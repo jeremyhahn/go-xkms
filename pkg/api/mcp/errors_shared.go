@@ -22,9 +22,10 @@ import (
 // classToJSONRPCCode translates apierrors.Class onto this transport's
 // JSON-RPC error code. It is total over every Class the apierrors tables
 // this package reads (ImportExportSentinelClasses, PIVSentinelClasses,
-// BarrierSentinelClasses, PINSentinelClasses) can produce; jsonRPCCodeForClass's
-// ErrCodeInternalError floor exists only for a Class a future apierrors
-// table introduces without a row here.
+// BarrierSentinelClasses, PINSentinelClasses, SealStoreSentinelClasses,
+// CustodianSentinelClasses, PolicySentinelClasses) can produce;
+// jsonRPCCodeForClass's ErrCodeInternalError floor exists only for a Class a
+// future apierrors table introduces without a row here.
 //
 // The JSON-RPC 2.0 vocabulary is far coarser than gRPC's codes.Code: it has
 // no dedicated AlreadyExists, PermissionDenied, FailedPrecondition,
@@ -128,6 +129,22 @@ func mapPINError(err error, operation string) error {
 		return nil
 	}
 	if class, ok := apierrors.ClassOf(apierrors.PINSentinelClasses, err); ok {
+		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: &errs.Wrapped{Msg: operation, Err: err}}
+	}
+	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
+}
+
+// mapPolicyError converts a TPM 2.0 PCR-bank sealed-secret authorization
+// policy domain error into a *KeyOpError, classifying it through
+// apierrors.PolicySentinelClasses -- the table go-xkms#691 made this package
+// share with pkg/api/grpc/service_policy.go's mapPolicyError, following the
+// go-xkms#912 precedent set for PIV and barrier. Anything not in that table
+// is an internal fault.
+func mapPolicyError(err error, operation string) error {
+	if err == nil {
+		return nil
+	}
+	if class, ok := apierrors.ClassOf(apierrors.PolicySentinelClasses, err); ok {
 		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: &errs.Wrapped{Msg: operation, Err: err}}
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}

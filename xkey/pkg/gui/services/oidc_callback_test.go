@@ -18,9 +18,11 @@ package services
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -197,6 +199,68 @@ func TestOIDCService_Login_AnswersOnTheRedirectURLPath(t *testing.T) {
 	case result := <-done:
 		require.False(t, result.Success)
 		assert.True(t, strings.Contains(result.Error, "access_denied") || strings.Contains(result.Error, "declined"), result.Error)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the callback did not end the login")
+	}
+}
+
+// TestOIDCService_Login_CallbackErrorPageIsInertUnderInjection proves the
+// GUI's callback listener answers a hostile error redirect with a page that
+// carries none of its markup and the loopback security headers, while the
+// login still ends with the provider's error (#1013).
+func TestOIDCService_Login_CallbackErrorPageIsInertUnderInjection(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := strconv.Itoa(probe.Addr().(*net.TCPAddr).Port)
+	require.NoError(t, probe.Close())
+	redirect := "http://127.0.0.1:" + port + "/callback"
+
+	svc := NewOIDCService(nil)
+	var authURL atomic.Value
+	svc.browserOpen = func(u string) error { authURL.Store(u); return nil }
+	svc.SetCallback("127.0.0.1", 8085)
+	require.NoError(t, svc.AddProvider(&OIDCProviderEntry{
+		Name: "p", Issuer: discoveryIssuer(t).URL, ClientID: "cid", Scopes: []string{"openid"}, RedirectURL: redirect,
+	}))
+
+	type loginOutcome struct {
+		result *OIDCLoginResult
+		err    error
+	}
+	done := make(chan loginOutcome, 1)
+	go func() {
+		result, loginErr := svc.Login("p")
+		done <- loginOutcome{result: result, err: loginErr}
+	}()
+
+	require.Eventually(t, func() bool {
+		return authURL.Load() != nil
+	}, 10*time.Second, 20*time.Millisecond, "the browser was never opened")
+
+	query := url.Values{
+		"error":             {"<script>alert(1)</script>"},
+		"error_description": {`"><img src=x onerror=alert(1)>`},
+	}
+	resp, err := http.Get(redirect + "?" + query.Encode())
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(body), "<h1>Authentication Failed</h1>")
+	assert.NotContains(t, string(body), "<script>")
+	assert.NotContains(t, string(body), "<img")
+	assert.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
+	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+	assert.Equal(t, "default-src 'none'; style-src 'unsafe-inline'", resp.Header.Get("Content-Security-Policy"))
+	assert.Equal(t, "no-referrer", resp.Header.Get("Referrer-Policy"))
+
+	select {
+	case outcome := <-done:
+		require.NoError(t, outcome.err)
+		require.False(t, outcome.result.Success)
+		assert.Contains(t, outcome.result.Error, "<script>alert(1)</script>")
 	case <-time.After(10 * time.Second):
 		t.Fatal("the callback did not end the login")
 	}

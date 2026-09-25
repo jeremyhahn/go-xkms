@@ -1,6 +1,6 @@
 # Sealing and Barrier — API
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -44,6 +44,46 @@ recovery keys but cannot ask whether any exist.
 | Seal data | `POST /api/v1/seal` | `Seal` | same as REST | `xkms.seal` | `Seal` | `keys:encrypt` |
 | Unseal data | `POST /api/v1/unseal` | `Unseal` | same as REST | `xkms.unseal` | `Unseal` | `keys:decrypt` |
 | Seal capability | `GET /api/v1/seal/capability` | `CanSeal` | same as REST | `xkms.canSeal` | `CanSeal` | `keys:get` |
+
+## PCR policy management
+
+TPM 2.0 PCR-bank sealed-secret authorization policies (`pkg/seal/policy`),
+wired onto every network transport by go-xkms#691. All seven RPCs gate on
+the `policy:*` permission family (`pkg/auth.ResourcePolicy`) — a resource
+name go-qrdb's canonical registry does not declare, so xkms mints and
+scopes it itself the way it already does for `bootstrap:read`
+(`pkg/apimodule/module_scopes.go`).
+
+| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`PolicyServicer.`) | Permission |
+|---|---|---|---|---|---|---|
+| Create | `POST /api/v1/policies/` | `PolicyCreate` | same as REST | `policy.create` | `PolicyCreate` | `policy:create` |
+| Get | `GET /api/v1/policies/{name}` | `PolicyGet` | same as REST | `policy.get` | `PolicyGet` | `policy:get` |
+| List | `GET /api/v1/policies/` | `PolicyList` | same as REST | `policy.list` | `PolicyList` | `policy:list` |
+| Delete | `DELETE /api/v1/policies/{name}` | `PolicyDelete` | same as REST | `policy.delete` | `PolicyDelete` | `policy:delete` |
+| Refresh | `POST /api/v1/policies/{name}/refresh` | `PolicyRefresh` | same as REST | `policy.refresh` | `PolicyRefresh` | `policy:refresh` |
+| Verify | `POST /api/v1/policies/{name}/verify` | `PolicyVerify` | same as REST | `policy.verify` | `PolicyVerify` | `policy:verify` |
+| Export | `GET /api/v1/policies/{name}/export` | `PolicyExport` | same as REST | `policy.export` | `PolicyExport` | `policy:export` |
+
+**Not served over USB.** The USB transport's counterparty is the xkey
+Android companion app — a Noise-encrypted JSON-RPC peer, not xkmsd, and one
+with no TPM to read PCRs from — so the entire Password/SealStore/Escrow/
+Policy administrative surface is out of scope there structurally, not by
+omission.
+
+**Escrow is a separate, open question.** `pkg/escrow`'s four operations
+(`EscrowKey`, `RecoverKey`, `ListEscrowed`, `RevokeEscrow`) remain stubbed
+`ErrNotSupported` on every transport pending go-xkms#692; they are unrelated
+to policy management beyond sharing a file section header in the transport
+source.
+
+`pkg/api/rest/policy_handlers.go` predates the convention every other REST
+handler group in this file follows (wiring `pkg/api/transport` request/
+response types straight onto the HTTP body): its JSON field names
+(`pcr_indices`, `pcr_values` as raw bytes) and its own local response types
+diverge from `transport.Policy*` (`pcrs`, `values` as a hex-encoded map).
+The REST and QUIC client transports translate between the two;
+`pkg/api/rest/wire`'s PCR Policy types document the mapping in full so it
+lives in exactly one place.
 
 ## Tenant barriers
 

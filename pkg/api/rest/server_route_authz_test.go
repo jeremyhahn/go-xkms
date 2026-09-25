@@ -32,6 +32,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -129,6 +130,15 @@ var gatedRoutePermissions = []gatedRoute{
 	// Credentials — the MCP credentials.* methods.
 	{http.MethodPost, "/api/v1/credentials/submit", "credentials", "submit"},
 	{http.MethodGet, "/api/v1/credentials/strategy", "credentials", "strategy"},
+
+	// PCR policies — service_policy.go.
+	{http.MethodPost, "/api/v1/policies/", "policy", "create"},
+	{http.MethodGet, "/api/v1/policies/", "policy", "list"},
+	{http.MethodGet, "/api/v1/policies/boot", "policy", "get"},
+	{http.MethodDelete, "/api/v1/policies/boot", "policy", "delete"},
+	{http.MethodPost, "/api/v1/policies/boot/refresh", "policy", "refresh"},
+	{http.MethodPost, "/api/v1/policies/boot/verify", "policy", "verify"},
+	{http.MethodGet, "/api/v1/policies/boot/export", "policy", "export"},
 }
 
 // sessionOnlyRoutes is the golden set of REST routes that still require only
@@ -143,19 +153,12 @@ var sessionOnlyRoutes = []string{
 	"GET /api/v1/credentials/",
 	"GET /api/v1/init/officer/status",
 	"GET /api/v1/init/status",
-	"GET /api/v1/policies/",
-	"GET /api/v1/policies/{id}",
-	"GET /api/v1/policies/{id}/export",
-	"DELETE /api/v1/policies/{id}",
 	"POST /api/v1/auth/logout",
 	"POST /api/v1/init/claim-cert/begin",
 	"POST /api/v1/init/claim-cert/complete",
 	"POST /api/v1/init/claim-share/begin",
 	"POST /api/v1/init/claim-share/complete",
 	"POST /api/v1/passwords/access-mode",
-	"POST /api/v1/policies/",
-	"POST /api/v1/policies/{id}/refresh",
-	"POST /api/v1/policies/{id}/verify",
 }
 
 // routeAuthzRecordingClient records the resource:action pair it was asked to
@@ -219,6 +222,9 @@ func newGatedRouteServer(t *testing.T, rbac qrdbtransport.RBACClient, authn auth
 	require.NoError(t, err)
 	svc.SetTenantService(tenantSvc)
 
+	policyMgr, err := policy.NewManager(fakePCRReader{}, policy.NewMemoryPolicyStore())
+	require.NoError(t, err)
+
 	server, err := NewServer(&Config{
 		Authenticator:     authn,
 		Backends:          map[string]xkms.Backend{"test": ks},
@@ -230,6 +236,7 @@ func newGatedRouteServer(t *testing.T, rbac qrdbtransport.RBACClient, authn auth
 		PasswordStore:     staticpw.NewStore(storage.NewMemory()),
 		CredentialService: &credentialspkg.Service{},
 		CA:                ca,
+		PolicyManager:     policyMgr,
 		EnableRBAC:        true,
 		RBACAuthorizer:    auth.NewAuthorizer(rbac),
 	})

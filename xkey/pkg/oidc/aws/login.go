@@ -194,38 +194,34 @@ func Login(ctx context.Context, opts LoginOptions, onAuthURL func(authURL string
 	return &LoginResult{TokenResponse: tokenResp, DPoPKey: dpopKey, AuthURL: authURL}, nil
 }
 
-// writeCallbackHTML writes an HTML status page to the browser that hit the
-// callback URL, and logs a failure at debug level. Every call site writes
-// after headers are already committed and has already queued its result on
-// codeChan/errChan, so a write failure -- typically the browser tab having
-// been closed already -- changes nothing about the login outcome.
-func writeCallbackHTML(w http.ResponseWriter, html string) {
-	w.Header().Set("Content-Type", "text/html")
-	if _, err := w.Write([]byte(html)); err != nil {
-		slog.Debug("oidc/aws: failed to write callback response", "error", err)
-	}
-}
-
 // handleLoginCallback handles the OAuth2 redirect for an AWS login.
 func handleLoginCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- string, errChan chan<- error, state *atomic.Value) {
 	query := r.URL.Query()
 
 	if errParam := query.Get("error"); errParam != "" {
-		writeCallbackHTML(w, "<html><body><h1>AWS Authentication Failed</h1></body></html>")
+		// A page that cannot reach the browser (it hung up) changes nothing
+		// about the login's outcome, so the write error is only logged.
+		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Failed"}); err != nil {
+			slog.Debug("oidc/aws: failed to write callback response", "error", err)
+		}
 		errChan <- &DetailError{Err: ErrAuthorizationFailed, Detail: ": " + errParam + ": " + query.Get("error_description")}
 		return
 	}
 
 	code := query.Get("code")
 	if code == "" {
-		writeCallbackHTML(w, "<html><body><h1>AWS Authentication Failed</h1><p>No authorization code received</p></body></html>")
+		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Failed", Message: "No authorization code received"}); err != nil {
+			slog.Debug("oidc/aws: failed to write callback response", "error", err)
+		}
 		errChan <- ErrNoAuthorizationCode
 		return
 	}
 
 	state.Store(query.Get("state"))
 
-	writeCallbackHTML(w, "<html><body><h1>AWS Authentication Successful</h1><p>You may close this window.</p></body></html>")
+	if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Successful", Message: "You may close this window."}); err != nil {
+		slog.Debug("oidc/aws: failed to write callback response", "error", err)
+	}
 
 	codeChan <- code
 }

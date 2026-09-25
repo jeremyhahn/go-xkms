@@ -11,15 +11,19 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package keyops_parity_test proves that the five hardware-capability key
-// operations return equivalent results across transports.
+// Package keyops_parity_test proves that operations reachable over more than
+// one transport return equivalent results, most of it the five
+// hardware-capability key operations plus (go-xkms#691) PCR policy
+// management.
 //
-// These operations were, until recently, reachable only over gRPC and the Unix
-// socket. Adding them to REST, QUIC, and MCP is only worth anything if the
-// answers actually agree, so this package drives one shared xkms service layer
-// through two independent transports and compares the wire results
-// field-by-field. It lives in its own package because a single test cannot
-// import both pkg/api/rest and pkg/api/grpc from inside either one.
+// The key operations were, until recently, reachable only over gRPC and the
+// Unix socket; PCR policy management was REST-only, and briefly broken there
+// too (see policy_parity_test.go). Adding either to a transport that lacked
+// it is only worth anything if the answers actually agree, so this package
+// drives one shared xkms service layer through two independent transports
+// and compares the wire results field-by-field. It lives in its own package
+// because a single test cannot import both pkg/api/rest and pkg/api/grpc
+// from inside either one.
 package keyops_parity_test
 
 import (

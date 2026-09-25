@@ -2821,9 +2821,15 @@ func (t *Transport) PasswordStoreStatus(ctx context.Context) (*transport.Passwor
 }
 
 // PasswordStoreSetAccessMode sets the password store access mode.
-// Note: This operation is not available via gRPC. Use the REST API instead.
-func (t *Transport) PasswordStoreSetAccessMode(_ context.Context, _ *transport.PasswordStoreSetAccessModeRequest) error {
-	return ErrNotSupported
+func (t *Transport) PasswordStoreSetAccessMode(ctx context.Context, req *transport.PasswordStoreSetAccessModeRequest) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+	_, err := t.client.PasswordStoreSetAccessMode(ctx, &pb.PasswordStoreSetAccessModeRequest{Mode: req.Mode})
+	if err != nil {
+		return &errs.Wrapped{Msg: "password store set access mode failed", Err: err}
+	}
+	return nil
 }
 
 // PasswordGenerate generates a random password.
@@ -2937,45 +2943,150 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 // ==================== Policy Operations ====================
 
 // PolicyCreate creates a new PCR policy.
-// Note: This operation is not available via gRPC.
-func (t *Transport) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.PolicyCreate(ctx, &pb.PolicyCreateRequest{
+		Name: req.Name,
+		Bank: req.Bank,
+		Pcrs: pcrsToProto(req.PCRs),
+	})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "policy create failed", Err: err}
+	}
+	return &transport.PolicyCreateResponse{
+		Name:      resp.Name,
+		Bank:      resp.Bank,
+		PCRs:      pcrsFromProto(resp.Pcrs),
+		Values:    pcrValuesFromProto(resp.Values),
+		CreatedAt: resp.CreatedAt,
+	}, nil
 }
 
 // PolicyGet retrieves a policy by name.
-// Note: This operation is not available via gRPC.
-func (t *Transport) PolicyGet(_ context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.PolicyGet(ctx, &pb.PolicyGetRequest{Name: req.Name})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "policy get failed", Err: err}
+	}
+	return policyGetResponseFromProto(resp), nil
 }
 
 // PolicyList lists all policies.
-// Note: This operation is not available via gRPC.
-func (t *Transport) PolicyList(_ context.Context) (*transport.PolicyListResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.PolicyList(ctx, &pb.PolicyListRequest{})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "policy list failed", Err: err}
+	}
+	policies := make([]transport.PolicyGetResponse, 0, len(resp.Policies))
+	for _, p := range resp.Policies {
+		policies = append(policies, *policyGetResponseFromProto(p))
+	}
+	return &transport.PolicyListResponse{
+		Policies:     policies,
+		PageResponse: transport.PageResponse{Total: int(resp.Total)},
+	}, nil
 }
 
 // PolicyDelete deletes a policy.
-// Note: This operation is not available via gRPC.
-func (t *Transport) PolicyDelete(_ context.Context, _ *transport.PolicyDeleteRequest) error {
-	return ErrNotSupported
+func (t *Transport) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+	_, err := t.client.PolicyDelete(ctx, &pb.PolicyDeleteRequest{Name: req.Name})
+	if err != nil {
+		return &errs.Wrapped{Msg: "policy delete failed", Err: err}
+	}
+	return nil
 }
 
 // PolicyRefresh refreshes a policy with current PCR values.
-// Note: This operation is not available via gRPC.
-func (t *Transport) PolicyRefresh(_ context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.PolicyRefresh(ctx, &pb.PolicyRefreshRequest{Name: req.Name})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "policy refresh failed", Err: err}
+	}
+	return policyGetResponseFromProto(resp), nil
 }
 
 // PolicyVerify verifies a policy against current PCR values.
-// Note: This operation is not available via gRPC.
-func (t *Transport) PolicyVerify(_ context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.PolicyVerify(ctx, &pb.PolicyVerifyRequest{Name: req.Name})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "policy verify failed", Err: err}
+	}
+	return &transport.PolicyVerifyResponse{
+		Name:    resp.Name,
+		Valid:   resp.Valid,
+		Message: resp.Message,
+	}, nil
 }
 
 // PolicyExport exports a policy.
-// Note: This operation is not available via gRPC.
-func (t *Transport) PolicyExport(_ context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.PolicyExport(ctx, &pb.PolicyExportRequest{Name: req.Name})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "policy export failed", Err: err}
+	}
+	return &transport.PolicyExportResponse{Data: resp.Data}, nil
+}
+
+// policyGetResponseFromProto converts a proto PolicyGetResponse to its
+// transport wire representation.
+func policyGetResponseFromProto(resp *pb.PolicyGetResponse) *transport.PolicyGetResponse {
+	return &transport.PolicyGetResponse{
+		Name:      resp.Name,
+		Bank:      resp.Bank,
+		PCRs:      pcrsFromProto(resp.Pcrs),
+		Values:    pcrValuesFromProto(resp.Values),
+		CreatedAt: resp.CreatedAt,
+		UpdatedAt: resp.UpdatedAt,
+	}
+}
+
+// pcrsToProto converts a PCR index slice to its proto (int32) representation.
+func pcrsToProto(pcrs []int) []int32 {
+	out := make([]int32, len(pcrs))
+	for i, v := range pcrs {
+		out[i] = int32(v) // #nosec G115 - PCR indices are 0-23
+	}
+	return out
+}
+
+// pcrValuesFromProto converts a proto (int32 key) PCR index-to-hex-value map
+// to the SDK's native map[int]string representation.
+func pcrValuesFromProto(values map[int32]string) map[int]string {
+	out := make(map[int]string, len(values))
+	for idx, v := range values {
+		out[int(idx)] = v
+	}
+	return out
+}
+
+// pcrsFromProto converts a proto (int32) PCR index slice to the SDK's native
+// []int representation.
+func pcrsFromProto(pcrs []int32) []int {
+	out := make([]int, len(pcrs))
+	for i, v := range pcrs {
+		out[i] = int(v)
+	}
+	return out
 }
 
 // ==================== WebAuthn Operations ====================

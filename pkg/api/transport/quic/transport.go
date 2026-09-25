@@ -2333,40 +2333,161 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 // part of transport.Client — see docs/escrow/architecture.md.
 
 // Policy Operations
+//
+// QUIC is REST served over HTTP/3 on the same chi router (see
+// pkg/api/rest/routes.go), so these translate the same wire shapes the REST
+// client transport does; pkg/api/rest/wire's PCR Policy types document why a
+// translation is needed at all.
 
 // PolicyCreate creates a new PCR policy.
-func (t *Transport) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/policies/", &wire.PolicyCreateRequest{
+		Name:       req.Name,
+		Bank:       req.Bank,
+		PCRIndices: req.PCRs,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var resp wire.PolicyCreateResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &transport.PolicyCreateResponse{
+		Name:      resp.Name,
+		Bank:      resp.Bank,
+		PCRs:      resp.PCRIndices,
+		Values:    wire.PCRValuesToHex(resp.PCRValues),
+		CreatedAt: resp.CreatedAt,
+	}, nil
 }
 
 // PolicyGet retrieves a policy by name.
-func (t *Transport) PolicyGet(_ context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	path := fmt.Sprintf("/api/v1/policies/%s", url.PathEscape(req.Name))
+	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp wire.PolicyGetResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &transport.PolicyGetResponse{
+		Name:      resp.Name,
+		Bank:      resp.Bank,
+		PCRs:      resp.PCRIndices,
+		Values:    wire.PCRValuesToHex(resp.PCRValues),
+		CreatedAt: resp.CreatedAt,
+		UpdatedAt: resp.UpdatedAt,
+	}, nil
 }
 
 // PolicyList lists all policies.
-func (t *Transport) PolicyList(_ context.Context) (*transport.PolicyListResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	data, err := t.doRawRequest(ctx, http.MethodGet, "/api/v1/policies/", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp wire.PolicyListResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	policies := make([]transport.PolicyGetResponse, 0, len(resp.Policies))
+	for _, p := range resp.Policies {
+		policies = append(policies, transport.PolicyGetResponse{
+			Name:      p.Name,
+			Bank:      p.Bank,
+			PCRs:      p.PCRIndices,
+			CreatedAt: p.CreatedAt,
+			UpdatedAt: p.UpdatedAt,
+		})
+	}
+	return &transport.PolicyListResponse{
+		Policies:     policies,
+		PageResponse: transport.PageResponse{Total: resp.Total},
+	}, nil
 }
 
 // PolicyDelete deletes a policy.
-func (t *Transport) PolicyDelete(_ context.Context, _ *transport.PolicyDeleteRequest) error {
-	return ErrNotSupported
+func (t *Transport) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	path := fmt.Sprintf("/api/v1/policies/%s", url.PathEscape(req.Name))
+	_, err := t.doRawRequest(ctx, http.MethodDelete, path, nil)
+	return err
 }
 
 // PolicyRefresh refreshes a policy with current PCR values.
-func (t *Transport) PolicyRefresh(_ context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	path := fmt.Sprintf("/api/v1/policies/%s/refresh", url.PathEscape(req.Name))
+	data, err := t.doRawRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp wire.PolicyRefreshResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &transport.PolicyGetResponse{
+		Name:      resp.Name,
+		Bank:      resp.Bank,
+		PCRs:      resp.PCRIndices,
+		UpdatedAt: resp.UpdatedAt,
+	}, nil
 }
 
 // PolicyVerify verifies a policy against current PCR values.
-func (t *Transport) PolicyVerify(_ context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	path := fmt.Sprintf("/api/v1/policies/%s/verify", url.PathEscape(req.Name))
+	data, err := t.doRawRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.PolicyVerifyResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
 }
 
 // PolicyExport exports a policy.
-func (t *Transport) PolicyExport(_ context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	path := fmt.Sprintf("/api/v1/policies/%s/export", url.PathEscape(req.Name))
+	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp wire.PolicyExportResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &transport.PolicyExportResponse{Data: resp.PolicyJSON}, nil
 }
 
 // CustodianGroupService methods.

@@ -1395,26 +1395,17 @@ func buildAuthorizationURL(endpoint, clientID, redirectURL string, scopes []stri
 	return endpoint + "?" + params.Encode()
 }
 
-// writeOIDCCallbackHTML writes an HTML status page to the browser that hit
-// the callback URL, and logs a failure at debug level. Every call site
-// writes after headers are already committed and has already queued its
-// result on codeChan/errChan, so a write failure -- typically the browser
-// tab having been closed already -- changes nothing about the login
-// outcome.
-func writeOIDCCallbackHTML(w http.ResponseWriter, html string) {
-	w.Header().Set("Content-Type", "text/html")
-	if _, err := io.WriteString(w, html); err != nil {
-		slog.Debug("oidc: failed to write callback response", "error", err)
-	}
-}
-
 // handleOIDCCallback handles the OAuth2 callback.
 func handleOIDCCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- string, errChan chan<- error, state *atomic.Value) {
 	query := r.URL.Query()
 
 	if errParam := query.Get("error"); errParam != "" {
 		errDesc := query.Get("error_description")
-		writeOIDCCallbackHTML(w, fmt.Sprintf("<html><body><h1>Authentication Failed</h1><p>%s: %s</p></body></html>", errParam, errDesc))
+		// A page that cannot reach the browser (it hung up) changes nothing
+		// about the login's outcome, so the write error is only logged.
+		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: errParam + ": " + errDesc}); err != nil {
+			slog.Debug("oidc: failed to write callback response", "error", err)
+		}
 
 		errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, errDesc)}
 		return
@@ -1422,14 +1413,18 @@ func handleOIDCCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- 
 
 	code := query.Get("code")
 	if code == "" {
-		writeOIDCCallbackHTML(w, "<html><body><h1>Authentication Failed</h1><p>No authorization code received</p></body></html>")
+		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: "No authorization code received"}); err != nil {
+			slog.Debug("oidc: failed to write callback response", "error", err)
+		}
 		errChan <- ErrOIDCNoAuthCode
 		return
 	}
 
 	state.Store(query.Get("state"))
 
-	writeOIDCCallbackHTML(w, "<html><body><h1>Authentication Successful</h1><p>You may close this window.</p></body></html>")
+	if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Successful", Message: "You may close this window."}); err != nil {
+		slog.Debug("oidc: failed to write callback response", "error", err)
+	}
 
 	codeChan <- code
 }

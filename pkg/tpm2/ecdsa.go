@@ -68,6 +68,18 @@ func (tpm *TPM2) CreateECDSA(
 		spec.Curve = keyAttrs.ECCAttributes.Curve
 	}
 
+	if keyAttrs.KeyType == types.KeyTypeEncryption || keyAttrs.KeyType == types.KeyTypeEncapsulation {
+		// A key created for encryption or key-agreement carries the decrypt
+		// attribute rather than signEncrypt, mirroring CreateRSA. Scheme stays
+		// TPM_ALG_NULL (the zero value): TPM2_ECDH_ZGen requires the key's
+		// scheme to be TPM_ALG_NULL or TPM_ALG_ECDH (TCG TPM 2.0 Library Part
+		// 3, section 14.5), and leaving it NULL matches the unrestricted,
+		// scheme-per-operation shape CreateRSA already uses for its decrypt
+		// keys.
+		spec.Sign = false
+		spec.Decrypt = true
+	}
+
 	eccTemplate, err := tpm.KeyTemplate(spec)
 	if err != nil {
 		tpm.logger.Error("failed to build ECC key template",

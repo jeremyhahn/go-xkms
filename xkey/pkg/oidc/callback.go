@@ -16,8 +16,10 @@
 package oidc
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"html/template"
 	"net"
 	"net/http"
 	"net/url"
@@ -280,4 +282,65 @@ func ExactPathHandler(path string, handler http.HandlerFunc) http.Handler {
 		}
 		handler(w, r)
 	})
+}
+
+// CallbackPageContentSecurityPolicy is the Content-Security-Policy of every
+// page a callback listener shows the browser: the page loads nothing and
+// runs nothing, and only its inline style is allowed.
+const CallbackPageContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'"
+
+// CallbackPage is the page a callback listener shows the browser once the
+// provider has redirected back. Title and Message are plain text: the
+// callback's error and error_description parameters are request input that
+// anyone able to steer the browser to the loopback URL controls, so they
+// are only ever rendered through callbackPageTemplate, which escapes them.
+type CallbackPage struct {
+	Title   string
+	Message string
+}
+
+// callbackPageTemplate is contextually escaped by html/template, so no
+// field of a CallbackPage can become markup or script.
+var callbackPageTemplate = template.Must(template.New("callback").Parse(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>{{.Title}}</title></head>
+<body><h1>{{.Title}}</h1>{{if .Message}}<p>{{.Message}}</p>{{end}}</body></html>
+`))
+
+// CallbackPageError reports a callback page that could not be rendered or
+// written to the browser.
+type CallbackPageError struct {
+	// Cause is the template or write failure.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *CallbackPageError) Error() string {
+	return "oidc: callback page: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying failure.
+func (e *CallbackPageError) Unwrap() error {
+	return e.Cause
+}
+
+// WriteCallbackPage renders page, escaped, to w with the headers that keep
+// the loopback origin inert: an explicit UTF-8 HTML content type with
+// sniffing disabled, a Content-Security-Policy that forbids every script and
+// resource, and no Referer, so the callback URL (which carries the
+// authorization code) is never sent on. The page is rendered before any
+// header is written, so a rendering failure leaves the response untouched.
+func WriteCallbackPage(w http.ResponseWriter, page CallbackPage) error {
+	var body bytes.Buffer
+	if err := callbackPageTemplate.Execute(&body, page); err != nil {
+		return &CallbackPageError{Cause: err}
+	}
+	header := w.Header()
+	header.Set("Content-Type", "text/html; charset=utf-8")
+	header.Set("X-Content-Type-Options", "nosniff")
+	header.Set("Content-Security-Policy", CallbackPageContentSecurityPolicy)
+	header.Set("Referrer-Policy", "no-referrer")
+	if _, err := w.Write(body.Bytes()); err != nil {
+		return &CallbackPageError{Cause: err}
+	}
+	return nil
 }

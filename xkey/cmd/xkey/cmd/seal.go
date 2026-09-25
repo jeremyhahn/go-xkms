@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -243,49 +244,165 @@ func readPassphraseFromStdin(out io.Writer) (string, error) {
 	return passphrase1, nil
 }
 
-// migrateExistingData migrates data from existing directory to encrypted volume.
-func migrateExistingData(out io.Writer, vol *luks.Volume, passphrase string) (err error) {
-	_, _ = fmt.Fprintln(out, "Migrating existing data to encrypted volume...")
-	dataDir := vol.MountPoint
+// migrateVolume is the subset of *luks.Volume behavior migrateExistingData
+// needs to stage, unlock, copy into and lock the encrypted volume. The
+// interface exists so tests can fault-inject unlock, copy and lock
+// failures without a real LUKS container or loop device.
+type migrateVolume interface {
+	GetMountPoint() string
+	Unlock(passphrase string) error
+	Lock() error
+	CopyDataToVolume(sourceDir string) error
+}
 
-	// Create a temp dir to hold data during migration
+// Compile-time check that *luks.Volume satisfies migrateVolume.
+var _ migrateVolume = (*luks.Volume)(nil)
+
+// migrateExistingData migrates data from the existing plaintext directory
+// into the encrypted volume.
+//
+// dataDir and the volume's mount point are the same path: unlocking mounts
+// the (empty) encrypted filesystem over dataDir, which hides the plaintext
+// files underneath without touching them, and locking (unmounting) reveals
+// them again untouched. That property is what makes the ordering below
+// safe: the source is staged, copied into the unlocked volume, verified,
+// and only deleted after the volume holding the verified copy has been
+// locked. If any step fails, the staging copy is left on disk and its path
+// is reported, and the plaintext source is never touched, so no copy of
+// the data is ever lost.
+func migrateExistingData(out io.Writer, vol migrateVolume, passphrase string) error {
+	_, _ = fmt.Fprintln(out, "Migrating existing data to encrypted volume...")
+	dataDir := vol.GetMountPoint()
+
+	// Stage the existing data before touching the volume or the source.
 	tmpDir, err := os.MkdirTemp("", "xkey-migrate-")
 	if err != nil {
 		return &SealError{Operation: "create_temp", Err: err}
 	}
-	defer func() {
-		if closeErr := os.RemoveAll(tmpDir); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-
-	// Copy existing data to temp directory
 	if err := copyDirContents(dataDir, tmpDir); err != nil {
+		_ = os.RemoveAll(tmpDir)
 		return &SealError{Operation: "copy_to_temp", Err: err}
 	}
 
-	// Remove original data directory
-	if err := os.RemoveAll(dataDir); err != nil {
-		return &SealError{Operation: "remove_original", Err: err}
+	// From here on, every failure preserves tmpDir: it may be the only
+	// intact copy of the source data until the source is removed below.
+	failMigration := func(op string, cause error) error {
+		_, _ = fmt.Fprintf(out, "Migration failed: staged copy preserved at %s\n", tmpDir)
+		return &SealError{Operation: op, Err: cause}
 	}
 
-	// Unlock and mount the volume
+	// Unlock the volume. This mounts the encrypted filesystem over
+	// dataDir; the plaintext files already there are hidden, not deleted.
 	if err := vol.Unlock(passphrase); err != nil {
-		return &SealError{Operation: "unlock_for_migration", Err: err}
+		return failMigration("unlock_for_migration", err)
 	}
 
-	// Copy from temp to mounted volume
+	// Copy the staged data into the now-mounted volume.
 	if err := vol.CopyDataToVolume(tmpDir); err != nil {
-		return &SealError{Operation: "migrate_data", Err: errors.Join(err, vol.Lock())}
+		if lockErr := vol.Lock(); lockErr != nil {
+			_, _ = fmt.Fprintf(out, "Warning: could not lock volume: %v\n", lockErr)
+		}
+		return failMigration("migrate_data", err)
 	}
 
-	// Lock the volume
+	// Verify the copy landed intact before doing anything irreversible.
+	if err := verifyDirCopy(tmpDir, dataDir); err != nil {
+		if lockErr := vol.Lock(); lockErr != nil {
+			_, _ = fmt.Fprintf(out, "Warning: could not lock volume: %v\n", lockErr)
+		}
+		return failMigration("verify_migration", err)
+	}
+
+	// Lock the volume. This unmounts it, which uncovers the original
+	// plaintext directory again, untouched since Unlock.
 	if err := vol.Lock(); err != nil {
-		return &SealError{Operation: "lock_after_migration", Err: err}
+		return failMigration("lock_after_migration", err)
+	}
+
+	// Only now, with a verified copy safely sealed inside the locked
+	// volume, remove the plaintext source.
+	if err := os.RemoveAll(dataDir); err != nil {
+		return failMigration("remove_original", err)
+	}
+
+	// Migration is complete and verified; the staging copy is no longer
+	// needed.
+	if err := os.RemoveAll(tmpDir); err != nil {
+		_, _ = fmt.Fprintf(out, "Warning: failed to remove staging copy at %s: %v\n", tmpDir, err)
 	}
 
 	_, _ = fmt.Fprintln(out, "Data migration complete.")
 	return nil
+}
+
+// verifyDirCopy confirms that every entry present in src also exists in
+// dst: directories exist as directories, and files exist with matching
+// size. It is a shallow integrity check run after copying data into the
+// encrypted volume and before the plaintext source is deleted.
+func verifyDirCopy(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return &DataVerificationError{Path: path, Message: "failed to walk source", Err: walkErr}
+		}
+		rel, relErr := filepath.Rel(src, path)
+		if relErr != nil {
+			return &DataVerificationError{Path: path, Message: "failed to resolve relative path", Err: relErr}
+		}
+		if rel == "." {
+			return nil
+		}
+		dstPath := filepath.Join(dst, rel)
+
+		if d.IsDir() {
+			info, statErr := os.Stat(dstPath)
+			if statErr != nil {
+				return &DataVerificationError{Path: rel, Message: "missing directory in destination", Err: statErr}
+			}
+			if !info.IsDir() {
+				return &DataVerificationError{Path: rel, Message: "expected a directory in destination"}
+			}
+			return nil
+		}
+
+		srcInfo, infoErr := d.Info()
+		if infoErr != nil {
+			return &DataVerificationError{Path: rel, Message: "failed to stat source entry", Err: infoErr}
+		}
+		dstInfo, statErr := os.Stat(dstPath)
+		if statErr != nil {
+			return &DataVerificationError{Path: rel, Message: "missing file in destination", Err: statErr}
+		}
+		if dstInfo.Size() != srcInfo.Size() {
+			return &DataVerificationError{
+				Path: rel,
+				Message: fmt.Sprintf("size mismatch: source %d bytes, destination %d bytes",
+					srcInfo.Size(), dstInfo.Size()),
+			}
+		}
+		return nil
+	})
+}
+
+// DataVerificationError indicates that the post-copy integrity check in
+// verifyDirCopy found a mismatch between the staged source and its copy
+// inside the encrypted volume.
+type DataVerificationError struct {
+	Path    string
+	Message string
+	Err     error
+}
+
+// Error returns the error message.
+func (e *DataVerificationError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("verify: %s: %s: %v", e.Path, e.Message, e.Err)
+	}
+	return fmt.Sprintf("verify: %s: %s", e.Path, e.Message)
+}
+
+// Unwrap returns the underlying error.
+func (e *DataVerificationError) Unwrap() error {
+	return e.Err
 }
 
 // parseSize converts size string (e.g., "100M", "1G") to bytes.
