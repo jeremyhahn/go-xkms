@@ -7,17 +7,19 @@ Transport model: [`../key-management/api.md`](../key-management/api.md)
 this feature needs no build tag and no backend-specific daemon
 configuration — see [`architecture.md`](architecture.md). Every route below
 is registered on every `xkmsd` build; whether it answers or 501s depends
-only on `s.xkmsService != nil` at daemon construction (`hasSSH` gate,
-`pkg/api/rest/routes.go:394`).
+only on `s.sshHandlers != nil` (the `hasSSH` gate,
+`pkg/api/rest/routes.go:453`). `sshHandlers` is built only when the REST
+config carries an SSH client (`cfg.SSHClient != nil`,
+`pkg/api/rest/server.go:489`).
 
 Permission: every route uses `auth.ResourceSSH` / `auth.ActionUse` — one
-blanket permission for the whole feature (`pkg/api/rest/routes.go:394-397`),
+blanket permission for the whole feature (`pkg/api/rest/routes.go:450-455`),
 unlike the generic key-management routes, which vary the action per verb.
 
 ## REST (`pkg/api/rest/handlers_ssh.go`, base path `/xkms/v1/ssh`)
 
 Note the base path: SSH uses `/xkms/v1/ssh`, not the `/api/v1` prefix the
-generic key/FROST routes use (`pkg/api/rest/routes.go:396`).
+generic key/FROST routes use (`pkg/api/rest/routes.go:455`).
 
 | Method | Path | Client call |
 |---|---|---|
