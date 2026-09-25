@@ -149,21 +149,6 @@ func (dm *deviceManager) Attest(ctx context.Context, name string) (*DeviceAttest
 		return nil, err
 	}
 
-	// device-attest-01, unlike EnrollDevice, does not register the account
-	// itself before authorizing the order. RFC 8555 requires the account
-	// URL (KID) in every authenticated request after registration; without
-	// it the server rejects a JWK-only JWS. Registration is idempotent —
-	// the server returns the existing account when the key is already
-	// known — so a failure here (already registered, transient) is logged
-	// and not fatal; AuthorizeOrder surfaces any auth problem it actually
-	// causes.
-	if _, regErr := acmeClient.RegisterAccount(); regErr != nil {
-		dm.logger.Warn("ACME account registration returned error (may be benign if already registered)",
-			slog.String("account", spec.Account),
-			slog.String("error", regErr.Error()),
-		)
-	}
-
 	tpmModule, err := openDeviceTPM(name, spec, dm.logger)
 	if err != nil {
 		return nil, err

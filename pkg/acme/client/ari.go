@@ -274,8 +274,10 @@ func (c *Client) createOrderWithReplacesInternal(ctx context.Context, authzIDs [
 	c.logger.Warn("creating order without replaces field - full ARI order creation requires custom JWS implementation",
 		slog.String("replacesCertID", replacesCertID))
 
-	// Use the standard authorize order method
-	order, err := c.client.AuthorizeOrder(ctx, authzIDs)
+	// Use the standard authorize order method. authorizeOrder registers the
+	// account on first use, so this request is signed with the
+	// server-issued KID rather than a bare JWK.
+	order, err := c.authorizeOrder(ctx, authzIDs)
 	if err != nil {
 		return nil, err
 	}

@@ -195,28 +195,15 @@ func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*E
 		"context_has_deadline", hasDeadline,
 		"context_deadline", deadline)
 
-	// Register account first — RFC 8555 requires account URL (KID) to be
-	// used in POST-as-GET and all authenticated requests. Without this,
-	// the x/crypto/acme library sends JWK-only JWS which server rejects
-	// with "KID not found in JWS header". Register is idempotent on the
-	// server: returns existing account if key already known.
-	c.logger.Info("DEBUG: About to register ACME account...")
-	if _, regErr := c.RegisterAccount(); regErr != nil {
-		// If already registered this is a non-fatal race — continue.
-		c.logger.Warn("ACME account registration returned error (may be benign if already registered)", "error", regErr.Error())
-	}
-
-	c.logger.Info("DEBUG: About to call c.client.AuthorizeOrder...")
-
-	order, err := c.client.AuthorizeOrder(ctx, []acme.AuthzID{
+	// authorizeOrder registers the account on first use (RFC 8555 requires
+	// the server-issued KID, not a bare JWK, on every authenticated request
+	// after registration) before creating the order.
+	order, err := c.authorizeOrder(ctx, []acme.AuthzID{
 		{
 			Type:  string(AuthzTypePermanentIdentifier),
 			Value: ipAddress,
 		},
 	})
-
-	c.logger.Info("DEBUG: AuthorizeOrder returned", "error", err)
-
 	if err != nil {
 		return nil, caerrors.InternalServerError("enrollment failed: failed to create order: %v", err)
 	}
@@ -505,7 +492,7 @@ func (c *Client) RequestEndorsementKeyCertificate(ctx context.Context, config *E
 		"challenge", config.Challenge)
 
 	// Create order with serialized EK public key as permanent identifier
-	order, err := c.client.AuthorizeOrder(ctx, []acme.AuthzID{
+	order, err := c.authorizeOrder(ctx, []acme.AuthzID{
 		{
 			Type:  string(AuthzTypePermanentIdentifier),
 			Value: ekIdentifier,
@@ -764,7 +751,7 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig, pcr
 		"pcr_count", len(pcrSelection))
 
 	// Create order for attestation
-	order, err := c.client.AuthorizeOrder(ctx, []acme.AuthzID{
+	order, err := c.authorizeOrder(ctx, []acme.AuthzID{
 		{
 			Type:  string(AuthzTypePermanentIdentifier),
 			Value: ipAddress,

@@ -57,7 +57,21 @@ acmeClient, err := client.NewClient(&client.Params{
 })
 ```
 
-### Register an Account
+### Account Registration
+
+Every order-creating call (`RequestCertificate`, `EnrollDevice`, `DeviceAttest`,
+`RequestEndorsementKeyCertificate`) registers the account itself the first
+time it is used, so there is no separate registration step before requesting
+a certificate. Registration happens exactly once per `Client` instance and is
+idempotent: per RFC 8555 §7.3.1, a `newAccount` request for a key that
+already has an account returns the existing account rather than an error,
+and the client treats that as success. A real registration failure (invalid
+contact, server rejection, connectivity) is returned as a typed error from
+whichever call triggered it, not swallowed.
+
+`RegisterAccount` remains available directly for callers that want to
+provision an account up front (for example, at account-onboarding time)
+without also placing an order:
 
 ```go
 account, err := acmeClient.RegisterAccount()
@@ -70,6 +84,8 @@ fmt.Printf("Account registered: %s\n", account.URI)
 ### Request a Certificate
 
 ```go
+// RequestCertificate registers the account on this call if it has not
+// already been registered by a prior call on the same Client.
 cert, err := acmeClient.RequestCertificate(ctx, &client.CertificateRequest{
     AuthzType:     "dns",
     AuthzValue:    "example.com",

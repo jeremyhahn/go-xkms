@@ -50,7 +50,7 @@ namespace.
 
 | Verb | Args | Purpose |
 |---|---|---|
-| `account add <name>` | account name | Register an ACME account |
+| `account add <name>` | account name | Add an ACME account configuration |
 | `account list` | — | List configured accounts |
 | `account show <name>` | account name | Account detail |
 | `account remove <name>` | account name | Remove an account |
@@ -74,6 +74,13 @@ trusted-acme-client account add prod \
 
 `--key-store tpm2` puts the **account key** in the TPM, which is the point: an
 account key in a file is a certificate-issuing capability sitting on disk.
+
+`account add` only stores this configuration locally; it makes no ACME
+`newAccount` request. The account is registered with the directory server
+the first time a command that needs an order for it runs — `cert request`,
+`cert renew`, or `device enroll`/`device attest` — and every later command
+reuses the same registration, since it is idempotent server-side (RFC 8555
+§7.3.1).
 
 ## `trusted-acme-client cert`
 

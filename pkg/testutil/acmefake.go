@@ -16,7 +16,9 @@ package testutil
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -52,6 +54,13 @@ type FakeACMEDirectory struct {
 	orderStatus     string
 	authzStatus     string
 	challengeStatus string
+
+	// accountKeys tracks the JWK (RFC 7517, encoded as jwkEncode in
+	// golang.org/x/crypto/acme produces it — deterministic per public key)
+	// of every account key that has completed a newAccount request, so a
+	// repeat request for the same key is answered per RFC 8555 §7.3.1
+	// rather than treated as a brand new account.
+	accountKeys map[string]bool
 }
 
 // NewFakeACMEDirectory starts a FakeACMEDirectory offering challengeTypes on
@@ -131,15 +140,116 @@ func (d *FakeACMEDirectory) handleNewNonce(w http.ResponseWriter, _ *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (d *FakeACMEDirectory) handleNewAccount(w http.ResponseWriter, _ *http.Request) {
+// handleNewAccount implements RFC 8555 §7.3's newAccount semantics for the
+// two request shapes golang.org/x/crypto/acme sends, distinguished by the
+// account key's JWK (every newAccount request is JWK-signed — there is no
+// KID yet):
+//
+//   - A registration request (Client.Register): the first request for a
+//     given key gets 201 Created with a fresh account; a repeat request for
+//     a key that already completed one gets 200 OK with the existing
+//     account, per §7.3.1. The client library turns a 200 here into
+//     ErrAccountAlreadyExists after caching the returned account URL as its
+//     KID — the idempotent path production code (and go-xkms#988's tests)
+//     depends on.
+//   - A POST-as-GET existing-account lookup (Client.GetReg, payload
+//     {"onlyReturnExisting":true}): 200 OK with the existing account if the
+//     key is known, otherwise 404 with an accountDoesNotExist problem
+//     document, per §7.3.1.
+func (d *FakeACMEDirectory) handleNewAccount(w http.ResponseWriter, r *http.Request) {
+	jwk, onlyReturnExisting, err := parseACMEAccountJWS(r)
+	if err != nil {
+		d.setHeaders(w)
+		w.WriteHeader(http.StatusBadRequest)
+		d.encodeJSON(w, map[string]interface{}{
+			"type":   "urn:ietf:params:acme:error:malformed",
+			"detail": err.Error(),
+		})
+		return
+	}
+
+	d.mu.Lock()
+	known := d.accountKeys[jwk]
+	if onlyReturnExisting && !known {
+		d.mu.Unlock()
+		d.setHeaders(w)
+		w.WriteHeader(http.StatusNotFound)
+		d.encodeJSON(w, map[string]interface{}{
+			"type":   "urn:ietf:params:acme:error:accountDoesNotExist",
+			"detail": "no account associated with this key",
+		})
+		return
+	}
+	if !known {
+		if d.accountKeys == nil {
+			d.accountKeys = make(map[string]bool)
+		}
+		d.accountKeys[jwk] = true
+	}
+	d.mu.Unlock()
+
 	d.setHeaders(w)
 	w.Header().Set("Location", d.URL+"/account/1")
-	w.WriteHeader(http.StatusCreated)
+	if known {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
 	d.encodeJSON(w, map[string]interface{}{
 		"status":  "valid",
 		"contact": []string{"mailto:test@example.com"},
 		"orders":  d.URL + "/account/1/orders",
 	})
+}
+
+// parseACMEAccountJWS extracts the account public key (as its raw JWK JSON,
+// a stable identity for a given key since golang.org/x/crypto/acme encodes
+// it deterministically with a fixed field order) and the
+// "onlyReturnExisting" flag from a JWS-wrapped newAccount request body, per
+// RFC 7515 §3.2 and RFC 8555 §7.3.
+func parseACMEAccountJWS(r *http.Request) (jwk string, onlyReturnExisting bool, err error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return "", false, err
+	}
+
+	var jws struct {
+		Protected string `json:"protected"`
+		Payload   string `json:"payload"`
+	}
+	if err := json.Unmarshal(body, &jws); err != nil {
+		return "", false, err
+	}
+
+	protectedJSON, err := base64.RawURLEncoding.DecodeString(jws.Protected)
+	if err != nil {
+		return "", false, err
+	}
+	var protected struct {
+		JWK json.RawMessage `json:"jwk"`
+	}
+	if err := json.Unmarshal(protectedJSON, &protected); err != nil {
+		return "", false, err
+	}
+	if len(protected.JWK) == 0 {
+		return "", false, errors.New("newAccount request missing jwk in protected header")
+	}
+
+	if jws.Payload != "" {
+		payloadJSON, err := base64.RawURLEncoding.DecodeString(jws.Payload)
+		if err != nil {
+			return "", false, err
+		}
+		var payload struct {
+			OnlyReturnExisting bool `json:"onlyReturnExisting"`
+		}
+		if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+			return "", false, err
+		}
+		onlyReturnExisting = payload.OnlyReturnExisting
+	}
+
+	return string(protected.JWK), onlyReturnExisting, nil
 }
 
 func (d *FakeACMEDirectory) handleNewOrder(w http.ResponseWriter, r *http.Request) {
