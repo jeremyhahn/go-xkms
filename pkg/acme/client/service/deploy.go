@@ -15,7 +15,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -41,31 +40,31 @@ func (d *Deployer) Deploy(ctx context.Context, certPEM []byte, keyPEM []byte, cf
 	if cfg == nil {
 		return ErrDeployFailed{
 			CertName: "unknown",
-			Err:      errors.New("deploy config is nil"),
+			Err:      ErrDeployConfigNil,
 		}
 	}
 	if len(certPEM) == 0 {
 		return ErrDeployFailed{
 			CertName: cfg.CertPath,
-			Err:      errors.New("certificate PEM data is empty"),
+			Err:      ErrDeployCertPEMEmpty,
 		}
 	}
 	if cfg.CertPath == "" {
 		return ErrDeployFailed{
 			CertName: cfg.CertPath,
-			Err:      errors.New("certificate path is empty"),
+			Err:      ErrDeployCertPathEmpty,
 		}
 	}
 	if cfg.KeyPath == "" {
 		return ErrDeployFailed{
 			CertName: cfg.KeyPath,
-			Err:      errors.New("key path is empty"),
+			Err:      ErrDeployKeyPathEmpty,
 		}
 	}
 	if len(keyPEM) == 0 {
 		return ErrDeployFailed{
 			CertName: cfg.KeyPath,
-			Err:      errors.New("private key PEM data is empty"),
+			Err:      ErrDeployKeyPEMEmpty,
 		}
 	}
 
