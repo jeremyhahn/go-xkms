@@ -844,7 +844,7 @@ func TestBackupSources_SyncOptionsMatchesOpenedStores(t *testing.T) {
 	home := isolatedBackupHome(t)
 	_ = home
 
-	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{})
+	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{}, false)
 	require.NoError(t, err)
 	defer sources.Close()
 
