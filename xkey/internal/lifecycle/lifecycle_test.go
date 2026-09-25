@@ -30,8 +30,10 @@ func TestJoiner_ReturnsTrueWhenTheGroupDrains(t *testing.T) {
 	var j Joiner
 	wg.Add(1)
 
+	// No wait needed before Done: Join blocks on the WaitGroup itself (up to
+	// its own minute-long bound below), so the exact moment this goroutine
+	// runs does not affect the assertion.
 	go func() {
-		time.Sleep(5 * time.Millisecond)
 		wg.Done()
 	}()
 
@@ -120,8 +122,10 @@ func TestDrain_WaitReturnsWhenTheLastOperationRetires(t *testing.T) {
 	d.Add()
 	d.Add()
 
+	// No wait needed before Done: Wait blocks on the Drain itself (up to
+	// its own minute-long bound below), so the exact moment this goroutine
+	// runs does not affect the assertion.
 	go func() {
-		time.Sleep(5 * time.Millisecond)
 		mu.Lock()
 		d.Done()
 		d.Done()

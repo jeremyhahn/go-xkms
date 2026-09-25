@@ -22,7 +22,7 @@ import (
 // classToJSONRPCCode translates apierrors.Class onto this transport's
 // JSON-RPC error code. It is total over every Class the apierrors tables
 // this package reads (ImportExportSentinelClasses, PIVSentinelClasses,
-// BarrierSentinelClasses) can produce; jsonRPCCodeForClass's
+// BarrierSentinelClasses, PINSentinelClasses) can produce; jsonRPCCodeForClass's
 // ErrCodeInternalError floor exists only for a Class a future apierrors
 // table introduces without a row here.
 //
@@ -51,6 +51,10 @@ var classToJSONRPCCode = map[apierrors.Class]int{
 	apierrors.ClassUnauthenticated:    ErrCodeInvalidParams,
 	apierrors.ClassDataLoss:           ErrCodeInternalError,
 	apierrors.ClassDeadlineExceeded:   ErrCodeInternalError,
+	// ClassResourceExhausted (a PIN backend locked out after too many failed
+	// attempts) has no dedicated JSON-RPC member either; it renders through
+	// the same floor ClassFailedPrecondition already uses.
+	apierrors.ClassResourceExhausted: ErrCodeInternalError,
 }
 
 // jsonRPCCodeForClass renders an apierrors.Class as its JSON-RPC error code,
@@ -109,6 +113,21 @@ func mapBarrierError(err error, operation string) error {
 		return nil
 	}
 	if class, ok := apierrors.ClassOf(apierrors.BarrierSentinelClasses, err); ok {
+		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: &errs.Wrapped{Msg: operation, Err: err}}
+	}
+	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
+}
+
+// mapPINError converts a PIN domain error into a *KeyOpError, classifying it
+// through apierrors.PINSentinelClasses -- the table go-xkms#773 made this
+// package share with pkg/api/grpc/service_barrier_pin.go's mapPINError,
+// following the go-xkms#912 precedent set for PIV and barrier. Anything not
+// in that table is an internal fault.
+func mapPINError(err error, operation string) error {
+	if err == nil {
+		return nil
+	}
+	if class, ok := apierrors.ClassOf(apierrors.PINSentinelClasses, err); ok {
 		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: &errs.Wrapped{Msg: operation, Err: err}}
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}

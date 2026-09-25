@@ -637,3 +637,103 @@ func TestTenantRateLimiter_TenantConfigOperationTypes(t *testing.T) {
 		})
 	}
 }
+
+// TestTenantRateLimiter_RetryAfterSeconds proves that RetryAfterSeconds
+// reports the configured interval, in seconds, for a tenant whose rate limit
+// resolves (go-xkms#886: ChallengeHandler's failed-validation category calls
+// this directly, since it cannot use Middleware).
+func TestTenantRateLimiter_RetryAfterSeconds(t *testing.T) {
+	config := &TenantRateLimiterConfig{
+		DefaultConfig: &RateLimitConfig{
+			FailedValidationRate: &RateLimit{MaxRequests: 5, Interval: 90 * time.Second},
+		},
+	}
+	trl := NewTenantRateLimiter(config, nil, ClientID, "failed-validation")
+	defer trl.Stop()
+
+	require.Equal(t, 90, trl.RetryAfterSeconds("any-tenant"))
+}
+
+// TestTenantRateLimiter_RetryAfterSeconds_NoConfig proves the error/edge
+// path: a tenant (or operation type) with no resolvable rate limit falls
+// back to the documented 60-second default instead of reporting 0 or
+// panicking.
+func TestTenantRateLimiter_RetryAfterSeconds_NoConfig(t *testing.T) {
+	trl := NewTenantRateLimiter(&TenantRateLimiterConfig{}, nil, ClientID, "failed-validation")
+	defer trl.Stop()
+
+	require.Equal(t, 60, trl.RetryAfterSeconds("any-tenant"))
+}
+
+// TestTenantRateLimiter_SharedQuotaAcrossAccounts proves go-xkms#886's core
+// tenant-admission-control property: a per-tenant overall quota, mounted
+// with a client-key function that ignores which account or client made the
+// request (the same constant every call — the shape cmd/xkmsd's
+// tenantSharedClientKey and pkg/acme/client's equivalent use), is consumed
+// by every account belonging to that tenant from one shared bucket, not one
+// bucket per account. Two different accounts of "tenant-x" (simulated here
+// by two requests carrying different KIDs, both resolving to the same
+// context tenant the way TenantAuthMiddleware would) exhaust the same
+// two-request budget between them.
+func TestTenantRateLimiter_SharedQuotaAcrossAccounts(t *testing.T) {
+	config := &TenantRateLimiterConfig{
+		DefaultConfig: &RateLimitConfig{
+			OverallRequestRate: &RateLimit{MaxRequests: 2, Interval: time.Minute},
+		},
+	}
+	sharedClientKey := func(*http.Request) string { return "" }
+	trl := NewTenantRateLimiter(config, TenantRateLimiterFromRequestContext(), sharedClientKey, "overall")
+	defer trl.Stop()
+
+	handler := trl.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	requestFromAccount := func(kid string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/acme/new-order", nil)
+		req = req.WithContext(WithTenantID(req.Context(), "tenant-x"))
+		req.Header.Set("X-Account-KID", kid) // irrelevant to the shared bucket key; only distinguishes the two accounts for the test
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w
+	}
+
+	// First account's request consumes 1 of the tenant's 2-request budget.
+	require.Equal(t, http.StatusOK, requestFromAccount("account-a").Code)
+	// A second, different account of the SAME tenant consumes the other.
+	require.Equal(t, http.StatusOK, requestFromAccount("account-b").Code)
+	// A third request — from either account — finds the tenant's shared
+	// budget already exhausted.
+	require.Equal(t, http.StatusTooManyRequests, requestFromAccount("account-a").Code)
+}
+
+// TestTenantRateLimiter_SharedQuotaAcrossAccounts_DifferentTenantsIsolated
+// proves the complementary property: two different tenants never share a
+// bucket, even under the same shared-client-key construction — one tenant
+// exhausting its quota never throttles another tenant's traffic.
+func TestTenantRateLimiter_SharedQuotaAcrossAccounts_DifferentTenantsIsolated(t *testing.T) {
+	config := &TenantRateLimiterConfig{
+		DefaultConfig: &RateLimitConfig{
+			OverallRequestRate: &RateLimit{MaxRequests: 1, Interval: time.Minute},
+		},
+	}
+	sharedClientKey := func(*http.Request) string { return "" }
+	trl := NewTenantRateLimiter(config, TenantRateLimiterFromRequestContext(), sharedClientKey, "overall")
+	defer trl.Stop()
+
+	handler := trl.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	requestFromTenant := func(tenantID string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/acme/new-order", nil)
+		req = req.WithContext(WithTenantID(req.Context(), tenantID))
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w
+	}
+
+	require.Equal(t, http.StatusOK, requestFromTenant("tenant-x").Code)
+	require.Equal(t, http.StatusTooManyRequests, requestFromTenant("tenant-x").Code, "tenant-x's own budget is exhausted")
+	require.Equal(t, http.StatusOK, requestFromTenant("tenant-y").Code, "tenant-y is unaffected by tenant-x's exhausted budget")
+}

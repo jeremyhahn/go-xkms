@@ -22,6 +22,25 @@ import (
 	"time"
 )
 
+// waitUntil polls cond until it reports true, failing the test if timeout
+// elapses first. Used in place of a fixed sleep for state this package
+// exposes no channel or callback to observe directly (e.g. gRPC's own
+// internal connectivity state machine, driven by real timers with no clock
+// seam).
+func waitUntil(t *testing.T, timeout time.Duration, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if cond() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(msg)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // TestClient_MonitorConnection_ContextCancel tests that the monitor exits
 // when the context is cancelled immediately.
 func TestClient_MonitorConnection_ContextCancel(t *testing.T) {
@@ -40,11 +59,12 @@ func TestClient_MonitorConnection_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	_ = client.Connect(ctx)
-	time.Sleep(50 * time.Millisecond)
 
-	// Cancel immediately to trigger the context.Done path.
+	// Cancel immediately to trigger the context.Done path. No wait is
+	// needed beforehand: monitorConnection's conn field is now an atomic
+	// pointer (#968), so Disconnect below is safe to call regardless of
+	// where the monitor goroutine's loop currently is.
 	cancel()
-	time.Sleep(100 * time.Millisecond)
 
 	client.Disconnect()
 }
@@ -67,12 +87,13 @@ func TestClient_MonitorConnection_DisconnectDuringMonitor(t *testing.T) {
 	ctx := context.Background()
 
 	_ = client.Connect(ctx)
-	time.Sleep(100 * time.Millisecond)
 
-	// Disconnect while monitor is running. The monitor should exit via
-	// the done channel.
+	// Disconnect while monitor is running. The monitor should exit via the
+	// done channel. No wait is needed beforehand or after: the conn field
+	// is an atomic pointer (#968), so Disconnect racing the monitor
+	// goroutine's loop is safe, and there is no assertion here that depends
+	// on the goroutine having exited yet.
 	client.Disconnect()
-	time.Sleep(100 * time.Millisecond)
 }
 
 // TestClient_MonitorConnection_ServerRestart tests reconnection when the
@@ -95,9 +116,15 @@ func TestClient_MonitorConnection_ServerRestart(t *testing.T) {
 	defer cancel()
 
 	_ = client.Connect(ctx)
-	time.Sleep(100 * time.Millisecond)
+	waitUntil(t, 5*time.Second, client.IsConnected, "client never reached the initial connected state")
 
-	// Stop server to trigger failure state.
+	// Stop server to trigger failure state. grpc.NewClient dials lazily and
+	// this test never issues an RPC, so nothing observable (IsConnected
+	// included: it treats Idle as connected) proves the client has noticed
+	// the server is gone without a keepalive configured -- there is no real
+	// signal available here, only the monitor's own poll cycle against
+	// gRPC's internal connectivity state, which is real time with no clock
+	// seam.
 	server.Stop()
 	time.Sleep(500 * time.Millisecond)
 
@@ -109,11 +136,10 @@ func TestClient_MonitorConnection_ServerRestart(t *testing.T) {
 	_ = server2.Start()
 	defer server2.Stop()
 
-	// Give time for reconnection.
+	// Give time for reconnection, for the same reason as above.
 	time.Sleep(2 * time.Second)
 
 	cancel()
-	time.Sleep(100 * time.Millisecond)
 	client.Disconnect()
 }
 
@@ -154,7 +180,10 @@ func TestSSHProxy_HandleConnection_WithMasterSocket(t *testing.T) {
 	_ = client.Connect(ctx)
 	defer client.Disconnect()
 
-	time.Sleep(50 * time.Millisecond)
+	// HandleConnection below refuses to proxy until IsConnected() is true
+	// (see ssh_proxy.go), so wait for the real signal rather than a fixed
+	// sleep.
+	waitUntil(t, 5*time.Second, client.IsConnected, "client never reached the connected state")
 
 	// Create SSH proxy.
 	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
@@ -211,12 +240,12 @@ func TestSSHProxy_MultipleConnections(t *testing.T) {
 		conns = append(conns, conn)
 	}
 
-	// Close all connections.
+	// Close all connections. No assertion follows, and proxy.Stop (deferred)
+	// handles any still-draining connections on its own, so no wait is
+	// needed here.
 	for _, conn := range conns {
 		conn.Close()
 	}
-
-	time.Sleep(100 * time.Millisecond)
 }
 
 // TestClient_IsConnected_NilConn tests IsConnected when conn is nil.

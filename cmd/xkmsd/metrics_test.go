@@ -44,7 +44,7 @@ func TestXkmsdMetrics_ACMERegistryReachesServerMetrics(t *testing.T) {
 	// for the embedded ACME server, so acmemetrics.Registry has at least
 	// one recorded sample by the time /metrics is scraped below.
 	svc := &stubRestService{}
-	acmeRouter := buildACMERouter(svc, "/acme", nil)
+	acmeRouter := buildACMERouter(svc, "/acme", nil, nil)
 	acmeTS := httptest.NewServer(acmeRouter)
 	defer acmeTS.Close()
 

@@ -736,6 +736,20 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		// Set store type
 		attrs.StoreType = backend.STORE_AWSKMS
 
+		// Exportable is unconditionally false and Sensitive is unconditionally
+		// true for every key this backend enumerates, truthfully reporting
+		// what this backend's API surface can ever do rather than leaving
+		// the types.KeyAttributes zero value in place by coincidence
+		// (go-xkms#932). Capabilities().Export is false unconditionally, and
+		// ExportKey/ExportKeyMaterial (awskms.go) both refuse every key --
+		// generated or BYOK-imported -- with backend.ErrExportNotSupported
+		// once the (dead, since Export is always false) Exportable policy
+		// check passes: AWS KMS never releases key material outside the
+		// service boundary for any key this backend can create, so
+		// Exportable=true would be a promise this backend cannot keep.
+		attrs.Exportable = false
+		attrs.Sensitive = true
+
 		allKeys = append(allKeys, attrs)
 	}
 

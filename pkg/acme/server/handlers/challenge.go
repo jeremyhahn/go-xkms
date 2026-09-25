@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -453,7 +454,35 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// RFC 8555 Section 6.6 failed-validation category. This cannot be
+	// blanket route middleware like the other per-category limiters: it must
+	// count only actual validation failures. The persisted challenge/order
+	// state above always reflects this attempt; only the *response* to this
+	// specific request changes when the account (within its tenant, if any)
+	// has exceeded its recent-failure budget.
+	if !validationSuccessful && s.failedValidationLimiter != nil {
+		tenantID := server.TenantIDFromContext(ctx)
+		clientKey := strconv.FormatUint(account.ID, 10)
+		if !s.failedValidationLimiter.Allow(tenantID, clientKey) {
+			s.writeFailedValidationRateLimitError(w, tenantID)
+			return
+		}
+	}
+
 	s.writeChallengeResponse(w, challenge)
+}
+
+// writeFailedValidationRateLimitError writes an RFC 8555 Section 6.6
+// rateLimited response for a failed-validation quota exceeded for tenantID.
+// It mirrors server.TenantRateLimiter's own response construction (that
+// type's response writer is unexported and lives in a different package),
+// reusing TenantRateLimiter.RetryAfterSeconds so the reported window always
+// matches the limiter's actual configuration.
+func (s *RestService) writeFailedValidationRateLimitError(w http.ResponseWriter, tenantID string) {
+	retryAfterSeconds := s.failedValidationLimiter.RetryAfterSeconds(tenantID)
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds))
+	detail := fmt.Sprintf("Rate limit exceeded. Please retry after %d seconds.", retryAfterSeconds)
+	writeError(w, common.RateLimited(detail))
 }
 
 // writeChallengeResponse writes an ACME challenge response with proper RFC 8555 headers.

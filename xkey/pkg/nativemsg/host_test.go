@@ -463,10 +463,9 @@ func TestHost_IPCConnectionFailure(t *testing.T) {
 	}
 	require.NoError(t, WriteMessage(stdinW, encMsg))
 
-	// The host should write an error message back to stdout.
-	// Give it a small window to process.
-	time.Sleep(100 * time.Millisecond)
-
+	// The host should write an error message back to stdout. No wait is
+	// needed: ReadMessage blocks until it arrives, the same way the
+	// handshake response was read above.
 	errResp, err := ReadMessage(stdoutR)
 	require.NoError(t, err)
 	assert.Equal(t, MsgTypeError, errResp.Type)

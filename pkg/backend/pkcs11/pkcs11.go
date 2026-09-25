@@ -505,6 +505,28 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 
 			decodeKeyType(ka, ckULong(readAttrs[2].Value), string(readAttrs[1].Value))
 
+			// CKA_EXTRACTABLE and CKA_SENSITIVE are the token's own record of
+			// whether this key may ever be wrapped out and whether its value
+			// may ever be disclosed in plaintext (PKCS#11 3.2 Table 30) --
+			// the hardware source of truth, not a value this backend keeps a
+			// parallel copy of. readBoolAttribute reads each one on its own,
+			// so a token that does not implement one of them still reports
+			// the other correctly rather than dropping the whole key from
+			// the list. An attribute the token declines to disclose is
+			// reported as false, understating rather than overstating what
+			// the token guarantees (see readBoolAttribute).
+			extractable, err := b.readBoolAttribute(session, h, pkcs11.CKA_EXTRACTABLE)
+			if err != nil {
+				return &errs.Wrapped{Msg: "list keys: read CKA_EXTRACTABLE", Err: err}
+			}
+			ka.Exportable = extractable
+
+			sensitive, err := b.readBoolAttribute(session, h, pkcs11.CKA_SENSITIVE)
+			if err != nil {
+				return &errs.Wrapped{Msg: "list keys: read CKA_SENSITIVE", Err: err}
+			}
+			ka.Sensitive = sensitive
+
 			results = append(results, ka)
 		}
 		return nil

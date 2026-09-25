@@ -123,8 +123,11 @@ func TestBLEPeripheral_StopDestroysTheKeyOnACleanJoin(t *testing.T) {
 	p.lifeMu.Unlock()
 
 	done := enterConnection(t, p)
+	// No readiness wait needed before releasing: the connection was
+	// registered on connWG before Stop started, so connWG already reflects
+	// it whenever Stop reaches connJoiner.Join -- done() only needs to run
+	// concurrently with Stop, not after any particular state Stop reaches.
 	go func() {
-		time.Sleep(10 * time.Millisecond)
 		done()
 	}()
 
