@@ -37,6 +37,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -78,6 +79,12 @@ func simulatorTPM2AttestingBackend(t *testing.T) (*TPM2AttestingBackend, *x509.C
 	} else {
 		require.NoError(t, err)
 	}
+
+	// Provision is TCG-only (EK + Shared SRK); xkms's own TPM2 backend
+	// resolves its storage parent exclusively off the Platform SRK, so it
+	// must be enrolled before NewTPM2BackendWithTPM is constructed below.
+	require.NoError(t, tpm2test.EnrollPlatformSRK(tpm, &config),
+		"simulator must enroll the Platform SRK xkms's own backend uses")
 
 	t.Cleanup(func() {
 		_ = tpm.Close()
