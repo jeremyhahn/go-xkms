@@ -116,6 +116,12 @@ func TestTrustedCA_Serve_HealthReportsRealBreakers(t *testing.T) {
 	require.Contains(t, status.Breakers, "http01", "the http-01 challenge verifier supplied via WithChallengeMap must be wrapped and registered")
 	assert.Equal(t, "closed", status.Breakers["http01"].State)
 
+	// Close the client's idle connections before cancelling. http.Server's
+	// Shutdown treats a handshaken connection that has not sent a request
+	// yet (StateNew) as active for up to five seconds, so a spare
+	// connection the transport opened would otherwise hold Serve past the
+	// deadline below.
+	client.CloseIdleConnections()
 	cancel()
 	select {
 	case err := <-done:
@@ -209,6 +215,12 @@ func TestTrustedCA_Serve_StorageBreakerOpen_DegradesDirectory(t *testing.T) {
 	assert.NotEmpty(t, resp.Header.Get("Warning"), "a cache-served directory response must be marked degraded")
 	assert.Equal(t, fresh, degraded, "the degraded response must be exactly the cached one")
 
+	// Close the client's idle connections before cancelling. http.Server's
+	// Shutdown treats a handshaken connection that has not sent a request
+	// yet (StateNew) as active for up to five seconds, so a spare
+	// connection the transport opened would otherwise hold Serve past the
+	// deadline below.
+	client.CloseIdleConnections()
 	cancel()
 	select {
 	case err := <-done:
