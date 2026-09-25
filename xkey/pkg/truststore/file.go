@@ -17,6 +17,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -142,8 +143,8 @@ func (fs *FileStore) AddCertificate(cert *x509.Certificate) error {
 		// Roll back the in-memory state and PEM file on metadata write failure.
 		delete(fs.certs, fp)
 		delete(fs.metadata, fp)
-		_ = os.Remove(fs.certPath(fp))
-		return err
+		removeErr := os.Remove(fs.certPath(fp))
+		return errors.Join(err, removeErr)
 	}
 
 	return nil
@@ -196,8 +197,8 @@ func (fs *FileStore) AddCertificateWithOptions(cert *x509.Certificate, opts *Add
 	if err := fs.writeMetadata(); err != nil {
 		delete(fs.certs, fp)
 		delete(fs.metadata, fp)
-		_ = os.Remove(fs.certPath(fp))
-		return err
+		removeErr := os.Remove(fs.certPath(fp))
+		return errors.Join(err, removeErr)
 	}
 
 	return nil
@@ -648,8 +649,8 @@ func (fs *FileStore) writeMetadata() error {
 	}
 
 	if err := os.Rename(tmpPath, metaPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: err}
+		removeErr := os.Remove(tmpPath)
+		return &SentinelCauseError{Sentinel: ErrStorageWrite, Cause: errors.Join(err, removeErr)}
 	}
 
 	return nil

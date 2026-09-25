@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -109,9 +110,18 @@ func (d *FakeACMEDirectory) setHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 }
 
+// encodeJSON writes v to w as JSON. The literal maps this fake writes never
+// fail to encode in practice, but a caller debugging a flaky test deserves to
+// know if that assumption is ever wrong rather than have the failure vanish.
+func (d *FakeACMEDirectory) encodeJSON(w http.ResponseWriter, v interface{}) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("testutil: FakeACMEDirectory failed to encode JSON response: %v", err)
+	}
+}
+
 func (d *FakeACMEDirectory) handleDirectory(w http.ResponseWriter, _ *http.Request) {
 	d.setHeaders(w)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	d.encodeJSON(w, map[string]interface{}{
 		"newNonce":   d.URL + "/new-nonce",
 		"newAccount": d.URL + "/new-account",
 		"newOrder":   d.URL + "/new-order",
@@ -151,7 +161,7 @@ func (d *FakeACMEDirectory) handleNewAccount(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		d.setHeaders(w)
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		d.encodeJSON(w, map[string]interface{}{
 			"type":   "urn:ietf:params:acme:error:malformed",
 			"detail": err.Error(),
 		})
@@ -164,7 +174,7 @@ func (d *FakeACMEDirectory) handleNewAccount(w http.ResponseWriter, r *http.Requ
 		d.mu.Unlock()
 		d.setHeaders(w)
 		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		d.encodeJSON(w, map[string]interface{}{
 			"type":   "urn:ietf:params:acme:error:accountDoesNotExist",
 			"detail": "no account associated with this key",
 		})
@@ -185,7 +195,7 @@ func (d *FakeACMEDirectory) handleNewAccount(w http.ResponseWriter, r *http.Requ
 	} else {
 		w.WriteHeader(http.StatusCreated)
 	}
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	d.encodeJSON(w, map[string]interface{}{
 		"status":  "valid",
 		"contact": []string{"mailto:test@example.com"},
 		"orders":  d.URL + "/account/1/orders",
@@ -253,7 +263,7 @@ func (d *FakeACMEDirectory) handleNewOrder(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Location", d.URL+"/order/1")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	d.encodeJSON(w, map[string]interface{}{
 		"status":         "pending",
 		"expires":        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 		"identifiers":    []map[string]string{{"type": "permanent-identifier", "value": "device-under-test"}},
@@ -279,7 +289,7 @@ func (d *FakeACMEDirectory) handleOrder(w http.ResponseWriter, r *http.Request) 
 	if status == "valid" {
 		resp["certificate"] = d.URL + "/cert/1"
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	d.encodeJSON(w, resp)
 }
 
 func (d *FakeACMEDirectory) handleAuthz(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +309,7 @@ func (d *FakeACMEDirectory) handleAuthz(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	d.encodeJSON(w, map[string]interface{}{
 		"status":     status,
 		"identifier": map[string]string{"type": "permanent-identifier", "value": "device-under-test"},
 		"challenges": challenges,
@@ -327,7 +337,7 @@ func (d *FakeACMEDirectory) handleChallenge(w http.ResponseWriter, r *http.Reque
 	status := d.challengeStatus
 	d.mu.Unlock()
 
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	d.encodeJSON(w, map[string]interface{}{
 		"type":   challengeType,
 		"url":    d.URL + "/challenge/" + idx,
 		"token":  "fake-token-" + idx,
@@ -343,7 +353,7 @@ func (d *FakeACMEDirectory) handleFinalize(w http.ResponseWriter, _ *http.Reques
 	d.mu.Unlock()
 
 	w.Header().Set("Location", d.URL+"/order/1")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	d.encodeJSON(w, map[string]interface{}{
 		"status":         "valid",
 		"expires":        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 		"identifiers":    []map[string]string{{"type": "permanent-identifier", "value": "device-under-test"}},
@@ -365,7 +375,10 @@ func (d *FakeACMEDirectory) handleRevokeCert(w http.ResponseWriter, _ *http.Requ
 func (d *FakeACMEDirectory) handleCert(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/pem-certificate-chain")
 	for _, der := range d.certs {
-		_ = pemEncodeCertificate(w, der)
+		if err := pemEncodeCertificate(w, der); err != nil {
+			log.Printf("testutil: FakeACMEDirectory failed to PEM-encode a certificate: %v", err)
+			return
+		}
 	}
 }
 

@@ -16,6 +16,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -76,7 +77,9 @@ func (h *PKCS11StateHandlers) respond(w http.ResponseWriter, resp interface{}, e
 func pkcs11StateWriteError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
+		log.Printf("Failed to encode pkcs11 state error response: %v", err)
+	}
 }
 
 // PutHandler stores a record.

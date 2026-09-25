@@ -148,8 +148,8 @@ func (ks *KeyStore) StoreKeyPackage(ctx context.Context, keyID string, pkg *KeyP
 
 	if _, err := ks.secretBackend.GenerateKey(ctx, attrs); err != nil {
 		// Clean up public components on failure
-		_ = ks.DeleteKey(ctx, keyID)
-		return &errs.Wrapped{Msg: "failed to store secret share", Err: err}
+		cleanupErr := ks.DeleteKey(ctx, keyID)
+		return errors.Join(&errs.Wrapped{Msg: "failed to store secret share", Err: err}, cleanupErr)
 	}
 
 	return nil

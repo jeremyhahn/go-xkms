@@ -49,8 +49,12 @@ func (d *Daemon) unexportItem(path dbus.ObjectPath) {
 	if d.conn == nil {
 		return
 	}
-	_ = d.conn.Export(nil, path, ItemInterface)
-	_ = d.conn.Export(nil, path, DBusPropertiesInterface)
+	if err := d.conn.Export(nil, path, ItemInterface); err != nil {
+		d.logger.Warn("failed to unexport Item interface", "path", string(path), "error", err.Error())
+	}
+	if err := d.conn.Export(nil, path, DBusPropertiesInterface); err != nil {
+		d.logger.Warn("failed to unexport Item properties interface", "path", string(path), "error", err.Error())
+	}
 }
 
 // Delete removes the underlying password entry. Read-only entries (e.g.

@@ -182,7 +182,10 @@ func (d *Daemon) Start() error {
 	d.conn = conn
 
 	if err := requestBusName(conn); err != nil {
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			d.logger.Warn("failed to close D-Bus connection after failed name request",
+				slog.String("error", closeErr.Error()))
+		}
 		if errors.Is(err, ErrServiceAlreadyRunning) {
 			d.logger.Error("failed to become primary owner of D-Bus name",
 				slog.String("name", BusName))
@@ -196,8 +199,7 @@ func (d *Daemon) Start() error {
 
 	// Export the service object
 	if err := d.exportObjects(); err != nil {
-		_ = conn.Close()
-		return err
+		return errors.Join(err, conn.Close())
 	}
 
 	// The default collection is always addressable, even while sealed (its
@@ -252,7 +254,9 @@ func (d *Daemon) Stop() error {
 			d.logger.Warn("failed to release D-Bus name",
 				slog.String("error", err.Error()))
 		}
-		_ = d.conn.Close()
+		if closeErr := d.conn.Close(); closeErr != nil {
+			d.logger.Warn("failed to close D-Bus connection", slog.String("error", closeErr.Error()))
+		}
 		d.conn = nil
 	}
 

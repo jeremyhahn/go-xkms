@@ -143,9 +143,13 @@ func OpenTPMEnroller(config *TPMEnrollerConfig) (TPMEnrollerCloser, error) {
 		// error; leaving it open would hold the device handle for the life of
 		// the process.
 		if tpm != nil {
-			_ = tpm.Close()
+			if closeErr := tpm.Close(); closeErr != nil {
+				logger.Warn("failed to close partially initialized TPM handle",
+					slog.String("device", device),
+					slog.String("error", closeErr.Error()))
+			}
 		}
-		return nil, unreachableTPM(logger, device, deviceOpenCause(device, err))
+		return nil, unreachableTPM(logger, device, deviceOpenCause(logger, device, err))
 	}
 
 	logger.Info("TPM opened for TCG device enrollment", slog.String("device", device))
@@ -167,7 +171,7 @@ func unreachableTPM(logger *slog.Logger, device string, cause error) error {
 // missing driver. Re-stat'ing the node is not enough — the node exists — so
 // the open is repeated purely to read the errno, and the handle is closed
 // immediately. Every other error is already specific and passes through.
-func deviceOpenCause(device string, err error) error {
+func deviceOpenCause(logger *slog.Logger, device string, err error) error {
 	if !errors.Is(err, xkms.ErrTPMOpeningDevice) {
 		return err
 	}
@@ -175,6 +179,10 @@ func deviceOpenCause(device string, err error) error {
 	if probeErr != nil {
 		return probeErr
 	}
-	_ = probe.Close()
+	if closeErr := probe.Close(); closeErr != nil {
+		logger.Warn("failed to close TPM device probe handle",
+			slog.String("device", device),
+			slog.String("error", closeErr.Error()))
+	}
 	return err
 }

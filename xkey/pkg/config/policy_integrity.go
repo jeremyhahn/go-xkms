@@ -143,7 +143,7 @@ func VerifyPolicyHMAC(policy *PolicySection, hmacPath string, soPIN string) (boo
 // WritePolicyHMAC computes and writes the HMAC file for the given policy.
 // A fresh random salt is generated for each write. The file is written
 // atomically using a temporary file and rename pattern for crash safety.
-func WritePolicyHMAC(policy *PolicySection, soPIN string, hmacPath string) error {
+func WritePolicyHMAC(policy *PolicySection, soPIN string, hmacPath string) (err error) {
 	if policy == nil {
 		return errors.Join(ErrPolicyHMACSaveFailed, errors.New("policy is nil"))
 	}
@@ -187,18 +187,20 @@ func WritePolicyHMAC(policy *PolicySection, soPIN string, hmacPath string) error
 	success := false
 	defer func() {
 		if !success {
-			_ = os.Remove(tmpPath)
+			if removeErr := os.Remove(tmpPath); removeErr != nil {
+				err = errors.Join(err, removeErr)
+			}
 		}
 	}()
 
 	if _, writeErr := tmpFile.Write(data); writeErr != nil {
-		_ = tmpFile.Close()
-		return errors.Join(ErrPolicyHMACSaveFailed, writeErr)
+		closeErr := tmpFile.Close()
+		return errors.Join(ErrPolicyHMACSaveFailed, writeErr, closeErr)
 	}
 
 	if syncErr := tmpFile.Sync(); syncErr != nil {
-		_ = tmpFile.Close()
-		return errors.Join(ErrPolicyHMACSaveFailed, syncErr)
+		closeErr := tmpFile.Close()
+		return errors.Join(ErrPolicyHMACSaveFailed, syncErr, closeErr)
 	}
 
 	if closeErr := tmpFile.Close(); closeErr != nil {

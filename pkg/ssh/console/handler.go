@@ -16,6 +16,7 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -287,7 +288,11 @@ func (h *wsHandler) awaitHostKeyResponse(conn *websocket.Conn) (bool, error) {
 	if err := conn.SetReadDeadline(time.Now().Add(h.hostKeyConfirmTimeout)); err != nil {
 		return false, err
 	}
-	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+	defer func() {
+		if err := conn.SetReadDeadline(time.Time{}); err != nil {
+			slog.Debug("ssh/console: failed to clear the read deadline after host-key confirmation", "error", err)
+		}
+	}()
 
 	for {
 		mt, data, err := conn.ReadMessage()
@@ -322,7 +327,9 @@ func bridge(conn *websocket.Conn, cons Console) {
 	closeDone := func() { once.Do(func() { close(done) }) }
 
 	conn.SetReadLimit(wsReadLimit)
-	_ = conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	if err := conn.SetReadDeadline(time.Now().Add(wsPongWait)); err != nil {
+		slog.Debug("ssh/console: failed to set the initial read deadline", "error", err)
+	}
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(wsPongWait))
 	})
@@ -335,7 +342,9 @@ func bridge(conn *websocket.Conn, cons Console) {
 			n, rerr := cons.Read(buf)
 			if n > 0 {
 				writeMu.Lock()
-				_ = conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+				if err := conn.SetWriteDeadline(time.Now().Add(wsWriteWait)); err != nil {
+					slog.Debug("ssh/console: failed to set write deadline before sending console output", "error", err)
+				}
 				werr := conn.WriteMessage(websocket.BinaryMessage, buf[:n])
 				writeMu.Unlock()
 				if werr != nil {
@@ -359,7 +368,9 @@ func bridge(conn *websocket.Conn, cons Console) {
 				return
 			case <-ticker.C:
 				writeMu.Lock()
-				_ = conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+				if err := conn.SetWriteDeadline(time.Now().Add(wsWriteWait)); err != nil {
+					slog.Debug("ssh/console: failed to set write deadline before sending ping", "error", err)
+				}
 				err := conn.WriteMessage(websocket.PingMessage, nil)
 				writeMu.Unlock()
 				if err != nil {
@@ -431,6 +442,6 @@ func writeJSON(conn *websocket.Conn, mu *sync.Mutex, v any) error {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	_ = conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
-	return conn.WriteMessage(websocket.TextMessage, data)
+	deadlineErr := conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+	return errors.Join(deadlineErr, conn.WriteMessage(websocket.TextMessage, data))
 }

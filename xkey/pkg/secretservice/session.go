@@ -42,7 +42,9 @@ func (d *Daemon) unexportSession(path dbus.ObjectPath) {
 	if d.conn == nil {
 		return
 	}
-	_ = d.conn.Export(nil, path, SessionInterface)
+	if err := d.conn.Export(nil, path, SessionInterface); err != nil {
+		d.logger.Warn("failed to unexport Session interface", "path", string(path), "error", err.Error())
+	}
 }
 
 // Close closes the session, matching org.freedesktop.Secret.Session.Close.
