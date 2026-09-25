@@ -16,6 +16,7 @@ the folder in the same commit that changes the behavior.
 | Feature | What it covers |
 |---------|----------------|
 | [acme-issuance](acme-issuance/) | ACME RFC 8555 server and client, ARI, DNS-01/HTTP-01, TPM enrollment |
+| [attestation-verifier](attestation-verifier/) | The generic, backend-agnostic `pkg/attestation` API — chain/signature verification (`Verifier`) and per-format key-binding invariants (`VerifyInvariants`) — that gates CSR issuance on hardware provenance for any format, TPM2/PIV/Android included |
 | [attested-peer](attested-peer/) | Is the other end of a connection a currently attested system? The quote→verdict primitive, IDevID/IAK credential validation, and TLS channel binding |
 | [audit-log](audit-log/) | Tamper-evident audit records and their signing chain |
 | [auth-factors](auth-factors/) | Factor composition, adapters, and the identity/key-domain split |
@@ -105,10 +106,11 @@ by five and reports unconverted folders as converted.
 | [key-management](key-management/) | `architecture/unified-keyid-jwk-integration.md`, `key-agreement.md` |
 | [crypto-backends](crypto-backends/) | `backends/` |
 | [tpm2](tpm2/) | `configuration/tpm2-session-encryption.md` |
+| [attestation-verifier](attestation-verifier/) | `attestation/README.md` — **absorbed and deleted** |
 | [pkcs11-provider-module](pkcs11-provider-module/) | `pkcs11/module/`, `references/pkcs11-v3.0-to-v3.2-changes.md`, `pkcs11/manager.md` |
 | [pkcs11-backend](pkcs11-backend/) | `pkcs11/backend/` (architecture.md, configuration.md, operations.md, runbook.md, security.md, README.md) — also corrects that folder's config.Pin/SOPIN description (now `*types.SecretValue`, credential-resolved) and its AttestKey "placeholder" claim (now fully implemented) |
 | [certificate-authority](certificate-authority/) | `ca/`, `ca-multi-keystore-design.md`, `architecture/hardware-certificate-storage.md` |
-| [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md`, `cli/trust-platform.md` |
+| [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md` |
 | [certificate-authority](certificate-authority/) | `ca/api-reference.md`, `ca/architecture.md`, `ca/certificate-types.md`, `ca/configuration.md`, `ca/multi-keystore.md`, `ca/protocol-parity.md`, `ca/README.md`, `ca-multi-keystore-design.md`, `architecture/hardware-certificate-storage.md` |
 | [acme-issuance](acme-issuance/) | **absorbed and deleted** (go-xkms#942): `acme/configuration.md`, `acme/quickstart.md`, `acme/implementation-plan.md`, `acme/cli/cactl.md`, `acme/cli/trusted-acme-server.md`, `acme/cli/trusted-acme-client.md`, `acme/cli/README.md`, `acme/deployment/README.md`, `acme/deployment/bare-metal.md`, `acme/deployment/docker.md`, `acme/deployment/monitoring.md`, `acme/deployment/troubleshooting.md` — all pre-merge go-trusted-ca documentation for a `trusted-acme-server`/`cactl` binary pair and `TRUSTEDCA_*`/`CACTL_*` env prefixes that never existed in this repository. `acme/admin/configuration.md`, `acme/deployment/operations.md` (the retained operator checklists), `acme/gui/*` and `acme/protocols/*` were corrected in place instead of deleted — see the note below. A previous pass of this row claimed `acme/architecture.md`, `acme/client.md`, `acme/challenges.md`, `acme/challenge-resolver.md` were also absorbed and deleted; they are still present in the tree and that claim does not hold — see the note below. |
 | [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md` |
@@ -210,46 +212,50 @@ Several of these need a note rather than a row:
   [`sealing-and-barrier/cli.md`](sealing-and-barrier/cli.md), which lists
   the verbs and flags but not why the PIN flags work despite the wire
   types carrying no PIN fields.
-- **`cli/trust-platform.md` is now partially superseded.** Its `xkey
-  browser launch` section (NSS `cert9.db` via `xkey/pkg/nssdb`, Firefox
-  `policies.json` overlay) is now covered in full by
+- **`cli/trust-platform.md` — absorbed and deleted** (this pass). It split
+  three ways, across two modules: the `xkey browser launch` section (NSS
+  `cert9.db` via `xkey/pkg/nssdb`, Firefox `policies.json` overlay) is
+  covered by
   [`../xkey/docs/browser-trust-injection/`](../xkey/docs/browser-trust-injection/)
-  (`cli.md`'s `xkey browser launch` section, `user.md`'s `~/.pki/nssdb`
-  and shared-mode-Firefox notes) — re-verified against that folder for
-  this pass. Its `xkey trust fetch <url> --spki-pin`/
-  `xkey trust import-platform <host:port> --spki-pin` walkthrough is
-  **still not superseded**: `xkey/docs/platform-trust/cli.md` documents
-  only the verbs defined in `xkey/cmd/xkey/cmd/trust.go` (`list`, `add`,
-  `remove`, `show`, `bootstrap`, `classify`, `install`, `uninstall`,
-  `test`) and omits `fetch`/`import-platform` entirely, even though both
-  verbs and the `--spki-pin`/`--purpose`/`--source`/`--install-system`/
-  `--timeout` flags this legacy file documents are still live, in the
-  separate file `xkey/cmd/xkey/cmd/trust_fetch.go`
-  (confirmed via `trust_fetch_test.go`'s flag-name assertions). Its
-  "Security model" three-path table, the "out-of-band" SPKI-pin sourcing
-  guidance, and the WebAuthn-login handoff section are likewise not
-  duplicated anywhere; the file stays.
-- **`attestation/README.md` is now partially superseded.** The "PKCS#11
-  HSM attestation" gap this note used to describe is closed:
+  (`cli.md`'s `xkey browser launch` section, `user.md`'s `~/.pki/nssdb` and
+  shared-mode-Firefox notes); the `xkey trust bootstrap` walkthrough by
+  [`trust-bootstrap/`](trust-bootstrap/); and the `xkey trust fetch <url>
+  --spki-pin`/`xkey trust import-platform <host:port> --spki-pin`
+  walkthrough, the "Security model" three-path table, the "out-of-band"
+  SPKI-pin sourcing guidance, and the WebAuthn-login handoff, by
+  [`../xkey/docs/platform-trust/`](../xkey/docs/platform-trust/) — `cli.md`
+  now documents `fetch`/`import-platform` (defined in the separate file
+  `xkey/cmd/xkey/cmd/trust_fetch.go`, verified against
+  `trust_fetch_test.go`'s flag-name assertions) alongside the rest of the
+  `trust` group, `user.md` carries the out-of-band sourcing guidance and a
+  pointer to `headless-webauthn/user.md` for the login handoff, and
+  `architecture.md`/`api.md` correct the endpoint the legacy file got wrong
+  — it was `GET /api/v1/ca/bundle`; both verbs actually hit the public,
+  unauthenticated `GET /v1/ca/bootstrap` via a separate `pkg/trust/fetcher`
+  package, not `pkg/trust/bootstrap`'s dispatch chain.
+- **`attestation/README.md` — absorbed and deleted** (this pass). The
+  "PKCS#11 HSM attestation" gap an earlier version of this note described was
+  already closed by
   [`pkcs11-backend/architecture.md`](pkcs11-backend/architecture.md)
-  §"Attestation: fully implemented, corrects a stale claim" now documents
-  `AttestKey` (`pkg/backend/pkcs11/attestation.go:296` and its supporting
-  functions) in full, including the correction that this legacy file's
-  predecessor (`docs/pkcs11/backend/operations.md`) got wrong. `tpm2/`
-  documents TPM 2.0 attestation (`attest`/`certify`,
-  `pkg/attestation/verifier.go`, `invariants.go`) from the TPM side. What
-  remains uncovered by either folder is the **generic, backend-agnostic**
-  `pkg/attestation` API this legacy file also describes —
-  `attestation.Verifier`/`NewVerifier` (`verifier.go:57`),
-  `VerifyOptions`/`DefaultVerifyOptions`/`InsecureVerifyOptions`
-  (`types.go:148,287,296`) — which no converted folder documents by name;
-  `NewVerifier`, `DefaultVerifyOptions`, etc. do not appear in
-  `tpm2/engineering.md` or `pkcs11-backend/*.md`. Its own Go code samples
-  are additionally stale (`tpm2.NewTPM2KeyStore` and
-  `types.AttestingBackend` were not found anywhere in the tree; the real
-  method is `(*Backend).AttestKey` in `pkg/backend/tpm2/attestation.go`,
-  with a different signature) — the file stays, but a rewrite (not a
-  deletion) is overdue.
+  §"Attestation: fully implemented, corrects a stale claim"
+  (`AttestKey`, `pkg/backend/pkcs11/attestation.go:296`), and `tpm2/`
+  documents TPM 2.0 attestation from the TPM side. The piece that remained —
+  the **generic, backend-agnostic** `pkg/attestation` API
+  (`attestation.Verifier`/`NewVerifier`,
+  `VerifyOptions`/`DefaultVerifyOptions`/`InsecureVerifyOptions`,
+  `VerifyInvariants`/`Evidence`, and the `pkg/config.AttestationConfig` +
+  `pkg/xkms.SetAttestationVerifiers` wiring that gates CSR issuance on it) —
+  is now [`attestation-verifier/`](attestation-verifier/), which also covers
+  a second production call site the legacy file never mentioned:
+  `pkg/ca/tcg.go`'s TCG-CSR-IDEVID enrollment path calls the same
+  `VerifyInvariants` directly, for the TPM2 format. The legacy file's own Go
+  code samples were additionally stale and are **not** reproduced in the new
+  folder: `tpm2.NewTPM2KeyStore` and `types.AttestingBackend` do not exist
+  anywhere in the tree; the real generation method is
+  `(*Backend).AttestKey(ctx, attrs, nonce)` on both `pkg/backend/tpm2` and
+  `pkg/backend/pkcs11`, behind the real interface `types.AttestingKeyProvider`
+  (`pkg/types/types.go:1805`), already documented in
+  [`key-management/`](key-management/).
 - **`crypto/kdf.md` is not superseded** by `key-management/`, which
   mentions the KDF algorithm names as CLI flag values and error types but
   not the approved-hash-per-algorithm table, the SP 800-108 fixed-input and
@@ -318,12 +324,11 @@ xkey module, not here — see
 [`../xkey/docs/browser-trust-injection/`](../xkey/docs/browser-trust-injection/)
 and the superseded-path row in `xkey/docs/README.md`. That folder also
 covers `xkey browser launch`'s NSS `cert9.db` and Firefox `policies.json`
-mechanics — the piece the `cli/trust-platform.md` note above (§"Legacy
-paths superseded") once called uncovered anywhere; see that note for what
-of `cli/trust-platform.md` is still not superseded. The legacy
-[`browser/`](browser/) path in *this* tree is a stale duplicate the xkey
-folder does not track; it is left as-is per this repository's no-deletion
-rule for legacy docs.
+mechanics — one of the three pieces `cli/trust-platform.md` (deleted this
+pass) split into; see the "absorbed and deleted" note above (§"Legacy paths
+superseded") for the other two. The legacy [`browser/`](browser/) path in
+*this* tree is a stale duplicate the xkey folder does not track; it is left
+as-is per this repository's no-deletion rule for legacy docs.
 
 ### Cross-cutting, and never getting a folder
 
