@@ -17,20 +17,29 @@
   (`Service`), plus prefix-routed multi-node dispatch (`MultiService`).
   `RestService` wires it as described under Configuration and Persistence
   below.
-- `pkg/acme/issuance` — the bridge to `pkg/ca`.
+- `pkg/acme/issuance` — **not on any production path.** It exists as a
+  standalone bridge type to `pkg/ca`, but nothing outside its own tests
+  imports it; `OrderFinalizeHandler` calls `s.ca.SignCSR` /
+  `s.ca.IssueEKCertificate` / `s.ca.SignTCGCSRIDevID`
+  (`pkg/acme/server/handlers/order_finalize.go:677,752,1343`) directly.
 - `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
 - `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy (blocklist,
   public suffix, reserved-IP, per-identifier-type challenge selection) and
   CAA. `pkg/acme/policy` is wired into `NewOrderHandler` and
   `createChallenges`; see Identifier policy below.
 - `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go` — request-rate
-  enforcement.
+  enforcement. `rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
+  wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA`
+  (`pkg/acme/client/trustedca.go:384-393`); the tenant limiter is
+  constructed nowhere outside its own file. See Invariants below and
+  go-xkms#882.
 - `pkg/acme/server/circuitbreaker` — the one circuit breaker implementation
   (`CircuitBreaker`, `Manager`, the `Middleware` HTTP wrapper, and the
-  `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators) and
-  `pkg/acme/server/degradation` (the cache-backed graceful-degradation
-  primitives) — the protective layer. See "Circuit breakers and degradation"
-  below.
+  `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators;
+  go-xkms#735 folded the previously-duplicate `pkg/acme/server/circuit_breaker.go`
+  into it and deleted that file) and `pkg/acme/server/degradation` (the
+  cache-backed graceful-degradation primitives) — the protective layer,
+  wired into xkmsd. See "Circuit breakers and degradation" below.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
   `barrier_handlers.go`, `barrier_service.go`, `ca_adapter.go`).
 - `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — the transport
@@ -165,8 +174,11 @@ once, to the externally visible base.
   dispatch, which is new work, not a rewiring of the existing
   `TenantRateLimiter`; it is filed as a follow-up rather than forced into
   this cap.
-- **Under pressure the circuit breaker refuses new orders.** Degradation never
-  means "issue without validating".
+- **A breaker guards the one dependency it wraps, not order creation, and
+  degradation never means "issue without validating".** `pkg/acme/server/circuitbreaker`
+  is wired into xkmsd (`cmd/xkmsd/acme.go`); the standalone `TrustedCA` does
+  not yet opt in. See "Circuit breakers and degradation" below for exactly
+  what is and is not covered.
 - **An advertised URL is configured or derived, never glued to a bind
   address.** `TrustedCA.Serve` advertises `acme.external_url` (or
   `WithExternalURL`) as given; with neither set it derives the URL from the
@@ -334,7 +346,8 @@ The mapping an implementer needs:
 | permanent-identifier or DNS/IP SAN not authorized by the order | `rejectedIdentifier` | 401 |
 
 **Fail closed:** unvalidated authorization, failed CAA, an undetermined CAA
-RRset (DNS failure), failed attestation, exceeded rate limit, an open circuit
+RRset (DNS failure), failed attestation, an exceeded rate limit (standalone
+`TrustedCA` only — see Invariants above), and, on xkmsd, an open circuit
 breaker on a dependency the order's path needs (a challenge verifier during
 validation, the KMS signer during finalize). Every one of them refuses to
 issue for that order. None of them refuses `POST /acme/new-order` itself —
@@ -603,22 +616,41 @@ storage. Changing the storage layout requires a data migration step.
 
 ## Observability
 
-`pkg/acme/server/metrics` exposes issuance, challenge and rate-limit metrics,
-plus the circuit breaker and degradation-cache counters `pkg/acme/server/
-circuitbreaker` and `pkg/acme/server/degradation` record against (failure/
-success/trip per breaker; hit/miss/size per cache) — not yet wired to a
-Prometheus exporter, see "Known gap" below. `GET /acme/health`
+`pkg/acme/server/metrics` defines a Prometheus registry with issuance,
+challenge and rate-limit counters (`RecordRequest`, `RecordCertificateIssued`,
+...), plus the circuit breaker and degradation-cache counters
+`pkg/acme/server/circuitbreaker` and `pkg/acme/server/degradation` record
+against (`RecordCircuitBreakerFailure`/`Success`/`Trip`,
+`RecordCacheHit`/`Miss`, `SetCacheSize`, `SetDegradationActive` —
+`pkg/acme/server/metrics/production.go`). No handler in
+`pkg/acme/server/handlers` calls the issuance/challenge/rate-limit `Record*`
+functions, so those counters stay at zero in every deployment; the circuit
+breaker and degradation counters, by contrast, are live on xkmsd's request
+path whenever `Params.Breakers` is set. Neither set reaches a scrape
+endpoint today: `InitProduction` — the function that registers the circuit
+breaker/degradation collectors on `metrics.Registry` — is called nowhere in
+the tree outside its own file, and xkmsd never calls `metrics.Init()` or
+mounts `/metrics` for ACME at all (`cmd/xkmsd/acme.go`). The standalone
+`TrustedCA` calls `metrics.Init()` and mounts
+`promhttp.HandlerFor(metrics.Registry, ...)` at `/metrics`
+(`pkg/acme/client/trustedca.go:378,414`), but since neither the issuance
+counters nor `InitProduction`'s collectors are registered or incremented on
+that path (it does not opt into `Params.Breakers` either), the endpoint
+reports only the Go runtime collectors. `GET /acme/health`
 (`RestService.HealthHandler`) is the synchronous, poll-driven view of the
-same state: every breaker's name, state and counters, and whether
-`storage` being open is currently degrading the directory/CA-bundle
-responses (see "Circuit breakers and degradation"). `pkg/acme/audit` and
-`pkg/acme/server/handlers/audit.go` write audit records for account, order
-and issuance events. Correlation IDs propagate from the transport
-middleware.
+circuit breaker/degradation state instead: every breaker's name, state and
+counters, and whether `storage` being open is currently degrading the
+directory/CA-bundle responses (see "Circuit breakers and degradation").
+`pkg/acme/audit` and `pkg/acme/server/handlers/audit.go` write audit records
+for account, order and issuance events, and those are live on both paths —
+audit, not metrics, is where issuance activity is actually observable today.
+Correlation IDs propagate from the transport middleware. Instrumenting the
+metrics package into the request path is tracked in go-xkms#734.
 
-**Known gap:** Prometheus exporters, per-tenant rate-limit *enforcement*
-(`TenantRateLimiter` is unwired — see Rate limiting under Invariants) and
-dashboards, OCSP stapling, CRL distribution-point automation, CT log
-submission automation and cross-signing automation are roadmap items, not
-implemented. They are tracked in `docs/acme/ROADMAP.md` and deliberately not
-documented here as if they existed.
+**Known gap:** Prometheus exporters (beyond the unwired registry above),
+per-tenant rate-limit *enforcement* (`TenantRateLimiter` is unwired — see
+Rate limiting under Invariants) and dashboards, OCSP stapling, CRL
+distribution-point automation, CT log submission automation and
+cross-signing automation are roadmap items, not implemented. They are
+tracked in `docs/acme/ROADMAP.md` and deliberately not documented here as if
+they existed.
