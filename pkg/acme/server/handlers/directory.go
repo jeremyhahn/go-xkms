@@ -65,5 +65,7 @@ func (s *RestService) DirectoryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	if _, err := w.Write(body); err != nil {
+		s.logger.Error("failed to write directory response", "error", err.Error())
+	}
 }

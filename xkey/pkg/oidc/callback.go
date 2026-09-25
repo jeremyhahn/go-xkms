@@ -17,6 +17,7 @@ package oidc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -235,10 +236,11 @@ func BindCallback(ctx context.Context, lc *net.ListenConfig, addrs []CallbackAdd
 				// listener already serves localhost.
 				continue
 			}
+			closeErr := err
 			for _, opened := range listeners {
-				_ = opened.Close()
+				closeErr = errors.Join(closeErr, opened.Close())
 			}
-			return nil, err
+			return nil, closeErr
 		}
 		listeners = append(listeners, listener)
 	}

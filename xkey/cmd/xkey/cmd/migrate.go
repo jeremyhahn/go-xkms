@@ -251,7 +251,11 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		}
 		return &MigrateError{Operation: "create_temp_mount", Err: &WrappedError{Msg: "failed to create temp mount", Err: err}}
 	}
-	defer func() { _ = os.RemoveAll(oldMount) }()
+	defer func() {
+		if rmErr := os.RemoveAll(oldMount); rmErr != nil {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not remove temp mount point %s: %v\n", oldMount, rmErr)
+		}
+	}()
 
 	newMount, err := os.MkdirTemp("", "xkey-migrate-new-")
 	if err != nil {
@@ -261,7 +265,11 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		}
 		return &MigrateError{Operation: "create_temp_mount", Err: &WrappedError{Msg: "failed to create temp mount", Err: err}}
 	}
-	defer func() { _ = os.RemoveAll(newMount) }()
+	defer func() {
+		if rmErr := os.RemoveAll(newMount); rmErr != nil {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not remove temp mount point %s: %v\n", newMount, rmErr)
+		}
+	}()
 
 	// Update mount points
 	oldVol.MountPoint = oldMount

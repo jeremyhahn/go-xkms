@@ -253,6 +253,18 @@ func TestListBackendsHandler(t *testing.T) {
 		assert.Len(t, resp.Backends, 1)
 		assert.Equal(t, "test-backend", resp.Backends[0].ID)
 	})
+
+	t.Run("returns 400 for a non-numeric page parameter", func(t *testing.T) {
+		setupTestService(t, "test-backend")
+		ctx := newTestHandlerContext()
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends?page=notanumber", nil)
+		w := httptest.NewRecorder()
+
+		ctx.ListBackendsHandler(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
 }
 
 // TestGetBackendHandler tests getting a specific backend

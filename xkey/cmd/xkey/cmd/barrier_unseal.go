@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -60,7 +61,7 @@ func init() {
 		"Unseal via TPM PCR-policy auto-unseal only (see 'xkey policy set-auto-unseal'); never prompts for a password")
 }
 
-func runBarrierUnseal(cmd *cobra.Command, args []string) error {
+func runBarrierUnseal(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 
 	// Resolve data directory.
@@ -93,9 +94,9 @@ func runBarrierUnseal(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer func() {
-		_ = barrier.Close()
+		err = errors.Join(err, barrier.Close())
 		if closer != nil {
-			_ = closer.Close()
+			err = errors.Join(err, closer.Close())
 		}
 	}()
 

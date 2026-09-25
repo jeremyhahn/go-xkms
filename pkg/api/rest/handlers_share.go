@@ -185,7 +185,11 @@ func (h *ShareHandlers) ListSharesHandler(w http.ResponseWriter, r *http.Request
 		shares = append(shares, shareInfoToStatus(&resp.Shares[i]))
 	}
 
-	pageReq := parsePageRequest(r)
+	pageReq, err := parsePageRequest(r)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
 	paged, pageResp := applyPagination(shares, pageReq)
 
 	writeJSON(w, listSharesResponse{Shares: paged, Pagination: pageResp}, http.StatusOK)

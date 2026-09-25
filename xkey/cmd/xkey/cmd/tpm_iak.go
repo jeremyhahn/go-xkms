@@ -17,6 +17,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -177,13 +178,17 @@ func init() {
 	_ = tpmIAKCSRCmd.MarkFlagRequired("output")
 }
 
-func runIAKShow(cmd *cobra.Command, args []string) error {
+func runIAKShow(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get IAK attributes
 	iakAttrs, err := tpm.IAKAttributes()
@@ -261,7 +266,7 @@ func outputIAKText(out io.Writer, info *IAKInfo) error {
 	return nil
 }
 
-func runIAKCreate(cmd *cobra.Command, args []string) error {
+func runIAKCreate(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Validate template
 	switch iakCreateTemplate {
@@ -275,7 +280,11 @@ func runIAKCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Check if IAK already exists
 	if !iakCreateForce {
@@ -301,13 +310,17 @@ func runIAKCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runIAKExport(cmd *cobra.Command, args []string) error {
+func runIAKExport(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get IAK certificate
 	iakCert, err := tpm.IAKCertificate()
@@ -336,13 +349,17 @@ func runIAKExport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runIAKCSR(cmd *cobra.Command, args []string) error {
+func runIAKCSR(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get EK certificate
 	ekCert, err := tpm.EKCertificate()

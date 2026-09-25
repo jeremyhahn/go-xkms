@@ -14,6 +14,7 @@
 package rest
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -22,23 +23,33 @@ import (
 
 // parsePageRequest extracts pagination parameters from URL query string.
 // Supported query parameters: page, page_size, sort_field, sort_order.
-// Missing or invalid values use defaults. page=0 (the default) means
-// return all results for backward compatibility with existing clients.
-func parsePageRequest(r *http.Request) transport.PageRequest {
+// Missing values use defaults. page=0 (the default) means return all
+// results for backward compatibility with existing clients. A page or
+// page_size that fails to parse as an integer is a client error and is
+// reported rather than silently treated as unpaginated.
+func parsePageRequest(r *http.Request) (transport.PageRequest, error) {
 	q := r.URL.Query()
 	pr := transport.PageRequest{}
 	if v := q.Get("page"); v != "" {
-		pr.Page, _ = strconv.Atoi(v)
+		page, err := strconv.Atoi(v)
+		if err != nil {
+			return transport.PageRequest{}, fmt.Errorf("%w: page %q: %w", ErrInvalidRequest, v, err)
+		}
+		pr.Page = page
 	}
 	if v := q.Get("page_size"); v != "" {
-		pr.PageSize, _ = strconv.Atoi(v)
+		pageSize, err := strconv.Atoi(v)
+		if err != nil {
+			return transport.PageRequest{}, fmt.Errorf("%w: page_size %q: %w", ErrInvalidRequest, v, err)
+		}
+		pr.PageSize = pageSize
 	}
 	pr.SortField = q.Get("sort_field")
 	if v := q.Get("sort_order"); v == "desc" || v == "1" {
 		pr.SortOrder = 1
 	}
 	pr.Normalize()
-	return pr
+	return pr, nil
 }
 
 // applyPagination slices items according to the page request and returns

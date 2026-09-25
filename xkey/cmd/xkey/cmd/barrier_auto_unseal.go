@@ -68,7 +68,11 @@ func tryBarrierPolicyAutoUnseal(ctx context.Context, logger *slog.Logger, barrie
 	if err != nil {
 		return false, nil, &SentinelCauseError{Sentinel: ErrBarrierAutoUnsealPolicyStoreFailed, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if _, err := store.GetAutoUnsealPolicy(ctx); err != nil {
 		if errors.Is(err, pcrpolicy.ErrPolicyNotFound) {
@@ -98,8 +102,7 @@ func tryBarrierPolicyAutoUnseal(ctx context.Context, logger *slog.Logger, barrie
 		// fallback (direct TPM unseal or a password) opens its own
 		// connection if it needs one, so nothing downstream depends on
 		// this transport staying open.
-		_ = tpmCloser.Close()
-		return false, nil, unsealErr
+		return false, nil, errors.Join(unsealErr, tpmCloser.Close())
 	}
 	return true, tpmCloser, nil
 }

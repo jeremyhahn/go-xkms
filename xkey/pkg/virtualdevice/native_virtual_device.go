@@ -301,20 +301,26 @@ func (d *NativeVirtualDevice) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	var closeErr error
+
 	// Close the HID handler first
 	if d.hidHandler != nil {
-		_ = d.hidHandler.Close()
+		if err := d.hidHandler.Close(); err != nil {
+			closeErr = errors.Join(closeErr, err)
+		}
 	}
 
 	// Only close the authenticator if this device created it.
 	if d.ownsAuth && d.authenticator != nil {
-		_ = d.authenticator.Close()
+		if err := d.authenticator.Close(); err != nil {
+			closeErr = errors.Join(closeErr, err)
+		}
 	}
 
 	// Close the response channel
 	close(d.respChan)
 
-	return nil
+	return closeErr
 }
 
 // Path returns the virtual device path.

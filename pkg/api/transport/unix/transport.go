@@ -2609,11 +2609,29 @@ func (t *Transport) DeleteShare(ctx context.Context, serverURL, groupID string, 
 	return err
 }
 
+// parseTimestamp parses an RFC3339 timestamp received from the server. An
+// empty value yields the zero time silently: the field was never set. A
+// non-empty value that fails to parse also yields the zero time -- the
+// call still returns the rest of the entity, which is otherwise complete
+// -- but it is logged, since it usually means the peer and this binary
+// have drifted on the wire encoding.
+func parseTimestamp(field, value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		slog.Debug("unix transport: failed to parse timestamp", "field", field, "value", value, "error", err)
+		return time.Time{}
+	}
+	return t
+}
+
 // pbShareInfoToTransport converts a proto ShareInfo to its transport
 // representation. An unparseable timestamp yields the zero time rather than
 // failing the call — the metadata is still useful without it.
 func pbShareInfoToTransport(s *pb.ShareInfo) transport.ShareInfo {
-	receivedAt, _ := time.Parse(time.RFC3339, s.GetSubmittedAt())
+	receivedAt := parseTimestamp("submitted_at", s.GetSubmittedAt())
 	return transport.ShareInfo{
 		ServerURL:  s.GetServerUrl(),
 		GroupID:    s.GetGroupId(),
@@ -3251,8 +3269,8 @@ func pbCustodianGroupToTransport(g *pb.CustodianGroup) transport.CustodianGroupI
 		}
 	}
 
-	createdAt, _ := time.Parse(time.RFC3339, g.GetCreatedAt())
-	updatedAt, _ := time.Parse(time.RFC3339, g.GetUpdatedAt())
+	createdAt := parseTimestamp("created_at", g.GetCreatedAt())
+	updatedAt := parseTimestamp("updated_at", g.GetUpdatedAt())
 
 	return transport.CustodianGroupInfo{
 		ID:        g.GetId(),
@@ -3271,8 +3289,8 @@ func pbTenantInfoToTransport(ti *pb.TenantInfo) transport.TenantInfo {
 		return transport.TenantInfo{}
 	}
 
-	createdAt, _ := time.Parse(time.RFC3339, ti.GetCreatedAt())
-	updatedAt, _ := time.Parse(time.RFC3339, ti.GetUpdatedAt())
+	createdAt := parseTimestamp("created_at", ti.GetCreatedAt())
+	updatedAt := parseTimestamp("updated_at", ti.GetUpdatedAt())
 
 	out := transport.TenantInfo{
 		ID:            ti.GetId(),

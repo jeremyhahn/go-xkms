@@ -14,6 +14,7 @@
 package rest
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"testing"
@@ -23,7 +24,10 @@ import (
 
 func TestParsePageRequest_Defaults(t *testing.T) {
 	r := &http.Request{URL: &url.URL{RawQuery: ""}}
-	pr := parsePageRequest(r)
+	pr, err := parsePageRequest(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if pr.Page != 0 {
 		t.Errorf("expected Page=0 (unpaginated), got %d", pr.Page)
@@ -41,7 +45,10 @@ func TestParsePageRequest_Defaults(t *testing.T) {
 
 func TestParsePageRequest_AllParams(t *testing.T) {
 	r := &http.Request{URL: &url.URL{RawQuery: "page=3&page_size=10&sort_field=name&sort_order=desc"}}
-	pr := parsePageRequest(r)
+	pr, err := parsePageRequest(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if pr.Page != 3 {
 		t.Errorf("expected Page=3, got %d", pr.Page)
@@ -59,7 +66,10 @@ func TestParsePageRequest_AllParams(t *testing.T) {
 
 func TestParsePageRequest_SortOrderNumeric(t *testing.T) {
 	r := &http.Request{URL: &url.URL{RawQuery: "sort_order=1"}}
-	pr := parsePageRequest(r)
+	pr, err := parsePageRequest(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if pr.SortOrder != 1 {
 		t.Errorf("expected SortOrder=1, got %d", pr.SortOrder)
@@ -68,7 +78,10 @@ func TestParsePageRequest_SortOrderNumeric(t *testing.T) {
 
 func TestParsePageRequest_SortOrderAscending(t *testing.T) {
 	r := &http.Request{URL: &url.URL{RawQuery: "sort_order=asc"}}
-	pr := parsePageRequest(r)
+	pr, err := parsePageRequest(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if pr.SortOrder != 0 {
 		t.Errorf("expected SortOrder=0 (asc), got %d", pr.SortOrder)
@@ -76,21 +89,37 @@ func TestParsePageRequest_SortOrderAscending(t *testing.T) {
 }
 
 func TestParsePageRequest_InvalidPage(t *testing.T) {
-	r := &http.Request{URL: &url.URL{RawQuery: "page=abc&page_size=xyz"}}
-	pr := parsePageRequest(r)
+	r := &http.Request{URL: &url.URL{RawQuery: "page=abc&page_size=10"}}
+	_, err := parsePageRequest(r)
 
-	// Invalid values default to 0 for page and DefaultPageSize for page_size
-	if pr.Page != 0 {
-		t.Errorf("expected Page=0 for invalid input, got %d", pr.Page)
+	// A non-numeric page is a client error, not a silent default: the
+	// caller asked for something parsePageRequest cannot honor.
+	if err == nil {
+		t.Fatal("expected error for non-numeric page, got nil")
 	}
-	if pr.PageSize != transport.DefaultPageSize {
-		t.Errorf("expected PageSize=%d for invalid input, got %d", transport.DefaultPageSize, pr.PageSize)
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Errorf("expected error to wrap ErrInvalidRequest, got %v", err)
+	}
+}
+
+func TestParsePageRequest_InvalidPageSize(t *testing.T) {
+	r := &http.Request{URL: &url.URL{RawQuery: "page=1&page_size=xyz"}}
+	_, err := parsePageRequest(r)
+
+	if err == nil {
+		t.Fatal("expected error for non-numeric page_size, got nil")
+	}
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Errorf("expected error to wrap ErrInvalidRequest, got %v", err)
 	}
 }
 
 func TestParsePageRequest_NegativePage(t *testing.T) {
 	r := &http.Request{URL: &url.URL{RawQuery: "page=-5"}}
-	pr := parsePageRequest(r)
+	pr, err := parsePageRequest(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if pr.Page != 0 {
 		t.Errorf("expected Page=0 (clamped from negative), got %d", pr.Page)

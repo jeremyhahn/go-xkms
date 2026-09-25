@@ -61,7 +61,7 @@ func acmeStatus(cfg *Config) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	status, err := client.Status().Status(ctx)
 	if err != nil {
@@ -82,7 +82,7 @@ func acmeStats(cfg *Config) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	stats, err := client.Status().Stats(ctx)
 	if err != nil {

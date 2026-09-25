@@ -194,7 +194,9 @@ func resolveBarrierStrategyID(dataDir string) (xkms.StrategyID, error) {
 
 	// Auto-detect: prefer hardware-backed sealing when a TPM is present.
 	if sealer, closer := probeTPMSealer(slog.Default(), dataDir, barrierTPMDevice, barrierTPMSimulator); sealer != nil {
-		_ = closer.Close()
+		if err := closer.Close(); err != nil {
+			slog.Default().Debug("barrier: failed to close TPM probe connection", "error", err)
+		}
 		return xkms.StrategyTPM2, nil
 	}
 	return xkms.StrategyPassphrase, nil
@@ -270,7 +272,7 @@ func createBarrier(dataDir string) (*xkms.Barrier, io.Closer, error) {
 	)
 	if err != nil {
 		if closer != nil {
-			_ = closer.Close()
+			err = errors.Join(err, closer.Close())
 		}
 		return nil, nil, &BarrierError{
 			Operation: "create_barrier",

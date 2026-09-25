@@ -244,7 +244,7 @@ func readPassphraseFromStdin(out io.Writer) (string, error) {
 }
 
 // migrateExistingData migrates data from existing directory to encrypted volume.
-func migrateExistingData(out io.Writer, vol *luks.Volume, passphrase string) error {
+func migrateExistingData(out io.Writer, vol *luks.Volume, passphrase string) (err error) {
 	_, _ = fmt.Fprintln(out, "Migrating existing data to encrypted volume...")
 	dataDir := vol.MountPoint
 
@@ -253,7 +253,11 @@ func migrateExistingData(out io.Writer, vol *luks.Volume, passphrase string) err
 	if err != nil {
 		return &SealError{Operation: "create_temp", Err: err}
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer func() {
+		if closeErr := os.RemoveAll(tmpDir); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Copy existing data to temp directory
 	if err := copyDirContents(dataDir, tmpDir); err != nil {
@@ -272,8 +276,7 @@ func migrateExistingData(out io.Writer, vol *luks.Volume, passphrase string) err
 
 	// Copy from temp to mounted volume
 	if err := vol.CopyDataToVolume(tmpDir); err != nil {
-		_ = vol.Lock()
-		return &SealError{Operation: "migrate_data", Err: err}
+		return &SealError{Operation: "migrate_data", Err: errors.Join(err, vol.Lock())}
 	}
 
 	// Lock the volume

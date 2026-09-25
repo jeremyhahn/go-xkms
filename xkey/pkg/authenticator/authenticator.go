@@ -655,8 +655,9 @@ func (a *Authenticator) Close() error {
 
 	// Save final state before closing
 	if err := a.storage.SaveState(a.state); err != nil {
-		// Log but don't fail close
-		_ = err
+		if a.logger != nil {
+			a.logger.Warn("authenticator: failed to save final state on close", slog.String("error", err.Error()))
+		}
 	}
 
 	// Close the key backend if present

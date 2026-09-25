@@ -430,7 +430,11 @@ func (h *HandlerContext) FrostListKeysHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	pageReq := parsePageRequest(r)
+	pageReq, err := parsePageRequest(r)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
 	paged, pageResp := applyPagination(respKeys, pageReq)
 
 	resp := FrostListKeysResponse{

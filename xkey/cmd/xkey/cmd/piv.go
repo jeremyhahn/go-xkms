@@ -584,7 +584,7 @@ func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertificateS
 }
 
 // runPIVList executes the piv list command.
-func runPIVList(cmd *cobra.Command, args []string) error {
+func runPIVList(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
@@ -593,7 +593,11 @@ func runPIVList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	slots, err := storage.List()
 	if err != nil {
@@ -625,7 +629,7 @@ func runPIVList(cmd *cobra.Command, args []string) error {
 }
 
 // runPIVShow executes the piv show command.
-func runPIVShow(cmd *cobra.Command, args []string) error {
+func runPIVShow(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
@@ -639,7 +643,11 @@ func runPIVShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	cert, err := storage.Retrieve(slot)
 	if err != nil {
@@ -680,7 +688,7 @@ func runPIVShow(cmd *cobra.Command, args []string) error {
 }
 
 // runPIVStore executes the piv store command.
-func runPIVStore(cmd *cobra.Command, args []string) error {
+func runPIVStore(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
@@ -708,7 +716,11 @@ func runPIVStore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := storage.Store(slot, cert); err != nil {
 		return errors.Join(ErrPIVStoreFailed, err)
@@ -724,7 +736,7 @@ func runPIVStore(cmd *cobra.Command, args []string) error {
 }
 
 // runPIVDelete executes the piv delete command.
-func runPIVDelete(cmd *cobra.Command, args []string) error {
+func runPIVDelete(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
@@ -739,7 +751,11 @@ func runPIVDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Check if certificate exists
 	cert, err := storage.Retrieve(slot)
@@ -775,7 +791,7 @@ func runPIVDelete(cmd *cobra.Command, args []string) error {
 }
 
 // runPIVExport executes the piv export command.
-func runPIVExport(cmd *cobra.Command, args []string) error {
+func runPIVExport(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
@@ -806,7 +822,11 @@ func runPIVExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	data, err := storage.Export(slot, pivFormat)
 	if err != nil {
@@ -830,7 +850,7 @@ func runPIVExport(cmd *cobra.Command, args []string) error {
 }
 
 // runPIVStatus executes the piv status command.
-func runPIVStatus(cmd *cobra.Command, args []string) error {
+func runPIVStatus(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
@@ -863,7 +883,11 @@ func runPIVStatus(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(out, "Storage Status:    Error - %v\n", err)
 		return nil // Don't fail, just report status
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	slots, err := storage.List()
 	if err != nil {

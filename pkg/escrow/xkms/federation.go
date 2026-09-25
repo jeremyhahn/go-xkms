@@ -45,6 +45,17 @@ func closeResponseBody(resp *http.Response) {
 	}
 }
 
+// drainResponseBody discards the remainder of resp.Body so the underlying
+// connection can be reused, and logs a failure at debug level. The caller's
+// result has already been computed from the response status, so a drain
+// failure changes nothing about the outcome -- it only costs the connection
+// its reuse.
+func drainResponseBody(resp *http.Response) {
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		slog.Debug("escrow/xkms: failed to drain HTTP response body", "error", err)
+	}
+}
+
 const (
 	// apiPrefix is the base path for escrow API endpoints.
 	apiPrefix = "/api/v1/escrow/keys"
@@ -149,8 +160,7 @@ func (a *FederationAgent) Available(ctx context.Context) bool {
 		return false
 	}
 	defer closeResponseBody(resp)
-	// Drain body to allow connection reuse.
-	_, _ = io.Copy(io.Discard, resp.Body)
+	drainResponseBody(resp)
 
 	return resp.StatusCode >= 200 && resp.StatusCode < 400
 }

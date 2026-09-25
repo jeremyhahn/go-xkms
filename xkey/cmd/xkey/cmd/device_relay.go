@@ -102,8 +102,7 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 		// The server took ownership of the key at construction, so a failed
 		// bind still has to go through Stop — it is the only thing that
 		// releases those protected pages now.
-		_ = server.Stop()
-		return &SentinelCauseError{Sentinel: ErrDeviceRelayStartFailed, Cause: err}
+		return &SentinelCauseError{Sentinel: ErrDeviceRelayStartFailed, Cause: errors.Join(err, server.Stop())}
 	}
 
 	actualAddr := server.Addr()

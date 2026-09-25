@@ -311,13 +311,25 @@ func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values) (*Toke
 	return nil, ErrDPoPNonceRequired
 }
 
-// parseTokenErrorResponse parses an OAuth2 error response body.
+// parseTokenErrorResponse parses an OAuth2 error response body. The request
+// has already failed (a non-200 status drove the caller here); a body that
+// isn't the expected OAuth2 JSON shape still leaves the caller with a
+// TokenRequestError carrying the status code, but with the raw body -- so
+// the failure is not reduced to a bare status code -- instead of the
+// unmarshal's zero-valued Code and Description.
 func parseTokenErrorResponse(body []byte, statusCode int) *TokenRequestError {
 	var errResp struct {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
 	}
-	_ = json.Unmarshal(body, &errResp)
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		slog.Debug("oidc: token error response is not valid OAuth2 JSON", "status_code", statusCode, "error", err)
+		return &TokenRequestError{
+			Err:         ErrTokenExchangeFailed,
+			Description: string(body),
+			StatusCode:  statusCode,
+		}
+	}
 	return &TokenRequestError{
 		Err:         ErrTokenExchangeFailed,
 		Code:        errResp.Error,

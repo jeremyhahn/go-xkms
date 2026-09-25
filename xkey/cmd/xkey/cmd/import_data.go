@@ -83,7 +83,7 @@ func init() {
 	luks2Cmd.AddCommand(importDataCmd)
 }
 
-func runImportData(cmd *cobra.Command, args []string) error {
+func runImportData(cmd *cobra.Command, args []string) (err error) {
 	if os.Geteuid() != 0 {
 		return luks.ErrPermissionDenied
 	}
@@ -146,7 +146,11 @@ func runImportData(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &ImportDataError{Operation: "create_temp_mount", Err: err}
 	}
-	defer func() { _ = os.RemoveAll(tmpMount) }()
+	defer func() {
+		if closeErr := os.RemoveAll(tmpMount); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Unlock the volume at the temp mount point
 	vol.MountPoint = tmpMount

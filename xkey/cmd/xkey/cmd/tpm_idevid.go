@@ -17,6 +17,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -188,13 +189,17 @@ func init() {
 	_ = tpmIDevIDCSRCmd.MarkFlagRequired("output")
 }
 
-func runIDevIDShow(cmd *cobra.Command, args []string) error {
+func runIDevIDShow(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get IDevID attributes
 	idevidAttrs, err := tpm.IDevIDAttributes()
@@ -272,7 +277,7 @@ func outputIDevIDText(out io.Writer, info *IDevIDInfo) error {
 	return nil
 }
 
-func runIDevIDCreate(cmd *cobra.Command, args []string) error {
+func runIDevIDCreate(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Validate template
 	switch idevidCreateTemplate {
@@ -286,7 +291,11 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Check if IDevID already exists
 	if !idevidCreateForce {
@@ -318,13 +327,17 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runIDevIDExport(cmd *cobra.Command, args []string) error {
+func runIDevIDExport(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get IDevID certificate
 	idevidCert, err := tpm.IDevIDCertificate()
@@ -353,13 +366,17 @@ func runIDevIDExport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runIDevIDCSR(cmd *cobra.Command, args []string) error {
+func runIDevIDCSR(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get EK certificate
 	ekCert, err := tpm.EKCertificate()

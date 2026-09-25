@@ -101,6 +101,14 @@ type pairingTransport interface {
 	Close() error
 }
 
+// abortPairing disconnects transport and returns baseErr joined with any
+// disconnect failure. Used on runDevicePair's many early-return failure
+// paths so a failed disconnect from an already-failed pairing attempt is
+// never silently dropped.
+func abortPairing(transport pairingTransport, baseErr error) error {
+	return errors.Join(baseErr, transport.Disconnect())
+}
+
 // pairingSeams are runDevicePair's injection points: how it opens its
 // transport, reads and writes the devices file, opens the barrier the new
 // Noise private key is sealed under (#42), and loads this machine's
@@ -136,7 +144,7 @@ var pairSeams = pairingSeams{
 }
 
 // runDevicePair executes the phone pairing command.
-func runDevicePair(cmd *cobra.Command, args []string) error {
+func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 	logger := slog.Default()
 
 	deviceFilter, _ := cmd.Flags().GetString("device")
@@ -188,7 +196,11 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		}
 		return &WrappedError{Msg: "failed to initialize Bluetooth", Err: err}
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() {
+		if closeErr := transport.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
 	defer cancel()
@@ -326,8 +338,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		LocalStaticPublicKey: session.LocalStaticPublicKey(),
 	}
 	if err := pairing.PerformHandshake(connectCtx, handshakeCfg); err != nil {
-		_ = transport.Disconnect()
-		return &WrappedError{Msg: "key exchange failed", Err: err}
+		return abortPairing(transport, &WrappedError{Msg: "key exchange failed", Err: err})
 	}
 
 	// Send pairing confirmation request to phone
@@ -338,49 +349,40 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	})
 	pairingPlaintext, err := pairing.EncodeRequest(pairingReq)
 	if err != nil {
-		_ = transport.Disconnect()
-		return &WrappedError{Msg: "failed to encode pairing request", Err: err}
+		return abortPairing(transport, &WrappedError{Msg: "failed to encode pairing request", Err: err})
 	}
 	pairingCiphertext, err := session.Encrypt(pairingPlaintext)
 	if err != nil {
-		_ = transport.Disconnect()
-		return &WrappedError{Msg: "failed to encrypt pairing request", Err: err}
+		return abortPairing(transport, &WrappedError{Msg: "failed to encrypt pairing request", Err: err})
 	}
 	pairingResponseCiphertext, err := transport.SendAndReceive(connectCtx, pairingCiphertext)
 	if err != nil {
-		_ = transport.Disconnect()
-		return &WrappedError{Msg: "pairing confirmation failed", Err: err}
+		return abortPairing(transport, &WrappedError{Msg: "pairing confirmation failed", Err: err})
 	}
 	pairingResponsePlaintext, err := session.Decrypt(pairingResponseCiphertext)
 	if err != nil {
-		_ = transport.Disconnect()
-		return &WrappedError{Msg: "failed to decrypt pairing response", Err: err}
+		return abortPairing(transport, &WrappedError{Msg: "failed to decrypt pairing response", Err: err})
 	}
 	pairingResp, err := pairing.DecodeResponse(pairingResponsePlaintext)
 	if err != nil {
-		_ = transport.Disconnect()
-		return &WrappedError{Msg: "failed to decode pairing response", Err: err}
+		return abortPairing(transport, &WrappedError{Msg: "failed to decode pairing response", Err: err})
 	}
 	if pairingResp.Error != nil {
-		_ = transport.Disconnect()
-		return pairing.MapRPCError(pairingResp.Error)
+		return abortPairing(transport, pairing.MapRPCError(pairingResp.Error))
 	}
 	pairingResult, err := pairing.DecodeResult[pairing.PairingConfirmResult](pairingResp)
 	if err != nil {
-		_ = transport.Disconnect()
-		return &WrappedError{Msg: "failed to decode pairing result", Err: err}
+		return abortPairing(transport, &WrappedError{Msg: "failed to decode pairing result", Err: err})
 	}
 	if !pairingResult.Confirmed {
-		_ = transport.Disconnect()
-		return phone.ErrPairingRejected
+		return abortPairing(transport, phone.ErrPairingRejected)
 	}
 	fmt.Printf("Phone confirmed pairing as \"%s\"\n", pairingResult.DeviceName)
 
 	// Get the phone's public key
 	remotePublicKey := session.RemoteStaticPublicKey()
 	if len(remotePublicKey) == 0 {
-		_ = transport.Disconnect()
-		return &MessageError{Msg: "failed to obtain phone's public key"}
+		return abortPairing(transport, &MessageError{Msg: "failed to obtain phone's public key"})
 	}
 
 	// Attest the device before anything is written down. Whether an
@@ -393,12 +395,11 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	attestResult, attestErr := performPairingAttestation(connectCtx, transport, session, logger)
 	if attestErr != nil {
 		if !allowUnattestable {
-			_ = transport.Disconnect()
 			if enterprisePolicy == nil {
 				logger.Warn("unattestable device refused: the config directory is sealed and the enterprise policy was not verified",
 					"hint", "supply the SO PIN (--so-pin-stdin or XKEY_SO_PIN) to honour a sealed policy that allows it")
 			}
-			return attestErr
+			return abortPairing(transport, attestErr)
 		}
 		logger.Warn("pairing continued without a verified attestation",
 			"device", deviceName,
@@ -407,8 +408,14 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		printUnattestablePairingWarning()
 	}
 
-	// Disconnect after pairing (will reconnect when needed)
-	_ = transport.Disconnect()
+	// Disconnect after pairing (will reconnect when needed). Pairing has
+	// already succeeded at this point, so a failed disconnect doesn't
+	// change the outcome below, but it is logged since transport.Close
+	// deferred above will otherwise be the only chance to notice the
+	// device connection did not tear down cleanly.
+	if err := transport.Disconnect(); err != nil {
+		logger.Warn("failed to disconnect after pairing", "error", err)
+	}
 
 	// Seal the local Noise static private key before it is written anywhere,
 	// or fall back to the legacy plaintext form with a warning if no barrier
@@ -528,12 +535,16 @@ func performPairingAttestation(
 //
 // It is the CLI's half of a decision whose other half is shared: WHICH store
 // to open is per-surface, what to do with the pool is not.
-func loadPairingAttestationTrust() (*attestation.Trust, error) {
+func loadPairingAttestationTrust() (_ *attestation.Trust, err error) {
 	store, err := openTrustStore()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: attestation.ErrDeviceAttestVerifyFailed, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	return attestation.LoadTrust(store)
 }

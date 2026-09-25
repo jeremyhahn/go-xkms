@@ -1488,3 +1488,28 @@ func TestRevokeToken_ErrorPaths(t *testing.T) {
 		assert.NoError(t, err)
 	})
 }
+
+func TestParseTokenErrorResponse(t *testing.T) {
+	t.Run("parses a well-formed OAuth2 error body", func(t *testing.T) {
+		body := []byte(`{"error":"invalid_grant","error_description":"the code has expired"}`)
+
+		err := parseTokenErrorResponse(body, http.StatusBadRequest)
+
+		assert.ErrorIs(t, err, ErrTokenExchangeFailed)
+		assert.Equal(t, "invalid_grant", err.Code)
+		assert.Equal(t, "the code has expired", err.Description)
+		assert.Equal(t, http.StatusBadRequest, err.StatusCode)
+	})
+
+	t.Run("falls back to the raw body when it is not OAuth2 JSON", func(t *testing.T) {
+		body := []byte("<html><body>502 Bad Gateway</body></html>")
+
+		err := parseTokenErrorResponse(body, http.StatusBadGateway)
+
+		assert.ErrorIs(t, err, ErrTokenExchangeFailed)
+		assert.Empty(t, err.Code)
+		assert.Equal(t, string(body), err.Description)
+		assert.Equal(t, http.StatusBadGateway, err.StatusCode)
+		assert.Contains(t, err.Error(), "502 Bad Gateway")
+	})
+}

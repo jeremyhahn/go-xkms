@@ -127,6 +127,16 @@ func (s *spaFileServer) closeQuiet(f http.File) {
 	}
 }
 
+// writeQuiet writes body to w and logs a failure at debug level. Every call
+// site writes after headers are already committed, so there is nothing left
+// to do on a write failure but note it -- most commonly a client that
+// disconnected mid-response.
+func (s *spaFileServer) writeQuiet(w http.ResponseWriter, body []byte) {
+	if _, err := w.Write(body); err != nil {
+		s.logger.Debug("webui: failed to write response body", "error", err)
+	}
+}
+
 // ServeHTTP serves the requested file or falls back to index.html for client-side routing.
 func (s *spaFileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
@@ -193,7 +203,7 @@ func (s *spaFileServer) serveIndex(w http.ResponseWriter, r *http.Request) {
 		injection := "<script>window.__API_BASE_URL__=" + jsStringLiteral(s.apiBaseURL) + ";</script>"
 		html := strings.Replace(string(data), "</head>", injection+"</head>", 1)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(html))
+		s.writeQuiet(w, []byte(html))
 		return
 	}
 

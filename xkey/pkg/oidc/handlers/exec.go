@@ -16,6 +16,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -87,7 +88,14 @@ func (h *ExecHandler) Handle(ctx context.Context, data *TokenData) error {
 	}
 	cmd.Env = env
 
-	// Pass JSON via stdin if requested
+	// Pass JSON via stdin if requested. The write happens in its own
+	// goroutine, per exec.StdinPipe's documented usage, so cmd.Run (which
+	// reads the other end concurrently) cannot deadlock against it. The
+	// result is reported on stdinErrCh rather than discarded, so a write
+	// failure -- most commonly the child exiting before reading all of
+	// stdin -- is still visible after Run returns, joined rather than
+	// letting it mask (or be masked by) the command's own exit error.
+	var stdinErrCh chan error
 	if h.PassJSON {
 		jsonData, err := json.Marshal(data)
 		if err != nil {
@@ -97,15 +105,23 @@ func (h *ExecHandler) Handle(ctx context.Context, data *TokenData) error {
 		if err != nil {
 			return &SentinelCauseError{Sentinel: ErrExecCommandFailed, Cause: err}
 		}
+		stdinErrCh = make(chan error, 1)
 		go func() {
-			defer func() { _ = stdin.Close() }()
-			_, _ = stdin.Write(jsonData)
+			_, werr := stdin.Write(jsonData)
+			stdinErrCh <- errors.Join(werr, stdin.Close())
 		}()
 	} else if h.Stdin != nil {
 		cmd.Stdin = h.Stdin
 	}
 
-	if err := cmd.Run(); err != nil {
+	runErr := cmd.Run()
+
+	var stdinErr error
+	if stdinErrCh != nil {
+		stdinErr = <-stdinErrCh
+	}
+
+	if err := errors.Join(runErr, stdinErr); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExecCommandFailed, Cause: err}
 	}
 

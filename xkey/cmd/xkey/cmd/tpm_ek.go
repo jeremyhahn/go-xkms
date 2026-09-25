@@ -20,8 +20,10 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -178,13 +180,17 @@ func init() {
 	_ = tpmEKRestoreCmd.MarkFlagRequired("input")
 }
 
-func runEKShow(cmd *cobra.Command, args []string) error {
+func runEKShow(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get EK attributes
 	ekAttrs, err := tpm.EKAttributes()
@@ -343,7 +349,14 @@ func verifyEKCertificateResult(cert *x509.Certificate) *xkeyAttestation.Verifica
 	if err != nil {
 		return nil
 	}
-	defer func() { _ = store.Close() }()
+	// This function has no error return -- its documented contract is a nil
+	// *VerificationResult on any setup failure -- so a close failure is
+	// logged rather than dropped.
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			slog.Default().Debug("tpm: failed to close trust store", "error", closeErr)
+		}
+	}()
 
 	// Create verifier with the trust store. Pass nil for embedded roots
 	// loader since embedded TPM manufacturer roots are not yet available.
@@ -371,13 +384,17 @@ func verifyEKCertificateResult(cert *x509.Certificate) *xkeyAttestation.Verifica
 	return result
 }
 
-func runEKExport(cmd *cobra.Command, args []string) error {
+func runEKExport(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get EK certificate based on algorithm flag
 	var ekCert *x509.Certificate
@@ -411,14 +428,18 @@ func runEKExport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runEKBackup(cmd *cobra.Command, args []string) error {
+func runEKBackup(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Ensure output directory exists
 	if err := os.MkdirAll(ekBackupOutput, 0750); err != nil {
@@ -473,7 +494,7 @@ func runEKBackup(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runEKRestore(cmd *cobra.Command, args []string) error {
+func runEKRestore(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Read the certificate from file
 	pemData, err := os.ReadFile(ekRestoreInput)
@@ -504,7 +525,11 @@ func runEKRestore(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Verify certificate matches EK public key (unless forced)
 	if !ekRestoreForce {

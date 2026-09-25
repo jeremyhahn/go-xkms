@@ -201,7 +201,11 @@ func (h *HandlerContext) ListBackendsHandler(w http.ResponseWriter, r *http.Requ
 		})
 	}
 
-	pageReq := parsePageRequest(r)
+	pageReq, err := parsePageRequest(r)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
 	paged, pageResp := applyPagination(backends, pageReq)
 
 	resp := ListBackendsResponse{
@@ -471,7 +475,11 @@ func (h *HandlerContext) ListKeysHandler(w http.ResponseWriter, r *http.Request)
 		keys = append(keys, keyInfo)
 	}
 
-	pageReq := parsePageRequest(r)
+	pageReq, err := parsePageRequest(r)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
 	paged, pageResp := applyPagination(keys, pageReq)
 
 	resp := ListKeysResponse{
@@ -1124,7 +1132,11 @@ func (h *HandlerContext) ListCertsHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	pageReq := parsePageRequest(r)
+	pageReq, err := parsePageRequest(r)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
 	paged, pageResp := applyPagination(certs, pageReq)
 
 	resp := ListCertsResponse{

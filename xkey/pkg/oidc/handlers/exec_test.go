@@ -139,6 +139,22 @@ func TestExecHandler_Handle(t *testing.T) {
 		}
 	})
 
+	t.Run("command failure with PassJSON stdin still reports the exit error", func(t *testing.T) {
+		// Exercises the stdin-write goroutine racing against a command that
+		// exits immediately without reading stdin: the write result must be
+		// drained (no deadlock) and the command's own exit error must still
+		// surface.
+		handler := NewExecHandler("exit 1").WithPassJSON()
+
+		err := handler.Handle(context.Background(), &TokenData{AccessToken: "test"})
+		if err == nil {
+			t.Error("Handle() expected error for failed command")
+		}
+		if !errors.Is(err, ErrExecCommandFailed) {
+			t.Errorf("Handle() error = %v, want ErrExecCommandFailed", err)
+		}
+	})
+
 	t.Run("pass JSON via stdin", func(t *testing.T) {
 		var stdout bytes.Buffer
 		// Use cat to echo stdin

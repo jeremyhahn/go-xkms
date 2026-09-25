@@ -407,13 +407,17 @@ func writeOutput(outputPath string, data []byte) error {
 }
 
 // runCAInfo executes the ca info command.
-func runCAInfo(cmd *cobra.Command, args []string) error {
+func runCAInfo(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	client, err := getSDKClient(cmd)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCAInfoFailed, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	resp, err := client.GetCACertificate(ctx, &transport.GetCACertificateRequest{})
@@ -434,7 +438,7 @@ func runCAInfo(cmd *cobra.Command, args []string) error {
 }
 
 // runCAIssue executes the ca issue command.
-func runCAIssue(cmd *cobra.Command, args []string) error {
+func runCAIssue(cmd *cobra.Command, args []string) (err error) {
 	profile, _ := cmd.Flags().GetString("profile")
 	if profile == "" {
 		return ErrCAProfileRequired
@@ -460,7 +464,11 @@ func runCAIssue(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCAIssueFailed, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	resp, err := client.IssueCertificate(ctx, &transport.IssueCertificateRequest{
@@ -491,7 +499,7 @@ func runCAIssue(cmd *cobra.Command, args []string) error {
 }
 
 // runCASignCSR executes the ca sign-csr command.
-func runCASignCSR(cmd *cobra.Command, args []string) error {
+func runCASignCSR(cmd *cobra.Command, args []string) (err error) {
 	csrPath, _ := cmd.Flags().GetString("csr")
 	if csrPath == "" {
 		return ErrCACSRRequired
@@ -510,7 +518,11 @@ func runCASignCSR(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCASignCSRFailed, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	resp, err := client.SignCSR(ctx, &transport.SignCSRRequest{
@@ -534,7 +546,7 @@ func runCASignCSR(cmd *cobra.Command, args []string) error {
 }
 
 // runCARevoke executes the ca revoke command.
-func runCARevoke(cmd *cobra.Command, args []string) error {
+func runCARevoke(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	serial := strings.TrimSpace(args[0])
 
@@ -548,7 +560,11 @@ func runCARevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCARevokeFailed, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	resp, err := client.RevokeCertificate(ctx, &transport.RevokeCertificateRequest{
@@ -569,14 +585,18 @@ func runCARevoke(cmd *cobra.Command, args []string) error {
 }
 
 // runCACRL executes the ca crl command.
-func runCACRL(cmd *cobra.Command, args []string) error {
+func runCACRL(cmd *cobra.Command, args []string) (err error) {
 	outputPath, _ := cmd.Flags().GetString("output")
 
 	client, err := getSDKClient(cmd)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCACRLFailed, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	resp, err := client.GenerateCRL(ctx, &transport.GenerateCRLRequest{})
@@ -588,7 +608,7 @@ func runCACRL(cmd *cobra.Command, args []string) error {
 }
 
 // runCACheckRevocation executes the ca check-revocation command.
-func runCACheckRevocation(cmd *cobra.Command, args []string) error {
+func runCACheckRevocation(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	serial := strings.TrimSpace(args[0])
 
@@ -596,7 +616,11 @@ func runCACheckRevocation(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCACheckRevocationFailed, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	resp, err := client.IsRevoked(ctx, &transport.IsRevokedRequest{
@@ -617,14 +641,18 @@ func runCACheckRevocation(cmd *cobra.Command, args []string) error {
 }
 
 // runCABundle executes the ca bundle command.
-func runCABundle(cmd *cobra.Command, args []string) error {
+func runCABundle(cmd *cobra.Command, args []string) (err error) {
 	outputPath, _ := cmd.Flags().GetString("output")
 
 	client, err := getSDKClient(cmd)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCABundleFailed, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	resp, err := client.GetCABundle(ctx, &transport.GetCABundleRequest{})
