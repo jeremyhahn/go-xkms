@@ -567,6 +567,150 @@ the same for the `handleSeal` / `handleUnseal` fix.
 walking `apierrors.SealStoreSentinelClasses`, mirroring the four existing
 subtests.
 
+### The remaining MCP handler families now classify too, and a guard closes the pattern (#930)
+
+#930 is #921's direct follow-up, closing the gap that paragraph named as out
+of scope: every handler family #912/#921 had not yet touched still returned
+bare, unwrapped errors, reported as the same `wire.CodeInternal` /
+`"xkms: internal error"` floor described above regardless of the actual
+condition.
+
+**Fixed families, each following the pattern its own domain calls for:**
+
+- **`pkg/api/mcp/handlers_share.go`** (`xkms.submitShare`, `listShares`,
+  `getShare`, `deleteShare`, `getShareCollectionStatus`) gained a local
+  `shareSentinelCodes` table and `mapShareError`, classifying
+  `qrdbsdk.ErrCeremonyShareNotFound` as `sdkssh.JSONRPCCodeNotFound` — the
+  same outcome `pkg/api/grpc/service_custodian_share_tenant.go`'s
+  `shareErrorToGRPC` reports as `codes.NotFound` — and `xkms.ErrNotConfigured`
+  as `ErrCodeServiceUnavailable`. The latter has no gRPC counterpart to
+  mirror: gRPC's five share RPCs never call through the xkms service layer at
+  all (they use the package-level `shareClient` set by `SetShareClient`
+  directly), so `XKMSService.shares` being nil is an MCP-only condition,
+  classified the same floor this package uses everywhere else for an unwired
+  subsystem.
+- **`pkg/api/mcp/handlers_audit.go`**'s `xkms.queryAudit` gained
+  `auditOperationError`, classifying unconditionally as `ErrCodeInternalError`
+  — mirroring `pkg/api/grpc/service_audit.go`'s `QueryAudit`, which reports
+  `codes.Internal` for any failure of the call unconditionally (its own
+  "not configured" and "nil request" guards run separately, before the call).
+- **`pkg/api/mcp/handlers_algorithms.go`**'s `xkms.algorithms` now routes its
+  error through the existing `mapKeyOpError`, matching
+  `pkg/api/grpc/service.go`'s `Algorithms`. `XKMSService.Algorithms` never
+  actually returns a non-nil error today; this keeps the handler correct if
+  that changes rather than leaving a dead bare-error branch.
+- **`pkg/api/mcp/utils.go`**'s `decodeSignature` — the only exported helper
+  in that file actually reachable from a handler (`handleVerify`;
+  `extractPublicKey`, `verifySignature` and `parseHashAlgorithm` are called
+  from nowhere in this package's dispatch surface and were left alone) — now
+  wraps every refusal (nil signature, a byte-array element that is not a
+  number, an encoding `json.Marshal`/`Unmarshal` cannot round-trip through
+  `[]byte`) as `ErrCodeInvalidParams`. There is no gRPC counterpart: proto's
+  `VerifyRequest.signature` is already `bytes`, so this JSON-RPC-only
+  loosely-typed decoding step has nothing to mirror; it is classified the
+  same way `decodeParams` itself is, since both reject a malformed request
+  field before any business logic runs.
+- **`pkg/api/mcp/handlers_frost.go`** (built only under the `frost` tag,
+  which CI's unit-test job adds) gained three local helpers —
+  `frostInvalidParamsError`, `frostOperationError`, `frostKeyNotFoundError`
+  — covering every one of its handlers (`generateKey`, `importKey`,
+  `listKeys`, `getKey`, `deleteKey`, `generateNonces`, `signRound`,
+  `aggregate`, `verify`) and `getFrostBackend`. Where
+  `pkg/api/grpc/service_frost.go` (also `frost`-tagged) has a counterpart
+  check, the code matches it exactly: required-field validation
+  (`threshold`, `total`, `participant_id`, `key_id`, `package.key_id`, …) is
+  `ErrCodeInvalidParams` (gRPC `InvalidArgument`); a `GetKey` failure
+  (`getKey`, `signRound`) is `sdkssh.JSONRPCCodeNotFound` (gRPC `NotFound`);
+  every other backend-operation failure, including `getFrostBackend`'s own
+  "no FROST backend configured", is `ErrCodeInternalError` (gRPC `Internal`).
+  The hex-decode failures this JSON-RPC surface alone has to parse (secret
+  share, group public key, verification shares, message, nonces,
+  commitments, signature — proto's FROST messages carry raw bytes, so gRPC
+  never decodes a hex string at all) have no gRPC line to mirror; they are
+  `ErrCodeInvalidParams`, the same classification this package already gives
+  every other malformed-request-field refusal.
+- **`pkg/api/mcp/handlers_frost_stub.go`**'s `routeFrostMethods` (built
+  under `!frost`, answering every `frost.*` method with "not compiled in")
+  changed from a bare `*errs.Message` to `ErrCodeMethodNotFound`, matching
+  `pkg/api/grpc/service_frost_stub.go`'s `errFrostNotCompiled`
+  (`codes.Unimplemented`) — `classToJSONRPCCode`'s mapping for
+  `apierrors.ClassUnimplemented` is `ErrCodeMethodNotFound`, so the two
+  transports' "not compiled in" refusal now sits in the same class.
+- **`pkg/api/mcp/handlers.go`**'s remaining request validation — every
+  `"X is required"` / `"invalid X"` check across `generateKey`, `sign`,
+  `verify`, `rotateKey`, `saveCert`/`getCert`/`deleteCert`/`certExists`/
+  `saveCertChain`/`getCertChain` (including the certificate/PEM parse
+  failures immediately behind those checks), `getImportParameters`,
+  `wrapKey`/`unwrapKey` (including the wrapping-key PEM parse failures),
+  `importKeyMaterial`, `asymmetricEncrypt`/`asymmetricDecrypt`, `copyKey`,
+  and `tenantForRequest`'s `ErrTenantIDNotAccepted` refusal (shared by every
+  handler that forwards a request-supplied `tenant_id`) — is now
+  `ErrCodeInvalidParams`, matching each one's gRPC counterpart in
+  `pkg/api/grpc/service.go`. `handleCopyKey`'s terminal
+  `XKMSService.CopyKey` failure, which gRPC has no counterpart for (its
+  `CopyKey` is a from-scratch implementation, not a delegation to the same
+  service method), now routes through `mapKeyOpError` like every other
+  service-layer delegation in this file, rather than a fixed-code wrap; its
+  `ErrCopyKeyIncomplete` contract-violation sentinel (a nil error with
+  `Success: false`) is `ErrCodeInternalError`.
+- **`pkg/api/mcp/handlers_bootstrap.go`**'s `bootstrap.showKeys` — found by
+  the guard test below, not named in the original issue text, but the same
+  bug class — gained `mapBootstrapError`, mirroring
+  `pkg/api/grpc/service_bootstrap.go`'s function of the same name:
+  `xkms.ErrBootstrapListenerNotEnabled` is `ErrCodeServiceUnavailable`
+  (gRPC `Unavailable`); anything else is `ErrCodeInternalError` (gRPC
+  `Internal`).
+
+**The guard: two tests that fail if any registered handler regresses.**
+`pkg/api/mcp/guard_keyoperror_test.go` adds
+`TestEveryRegisteredHandler_ReturnsKeyOpErrorOrNil`, a runtime sweep over
+`rpcMethodHandlers` — the same table `InvokeMethod` dispatches through and
+`ModuleMethods()` advertises as MCP tools, and the same table
+`TestEveryHandler_MalformedParamsAreInvalidParams` (#774) already sweeps for
+the decode-failure gate — driving each handler with a valid, empty JSON
+object (`{}`) rather than that test's malformed JSON, so the call reaches
+each handler's own validation and, for a handler with no required fields,
+the service-layer call beneath it. The test server (`newMalformedParamsTestServer`)
+wires every subsystem it is safe to leave configured (password store,
+barrier, SSH) so a handler that depends on one of those does not panic on a
+nil dereference; every other subsystem (shares, audit, custodian groups, CA,
+WebAuthn, PIV, FROST backends, the tenant service) is deliberately left nil,
+so a handler that reaches its own subsystem's "not configured" guard
+exercises exactly the path this issue's bug class lived in. Because
+`frost.*` methods are dispatched by `routeFrostMethods` *before*
+`rpcMethodHandlers` is ever consulted (`InvokeMethod`, `module_support.go`),
+they are outside that sweep's reach; `TestEveryFrostMethod_ReturnsKeyOpErrorOrNil`
+is their identical counterpart, run against the fixed `frostMethods` list
+and passing under both the `frost` tag (the real handlers) and without it
+(the stub).
+
+This runtime-sweep mechanism was chosen over a `go/ast` static check for two
+reasons. First, it proves exactly what `module_mcp.go` itself observes: it
+calls the same handler function through the same
+`errors.As(err, &KeyOpError{})` the dispatcher uses, so it can never diverge
+from real dispatch behaviour the way a lexical pattern match over source
+text could — a static check would have to re-derive, by tracing call graphs
+across interface boundaries, that every "safe" mapper function
+(`mapKeyOpError`, `mapShareError`, `certOperationError`, …) itself only ever
+returns nil or `*KeyOpError`, which a direct runtime call proves for free.
+Second, it is exactly the architecture this package already committed to
+for the sibling gate (#774): a table a reviewer watches shrink or grow, not
+a parallel analysis tool with its own blind spots.
+
+**Verification**: `pkg/api/mcp/guard_keyoperror_test.go`'s two sweep tests
+(above); per-family wire-code tests through `Server.InvokeMethod` and the
+individual handlers in `handlers_share_test.go`, `handlers_audit_test.go`,
+`handlers_crypto_params_test.go` (`decodeSignature`), `handlers_frost_test.go`
+(`frost`-tagged) and `handlers_bootstrap_test.go`; `server_frost_stub_test.go`
+pins the stub's `ErrCodeMethodNotFound` change; `module_mcp_errors_test.go`
+in `pkg/apimodule` was updated in the same change, since its
+"unclassified error degrades to a generic internal fault" subtest had used
+the (now-fixed) frost stub as its example — #930 closed the last bare-error
+path that subtest could reach through a real MCP call, so it now documents
+that the fallback branch it names is defense-in-depth with no live
+production trigger, rather than continuing to rely on the bug this issue
+fixes to stay reproducible.
+
 ## Pagination
 
 `ListKeys`, `ListBackends` and `ListCertificates` take `ListOption` values and

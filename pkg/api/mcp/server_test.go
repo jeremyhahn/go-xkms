@@ -226,8 +226,11 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 
 		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
-		assert.NotNil(t, resp.Error)
-		assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
+		require.NotNil(t, resp.Error)
+		// go-xkms#930: handleGenerateKey's "key_id is required" refusal now
+		// reaches dispatch as a *KeyOpError carrying ErrCodeInvalidParams,
+		// not the ErrCodeInternalError floor a bare error used to fall to.
+		assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 	})
 }
 
