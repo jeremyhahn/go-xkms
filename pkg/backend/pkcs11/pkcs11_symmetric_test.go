@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
@@ -1596,5 +1597,34 @@ func TestSymmetricEncrypter_KeyUsageIsEnforced(t *testing.T) {
 		_, err = encrypter.Decrypt(encrypted, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to initialize decryption")
+	})
+}
+
+// TestResolveGCMTagSize verifies the tag-length mapping AES-GCM Encrypt/
+// Decrypt use: zero selects the full 128-bit tag, every SP 800-38D-approved
+// truncated length passes through unchanged, and any other length is
+// refused with the typed ErrInvalidTagSize rather than silently clamped to
+// the nearest approved value.
+func TestResolveGCMTagSize(t *testing.T) {
+	t.Run("zero selects the full tag", func(t *testing.T) {
+		got, err := resolveGCMTagSize(0)
+		require.NoError(t, err)
+		assert.Equal(t, gcmTagSize, got)
+	})
+
+	t.Run("every approved length passes through", func(t *testing.T) {
+		for requested := range gcmTagSizes {
+			got, err := resolveGCMTagSize(requested)
+			require.NoError(t, err)
+			assert.Equal(t, requested, got)
+		}
+	})
+
+	t.Run("an unapproved length is refused", func(t *testing.T) {
+		_, err := resolveGCMTagSize(10)
+		require.Error(t, err)
+		var typed *errs.Detail
+		require.True(t, errors.As(err, &typed), "expected *errs.Detail, got %T", err)
+		assert.ErrorIs(t, err, ErrInvalidTagSize)
 	})
 }
