@@ -336,8 +336,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairing.Transport)
 	case staticKey == nil:
 		generated, err := pairing.GenerateStaticKey()
 		if err != nil {
-			_ = transport.Close()
-			return nil, err
+			return nil, errors.Join(err, transport.Close())
 		}
 		staticKey, ownedKey = generated, generated // we made it, we own it
 	case cfg.OwnsStaticKey:
@@ -372,8 +371,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairing.Transport)
 	// Validate trust settings: if no expected remote key and trust-new-devices is false,
 	// reject the connection to prevent connecting to unknown devices.
 	if len(cfg.ExpectedRemoteStatic) == 0 && !cfg.TrustNewDevices {
-		_ = transport.Close()
-		return nil, ErrUntrustedDevice
+		return nil, errors.Join(ErrUntrustedDevice, transport.Close())
 	}
 
 	// Create Noise session with empty prologue initially.
@@ -388,8 +386,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairing.Transport)
 		Prologue:             nil, // Set during identity exchange
 	})
 	if err != nil {
-		_ = transport.Close()
-		return nil, err
+		return nil, errors.Join(err, transport.Close())
 	}
 
 	constructed = true
@@ -561,7 +558,9 @@ func (b *PhoneKeyBackend) connectBLE(ctx context.Context, bleTransport BLECapabl
 			// Other errors: force-remove and retry with fresh scan
 			// Force-remove to clear stale D-Bus state from failed connection
 			if attempt < maxRetries {
-				_ = bleTransport.DisconnectAndRemove()
+				if disconnectErr := bleTransport.DisconnectAndRemove(); disconnectErr != nil {
+					b.log.Warn("failed to disconnect and remove BLE device", "address", address, "error", disconnectErr)
+				}
 				b.log.Info("will retry with fresh scan after disconnect")
 				continue
 			}
@@ -577,7 +576,9 @@ func (b *PhoneKeyBackend) connectBLE(ctx context.Context, bleTransport BLECapabl
 			// D-Bus operation that blocks all future writes with "In Progress".
 			// Removing the device from BlueZ invalidates all cached GATT handles
 			// and stale D-Bus state, allowing a fresh connection with clean objects.
-			_ = bleTransport.DisconnectAndRemove()
+			if disconnectErr := bleTransport.DisconnectAndRemove(); disconnectErr != nil {
+				b.log.Warn("failed to disconnect and remove BLE device", "address", address, "error", disconnectErr)
+			}
 			lastErr = err
 
 			if attempt < maxRetries {
@@ -1190,7 +1191,9 @@ func (b *PhoneKeyBackend) close() error {
 	// Also unblocks any leaseholder's round trip rather than leaving it to
 	// wait out its own timeout.
 	if b.transport != nil {
-		_ = b.transport.Close()
+		if closeErr := b.transport.Close(); closeErr != nil {
+			b.log.Warn("transport close failed", "error", closeErr)
+		}
 		b.transport = nil
 	}
 

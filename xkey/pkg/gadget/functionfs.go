@@ -15,6 +15,7 @@ package gadget
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -115,29 +116,29 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 	// Write USB descriptors to ep0.
 	descs := BuildCCIDDescriptors()
 	if _, err := t.ep0.Write(descs); err != nil {
-		_ = t.ep0.Close()
+		closeErr := t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
-			&SentinelCauseError{Sentinel: ErrDescriptorWriteFailed, Cause: err})
+			&SentinelCauseError{Sentinel: ErrDescriptorWriteFailed, Cause: errors.Join(err, closeErr)})
 	}
 
 	// Write string descriptors to ep0.
 	strings := BuildFunctionFSStrings()
 	if _, err := t.ep0.Write(strings); err != nil {
-		_ = t.ep0.Close()
+		closeErr := t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
-			&SentinelCauseError{Sentinel: ErrDescriptorWriteFailed, Cause: err})
+			&SentinelCauseError{Sentinel: ErrDescriptorWriteFailed, Cause: errors.Join(err, closeErr)})
 	}
 
 	// Open bulk OUT endpoint (host -> device).
 	epOutPath := filepath.Join(t.mountDir, "ep1")
 	epOut, err := os.OpenFile(epOutPath, os.O_RDONLY, 0)
 	if err != nil {
-		_ = t.ep0.Close()
+		closeErr := t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
-			&DetailError{Err: ErrEndpointOpenFailed, Detail: fmt.Sprintf(": ep1: %v", err)})
+			&DetailError{Err: ErrEndpointOpenFailed, Detail: fmt.Sprintf(": ep1: %v", errors.Join(err, closeErr))})
 	}
 	t.epOut = epOut
 
@@ -145,12 +146,12 @@ func (t *FunctionFSTransport) Initialize(ctx context.Context) error {
 	epInPath := filepath.Join(t.mountDir, "ep2")
 	epIn, err := os.OpenFile(epInPath, os.O_WRONLY, 0)
 	if err != nil {
-		_ = t.epOut.Close()
+		epOutCloseErr := t.epOut.Close()
 		t.epOut = nil
-		_ = t.ep0.Close()
+		ep0CloseErr := t.ep0.Close()
 		t.ep0 = nil
 		return NewGadgetError("Initialize",
-			&DetailError{Err: ErrEndpointOpenFailed, Detail: fmt.Sprintf(": ep2: %v", err)})
+			&DetailError{Err: ErrEndpointOpenFailed, Detail: fmt.Sprintf(": ep2: %v", errors.Join(err, epOutCloseErr, ep0CloseErr))})
 	}
 	t.epIn = epIn
 
@@ -187,8 +188,15 @@ func (t *FunctionFSTransport) Read(ctx context.Context) ([]byte, error) {
 		}
 
 		// Set a short deadline so we can check for context cancellation.
+		// os.ErrNoDeadline means the underlying file type (e.g., a plain
+		// regular file, as used in tests) does not support deadlines at
+		// all; Read on such files returns immediately regardless, so that
+		// case is not an error. Any other failure (closed fd, etc.) is.
 		deadline := time.Now().Add(ffsPollInterval)
-		_ = t.epOut.SetReadDeadline(deadline)
+		if err := t.epOut.SetReadDeadline(deadline); err != nil && !errors.Is(err, os.ErrNoDeadline) {
+			return nil, NewGadgetError("Read",
+				&SentinelCauseError{Sentinel: ErrEndpointIOFailed, Cause: err})
+		}
 
 		n, err := t.epOut.Read(buf)
 		if err != nil {
@@ -281,7 +289,17 @@ func (t *FunctionFSTransport) monitorEvents(ctx context.Context, ep0 *os.File) {
 		}
 
 		// Set a short deadline to allow checking context/closed state.
-		_ = ep0.SetReadDeadline(time.Now().Add(ffsPollInterval))
+		// os.ErrNoDeadline means the underlying file type does not support
+		// deadlines at all (e.g., a plain regular file, as used in tests);
+		// Read on such files returns immediately regardless, so that case
+		// is not an error. Any other failure (closed fd, etc.) is terminal.
+		if err := ep0.SetReadDeadline(time.Now().Add(ffsPollInterval)); err != nil && !errors.Is(err, os.ErrNoDeadline) {
+			if t.closed.Load() {
+				return
+			}
+			t.logger.Error("FunctionFS event set read deadline error", "error", err)
+			return
+		}
 
 		n, err := ep0.Read(eventBuf)
 		if err != nil {

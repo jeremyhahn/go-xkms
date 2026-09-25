@@ -140,7 +140,9 @@ func (t *USBTransport) Connect(ctx context.Context) error {
 		// No AOA device found — try to switch an Android device into AOA mode.
 		t.log.Debug("no AOA device found, attempting AOA switchover")
 		if switchErr := t.switchToAOA(usbCtx); switchErr != nil {
-			_ = usbCtx.Close()
+			if closeErr := usbCtx.Close(); closeErr != nil {
+				t.log.Warn("USB context close failed", "error", closeErr)
+			}
 			t.log.Error("AOA switchover failed", "error", switchErr)
 			return ErrConnectionFailed
 		}
@@ -149,35 +151,43 @@ func (t *USBTransport) Connect(ctx context.Context) error {
 		time.Sleep(2 * time.Second)
 
 		// Re-open the USB context after switchover.
-		_ = usbCtx.Close()
+		if closeErr := usbCtx.Close(); closeErr != nil {
+			t.log.Warn("USB context close failed", "error", closeErr)
+		}
 		usbCtx = gousb.NewContext()
 
 		dev, err = t.findAOADevice(usbCtx)
 		if err != nil {
-			_ = usbCtx.Close()
+			if closeErr := usbCtx.Close(); closeErr != nil {
+				t.log.Warn("USB context close failed", "error", closeErr)
+			}
 			t.log.Error("AOA device not found after switchover", "error", err)
 			return ErrConnectionFailed
 		}
 	}
 
-	// Set auto-detach kernel driver so we can claim the interface.
-	_ = dev.SetAutoDetach(true)
+	// Set auto-detach kernel driver so we can claim the interface. Not
+	// fatal on its own: interface claim below will fail with a clearer
+	// error if a kernel driver is still attached.
+	if err := dev.SetAutoDetach(true); err != nil {
+		t.log.Warn("failed to set USB auto-detach", "error", err)
+	}
 
 	// Open the default configuration and claim interface 0.
 	cfg, err := dev.Config(1)
 	if err != nil {
-		_ = dev.Close()
-		_ = usbCtx.Close()
-		t.log.Error("failed to get USB config", "error", err)
+		devCloseErr := dev.Close()
+		usbCtxCloseErr := usbCtx.Close()
+		t.log.Error("failed to get USB config", "error", errors.Join(err, devCloseErr, usbCtxCloseErr))
 		return ErrConnectionFailed
 	}
 
 	intf, err := cfg.Interface(0, 0)
 	if err != nil {
-		_ = cfg.Close()
-		_ = dev.Close()
-		_ = usbCtx.Close()
-		t.log.Error("failed to claim USB interface", "error", err)
+		cfgCloseErr := cfg.Close()
+		devCloseErr := dev.Close()
+		usbCtxCloseErr := usbCtx.Close()
+		t.log.Error("failed to claim USB interface", "error", errors.Join(err, cfgCloseErr, devCloseErr, usbCtxCloseErr))
 		return ErrConnectionFailed
 	}
 
@@ -203,10 +213,11 @@ func (t *USBTransport) Connect(ctx context.Context) error {
 
 	if inEP == nil || outEP == nil {
 		intf.Close()
-		_ = cfg.Close()
-		_ = dev.Close()
-		_ = usbCtx.Close()
-		t.log.Error("USB AOA device missing bulk endpoints")
+		cfgCloseErr := cfg.Close()
+		devCloseErr := dev.Close()
+		usbCtxCloseErr := usbCtx.Close()
+		t.log.Error("USB AOA device missing bulk endpoints",
+			"error", errors.Join(cfgCloseErr, devCloseErr, usbCtxCloseErr))
 		return ErrConnectionFailed
 	}
 
@@ -238,7 +249,9 @@ func (t *USBTransport) findAOADevice(usbCtx *gousb.Context) (*gousb.Device, erro
 
 	// Use the first matching device, close extras.
 	for i := 1; i < len(devs); i++ {
-		_ = devs[i].Close()
+		if closeErr := devs[i].Close(); closeErr != nil {
+			t.log.Warn("failed to close extra AOA device", "error", closeErr)
+		}
 	}
 
 	return devs[0], nil
@@ -257,7 +270,9 @@ func (t *USBTransport) switchToAOA(usbCtx *gousb.Context) error {
 
 	defer func() {
 		for _, d := range devs {
-			_ = d.Close()
+			if closeErr := d.Close(); closeErr != nil {
+				t.log.Warn("failed to close USB device", "error", closeErr)
+			}
 		}
 	}()
 
@@ -431,7 +446,7 @@ func (t *USBTransport) IsConnected() bool {
 
 // Close closes the transport permanently and releases all resources.
 // After Close, the transport cannot be reconnected.
-func (t *USBTransport) Close() error {
+func (t *USBTransport) Close() (err error) {
 	if t.closed.Swap(true) {
 		return nil
 	}
@@ -448,19 +463,23 @@ func (t *USBTransport) Close() error {
 	}
 
 	if t.device != nil {
-		_ = t.device.Close()
+		if closeErr := t.device.Close(); closeErr != nil {
+			err = errors.Join(err, &WrappedError{Msg: "close USB device", Err: closeErr})
+		}
 		t.device = nil
 	}
 
 	if t.usbCtx != nil {
-		_ = t.usbCtx.Close()
+		if closeErr := t.usbCtx.Close(); closeErr != nil {
+			err = errors.Join(err, &WrappedError{Msg: "close USB context", Err: closeErr})
+		}
 		t.usbCtx = nil
 	}
 
 	t.inEP = nil
 	t.outEP = nil
 
-	return nil
+	return err
 }
 
 // handleWriteError updates connection state on write failures.
