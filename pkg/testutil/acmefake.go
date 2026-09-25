@@ -78,6 +78,7 @@ func NewFakeACMEDirectory(t *testing.T, challengeTypes []string, certs [][]byte)
 	mux.HandleFunc("/challenge/", d.handleChallenge)
 	mux.HandleFunc("/finalize/1", d.handleFinalize)
 	mux.HandleFunc("/cert/1", d.handleCert)
+	mux.HandleFunc("/revoke-cert", d.handleRevokeCert)
 
 	d.Server = httptest.NewServer(mux)
 	t.Cleanup(d.Close)
@@ -240,6 +241,15 @@ func (d *FakeACMEDirectory) handleFinalize(w http.ResponseWriter, _ *http.Reques
 		"finalize":       d.URL + "/finalize/1",
 		"certificate":    d.URL + "/cert/1",
 	})
+}
+
+// handleRevokeCert accepts any well-formed revocation request and reports
+// success, mirroring the rest of this fake: it proves out client code that
+// drives golang.org/x/crypto/acme.Client.RevokeCert, not CA revocation
+// business logic (belongs to pkg/acme/server's own tests).
+func (d *FakeACMEDirectory) handleRevokeCert(w http.ResponseWriter, _ *http.Request) {
+	d.setHeaders(w)
+	w.WriteHeader(http.StatusOK)
 }
 
 func (d *FakeACMEDirectory) handleCert(w http.ResponseWriter, _ *http.Request) {
