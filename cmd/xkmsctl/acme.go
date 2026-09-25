@@ -25,6 +25,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 
@@ -205,6 +206,19 @@ func SetACMEAdminClientFactory(f ACMEAdminClientFactory) func() {
 	prev := acmeAdminClientFactory
 	acmeAdminClientFactory = f
 	return func() { acmeAdminClientFactory = prev }
+}
+
+// closeAdminClientQuiet runs cleanup (the closer acmeAdminClient returns)
+// and logs a failure at debug level. Every call site is a defer running
+// after the command has already produced its result (success or a handled
+// error reported through handleError), so there is no more-authoritative
+// channel left to report a cleanup failure on -- and, unlike handleError,
+// this must never call exitFunc: a cleanup hiccup on an otherwise
+// successful command must not turn it into a process exit.
+func closeAdminClientQuiet(cleanup func() error) {
+	if err := cleanup(); err != nil {
+		slog.Default().Debug("xkmsctl: failed to close ACME admin client", "error", err)
+	}
 }
 
 // acmeAdminClient resolves the active factory and opens a client.

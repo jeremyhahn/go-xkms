@@ -386,7 +386,7 @@ Examples:
 }
 
 // runPasswordAdd executes the password add command.
-func runPasswordAdd(cmd *cobra.Command, args []string) error {
+func runPasswordAdd(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	name, _ := cmd.Flags().GetString("name")
 	password, _ := cmd.Flags().GetString("password")
@@ -421,7 +421,11 @@ func runPasswordAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if generate {
 		password, err = xkms.GenerateStaticPassword(length, charset)
@@ -538,20 +542,26 @@ type passwordListEntry struct {
 
 // writePasswordValue writes secret's plaintext directly to w, borrowed from
 // protected memory for the duration of the write rather than materialized
-// into a Go string via a %s verb. A nil secret writes nothing.
+// into a Go string via a %s verb. A nil secret writes nothing. A failure to
+// open or read the secret writes a bracketed marker instead of leaving the
+// "Password:" label with nothing after it, which would otherwise be
+// indistinguishable from a genuinely empty stored password.
 func writePasswordValue(w io.Writer, secret *secure.Secret) {
 	if secret == nil {
 		return
 	}
 	buf, err := secret.Open()
 	if err != nil {
+		_, _ = fmt.Fprintf(w, "<error: %v>", err)
 		return
 	}
 	defer buf.Destroy()
-	_ = buf.WithBytes(func(b []byte) error {
+	if err := buf.WithBytes(func(b []byte) error {
 		_, werr := w.Write(b)
 		return werr
-	})
+	}); err != nil {
+		_, _ = fmt.Fprintf(w, "<error: %v>", err)
+	}
 }
 
 // resolvePasswordList asks the daemon first and reads the on-disk store only
@@ -593,7 +603,7 @@ func resolvePasswordList(cmd *cobra.Command, selection string, showPasswords boo
 // readPasswordListFromDisk reads the on-disk static password store. It is
 // the correct authority when no daemon holds the barrier, and the only path
 // that can reveal password values.
-func readPasswordListFromDisk(cmd *cobra.Command) ([]passwordListEntry, string, error) {
+func readPasswordListFromDisk(cmd *cobra.Command) (_ []passwordListEntry, _ string, err error) {
 	storePath, err := passwordStorePath(cmd)
 	if err != nil {
 		return nil, "", err
@@ -606,7 +616,11 @@ func readPasswordListFromDisk(cmd *cobra.Command) ([]passwordListEntry, string, 
 		}
 		return nil, storePath, err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	passwords, err := store.List()
 	if err != nil {
@@ -650,7 +664,7 @@ func passwordStorePath(cmd *cobra.Command) (string, error) {
 }
 
 // runPasswordGet executes the password get command.
-func runPasswordGet(cmd *cobra.Command, args []string) error {
+func runPasswordGet(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	storePath, err := passwordStorePath(cmd)
 	if err != nil {
@@ -665,7 +679,11 @@ func runPasswordGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	pw, err := store.Get(args[0])
 	if err != nil {
@@ -677,7 +695,7 @@ func runPasswordGet(cmd *cobra.Command, args []string) error {
 }
 
 // runPasswordRemove executes the password remove command.
-func runPasswordRemove(cmd *cobra.Command, args []string) error {
+func runPasswordRemove(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	storePath, err := passwordStorePath(cmd)
 	if err != nil {
@@ -696,7 +714,11 @@ func runPasswordRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	reader := bufio.NewReader(os.Stdin)
 
@@ -735,7 +757,7 @@ func runPasswordRemove(cmd *cobra.Command, args []string) error {
 // runPasswordType executes the password type command. It connects to the
 // running xkey daemon and instructs it to type the named password via
 // the virtual HID keyboard.
-func runPasswordType(cmd *cobra.Command, args []string) error {
+func runPasswordType(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	if len(args) == 0 {
 		return ErrPasswordMissingTypeArg
@@ -747,7 +769,11 @@ func runPasswordType(cmd *cobra.Command, args []string) error {
 	}
 
 	client := ipc.NewClient(socketPath)
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	resp, err := client.TypePassword(args[0])
 	if err != nil {
@@ -766,7 +792,7 @@ func runPasswordType(cmd *cobra.Command, args []string) error {
 }
 
 // runPasswordUnlock executes the password unlock command.
-func runPasswordUnlock(cmd *cobra.Command, args []string) error {
+func runPasswordUnlock(cmd *cobra.Command, args []string) (err error) {
 	pin, _ := cmd.Flags().GetString("pin")
 
 	if pin == "" {
@@ -777,7 +803,11 @@ func runPasswordUnlock(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	req := &transport.PasswordStoreUnlockRequest{
@@ -793,12 +823,16 @@ func runPasswordUnlock(cmd *cobra.Command, args []string) error {
 }
 
 // runPasswordLock executes the password lock command.
-func runPasswordLock(cmd *cobra.Command, args []string) error {
+func runPasswordLock(cmd *cobra.Command, args []string) (err error) {
 	client, err := connectPasswordStore()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -906,12 +940,16 @@ const passwordBackendFile = "file"
 
 // readPasswordStatusFromXKMSd reads the session status from a configured
 // xkmsd server. This is the only source that knows the access mode.
-func readPasswordStatusFromXKMSd(cmd *cobra.Command) (passwordStatusInfo, stateSource, error) {
+func readPasswordStatusFromXKMSd(cmd *cobra.Command) (_ passwordStatusInfo, _ stateSource, err error) {
 	client, err := connectPasswordStore()
 	if err != nil {
 		return passwordStatusInfo{}, stateSource{}, err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	resp, err := client.PasswordStoreStatus(context.Background())
 	if err != nil {
@@ -928,7 +966,7 @@ func readPasswordStatusFromXKMSd(cmd *cobra.Command) (passwordStatusInfo, stateS
 }
 
 // runPasswordAccessMode executes the password access-mode command.
-func runPasswordAccessMode(cmd *cobra.Command, args []string) error {
+func runPasswordAccessMode(cmd *cobra.Command, args []string) (err error) {
 	mode, _ := cmd.Flags().GetString("mode")
 
 	if mode == "" {
@@ -943,7 +981,11 @@ func runPasswordAccessMode(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	req := &transport.PasswordStoreSetAccessModeRequest{

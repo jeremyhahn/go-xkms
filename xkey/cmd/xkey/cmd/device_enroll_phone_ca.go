@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -58,12 +59,16 @@ const enrollmentCertProfile = "client"
 // These are the Google hardware attestation roots. They are what turns the
 // chain from "certificates the phone sent" into evidence: without an anchor a
 // device can mint its own chain and attest whatever it likes.
-func androidAttestationRoots() (*x509.CertPool, error) {
+func androidAttestationRoots() (_ *x509.CertPool, err error) {
 	store, err := openTrustStore()
 	if err != nil {
 		return nil, &WrappedError{Msg: "failed to open trust store", Err: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	verifier, err := attestation.NewVerifier(store, truststore.LoadEmbeddedRoots)
 	if err != nil {
@@ -95,7 +100,7 @@ func signEnrollmentCSR(
 	result *pairing.LocalGetDeviceEnrollmentRequestResult,
 	nonce []byte,
 	decision *pairing.EnrollmentDecision,
-) ([]byte, [][]byte, error) {
+) (_ []byte, _ [][]byte, err error) {
 	source := strings.ToLower(strings.TrimSpace(opts.CASource))
 	if source == "" {
 		source = caSourceLocal
@@ -137,7 +142,11 @@ func signEnrollmentCSR(
 	if err != nil {
 		return nil, nil, &SentinelCauseError{Sentinel: ErrEnrollPhoneNoCA, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	resp, err := client.SignCSR(ctx, req)
 	if err != nil {

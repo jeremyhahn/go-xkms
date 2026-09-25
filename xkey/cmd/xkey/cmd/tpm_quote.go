@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -87,7 +88,7 @@ func init() {
 		"Include event log in output (when available)")
 }
 
-func runTPMQuote(cmd *cobra.Command, args []string) error {
+func runTPMQuote(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Parse PCR indices
 	pcrs, err := parsePCRIndices(quotePCRs)
@@ -109,7 +110,11 @@ func runTPMQuote(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Check for IAK
 	if _, err := tpm.IAKAttributes(); err != nil {

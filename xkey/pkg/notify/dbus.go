@@ -120,11 +120,17 @@ func connectSessionBus(logger *slog.Logger) (*dbus.Conn, error) {
 	// Connect using the standard method which respects the env var
 	conn, err := dbus.ConnectSessionBus()
 
-	// Restore old env var (best effort)
+	// Restore old env var (best effort): the connection above has already
+	// been made or has already failed, so a restore failure changes
+	// nothing about conn/err below, but it is logged since a leaked
+	// override would misdirect every subsequent D-Bus connection in this
+	// process.
 	if oldAddr != "" {
-		_ = os.Setenv("DBUS_SESSION_BUS_ADDRESS", oldAddr)
-	} else {
-		_ = os.Unsetenv("DBUS_SESSION_BUS_ADDRESS")
+		if restoreErr := os.Setenv("DBUS_SESSION_BUS_ADDRESS", oldAddr); restoreErr != nil {
+			logger.Warn("failed to restore DBUS_SESSION_BUS_ADDRESS", slog.String("error", restoreErr.Error()))
+		}
+	} else if restoreErr := os.Unsetenv("DBUS_SESSION_BUS_ADDRESS"); restoreErr != nil {
+		logger.Warn("failed to unset DBUS_SESSION_BUS_ADDRESS", slog.String("error", restoreErr.Error()))
 	}
 
 	if err != nil {

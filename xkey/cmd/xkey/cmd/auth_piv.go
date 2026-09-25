@@ -73,7 +73,7 @@ func buildAuthPIVConfig(cmd *cobra.Command) *PIVConfig {
 // key IS the credential: there is no username and no WebAuthn ceremony. On
 // success the returned access/refresh token pair is stored under the same
 // token store "xkey auth login" (WebAuthn) and "xkey auth token" use.
-func runAuthLoginPIV(cmd *cobra.Command, logger *slog.Logger, serverURL string) error {
+func runAuthLoginPIV(cmd *cobra.Command, logger *slog.Logger, serverURL string) (err error) {
 	slotFlag, _ := cmd.Flags().GetString("slot")
 	slot, err := validatePIVSlot(slotFlag)
 	if err != nil {
@@ -89,7 +89,11 @@ func runAuthLoginPIV(cmd *cobra.Command, logger *slog.Logger, serverURL string) 
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	cert, err := storage.Retrieve(slot)
 	if err != nil {

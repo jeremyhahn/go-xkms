@@ -30,7 +30,7 @@ func Save(cfg *Config) error {
 // It uses a temporary file + rename pattern for crash safety. The parent
 // directory is created with 0700 permissions if it does not exist. The
 // config file is written with 0600 permissions.
-func SaveToPath(cfg *Config, path string) error {
+func SaveToPath(cfg *Config, path string) (err error) {
 	if cfg == nil {
 		return errors.Join(ErrConfigSaveFailed, errors.New("config is nil"))
 	}
@@ -57,23 +57,26 @@ func SaveToPath(cfg *Config, path string) error {
 	}
 	tmpPath := tmpFile.Name()
 
-	// Clean up the temp file on any failure path.
+	// Clean up the temp file on any failure path. A failed removal is
+	// joined into the returned error rather than dropped, since a leaked
+	// temp file should be visible to the caller even though it is not
+	// itself the reason the save failed.
 	success := false
 	defer func() {
 		if !success {
-			_ = os.Remove(tmpPath)
+			if rmErr := os.Remove(tmpPath); rmErr != nil {
+				err = errors.Join(err, rmErr)
+			}
 		}
 	}()
 
 	if _, writeErr := tmpFile.Write(data); writeErr != nil {
-		_ = tmpFile.Close()
-		return errors.Join(ErrConfigSaveFailed, writeErr)
+		return errors.Join(ErrConfigSaveFailed, writeErr, tmpFile.Close())
 	}
 
 	// Sync to disk before closing to ensure durability.
 	if syncErr := tmpFile.Sync(); syncErr != nil {
-		_ = tmpFile.Close()
-		return errors.Join(ErrConfigSaveFailed, syncErr)
+		return errors.Join(ErrConfigSaveFailed, syncErr, tmpFile.Close())
 	}
 
 	if closeErr := tmpFile.Close(); closeErr != nil {

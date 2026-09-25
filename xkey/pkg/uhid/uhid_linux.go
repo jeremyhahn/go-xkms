@@ -18,6 +18,7 @@ package uhid
 import (
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -212,12 +213,16 @@ func (d *Device) Close() error {
 		return nil
 	}
 
-	// Send UHID_DESTROY if device was created
+	// Send UHID_DESTROY if device was created. Best effort: the fd is
+	// closed immediately below regardless, so a failed notification here
+	// changes nothing about teardown, but it is logged since the kernel
+	// would otherwise be left believing the device still exists.
 	if d.created.Load() {
 		buf := make([]byte, uhidEventHeaderSize)
 		binary.LittleEndian.PutUint32(buf[0:4], UHID_DESTROY)
-		// Best effort - ignore errors during cleanup
-		_, _ = d.file.Write(buf)
+		if _, werr := d.file.Write(buf); werr != nil {
+			slog.Debug("uhid: failed to send UHID_DESTROY during close", "error", werr)
+		}
 	}
 
 	err := d.file.Close()

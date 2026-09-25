@@ -113,7 +113,7 @@ func acmeCertList(cfg *Config) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	resp, err := client.Certificate().List(ctx, &acmeadmin.ListCertificatesRequest{
 		Page:    acmeCertListPage,
@@ -143,7 +143,7 @@ func acmeCertGet(cfg *Config, serial string) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	cert, err := client.Certificate().Get(ctx, serial)
 	if err != nil {
@@ -169,7 +169,7 @@ func acmeCertRevoke(cfg *Config, serial string) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	if err := client.Certificate().Revoke(ctx, serial, acmeCertRevokeRsn); err != nil {
 		handleError(classifyACMEAdminError("revoke certificate "+serial, ErrRevokeACMECertificateFailed, err))

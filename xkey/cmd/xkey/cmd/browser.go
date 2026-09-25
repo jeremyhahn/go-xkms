@@ -90,7 +90,7 @@ func init() {
 
 // runBrowserLaunch opens the trust store, detects or resolves the target
 // browser, injects CA certificates, and launches the browser process.
-func runBrowserLaunch(cmd *cobra.Command, args []string) error {
+func runBrowserLaunch(cmd *cobra.Command, args []string) (err error) {
 	url := "about:blank"
 	if len(args) > 0 {
 		url = args[0]
@@ -118,7 +118,11 @@ func runBrowserLaunch(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrBrowserLaunchFailed,
 			Cause: &WrappedError{Msg: fmt.Sprintf("failed to open trust store at %s", trustStorePath), Err: err}}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Create services.
 	trustSvc := services.NewTrustService(store)

@@ -299,7 +299,7 @@ func runDeviceEnroll(cmd *cobra.Command, args []string) error {
 // a rejection arrives as an alert on the first read. The probe therefore
 // reads once with a short deadline. Bytes or a read timeout mean the master
 // accepted the certificate; any other read error is the rejection.
-func probeMasterWithClientCert(address string, clientCert tls.Certificate, roots *x509.CertPool) error {
+func probeMasterWithClientCert(address string, clientCert tls.Certificate, roots *x509.CertPool) (err error) {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return err
@@ -315,7 +315,11 @@ func probeMasterWithClientCert(address string, clientCert tls.Certificate, roots
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := conn.SetReadDeadline(time.Now().Add(deviceEnrollMasterSilenceWindow)); err != nil {
 		return err

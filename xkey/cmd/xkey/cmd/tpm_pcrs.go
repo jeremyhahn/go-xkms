@@ -16,6 +16,7 @@ package cmd
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -91,11 +92,10 @@ func init() {
 		"Comma-separated list of PCR indices (default: 0-23)")
 }
 
-func runTPMPCRs(cmd *cobra.Command, args []string) error {
+func runTPMPCRs(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Parse PCR indices
 	var indices []uint
-	var err error
 
 	if pcrsIndices != "" {
 		indices, err = parsePCRIndicesForPCRs(pcrsIndices)
@@ -125,7 +125,11 @@ func runTPMPCRs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Read PCRs
 	banks, err := tpm.ReadPCRs(indices)

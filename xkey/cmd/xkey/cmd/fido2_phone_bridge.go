@@ -205,10 +205,9 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*p
 	bridge, err := pairing.NewBridge(client, bridgeCfg)
 	if err != nil {
 		if enrollerCloser != nil {
-			_ = enrollerCloser.Close()
+			err = errors.Join(err, enrollerCloser.Close())
 		}
-		_ = client.Close()
-		return nil, errors.Join(ErrXKMSdBridgeCreationFailed, err)
+		return nil, errors.Join(ErrXKMSdBridgeCreationFailed, err, client.Close())
 	}
 
 	// Enable bidirectional message routing on the phone backend.
@@ -223,10 +222,9 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*p
 	// failure directly above.
 	if err := backend.EnableBidirectional(bridge); err != nil {
 		if enrollerCloser != nil {
-			_ = enrollerCloser.Close()
+			err = errors.Join(err, enrollerCloser.Close())
 		}
-		_ = client.Close()
-		return nil, errors.Join(ErrXKMSdBridgeCreationFailed, err)
+		return nil, errors.Join(ErrXKMSdBridgeCreationFailed, err, client.Close())
 	}
 
 	logger.Info("xkmsd bridge enabled",
@@ -263,8 +261,7 @@ func dialXKMSd(cfg *XKMSdBridgeConfig, logger *slog.Logger) (transport.Client, e
 	defer cancel()
 
 	if err := client.Connect(ctx); err != nil {
-		_ = client.Close()
-		return nil, errors.Join(ErrXKMSdConnectionFailed, err)
+		return nil, errors.Join(ErrXKMSdConnectionFailed, err, client.Close())
 	}
 
 	logger.Info("connected to xkmsd")

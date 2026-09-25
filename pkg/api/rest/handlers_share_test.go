@@ -330,6 +330,18 @@ func TestListSharesHandler_WithShares(t *testing.T) {
 	}
 }
 
+func TestListSharesHandler_InvalidPageParam(t *testing.T) {
+	_, router := setupShareTestHandlers(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/shares/?page=notanumber", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+}
+
 func TestListSharesHandler_NotConfigured(t *testing.T) {
 	svc := initShareServiceSingleton(t, nil)
 	router := shareRouter(NewShareHandlers(svc))

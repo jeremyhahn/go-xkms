@@ -87,7 +87,7 @@ func init() {
 }
 
 // runFIDO2Status queries the daemon over IPC.
-func runFIDO2Status(cmd *cobra.Command, _ []string) error {
+func runFIDO2Status(cmd *cobra.Command, _ []string) (err error) {
 	out := cmd.OutOrStdout()
 	socketPath, _ := cmd.Flags().GetString("socket")
 	if socketPath == "" {
@@ -95,7 +95,11 @@ func runFIDO2Status(cmd *cobra.Command, _ []string) error {
 	}
 
 	client := ipc.NewClient(socketPath)
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	resp, err := client.Status()
 	if err != nil {

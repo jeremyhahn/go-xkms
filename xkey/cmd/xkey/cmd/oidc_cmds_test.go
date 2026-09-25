@@ -290,6 +290,19 @@ func TestStopProcess_CleansStalePIDFile(t *testing.T) {
 	assert.NoFileExists(t, pidFile, "stopping a dead process must remove its stale PID file")
 }
 
+func TestStopProcess_MissingPIDFileIsNotAnError(t *testing.T) {
+	// A PID file that was never created (as opposed to a stale one left
+	// behind by a dead process) must not surface os.ErrNotExist from the
+	// cleanup Remove -- there is nothing to clean up.
+	pidFile := filepath.Join(t.TempDir(), "missing.pid")
+
+	var buf bytes.Buffer
+	err := stopProcess(&buf, pidFile, "missing")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, os.ErrNotExist), "want no os.ErrNotExist wrapped for a PID file that never existed")
+	assert.Equal(t, "no running process for 'missing'", err.Error())
+}
+
 func TestRunOIDCStop_AllReportsNoneWhenAllStale(t *testing.T) {
 	cmd, buf, store := oidcTestCmd(t)
 	require.NoError(t, cmd.Flags().Set("all", "true"))

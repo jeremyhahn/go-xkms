@@ -16,6 +16,7 @@ package cmd
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -103,14 +104,18 @@ func init() {
 	tpmCmd.AddCommand(tpmStatusCmd)
 }
 
-func runTPMStatus(cmd *cobra.Command, args []string) error {
+func runTPMStatus(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Open TPM - don't require it to be initialized
 	tpm, err := openTPMForProvisioning()
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTPMDeviceNotFound, Cause: err}
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get fixed properties for device info
 	props, err := tpm.FixedProperties()

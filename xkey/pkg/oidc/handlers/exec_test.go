@@ -139,6 +139,47 @@ func TestExecHandler_Handle(t *testing.T) {
 		}
 	})
 
+	t.Run("command failure with PassJSON stdin still reports the exit error", func(t *testing.T) {
+		// Exercises the stdin-write goroutine racing against a command that
+		// exits immediately without reading stdin: the write result must be
+		// drained (no deadlock) and the command's own exit error must still
+		// surface.
+		handler := NewExecHandler("exit 1").WithPassJSON()
+
+		err := handler.Handle(context.Background(), &TokenData{AccessToken: "test"})
+		if err == nil {
+			t.Error("Handle() expected error for failed command")
+		}
+		if !errors.Is(err, ErrExecCommandFailed) {
+			t.Errorf("Handle() error = %v, want ErrExecCommandFailed", err)
+		}
+	})
+
+	t.Run("PassJSON succeeds when the command exits without reading a large payload", func(t *testing.T) {
+		// "true" exits immediately without reading stdin at all. With a
+		// payload over 64 KiB the stdin-write goroutine reliably observes
+		// EPIPE (or os.ErrClosed on the following Close) once cmd.Wait
+		// closes the pipe out from under it. That must not surface as
+		// ErrExecCommandFailed for a command that exited 0.
+		handler := NewExecHandler("true").WithPassJSON()
+
+		data := &TokenData{
+			AccessToken: "test-token",
+			// Extra isn't projected into the environment (unlike
+			// AccessToken/IDToken/etc.), so a large value here inflates
+			// the JSON payload on stdin without hitting the OS argv/env
+			// size limit through cmd.Env.
+			Extra: map[string]interface{}{
+				"padding": strings.Repeat("a", 128*1024), // 128 KiB, well over 64 KiB
+			},
+		}
+
+		err := handler.Handle(context.Background(), data)
+		if err != nil {
+			t.Errorf("Handle() error = %v, want nil", err)
+		}
+	})
+
 	t.Run("pass JSON via stdin", func(t *testing.T) {
 		var stdout bytes.Buffer
 		// Use cat to echo stdin

@@ -215,7 +215,7 @@ func (c *Client) Close() error {
 // send opens a connection to the daemon, writes the message, reads the
 // response, and closes the connection. If the socket does not exist or the
 // connection is refused, ErrDaemonNotRunning is returned.
-func (c *Client) send(msg *Message) (*Response, error) {
+func (c *Client) send(msg *Message) (response *Response, err error) {
 	if c.closed.Load() {
 		return nil, ErrClientClosed
 	}
@@ -227,7 +227,11 @@ func (c *Client) send(msg *Message) (*Response, error) {
 		}
 		return nil, &SentinelCauseError{Sentinel: ErrConnectionFailed, Cause: err}
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := conn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrConnectionFailed, Cause: err}

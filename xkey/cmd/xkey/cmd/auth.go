@@ -290,14 +290,18 @@ func authRootPool(caFile string) (*x509.CertPool, error) {
 // a server is not one. Promoting them here would let a TPM vendor root
 // authenticate an xkms server, which is a wider grant than the operator made
 // when they imported it for attestation.
-func authTrustStoreCertificates() ([]*x509.Certificate, error) {
+func authTrustStoreCertificates() (certs []*x509.Certificate, err error) {
 	store, err := openTrustStore()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrAuthTrustStoreRead, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
-	certs, err := store.TLSRoots()
+	certs, err = store.TLSRoots()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrAuthTrustStoreRead, Cause: err}
 	}
@@ -535,7 +539,7 @@ func init() {
 // runAuthRegister executes the auth register command: it records the server
 // in the local registry and enrolls a WebAuthn credential on it using the
 // local FIDO2 authenticator.
-func runAuthRegister(cmd *cobra.Command, args []string) error {
+func runAuthRegister(cmd *cobra.Command, args []string) (err error) {
 	logger := slog.Default()
 
 	serverURL, _ := cmd.Flags().GetString("server")
@@ -604,7 +608,11 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	logger.Info("connecting to server", slog.String("url", serverURL))
 
@@ -703,7 +711,7 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 // assertion ceremony against a registered server and stores the issued JWT.
 // With --piv it instead authenticates over mTLS using a PIV slot
 // certificate, via runAuthLoginPIV.
-func runAuthLogin(cmd *cobra.Command, args []string) error {
+func runAuthLogin(cmd *cobra.Command, args []string) (err error) {
 	logger := slog.Default()
 
 	serverURL, _ := cmd.Flags().GetString("server")
@@ -762,7 +770,11 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	logger.Info("connecting to server", slog.String("url", serverEntry.URL))
 
@@ -1074,13 +1086,18 @@ func openServerRegistry(logger *slog.Logger) (serverregistry.ServerRegistry, fun
 
 	registry, err := serverregistry.NewBackendServerRegistry(backend, "servers/")
 	if err != nil {
-		_ = backend.Close()
-		return nil, nil, errors.Join(ErrAuthRegistryCreationFailed, err)
+		return nil, nil, errors.Join(ErrAuthRegistryCreationFailed, err, backend.Close())
 	}
 
+	// cleanup's signature is func() -- there is no error return to the
+	// caller's defer -- so a failure here is logged rather than dropped.
 	cleanup := func() {
-		_ = registry.Close()
-		_ = backend.Close()
+		if closeErr := registry.Close(); closeErr != nil {
+			logger.Warn("failed to close server registry", slog.String("error", closeErr.Error()))
+		}
+		if closeErr := backend.Close(); closeErr != nil {
+			logger.Warn("failed to close auth storage backend", slog.String("error", closeErr.Error()))
+		}
 	}
 
 	logger.Debug("opened server registry", slog.String("path", storagePath))
@@ -1103,19 +1120,23 @@ func openTokenStore(logger *slog.Logger) (tokenstore.TokenStore, func(), error) 
 
 	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	if err != nil {
-		_ = backend.Close()
-		return nil, nil, errors.Join(ErrAuthTokenStoreCreationFailed, err)
+		return nil, nil, errors.Join(ErrAuthTokenStoreCreationFailed, err, backend.Close())
 	}
 
 	store, err := tokenstore.NewDAOStore(kvStore)
 	if err != nil {
-		_ = backend.Close()
-		return nil, nil, errors.Join(ErrAuthTokenStoreCreationFailed, err)
+		return nil, nil, errors.Join(ErrAuthTokenStoreCreationFailed, err, backend.Close())
 	}
 
+	// cleanup's signature is func() -- there is no error return to the
+	// caller's defer -- so a failure here is logged rather than dropped.
 	cleanup := func() {
-		_ = store.Close()
-		_ = backend.Close()
+		if closeErr := store.Close(); closeErr != nil {
+			logger.Warn("failed to close auth token store", slog.String("error", closeErr.Error()))
+		}
+		if closeErr := backend.Close(); closeErr != nil {
+			logger.Warn("failed to close auth storage backend", slog.String("error", closeErr.Error()))
+		}
 	}
 
 	logger.Debug("opened token store", slog.String("path", storagePath))

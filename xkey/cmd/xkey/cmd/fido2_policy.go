@@ -232,8 +232,7 @@ func createFIDO2RPPolicyStore(cfg *FIDO2Config) (authenticator.RPPolicyStore, er
 		}
 		store, err := authenticator.NewBackendRPPolicyStore(backend, "xkey/rp-policies/")
 		if err != nil {
-			_ = backend.Close()
-			return nil, errors.Join(ErrRPPolicyStoreCreationFailed, err)
+			return nil, errors.Join(ErrRPPolicyStoreCreationFailed, err, backend.Close())
 		}
 		return store, nil
 

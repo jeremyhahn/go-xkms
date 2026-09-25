@@ -363,12 +363,16 @@ func resolveShareDataDir() (string, error) {
 }
 
 // runShareList lists all locally stored shares.
-func runShareList(cmd *cobra.Command, _ []string) error {
+func runShareList(cmd *cobra.Command, _ []string) (err error) {
 	store, err := openLocalShareStore()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	entries, err := store.List(ctx)
@@ -405,7 +409,7 @@ func runShareList(cmd *cobra.Command, _ []string) error {
 }
 
 // runShareReceive polls a server for shares and stores them locally.
-func runShareReceive(cmd *cobra.Command, _ []string) error {
+func runShareReceive(cmd *cobra.Command, _ []string) (err error) {
 	serverURL, _ := cmd.Flags().GetString("server")
 	if serverURL == "" {
 		return ErrShareMissingServer
@@ -424,7 +428,11 @@ func runShareReceive(cmd *cobra.Command, _ []string) error {
 	if err := client.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareReceiveConnect, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// List shares assigned to this user.
 	resp, err := client.ListShares(ctx)
@@ -442,7 +450,11 @@ func runShareReceive(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	out := cmd.OutOrStdout()
 	saved := 0
@@ -483,7 +495,7 @@ func runShareReceive(cmd *cobra.Command, _ []string) error {
 }
 
 // runShareImport imports a share from a JSON file into the local store.
-func runShareImport(cmd *cobra.Command, _ []string) error {
+func runShareImport(cmd *cobra.Command, _ []string) (err error) {
 	filePath, _ := cmd.Flags().GetString("file")
 	if filePath == "" {
 		return ErrShareMissingFile
@@ -511,7 +523,11 @@ func runShareImport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Save the share.
 	ctx := context.Background()
@@ -526,7 +542,7 @@ func runShareImport(cmd *cobra.Command, _ []string) error {
 }
 
 // runShareExport exports a share from the local store to a JSON file.
-func runShareExport(cmd *cobra.Command, _ []string) error {
+func runShareExport(cmd *cobra.Command, _ []string) (err error) {
 	serverURL, _ := cmd.Flags().GetString("server")
 	groupID, _ := cmd.Flags().GetString("group-id")
 	shareIndex, _ := cmd.Flags().GetInt("share-index")
@@ -550,7 +566,11 @@ func runShareExport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Load the share.
 	ctx := context.Background()
@@ -576,7 +596,7 @@ func runShareExport(cmd *cobra.Command, _ []string) error {
 }
 
 // runShareUnseal loads a local share and submits it to unseal the server barrier.
-func runShareUnseal(cmd *cobra.Command, _ []string) error {
+func runShareUnseal(cmd *cobra.Command, _ []string) (err error) {
 	serverURL, _ := cmd.Flags().GetString("server")
 	groupID, _ := cmd.Flags().GetString("group-id")
 	shareIndex, _ := cmd.Flags().GetInt("share-index")
@@ -596,7 +616,11 @@ func runShareUnseal(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	entry, err := store.Load(ctx, serverURL, groupID, shareIndex)
@@ -613,7 +637,11 @@ func runShareUnseal(cmd *cobra.Command, _ []string) error {
 	if err := client.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareUnsealConnect, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Submit the share for barrier unseal.
 	shareB64 := base64.StdEncoding.EncodeToString(entry.ShareData)
@@ -642,7 +670,7 @@ func runShareUnseal(cmd *cobra.Command, _ []string) error {
 }
 
 // runShareDelete deletes a share from the local store.
-func runShareDelete(cmd *cobra.Command, _ []string) error {
+func runShareDelete(cmd *cobra.Command, _ []string) (err error) {
 	serverURL, _ := cmd.Flags().GetString("server")
 	groupID, _ := cmd.Flags().GetString("group-id")
 	shareIndex, _ := cmd.Flags().GetInt("share-index")
@@ -662,7 +690,11 @@ func runShareDelete(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Delete the share.
 	ctx := context.Background()

@@ -284,7 +284,7 @@ func runDeviceSyncPull(cmd *cobra.Command, args []string) error {
 // runDeviceSyncMode drives every selected store through one exchange with the
 // phone. All three sync commands funnel through here; the mode decides which
 // half of each exchange is applied.
-func runDeviceSyncMode(cmd *cobra.Command, mode syncMode) error {
+func runDeviceSyncMode(cmd *cobra.Command, mode syncMode) (err error) {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -318,7 +318,11 @@ func runDeviceSyncMode(cmd *cobra.Command, mode syncMode) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -357,7 +361,7 @@ func runDeviceSyncMode(cmd *cobra.Command, mode syncMode) error {
 }
 
 // runDeviceSyncStatus shows sync status with a paired phone.
-func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
+func runDeviceSyncStatus(cmd *cobra.Command, args []string) (err error) {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	out := cmd.OutOrStdout()
@@ -373,7 +377,11 @@ func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

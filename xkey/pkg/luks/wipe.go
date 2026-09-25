@@ -15,6 +15,7 @@ package luks
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -85,7 +86,7 @@ type WipeOptions struct {
 }
 
 // Wipe securely wipes a file using the specified standard.
-func Wipe(opts WipeOptions) error {
+func Wipe(opts WipeOptions) (err error) {
 	patterns := opts.Standard.GetPatternSequence()
 	if len(patterns) == 0 {
 		// Default to single zeros pass
@@ -104,7 +105,11 @@ func Wipe(opts WipeOptions) error {
 	if err != nil {
 		return &WrappedError{Msg: "failed to open file", Err: err}
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Perform wipe passes
 	for i, pattern := range patterns {
