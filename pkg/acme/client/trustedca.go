@@ -45,6 +45,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
@@ -366,6 +367,22 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 		return caerrors.InternalServerError("failed to initialize CAA validator: %v", err)
 	}
 
+	// The shared circuit breaker manager backs this router's own storage
+	// breaker, the KMS breaker NewRestService wraps tca.kmsService with, and
+	// the challenge verifiers wrapped below -- so HealthHandler reports every
+	// breaker from a single registry, exactly as xkmsd's embedded ACME
+	// listener does (cmd/xkmsd/acme.go). Unlike xkmsd this is unconditional:
+	// there is no "resilience disabled" switch, matching
+	// config.ACMEResilienceConfig's own always-on defaults.
+	breakers := circuitbreaker.NewManager()
+
+	// server.WrapChallengeVerifiers is the one construction path shared with
+	// xkmsd's buildChallengeMap: it wraps the "http-01" and "dns-01" entries
+	// of the caller-supplied challenge map (see WithChallengeMap) with a
+	// breaker from breakers, and leaves every other challenge type
+	// unchanged.
+	challengeMap := server.WrapChallengeVerifiers(tca.challengeMap, tca.config.ACME.Resilience, breakers)
+
 	// Initialize ACME REST service
 	restService, err := handlers.NewRestService(&handlers.Params{
 		AllowLoopbackIdentifier: tca.config.ACME.AllowLoopbackIdentifier,
@@ -374,11 +391,17 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 		CA:                      tca.ca,
 		CAAIdentities:           tca.config.ACME.CAIdentifiers,
 		CAAValidator:            caaValidator,
-		ChallengeMap:            tca.challengeMap,
+		ChallengeMap:            challengeMap,
 		KMSService:              tca.kmsService,
 		Logger:                  tca.logger,
 		StorageFactory:          tca.storageFactory,
 		TermsOfService:          tca.config.ACME.TermsOfService,
+		Breakers:                breakers,
+		StorageBreaker:          tca.config.ACME.Resilience.Storage.CircuitBreakerConfig("storage"),
+		KMSBreaker:              tca.config.ACME.Resilience.KMS.CircuitBreakerConfig("kms"),
+		DegradationCacheTTL:     tca.config.ACME.Resilience.Degradation.ResolveCacheTTL(),
+		DegradationStaleTTL:     tca.config.ACME.Resilience.Degradation.ResolveStaleTTL(),
+		DegradationMaxCacheSize: tca.config.ACME.Resilience.Degradation.ResolveMaxCacheSize(),
 	})
 	if err != nil {
 		return caerrors.InternalServerError("failed to initialize ACME service: %v", err)
@@ -446,9 +469,10 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	acmeRouter.HandleFunc("/orders/{id}", restService.OrdersListHandler).Methods("POST", "GET")
 	acmeRouter.HandleFunc("/ca-bundle", restService.CABundleHandler).Methods("GET")
 
-	// Health and metrics endpoints. HealthHandler reports circuit breaker and
-	// degradation status (empty/healthy here: this standalone TrustedCA path
-	// does not yet opt into Params.Breakers).
+	// Health and metrics endpoints. HealthHandler reports every breaker on
+	// the breakers Manager built above (Params.Breakers), and whether the
+	// directory/CA-bundle endpoints are currently degraded because the
+	// storage breaker is open.
 	router.HandleFunc("/health", restService.HealthHandler).Methods("GET")
 	router.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

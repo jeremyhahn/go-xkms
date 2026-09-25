@@ -464,8 +464,10 @@ func (a *acmeServer) Shutdown(ctx context.Context) error {
 // The http-01 and dns-01 verifiers are wrapped with a breaker from breakers,
 // configured from resilience, so a target that stops responding trips its
 // own breaker instead of holding up every challenge validation sharing the
-// same worker (circuitbreaker.WrapChallengeVerifier). A nil breakers leaves
-// both verifiers unwrapped.
+// same worker. acmeserver.WrapChallengeVerifiers does the wrapping; it is
+// the one construction path shared with the standalone TrustedCA
+// (pkg/acme/client/trustedca.go), so neither composition hand-rolls its own
+// wrapping. A nil breakers leaves both verifiers unwrapped.
 func buildChallengeMap(
 	cfg config.ACMEChallengesConfig,
 	resilience config.ACMEResilienceConfig,
@@ -473,30 +475,20 @@ func buildChallengeMap(
 ) map[string]common.ChallengeVerifierFunc {
 	m := make(map[string]common.ChallengeVerifierFunc, 2)
 	if cfg.HTTP01 {
-		verifier := common.ChallengeVerifierFunc(func(
+		m[common.ChallengeTypeHTTP01] = common.ChallengeVerifierFunc(func(
 			resolver *net.Resolver,
 			_ common.CertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 			return http01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		})
-		if breakers != nil {
-			cb := breakers.GetOrCreate(resilience.HTTP01.CircuitBreakerConfig("http01"))
-			verifier = circuitbreaker.WrapChallengeVerifier(cb, verifier)
-		}
-		m[common.ChallengeTypeHTTP01] = verifier
 	}
 	if cfg.DNS01 {
-		verifier := common.ChallengeVerifierFunc(func(
+		m[common.ChallengeTypeDNS01] = common.ChallengeVerifierFunc(func(
 			resolver *net.Resolver,
 			_ common.CertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 			return dns01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		})
-		if breakers != nil {
-			cb := breakers.GetOrCreate(resilience.DNS01.CircuitBreakerConfig("dns01"))
-			verifier = circuitbreaker.WrapChallengeVerifier(cb, verifier)
-		}
-		m[common.ChallengeTypeDNS01] = verifier
 	}
 	// The TPM attestation challenges (enroll-01/endorse-01) use the shared SDK
 	// wiring so every ACME server in the stack (xkmsd, quicbaas) enables them
@@ -504,7 +496,7 @@ func buildChallengeMap(
 	for challengeType, verifier := range acmesdk.ACMEAttestationVerifiers(cfg.Enroll01, cfg.Endorse01) {
 		m[challengeType] = verifier
 	}
-	return m
+	return acmeserver.WrapChallengeVerifiers(m, resilience, breakers)
 }
 
 // buildClusterPreSignHooks returns the pre-sign hook registry for the ACME

@@ -40,7 +40,11 @@
   go-xkms#735 folded the previously-duplicate `pkg/acme/server/circuit_breaker.go`
   into it and deleted that file) and `pkg/acme/server/degradation` (the
   cache-backed graceful-degradation primitives) — the protective layer,
-  wired into xkmsd. See "Circuit breakers and degradation" below.
+  wired into both xkmsd and the standalone `TrustedCA` (go-xkms#820). Both
+  compositions build their breaker `Manager` and wrap their challenge
+  verifiers through `pkg/acme/server/resilience.go`'s
+  `WrapChallengeVerifiers`, the one shared construction path — see "Circuit
+  breakers and degradation" below.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
   `barrier_handlers.go`, `barrier_service.go`, `ca_adapter.go`).
 - `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — the transport
@@ -205,9 +209,9 @@ once, to the externally visible base.
   once the account's budget for that tenant is exhausted.
 - **A breaker guards the one dependency it wraps, not order creation, and
   degradation never means "issue without validating".** `pkg/acme/server/circuitbreaker`
-  is wired into xkmsd (`cmd/xkmsd/acme.go`); the standalone `TrustedCA` does
-  not yet opt in. See "Circuit breakers and degradation" below for exactly
-  what is and is not covered.
+  is wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone
+  `TrustedCA` (`pkg/acme/client/trustedca.go`, go-xkms#820). See "Circuit
+  breakers and degradation" below for exactly what is and is not covered.
 - **An advertised URL is configured or derived, never glued to a bind
   address.** `TrustedCA.Serve` advertises `acme.external_url` (or
   `WithExternalURL`) as given; with neither set it derives the URL from the
@@ -284,11 +288,21 @@ dependencies each get their own breaker from a shared `circuitbreaker.Manager`:
 
 | Breaker name | Guards | Wired by |
 |---|---|---|
-| `http01` | the `http-01` challenge verifier | `cmd/xkmsd/acme.go:buildChallengeMap`, via `circuitbreaker.WrapChallengeVerifier` |
-| `dns01` | the `dns-01` challenge verifier | same, `circuitbreaker.WrapChallengeVerifier` |
+| `http01` | the `http-01` challenge verifier | `cmd/xkmsd/acme.go:buildChallengeMap` and `TrustedCA.Serve` (`pkg/acme/client/trustedca.go`, go-xkms#820), both via `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` -> `circuitbreaker.WrapChallengeVerifier` |
+| `dns01` | the `dns-01` challenge verifier | same, `WrapChallengeVerifiers` -> `circuitbreaker.WrapChallengeVerifier` |
 | `ct` | CT log submission (`ct.LogSubmitter`) | `circuitbreaker.WrapLogSubmitter` — no production call site yet; see architecture.md |
 | `kms` | `Params.KMSService` (the tenant KMS signer) | `handlers.NewRestService`, automatically, when both `Params.Breakers` and `Params.KMSService` are set |
 | `storage` | CA/keystore-backed certificate storage (`CA.CABundleFiltered`, `GET /acme/ca-bundle`'s dependency) | `handlers.NewRestService`, from `Params.StorageBreaker` |
+
+`WrapChallengeVerifiers` (`pkg/acme/server/resilience.go`) is the one place
+that decides which challenge-map entries get wrapped and under which breaker
+names: it copies the map, wraps the `http-01` and `dns-01` entries (when
+present) with a breaker from the `Manager` it is given, and returns every
+other entry — the TPM attestation verifiers `sdk/go/acme.ACMEAttestationVerifiers`
+builds, for instance — unchanged. `cmd/xkmsd/acme.go`'s `buildChallengeMap`
+calls it after selecting verifiers from `acme.challenges`; `TrustedCA.Serve`
+calls it on whatever map a caller supplied through `WithChallengeMap`. A nil
+`Manager` (resilience not wired) or nil map returns the input unchanged.
 
 `storage` here is **not** the go-qrdb-backed ACME protocol state
 (`pkg/acme/storage` → `go-qrdb/sdk/go`, accounts/orders/authorizations/
@@ -347,9 +361,16 @@ It returns 503 when any breaker is not closed, 200 otherwise. A
 breakers listed rather than omitting the endpoint. `cmd/xkmsd/acme.go` opts
 in (`Params.Breakers`, `StorageBreaker`, `KMSBreaker`, all sourced from
 `acme.resilience` — see "Configuration"); the standalone `TrustedCA` path
-(`pkg/acme/client/trustedca.go`) mounts `HealthHandler` at `/health` too but
-does not yet set `Params.Breakers`, so it always reports healthy with no
-breakers — a known gap, not a design choice.
+(`pkg/acme/client/trustedca.go`) now opts in the same way (go-xkms#820),
+sourcing the same four fields from `TCAACMEConfig.Resilience` — reusing
+`config.ACMEResilienceConfig` directly rather than a parallel type, so a
+`storage`/`kms`/`http01`/`dns01` breaker section means the same thing in
+either composition's configuration file. `TrustedCA.Serve` builds its
+breaker `Manager` unconditionally, same as `cmd/xkmsd/acme.go` — there is no
+"resilience disabled" switch, matching `ACMEResilienceConfig`'s own
+always-on defaults — so `GET /health` always lists at least the `storage`
+breaker, plus `http01`/`dns01` when the caller-supplied challenge map
+(`WithChallengeMap`) has those entries.
 
 ## Error semantics
 
@@ -614,6 +635,24 @@ mapped into `handlers.Params` (`Breakers`, `StorageBreaker`, `KMSBreaker`,
 `http01`/`dns01` sections are consumed directly by `buildChallengeMap`, and
 `ct_submitter` has no consumer yet (see "What this feature deliberately does
 not do" in architecture.md).
+
+The standalone `TrustedCA` (`pkg/acme/client/trustedca_config.go`,
+go-xkms#820) reuses `config.ACMEResilienceConfig` directly as
+`TCAACMEConfig.Resilience` (`acme.resilience` in `TrustedCAConfig`'s own
+YAML) rather than defining a parallel type: `TrustedCAConfig` already sits
+downstream of `pkg/config` in the build graph (it imports `pkg/config` for
+`audit.Config` and other shared sections), so there is no layering reason to
+diverge, and every `max_failures`/`reset_timeout_seconds`/etc. field, its
+zero-value defaults, and `ErrACMEResilienceNegativeValue` validation behave
+identically in both compositions' configuration files.
+`TCAACMEConfig.Validate` delegates to `Resilience.Validate` the same way
+`ACMEConfig.Validate` does. `TrustedCA.Serve` is the `TrustedCA` equivalent
+of `cmd/xkmsd/acme.go`'s mapping into `handlers.Params`: it builds a
+`circuitbreaker.Manager` unconditionally, wraps its challenge map (see
+"Circuit breakers and degradation") through the shared
+`server.WrapChallengeVerifiers`, and sets `Breakers`, `StorageBreaker`,
+`KMSBreaker`, `DegradationCacheTTL`, `DegradationStaleTTL`, and
+`DegradationMaxCacheSize` from the same `Resilience` fields.
 
 ## Persistence
 
