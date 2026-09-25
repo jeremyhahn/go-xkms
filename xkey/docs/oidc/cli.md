@@ -1,6 +1,6 @@
 # OIDC — CLI
 
-Status: current. Last verified: 2026-09-22.
+Status: current. Last verified: 2026-09-25.
 
 `xkey oidc` performs browser-based OIDC login against any OIDC-compliant
 provider (PKCE authorization code) or AWS Console native login (DPoP), and
@@ -79,12 +79,12 @@ xkey oidc aws [flags]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--region`, `-r` | (required) | AWS region |
-| `--profile` | `default` | AWS profile name to write credentials to |
+| `--region`, `-r` | (required) | AWS region; `a-z 0-9 -` only when written to the credentials file |
+| `--profile` | `default` | AWS profile name to write credentials to; `A-Z a-z 0-9 . _ - @ + : /` only |
 | `--cross-device` | `false` | Cross-device authentication flow |
 | `--no-browser` | `false` | Print URL instead of opening a browser |
 | `--output`, `-o` | `aws-credentials` | `aws-credentials`, `json`, `exec`, or `none` |
-| `--credentials-file` | `~/.aws/credentials` | AWS credentials file path |
+| `--credentials-file` | `~/.aws/credentials` | AWS credentials file path; replaced atomically with mode `0600`, other profiles kept |
 | `--exec` | | Execute a script after login |
 | `--auto-refresh` | `0` | Auto-refresh interval in seconds |
 | `--session-store` | `~/.xkey/aws-session.json` | Session store path |

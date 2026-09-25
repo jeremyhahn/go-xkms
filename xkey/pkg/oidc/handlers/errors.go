@@ -41,6 +41,26 @@ var (
 	// ErrAWSResponseMissingCredentials is returned when AWS response lacks credentials.
 	ErrAWSResponseMissingCredentials = errors.New("handlers: AWS response missing credentials")
 
+	// ErrAWSInvalidAccessKeyID is returned when an access key ID is not
+	// 16 to 128 characters of A-Z and 0-9.
+	ErrAWSInvalidAccessKeyID = errors.New("handlers: invalid AWS access key ID")
+
+	// ErrAWSInvalidSecretAccessKey is returned when a secret access key is
+	// empty or contains a byte outside printable, non-space ASCII.
+	ErrAWSInvalidSecretAccessKey = errors.New("handlers: invalid AWS secret access key")
+
+	// ErrAWSInvalidSessionToken is returned when a session token contains a
+	// byte outside the base64 alphabet (A-Z, a-z, 0-9, '+', '/', '=').
+	ErrAWSInvalidSessionToken = errors.New("handlers: invalid AWS session token")
+
+	// ErrAWSInvalidProfile is returned when a profile name contains a byte
+	// outside A-Z, a-z, 0-9 and "._-@+:/".
+	ErrAWSInvalidProfile = errors.New("handlers: invalid AWS profile name")
+
+	// ErrAWSInvalidRegion is returned when a region contains a byte outside
+	// a-z, 0-9 and '-'.
+	ErrAWSInvalidRegion = errors.New("handlers: invalid AWS region")
+
 	// ErrInvalidAWSResponse is returned when the AWS response format is invalid.
 	ErrInvalidAWSResponse = errors.New("handlers: invalid AWS response format")
 

@@ -3,7 +3,8 @@
 Status: current. Last verified: 2026-09-25.
 
 This document covers the CLI's token-store surface
-(`cmd/xkey/cmd/oidc_token_store.go`, `cmd/xkey/cmd/oidc.go`). For the OIDC
+(`cmd/xkey/cmd/oidc_token_store.go`, `cmd/xkey/cmd/oidc.go`) and the AWS
+credentials-file writer (`pkg/oidc/handlers/aws_credentials.go`). For the OIDC
 protocol client, discovery, and DPoP, see `xkey/pkg/oidc`'s own doc
 comments; for the GUI's storage wiring, see `pkg/gui/services/oidc_service.go`.
 
@@ -134,6 +135,52 @@ func (s *oidcCLITokenStore) Clear() (existed bool, err error)
   Values handed to an `--exec` script or written to a credentials file are
   data, not display, so they are not sanitised.
 
+### AWS credentials file
+
+`AWSCredentialsHandler.Handle` (the `aws-credentials` output mode, shared by
+`xkey oidc aws` and the GUI through `handlers.NewForMode`) writes the token
+endpoint's credentials into an INI file that the AWS CLI and SDKs read. A
+value that could end its line would let a hostile token response add keys
+such as `credential_process`, which AWS tooling executes. So:
+
+- **Every value is validated before anything touches the disk, and an
+  invalid one is refused, never sanitised.** `validate` runs before the
+  directory is created or the file is read; on refusal the existing file
+  is byte-for-byte unchanged and no temporary file is left behind. The
+  rules (`awsValueRule`, checked byte by byte):
+
+  | Value | Allowed | Sentinel |
+  |---|---|---|
+  | `AccessKeyID` | `A-Z 0-9`, 16 to 128 bytes | `ErrAWSInvalidAccessKeyID` |
+  | `SecretAccessKey` | printable ASCII `0x21`-`0x7E` (no space, tab or control), non-empty | `ErrAWSInvalidSecretAccessKey` |
+  | `SessionToken` (when present) | base64 alphabet `A-Z a-z 0-9 + / =` | `ErrAWSInvalidSessionToken` |
+  | profile name | `A-Z a-z 0-9 . _ - @ + : /`, non-empty | `ErrAWSInvalidProfile` |
+  | region (configured, else from the response) | `a-z 0-9 -` | `ErrAWSInvalidRegion` |
+
+  None of these admits `\n`, `\r`, NUL or any other control byte. Only the
+  secret admits `[` or `=`, and it only ever appears after `key = ` on its
+  own line. The expiration is formatted by xkey (`2006-01-02T15:04:05Z`, in
+  UTC), not copied from the response.
+- **Refusals never echo the value.** The error is a `*DetailError` over the
+  field's sentinel, carrying only the length or the offending byte offset
+  (for example `handlers: invalid AWS secret access key: disallowed byte at
+  offset 9`).
+- **The file is replaced atomically with mode `0600`.** `writeCredentialsFile`
+  writes a temporary file in the same directory, `chmod`s it to `0600`,
+  writes, `fsync`s, closes, renames it over the target and `fsync`s the
+  directory. A failure before the rename removes the temporary file and
+  leaves the target untouched. A pre-existing file with a looser mode ends
+  up `0600`. The directory is created `0700` when missing.
+- **Merge semantics:** the handler's profile section is replaced
+  wholesale; every other profile and its keys are kept. Comments and blank
+  lines are not preserved. Output is deterministic: profiles in name order,
+  and within a profile the known keys (`aws_access_key_id`,
+  `aws_secret_access_key`, `aws_session_token`, `region`,
+  `aws_credential_expiration`) first, then any other keys in name order.
+- The path is the handler's `CredentialsPath` (`--credentials-file`) with
+  a leading `~/` expanded against `$HOME`; `AWS_SHARED_CREDENTIALS_FILE` is
+  not consulted.
+
 ## Errors
 
 | Sentinel | Meaning |
@@ -145,7 +192,16 @@ func (s *oidcCLITokenStore) Clear() (existed bool, err error)
 | `ErrBarrierStoreOpenFailed` | (`barrier_store.go`) An initialized barrier exists but could not be unsealed |
 | `ErrOIDCInvalidRefreshToken` | `refresh` (or the auto-refresh loop) has no refresh token to use; the loop stops |
 
-All are typed sentinels wrapped through `SentinelCauseError`
+The AWS credentials writer (`pkg/oidc/handlers/errors.go`):
+
+| Sentinel | Meaning |
+|---|---|
+| `ErrAWSInvalidAccessKeyID`, `ErrAWSInvalidSecretAccessKey`, `ErrAWSInvalidSessionToken`, `ErrAWSInvalidProfile`, `ErrAWSInvalidRegion` | A value failed its rule; wrapped in `DetailError` with the length or byte offset, never the value |
+| `ErrAWSResponseMissingCredentials` | The response has no credentials, or an empty access key ID or secret |
+| `ErrAWSProfileRequired`, `ErrAWSCredentialsPathRequired` | The handler has no profile or no path |
+| `ErrAWSCredentialsRead`, `ErrAWSCredentialsWrite` | Reading or atomically replacing the file failed (wraps the cause) |
+
+The token-store sentinels are wrapped through `SentinelCauseError`
 (`errors.go`), so `errors.Is` matches both the feature-level sentinel and
 the underlying cause.
 
@@ -181,10 +237,21 @@ the files below.
 | `*TerminalInert*`, `TestTokenRequestError_RendersProviderTextInert`, `TestClient_Exchange_TokenEndpointErrorIsInert` | An OSC 52 + `ESC[2J` + 8-bit CSI + NUL payload sent through every call path listed under Invariants (CLI, GUI and AWS callback errors, the GUI log line, the OIDC and AWS token-endpoint errors, the GUI refresh error, printed claims and the AWS access key ID) comes out as plain text |
 | `oidc_barrier_test.go` | The barrier decision itself: no-barrier warning + plain-file fallback, barrier-encrypted round-trip across two independent `openOIDCTokenStore` calls (proving a fresh process can unseal and read), wrong-password and no-password typed refusals, `--token-store` bypassing barrier auto-detection, and `TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick` — which invalidates the barrier password on the test's `cobra.Command` immediately after the store is opened, then proves three successful refresh ticks still complete, so any hypothetical re-resolution inside the loop would have failed |
 
+The AWS credentials writer is covered in `pkg/oidc/handlers`:
+
+| File | Covers |
+|---|---|
+| `aws_credentials_validate_test.go` | Injection refusal (`\n`, `\r`, `[`, `=`, NUL in each field and the profile/region) with the existing file byte-for-byte unchanged and no temporary file left; no `~/.aws` created for a refused write; real-shaped STS credentials round-tripping with other profiles preserved, UTC expiration and mode `0600` over a pre-existing `0644` file; each rule's bounds; errors that report offsets, not values; deterministic formatting; rename-failure cleanup. Every file it writes is under `t.TempDir()`, and the `Handle` tests redirect `HOME` and `AWS_SHARED_CREDENTIALS_FILE` there and write through the default `~/.aws/credentials` path |
+| `aws_credentials_test.go` | Required-field errors, create/update/add-profile merge, region override, expiration toggle, parsing |
+
 Run just this package's tests:
 
 ```
 cd xkey && GOTOOLCHAIN=auto GOWORK=off go test -tags 'ble codec_json' ./cmd/xkey/cmd/... -run OIDC
+```
+
+```
+cd xkey && GOWORK=off go test -race -tags 'ble codec_json' ./pkg/oidc/handlers/
 ```
 
 `oidc_barrier_test.go`'s tests drive a real passphrase barrier
