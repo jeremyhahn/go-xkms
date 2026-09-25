@@ -37,8 +37,8 @@
 - `pkg/acme/server/circuitbreaker` — the one circuit breaker implementation
   (`CircuitBreaker`, `Manager`, the `Middleware` HTTP wrapper, and the
   `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators;
-  go-xkms#735 folded the previously-duplicate `pkg/acme/server/circuit_breaker.go`
-  into it and deleted that file) and `pkg/acme/server/degradation` (the
+  go-xkms#975 deleted the unreferenced duplicate `pkg/acme/server/circuit_breaker.go`
+  that #735 had left behind) and `pkg/acme/server/degradation` (the
   cache-backed graceful-degradation primitives) — the protective layer,
   wired into both xkmsd and the standalone `TrustedCA` (go-xkms#820). Both
   compositions build their breaker `Manager` and wrap their challenge
