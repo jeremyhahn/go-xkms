@@ -66,8 +66,20 @@ type TrustedCAConfig struct {
 	// Admin API configuration
 	Admin AdminConfig `yaml:"admin" json:"admin"`
 
-	// Multi-tenancy configuration
-	MultiTenant MultiTenantConfig `yaml:"multi_tenant" json:"multi_tenant"`
+	// Multi-tenancy is not a config field: it is a construction-time wiring
+	// decision, matching how every other structural component of TrustedCA
+	// (CA, storage factory, QRDB service, auth client) is wired -- through an
+	// Option, not through this config struct. WithMultiTenant() is the only
+	// switch; WithQRDB() supplies the multi-tenant store it requires. This
+	// also matches xkmsd's embedded ACME server: cmd/xkmsd/admin.go always
+	// calls admin.NewTenantAwareAdminService directly and has no
+	// pkg/config.ACMEConfig multi-tenant key -- the switch there is which
+	// constructor gets called, not a boolean in config. A former
+	// MultiTenantConfig section here (Enabled, DefaultTenantID,
+	// TenantIsolation) was validated and defaulted but never read by
+	// anything; it was deleted rather than wired, since nothing in the
+	// codebase gave DefaultTenantID or TenantIsolation runtime meaning
+	// (go-xkms#946).
 
 	// Audit configures the audit trail recording every issuance, revocation,
 	// account, and enrollment decision. DefaultTrustedCAConfig enables it; the
@@ -173,27 +185,6 @@ type AdminConfig struct {
 	TLS TCATLSConfig `yaml:"tls" json:"tls"`
 }
 
-// MultiTenantConfig holds multi-tenancy configuration.
-type MultiTenantConfig struct {
-	// Enabled indicates whether multi-tenancy is enabled.
-	Enabled bool `yaml:"enabled" json:"enabled"`
-
-	// DefaultTenantID is the default tenant ID for single-tenant mode.
-	DefaultTenantID string `yaml:"default_tenant_id" json:"default_tenant_id"`
-
-	// TenantIsolation configures tenant isolation settings.
-	TenantIsolation TenantIsolationConfig `yaml:"tenant_isolation" json:"tenant_isolation"`
-}
-
-// TenantIsolationConfig holds tenant isolation settings.
-type TenantIsolationConfig struct {
-	// EnforceIsolation enables strict tenant isolation.
-	EnforceIsolation bool `yaml:"enforce_isolation" json:"enforce_isolation"`
-
-	// AllowCrossTenantSuperAdmin allows super-admins to access other tenants.
-	AllowCrossTenantSuperAdmin bool `yaml:"allow_cross_tenant_super_admin" json:"allow_cross_tenant_super_admin"`
-}
-
 // DefaultConfig returns a default configuration with TLS 1.3 enforced.
 // All keys are managed by go-xkms - no filesystem key paths required.
 func DefaultTrustedCAConfig() *TrustedCAConfig {
@@ -219,14 +210,6 @@ func DefaultTrustedCAConfig() *TrustedCAConfig {
 			TLS: TCATLSConfig{
 				MinVersion: "1.3",
 				MaxVersion: "1.3",
-			},
-		},
-		MultiTenant: MultiTenantConfig{
-			Enabled:         false,
-			DefaultTenantID: "default",
-			TenantIsolation: TenantIsolationConfig{
-				EnforceIsolation:           true,
-				AllowCrossTenantSuperAdmin: true,
 			},
 		},
 		// The audit trail is a compliance control, so it is on by default and
@@ -267,9 +250,6 @@ func (c *TrustedCAConfig) Validate() error {
 		return err
 	}
 	if err := c.Admin.Validate(); err != nil {
-		return err
-	}
-	if err := c.MultiTenant.Validate(); err != nil {
 		return err
 	}
 	return nil
@@ -377,18 +357,6 @@ func (a *AdminConfig) Validate() error {
 	}
 	if err := a.TLS.Validate(); err != nil {
 		return err
-	}
-	return nil
-}
-
-// Validate validates the multi-tenancy configuration.
-// When Enabled is true, DefaultTenantID is required.
-func (m *MultiTenantConfig) Validate() error {
-	if !m.Enabled {
-		return nil
-	}
-	if m.DefaultTenantID == "" {
-		return errors.MalformedError("multi_tenant.default_tenant_id is required when multi-tenancy is enabled")
 	}
 	return nil
 }
