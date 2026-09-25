@@ -1,6 +1,6 @@
 # OATH TOTP/HOTP — User Guide
 
-> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 ## Add a credential
 
@@ -49,8 +49,8 @@ Once you run `xkey barrier init`, every `xkey oath` command at the default
 store location encrypts credentials transparently — nothing else to do. See
 [seal/user.md](../seal/user.md) to set the barrier up (including
 TPM auto-unseal, so an agent never needs a password). Without a barrier,
-credentials are stored as plain JSON at `./data/oath.json` (or wherever
-`--store` points); protect that file with filesystem permissions.
+credentials are stored as plain JSON at `~/.xkey/data/oath.json` (or
+wherever `--store` points); protect that file with filesystem permissions.
 
 ## Migrate credentials to a new machine
 

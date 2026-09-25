@@ -15,6 +15,7 @@ package client
 
 import (
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
@@ -46,6 +47,16 @@ var validSignatureAlgorithms = map[string]struct{}{
 
 // Config holds the configuration for a TrustedCA instance.
 type TrustedCAConfig struct {
+	// DataDir is the base directory this TrustedCA instance persists to.
+	// Audit.LogPath, when not set explicitly, resolves to
+	// DataDir/DefaultAuditLogFileName (see Validate) -- the same
+	// DataDir-relative pattern xkmsd's embedded ACME server uses for its
+	// own audit trail (pkg/config.ACMEAuditConfig.ResolveLogPath) -- so a
+	// standalone TrustedCA never falls back to a cwd-relative default
+	// (go-xkms#929). Required whenever Audit.Enabled is true and
+	// Audit.LogPath is not set.
+	DataDir string `yaml:"data_dir" json:"data_dir"`
+
 	// ACME server configuration
 	ACME TCAACMEConfig `yaml:"acme" json:"acme"`
 
@@ -60,13 +71,16 @@ type TrustedCAConfig struct {
 
 	// Audit configures the audit trail recording every issuance, revocation,
 	// account, and enrollment decision. DefaultTrustedCAConfig enables it; the
-	// admin API's GET /admin/audit reads back exactly this trail.
+	// admin API's GET /admin/audit reads back exactly this trail. LogPath is
+	// left empty by DefaultTrustedCAConfig and resolved against DataDir by
+	// Validate.
 	Audit audit.Config `yaml:"audit" json:"audit"`
 }
 
-// DefaultAuditLogPath is the audit trail written by a TrustedCA that did not
-// have a log path configured.
-const DefaultAuditLogPath = "trusted-ca-audit.log"
+// DefaultAuditLogFileName is the audit trail file name created inside
+// DataDir by a TrustedCA that did not have Audit.LogPath configured
+// explicitly.
+const DefaultAuditLogFileName = "trusted-ca-audit.log"
 
 // ACMEConfig holds ACME server configuration.
 type TCAACMEConfig struct {
@@ -216,10 +230,12 @@ func DefaultTrustedCAConfig() *TrustedCAConfig {
 			},
 		},
 		// The audit trail is a compliance control, so it is on by default and
-		// has to be switched off deliberately.
+		// has to be switched off deliberately. LogPath is left empty here:
+		// Validate resolves it against DataDir (or rejects the config if
+		// DataDir is also unset), so the caller sees a typed error instead
+		// of a cwd-relative log file (go-xkms#929).
 		Audit: audit.Config{
 			Enabled:              true,
-			LogPath:              DefaultAuditLogPath,
 			MaxSizeMB:            100,
 			MaxAgeDays:           365,
 			MaxBackups:           10,
@@ -239,6 +255,9 @@ func (c *TrustedCAConfig) Validate() error {
 	if err := c.CA.Validate(); err != nil {
 		return err
 	}
+	if err := c.resolveAuditLogPath(); err != nil {
+		return err
+	}
 	if err := c.Audit.Validate(); err != nil {
 		return err
 	}
@@ -248,6 +267,24 @@ func (c *TrustedCAConfig) Validate() error {
 	if err := c.MultiTenant.Validate(); err != nil {
 		return err
 	}
+	return nil
+}
+
+// resolveAuditLogPath derives Audit.LogPath from DataDir when the operator
+// enabled the audit trail but did not set Audit.LogPath explicitly,
+// mirroring pkg/config.ACMEAuditConfig.ResolveLogPath -- the same
+// DataDir-relative pattern xkmsd's embedded ACME server uses for its own
+// audit trail. A disabled trail needs no path at all. DataDir is required
+// to derive the default: there is no cwd-relative fallback (go-xkms#929).
+func (c *TrustedCAConfig) resolveAuditLogPath() error {
+	if !c.Audit.Enabled || c.Audit.LogPath != "" {
+		return nil
+	}
+	if c.DataDir == "" {
+		return errors.MalformedError(
+			"data_dir is required to resolve audit.logPath when audit.enabled is true and audit.logPath is not set")
+	}
+	c.Audit.LogPath = filepath.Join(c.DataDir, DefaultAuditLogFileName)
 	return nil
 }
 

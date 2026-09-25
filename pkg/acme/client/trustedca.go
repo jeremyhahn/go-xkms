@@ -324,6 +324,13 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	tlsConfig.MinVersion = tls.VersionTLS13
 	tlsConfig.MaxVersion = tls.VersionTLS13
 
+	// Resolve Audit.LogPath against config.DataDir when the operator did not
+	// set one explicitly (go-xkms#929): a TrustedCA never falls back to a
+	// cwd-relative audit log.
+	if err := tca.config.resolveAuditLogPath(); err != nil {
+		return caerrors.InternalServerError("failed to resolve audit log path: %v", err)
+	}
+
 	// Open the audit trail before the CA can sign anything. A disabled trail
 	// yields the no-op logger; an enabled trail whose file cannot be created
 	// fails the start-up rather than running a CA that records nothing.

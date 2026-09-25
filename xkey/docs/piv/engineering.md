@@ -132,7 +132,7 @@ ever return the CLI flag's current value — set `--backend`,
 |---|---|
 | `--backend` | `software` |
 | `--piv-storage` | (matches backend) |
-| `--storage-path` | `./data/piv` |
+| `--storage-path` | empty: resolved by `resolvePIVStoragePath` (`xkey/cmd/xkey/cmd/piv.go`) to `<xkey-home>/data/piv` |
 | `--tpm-device` | `/dev/tpmrm0` |
 | `--pkcs11-library` | `/usr/lib/softhsm/libsofthsm2.so` |
 | `--pkcs11-token` | (none) |

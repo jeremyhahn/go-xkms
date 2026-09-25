@@ -58,9 +58,13 @@ func TestOATHSyncPhoneCmd_FlagDefaults(t *testing.T) {
 	})
 
 	t.Run("store_default", func(t *testing.T) {
+		// Empty by design (go-xkms#929): a baked-in default would be
+		// cwd-relative at flag-registration time. The real default is
+		// resolved at run time by openOATHStore (resolveDataDir), not the
+		// flag.
 		flag := oathSyncPhoneCmd.Flags().Lookup("store")
 		require.NotNil(t, flag)
-		assert.Equal(t, defaultOATHStorePath, flag.DefValue)
+		assert.Equal(t, "", flag.DefValue)
 	})
 }
 

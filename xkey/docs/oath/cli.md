@@ -1,6 +1,6 @@
 # OATH TOTP/HOTP — CLI
 
-> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 Every flag below is read from `cmd/xkey/cmd/oath.go`'s `init()` and matches
 `xkey oath <verb> --help` built from this checkout.
@@ -17,7 +17,7 @@ Every flag below is read from `cmd/xkey/cmd/oath.go`'s `init()` and matches
 | `--algorithm` | `SHA1` | `SHA1`, `SHA256`, `SHA512` |
 | `--digits` | `6` | `6`, `7`, or `8` |
 | `--period` | `30` | TOTP time step, seconds |
-| `--store` | `./data/oath.json` | Store path. An explicit value always selects a plain file, bypassing the barrier — see [architecture.md](architecture.md) |
+| `--store` | `~/.xkey/data/oath.json` (resolved via `resolveDataDir`, go-xkms#929) | Store path. An explicit value always selects a plain file, bypassing the barrier — see [architecture.md](architecture.md) |
 | `--barrier-password` | | Barrier password, when the default store resolves to the barrier |
 | `--barrier-password-file` | | Read the barrier password from a file (first line) |
 
@@ -33,7 +33,7 @@ xkey oath add --uri "otpauth://totp/..." --name "My GitHub"
 
 | Flag | Default | Description |
 |---|---|---|
-| `--store` | `./data/oath.json` | Store path |
+| `--store` | `~/.xkey/data/oath.json` | Store path |
 | `--secrets` | `false` | Show secret keys |
 | `--uri` | `false` | Show `otpauth://` URIs |
 | `--barrier-password`, `--barrier-password-file` | | Same as `add` |
@@ -48,7 +48,7 @@ xkey oath list --uri
 
 | Flag | Default | Description |
 |---|---|---|
-| `--store` | `./data/oath.json` | Store path |
+| `--store` | `~/.xkey/data/oath.json` | Store path |
 | `--all` | `false` | Generate codes for every credential |
 | `--barrier-password`, `--barrier-password-file` | | Same as `add` |
 
@@ -62,7 +62,7 @@ xkey oath generate "GitHub" "AWS"
 
 | Flag | Default | Description |
 |---|---|---|
-| `--store` | `./data/oath.json` | Store path |
+| `--store` | `~/.xkey/data/oath.json` | Store path |
 | `--force` | `false` | Skip the confirmation prompt |
 | `--barrier-password`, `--barrier-password-file` | | Same as `add` |
 
@@ -78,7 +78,7 @@ Captures the desktop display(s) and decodes a QR code into a credential.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--store` | `./data/oath.json` | Store path |
+| `--store` | `~/.xkey/data/oath.json` | Store path |
 | `--name` | (from QR) | Override the credential name |
 | `--display` | `-1` | Display index to scan (`-1` = all) |
 | `--list-displays` | `false` | List available displays and exit |

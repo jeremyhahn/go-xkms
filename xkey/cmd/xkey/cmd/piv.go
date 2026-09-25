@@ -30,11 +30,17 @@ import (
 
 // PIV configuration constants.
 const (
-	defaultPIVStoragePath   = "./data/piv"
 	defaultPIVBackend       = "software"
 	defaultPIVTPMDevice     = "/dev/tpmrm0"
 	defaultPIVExportFormat  = "pem"
 	defaultPIVPKCS11Library = "/usr/lib/softhsm/libsofthsm2.so"
+
+	// pivStorageFeature is the featureDataDir (datadir.go) subdirectory the
+	// PIV file-storage path defaults to when --storage-path is not set:
+	// <xkey data dir>/piv, resolved through the CLI's shared data-directory
+	// chain (XKEY_HOME, XKEY_DATA_DIR, config data_dir, or ~/.xkey/data)
+	// rather than a cwd-relative default (go-xkms#929).
+	pivStorageFeature = "piv"
 )
 
 // PIV configuration keys for Viper.
@@ -440,8 +446,8 @@ func init() {
 		"Key backend: software, tpm2, or pkcs11")
 	PIVCmd.PersistentFlags().String("piv-storage", "",
 		"Certificate storage type override: file, tpm2, or pkcs11 (default: matches backend)")
-	PIVCmd.PersistentFlags().String("storage-path", defaultPIVStoragePath,
-		"Path for file storage")
+	PIVCmd.PersistentFlags().String("storage-path", "",
+		"Path for file storage (default: ~/.xkey/data/piv, see XKEY_DATA_DIR)")
 	PIVCmd.PersistentFlags().String("tpm-device", defaultPIVTPMDevice,
 		"TPM device path for tpm2 backend/storage")
 	PIVCmd.PersistentFlags().String("pkcs11-library", defaultPIVPKCS11Library,
@@ -513,8 +519,35 @@ func buildPIVConfig() *PIVConfig {
 	}
 }
 
+// resolvePIVStoragePath returns cfg.StoragePath if the operator set one
+// (--storage-path, XKEY_DATA_DIR, or the config data_dir key), otherwise
+// resolves the PIV file-storage default through the CLI's single
+// data-directory chain (datadir.go), creating it if necessary
+// (go-xkms#929). cfg.StoragePath is updated with the resolved value so
+// later readers (e.g. `piv status`) observe the same path.
+func resolvePIVStoragePath(cfg *PIVConfig) (string, error) {
+	if cfg.StoragePath != "" {
+		return cfg.StoragePath, nil
+	}
+	dir, err := featureDataDir(pivStorageFeature)
+	if err != nil {
+		return "", err
+	}
+	cfg.StoragePath = dir
+	return dir, nil
+}
+
 // createPIVStorage creates the appropriate certificate storage backend.
 func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertificateStorage, error) {
+	// Resolve the file-storage default before validating: an unset
+	// --storage-path must resolve through the shared xkey data directory,
+	// not fail closed as "required" (go-xkms#929).
+	if cfg.StorageType == PIVStorageTypeFile {
+		if _, err := resolvePIVStoragePath(cfg); err != nil {
+			return nil, err
+		}
+	}
+
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -811,7 +844,11 @@ func runPIVStatus(cmd *cobra.Command, args []string) error {
 
 	switch cfg.StorageType {
 	case PIVStorageTypeFile:
-		_, _ = fmt.Fprintf(out, "Storage Path:      %s\n", cfg.StoragePath)
+		storagePath, err := resolvePIVStoragePath(cfg)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(out, "Storage Path:      %s\n", storagePath)
 	case PIVStorageTypeTPM2:
 		_, _ = fmt.Fprintf(out, "TPM Device:        %s\n", cfg.TPMDevice)
 	case PIVStorageTypePKCS11:

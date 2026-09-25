@@ -368,10 +368,16 @@ func TestTrustedCA_Serve_AlreadyStarted(t *testing.T) {
 
 func TestTrustedCA_Serve_ContextCancellation(t *testing.T) {
 	port := getAvailablePort(t)
+	// DefaultTrustedCAConfig leaves Audit.LogPath unresolved (go-xkms#929):
+	// Serve derives it from DataDir, so tests that exercise a real Serve
+	// call need one.
+	cfg := DefaultTrustedCAConfig()
+	cfg.DataDir = t.TempDir()
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithListenAddr(fmt.Sprintf("127.0.0.1:%d", port)),
+		WithConfig(cfg),
 	)
 	require.NoError(t, err)
 

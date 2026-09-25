@@ -12,7 +12,7 @@ Inherited by every `piv` subcommand.
 |---|---|---|
 | `--backend` | `software` | Key backend: `software`, `tpm2` (needs `-tags tpm2`), or `pkcs11` (needs `-tags pkcs11`) |
 | `--piv-storage` | (matches backend) | Certificate storage override: `file`, `tpm2`, or `pkcs11` |
-| `--storage-path` | `./data/piv` | Path for file storage |
+| `--storage-path` | `<xkey-home>/data/piv` (resolved through `featureDataDir`; see `resolvePIVStoragePath`) | Path for file storage |
 | `--tpm-device` | `/dev/tpmrm0` | TPM device path |
 | `--pkcs11-library` | `/usr/lib/softhsm/libsofthsm2.so` | PKCS#11 library path |
 | `--pkcs11-token` | | PKCS#11 token label |

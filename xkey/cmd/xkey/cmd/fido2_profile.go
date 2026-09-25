@@ -79,14 +79,16 @@ func (p *FIDO2Profile) Validate() error {
 }
 
 // fido2ProfileStorePath returns the directory holding the persisted profile.
-// It hangs off the configured FIDO2 storage path so the profile shares the
-// lifetime of the authenticator's other on-disk policy.
-func fido2ProfileStorePath(cfg *FIDO2Config) string {
-	base := cfg.StoragePath
-	if base == "" {
-		base = defaultFIDO2StoragePath
+// It hangs off the configured FIDO2 storage path (resolveFIDO2StoragePath,
+// fido2.go) so the profile shares the lifetime of the authenticator's other
+// on-disk policy -- and, when no --storage-path was set, the same resolved
+// xkey data directory rather than a cwd-relative default (go-xkms#929).
+func fido2ProfileStorePath(cfg *FIDO2Config) (string, error) {
+	base, err := resolveFIDO2StoragePath(cfg)
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(base, fido2ProfileStoreSubdir)
+	return filepath.Join(base, fido2ProfileStoreSubdir), nil
 }
 
 // openFIDO2ProfileStore opens the file-backed store holding the
@@ -96,7 +98,11 @@ func fido2ProfileStorePath(cfg *FIDO2Config) string {
 // with memory credential storage: a profile that vanished with the process
 // could never influence a later GetInfo response.
 func openFIDO2ProfileStore(cfg *FIDO2Config) (xkms.StorageBackend, error) {
-	backend, err := xkms.NewFileStorageBackend(fido2ProfileStorePath(cfg))
+	path, err := fido2ProfileStorePath(cfg)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrFIDO2ProfileStoreOpenFailed, Cause: err}
+	}
+	backend, err := xkms.NewFileStorageBackend(path)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrFIDO2ProfileStoreOpenFailed, Cause: err}
 	}

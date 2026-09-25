@@ -502,6 +502,20 @@ The standalone `TrustedCA` also carries its own advertised URL,
 `acme.external_url`; `Validate` requires it, and a caller that skips
 validation gets the derived default described under Invariants.
 
+**Audit log path (`TrustedCAConfig.DataDir`, `trustedca_config.go`,
+go-xkms#929).** `DefaultTrustedCAConfig` enables the audit trail but leaves
+`Audit.LogPath` empty; `TrustedCAConfig.Validate` (called by `TrustedCA.Serve`
+just before opening the trail) derives it from `DataDir` as
+`DataDir/trusted-ca-audit.log` (`DefaultAuditLogFileName`) when the operator
+did not set `Audit.LogPath` explicitly — the same `DataDir`-relative pattern
+`ACMEAuditConfig.AuditConfig` uses for xkmsd's embedded ACME audit trail
+above, so neither surface ever falls back to a path relative to the
+process's working directory. An enabled trail with neither `Audit.LogPath`
+nor `DataDir` set fails `Validate` with a typed `*errors.TrustedCAError`
+(`errors.MalformedError`) rather than silently writing beside wherever the
+process happens to run; a disabled trail (`Audit.Enabled = false`) needs
+neither field.
+
 **CAA configuration (`ACMEConfig`, `pkg/config/acme.go`).**
 `acme.caa_identities` is the list of issuer domain names this CA is known by
 in `issue`/`issuewild` CAA records, and is **required whenever `acme.enabled`

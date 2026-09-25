@@ -222,7 +222,11 @@ func createFIDO2RPPolicyStore(cfg *FIDO2Config) (authenticator.RPPolicyStore, er
 		return authenticator.NewMemoryRPPolicyStore(), nil
 
 	case FIDO2StorageTypeFile:
-		backend, err := xkms.NewFileStorageBackend(cfg.StoragePath)
+		storagePath, err := resolveFIDO2StoragePath(cfg)
+		if err != nil {
+			return nil, errors.Join(ErrRPPolicyStoreCreationFailed, err)
+		}
+		backend, err := xkms.NewFileStorageBackend(storagePath)
 		if err != nil {
 			return nil, errors.Join(ErrRPPolicyStoreCreationFailed, err)
 		}
@@ -477,7 +481,11 @@ func runFIDO2ProfileSet(cmd *cobra.Command, args []string) error {
 	if err := writeFIDO2ProfileTable(out, profile); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(out, "\nProfile saved to %s\n", fido2ProfileStorePath(cfg))
+	storePath, err := fido2ProfileStorePath(cfg)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "\nProfile saved to %s\n", storePath)
 	return nil
 }
 
@@ -494,7 +502,11 @@ func runFIDO2ProfileShow(cmd *cobra.Command, args []string) error {
 	if err := writeFIDO2ProfileTable(out, profile); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(out, "\nProfile store: %s\n", fido2ProfileStorePath(cfg))
+	storePath, err := fido2ProfileStorePath(cfg)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "\nProfile store: %s\n", storePath)
 	return nil
 }
 

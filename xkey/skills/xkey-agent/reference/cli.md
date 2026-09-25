@@ -889,7 +889,7 @@ Aliases: fido
 | `--name` | string | xKey (go-xkms) | Device name visible to OS |
 | `--notify` | string | dialog | Notification type: dialog (interactive), passive (desktop notification), log (log-only), or none |
 | `--notify-command` | string |  | Custom notification command (overrides built-in notifications) |
-| `--password-store` | string | ./data/staticpw | Path to static password store |
+| `--password-store` | string |  | Path to static password store (default: ~/.xkey/data/staticpw, the same store `xkey password` uses) |
 | `--phone-device` | string |  | Specific phone name or address to use (default: use default paired phone) |
 | `--pin` | bool | true | Enable PIN support (required for FIDO 2.1 credential management) |
 | `--require-touch` | bool | true | Require touch even after PIN verification (like hardware YubiKey) |
@@ -897,7 +897,7 @@ Aliases: fido
 | `--set-pin` | string |  | Establish the initial PIN when the store has none (requires --pin; refused if a PIN is already set) |
 | `--socket` | string |  | IPC socket path (default: $XDG_RUNTIME_DIR/xkey/xkey.sock) |
 | `--storage` | string | memory | Storage type: memory, file, or barrier |
-| `--storage-path` | string | ./data | Path for file storage |
+| `--storage-path` | string |  | Path for file storage and the authenticator profile (default: ~/.xkey/data/fido2, see --data-dir/XKEY_DATA_DIR) |
 | `--timeout` | duration | 30s | Timeout for user presence requests |
 | `--tpm-device` | string | /dev/tpmrm0 | TPM device path |
 | `--unified-pin` | bool | true | Propagate the host PIN service's user PIN to the virtual FIDO2 authenticator's CTAP2 PIN hash on every set/change/verify (it does not sync a separate PKCS#11 or file PIN store: there is exactly one governing PIN backend, see 'xkey pin status') |
@@ -1028,7 +1028,7 @@ Usage: `xkey fido2 start [flags]`
 | `--name` | string | xKey (go-xkms) | Device name visible to OS |
 | `--notify` | string | dialog | Notification type: dialog (interactive), passive (desktop notification), log (log-only), or none |
 | `--notify-command` | string |  | Custom notification command (overrides built-in notifications) |
-| `--password-store` | string | ./data/staticpw | Path to static password store |
+| `--password-store` | string |  | Path to static password store (default: ~/.xkey/data/staticpw, the same store `xkey password` uses) |
 | `--phone-device` | string |  | Specific phone name or address to use (default: use default paired phone) |
 | `--pin` | bool | true | Enable PIN support (required for FIDO 2.1 credential management) |
 | `--require-touch` | bool | true | Require touch even after PIN verification (like hardware YubiKey) |
@@ -1036,7 +1036,7 @@ Usage: `xkey fido2 start [flags]`
 | `--set-pin` | string |  | Establish the initial PIN when the store has none (requires --pin; refused if a PIN is already set) |
 | `--socket` | string |  | IPC socket path (default: $XDG_RUNTIME_DIR/xkey/xkey.sock) |
 | `--storage` | string | memory | Storage type: memory, file, or barrier |
-| `--storage-path` | string | ./data | Path for file storage |
+| `--storage-path` | string |  | Path for file storage and the authenticator profile (default: ~/.xkey/data/fido2, see --data-dir/XKEY_DATA_DIR) |
 | `--timeout` | duration | 30s | Timeout for user presence requests |
 | `--tpm-device` | string | /dev/tpmrm0 | TPM device path |
 | `--unified-pin` | bool | true | Propagate the host PIN service's user PIN to the virtual FIDO2 authenticator's CTAP2 PIN hash on every set/change/verify (it does not sync a separate PKCS#11 or file PIN store: there is exactly one governing PIN backend, see 'xkey pin status') |
@@ -1158,7 +1158,7 @@ Usage: `xkey oath add [flags]`
 | `--name` | string |  | Credential name (e.g., GitHub) |
 | `--period` | int | 30 | Time period in seconds (TOTP only) |
 | `--secret` | string |  | Base32-encoded secret key |
-| `--store` | string | ./data/oath.json | Path to credential store |
+| `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--type` | string | totp | OTP type: totp or hotp |
 | `--uri` | string |  | otpauth:// URI (from QR code) |
 
@@ -1175,7 +1175,7 @@ Aliases: gen, code
 | `--all` | bool | false | Generate codes for all credentials |
 | `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
-| `--store` | string | ./data/oath.json | Path to credential store |
+| `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 
 ## xkey oath list
 
@@ -1190,7 +1190,7 @@ Aliases: ls
 | `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--secrets` | bool | false | Show secret keys |
-| `--store` | string | ./data/oath.json | Path to credential store |
+| `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--uri` | bool | false | Show otpauth:// URIs |
 
 ## xkey oath pull
@@ -1204,7 +1204,7 @@ Usage: `xkey oath pull [flags]`
 | `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--device` | string |  | Paired device name |
-| `--store` | string | ./data/oath.json | Path to credential store |
+| `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--timeout` | duration | 1m0s | Operation timeout |
 
 ## xkey oath push
@@ -1218,7 +1218,7 @@ Usage: `xkey oath push <name-or-id> [flags]`
 | `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--device` | string |  | Paired device name |
-| `--store` | string | ./data/oath.json | Path to credential store |
+| `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--timeout` | duration | 1m0s | Operation timeout |
 
 ## xkey oath remove
@@ -1234,7 +1234,7 @@ Aliases: rm, delete
 | `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--force` | bool | false | Don't prompt for confirmation |
-| `--store` | string | ./data/oath.json | Path to credential store |
+| `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 
 ## xkey oath scan
 
@@ -1250,7 +1250,7 @@ Usage: `xkey oath scan [flags]`
 | `--index` | int | -1 | Select QR code by index when multiple are found |
 | `--list-displays` | bool | false | List available displays and exit |
 | `--name` | string |  | Override the credential name |
-| `--store` | string | ./data/oath.json | Path to credential store |
+| `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--yes`, `-y` | bool | false | Don't prompt for confirmation |
 
 ## xkey oath sync
@@ -1264,7 +1264,7 @@ Usage: `xkey oath sync [flags]`
 | `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--device` | string |  | Paired device name |
-| `--store` | string | ./data/oath.json | Path to credential store |
+| `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--timeout` | duration | 1m0s | Operation timeout |
 
 ## xkey oidc
@@ -1479,7 +1479,7 @@ Usage: `xkey password add [flags]`
 | `--name` | string |  | Password name (e.g., DatabaseProd) |
 | `--notes` | string |  | Optional notes |
 | `--password` | string |  | The password to store |
-| `--store` | string | ./data/staticpw | Path to password store |
+| `--store` | string |  | Path to password store (default: ~/.xkey/data/staticpw) |
 | `--title` | string |  | Display title for credential |
 | `--url` | string |  | Website URL for domain matching |
 | `--username` | string |  | Username or login |
@@ -1494,7 +1494,7 @@ Aliases: show
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--store` | string | ./data/staticpw | Path to password store |
+| `--store` | string |  | Path to password store (default: ~/.xkey/data/staticpw) |
 
 ## xkey password list
 
@@ -1509,7 +1509,7 @@ Aliases: ls
 | `--show-passwords` | bool | false | Show password values (requires --source disk) |
 | `--socket` | string |  | IPC socket path of the running daemon (default: auto-detect) |
 | `--source` | string | auto | Where to read state from: auto, daemon, disk |
-| `--store` | string | ./data/staticpw | Path to password store |
+| `--store` | string |  | Path to password store (default: ~/.xkey/data/staticpw) |
 
 ## xkey password lock
 
@@ -1528,7 +1528,7 @@ Aliases: rm, delete
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--force` | bool | false | Skip confirmation prompt |
-| `--store` | string | ./data/staticpw | Path to password store |
+| `--store` | string |  | Path to password store (default: ~/.xkey/data/staticpw) |
 
 ## xkey password status
 
@@ -1540,7 +1540,7 @@ Usage: `xkey password status [flags]`
 |---|---|---|---|
 | `--socket` | string |  | IPC socket path of the running daemon (default: auto-detect) |
 | `--source` | string | auto | Where to read state from: auto, daemon, disk, xkmsd |
-| `--store` | string | ./data/staticpw | Path to password store |
+| `--store` | string |  | Path to password store (default: ~/.xkey/data/staticpw) |
 
 ## xkey password type
 
@@ -1646,7 +1646,7 @@ Inherited by subcommands:
 | `--pkcs11-pin` | string |  | PKCS#11 user PIN |
 | `--pkcs11-so-pin` | string |  | PKCS#11 Security Officer PIN (required for key generation) |
 | `--pkcs11-token` | string |  | PKCS#11 token label |
-| `--storage-path` | string | ./data/piv | Path for file storage |
+| `--storage-path` | string |  | Path for file storage (default: ~/.xkey/data/piv, see XKEY_DATA_DIR) |
 | `--tpm-device` | string | /dev/tpmrm0 | TPM device path for tpm2 backend/storage |
 
 ## xkey piv csr
