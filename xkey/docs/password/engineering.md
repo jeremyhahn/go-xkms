@@ -192,7 +192,7 @@ type constants shared with the extension protocol.
 | `--source` (`list`) | `auto`→ daemon, then disk | `daemon`/`disk` force one |
 | `--source` (`status`) | `auto`→ daemon, then disk; `xkmsd` reads the session server | The only verb that accepts `xkmsd` |
 | `xkmsd` endpoint | `--xkmsd-url` / `XKMSD_URL` / config, resolved by `newXKMSdClient` (shared helper, `xkmsd_client.go`) | Required for `unlock`/`lock`/`access-mode`, and `status --source xkmsd` |
-| `fido2` daemon's password store | `--password-store` flag (unset default resolves to the same `~/.xkey/data/staticpw`, go-xkms#929) / `XKEY_FIDO2_PASSWORD_STORE` | `xkey fido2` opens this store for `touch`/`password type` requests |
+| `fido2` daemon's password store | `--password-store` flag only (unset default resolves to the same `~/.xkey/data/staticpw`, go-xkms#929) | `xkey fido2` opens this store for `touch`/`password type` requests. `viper.BindPFlag("fido2.password_store", ...)` (`fido2.go:436`) is on the global Viper singleton, which is never wired to `AutomaticEnv`/`SetEnvPrefix`, so `XKEY_FIDO2_PASSWORD_STORE` does nothing today (go-xkms#871) |
 
 ## Tests
 

@@ -1,6 +1,6 @@
 # xkmsd Configuration — Architecture
 
-> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## The problem
 
@@ -28,7 +28,7 @@ flags  >  environment  >  file  >  defaults
 |---|---|---|
 | defaults | `config.Defaults()` (`pkg/config/load.go`) | rendered to a key map and registered with viper, so every key is known |
 | file | the YAML at `--config` / `XKMS_CONFIG` | `viper.MergeConfig`, decoded with the struct's `yaml` tags |
-| environment | `XKMS_<SECTION>_<KEY>` | `SetEnvPrefix("XKMS")` + `SetEnvKeyReplacer(".", "_")` + `AutomaticEnv`, plus a registered alias table for pre-viper names |
+| environment | `XKMS_<SECTION>_<KEY>` | `SetEnvPrefix("XKMS")` + `SetEnvKeyReplacer(".", "_")` + `AutomaticEnv`; no alias table — see "Environment names" below |
 | flags | `xkmsd --host …` | applied only when the flag was set (`flag.Visit`, the standard-library form of `Changed()`) |
 
 The first three layers resolve inside `config.Load`; the daemon applies the

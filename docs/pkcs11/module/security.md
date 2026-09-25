@@ -98,11 +98,17 @@ PKCS#11 PINs are used for user and SO authentication:
 - Consider hardware-backed PIN storage
 
 ```bash
-# Use environment variable (cleared after read)
-export XKMS_PIN="..."
-pkcs11-tool --module $P11_MODULE --login --list-objects
-unset XKMS_PIN
+# pkcs11-tool has no PIN environment variable of its own; pass --pin
+# explicitly or omit it and answer the interactive prompt.
+pkcs11-tool --module $P11_MODULE --login --pin "$PIN" --list-objects
 ```
+
+The module's own token User PIN (used for auto-initialization, not for a
+`pkcs11-tool` invocation) is `XKMS_PKCS11_USER_PIN` (`EnvUserPIN`,
+`pkg/pkcs11/module/config.go:56`), read by `applyEnvOverrides`
+(`config.go:477`) and taking precedence over the configuration file the
+same way `XKMS_PKCS11_PIV_BACKENDS` does — see
+[piv.md](piv.md#xkms_pkcs11_piv_backends-environment-variable).
 
 #### Unified PIN Coordination
 

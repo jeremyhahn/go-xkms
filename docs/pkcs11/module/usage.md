@@ -406,13 +406,6 @@ pkcs11-tool --module $P11_MODULE \
 
 ## Troubleshooting
 
-### Debug Logging
-
-```bash
-export XKMS_DEBUG=true
-export XKMS_LOG_FILE=/tmp/pkcs11.log
-```
-
 ### Common Issues
 
 | Error | Cause | Solution |
