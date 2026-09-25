@@ -103,4 +103,17 @@ func TestClassification_MatchesSharedTables(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("seal store", func(t *testing.T) {
+		for _, entry := range apierrors.SealStoreSentinelClasses {
+			want, ok := wireExpectationForClass[entry.Class]
+			require.True(t, ok, "no wire expectation for class %v", entry.Class)
+			t.Run(want.name, func(t *testing.T) {
+				err := mapSealStoreError(entry.Sentinel)
+				var keyErr *KeyOpError
+				require.ErrorAs(t, err, &keyErr)
+				assert.Equal(t, want.mcpCode, keyErr.Code)
+			})
+		}
+	})
 }

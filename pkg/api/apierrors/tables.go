@@ -19,6 +19,19 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
+// SealStoreSentinelClasses classifies the errors the machine-local
+// platform-sealed credential store (pkg/xkms's SealStoreServicer,
+// pkg/seal's Store) returns. Both pkg/api/grpc/service_seal_store.go's
+// mapSealStoreError and pkg/api/mcp's mirror of it read this table
+// (go-xkms#921).
+var SealStoreSentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+	{xkms.ErrNilRequest, ClassInvalidArgument},
+	{seal.ErrSecretNotFound, ClassNotFound},
+	{seal.ErrInvalidSecretName, ClassInvalidArgument},
+	{seal.ErrResealFailed, ClassInternal},
+}
+
 // ImportExportSentinelClasses classifies the backend-layer capability
 // sentinels a direct backend.ImportBackend / backend.ExportBackend call can
 // return: WrapKey, UnwrapKey, GetImportParameters, ImportKey, ExportKey and

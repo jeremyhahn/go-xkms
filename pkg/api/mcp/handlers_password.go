@@ -448,7 +448,7 @@ func (s *Server) handlePasswordUnlock(ctx context.Context, req *JSONRPCRequest) 
 
 	status, err := s.passwordManager.TenantStoreStatus(identity.TenantID)
 	if err != nil {
-		return nil, err
+		return nil, mapPasswordStoreError(err)
 	}
 
 	return PasswordStoreStatusResult{
@@ -477,7 +477,7 @@ func (s *Server) handlePasswordLock(ctx context.Context, req *JSONRPCRequest) (i
 
 	status, err := s.passwordManager.TenantStoreStatus(identity.TenantID)
 	if err != nil {
-		return nil, err
+		return nil, mapPasswordStoreError(err)
 	}
 
 	return PasswordStoreStatusResult{
