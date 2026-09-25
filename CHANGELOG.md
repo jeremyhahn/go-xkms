@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0-alpha] - 2026-09-25
+
+### Security
+
+- **xkey's OIDC callback page no longer renders the provider's error as
+  HTML.**
+  The CLI's loopback callback page wrote the `error` and `error_description`
+  query parameters into its HTML unescaped, so anyone able to steer the
+  browser to the callback URL while a login was pending (a hostile IdP, a
+  crafted link) could inject markup or script into the local callback
+  origin. Every callback page (CLI, GUI and `xkey oidc aws`) is now rendered
+  by one function, `oidc.WriteCallbackPage`, through `html/template`, and is
+  served with `Content-Type: text/html; charset=utf-8`,
+  `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src
+  'none'; style-src 'unsafe-inline'` and `Referrer-Policy: no-referrer`.
+  Tests send a `<script>` / `"><img onerror>` redirect to each of the three
+  handlers and assert the escaped output and the headers. (go-xkms#1013)
+
+### Added
+
+- **PCR policy management now works over every network transport, not just
+  REST.** `PolicyCreate`, `PolicyGet`, `PolicyList`, `PolicyDelete`,
+  `PolicyRefresh`, `PolicyVerify` and `PolicyExport` were `ErrNotSupported`
+  one-liners on the gRPC, Unix, QUIC and MCP client transports, and
+  `PasswordStoreSetAccessMode` was likewise stubbed on gRPC and Unix
+  (go-xkms#691); `xkmsctl policy` and any SDK caller not on REST failed on
+  every one of those verbs. All seven Policy RPCs and messages were added
+  to `pkg/api/grpc/proto/xkmsv1/xkms.proto` and regenerated; the gRPC
+  service (and, over the same generated client, Unix) delegates to
+  `pkg/xkms.XKMSService`'s existing `PolicyServicer`; QUIC (HTTP/3 on the
+  REST router) and the REST client transport translate REST's own wire
+  shapes via new `pkg/api/rest/wire` PCR Policy types; MCP gained
+  `policy.*` tool handlers and dispatch-table entries. Authorization is a
+  new `policy:*` permission family (`pkg/auth.ResourcePolicy`,
+  `pkg/apimodule/module_scopes.go`) mirrored one-for-one across REST's
+  route table, the gRPC proto's `(qrdb.v1.permission)` options, and MCP's
+  `methodPermissions` — go-qrdb's canonical registry does not declare a
+  policy resource, so xkms mints and scopes it itself, the way it already
+  does for `bootstrap:read`. `PasswordStoreSetAccessMode` on gRPC/Unix
+  gates on `passwords:write`, matching its `PasswordUpdate` sibling.
+  `pkg/api/keyops_parity_test` gained `TestPolicy_RESTAndGRPCAgree` and
+  `TestPolicy_ValidationAgrees`, driving one shared `xkms.XKMSService`
+  through both transports so a future regression to a stub fails a test
+  rather than shipping. The USB transport (a Noise-encrypted JSON-RPC peer
+  to the xkey Android companion app, not xkmsd, with no TPM) and the four
+  `pkg/escrow` RPCs (a separate open question, go-xkms#692) are
+  unaffected. Files: `pkg/api/grpc/proto/xkmsv1/xkms.proto`,
+  `pkg/api/grpc/service_policy.go`, `pkg/api/grpc/service_password.go`,
+  `pkg/api/transport/{grpc,unix,quic,rest,mcp}/transport.go`,
+  `pkg/api/mcp/handlers_policy.go`, `pkg/api/mcp/authz.go`,
+  `pkg/api/mcp/server.go`, `pkg/api/rest/wire/types.go`,
+  `pkg/auth/permissions.go`, `pkg/apimodule/module_scopes.go`,
+  `internal/authzscan/authzscan.go`,
+  `pkg/api/keyops_parity_test/policy_parity_test.go`,
+  `test/integration/api/commands/commands.go`.
+
+### Fixed
+
+- **`xkey luks2 seal`'s existing-data migration and `xkey luks2 import-data`
+  can no longer destroy the only copy of a user's data on a failed unlock,
+  copy or lock.** `migrateExistingData` deleted the plaintext source
+  directory before unlocking the new volume; if `Unlock` or
+  `CopyDataToVolume` then failed, the deferred cleanup deleted the staged
+  copy too, leaving nothing. It now stages the source, unlocks the volume,
+  copies into it, verifies the copy (`verifyDirCopy`, a new typed
+  `*DataVerificationError`), and only then locks the volume and deletes the
+  source; any failure along the way keeps the staged copy and reports its
+  path instead. `import-data` unconditionally `RemoveAll`'d its temporary
+  mount point on return, including when a copy or lock failure had left the
+  volume mounted there; `removeTempMount` now checks `IsMounted()` first and
+  leaves a still-mounted mount point in place, reporting it instead of
+  deleting its contents. Both functions take small interfaces
+  (`migrateVolume`, `importDataVolume`) instead of a concrete `*luks.Volume`
+  so the failure paths are covered by fault-injection tests
+  (`seal_test.go`, `import_data_test.go`) with no real LUKS device or root
+  required. (go-xkms#1012)
+- **Every named-policy REST route answered 400 for every real request.**
+  `pkg/api/rest/routes.go` registered `GET/DELETE /api/v1/policies/{id}`
+  and the `/refresh`, `/verify`, `/export` sub-routes with an `{id}` chi
+  path parameter, but `pkg/api/rest/policy_handlers.go`'s handlers all read
+  `chi.URLParam(r, "name")` — a key chi never populated, so every call with
+  a real policy name fell into the "Policy name is required" branch
+  regardless of what the caller sent (go-xkms#691). Routes now register
+  `{name}`. Found and pinned by
+  `pkg/api/keyops_parity_test/policy_parity_test.go`, which drives the same
+  request through REST and gRPC and requires both to agree.
+
 ## [0.29.0-alpha] - 2026-09-25
 
 ### Security
