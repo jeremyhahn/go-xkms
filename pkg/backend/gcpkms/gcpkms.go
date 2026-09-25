@@ -49,7 +49,11 @@ import (
 )
 
 // KMSClient defines the interface for GCP KMS operations.
-// This interface allows for mocking in tests.
+// This interface allows for mocking in tests. It lists exactly the
+// operations Backend calls; GetImportJob was removed (go-xkms#705) because
+// no Backend method ever called it -- an unused interface method can only
+// be covered by a test that calls it directly with no Backend behavior to
+// assert, which is coverage padding, not a real test.
 type KMSClient interface {
 	CreateCryptoKey(ctx context.Context, req *kmspb.CreateCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error)
 	GetCryptoKey(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error)
@@ -64,7 +68,6 @@ type KMSClient interface {
 	Encrypt(ctx context.Context, req *kmspb.EncryptRequest, opts ...interface{}) (*kmspb.EncryptResponse, error)
 	Decrypt(ctx context.Context, req *kmspb.DecryptRequest, opts ...interface{}) (*kmspb.DecryptResponse, error)
 	CreateImportJob(ctx context.Context, req *kmspb.CreateImportJobRequest, opts ...interface{}) (*kmspb.ImportJob, error)
-	GetImportJob(ctx context.Context, req *kmspb.GetImportJobRequest, opts ...interface{}) (*kmspb.ImportJob, error)
 	ImportCryptoKeyVersion(ctx context.Context, req *kmspb.ImportCryptoKeyVersionRequest, opts ...interface{}) (*kmspb.CryptoKeyVersion, error)
 	Close() error
 }
@@ -136,10 +139,6 @@ func (r *realKMSClient) Decrypt(ctx context.Context, req *kmspb.DecryptRequest, 
 
 func (r *realKMSClient) CreateImportJob(ctx context.Context, req *kmspb.CreateImportJobRequest, opts ...interface{}) (*kmspb.ImportJob, error) {
 	return r.KeyManagementClient.CreateImportJob(ctx, req)
-}
-
-func (r *realKMSClient) GetImportJob(ctx context.Context, req *kmspb.GetImportJobRequest, opts ...interface{}) (*kmspb.ImportJob, error) {
-	return r.KeyManagementClient.GetImportJob(ctx, req)
 }
 
 func (r *realKMSClient) ImportCryptoKeyVersion(ctx context.Context, req *kmspb.ImportCryptoKeyVersionRequest, opts ...interface{}) (*kmspb.CryptoKeyVersion, error) {

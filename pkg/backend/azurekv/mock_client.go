@@ -31,7 +31,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 )
 
@@ -44,8 +43,6 @@ type MockKeyVaultClient struct {
 	deleteErr  error
 	signErr    error
 	decryptErr error
-	wrapErr    error
-	unwrapErr  error
 	rotateErr  error
 }
 
@@ -99,16 +96,6 @@ func (m *MockKeyVaultClient) SetSignError(err error) {
 // SetDecryptError sets an error to be returned by Decrypt operations.
 func (m *MockKeyVaultClient) SetDecryptError(err error) {
 	m.decryptErr = err
-}
-
-// SetWrapError sets an error to be returned by WrapKey operations.
-func (m *MockKeyVaultClient) SetWrapError(err error) {
-	m.wrapErr = err
-}
-
-// SetUnwrapError sets an error to be returned by UnwrapKey operations.
-func (m *MockKeyVaultClient) SetUnwrapError(err error) {
-	m.unwrapErr = err
 }
 
 // SetRotateError sets an error to be returned by RotateKey operations.
@@ -681,89 +668,6 @@ func (m *MockKeyVaultClient) Decrypt(ctx context.Context, keyName, keyVersion st
 	}
 
 	return response, nil
-}
-
-// WrapKey wraps (encrypts) a key using a key from the mock vault.
-func (m *MockKeyVaultClient) WrapKey(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.WrapKeyOptions) (azkeys.WrapKeyResponse, error) {
-	if m.wrapErr != nil {
-		return azkeys.WrapKeyResponse{}, m.wrapErr
-	}
-
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	mock, exists := m.keys[keyName]
-	if !exists {
-		return azkeys.WrapKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyName)}
-	}
-
-	// For symmetric keys (oct type), perform AES key wrapping
-	// For simplicity in the mock, we'll just XOR the value with a fixed pattern
-	// In production, this would use proper AES-KW algorithm
-	wrappedKey := make([]byte, len(params.Value))
-	copy(wrappedKey, params.Value)
-
-	// Simple obfuscation for mock (not cryptographically secure)
-	if secretBytes, ok := mock.privateKey.([]byte); ok {
-		for i := range wrappedKey {
-			wrappedKey[i] ^= secretBytes[i%len(secretBytes)]
-		}
-	}
-
-	keyID := azkeys.ID(fmt.Sprintf("https://mock-vault.vault.azure.net/keys/%s/%s", keyName, mock.version))
-	response := azkeys.WrapKeyResponse{
-		KeyOperationResult: azkeys.KeyOperationResult{
-			KID:    &keyID,
-			Result: wrappedKey,
-		},
-	}
-
-	return response, nil
-}
-
-// UnwrapKey unwraps (decrypts) a key using a key from the mock vault.
-func (m *MockKeyVaultClient) UnwrapKey(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.UnwrapKeyOptions) (azkeys.UnwrapKeyResponse, error) {
-	if m.unwrapErr != nil {
-		return azkeys.UnwrapKeyResponse{}, m.unwrapErr
-	}
-
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	mock, exists := m.keys[keyName]
-	if !exists {
-		return azkeys.UnwrapKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyName)}
-	}
-
-	// For symmetric keys (oct type), perform AES key unwrapping
-	// This is the reverse of WrapKey - apply same XOR to decrypt
-	unwrappedKey := make([]byte, len(params.Value))
-	copy(unwrappedKey, params.Value)
-
-	// Simple deobfuscation for mock (not cryptographically secure)
-	if secretBytes, ok := mock.privateKey.([]byte); ok {
-		for i := range unwrappedKey {
-			unwrappedKey[i] ^= secretBytes[i%len(secretBytes)]
-		}
-	}
-
-	keyID := azkeys.ID(fmt.Sprintf("https://mock-vault.vault.azure.net/keys/%s/%s", keyName, mock.version))
-	response := azkeys.UnwrapKeyResponse{
-		KeyOperationResult: azkeys.KeyOperationResult{
-			KID:    &keyID,
-			Result: unwrappedKey,
-		},
-	}
-
-	return response, nil
-}
-
-// NewListKeyPropertiesPager returns a pager for listing key properties.
-// For the mock, we return nil as pagination is not implemented.
-func (m *MockKeyVaultClient) NewListKeyPropertiesPager(options *azkeys.ListKeyPropertiesOptions) *runtime.Pager[azkeys.ListKeyPropertiesResponse] {
-	// Mock implementation - return nil pager
-	// In a real implementation, this would return an actual pager
-	return nil
 }
 
 // RotateKey rotates a key in the mock vault by creating a new version.

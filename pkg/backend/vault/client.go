@@ -16,30 +16,21 @@
 package vault
 
 import (
-	"context"
-
 	vault "github.com/hashicorp/vault/api"
 )
 
 // VaultClient is an interface for Vault operations to enable testing with mocks.
+// It lists exactly the operations Backend calls; Token, NewRequest,
+// RawRequestWithContext and Address were removed (go-xkms#705) because no
+// Backend method ever called them -- an unused interface method can only be
+// covered by a test that calls it directly with no Backend behavior to
+// assert, which is coverage padding, not a real test.
 type VaultClient interface {
 	// Logical returns the logical secrets client
 	Logical() *vault.Logical
 
 	// SetToken sets the authentication token
 	SetToken(token string)
-
-	// Token returns the current authentication token
-	Token() string
-
-	// NewRequest creates a new Vault API request
-	NewRequest(method, requestPath string) *vault.Request
-
-	// RawRequestWithContext performs a raw request to Vault
-	RawRequestWithContext(ctx context.Context, r *vault.Request) (*vault.Response, error)
-
-	// Address returns the Vault server address
-	Address() string
 }
 
 // defaultVaultClient wraps the standard Vault client to implement VaultClient interface.
@@ -58,20 +49,4 @@ func (c *defaultVaultClient) Logical() *vault.Logical {
 
 func (c *defaultVaultClient) SetToken(token string) {
 	c.client.SetToken(token)
-}
-
-func (c *defaultVaultClient) Token() string {
-	return c.client.Token()
-}
-
-func (c *defaultVaultClient) NewRequest(method, requestPath string) *vault.Request {
-	return c.client.NewRequest(method, requestPath)
-}
-
-func (c *defaultVaultClient) RawRequestWithContext(ctx context.Context, r *vault.Request) (*vault.Response, error) {
-	return c.client.RawRequestWithContext(ctx, r)
-}
-
-func (c *defaultVaultClient) Address() string {
-	return c.client.Address()
 }
