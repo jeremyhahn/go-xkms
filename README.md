@@ -1,10 +1,6 @@
 # go-xkms
 
-[![Go Version](https://img.shields.io/badge/Go-1.25.6-blue.svg)](https://golang.org)
-[![Version](https://img.shields.io/badge/version-v0.2.3--alpha-green.svg)](https://github.com/jeremyhahn/go-xkms/releases)
-[![Tests](https://img.shields.io/badge/tests-151%20passing-brightgreen.svg)](test/integration)
-[![Coverage](https://img.shields.io/badge/coverage-92.5%25-brightgreen.svg)](pkg)
-[![Backends](https://img.shields.io/badge/backends-8-blue.svg)](#backend-support-)
+[![Go Version](https://img.shields.io/badge/Go-1.27.0-blue.svg)](https://golang.org)
 [![AGPL-3.0 License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Commercial License](https://img.shields.io/badge/license-Commercial-green.svg)](LICENSE-COMMERCIAL.md)
 
@@ -12,13 +8,13 @@ A secure cryptographic key and certificate management solution for on-prem, hybr
 
 ## Features at a Glance
 
-- **8 Production-Ready Backends**: Software, PKCS#11, TPM2, AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault, Phone
+- **Pluggable Backends**: Software, PKCS#11, TPM2, AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault, Phone
 - **Complete Key Management**: Generate, store, retrieve, rotate, and delete keys (RSA, ECDSA, Ed25519, AES)
 - **Symmetric Encryption**: AES-GCM (128/192/256-bit) with AEAD safety support across all backends
 - **Certificate Operations**: Full X.509 certificate lifecycle including chains and CRL support
 - **Crypto Operations**: Sign, verify, encrypt, decrypt with standard Go interfaces
 - **Thread-Safe**: Safe for concurrent operations with proper synchronization
-- **Well-Tested**: 92.5% unit test coverage with 151 passing integration tests
+- **Well-Tested**: unit and integration suites, with a CI coverage gate
 - **Pluggable Architecture**: Easy to add custom backends and storage implementations
 - **Unified Service API**: Simple API that abstracts backend complexity
 
@@ -36,12 +32,9 @@ A secure cryptographic key and certificate management solution for on-prem, hybr
 ### Design Principles
 
 - **Clean Architecture**: Clear separation of concerns, interface-based design
-- **Pluggable Backends**: Easy to add new storage types
 - **Unified Service API**: Single API for all backends - no leaky abstractions
 - **Thread-Safe**: Safe for concurrent operations
-- **Well-Tested**: 92.5% unit test coverage, 151 passing integration tests
-- **Production-Ready**: v0.2.0-alpha with 8 fully working backends
-- **Focused Scope**: Just keys and certificates - no server/events/secrets
+- **Well-Tested**: unit and integration suites, with a CI coverage gate
 
 ---
 
@@ -833,7 +826,7 @@ go-xkms/
 │
 ├── examples/              # Usage examples
 └── test/
-    └── integration/       # Integration test suite (151 tests)
+    └── integration/       # Integration test suite
 ```
 
 ### Design Pattern
