@@ -347,7 +347,11 @@ func (s *StorageService) migrateToEncryptedDirect(sizeGB int, passphrase string,
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(tmpMount) }()
+	defer func() {
+		if rmErr := os.RemoveAll(tmpMount); rmErr != nil {
+			s.log.Warn("failed to remove temporary import mount point", "dir", tmpMount, "error", rmErr)
+		}
+	}()
 
 	importVol := luks.NewVolumeWithPaths(luksPath, tmpMount)
 

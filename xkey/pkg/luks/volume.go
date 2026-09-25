@@ -14,6 +14,7 @@
 package luks
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -122,20 +123,17 @@ func (v *Volume) Create(sizeBytes int64, passphrase string) error {
 		return &VolumeError{Operation: "create_file", Path: v.LUKSPath, Err: err}
 	}
 	if err := f.Truncate(sizeBytes); err != nil {
-		_ = f.Close()
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "truncate", Path: v.LUKSPath, Err: err}
+		cleanupErr := errors.Join(f.Close(), os.Remove(v.LUKSPath))
+		return &VolumeError{Operation: "truncate", Path: v.LUKSPath, Err: errors.Join(err, cleanupErr)}
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "close_file", Path: v.LUKSPath, Err: err}
+		return &VolumeError{Operation: "close_file", Path: v.LUKSPath, Err: errors.Join(err, os.Remove(v.LUKSPath))}
 	}
 
 	// Setup loop device using go-luks2
 	loopDev, err := setupLoopDevice(v.LUKSPath)
 	if err != nil {
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "setup_loop", Path: v.LUKSPath, Err: err}
+		return &VolumeError{Operation: "setup_loop", Path: v.LUKSPath, Err: errors.Join(err, os.Remove(v.LUKSPath))}
 	}
 	v.LoopDevice = loopDev
 
@@ -145,30 +143,25 @@ func (v *Volume) Create(sizeBytes int64, passphrase string) error {
 		Passphrase: []byte(passphrase),
 	}
 	if err := formatLUKS(formatOpts); err != nil {
-		_ = detachLoopDevice(loopDev)
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "luks_format", Path: loopDev, Err: err}
+		cleanupErr := errors.Join(detachLoopDevice(loopDev), os.Remove(v.LUKSPath))
+		return &VolumeError{Operation: "luks_format", Path: loopDev, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Unlock the volume
 	if err := unlockLUKS(loopDev, []byte(passphrase), v.MapperName); err != nil {
-		_ = detachLoopDevice(loopDev)
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "luks_unlock", Path: loopDev, Err: err}
+		cleanupErr := errors.Join(detachLoopDevice(loopDev), os.Remove(v.LUKSPath))
+		return &VolumeError{Operation: "luks_unlock", Path: loopDev, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Create ext4 filesystem using go-luks2
 	if err := makeFilesystem(v.MapperName, "ext4", "xkey"); err != nil {
-		_ = lockLUKS(v.MapperName)
-		_ = detachLoopDevice(loopDev)
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "create_fs", Path: v.MapperName, Err: err}
+		cleanupErr := errors.Join(lockLUKS(v.MapperName), detachLoopDevice(loopDev), os.Remove(v.LUKSPath))
+		return &VolumeError{Operation: "create_fs", Path: v.MapperName, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Lock it back
 	if err := lockLUKS(v.MapperName); err != nil {
-		_ = detachLoopDevice(loopDev)
-		return &VolumeError{Operation: "luks_lock", Path: v.MapperName, Err: err}
+		return &VolumeError{Operation: "luks_lock", Path: v.MapperName, Err: errors.Join(err, detachLoopDevice(loopDev))}
 	}
 
 	// Detach loop device
@@ -205,15 +198,13 @@ func (v *Volume) Unlock(passphrase string) error {
 
 	// Unlock LUKS
 	if err := unlockLUKS(loopDev, []byte(passphrase), v.MapperName); err != nil {
-		_ = detachLoopDevice(loopDev)
-		return &VolumeError{Operation: "luks_unlock", Path: loopDev, Err: err}
+		return &VolumeError{Operation: "luks_unlock", Path: loopDev, Err: errors.Join(err, detachLoopDevice(loopDev))}
 	}
 
 	// Create mount point
 	if err := os.MkdirAll(v.MountPoint, 0700); err != nil {
-		_ = lockLUKS(v.MapperName)
-		_ = detachLoopDevice(loopDev)
-		return &VolumeError{Operation: "create_mountpoint", Path: v.MountPoint, Err: err}
+		cleanupErr := errors.Join(lockLUKS(v.MapperName), detachLoopDevice(loopDev))
+		return &VolumeError{Operation: "create_mountpoint", Path: v.MountPoint, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Mount using go-luks2
@@ -224,9 +215,8 @@ func (v *Volume) Unlock(passphrase string) error {
 		Flags:      0,
 	}
 	if err := mountLUKS(mountOpts); err != nil {
-		_ = lockLUKS(v.MapperName)
-		_ = detachLoopDevice(loopDev)
-		return &VolumeError{Operation: "mount", Path: v.MountPoint, Err: err}
+		cleanupErr := errors.Join(lockLUKS(v.MapperName), detachLoopDevice(loopDev))
+		return &VolumeError{Operation: "mount", Path: v.MountPoint, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Chown the entire mount tree to the real (non-elevated) user when
@@ -449,12 +439,16 @@ func copyDir(src, dst string) error {
 }
 
 // copyFile copies a single file.
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = srcFile.Close() }()
+	defer func() {
+		if closeErr := srcFile.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {
@@ -466,9 +460,8 @@ func copyFile(src, dst string) error {
 		return err
 	}
 
-	if _, err = io.Copy(dstFile, srcFile); err != nil {
-		_ = dstFile.Close()
-		return err
+	if _, copyErr := io.Copy(dstFile, srcFile); copyErr != nil {
+		return errors.Join(copyErr, dstFile.Close())
 	}
 
 	// Surface any flush error from closing the destination file.

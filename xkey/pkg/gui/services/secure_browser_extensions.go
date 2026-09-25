@@ -15,6 +15,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -555,20 +556,23 @@ func copyTree(src, dst string) error {
 }
 
 // copyFile copies a single regular file from src to dst with the given mode.
-func copyFile(src, dst string, mode os.FileMode) error {
+func copyFile(src, dst string, mode os.FileMode) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = in.Close() }()
+	defer func() {
+		if closeErr := in.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode.Perm())
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
+	if _, copyErr := io.Copy(out, in); copyErr != nil {
+		return errors.Join(copyErr, out.Close())
 	}
 	return out.Close()
 }

@@ -384,7 +384,11 @@ func (s *SecureBrowserService) syncChrome(certs []*x509.Certificate) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserNSSDB, Cause: err}
 	}
-	defer func() { _ = writer.Close() }()
+	defer func() {
+		if closeErr := writer.Close(); closeErr != nil {
+			s.log.Warn("failed to close nssdb writer", "error", closeErr)
+		}
+	}()
 
 	// Remove all existing xkey-managed certs then re-add.
 	if removeErr := writer.RemoveByPrefix(nssdbCertLabelPrefix); removeErr != nil {
@@ -428,10 +432,15 @@ func (s *SecureBrowserService) syncFirefox(certs []*x509.Certificate) error {
 	}
 
 	// Remove old PEM files.
-	entries, _ := os.ReadDir(certsDir)
+	entries, readErr := os.ReadDir(certsDir)
+	if readErr != nil {
+		s.log.Warn("failed to list firefox certs directory for cleanup", "dir", certsDir, "error", readErr)
+	}
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name(), ".pem") {
-			_ = os.Remove(filepath.Join(certsDir, entry.Name()))
+			if removeErr := os.Remove(filepath.Join(certsDir, entry.Name())); removeErr != nil {
+				s.log.Warn("failed to remove stale firefox cert PEM file", "file", entry.Name(), "error", removeErr)
+			}
 		}
 	}
 
@@ -483,7 +492,11 @@ func (s *SecureBrowserService) injectFirefoxNSSDB(certs []*x509.Certificate) err
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserNSSDB, Cause: err}
 	}
-	defer func() { _ = writer.Close() }()
+	defer func() {
+		if closeErr := writer.Close(); closeErr != nil {
+			s.log.Warn("failed to close firefox nssdb writer", "error", closeErr)
+		}
+	}()
 
 	if removeErr := writer.RemoveByPrefix(nssdbCertLabelPrefix); removeErr != nil {
 		s.log.Warn("failed to remove existing xkey certs from firefox nssdb", "error", removeErr)

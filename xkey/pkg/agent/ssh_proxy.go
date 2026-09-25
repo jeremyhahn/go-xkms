@@ -14,6 +14,7 @@
 package agent
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -79,10 +80,15 @@ func (p *SSHProxy) Start() error {
 	if _, err := os.Stat(p.socketPath); err == nil {
 		conn, dialErr := net.Dial("unix", p.socketPath)
 		if dialErr == nil {
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				p.logger.Warn("failed to close probe connection to existing socket",
+					"socket", p.socketPath, "error", closeErr)
+			}
 			return ErrServerAlreadyRunning
 		}
-		_ = os.Remove(p.socketPath)
+		if removeErr := os.Remove(p.socketPath); removeErr != nil {
+			return &AgentError{Operation: "start_ssh_proxy", Err: ErrSocketPath, Cause: removeErr}
+		}
 	}
 
 	listener, err := net.Listen("unix", p.socketPath)
@@ -92,9 +98,17 @@ func (p *SSHProxy) Start() error {
 
 	// Set socket permissions to owner-only.
 	if err := os.Chmod(p.socketPath, 0600); err != nil {
-		_ = listener.Close()
-		_ = os.Remove(p.socketPath)
-		return &AgentError{Operation: "start_ssh_proxy", Err: err}
+		// Closing the listener unlinks the socket file it created, so a
+		// subsequent removal failing with "not exist" is expected, not a
+		// cleanup failure worth reporting.
+		closeErr := listener.Close()
+		var cleanupErr error
+		if removeErr := os.Remove(p.socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			cleanupErr = errors.Join(closeErr, removeErr)
+		} else {
+			cleanupErr = closeErr
+		}
+		return &AgentError{Operation: "start_ssh_proxy", Err: err, Cause: cleanupErr}
 	}
 
 	// done is closed by the accept loop when it returns; Stop waits on it,
@@ -115,8 +129,10 @@ func (p *SSHProxy) Start() error {
 	return nil
 }
 
-// Stop shuts down the SSH proxy and removes the socket file.
-func (p *SSHProxy) Stop() error {
+// Stop shuts down the SSH proxy and removes the socket file. Any error
+// closing an in-flight connection, the listener, or removing the socket
+// file is joined into the returned error rather than discarded.
+func (p *SSHProxy) Stop() (err error) {
 	if !p.running.CompareAndSwap(true, false) {
 		return ErrServerNotStarted
 	}
@@ -126,7 +142,9 @@ func (p *SSHProxy) Stop() error {
 	p.mu.Lock()
 	listener, done := p.listener, p.done
 	for conn := range p.conns {
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 	}
 	p.mu.Unlock()
 
@@ -137,16 +155,23 @@ func (p *SSHProxy) Stop() error {
 	// reported the caller's next write against that goroutine's last read
 	// (TestSSHProxy_StartStop, 1 in 40 runs).
 	if listener != nil {
-		_ = listener.Close()
+		if closeErr := listener.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 	}
 	<-done
 
 	// Wait for all connection handlers to finish.
 	p.wg.Wait()
 
-	_ = os.Remove(p.socketPath)
+	// A Unix listener unlinks its own socket file on Close, so the file is
+	// typically already gone by the time we get here; only a genuine
+	// removal failure (e.g. permission denied) is reported.
+	if removeErr := os.Remove(p.socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		err = errors.Join(err, removeErr)
+	}
 	p.logger.Info("SSH proxy stopped")
-	return nil
+	return err
 }
 
 // SocketPath returns the path to the SSH agent socket.
@@ -195,7 +220,9 @@ func (p *SSHProxy) handleConnection(conn net.Conn) {
 		p.mu.Lock()
 		delete(p.conns, conn)
 		p.mu.Unlock()
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			p.logger.Debug("failed to close SSH agent connection", "error", closeErr)
+		}
 		p.wg.Done()
 	}()
 
@@ -215,7 +242,11 @@ func (p *SSHProxy) handleConnection(conn net.Conn) {
 			"error", err)
 		return
 	}
-	defer func() { _ = masterConn.Close() }()
+	defer func() {
+		if closeErr := masterConn.Close(); closeErr != nil {
+			p.logger.Debug("failed to close master SSH agent connection", "error", closeErr)
+		}
+	}()
 
 	// Bidirectional proxy.
 	errCh := make(chan error, 2)

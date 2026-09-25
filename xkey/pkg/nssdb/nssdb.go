@@ -25,6 +25,7 @@ import (
 	"database/sql"
 	"encoding/asn1"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -178,29 +179,22 @@ func NewWriter(nssdbDir string) (*Writer, error) {
 
 	keyDB, err := sql.Open("sqlite", keyDBPath)
 	if err != nil {
-		_ = certDB.Close()
-		return nil, &DetailError{Err: ErrOpenDatabase, Detail: fmt.Sprintf(": key4.db: %s", err)}
+		return nil, &DetailError{Err: ErrOpenDatabase, Detail: fmt.Sprintf(": key4.db: %s%s", err, cleanupSuffix(certDB.Close()))}
 	}
 
 	// Enable WAL mode for better concurrent read performance.
 	for _, db := range []*sql.DB{certDB, keyDB} {
 		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-			_ = certDB.Close()
-			_ = keyDB.Close()
-			return nil, &DetailError{Err: ErrCreateSchema, Detail: fmt.Sprintf(": %s", err)}
+			return nil, &DetailError{Err: ErrCreateSchema, Detail: fmt.Sprintf(": %s%s", err, cleanupSuffix(certDB.Close(), keyDB.Close()))}
 		}
 	}
 
 	if _, err := certDB.Exec(cert9Schema); err != nil {
-		_ = certDB.Close()
-		_ = keyDB.Close()
-		return nil, &DetailError{Err: ErrCreateSchema, Detail: fmt.Sprintf(": cert9.db: %s", err)}
+		return nil, &DetailError{Err: ErrCreateSchema, Detail: fmt.Sprintf(": cert9.db: %s%s", err, cleanupSuffix(certDB.Close(), keyDB.Close()))}
 	}
 
 	if _, err := keyDB.Exec(key4Schema); err != nil {
-		_ = certDB.Close()
-		_ = keyDB.Close()
-		return nil, &DetailError{Err: ErrCreateSchema, Detail: fmt.Sprintf(": key4.db: %s", err)}
+		return nil, &DetailError{Err: ErrCreateSchema, Detail: fmt.Sprintf(": key4.db: %s%s", err, cleanupSuffix(certDB.Close(), keyDB.Close()))}
 	}
 
 	w := &Writer{
@@ -212,8 +206,9 @@ func NewWriter(nssdbDir string) (*Writer, error) {
 	// Initialize the password entry if not already present, and derive the
 	// intermediate key used for trust object signatures.
 	if err := w.ensurePassword(); err != nil {
-		_ = certDB.Close()
-		_ = keyDB.Close()
+		if closeErr := errors.Join(certDB.Close(), keyDB.Close()); closeErr != nil {
+			return nil, &WrappedError{Msg: fmt.Sprintf("nssdb: cleanup failed after password init error (%s)", closeErr), Err: err}
+		}
 		return nil, err
 	}
 
@@ -280,7 +275,7 @@ func (w *Writer) AddTrustedCA(cert *x509.Certificate, label string) error {
 //
 // Associated key4.db HMAC signatures are removed for every deleted object,
 // both certificate IDs and trust IDs.
-func (w *Writer) RemoveByPrefix(prefix string) error {
+func (w *Writer) RemoveByPrefix(prefix string) (err error) {
 	if w.closed {
 		return ErrWriterClosed
 	}
@@ -298,7 +293,11 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 	if err != nil {
 		return &DetailError{Err: ErrRemoveCertificate, Detail: fmt.Sprintf(": %s", err)}
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	type certRef struct {
 		id     int64
@@ -336,16 +335,16 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 		for tRows.Next() {
 			var id int64
 			if err := tRows.Scan(&id); err != nil {
-				_ = tRows.Close()
-				return &DetailError{Err: ErrRemoveTrust, Detail: fmt.Sprintf(": %s", err)}
+				return &DetailError{Err: ErrRemoveTrust, Detail: fmt.Sprintf(": %s%s", err, cleanupSuffix(tRows.Close()))}
 			}
 			trustIDs = append(trustIDs, id)
 		}
 		if err := tRows.Err(); err != nil {
-			_ = tRows.Close()
+			return &DetailError{Err: ErrRemoveTrust, Detail: fmt.Sprintf(": %s%s", err, cleanupSuffix(tRows.Close()))}
+		}
+		if err := tRows.Close(); err != nil {
 			return &DetailError{Err: ErrRemoveTrust, Detail: fmt.Sprintf(": %s", err)}
 		}
-		_ = tRows.Close()
 	}
 
 	// Gather all IDs to delete (certs + trust objects) and run a single
@@ -421,6 +420,23 @@ func InitDir(nssdbDir string) error {
 }
 
 // ---- internal helpers ----
+
+// cleanupSuffix formats non-nil cleanup errors encountered while unwinding
+// a partially initialized Writer for inclusion in a DetailError's Detail
+// text, so a close failure during cleanup is reported rather than dropped.
+// It returns "" when every cleanup call succeeded.
+func cleanupSuffix(errs ...error) string {
+	var msgs []string
+	for _, err := range errs {
+		if err != nil {
+			msgs = append(msgs, err.Error())
+		}
+	}
+	if len(msgs) == 0 {
+		return ""
+	}
+	return " (cleanup: " + strings.Join(msgs, "; ") + ")"
+}
 
 // explicitNull returns the 3-byte NSS explicit-null sentinel.
 func explicitNull() []byte {

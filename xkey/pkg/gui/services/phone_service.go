@@ -522,7 +522,11 @@ func (s *PhoneService) Scan(timeoutSeconds int) ([]DiscoveredDevice, error) {
 		s.log.Error("failed to create BLE transport", "error", err)
 		return nil, ErrPhoneScanFailed
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() {
+		if closeErr := transport.Close(); closeErr != nil {
+			s.log.Warn("failed to close BLE transport", "error", closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -620,7 +624,11 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		s.log.Error("failed to create BLE transport for pairing", "error", err)
 		return nil, ErrPhonePairFailed
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() {
+		if closeErr := transport.Close(); closeErr != nil {
+			s.log.Warn("failed to close BLE transport", "error", closeErr)
+		}
+	}()
 
 	// Connect to the device.
 	connectCtx, connectCancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -632,7 +640,11 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		return nil, ErrPhonePairFailed
 	}
 	// Disconnect after pairing, whatever its outcome (reconnects on demand).
-	defer func() { _ = transport.Disconnect() }()
+	defer func() {
+		if disconnectErr := transport.Disconnect(); disconnectErr != nil {
+			s.log.Warn("failed to disconnect BLE transport", "error", disconnectErr)
+		}
+	}()
 
 	return s.pairOverTransport(connectCtx, transport, session, localKey, address)
 }
@@ -1127,9 +1139,9 @@ func (s *PhoneService) Connect(name string) error {
 
 	s.log.Info("connecting to device", "device", name, "address", device.Address)
 	if err := transport.Connect(connectCtx, device.Address); err != nil {
-		_ = transport.Close()
+		closeErr := transport.Close()
 		s.log.Error("BLE connection failed", "device", name, "address", device.Address, "error", err)
-		return ErrPhoneConnectFailed
+		return errors.Join(ErrPhoneConnectFailed, closeErr)
 	}
 
 	// Perform Noise XX handshake with identity exchange for prologue binding.
@@ -1144,10 +1156,9 @@ func (s *PhoneService) Connect(name string) error {
 		ExpectedDeviceFingerprint: expectedFingerprint,
 	}
 	if err := pairing.PerformHandshake(connectCtx, handshakeCfg); err != nil {
-		_ = transport.Disconnect()
-		_ = transport.Close()
+		cleanupErr := errors.Join(transport.Disconnect(), transport.Close())
 		s.log.Error("Noise handshake failed", "device", name, "error", err)
-		return ErrPhoneHandshakeFailed
+		return errors.Join(ErrPhoneHandshakeFailed, cleanupErr)
 	}
 
 	// The #129 liveness proof, BEFORE the session is published (#130).
@@ -1162,20 +1173,18 @@ func (s *PhoneService) Connect(name string) error {
 	// GUI-local copy. That this package could not reach the verifier at all is
 	// why the GUI went without the check while the CLI had it.
 	if err := s.proveDeviceLiveness(connectCtx, transport, session, device); err != nil {
-		_ = transport.Disconnect()
-		_ = transport.Close()
+		cleanupErr := errors.Join(transport.Disconnect(), transport.Close())
 		s.log.Error("device liveness attestation failed; refusing to publish the session",
 			"device", name, "error", err)
-		return errors.Join(ErrPhoneAttestationRequired, err)
+		return errors.Join(ErrPhoneAttestationRequired, err, cleanupErr)
 	}
 
 	// Store transport + session on PhoneService fields. A refusal is ours to
 	// clean up: published stays false, so the deferred cleanup releases the
 	// key this call generated.
 	if err := s.publishConnection(name, transport, session, localKey); err != nil {
-		_ = transport.Disconnect()
-		_ = transport.Close()
-		return err
+		cleanupErr := errors.Join(transport.Disconnect(), transport.Close())
+		return errors.Join(err, cleanupErr)
 	}
 	published = true
 
@@ -1884,9 +1893,12 @@ func (s *PhoneService) closeActiveConnectionLocked() error {
 
 	// Disconnect first so any leaseholder's round trip fails fast rather than
 	// waiting out its own timeout.
+	var cleanupErr error
 	if transport != nil {
-		_ = transport.Disconnect()
-		_ = transport.Close()
+		cleanupErr = errors.Join(transport.Disconnect(), transport.Close())
+		if cleanupErr != nil {
+			s.log.Warn("failed to cleanly disconnect BLE transport during shutdown", "error", cleanupErr)
+		}
 	}
 
 	// Bounded: a leaseholder is mid BLE round trip with a handset that may
@@ -1902,7 +1914,7 @@ func (s *PhoneService) closeActiveConnectionLocked() error {
 	// pages an in-flight operation is still reading.
 	if drained {
 		key.Destroy()
-		return nil
+		return cleanupErr
 	}
 
 	// Parked, not dropped. The local would otherwise go out of scope here,
@@ -1923,7 +1935,7 @@ func (s *PhoneService) closeActiveConnectionLocked() error {
 			"finish within the shutdown window",
 			"in_flight", s.activeUsers.InFlight(), "timeout", connShutdownTimeout)
 	}
-	return ErrPhoneShutdownIncomplete
+	return errors.Join(ErrPhoneShutdownIncomplete, cleanupErr)
 }
 
 // connShutdownTimeout bounds how long teardown waits for in-flight operations

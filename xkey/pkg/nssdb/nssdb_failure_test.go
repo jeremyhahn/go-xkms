@@ -160,6 +160,20 @@ func TestWriteTrustSignatures_SkipsUnparsableAttributeName(t *testing.T) {
 	assert.NoError(t, err, "an unparsable attribute name must be skipped, not fatal")
 }
 
+// TestCleanupSuffix verifies cleanupSuffix reports every non-nil cleanup
+// error it is given rather than silently dropping any of them, and stays
+// empty when cleanup fully succeeded.
+func TestCleanupSuffix(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "", cleanupSuffix(), "no cleanup calls means no suffix")
+	assert.Equal(t, "", cleanupSuffix(nil, nil), "successful cleanup calls must not appear in the suffix")
+	assert.Equal(t, " (cleanup: disk full)", cleanupSuffix(errors.New("disk full")))
+	assert.Equal(t, " (cleanup: disk full; also busy)",
+		cleanupSuffix(nil, errors.New("disk full"), errors.New("also busy")),
+		"every non-nil cleanup error must be reported, not just the first")
+}
+
 func TestNSSDBTypedErrors(t *testing.T) {
 	t.Parallel()
 

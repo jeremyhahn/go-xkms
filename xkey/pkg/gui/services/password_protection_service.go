@@ -88,7 +88,11 @@ func (s *PasswordProtectionService) logPasswordStoreOp(op audit.OperationType, s
 func (s *PasswordProtectionService) GetStatus() (*PasswordProtectionStatus, error) {
 	tpmAvailable := false
 	if s.sealSvc != nil {
-		tpmAvailable, _ = s.sealSvc.CanSeal()
+		var err error
+		tpmAvailable, err = s.sealSvc.CanSeal()
+		if err != nil {
+			s.log.Warn("failed to check whether the sealer can seal", "error", err)
+		}
 	}
 
 	pwCount := 0

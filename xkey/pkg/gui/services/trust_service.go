@@ -644,7 +644,9 @@ func (s *TrustService) ExportBrowserTrustBundle(bundlePath string) (int, error) 
 
 	if count == 0 {
 		// Remove stale bundle file if no certs are exported.
-		_ = os.Remove(bundlePath)
+		if err := os.Remove(bundlePath); err != nil && !os.IsNotExist(err) {
+			return 0, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleExport, Cause: err}
+		}
 		return 0, nil
 	}
 

@@ -938,7 +938,11 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 			// inside the method before any nil check of ours runs.
 			canSeal := false
 			if s.sealSvc != nil {
-				canSeal, _ = s.sealSvc.CanSeal()
+				var canSealErr error
+				canSeal, canSealErr = s.sealSvc.CanSeal()
+				if canSealErr != nil {
+					slog.Warn("wizard: failed to check whether the sealer can seal", "error", canSealErr)
+				}
 			}
 			if barrierPW != "" && s.sealSvc != nil && canSeal {
 				policyType := string(PolicyTypeNone)

@@ -470,11 +470,14 @@ func (s *StaticPasswordService) RenameFolder(oldPath string, newPath string) err
 		}
 	}
 
-	// Move persisted folder marker from old path to new path.
-	_ = s.store.RemoveFolder(oldPath)
-	_ = s.store.CreateFolder(newPath)
+	// Move persisted folder marker from old path to new path. Both steps are
+	// attempted regardless of the first's outcome, and any failure is
+	// reported rather than dropped -- the entries above have already moved,
+	// so a marker failure here leaves state worth surfacing, not undoing.
+	removeErr := s.store.RemoveFolder(oldPath)
+	createErr := s.store.CreateFolder(newPath)
 
-	return nil
+	return errors.Join(removeErr, createErr)
 }
 
 // DeleteFolder deletes all entries in the given folder and its subfolders.
@@ -500,9 +503,7 @@ func (s *StaticPasswordService) DeleteFolder(folderPath string) error {
 	}
 
 	// Remove the persisted folder marker (if any).
-	_ = s.store.RemoveFolder(folderPath)
-
-	return nil
+	return s.store.RemoveFolder(folderPath)
 }
 
 // SearchPasswords searches across title, username, URL, notes, and name

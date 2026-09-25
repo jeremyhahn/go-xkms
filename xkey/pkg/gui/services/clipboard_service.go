@@ -16,6 +16,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os/exec"
 	"strings"
@@ -133,11 +134,13 @@ func (s *ClipboardService) ClearClipboard() error {
 		return ErrClipboardToolUnavailable
 	}
 
-	// Overwrite clipboard with a single space first, then clear.
-	// This ensures the clipboard tool's internal buffer is overwritten
-	// before being cleared, reducing the chance of data remnants.
-	_ = s.writeClipboard(" ")
-	return s.writeClipboard("")
+	// Overwrite clipboard with a single space first, then clear. This
+	// ensures the clipboard tool's internal buffer is overwritten before
+	// being cleared, reducing the chance of data remnants. Both steps are
+	// attempted regardless of the first's outcome, and any failure from
+	// either is reported rather than dropped.
+	overwriteErr := s.writeClipboard(" ")
+	return errors.Join(overwriteErr, s.writeClipboard(""))
 }
 
 // scheduleClear starts a goroutine that clears the clipboard after the
@@ -178,7 +181,9 @@ func (s *ClipboardService) scheduleClear(expectedText string, delay time.Duratio
 
 			if strings.TrimSpace(current) == strings.TrimSpace(string(expected)) {
 				// Overwrite first, then clear.
-				_ = s.writeClipboard(" ")
+				if overwriteErr := s.writeClipboard(" "); overwriteErr != nil {
+					s.log.Debug("failed to overwrite clipboard before clear", "error", overwriteErr)
+				}
 				if err := s.writeClipboard(""); err != nil {
 					s.log.Debug("failed to clear clipboard", "error", err)
 				} else {
