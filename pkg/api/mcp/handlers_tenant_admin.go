@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -35,11 +34,11 @@ type TenantIDParams struct {
 // tenantIDParam decodes and validates a TenantIDParams from req.
 func tenantIDParam(req *JSONRPCRequest) (string, error) {
 	var params TenantIDParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return "", &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return "", err
 	}
 	if params.TenantID == "" {
-		return "", &errs.Message{Msg: "tenant_id is required"}
+		return "", &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "tenant_id is required"}}
 	}
 	return params.TenantID, nil
 }
@@ -64,7 +63,7 @@ func tenantAdminAccessDenied(identity *auth.Identity, tenantID string) bool {
 // GetTenantHandler/DeleteTenantHandler/TenantBarrier*Handler comment records.
 func refuseCrossTenantAdmin(ctx context.Context, tid string) error {
 	if tenantAdminAccessDenied(auth.GetIdentity(ctx), tid) {
-		return mapKeyOpError(seal.ErrTenantNotFound)
+		return mapTenantError(seal.ErrTenantNotFound, "tenant admin")
 	}
 	return nil
 }
@@ -76,19 +75,19 @@ func refuseCrossTenantAdmin(ctx context.Context, tid string) error {
 // tenant cannot yet be "owned" by anyone), and neither does this handler.
 func (s *Server) handleCreateTenant(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.CreateTenantRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if params.ID == "" {
-		return nil, &errs.Message{Msg: "id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "id is required"}}
 	}
 	if params.Name == "" {
-		return nil, &errs.Message{Msg: "name is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "name is required"}}
 	}
 
 	resp, err := s.xkmsService.CreateTenant(ctx, &params)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "create tenant")
 	}
 
 	return resp, nil
@@ -109,7 +108,7 @@ func (s *Server) handleGetTenant(ctx context.Context, req *JSONRPCRequest) (inte
 
 	resp, err := s.xkmsService.GetTenant(ctx, tid)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "get tenant")
 	}
 
 	return resp, nil
@@ -122,7 +121,7 @@ func (s *Server) handleGetTenant(ctx context.Context, req *JSONRPCRequest) (inte
 func (s *Server) handleListTenants(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
 	resp, err := s.xkmsService.ListTenants(ctx)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "list tenants")
 	}
 
 	identity := auth.GetIdentity(ctx)
@@ -152,7 +151,7 @@ func (s *Server) handleDeleteTenant(ctx context.Context, req *JSONRPCRequest) (i
 	}
 
 	if err := s.xkmsService.DeleteTenant(ctx, tid); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "delete tenant")
 	}
 
 	return tenantAdminSuccess, nil
@@ -167,23 +166,23 @@ func (s *Server) handleDeleteTenant(ctx context.Context, req *JSONRPCRequest) (i
 // status, exactly as the REST handler does.
 func (s *Server) handleTenantBarrierInit(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.TenantBarrierInitRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if params.TenantID == "" {
-		return nil, &errs.Message{Msg: "tenant_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "tenant_id is required"}}
 	}
 	if err := refuseCrossTenantAdmin(ctx, params.TenantID); err != nil {
 		return nil, err
 	}
 
 	if err := s.xkmsService.TenantBarrierInit(ctx, &params); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "tenant barrier init")
 	}
 
 	resp, err := s.xkmsService.TenantBarrierStatus(ctx, params.TenantID)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "tenant barrier status")
 	}
 
 	return resp, nil
@@ -197,23 +196,23 @@ func (s *Server) handleTenantBarrierInit(ctx context.Context, req *JSONRPCReques
 // handler does.
 func (s *Server) handleTenantBarrierUnseal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.TenantBarrierUnsealRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if params.TenantID == "" {
-		return nil, &errs.Message{Msg: "tenant_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "tenant_id is required"}}
 	}
 	if err := refuseCrossTenantAdmin(ctx, params.TenantID); err != nil {
 		return nil, err
 	}
 
 	if err := s.xkmsService.TenantBarrierUnseal(ctx, &params); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "tenant barrier unseal")
 	}
 
 	resp, err := s.xkmsService.TenantBarrierStatus(ctx, params.TenantID)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "tenant barrier status")
 	}
 
 	return resp, nil
@@ -235,7 +234,7 @@ func (s *Server) handleTenantBarrierStatus(ctx context.Context, req *JSONRPCRequ
 
 	resp, err := s.xkmsService.TenantBarrierStatus(ctx, tid)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "tenant barrier status")
 	}
 
 	return resp, nil
@@ -249,16 +248,16 @@ func (s *Server) handleTenantBarrierStatus(ctx context.Context, req *JSONRPCRequ
 // handler.
 func (s *Server) handleUpdateTenantEntitlements(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.UpdateTenantEntitlementsRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if params.TenantID == "" {
-		return nil, &errs.Message{Msg: "tenant_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "tenant_id is required"}}
 	}
 
 	resp, err := s.xkmsService.UpdateTenantEntitlements(ctx, &params)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "update tenant entitlements")
 	}
 
 	return resp, nil
@@ -271,16 +270,16 @@ func (s *Server) handleUpdateTenantEntitlements(ctx context.Context, req *JSONRP
 // handler.
 func (s *Server) handleUpdateTenantQuotas(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.UpdateTenantQuotasRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if params.TenantID == "" {
-		return nil, &errs.Message{Msg: "tenant_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "tenant_id is required"}}
 	}
 
 	resp, err := s.xkmsService.UpdateTenantQuotas(ctx, &params)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapTenantError(err, "update tenant quotas")
 	}
 
 	return resp, nil

@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
@@ -30,15 +29,15 @@ var pinSuccess = map[string]interface{}{"success": true}
 // PIN. Delegates entirely to the xkms service layer (XKMSService.SetSOPIN),
 // which forwards to the composed qrdbsdk.PINBackend; the go-qrdb node's PIN
 // domain errors (ErrPINAlreadySet, ErrPINTooShort, ...) propagate through
-// mapKeyOpError unchanged.
+// mapPINError unchanged.
 func (s *Server) handleSetSOPIN(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.SetSOPINRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := s.xkmsService.SetSOPIN(ctx, &params); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapPINError(err, "set SO PIN")
 	}
 
 	return pinSuccess, nil
@@ -48,12 +47,12 @@ func (s *Server) handleSetSOPIN(ctx context.Context, req *JSONRPCRequest) (inter
 // authorized by the Security Officer PIN carried in the request.
 func (s *Server) handleSetUserPIN(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.SetUserPINRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := s.xkmsService.SetUserPIN(ctx, &params); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapPINError(err, "set user PIN")
 	}
 
 	return pinSuccess, nil
@@ -63,12 +62,12 @@ func (s *Server) handleSetUserPIN(ctx context.Context, req *JSONRPCRequest) (int
 // Security Officer PIN from its current value to a new one.
 func (s *Server) handleChangeSOPIN(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.ChangeSOPINRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := s.xkmsService.ChangeSOPIN(ctx, &params); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapPINError(err, "change SO PIN")
 	}
 
 	return pinSuccess, nil
@@ -78,12 +77,12 @@ func (s *Server) handleChangeSOPIN(ctx context.Context, req *JSONRPCRequest) (in
 // user PIN from its current value to a new one.
 func (s *Server) handleChangeUserPIN(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.ChangeUserPINRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := s.xkmsService.ChangeUserPIN(ctx, &params); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapPINError(err, "change user PIN")
 	}
 
 	return pinSuccess, nil
@@ -93,12 +92,12 @@ func (s *Server) handleChangeUserPIN(ctx context.Context, req *JSONRPCRequest) (
 // caller-supplied Security Officer PIN without changing it.
 func (s *Server) handleVerifySOPIN(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.VerifySOPINRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := s.xkmsService.VerifySOPIN(ctx, &params); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapPINError(err, "verify SO PIN")
 	}
 
 	return pinSuccess, nil
@@ -108,12 +107,12 @@ func (s *Server) handleVerifySOPIN(ctx context.Context, req *JSONRPCRequest) (in
 // caller-supplied user PIN without changing it.
 func (s *Server) handleVerifyUserPIN(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.VerifyUserPINRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := s.xkmsService.VerifyUserPIN(ctx, &params); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapPINError(err, "verify user PIN")
 	}
 
 	return pinSuccess, nil
@@ -124,7 +123,7 @@ func (s *Server) handleVerifyUserPIN(ctx context.Context, req *JSONRPCRequest) (
 func (s *Server) handleGetLockoutStatus(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
 	resp, err := s.xkmsService.GetLockoutStatus(ctx)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapPINError(err, "get lockout status")
 	}
 
 	return resp, nil
@@ -135,12 +134,12 @@ func (s *Server) handleGetLockoutStatus(ctx context.Context, _ *JSONRPCRequest) 
 // request.
 func (s *Server) handleResetLockout(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.ResetLockoutRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := s.xkmsService.ResetLockout(ctx, &params); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapPINError(err, "reset lockout")
 	}
 
 	return pinSuccess, nil

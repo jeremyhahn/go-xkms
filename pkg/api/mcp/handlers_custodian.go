@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -36,11 +35,11 @@ type CustodianGroupIDParams struct {
 // groupID decodes and validates a CustodianGroupIDParams from req.
 func groupID(req *JSONRPCRequest) (string, error) {
 	var params CustodianGroupIDParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return "", &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return "", err
 	}
 	if params.GroupID == "" {
-		return "", &errs.Message{Msg: "group_id is required"}
+		return "", &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "group_id is required"}}
 	}
 	return params.GroupID, nil
 }
@@ -51,13 +50,13 @@ func groupID(req *JSONRPCRequest) (string, error) {
 // which passes through to the embedded go-qrdb node's custodian client.
 func (s *Server) handleCreateCustodianGroup(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.CreateCustodianGroupRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := s.xkmsService.CreateCustodianGroup(ctx, &params)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapCustodianError(err, "create custodian group")
 	}
 
 	return resp, nil
@@ -73,7 +72,7 @@ func (s *Server) handleGetCustodianGroup(ctx context.Context, req *JSONRPCReques
 
 	resp, err := s.xkmsService.GetCustodianGroup(ctx, id)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapCustodianError(err, "get custodian group")
 	}
 
 	return resp, nil
@@ -84,7 +83,7 @@ func (s *Server) handleGetCustodianGroup(ctx context.Context, req *JSONRPCReques
 func (s *Server) handleListCustodianGroups(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
 	resp, err := s.xkmsService.ListCustodianGroups(ctx)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapCustodianError(err, "list custodian groups")
 	}
 
 	return resp, nil
@@ -99,7 +98,7 @@ func (s *Server) handleDeleteCustodianGroup(ctx context.Context, req *JSONRPCReq
 	}
 
 	if err := s.xkmsService.DeleteCustodianGroup(ctx, id); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapCustodianError(err, "delete custodian group")
 	}
 
 	return custodianSuccess, nil
@@ -109,13 +108,13 @@ func (s *Server) handleDeleteCustodianGroup(ctx context.Context, req *JSONRPCReq
 // a member to an existing custodian group.
 func (s *Server) handleAddCustodianMember(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.AddCustodianMemberRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := s.xkmsService.AddCustodianMember(ctx, &params)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapCustodianError(err, "add custodian member")
 	}
 
 	return resp, nil
@@ -125,12 +124,12 @@ func (s *Server) handleAddCustodianMember(ctx context.Context, req *JSONRPCReque
 // method: removes a member from a custodian group.
 func (s *Server) handleRemoveCustodianMember(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.RemoveCustodianMemberRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := s.xkmsService.RemoveCustodianMember(ctx, &params); err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapCustodianError(err, "remove custodian member")
 	}
 
 	return custodianSuccess, nil
@@ -140,13 +139,13 @@ func (s *Server) handleRemoveCustodianMember(ctx context.Context, req *JSONRPCRe
 // distribution of a custodian group's Shamir shares to its enrolled members.
 func (s *Server) handleDistributeShares(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.DistributeSharesRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := s.xkmsService.DistributeShares(ctx, &params)
 	if err != nil {
-		return nil, mapKeyOpError(err)
+		return nil, mapCustodianError(err, "distribute shares")
 	}
 
 	return resp, nil

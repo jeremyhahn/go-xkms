@@ -1458,12 +1458,12 @@ func (s *Server) handleDeriveKeyECDH(ctx context.Context, req *JSONRPCRequest) (
 // (pkg/xkms/servicer_crypto.go).
 func (s *Server) handleDeriveKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.DeriveKeyRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.Algorithm == "" {
-		return nil, &errs.Message{Msg: "algorithm is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "algorithm is required"}}
 	}
 
 	tenantID, err := tenantForRequest(ctx, params.TenantID)
