@@ -745,10 +745,10 @@ func TestTCPPairingServer_MaxConnections(t *testing.T) {
 		sessions[i] = clientHandshake(t, c)
 	}
 
-	// Give the server a moment for both connections to be fully registered
-	// in the accept loop (semaphore acquired before goroutine spawn).
-	time.Sleep(100 * time.Millisecond)
-
+	// No wait needed: the accept loop is single-threaded and acquires the
+	// semaphore slot before spawning each connection's handler goroutine, so
+	// a completed handshake already proves that connection's slot was taken.
+	//
 	// The 3rd connection should be accepted at TCP level but immediately
 	// closed by the server because the semaphore is full.
 	c3, err := net.DialTimeout("tcp", srv.Addr(), 2*time.Second)

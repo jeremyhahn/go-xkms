@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -29,6 +30,27 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// syncBuilder is a strings.Builder safe for one goroutine to write into
+// (via exec.Cmd's internal output copier) while another polls its contents,
+// as TestDevice_Relay_StartStop does below to detect the relay's readiness
+// message without racing on a plain strings.Builder.
+type syncBuilder struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuilder) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuilder) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
 
 func TestDevice_Help(t *testing.T) {
 	h := NewDeviceTestHelper(t)
@@ -289,26 +311,46 @@ func TestDevice_Relay_StartStop(t *testing.T) {
 	// Start relay as a subprocess on an ephemeral port
 	cmd := exec.CommandContext(ctx, h.binaryPath, "device", "relay", "--listen", ":0")
 
-	var stdout, stderr strings.Builder
+	// syncBuilder rather than strings.Builder: the poll below reads stdout
+	// while exec.Cmd's output copier goroutine is still writing to it.
+	var stdout, stderr syncBuilder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	err := cmd.Start()
 	require.NoError(t, err, "relay subprocess should start")
-
-	// Wait briefly for the server to begin listening
-	time.Sleep(500 * time.Millisecond)
-
-	// Verify the process is still running (hasn't crashed immediately)
-	// A nil from cmd.Process means it never started; check it's alive.
 	require.NotNil(t, cmd.Process, "relay process should exist")
+
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+
+	// Wait for the relay to actually report it is listening instead of
+	// sleeping a fixed duration, so SIGTERM below cannot race a relay that
+	// has not bound its socket yet.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		combined := stdout.String() + stderr.String()
+		if strings.Contains(combined, "listening") || strings.Contains(combined, "Listening") ||
+			strings.Contains(combined, "TCP pairing relay") {
+			break
+		}
+		select {
+		case exitErr := <-exited:
+			t.Fatalf("relay exited before reporting listening (err=%v); output:\n%s", exitErr, combined)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("relay never reported listening within 5s; output so far:\n%s", combined)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	// Send SIGTERM for clean shutdown
 	err = cmd.Process.Signal(syscall.SIGTERM)
 	require.NoError(t, err, "sending SIGTERM to relay should succeed")
 
 	// Wait for exit
-	exitErr := cmd.Wait()
+	exitErr := <-exited
 
 	// The relay exits with 0 on SIGTERM or non-zero; both are acceptable
 	// as long as it started and handled the signal.

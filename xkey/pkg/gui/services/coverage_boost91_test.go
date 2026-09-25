@@ -179,11 +179,13 @@ func TestCB91_ScheduleClear_TimerFiresAndClears(t *testing.T) {
 
 	svc.scheduleClear("sensitive-data", 50*time.Millisecond)
 
-	time.Sleep(300 * time.Millisecond)
-
-	content, err := svc.readClipboard()
-	require.NoError(t, err)
-	assert.Empty(t, content, "clipboard should be cleared after timeout")
+	// scheduleClear's 50ms delay (no clock seam) is the behavior under
+	// test; poll for the clear rather than betting a fixed sleep is long
+	// enough under a loaded scheduler.
+	require.Eventually(t, func() bool {
+		content, readErr := svc.readClipboard()
+		return readErr == nil && content == ""
+	}, 5*time.Second, 10*time.Millisecond, "clipboard was not cleared after timeout")
 }
 
 func TestCB91_ScheduleClear_ContentChanged(t *testing.T) {

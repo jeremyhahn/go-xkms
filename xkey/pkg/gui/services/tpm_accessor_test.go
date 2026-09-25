@@ -85,8 +85,15 @@ func TestTPMAccessor_Shutdown_WaitsForInflight(t *testing.T) {
 		close(shutdownDone)
 	}()
 
-	// Give the shutdown goroutine time to start and block on the mutex.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the shutdown goroutine to mark the accessor closed instead of
+	// sleeping a fixed duration: closed is set before Shutdown blocks on the
+	// mutex (same goroutine, program order), so once this observes it, the
+	// only remaining race is the few instructions before Shutdown reaches
+	// mu.Lock() -- far narrower than betting a fixed sleep covers scheduling
+	// under a loaded host.
+	require.Eventually(t, func() bool {
+		return acc.closed.Load()
+	}, 5*time.Second, time.Millisecond, "Shutdown did not mark the accessor closed")
 
 	// Verify shutdown has not completed yet.
 	select {

@@ -833,9 +833,9 @@ func TestFCP6_AppLockService_AutoLockTimerFires(t *testing.T) {
 	})
 	svc.autoLockMu.Unlock()
 
-	// Wait for the timer to fire.
-	time.Sleep(50 * time.Millisecond)
-	assert.True(t, svc.locked.Load())
+	// The 1ms AfterFunc fire is the behavior under test; poll rather than
+	// bet a fixed sleep is long enough under a loaded scheduler.
+	require.Eventually(t, svc.locked.Load, 5*time.Second, 10*time.Millisecond, "auto-lock timer did not fire")
 }
 
 func TestFCP6_AppLockService_ResetAutoLockTimer_WithExistingTimer(t *testing.T) {

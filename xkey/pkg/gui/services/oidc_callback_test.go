@@ -171,11 +171,9 @@ func TestOIDCService_Login_AnswersOnTheRedirectURLPath(t *testing.T) {
 		done <- result
 	}()
 
-	deadline := time.Now().Add(10 * time.Second)
-	for authURL.Load() == nil {
-		require.False(t, time.Now().After(deadline), "the browser was never opened")
-		time.Sleep(20 * time.Millisecond)
-	}
+	require.Eventually(t, func() bool {
+		return authURL.Load() != nil
+	}, 10*time.Second, 20*time.Millisecond, "the browser was never opened")
 	assert.Contains(t, authURL.Load().(string), "redirect_uri=http%3A%2F%2F127.0.0.1%3A"+port+"%2Foauth%2Fcallback")
 
 	for _, other := range []string{"/oauth/callback/", "/oauth/callback/x", "/oauth/other", "/"} {

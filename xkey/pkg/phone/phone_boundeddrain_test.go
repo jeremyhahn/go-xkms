@@ -171,7 +171,10 @@ func TestClose_ReportsSuccessWhenEveryLeaseDrains(t *testing.T) {
 	closed := make(chan error, 1)
 	go func() { closed <- backend.Close() }()
 
-	time.Sleep(10 * time.Millisecond)
+	// No readiness wait needed: the lease was acquired before Close started,
+	// so b.ops already has it in flight whenever Close reaches ops.Wait --
+	// release() only needs to happen at some point, not after any particular
+	// state Close reaches.
 	release()
 
 	select {

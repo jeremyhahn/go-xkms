@@ -239,10 +239,9 @@ func TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick(t *testing.T
 		done <- runAutoRefresh(server.URL, "client", store, defaultOIDCTokenStorePath, "", "", 10*time.Millisecond, &buf, oidc.TokenEncodingForm, stop)
 	}()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for refreshes.Load() < 4 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
+	require.Eventually(t, func() bool {
+		return refreshes.Load() >= 4
+	}, 5*time.Second, 10*time.Millisecond, "fewer than 4 refresh ticks before the deadline")
 	close(stop)
 
 	select {
