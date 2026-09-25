@@ -95,4 +95,13 @@ var (
 
 	// ErrNilSealedData indicates that nil sealed data was provided to Unseal
 	ErrNilSealedData = errors.New("tpm2: sealed data is required")
+
+	// ErrKeyDirRequired indicates Config.KeyDir was left unset. There is no
+	// cwd-relative default: Config is constructed by callers with no
+	// meaningful process working directory (an embedded service, a daemon
+	// started from an arbitrary cwd, a unit test), so defaulting KeyDir would
+	// scatter key material or leave stray tpm2-keys/ directories behind (see
+	// pkg/server's resolveTPM2KeyDir, which derives KeyDir from storage.path
+	// for exactly this reason). Callers must supply KeyDir explicitly.
+	ErrKeyDirRequired = errors.New("tpm2: key_dir is required")
 )
