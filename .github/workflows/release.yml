@@ -404,6 +404,19 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
+      # comes from the commit this workflow runs from, not from the tag being
+      # released. A workflow_dispatch repair of an older tag runs this
+      # workflow from main against a checkout that predates the tooling it
+      # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
+      # "scripts/retry.sh: No such file or directory").
+      - name: Checkout release tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts
+
       # go-xkms#1026: only the standard/arm64 leg needs this at all (see
       # `qemu:` on the matrix above) -- the FIPS legs are CGO_ENABLED=0 on
       # both architectures and the amd64/standard leg is already native, so
@@ -704,7 +717,7 @@ jobs:
           if [ "${{ matrix.variant }}" = "standard" ]; then
             files+=("xkey-${V}-linux-${A}" "xkey-${V}-linux-${A}.sha256")
           fi
-          scripts/release-assets.sh upload "${files[@]}"
+          .release-tools/scripts/release-assets.sh upload "${files[@]}"
 
   build-docker:
     name: Build Docker Server Image
@@ -716,6 +729,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_TAG }}
+
+      # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
+      # comes from the commit this workflow runs from, not from the tag being
+      # released. A workflow_dispatch repair of an older tag runs this
+      # workflow from main against a checkout that predates the tooling it
+      # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
+      # "scripts/retry.sh: No such file or directory").
+      - name: Checkout release tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts
 
       # go-xkms#1026: QEMU/binfmt is needed ONLY by the multi-arch PUSH step
       # at the bottom of this job (`platforms: linux/amd64,linux/arm64`),
@@ -916,7 +942,7 @@ jobs:
           if [ "${{ github.server_url }}" = "https://github.com" ]; then
             CACHE_ARGS=(--cache-from type=gha --cache-to type=gha,mode=max)
           fi
-          scripts/retry.sh --attempts 3 --backoff 20 -- \
+          .release-tools/scripts/retry.sh --attempts 3 --backoff 20 -- \
             docker buildx build \
               --file Dockerfile.release \
               --platform linux/amd64 \
@@ -984,6 +1010,19 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
+      # comes from the commit this workflow runs from, not from the tag being
+      # released. A workflow_dispatch repair of an older tag runs this
+      # workflow from main against a checkout that predates the tooling it
+      # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
+      # "scripts/retry.sh: No such file or directory").
+      - name: Checkout release tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts
+
       # See the server-image job's comment: QEMU here is needed only by the
       # multi-arch push step below, which never runs on Gitea.
       - name: Set up QEMU
@@ -1043,7 +1082,7 @@ jobs:
           if [ "${{ github.server_url }}" = "https://github.com" ]; then
             CACHE_ARGS=(--cache-from type=gha --cache-to type=gha,mode=max)
           fi
-          scripts/retry.sh --attempts 3 --backoff 20 -- \
+          .release-tools/scripts/retry.sh --attempts 3 --backoff 20 -- \
             docker buildx build \
               --file Dockerfile.cli \
               --platform linux/amd64 \
@@ -1138,14 +1177,27 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
+      # comes from the commit this workflow runs from, not from the tag being
+      # released. A workflow_dispatch repair of an older tag runs this
+      # workflow from main against a checkout that predates the tooling it
+      # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
+      # "scripts/retry.sh: No such file or directory").
+      - name: Checkout release tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts
+
       # verify exits 1 naming each absent asset, and only when every asset
       # is present are the master checksums built, so a partial release
       # never publishes a checksums.txt that vouches for less than the set.
       - name: Verify the release carries every matrix asset
-        run: scripts/release-assets.sh verify "${{ needs.create-release.outputs.version }}"
+        run: .release-tools/scripts/release-assets.sh verify "${{ needs.create-release.outputs.version }}"
 
       - name: Download the per-asset checksums
-        run: scripts/release-assets.sh download checksums '*.sha256'
+        run: .release-tools/scripts/release-assets.sh download checksums '*.sha256'
 
       - name: Create master checksums file
         run: |
@@ -1155,7 +1207,7 @@ jobs:
           cat checksums.txt
 
       - name: Upload master checksums to release
-        run: scripts/release-assets.sh upload checksums.txt
+        run: .release-tools/scripts/release-assets.sh upload checksums.txt
 
   announce-release:
     name: Announce Release
@@ -1269,6 +1321,19 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
+      # comes from the commit this workflow runs from, not from the tag being
+      # released. A workflow_dispatch repair of an older tag runs this
+      # workflow from main against a checkout that predates the tooling it
+      # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
+      # "scripts/retry.sh: No such file or directory").
+      - name: Checkout release tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts
+
       # Fails loudly and names every discrepancy: `missing: NAME` for
       # anything the matrix expects that Gitea does not have, `unexpected:
       # NAME` for anything present that the matrix does not expect. A green
@@ -1276,4 +1341,4 @@ jobs:
       # release is actually complete, independent of which individual jobs
       # in THIS run happened to succeed.
       - name: Verify the published release is complete
-        run: scripts/release-assets.sh verify-complete "${{ needs.create-release.outputs.version }}"
+        run: .release-tools/scripts/release-assets.sh verify-complete "${{ needs.create-release.outputs.version }}"

@@ -52,3 +52,6 @@ Thumbs.db
 gomodauth*
 .devcontainer/.env
 .devcontainer/gomodauth.env
+
+# Release tooling checked out by release.yml alongside the tagged source.
+.release-tools
