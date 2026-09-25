@@ -214,6 +214,21 @@ func TestErrDeployFailed(t *testing.T) {
 	assert.Equal(t, errSentinel, err.Unwrap())
 }
 
+func TestErrDeployFailed_SentinelCauses(t *testing.T) {
+	sentinels := []error{
+		ErrDeployConfigNil,
+		ErrDeployCertPEMEmpty,
+		ErrDeployCertPathEmpty,
+		ErrDeployKeyPathEmpty,
+		ErrDeployKeyPEMEmpty,
+	}
+	for _, sentinel := range sentinels {
+		err := ErrDeployFailed{CertName: "api-tls", Err: sentinel}
+		assert.ErrorIs(t, err, sentinel)
+		assert.NotEmpty(t, err.Error())
+	}
+}
+
 func TestErrPostHookFailed(t *testing.T) {
 	err := ErrPostHookFailed{Hook: "reload-nginx", Err: errSentinel}
 	assert.Contains(t, err.Error(), "reload-nginx")

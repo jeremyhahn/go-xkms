@@ -17,7 +17,10 @@
 // automatic renewal.
 package service
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrChallengeSetupFailed indicates that setting up an ACME challenge failed.
 type ErrChallengeSetupFailed struct {
@@ -361,6 +364,17 @@ func (e ErrClientCreation) Error() string {
 func (e ErrClientCreation) Unwrap() error {
 	return e.Err
 }
+
+// Sentinel causes wrapped by ErrDeployFailed when Deploy is called with an
+// incomplete or invalid DeployConfig. Callers can match a specific cause
+// with errors.Is, which walks ErrDeployFailed.Unwrap to reach these.
+var (
+	ErrDeployConfigNil     = errors.New("acme-client-service: deploy config is nil")
+	ErrDeployCertPEMEmpty  = errors.New("acme-client-service: certificate PEM data is empty")
+	ErrDeployCertPathEmpty = errors.New("acme-client-service: certificate path is empty")
+	ErrDeployKeyPathEmpty  = errors.New("acme-client-service: key path is empty")
+	ErrDeployKeyPEMEmpty   = errors.New("acme-client-service: private key PEM data is empty")
+)
 
 // ErrDeployFailed indicates that certificate deployment failed.
 type ErrDeployFailed struct {
