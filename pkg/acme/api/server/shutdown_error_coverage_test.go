@@ -40,12 +40,11 @@ func TestShutdown_ForceRESTError(t *testing.T) {
 		Handler: http.NewServeMux(),
 	}
 
-	// Start serving
+	// Start serving. Shutdown works correctly whether or not Serve's accept
+	// loop has started, so no readiness wait is needed here.
 	go func() {
 		_ = restServer.Serve(listener)
 	}()
-
-	time.Sleep(50 * time.Millisecond)
 
 	server.running.Store(true)
 	server.restServer = restServer
@@ -76,12 +75,11 @@ func TestShutdown_ForceMCPError(t *testing.T) {
 		Handler: http.NewServeMux(),
 	}
 
-	// Start serving
+	// Start serving. Shutdown works correctly whether or not Serve's accept
+	// loop has started, so no readiness wait is needed here.
 	go func() {
 		_ = mcpServer.Serve(listener)
 	}()
-
-	time.Sleep(50 * time.Millisecond)
 
 	server.running.Store(true)
 	server.mcpServer = mcpServer
@@ -156,8 +154,6 @@ func TestShutdown_MultipleShutdownErrors(t *testing.T) {
 	}
 	_ = quicServer.Close() // Pre-close to cause error
 
-	time.Sleep(50 * time.Millisecond)
-
 	server.restServer = restServer
 	server.mcpServer = mcpServer
 	server.quicServer = quicServer
@@ -191,8 +187,6 @@ func TestShutdown_WithRunningServersAndErrors(t *testing.T) {
 	require.NoError(t, err)
 	mcpServer := &http.Server{Handler: http.NewServeMux()}
 	go func() { _ = mcpServer.Serve(mcpListener) }()
-
-	time.Sleep(50 * time.Millisecond)
 
 	server.restServer = restServer
 	server.mcpServer = mcpServer
@@ -232,8 +226,6 @@ func TestShutdown_ErrorsJoined(t *testing.T) {
 	require.NoError(t, err)
 	mcpServer := &http.Server{Handler: http.NewServeMux()}
 	go func() { _ = mcpServer.Serve(mcpListener) }()
-
-	time.Sleep(50 * time.Millisecond)
 
 	server.restServer = restServer
 	server.mcpServer = mcpServer
