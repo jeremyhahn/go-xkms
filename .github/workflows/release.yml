@@ -1239,7 +1239,10 @@ jobs:
             const currentBody = release.data.body || '';
             // A repair run re-announces an existing release; append the
             // Docker section once, never a second copy.
-            if (currentBody.includes('## Docker Images')) {
+            // Match the heading line exactly: create-release's notes carry a
+            // '### Docker Images' subsection, which a substring test for
+            // '## Docker Images' also matches, so it skipped every announce.
+            if (/^## Docker Images\s*$/m.test(currentBody)) {
               core.info('Release notes already carry the Docker Images section.');
               return;
             }
