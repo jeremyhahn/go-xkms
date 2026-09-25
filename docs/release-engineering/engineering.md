@@ -41,6 +41,37 @@ does not distinguish an infrastructure failure from a code failure — nothing
 outside the wrapped command can — so a genuine build defect also retries and
 then fails with its own real exit code, just three times over.
 
+`build-binaries`' four-leg matrix (standard/amd64, standard/arm64, fips/amd64,
+fips/arm64) builds every leg **natively inside the same amd64
+`golang:bookworm` container** — no leg passes `--platform` to `docker create`
+and no leg runs `docker/setup-qemu-action` (go-xkms#1032, following on
+go-xkms#1026's fips/arm64 leg, which established the pattern first). The two
+`arm64` legs cross-compile via `GOARCH=arm64`: fips/arm64 needs no C toolchain
+at all (`CGO_ENABLED=0`, pure Go), and standard/arm64 additionally
+`dpkg --add-architecture arm64`s the container, installs
+`gcc-aarch64-linux-gnu` plus the arm64 variant of every dev package the leg
+already installs for amd64, and sets `CC=aarch64-linux-gnu-gcc` before the
+static `-linkmode external -extldflags -static` build — the same approach
+`make release-server` already uses for `xkmsd` (`Makefile:898`). This was
+spiked locally before being adopted: a full cross-compiled build of
+`xkmsctl`, `xkmsd` and `xkey` with the leg's exact tags and ldflags produced
+statically linked aarch64 ELF binaries, confirmed with `file`. The one dev
+package genuinely in doubt going in, `libtss2-dev` (tpm2-tss ships no static
+`.a` on Debian, only `.so`, on either architecture), turned out not to matter
+for the outcome: this leg's TPM backend (`google/go-tpm`,
+`github.com/google/go-tpm-tools`) is pure Go with no cgo dependency on
+libtss2 at all, and `go-icu-regex`/`gousb` are likewise not reachable under
+the leg's own build tags (`gousb` sits behind a separate `usb` tag this leg
+does not pass). The packages stay installed to match the previously-QEMU'd
+leg's footprint unchanged, but the actual cgo surface this leg statically
+links is narrower than the apt list suggests: `miekg/pkcs11` (`dlopen`-based,
+no static lib needed) plus glibc's own NSS lookups (`os/user`, `net`'s cgo
+resolver) — which is why `-static` still links cleanly with no tpm2-tss/ICU/
+USB static archive in the picture. If a future backend or tag genuinely
+starts reaching one of the icu/usb/tss2 cgo paths under `CGO_ENABLED=1`,
+re-verify static-archive availability for `arm64` before assuming this leg's
+`-static` link still holds.
+
 ## Declared constants
 
 | Name | Declared in | Contents |

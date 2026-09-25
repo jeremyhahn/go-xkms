@@ -334,10 +334,11 @@ jobs:
     # limit a leg runs into the runner's default of three hours: v0.9.5-alpha's
     # two arm64 legs sat from 13:23 to 16:23 after the docker socket stopped
     # answering, the run showed in_progress for hours, and the release shipped
-    # amd64 only with no master checksums. The arm64 legs build under QEMU
-    # and take 20-33 minutes when healthy (v0.10.0-alpha, v0.11.0-alpha), so
-    # 75 minutes is generous for a slow runner and still a fraction of the
-    # default.
+    # amd64 only with no master checksums. None of the four legs below touch
+    # QEMU any longer (go-xkms#1032, see the matrix below), so 75 minutes is
+    # generous headroom rather than a measured need -- kept rather than
+    # tightened because a native cross-compile leg failing to build in over an
+    # hour is itself worth surfacing as a hang, not just a slow run.
     timeout-minutes: 75
     strategy:
       # Every leg uploads its own assets and the checksums job verifies the
@@ -347,57 +348,40 @@ jobs:
       # go-xkms#1026: caps how many of these four legs a self-hosted runner
       # host builds at once. The legs were never contending on CPU alone --
       # each `docker create` also hits that host's shared docker DAEMON, and
-      # the arm64/standard leg below hits it hardest (QEMU emulation, full
-      # apt install, static CGO link). 2 keeps at most one CGO-heavy leg and
-      # one lighter leg in flight together without serialising the whole
-      # matrix (which would double this job's wall time for no reason: three
-      # of the four legs below need no QEMU at all -- see `qemu:` on each).
+      # the arm64/standard leg below hits it hardest (full apt install plus a
+      # static CGO cross-link). 2 keeps at most one CGO-heavy leg and one
+      # lighter leg in flight together without serialising the whole matrix
+      # (which would double this job's wall time for no reason).
       max-parallel: 2
       matrix:
         include:
-          # Standard builds. CGO_ENABLED=1 (tpm2, pkcs11, frost, plus the
-          # unconditional icu/usb cgo deps of the module graph -- see
-          # build.sh below), statically linked.
+          # Standard builds. CGO_ENABLED=1 (tpm2, pkcs11, frost), statically
+          # linked. Neither arch leg below touches QEMU (go-xkms#1032): both
+          # cross-compile natively inside the SAME amd64 golang:bookworm
+          # container, the arm64 leg via CC=aarch64-linux-gnu-gcc -- see
+          # build.sh below.
           - platform: linux/amd64
             arch: amd64
             variant: standard
             fips: false
-            # Native: the runner IS amd64, so this never touches QEMU.
-            qemu: false
           - platform: linux/arm64
             arch: arm64
             variant: standard
             fips: false
-            # The one leg QEMU emulation could not be removed from (see the
-            # "Set up QEMU" step below for why: miekg/pkcs11, go-icu-regex
-            # and gousb are cgo, and this build statically links against
-            # arm64 libtss2/libicu/libusb/pkcs11 headers, which is not
-            # something an amd64->arm64 cross toolchain can be verified to
-            # do reliably without a real arm64 linker to test against).
-            qemu: true
           # FIPS 140-3 compliant builds (Linux only, Go's built-in
           # GOFIPS140 mode). CGO_ENABLED=0 unconditionally (pure Go crypto,
           # gms_pure_go instead of the cgo ICU regex engine, tpm2/pkcs11
           # excluded) -- there is nothing here for a C toolchain to link,
-          # on EITHER architecture, so neither FIPS leg ever needs QEMU.
+          # on EITHER architecture, so neither FIPS leg ever needed QEMU
+          # (go-xkms#1026).
           - platform: linux/amd64
             arch: amd64
             variant: fips
             fips: true
-            qemu: false
           - platform: linux/arm64
             arch: arm64
             variant: fips
             fips: true
-            # Native `GOARCH=arm64 CGO_ENABLED=0 go build` inside the SAME
-            # amd64 golang:bookworm container the amd64 leg uses (no
-            # `--platform`, so no docker-daemon platform emulation, no
-            # binfmt registration, no QEMU at all) -- go-xkms#1026's actual
-            # fix, not just a mitigation: this leg failed on a docker-daemon
-            # timeout at v0.30.0-alpha (issue table) purely because it was
-            # running under QEMU for a build that needed no C toolchain in
-            # the first place.
-            qemu: false
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -417,32 +401,15 @@ jobs:
           path: .release-tools
           sparse-checkout: scripts
 
-      # go-xkms#1026: only the standard/arm64 leg needs this at all (see
-      # `qemu:` on the matrix above) -- the FIPS legs are CGO_ENABLED=0 on
-      # both architectures and the amd64/standard leg is already native, so
-      # gating this out for them removes three of this job's four QEMU
-      # touches, which is most of what was contending for the runner host's
-      # docker daemon and racing the binfmt image cache.
-      #
-      # `cache-image: false` (go-xkms#1026): the action's default caches the
-      # tonistiigi/binfmt image tarball into hostedtoolcache and reuses it
-      # across runs. v0.24.0-alpha hit that cache mid-write from a
-      # concurrent job on the same runner host: `ENOENT copyfile
-      # .../tonistiigi--binfmt/latest/linux-x64/image.tar ->
-      # /opt/hostedtoolcache/...`. Disabling the cache means this leg always
-      # pulls and installs the binfmt image fresh -- slightly more network
-      # traffic, no shared mutable state to race.
-      - name: Set up QEMU
-        if: matrix.qemu == 'true'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: ${{ matrix.platform }}
-          cache-image: false
-
-      - name: Set up Docker Buildx
-        if: matrix.qemu == 'true'
-        uses: docker/setup-buildx-action@v3
-
+      # No "Set up QEMU" / "Set up Docker Buildx" steps here (go-xkms#1032):
+      # the last leg that needed platform emulation, standard/arm64, now
+      # cross-compiles natively (see build.sh below) the same way the
+      # FIPS/arm64 leg already did (go-xkms#1026). With all four legs native,
+      # a QEMU setup step here would never run -- dead weight and, worse, a
+      # trap for the next person who flips a leg back to needing it without
+      # restoring the step it silently depended on. If a future leg genuinely
+      # needs QEMU, add `docker/setup-qemu-action` and `--platform` back for
+      # that leg alone, and restore a per-leg switch to gate it.
       - name: Build binaries in native container
         run: |
           # Create a build script
@@ -489,16 +456,40 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates file git
           if [ "$CGO_MODE" = "1" ]; then
-            apt-get install -y --no-install-recommends \
-              build-essential \
-              pkg-config \
-              libsofthsm2 \
-              libsofthsm2-dev \
-              softhsm2 \
-              libtss2-dev \
-              libicu-dev \
-              libusb-1.0-0-dev \
-              libssl-dev
+            apt-get install -y --no-install-recommends build-essential pkg-config
+
+            if [ "$GOARCH" = "arm64" ]; then
+              # Cross-compiling for arm64 FROM this amd64 container
+              # (go-xkms#1032): no QEMU, no --platform, no daemon-level
+              # emulation. An aarch64 cross toolchain plus the arm64 variant
+              # of every dev package this leg installs for amd64, so CC
+              # below links a native aarch64 static binary -- the same
+              # verified-working approach Makefile's release-server target
+              # already uses for xkmsd (Makefile:898). Scoped to
+              # CGO_MODE=1/GOARCH=arm64 alone: the FIPS/arm64 leg is
+              # CGO_ENABLED=0 and never reaches this branch.
+              dpkg --add-architecture arm64
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                gcc-aarch64-linux-gnu \
+                libsofthsm2:arm64 \
+                libsofthsm2-dev:arm64 \
+                softhsm2:arm64 \
+                libtss2-dev:arm64 \
+                libicu-dev:arm64 \
+                libusb-1.0-0-dev:arm64 \
+                libssl-dev:arm64
+              export CC=aarch64-linux-gnu-gcc
+            else
+              apt-get install -y --no-install-recommends \
+                libsofthsm2 \
+                libsofthsm2-dev \
+                softhsm2 \
+                libtss2-dev \
+                libicu-dev \
+                libusb-1.0-0-dev \
+                libssl-dev
+            fi
           fi
 
           # Static linking flags (adjust for FIPS builds which don't use CGO)
@@ -508,7 +499,7 @@ jobs:
             LDFLAGS="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w -linkmode external -extldflags '-static'"
           fi
 
-          echo "Building for linux/${GOARCH} with CGO_ENABLED=${CGO_MODE}"
+          echo "Building for linux/${GOARCH} with CGO_ENABLED=${CGO_MODE} CC=${CC:-cc (native)}"
           echo "Build flags: ${BUILD_FLAGS}"
 
           mkdir -p /src/dist
@@ -578,20 +569,15 @@ jobs:
           # bare `-e NAME` host-value passthrough, so each credential var is
           # explicitly expanded here (empty string when unset, e.g. on
           # GitHub Actions -- same no-op behavior as before).
-          #
-          # `--platform` is passed ONLY for the one leg that actually needs
-          # it (`matrix.qemu == 'true'`, i.e. standard/arm64): every other
-          # leg builds inside the container's OWN (amd64) architecture and
-          # cross-compiles via GOARCH -- exactly like the FIPS/arm64 leg,
-          # which needs no C toolchain to do that at all (go-xkms#1026).
-          # Passing `--platform=linux/amd64` explicitly for the amd64 legs
-          # would be a no-op on an amd64 runner; omitting it entirely for
-          # every non-qemu leg is the same thing without asking the daemon
-          # to resolve a platform match it already has.
-          PLATFORM_ARGS=()
-          if [ "${{ matrix.qemu }}" = "true" ]; then
-            PLATFORM_ARGS=(--platform="${{ matrix.platform }}")
-          fi
+          # No `--platform` is ever passed (go-xkms#1032): every leg now
+          # builds inside the container's OWN (amd64) architecture and
+          # cross-compiles via GOARCH -- the arm64/standard leg via
+          # CC=aarch64-linux-gnu-gcc (see build.sh above), the same way the
+          # FIPS/arm64 leg already did with no C toolchain at all
+          # (go-xkms#1026). Passing `--platform=linux/amd64` explicitly
+          # would be a no-op on an amd64 runner, so it is omitted rather
+          # than asking the daemon to resolve a platform match it already
+          # has.
 
           # Bounded retry around the whole create/copy/run/copy sequence
           # (go-xkms#1026): the failures on record here are runner
@@ -606,11 +592,10 @@ jobs:
           max_attempts=3
           while :; do
             attempt=$((attempt + 1))
-            echo "::group::Build attempt ${attempt}/${max_attempts} (platform=${{ matrix.platform }}, qemu=${{ matrix.qemu }})"
+            echo "::group::Build attempt ${attempt}/${max_attempts} (platform=${{ matrix.platform }})"
             rm -rf dist
             CID=""
             if CID=$(docker create \
-                 "${PLATFORM_ARGS[@]}" \
                  -w /src \
                  -e VERSION="${{ needs.create-release.outputs.version }}" \
                  -e COMMIT="${{ needs.create-release.outputs.commit }}" \
