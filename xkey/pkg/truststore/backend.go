@@ -108,8 +108,8 @@ func (bs *BackendStore) AddCertificate(cert *x509.Certificate) error {
 	meta := newCertMetadata(cert, fp)
 	if err := bs.writeMeta(fp, meta); err != nil {
 		// Roll back the certificate entry on metadata write failure.
-		_ = bs.backend.Delete(context.Background(), bs.certKey(fp))
-		return err
+		deleteErr := bs.backend.Delete(context.Background(), bs.certKey(fp))
+		return errors.Join(err, deleteErr)
 	}
 
 	bs.certs[fp] = cert
@@ -160,8 +160,8 @@ func (bs *BackendStore) AddCertificateWithOptions(cert *x509.Certificate, opts *
 	}
 
 	if err := bs.writeMeta(fp, meta); err != nil {
-		_ = bs.backend.Delete(context.Background(), bs.certKey(fp))
-		return err
+		deleteErr := bs.backend.Delete(context.Background(), bs.certKey(fp))
+		return errors.Join(err, deleteErr)
 	}
 
 	bs.certs[fp] = cert
@@ -550,6 +550,7 @@ func (bs *BackendStore) rebuildFromCerts() error {
 		return &SentinelCauseError{Sentinel: ErrStorageRead, Cause: err}
 	}
 
+	var writeErr error
 	for _, key := range certKeys {
 		// Extract fingerprint from key: {prefix}certificates/{fingerprint}.pem
 		fp := extractFingerprint(key, certPrefix, certKeySuffix)
@@ -579,11 +580,16 @@ func (bs *BackendStore) rebuildFromCerts() error {
 		bs.certs[fp] = cert
 		bs.meta[fp] = meta
 
-		// Persist the rebuilt metadata.
-		_ = bs.writeMeta(fp, meta)
+		// Persist the rebuilt metadata. In-memory state (bs.certs/bs.meta) is
+		// already updated above; a write failure here is accumulated and
+		// reported rather than dropped, so the caller learns the on-disk
+		// metadata may still be out of sync with what was just rebuilt.
+		if err := bs.writeMeta(fp, meta); err != nil {
+			writeErr = errors.Join(writeErr, err)
+		}
 	}
 
-	return nil
+	return writeErr
 }
 
 // writeCert writes a certificate as PEM-encoded data to the backend.

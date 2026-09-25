@@ -14,7 +14,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
@@ -165,7 +164,7 @@ func (s *RestService) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	_ = json.NewEncoder(w).Encode(status)
+	s.encodeJSON(w, status)
 }
 
 // degradationHeader marks a response as served from the degradation cache.

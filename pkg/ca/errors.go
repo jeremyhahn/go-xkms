@@ -54,6 +54,10 @@ var (
 	// ErrCertificateAlreadyExists indicates a certificate with the same
 	// identifier already exists.
 	ErrCertificateAlreadyExists = errors.New("ca: certificate already exists")
+
+	// ErrCertificateEncoding indicates a certificate could not be PEM
+	// encoded into a bundle.
+	ErrCertificateEncoding = errors.New("ca: certificate pem encoding failed")
 )
 
 // Signing errors indicate issues with cryptographic signing operations.

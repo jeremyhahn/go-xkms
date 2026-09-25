@@ -64,8 +64,12 @@ func (d *Daemon) unexportCollection(path dbus.ObjectPath, itemPaths []dbus.Objec
 	if d.conn == nil {
 		return
 	}
-	_ = d.conn.Export(nil, path, CollectionInterface)
-	_ = d.conn.Export(nil, path, DBusPropertiesInterface)
+	if err := d.conn.Export(nil, path, CollectionInterface); err != nil {
+		d.logger.Warn("failed to unexport Collection interface", "path", string(path), "error", err.Error())
+	}
+	if err := d.conn.Export(nil, path, DBusPropertiesInterface); err != nil {
+		d.logger.Warn("failed to unexport Collection properties interface", "path", string(path), "error", err.Error())
+	}
 }
 
 // exportExistingCollections exports the default collection plus one object

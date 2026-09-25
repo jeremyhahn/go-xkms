@@ -170,7 +170,12 @@ func (c *restClient) doWithQuery(ctx context.Context, path string, q url.Values)
 // are tolerated.
 func decodeErrorResponse(status int, body []byte) error {
 	var env errorEnvelope
-	_ = json.Unmarshal(body, &env) // best-effort; missing body stays empty.
+	if err := json.Unmarshal(body, &env); err != nil {
+		// Best-effort: a non-JSON or empty error body just leaves env zero-valued,
+		// which the switch below already handles via empty Resource/Message. Still
+		// worth knowing about, so it is logged rather than dropped.
+		slog.Debug("ssh: failed to decode error response envelope", "status", status, "error", err)
+	}
 	msg := env.Message
 	if msg == "" {
 		msg = env.Error

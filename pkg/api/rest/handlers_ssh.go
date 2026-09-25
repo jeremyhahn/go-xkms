@@ -583,7 +583,9 @@ func writeSSHError(w http.ResponseWriter, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(env)
+	if encErr := json.NewEncoder(w).Encode(env); encErr != nil {
+		slog.Debug("rest/ssh: failed to encode error envelope", "error", encErr)
+	}
 }
 
 // classifySSHError is a small adapter around the SDK's shared status

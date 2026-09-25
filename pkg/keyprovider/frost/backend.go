@@ -18,6 +18,7 @@ package frost
 import (
 	"context"
 	"crypto"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -297,12 +298,13 @@ func (b *FrostBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 	}
 
 	// Delete nonce markers for this key
+	var nonceErr error
 	if b.config.EnableNonceTracking {
-		_ = b.nonceTracker.DeleteKeyNonces(keyID)
+		nonceErr = b.nonceTracker.DeleteKeyNonces(keyID)
 	}
 
 	// Delete key package
-	return b.keystore.DeleteKey(ctx, keyID)
+	return errors.Join(nonceErr, b.keystore.DeleteKey(ctx, keyID))
 }
 
 // ListKeys returns attributes for all FROST keys managed by this backend.

@@ -563,6 +563,7 @@ func (ca *CA) CABundleFiltered(storeType types.StoreType, keyAlgorithm x509.Publ
 	ca.mu.RUnlock()
 
 	var buf bytes.Buffer
+	var encodeErr error
 	appendFiltered := func(cert *x509.Certificate) {
 		if cert == nil {
 			return
@@ -587,14 +588,19 @@ func (ca *CA) CABundleFiltered(storeType types.StoreType, keyAlgorithm x509.Publ
 				return
 			}
 		}
-		_ = pem.Encode(&buf, &pem.Block{
+		if err := pem.Encode(&buf, &pem.Block{
 			Type:  "CERTIFICATE",
 			Bytes: cert.Raw,
-		})
+		}); err != nil {
+			encodeErr = errors.Join(encodeErr, err)
+		}
 	}
 
 	appendFiltered(intermediateCert)
 	appendFiltered(rootCert)
+	if encodeErr != nil {
+		return nil, &errs.Detail{Err: ErrCertificateEncoding, Detail: fmt.Sprintf("%v", encodeErr)}
+	}
 
 	if buf.Len() == 0 {
 		return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "no certificates match filter"}
