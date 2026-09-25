@@ -408,6 +408,16 @@ func TestCreateSecretKey_CreatesLoadableAESKeyUnderSRK(t *testing.T) {
 	assert.Nil(t, out)
 }
 
+// TestCreateSecretKey_NilParentRefused proves CreateSecretKey refuses a key
+// with no parent rather than dereferencing keyAttrs.Parent.TPMAttributes.
+func TestCreateSecretKey_NilParentRefused(t *testing.T) {
+	h := newSimHarness(t, nil)
+
+	attrs := &types.KeyAttributes{CN: "no-parent-secret-key"}
+	err := h.TPM.CreateSecretKey(attrs, h.Backend)
+	assert.ErrorIs(t, err, store.ErrInvalidKeyAttributes)
+}
+
 // TestCreateSecretKey_TwoKeysAreDistinct proves each call creates independent
 // key material rather than deriving the same key twice, which would make every
 // "secret key" in the system identical.

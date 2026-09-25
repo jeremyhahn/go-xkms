@@ -177,6 +177,21 @@ func TestGetSymmetricKey_RetrievalError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrKeyRetrievalFailed)
 }
 
+// TestGetSymmetricKey_NoTransport proves GetSymmetricKey refuses to look up
+// a key backend blob against a TPM2 that was never opened, rather than
+// reaching the backend at all with a transport it could never use.
+func TestGetSymmetricKey_NoTransport(t *testing.T) {
+	tpm := &TPM2{}
+	attrs := &types.KeyAttributes{
+		CN:                 "no-transport-symmetric",
+		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err := tpm.GetSymmetricKey(attrs)
+	assert.ErrorIs(t, err, ErrNotInitialized)
+}
+
 // TestSymmetricEncrypter_NotFound verifies that SymmetricEncrypter
 // propagates GetSymmetricKey's not-found classification for a key that
 // was never generated, rather than a generic wrapped error.

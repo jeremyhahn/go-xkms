@@ -186,6 +186,94 @@ func TestTPM2CapabilityMethods_TransportFailure_PropagateError(t *testing.T) {
 		require.Error(t, err)
 		assert.False(t, fips)
 	})
+	t.Run("Capabilities", func(t *testing.T) {
+		caps, err := h.TPM.Capabilities()
+		require.Error(t, err)
+		assert.Nil(t, caps)
+	})
+}
+
+// TestQueryAlgorithms_TransportFailure and TestQueryECCCurves_TransportFailure
+// cover the TPM_CAP_ALGS / TPM_CAP_ECC_CURVES paginating queries directly.
+// Capabilities calls queryAlgorithms first and queryECCCurves only if that
+// succeeds, so the table above never reaches queryECCCurves's own transport
+// check; calling each function directly proves both refuse a dead transport
+// on their own first GetCapability call, rather than returning an empty map
+// indistinguishable from "device implements nothing".
+func TestQueryAlgorithms_TransportFailure(t *testing.T) {
+	algs, err := queryAlgorithms(failingTransport{})
+	require.Error(t, err)
+	assert.Nil(t, algs)
+}
+
+func TestQueryECCCurves_TransportFailure(t *testing.T) {
+	curves, err := queryECCCurves(failingTransport{})
+	require.Error(t, err)
+	assert.Nil(t, curves)
+}
+
+// getCapPropertyCountOffset is the byte offset of TPM2_GetCapability's
+// propertyCount parameter: header(10) + capability(4) + property(4).
+const getCapPropertyCountOffset = 18
+
+// pageSizeCappingTransport rewrites TPM2_GetCapability's propertyCount to 1
+// for one capability selector, forcing the simulator's honest (and
+// otherwise single-page) answer across several round trips. It is how
+// queryAlgorithms/queryECCCurves's moreData pagination loop is exercised
+// without depending on a device that happens to implement more entries than
+// this package's own hardcoded capabilityPageSize requests in one call.
+type pageSizeCappingTransport struct {
+	inner      transport.TPM
+	capability tpm2.TPMCap
+}
+
+func (m *pageSizeCappingTransport) Send(input []byte) ([]byte, error) {
+	if len(input) >= getCapPropertyCountOffset+4 {
+		cc := tpm2.TPMCC(binary.BigEndian.Uint32(input[tpmCCOffset : tpmCCOffset+4]))
+		capability := binary.BigEndian.Uint32(input[getCapCapabilityOffset : getCapCapabilityOffset+4])
+		if cc == tpm2.TPMCCGetCapability && capability == uint32(m.capability) {
+			rewritten := make([]byte, len(input))
+			copy(rewritten, input)
+			binary.BigEndian.PutUint32(rewritten[getCapPropertyCountOffset:getCapPropertyCountOffset+4], 1)
+			return m.inner.Send(rewritten)
+		}
+	}
+	return m.inner.Send(input)
+}
+
+// TestQueryAlgorithms_PaginatesAcrossMultiplePages proves the moreData loop
+// actually advances to the next page rather than only ever reading the
+// first: with propertyCount pinned to 1, collecting one algorithm at a time
+// must still reach the same set queryAlgorithms's own default page size
+// (100) collects in a single round trip.
+func TestQueryAlgorithms_PaginatesAcrossMultiplePages(t *testing.T) {
+	h := newSimHarness(t, nil)
+
+	paged, err := queryAlgorithms(&pageSizeCappingTransport{inner: h.TPM.transport, capability: tpm2.TPMCapAlgs})
+	require.NoError(t, err)
+	whole, err := queryAlgorithms(h.TPM.transport)
+	require.NoError(t, err)
+
+	require.Greater(t, len(paged), 1,
+		"a one-algorithm-per-page query must still traverse more than one page")
+	assert.Equal(t, whole, paged,
+		"paginating one algorithm at a time must collect the same set as one large page")
+}
+
+// TestQueryECCCurves_PaginatesAcrossMultiplePages is
+// TestQueryAlgorithms_PaginatesAcrossMultiplePages for TPM_CAP_ECC_CURVES.
+func TestQueryECCCurves_PaginatesAcrossMultiplePages(t *testing.T) {
+	h := newSimHarness(t, nil)
+
+	paged, err := queryECCCurves(&pageSizeCappingTransport{inner: h.TPM.transport, capability: tpm2.TPMCapECCCurves})
+	require.NoError(t, err)
+	whole, err := queryECCCurves(h.TPM.transport)
+	require.NoError(t, err)
+
+	require.Greater(t, len(paged), 1,
+		"a one-curve-per-page query must still traverse more than one page")
+	assert.Equal(t, whole, paged,
+		"paginating one curve at a time must collect the same set as one large page")
 }
 
 // TestAllFixedProperties_ReturnsSortedNamedProperties proves AllFixedProperties

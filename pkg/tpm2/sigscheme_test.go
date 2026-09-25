@@ -429,3 +429,78 @@ func TestIsPSSRequest_NeitherSourceMeansPKCS1(t *testing.T) {
 	assert.False(t, isPSSRequest(ssaAttrs, nil))
 	assert.False(t, isPSSRequest(nil, &store.SignerOpts{}))
 }
+
+// TestRsaKeySchemeHash covers every branch of the key-scheme-to-hash
+// resolver: an unfixed (TPM_ALG_NULL or zero) scheme, a fixed RSASSA/RSAPSS
+// scheme naming a real hash, a fixed scheme naming no hash (a malformed key
+// public area this package must still refuse rather than crash on), and a
+// scheme this package never issues (OAEP), which cannot sign at all.
+func TestRsaKeySchemeHash(t *testing.T) {
+	t.Run("TPM_ALG_NULL scheme is unfixed", func(t *testing.T) {
+		hash, fixed, err := rsaKeySchemeHash(tpm2.TPMTRSAScheme{Scheme: tpm2.TPMAlgNull})
+		require.NoError(t, err)
+		assert.False(t, fixed)
+		assert.Zero(t, hash)
+	})
+
+	t.Run("zero-value scheme is unfixed", func(t *testing.T) {
+		hash, fixed, err := rsaKeySchemeHash(tpm2.TPMTRSAScheme{})
+		require.NoError(t, err)
+		assert.False(t, fixed)
+		assert.Zero(t, hash)
+	})
+
+	t.Run("RSASSA names its hash", func(t *testing.T) {
+		scheme := tpm2.TPMTRSAScheme{
+			Scheme: tpm2.TPMAlgRSASSA,
+			Details: tpm2.NewTPMUAsymScheme(
+				tpm2.TPMAlgRSASSA, &tpm2.TPMSSigSchemeRSASSA{HashAlg: tpm2.TPMAlgSHA256}),
+		}
+		hash, fixed, err := rsaKeySchemeHash(scheme)
+		require.NoError(t, err)
+		assert.True(t, fixed)
+		assert.Equal(t, tpm2.TPMAlgSHA256, hash)
+	})
+
+	t.Run("RSASSA naming TPM_ALG_NULL as its hash is unresolved", func(t *testing.T) {
+		scheme := tpm2.TPMTRSAScheme{
+			Scheme: tpm2.TPMAlgRSASSA,
+			Details: tpm2.NewTPMUAsymScheme(
+				tpm2.TPMAlgRSASSA, &tpm2.TPMSSigSchemeRSASSA{HashAlg: tpm2.TPMAlgNull}),
+		}
+		_, _, err := rsaKeySchemeHash(scheme)
+		assert.ErrorIs(t, err, ErrSchemeHashUnresolved)
+	})
+
+	t.Run("RSAPSS names its hash", func(t *testing.T) {
+		scheme := tpm2.TPMTRSAScheme{
+			Scheme: tpm2.TPMAlgRSAPSS,
+			Details: tpm2.NewTPMUAsymScheme(
+				tpm2.TPMAlgRSAPSS, &tpm2.TPMSSigSchemeRSAPSS{HashAlg: tpm2.TPMAlgSHA384}),
+		}
+		hash, fixed, err := rsaKeySchemeHash(scheme)
+		require.NoError(t, err)
+		assert.True(t, fixed)
+		assert.Equal(t, tpm2.TPMAlgSHA384, hash)
+	})
+
+	t.Run("RSAPSS naming TPM_ALG_NULL as its hash is unresolved", func(t *testing.T) {
+		scheme := tpm2.TPMTRSAScheme{
+			Scheme: tpm2.TPMAlgRSAPSS,
+			Details: tpm2.NewTPMUAsymScheme(
+				tpm2.TPMAlgRSAPSS, &tpm2.TPMSSigSchemeRSAPSS{HashAlg: tpm2.TPMAlgNull}),
+		}
+		_, _, err := rsaKeySchemeHash(scheme)
+		assert.ErrorIs(t, err, ErrSchemeHashUnresolved)
+	})
+
+	t.Run("an encryption scheme cannot sign", func(t *testing.T) {
+		scheme := tpm2.TPMTRSAScheme{
+			Scheme: tpm2.TPMAlgOAEP,
+			Details: tpm2.NewTPMUAsymScheme(
+				tpm2.TPMAlgOAEP, &tpm2.TPMSEncSchemeOAEP{HashAlg: tpm2.TPMAlgSHA256}),
+		}
+		_, _, err := rsaKeySchemeHash(scheme)
+		assert.ErrorIs(t, err, ErrSignSchemeMismatch)
+	})
+}
