@@ -146,13 +146,17 @@ func init() {
 	_ = tpmIDevIDCertImportCmd.MarkFlagRequired("cert")
 }
 
-func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
+func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get IDevID attributes
 	idevidAttrs, err := tpm.IDevIDAttributes()
@@ -272,7 +276,7 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runIDevIDCertImport(cmd *cobra.Command, args []string) error {
+func runIDevIDCertImport(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Read certificate file
 	pemData, err := os.ReadFile(idevidCertImportPath)
@@ -308,7 +312,11 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get IDevID public key
 	idevidPubKey, idevidErr := tpm.IDevID()

@@ -303,40 +303,56 @@ func (tpm *TPM2) ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte) 
 	return nil
 }
 
+// isTPMResponseCode reports whether err carries the TPM response code code,
+// either as a typed value or, failing that, by name in err's message.
+//
+// A format-1 response carries handle, session, or parameter index bits
+// alongside the base response value (TCG TPM 2.0 Library Part 2, section
+// 6.6.3), so the code a real TPM returns for, say, a session-1 auth failure
+// is not the bare TPMRCBadAuth constant but that constant with the session
+// bits added on top. tpm2.TPMRC implements error's optional Is(error) bool
+// method by stripping exactly those bits before comparing (see
+// TPMRC.isFmt1Error in the go-tpm package this project already depends on),
+// so errors.Is(err, code) -- which calls that method once it unwraps err
+// down to the TPMRC go-tpm attached -- is the canonical classification. A
+// hand-rolled mask over the raw code has to reimplement that stripping
+// itself and get every one of session, parameter, and handle formats right;
+// getting it wrong silently degrades the typed path to unreachable and the
+// predicate then only works by accident, through the string fallback below.
+//
+// fallback names substrings recognised in err's message when the wrapping
+// chain exposes no typed TPMRC, for robustness across go-tpm versions.
+func isTPMResponseCode(err error, code tpm2.TPMRC, fallback ...string) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, code) {
+		return true
+	}
+	s := err.Error()
+	for _, sub := range fallback {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
 // isTPMAuthError checks whether a TPM error indicates an authentication
 // failure. The TPM returns specific response codes for auth failures:
 //   - TPM_RC_BAD_AUTH (0x022) - authorization value is incorrect
 //   - TPM_RC_AUTH_FAIL (0x09A) - authorization failed (DA counter incremented)
 //   - TPM_RC_LOCKOUT (0x921) - DA lockout is active
 //
-// The function checks both the typed TPMRC value and the error string
-// for robustness across different go-tpm versions.
+// Each is classified through isTPMResponseCode, so the typed comparison
+// normalizes format-1 session/parameter bits instead of assuming they are
+// zero. This is the broad predicate -- "the caller supplied the wrong
+// secret" -- used for PIN retry; isTPMBadAuth (tpm.go) shares this same
+// primitive but recognizes only the narrower non-DA TPM_RC_BAD_AUTH form.
 func isTPMAuthError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	// Check typed TPM response code.
-	var rc tpm2.TPMRC
-	if errors.As(err, &rc) {
-		// Mask out format-one session/parameter bits to get the base code.
-		rcVal := uint32(rc) & 0x0FF
-		if rcVal == 0x022 || rcVal == 0x09A {
-			return true
-		}
-		// Also check the full value for format-zero codes.
-		rcFull := uint32(rc) & 0xFFF
-		if rcFull == 0x921 { // TPM_RC_LOCKOUT
-			return true
-		}
-	}
-
-	// Fall back to string matching for robustness.
-	s := err.Error()
-	return strings.Contains(s, "bad_auth") ||
-		strings.Contains(s, "auth_fail") ||
-		strings.Contains(s, "BAD_AUTH") ||
-		strings.Contains(s, "AUTH_FAIL") ||
-		strings.Contains(s, "TPM_RC_BAD_AUTH") ||
-		strings.Contains(s, "TPM_RC_AUTH_FAIL")
+	return isTPMResponseCode(err, tpm2.TPMRCBadAuth,
+		"bad_auth", "BAD_AUTH", "TPM_RC_BAD_AUTH") ||
+		isTPMResponseCode(err, tpm2.TPMRCAuthFail,
+			"auth_fail", "AUTH_FAIL", "TPM_RC_AUTH_FAIL") ||
+		isTPMResponseCode(err, tpm2.TPMRCLockout)
 }

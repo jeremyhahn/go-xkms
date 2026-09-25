@@ -8,7 +8,9 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
@@ -354,26 +356,7 @@ func TestShareSecret_InvalidInputs_Rejected(t *testing.T) {
 // a hard failure, a false positive retries a genuine fault forever.
 func TestIsTPMBadAuth_ClassifiesRealTPMResponses(t *testing.T) {
 	h := newEnrollHarness(t)
-	pks := newPlatformKeyStore(t, h)
-	require.NoError(t, pks.EnrollPlatformSRK("", "the-correct-pin"))
-
-	// Provoke a real, unwrapped authorization failure straight from the TPM by
-	// issuing a command under the platform SRK with the wrong password. Going
-	// through TPM2.VerifyAuth would wrap the response in ErrAuthProbeRejected
-	// and hide the code the predicate is meant to classify.
-	srkHandle := tpm2.TPMHandle(h.TPM.config.PlatformSRK.SRKHandle)
-	srkName, _, err := h.TPM.ReadHandle(srkHandle)
-	require.NoError(t, err)
-
-	_, realBadAuth := tpm2.Create{
-		ParentHandle: tpm2.AuthHandle{
-			Handle: srkHandle,
-			Name:   srkName,
-			Auth:   tpm2.PasswordAuth([]byte("the-wrong-pin")),
-		},
-		InPublic: tpm2.New2B(KeyedHashTemplate),
-	}.Execute(h.TPM.transport)
-	require.Error(t, realBadAuth, "precondition: a wrong SRK password must fail")
+	realBadAuth := realWrongSRKPasswordError(t, h)
 
 	// A wrong password on a DA-protected object yields TPM_RC_AUTH_FAIL (the
 	// HMAC check failed and the DA counter was incremented), NOT the
@@ -402,6 +385,78 @@ func TestIsTPMBadAuth_ClassifiesRealTPMResponses(t *testing.T) {
 			"%v is not an authorization failure and must not be classified as one", rc)
 	}
 }
+
+// realWrongSRKPasswordError provokes a real, unwrapped authorization failure
+// straight from the TPM by issuing a command under the enrolled platform SRK
+// with the wrong password. Going through TPM2.VerifyAuth would wrap the
+// response in ErrAuthProbeRejected and hide the code the isTPM* predicates
+// are meant to classify.
+//
+// A wrong password on this DA-protected object yields TPM_RC_AUTH_FAIL (the
+// HMAC check failed and the DA counter was incremented), not the non-DA
+// TPM_RC_BAD_AUTH -- and, being a real response, it carries the format-1
+// session bits a hand-built TPMRC constant would not (TCG TPM 2.0 Library
+// Part 2, section 6.6.3), which is exactly what the masking bug this covers
+// depended on.
+func realWrongSRKPasswordError(t *testing.T, h *simHarness) error {
+	t.Helper()
+
+	pks := newPlatformKeyStore(t, h)
+	require.NoError(t, pks.EnrollPlatformSRK("", "the-correct-pin"))
+
+	srkHandle := tpm2.TPMHandle(h.TPM.config.PlatformSRK.SRKHandle)
+	srkName, _, err := h.TPM.ReadHandle(srkHandle)
+	require.NoError(t, err)
+
+	_, badAuthErr := tpm2.Create{
+		ParentHandle: tpm2.AuthHandle{
+			Handle: srkHandle,
+			Name:   srkName,
+			Auth:   tpm2.PasswordAuth([]byte("the-wrong-pin")),
+		},
+		InPublic: tpm2.New2B(KeyedHashTemplate),
+	}.Execute(h.TPM.transport)
+	require.Error(t, badAuthErr, "precondition: a wrong SRK password must fail")
+	return badAuthErr
+}
+
+// TestIsTPMAuthError_TypedPath_ClassifiesRealAuthFail proves the *typed* fast
+// path inside isTPMAuthError -- not its string-matching fallback -- is what
+// recognises a real TPM_RC_AUTH_FAIL.
+//
+// The masking bug this guards against ("& 0x0FF") only manifested once the
+// format-1 response carried non-zero session or parameter bits, which is
+// exactly what a real TPM returns. So the raw tpm2.TPMRC is extracted from a
+// genuine wrong-password failure and re-wrapped behind a message that names
+// neither "AUTH_FAIL" nor "BAD_AUTH": isTPMAuthError can only return true for
+// that wrapper by having errors.Is match the typed tpm2.TPMRC through
+// TPMRC's own format-1-aware Is method, never through the string fallback.
+func TestIsTPMAuthError_TypedPath_ClassifiesRealAuthFail(t *testing.T) {
+	h := newEnrollHarness(t)
+	realBadAuth := realWrongSRKPasswordError(t, h)
+
+	var rc tpm2.TPMRC
+	require.True(t, errors.As(realBadAuth, &rc),
+		"precondition: go-tpm must expose a typed TPMRC for this failure")
+
+	opaque := opaqueTPMRCError{rc: rc}
+	require.False(t,
+		strings.Contains(opaque.Error(), "AUTH_FAIL") || strings.Contains(opaque.Error(), "BAD_AUTH"),
+		"precondition: the wrapper's own message must not satisfy the string fallback")
+
+	assert.True(t, isTPMAuthError(opaque),
+		"the typed path must classify a real TPM_RC_AUTH_FAIL via errors.Is, independent of message text")
+}
+
+// opaqueTPMRCError wraps a tpm2.TPMRC behind a message that names neither
+// "AUTH_FAIL" nor "BAD_AUTH", isolating isTPMAuthError's typed path from its
+// string-matching fallback.
+type opaqueTPMRCError struct {
+	rc tpm2.TPMRC
+}
+
+func (e opaqueTPMRCError) Error() string { return "operation did not complete" }
+func (e opaqueTPMRCError) Unwrap() error { return e.rc }
 
 // errBadAuthString models the textual form of a bad-auth failure that the
 // predicate matches on for robustness across go-tpm versions.

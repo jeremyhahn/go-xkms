@@ -447,6 +447,15 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"sealStore.reseal": (*Server).handleSealStoreReseal,
 	"sealStore.status": (*Server).handleSealStoreStatus,
 
+	// PCR policy management (pkg/seal/policy)
+	"policy.create":  (*Server).handlePolicyCreate,
+	"policy.get":     (*Server).handlePolicyGet,
+	"policy.list":    (*Server).handlePolicyList,
+	"policy.delete":  (*Server).handlePolicyDelete,
+	"policy.refresh": (*Server).handlePolicyRefresh,
+	"policy.verify":  (*Server).handlePolicyVerify,
+	"policy.export":  (*Server).handlePolicyExport,
+
 	// SSH key operations
 	"ssh.keys.generate": (*Server).handleSSHKeysGenerate,
 	"ssh.keys.import":   (*Server).handleSSHKeysImport,

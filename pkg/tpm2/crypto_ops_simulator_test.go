@@ -339,6 +339,58 @@ func TestECDHZGen_SigningKey_Rejected(t *testing.T) {
 	assert.Nil(t, shared, "no shared secret may be returned when the TPM refuses")
 }
 
+// TestECDHZGen_EncryptionKey_RoundTripsWithCryptoECDH is the success-path
+// companion to TestECDHZGen_SigningKey_Rejected above: a key created through
+// CreateECDSA with KeyTypeEncryption must carry Decrypt instead of
+// SignEncrypt (ecdsa.go), so TPM2_ECDH_ZGen must accept it and the shared
+// secret it computes must equal the one crypto/ecdh computes independently
+// from the peer's side.
+//
+// The oracle is crypto/ecdh, never the TPM's own inverse: the TPM derives Z
+// from its retained private key and the peer's public point, the test
+// derives Z from the peer's private key and the TPM's returned public point,
+// and ECDH means those two agree only if the TPM actually performed the
+// agreement this test asked for.
+func TestECDHZGen_EncryptionKey_RoundTripsWithCryptoECDH(t *testing.T) {
+	for _, curve := range []elliptic.Curve{elliptic.P256(), elliptic.P384(), elliptic.P521()} {
+		t.Run(curve.Params().Name, func(t *testing.T) {
+			h := newSimHarness(t, nil)
+
+			attrs := childKeyAttrs(t, h, "ecdh-decrypt-key", x509.ECDSA, types.KeyTypeEncryption)
+			attrs.ECCAttributes = &types.ECCAttributes{Curve: curve}
+
+			pub, err := h.TPM.CreateECDSA(attrs, h.Backend, true)
+			require.NoError(t, err,
+				"a decrypt-typed ECC key must be creatable through the public API")
+
+			tpmECDHPub, err := pub.ECDH()
+			require.NoError(t, err, "the returned public point must lie on the curve")
+
+			peerPriv, err := ecdsa.GenerateKey(curve, rand.Reader)
+			require.NoError(t, err)
+			peerECDHPriv, err := peerPriv.ECDH()
+			require.NoError(t, err)
+
+			peerRaw := peerECDHPriv.PublicKey().Bytes()
+			peerSize := ecpoint.CoordinateSize(curve)
+			peerPoint := &tpm2.TPMSECCPoint{
+				X: tpm2.TPM2BECCParameter{Buffer: peerRaw[1 : 1+peerSize]},
+				Y: tpm2.TPM2BECCParameter{Buffer: peerRaw[1+peerSize:]},
+			}
+
+			shared, err := h.TPM.ECDHZGen(attrs, peerPoint, h.Backend)
+			require.NoError(t, err,
+				"ECDH_ZGen must succeed against a key created with KeyTypeEncryption")
+
+			expected, err := peerECDHPriv.ECDH(tpmECDHPub)
+			require.NoError(t, err)
+
+			assert.Equal(t, expected, shared,
+				"the TPM and the peer must agree on the ECDH shared secret")
+		})
+	}
+}
+
 // TestECDHZGen_InvalidInputs_Rejected covers the documented invalid-input
 // contract of the ECDH entry point.
 func TestECDHZGen_InvalidInputs_Rejected(t *testing.T) {

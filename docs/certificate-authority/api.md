@@ -1,6 +1,6 @@
 # Certificate Authority — API
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-25
 
 Transport shapes are described once in
 [`../key-management/api.md`](../key-management/api.md) §"How the six transports
@@ -134,9 +134,15 @@ directly rather than through `CA.CRL`.
 
 ## Pagination
 
-`ListCertificates` takes `ListOption` values and pages. `GenerateCRL` and
-`CA.CRL` both return the whole current CRL and are deliberately not paged —
-a partial CRL is a security defect, not a convenience.
+`ListCertificates` (`GET /api/v1/certs`) takes `ListOption` values and pages
+through the same shared `transport.PageRequestFromQuery` implementation
+every REST list endpoint uses; see
+[`../key-management/api.md`](../key-management/api.md) §"Pagination" for the
+`page` / `page_size` / `sort_field` / `sort_order` query parameters and the
+**400** an invalid one gets. With no `page` parameter every matching
+certificate is returned. `GenerateCRL` and `CA.CRL` both return the whole
+current CRL and are deliberately not paged — a partial CRL is a security
+defect, not a convenience.
 
 ## Versioning and deprecation
 

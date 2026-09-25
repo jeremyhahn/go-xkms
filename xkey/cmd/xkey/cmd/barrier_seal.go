@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -42,7 +43,7 @@ func init() {
 	barrierCmd.AddCommand(barrierSealCmd)
 }
 
-func runBarrierSeal(cmd *cobra.Command, args []string) error {
+func runBarrierSeal(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 
 	// Resolve data directory.
@@ -65,9 +66,13 @@ func runBarrierSeal(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer func() {
-		_ = barrier.Close()
+		if cerr := barrier.Close(); cerr != nil {
+			err = errors.Join(err, cerr)
+		}
 		if closer != nil {
-			_ = closer.Close()
+			if cerr := closer.Close(); cerr != nil {
+				err = errors.Join(err, cerr)
+			}
 		}
 	}()
 

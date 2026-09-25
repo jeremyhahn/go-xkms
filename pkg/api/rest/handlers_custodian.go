@@ -166,8 +166,12 @@ func (h *CustodianHandlers) ListGroupsHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	pageReq := parsePageRequest(r)
-	paged, pageResp := applyPagination(resp.Groups, pageReq)
+	pageReq, err := transport.PageRequestFromQuery(r)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	paged, pageResp := transport.ApplyPagination(resp.Groups, pageReq)
 
 	writeJSON(w, listCustodianGroupsResponse{Groups: paged, Pagination: pageResp}, http.StatusOK)
 }

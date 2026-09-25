@@ -220,6 +220,16 @@ func TestListTenantsHandler_Empty(t *testing.T) {
 	assert.Empty(t, resp.Tenants)
 }
 
+func TestListTenantsHandler_InvalidPageParam(t *testing.T) {
+	_, router := setupTenantTestHandlers(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants/?page=notanumber", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func TestListTenantsHandler_WithTenants(t *testing.T) {
 	_, router := setupTenantTestHandlers(t)
 

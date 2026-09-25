@@ -758,8 +758,14 @@ func generateCredentialID(issuer, accountName string) string {
 	if accountName != "" {
 		return strings.ToLower(accountName)
 	}
-	// Fallback to random ID
+	// Fallback to a random ID. crypto/rand.Read failing means the platform's
+	// entropy source itself is broken, not a transient condition this
+	// function can retry around; fall back to a nanosecond timestamp so the
+	// ID stays unique enough to avoid colliding with a sibling credential
+	// created moments apart, rather than every failure returning "oath-0".
 	b := make([]byte, 8)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("oath-%x", time.Now().UnixNano())
+	}
 	return fmt.Sprintf("oath-%x", b)
 }

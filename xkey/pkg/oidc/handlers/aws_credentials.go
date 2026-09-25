@@ -16,6 +16,7 @@ package handlers
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -187,7 +188,7 @@ func (h *AWSCredentialsHandler) readCredentialsFile(path string) (map[string]map
 }
 
 // writeCredentialsFile writes the credentials file.
-func (h *AWSCredentialsHandler) writeCredentialsFile(path string, sections map[string]map[string]string) error {
+func (h *AWSCredentialsHandler) writeCredentialsFile(path string, sections map[string]map[string]string) (err error) {
 	// Create temporary file in the same directory
 	dir := filepath.Dir(path)
 	tempFile, err := os.CreateTemp(dir, ".aws-credentials-*")
@@ -195,7 +196,18 @@ func (h *AWSCredentialsHandler) writeCredentialsFile(path string, sections map[s
 		return err
 	}
 	tempPath := tempFile.Name()
-	defer func() { _ = os.Remove(tempPath) }() // Clean up if we fail
+	// Clean up the temp file on any failure path. A failed removal is
+	// joined into the returned error rather than dropped, since a leaked
+	// temp file should be visible to the caller. On success the rename
+	// below has already moved tempPath away, so this is a no-op.
+	success := false
+	defer func() {
+		if !success {
+			if rmErr := os.Remove(tempPath); rmErr != nil {
+				err = errors.Join(err, rmErr)
+			}
+		}
+	}()
 
 	writer := bufio.NewWriter(tempFile)
 
@@ -235,8 +247,7 @@ func (h *AWSCredentialsHandler) writeCredentialsFile(path string, sections map[s
 	}
 
 	if err := writer.Flush(); err != nil {
-		_ = tempFile.Close()
-		return err
+		return errors.Join(err, tempFile.Close())
 	}
 
 	if err := tempFile.Close(); err != nil {
@@ -253,6 +264,7 @@ func (h *AWSCredentialsHandler) writeCredentialsFile(path string, sections map[s
 		return err
 	}
 
+	success = true
 	return nil
 }
 

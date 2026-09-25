@@ -1,6 +1,6 @@
 # LUKS2 Encrypted Storage — Engineering
 
-> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 ## Exported surface
 
@@ -52,6 +52,81 @@ The same `*xkms.LUKSStorageBackend` instance is reused for the life of the
 so state set by `CreateVolume`/`UnlockVolume`/`LockVolume`'s root-euid
 branches is what step 3 sees on every subsequent call.
 
+## Crash-safety invariants — `seal` migration and `import-data`
+
+Both `xkey luks2 seal` (existing-data migration) and `xkey luks2
+import-data` move a plaintext directory into an encrypted volume. Neither
+may lose the only copy of that data if a step fails partway through
+(`#1012`).
+
+### `migrateExistingData` (`cmd/xkey/cmd/seal.go`)
+
+Order of operations, each gated on the previous one succeeding:
+
+1. Stage the existing directory (`vol.GetMountPoint()`) into a temp dir
+   (`os.MkdirTemp("", "xkey-migrate-")`) via `copyDirContents`. Nothing has
+   been touched yet; a failure here just discards the (unused) temp dir.
+2. `vol.Unlock(passphrase)` — mounts the encrypted filesystem over the same
+   path the plaintext data lives at. This hides the plaintext files, it
+   does not delete them: they reappear once the volume is locked again.
+3. `vol.CopyDataToVolume(tmpDir)` — copies the staged data into the
+   now-mounted volume.
+4. `verifyDirCopy(tmpDir, dataDir)` — a shallow integrity check (every file
+   and directory in the staged copy exists in the volume with a matching
+   size) run while the volume is still mounted, so `dataDir` resolves to
+   the volume's content.
+5. `vol.Lock()` — unmounts, which uncovers the original plaintext
+   directory again, untouched since step 2.
+6. Only now: `os.RemoveAll(dataDir)` deletes the plaintext source, followed
+   by `os.RemoveAll(tmpDir)` to drop the now-redundant staging copy.
+
+If any of steps 2–6 fails, the function returns before deleting the source
+or the staging copy: the staging directory is left on disk and its path is
+written to `out` (`"staged copy preserved at %s"`); on a copy or verify
+failure a best-effort `vol.Lock()` is attempted and any failure of that is
+also reported. The source directory is never removed before step 6, so a
+failure at any earlier step leaves both the original plaintext *and* the
+staging copy in place — the change deliberately favors two intact copies
+over deleting either one early.
+
+`migrateExistingData` takes a `migrateVolume` interface
+(`GetMountPoint/Unlock/Lock/CopyDataToVolume`), not a concrete
+`*luks.Volume`, purely so unit tests can fault-inject each step without a
+real LUKS container or loop device (`cmd/xkey/cmd/seal_test.go`,
+`fakeMigrateVolume`). `*luks.Volume` satisfies it structurally; production
+code is unaffected.
+
+`verifyDirCopy` failures are a typed `*DataVerificationError` (`Path`,
+`Message`, wrapped `Err`), consistent with the "typed errors, not
+`fmt.Errorf`" convention the rest of this package follows.
+
+### `import-data` (`cmd/xkey/cmd/import_data.go`)
+
+`runImportData` unlocks the volume at a temporary mount point
+(`os.MkdirTemp("", "xkey-import-")`), copies the source directory into it,
+and locks it again — all via `importDataToVolume`, which takes an
+`importDataVolume` interface (`Unlock/Lock/CopyDataToVolume/IsMounted`) for
+the same fault-injection reason as `migrateVolume` above.
+
+The temporary mount point is removed by a deferred call to
+`removeTempMount`, never by an unconditional `os.RemoveAll`:
+
+```go
+defer removeTempMount(cmd.OutOrStdout(), vol, tmpMount)
+```
+
+`removeTempMount` calls `vol.IsMounted()` first. If the volume is still
+mounted there — because `Unlock` succeeded but `Lock` never ran or itself
+failed — the directory is left in place and a warning is written to `out`
+instead of being deleted; a still-mounted directory holds the copied data,
+and removing it would delete that data. Only when `IsMounted()` is `false`
+does it call `os.RemoveAll(tmpMount)`.
+
+On a copy failure, `importDataToVolume` also attempts a best-effort
+`vol.Lock()`; if that itself fails, it reports that `tmpMount` is still
+mounted before returning, so the operator knows to inspect it rather than
+assume the deferred cleanup handled it.
+
 ## Errors
 
 All sentinels are typed values from `go-xkms/pkg/storage/luks`, re-exported
@@ -90,6 +165,8 @@ existence. Container and mount point paths come from `xhome.Home`
 | xkey `pkg/gui/services` | `storage_service_test.go` (`TestStorageService_RequireUnlocked_*`) | no-LUKS no-op; locked volume returns `ErrLUKSVolumeLocked`; idempotent across repeated calls |
 | xkey `pkg/gui` | `init_data_dir_test.go` (`TestInitializeDataDir_LUKSLocked_*`, `TestInitializeDataDir_StorageServiceWired_NoLUKS_Unchanged`) | `initializeDataDir` fails closed with the sentinel and **asserts on the filesystem** that no `data/` subdirectory is created beneath an unmounted mount point; wiring `storageService` does not change the no-LUKS path |
 | xkey `cmd/xkey/cmd` | `luks_cmds_test.go` (`TestCheckLUKSVolume_*`) | the CLI gate returns the same sentinel for a locked volume; no-op for no volume |
+| xkey `cmd/xkey/cmd` | `seal_test.go` (`TestMigrateExistingData_*`, `TestVerifyDirCopy_*`) | unlock, copy, verify and lock failures during migration all preserve both the plaintext source and the staged copy (fault-injected via `fakeMigrateVolume`, no real LUKS device); a full success removes both |
+| xkey `cmd/xkey/cmd` | `import_data_test.go` (`TestImportDataToVolume_*`, `TestRemoveTempMount_*`) | unlock, copy and lock failures during import are reported and, when the volume is still mounted, `removeTempMount` leaves the temp mount point (and its copied data) in place instead of deleting it |
 
 A real cryptsetup/loop-device exercise (actually mounting, unlocking from a
 second process, confirming ciphertext on the backing file) needs root and

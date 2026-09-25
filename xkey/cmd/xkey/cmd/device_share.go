@@ -132,7 +132,7 @@ func init() {
 }
 
 // runDeviceShare shares a key with a paired phone device.
-func runDeviceShare(cmd *cobra.Command, args []string) error {
+func runDeviceShare(cmd *cobra.Command, args []string) (err error) {
 	backend := args[0]
 	keyID := args[1]
 	deviceName, _ := cmd.Flags().GetString("device")
@@ -221,7 +221,11 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -314,12 +318,16 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 // loadSharedKeyMaterial reads a key from a local xkmsd backend so it can be
 // sent to the phone. The public key and certificate are always fetched; raw
 // key material is exported only when the sharing policy asks for it.
-func loadSharedKeyMaterial(backend, keyID string, includeSecret bool, logger *slog.Logger) (*sharedKeyMaterial, error) {
+func loadSharedKeyMaterial(backend, keyID string, includeSecret bool, logger *slog.Logger) (_ *sharedKeyMaterial, err error) {
 	client, err := dialXKMSd(loadXKMSdBridgeConfig(), logger)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrShareKeyLoadFailed, Cause: err}
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultXKMSdRequestTimeout)
 	defer cancel()
@@ -366,7 +374,7 @@ func loadSharedKeyMaterial(backend, keyID string, includeSecret bool, logger *sl
 }
 
 // runDeviceImport imports a shared key from a paired phone device.
-func runDeviceImport(cmd *cobra.Command, args []string) error {
+func runDeviceImport(cmd *cobra.Command, args []string) (err error) {
 	keyID := args[0]
 	targetBackend, _ := cmd.Flags().GetString("backend")
 	deviceName, _ := cmd.Flags().GetString("device")
@@ -417,7 +425,11 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

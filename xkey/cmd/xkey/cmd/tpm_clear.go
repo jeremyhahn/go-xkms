@@ -183,14 +183,18 @@ func runForceTPMClear(cmd *cobra.Command) error {
 }
 
 // runStandardTPMClear performs a standard TPM clear using lockout authorization
-func runStandardTPMClear(cmd *cobra.Command) error {
+func runStandardTPMClear(cmd *cobra.Command) (err error) {
 	// Open TPM for provisioning (allows unprovisioned state)
 	tpm, err := openTPMForProvisioning()
 	if err != nil {
 		cmd.PrintErrf("Error: Failed to open TPM: %v\n", err)
 		return err
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get lockout auth
 	var lockoutAuth []byte

@@ -245,7 +245,7 @@ func runUSBDeviceStart(_ *cobra.Command, _ []string) error {
 }
 
 // runUSBDeviceUHID starts the CCID device using UHID software HID emulation.
-func runUSBDeviceUHID(ctx context.Context, bridge *ccid.PKCS11Bridge, logger *slog.Logger) error {
+func runUSBDeviceUHID(ctx context.Context, bridge *ccid.PKCS11Bridge, logger *slog.Logger) (err error) {
 	uhidDev, err := uhid.Open()
 	if err != nil {
 		return errors.Join(ErrUSBDeviceStartFailed, err)
@@ -261,16 +261,18 @@ func runUSBDeviceUHID(ctx context.Context, bridge *ccid.PKCS11Bridge, logger *sl
 		ReportDescriptor: ccid.CCIDHIDReportDescriptor,
 	}
 	if err := uhidDev.Create(cfg); err != nil {
-		_ = uhidDev.Close()
-		return errors.Join(ErrUSBDeviceStartFailed, err)
+		return errors.Join(ErrUSBDeviceStartFailed, err, uhidDev.Close())
 	}
 
 	usbTransport, err := gadget.NewUHIDTransport(uhidDev, logger)
 	if err != nil {
-		_ = uhidDev.Close()
-		return errors.Join(ErrUSBDeviceStartFailed, err)
+		return errors.Join(ErrUSBDeviceStartFailed, err, uhidDev.Close())
 	}
-	defer func() { _ = usbTransport.Close() }()
+	defer func() {
+		if closeErr := usbTransport.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	device, err := ccid.NewCCIDDevice(bridge, usbTransport, logger)
 	if err != nil {
@@ -283,7 +285,7 @@ func runUSBDeviceUHID(ctx context.Context, bridge *ccid.PKCS11Bridge, logger *sl
 
 // runUSBDeviceGadget starts the CCID device using the USB Gadget API
 // for real USB device emulation on OTG-capable hardware.
-func runUSBDeviceGadget(ctx context.Context, bridge *ccid.PKCS11Bridge, logger *slog.Logger) error {
+func runUSBDeviceGadget(ctx context.Context, bridge *ccid.PKCS11Bridge, logger *slog.Logger) (err error) {
 	udc := viper.GetString("usb.device.udc")
 
 	config := gadget.DefaultGadgetConfig()
@@ -300,7 +302,11 @@ func runUSBDeviceGadget(ctx context.Context, bridge *ccid.PKCS11Bridge, logger *
 	if err := g.Start(ctx); err != nil {
 		return errors.Join(ErrUSBDeviceStartFailed, err)
 	}
-	defer func() { _ = g.Stop() }()
+	defer func() {
+		if closeErr := g.Stop(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ccidTransport := g.CCIDTransport()
 	if ccidTransport == nil {

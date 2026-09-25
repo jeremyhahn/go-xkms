@@ -97,7 +97,7 @@ func init() {
 }
 
 // runDeviceAttestDevice executes the phone device attestation command.
-func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
+func runDeviceAttestDevice(cmd *cobra.Command, args []string) (err error) {
 	logger := slog.Default()
 
 	deviceFilter, _ := cmd.Flags().GetString("device")
@@ -216,7 +216,11 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 		}
 		return &WrappedError{Msg: "failed to initialize Bluetooth", Err: err}
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() {
+		if closeErr := transport.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Connect to the device
 	fmt.Println("Connecting...")
@@ -227,7 +231,11 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	if err := transport.Connect(connectCtx, device.Address); err != nil {
 		return &WrappedError{Msg: "connection failed", Err: err}
 	}
-	defer func() { _ = transport.Disconnect() }()
+	defer func() {
+		if closeErr := transport.Disconnect(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Create Noise session with existing keys
 	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{

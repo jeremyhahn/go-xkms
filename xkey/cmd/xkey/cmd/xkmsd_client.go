@@ -319,8 +319,7 @@ func connectXKMSdClient(cmd *cobra.Command) (transport.Client, error) {
 	defer cancel()
 
 	if err := client.Connect(ctx); err != nil {
-		_ = client.Close()
-		return nil, &SentinelCauseError{Sentinel: ErrXKMSdConnectFailed, Cause: err}
+		return nil, &SentinelCauseError{Sentinel: ErrXKMSdConnectFailed, Cause: errors.Join(err, client.Close())}
 	}
 	return client, nil
 }

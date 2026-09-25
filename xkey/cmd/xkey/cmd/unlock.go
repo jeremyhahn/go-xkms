@@ -126,7 +126,7 @@ func resolveUnlockPIN(cmd *cobra.Command) (string, error) {
 // that reports success on a daemon that is still locked is worse than a
 // failure: the ceremony that follows fails somewhere unrelated ("operation
 // denied" from the authenticator) and names the wrong subsystem.
-func runUnlock(cmd *cobra.Command, _ []string) error {
+func runUnlock(cmd *cobra.Command, _ []string) (err error) {
 	out := cmd.OutOrStdout()
 
 	pin, err := resolveUnlockPIN(cmd)
@@ -140,7 +140,11 @@ func runUnlock(cmd *cobra.Command, _ []string) error {
 	}
 
 	client := ipc.NewClient(socketPath)
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	resp, err := client.Unlock(pin)
 	if err != nil {

@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 
@@ -55,14 +56,12 @@ func buildGCPKMSBarrierStrategy(ctx context.Context, dataDir string) (xkms.Seali
 		CertStorage:     metaStorage,
 	})
 	if err != nil {
-		_ = metaStorage.Close()
-		return nil, nil, &BarrierError{Operation: "create_backend", Err: err}
+		return nil, nil, &BarrierError{Operation: "create_backend", Err: errors.Join(err, metaStorage.Close())}
 	}
 
 	strategy, err := xkms.BuildCloudKMSStrategy(ctx, xkms.StrategyGCPKMS, xkms.StoreGCPKMS, backend)
 	if err != nil {
-		_ = backend.Close()
-		return nil, nil, &BarrierError{Operation: "build_strategy", Err: err}
+		return nil, nil, &BarrierError{Operation: "build_strategy", Err: errors.Join(err, backend.Close())}
 	}
 
 	return strategy, backend, nil

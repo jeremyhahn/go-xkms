@@ -299,7 +299,7 @@ func init() {
 // ---------------------------------------------------------------------------
 
 // runPolicyCreate executes the policy create command.
-func runPolicyCreate(cmd *cobra.Command, args []string) error {
+func runPolicyCreate(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
 	pcrsFlag, _ := cmd.Flags().GetString("pcrs")
 	bank, _ := cmd.Flags().GetString("bank")
@@ -334,7 +334,11 @@ func runPolicyCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPolicyStoreOpenFailed, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -354,7 +358,7 @@ func runPolicyCreate(cmd *cobra.Command, args []string) error {
 }
 
 // runPolicyList executes the policy list command.
-func runPolicyList(cmd *cobra.Command, args []string) error {
+func runPolicyList(cmd *cobra.Command, args []string) (err error) {
 	storePath, _ := cmd.Flags().GetString("store")
 	page, _ := cmd.Flags().GetInt("page")
 	pageSize, _ := cmd.Flags().GetInt("page-size")
@@ -365,7 +369,11 @@ func runPolicyList(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintln(out, "No policies found.")
 		return nil
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -455,7 +463,7 @@ func runPolicyListPaginated(cmd *cobra.Command, store pcrpolicy.PolicyStore, ctx
 }
 
 // runPolicyGet executes the policy get command.
-func runPolicyGet(cmd *cobra.Command, args []string) error {
+func runPolicyGet(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
 	storePath, _ := cmd.Flags().GetString("store")
 	out := cmd.OutOrStdout()
@@ -464,7 +472,11 @@ func runPolicyGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPolicyGetFailed, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -500,7 +512,7 @@ func runPolicyGet(cmd *cobra.Command, args []string) error {
 }
 
 // runPolicyDelete executes the policy delete command.
-func runPolicyDelete(cmd *cobra.Command, args []string) error {
+func runPolicyDelete(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
 	storePath, _ := cmd.Flags().GetString("store")
 
@@ -508,7 +520,11 @@ func runPolicyDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPolicyDeleteFailed, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -527,7 +543,7 @@ func runPolicyDelete(cmd *cobra.Command, args []string) error {
 }
 
 // runPolicySetAutoUnseal executes the policy set-auto-unseal command.
-func runPolicySetAutoUnseal(cmd *cobra.Command, args []string) error {
+func runPolicySetAutoUnseal(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
 	storePath, _ := cmd.Flags().GetString("store")
 
@@ -535,7 +551,11 @@ func runPolicySetAutoUnseal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPolicyAutoUnsealFailed, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -551,14 +571,18 @@ func runPolicySetAutoUnseal(cmd *cobra.Command, args []string) error {
 }
 
 // runPolicyClearAutoUnseal executes the policy clear-auto-unseal command.
-func runPolicyClearAutoUnseal(cmd *cobra.Command, args []string) error {
+func runPolicyClearAutoUnseal(cmd *cobra.Command, args []string) (err error) {
 	storePath, _ := cmd.Flags().GetString("store")
 
 	store, err := policyStoreFactory(storePath)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPolicyClearAutoFailed, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -571,7 +595,7 @@ func runPolicyClearAutoUnseal(cmd *cobra.Command, args []string) error {
 }
 
 // runPolicyRefresh executes the policy refresh command.
-func runPolicyRefresh(cmd *cobra.Command, args []string) error {
+func runPolicyRefresh(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
 	storePath, _ := cmd.Flags().GetString("store")
 
@@ -579,7 +603,11 @@ func runPolicyRefresh(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPolicyRefreshFailed, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -617,7 +645,7 @@ func runPolicyRefresh(cmd *cobra.Command, args []string) error {
 }
 
 // runPolicyVerify executes the policy verify command.
-func runPolicyVerify(cmd *cobra.Command, args []string) error {
+func runPolicyVerify(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
 	storePath, _ := cmd.Flags().GetString("store")
 	out := cmd.OutOrStdout()
@@ -626,7 +654,11 @@ func runPolicyVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPolicyVerifyFailed, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -671,7 +703,7 @@ func runPolicyVerify(cmd *cobra.Command, args []string) error {
 }
 
 // runPolicyExport executes the policy export command.
-func runPolicyExport(cmd *cobra.Command, args []string) error {
+func runPolicyExport(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
 	storePath, _ := cmd.Flags().GetString("store")
 
@@ -679,7 +711,11 @@ func runPolicyExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPolicyExportFailed, Cause: err}
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -767,12 +803,16 @@ func comparePCRByteValues(expected, current map[uint][]byte) []pcrMismatch {
 // useSimulator select which TPM to open (see resolveTPMDevice for the
 // flag > TPM_DEVICE_PATH env > default precedence), independent of the
 // `tpm` command group's own --device/--simulator flags.
-func readCurrentPCRValues(indices []uint, bank, device string, useSimulator bool) (map[int]string, error) {
+func readCurrentPCRValues(indices []uint, bank, device string, useSimulator bool) (_ map[int]string, err error) {
 	tpm, err := openTPMForProvisioningWithDeviceAndPCROverrides(resolveTPMDevice(device), useSimulator, "", nil, 0)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPolicyReadCurrentFailed, Cause: err}
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	banks, err := tpm.ReadPCRs(indices)
 	if err != nil {

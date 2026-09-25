@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -86,7 +87,7 @@ func init() {
 	barrierCmd.AddCommand(barrierInitCmd)
 }
 
-func runBarrierInit(cmd *cobra.Command, args []string) error {
+func runBarrierInit(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 
 	// Validate strategy flag if provided.
@@ -133,9 +134,13 @@ func runBarrierInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer func() {
-		_ = barrier.Close()
+		if cerr := barrier.Close(); cerr != nil {
+			err = errors.Join(err, cerr)
+		}
 		if closer != nil {
-			_ = closer.Close()
+			if cerr := closer.Close(); cerr != nil {
+				err = errors.Join(err, cerr)
+			}
 		}
 	}()
 

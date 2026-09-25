@@ -110,7 +110,7 @@ func openFIDO2ProfileStore(cfg *FIDO2Config) (xkms.StorageBackend, error) {
 }
 
 // saveFIDO2Profile persists the profile, replacing any previous document.
-func saveFIDO2Profile(ctx context.Context, cfg *FIDO2Config, profile *FIDO2Profile) error {
+func saveFIDO2Profile(ctx context.Context, cfg *FIDO2Config, profile *FIDO2Profile) (err error) {
 	if err := profile.Validate(); err != nil {
 		return err
 	}
@@ -124,7 +124,11 @@ func saveFIDO2Profile(ctx context.Context, cfg *FIDO2Config, profile *FIDO2Profi
 	if err != nil {
 		return err
 	}
-	defer func() { _ = backend.Close() }()
+	defer func() {
+		if closeErr := backend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := backend.Put(ctx, fido2ProfileKey, data); err != nil {
 		return &SentinelCauseError{Sentinel: ErrFIDO2ProfileSaveFailed, Cause: err}
@@ -135,12 +139,16 @@ func saveFIDO2Profile(ctx context.Context, cfg *FIDO2Config, profile *FIDO2Profi
 // loadFIDO2Profile reads the persisted profile. A store that has never been
 // written yields the zero profile, which is the authenticator's default
 // behavior, so callers do not special-case first use.
-func loadFIDO2Profile(ctx context.Context, cfg *FIDO2Config) (*FIDO2Profile, error) {
+func loadFIDO2Profile(ctx context.Context, cfg *FIDO2Config) (_ *FIDO2Profile, err error) {
 	backend, err := openFIDO2ProfileStore(cfg)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = backend.Close() }()
+	defer func() {
+		if closeErr := backend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	data, err := backend.Get(ctx, fido2ProfileKey)
 	if err != nil {

@@ -365,6 +365,35 @@ func TestPageRequestFromQuery_AllParams(t *testing.T) {
 	}
 }
 
+// TestPageRequestFromQuery_SortOrderStringForms proves sort_order accepts
+// the "asc"/"desc" string convention the REST API and its TypeScript SDK
+// send on the wire, in addition to the plain integer form other transports
+// use.
+func TestPageRequestFromQuery_SortOrderStringForms(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		v    string
+		want int
+	}{
+		{"desc", "desc", SortOrderDesc},
+		{"asc", "asc", SortOrderAsc},
+		{"numeric 1", "1", SortOrderDesc},
+		{"numeric 0", "0", SortOrderAsc},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &http.Request{URL: &url.URL{RawQuery: "sort_order=" + tc.v}}
+
+			pr, err := PageRequestFromQuery(r)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if pr.SortOrder != tc.want {
+				t.Errorf("expected SortOrder=%d, got %d", tc.want, pr.SortOrder)
+			}
+		})
+	}
+}
+
 func TestPageRequestFromQuery_NoParams(t *testing.T) {
 	r := &http.Request{
 		URL: &url.URL{RawQuery: ""},

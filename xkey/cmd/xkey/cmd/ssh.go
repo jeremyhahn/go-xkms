@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,6 +226,20 @@ var sshAuthorizedRemoveCmd = &cobra.Command{
 	RunE:    runSSHAuthorizedRemove,
 }
 
+// closeSSHClientQuiet returns a func() that closes client and logs a
+// failure at debug level. Its signature matches what sshClient and
+// sshClientForServer hand back to the caller as the closer half of their
+// (client, closer, error) result: there is no error return on that path
+// for a close failure to travel through, so it is logged instead of
+// dropped.
+func closeSSHClientQuiet(client sshsdk.Client) func() {
+	return func() {
+		if err := client.Close(); err != nil {
+			slog.Default().Debug("ssh: failed to close client", "error", err)
+		}
+	}
+}
+
 // sshClient resolves the transport and returns an sshsdk.Client along
 // with its Close function. The Close returned is always safe to defer;
 // it is a no-op on the REST transport.
@@ -246,7 +261,7 @@ func sshClient(cmd *cobra.Command) (sshsdk.Client, func(), error) {
 		if err != nil {
 			return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
 		}
-		return client, func() { _ = client.Close() }, nil
+		return client, closeSSHClientQuiet(client), nil
 	}
 
 	// 3. Otherwise use the local shared-store-backed embedded client.
@@ -258,7 +273,7 @@ func sshClient(cmd *cobra.Command) (sshsdk.Client, func(), error) {
 	if err != nil {
 		return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
 	}
-	return client, func() { _ = client.Close() }, nil
+	return client, closeSSHClientQuiet(client), nil
 }
 
 // sshClientForServer constructs the SDK SSH client for an explicit --server URL.
@@ -270,7 +285,7 @@ func sshClientForServer(server, tlsCA, token string) (sshsdk.Client, func(), err
 	if err != nil {
 		return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
 	}
-	return client, func() { _ = client.Close() }, nil
+	return client, closeSSHClientQuiet(client), nil
 }
 
 // firstNonEmpty returns the first non-empty trimmed string.

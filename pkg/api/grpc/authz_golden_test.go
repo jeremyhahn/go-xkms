@@ -130,9 +130,21 @@ var goldenRPCPermissions = map[string]string{
 	"PasswordGet":                 "passwords:read",
 	"PasswordList":                "passwords:read",
 	"PasswordStoreLock":           "passwords:lock",
+	"PasswordStoreSetAccessMode":  "passwords:write",
 	"PasswordStoreStatus":         "passwords:read",
 	"PasswordStoreUnlock":         "passwords:unlock",
 	"PasswordUpdate":              "passwords:write",
+	// PCR policy management (go-xkms#691) -- pkg/auth.ResourcePolicy, a
+	// resource family go-qrdb's canonical registry does not declare
+	// upstream; xkms owns it and scopes it in
+	// pkg/apimodule/module_scopes.go.
+	"PolicyCreate":  "policy:create",
+	"PolicyGet":     "policy:get",
+	"PolicyList":    "policy:list",
+	"PolicyDelete":  "policy:delete",
+	"PolicyRefresh": "policy:refresh",
+	"PolicyVerify":  "policy:verify",
+	"PolicyExport":  "policy:export",
 	// PKCS#11 remote-state RPCs persist a token's key/object state, so they gate
 	// on the keys resource: writes for mutation, reads for retrieval/listing.
 	"PKCS11StateDelete":      "keys:write",

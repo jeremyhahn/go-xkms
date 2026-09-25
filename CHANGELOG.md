@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0-alpha] - 2026-09-25
+
+### Security
+
+- **Locked-memory allocations go through the process allocator, and a failed
+  FIDO2 PIN-hash cache no longer keeps accepting the old PIN.** The sealed
+  compare-and-delete guard (`pkg/storage/sealed`) and the `pkg/pintpm2`
+  FIDO2 hash cache now allocate through go-enclave's
+  `enclave.ProcessAllocator()`, so they respect the process's locked-memory
+  budget. A refusal is a typed error (`ErrGuardEnclaveFailed`,
+  `ErrFIDO2HashCacheFailed`) wrapping `ErrBudgetExhausted`,
+  `ErrLockedMemoryUnavailable` or `ErrLimitDiscoveryFailed`.
+  `cacheFIDO2Hash` used to discard its allocation error. After a
+  `ChangeUserPIN` whose new-hash allocation failed, the old PIN's hash stayed
+  cached, so `VerifyFIDO2Hash` accepted a PIN the TPM no longer held. The old
+  hash is now dropped, and `SetUserPIN`, `ChangeUserPIN` and `VerifyUserPIN`
+  return the typed error. The TPM's decision still stands. (go-xkms#623,
+  #981)
+- **xkey's TPM attestation statements were broken; they now certify credential
+  keys under the Platform SRK.**
+  `TPM2AttestingBackend.GetAttestationStatement` loaded the credential key for
+  `TPM2_Certify` under the Shared SRK. `BackendAdapter.GenerateCredentialKey`
+  creates those keys under the Platform SRK, so every statement failed with
+  `TPM_RC_INTEGRITY`. The simulator tests never caught this: their fixture
+  never enrolled the PSRK, and CI never built xkey tests with
+  `tpm_simulator`. Both are fixed, and CI now runs xkey's `tpm_simulator`
+  tests. The simulator fixtures also release the process-global simulator on
+  every exit path, so a failed assertion can no longer hang the next test.
+  (go-xkms#985, #990)
+
+### Changed
+
+- **ACME client deploy validation failures are typed sentinels.**
+  `ErrDeployFailed` now wraps `ErrDeployConfigNil`, `ErrDeployCertPEMEmpty`,
+  `ErrDeployCertPathEmpty`, `ErrDeployKeyPathEmpty` or `ErrDeployKeyPEMEmpty`,
+  so callers can match with `errors.Is` instead of error text. (go-xkms#895,
+  #980)
+
+### Fixed
+
+- **Every ACME order path registers the account first, and registration
+  failures are no longer swallowed.** Certificate request and renew,
+  `CrossSign`, `CrossSignWithChallenge` and `CreateOrderWithReplaces` created
+  orders without registering the account, and relied on x/crypto/acme's lazy
+  KID lookup. `EnrollDevice` and the device manager each registered inline
+  and downgraded every error to a warning. `Client.authorizeOrder` is now the
+  only path to `AuthorizeOrder`. It registers the account once per `Client`
+  (idempotent per RFC 8555 §7.3.1) and returns real failures as typed errors,
+  which are not cached, so the next order retries. `RegisterAccount` leaves
+  out `Contact` when no email is configured. (go-xkms#988, #994)
+- **awskms `ListKeys` reports symmetric and asymmetric key types correctly.**
+  `GenerateSymmetricKey` stored `key_type` as `string(uint8)`, which is a
+  single control character, and `ListKeys` silently dropped string values, so
+  those keys came back as `UNKNOWN`. Both creation paths now write
+  `KeyType.String()`, and `ListKeys` parses it with `types.ParseKeyType`,
+  matching azurekv and gcpkms. Unused client-interface methods were removed
+  from awskms, vault, gcpkms and azurekv. (go-xkms#705, #999)
+- **Library code no longer silently discards errors on cleanup and
+  security-relevant paths.** More than 200 `_ =` sites across the root
+  module, sdk/go and xkey now return, join or log the error. Examples:
+  - a failed barrier re-seal after an unlock audit write fails now surfaces
+    through the D-Bus error;
+  - truststore and LUKS rollback failures are joined into the primary error;
+  - `WritePolicyHMAC` reports Close and cleanup failures;
+  - FROST nonce-cleanup deletes are returned.
+
+  A failed deadline set on the phone TCP pairing server and on FunctionFS
+  reads is now fatal instead of silently skipping the timeout. `CABundleFiltered`
+  reports PEM encode failures as `ErrCertificateEncoding`. (go-xkms#701, #983,
+  #986, #991)
+
 ## [0.28.0-alpha] - 2026-09-25
 
 ### Security

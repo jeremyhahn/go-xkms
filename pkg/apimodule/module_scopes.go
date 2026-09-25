@@ -29,12 +29,12 @@ import (
 // v0.19.0-alpha a go-quicbaas login for any role carrying keys:read was
 // rejected with "permission: no scope declared for keys:read".
 //
-// pkg/auth/permissions.go states that xkms registers no parallel vocabulary:
-// its resource:action pairs mirror qrdb's canonical registry, so qrdb's own
-// self_scope.go / tenant_scope.go declare the scope of nearly all of them.
-// That claim holds for 69 of the 73 permissions this module contributes. The
-// four below are the exceptions — names qrdb does not declare, so xkms owns
-// them and must declare their reach itself.
+// pkg/auth/permissions.go states that most of xkms's resource:action pairs
+// mirror qrdb's canonical registry, so qrdb's own self_scope.go /
+// tenant_scope.go declare the scope of nearly all of them. That claim holds
+// for 69 of the 81 permissions this module contributes. The twelve below are
+// the exceptions — names qrdb does not declare, so xkms owns them and must
+// declare their reach itself.
 //
 // PIN EACH MEMBER, NOT THE FAMILY — go-qrdb self_scope.go's rule. Every
 // permission is named individually rather than swept in through a family
@@ -98,5 +98,22 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// to every tenant for a system member. qrdb does not declare this
 		// name; xkms owns it.
 		qrdbsdk.Permission(auth.ResourceBootstrap + ":" + auth.ActionRead),
+
+		// policy:* (go-xkms#691) is TPM 2.0 PCR-bank sealed-secret
+		// authorization policy management (pkg/seal/policy): capturing,
+		// reading, refreshing, verifying, and exporting the PCR-value
+		// snapshots sealed secrets bind to. It is platform/hardware state,
+		// not per-tenant key material -- the same reasoning keys:read/write
+		// above give for the PKCS#11 remote-state and seal stores -- so it
+		// takes the same ScopeSelf reach. qrdb does not declare this name;
+		// xkms owns it. PIN EACH MEMBER: a family helper here would tag a
+		// future policy action nobody reviewed.
+		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionCreate),
+		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionDelete),
+		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionRefresh),
+		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionVerify),
+		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionExport),
 	}
 }

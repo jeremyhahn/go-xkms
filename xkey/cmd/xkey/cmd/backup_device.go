@@ -137,7 +137,7 @@ func init() {
 
 // runBackupToDevice seals a backup of the local xkey data and stores it on a
 // paired phone device.
-func runBackupToDevice(cmd *cobra.Command, args []string) error {
+func runBackupToDevice(cmd *cobra.Command, args []string) (err error) {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	password, _ := cmd.Flags().GetString("password")
@@ -195,7 +195,11 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() {
+		if closeErr := transport.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -243,7 +247,7 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 
 // runBackupFromDevice retrieves the sealed backup held by a paired phone and
 // merges it back into the local xkey data stores.
-func runBackupFromDevice(cmd *cobra.Command, args []string) error {
+func runBackupFromDevice(cmd *cobra.Command, args []string) (err error) {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	password, _ := cmd.Flags().GetString("password")
@@ -268,7 +272,11 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() {
+		if closeErr := transport.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

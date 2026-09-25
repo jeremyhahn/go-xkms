@@ -1,10 +1,10 @@
 # Sealing and Barrier — CLI
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-23
 
-Binary: `xkmsctl`. Groups: `barrier` (`cmd/xkmsctl/barrier*.go`) and the
-top-level `seal` / `unseal` / `can-seal` data verbs. Global flags:
-[`../key-management/cli.md`](../key-management/cli.md).
+Binary: `xkmsctl`. Groups: `barrier` (`cmd/xkmsctl/barrier*.go`), `policy`
+(`cmd/xkmsctl/policy.go`), and the top-level `seal` / `unseal` / `can-seal`
+data verbs. Global flags: [`../key-management/cli.md`](../key-management/cli.md).
 
 ## `xkmsctl barrier status`
 
@@ -147,14 +147,50 @@ xkmsctl can-seal --backend tpm2
 xkmsctl seal "secret payload" --backend tpm2
 ```
 
+## `xkmsctl policy`
+
+TPM 2.0 PCR-bank sealed-secret authorization policies (pkg/seal/policy): a
+policy captures the values of a set of PCRs in a given bank, and a sealed
+secret bound to it can only be unsealed while the platform's PCRs still
+match. go-xkms#691 wired every verb onto all five network transports
+(REST, gRPC, QUIC, Unix, MCP); previously only REST served it, and a
+route/handler parameter mismatch (`{id}` registered, `chi.URLParam(r,
+"name")` read) meant every named-policy REST call answered 400 regardless.
+
+| Verb | Args | Flags | Purpose |
+|---|---|---|---|
+| `policy create <name>` | name | `--bank` (default `sha256`), `--pcrs` (required, comma-separated indices) | Capture current PCR values into a new named policy |
+| `policy list` | — | — | List all policies |
+| `policy get <name>` | name | — | Show a policy, including its captured PCR values |
+| `policy delete <name>` | name | — | Delete a policy |
+| `policy refresh <name>` | name | — | Re-capture a policy from current PCR values (after an expected platform change) |
+| `policy verify <name>` | name | — | Verify a policy against current PCR values; exits non-zero on mismatch |
+| `policy export <name>` | name | `--output` (file path; stdout if omitted) | Export a policy document |
+
+```
+xkmsctl policy create boot --pcrs 0,2,4,7
+xkmsctl policy create boot --bank sha384 --pcrs 0,7
+xkmsctl policy verify boot
+xkmsctl policy export boot --output boot-policy.json
+```
+
+Authorization is the `policy:*` permission family (`policy:create`,
+`policy:get`, `policy:list`, `policy:delete`, `policy:refresh`,
+`policy:verify`, `policy:export`) — a resource go-qrdb's canonical registry
+does not declare, so xkms mints and scopes it itself
+(`pkg/apimodule/module_scopes.go`), the way it already does for
+`bootstrap:read`.
+
 ## Exit codes
 
 `0` on success. A sealed barrier is not an error from `barrier status` — it is a
-reported state. Unseal failures are non-zero and never partial.
+reported state. Unseal failures are non-zero and never partial. `policy verify`
+is non-zero when the policy no longer matches current PCR values.
 
 ## Parity coverage
 
-`CommandDefinition` entries exist for `seal`, `unseal` and `can-seal`.
+`CommandDefinition` entries exist for `seal`, `unseal`, `can-seal`, and (as of
+go-xkms#691) every `policy` verb.
 
 **Defect:** none of the `barrier` verbs — `status`, `init`, `init-shamir`,
 `unseal`, `unseal-shares`, `seal`, `rekey`, the four `recovery` verbs, or

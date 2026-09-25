@@ -127,7 +127,9 @@ func main() {
 			router.Stop()
 		}
 		if tr != nil {
-			_ = tr.Close()
+			if err := tr.Close(); err != nil {
+				logger.Warn("failed to close transport during teardown", "error", err)
+			}
 		}
 		if router != nil && !router.Join(probeShutdownTimeout) {
 			logger.Warn("message router did not exit within the shutdown window; " +
@@ -172,7 +174,13 @@ func main() {
 			return nil, &MessageError{Msg: fmt.Sprintf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)}
 		}
 		out := map[string]json.RawMessage{}
-		_ = json.Unmarshal(resp.Result, &out)
+		if err := json.Unmarshal(resp.Result, &out); err != nil {
+			// A malformed result must fail the step, not be silently
+			// treated as an empty (all fields missing) response: this
+			// probe exists to catch exactly this kind of wire deviation
+			// from the phone.
+			return nil, &MessageError{Msg: fmt.Sprintf("malformed rpc result for %s: %v", method, err)}
+		}
 		return out, nil
 	}
 
@@ -397,12 +405,17 @@ func symRoundtrip(p *prober, label, keyID string, exportable bool) {
 	p.record(fmt.Sprintf("local.symmetricEncrypt (%s)", label), true, err, "")
 	if err == nil {
 		var ctB64 string
-		_ = json.Unmarshal(enc["data"], &ctB64)
-		dec, derr := p.call("local.symmetricDecrypt", map[string]interface{}{"keyId": keyID, "data": ctB64})
-		if derr == nil {
-			got := decodeB64(dec["data"])
-			if !bytes.Equal(got, plaintext) {
-				derr = &MessageError{Msg: fmt.Sprintf("round-trip mismatch: got %q", string(got))}
+		var derr error
+		if uerr := json.Unmarshal(enc["data"], &ctB64); uerr != nil {
+			derr = &MessageError{Msg: fmt.Sprintf("malformed symmetricEncrypt response: %v", uerr)}
+		} else {
+			var dec map[string]json.RawMessage
+			dec, derr = p.call("local.symmetricDecrypt", map[string]interface{}{"keyId": keyID, "data": ctB64})
+			if derr == nil {
+				got := decodeB64(dec["data"])
+				if !bytes.Equal(got, plaintext) {
+					derr = &MessageError{Msg: fmt.Sprintf("round-trip mismatch: got %q", string(got))}
+				}
 			}
 		}
 		p.record(fmt.Sprintf("local.symmetricDecrypt round-trip (%s)", label), true, derr, "")
@@ -527,7 +540,11 @@ func oathFamily(p *prober, runID string) {
 	credentialID := ""
 	if list != nil {
 		var creds []map[string]interface{}
-		_ = json.Unmarshal(list["credentials"], &creds)
+		if uerr := json.Unmarshal(list["credentials"], &creds); uerr != nil {
+			p.record("find added OATH credential", true,
+				&MessageError{Msg: fmt.Sprintf("malformed oathList response: %v", uerr)}, "")
+			return
+		}
 		for _, c := range creds {
 			if c["issuer"] == "e2eprobe" {
 				credentialID, _ = c["name"].(string)
@@ -543,14 +560,17 @@ func oathFamily(p *prober, runID string) {
 		"credential_id": credentialID,
 	}); genRes != nil {
 		var code string
-		_ = json.Unmarshal(genRes["code"], &code)
-		now := time.Now().Unix() / 30
 		var terr error
-		if code != totp(secret, now, digest) &&
-			code != totp(secret, now-1, digest) &&
-			code != totp(secret, now+1, digest) {
-			terr = &MessageError{Msg: fmt.Sprintf("TOTP mismatch (%s): phone=%s go=%s",
-				algorithm, code, totp(secret, now, digest))}
+		if uerr := json.Unmarshal(genRes["code"], &code); uerr != nil {
+			terr = &MessageError{Msg: fmt.Sprintf("malformed oathGenerate response: %v", uerr)}
+		} else {
+			now := time.Now().Unix() / 30
+			if code != totp(secret, now, digest) &&
+				code != totp(secret, now-1, digest) &&
+				code != totp(secret, now+1, digest) {
+				terr = &MessageError{Msg: fmt.Sprintf("TOTP mismatch (%s): phone=%s go=%s",
+					algorithm, code, totp(secret, now, digest))}
+			}
 		}
 		p.record("TOTP cross-compute (Go side)", true, terr, "")
 	}
@@ -571,10 +591,15 @@ func backupFamily(p *prober) {
 		return
 	}
 	var backupID string
-	_ = json.Unmarshal(created["backup_id"], &backupID)
-	restored, rerr := p.call("local.restoreBackup", map[string]interface{}{"backup_id": backupID})
-	if rerr == nil && !bytes.Equal(decodeB64(restored["backup_data"]), blob) {
-		rerr = &MessageError{Msg: "backup round-trip mismatch"}
+	var rerr error
+	if uerr := json.Unmarshal(created["backup_id"], &backupID); uerr != nil {
+		rerr = &MessageError{Msg: fmt.Sprintf("malformed createBackup response: %v", uerr)}
+	} else {
+		var restored map[string]json.RawMessage
+		restored, rerr = p.call("local.restoreBackup", map[string]interface{}{"backup_id": backupID})
+		if rerr == nil && !bytes.Equal(decodeB64(restored["backup_data"]), blob) {
+			rerr = &MessageError{Msg: "backup round-trip mismatch"}
+		}
 	}
 	p.record("local.restoreBackup (round-trip)", true, rerr, "")
 }
@@ -628,8 +653,13 @@ func sharingFamily(p *prober, runID, hwKeyID string) {
 	exported, herr := p.call("local.importSharedKey", map[string]interface{}{"key_id": shareableHwKeyID})
 	if herr == nil {
 		var exportable bool
-		_ = json.Unmarshal(exported["exportable"], &exportable)
-		if exportable {
+		// A malformed exportable field must not be read as "false" here:
+		// that is the passing value, so silently defaulting to it on a
+		// parse failure would let a genuinely non-conformant response
+		// through the one check this step exists to make.
+		if uerr := json.Unmarshal(exported["exportable"], &exportable); uerr != nil {
+			herr = &MessageError{Msg: fmt.Sprintf("malformed importSharedKey response: %v", uerr)}
+		} else if exportable {
 			herr = &MessageError{Msg: "hardware key reported exportable"}
 		} else if _, hasWrapped := exported["wrapped_key"]; hasWrapped {
 			herr = &MessageError{Msg: "hardware key leaked wrapped_key"}

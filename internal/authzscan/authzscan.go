@@ -139,6 +139,7 @@ func Constants() map[string]string {
 		"ResourceACMEEAB":       auth.ResourceACMEEAB,
 		"ResourceCA":            auth.ResourceCA,
 		"ResourceBootstrap":     auth.ResourceBootstrap,
+		"ResourcePolicy":        auth.ResourcePolicy,
 
 		"ActionSign":               auth.ActionSign,
 		"ActionVerify":             auth.ActionVerify,
@@ -151,6 +152,7 @@ func Constants() map[string]string {
 		"ActionGet":                auth.ActionGet,
 		"ActionImport":             auth.ActionImport,
 		"ActionExport":             auth.ActionExport,
+		"ActionRefresh":            auth.ActionRefresh,
 		"ActionWrap":               auth.ActionWrap,
 		"ActionUnwrap":             auth.ActionUnwrap,
 		"ActionDerive":             auth.ActionDerive,

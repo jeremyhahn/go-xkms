@@ -595,6 +595,47 @@ func (s *mockKeystoreServer) SealStoreStatus(_ context.Context, _ *pb.SealStoreS
 	return &pb.SealStoreStatusResponse{Available: true, SealerId: "tpm2", SecretCount: 2, SecretNames: []string{"db-password", "tls-key"}}, nil
 }
 
+func (s *mockKeystoreServer) PasswordStoreSetAccessMode(_ context.Context, req *pb.PasswordStoreSetAccessModeRequest) (*pb.PasswordStoreSetAccessModeResponse, error) {
+	return &pb.PasswordStoreSetAccessModeResponse{Mode: req.Mode, Message: "ok"}, nil
+}
+
+func (s *mockKeystoreServer) PolicyCreate(_ context.Context, req *pb.PolicyCreateRequest) (*pb.PolicyCreateResponse, error) {
+	return &pb.PolicyCreateResponse{
+		Name: req.Name, Bank: req.Bank, Pcrs: req.Pcrs,
+		Values: map[int32]string{0: "aa"}, CreatedAt: "2026-01-01T00:00:00Z",
+	}, nil
+}
+
+func (s *mockKeystoreServer) PolicyGet(_ context.Context, req *pb.PolicyGetRequest) (*pb.PolicyGetResponse, error) {
+	return &pb.PolicyGetResponse{
+		Name: req.Name, Bank: "sha256", Pcrs: []int32{0, 7},
+		Values: map[int32]string{0: "aa"}, CreatedAt: "2026-01-01T00:00:00Z",
+	}, nil
+}
+
+func (s *mockKeystoreServer) PolicyList(_ context.Context, _ *pb.PolicyListRequest) (*pb.PolicyListResponse, error) {
+	return &pb.PolicyListResponse{
+		Policies: []*pb.PolicyGetResponse{{Name: "boot", Bank: "sha256", Pcrs: []int32{0, 7}}},
+		Total:    1,
+	}, nil
+}
+
+func (s *mockKeystoreServer) PolicyDelete(_ context.Context, _ *pb.PolicyDeleteRequest) (*pb.PolicyDeleteResponse, error) {
+	return &pb.PolicyDeleteResponse{}, nil
+}
+
+func (s *mockKeystoreServer) PolicyRefresh(_ context.Context, req *pb.PolicyRefreshRequest) (*pb.PolicyGetResponse, error) {
+	return &pb.PolicyGetResponse{Name: req.Name, Bank: "sha256", Pcrs: []int32{0, 7}, UpdatedAt: "2026-01-01T00:00:00Z"}, nil
+}
+
+func (s *mockKeystoreServer) PolicyVerify(_ context.Context, req *pb.PolicyVerifyRequest) (*pb.PolicyVerifyResponse, error) {
+	return &pb.PolicyVerifyResponse{Name: req.Name, Valid: true}, nil
+}
+
+func (s *mockKeystoreServer) PolicyExport(_ context.Context, req *pb.PolicyExportRequest) (*pb.PolicyExportResponse, error) {
+	return &pb.PolicyExportResponse{Data: `{"name":"` + req.Name + `"}`}, nil
+}
+
 // newBufconnTransport creates an in-memory gRPC server + connected Transport for testing.
 func newBufconnTransport(t *testing.T) (*Transport, func()) {
 	t.Helper()
@@ -1558,28 +1599,6 @@ func TestErrNotSupported_Methods(t *testing.T) {
 			return err
 		}},
 		{"GetCredentialStrategy", func() error { _, err := tr.GetCredentialStrategy(context.Background()); return err }},
-		{"PasswordStoreSetAccessMode", func() error {
-			return tr.PasswordStoreSetAccessMode(context.Background(), &transport.PasswordStoreSetAccessModeRequest{})
-		}},
-		{"PolicyCreate", func() error {
-			_, err := tr.PolicyCreate(context.Background(), &transport.PolicyCreateRequest{})
-			return err
-		}},
-		{"PolicyGet", func() error { _, err := tr.PolicyGet(context.Background(), &transport.PolicyGetRequest{}); return err }},
-		{"PolicyList", func() error { _, err := tr.PolicyList(context.Background()); return err }},
-		{"PolicyDelete", func() error { return tr.PolicyDelete(context.Background(), &transport.PolicyDeleteRequest{}) }},
-		{"PolicyRefresh", func() error {
-			_, err := tr.PolicyRefresh(context.Background(), &transport.PolicyRefreshRequest{})
-			return err
-		}},
-		{"PolicyVerify", func() error {
-			_, err := tr.PolicyVerify(context.Background(), &transport.PolicyVerifyRequest{})
-			return err
-		}},
-		{"PolicyExport", func() error {
-			_, err := tr.PolicyExport(context.Background(), &transport.PolicyExportRequest{})
-			return err
-		}},
 	}
 
 	for _, tc := range tests {
@@ -1593,6 +1612,54 @@ func TestErrNotSupported_Methods(t *testing.T) {
 		_, err := tr.SignCSRInit(context.Background(), &transport.SignCSRInitRequest{})
 		assert.ErrorIs(t, err, ErrNotSupported)
 	})
+}
+
+// --- PasswordStoreSetAccessMode and Policy ---
+//
+// go-xkms#691 moved both off the table above: they now round-trip against
+// the mock KeystoreService exactly as every other implemented method here
+// does.
+
+func TestPasswordStoreSetAccessMode_Connected(t *testing.T) {
+	tr, cleanup := newBufconnTransport(t)
+	defer cleanup()
+
+	err := tr.PasswordStoreSetAccessMode(context.Background(), &transport.PasswordStoreSetAccessModeRequest{Mode: "session_based"})
+	assert.NoError(t, err)
+}
+
+func TestPolicy_RoundTrip(t *testing.T) {
+	tr, cleanup := newBufconnTransport(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	createResp, err := tr.PolicyCreate(ctx, &transport.PolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []int{0, 7}})
+	require.NoError(t, err)
+	assert.Equal(t, "boot", createResp.Name)
+	assert.ElementsMatch(t, []int{0, 7}, createResp.PCRs)
+
+	getResp, err := tr.PolicyGet(ctx, &transport.PolicyGetRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, "boot", getResp.Name)
+
+	listResp, err := tr.PolicyList(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, listResp.Total)
+
+	verifyResp, err := tr.PolicyVerify(ctx, &transport.PolicyVerifyRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.True(t, verifyResp.Valid)
+
+	exportResp, err := tr.PolicyExport(ctx, &transport.PolicyExportRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, `{"name":"boot"}`, exportResp.Data)
+
+	refreshResp, err := tr.PolicyRefresh(ctx, &transport.PolicyRefreshRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, "boot", refreshResp.Name)
+
+	require.NoError(t, tr.PolicyDelete(ctx, &transport.PolicyDeleteRequest{Name: "boot"}))
 }
 
 // TestRegistration_RPCWired confirms the FIDO2 registration and authentication
@@ -1663,6 +1730,20 @@ func TestPbTenantInfoToTransport_WithData(t *testing.T) {
 		CreatedAt: time.Now().Format(time.RFC3339), UpdatedAt: time.Now().Format(time.RFC3339),
 	}
 	assert.Equal(t, "t-1", pbTenantInfoToTransport(ti).ID)
+}
+
+func TestParseTimestamp_Empty(t *testing.T) {
+	assert.True(t, parseTimestamp("field", "").IsZero())
+}
+
+func TestParseTimestamp_Malformed(t *testing.T) {
+	assert.True(t, parseTimestamp("field", "not-a-timestamp").IsZero())
+}
+
+func TestParseTimestamp_Valid(t *testing.T) {
+	want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	got := parseTimestamp("field", want.Format(time.RFC3339))
+	assert.True(t, want.Equal(got))
 }
 
 func TestConvertJSONToBytes_Empty(t *testing.T) {

@@ -1,6 +1,6 @@
 # LUKS2 Encrypted Storage — User Guide
 
-> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 ## What this protects, and what it doesn't
 
@@ -75,6 +75,76 @@ passphrase unless you kept a manual copy.
 sudo xkey luks2 migrate --size 500M          # grow, keep same passphrase
 sudo xkey luks2 migrate --wipe --wipe-standard dod7   # grow and securely erase the old container
 ```
+
+## If `seal` or `import-data` is interrupted partway through
+
+Both commands are careful never to leave your data with only one copy, or
+none, if they're interrupted — a crash, a lost connection over SSH, a
+wrong passphrase, a full disk. They do it two different ways, so recovery
+looks different for each.
+
+### `seal`, when it migrates existing data
+
+If `seal` finds existing data in your xKey home when it runs, it first
+stages that data in a temporary plaintext directory, then copies the stage
+into the newly created encrypted volume. Only after that copy is verified
+and the volume is locked does `seal` delete the original data. If anything
+fails before that point, the staging directory is left in place and its
+path is printed instead of being silently discarded:
+
+```
+Migration failed: staged copy preserved at /tmp/xkey-migrate-1234567890
+```
+
+Your original data is untouched in this case. But recovery isn't simply
+"re-run `seal`": by the time it reports a staged copy, `seal` has already
+created the encrypted container, so running `seal` again refuses with
+"volume already exists". Instead, recover with `import-data`, pointing it
+at the container `seal` already created and the reported staging
+directory:
+
+```bash
+sudo xkey luks2 import-data --source /tmp/xkey-migrate-1234567890 \
+  --path ~/.xkey.luks --cleanup
+```
+
+Use the same `--path` you gave `seal` (or omit it if you didn't pass one,
+since both commands default to the same location). `--cleanup` removes the
+staging copy once the import succeeds.
+
+### `import-data`
+
+`import-data` always targets a container that already exists, so if it
+fails while unlocking, copying or locking, it's safe to fix whatever the
+error reported and re-run the exact same command; your source directory is
+never touched until the copy has succeeded and the volume has been locked
+(cleanup, if you passed `--cleanup`, only runs after that).
+
+Unlike `seal`, `import-data` doesn't stage a separate plaintext copy — it
+unlocks the volume at a *temporary mount point* (rather than your normal
+mount point, so it doesn't collide with data already there) and copies
+your source directly into it. If a copy or lock failure leaves that
+temporary mount point still mounted, deleting it would destroy the data
+just copied into it, so `import-data` reports it instead:
+
+```
+Warning: /tmp/xkey-import-1234567890 is still mounted; leaving it in
+place. Run 'xkey luks2 lock' against it, then remove it manually once
+its contents are no longer at risk.
+```
+
+In that case, confirm its contents look right, then lock it by mount point
+and remove the now-empty directory:
+
+```bash
+sudo xkey luks2 lock --mount-point <path>
+sudo rmdir <path>
+```
+
+If `import-data --unseal` fails at the very last step, after reporting
+success and copying your data in, your data is already safe inside the
+locked container; you just need `sudo xkey luks2 unseal` to open it — no
+temporary mount point is involved at that point.
 
 ## Destroying an encrypted volume for good
 

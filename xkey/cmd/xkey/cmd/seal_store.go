@@ -278,7 +278,7 @@ func connectSealStore() (SealStoreService, error) {
 }
 
 // runSealStorePut executes the platform-store put command.
-func runSealStorePut(cmd *cobra.Command, args []string) error {
+func runSealStorePut(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
 	value, _ := cmd.Flags().GetString("value")
 	filePath, _ := cmd.Flags().GetString("file")
@@ -308,7 +308,11 @@ func runSealStorePut(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	req := &transport.SealStorePutRequest{
@@ -325,7 +329,7 @@ func runSealStorePut(cmd *cobra.Command, args []string) error {
 }
 
 // runSealStoreGet executes the platform-store get command.
-func runSealStoreGet(cmd *cobra.Command, args []string) error {
+func runSealStoreGet(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
 	outputPath, _ := cmd.Flags().GetString("output")
 
@@ -333,7 +337,11 @@ func runSealStoreGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	req := &transport.SealStoreGetRequest{
@@ -359,14 +367,18 @@ func runSealStoreGet(cmd *cobra.Command, args []string) error {
 }
 
 // runSealStoreDelete executes the platform-store delete command.
-func runSealStoreDelete(cmd *cobra.Command, args []string) error {
+func runSealStoreDelete(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
 
 	client, err := connectSealStore()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	req := &transport.SealStoreDeleteRequest{
@@ -382,12 +394,16 @@ func runSealStoreDelete(cmd *cobra.Command, args []string) error {
 }
 
 // runSealStoreList executes the platform-store list command.
-func runSealStoreList(cmd *cobra.Command, args []string) error {
+func runSealStoreList(cmd *cobra.Command, args []string) (err error) {
 	client, err := connectSealStore()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	resp, err := client.SealStoreList(ctx)
@@ -411,7 +427,7 @@ func runSealStoreList(cmd *cobra.Command, args []string) error {
 }
 
 // runSealStoreReseal executes the platform-store reseal command.
-func runSealStoreReseal(cmd *cobra.Command, args []string) error {
+func runSealStoreReseal(cmd *cobra.Command, args []string) (err error) {
 	resealAll, _ := cmd.Flags().GetBool("all")
 
 	if !resealAll && len(args) == 0 {
@@ -422,7 +438,11 @@ func runSealStoreReseal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	out := cmd.OutOrStdout()
@@ -463,12 +483,16 @@ func runSealStoreReseal(cmd *cobra.Command, args []string) error {
 }
 
 // runSealStoreStatus executes the platform-store status command.
-func runSealStoreStatus(cmd *cobra.Command, args []string) error {
+func runSealStoreStatus(cmd *cobra.Command, args []string) (err error) {
 	client, err := connectSealStore()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	resp, err := client.SealStoreStatus(ctx)

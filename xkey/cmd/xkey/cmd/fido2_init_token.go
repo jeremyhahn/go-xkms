@@ -163,14 +163,18 @@ func init() {
 // authenticator itself is constructed after the prompt, because constructing it
 // starts the post-power-up initialization window and PIN entry would otherwise
 // spend it.
-func runFIDO2InitToken(cmd *cobra.Command, _ []string) error {
+func runFIDO2InitToken(cmd *cobra.Command, _ []string) (err error) {
 	out := cmd.OutOrStdout()
 
 	storage, err := openTokenDevice(cmd)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	initialized, err := tokenInitialized(storage)
 	if err != nil {
@@ -191,7 +195,11 @@ func runFIDO2InitToken(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTokenDeviceOpenFailed, Cause: err}
 	}
-	defer func() { _ = auth.Close() }()
+	defer func() {
+		if closeErr := auth.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// InitializeToken is the authoritative guard, not the pre-check above: it
 	// re-tests under the state lock and returns ErrKeyManagerAlreadyInitialized,
@@ -208,14 +216,18 @@ func runFIDO2InitToken(cmd *cobra.Command, _ []string) error {
 }
 
 // runFIDO2ChangeSOPIN replaces the device's Security Officer PIN.
-func runFIDO2ChangeSOPIN(cmd *cobra.Command, _ []string) error {
+func runFIDO2ChangeSOPIN(cmd *cobra.Command, _ []string) (err error) {
 	out := cmd.OutOrStdout()
 
 	storage, err := openTokenDevice(cmd)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	initialized, err := tokenInitialized(storage)
 	if err != nil {
@@ -238,7 +250,11 @@ func runFIDO2ChangeSOPIN(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTokenDeviceOpenFailed, Cause: err}
 	}
-	defer func() { _ = auth.Close() }()
+	defer func() {
+		if closeErr := auth.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := auth.ChangeSOPIN(cmd.Context(), currentPIN, newPIN); err != nil {
 		if errors.Is(err, authenticator.ErrTokenUninitialized) {
