@@ -18,6 +18,7 @@
 package types
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -96,6 +97,21 @@ var (
 	// substituting an empty password, which for TPM UserAuth would
 	// otherwise produce passwordless authentication.
 	ErrEnclaveUnavailable = errors.New("types: secure enclave unavailable")
+
+	// ErrBlobCNRequired is returned when VerifyOpts.IntegrityCheck is set
+	// without a BlobCN identifying which persisted record to check the
+	// digest against.
+	ErrBlobCNRequired = errors.New("verify: integrity check requires BlobCN")
+
+	// ErrChecksumProviderRequired is returned when VerifyOpts.IntegrityCheck
+	// is set without a ChecksumProvider to retrieve the persisted checksum
+	// from.
+	ErrChecksumProviderRequired = errors.New("verify: integrity check requires a ChecksumProvider")
+
+	// ErrIntegrityCheckFailed is returned when the digest presented for
+	// verification does not match the checksum recorded when the blob
+	// identified by VerifyOpts.BlobCN was signed.
+	ErrIntegrityCheckFailed = errors.New("verify: integrity check failed")
 )
 
 // =============================================================================
@@ -3375,6 +3391,34 @@ type VerifyOpts struct {
 
 	// PSSOptions for RSA-PSS signatures
 	PSSOptions *rsa.PSSOptions
+
+	// BlobCN identifies the persisted signature/digest record checked when
+	// IntegrityCheck is set. It must match the BlobCN the blob was signed
+	// under (see signing.SignerOpts.BlobCN). Required when IntegrityCheck
+	// is true.
+	BlobCN string
+
+	// IntegrityCheck, when true, additionally confirms that digest matches
+	// the checksum ChecksumProvider recorded for BlobCN at sign time, on top
+	// of the cryptographic signature check Verify always performs. Requires
+	// both BlobCN and ChecksumProvider to be set.
+	IntegrityCheck bool
+
+	// ChecksumProvider supplies the persisted checksum used by
+	// IntegrityCheck. Required when IntegrityCheck is true.
+	ChecksumProvider ChecksumProvider
+}
+
+// ChecksumProvider retrieves the checksum (digest) persisted for a signed
+// blob, keyed by VerifyOpts.KeyAttributes and VerifyOpts.BlobCN.
+// SimpleVerifier calls it when VerifyOpts.IntegrityCheck is set, to confirm
+// the digest presented for verification is the same one recorded when the
+// blob was signed.
+type ChecksumProvider interface {
+	// Checksum returns the persisted checksum for opts. It returns a typed
+	// error, never a nil checksum with a nil error, when no record exists or
+	// the lookup fails.
+	Checksum(opts *VerifyOpts) ([]byte, error)
 }
 
 // Verifier provides signature verification capabilities.
@@ -3425,30 +3469,64 @@ func NewVerifier(opts *VerifyOpts) Verifier {
 	return &SimpleVerifier{opts: opts}
 }
 
-// Verify verifies a signature against a digest
+// Verify verifies a signature against a digest. When opts.IntegrityCheck is
+// set, a successful signature check is followed by a check of digest against
+// the checksum opts.ChecksumProvider recorded for opts.BlobCN at sign time.
 func (v *SimpleVerifier) Verify(publicKey crypto.PublicKey, digest, signature []byte) error {
 	if publicKey == nil {
 		return &errs.Message{Msg: "public key is nil"}
 	}
+
+	var sigErr error
 	switch pub := publicKey.(type) {
 	case *rsa.PublicKey:
 		if v.opts.PSSOptions != nil {
-			return rsa.VerifyPSS(pub, v.opts.PSSOptions.Hash, digest, signature, v.opts.PSSOptions)
+			sigErr = rsa.VerifyPSS(pub, v.opts.PSSOptions.Hash, digest, signature, v.opts.PSSOptions)
+		} else {
+			sigErr = rsa.VerifyPKCS1v15(pub, v.opts.Hash, digest, signature)
 		}
-		return rsa.VerifyPKCS1v15(pub, v.opts.Hash, digest, signature)
 	case *ecdsa.PublicKey:
 		if !ecdsa.VerifyASN1(pub, digest, signature) {
-			return &errs.Message{Msg: "ECDSA signature verification failed"}
+			sigErr = &errs.Message{Msg: "ECDSA signature verification failed"}
 		}
-		return nil
 	case ed25519.PublicKey:
 		if !ed25519.Verify(pub, digest, signature) {
-			return &errs.Message{Msg: "Ed25519 signature verification failed"}
+			sigErr = &errs.Message{Msg: "Ed25519 signature verification failed"}
 		}
-		return nil
 	default:
 		return &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", publicKey)}
 	}
+	if sigErr != nil {
+		return sigErr
+	}
+
+	if v.opts.IntegrityCheck {
+		return v.verifyIntegrity(digest)
+	}
+
+	return nil
+}
+
+// verifyIntegrity confirms digest against the checksum persisted for
+// v.opts.BlobCN, retrieved through v.opts.ChecksumProvider.
+func (v *SimpleVerifier) verifyIntegrity(digest []byte) error {
+	if v.opts.BlobCN == "" {
+		return ErrBlobCNRequired
+	}
+	if v.opts.ChecksumProvider == nil {
+		return ErrChecksumProviderRequired
+	}
+
+	checksum, err := v.opts.ChecksumProvider.Checksum(v.opts)
+	if err != nil {
+		return err
+	}
+
+	if !bytes.Equal(checksum, digest) {
+		return &errs.Detail{Err: ErrIntegrityCheckFailed, Detail: v.opts.BlobCN}
+	}
+
+	return nil
 }
 
 // ECCConfig holds ECC-specific configuration for YAML serialization.

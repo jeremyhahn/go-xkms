@@ -267,11 +267,15 @@ func TestEnrollDevice_InvalidPackedCSR_B3(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTPMNotConfigured)
 }
 
+// TestVerifyTCG_CSR_IDevIDBytes_NoTPM proves VerifyTCG_CSR_IDevIDBytes runs
+// (and fails on the garbage CSR, not on a missing TPM) even with no TPM
+// configured: the credential challenge is built in software (go-xkms#798).
 func TestVerifyTCG_CSR_IDevIDBytes_NoTPM(t *testing.T) {
 	ca := setupTestCA(t)
 	tpmInstance.Store(nil)
 	_, _, _, err := ca.VerifyTCG_CSR_IDevIDBytes([]byte("x"), x509.ECDSAWithSHA256)
-	assert.ErrorIs(t, err, ErrTPMNotConfigured)
+	assert.NotErrorIs(t, err, ErrTPMNotConfigured)
+	assert.ErrorIs(t, err, ErrTCGCSRUnmarshalFailed)
 }
 
 // =============================================================================

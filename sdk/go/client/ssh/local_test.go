@@ -15,13 +15,52 @@ package ssh_test
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	gossh "golang.org/x/crypto/ssh"
+
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
+
+// generateLocalIdentityFiles generates a fresh, unencrypted ed25519 keypair
+// and writes it (private + paired ".pub") to dir/name, returning the signer
+// an in-process agent would serve for the same key so tests can prove
+// dedup-by-fingerprint and agent-preferred resolution against a real key
+// rather than two unrelated ones.
+func generateLocalIdentityFiles(t *testing.T, dir, name string) (path string, signer gossh.Signer) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey: %v", err)
+	}
+	block, err := gossh.MarshalPrivateKey(priv, "test")
+	if err != nil {
+		t.Fatalf("MarshalPrivateKey: %v", err)
+	}
+	sshPub, err := gossh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatalf("NewPublicKey: %v", err)
+	}
+	signer, err = gossh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("NewSignerFromKey: %v", err)
+	}
+
+	path = filepath.Join(dir, name)
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatalf("write private key: %v", err)
+	}
+	if err := os.WriteFile(path+".pub", gossh.MarshalAuthorizedKey(sshPub), 0o644); err != nil {
+		t.Fatalf("write public key: %v", err)
+	}
+	return path, signer
+}
 
 // TestLoadLocalSSHConfig_MissingFileIsEmptyConfig pins that an absent
 // ssh_config path is not an error (mirrors OpenSSH's own treatment of a
@@ -224,5 +263,162 @@ func TestResolveLocalSigners_PinnedIdentityWithNoUsableSignerErrors(t *testing.T
 	var lae *sdkssh.LocalIdentityAttemptError
 	if !errors.As(nue, &lae) {
 		t.Fatalf("expected the joined error to contain a *LocalIdentityAttemptError, got %v", nue.Unwrap())
+	}
+}
+
+// TestResolveLocalSigners_AgentPrefixSuccess pins the "agent:<fingerprint>"
+// selector's success path against a real in-process agent (StartAgent, the
+// same production primitive the package's own agent tests serve signers
+// through): the returned signer must be the exact key the agent advertised
+// under that fingerprint, and it must actually sign.
+func TestResolveLocalSigners_AgentPrefixSuccess(t *testing.T) {
+	signer := testConnectSigner(t)
+	sess, err := sdkssh.StartAgent(context.Background(), sdkssh.AgentOptions{Signers: []gossh.Signer{signer}})
+	if err != nil {
+		t.Fatalf("StartAgent: %v", err)
+	}
+	defer sess.Stop(context.Background())
+
+	fp := gossh.FingerprintSHA256(signer.PublicKey())
+	sel := sdkssh.LocalKeySelector{Identity: sdkssh.LocalIdentityAgentPrefix + fp}
+
+	signers, err := sdkssh.ResolveLocalSigners(context.Background(), sel, sess.SockPath)
+	if err != nil {
+		t.Fatalf("ResolveLocalSigners: %v", err)
+	}
+	if len(signers) != 1 {
+		t.Fatalf("expected exactly 1 signer, got %d", len(signers))
+	}
+	if string(signers[0].PublicKey().Marshal()) != string(signer.PublicKey().Marshal()) {
+		t.Fatal("resolved signer's public key does not match the agent-held key")
+	}
+
+	msg := []byte("authenticate me")
+	sig, err := signers[0].Sign(rand.Reader, msg)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if err := signer.PublicKey().Verify(msg, sig); err != nil {
+		t.Fatalf("signature did not verify: %v", err)
+	}
+}
+
+// TestResolveLocalSigners_AliasResolvesOnDiskIdentity pins the normal
+// (non-pinned, non-agent-prefix) resolution path: with no ssh_config Host
+// block for the alias and no agent reachable, ResolveLocalSigners falls
+// through to ssh(1)'s own default identity-file convention
+// (~/.ssh/id_ed25519) and resolves a working signer from it.
+func TestResolveLocalSigners_AliasResolvesOnDiskIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	_, wantSigner := generateLocalIdentityFiles(t, sshDir, "id_ed25519")
+
+	sel := sdkssh.LocalKeySelector{Alias: "unconfigured-host"}
+	signers, err := sdkssh.ResolveLocalSigners(context.Background(), sel, "")
+	if err != nil {
+		t.Fatalf("ResolveLocalSigners: %v", err)
+	}
+	if len(signers) != 1 {
+		t.Fatalf("expected exactly 1 signer from the default identity file, got %d", len(signers))
+	}
+	if string(signers[0].PublicKey().Marshal()) != string(wantSigner.PublicKey().Marshal()) {
+		t.Fatal("resolved signer does not match the on-disk default identity")
+	}
+}
+
+// TestResolveLocalSigners_AgentAndIdentityFileDeduped pins the dedup-by-
+// fingerprint contract: when the system agent and a discovered identity
+// file serve the SAME key, ResolveLocalSigners must offer it exactly once
+// (from the agent, which OpenSSH itself always prefers), not twice.
+func TestResolveLocalSigners_AgentAndIdentityFileDeduped(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	_, fileSigner := generateLocalIdentityFiles(t, sshDir, "id_ed25519")
+
+	sess, err := sdkssh.StartAgent(context.Background(), sdkssh.AgentOptions{Signers: []gossh.Signer{fileSigner}})
+	if err != nil {
+		t.Fatalf("StartAgent: %v", err)
+	}
+	defer sess.Stop(context.Background())
+
+	sel := sdkssh.LocalKeySelector{Alias: "unconfigured-host"}
+	signers, err := sdkssh.ResolveLocalSigners(context.Background(), sel, sess.SockPath)
+	if err != nil {
+		t.Fatalf("ResolveLocalSigners: %v", err)
+	}
+	if len(signers) != 1 {
+		t.Fatalf("expected the shared key deduped to exactly 1 signer, got %d", len(signers))
+	}
+	if string(signers[0].PublicKey().Marshal()) != string(fileSigner.PublicKey().Marshal()) {
+		t.Fatal("resolved signer does not match the shared key")
+	}
+}
+
+// TestResolveLocalSigners_ConfigParseErrorPropagates pins that a malformed
+// ssh_config at the default user path fails resolution outright rather than
+// silently falling back to no configuration, surfacing the same
+// *LocalConfigParseError LoadLocalSSHConfig itself returns.
+func TestResolveLocalSigners_ConfigParseErrorPropagates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	// "Match exec" is explicitly rejected by the parser (arbitrary command
+	// execution from an untrusted config file) -- same fixture
+	// TestLoadLocalSSHConfig_MalformedFileIsParseError uses directly.
+	cfgPath := filepath.Join(sshDir, "config")
+	if err := os.WriteFile(cfgPath, []byte("Match exec true\n    HostName wat.example.com\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	sel := sdkssh.LocalKeySelector{Alias: "anything"}
+	_, err := sdkssh.ResolveLocalSigners(context.Background(), sel, "")
+	var pe *sdkssh.LocalConfigParseError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *LocalConfigParseError, got %T: %v", err, err)
+	}
+}
+
+// TestResolveLocalSigners_DiscoverIdentitiesErrorPropagates pins that a
+// discovery-time I/O error (distinct from "file does not exist") aborts
+// resolution instead of being swallowed into an empty candidate list. The
+// fault is a path that treats a regular file as a directory component
+// (ENOTDIR) -- an error root cannot bypass with permission bits, unlike
+// chmod-based fault injection.
+func TestResolveLocalSigners_DiscoverIdentitiesErrorPropagates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	// A regular file standing in for what the config below addresses as a
+	// directory.
+	notADir := filepath.Join(sshDir, "not-a-dir")
+	if err := os.WriteFile(notADir, []byte("regular file"), 0o600); err != nil {
+		t.Fatalf("write regular file: %v", err)
+	}
+
+	cfgPath := filepath.Join(sshDir, "config")
+	cfg := "Host badhost\n    IdentityFile ~/.ssh/not-a-dir/nested\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	sel := sdkssh.LocalKeySelector{Alias: "badhost"}
+	_, err := sdkssh.ResolveLocalSigners(context.Background(), sel, "")
+	var re *sdkssh.LocalIdentityReadError
+	if !errors.As(err, &re) {
+		t.Fatalf("expected *LocalIdentityReadError, got %T: %v", err, err)
 	}
 }

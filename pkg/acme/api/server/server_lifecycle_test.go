@@ -468,14 +468,17 @@ func TestLifecycle_DirectServerStartAndShutdown(t *testing.T) {
 		errCh <- server.startREST(context.Background())
 	}()
 
-	// Give time to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the restServer field to be assigned instead of sleeping a
+	// fixed duration.
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.restServer != nil
+	}, 10*time.Second, 10*time.Millisecond, "REST server was not created")
 
-	// Verify restServer was created
 	server.mu.RLock()
 	restServer := server.restServer
 	server.mu.RUnlock()
-	require.NotNil(t, restServer)
 
 	// Shutdown REST server
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -518,14 +521,17 @@ func TestLifecycle_DirectMCPStartAndShutdown(t *testing.T) {
 		errCh <- server.startMCP(context.Background())
 	}()
 
-	// Give time to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the mcpServer field to be assigned instead of sleeping a
+	// fixed duration.
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.mcpServer != nil
+	}, 10*time.Second, 10*time.Millisecond, "MCP server was not created")
 
-	// Verify mcpServer was created
 	server.mu.RLock()
 	mcpServer := server.mcpServer
 	server.mu.RUnlock()
-	require.NotNil(t, mcpServer)
 
 	// Shutdown MCP server
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -570,14 +576,17 @@ func TestLifecycle_DirectRESTWithTLS(t *testing.T) {
 		errCh <- server.startREST(context.Background())
 	}()
 
-	// Give time to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the restServer field to be assigned instead of sleeping a
+	// fixed duration.
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.restServer != nil
+	}, 10*time.Second, 10*time.Millisecond, "REST server was not created")
 
-	// Verify restServer was created
 	server.mu.RLock()
 	restServer := server.restServer
 	server.mu.RUnlock()
-	require.NotNil(t, restServer)
 
 	// Shutdown REST server
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -611,14 +620,17 @@ func TestLifecycle_DirectQUICStartAndShutdown(t *testing.T) {
 		errCh <- server.startQUIC(context.Background())
 	}()
 
-	// Give time to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the quicServer field to be assigned instead of sleeping a
+	// fixed duration.
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.quicServer != nil
+	}, 10*time.Second, 10*time.Millisecond, "QUIC server was not created")
 
-	// Verify quicServer was created
 	server.mu.RLock()
 	quicServer := server.quicServer
 	server.mu.RUnlock()
-	require.NotNil(t, quicServer)
 
 	// Close QUIC server
 	err = quicServer.Close()

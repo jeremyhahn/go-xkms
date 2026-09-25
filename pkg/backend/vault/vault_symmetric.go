@@ -129,7 +129,8 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		// the numeric KeyType as a Unicode code point, not a decimal string
 		// (KeyType is uint8), which round-tripped through JSON as an
 		// unparseable single-rune string and left every symmetric key's
-		// KeyType at its zero value once ListKeys tried to read it back.
+		// KeyType at its zero value once ListKeys tried to read it back
+		// (go-xkms#705).
 		"key_type":   uint8(attrs.KeyType),
 		"store_type": backend.STORE_VAULT,
 		"vault_name": keyName,

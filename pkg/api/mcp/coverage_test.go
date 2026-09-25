@@ -584,6 +584,6 @@ func TestHandler_Decrypt_NotFoundInAnyBackend(t *testing.T) {
 
 		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }

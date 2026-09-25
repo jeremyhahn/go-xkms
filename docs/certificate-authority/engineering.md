@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface — `pkg/ca`
 
@@ -79,6 +79,11 @@ and the `…WithXSigner` variants.
 
 **`CATCGEnrollment`** —
 `VerifyTCG_CSR_IDevIDBytes(packedCSR []byte, sigAlg x509.SignatureAlgorithm) (blob, secret, plain []byte, err error)`.
+The `TPM2_MakeCredential` challenge is built in software
+(`tpm2.NewCredentialChallenge`, `tpm2.ActivationKeyName`); this method no
+longer calls `ca.getTPM()` and no longer requires `SetTPM` to have been
+called (go-xkms#798) -- `EnrollDevice` (the full IAK/IDevID issuance path)
+still does, for `SignTCGCSRIDevID`.
 
 **TCG DevID certificate conformance** (`tcg.go`, `tcg_oids.go`,
 `tcg_devid_name.go`, `san.go`) — the IDevID and IAK certificates
@@ -246,6 +251,44 @@ and `pkg/api/mcp/handlers_ca.go` / `handlers_ca_tcg.go`. `ErrCRLNotFound` maps
 to `404`; `ErrNotInitialized` maps to `503`; both are declared in
 `pkg/ca/errors.go` and joined into REST's `caErrorStatusMap` by
 `errors.Is`, so they map correctly even wrapped in `xkms.ErrCAOperation`.
+
+### gRPC/Unix CA wiring is per-`Service`, not a package global (go-xkms#951)
+
+`pkg/api/grpc.Service` carries its own `ca any` and `caBundler CABundler`
+fields (`service.go`), set via the instance methods `(*Service).SetCA` and
+`(*Service).SetCABundler` (`service_ca.go`, `service_ca_bundle.go`) — the
+same auxiliary-wiring pattern `SetSSHClient` already used. Before this fix,
+`SetCA`/`SetCABundler` were package-level functions writing a single
+process-wide global that no production composition root ever called, so
+every CA RPC (`GetCACertificate`, `SignCSR`, `IssueCertificate`,
+`RevokeCertificate`, `GenerateCRL`, `IsRevoked`, and the TCG EK/AK/enroll
+variants) answered `codes.Unavailable` over `unix://`, `grpc://` and
+`grpcs://` regardless of whether a CA was configured. REST was unaffected —
+`pkg/api/rest`'s `Config.CA` was always per-`Server`.
+
+Composition roots wire `SetCA`/`SetCABundler` right after `NewService`,
+under the same condition `pkg/server`'s `buildRESTConfig` uses for
+`restConfig.CA` (a configured CA **and** a composed `XKMSService`):
+
+- `pkg/server`'s `startUnix` (`server.go`) forwards `s.xkmsService` as the
+  CA servicer through `unix.GRPCConfig.CA`/`CABundler`, which
+  `unix.NewGRPCServer.Start` passes to `(*Service).SetCA`/`SetCABundler`
+  (`pkg/api/unix/grpc_server.go`).
+- `pkg/apimodule.Module.keystore` (`module.go`) — the unified qrdb server's
+  gRPC surface — wires the resolved `XKMSService` itself whenever
+  `XKMSService.CA() != nil`, since the same object exposes both the
+  transport-shaped CA methods and the `provider.CA` accessor.
+
+A CA servicer (`x any`) is duck-typed against the transport-shaped method
+sets in `service_ca.go`/`service_ca_tcg.go` (`grpcCAMethodCert`,
+`grpcCAMethodSignCSR`, ...) exactly as before; only the storage location of
+the configured value changed, from a package variable to a `Service` field.
+
+Any other binary embedding `pkg/api/grpc.Service` directly (rather than
+through `pkg/api/unix` or `pkg/apimodule`) must call the instance methods
+`(*Service).SetCA` / `(*Service).SetCABundler` on the constructed `*Service`
+before serving CA RPCs; the removed package-level `SetCA`/`GetCA`/
+`SetCABundler`/`GetCABundler` have no replacement free functions.
 
 **Fail-closed paths:** uninitialized CA; a CSR that fails policy; a revoked or
 expired issuer; an attestation quote that does not verify; a TCG CSR whose

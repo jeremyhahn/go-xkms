@@ -121,9 +121,9 @@ func (d *transitDouble) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// with ?list=true (see logical.go's comment: "Set this for broader
 	// compatibility") rather than sending the literal LIST verb its own
 	// ListWithContext constructs, so the method to match here is GET, not
-	// LIST; the path shape (no name segment) is what disambiguates this from
-	// an ordinary single-key read.
-	if parts[1] == "keys" && len(parts) == 2 && r.Method == http.MethodGet {
+	// LIST, with the list=true query parameter (rather than the path shape
+	// alone) disambiguating this from an ordinary single-key read.
+	if parts[1] == "keys" && len(parts) == 2 && r.Method == http.MethodGet && r.URL.Query().Get("list") == "true" {
 		d.listKeys(w)
 		return
 	}
@@ -153,27 +153,6 @@ func (d *transitDouble) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeVaultError(w, http.StatusNotFound, "unsupported operation "+operation)
 	}
-}
-
-// listKeys implements LIST /v1/transit/keys, returning every key name this
-// double currently holds under the same {"data":{"keys":[...]}} envelope
-// real Vault Transit uses, which is the shape (*Backend).ListKeys parses.
-func (d *transitDouble) listKeys(w http.ResponseWriter) {
-	d.mu.Lock()
-	names := make([]string, 0, len(d.keys))
-	for name := range d.keys {
-		names = append(names, name)
-	}
-	d.mu.Unlock()
-
-	keys := make([]interface{}, len(names))
-	for i, name := range names {
-		keys[i] = name
-	}
-
-	writeVaultData(w, map[string]interface{}{
-		"keys": keys,
-	})
 }
 
 // handleKey implements create (POST/PUT), read (GET) and delete (DELETE).
@@ -775,6 +754,30 @@ func (d *transitDouble) aeadForVersion(name string, version int) (cipher.AEAD, e
 	// aes256-gcm96 envelope is nonce || ciphertext || tag, which is exactly
 	// what Seal prepends and Open strips.
 	return cipher.NewGCMWithRandomNonce(block)
+}
+
+// listKeys implements Vault Transit's LIST /transit/keys, returning the
+// names of every key the double currently holds. Real Vault returns 404
+// when the collection is empty (surfaced to callers as secret == nil, not
+// an error, by the Go client), which this mirrors.
+func (d *transitDouble) listKeys(w http.ResponseWriter) {
+	d.mu.Lock()
+	names := make([]string, 0, len(d.keys))
+	for name := range d.keys {
+		names = append(names, name)
+	}
+	d.mu.Unlock()
+
+	if len(names) == 0 {
+		writeVaultError(w, http.StatusNotFound, "no keys found")
+		return
+	}
+
+	keysInterface := make([]interface{}, len(names))
+	for i, n := range names {
+		keysInterface[i] = n
+	}
+	writeVaultData(w, map[string]interface{}{"keys": keysInterface})
 }
 
 // keyCount reports how many keys the double currently holds, so a test can

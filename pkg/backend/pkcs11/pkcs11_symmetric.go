@@ -350,7 +350,7 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		return nil, err
 	}
 	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 	}
@@ -538,7 +538,7 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 		return nil, err
 	}
 	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 	}
@@ -634,7 +634,7 @@ func (e *pkcs11SymmetricEncrypter) withKeySession(fn func(session pkcs11.Session
 		return err
 	}
 	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 	}

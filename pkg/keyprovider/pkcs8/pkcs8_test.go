@@ -1512,6 +1512,59 @@ func (m *mockStorageError) Close() error {
 	return nil
 }
 
+// wrappedNotFoundStorage is a storage.Backend double whose Get and Delete
+// wrap storage.ErrNotFound with call-site context (fmt.Errorf's %w),
+// the shape a real backend produces when it adds detail to the sentinel.
+type wrappedNotFoundStorage struct {
+	storage.Backend
+}
+
+func (w *wrappedNotFoundStorage) Get(_ context.Context, key string) ([]byte, error) {
+	return nil, fmt.Errorf("get %s: %w", key, storage.ErrNotFound)
+}
+
+func (w *wrappedNotFoundStorage) Delete(_ context.Context, key string) error {
+	return fmt.Errorf("delete %s: %w", key, storage.ErrNotFound)
+}
+
+// TestGetKey_NotFound_Wrapped is go-xkms#894's regression case: GetKey
+// compares the storage error with errors.Is, so a storage backend that
+// wraps storage.ErrNotFound must still classify as backend.ErrKeyNotFound,
+// not the generic "failed to retrieve key" a bare == comparison would take.
+func TestGetKey_NotFound_Wrapped(t *testing.T) {
+	config := &Config{KeyStorage: &wrappedNotFoundStorage{Backend: storage.New()}}
+	be, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = be.Close() }()
+
+	attrs := createRSAAttrs("test-getkey-wrapped-notfound.com", 2048)
+
+	_, err = be.(*PKCS8Backend).GetKey(context.Background(), attrs)
+	if !errors.Is(err, backend.ErrKeyNotFound) {
+		t.Fatalf("expected backend.ErrKeyNotFound, got %v", err)
+	}
+}
+
+// TestDeleteKey_NotFound_Wrapped is the DeleteKey counterpart of
+// TestGetKey_NotFound_Wrapped.
+func TestDeleteKey_NotFound_Wrapped(t *testing.T) {
+	config := &Config{KeyStorage: &wrappedNotFoundStorage{Backend: storage.New()}}
+	be, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = be.Close() }()
+
+	attrs := createRSAAttrs("test-deletekey-wrapped-notfound.com", 2048)
+
+	err = be.(*PKCS8Backend).DeleteKey(context.Background(), attrs)
+	if !errors.Is(err, backend.ErrKeyNotFound) {
+		t.Fatalf("expected backend.ErrKeyNotFound, got %v", err)
+	}
+}
+
 // TestDeleteKey_StorageError tests DeleteKey with storage errors
 func TestDeleteKey_StorageError(t *testing.T) {
 	mockStorage := &mockStorageError{

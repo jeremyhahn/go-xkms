@@ -20,6 +20,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/asn1"
 	"errors"
@@ -349,6 +350,17 @@ func TestStoreTypeForBackend(t *testing.T) {
 		{xkms.BackendTypeAzureKV, xkms.StoreAzureKV},
 		{xkms.BackendTypeVault, xkms.StoreVault},
 		{xkms.BackendTypePhone, xkms.StorePhone},
+		// Module-ID-style backend types (e.g. a second PKCS#11 token
+		// registered under its own instance name) fall through to the
+		// prefix-matching loop rather than the exact-match cases above.
+		{xkms.BackendType("pkcs11-libykcs11-slot-0"), xkms.StorePKCS11},
+		{xkms.BackendType("tpm2-simulator"), xkms.StoreTPM2},
+		{xkms.BackendType("awskms-us-east-1"), xkms.StoreAWSKMS},
+		{xkms.BackendType("gcpkms-project-a"), xkms.StoreGCPKMS},
+		{xkms.BackendType("azurekv-vault-1"), xkms.StoreAzureKV},
+		{xkms.BackendType("vault-transit"), xkms.StoreVault},
+		// A backend type matching no known prefix passes through unchanged.
+		{xkms.BackendType("mystery-backend"), xkms.StoreType("mystery-backend")},
 	}
 
 	for _, tt := range tests {
@@ -398,6 +410,27 @@ func TestEncodeCOSEPublicKey_TypeMismatches(t *testing.T) {
 			assert.ErrorIs(t, err, ErrUnsupportedAlgorithm)
 		})
 	}
+}
+
+// TestEncodeCOSEPublicKey_RSA covers the RSA dispatch branch (used only for
+// a TPM Initial Attestation Key's public key): EncodeCOSEPublicKey must
+// route an *rsa.PublicKey with an RSA COSE algorithm to encodeCOSERSAKey
+// rather than falling through to ErrUnsupportedAlgorithm.
+func TestEncodeCOSEPublicKey_RSA(t *testing.T) {
+	t.Parallel()
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	encoded, err := EncodeCOSEPublicKey(&rsaKey.PublicKey, COSEAlgRS256)
+	require.NoError(t, err)
+	assert.NotEmpty(t, encoded)
+
+	var decoded map[int]interface{}
+	require.NoError(t, cbor.Unmarshal(encoded, &decoded))
+	kty, ok := decoded[1].(uint64)
+	require.True(t, ok)
+	assert.Equal(t, uint64(COSEKeyTypeRSA), kty)
 }
 
 // TestEncodeCOSEEC2Key_PadsCoordinates verifies short coordinates are

@@ -188,7 +188,7 @@ func NewBackend(config *Config) (*Backend, error) {
 		// (mirrors the seal first-boot recipe in go-quicbaas). Real hardware
 		// is NEVER auto-provisioned — boot-time provisioning of physical TPMs
 		// is an operator action (`xkmsd init`).
-		if err == pkgtpm2.ErrNotInitialized && config.UseSimulator && tpm != nil {
+		if errors.Is(err, pkgtpm2.ErrNotInitialized) && config.UseSimulator && tpm != nil {
 			if perr := provisionSimulatorEKSRK(tpm, tpmConfig); perr != nil {
 				closeErr := tpm.Close()
 				return nil, &errs.Joined{Lead: ErrNotInitialized, Detail: "simulator provisioning failed", Cause: errors.Join(perr, closeErr)}
@@ -202,7 +202,7 @@ func NewBackend(config *Config) (*Backend, error) {
 				closeErr = tpm.Close()
 			}
 			// Check for initialization error - TPM may need provisioning
-			if err == pkgtpm2.ErrNotInitialized {
+			if errors.Is(err, pkgtpm2.ErrNotInitialized) {
 				return nil, errors.Join(&errs.Detail{Err: ErrNotInitialized, Detail: "TPM needs provisioning"}, closeErr)
 			}
 			return nil, &errs.Wrapped{Msg: "failed to initialize TPM", Err: errors.Join(err, closeErr)}

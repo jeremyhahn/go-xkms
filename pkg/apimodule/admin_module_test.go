@@ -138,6 +138,36 @@ func TestAdminModule_RegisterHTTP_UIOnItsOwnPrefix(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "admin ui")
 }
 
+// TestAdminModule_RegisterHTTP_RedirectRoot proves that, when
+// WithAdminWebUI's redirectRoot is set, GET / is registered as a public
+// 302 redirect to the admin UI's own prefix.
+func TestAdminModule_RegisterHTTP_RedirectRoot(t *testing.T) {
+	const uiPrefix = "/admin-ui"
+	fsys := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html>admin ui</html>")},
+	}
+	m, err := NewAdminModule(func() http.Handler { return nil }, []string{"/admin"},
+		WithAdminWebUI(uiPrefix, fsys, true))
+	require.NoError(t, err)
+
+	reg, recs := newCaptureRegistrar()
+	m.RegisterHTTP(reg)
+
+	var rootHandler http.HandlerFunc
+	for _, r := range *recs {
+		if r.method == http.MethodGet && r.pattern == "/" {
+			rootHandler = r.handler
+		}
+	}
+	require.NotNil(t, rootHandler, "GET / must be registered when redirectRoot is set")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	rootHandler(w, req)
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Equal(t, uiPrefix, w.Header().Get("Location"))
+}
+
 // TestAdminModule_LazyAPIHandler_ComposingServer503 proves an admin API
 // request answers 503 while the resolver has not yet published a router
 // (the host is still composing the ACME CA/storage/qrdb TenantService the

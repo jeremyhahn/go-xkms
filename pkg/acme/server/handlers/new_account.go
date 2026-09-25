@@ -177,8 +177,16 @@ func (s *RestService) NewAccountHandler(w http.ResponseWriter, r *http.Request) 
 		if err == nil {
 			newAccountURL := fmt.Sprintf("%s/acme/new-account", s.baseRESTURI)
 			verifier := NewExternalAccountBindingVerifier(eabDAO, newAccountURL)
-			verifiedBinding, _ = verifier.Verify(ctx, req.ExternalAccountBinding, jwk)
-			// If verification fails, we still proceed (binding is optional)
+			var verifyErr error
+			verifiedBinding, verifyErr = verifier.Verify(ctx, req.ExternalAccountBinding, jwk)
+			if verifyErr != nil {
+				// The binding is optional here, so verification failure
+				// does not fail the request, but it's still reported: an
+				// operator needs visibility into malformed or invalid
+				// optional EAB submissions.
+				s.logger.Warn("optional external account binding failed verification",
+					"error", verifyErr.Error())
+			}
 		}
 	}
 

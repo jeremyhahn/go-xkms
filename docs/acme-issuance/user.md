@@ -174,22 +174,25 @@ curl -H "Authorization: Bearer $TOKEN" https://kms.example.com:8443/openapi/admi
 | doubled path in the directory, `/api/v1/api/v1/acme/...` | the server's base URI is misconfigured | fix the server's `baseRESTURI`; the client is fine |
 | `rejectedIdentifier` | the identifier is blocklisted, is not under a public suffix, or (for an IP) is in a reserved/loopback range | check `acme.policy` in the server config, or request an identifier the policy allows |
 | `caa` error | a CAA record forbids this CA outright, restricts issuance to a different ACME account (`accounturi`) or challenge type (`validationmethods`, RFC 8657) than this request used, has a malformed `accounturi`/`validationmethods` value, or the server could not determine the CAA RRset at all (DNS failure fails closed, RFC 8659 §5.1) | fix the CAA record — issuer domain, `accounturi`, or `validationmethods` — to allow this CA, this account, and the challenge type you're using; or retry once DNS is reachable |
-| `rateLimited` | per-account or per-tenant limit hit | back off; the response carries `Retry-After` |
+| `rateLimited` | per-client (account once registered, otherwise IP) request cap hit | back off; the response carries `Retry-After` |
 | `orderNotReady` on finalize | an authorization is still pending | complete the challenge first |
 | `badCSR` | the CSR does not match the order's identifiers | regenerate the CSR from the order |
 | `badCSR` on a `device-attest-01`/`enroll-01` CSR finalize | the CSR has no RFC 4043 `permanentIdentifier` otherName (OID `1.3.6.1.5.5.7.8.3`) in its `subjectAltName` | the identifier is never read from the Common Name; encode it as the otherName |
 | `rejectedIdentifier` on finalize with a correct otherName | the CSR carries a DNS/IP SAN, or a permanent identifier value, the order did not authorize | regenerate the CSR with only the names the order's identifiers list |
 | `enroll-01` never completes | the TPM's EK does not chain to a manufacturer root the CA trusts | import the manufacturer chain server-side |
 | joining node hangs during enrollment | the server cannot reach `challenge_port` on the node | open it, or fix the advertised address |
-| `incorrectResponse` on challenge validation, right away instead of after a timeout | the `http01`/`dns01` circuit breaker is open — the verifier failed enough times recently that the server is failing fast instead of retrying a target it already knows is unreachable | fix or wait out whatever is unreachable (the target host, DNS); check `GET /acme/health` for the breaker's state and when it last tripped |
-| finalize fails for a tenant-CA order specifically, other orders unaffected | the `kms` circuit breaker is open — the tenant KMS signer is unreachable | check the KMS backend; `GET /acme/health` reports the `kms` breaker |
-| `GET /acme/directory` or `GET /acme/ca-bundle` returns a `Warning: 110 - "Response is stale"` header | the `storage` breaker (CA/keystore access) is open and the server is serving its last known-good response instead of failing the request | check `GET /acme/health`'s `degradation.active`; `POST /acme/new-order` and the rest of the protocol are unaffected by this — only these two GET endpoints degrade |
+| `incorrectResponse` on challenge validation, right away instead of after a timeout | on xkmsd, the `http01`/`dns01` circuit breaker is open — the verifier failed enough times recently that the server is failing fast instead of retrying a target it already knows is unreachable | fix or wait out whatever is unreachable (the target host, DNS); check `GET /acme/health` for the breaker's state and when it last tripped |
+| finalize fails for a tenant-CA order specifically, other orders unaffected | on xkmsd, the `kms` circuit breaker is open — the tenant KMS signer is unreachable | check the KMS backend; `GET /acme/health` reports the `kms` breaker |
+| `GET /acme/directory` or `GET /acme/ca-bundle` returns a `Warning: 110 - "Response is stale"` header | on xkmsd, the `storage` breaker (CA/keystore access) is open and the server is serving its last known-good response instead of failing the request | check `GET /acme/health`'s `degradation.active`; `POST /acme/new-order` and the rest of the protocol are unaffected by this — only these two GET endpoints degrade |
 
 Circuit breakers guard individual dependencies (the challenge verifiers, the
 tenant KMS signer, CA-bundle storage access), not order creation:
 `POST /acme/new-order` is never refused because a breaker is open. `GET
 /acme/health` reports every breaker's state and whether the server is
-currently serving degraded (cached) directory/CA-bundle responses.
+currently serving degraded (cached) directory/CA-bundle responses. This is
+xkmsd-only today: the standalone `trusted-acme-client serve` / `TrustedCA`
+deployment does not wire breakers, so its `GET /health` always reports
+healthy with no breakers listed.
 
 ## Where to go next
 

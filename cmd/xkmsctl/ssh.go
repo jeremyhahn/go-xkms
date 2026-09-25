@@ -267,7 +267,7 @@ func xkmsctlSSHClient() (sshsdk.Client, func(), error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		return c, func() { _ = c.Close() }, nil
+		return c, func() { closeQuietly(c) }, nil
 	}
 	if strings.TrimSpace(cfg.Server) == "" {
 		return nil, nil, ErrSSHServerRequired
@@ -276,17 +276,21 @@ func xkmsctlSSHClient() (sshsdk.Client, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return c, func() { _ = c.Close() }, nil
+	return c, func() { closeQuietly(c) }, nil
 }
 
 func runXkmsctlSSHGenerate(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	name, _ := cmd.Flags().GetString("name")
-	algo, _ := cmd.Flags().GetString("type")
-	bits, _ := cmd.Flags().GetInt("bits")
-	comment, _ := cmd.Flags().GetString("comment")
-	backend, _ := cmd.Flags().GetString("key-backend")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	name := fr.String("name")
+	algo := fr.String("type")
+	bits := fr.Int("bits")
+	comment := fr.String("comment")
+	backend := fr.String("key-backend")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if name == "" {
 		return ErrSSHName
 	}
@@ -307,8 +311,12 @@ func runXkmsctlSSHGenerate(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHList(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	client, closer, err := xkmsctlSSHClient()
 	if err != nil {
 		return err
@@ -329,9 +337,13 @@ func runXkmsctlSSHList(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHGet(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	name, _ := cmd.Flags().GetString("name")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	name := fr.String("name")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if name == "" {
 		return ErrSSHName
 	}
@@ -349,9 +361,13 @@ func runXkmsctlSSHGet(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHExport(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	name, _ := cmd.Flags().GetString("name")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	name := fr.String("name")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if name == "" {
 		return ErrSSHName
 	}
@@ -369,10 +385,14 @@ func runXkmsctlSSHExport(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHSign(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	name, _ := cmd.Flags().GetString("name")
-	data, _ := cmd.Flags().GetString("data")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	name := fr.String("name")
+	data := fr.String("data")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if name == "" {
 		return ErrSSHName
 	}
@@ -394,9 +414,13 @@ func runXkmsctlSSHSign(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHDelete(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	name, _ := cmd.Flags().GetString("name")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	name := fr.String("name")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if name == "" {
 		return ErrSSHName
 	}
@@ -427,8 +451,12 @@ func sshPassphraseProvider() secure.PassphraseProvider {
 // --key flag (an authorized_keys-format line) or the --file flag (the
 // same line read from disk). Exactly one is required.
 func sshPublicKeyFromFlags(cmd *cobra.Command) (gossh.PublicKey, error) {
-	line, _ := cmd.Flags().GetString("key")
-	path, _ := cmd.Flags().GetString("file")
+	fr := newFlagReader(cmd)
+	line := fr.String("key")
+	path := fr.String("file")
+	if err := fr.Err(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(line) == "" {
 		if strings.TrimSpace(path) == "" {
 			return nil, ErrSSHLine
@@ -447,11 +475,15 @@ func sshPublicKeyFromFlags(cmd *cobra.Command) (gossh.PublicKey, error) {
 }
 
 func runXkmsctlSSHImport(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	name, _ := cmd.Flags().GetString("name")
-	comment, _ := cmd.Flags().GetString("comment")
-	path, _ := cmd.Flags().GetString("file")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	name := fr.String("name")
+	comment := fr.String("comment")
+	path := fr.String("file")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(path) == "" {
 		return ErrSSHFile
 	}
@@ -478,10 +510,14 @@ func runXkmsctlSSHImport(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHKnownHostsAdd(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	host, _ := cmd.Flags().GetString("host")
-	source, _ := cmd.Flags().GetString("source")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	host := fr.String("host")
+	source := fr.String("source")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if host == "" {
 		return ErrSSHHost
 	}
@@ -505,8 +541,12 @@ func runXkmsctlSSHKnownHostsAdd(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHKnownHostsList(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	client, closer, err := xkmsctlSSHClient()
 	if err != nil {
 		return err
@@ -527,9 +567,13 @@ func runXkmsctlSSHKnownHostsList(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHKnownHostsRemove(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	host, _ := cmd.Flags().GetString("host")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	host := fr.String("host")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if host == "" {
 		return ErrSSHHost
 	}
@@ -548,9 +592,13 @@ func runXkmsctlSSHKnownHostsRemove(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHKnownHostsVerify(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	host, _ := cmd.Flags().GetString("host")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	host := fr.String("host")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if host == "" {
 		return ErrSSHHost
 	}
@@ -571,12 +619,16 @@ func runXkmsctlSSHKnownHostsVerify(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHAuthorizedAdd(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	name, _ := cmd.Flags().GetString("name")
-	line, _ := cmd.Flags().GetString("line")
-	options, _ := cmd.Flags().GetStringSlice("option")
-	comment, _ := cmd.Flags().GetString("comment")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	name := fr.String("name")
+	line := fr.String("line")
+	options := fr.StringSlice("option")
+	comment := fr.String("comment")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if name == "" {
 		return ErrSSHName
 	}
@@ -598,9 +650,13 @@ func runXkmsctlSSHAuthorizedAdd(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHAuthorizedGet(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	name, _ := cmd.Flags().GetString("name")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	name := fr.String("name")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if name == "" {
 		return ErrSSHName
 	}
@@ -619,8 +675,12 @@ func runXkmsctlSSHAuthorizedGet(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHAuthorizedList(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	client, closer, err := xkmsctlSSHClient()
 	if err != nil {
 		return err
@@ -641,9 +701,13 @@ func runXkmsctlSSHAuthorizedList(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHAuthorizedRemove(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
-	name, _ := cmd.Flags().GetString("name")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	name := fr.String("name")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if name == "" {
 		return ErrSSHName
 	}
@@ -660,9 +724,13 @@ func runXkmsctlSSHAuthorizedRemove(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHAuthorizedEmit(cmd *cobra.Command, _ []string) error {
-	line, _ := cmd.Flags().GetString("line")
-	options, _ := cmd.Flags().GetStringSlice("option")
-	comment, _ := cmd.Flags().GetString("comment")
+	fr := newFlagReader(cmd)
+	line := fr.String("line")
+	options := fr.StringSlice("option")
+	comment := fr.String("comment")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(line) == "" {
 		return ErrSSHLine
 	}
@@ -682,8 +750,12 @@ func runXkmsctlSSHAuthorizedEmit(cmd *cobra.Command, _ []string) error {
 }
 
 func runXkmsctlSSHAuthorizedVerify(cmd *cobra.Command, _ []string) error {
-	scope, _ := cmd.Flags().GetString("scope")
-	owner, _ := cmd.Flags().GetString("owner")
+	fr := newFlagReader(cmd)
+	scope := fr.String("scope")
+	owner := fr.String("owner")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	pub, err := sshPublicKeyFromFlags(cmd)
 	if err != nil {
 		return err

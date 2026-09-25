@@ -445,10 +445,15 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 
 	keyID := *resp.Key.KID
 
-	// Store metadata
+	// Store metadata. key_type is serialized through its String() form (not
+	// the raw uint8 value, and not a bare string() conversion of it) because
+	// ListKeys reads it back with types.ParseKeyType, which expects the
+	// same "SIGNING"-style spelling; a raw numeric value round-trips through
+	// json.Marshal as a JSON number and silently fails ListKeys' .(string)
+	// type assertion, dropping the key's type on every read (go-xkms#705).
 	metadata := map[string]interface{}{
 		"key_id":    keyID,
-		"key_type":  attrs.KeyType,
+		"key_type":  attrs.KeyType.String(),
 		"cn":        attrs.CN,
 		"algorithm": attrs.KeyAlgorithm.String(),
 	}
@@ -722,10 +727,11 @@ func (b *Backend) CreateSecretKey(attrs *types.KeyAttributes, keySize int) (stri
 
 	keyID := *resp.Key.KID
 
-	// Store metadata
+	// Store metadata. See the identical comment in CreateKey: key_type must
+	// be attrs.KeyType.String(), not the raw KeyType value.
 	metadata := map[string]interface{}{
 		"key_id":    keyID,
-		"key_type":  attrs.KeyType,
+		"key_type":  attrs.KeyType.String(),
 		"cn":        attrs.CN,
 		"key_size":  keySize,
 		"symmetric": true,

@@ -27,7 +27,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -41,10 +40,6 @@ func TestStartNoiseBootstrap_PublishesAndWithdrawsListenerKeys(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = false // call startNoiseBootstrap manually
 	cfg.Server.NoisePort = 0    // bind on any available port
@@ -53,6 +48,8 @@ func TestStartNoiseBootstrap_PublishesAndWithdrawsListenerKeys(t *testing.T) {
 	srv, err := New(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, srv.xkmsService, "server construction must wire the XKMSService singleton")
+
+	srv.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	ctx := context.Background()
 

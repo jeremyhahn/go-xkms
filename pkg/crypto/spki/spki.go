@@ -35,6 +35,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"log/slog"
 	"os"
 )
 
@@ -165,7 +166,11 @@ func FetchServerPinWithCA(address string, rootCAs *x509.CertPool) (string, *x509
 	if err != nil {
 		return "", nil, ErrDialFailed
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if cerr := conn.Close(); cerr != nil {
+			slog.Debug("crypto/spki: failed to close TLS connection", "error", cerr)
+		}
+	}()
 
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {

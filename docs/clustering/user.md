@@ -32,6 +32,43 @@ the capability, it does not turn clustering on.
 Exactly one node bootstraps (`join: false`, with the complete peer list);
 the rest join (`join: true`) after it is healthy.
 
+### Via YAML
+
+Node 1 (bootstrapper):
+
+```yaml
+storage:
+  backend: qrdb
+  path: /var/lib/xkms/data
+
+cluster:
+  enabled: true
+  node_id: 1
+  shard_id: 1
+  raft_address: "10.0.0.1:63001"
+  listen_address: "10.0.0.1:63001"
+  # Optional: host clients use to reach THIS node's xkms APIs. Defaults to
+  # the host portion of raft_address; set it when the API and Raft planes
+  # are reached over different addresses.
+  advertise_host: "10.0.0.1"
+  peers: "1=10.0.0.1:63001,2=10.0.0.2:63001,3=10.0.0.3:63001"
+  join: false  # First node bootstraps
+```
+
+Nodes 2 and 3 use identical YAML except:
+
+```yaml
+cluster:
+  node_id: 2  # or 3 for node3
+  advertise_host: "10.0.0.2"  # or 10.0.0.3
+  join: true
+```
+
+`storage.path` must be a separate, node-local directory on every node —
+never shared or NFS-mounted.
+
+### Via environment variables
+
 Node 1 (bootstrapper):
 
 ```bash
@@ -76,6 +113,53 @@ All three paths must be set together, or none — a partial set is a startup
 error. Without either operator files or a network you trust, do not run
 multi-node Raft unencrypted.
 
+### Auto-provisioned Raft mTLS (`raft_enrollment`)
+
+Supplying `raft_tls.*` files by hand does not scale past a few nodes. The
+`raft_enrollment` block instead provisions inter-node mTLS touch-free: the
+first node stands up a cluster CA and every node obtains its own transport
+certificate automatically, in the precedence order above (operator files →
+ACME-attested → hardware node key → software node key, Noise NK / SPKI /
+DANE / Direct bootstrap). This is the same `pkg/trust/clusterca` toolkit
+every product in the stack consumes through `sdk/go/clusterca`.
+
+#### ACME-attested cluster enrollment
+
+With `raft_enrollment.acme.enabled: true`, node certificates are issued
+through TPM-attested ACME enroll-01 rather than a shared CA key: the first
+node pre-stages the CA hierarchy and issues its own transport leaf; joining
+nodes fetch the trust anchor via `raft_enrollment.bootstrap`, then prove
+their identity with TPM attestation to the existing node's ACME directory.
+No shared CA private key is ever distributed.
+
+```yaml
+cluster:
+  enabled: true
+  node_id: 1
+  raft_address: 10.0.0.1:63001
+  peers: "1=10.0.0.1:63001,2=10.0.0.2:63001,3=10.0.0.3:63001"
+  raft_enrollment:
+    trust_domain: prod.cluster
+    key_backend: tpm2
+    acme:
+      enabled: true
+      directory_url: https://10.0.0.1:8443/acme/directory  # joining nodes only
+    cluster_ca_cn: "Cluster Intermediate CA"
+    ca_key_protection: ""   # auto: TPM/HSM -> passphrase -> refuse
+    advertise_noise_host: 10.0.0.1
+    advertise_noise_port: 63006
+    bootstrap:
+      spki_pin: <base64 SPKI pin>
+      server_addr: 10.0.0.1:8443
+```
+
+Two admission models are available via the ACME challenge configuration:
+**enroll-01** (TPM-attested self-enrollment, touch-free) and **endorse-01**
+(EAB-admin-gated: an operator explicitly authorizes each node). See
+[Cluster CA key custody](ca-key-custody.md) for the cluster CA key
+protection and custody-strategy options (`ca_key_protection`,
+`ca_key_strategy`).
+
 ## Checking on the cluster
 
 ```bash
@@ -86,6 +170,26 @@ xkmsctl cluster members
 `status` shows the shard's current leader; `members` lists every replica
 with its advertised API endpoints. Run these against any node — they answer
 the same regardless of which node you ask.
+
+The embedded web console's **Cluster** page shows the same read-only status
+and membership over the REST API (see api.md) once signed in, when the node
+is clustered; a standalone deployment hides the nav entry by default but
+the page still renders a "standalone" result if visited directly. Membership
+changes (`xkmsctl cluster add`/`remove`) are performed over the Raft admin
+plane only and are intentionally not exposed as a button in the web
+console.
+
+## Monitoring and debugging
+
+When clustering is enabled, xkms logs cluster startup and election events:
+
+```
+time=2026-06-08T10:15:30Z level=info msg="Hosting clustered qrdb engine via NewClusteredNode" node_id=1 shard_id=1 raft_address=node1:63001 members=3 join=false
+```
+
+Look for "raft" in logs to see leader elections, membership changes, and
+replication status. A healthy cluster responds to read operations on all
+members and write operations on the leader.
 
 ## Adding and removing nodes
 

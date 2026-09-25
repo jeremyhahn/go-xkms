@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -331,7 +332,11 @@ func (f *FileQuerier) scanFile(ctx context.Context, path string, visit func(*Aud
 		}
 		return 0, caerrors.StorageFailureError("audit: failed to open log file: %v", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			slog.Debug("audit: failed to close log file", slog.String("path", path), slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	var source io.Reader = file
 	if strings.HasSuffix(path, compressedSuffix) {
@@ -339,7 +344,11 @@ func (f *FileQuerier) scanFile(ctx context.Context, path string, visit func(*Aud
 		if err != nil {
 			return 0, caerrors.StorageFailureError("audit: failed to open compressed log file: %v", err)
 		}
-		defer func() { _ = gz.Close() }()
+		defer func() {
+			if closeErr := gz.Close(); closeErr != nil {
+				slog.Debug("audit: failed to close compressed log reader", slog.String("path", path), slog.String("error", closeErr.Error()))
+			}
+		}()
 		source = gz
 	}
 

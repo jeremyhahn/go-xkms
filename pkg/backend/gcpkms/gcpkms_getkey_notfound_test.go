@@ -60,7 +60,7 @@ func TestBackend_GetKey_NotFound(t *testing.T) {
 	// GetKey checks local metadata before calling GetCryptoKey; seed it so
 	// the test exercises the gRPC status classification, not the earlier
 	// "no local record" gate.
-	require.NoError(t, storage.SaveKey(context.Background(), keyStorage, attrs.ID(), []byte(`{}`)))
+	require.NoError(t, storage.SaveKey(context.Background(), keyStorage, attrs.CN, []byte(`{}`)))
 
 	_, err = b.GetKey(context.Background(), attrs)
 	require.Error(t, err)
@@ -97,7 +97,7 @@ func TestBackend_GetKey_RetrievalError(t *testing.T) {
 		KeyType:      backend.KEY_TYPE_SIGNING,
 		StoreType:    backend.STORE_GCPKMS,
 	}
-	require.NoError(t, storage.SaveKey(context.Background(), keyStorage, attrs.ID(), []byte(`{}`)))
+	require.NoError(t, storage.SaveKey(context.Background(), keyStorage, attrs.CN, []byte(`{}`)))
 
 	_, err = b.GetKey(context.Background(), attrs)
 	require.Error(t, err)

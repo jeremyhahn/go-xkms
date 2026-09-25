@@ -16,7 +16,6 @@ package xkms
 import (
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -81,14 +80,13 @@ func (s *XKMSService) enforceAttestationInvariants(
 ) error {
 	csr, err := parseCSRAny(req.CSRPEM)
 	if err != nil {
-		return fmt.Errorf("%w: the CSR does not parse: %v", ErrAttestationKeyNotBound, err)
+		return &ErrOperationWrap{Sentinel: ErrAttestationKeyNotBound, Detail: "the CSR does not parse", Err: err}
 	}
 	// A CSR is self-signed by the key it names. An invalid signature means the
 	// requester does not hold the private half, so binding it to attested
 	// hardware would certify a key nobody demonstrated control of.
 	if err := csr.CheckSignature(); err != nil {
-		return fmt.Errorf("%w: the CSR signature does not verify: %v",
-			ErrAttestationKeyNotBound, err)
+		return &ErrOperationWrap{Sentinel: ErrAttestationKeyNotBound, Detail: "the CSR signature does not verify", Err: err}
 	}
 
 	// This carrier delivers a PKCS#10 alongside a certificate chain; it has no
@@ -110,7 +108,7 @@ func (s *XKMSService) enforceAttestationInvariants(
 		if !s.unboundAttestationAllowed() {
 			slog.Warn("CSR attestation refused: binding cannot be checked",
 				"format", format, "error", err)
-			return fmt.Errorf("%w: %v", ErrAttestationUnbindableFormat, err)
+			return &ErrOperationWrap{Sentinel: ErrAttestationUnbindableFormat, Err: err}
 		}
 		// Deliberately accepted, and said out loud every time.
 		slog.Warn("issuing against an attestation whose key binding was NOT verified",
@@ -121,15 +119,15 @@ func (s *XKMSService) enforceAttestationInvariants(
 
 	case errors.Is(err, attestation.ErrUnknownFormat):
 		slog.Warn("CSR attestation refused: no profile for format", "format", format)
-		return fmt.Errorf("%w: %v", ErrAttestationUnbindableFormat, err)
+		return &ErrOperationWrap{Sentinel: ErrAttestationUnbindableFormat, Err: err}
 
 	case errors.Is(err, attestation.ErrKeyNotBound):
 		slog.Warn("CSR attestation refused: key not bound", "format", format, "error", err)
-		return fmt.Errorf("%w: %v", ErrAttestationKeyNotBound, err)
+		return &ErrOperationWrap{Sentinel: ErrAttestationKeyNotBound, Err: err}
 
 	case errors.Is(err, attestation.ErrStaleEvidence):
 		slog.Warn("CSR attestation refused: challenge mismatch", "format", format)
-		return fmt.Errorf("%w: %v", ErrAttestationStale, err)
+		return &ErrOperationWrap{Sentinel: ErrAttestationStale, Err: err}
 
 	default:
 		return err

@@ -128,13 +128,15 @@ func TestServeSealedWindow_SealedNodeProceedsAfterUnseal(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.serveSealedWindow(node) }()
 
-	// Give ServeSealedWindow's listener/poll loop a moment to start, then
-	// unseal "any other path": directly against the barrier service the
-	// listener itself would serve (service.BarrierServicer.BarrierUnseal),
-	// NOT node.Unseal — that call also completes the boot, and only
-	// serveSealedWindow is meant to make it, exactly once, after the window
-	// observes the unseal.
-	time.Sleep(100 * time.Millisecond)
+	// Unseal "any other path" without waiting for the goroutine above to
+	// start first: directly against the barrier service the listener itself
+	// would serve (service.BarrierServicer.BarrierUnseal), NOT node.Unseal —
+	// that call also completes the boot, and only serveSealedWindow is meant
+	// to make it, exactly once, after the window observes the unseal. No
+	// synchronization is needed here: go-qrdb's ServeSealedWindow checks
+	// IsSealed() before its first wait and again on every poll tick
+	// (sealedWindowPollInterval), so this unseal is observed whether it lands
+	// before that first check or between polls.
 	svcNode := node.Services()
 	require.NotNil(t, svcNode, "a sealed node must still expose the seal-layer services")
 	require.NotNil(t, svcNode.Barrier)
@@ -186,9 +188,11 @@ func TestServeSealedWindow_RefusesNonLoopbackByDefault(t *testing.T) {
 	s2 := testSealedWindowServer(t, cfg)
 	proceeded := make(chan error, 1)
 	go func() { proceeded <- s2.serveSealedWindow(node) }()
-	// Cancel quickly: this test only asserts the bind check was bypassed
-	// (no *SealedWindowBindError), not that unseal completes.
-	time.Sleep(50 * time.Millisecond)
+	// Cancel immediately: this test only asserts the bind check was bypassed
+	// (no *SealedWindowBindError), not that unseal completes, and
+	// go-qrdb's ServeSealedWindow calls srv.Start() unconditionally before
+	// ever checking ctx, so an already-canceled context still exercises the
+	// same bind path and is observed on its first select.
 	s2.cancel()
 	select {
 	case err := <-proceeded:
@@ -216,7 +220,9 @@ func TestServeSealedWindow_CancellationClosesCleanly(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.serveSealedWindow(node) }()
 
-	time.Sleep(100 * time.Millisecond)
+	// Cancel immediately: go-qrdb's ServeSealedWindow calls srv.Start()
+	// unconditionally before ever checking ctx, so an already-canceled
+	// context still starts the listener and is observed on its first select.
 	s.cancel()
 
 	select {

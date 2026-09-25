@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -787,5 +788,40 @@ func TestWaitForAgentExit_TimesOut(t *testing.T) {
 
 	if waitForAgentExit(state, 100*time.Millisecond) {
 		t.Error("waitForAgentExit reported exit for a process that is still running")
+	}
+}
+
+// ---------------------------------------------------------------
+// runAgentStop (thin RunE wrapper over stopAgentServer)
+// ---------------------------------------------------------------
+
+func TestRunAgentStop_NothingRunning(t *testing.T) {
+	withIsolatedAgentHome(t)
+
+	_, err := runDetached(t, runAgentStop)
+	if !errors.Is(err, ErrAgentServerNotRunning) {
+		t.Fatalf("runAgentStop error = %v, want %v", err, ErrAgentServerNotRunning)
+	}
+}
+
+func TestRunAgentStop_ReportsGracefulTermination(t *testing.T) {
+	withIsolatedAgentHome(t)
+
+	executable := fakeAgentExecutable(t)
+	pid := startFakeAgentServer(t, executable, false)
+	seedAgentServerState(t, pid, executable)
+
+	out, err := runDetached(t, runAgentStop)
+	if err != nil {
+		t.Fatalf("runAgentStop: %v", err)
+	}
+	if !strings.Contains(out, "Agent server stopped") {
+		t.Errorf("output = %q, want it to report the server stopped", out)
+	}
+	if !strings.Contains(out, "Signal: SIGTERM") {
+		t.Errorf("output = %q, want it to report SIGTERM (not SIGKILL) for a cooperative process", out)
+	}
+	if _, statErr := os.Stat(mustAgentStateFile(t)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("state file was not removed: %v", statErr)
 	}
 }

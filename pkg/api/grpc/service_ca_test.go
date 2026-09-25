@@ -189,19 +189,18 @@ func generateTestCert(t *testing.T) *x509.Certificate {
 	return cert
 }
 
-func TestSetCA_GetCA(t *testing.T) {
-	old := GetCA()
-	defer SetCA(old)
+func TestServiceSetCA_CA(t *testing.T) {
+	svc := NewService(nil, nil, nil)
 
 	t.Run("sets and gets CA", func(t *testing.T) {
 		mock := &mockCACert{}
-		SetCA(mock)
-		assert.Equal(t, mock, GetCA())
+		svc.SetCA(mock)
+		assert.Equal(t, mock, svc.CA())
 	})
 
 	t.Run("sets to nil", func(t *testing.T) {
-		SetCA(nil)
-		assert.Nil(t, GetCA())
+		svc.SetCA(nil)
+		assert.Nil(t, svc.CA())
 	})
 }
 
@@ -209,9 +208,7 @@ func TestGetCACertificate(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
-		old := GetCA()
-		SetCA(nil)
-		defer SetCA(old)
+		svc.SetCA(nil)
 
 		_, err := svc.GetCACertificate(context.Background(), &pb.GetCACertificateRequest{})
 		require.Error(t, err)
@@ -221,9 +218,7 @@ func TestGetCACertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when CA does not implement cert getter", func(t *testing.T) {
-		old := GetCA()
-		SetCA("not-a-ca") // does not implement grpcCAMethodCert
-		defer SetCA(old)
+		svc.SetCA("not-a-ca") // does not implement grpcCAMethodCert
 
 		_, err := svc.GetCACertificate(context.Background(), &pb.GetCACertificateRequest{})
 		require.Error(t, err)
@@ -233,9 +228,7 @@ func TestGetCACertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when CACertificate fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCACert{err: errors.New("cert error")})
-		defer SetCA(old)
+		svc.SetCA(&mockCACert{err: errors.New("cert error")})
 
 		_, err := svc.GetCACertificate(context.Background(), &pb.GetCACertificateRequest{})
 		require.Error(t, err)
@@ -246,9 +239,7 @@ func TestGetCACertificate(t *testing.T) {
 
 	t.Run("returns certificate on success", func(t *testing.T) {
 		cert := generateTestCert(t)
-		old := GetCA()
-		SetCA(&mockCACert{cert: cert})
-		defer SetCA(old)
+		svc.SetCA(&mockCACert{cert: cert})
 
 		resp, err := svc.GetCACertificate(context.Background(), &pb.GetCACertificateRequest{})
 		require.NoError(t, err)
@@ -265,9 +256,7 @@ func TestSignCSR(t *testing.T) {
 	cert := generateTestCert(t)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
-		old := GetCA()
-		SetCA(nil)
-		defer SetCA(old)
+		svc.SetCA(nil)
 
 		_, err := svc.SignCSR(context.Background(), &pb.SignCSRRequest{CsrPem: []byte("csr")})
 		require.Error(t, err)
@@ -277,9 +266,7 @@ func TestSignCSR(t *testing.T) {
 	})
 
 	t.Run("returns error when CSR PEM is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCASignCSR{})
-		defer SetCA(old)
+		svc.SetCA(&mockCASignCSR{})
 
 		_, err := svc.SignCSR(context.Background(), &pb.SignCSRRequest{CsrPem: nil})
 		require.Error(t, err)
@@ -289,9 +276,7 @@ func TestSignCSR(t *testing.T) {
 	})
 
 	t.Run("returns error when CA does not implement SignCSR", func(t *testing.T) {
-		old := GetCA()
-		SetCA("not-a-signer")
-		defer SetCA(old)
+		svc.SetCA("not-a-signer")
 
 		_, err := svc.SignCSR(context.Background(), &pb.SignCSRRequest{CsrPem: []byte("csr")})
 		require.Error(t, err)
@@ -301,9 +286,7 @@ func TestSignCSR(t *testing.T) {
 	})
 
 	t.Run("returns error when signing fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCASignCSR{err: errors.New("sign failed")})
-		defer SetCA(old)
+		svc.SetCA(&mockCASignCSR{err: errors.New("sign failed")})
 
 		_, err := svc.SignCSR(context.Background(), &pb.SignCSRRequest{CsrPem: []byte("csr")})
 		require.Error(t, err)
@@ -314,9 +297,7 @@ func TestSignCSR(t *testing.T) {
 
 	t.Run("returns signed certificate with chain on success", func(t *testing.T) {
 		caCert := generateTestCert(t)
-		old := GetCA()
-		SetCA(&mockCASignCSR{cert: cert, caCert: caCert})
-		defer SetCA(old)
+		svc.SetCA(&mockCASignCSR{cert: cert, caCert: caCert})
 
 		resp, err := svc.SignCSR(context.Background(), &pb.SignCSRRequest{
 			CsrPem:       []byte("csr"),
@@ -330,9 +311,7 @@ func TestSignCSR(t *testing.T) {
 	})
 
 	t.Run("returns signed certificate without chain when CA cert fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCASignCSR{cert: cert, caErr: errors.New("no ca cert")})
-		defer SetCA(old)
+		svc.SetCA(&mockCASignCSR{cert: cert, caErr: errors.New("no ca cert")})
 
 		resp, err := svc.SignCSR(context.Background(), &pb.SignCSRRequest{CsrPem: []byte("csr")})
 		require.NoError(t, err)
@@ -345,9 +324,7 @@ func TestIssueCertificate(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
-		old := GetCA()
-		SetCA(nil)
-		defer SetCA(old)
+		svc.SetCA(nil)
 
 		_, err := svc.IssueCertificate(context.Background(), &pb.IssueCertificateRequest{CommonName: "test"})
 		require.Error(t, err)
@@ -357,9 +334,7 @@ func TestIssueCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when common name is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssue{})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIssue{})
 
 		_, err := svc.IssueCertificate(context.Background(), &pb.IssueCertificateRequest{CommonName: ""})
 		require.Error(t, err)
@@ -369,9 +344,7 @@ func TestIssueCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when CA does not implement issue", func(t *testing.T) {
-		old := GetCA()
-		SetCA("not-an-issuer")
-		defer SetCA(old)
+		svc.SetCA("not-an-issuer")
 
 		_, err := svc.IssueCertificate(context.Background(), &pb.IssueCertificateRequest{CommonName: "test"})
 		require.Error(t, err)
@@ -381,9 +354,7 @@ func TestIssueCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when issuance fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssue{err: errors.New("issue failed")})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIssue{err: errors.New("issue failed")})
 
 		_, err := svc.IssueCertificate(context.Background(), &pb.IssueCertificateRequest{CommonName: "test"})
 		require.Error(t, err)
@@ -393,14 +364,12 @@ func TestIssueCertificate(t *testing.T) {
 	})
 
 	t.Run("returns certificate on success", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssue{
+		svc.SetCA(&mockCAIssue{
 			certPEM:   []byte("cert-pem"),
 			chainPEM:  []byte("chain-pem"),
 			keyPEM:    []byte("key-pem"),
 			serialHex: "abc123",
 		})
-		defer SetCA(old)
 
 		resp, err := svc.IssueCertificate(context.Background(), &pb.IssueCertificateRequest{
 			CommonName:   "test.example.com",
@@ -422,9 +391,7 @@ func TestRevokeCertificate(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
-		old := GetCA()
-		SetCA(nil)
-		defer SetCA(old)
+		svc.SetCA(nil)
 
 		_, err := svc.RevokeCertificate(context.Background(), &pb.RevokeCertificateRequest{SerialNumber: "abc"})
 		require.Error(t, err)
@@ -434,9 +401,7 @@ func TestRevokeCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when serial number is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCARevoke{})
-		defer SetCA(old)
+		svc.SetCA(&mockCARevoke{})
 
 		_, err := svc.RevokeCertificate(context.Background(), &pb.RevokeCertificateRequest{SerialNumber: ""})
 		require.Error(t, err)
@@ -446,9 +411,7 @@ func TestRevokeCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when CA does not implement revoke", func(t *testing.T) {
-		old := GetCA()
-		SetCA("not-a-revoker")
-		defer SetCA(old)
+		svc.SetCA("not-a-revoker")
 
 		_, err := svc.RevokeCertificate(context.Background(), &pb.RevokeCertificateRequest{SerialNumber: "abc"})
 		require.Error(t, err)
@@ -458,9 +421,7 @@ func TestRevokeCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when serial number is invalid hex", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCARevoke{})
-		defer SetCA(old)
+		svc.SetCA(&mockCARevoke{})
 
 		_, err := svc.RevokeCertificate(context.Background(), &pb.RevokeCertificateRequest{SerialNumber: "not-hex"})
 		require.Error(t, err)
@@ -470,9 +431,7 @@ func TestRevokeCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when revocation fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCARevoke{err: errors.New("revoke failed")})
-		defer SetCA(old)
+		svc.SetCA(&mockCARevoke{err: errors.New("revoke failed")})
 
 		_, err := svc.RevokeCertificate(context.Background(), &pb.RevokeCertificateRequest{SerialNumber: "abc"})
 		require.Error(t, err)
@@ -482,9 +441,7 @@ func TestRevokeCertificate(t *testing.T) {
 	})
 
 	t.Run("revokes certificate on success", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCARevoke{})
-		defer SetCA(old)
+		svc.SetCA(&mockCARevoke{})
 
 		resp, err := svc.RevokeCertificate(context.Background(), &pb.RevokeCertificateRequest{
 			SerialNumber: "0xabc",
@@ -500,9 +457,7 @@ func TestGenerateCRL(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
-		old := GetCA()
-		SetCA(nil)
-		defer SetCA(old)
+		svc.SetCA(nil)
 
 		_, err := svc.GenerateCRL(context.Background(), &pb.GenerateCRLRequest{})
 		require.Error(t, err)
@@ -512,9 +467,7 @@ func TestGenerateCRL(t *testing.T) {
 	})
 
 	t.Run("returns error when CA does not implement CRL", func(t *testing.T) {
-		old := GetCA()
-		SetCA("not-a-crl-generator")
-		defer SetCA(old)
+		svc.SetCA("not-a-crl-generator")
 
 		_, err := svc.GenerateCRL(context.Background(), &pb.GenerateCRLRequest{})
 		require.Error(t, err)
@@ -524,9 +477,7 @@ func TestGenerateCRL(t *testing.T) {
 	})
 
 	t.Run("returns error when CRL generation fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCACRL{err: errors.New("crl failed")})
-		defer SetCA(old)
+		svc.SetCA(&mockCACRL{err: errors.New("crl failed")})
 
 		_, err := svc.GenerateCRL(context.Background(), &pb.GenerateCRLRequest{})
 		require.Error(t, err)
@@ -536,9 +487,7 @@ func TestGenerateCRL(t *testing.T) {
 	})
 
 	t.Run("returns CRL on success", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCACRL{crlDER: []byte("crl-data")})
-		defer SetCA(old)
+		svc.SetCA(&mockCACRL{crlDER: []byte("crl-data")})
 
 		resp, err := svc.GenerateCRL(context.Background(), &pb.GenerateCRLRequest{})
 		require.NoError(t, err)
@@ -551,9 +500,7 @@ func TestIsRevoked(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
-		old := GetCA()
-		SetCA(nil)
-		defer SetCA(old)
+		svc.SetCA(nil)
 
 		_, err := svc.IsRevoked(context.Background(), &pb.IsRevokedRequest{SerialNumber: "abc"})
 		require.Error(t, err)
@@ -563,9 +510,7 @@ func TestIsRevoked(t *testing.T) {
 	})
 
 	t.Run("returns error when serial number is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIsRevoked{})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIsRevoked{})
 
 		_, err := svc.IsRevoked(context.Background(), &pb.IsRevokedRequest{SerialNumber: ""})
 		require.Error(t, err)
@@ -575,9 +520,7 @@ func TestIsRevoked(t *testing.T) {
 	})
 
 	t.Run("returns error when CA does not implement IsRevoked", func(t *testing.T) {
-		old := GetCA()
-		SetCA("not-a-checker")
-		defer SetCA(old)
+		svc.SetCA("not-a-checker")
 
 		_, err := svc.IsRevoked(context.Background(), &pb.IsRevokedRequest{SerialNumber: "abc"})
 		require.Error(t, err)
@@ -587,9 +530,7 @@ func TestIsRevoked(t *testing.T) {
 	})
 
 	t.Run("returns error when serial is invalid hex", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIsRevoked{})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIsRevoked{})
 
 		_, err := svc.IsRevoked(context.Background(), &pb.IsRevokedRequest{SerialNumber: "not-hex"})
 		require.Error(t, err)
@@ -599,9 +540,7 @@ func TestIsRevoked(t *testing.T) {
 	})
 
 	t.Run("returns error when check fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIsRevoked{err: errors.New("check failed")})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIsRevoked{err: errors.New("check failed")})
 
 		_, err := svc.IsRevoked(context.Background(), &pb.IsRevokedRequest{SerialNumber: "abc"})
 		require.Error(t, err)
@@ -611,9 +550,7 @@ func TestIsRevoked(t *testing.T) {
 	})
 
 	t.Run("returns revoked=true when certificate is revoked", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIsRevoked{revoked: true})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIsRevoked{revoked: true})
 
 		resp, err := svc.IsRevoked(context.Background(), &pb.IsRevokedRequest{SerialNumber: "abc"})
 		require.NoError(t, err)
@@ -622,9 +559,7 @@ func TestIsRevoked(t *testing.T) {
 	})
 
 	t.Run("returns revoked=false when certificate is not revoked", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIsRevoked{revoked: false})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIsRevoked{revoked: false})
 
 		resp, err := svc.IsRevoked(context.Background(), &pb.IsRevokedRequest{SerialNumber: "abc"})
 		require.NoError(t, err)

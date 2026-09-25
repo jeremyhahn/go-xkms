@@ -19,6 +19,7 @@ package module
 import (
 	"bufio"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -539,7 +540,11 @@ func LoadFromFile(path string) (*Config, error) {
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrConfigFileOpen, Detail: fmt.Sprintf("%v", err)}
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			slog.Debug("pkcs11/module: failed to close config file", "path", path, "error", cerr)
+		}
+	}()
 
 	cfg := DefaultConfig()
 	scanner := bufio.NewScanner(file)

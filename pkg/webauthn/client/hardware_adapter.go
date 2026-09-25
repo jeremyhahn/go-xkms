@@ -58,12 +58,10 @@ func NewHardwareAdapter(config *fido2.Config, enumerator fido2.HIDDeviceEnumerat
 
 	devices, err := handler.ListDevices()
 	if err != nil {
-		_ = handler.Close()
-		return nil, &errs.Joined{Lead: ErrAuthenticatorNotFound, Cause: err}
+		return nil, errors.Join(&errs.Joined{Lead: ErrAuthenticatorNotFound, Cause: err}, handler.Close())
 	}
 	if len(devices) == 0 {
-		_ = handler.Close()
-		return nil, ErrAuthenticatorNotFound
+		return nil, errors.Join(ErrAuthenticatorNotFound, handler.Close())
 	}
 
 	return &HardwareAdapter{handler: handler}, nil

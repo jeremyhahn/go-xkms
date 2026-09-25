@@ -550,6 +550,16 @@ func (m *mockXKMSTPM) ActivateCredential(credentialBlob, encryptedSecret []byte)
 	return m.activateSecret, nil
 }
 
+func (m *mockXKMSTPM) AnswerCredentialChallenge(key *xkmssdk.ActivationKey, challenge *xkmssdk.CredentialChallenge) ([]byte, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSTPM) ClearForReprovision() (bool, error) { return false, nil }
+
+func (m *mockXKMSTPM) CreateActivationKey() (*xkmssdk.ActivationKey, error) { return nil, nil }
+
+func (m *mockXKMSTPM) State() (*xkmssdk.ProvisioningState, error) { return nil, nil }
+
 func (m *mockXKMSTPM) AKProfile() (xkmssdk.AKProfile, error) {
 	return xkmssdk.AKProfile{}, nil
 }

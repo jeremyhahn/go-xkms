@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -184,6 +185,10 @@ func (m *mockXKMSBackend) Type() types.StoreType {
 }
 
 func (m *mockXKMSBackend) CertStorage() certstore.CertificateStorageAdapter {
+	return nil
+}
+
+func (m *mockXKMSBackend) SignerStore() store.SignerStorer {
 	return nil
 }
 

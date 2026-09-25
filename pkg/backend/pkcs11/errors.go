@@ -15,7 +15,11 @@
 
 package pkcs11
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/miekg/pkcs11"
+)
 
 var (
 	// ErrUnsupportedKeyAlgorithm is returned when an unsupported key algorithm is requested.
@@ -102,3 +106,12 @@ var (
 	// CKR_USER_TYPE_INVALID error with actionable context for the caller.
 	ErrSOPINRequired = errors.New("pkcs11: SO PIN required for this operation on YubiKey PIV (provide management key)")
 )
+
+// isCKR reports whether err is, or wraps, a pkcs11.Error carrying the given
+// Cryptoki return code (CKR_*). Call sites use this instead of comparing err
+// to a pkcs11.Error value with == so a wrapped Cryptoki error (e.g. via
+// errors.Join or %w) still classifies correctly.
+func isCKR(err error, code uint) bool {
+	var ckErr pkcs11.Error
+	return errors.As(err, &ckErr) && ckErr == pkcs11.Error(code)
+}

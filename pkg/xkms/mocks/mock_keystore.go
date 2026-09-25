@@ -27,6 +27,7 @@ import (
 
 	backendmocks "github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	storagemocks "github.com/jeremyhahn/go-xkms/pkg/storage/mocks"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -40,6 +41,10 @@ type MockKeyStore struct {
 	// Embedded mocks for delegation
 	BackendMock   *backendmocks.MockBackend
 	CertStoreMock *storagemocks.MockCertStorage
+
+	// SignerStoreMock backs SignerStore(). Nil unless a test configures it,
+	// matching CertStoreMock's default of nil.
+	SignerStoreMock store.SignerStorer
 
 	// Storage
 	keys       map[string]crypto.PrivateKey
@@ -676,6 +681,12 @@ func (m *MockKeyStore) KeyProvider() types.KeyProvider {
 // CertStorage returns the underlying certificate storage for direct access if needed.
 func (m *MockKeyStore) CertStorage() certstore.CertificateStorageAdapter {
 	return m.CertStoreMock
+}
+
+// SignerStore returns the configured signer store, or nil when the test has
+// not configured one.
+func (m *MockKeyStore) SignerStore() store.SignerStorer {
+	return m.SignerStoreMock
 }
 
 // Close releases all resources held by the xkms.

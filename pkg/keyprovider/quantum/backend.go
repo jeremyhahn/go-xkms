@@ -27,6 +27,7 @@ import (
 	"crypto/mlkem"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -431,7 +432,7 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 	keyID := attrs.ID()
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
@@ -545,7 +546,7 @@ func (b *QuantumBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttribut
 
 	keyID := attrs.ID()
 	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return &errs.Wrapped{Msg: "failed to delete key", Err: err}

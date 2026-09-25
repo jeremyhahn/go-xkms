@@ -946,3 +946,74 @@ func TestFactoryReset_EmptyTPM(t *testing.T) {
 	err := tpmImpl.FactoryReset(nil)
 	require.NoError(t, err)
 }
+
+// TestFactoryReset_IAKAtLegacyECCHandle_Evicted proves the fix for the
+// FactoryReset handle-table bug (go-xkms#798): an IAK placed at 0x81010002
+// -- this codebase's own default IAK handle (IAKConfig.Handle), and also
+// the TCG-reserved "EK ECC" address the old hardcoded preserveHandles table
+// protected unconditionally -- is evicted, not preserved, because
+// preserveHandles is now derived from the TPM's actual configured
+// EK.Handle rather than a hardcoded TCG-default pair.
+func TestFactoryReset_IAKAtLegacyECCHandle_Evicted(t *testing.T) {
+	_, tpm := createSim(false, false)
+	defer func() { _ = tpm.Close() }()
+
+	tpmImpl, ok := tpm.(*TPM2)
+	require.True(t, ok)
+
+	// createSim provisions via Provision(nil), which leaves hierarchy auth
+	// empty; reflect that in the config, matching TestFactoryReset_Success.
+	tpmImpl.config.EK.HierarchyAuth = nil
+
+	// createSim's shared IAK config already places the IAK at 0x81010002 --
+	// the exact handle the old hardcoded table called "EK ECC P-256" and
+	// preserved unconditionally. This test depends on that collision to
+	// exercise the fix; TestFactoryReset_Success retargets the IAK away
+	// from it instead, to test eviction without depending on this fix.
+	require.Equal(t, uint32(0x81010002), tpmImpl.config.IAK.Handle,
+		"this test depends on createSim's IAK handle colliding with the legacy ECC-EK address")
+
+	soPIN := mustPassword([]byte(store.DEFAULT_PASSWORD))
+	require.NoError(t, tpmImpl.Install(soPIN, nil))
+
+	_, err := tpmImpl.IAKAttributes()
+	require.NoError(t, err, "IAK should exist before reset")
+
+	require.NoError(t, tpmImpl.FactoryReset([]byte(store.DEFAULT_PASSWORD)))
+
+	_, err = tpmImpl.IAKAttributes()
+	assert.Error(t, err, "the IAK at the legacy ECC-EK handle must be evicted, not preserved")
+
+	_, err = tpmImpl.EKAttributes()
+	require.NoError(t, err, "the TPM's real, configured EK must remain after factory reset")
+}
+
+// TestFactoryReset_ForeignObjectAtTCGECCEKHandle_Preserved is the other half
+// of the go-xkms#798 fix: 0x81010002 is the TCG ECC EK address, so an object
+// there that this package's configuration does not own -- a manufacturer ECC
+// EK beside a configured RSA EK -- must survive FactoryReset. The IAK is
+// provisioned at 0x81010002 and the configuration is then pointed elsewhere,
+// which leaves a persistent object at that address that the package no
+// longer owns.
+func TestFactoryReset_ForeignObjectAtTCGECCEKHandle_Preserved(t *testing.T) {
+	_, tpm := createSim(false, false)
+	defer func() { _ = tpm.Close() }()
+
+	tpmImpl, ok := tpm.(*TPM2)
+	require.True(t, ok)
+	tpmImpl.config.EK.HierarchyAuth = nil
+	require.Equal(t, uint32(0x81010002), tpmImpl.config.IAK.Handle)
+
+	soPIN := mustPassword([]byte(store.DEFAULT_PASSWORD))
+	require.NoError(t, tpmImpl.Install(soPIN, nil))
+
+	tpmImpl.config.IAK.Handle = 0x81010010
+
+	require.NoError(t, tpmImpl.FactoryReset([]byte(store.DEFAULT_PASSWORD)))
+
+	_, err := tpm2.ReadPublic{ObjectHandle: tpm2.TPMHandle(0x81010002)}.Execute(tpmImpl.transport)
+	assert.NoError(t, err, "an object at the TCG ECC EK handle that the configuration does not own must be preserved")
+
+	_, err = tpmImpl.EKAttributes()
+	require.NoError(t, err, "the configured EK must remain after factory reset")
+}

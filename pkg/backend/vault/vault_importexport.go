@@ -266,7 +266,8 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		"cn":                  attrs.CN,
 		"symmetric_algorithm": string(attrs.SymmetricAlgorithm),
 		// uint8: see the matching comment in vault_symmetric.go's
-		// GenerateSymmetricKey for why string(attrs.KeyType) is wrong here.
+		// GenerateSymmetricKey for why string(attrs.KeyType) is wrong here
+		// (go-xkms#705).
 		"key_type":   uint8(attrs.KeyType),
 		"store_type": backend.STORE_VAULT,
 		"vault_name": keyName,

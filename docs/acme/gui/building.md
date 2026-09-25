@@ -1,5 +1,16 @@
 # Building
 
+> **Correction (go-xkms#942):** there is no `cactl` or `trusted-acme-server`
+> binary, and the root Makefile has no `build-gui`/`frontend-build-admin`/
+> `build-gui-cactl` targets today. This page's Makefile and npm-workspace
+> layout (`web/packages/{admin,client,shared}`) describes
+> `pkg/acme/gui/{admin,client,guard,webui}`, which has no confirmed `cmd/`
+> caller — see [`README.md`](README.md)'s correction. The frontend source
+> for the admin UI that **is** wired (`xkmsd`'s `/admin-ui`) instead lives
+> at `pkg/acme/web/packages/{admin,client,shared}`. Reconciling this page
+> with that is unresolved; treat the targets and paths below as
+> unverified.
+
 ## Frontend Targets
 
 | Target | Description |
@@ -20,26 +31,19 @@
 make build
 ```
 
-Produces three binaries without GUI support:
-- `bin/trusted-acme-server`
-- `bin/trusted-acme-client`
-- `bin/cactl`
+`make build` produces `bin/xkmsd` and `bin/xkmsctl` (`build-servers`,
+`build-cli`, `Makefile:462-484`); there is no Makefile target that builds
+`cmd/acme-client` (`trusted-acme-client`) today. See the correction above
+for what this page originally claimed.
 
 The `frontend-build` target runs first to embed the admin SPA into the server binary for web mode.
 
 ### GUI-Enabled (requires CGO + WebKit2GTK)
 
-```bash
-make build-gui
-```
-
-Compiles with `-tags=gui` and produces binaries with native desktop window support:
-
-| Target | Binary | Build Tags |
-|--------|--------|------------|
-| `build-gui-server` | `bin/trusted-acme-server` | `gui` + project tags |
-| `build-gui-client` | `bin/trusted-acme-client` | `gui` + project tags |
-| `build-gui-cactl` | `bin/cactl` | `gui,iam,grpc,codec_json,codec_msgpack,codec_cbor,codec_yaml` |
+There is no `make build-gui`/`build-gui-server`/`build-gui-client` target
+in the root Makefile. `cmd/acme-client/gui.go` builds under `-tags gui`
+directly (`go build -tags gui ./cmd/acme-client`), but has no Makefile
+target of its own — see the correction above.
 
 ## Build Pipeline
 

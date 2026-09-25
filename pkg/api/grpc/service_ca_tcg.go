@@ -46,7 +46,7 @@ type grpcCAMethodEnrollDevice interface {
 
 // IssueEKCertificate issues an Endorsement Key certificate for a TPM.
 func (s *Service) IssueEKCertificate(ctx context.Context, req *pb.IssueEKCertificateRequest) (*pb.IssueEKCertificateResponse, error) {
-	ca := getCAInstance()
+	ca := s.ca
 	if ca == nil {
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
@@ -86,7 +86,7 @@ func (s *Service) IssueEKCertificate(ctx context.Context, req *pb.IssueEKCertifi
 
 // IssueAKCertificate issues an Attestation Key certificate for a TPM.
 func (s *Service) IssueAKCertificate(ctx context.Context, req *pb.IssueAKCertificateRequest) (*pb.IssueAKCertificateResponse, error) {
-	ca := getCAInstance()
+	ca := s.ca
 	if ca == nil {
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
@@ -126,7 +126,7 @@ func (s *Service) IssueAKCertificate(ctx context.Context, req *pb.IssueAKCertifi
 
 // SignTCGCSR signs a TCG-CSR-IDEVID and returns IAK and IDevID certificates.
 func (s *Service) SignTCGCSR(ctx context.Context, req *pb.SignTCGCSRRequest) (*pb.SignTCGCSRResponse, error) {
-	ca := getCAInstance()
+	ca := s.ca
 	if ca == nil {
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
@@ -165,7 +165,7 @@ func (s *Service) SignTCGCSR(ctx context.Context, req *pb.SignTCGCSRRequest) (*p
 
 // EnrollDevice performs full TCG device enrollment with credential activation challenge.
 func (s *Service) EnrollDevice(ctx context.Context, req *pb.EnrollDeviceRequest) (*pb.EnrollDeviceResponse, error) {
-	ca := getCAInstance()
+	ca := s.ca
 	if ca == nil {
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
