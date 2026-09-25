@@ -122,6 +122,85 @@ func TestVerifierAdapter_PKCS11Dispatch(t *testing.T) {
 	}
 }
 
+// TestVerifierAdapter_PIVDispatch pins that a PIV-only verifierAdapter
+// routes Type/Verify/BeginChallenge to the wrapped
+// PIVHardwareFactorVerifier: BeginChallenge takes the same generic-nonce
+// path as PKCS#11 (no per-method challenge), and Verify/Type reach the
+// wrapped verifier rather than falling through to the pkcs11 branch.
+func TestVerifierAdapter_PIVDispatch(t *testing.T) {
+	roots := x509.NewCertPool()
+	pivv, err := auth_factors.NewPIVHardwareFactorVerifier(roots, nil)
+	if err != nil {
+		t.Fatalf("NewPIVHardwareFactorVerifier: %v", err)
+	}
+	adapter := verifierAdapter{piv: pivv}
+
+	if got := adapter.Type(); got != pivv.Type() {
+		t.Fatalf("Type() = %v, want %v", got, pivv.Type())
+	}
+
+	challenge, meta, exp, err := adapter.BeginChallenge(context.Background(), "tenant", qrdbtransport.FactorTypePIV, "")
+	if err != nil {
+		t.Fatalf("BeginChallenge: %v", err)
+	}
+	if challenge != nil || meta != nil || !exp.IsZero() {
+		t.Fatalf("expected a zero-value generic-nonce challenge, got (%v, %v, %v)", challenge, meta, exp)
+	}
+
+	// A nil factor is a deterministic, non-crypto error path — it proves
+	// Verify dispatches to the wrapped PIV verifier rather than the
+	// pkcs11 fallback.
+	err = adapter.Verify(context.Background(), nil, qrdbtransport.VerifyChallenge{})
+	if err == nil {
+		t.Fatal("expected an error verifying a nil factor")
+	}
+	if _, ok := err.(*auth_factors.MissingFactorError); !ok {
+		t.Fatalf("expected *auth_factors.MissingFactorError from the PIV verifier, got %T: %v", err, err)
+	}
+}
+
+// TestVerifierAdapter_WebAuthnDispatch pins that a WebAuthn-only
+// verifierAdapter routes Type/Verify/BeginChallenge to the wrapped
+// WebAuthnFactorVerifier: BeginChallenge takes the RP-bound ceremony path
+// (distinct from the PIV/PKCS#11 generic-nonce path) and Verify/Type reach
+// the wrapped verifier.
+func TestVerifierAdapter_WebAuthnDispatch(t *testing.T) {
+	svc := newTestWebAuthnService(t)
+	webauthnv, err := auth_factors.NewWebAuthnFactorVerifier(svc)
+	if err != nil {
+		t.Fatalf("NewWebAuthnFactorVerifier: %v", err)
+	}
+	adapter := verifierAdapter{webauthn: webauthnv}
+
+	if got := adapter.Type(); got != webauthnv.Type() {
+		t.Fatalf("Type() = %v, want %v", got, webauthnv.Type())
+	}
+
+	// An empty hint drives the discoverable-credential ceremony, which
+	// succeeds without a pre-registered user and returns the RP-bound
+	// challenge (unlike the PIV/PKCS#11 generic-nonce path).
+	challenge, meta, _, err := adapter.BeginChallenge(context.Background(), "tenant", qrdbtransport.FactorTypeFIDO2, "")
+	if err != nil {
+		t.Fatalf("BeginChallenge: %v", err)
+	}
+	if len(challenge) == 0 {
+		t.Fatal("expected a non-empty RP-bound challenge")
+	}
+	if meta["session_id"] == "" || meta["options"] == "" {
+		t.Fatalf("expected session_id and options metadata, got %v", meta)
+	}
+
+	// A nil factor is a deterministic, non-crypto error path — it proves
+	// Verify dispatches to the wrapped WebAuthn verifier.
+	err = adapter.Verify(context.Background(), nil, qrdbtransport.VerifyChallenge{})
+	if err == nil {
+		t.Fatal("expected an error verifying a nil factor")
+	}
+	if _, ok := err.(*auth_factors.MissingFactorError); !ok {
+		t.Fatalf("expected *auth_factors.MissingFactorError from the webauthn verifier, got %T: %v", err, err)
+	}
+}
+
 // newTestWebAuthnService constructs a minimal but configured xkms
 // webauthn.Service for tests.
 func newTestWebAuthnService(t *testing.T) *xkmswebauthn.Service {
