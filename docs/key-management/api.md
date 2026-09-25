@@ -713,9 +713,17 @@ fixes to stay reproducible.
 
 ## Pagination
 
-`ListKeys`, `ListBackends` and `ListCertificates` take `ListOption` values and
-return paged results; the REST side is `pkg/api/rest/pagination.go`, the client
-side `pkg/api/transport/pagination.go`. Unbounded result sets are not returned.
+`ListKeys`, `ListBackends` and `ListCertificates` take `ListOption` values; the
+REST side is `pkg/api/rest/pagination.go`, the client side
+`pkg/api/transport/pagination.go`.
+
+- **Default is unpaginated.** With no `page` query parameter, or `page=0`,
+  the full result set is returned. That keeps existing clients working
+  (`transport.PageRequest.IsUnpaginated`). Pass `page >= 1` and `page_size`
+  to opt in.
+- **Non-numeric values are rejected.** A `page` or `page_size` that is not an
+  integer is answered with **400** (`ErrInvalidRequest`, from
+  `parsePageRequest`). It is not treated as unpaginated.
 
 ## Port conflicts — as-shipped reality
 
