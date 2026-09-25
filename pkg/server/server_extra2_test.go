@@ -301,8 +301,8 @@ func TestInitializeQRDBStorage_QRDBEmptyTransportIsEmbedded(t *testing.T) {
 // ============================================================================
 
 // TestStartNoiseBootstrap_NoBundler verifies startNoiseBootstrap returns early
-// without panicking when no CA bundler has been set (grpcinternal.GetCABundler
-// returns nil). The goroutine completes quickly.
+// without panicking when no CA bundler has been set (server.grpcCABundler is
+// nil). The goroutine completes quickly.
 func TestStartNoiseBootstrap_NoBundler(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
@@ -3041,11 +3041,6 @@ func TestStartNoiseBootstrap_WithBundler(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	// Set a mock CA bundler so the nil-guard is passed.
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = false // call startNoiseBootstrap manually
 	cfg.Server.NoisePort = 0    // bind on any available port
@@ -3053,6 +3048,9 @@ func TestStartNoiseBootstrap_WithBundler(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
+
+	// Set a mock CA bundler so the nil-guard is passed.
+	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	server.wg.Add(1)
 	done := make(chan struct{})
@@ -3082,10 +3080,6 @@ func TestStartNoiseBootstrap_TimingsOK(t *testing.T) {
 
 	// Verify startNoiseBootstrap with ReadTimeout/WriteTimeout config strings
 	// parses them correctly (exercises the timeout parse branches).
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = false
 	cfg.Server.NoisePort = 0
@@ -3096,6 +3090,8 @@ func TestStartNoiseBootstrap_TimingsOK(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
+
+	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	server.wg.Add(1)
 	done := make(chan struct{})
@@ -3123,10 +3119,6 @@ func TestServer_Shutdown_WithNoiseServer(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = true // enable noise so Start() launches it
 	cfg.Server.NoisePort = 0
@@ -3140,6 +3132,8 @@ func TestServer_Shutdown_WithNoiseServer(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
+
+	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	require.NoError(t, server.Start())
 	// Give the noise server a moment to start its accept loop.
@@ -3700,10 +3694,6 @@ func TestInitializeHealth_BackendUnhealthy(t *testing.T) {
 // Noise static key file exists but does not decode, startNoiseBootstrap logs
 // the error and returns without hanging.
 func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	dataDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dataDir, noiseStaticKeyFileName), []byte("not-a-valid-key"), 0600))
 
@@ -3711,6 +3701,7 @@ func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
 		Server:  config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
 		Storage: config.StorageConfig{Path: dataDir},
 	})
+	s.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	s.wg.Add(1)
 	done := make(chan struct{})
@@ -3734,10 +3725,6 @@ func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
 // MaxConnections exceeds the upper bound (10000), noiseboot.NewServer returns
 // an error and startNoiseBootstrap exits cleanly.
 func TestStartNoiseBootstrap_MaxConnectionsExceeded(t *testing.T) {
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	s := newMinimalServer(t, &config.Config{
 		Server: config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
 		Bootstrap: config.BootstrapConfig{
@@ -3747,6 +3734,7 @@ func TestStartNoiseBootstrap_MaxConnectionsExceeded(t *testing.T) {
 			},
 		},
 	})
+	s.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	s.wg.Add(1)
 	done := make(chan struct{})

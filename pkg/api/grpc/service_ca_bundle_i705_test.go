@@ -47,14 +47,11 @@ func (m *mockGRPCCABundleServicer) GetCABundle(_ context.Context, _ *transport.G
 }
 
 func TestServiceGetCABundle_ServicerAdapterPath(t *testing.T) {
-	old := getCAInstance()
-	defer SetCA(old)
-
 	cert, _ := createTestRootCACert(t)
 	bundlePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 
-	SetCA(&mockGRPCCABundleServicer{bundlePEM: bundlePEM})
 	svc := newTestService()
+	svc.SetCA(&mockGRPCCABundleServicer{bundlePEM: bundlePEM})
 
 	resp, err := svc.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	require.NoError(t, err)
@@ -64,11 +61,8 @@ func TestServiceGetCABundle_ServicerAdapterPath(t *testing.T) {
 }
 
 func TestServiceGetCABundle_ServicerAdapterPropagatesError(t *testing.T) {
-	old := getCAInstance()
-	defer SetCA(old)
-
-	SetCA(&mockGRPCCABundleServicer{err: errors.New("ca unavailable")})
 	svc := newTestService()
+	svc.SetCA(&mockGRPCCABundleServicer{err: errors.New("ca unavailable")})
 
 	_, err := svc.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	require.Error(t, err)

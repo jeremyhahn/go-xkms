@@ -21,7 +21,6 @@ import (
 
 	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
 
-	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -44,9 +43,6 @@ func TestNoiseBootstrapKeySurvivesStart(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	grpcinternal.SetCABundler(&mockCABundlerForNoise{cert: selfSignedCert(t)})
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = false // drive startNoiseBootstrap directly
 	cfg.Server.NoisePort = 0
@@ -54,6 +50,8 @@ func TestNoiseBootstrapKeySurvivesStart(t *testing.T) {
 
 	srv, err := New(cfg)
 	require.NoError(t, err)
+
+	srv.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	srv.wg.Add(1)
 	done := make(chan struct{})
