@@ -1,6 +1,6 @@
 # Phone as HSM — User Guide
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 ## What this does
 
@@ -118,12 +118,12 @@ your truststore, classified `android-hardware`. See
 ## PIV, OATH and sync
 
 ```
-xkey device phone-list
-xkey device phone-generate 9a
-xkey device phone-push-cert 9a cert.pem
-xkey device phone-pull-cert 9a
+xkey piv phone-list
+xkey piv phone-generate 9a
+xkey piv phone-push-cert 9a cert.pem
+xkey piv phone-pull-cert 9a
 
-xkey device oath-sync
+xkey oath sync
 xkey device sync-status
 ```
 

@@ -1,6 +1,6 @@
 # LUKS2 Encrypted Storage — CLI
 
-> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 All LUKS commands live under `xkey luks2` and require root (directly, or via
 `sudo`). They are exempt from the ordinary unlock gate described below —
@@ -87,6 +87,37 @@ sudo xkey luks2 lock [flags]
 ```bash
 sudo xkey luks2 lock
 ```
+
+## import-data — copy existing data into an already-created container
+
+```bash
+sudo xkey luks2 import-data [flags]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--source` | Source directory to import from | `~/.xkey` |
+| `--path` | LUKS file path | `~/.xkey.luks` |
+| `--cleanup` | Remove the original plaintext data after a successful import | `false` |
+| `--backup` | With `--cleanup`, rename the source directory to `<source>-backup` instead of deleting it | `false` |
+| `--unseal` | Unlock the volume at `--mount-point` after import/cleanup, in the same elevated command | `false` |
+| `--mount-point` | Final mount point used with `--unseal` | `~/.xkey` |
+
+```bash
+sudo xkey luks2 import-data --source ~/.xkey --path ~/.xkey.luks --cleanup
+sudo xkey luks2 import-data --source ~/.xkey --path ~/.xkey.luks --cleanup --backup
+sudo xkey luks2 import-data --source ~/.xkey --path ~/.xkey.luks --cleanup --unseal --mount-point ~/.xkey
+```
+
+Unlike `seal`, which migrates data into a container it just created,
+`import-data` targets a container that already exists: it unlocks the
+volume at a temporary mount point (not `--mount-point`), copies `--source`
+into it with `Volume.CopyDataToVolume`, and locks it again before any
+`--cleanup`/`--unseal` step runs — this ordering closes the window in which
+a still-running application could recreate plaintext data in `--source`
+between cleanup and the final mount. Fails with `ImportDataError` if
+`--source` does not exist or is empty, or if the LUKS volume at `--path`
+does not exist yet (create it first with `luks2 seal`). Requires root.
 
 ## migrate — move to a new or larger container
 

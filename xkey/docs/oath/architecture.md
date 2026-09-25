@@ -12,7 +12,7 @@ storage location and encryption (the barrier vs. the plain JSON file) is a
 `seal`-feature decision this document only summarizes; see
 [seal/architecture.md](../seal/architecture.md) for the full mechanism.
 
-Out of scope: `xkey device oath-sync`/`oath-push`/`oath-pull` (phone-backed
+Out of scope: `xkey oath sync`/`push`/`pull` (phone-backed
 OATH sync, owned by the `device`/`phone` feature folders), and
 `AutoFillService.GetTOTPForDomain`/`GetTOTPByID` (browser-extension TOTP
 autofill, documented in [autofill/](../autofill/) — that service calls
@@ -67,7 +67,7 @@ Three implementations of the `Store` interface (`Add`, `Get`, `List`,
 `openOATHStore` (`cmd/xkey/cmd/oath.go`) is the CLI's own decision: an
 explicit `--store` always wins and selects `FileStore` at that path;
 otherwise it defers entirely to `resolveSecretStoreBackend` (shared with
-`xkey backup` and `xkey device oath-sync`, see
+`xkey backup` and `xkey oath sync`, see
 [seal/architecture.md](../seal/architecture.md)) to decide barrier vs. plain
 file. `xkey/pkg/gui/services/oath_service.go`'s `OATHService` takes an
 already-constructed `oath.Store` (via `NewOATHService`/`SetStore`) — the GUI

@@ -1,6 +1,6 @@
 # OATH TOTP/HOTP — CLI
 
-> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 Every flag below is read from `cmd/xkey/cmd/oath.go`'s `init()` and matches
 `xkey oath <verb> --help` built from this checkout.
@@ -111,6 +111,15 @@ Shared by every verb above (`openOATHStore`, `cmd/xkey/cmd/oath.go`):
 1. `--store` explicitly set (`cmd.Flags().Changed("store")`) → plain
    `FileStore` at that path, no barrier involved.
 2. Otherwise, the default data directory's barrier-or-file decision
-   (`resolveSecretStoreBackend`, shared with `xkey backup` and `xkey device
-   oath-sync`) — see [architecture.md](architecture.md) and
+   (`resolveSecretStoreBackend`, shared with `xkey backup` and `xkey oath
+   sync`) — see [architecture.md](architecture.md) and
    [seal/cli.md](../seal/cli.md).
+
+## Phone sync
+
+`xkey oath sync`, `xkey oath push <name-or-id>` and `xkey oath pull` move
+credentials to and from a paired phone. They take the same `--store`,
+`--barrier-password`/`--barrier-password-file` flags as above, plus
+`--device` (paired device name) and `--timeout` (default `1m0s`). Documented
+in full, alongside the rest of the phone-pairing verb catalog, in
+[phone-hsm/cli.md](../phone-hsm/cli.md#oath-sharing-and-sync).
