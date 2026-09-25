@@ -273,7 +273,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		}
 
 		if err := p.Initialize(); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+			if !isCKR(err, pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 				return &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 			}
 		}
@@ -294,7 +294,11 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
-	defer b.p11ctx.CloseSession(session)
+	defer func() {
+		if closeErr := b.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login as user (only logout if we performed the login)
 	var didLogin bool
@@ -303,7 +307,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		return err
 	}
 	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 		// Already logged in, don't logout later
@@ -313,7 +317,11 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		didLogin = true
 	}
 	if didLogin {
-		defer b.p11ctx.Logout(session)
+		defer func() {
+			if logoutErr := b.p11ctx.Logout(session); logoutErr != nil {
+				err = errors.Join(err, logoutErr)
+			}
+		}()
 	}
 
 	// Find the wrapping key (private key handle). The label is the package
@@ -744,7 +752,7 @@ func (b *Backend) buildImportKeyTemplate(attrs *types.KeyAttributes, keyID, keyL
 //   - The exported key is wrapped using the HSM's wrapping key
 //   - Keys imported with CKA_EXTRACTABLE=false cannot be exported
 //   - The export operation happens entirely within the HSM for maximum security
-func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (wrapped *backend.WrappedKeyMaterial, err error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -774,7 +782,7 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		}
 
 		if err := p.Initialize(); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+			if !isCKR(err, pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 				return nil, &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 			}
 		}
@@ -795,7 +803,11 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
-	defer b.p11ctx.CloseSession(session)
+	defer func() {
+		if closeErr := b.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login as user (only logout if we performed the login)
 	var didLogin bool
@@ -804,7 +816,7 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		return nil, err
 	}
 	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 		// Already logged in, don't logout later
@@ -814,7 +826,11 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		didLogin = true
 	}
 	if didLogin {
-		defer b.p11ctx.Logout(session)
+		defer func() {
+			if logoutErr := b.p11ctx.Logout(session); logoutErr != nil {
+				err = errors.Join(err, logoutErr)
+			}
+		}()
 	}
 
 	// Find the key to export. The class is part of the template because an RSA
@@ -1032,7 +1048,7 @@ func determineKeySpec(attrs *types.KeyAttributes) string {
 //
 // Note: Most HSM security policies will prevent keys from having CKA_EXTRACTABLE=true.
 // This is primarily useful for testing with SoftHSM or specific compliance scenarios.
-func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
+func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) (keyMaterial []byte, err error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -1068,16 +1084,20 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
-	defer b.p11ctx.CloseSession(session)
+	defer func() {
+		if closeErr := b.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login if required
-	if types.SecretValueSet(&b.config.PIN) {
+	if b.config.PIN != nil {
 		userPIN, err := b.userPIN()
 		if err != nil {
 			return nil, err
 		}
 		if err := b.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+			if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 				return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 			}
 		}

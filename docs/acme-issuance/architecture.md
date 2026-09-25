@@ -1,6 +1,6 @@
 # ACME Issuance — Architecture
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## The problem
 
@@ -61,9 +61,11 @@ Rejected alternatives:
 | Server handlers | `pkg/acme/server/handlers` |
 | Nonce service | `pkg/acme/nonce` |
 | Challenge implementations | `pkg/acme/challenges/{http-01,dns-01,device-attest-01,enroll-01,endorse-01}` |
-| Issuance | `pkg/acme/issuance` → `pkg/ca` |
+| Issuance | `pkg/acme/server/handlers.OrderFinalizeHandler` calls `s.ca` (`pkg/ca`) directly; `pkg/acme/issuance` is not on this path — see Data flow below |
 | Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
-| Policy, CAA, rate limits, circuit breaker, degradation | `pkg/acme/policy`, `pkg/acme/server/caa.go`, `pkg/acme/server/rate_limiter.go`, `pkg/acme/server/{circuitbreaker,degradation}` |
+| Identifier policy, CAA | `pkg/acme/policy`, `pkg/acme/server/caa.go` — both wired, see Trust boundaries |
+| Rate limits | `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` — wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`), keyed per client (JWS KID or IP); `tenant_rate_limiter.go` exists but is wired into neither; see Trust boundaries |
+| Circuit breakers, degradation cache | `pkg/acme/server/circuitbreaker` (breakers, `Manager`, the HTTP middleware, and the `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators), `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` (the shared challenge-verifier wrapping helper), `pkg/acme/server/degradation` (the cache `GET /acme/directory` and `GET /acme/ca-bundle` fall back to) — wired into both xkmsd and the standalone `TrustedCA`; see Trust boundaries |
 | Certificate Transparency | `pkg/acme/ct` |
 | Admin plane | `pkg/acme/admin` |
 | Multi-transport adapters | `pkg/acme/api/{rest,grpc,quic,mcp}` + `pkg/acme/api/adapter.go` |
@@ -85,7 +87,7 @@ client → GET  /acme/directory              (URLs for everything else)
        → POST /acme/challenge/{id}         (client says "ready")
          ← server validates out of band (HTTP fetch / DNS lookup)
        → POST /acme/order/{id}/finalize    (CSR submitted)
-         → pkg/acme/issuance → TrustedCA.SignCSR → keystore signer
+         → OrderFinalizeHandler → s.ca.SignCSR (pkg/ca) → keystore signer
        → GET  /acme/cert/{id}              (certificate chain, PEM)
 ```
 
@@ -110,24 +112,97 @@ through ACME against an existing node's directory.
 - **Account keys are the client's identity.** Every POST is JWS-signed by the
   account key; the server binds orders to the account, not to a session.
 - **Nonces are single-use and server-issued.** Replay protection is the nonce
-  service, `pkg/acme/nonce`.
+  service, `pkg/acme/nonce`: an AES-GCM-encrypted, monotonic counter validated
+  by decryption rather than by a lookup table, with a `NonceMaxUsed`-bounded
+  redeemed-set and a `NonceLifetime`-bounded signing epoch — see
+  [`engineering.md`](engineering.md) Configuration and Persistence. Nonce
+  validity across nodes in a load-balanced deployment requires every node to
+  share the same encryption key (`handlers.Params.NonceKey`); absent that,
+  each node mints from its own key and a request that lands on a different
+  node than the one that issued the nonce gets `badNonce`, which RFC 8555
+  clients already retry.
 - **Challenge validation happens server-side, out of band.** Nothing the client
   asserts about itself is trusted; the server fetches, resolves, or activates.
 - **`enroll-01` trusts the TPM manufacturer chain**, not the requester. If the
   EK certificate does not chain to a trusted manufacturer root, activation
   cannot succeed.
-- **Rate limits and CAA are enforcement, not advice.** `pkg/acme/server/caa.go`
-  checks CAA before issuing; `pkg/acme/server/rate_limiter.go` and the tenant
-  rate limiter bound per-account and per-tenant issuance.
-- **The circuit breaker and degradation paths fail closed** — under pressure the
-  server refuses new orders rather than issuing unvalidated ones.
+- **Identifier policy and CAA are enforcement, not advice, and both are live.**
+  `NewOrderHandler` runs every identifier through `pkg/acme/policy` before an
+  authorization is created (`checkIdentifierPolicy`,
+  `pkg/acme/server/handlers/identifier_policy.go:56`, called from
+  `new_order.go:108`; go-xkms#770). `pkg/acme/server/caa.go` checks CAA
+  (RFC 8659, plus RFC 8657's `accounturi`/`validationmethods` parameters)
+  before issuing, wired through `Params.CAAValidator` and
+  constructed from the required `acme.caa_identities` config in both xkmsd
+  (`cmd/xkmsd/acme.go:245`, `order_finalize.go:523,539`) and the standalone
+  `TrustedCA` (`pkg/acme/client/trustedca.go`); go-xkms#788. An ACME server
+  cannot start enabled without naming the issuer identity a CAA record must
+  list, and a DNS failure that leaves the CAA RRset undetermined denies
+  issuance rather than proceeding regardless. Order finalize supplies the
+  requesting account's URI and the challenge type that actually validated
+  each identifier, so a record's `accounturi`/`validationmethods` parameters
+  are enforced against reality, not merely parsed.
+- **Rate limits are enforcement, not advice, per client.**
+  `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
+  mounted on the whole ACME surface by both ACME server compositions
+  (xkmsd's `cmd/xkmsd/acme.go`, the standalone `TrustedCA`), keying each
+  client by JWS KID or IP. The per-tenant overall quota and the RFC 8555
+  Section 6.6 per-category limits (`tenant_rate_limiter.go`,
+  `rate_limiter.go`) are wired into both compositions, keyed exclusively on
+  a tenant `handlers.RestService.TenantAuthMiddleware` resolves from a fully
+  verified JWS `kid` — never from a client-asserted header, host, or path —
+  see [`engineering.md`](engineering.md) §Rate limiting and §Tenant
+  admission control (go-xkms#886).
+- **Circuit breakers guard individual outbound dependencies, not order
+  creation, and now run on both ACME server compositions.**
+  `pkg/acme/server/circuitbreaker` wraps five dependencies, each with its own
+  breaker: the `http-01` and `dns-01` challenge verifiers, CT log submission
+  (`circuitbreaker.WrapLogSubmitter`, available wherever a CT submitter is
+  constructed — see "What this feature deliberately does not do"), the
+  tenant KMS signer (`Params.KMSService`, wrapped automatically by
+  `NewRestService` when both it and `Params.Breakers` are set), and the
+  CA/keystore-backed certificate storage `GET /acme/ca-bundle` reads from.
+  `cmd/xkmsd/acme.go` and the standalone `TrustedCA`
+  (`pkg/acme/client/trustedca.go`, go-xkms#820) both build their breaker
+  `Manager` and wrap their challenge verifiers through the same
+  `server.WrapChallengeVerifiers` helper (`pkg/acme/server/resilience.go`),
+  so a breaker named `http01` or `dns01` means the same thing in either
+  composition's `/health` output; `xkmsd`'s `buildChallengeMap` calls it
+  after selecting verifiers from `acme.challenges`, `TrustedCA.Serve` calls
+  it on the map a caller supplied through `WithChallengeMap`. `TrustedCA`
+  reuses `pkg/config`'s `ACMEResilienceConfig` directly as
+  `TCAACMEConfig.Resilience` rather than a parallel type, so the same
+  `storage`/`kms`/`http01`/`dns01` breaker sections and defaults apply to
+  both compositions' configuration.
+  An open breaker fails only the call it guards — a challenge validation
+  attempt returns an `incorrectResponse` problem instead of hanging on a dead
+  verifier target, a KMS-backed finalize fails instead of blocking — it does
+  not intercept `POST /acme/new-order`, which calls none of these five.
+  `GET /acme/directory` and `GET /acme/ca-bundle` degrade rather than fail:
+  while the storage breaker is open they serve their last computed response
+  from a `pkg/acme/server/degradation` cache (falling back to a *stale*
+  cache entry only past its TTL; a still-fresh one is served as a normal,
+  non-degraded response). `GET /acme/health` reports every breaker's state
+  and counters and whether the directory/CA-bundle endpoints are currently
+  degraded.
+  The ACME protocol state itself — accounts, orders, authorizations,
+  challenges, nonces (`pkg/acme/storage` → `go-qrdb/sdk/go`) — is not wrapped
+  in a circuit breaker: go-qrdb owns that storage's consistency and retry
+  semantics, and a breaker's goroutine-plus-timeout can abandon a call
+  without waiting for it, which is safe for an idempotent read or a network
+  probe but not for a durable write whose caller must not believe it failed
+  while it is still committing. Lower layers win.
 
 ## What this feature deliberately does not do
 
 - **It does not run a public web PKI.** OCSP stapling, CRL distribution-point
   automation, CT log submission and cross-signing automation are on the roadmap,
-  not in the tree; `pkg/acme/ct` is present but the surrounding automation is
-  not.
+  not in the tree; `pkg/acme/ct` and `pkg/acme/issuance` (the bridge that would
+  call it) are present but neither is wired into `OrderFinalizeHandler`, which
+  issues through `TrustedCA.SignCSR` directly. `circuitbreaker.WrapLogSubmitter`
+  exists so whatever wires CT submission in does not have to build its own
+  resilience layer, but there is no production call site to wrap yet; SCT
+  handling at issuance is tracked separately as go-xkms#745.
 - **It does not own the CA.** Issuance is `TrustedCA`'s; ACME is the protocol in
   front of it.
 - **It does not define identity.** Accounts are ACME accounts. Platform users,

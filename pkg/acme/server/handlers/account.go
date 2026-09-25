@@ -17,7 +17,9 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 )
 
 // AccountRequest represents the structure of an account update/deactivation request.
@@ -61,6 +63,11 @@ func (s *RestService) AccountHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// deactivated is set once the account's in-memory status has been moved
+	// to "deactivated" below, and drives the metrics.DecTenantActiveAccounts
+	// call once that status is actually persisted by accountDAO.Save.
+	deactivated := false
+
 	// Handle account status update
 	if accountRequest.Status != "" {
 		if accountRequest.Status == common.StatusDeactivated {
@@ -70,6 +77,18 @@ func (s *RestService) AccountHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			account.Status = common.StatusDeactivated
 			s.logger.Info("Account deactivated", "id", account.ID)
+			if auditErr := s.recordAudit(audit.EventAccountDeactivated, s.auditLog.LogWithContext(auditContext(r),
+				audit.EventAccountDeactivated,
+				auditAccountRef(account.ID),
+				auditAccountRef(account.ID),
+				"deactivate",
+				audit.ResultSuccess,
+				nil,
+			)); auditErr != nil {
+				writeError(w, common.ServerInternal("Failed to record audit event"))
+				return
+			}
+			deactivated = true
 		} else {
 			writeError(w, common.MalformedError("Invalid status value", nil))
 			return
@@ -91,6 +110,10 @@ func (s *RestService) AccountHandler(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("Failed to update account", "error", err)
 		writeError(w, common.ServerInternal("Failed to update account"))
 		return
+	}
+
+	if deactivated && account.TenantID != "" {
+		metrics.DecTenantActiveAccounts(account.TenantID)
 	}
 
 	s.respondWithAccount(w, account, http.StatusOK)

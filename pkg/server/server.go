@@ -35,7 +35,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -57,7 +59,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
-	"github.com/jeremyhahn/go-xkms/pkg/factor"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
@@ -200,6 +201,16 @@ type Server struct {
 	// startMetrics goroutine never releases its wg slot.
 	metricsServer *http.Server
 
+	// extraGatherers holds additional Prometheus gatherers combined with the
+	// default registry when /metrics is scraped, registered via
+	// RegisterMetricsGatherer. The ACME subsystem's collectors live in their
+	// own private registry (pkg/acme/server/metrics.Registry) rather than the
+	// default one, so this is how they become part of the same /metrics
+	// response xkmsd already serves instead of a second endpoint. Guarded by
+	// mu because ACME starts after Start (and therefore after startMetrics'
+	// goroutine begins serving).
+	extraGatherers []prometheus.Gatherer
+
 	// Authentication
 	authenticator auth.Authenticator
 
@@ -268,10 +279,6 @@ type Server struct {
 	// since the same open backs both the seal strategy and the tpm2 backend.
 	nodeSealClose func() error
 
-	// nodeSealPassphrase is the resolved boot-time unseal passphrase (empty for
-	// hardware/TPM mode).
-	nodeSealPassphrase []byte
-
 	// clusterCAKeyStrategy is the cluster CA key custody strategy (barrier / hsm
 	// / tpm-kek) built during cluster ACME provisioning. It is stateful (the
 	// barrier strategy retains its bootstrap key-storage handle for promotion),
@@ -306,6 +313,21 @@ type Server struct {
 	// Platform store
 	platformStore seal.PlatformStore
 
+	// platformStoreTPM is the raw TPM2 backend the platform store's tpm2
+	// credential strategy seals through -- either s.nodeSealTPM reused, or a
+	// standalone open. Nil unless the tpm2 strategy was built. Retained
+	// (rather than only the wrapped types.Sealer buried inside the platform
+	// store's PlatformSealer) so the underlying TPM is reachable for
+	// diagnostics and tests without unwrapping the seal chain.
+	platformStoreTPM types.Sealer
+
+	// platformStoreTPMClose releases a TPM open made standalone for the
+	// platform store's tpm2 credential seal strategy, when the node-seal
+	// flip (s.nodeSealTPM) did not already open one to share. Nil when the
+	// platform store reused the flip's open, used a non-tpm2 strategy, or
+	// was never built.
+	platformStoreTPMClose func() error
+
 	// Policy manager
 	policyManager *policy.Manager
 
@@ -317,6 +339,16 @@ type Server struct {
 
 	// CA for certificate authority operations
 	ca ca.TrustedCA
+
+	// grpcCABundler is the CA bundle source computed in Start (from the TLS
+	// CA file or the CA instance) and forwarded to the gRPC transports
+	// (unix.GRPCConfig.CABundler -> grpcapi.Service.SetCABundler) and to
+	// startNoiseBootstrap, which all served it through a package-level
+	// grpcinternal.SetCABundler/GetCABundler global before go-xkms#951.
+	// Nil until Start computes one; the Noise bootstrap subsystem and the
+	// gRPC transports both read this same field rather than each other's
+	// package-level state.
+	grpcCABundler grpcinternal.CABundler
 
 	// Credential service for managing backend credentials
 	credentialService *credentialspkg.Service
@@ -570,18 +602,67 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 
 	// Initialize the shared qrdb storage backend (when configured). This must
 	// happen before initializeBackends, because per-subdir storage views are
-	// key-prefixed views over this single shared backend.
+	// key-prefixed views over this single shared backend. For a
+	// NodeFlipWired barrier strategy this is also where Server.New blocks:
+	// initEmbeddedQRDBNode builds the node's own seal subsystem and, when it
+	// cannot auto-unseal unattended ("passphrase"/"shamir"), serves the
+	// sealed-window listener and waits for an operator to complete
+	// `xkmsctl barrier unseal`/`unseal-shares` — go-qrdb's own
+	// cmd/qrdbd pattern (initSealSubsystem -> awaitUnseal), driven here
+	// entirely through go-qrdb/sdk/go. By the time this call returns, the
+	// barrier (s.barrier, for the flip case) is unsealed and adopted.
 	if err := s.initializeQRDBStorage(); err != nil {
 		cancel()
 		return nil, &ErrServiceInit{Service: "qrdb storage", Err: err}
 	}
 
+	// abortAfterStorage undoes initializeQRDBStorage when a later start-up
+	// step fails. A close error is logged, since the step's own error is the
+	// one returned.
+	abortAfterStorage := func(step string) {
+		cancel()
+		s.closePlatformStoreTPM()
+		if closeErr := s.closeQRDBStorage(); closeErr != nil {
+			s.logger.Error("failed to close qrdb storage after start-up failure", "step", step, "error", closeErr)
+		}
+	}
+
+	// Initialize platform store. Runs after unseal (the node-flip case above
+	// is already unsealed and adopted by this point; a non-flip barrier, if
+	// any, unseals later in initializeBarrier and the platform store does not
+	// depend on it). Builds a sealer from credentials.seal_strategy and skips
+	// only for "manual" (nothing stored) and "barrier" (the credential
+	// service stores directly in s.barrier instead) -- see initializePlatformStore.
+	if err := s.initializePlatformStore(); err != nil {
+		abortAfterStorage("platform store")
+		return nil, &ErrServiceInit{Service: "platform store", Err: err}
+	}
+
+	// Initialize credential service. Moved here (before initializeBackends)
+	// so the PKCS#11/RNG-PKCS#11/AWS/Azure/Vault backend credentials below
+	// can resolve through it via credential:// references, the same way
+	// go-qrdb's own daemon resolves credentials only after its seal
+	// subsystem is unsealed.
+	if err := s.initializeCredentialService(); err != nil {
+		abortAfterStorage("credential service")
+		return nil, &ErrServiceInit{Service: "credential service", Err: err}
+	}
+
+	// Resolve every secret-bearing config field's credential:// (and future
+	// scheme) reference in one pass, now that the credential service exists
+	// to back it -- including the five backend-credential fields
+	// initializeBackends is about to read (PKCS#11 PIN, RNG PKCS#11 PIN, AWS
+	// KMS secret key, Azure Key Vault client secret, Vault token), which
+	// could not resolve here before this reorder. See resolveConfigSecrets
+	// for what this does and does not cover.
+	if err := s.resolveConfigSecrets(); err != nil {
+		abortAfterStorage("config secret resolution")
+		return nil, &ErrServiceInit{Service: "config secret resolution", Err: err}
+	}
+
 	// Initialize backends
 	if err := s.initializeBackends(); err != nil {
-		cancel()
-		if closeErr := s.closeQRDBStorage(); closeErr != nil {
-			s.logger.Error("failed to close qrdb storage during backend init failure", "error", closeErr)
-		}
+		abortAfterStorage("backends")
 		return nil, &ErrServiceInit{Service: "backends", Err: err}
 	}
 
@@ -666,33 +747,6 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		cancel()
 		s.closeBackends()
 		return nil, &ErrServiceInit{Service: "pkcs11 state store", Err: err}
-	}
-
-	// Initialize platform store
-	if err := s.initializePlatformStore(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "platform store", Err: err}
-	}
-
-	// Initialize credential service
-	if err := s.initializeCredentialService(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "credential service", Err: err}
-	}
-
-	// Resolve every secret-bearing config field's credential:// (and future
-	// scheme) reference in one pass, now that the credential service exists
-	// to back it. This is the single resolution point every later consumer
-	// relies on -- initializeCA's CA identity/keystore passwords, the
-	// cluster CA key passphrase, and the phone backend's Noise static key no
-	// longer resolve their own field. See resolveConfigSecrets for what this
-	// does and does not cover.
-	if err := s.resolveConfigSecrets(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "config secret resolution", Err: err}
 	}
 
 	// Initialize policy manager
@@ -1021,6 +1075,14 @@ func (s *Server) initializeBackends() error {
 
 	if err := s.initPhoneBackend(); err != nil {
 		return &ErrBackendInit{Backend: "phone", Err: err}
+	}
+
+	// FROST initializes last: backends.frost.secret_backend names one of the
+	// backends initialized above, and that types.KeyProvider must already be
+	// registered in s.keyProviders for the FrostBackend to hold each
+	// participant's secret share through it.
+	if err := s.initFrostBackend(); err != nil {
+		return &ErrBackendInit{Backend: "FROST", Err: err}
 	}
 
 	if len(s.keyProviders) == 0 {
@@ -1753,18 +1815,6 @@ func (s *Server) initializePKCS11StateStore() error {
 	return nil
 }
 
-// initializePlatformStore initializes the platform sealed credential store.
-func (s *Server) initializePlatformStore() error {
-	// Platform store requires barrier to be initialized for sealing
-	if s.barrier == nil {
-		s.logger.Info("Platform store skipped: barrier not configured")
-		return nil
-	}
-
-	s.logger.Info("Platform store initialized")
-	return nil
-}
-
 // initializeCredentialService initializes the credential management service
 // for sealing/unsealing backend credentials (PKCS#11 User PIN, TPM2 auth, etc.)
 func (s *Server) initializeCredentialService() error {
@@ -1832,7 +1882,7 @@ func (s *Server) initializeFactorRegistry() error {
 	if s.factorRegistry != nil {
 		return nil
 	}
-	registry, err := factor.NewDefaultRegistry(factor.Config{})
+	registry, err := NewNodeFactorRegistry()
 	if err != nil {
 		return &ErrServiceInit{Service: "factor registry", Err: err}
 	}
@@ -2194,6 +2244,7 @@ func (s *Server) initializeCA() error {
 		SerialGen:       ca.NewSerialGenerator(ca.NewBackendStorage(serialStore)),
 		RevocationStore: revocationStore,
 		BackendForStore: backendForStore,
+		AuditLogger:     s.auditLogger,
 	})
 	if err != nil {
 		return &ErrCAInit{Operation: "create CA", Err: err}
@@ -2207,9 +2258,22 @@ func (s *Server) initializeCA() error {
 		return &ErrCAInit{Operation: "adopt staged cluster CA certificates", Err: err}
 	}
 
-	// Try to load existing CA state (certificates and keys from a previous run).
-	// If loading fails, the CA has not been initialized yet, so create it.
+	// Try to load existing CA state (certificates and keys from a previous
+	// run). Only a genuine ca.ErrCertificateNotFound -- the root (or an
+	// intermediate) certificate is simply absent, the one condition Load
+	// reports that legitimately means "never initialized" -- falls through to
+	// Init, which getOrGenerateCAKey makes safe to (re)run over a partial
+	// state. Any other Load failure (a corrupt or unreadable persisted
+	// certificate, an unavailable keystore backend, a key-attributes defect)
+	// is a distinct problem with existing state and must fail startup closed
+	// instead of silently forging a new root over it (go-xkms#793: initializeCA
+	// used to treat every Load error alike, so a Load bug unrelated to
+	// "not found" minted a brand new CA -- and therefore a new TLS SPKI and a
+	// new client pin -- on every restart).
 	if err := trustedCA.Load(s.ctx); err != nil {
+		if !errors.Is(err, ca.ErrCertificateNotFound) {
+			return &ErrCAInit{Operation: "load existing CA", Err: err}
+		}
 		s.logger.Info("No existing CA found, initializing new CA", "reason", err.Error())
 		if initErr := trustedCA.Init(s.ctx); initErr != nil {
 			return &ErrCAInit{Operation: "initialize new CA", Err: initErr}
@@ -2498,7 +2562,7 @@ func (s *Server) Start() error {
 			s.logger.Warn("Failed to initialize CA bundler", slog.Any("error", err))
 		} else {
 			rest.SetCABundler(bundler)
-			grpcinternal.SetCABundler(bundler)
+			s.grpcCABundler = bundler
 			s.logger.Info("CA bundler initialized from TLS CA file", "ca_file", s.config.TLS.CAFile)
 		}
 	} else if s.config.TLS.Enabled && s.ca != nil && s.ca.IsInitialized() {
@@ -2508,7 +2572,7 @@ func (s *Server) Start() error {
 			s.logger.Warn("Failed to initialize CA bundler from CA instance", slog.Any("error", err))
 		} else {
 			rest.SetCABundler(bundler)
-			grpcinternal.SetCABundler(bundler)
+			s.grpcCABundler = bundler
 			s.logger.Info("CA bundler initialized from CA instance")
 		}
 	}
@@ -2566,6 +2630,9 @@ func (s *Server) Start() error {
 	if s.config.Metrics.Enabled {
 		s.wg.Add(1)
 		go s.startMetrics()
+
+		s.wg.Add(1)
+		go s.startBackendMetrics()
 	}
 
 	// Mark service as fully started for startup probes
@@ -2600,6 +2667,17 @@ func (s *Server) startUnix() {
 	case "grpc":
 		s.logger.Info("Starting Unix socket with gRPC protocol", "socket", socketPath)
 
+		// The XKMSService is forwarded as the CA servicer under the same
+		// condition buildRESTConfig gates restConfig.CA on: a configured CA
+		// (s.ca != nil) AND a composed XKMSService. Before go-xkms#951, CA
+		// RPCs over this listener always answered Unavailable because
+		// nothing wired a CA into the gRPC service's (then package-level)
+		// SetCA at all.
+		var caServicer any
+		if s.ca != nil && s.xkmsService != nil {
+			caServicer = s.xkmsService
+		}
+
 		// Create Unix gRPC server configuration
 		// Note: Logger is nil - the unix package will use its internal noOpLogger
 		grpcConfig := &unix.GRPCConfig{
@@ -2608,6 +2686,8 @@ func (s *Server) startUnix() {
 			XKMSService:     s.xkmsService,
 			SSHClient:       s.ensureSSHClient(),
 			BarrierRegistry: s.barrierRegistry,
+			CA:              caServicer,
+			CABundler:       s.grpcCABundler,
 			// Host the embedded qrdb node's control plane (cluster admin,
 			// rebalance, user auth factors) on the unix socket — xkmsctl's
 			// default transport. Same socket-file-mode trust boundary as the
@@ -2867,10 +2947,21 @@ func (s *Server) startREST() {
 
 	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
 	// cancelled) before we got here, do not start — return so this goroutine
-	// releases its wg slot instead of blocking in Start.
+	// releases its wg slot instead of blocking in Start. The pre-bound
+	// loopback listener (already open before this goroutine ran; see
+	// SetRESTListener) is this goroutine's to close in that case: it is only
+	// registered with the stdlib http.Server's listener tracking — which is
+	// what Shutdown closes — once Start below calls Serve/ServeTLS, so
+	// returning here without closing it would leak the open socket for the
+	// life of the process.
 	s.mu.Lock()
 	if s.ctx.Err() != nil {
 		s.mu.Unlock()
+		if s.restListener != nil {
+			if cerr := s.restListener.Close(); cerr != nil {
+				s.logger.Warn("Failed to close pre-bound REST listener during aborted startup", slog.Any("error", cerr))
+			}
+		}
 		return
 	}
 	s.restServer = restSrv
@@ -2892,6 +2983,25 @@ func (s *Server) startREST() {
 	}
 }
 
+// backendMetricsInterval is how often startBackendMetrics re-probes backend
+// health and reconciles the keys/certs gauges.
+//
+// There is no existing schedule or config to inherit this from: the REST
+// readiness health checker (pkg/api/rest/health_handlers.go's ReadyHandler)
+// runs s.healthChecker.Ready(ctx) on demand, once per incoming GET
+// /health/ready request, not on a timer, and pkg/config's HealthConfig
+// carries no interval field. This instead matches the resource collector's
+// own interval (metrics.StartResourceCollector(s.ctx, 30*time.Second) in
+// initializeMetrics below) so xkms has one periodic-metrics cadence, not two.
+const backendMetricsInterval = 30 * time.Second
+
+// backendMetricsProbeTimeout bounds one backend's health probe (ListKeys)
+// plus its keys/certs listings so a wedged backend cannot stall the
+// periodic refresher beyond this budget. It is applied per backend, not
+// once for the whole sweep, so one unresponsive backend does not eat into
+// the time budget the sweep would otherwise give its siblings.
+const backendMetricsProbeTimeout = 5 * time.Second
+
 // initializeMetrics initializes the metrics subsystem
 func (s *Server) initializeMetrics() error {
 	s.logger.Info("Initializing metrics...")
@@ -2902,13 +3012,89 @@ func (s *Server) initializeMetrics() error {
 	// Start resource collector with 30-second interval
 	s.metricsCollector = metrics.StartResourceCollector(s.ctx, 30*time.Second)
 
-	// Initialize backend health metrics
-	for name := range s.keyProviders {
-		metrics.SetBackendHealth(name, true)
-	}
+	// Seed backend health, keys, and certs gauges synchronously so an
+	// immediate scrape reports real values instead of the Prometheus
+	// zero-value default; startBackendMetrics refreshes them thereafter.
+	s.updateBackendMetrics()
 
 	s.logger.Info("Metrics initialized successfully")
 	return nil
+}
+
+// startBackendMetrics periodically probes each backend's health through the
+// same health.Checker probes REST readiness uses (initializeHealth), and
+// refreshes the keys/certs gauges, so /metrics reports real backend state
+// instead of the constant "healthy" xkms shipped before go-xkms#720.
+func (s *Server) startBackendMetrics() {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(backendMetricsInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.updateBackendMetrics()
+		}
+	}
+}
+
+// updateBackendMetrics runs one round of backend health probes and
+// keys/certs gauge reconciliation across every registered backend.
+//
+// Each backend's ListKeys is called exactly once per tick: the same result
+// answers both "is the backend responsive" (health) and "how many keys does
+// it hold" (the keys-total gauge reconciliation), rather than probing health
+// through s.healthChecker and separately listing again for the count. This
+// intentionally does not go through s.healthChecker.Ready(ctx) -- that
+// checker exists for REST's on-demand readiness endpoint (see
+// backendMetricsInterval's doc comment) and Checker.Ready returns only a
+// status/latency/error per check, never the key list a count needs, so
+// routing through it here would still cost a second ListKeys per backend.
+//
+// ListCerts has no equivalent combined use (nothing else on this sweep
+// needs a certs health signal), so it remains its own call -- one call per
+// backend for keys, one for certs, never two for the same count.
+func (s *Server) updateBackendMetrics() {
+	for name, b := range s.backends {
+		s.probeBackendMetrics(name, b)
+	}
+}
+
+// probeBackendMetrics runs updateBackendMetrics's per-backend health probe
+// and keys/certs gauge reconciliation. Each backend gets its own
+// backendMetricsProbeTimeout budget (see that constant's doc comment).
+func (s *Server) probeBackendMetrics(name string, b xkms.Backend) {
+	ctx, cancel := context.WithTimeout(s.ctx, backendMetricsProbeTimeout)
+	defer cancel()
+
+	start := time.Now()
+	keys, err := b.ListKeys(ctx)
+	latency := time.Since(start)
+
+	healthy := err == nil
+	metrics.SetBackendHealth(name, healthy)
+
+	status := metrics.StatusSuccess
+	if !healthy {
+		status = metrics.StatusError
+	}
+	metrics.RecordOperation(metrics.OpHealthCheck, name, status, latency.Seconds())
+
+	// A failed probe must not publish a keys-total value: it has no count to
+	// report, and publishing 0 would read as "backend is empty" rather than
+	// "backend did not answer". The gauge is left at whatever the last
+	// successful reconciliation (or a request-path increment/decrement)
+	// published.
+	if healthy {
+		metrics.SetKeysTotal(name, float64(len(keys)))
+	}
+
+	if certs, certErr := b.ListCerts(ctx); certErr == nil {
+		metrics.SetCertsTotal(name, float64(len(certs)))
+	}
 }
 
 // listenAddr joins the configured bind host with a listener's port the way
@@ -2921,6 +3107,36 @@ func (s *Server) listenAddr(port int) string {
 	return net.JoinHostPort(s.config.Server.Host, strconv.Itoa(port))
 }
 
+// RegisterMetricsGatherer adds an additional Prometheus gatherer to be
+// combined with the default registry when /metrics is scraped. The gatherer
+// list is re-read on every scrape (see serverGatherer), so a gatherer
+// registered after the metrics server has already started listening -
+// which is the normal case for the ACME subsystem, started after Start -
+// is still picked up on the next request. Safe for concurrent use.
+func (s *Server) RegisterMetricsGatherer(g prometheus.Gatherer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.extraGatherers = append(s.extraGatherers, g)
+}
+
+// serverGatherer combines prometheus.DefaultGatherer with any gatherers
+// registered on s via RegisterMetricsGatherer. It reads the registration
+// list fresh on every Gather call rather than capturing it once, so /metrics
+// reflects gatherers registered after the metrics server started serving.
+type serverGatherer struct {
+	s *Server
+}
+
+// Gather implements prometheus.Gatherer.
+func (g serverGatherer) Gather() ([]*dto.MetricFamily, error) {
+	g.s.mu.RLock()
+	gatherers := make(prometheus.Gatherers, 0, len(g.s.extraGatherers)+1)
+	gatherers = append(gatherers, prometheus.DefaultGatherer)
+	gatherers = append(gatherers, g.s.extraGatherers...)
+	g.s.mu.RUnlock()
+	return gatherers.Gather()
+}
+
 // startMetrics starts the Prometheus metrics server
 func (s *Server) startMetrics() {
 	defer s.wg.Done()
@@ -2928,7 +3144,7 @@ func (s *Server) startMetrics() {
 	addr := s.listenAddr(s.config.Metrics.Port)
 
 	mux := http.NewServeMux()
-	mux.Handle(s.config.Metrics.Path, promhttp.Handler())
+	mux.Handle(s.config.Metrics.Path, promhttp.HandlerFor(serverGatherer{s: s}, promhttp.HandlerOpts{}))
 
 	server := &http.Server{
 		Addr:              addr,
@@ -3042,7 +3258,7 @@ func (s *Server) startNoiseBootstrap() {
 	addr := s.listenAddr(s.config.Server.NoisePort)
 
 	// Get CA bundler
-	bundler := grpcinternal.GetCABundler()
+	bundler := s.grpcCABundler
 	if bundler == nil {
 		s.logger.Error("Noise bootstrap requires a CA bundler to be configured")
 		return
@@ -3591,8 +3807,25 @@ func (s *Server) closeBackends() {
 			s.logger.Error("Error closing backend", slog.Any("error", err), "backend", name)
 		}
 	}
+	s.closePlatformStoreTPM()
 	if err := s.closeQRDBStorage(); err != nil {
 		s.logger.Error("Error closing qrdb storage", slog.Any("error", err))
+	}
+}
+
+// closePlatformStoreTPM releases a TPM open made standalone for the platform
+// store's tpm2 seal strategy (see buildTPM2PlatformSealer), when one was
+// opened. It is a no-op when the platform store reused the node-seal flip's
+// TPM open (that open is released by closeQRDBNode instead) or used a
+// non-tpm2 strategy. Idempotent and safe on every shutdown/abort path.
+func (s *Server) closePlatformStoreTPM() {
+	if s.platformStoreTPMClose == nil {
+		return
+	}
+	closeFn := s.platformStoreTPMClose
+	s.platformStoreTPMClose = nil
+	if err := closeFn(); err != nil {
+		s.logger.Warn("platform store: failed to close the standalone TPM open", "error", err)
 	}
 }
 

@@ -839,6 +839,63 @@ func TestStartSession_StopReportsCleanShutdown(t *testing.T) {
 	assert.True(t, report.Clean(), "expected a clean shutdown, got %d abandoned", report.Abandoned)
 	assert.True(t, report.Joined, "every handler should have finished")
 	assert.Zero(t, report.Abandoned)
+
+	// A clean protocol exchange followed by an ordinary close must not leave
+	// anything on Err (#701): the agent-protocol client's Close (io.EOF on
+	// the server side) is exactly the shape recordErr treats as meaningless.
+	waitDone(t, sess)
+	assert.NoError(t, sess.Err())
+}
+
+// TestStartSession_ErrSurfacesHandlerProtocolError verifies that a genuine
+// per-connection protocol error -- neither an ordinary disconnect (io.EOF)
+// nor this package's own shutdown Close (net.ErrClosed) -- reaches Session.Err
+// rather than being silently discarded (#701).
+func TestStartSession_ErrSurfacesHandlerProtocolError(t *testing.T) {
+	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{newEd25519Signer(t)}})
+	require.NoError(t, err)
+
+	conn, err := net.Dial("unix", sess.SockPath)
+	require.NoError(t, err)
+
+	// A length-prefixed agent-protocol frame claiming a 10-byte body,
+	// followed by only 1 of those bytes and then a close: the server's
+	// io.ReadFull of the body reads a partial amount before EOF and reports
+	// io.ErrUnexpectedEOF, not io.EOF -- a real error, not an ordinary
+	// disconnect.
+	_, err = conn.Write([]byte{0, 0, 0, 10, 0xff})
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+
+	// The malformed connection's handler runs concurrently with this test
+	// goroutine. A second, well-behaved round trip only completes once the
+	// accept loop -- a strictly sequential for-loop -- has moved past
+	// accepting the connection above, which exercises the agent continuing
+	// to serve other clients after one connection errors.
+	confirm, err := net.Dial("unix", sess.SockPath)
+	require.NoError(t, err)
+	_, err = sshagent.NewClient(confirm).List()
+	require.NoError(t, err)
+	require.NoError(t, confirm.Close())
+
+	// That ordering is only a head start, not a guarantee: it says handler 1
+	// was launched before handler 2's round trip, not that handler 1 has
+	// finished reading and recording its error by the time it completes.
+	// Poll the tracker directly -- deterministic, and available here since
+	// this test lives in the same package -- rather than firing Stop's
+	// unconditional listener-close and client-drain (which would turn a
+	// still-unread partial frame into net.ErrClosed instead of
+	// io.ErrUnexpectedEOF) on a race.
+	require.Eventually(t, func() bool {
+		return errors.Is(sess.track.err(), io.ErrUnexpectedEOF)
+	}, 10*time.Second, 10*time.Millisecond, "handler did not record the protocol error")
+
+	stopClean(t, sess)
+	waitDone(t, sess)
+
+	gotErr := sess.Err()
+	require.Error(t, gotErr, "a genuine protocol error on a served connection must not vanish")
+	assert.ErrorIs(t, gotErr, io.ErrUnexpectedEOF)
 }
 
 // TestStartSession_StopHonoursABoundLongerThanTheReapers closes the hole a

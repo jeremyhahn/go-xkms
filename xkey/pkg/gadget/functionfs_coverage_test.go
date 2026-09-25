@@ -53,8 +53,6 @@ func TestFunctionFSTransport_Initialize_Success(t *testing.T) {
 	}
 
 	cancel()
-	// Give the monitor goroutine time to exit.
-	time.Sleep(50 * time.Millisecond)
 
 	err = tr.Close()
 	if err != nil {
@@ -226,7 +224,6 @@ func TestFunctionFSTransport_ReadWrite_WithFiles(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(50 * time.Millisecond)
 	tr.Close()
 }
 
@@ -264,7 +261,6 @@ func TestFunctionFSTransport_Read_EOF(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(50 * time.Millisecond)
 	tr.Close()
 }
 
@@ -302,7 +298,6 @@ func TestFunctionFSTransport_Read_ContextCancelled(t *testing.T) {
 	}
 
 	initCancel()
-	time.Sleep(50 * time.Millisecond)
 	tr.Close()
 }
 
@@ -339,7 +334,6 @@ func TestFunctionFSTransport_Read_ClosedDuringLoop(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(50 * time.Millisecond)
 }
 
 func TestFunctionFSTransport_Write_Error(t *testing.T) {
@@ -385,7 +379,97 @@ func TestFunctionFSTransport_Write_Error(t *testing.T) {
 	}
 
 	cancel()
+}
+
+func TestFunctionFSTransport_Read_SetDeadlineError(t *testing.T) {
+	dir := t.TempDir()
+	for _, ep := range []string{"ep0", "ep1", "ep2"} {
+		f, err := os.Create(filepath.Join(dir, ep))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+
+	tr, err := NewFunctionFSTransport(dir, &OSFileSystem{}, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := tr.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	// Close the underlying epOut fd directly so SetReadDeadline fails
+	// before Read is attempted.
+	tr.epOut.Close()
+
+	_, readErr := tr.Read(ctx)
+	if readErr == nil {
+		t.Fatal("expected error from Read when SetReadDeadline fails")
+	}
+	if !errors.Is(readErr, ErrEndpointIOFailed) {
+		t.Errorf("got %v, want ErrEndpointIOFailed", readErr)
+	}
+
+	cancel()
 	time.Sleep(50 * time.Millisecond)
+	tr.Close()
+}
+
+func TestFunctionFSTransport_MonitorEvents_SetDeadlineError(t *testing.T) {
+	dir := t.TempDir()
+	for _, ep := range []string{"ep0", "ep1", "ep2"} {
+		f, err := os.Create(filepath.Join(dir, ep))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+
+	tr, err := NewFunctionFSTransport(dir, &OSFileSystem{}, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := tr.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	// Open a second handle to ep0 and close it immediately so
+	// SetReadDeadline fails on it, independent of the transport's own
+	// ep0 field (which the background monitor started by Initialize
+	// still holds open).
+	ep0, err := os.Open(filepath.Join(dir, "ep0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep0.Close()
+
+	// Call monitorEvents directly with the closed handle: it should treat
+	// the SetReadDeadline failure as terminal and return, rather than
+	// falling through to an unbounded Read with no deadline set.
+	done := make(chan struct{})
+	go func() {
+		tr.monitorEvents(ctx, ep0)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("monitorEvents did not return after SetReadDeadline failure")
+	}
+
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+	tr.Close()
 }
 
 func TestFunctionFSTransport_Close_WithOpenEndpoints(t *testing.T) {
@@ -411,7 +495,6 @@ func TestFunctionFSTransport_Close_WithOpenEndpoints(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(50 * time.Millisecond)
 
 	// Close should succeed and nil out all endpoints.
 	err = tr.Close()
@@ -457,10 +540,13 @@ func TestFunctionFSTransport_MonitorEvents_ContextCancel(t *testing.T) {
 		t.Fatalf("Initialize failed: %v", err)
 	}
 
-	// Cancel context to stop the monitor goroutine.
+	// Cancel context to stop the monitor goroutine. The monitor only
+	// re-checks ctx.Done() between reads, on the ffsPollInterval read
+	// deadline (no clock seam here, and nothing the monitor exposes signals
+	// its exit), so this waits a safe multiple of that production interval
+	// rather than an arbitrary duration.
 	cancel()
-	// Give the monitor goroutine time to detect cancellation and exit.
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(2*ffsPollInterval + 200*time.Millisecond)
 
 	// Verify transport is still operational (monitor exiting does not close transport).
 	if tr.closed.Load() {
@@ -493,8 +579,11 @@ func TestFunctionFSTransport_MonitorEvents_Closed(t *testing.T) {
 	}
 
 	// Close the transport; the monitor should detect closed state and exit.
+	// See the comment in TestFunctionFSTransport_MonitorEvents_ContextCancel
+	// for why this waits a multiple of ffsPollInterval rather than an
+	// arbitrary duration.
 	tr.Close()
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(2*ffsPollInterval + 200*time.Millisecond)
 
 	cancel()
 }
@@ -521,10 +610,12 @@ func TestFunctionFSTransport_MonitorEvents_EOF(t *testing.T) {
 		t.Fatalf("Initialize failed: %v", err)
 	}
 
-	// Close ep0 directly so the monitor gets EOF.
+	// Close ep0 directly so the monitor gets EOF. See the comment in
+	// TestFunctionFSTransport_MonitorEvents_ContextCancel for why this waits
+	// a multiple of ffsPollInterval rather than an arbitrary duration.
 	tr.ep0.Close()
 	tr.ep0 = nil
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(2*ffsPollInterval + 200*time.Millisecond)
 
 	cancel()
 }

@@ -18,10 +18,12 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"math/big"
 	"testing"
@@ -184,12 +186,16 @@ func TestIsExpired(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "certificate expiring in 1 second",
+			// X.509 validity has one-second resolution and the fixture is
+			// built before IsExpired runs, so a one-second margin can
+			// genuinely lapse on a loaded runner. A minute keeps the case
+			// "close to expiry" without racing the clock.
+			name: "certificate expiring in 1 minute",
 			cert: generateTestCertificate(t, testCertOptions{
 				serial:     big.NewInt(3),
 				commonName: "Almost Expired Cert",
 				notBefore:  time.Now().Add(-24 * time.Hour),
-				notAfter:   time.Now().Add(time.Second),
+				notAfter:   time.Now().Add(time.Minute),
 				key:        key,
 			}),
 			expected: false,
@@ -2029,32 +2035,44 @@ func TestVerifyChainAlgorithms_MD5IntermediateRejected(t *testing.T) {
 	}
 }
 
+// sha1SelfSignedRootPEM is a real, validly self-signed SHA1WithRSA
+// certificate, generated once offline (crypto/x509 panics signing with
+// SHA-1 under GODEBUG=fips140=only, rather than returning an error, so this
+// cannot be generated at test-run time in a FIPS-only process; see go-xkms
+// #23). TestVerifyChainAlgorithms_SHA1RootAnchorExempt needs a REAL
+// self-signed signature -- IsSelfSigned() verifies it against the cert's own
+// public key -- to exercise the exemption it tests, so a synthetic
+// metadata-only certificate (as makeWeakCert builds for every other test in
+// this file, which never sign anything and so never touch this problem)
+// will not do.
+const sha1SelfSignedRootPEM = `-----BEGIN CERTIFICATE-----
+MIIC+jCCAeKgAwIBAgICIykwDQYJKoZIhvcNAQEFBQAwHjEcMBoGA1UEAxMTU0hB
+MSBMZWdhY3kgUm9vdCBDQTAeFw0yNjAxMDEwMDAwMDBaFw0zNjAxMDEwMDAwMDBa
+MB4xHDAaBgNVBAMTE1NIQTEgTGVnYWN5IFJvb3QgQ0EwggEiMA0GCSqGSIb3DQEB
+AQUAA4IBDwAwggEKAoIBAQCvEv0kw2JIiLpt+6SLvYIXVKaUhwQtflguIRwV8Vwz
+n+LgGY4RdFvLVrb6P+PQqGTBWYkcm7FMbCcnAoIHMMRzXf6PG0e+HiLa81yH+BwT
+PBk9epMSWAbM9mSGWeaLeL0tMKIjdJHGmE3Z70h5fbhcSTv2Lw6wo+Jodjn69rgA
+0SuqgygOgeL4Xc/odhVq7wQD6qMOrgqjeP8zfLXYSxW8UGXh6UArjUjREbMxrY5d
+jP1omi4iEEx+jr4+XdBlt39kIzuiYnDLp9jGhESt4iVSnJZOHjjVDEE58ECMT7Ti
+JqMv49jOfl5YTXJDwhX7pc0U9PjOwkOiCX+Ro4p+Z6cxAgMBAAGjQjBAMA4GA1Ud
+DwEB/wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBQCHXAJunt4SdBF
+qJszs14PelLLCzANBgkqhkiG9w0BAQUFAAOCAQEANHszXgy5yG44V87RvvUcM2p6
+kCO6NksNyeaNrXPQML22x5LvUcHlyw7dBjjQgqXpshhrNSbhaT8Sg0a0zKDnTgnS
+hVD7eahEn7jWYfq+T8qMR9e+edkZ9AAS20UF5Jzd080k0ypdQl78wJnYtwzCd8LR
+S6tumXQQhfu1VEVAZZUt+0DwvWth+pfo8prcuZvX42JxmnONxgu8R08FOMqY/ymU
+t8PCk3HGeFh16XD6oNqW13vOPN4J2yNP8q61zLtXSeM8oc8t2LLwrBhpKD/ZLxvr
+KK40S4eCYSei2EUb2hT7Oy887b7map7cVVmaRG3b1sT8fyB93+hAdr4FjWTbtw==
+-----END CERTIFICATE-----
+`
+
 func TestVerifyChainAlgorithms_SHA1RootAnchorExempt(t *testing.T) {
-	// Build a REAL self-signed RSA certificate with SHA1WithRSA so that
-	// IsSelfSigned() returns true (it checks RawSubject == RawIssuer and
-	// verifies the signature against the cert's own public key).
-	rsaKey := generateTestRSAKey(t)
-	sha1RootDER, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
-		SerialNumber:       big.NewInt(9001),
-		Subject:            pkix.Name{CommonName: "SHA1 Legacy Root CA"},
-		NotBefore:          time.Now().Add(-time.Hour),
-		NotAfter:           time.Now().Add(365 * 24 * time.Hour),
-		IsCA:               true,
-		SignatureAlgorithm: x509.SHA1WithRSA,
-		KeyUsage:           x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-	}, &x509.Certificate{
-		SerialNumber:       big.NewInt(9001),
-		Subject:            pkix.Name{CommonName: "SHA1 Legacy Root CA"},
-		NotBefore:          time.Now().Add(-time.Hour),
-		NotAfter:           time.Now().Add(365 * 24 * time.Hour),
-		IsCA:               true,
-		SignatureAlgorithm: x509.SHA1WithRSA,
-		KeyUsage:           x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-	}, &rsaKey.PublicKey, rsaKey)
-	if err != nil {
-		t.Fatalf("failed to create SHA1 self-signed cert: %v", err)
+	// See sha1SelfSignedRootPEM for why this is a fixed fixture rather than
+	// signed at test-run time.
+	block, _ := pem.Decode([]byte(sha1SelfSignedRootPEM))
+	if block == nil {
+		t.Fatal("sha1SelfSignedRootPEM must decode")
 	}
-	sha1Root, err := x509.ParseCertificate(sha1RootDER)
+	sha1Root, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		t.Fatalf("failed to parse SHA1 root cert: %v", err)
 	}
@@ -2066,9 +2084,28 @@ func TestVerifyChainAlgorithms_SHA1RootAnchorExempt(t *testing.T) {
 	leafCert := generateLeafCertificate(t, caCert, caKey, leafKey)
 
 	// Chain: [leaf (ECDSAWithSHA256), sha1Root (SHA1WithRSA, self-signed)]
-	// The SHA1 root is the trust anchor → it must be exempt.
-	chains := [][]*x509.Certificate{{leafCert, sha1Root}}
-	if err := VerifyChainAlgorithms(chains); err != nil {
+	err = VerifyChainAlgorithms([][]*x509.Certificate{{leafCert, sha1Root}})
+
+	// IsSelfSigned grants the RFC 5280 §6.1 exemption only once it has
+	// verified the anchor's SHA-1 signature against its own public key
+	// (tbsCertificateDigest), which is exactly what a FIPS 140-only process
+	// cannot do. It fails closed under GODEBUG=fips140=only instead: the
+	// anchor is treated as NOT self-signed, so VerifyChainAlgorithms falls
+	// through to the ordinary weak-algorithm check and rejects the chain --
+	// the same outcome TestVerifyChainAlgorithms_SHA1LeafRejected pins for a
+	// non-anchor SHA-1 certificate. The exemption itself is unaffected
+	// outside FIPS 140-only mode, which this asserts too.
+	if fips140.Enforced() {
+		if err == nil {
+			t.Fatal("VerifyChainAlgorithms: SHA-1 self-signed anchor must not be exempt under GODEBUG=fips140=only")
+		}
+		var detail *ErrWeakSignatureAlgorithmDetail
+		if !errors.As(err, &detail) {
+			t.Fatalf("expected *ErrWeakSignatureAlgorithmDetail, got %T: %v", err, err)
+		}
+		return
+	}
+	if err != nil {
 		t.Errorf("VerifyChainAlgorithms: SHA1WithRSA self-signed anchor should be exempt, got: %v", err)
 	}
 }

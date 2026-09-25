@@ -25,12 +25,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -108,6 +111,13 @@ type TrustService struct {
 	store    truststore.TrustStore
 	elevator Elevator
 	onMutate func() // called after trust store mutations (add/remove/import)
+
+	auditLog atomic.Pointer[audit.Logger]
+
+	// policy is the enterprise policy section whose UserCanManageTrustStore
+	// field gates every mutating operation below. nil in personal mode.
+	// See SetPolicy.
+	policy atomic.Pointer[config.PolicySection]
 }
 
 // NewTrustService creates a new TrustService.
@@ -128,6 +138,43 @@ func (s *TrustService) SetContext(ctx context.Context) {
 // when the data directory is created after construction.
 func (s *TrustService) SetStore(store truststore.TrustStore) {
 	s.store = store
+}
+
+// SetAuditLogger sets the audit logger for security event logging.
+func (s *TrustService) SetAuditLogger(l audit.Logger) {
+	s.auditLog.Store(&l)
+}
+
+// SetPolicy installs the enterprise policy section that gates every trust
+// store mutation. The GUI calls this with config.DefaultPolicy() before SO
+// login and the verified section afterward; see startupEnterprisePolicy and
+// applyVerifiedEnterprisePolicy in pkg/gui/enterprise_policy.go.
+func (s *TrustService) SetPolicy(pol *config.PolicySection) {
+	s.policy.Store(pol)
+}
+
+// requireManageTrustStore returns a *PolicyDeniedError, and logs it, if
+// enterprise policy's UserCanManageTrustStore is false. Every mutating
+// TrustService method calls this first so the refusal and its audit event
+// take the same shape everywhere in this file.
+func (s *TrustService) requireManageTrustStore(operation string) error {
+	pol := s.policy.Load()
+	if pol == nil || pol.UserCanManageTrustStore {
+		return nil
+	}
+	err := &PolicyDeniedError{Field: "user_can_manage_trust_store"}
+	if p := s.auditLog.Load(); p != nil {
+		if auditErr := (*p).Log(audit.Entry{
+			Timestamp: time.Now(),
+			Operation: audit.OpPolicyDenied,
+			Success:   false,
+			Error:     err.Error(),
+			Details:   map[string]any{"operation": operation},
+		}); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
+	}
+	return err
 }
 
 // SetOnMutate registers a callback that is invoked after trust store
@@ -246,6 +293,9 @@ func (s *TrustService) ListCertificatesByPurpose(purpose string) ([]TrustCertInf
 
 // AddCertificatesPEM adds certificates from PEM data and returns the count added.
 func (s *TrustService) AddCertificatesPEM(pemData string) (int, error) {
+	if err := s.requireManageTrustStore("add_certificates_pem"); err != nil {
+		return 0, err
+	}
 	if s.store == nil {
 		return 0, nil
 	}
@@ -258,6 +308,9 @@ func (s *TrustService) AddCertificatesPEM(pemData string) (int, error) {
 
 // RemoveCertificate removes a certificate by fingerprint.
 func (s *TrustService) RemoveCertificate(fingerprint string) error {
+	if err := s.requireManageTrustStore("remove_certificate"); err != nil {
+		return err
+	}
 	if s.store == nil {
 		return nil
 	}
@@ -306,6 +359,9 @@ func (s *TrustService) GetCertificatePEM(fingerprint string) (string, error) {
 // Returns the number of certificates added. Returns 0, nil if the user
 // cancels the dialog.
 func (s *TrustService) ImportCertificateFile() (int, error) {
+	if err := s.requireManageTrustStore("import_certificate_file"); err != nil {
+		return 0, err
+	}
 	if s.store == nil {
 		s.log.Warn("ImportCertificateFile: trust store not initialized")
 		return 0, ErrNilTrustStore
@@ -411,6 +467,9 @@ type TrustStrapImportRequest struct {
 // stays in sync with the same modes the xkmsctl CLI and the QuicBaaS
 // SDK expose.
 func (s *TrustService) ImportFromTrustStrap(req TrustStrapImportRequest) (int, error) {
+	if err := s.requireManageTrustStore("import_from_truststrap"); err != nil {
+		return 0, err
+	}
 	if s.store == nil {
 		return 0, ErrNilTrustStore
 	}
@@ -508,6 +567,9 @@ func (s *TrustService) ExportCertificateDER(fingerprint string) ([]byte, error) 
 // trust bundle. When enabled is true the TagBrowserExport tag is added to
 // the certificate metadata; when false the tag is removed.
 func (s *TrustService) SetBrowserExport(fingerprint string, enabled bool) error {
+	if err := s.requireManageTrustStore("set_browser_export"); err != nil {
+		return err
+	}
 	if s.store == nil {
 		return ErrNilTrustStore
 	}
@@ -582,7 +644,9 @@ func (s *TrustService) ExportBrowserTrustBundle(bundlePath string) (int, error) 
 
 	if count == 0 {
 		// Remove stale bundle file if no certs are exported.
-		_ = os.Remove(bundlePath)
+		if err := os.Remove(bundlePath); err != nil && !os.IsNotExist(err) {
+			return 0, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleExport, Cause: err}
+		}
 		return 0, nil
 	}
 
@@ -595,16 +659,24 @@ func (s *TrustService) ExportBrowserTrustBundle(bundlePath string) (int, error) 
 		return 0, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleExport, Cause: err}
 	}
 
-	// Write manifest sidecar for staleness detection.
+	// Write manifest sidecar for staleness detection. The bundle itself is
+	// already written and durable at this point; a manifest failure is
+	// reported (not discarded) because it leaves staleness detection
+	// checking a stale or absent manifest against the fresh bundle, but it
+	// does not undo the export, so the count of exported certificates is
+	// still returned alongside the error.
 	manifest := bundleManifest{
 		Fingerprints: s.eligibleFingerprints(),
 		GeneratedAt:  time.Now().UTC(),
 		CertCount:    count,
 	}
 	manifestData, marshalErr := json.MarshalIndent(manifest, "", "  ")
-	if marshalErr == nil {
-		manifestPath := filepath.Join(dir, browserBundleManifestFile)
-		_ = os.WriteFile(manifestPath, manifestData, 0o600)
+	if marshalErr != nil {
+		return count, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleManifestWrite, Cause: marshalErr}
+	}
+	manifestPath := filepath.Join(dir, browserBundleManifestFile)
+	if err := os.WriteFile(manifestPath, manifestData, 0o600); err != nil {
+		return count, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleManifestWrite, Cause: err}
 	}
 
 	s.log.Info("exported browser trust bundle",
@@ -671,6 +743,9 @@ func (s *TrustService) GetBrowserBundleStatus(bundlePath string) BrowserBundleSt
 // the given purpose. Returns the number of new certificates added. The
 // operation is idempotent; certificates already in the store are skipped.
 func (s *TrustService) SeedEmbeddedRoots(purpose string) (int, error) {
+	if err := s.requireManageTrustStore("seed_embedded_roots"); err != nil {
+		return 0, err
+	}
 	if s.store == nil {
 		return 0, nil
 	}
@@ -712,6 +787,9 @@ func (s *TrustService) SeedEmbeddedRoots(purpose string) (int, error) {
 // privilege elevation via sudo. The password is used to authenticate the
 // sudo session and is zeroed from memory after use.
 func (s *TrustService) InstallToSystem(fingerprint string, password string) error {
+	if err := s.requireManageTrustStore("install_to_system"); err != nil {
+		return err
+	}
 	if s.store == nil {
 		return ErrNilTrustStore
 	}
@@ -750,6 +828,9 @@ func (s *TrustService) InstallToSystem(fingerprint string, password string) erro
 // privilege elevation via sudo. The password is used to authenticate the
 // sudo session and is zeroed from memory after use.
 func (s *TrustService) RemoveFromSystem(fingerprint string, password string) error {
+	if err := s.requireManageTrustStore("remove_from_system"); err != nil {
+		return err
+	}
 	if s.store == nil {
 		return ErrNilTrustStore
 	}

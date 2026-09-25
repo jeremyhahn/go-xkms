@@ -110,6 +110,16 @@ func (c *Controller) Seal() error {
 // held the real PIN. The cgo boundary already copies these out of the
 // application's memory, so nothing is aliased; if PIN wiping is wanted it
 // belongs in Module.SetPIN after its last read, not in a constructor here.
+//
+// The two reseal-on-failure paths below no longer discard the reseal's own
+// error. qrdb's StorageBarrier.Seal() (pkg/seal/barrier.go) guarantees the
+// barrier's observable state is sealed once it returns, regardless of
+// whether it reports an error: it stores stateSealed unconditionally and
+// only surfaces an error for observability of a lower-level fault. So the
+// barrier is never left in an unsealed or ambiguous state here — Seal's
+// error, when non-nil, is joined onto the failure that triggered the reseal
+// so both are visible to the caller, not because the barrier's state is in
+// doubt.
 func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) error {
 	ctx := context.Background()
 
@@ -132,14 +142,18 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) error {
 	newCreds, credErr := seal.CredentialsFor(newPassphrase)
 	if credErr != nil {
 		if wasSealed {
-			_ = c.barrier.Seal()
+			if sealErr := c.barrier.Seal(); sealErr != nil {
+				return errors.Join(credErr, sealErr)
+			}
 		}
 		return credErr
 	}
 	defer newCreds.Secret.Destroy()
 	if err := c.barrier.ChangePassword(ctx, newCreds); err != nil {
 		if wasSealed {
-			_ = c.barrier.Seal()
+			if sealErr := c.barrier.Seal(); sealErr != nil {
+				return errors.Join(err, sealErr)
+			}
 		}
 		return err
 	}

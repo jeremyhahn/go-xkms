@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -135,8 +136,11 @@ func (s *RestService) NewAccountHandler(w http.ResponseWriter, r *http.Request) 
 
 			// A rejected external account binding is a refused enrollment, not
 			// a protocol nicety: record it before the request is answered.
-			s.recordAudit(audit.LogAuthenticationFailed(auditContext(r), s.auditLog,
-				"external account binding verification failed: "+err.Error()))
+			if auditErr := s.recordAudit(audit.EventAuthenticationFailed, audit.LogAuthenticationFailed(auditContext(r), s.auditLog,
+				"external account binding verification failed: "+err.Error())); auditErr != nil {
+				writeError(w, common.ServerInternal("Failed to record audit event"))
+				return
+			}
 
 			// Return appropriate error based on the verification failure.
 			// Check sentinel errors first (returned directly by the verifier),
@@ -174,8 +178,16 @@ func (s *RestService) NewAccountHandler(w http.ResponseWriter, r *http.Request) 
 		if err == nil {
 			newAccountURL := fmt.Sprintf("%s/acme/new-account", s.baseRESTURI)
 			verifier := NewExternalAccountBindingVerifier(eabDAO, newAccountURL)
-			verifiedBinding, _ = verifier.Verify(ctx, req.ExternalAccountBinding, jwk)
-			// If verification fails, we still proceed (binding is optional)
+			var verifyErr error
+			verifiedBinding, verifyErr = verifier.Verify(ctx, req.ExternalAccountBinding, jwk)
+			if verifyErr != nil {
+				// The binding is optional here, so verification failure
+				// does not fail the request, but it's still reported: an
+				// operator needs visibility into malformed or invalid
+				// optional EAB submissions.
+				s.logger.Warn("optional external account binding failed verification",
+					"error", verifyErr.Error())
+			}
 		}
 	}
 
@@ -220,7 +232,14 @@ func (s *RestService) NewAccountHandler(w http.ResponseWriter, r *http.Request) 
 
 	s.logger.Info("Account created", "id", accountID, "contacts", req.Contact,
 		"external_account_bound", verifiedBinding != nil, "tenant_id", newAccount.TenantID)
-	s.recordAudit(audit.LogAccountCreated(auditContext(r), s.auditLog,
-		auditAccountID(accountID), req.Contact, verifiedBinding != nil))
+	if auditErr := s.recordAudit(audit.EventAccountCreated, audit.LogAccountCreated(auditContext(r), s.auditLog,
+		auditAccountID(accountID), req.Contact, verifiedBinding != nil)); auditErr != nil {
+		writeError(w, common.ServerInternal("Failed to record audit event"))
+		return
+	}
+	metrics.RecordAccountCreated()
+	if newAccount.TenantID != "" {
+		metrics.IncTenantActiveAccounts(newAccount.TenantID)
+	}
 	s.respondWithAccount(w, newAccount, http.StatusCreated)
 }

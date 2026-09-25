@@ -515,7 +515,6 @@ func TestOperationType_Constants(t *testing.T) {
 		OpUserPresenceConfirmed,
 		OpUserPresenceTimedOut,
 		OpUserPresenceCancelled,
-		OpTouchEventReceived,
 
 		// Browser extension / native messaging operations.
 		OpExtensionHandshake,
@@ -536,12 +535,8 @@ func TestOperationType_Constants(t *testing.T) {
 
 		// OATH operations.
 		OpOATHCredentialCreated,
-		OpOATHCredentialAccessed,
-		OpOATHCredentialUpdated,
 		OpOATHCredentialDeleted,
 		OpOATHCodeGenerated,
-		OpOATHCodeValidated,
-		OpOATHCodeInvalid,
 
 		// IPC operations.
 		OpIPCMessageDispatched,
@@ -605,4 +600,158 @@ func TestSlogLogger_Log_ZeroDuration(t *testing.T) {
 // TestLogger_Interface ensures SlogLogger implements Logger interface.
 func TestLogger_Interface(t *testing.T) {
 	var _ Logger = (*SlogLogger)(nil)
+}
+
+// TestSlogLogger_LogPINOperation verifies the Error field is populated from
+// a non-nil error and left empty on success, and that Backend is carried
+// through to the log entry unmodified.
+func TestSlogLogger_LogPINOperation(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		var buf bytes.Buffer
+		auditLogger := NewSlogLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+
+		if err := auditLogger.LogPINOperation(OpPINVerified, "pkcs11", true, nil, map[string]any{"attempt": 1}); err != nil {
+			t.Fatalf("LogPINOperation() error = %v", err)
+		}
+
+		output := buf.String()
+		if strings.Contains(output, "error=") {
+			t.Errorf("expected no error field on success, got: %s", output)
+		}
+		if !strings.Contains(output, "pkcs11") {
+			t.Errorf("expected backend %q in output, got: %s", "pkcs11", output)
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		var buf bytes.Buffer
+		auditLogger := NewSlogLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+		pinErr := errors.New("pin locked")
+
+		if err := auditLogger.LogPINOperation(OpPINVerified, "pkcs11", false, pinErr, nil); err != nil {
+			t.Fatalf("LogPINOperation() error = %v", err)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "pin locked") {
+			t.Errorf("expected underlying error text in output, got: %s", output)
+		}
+	})
+}
+
+// TestSlogLogger_LogTPMOperation verifies the entry is always attributed to
+// the "tpm2" backend regardless of caller input, and that a nil error
+// produces no Error field.
+func TestSlogLogger_LogTPMOperation(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		var buf bytes.Buffer
+		auditLogger := NewSlogLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+
+		if err := auditLogger.LogTPMOperation(OpDeviceAttested, true, nil, nil); err != nil {
+			t.Fatalf("LogTPMOperation() error = %v", err)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "tpm2") {
+			t.Errorf("expected backend %q in output, got: %s", "tpm2", output)
+		}
+		if strings.Contains(output, "error=") {
+			t.Errorf("expected no error field on success, got: %s", output)
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		var buf bytes.Buffer
+		auditLogger := NewSlogLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+		tpmErr := errors.New("seal operation failed")
+
+		if err := auditLogger.LogTPMOperation(OpDeviceAttested, false, tpmErr, nil); err != nil {
+			t.Fatalf("LogTPMOperation() error = %v", err)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "seal operation failed") {
+			t.Errorf("expected underlying error text in output, got: %s", output)
+		}
+	})
+}
+
+// TestSlogLogger_LogPasswordStoreOperation verifies the source is injected
+// into Details under the "source" key, including when the caller passes a
+// nil Details map.
+func TestSlogLogger_LogPasswordStoreOperation(t *testing.T) {
+	t.Run("success nil details", func(t *testing.T) {
+		var buf bytes.Buffer
+		auditLogger := NewSlogLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+
+		if err := auditLogger.LogPasswordStoreOperation(OpAutofillRequested, "autofill", true, nil, nil); err != nil {
+			t.Fatalf("LogPasswordStoreOperation() error = %v", err)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "source=autofill") {
+			t.Errorf("expected source=autofill in output, got: %s", output)
+		}
+	})
+
+	t.Run("failure preserves caller details", func(t *testing.T) {
+		var buf bytes.Buffer
+		auditLogger := NewSlogLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+		storeErr := errors.New("store locked")
+
+		err := auditLogger.LogPasswordStoreOperation(OpAutofillRequested, "extension", false, storeErr,
+			map[string]any{"domain": "example.com"})
+		if err != nil {
+			t.Fatalf("LogPasswordStoreOperation() error = %v", err)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "source=extension") {
+			t.Errorf("expected source=extension in output, got: %s", output)
+		}
+		if !strings.Contains(output, "example.com") {
+			t.Errorf("expected caller-supplied detail to survive, got: %s", output)
+		}
+		if !strings.Contains(output, "store locked") {
+			t.Errorf("expected underlying error text in output, got: %s", output)
+		}
+	})
+}
+
+// TestSlogLogger_LogUserPresenceEvent verifies the source is injected into
+// Details and the entry reports success/failure as given (this event has
+// no error parameter to convert).
+func TestSlogLogger_LogUserPresenceEvent(t *testing.T) {
+	t.Run("success nil details", func(t *testing.T) {
+		var buf bytes.Buffer
+		auditLogger := NewSlogLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+
+		if err := auditLogger.LogUserPresenceEvent(OpDeviceAttested, "fido2", true, nil); err != nil {
+			t.Fatalf("LogUserPresenceEvent() error = %v", err)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "source=fido2") {
+			t.Errorf("expected source=fido2 in output, got: %s", output)
+		}
+	})
+
+	t.Run("failure with caller details", func(t *testing.T) {
+		var buf bytes.Buffer
+		auditLogger := NewSlogLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+
+		err := auditLogger.LogUserPresenceEvent(OpDeviceAttested, "fido2", false,
+			map[string]any{"reason": "timeout"})
+		if err != nil {
+			t.Fatalf("LogUserPresenceEvent() error = %v", err)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "source=fido2") {
+			t.Errorf("expected source=fido2 in output, got: %s", output)
+		}
+		if !strings.Contains(output, "timeout") {
+			t.Errorf("expected caller-supplied detail to survive, got: %s", output)
+		}
+	})
 }

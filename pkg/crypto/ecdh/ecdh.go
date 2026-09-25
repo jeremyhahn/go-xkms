@@ -39,13 +39,11 @@ package ecdh
 import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/hkdf"
 	"crypto/sha256"
 	"fmt"
-	"io"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-
-	"golang.org/x/crypto/hkdf"
 )
 
 // DeriveSharedSecret performs ECDH key agreement between a private key and
@@ -112,12 +110,13 @@ func DeriveKey(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {
 		return nil, &errs.Message{Msg: fmt.Sprintf("key length must be positive, got %d", keyLength)}
 	}
 
-	// Create HKDF reader using SHA-256
-	hkdfReader := hkdf.New(sha256.New, sharedSecret, salt, info)
-
-	// Derive key
-	derivedKey := make([]byte, keyLength)
-	if _, err := io.ReadFull(hkdfReader, derivedKey); err != nil {
+	// crypto/hkdf.Key (the stdlib RFC 5869 implementation, Go 1.24+) is used
+	// instead of golang.org/x/crypto/hkdf.New: the x/crypto Reader
+	// constructor converts the stdlib's own FIPS 140-only refusals (short
+	// shared secret, an over-length request) into a panic, which would crash
+	// this process instead of returning the error this function promises.
+	derivedKey, err := hkdf.Key(sha256.New, sharedSecret, salt, string(info), keyLength)
+	if err != nil {
 		return nil, &errs.Wrapped{Msg: "HKDF derivation failed", Err: err}
 	}
 

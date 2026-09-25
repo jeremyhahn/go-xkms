@@ -209,12 +209,25 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	if dErr := s.b.users.DeleteUser(ctx, id); dErr != nil {
 		return WrapError("qrdb delete user", dErr)
 	}
-	credIDs, _ := s.b.listUserCredIDs(ctx, id)
-	for _, c := range credIDs {
-		_ = s.b.kv.Delete(ctx, credKey(c))
+	// The user record is already gone; the credential side-channel entries
+	// below are best-effort cleanup. A failure here still needs to reach the
+	// caller -- an orphaned credential blob left in KV would go on
+	// referencing a user that no longer exists -- so failures are joined
+	// into one error rather than discarded.
+	credIDs, err := s.b.listUserCredIDs(ctx, id)
+	if err != nil {
+		return WrapError("list user credentials for delete", err)
 	}
-	_ = s.b.kv.Delete(ctx, userCredSetKey(id))
-	return nil
+	var delErr error
+	for _, c := range credIDs {
+		if dErr := s.b.kv.Delete(ctx, credKey(c)); dErr != nil {
+			delErr = errors.Join(delErr, WrapError("delete credential", dErr))
+		}
+	}
+	if dErr := s.b.kv.Delete(ctx, userCredSetKey(id)); dErr != nil {
+		delErr = errors.Join(delErr, WrapError("delete credential index", dErr))
+	}
+	return delErr
 }
 
 // ----- CredentialStore -----
@@ -242,7 +255,10 @@ func (s *qrdbCredentialStore) Save(ctx context.Context, cred *Credential) error 
 	if err := s.b.kv.Put(ctx, credKey(credSeg), blob); err != nil {
 		return WrapError("persist credential", err)
 	}
-	ids, _ := s.b.listUserCredIDs(ctx, id)
+	ids, err := s.b.listUserCredIDs(ctx, id)
+	if err != nil {
+		return WrapError("list user credentials", err)
+	}
 	for _, existing := range ids {
 		if existing == credSeg {
 			return nil
@@ -339,7 +355,15 @@ func (s *qrdbCredentialStore) Delete(ctx context.Context, credID []byte) error {
 	if err := s.b.kv.Delete(ctx, credKey(idStr)); err != nil {
 		return WrapError("delete credential", err)
 	}
-	ids, _ := s.b.listUserCredIDs(ctx, userID)
+	ids, err := s.b.listUserCredIDs(ctx, userID)
+	if err != nil {
+		// The credential blob is already gone; failing to also update the
+		// index means it may still list the deleted credential, but that is
+		// safer than the alternative of persisting an index built from a
+		// failed (effectively empty) list, which would silently wipe every
+		// other credential the user has.
+		return WrapError("list user credentials for delete", err)
+	}
 	out := ids[:0]
 	for _, id := range ids {
 		if id == idStr {
@@ -370,10 +394,16 @@ func (s *qrdbCredentialStore) DeleteByUserID(ctx context.Context, userID []byte)
 	if err != nil {
 		return err
 	}
+	var delErr error
 	for _, cid := range ids {
-		_ = s.b.kv.Delete(ctx, credKey(cid))
+		if dErr := s.b.kv.Delete(ctx, credKey(cid)); dErr != nil {
+			delErr = errors.Join(delErr, WrapError("delete credential", dErr))
+		}
 	}
-	return s.b.kv.Delete(ctx, userCredSetKey(id))
+	if dErr := s.b.kv.Delete(ctx, userCredSetKey(id)); dErr != nil {
+		delErr = errors.Join(delErr, WrapError("delete credential index", dErr))
+	}
+	return delErr
 }
 
 // ----- shared helpers -----

@@ -1,6 +1,6 @@
 # Crypto Backends — API
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 The six transports and how they are shaped are described once, in
 [`../key-management/api.md`](../key-management/api.md) §"How the six transports

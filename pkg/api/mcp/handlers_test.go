@@ -15,6 +15,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -23,6 +24,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -132,6 +134,62 @@ func TestHandler_ListBackends(t *testing.T) {
 			}
 		}
 		assert.True(t, foundSoftware, "Should contain software backend")
+	})
+}
+
+// TestHandler_GetBackend tests the xkms.getBackend handler added for
+// go-xkms#762: docs/crypto-backends/api.md already documented this method as
+// the MCP equivalent of REST's GET /api/v1/backends/{id}, but no handler
+// existed to serve it.
+func TestHandler_GetBackend(t *testing.T) {
+	server := createTestServer(t)
+	defer cleanupXKMS()
+
+	ctx := context.Background()
+
+	t.Run("returns the named backend", func(t *testing.T) {
+		params := GetBackendParams{Backend: "software"}
+		paramsJSON, _ := json.Marshal(params)
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getBackend", Params: paramsJSON, ID: 1}
+
+		result, err := server.handleGetBackend(ctx, req)
+		require.NoError(t, err)
+
+		info, ok := result.(*transport.BackendInfo)
+		require.True(t, ok)
+		assert.Equal(t, "software", info.ID)
+		assert.NotEmpty(t, info.Type)
+	})
+
+	t.Run("fails for an unknown backend", func(t *testing.T) {
+		params := GetBackendParams{Backend: "does-not-exist"}
+		paramsJSON, _ := json.Marshal(params)
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getBackend", Params: paramsJSON, ID: 1}
+
+		_, err := server.handleGetBackend(ctx, req)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, xkms.ErrBackendNotFound)
+	})
+
+	t.Run("fails with an empty backend name as InvalidParams", func(t *testing.T) {
+		paramsJSON, _ := json.Marshal(GetBackendParams{})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getBackend", Params: paramsJSON, ID: 1}
+
+		_, err := server.handleGetBackend(ctx, req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
+	})
+
+	t.Run("fails with malformed JSON params as InvalidParams", func(t *testing.T) {
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getBackend", Params: json.RawMessage(`{bad`), ID: 1}
+
+		_, err := server.handleGetBackend(ctx, req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
 	})
 }
 
@@ -446,7 +504,7 @@ func TestHandler_GetKey(t *testing.T) {
 
 		_, err := server.handleGetKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -1440,7 +1498,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 
 		_, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2040,7 +2098,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 
 		_, err := server.handleExportKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2194,11 +2252,12 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 
 	t.Run("decrypts data", func(t *testing.T) {
 		params := DecryptParams{
-			KeyID:      "test-sym-decrypt-key",
-			Backend:    "software",
-			Ciphertext: encResult.Ciphertext,
-			Nonce:      encResult.Nonce,
-			Tag:        encResult.Tag,
+			KeyID:        "test-sym-decrypt-key",
+			Backend:      "software",
+			Ciphertext:   encResult.Ciphertext,
+			Nonce:        encResult.Nonce,
+			Tag:          encResult.Tag,
+			GCMNonceMode: encResult.GCMNonceMode,
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -2239,6 +2298,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 			Nonce:          encResultAAD.Nonce,
 			Tag:            encResultAAD.Tag,
 			AdditionalData: []byte("aad"),
+			GCMNonceMode:   encResultAAD.GCMNonceMode,
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -2291,10 +2351,11 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 
 	t.Run("decrypts without specifying backend", func(t *testing.T) {
 		params := DecryptParams{
-			KeyID:      "test-sym-decrypt-key",
-			Ciphertext: encResult.Ciphertext,
-			Nonce:      encResult.Nonce,
-			Tag:        encResult.Tag,
+			KeyID:        "test-sym-decrypt-key",
+			Ciphertext:   encResult.Ciphertext,
+			Nonce:        encResult.Nonce,
+			Tag:          encResult.Tag,
+			GCMNonceMode: encResult.GCMNonceMode,
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -2400,7 +2461,7 @@ func TestHandler_DeleteKey_NonExistent(t *testing.T) {
 
 		_, err := server.handleDeleteKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2564,7 +2625,7 @@ func TestHandler_Sign_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleSign(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2592,7 +2653,7 @@ func TestHandler_Verify_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleVerify(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2646,7 +2707,7 @@ func TestHandler_Encrypt_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleEncrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2672,7 +2733,7 @@ func TestHandler_Decrypt_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2698,7 +2759,7 @@ func TestHandler_AsymmetricEncrypt_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleAsymmetricEncrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2724,7 +2785,7 @@ func TestHandler_AsymmetricDecrypt_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleAsymmetricDecrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2749,7 +2810,7 @@ func TestHandler_GetKey_NonExistentBackend(t *testing.T) {
 
 		_, err := server.handleGetKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 }
 
@@ -3548,7 +3609,18 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 		}
 
 		result, err := server.handleEncrypt(context.Background(), req)
-		require.NoError(t, err)
+		if err != nil {
+			// This RPC's asymmetric fallback deliberately mirrors
+			// PKCS#11's CKM_RSA_PKCS mechanism -- raw PKCS#1 v1.5
+			// encryption, no OAEP digest involved -- for the
+			// local-fallback KEK-wrap path (see
+			// pkg/xkms/servicer_crypto.go's Encrypt). crypto/rsa refuses
+			// that construction outright under GODEBUG=fips140=only.
+			if fips140.Enforced() {
+				return
+			}
+			require.NoError(t, err)
+		}
 
 		encryptResult, ok := result.(EncryptResult)
 		require.True(t, ok)
@@ -3592,7 +3664,7 @@ func TestHandler_Decrypt_InvalidBackend(t *testing.T) {
 
 		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 }
 
@@ -3722,6 +3794,17 @@ func TestHandler_SHA1Hash(t *testing.T) {
 	t.Run("SHA-1 round-trips under the weak-hash policy", func(t *testing.T) {
 		types.SetAllowWeakHashes(true)
 		defer types.SetAllowWeakHashes(false)
+
+		// SetAllowWeakHashes(true) is a deliberate no-op under FIPSMode():
+		// the Go Cryptographic Module's approved-algorithm boundary is the
+		// ceiling this repository's own policy switch must never be able
+		// to re-open (see pkg/types/hashpolicy.go), so SHA-1 signing stays
+		// refused under GODEBUG=fips140=only regardless of the policy.
+		if types.FIPSMode() {
+			_, signErr := server.handleSign(context.Background(), signReq)
+			require.ErrorIs(t, signErr, xkms.ErrInvalidHashFunction)
+			return
+		}
 
 		signResult, signErr := server.handleSign(context.Background(), signReq)
 		require.NoError(t, signErr)
@@ -4684,7 +4767,7 @@ func TestHandler_Decrypt_WithEmptyCiphertext(t *testing.T) {
 
 		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -4923,12 +5006,17 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 	})
 }
 
-// TestHandler_ListKeys_InvalidParams tests list keys with invalid params
+// TestHandler_ListKeys_InvalidParams tests list keys with invalid params.
+//
+// Malformed JSON used to be silently discarded and the request processed as
+// if no params had been sent at all (#701): a caller with a typo in their
+// params object got a confusingly successful, unfiltered response instead of
+// a rejection. It must now be reported as Invalid params.
 func TestHandler_ListKeys_InvalidParams(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
 
-	t.Run("handles invalid JSON params gracefully", func(t *testing.T) {
+	t.Run("rejects malformed JSON params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
 			Method:  "xkms.listKeys",
@@ -4936,7 +5024,20 @@ func TestHandler_ListKeys_InvalidParams(t *testing.T) {
 			ID:      1,
 		}
 
-		// Should not error - listKeys can work without params
+		_, err := server.handleListKeys(context.Background(), req)
+		require.Error(t, err)
+		var keyOp *KeyOpError
+		require.True(t, errors.As(err, &keyOp))
+		assert.Equal(t, ErrCodeInvalidParams, keyOp.Code)
+	})
+
+	t.Run("omitted params still work", func(t *testing.T) {
+		req := &JSONRPCRequest{
+			JSONRPC: "2.0",
+			Method:  "xkms.listKeys",
+			ID:      1,
+		}
+
 		result, err := server.handleListKeys(context.Background(), req)
 		require.NoError(t, err)
 
@@ -5241,7 +5342,7 @@ func TestHandler_DeleteKey_ErrorPaths(t *testing.T) {
 
 		_, err := server.handleDeleteKey(context.Background(), req)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -5299,7 +5400,7 @@ func TestHandler_Verify_ErrorPaths(t *testing.T) {
 
 		_, err := server.handleVerify(context.Background(), req)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -5512,9 +5613,10 @@ func TestHandler_Decrypt_WithBackendSearch(t *testing.T) {
 		params := DecryptParams{
 			KeyID: "test-decrypt-search",
 			// No backend - will search
-			Ciphertext: encryptResult.Ciphertext,
-			Nonce:      encryptResult.Nonce,
-			Tag:        encryptResult.Tag,
+			Ciphertext:   encryptResult.Ciphertext,
+			Nonce:        encryptResult.Nonce,
+			Tag:          encryptResult.Tag,
+			GCMNonceMode: encryptResult.GCMNonceMode,
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -5627,7 +5729,7 @@ func TestHandler_Decrypt_KeyNotFoundAnywhere(t *testing.T) {
 
 		_, err := server.handleDecrypt(context.Background(), req)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 

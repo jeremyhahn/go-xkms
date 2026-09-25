@@ -675,19 +675,13 @@ curl https://acme.example.com/admin/status
 
 ### Database Maintenance
 
-```bash
-# Compact/vacuum storage (if applicable)
-docker compose exec trusted-ca \
-    /app/trusted-acme-server maintenance vacuum
-
-# Rebuild indexes
-docker compose exec trusted-ca \
-    /app/trusted-acme-server maintenance reindex
-
-# Analyze query performance
-docker compose exec trusted-ca \
-    /app/trusted-acme-server maintenance analyze
-```
+There is no `trusted-acme-server` binary, and neither `xkmsd` nor `xkmsctl`
+has a `maintenance vacuum`/`reindex`/`analyze` subcommand. ACME protocol
+state (accounts, orders, authorizations, challenges) persists through
+`pkg/acme/storage` over `go-qrdb/sdk/go`
+([`../../acme-issuance/engineering.md`](../../acme-issuance/engineering.md)
+§Persistence); storage compaction and maintenance are go-qrdb's own
+operational surface, not an ACME-server command.
 
 ## Security Operations
 

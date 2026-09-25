@@ -97,9 +97,21 @@ var publicMethods = map[string]struct{}{
 //     surface with the ordinary keys:* actions. The entries live here rather
 //     than in the frost-tagged handlers so a `frost` build cannot ship an
 //     unenforced FROST surface.
+//   - xkms.*SOPIN / *UserPIN / getLockoutStatus / resetLockout,
+//     xkms.*CustodianGroup* / addCustodianMember / removeCustodianMember /
+//     distributeShares, xkms.*Tenant* / tenantBarrier*, and xkms.deriveKey —
+//     pkg/api/grpc/service_barrier_pin.go and
+//     service_custodian_share_tenant.go's s.authorize calls (pin:*,
+//     ceremony:*, tenants:*, tenant_barrier:*), and service.go's DeriveKey
+//     (keys:derive). REST serves the PIN, custodian, and tenant routes
+//     under session-only auth with no RBAC permission of their own
+//     (pkg/api/rest/routes.go); gRPC's authorize calls are the only
+//     transport that already enforces a specific grant for these
+//     operations, so they are this table's source (go-xkms#773).
 var methodPermissions = map[string]permission{
 	// Backends.
 	"xkms.listBackends": {auth.ResourceBackends, auth.ActionList},
+	"xkms.getBackend":   {auth.ResourceBackends, auth.ActionRead},
 
 	// Key lifecycle and crypto operations.
 	"xkms.generateKey":         {auth.ResourceKeys, auth.ActionCreate},
@@ -186,6 +198,52 @@ var methodPermissions = map[string]permission{
 	// Trust bootstrap listener (go-xkms#632).
 	"bootstrap.showKeys": {auth.ResourceBootstrap, auth.ActionRead},
 
+	// PIN management -- pkg/api/grpc/service_barrier_pin.go's
+	// s.authorize(ctx, auth.ResourcePIN, ...) calls (go-xkms#773).
+	"xkms.setSOPIN":         {auth.ResourcePIN, auth.ActionWrite},
+	"xkms.setUserPIN":       {auth.ResourcePIN, auth.ActionWrite},
+	"xkms.changeSOPIN":      {auth.ResourcePIN, auth.ActionWrite},
+	"xkms.changeUserPIN":    {auth.ResourcePIN, auth.ActionWrite},
+	"xkms.verifySOPIN":      {auth.ResourcePIN, auth.ActionRead},
+	"xkms.verifyUserPIN":    {auth.ResourcePIN, auth.ActionRead},
+	"xkms.getLockoutStatus": {auth.ResourcePIN, auth.ActionRead},
+	"xkms.resetLockout":     {auth.ResourcePIN, auth.ActionWrite},
+
+	// Custodian groups -- pkg/api/grpc/service_custodian_share_tenant.go's
+	// s.authorize(ctx, auth.ResourceCeremony, ...) calls (go-xkms#773). Group
+	// reads carry the ceremony status action; enrolling or revoking a
+	// custodian changes who can contribute an unseal share, so those carry
+	// the dedicated enroll/revoke_custodian actions, exactly as the init
+	// ceremony's own custodian roster does.
+	"xkms.createCustodianGroup":  {auth.ResourceCeremony, auth.ActionEnrollCustodian},
+	"xkms.getCustodianGroup":     {auth.ResourceCeremony, auth.ActionStatus},
+	"xkms.listCustodianGroups":   {auth.ResourceCeremony, auth.ActionStatus},
+	"xkms.deleteCustodianGroup":  {auth.ResourceCeremony, auth.ActionRevokeCustodian},
+	"xkms.addCustodianMember":    {auth.ResourceCeremony, auth.ActionEnrollCustodian},
+	"xkms.removeCustodianMember": {auth.ResourceCeremony, auth.ActionRevokeCustodian},
+	"xkms.distributeShares":      {auth.ResourceCeremony, auth.ActionClaimShareBegin},
+
+	// Tenant administration -- pkg/api/grpc/service_custodian_share_tenant.go's
+	// s.authorize(ctx, auth.ResourceTenants|auth.ResourceTenantBarrier, ...)
+	// calls (go-xkms#773). Tenant metadata CRUD carries tenants:*; the
+	// per-tenant barrier lifecycle is its own resource family, distinct from
+	// the system barrier's seal:*.
+	"xkms.createTenant":             {auth.ResourceTenants, auth.ActionCreate},
+	"xkms.getTenant":                {auth.ResourceTenants, auth.ActionRead},
+	"xkms.listTenants":              {auth.ResourceTenants, auth.ActionList},
+	"xkms.deleteTenant":             {auth.ResourceTenants, auth.ActionDelete},
+	"xkms.tenantBarrierInit":        {auth.ResourceTenantBarrier, auth.ActionInit},
+	"xkms.tenantBarrierUnseal":      {auth.ResourceTenantBarrier, auth.ActionUnseal},
+	"xkms.tenantBarrierStatus":      {auth.ResourceTenantBarrier, auth.ActionStatus},
+	"xkms.updateTenantEntitlements": {auth.ResourceTenants, auth.ActionUpdate},
+	"xkms.updateTenantQuotas":       {auth.ResourceTenants, auth.ActionUpdate},
+
+	// Non-ECDH key derivation -- pkg/api/grpc/service.go's DeriveKey
+	// s.authorize(ctx, auth.ResourceKeys, auth.ActionDerive, ...) call,
+	// identical to xkms.deriveKeyECDH's mapping above (go-xkms#773). REST
+	// carries no route for this method; gRPC is its only other transport.
+	"xkms.deriveKey": {auth.ResourceKeys, auth.ActionDerive},
+
 	// Shamir shares. Reads are ceremony status; writes (submit, delete)
 	// move quorum material and carry the barrier's unseal-share action.
 	"xkms.submitShare":              {auth.ResourceBarrier, auth.ActionUnsealShare},
@@ -210,16 +268,30 @@ var methodPermissions = map[string]permission{
 	"credentials.submit":   {auth.ResourceCredentials, auth.ActionSubmit},
 	"credentials.strategy": {auth.ResourceCredentials, auth.ActionStrategy},
 
+	// User management. Mirrors pkg/api/rest/routes.go's /api/v1/users
+	// decorators exactly: create/list/read/delete carry their ordinary CRUD
+	// actions, enable/disable/bindCert all carry update since each mutates an
+	// existing user's state rather than replacing it.
+	"user.create":          {auth.ResourceUsers, auth.ActionCreate},
+	"user.list":            {auth.ResourceUsers, auth.ActionList},
+	"user.get":             {auth.ResourceUsers, auth.ActionRead},
+	"user.delete":          {auth.ResourceUsers, auth.ActionDelete},
+	"user.enable":          {auth.ResourceUsers, auth.ActionUpdate},
+	"user.disable":         {auth.ResourceUsers, auth.ActionUpdate},
+	"user.bindCert":        {auth.ResourceUsers, auth.ActionUpdate},
+	"user.listCredentials": {auth.ResourceUsers, auth.ActionRead},
+
 	// Password store.
-	"password.add":      {auth.ResourcePasswords, auth.ActionWrite},
-	"password.get":      {auth.ResourcePasswords, auth.ActionRead},
-	"password.list":     {auth.ResourcePasswords, auth.ActionRead},
-	"password.update":   {auth.ResourcePasswords, auth.ActionWrite},
-	"password.delete":   {auth.ResourcePasswords, auth.ActionDelete},
-	"password.unlock":   {auth.ResourcePasswords, auth.ActionUnlock},
-	"password.lock":     {auth.ResourcePasswords, auth.ActionLock},
-	"password.status":   {auth.ResourcePasswords, auth.ActionRead},
-	"password.generate": {auth.ResourcePasswords, auth.ActionGenerate},
+	"password.add":           {auth.ResourcePasswords, auth.ActionWrite},
+	"password.get":           {auth.ResourcePasswords, auth.ActionRead},
+	"password.list":          {auth.ResourcePasswords, auth.ActionRead},
+	"password.update":        {auth.ResourcePasswords, auth.ActionWrite},
+	"password.delete":        {auth.ResourcePasswords, auth.ActionDelete},
+	"password.unlock":        {auth.ResourcePasswords, auth.ActionUnlock},
+	"password.lock":          {auth.ResourcePasswords, auth.ActionLock},
+	"password.status":        {auth.ResourcePasswords, auth.ActionRead},
+	"password.generate":      {auth.ResourcePasswords, auth.ActionGenerate},
+	"password.setAccessMode": {auth.ResourcePasswords, auth.ActionWrite},
 
 	// Platform-sealed store. Secrets sealed here are key-protection
 	// material, so the actions mirror the keys:* pairs used by every other

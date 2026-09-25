@@ -438,10 +438,11 @@ func (t *Transport) Encrypt(ctx context.Context, req *transport.EncryptRequest) 
 	}
 
 	return &transport.EncryptResponse{
-		Ciphertext: resp.Ciphertext,
-		Nonce:      resp.Nonce,
-		Tag:        resp.Tag,
-		IV:         resp.Iv,
+		Ciphertext:   resp.Ciphertext,
+		Nonce:        resp.Nonce,
+		Tag:          resp.Tag,
+		IV:           resp.Iv,
+		GCMNonceMode: resp.GcmNonceMode,
 	}, nil
 }
 
@@ -458,6 +459,7 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 		Nonce:          req.Nonce,
 		Tag:            req.Tag,
 		AdditionalData: req.AdditionalData,
+		GcmNonceMode:   req.GCMNonceMode,
 		Mode:           req.Mode,
 		Iv:             req.IV,
 		Padding:        req.Padding,
@@ -2915,27 +2917,10 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 	}, nil
 }
 
-// ==================== Escrow Operations ====================
-//
-// No gRPC route exists yet for external key escrow (pkg/escrow); see
-// docs/escrow/architecture.md. These stubs keep Transport satisfying
-// transport.XKMSServicer.
-
-func (t *Transport) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) RevokeEscrow(_ context.Context, _ string) error {
-	return ErrNotSupported
-}
+// External key escrow (pkg/escrow) is embedded-only (go-xkms#692): its RBAC
+// model is undecided, so Transport does not implement EscrowKey/RecoverKey/
+// ListEscrowed/RevokeEscrow at all. transport.EscrowService is no longer
+// part of transport.Client — see docs/escrow/architecture.md.
 
 // ==================== Policy Operations ====================
 

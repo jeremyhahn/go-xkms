@@ -921,26 +921,6 @@ func TestRequestErrors(t *testing.T) {
 	})
 }
 
-// TestRequestStream tests streaming (not supported).
-func TestRequestStream(t *testing.T) {
-	mock := newMockRestService()
-	cfg := &transport.Config{}
-
-	tr, err := NewTransport(cfg, WithService(mock))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	ctx := context.Background()
-	_, err = tr.RequestStream(ctx, "test", "method", nil)
-	if err == nil {
-		t.Fatal("expected error for streaming")
-	}
-	if !errors.IsUnimplemented(err) {
-		t.Errorf("expected unimplemented error, got: %v", err)
-	}
-}
-
 // TestFactory tests the transport factory.
 func TestFactory(t *testing.T) {
 	t.Run("success", func(t *testing.T) {

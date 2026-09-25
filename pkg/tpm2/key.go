@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/asn1"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -191,9 +192,9 @@ func applyDevIDConfig(
 	cn string,
 	sigAlgo x509.SignatureAlgorithm,
 	platformPolicy bool,
-	password types.SecretValue) error {
+	password *types.SecretValue) error {
 
-	passwordBytes, err := types.SecretValueBytes(&password)
+	passwordBytes, err := types.SecretValueBytes(password)
 	if err != nil {
 		return err
 	}
@@ -278,8 +279,8 @@ func (tpm *TPM2) EKAttributes() (*types.KeyAttributes, error) {
 		ekAttrs, err := tpm.KeyAttributes(ekHandle)
 		if err != nil {
 			// Check if this is a "handle not found" error (persistent EK doesn't exist)
-			isPersistentHandleError := err == tpm2.TPMRC(0x184) || // TPM_RC_VALUE
-				err == tpm2.TPMRC(0x18b) // TPM_RC_HANDLE
+			isPersistentHandleError := errors.Is(err, tpm2.TPMRC(0x184)) || // TPM_RC_VALUE
+				errors.Is(err, tpmRCHandle) // TPM_RC_HANDLE
 
 			if isPersistentHandleError {
 				// Persistent EK doesn't exist - check for manufacturer EK certificate in NV RAM
@@ -399,6 +400,24 @@ func (tpm *TPM2) SSRKAttributes() (*types.KeyAttributes, error) {
 // PlatformSRKAttributes returns the Platform Storage Root Key attributes
 // using its persistent handle (default 0x81000002).
 //
+// Configuration is the source of truth for whether this SRK is
+// platform-policy bound, on this path exactly as it is for the
+// PlatformKeyStore path below: PlatformSRKAttributesFromConfig (the same
+// function PlatformKeyStore uses to build the attributes it creates the SRK
+// from) supplies PlatformPolicy here too, rather than this method
+// re-deriving it or leaving it at the Go zero value. A bare TPM2_ReadPublic
+// (tpm.KeyAttributes) has no configuration in scope and cannot set it, and
+// the object's live AuthPolicy is deliberately not inspected to infer it --
+// inferring from what TPM2_ReadPublic returns would make an unrelated
+// object's coincidentally-matching AuthPolicy silently select the PCR
+// branch. Without this, a caller with no PlatformKeyStore attached (every
+// unattended path: the barrier's TPM2Strategy, PlatformSealer) resolved
+// PlatformPolicy: false here even when the SRK was created with a platform
+// policy, so CreateSession skipped PlatformPolicySession entirely and tried
+// a plain password session with empty auth against an enrolled SRK's real,
+// non-empty PIN -- refused with TPM_RC_AUTH_FAIL before the PolicyPCR branch
+// the object's AuthPolicy actually supports was ever attempted.
+//
 // When a PlatformKeyStore is attached and its auth is confirmed (IsAuthReady),
 // the SRK auth password from the PlatformKeyStore is included in the returned
 // attributes. This allows seal/unseal operations using the SRK to succeed
@@ -421,6 +440,13 @@ func (tpm *TPM2) PlatformSRKAttributes() (*types.KeyAttributes, error) {
 		}
 		srkAttrs.KeyType = types.KeyTypeStorage
 		srkAttrs.StoreType = types.StoreTPM2
+
+		configAttrs, err := PlatformSRKAttributesFromConfig(tpm.config)
+		if err != nil {
+			return nil, err
+		}
+		srkAttrs.PlatformPolicy = configAttrs.PlatformPolicy
+
 		tpm.platformSRKAttrs = srkAttrs
 	}
 
@@ -451,7 +477,7 @@ func (tpm *TPM2) KeyAttributes(
 	}.Execute(tpm.transport)
 	if err != nil {
 		// TPM_RC_HANDLE (0x18b) is expected when key doesn't exist - log at debug level
-		if err == tpm2.TPMRC(0x18b) {
+		if errors.Is(err, tpmRCHandle) {
 			tpm.logger.Debug("key handle not found (expected during initialization)",
 				slog.String("handle", fmt.Sprintf("0x%x", handle)),
 				slog.String("error", err.Error()))
@@ -607,7 +633,10 @@ func (tpm *TPM2) CreateEK(
 		return err
 	}
 
-	hierName, _ := HierarchyName(hierarchy)
+	hierName, hierErr := HierarchyName(hierarchy)
+	if hierErr != nil {
+		hierName = fmt.Sprintf("0x%08x", uint32(hierarchy))
+	}
 	tpm.logger.Debug("tpm: EK Hierarchy", slog.String("hierarchy", hierName))
 	tpm.logger.Debug("tpm: EK Name", slog.String("name", fmt.Sprintf("0x%x", Encode(primaryKey.Name.Buffer))))
 
@@ -655,19 +684,22 @@ func (tpm *TPM2) CreateSRK(
 		userAuth = srkAttrs.Password.Bytes()
 	}
 
-	// DIAGNOSTIC: dump exactly what we're about to pass to CreatePrimary.
-	// The TPM_RC_BAD_AUTH observed on lab-node-2 2026-04-08 shows empty owner
-	// auth in tpm2_getcap but Go's CreatePrimary failing. We need to see
-	// the actual bytes the Go library is sending.
-	hierName, _ := HierarchyName(hierarchy)
-	tpm.logger.Info("CreateSRK DIAGNOSTIC",
+	// Diagnostic summary of what is about to be passed to CreatePrimary.
+	// Lengths and presence flags only -- never the auth bytes themselves, at
+	// any log level. The auth values this key is created with are exactly
+	// the owner-hierarchy and object secrets this package protects
+	// everywhere else (types.SecretValue, memguard enclaves); logging them
+	// here would undo that.
+	hierName, hierErr := HierarchyName(hierarchy)
+	if hierErr != nil {
+		hierName = fmt.Sprintf("0x%08x", uint32(hierarchy))
+	}
+	tpm.logger.Debug("CreateSRK",
 		slog.String("hierarchy", hierName),
 		slog.String("hierarchy_handle", fmt.Sprintf("0x%08x", uint32(hierarchy))),
 		slog.Int("hierarchy_auth_len", len(hierarchyAuth)),
-		slog.String("hierarchy_auth_hex", fmt.Sprintf("%x", hierarchyAuth)),
 		slog.Bool("hierarchy_auth_nil_field", srkAttrs.TPMAttributes.HierarchyAuth == nil),
 		slog.Int("user_auth_len", len(userAuth)),
-		slog.String("user_auth_hex", fmt.Sprintf("%x", userAuth)),
 		slog.Bool("user_auth_nil_field", srkAttrs.Password == nil),
 		slog.Bool("platform_policy", srkAttrs.PlatformPolicy),
 		slog.String("persistent_handle", fmt.Sprintf("0x%08x", uint32(srkAttrs.TPMAttributes.Handle))),
@@ -809,7 +841,10 @@ func (tpm *TPM2) CreateSRK(
 		}
 	}
 
-	srkHierName, _ := HierarchyName(hierarchy)
+	srkHierName, srkHierErr := HierarchyName(hierarchy)
+	if srkHierErr != nil {
+		srkHierName = fmt.Sprintf("0x%08x", uint32(hierarchy))
+	}
 	tpm.logger.Debug("tpm: SRK Hierarchy", slog.String("hierarchy", srkHierName))
 	tpm.logger.Debug("tpm: SRK Name", slog.String("name", fmt.Sprintf("0x%s", Encode(primaryKey.Name.Buffer))))
 

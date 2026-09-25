@@ -75,6 +75,8 @@ var (
 	ErrOIDCInvalidRefreshToken   = errors.New("oidc: invalid or missing refresh token")
 	ErrOIDCExecFailed            = errors.New("oidc: exec command failed")
 	ErrOIDCIncompleteEndpoints   = errors.New("oidc: incomplete manual endpoint configuration")
+	ErrOIDCNoAuthCode            = errors.New("oidc: no authorization code received")
+	ErrOIDCMissingProviderArg    = errors.New("oidc: specify provider name or use --all")
 )
 
 // OIDCExecPayload is the JSON structure passed to exec scripts.
@@ -1403,7 +1405,7 @@ func handleOIDCCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- 
 	if code == "" {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte("<html><body><h1>Authentication Failed</h1><p>No authorization code received</p></body></html>"))
-		errChan <- errors.New("no authorization code received")
+		errChan <- ErrOIDCNoAuthCode
 		return
 	}
 
@@ -2173,7 +2175,7 @@ func runOIDCStop(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(args) == 0 {
-		return errors.New("specify provider name or use --all")
+		return ErrOIDCMissingProviderArg
 	}
 
 	providerName := args[0]

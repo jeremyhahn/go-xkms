@@ -14,6 +14,7 @@
 package nssdb
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -75,6 +76,40 @@ func TestAddTrustedCA_KeyDatabaseFailure(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSignatureInsert)
 }
 
+// TestAddTrustedCA_TrustInsertFailure verifies that a failure inserting the
+// trust object specifically (the certificate object having already been
+// inserted successfully) is reported as ErrInsertTrust, distinct from
+// ErrInsertCertificate. A certificate object with no matching trust object
+// is exactly the "shows up but is not trusted" defect this package exists
+// to prevent, so the two failure modes must stay distinguishable.
+//
+// generateObjectID hands out (baseID, baseID+1) pairs from a package-level
+// counter; reserving one id and pre-occupying baseID+1 of the *next* pair
+// predicts the trust object's id and collides only that insert, leaving the
+// certificate insert (baseID) untouched.
+//
+// Deliberately not t.Parallel(): the prediction only holds if nothing else
+// calls the package-level generateObjectID counter between the reservation
+// and AddTrustedCA's own call, which a concurrently running parallel test
+// calling AddTrustedCA could do.
+func TestAddTrustedCA_TrustInsertFailure(t *testing.T) {
+	dir := t.TempDir()
+	w, err := NewWriter(dir)
+	require.NoError(t, err)
+	defer func() { _ = w.Close() }()
+
+	reserved := generateObjectID()
+	predictedTrustID := reserved + 3 // next pair is (reserved+2, reserved+3)
+
+	_, err = w.certDB.Exec("INSERT INTO nssPublic (id) VALUES (?)", predictedTrustID)
+	require.NoError(t, err)
+
+	err = w.AddTrustedCA(testCA(t), "xkey Test CA")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInsertTrust)
+	assert.False(t, errors.Is(err, ErrInsertCertificate), "the certificate insert must have succeeded before the trust insert collided")
+}
+
 // TestRemoveByPrefix_DatabaseFailure verifies removal failures are surfaced,
 // so a stale CA is never reported as revoked when it is still trusted.
 func TestRemoveByPrefix_DatabaseFailure(t *testing.T) {
@@ -105,6 +140,38 @@ func TestNewWriter_PasswordInitFailure(t *testing.T) {
 	w, err := NewWriter(dir)
 	require.Error(t, err)
 	assert.Nil(t, w)
+}
+
+// TestWriteTrustSignatures_SkipsUnparsableAttributeName verifies a
+// malformed attribute name in the map is skipped rather than aborting the
+// whole signature write — writeTrustSignatures is only ever called with
+// buildTrustAttrs' own output in production, so this exercises the guard
+// directly rather than relying on being able to smuggle a bad key through
+// AddTrustedCA.
+func TestWriteTrustSignatures_SkipsUnparsableAttributeName(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	w, err := NewWriter(dir)
+	require.NoError(t, err)
+	defer func() { _ = w.Close() }()
+
+	err = w.writeTrustSignatures(1, map[string][]byte{"not-a-valid-attr-name": []byte("x")})
+	assert.NoError(t, err, "an unparsable attribute name must be skipped, not fatal")
+}
+
+// TestCleanupSuffix verifies cleanupSuffix reports every non-nil cleanup
+// error it is given rather than silently dropping any of them, and stays
+// empty when cleanup fully succeeded.
+func TestCleanupSuffix(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "", cleanupSuffix(), "no cleanup calls means no suffix")
+	assert.Equal(t, "", cleanupSuffix(nil, nil), "successful cleanup calls must not appear in the suffix")
+	assert.Equal(t, " (cleanup: disk full)", cleanupSuffix(errors.New("disk full")))
+	assert.Equal(t, " (cleanup: disk full; also busy)",
+		cleanupSuffix(nil, errors.New("disk full"), errors.New("also busy")),
+		"every non-nil cleanup error must be reported, not just the first")
 }
 
 func TestNSSDBTypedErrors(t *testing.T) {
@@ -138,6 +205,58 @@ func TestInitDir_PKCS11TxtFailure(t *testing.T) {
 	err := InitDir(dir)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrWritePKCS11Txt)
+}
+
+// TestNewWriter_CertSchemaCreationLocked verifies that a cert9.db whose file
+// already exists in WAL mode but is held write-locked by another connection
+// (rather than being wholly unopenable) fails schema creation with a typed
+// error, rather than returning a Writer over a database with no schema.
+func TestNewWriter_CertSchemaCreationLocked(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, cert9DBFile)
+
+	blocker, err := sql.Open("sqlite", certPath)
+	require.NoError(t, err)
+	defer func() { _ = blocker.Close() }()
+
+	// Put the file into WAL mode ahead of NewWriter so its own WAL pragma is
+	// a same-mode no-op, then hold the write lock open so the CREATE TABLE
+	// that follows collides with it instead.
+	_, err = blocker.Exec("PRAGMA journal_mode=WAL")
+	require.NoError(t, err)
+	_, err = blocker.Exec("BEGIN IMMEDIATE")
+	require.NoError(t, err)
+
+	w, err := NewWriter(dir)
+	require.Error(t, err)
+	assert.Nil(t, w)
+	assert.ErrorIs(t, err, ErrCreateSchema)
+}
+
+// TestNewWriter_KeySchemaCreationLocked mirrors
+// TestNewWriter_CertSchemaCreationLocked for key4.db: a write lock held by
+// another connection during schema creation is reported as a typed error.
+func TestNewWriter_KeySchemaCreationLocked(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, key4DBFile)
+
+	blocker, err := sql.Open("sqlite", keyPath)
+	require.NoError(t, err)
+	defer func() { _ = blocker.Close() }()
+
+	_, err = blocker.Exec("PRAGMA journal_mode=WAL")
+	require.NoError(t, err)
+	_, err = blocker.Exec("BEGIN IMMEDIATE")
+	require.NoError(t, err)
+
+	w, err := NewWriter(dir)
+	require.Error(t, err)
+	assert.Nil(t, w)
+	assert.ErrorIs(t, err, ErrCreateSchema)
 }
 
 // TestNewWriter_CertDatabaseUnusable verifies an unusable cert9.db is reported

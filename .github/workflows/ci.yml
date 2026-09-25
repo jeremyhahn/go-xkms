@@ -45,6 +45,64 @@
 # runs `go install ...@pin` behind a retry loop; that install OVERWRITES the
 # baked binary with a different version, which is the whole defect. See the
 # Lint and Security Scan jobs and .github/scripts/require-tool.sh.
+#
+# TWO-TIER PIPELINE (2026-09-24, branch ci/two-tier-pipeline). Almost every
+# change lands through a merge-train PR (head branch `train/<n>`): many PRs
+# merged into one branch, then that one branch fast-forwards into main. An
+# ordinary PR's own CI run was therefore never the thing standing between a
+# defect and main -- the train's run is -- so running the FULL 9-14 job
+# matrix on every ordinary PR too was spending runner capacity the fleet does
+# not have (load average 150-380, 20-40 concurrent jobs measured on the two
+# runner hosts) on a signal the train re-derives from scratch anyway.
+#
+# Two independent axes, computed once by the `changes` job and read from its
+# outputs everywhere else:
+#
+#   docs_only   true when every changed path is docs/**, **/*.md or
+#               .changelog/** (see pr-scope.sh). Skips every Go-compiling
+#               job (build, build-raft, test, race, security, docker, the
+#               nested-module jobs) on both tiers -- a documentation change
+#               cannot regress code no matter which tier would otherwise
+#               apply. `lint` and `arch-gates` are NOT skipped: `lint` is
+#               where the xkey agent-skill reference check lives
+#               (check-skill-reference), which IS a docs check, and
+#               arch-gates is a six-second grep with nothing to gain by
+#               excluding it.
+#
+#   full_tier   true for a train/* PR or a push to main (or a manual
+#               dispatch); false for every other pull_request. Selects which
+#               of the two mutually-exclusive job sets below runs:
+#
+#     fast tier (full_tier=false): lint, build, arch-gates (unchanged), plus
+#       test-changed (unit tests scoped to the packages the PR touched, with
+#       a best-effort reverse-dependency expansion -- see
+#       changed-go-packages.sh) and nested-module-build (sdk/go, xkey and
+#       web/desktop compile, not their full test suites -- `make vet`,
+#       already in the `lint` job's LINT_MODULES loop, covers `go vet` for
+#       both nested modules on every tier already).
+#
+#     full tier (full_tier=true): everything the fast tier has, PLUS the
+#       expensive jobs this file already had -- race, build-raft, the
+#       nested-module-test full suites, docker build+scan, security, and
+#       tpm2-simulator -- and `test`, whose `make coverage` carries the root
+#       89% COVERAGE_THRESHOLD gate. That gate moving to the full tier is the
+#       point: it was already effectively enforced only at the train, since
+#       an outdated branch cannot fast-forward into main, so gating every
+#       individual PR on it bought nothing but runner time.
+#
+# ci-gate treats a job's `skipped` result as PASS exactly when the tier/
+# docs-only split says that job was not supposed to run for THIS PR, and as
+# FAIL otherwise -- the same "a gate that can pass vacuously is worse than no
+# gate" principle the v1.9 block above already applies to the staged
+# ordering, extended to cover deliberate exclusion as well as upstream
+# failure.
+#
+# Do not add a workflow-level `paths-ignore:` for docs paths instead of the
+# `changes` job: `paths-ignore` on `pull_request`/`push` makes Gitea/GitHub
+# not START the workflow run at all for a matching diff, which means the
+# required `CI / CI Gate (pull_request)` context never reports anything --
+# not skipped, not success, nothing -- and main's branch protection then
+# blocks a docs-only PR forever waiting on a context that will never exist.
 
 name: CI
 
@@ -169,11 +227,62 @@ env:
   # (go-tpm-tools v0.4.8, 2026-08-14).
 
 jobs:
+  # Job 0: Detect Changes -- classifies this run for the two-tier pipeline
+  # (see the top-of-file note). Kept dependency-free (git only, no Go
+  # toolchain, no `needs:`) so it starts immediately and reports back fast --
+  # a `git diff` against a full clone, no compilation. `lint` and
+  # `arch-gates` stay unconditional and start immediately too, same as
+  # before this change. `build` now needs this job's `docs_only` output
+  # before it can start (a docs-only diff has nothing to build), so it pays
+  # this job's runtime as added latency on its own critical path; every
+  # OTHER job already staged behind `[lint, build, arch-gates]` (the v1.9
+  # fail-fast) absorbs that delay for free since `changes` finishes well
+  # before `build`'s own ~7m matrix does.
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+      full_tier: ${{ steps.scope.outputs.full_tier }}
+      merge_base: ${{ steps.scope.outputs.merge_base }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # pr-scope.sh diffs against the merge-base with the PR's base
+          # branch (or the push's previous sha); a shallow clone can leave
+          # that commit unreachable, and the script is written to FAIL OPEN
+          # in that case (docs_only=false) rather than silently misclassify
+          # a real code change as docs-only -- so a shallow clone would not
+          # break correctness, only quietly disable the skip. Full history
+          # keeps the skip working.
+          fetch-depth: 0
+
+      - name: Classify this run (docs-only? which tier?)
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          # head_ref/base.sha/before are look-at-only here: pr-scope.sh only
+          # ever compares them against fixed patterns (train/*, all-zero) or
+          # passes them to `git`, never interpolates them into a shell
+          # string, so there is no injection surface despite head_ref being
+          # attacker-controlled on a fork PR.
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: .github/scripts/pr-scope.sh
+
   # Job 1: Unit Tests with Coverage Enforcement
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
-    needs: [lint, build, arch-gates]
+    needs: [lint, build, arch-gates, changes]
+    # Full tier only (see the top-of-file TWO-TIER PIPELINE note): this is
+    # the `make coverage` run with the root 89% COVERAGE_THRESHOLD gate,
+    # reserved for train/* PRs and pushes to main. An ordinary PR gets the
+    # narrower `test-changed` job instead.
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
 
     steps:
       - name: Checkout code
@@ -266,6 +375,22 @@ jobs:
             echo "Coverage ${COVERAGE}% meets threshold ${COVERAGE_THRESHOLD}%"
           fi
 
+      # coverage-threshold-report pulls in two extra lanes make coverage
+      # (above) doesn't run: the tpm2 simulator suite (links -lcrypto) and
+      # the pkcs11-tagged suite (SoftHSM2, already installed and initialized
+      # by this job's "Install and configure SoftHSM2" step above -- the
+      # token directory persists for the rest of this job).
+      - name: Install tpm2 simulator coverage dependencies
+        run: sudo .github/scripts/apt-deps.sh libssl-dev
+
+      - name: Report per-package coverage (issue #703)
+        # Non-blocking: collects packages below 90% for tracking in #704, #705, #706
+        # This will be blocking once those issues are resolved
+        continue-on-error: true
+        run: make coverage-threshold-report
+        env:
+          SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         continue-on-error: true
@@ -348,7 +473,13 @@ jobs:
     # spending immediately. Gitea has no run-cancel API, so ordering is the
     # only fail-fast available — without it a red lint keeps the whole suite
     # burning runners in parallel.
-    needs: [lint, build, arch-gates]
+    #
+    # Full tier only (TWO-TIER PIPELINE note, top of file): these are the
+    # full race-detector suites. An ordinary PR gets `nested-module-build`
+    # instead -- sdk/go and xkey still have to COMPILE on every PR, but the
+    # full run is reserved for train/* PRs and pushes to main.
+    needs: [lint, build, arch-gates, changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
 
     steps:
       - name: Checkout code
@@ -403,9 +534,13 @@ jobs:
         working-directory: web/desktop
         run: go test -race -v ./...
 
+      # -tags tpm_simulator: pkg/pairing/bridge_enrollment_simulator_test.go
+      # proves BridgeConfig.TPM against the in-process go-tpm-tools simulator
+      # (#985). Without the tag the file is excluded from the build entirely,
+      # so the compile-time proof it carries goes dark, not just unrun.
       - name: xkey lifecycle tests
         working-directory: xkey
-        run: go test -race -v ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
+        run: go test -race -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
 
       # pkg/authenticator holds the FIDO2 ClientPIN command handling, including
       # the ChangePIN buffer-aliasing regression test. `go vet -tags ble ./...`
@@ -424,16 +559,20 @@ jobs:
       # checked -- and under GODEBUG=fips140=only the thing being refused is a
       # standard-library PANIC, so the untested direction is a process kill on
       # a user-driven path.
+      # -tags tpm_simulator: pkg/authenticator/keybackend's TPM attestation
+      # tests exercise TPM2_Certify and go-webauthn's own "tpm" format
+      # verifier against the in-process simulator (#985). Without the tag
+      # those files are excluded from the build entirely.
       - name: xkey authenticator and oath tests
         working-directory: xkey
-        run: go test -race -v -tags codec_json ./pkg/authenticator/... ./pkg/oath/...
+        run: go test -race -v -tags "codec_json tpm_simulator" ./pkg/authenticator/... ./pkg/oath/...
 
       # Every other xkey unit package (#147). Before this step CI executed
       # 2,483 of the module's 13,725 test functions: the 41 packages below had
       # tests that `go vet -tags ble ./...` compiled and no job ran, and a test
       # that is only compiled cannot fail. The set is the security surface of
       # the product -- truststore, tokenstore, luks, ca, secretservice, nssdb,
-      # pivcert, pkcs11mgr, sshstore, sshlocal, config, audit -- and #182 was
+      # pivcert, sshstore, sshlocal, config, audit -- and #182 was
       # an open defect in truststore while its 266 tests sat dark.
       #
       # -tags codec_json for the same reason as the step above: the DAO-backed
@@ -517,14 +656,14 @@ jobs:
               GOPROXY=off \
             "$@"
           }
-          as_xkey_ci go test -race -tags codec_json -count=1 \
+          as_xkey_ci go test -race -tags "codec_json tpm_simulator" -count=1 \
             ./cmd/e2eprobe ./cmd/xkey \
             ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
             ./pkg/ca ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
             ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
             ./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
             ./pkg/oidc ./pkg/oidc/aws ./pkg/oidc/handlers \
-            ./pkg/pcr_policy ./pkg/pkcs11mgr \
+            ./pkg/pcr_policy \
             ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
             ./pkg/serverregistry ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
             ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/usb \
@@ -535,7 +674,11 @@ jobs:
           # user (#332): cmd/xkey/cmd 1,761 tests in 35 s, pkg/gui/services
           # 6,521 tests in 130 s, nothing environment-dependent on a host with
           # no BLE adapter and no user session.
-          as_xkey_ci go test -race -tags "ble codec_json" -count=1 \
+          #
+          # -tags tpm_simulator: cmd/xkey/cmd/barrier_auto_unseal_test.go
+          # drives the auto-unseal path against the in-process simulator
+          # (#985); no host TPM or swtpm is touched.
+          as_xkey_ci go test -race -tags "ble codec_json tpm_simulator" -count=1 \
             ./cmd/xkey/cmd ./pkg/gui/services
 
       # Compile-check EVERY ble-tagged package, tests included.
@@ -603,6 +746,128 @@ jobs:
       - name: xkey device attestation decision
         working-directory: xkey
         run: go test ./pkg/attestation/... -count=1
+
+  # Job 1c: Nested Module Build (fast tier) -- sdk/go, xkey and web/desktop
+  # still have to COMPILE on every ordinary PR; `go vet` for all three is
+  # already covered on EVERY tier by the `lint` job's `make vet`
+  # (LINT_MODULES = . sdk/go xkey web/desktop, see the Makefile), so the one
+  # signal missing for a fast-tier PR was "does it still build". The full
+  # race-detector suites in `nested-module-test` above are reserved for the
+  # full tier (train/* PRs, pushes to main); this job is its cheap fast-tier
+  # counterpart, not a replacement for it.
+  nested-module-build:
+    name: Nested Module Build (sdk/go, xkey, web/desktop) [fast tier]
+    runs-on: ubuntu-latest
+    needs: [lint, build, arch-gates, changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier != 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Same cgo deps nested-module-test installs, for the same reason:
+      # dolthub/go-icu-regex and google/gousb are unconditional deps of the
+      # module graph whenever CGO_ENABLED defaults to 1.
+      - name: Install cgo dependencies
+        run: |
+          sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
+
+      - name: sdk/go build
+        working-directory: sdk/go
+        run: go build ./...
+
+      - name: web/desktop build
+        working-directory: web/desktop
+        run: go build ./...
+
+      # Untagged, matching what a plain `go build` of the module gets: the
+      # ble/tpm2/hardware-backend tags are already compile-checked on every
+      # tier by the `lint` job's `go vet -tags "$(LINT_TAGS_xkey)"`, and
+      # duplicating that here would buy nothing but time.
+      - name: xkey build (default tags)
+        working-directory: xkey
+        run: go build ./...
+
+  # Job 1d: Unit Tests (changed packages) [fast tier] -- an ordinary PR (not
+  # train/*, not a push) gets a smoke test scoped to whatever it touched
+  # instead of the full `make coverage` run in `test` above: the
+  # authoritative, un-scoped suite (with the 89% COVERAGE_THRESHOLD gate)
+  # only runs on the full tier, and every PR reaches main only through a
+  # train that runs it before the fast-forward. See changed-go-packages.sh
+  # for the package selection (changed root-module packages plus a
+  # best-effort reverse-dependency expansion) and its fail-open behaviour --
+  # a narrower-than-ideal scope here costs a later signal on the train,
+  # never a gap in what actually gates main.
+  test-changed:
+    name: Unit Tests (changed packages) [fast tier]
+    runs-on: ubuntu-latest
+    needs: [lint, build, arch-gates, changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier != 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # changed-go-packages.sh diffs against needs.changes.outputs.merge_base,
+          # a commit that has to actually be present in this job's own clone
+          # (a fresh runner, possibly a different host than the `changes`
+          # job ran on) -- same reasoning as the `changes` job's checkout.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Same SoftHSM2 setup as the `test` job, for the same reason: the
+      # changed-package set can legitimately include pkcs11-backed code.
+      - name: Install and configure SoftHSM2
+        run: |
+          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev
+          mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
+          cat > ${GITHUB_WORKSPACE}/softhsm2.conf << EOF
+          directories.tokendir = ${GITHUB_WORKSPACE}/softhsm2/tokens
+          objectstore.backend = file
+          log.level = INFO
+          EOF
+          softhsm2-util --init-token --slot 0 --label "test-token" --so-pin 1234 --pin 1234
+        env:
+          SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Determine changed packages
+        id: pkgs
+        env:
+          MERGE_BASE: ${{ needs.changes.outputs.merge_base }}
+          # Must match the -tags of "Unit tests for changed packages" below,
+          # so packages gated behind other tags are left out of the set.
+          GO_TEST_TAGS: codec_cbor codec_json codec_msgpack tpm_simulator frost
+        run: .github/scripts/changed-go-packages.sh
+
+      # Same tag set as test-go's TEST_TAGS (Makefile), minus the hardware
+      # KMS backend tags (pkcs8/awskms/gcpkms/azurekv/pkcs11/vault): this is
+      # a fast-tier smoke check on a package subset, not the authoritative
+      # suite, and the full backend matrix already runs in `race` on the
+      # full tier.
+      - name: Unit tests for changed packages
+        if: steps.pkgs.outputs.packages != ''
+        env:
+          CGO_ENABLED: 1
+          SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
+        run: go test -race -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" ${{ steps.pkgs.outputs.packages }}
+
+      - name: No root-module Go changes
+        if: steps.pkgs.outputs.packages == ''
+        run: echo "No root-module .go files changed -- nothing to test here (sdk/go, xkey and web/desktop changes are covered by nested-module-build)."
 
   # Job 3: Lint
   lint:
@@ -681,6 +946,24 @@ jobs:
       - name: Test the apt dependency step
         run: .github/scripts/apt-deps-test.sh
 
+      # The two-tier pipeline's docs-only/tier classifier (top-of-file
+      # TWO-TIER PIPELINE note): every PR and push either gets Go jobs
+      # skipped it should not, or has Go jobs run it should not, if this
+      # gets it wrong -- so it has its own suite rather than trusting the
+      # `changes` job's first real run. Real git in a throwaway repo, no
+      # network, no host mutation, well under a second.
+      - name: Test the docs-only/tier classifier
+        run: .github/scripts/pr-scope-test.sh
+
+      # Same reasoning for the fast tier's changed-package scoping: a wrong
+      # answer here either narrows a fast-tier PR's test coverage silently
+      # or (less likely, but worse) errors the job outright. Real git plus a
+      # fake `go` on a replaced PATH -- see the script's own header for why
+      # the reverse-dependency half is faked rather than run against this
+      # module's real graph.
+      - name: Test the changed-package scoping
+        run: .github/scripts/changed-go-packages-test.sh
+
       # NO NETWORK INSTALL (#189). golangci-lint is baked into the self-hosted
       # runner image at GOLANGCI_LINT_VERSION, in /usr/local/bin. The step this
       # replaces ran `go install ...@v2.12.2` unconditionally, which did not
@@ -708,6 +991,12 @@ jobs:
       - name: Run golangci-lint
         run: make lint
 
+      # The xkey agent skill's CLI reference is generated from the cobra
+      # tree. This fails when the committed reference is stale, or when
+      # SKILL.md cites a command or flag xkey does not have.
+      - name: Check xkey agent skill reference
+        run: make -C xkey check-skill-reference
+
       # go-qrdb's pkg/secure/analyzer enforces the raw-memguard-import,
       # ssh.ParsePrivateKey and sensitive-field rules, but only where its own
       # make target runs -- and nothing in go-qrdb reaches into this
@@ -732,7 +1021,10 @@ jobs:
     # spending immediately. Gitea has no run-cancel API, so ordering is the
     # only fail-fast available — without it a red lint keeps the whole suite
     # burning runners in parallel.
-    needs: [lint, build, arch-gates]
+    #
+    # Full tier only (TWO-TIER PIPELINE note, top of file).
+    needs: [lint, build, arch-gates, changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
     permissions:
       security-events: write
       contents: read
@@ -827,6 +1119,13 @@ jobs:
   build:
     name: Build Binaries
     runs-on: ubuntu-latest
+    # Runs on BOTH tiers (TWO-TIER PIPELINE note, top of file) -- lint,
+    # build and arch-gates are the fast-tier trio every other job stages
+    # behind, and stay unconditional except for the one thing that can
+    # legitimately skip them: a docs-only diff has nothing for a build to
+    # compile.
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true'
     strategy:
       matrix:
         include:
@@ -966,7 +1265,11 @@ jobs:
     # spending immediately. Gitea has no run-cancel API, so ordering is the
     # only fail-fast available — without it a red lint keeps the whole suite
     # burning runners in parallel.
-    needs: [lint, build, arch-gates]
+    #
+    # Full tier only (TWO-TIER PIPELINE note, top of file): this is the raft
+    # tag matrix, part of "all tagged backends".
+    needs: [lint, build, arch-gates, changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
     strategy:
       matrix:
         tags: [ "codec_json", "raft codec_json" ]
@@ -1046,8 +1349,12 @@ jobs:
   docker:
     name: Docker Build & Scan
     runs-on: ubuntu-latest
-    needs: [lint, build, arch-gates, security]
-    if: github.event_name == 'push'
+    needs: [lint, build, arch-gates, security, changes]
+    # Push-only, as before, PLUS docs_only (TWO-TIER PIPELINE note, top of
+    # file): a docs-only push straight to main -- a train that turned out to
+    # carry only doc changes -- has no image worth building or scanning
+    # either.
+    if: github.event_name == 'push' && needs.changes.outputs.docs_only != 'true'
     permissions:
       security-events: write
       contents: read
@@ -1220,7 +1527,10 @@ jobs:
     # spending immediately. Gitea has no run-cancel API, so ordering is the
     # only fail-fast available — without it a red lint keeps the whole suite
     # burning runners in parallel.
-    needs: [lint, build, arch-gates]
+    #
+    # Full tier only (TWO-TIER PIPELINE note, top of file).
+    needs: [lint, build, arch-gates, changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
 
     steps:
       - name: Checkout code
@@ -1271,11 +1581,11 @@ jobs:
       # dump shows argon2 mid-computation, not a deadlock. 30m keeps a real
       # hang bounded while leaving 5x headroom over the healthy cost.
       # The durable fix is to stop paying production Argon2 cost in tests.
-      - name: Run tests with race detector (all backends)
+      - name: Run tests with race detector (all backends including FROST)
         env:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -race -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./...
+        run: go test -race -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
 
   # Job 7b: pkg/tpm2 on the in-process TPM simulator
   #
@@ -1287,13 +1597,20 @@ jobs:
   # `make test-tpm2-simulator` is the single entry point; the suite measures
   # ~90 s on a workstation and the target bounds it at 20 minutes.
   #
-  # Deliberately `needs` nothing: the suite is cheap and independent of the
-  # fast tier, so a staged wait would add latency without saving runner time.
-  # It is not yet in the ci-gate needs list; adding it there is the step that
-  # makes it a required check.
+  # Deliberately does not `need` [lint, build, arch-gates]: the suite is
+  # cheap and independent of the fast tier, so staging it behind that trio
+  # would add latency without saving runner time. It IS a required check
+  # (see its entry in ci-gate's needs list below); the paragraph that used
+  # to say otherwise here was stale.
+  #
+  # Full tier only (TWO-TIER PIPELINE note, top of file): part of "all
+  # tagged backends" alongside `race` and `build-raft`. Needs `changes` for
+  # that gating alone, not for staging.
   tpm2-simulator:
     name: TPM2 Simulator Tests
     runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.full_tier == 'true'
     timeout-minutes: 30
 
     steps:
@@ -1328,11 +1645,59 @@ jobs:
   # this consolidation -- AES-GCM nonces are generated inside the module
   # boundary, the AEAD auto-selectors return AES-256-GCM in FIPS mode instead
   # of ChaCha20-Poly1305, and the algorithm allowlists are filtered at both
-  # validation entry points. The JOB half is withheld because the suite does
-  # not pass under GODEBUG=fips140=only yet: measured on this tree,
-  # 364+ tests fail across 13+ packages, and the first root cause is not even
-  # ours -- go-qrdb v0.5.9-alpha's pkg/role.deterministicUUID derives system
-  # role IDs with uuid.NewSHA1, and crypto/sha1 PANICS under fips140=only.
+  # validation entry points. #613/#633 and go-xkms#23's second pass closed the
+  # go-qrdb SHA-1 blocker (fixed upstream, pkg/role now on SHA-256) and fixed
+  # every FIPS-only PANIC this repository's own code caused -- several
+  # golang.org/x/crypto and crypto/hmac call sites turned the stdlib's FIPS
+  # refusal into a process crash instead of an error; see docs/fips/README.md
+  # "Panics the stdlib raises instead of returning an error" -- plus the
+  # X25519/ChaCha20-Poly1305/ML-KEM-512 deliberately-non-approved coverage in
+  # pkg/crypto/x25519, pkg/crypto/chacha20poly1305 and pkg/quantum/mlkem512.
+  #
+  # The JOB half is still withheld. #23's second and third passes fixed every
+  # test in pkg/encoding/jwe, pkg/keyprovider/symmetric, pkg/ssh/console,
+  # pkg/ssh/session, pkg/api/transport/usb, pkg/backend/software, pkg/api/mcp,
+  # pkg/xkms (2,643 tests) and the smaller packages the previous version of
+  # this comment listed, plus a cross-cutting production bug the work
+  # surfaced along the way: the GCMNonceMode field that says which AEAD
+  # construction produced a ciphertext (see docs/fips/README.md "Random-nonce
+  # GCM for the default Encrypt path") was not threaded through the gRPC,
+  # REST or MCP wire transports, so a default (no-explicit-nonce) symmetric
+  # Encrypt under fips140=only produced a ciphertext its own matching Decrypt
+  # call could not open over any of those three transports. That is fixed at
+  # the wire-protocol level, not worked around in tests. Two kinds of failure
+  # still remain, measured on this tree under GODEBUG=fips140=only:
+  #   1. pkg/pkcs11/module: broader than the authenticated-wrap verbs alone.
+  #      PKCS#11 v3.0's CKM_AES_GCM mechanism takes its IV from the caller via
+  #      CK_GCM_PARAMS with no random-nonce mode to opt into, so nearly the
+  #      whole CKM_AES_GCM mechanism surface is arbitrary-IV GCM -- not only
+  #      the wrap verbs -- and most of pkg/testing/pkcs11test's conformance
+  #      coverage exercises it (295 failures at last measurement). See
+  #      docs/fips/README.md "Integration Points" for the corrected scope.
+  #   2. github.com/google/go-tpm v0.9.8 panics -- not errors -- inside its
+  #      own TPM2 session machinery under fips140=only, on ordinary,
+  #      spec-compliant use: session HMAC authorization (crypto/hmac, a
+  #      short or empty auth value is legal TPM2 protocol, not attacker
+  #      input) and session parameter encryption (crypto/cipher CFB, which
+  #      the TPM2 spec mandates for that purpose). This is not caused by
+  #      go-xkms code and is out of scope for this repository to fix; it
+  #      blocks pkg/tpm2, pkg/backend/tpm2, pkg/luks, pkg/trust/clusterca and
+  #      pkg/xkms's TPM2 registration path, and needs routing upstream the
+  #      same way go-qrdb's SHA-1 blocker was. Measured this pass: one such
+  #      panic aborts the whole test *binary*, not just the offending test,
+  #      so `go test -tags tpm_simulator ./pkg/xkms/...` under fips140=only
+  #      silently never runs the majority of the package's 2,643 tests unless
+  #      that one test is skipped first -- worse than "N tests fail", and the
+  #      reason pkg/xkms's own FIPS coverage above had to be verified with
+  #      that test skipped. See docs/fips/README.md "Known blockers outside
+  #      this repository's control" for the full finding, including a related
+  #      but non-fatal gorilla/websocket SHA-1 panic (recovered by net/http
+  #      per-connection, so it fails WebSocket upgrades under fips140=only
+  #      rather than crashing the process) and two open architecture
+  #      questions for the owner: pkg/ssh/session's intentionally un-pinned
+  #      curve25519-sha256 KEX offer, and pkg/api/transport/usb's Noise
+  #      handshake being hard-wired to Curve25519 with no FIPS-approved
+  #      substitute DH function in the pattern.
   #
   # Landing a required check that is red on arrival is the exact ordering
   # mistake task #98 exists to prevent: a gate is only safe once the code it
@@ -1342,47 +1707,93 @@ jobs:
   # the needs list and the results check -- a gate that can pass vacuously is
   # worse than no gate. join(needs.*.result) is deliberately not used: it
   # evaluates empty on Gitea and reports success while jobs fail.
+  #
+  # TWO-TIER PIPELINE (top-of-file note): a job's `skipped` result is now
+  # ambiguous between two causes that must be judged oppositely --
+  #   - the v1.9 staged fail-fast: an upstream stage (lint/build/arch-gates)
+  #     failed and this job never got a chance to run -- FAIL, same as ever.
+  #   - the two-tier/docs-only split deliberately excluded this job from
+  #     THIS run (a fast-tier PR skipping a full-tier-only job, or a
+  #     docs-only diff skipping every Go job) -- PASS, by design: failing it
+  #     would make every fast-tier PR and every docs-only PR permanently
+  #     unmergeable, which is the opposite of the point of this file.
+  # The step below tells the two apart using needs.changes.outputs, not by
+  # guessing from the result alone.
   ci-gate:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [test, nested-module-test, lint, security, build, build-raft, arch-gates, docker, race, tpm2-simulator]
+    needs: [changes, test, test-changed, nested-module-test, nested-module-build, lint, security, build, build-raft, arch-gates, docker, race, tpm2-simulator]
 
     steps:
       - name: Fail closed on any non-success
+        env:
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          FULL_TIER: ${{ needs.changes.outputs.full_tier }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          # v1.9 staged fail-fast: skipped is not the same as failed, but BOTH
-          # fail the gate. Under staging a skip means an upstream stage failed
-          # and this job never ran -- naming it prevents the go-qrdb#42 class,
-          # a red that reads like a test failure while the tests never
-          # executed. Silence about a skip is the dangerous outcome, not the
-          # skip itself.
-          check() { case "$2" in
-            success) echo "OK   $1";;
-            skipped) echo "SKIP $1 (upstream stage failed -- see the fast tier: lint, build, arch-gates)"; BAD=1;;
-            *)       echo "FAIL $1 ($2)"; BAD=1;;
-          esac; }
           BAD=0
-          check test             "${{ needs.test.result }}"
-          check nested-module-test "${{ needs.nested-module-test.result }}"
-          check lint             "${{ needs.lint.result }}"
-          check security         "${{ needs.security.result }}"
-          check build            "${{ needs.build.result }}"
-          check build-raft       "${{ needs.build-raft.result }}"
-          check arch-gates       "${{ needs.arch-gates.result }}"
-          check race             "${{ needs.race.result }}"
-          check tpm2-simulator   "${{ needs.tpm2-simulator.result }}"
-          # docker carries `if: github.event_name == 'push'`, so 'skipped' is
-          # legitimate on a pull_request and only there. On a push a skip means
-          # the job never ran -- fail closed rather than pass vacuously.
+
+          # check_required <name> <result> <skip-is-ok: 0|1>
+          check_required() {
+            case "$2" in
+              success) echo "OK   $1";;
+              skipped)
+                if [ "$3" = 1 ]; then
+                  echo "SKIP $1 (excluded by the tier/docs-only split, by design)"
+                else
+                  echo "FAIL $1 (should have run for this tier -- or an upstream fast-tier stage failed, see lint/build/arch-gates)"
+                  BAD=1
+                fi
+                ;;
+              *) echo "FAIL $1 ($2)"; BAD=1;;
+            esac
+          }
+
+          # `changes` itself is unconditional.
+          check_required changes "${{ needs.changes.result }}" 0
+
+          # lint and arch-gates run on every PR and every push, docs-only
+          # included (lint is where the xkey check-skill-reference docs
+          # check lives; arch-gates is six seconds of grep).
+          check_required lint       "${{ needs.lint.result }}" 0
+          check_required arch-gates "${{ needs.arch-gates.result }}" 0
+
+          # build runs on both tiers; only a docs-only diff skips it.
+          build_skip_ok=0
+          [ "$DOCS_ONLY" = "true" ] && build_skip_ok=1
+          check_required build "${{ needs.build.result }}" "$build_skip_ok"
+
+          # Full-tier-only jobs: skip is fine on a fast-tier PR (full_tier
+          # != true) or a docs-only diff; required on a train PR or a push.
+          full_only_skip_ok=0
+          if [ "$DOCS_ONLY" = "true" ] || [ "$FULL_TIER" != "true" ]; then full_only_skip_ok=1; fi
+          check_required test               "${{ needs.test.result }}" "$full_only_skip_ok"
+          check_required nested-module-test "${{ needs.nested-module-test.result }}" "$full_only_skip_ok"
+          check_required security           "${{ needs.security.result }}" "$full_only_skip_ok"
+          check_required build-raft         "${{ needs.build-raft.result }}" "$full_only_skip_ok"
+          check_required race               "${{ needs.race.result }}" "$full_only_skip_ok"
+          check_required tpm2-simulator     "${{ needs.tpm2-simulator.result }}" "$full_only_skip_ok"
+
+          # Fast-tier-only jobs: skip is fine on a train PR/push (the
+          # full-tier jobs above already cover it) or a docs-only diff;
+          # required on an ordinary code PR.
+          fast_only_skip_ok=0
+          if [ "$DOCS_ONLY" = "true" ] || [ "$FULL_TIER" = "true" ]; then fast_only_skip_ok=1; fi
+          check_required test-changed        "${{ needs.test-changed.result }}" "$fast_only_skip_ok"
+          check_required nested-module-build "${{ needs.nested-module-build.result }}" "$fast_only_skip_ok"
+
+          # docker: push-only, as before, PLUS a docs-only push now
+          # legitimately skips it too (see the `docker` job's own `if`).
           case "${{ needs.docker.result }}" in
             success) echo "OK   docker" ;;
             skipped)
-              if [ "${{ github.event_name }}" = 'push' ]; then
-                echo "FAIL docker (skipped on a push)"; BAD=1
+              if [ "$EVENT_NAME" != 'push' ] || [ "$DOCS_ONLY" = "true" ]; then
+                echo "OK   docker (push-only/docs-only-skipped job, event=$EVENT_NAME, docs_only=$DOCS_ONLY)"
               else
-                echo "OK   docker (push-only job, event=${{ github.event_name }})"
+                echo "FAIL docker (skipped on a non-docs-only push)"; BAD=1
               fi ;;
             *) echo "FAIL docker (${{ needs.docker.result }})"; BAD=1 ;;
           esac
+
           exit $BAD

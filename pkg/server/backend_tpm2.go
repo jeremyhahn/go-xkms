@@ -14,8 +14,6 @@
 package server
 
 import (
-	"path/filepath"
-
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 )
 
@@ -31,14 +29,7 @@ const tpm2KeyDirSubdir = "tpm2-keys"
 // construction of *config.Config) never run config.Config.Validate, so an
 // empty Storage.Path cannot be assumed to have already been rejected.
 func (s *Server) resolveTPM2KeyDir() (string, error) {
-	if s.config.Storage.Path == "" {
-		return "", &ErrConfigRequired{
-			Field:   "storage.path",
-			Backend: "tpm2",
-			Hint:    "the TPM2 key directory is derived from storage.path and must not resolve relative to the process working directory",
-		}
-	}
-	return filepath.Join(s.config.Storage.Path, tpm2KeyDirSubdir), nil
+	return resolveTPM2KeyDir(s.config)
 }
 
 // initTPM2Backend initializes the TPM2 backend if enabled in configuration
@@ -58,23 +49,41 @@ func (s *Server) initTPM2Backend() error {
 		return &ErrBackendCreate{Backend: "TPM2", Err: err}
 	}
 
-	// When the seal autodetect already opened this TPM (node-barrier flip),
-	// reuse that single open: build the general backend over the SAME TPM
-	// connection via NewBackendWithTPM. A second independent open would hang a
-	// swtpm emulator; sharing the connection also keeps one PlatformKeyStore /
-	// policy state. The shared TPM is closed once, at node shutdown
-	// (nodeSealClose), not by this backend (externalTPM).
-	if shared, ok := s.nodeSealTPM.(*tpm2backend.Backend); ok {
+	// When an earlier step already opened this TPM -- the seal autodetect for
+	// the node-barrier flip (s.nodeSealTPM), or the platform store's tpm2
+	// credential strategy (s.platformStoreTPM, initializePlatformStore, which
+	// runs before this) -- reuse that single open: build the general backend
+	// over the SAME TPM connection via NewBackendWithTPM. A second independent
+	// open hangs the simulator (and a real swtpm); sharing the connection also
+	// keeps one PlatformKeyStore / policy state. Whichever field opened it owns
+	// closing it (nodeSealClose at node shutdown, or platformStoreTPMClose at
+	// server shutdown) -- not this backend (externalTPM).
+	//
+	// KeyBackend reuses shared.KeyBackend() -- the SAME store.KeyBackend the
+	// earlier open built (tpm2backend.NewBackend) over this identical keyDir,
+	// resolveTPM2KeyDir in both paths -- rather than opening a second file
+	// store over the same directory. Key blobs created under the shared TPM
+	// are parented to the same Platform SRK the barrier uses, so the barrier
+	// and this backend read and write one on-disk key store and share one
+	// parent key. The TCG Shared SRK is never used.
+	shared, ok := s.nodeSealTPM.(*tpm2backend.Backend)
+	sharedFrom := "the seal autodetect's single TPM open"
+	if !ok {
+		shared, ok = s.platformStoreTPM.(*tpm2backend.Backend)
+		sharedFrom = "the platform store's tpm2 credential strategy TPM open"
+	}
+	if ok {
 		tpmBackend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
-			TPM:    shared.TPM(),
-			KeyDir: keyDir,
-			Logger: s.logger,
+			TPM:        shared.TPM(),
+			KeyBackend: shared.KeyBackend(),
+			KeyDir:     keyDir,
+			Logger:     s.logger,
 		})
 		if err != nil {
 			return &ErrBackendCreate{Backend: "TPM2", Err: err}
 		}
 		s.keyProviders["tpm2"] = tpmBackend
-		s.logger.Info("TPM2 backend reuses the seal autodetect's single TPM open", "backend", "tpm2", "device", devicePath)
+		s.logger.Info("TPM2 backend reuses "+sharedFrom, "backend", "tpm2", "device", devicePath)
 		return nil
 	}
 

@@ -226,8 +226,11 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 
 		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
-		assert.NotNil(t, resp.Error)
-		assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
+		require.NotNil(t, resp.Error)
+		// go-xkms#930: handleGenerateKey's "key_id is required" refusal now
+		// reaches dispatch as a *KeyOpError carrying ErrCodeInvalidParams,
+		// not the ErrCodeInternalError floor a bare error used to fall to.
+		assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 	})
 }
 
@@ -676,11 +679,12 @@ func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
 
 	t.Run("routes xkms.decrypt", func(t *testing.T) {
 		params := DecryptParams{
-			KeyID:      "test-decrypt-route-key",
-			Backend:    "software",
-			Ciphertext: encResult.Ciphertext,
-			Nonce:      encResult.Nonce,
-			Tag:        encResult.Tag,
+			KeyID:        "test-decrypt-route-key",
+			Backend:      "software",
+			Ciphertext:   encResult.Ciphertext,
+			Nonce:        encResult.Nonce,
+			Tag:          encResult.Tag,
+			GCMNonceMode: encResult.GCMNonceMode,
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -970,29 +974,6 @@ func TestServer_StopWithoutStart(t *testing.T) {
 
 	err = server.Stop()
 	require.NoError(t, err)
-}
-
-// TestServer_HandleRequest_FrostMethodWithError tests FROST method that returns error
-func TestServer_HandleRequest_FrostMethodWithError(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Test a FROST method that should return an error (when FROST is not compiled in)
-	req := &JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "frost.generateNonces",
-		ID:      1,
-	}
-
-	resp := invokeRequest(server, ctx, req)
-	require.NotNil(t, resp)
-	assert.NotNil(t, resp.Error)
-	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
 }
 
 // TestServer_HandleRequest_WithAuthenticatedIdentity tests request with identity in context

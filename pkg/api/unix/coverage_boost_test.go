@@ -18,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,17 +49,9 @@ func TestGRPCServer_StopWithExpiredContext(t *testing.T) {
 		errCh <- server.Start()
 	}()
 
-	// Wait for socket to exist
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, statErr := os.Stat(socketPath); statErr == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForGRPCServerReady(t, server, socketPath)
 
 	// Establish a connection to delay graceful shutdown
-	time.Sleep(50 * time.Millisecond)
 	conn, dialErr := grpc.NewClient(
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),

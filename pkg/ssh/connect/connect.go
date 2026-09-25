@@ -23,6 +23,7 @@ package connect
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -116,6 +117,12 @@ type Session struct {
 	agent          *sshagent.Session
 	inFlight       sync.WaitGroup
 
+	// cleanupErr holds a work-directory removal failure from reap, including
+	// one that happens on the background reaper goroutine well after Stop /
+	// SyncAndStop returned. Guarded by mu since the background reaper writes
+	// it from its own goroutine. See Err.
+	cleanupErr error
+
 	// drained is closed once every running Sync has finished, by exactly ONE
 	// waiter however many teardown calls ask for it. A waiter per call leaked
 	// one permanently for each bounded stop whose store never answered, and
@@ -205,8 +212,7 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 	// verification into first contact.
 	abs, err := filepath.Abs(workDir)
 	if err != nil {
-		cleanupDir(ownsWorkDir, workDir)
-		return nil, &LaunchError{Op: "workdir", Err: err}
+		return nil, errors.Join(&LaunchError{Op: "workdir", Err: err}, cleanupDir(ownsWorkDir, workDir))
 	}
 	workDir = abs
 
@@ -218,12 +224,11 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 		WorkDir: workDir,
 	})
 	if err != nil {
-		cleanupDir(ownsWorkDir, workDir)
 		// Every setup failure in this package is a *LaunchError; a caller
 		// matching that type must not start missing agent failures just
 		// because the agent moved into its own package. The cause stays
 		// reachable through Unwrap.
-		return nil, &LaunchError{Op: "agent session", Err: err}
+		return nil, errors.Join(&LaunchError{Op: "agent session", Err: err}, cleanupDir(ownsWorkDir, workDir))
 	}
 
 	// Seed the known_hosts the native client will verify against: pins from the
@@ -233,10 +238,12 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 	if !req.SkipStore {
 		body, err := known_hosts.EmitAll(ctx, req.KnownHostsStore, req.Scope, req.Owner)
 		if err != nil {
-			// Nothing has attached yet, so this join is immediate.
+			// Nothing has attached yet, so this join is immediate. Stop
+			// returns a ShutdownReport, not an error -- there is nothing to
+			// join from it -- but the directory removal below can fail and
+			// must not vanish.
 			_ = agentSess.Stop(context.Background())
-			cleanupDir(ownsWorkDir, workDir)
-			return nil, &LaunchError{Op: "emit known_hosts", Err: err}
+			return nil, errors.Join(&LaunchError{Op: "emit known_hosts", Err: err}, cleanupDir(ownsWorkDir, workDir))
 		}
 		seed = append(seed, body...)
 	}
@@ -255,8 +262,7 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 	if werr := os.WriteFile(khFile, seed, 0o600); werr != nil { // #nosec G304 G703 -- operator-supplied WorkDir, not attacker-controlled
 		// Nothing has attached yet, so this join is immediate.
 		_ = agentSess.Stop(context.Background())
-		cleanupDir(ownsWorkDir, workDir)
-		return nil, &LaunchError{Op: "write known_hosts", Err: werr}
+		return nil, errors.Join(&LaunchError{Op: "write known_hosts", Err: werr}, cleanupDir(ownsWorkDir, workDir))
 	}
 
 	strict := req.StrictHostKeyChecking
@@ -441,7 +447,7 @@ func (s *Session) reap(ctx context.Context) {
 
 	select {
 	case <-s.drainCompletion():
-		cleanupDir(s.ownsWorkDir, s.workDir)
+		s.setCleanupErr(cleanupDir(s.ownsWorkDir, s.workDir))
 		return
 	case <-ctx.Done():
 	}
@@ -457,9 +463,31 @@ func (s *Session) reap(ctx context.Context) {
 			case <-s.drainCompletion():
 			case <-after(syncDrainTimeout):
 			}
-			cleanupDir(s.ownsWorkDir, s.workDir)
+			s.setCleanupErr(cleanupDir(s.ownsWorkDir, s.workDir))
 		}()
 	})
+}
+
+// setCleanupErr records a work-directory removal failure from reap so it is
+// reachable via Err rather than dropped (#701). Safe to call from the
+// background reaper goroutine.
+func (s *Session) setCleanupErr(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.Lock()
+	s.cleanupErr = errors.Join(s.cleanupErr, err)
+	s.mu.Unlock()
+}
+
+// Err returns the first work-directory cleanup failure recorded by Stop,
+// SyncAndStop, or the background reaper they may have handed teardown to.
+// It is nil until teardown has actually removed (or failed to remove) the
+// directory, and safe to call at any time, including before Stop.
+func (s *Session) Err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cleanupErr
 }
 
 // after returns a channel closed once d has elapsed, for the background reaper,
@@ -527,7 +555,11 @@ func (s *Session) SyncAndStop(ctx context.Context) (int, sshagent.ShutdownReport
 	}
 
 	s.reap(ctx)
-	return added, report, err
+	// reap either removed the work directory synchronously (in which case
+	// Err already reflects the outcome) or hand it to the background
+	// reaper on an exhausted budget, which finishes later -- the caller can
+	// still consult Err once Stop's own context work is done, if it cares.
+	return added, report, errors.Join(err, s.Err())
 }
 
 // KnownHostsFile returns the path to the session's temp known_hosts file (empty
@@ -547,10 +579,15 @@ func target(user, host string) string {
 }
 
 // cleanupDir removes the work dir only when this package created it.
-func cleanupDir(owns bool, dir string) {
+// removeAll deletes a session-owned work directory. Tests replace it to
+// force a cleanup failure, which file permissions cannot do under root.
+var removeAll = os.RemoveAll
+
+func cleanupDir(owns bool, dir string) error {
 	if owns && dir != "" {
-		_ = os.RemoveAll(dir)
+		return removeAll(dir)
 	}
+	return nil
 }
 
 // mirrorKnownHosts appends host-key lines present in src but not in dst,

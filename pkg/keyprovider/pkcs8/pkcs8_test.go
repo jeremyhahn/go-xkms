@@ -1512,6 +1512,59 @@ func (m *mockStorageError) Close() error {
 	return nil
 }
 
+// wrappedNotFoundStorage is a storage.Backend double whose Get and Delete
+// wrap storage.ErrNotFound with call-site context (fmt.Errorf's %w),
+// the shape a real backend produces when it adds detail to the sentinel.
+type wrappedNotFoundStorage struct {
+	storage.Backend
+}
+
+func (w *wrappedNotFoundStorage) Get(_ context.Context, key string) ([]byte, error) {
+	return nil, fmt.Errorf("get %s: %w", key, storage.ErrNotFound)
+}
+
+func (w *wrappedNotFoundStorage) Delete(_ context.Context, key string) error {
+	return fmt.Errorf("delete %s: %w", key, storage.ErrNotFound)
+}
+
+// TestGetKey_NotFound_Wrapped is go-xkms#894's regression case: GetKey
+// compares the storage error with errors.Is, so a storage backend that
+// wraps storage.ErrNotFound must still classify as backend.ErrKeyNotFound,
+// not the generic "failed to retrieve key" a bare == comparison would take.
+func TestGetKey_NotFound_Wrapped(t *testing.T) {
+	config := &Config{KeyStorage: &wrappedNotFoundStorage{Backend: storage.New()}}
+	be, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = be.Close() }()
+
+	attrs := createRSAAttrs("test-getkey-wrapped-notfound.com", 2048)
+
+	_, err = be.(*PKCS8Backend).GetKey(context.Background(), attrs)
+	if !errors.Is(err, backend.ErrKeyNotFound) {
+		t.Fatalf("expected backend.ErrKeyNotFound, got %v", err)
+	}
+}
+
+// TestDeleteKey_NotFound_Wrapped is the DeleteKey counterpart of
+// TestGetKey_NotFound_Wrapped.
+func TestDeleteKey_NotFound_Wrapped(t *testing.T) {
+	config := &Config{KeyStorage: &wrappedNotFoundStorage{Backend: storage.New()}}
+	be, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = be.Close() }()
+
+	attrs := createRSAAttrs("test-deletekey-wrapped-notfound.com", 2048)
+
+	err = be.(*PKCS8Backend).DeleteKey(context.Background(), attrs)
+	if !errors.Is(err, backend.ErrKeyNotFound) {
+		t.Fatalf("expected backend.ErrKeyNotFound, got %v", err)
+	}
+}
+
 // TestDeleteKey_StorageError tests DeleteKey with storage errors
 func TestDeleteKey_StorageError(t *testing.T) {
 	mockStorage := &mockStorageError{
@@ -1794,7 +1847,11 @@ func (m *mockStorageErrorOnExists) Close() error {
 	return nil
 }
 
-// TestGetKey_StorageError tests GetKey with storage error
+// TestGetKey_StorageError tests GetKey with storage error. go-xkms#801: a
+// storage failure that is not storage.ErrNotFound must not be classified as
+// backend.ErrKeyNotFound, since callers such as pkg/ca's getOrGenerateCAKey
+// use that distinction to decide whether generating a replacement key is
+// safe.
 func TestGetKey_StorageError(t *testing.T) {
 	mockStorage := &mockStorageGetError{
 		Backend: storage.New(),
@@ -1815,6 +1872,9 @@ func TestGetKey_StorageError(t *testing.T) {
 	_, err = be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GetKey should fail with storage error")
+	}
+	if errors.Is(err, backend.ErrKeyNotFound) {
+		t.Errorf("a generic storage error must not satisfy errors.Is(err, backend.ErrKeyNotFound), got: %v", err)
 	}
 }
 
@@ -2582,9 +2642,9 @@ func TestGenerateKey_X25519(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	key, err := be.GenerateKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	key, ok := requireX25519Key(t, be, attrs)
+	if !ok {
+		return
 	}
 
 	if key == nil {
@@ -2624,14 +2684,14 @@ func TestDeriveSharedSecret_X25519(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	key1, err := be.GenerateKey(context.Background(), attrs1)
-	if err != nil {
-		t.Fatalf("GenerateKey 1 failed: %v", err)
+	key1, ok := requireX25519Key(t, be, attrs1)
+	if !ok {
+		return
 	}
 
-	key2, err := be.GenerateKey(context.Background(), attrs2)
-	if err != nil {
-		t.Fatalf("GenerateKey 2 failed: %v", err)
+	key2, ok := requireX25519Key(t, be, attrs2)
+	if !ok {
+		return
 	}
 
 	// Get public keys
@@ -2943,9 +3003,8 @@ func TestPublic_X25519(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	if _, ok := requireX25519Key(t, be, attrs); !ok {
+		return
 	}
 
 	pub, err := be.Public(context.Background(), attrs)
@@ -2972,9 +3031,8 @@ func TestDecodeKey_X25519Wrapping(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	if _, ok := requireX25519Key(t, be, attrs); !ok {
+		return
 	}
 
 	// Retrieve the key, which should trigger decodeKey with X25519 wrapping
@@ -3003,9 +3061,9 @@ func TestStoreKey_X25519Unwrapping(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	key, err := be.GenerateKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	key, ok := requireX25519Key(t, be, attrs)
+	if !ok {
+		return
 	}
 
 	if key == nil {
@@ -3037,14 +3095,13 @@ func TestDeriveSharedSecret_X25519_WrongPublicKeyType(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(context.Background(), x25519Attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	if _, ok := requireX25519Key(t, be, x25519Attrs); !ok {
+		return
 	}
 
 	// Generate RSA key to get wrong public key type
 	rsaAttrs := createRSAAttrs("test-rsa-wrong.com", 2048)
-	_, err = be.GenerateKey(context.Background(), rsaAttrs)
+	_, err := be.GenerateKey(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey RSA failed: %v", err)
 	}

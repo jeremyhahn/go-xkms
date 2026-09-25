@@ -1127,3 +1127,27 @@ func TestNeedsPINBeforeTouch_InvalidCBOR(t *testing.T) {
 		})
 	}
 }
+
+// TestAuthenticator_SetAlwaysUV proves the setter reaches the same config
+// field the CTAP2 command handlers read (cmd_getassertion.go,
+// cmd_getinfo.go, cmd_largeblobs.go, cmd_config.go), the same shape as the
+// existing SetRequireUserPresence/SetEnableUserIntentCheck setters this one
+// mirrors for the enterprise policy's FIDO2AlwaysUV field (#668).
+func TestAuthenticator_SetAlwaysUV(t *testing.T) {
+	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
+	config.Storage = NewMemoryStorage()
+	config.AlwaysUV = false
+
+	auth, err := NewAuthenticator(config)
+	require.NoError(t, err)
+	defer auth.Close()
+
+	require.False(t, auth.Config().AlwaysUV)
+
+	auth.SetAlwaysUV(true)
+	require.True(t, auth.Config().AlwaysUV)
+
+	auth.SetAlwaysUV(false)
+	require.False(t, auth.Config().AlwaysUV)
+}

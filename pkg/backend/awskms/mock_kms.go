@@ -22,7 +22,12 @@ import (
 )
 
 // KMSClient defines the interface for AWS KMS operations.
-// This interface allows us to mock KMS operations for testing.
+// This interface allows us to mock KMS operations for testing. It lists
+// exactly the operations Backend calls; ListAliases, UpdateAlias,
+// DeleteAlias and the KMS ListKeys API were removed (go-xkms#705) because no
+// Backend method ever called them -- an unused interface method can only be
+// covered by a test that calls it directly with no Backend behavior to
+// assert, which is coverage padding, not a real test.
 type KMSClient interface {
 	CreateKey(ctx context.Context, params *kms.CreateKeyInput, optFns ...func(*kms.Options)) (*kms.CreateKeyOutput, error)
 	Sign(ctx context.Context, params *kms.SignInput, optFns ...func(*kms.Options)) (*kms.SignOutput, error)
@@ -31,10 +36,6 @@ type KMSClient interface {
 	ScheduleKeyDeletion(ctx context.Context, params *kms.ScheduleKeyDeletionInput, optFns ...func(*kms.Options)) (*kms.ScheduleKeyDeletionOutput, error)
 	DescribeKey(ctx context.Context, params *kms.DescribeKeyInput, optFns ...func(*kms.Options)) (*kms.DescribeKeyOutput, error)
 	CreateAlias(ctx context.Context, params *kms.CreateAliasInput, optFns ...func(*kms.Options)) (*kms.CreateAliasOutput, error)
-	ListAliases(ctx context.Context, params *kms.ListAliasesInput, optFns ...func(*kms.Options)) (*kms.ListAliasesOutput, error)
-	ListKeys(ctx context.Context, params *kms.ListKeysInput, optFns ...func(*kms.Options)) (*kms.ListKeysOutput, error)
-	UpdateAlias(ctx context.Context, params *kms.UpdateAliasInput, optFns ...func(*kms.Options)) (*kms.UpdateAliasOutput, error)
-	DeleteAlias(ctx context.Context, params *kms.DeleteAliasInput, optFns ...func(*kms.Options)) (*kms.DeleteAliasOutput, error)
 	Decrypt(ctx context.Context, params *kms.DecryptInput, optFns ...func(*kms.Options)) (*kms.DecryptOutput, error)
 	Encrypt(ctx context.Context, params *kms.EncryptInput, optFns ...func(*kms.Options)) (*kms.EncryptOutput, error)
 	RotateKeyOnDemand(ctx context.Context, params *kms.RotateKeyOnDemandInput, optFns ...func(*kms.Options)) (*kms.RotateKeyOnDemandOutput, error)
@@ -52,10 +53,6 @@ type MockKMSClient struct {
 	ScheduleKeyDeletionFunc    func(ctx context.Context, params *kms.ScheduleKeyDeletionInput, optFns ...func(*kms.Options)) (*kms.ScheduleKeyDeletionOutput, error)
 	DescribeKeyFunc            func(ctx context.Context, params *kms.DescribeKeyInput, optFns ...func(*kms.Options)) (*kms.DescribeKeyOutput, error)
 	CreateAliasFunc            func(ctx context.Context, params *kms.CreateAliasInput, optFns ...func(*kms.Options)) (*kms.CreateAliasOutput, error)
-	ListAliasesFunc            func(ctx context.Context, params *kms.ListAliasesInput, optFns ...func(*kms.Options)) (*kms.ListAliasesOutput, error)
-	ListKeysFunc               func(ctx context.Context, params *kms.ListKeysInput, optFns ...func(*kms.Options)) (*kms.ListKeysOutput, error)
-	UpdateAliasFunc            func(ctx context.Context, params *kms.UpdateAliasInput, optFns ...func(*kms.Options)) (*kms.UpdateAliasOutput, error)
-	DeleteAliasFunc            func(ctx context.Context, params *kms.DeleteAliasInput, optFns ...func(*kms.Options)) (*kms.DeleteAliasOutput, error)
 	DecryptFunc                func(ctx context.Context, params *kms.DecryptInput, optFns ...func(*kms.Options)) (*kms.DecryptOutput, error)
 	EncryptFunc                func(ctx context.Context, params *kms.EncryptInput, optFns ...func(*kms.Options)) (*kms.EncryptOutput, error)
 	RotateKeyOnDemandFunc      func(ctx context.Context, params *kms.RotateKeyOnDemandInput, optFns ...func(*kms.Options)) (*kms.RotateKeyOnDemandOutput, error)
@@ -115,38 +112,6 @@ func (m *MockKMSClient) DescribeKey(ctx context.Context, params *kms.DescribeKey
 func (m *MockKMSClient) CreateAlias(ctx context.Context, params *kms.CreateAliasInput, optFns ...func(*kms.Options)) (*kms.CreateAliasOutput, error) {
 	if m.CreateAliasFunc != nil {
 		return m.CreateAliasFunc(ctx, params, optFns...)
-	}
-	return nil, nil
-}
-
-// ListAliases mocks the ListAliases operation.
-func (m *MockKMSClient) ListAliases(ctx context.Context, params *kms.ListAliasesInput, optFns ...func(*kms.Options)) (*kms.ListAliasesOutput, error) {
-	if m.ListAliasesFunc != nil {
-		return m.ListAliasesFunc(ctx, params, optFns...)
-	}
-	return nil, nil
-}
-
-// UpdateAlias mocks the UpdateAlias operation.
-func (m *MockKMSClient) UpdateAlias(ctx context.Context, params *kms.UpdateAliasInput, optFns ...func(*kms.Options)) (*kms.UpdateAliasOutput, error) {
-	if m.UpdateAliasFunc != nil {
-		return m.UpdateAliasFunc(ctx, params, optFns...)
-	}
-	return nil, nil
-}
-
-// DeleteAlias mocks the DeleteAlias operation.
-func (m *MockKMSClient) DeleteAlias(ctx context.Context, params *kms.DeleteAliasInput, optFns ...func(*kms.Options)) (*kms.DeleteAliasOutput, error) {
-	if m.DeleteAliasFunc != nil {
-		return m.DeleteAliasFunc(ctx, params, optFns...)
-	}
-	return nil, nil
-}
-
-// ListKeys mocks the ListKeys operation.
-func (m *MockKMSClient) ListKeys(ctx context.Context, params *kms.ListKeysInput, optFns ...func(*kms.Options)) (*kms.ListKeysOutput, error) {
-	if m.ListKeysFunc != nil {
-		return m.ListKeysFunc(ctx, params, optFns...)
 	}
 	return nil, nil
 }

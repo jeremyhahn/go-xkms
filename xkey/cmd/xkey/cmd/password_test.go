@@ -25,6 +25,9 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
@@ -1223,5 +1226,173 @@ func TestPasswordCmd_AccessModeThenStatus(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "Access Mode:     session_based") {
 		t.Errorf("status should reflect session_based mode, got: %q", output)
+	}
+}
+
+// --- passwordStorePath (go-xkms#929) ---
+
+// TestPasswordStorePath_ExplicitFlagWins verifies that an explicit --store
+// value is returned unchanged, without consulting the shared xkey
+// data-directory chain at all.
+func TestPasswordStorePath_ExplicitFlagWins(t *testing.T) {
+	resetPasswordFlags()
+	t.Cleanup(resetPasswordFlags)
+
+	if err := passwordGetCmd.Flags().Set("store", "/explicit/store/path"); err != nil {
+		t.Fatalf("Set(store): %v", err)
+	}
+
+	got, err := passwordStorePath(passwordGetCmd)
+	if err != nil {
+		t.Fatalf("passwordStorePath: %v", err)
+	}
+	if got != "/explicit/store/path" {
+		t.Errorf("got %q, want %q", got, "/explicit/store/path")
+	}
+}
+
+// TestPasswordStorePath_DefaultsUnderXKEYHome verifies that an unset --store
+// resolves to an absolute path under the resolved xkey data directory
+// (<XKEY_HOME>/data/staticpw), never a path relative to the process's
+// working directory (go-xkms#929).
+func TestPasswordStorePath_DefaultsUnderXKEYHome(t *testing.T) {
+	resetPasswordFlags()
+	t.Cleanup(resetPasswordFlags)
+	isolateDataDirSources(t)
+	root := t.TempDir()
+	xhome.SetRoot(root)
+
+	got, err := passwordStorePath(passwordGetCmd)
+	if err != nil {
+		t.Fatalf("passwordStorePath: %v", err)
+	}
+
+	want := filepath.Join(root, "data", "staticpw")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("got %q, want an absolute path", got)
+	}
+}
+
+// TestPasswordStorePath_ErrorWhenHomeUnresolvable verifies that resolution
+// fails with a typed error, instead of falling back to a cwd-relative path,
+// when the xkey home cannot be resolved or created (go-xkms#929).
+func TestPasswordStorePath_ErrorWhenHomeUnresolvable(t *testing.T) {
+	resetPasswordFlags()
+	t.Cleanup(resetPasswordFlags)
+	isolateDataDirSources(t)
+
+	// A regular file, not a directory: XKEY_HOME can neither be used nor
+	// created as a directory.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Setenv(xhome.EnvHome, blocker)
+
+	if _, err := passwordStorePath(passwordGetCmd); err == nil {
+		t.Error("passwordStorePath should fail when the xkey home cannot be resolved")
+	}
+}
+
+// --- password type ---
+
+// typePasswordHandler implements ipc.Handler for runPasswordType tests. It
+// records the last name it was asked to type and returns a scripted
+// response, so tests can exercise both the success and daemon-error paths
+// without a display or a real virtual keyboard.
+type typePasswordHandler struct {
+	resp     *ipc.Response
+	err      error
+	lastName string
+}
+
+func (h *typePasswordHandler) HandleTouch() (*ipc.Response, error) {
+	return ipc.OKResponse(ipc.ActionApprovedUP), nil
+}
+
+func (h *typePasswordHandler) HandleTypePassword(name string) (*ipc.Response, error) {
+	h.lastName = name
+	return h.resp, h.err
+}
+
+func (h *typePasswordHandler) HandleStatus() (*ipc.Response, error) {
+	return ipc.OKResponse(ipc.ActionDaemonReady), nil
+}
+
+// newPasswordTypeTestCmd builds a detached type command carrying the
+// --socket flag pointed at sockPath.
+func newPasswordTypeTestCmd(t *testing.T, sockPath string) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("socket", sockPath, "")
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	return cmd, &buf
+}
+
+func TestRunPasswordType_TypesThroughRunningDaemon(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "xkey-ipc.sock")
+	handler := &typePasswordHandler{resp: ipc.OKResponse(ipc.ActionTypedPassword)}
+
+	srv, err := ipc.NewServer(sockPath, handler, nil)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx) }()
+	t.Cleanup(func() { cancel(); srv.Close() })
+
+	cmd, buf := newPasswordTypeTestCmd(t, sockPath)
+	if err := runPasswordType(cmd, []string{"github"}); err != nil {
+		t.Fatalf("runPasswordType() error = %v", err)
+	}
+	if handler.lastName != "github" {
+		t.Errorf("daemon received name = %q, want %q", handler.lastName, "github")
+	}
+	if !strings.Contains(buf.String(), "Typed password: github") {
+		t.Errorf("output = %q, want it to report the typed entry", buf.String())
+	}
+}
+
+func TestRunPasswordType_DaemonReportsError(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "xkey-ipc.sock")
+	handler := &typePasswordHandler{resp: ipc.ErrorResponse("no such entry")}
+
+	srv, err := ipc.NewServer(sockPath, handler, nil)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx) }()
+	t.Cleanup(func() { cancel(); srv.Close() })
+
+	cmd, _ := newPasswordTypeTestCmd(t, sockPath)
+	err = runPasswordType(cmd, []string{"missing"})
+	if !errors.Is(err, ErrPasswordTypeFailed) {
+		t.Errorf("error = %v, want %v", err, ErrPasswordTypeFailed)
+	}
+}
+
+func TestRunPasswordType_DaemonNotRunning(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "no-daemon.sock")
+
+	cmd, _ := newPasswordTypeTestCmd(t, sockPath)
+	err := runPasswordType(cmd, []string{"github"})
+	if !errors.Is(err, ErrTouchDaemonNotRunning) {
+		t.Errorf("error = %v, want %v", err, ErrTouchDaemonNotRunning)
+	}
+}
+
+func TestRunPasswordType_MissingArgument(t *testing.T) {
+	cmd, _ := newPasswordTypeTestCmd(t, "")
+	err := runPasswordType(cmd, nil)
+	if !errors.Is(err, ErrPasswordMissingTypeArg) {
+		t.Errorf("error = %v, want %v", err, ErrPasswordMissingTypeArg)
 	}
 }

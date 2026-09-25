@@ -16,8 +16,10 @@ package config
 import (
 	"errors"
 	"path/filepath"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/nonce"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -36,9 +38,10 @@ var (
 	// no keystore backend has been configured for the ACME CA to use.
 	ErrACMEMissingKeystoreBackend = errors.New("acme: keystore_backend is required when acme.enabled is true")
 
-	// ErrACMEMissingTLS is returned when acme.enabled is true, acme.reuse_tls
-	// is false, and no TLS cert/key pair has been configured.
-	ErrACMEMissingTLS = errors.New("acme: tls.cert_file and tls.key_file are required when acme.reuse_tls is false")
+	// ErrACMEMissingTLS is returned when acme.enabled is true and no TLS
+	// cert/key pair has been configured. The ACME listener always uses its
+	// own dedicated TLS material.
+	ErrACMEMissingTLS = errors.New("acme: tls.cert_file and tls.key_file are required when acme.enabled is true")
 
 	// ErrACMEAuditNegativeRetention is returned when an audit rotation knob is
 	// configured with a negative value. Zero selects the built-in default;
@@ -48,6 +51,36 @@ var (
 	// ErrACMEAuditUnsupportedFormat is returned when acme.audit.format names a
 	// serialization the audit trail cannot be written or queried in.
 	ErrACMEAuditUnsupportedFormat = errors.New("acme: audit.format must be \"json\" (the only queryable audit trail format)")
+
+	// ErrACMENonceNegativeLifetime is returned when acme.nonce.lifetime is
+	// configured with a negative duration. Zero selects the built-in default;
+	// a negative value has no meaning.
+	ErrACMENonceNegativeLifetime = errors.New("acme: nonce.lifetime must not be negative")
+
+	// ErrACMENonceNegativeMaxUsed is returned when acme.nonce.max_used is
+	// configured with a negative value. Zero selects the built-in default;
+	// a negative value has no meaning.
+	ErrACMENonceNegativeMaxUsed = errors.New("acme: nonce.max_used must not be negative")
+
+	// ErrACMEMissingCAAIdentities is returned when acme.enabled is true but
+	// no CAA identities have been configured. RFC 8555 Section 8.1 requires
+	// ACME servers to check CAA (RFC 8659) records before issuing; without
+	// at least one identity the CA has nothing to compare an issue/issuewild
+	// record's value against, so a domain that publishes a restrictive CAA
+	// record could never be distinguished from one that permits this CA.
+	// There is no silent default: an operator names the identity or
+	// identities their CA issues CAA records under.
+	ErrACMEMissingCAAIdentities = errors.New("acme: caa_identities is required when acme.enabled is true")
+
+	// ErrACMERateLimitNegativeMaxRequests is returned when
+	// acme.rate_limit.max_requests is configured with a negative value. Zero
+	// selects the built-in default; a negative value has no meaning.
+	ErrACMERateLimitNegativeMaxRequests = errors.New("acme: rate_limit.max_requests must not be negative")
+
+	// ErrACMERateLimitNegativeInterval is returned when
+	// acme.rate_limit.interval is configured with a negative duration. Zero
+	// selects the built-in default; a negative duration has no meaning.
+	ErrACMERateLimitNegativeInterval = errors.New("acme: rate_limit.interval must not be negative")
 )
 
 // ACMEConfig configures the optional ACME (RFC 8555) server that xkmsd may
@@ -56,8 +89,8 @@ var (
 //
 // The ACME server is always served on a dedicated HTTPS listener because
 // RFC 8555 clients expect a standalone directory resource. The listener is
-// configured via HTTPSAddr and uses either the inherited xkmsd TLS material
-// (ReuseTLS == true) or its own certificate/key pair.
+// configured via HTTPSAddr and always uses its own certificate/key pair,
+// configured through TLS below.
 type ACMEConfig struct {
 	// Enabled controls whether the ACME server is started. When false the
 	// remainder of this config is ignored.
@@ -79,9 +112,18 @@ type ACMEConfig struct {
 	// TermsOfService is the URL advertised in the directory meta object.
 	TermsOfService string `yaml:"terms_of_service"`
 
-	// CAAIdentities is the list of CAA identities advertised in the directory
-	// meta object. Empty disables CAA advertisement.
+	// CAAIdentities is the list of issuer domain names this CA is known by
+	// in CAA (RFC 8659) issue/issuewild records — the identities finalize
+	// checks a domain's CAA RRset against before issuing, and the same
+	// list advertised in the directory meta object per RFC 8555 Section
+	// 9.7.6. Required whenever ACME is enabled: see Validate.
 	CAAIdentities []string `yaml:"caa_identities"`
+
+	// CAADNSServer optionally pins the recursive resolver (host:port, e.g.
+	// "8.8.8.8:53") used for the CAA lookups performed at order finalize.
+	// Empty uses the same default resolver the dns-01 challenge tooling
+	// uses (pkg/acme/challenges/dns-01/providers.DefaultNameservers).
+	CAADNSServer string `yaml:"caa_dns_server"`
 
 	// ExternalAccountRequired indicates that newAccount requests MUST include
 	// an externalAccountBinding per RFC 8555 Section 7.3.4.
@@ -108,12 +150,8 @@ type ACMEConfig struct {
 	// "<storage.path>/acme".
 	DataDir string `yaml:"data_dir"`
 
-	// ReuseTLS indicates whether the ACME listener should reuse the xkmsd
-	// TLS configuration (tls.cert_file/tls.key_file or CA-backed TLS). When
-	// false the TLS section below is required.
-	ReuseTLS bool `yaml:"reuse_tls"`
-
-	// TLS configures the ACME listener's TLS settings when ReuseTLS is false.
+	// TLS configures the ACME listener's TLS settings. Required when Enabled
+	// is true.
 	TLS ACMETLSConfig `yaml:"tls"`
 
 	// Audit configures the ACME audit trail: the tamper-evident record of
@@ -126,6 +164,29 @@ type ACMEConfig struct {
 	// challenges (enroll-01/endorse-01/device-attest-01). See
 	// ACMEEnrollmentConfig.
 	Enrollment ACMEEnrollmentConfig `yaml:"enrollment"`
+
+	// Nonce configures the replay-nonce service (pkg/acme/nonce), RFC 8555
+	// Section 6.5's Replay-Nonce / badNonce mechanism. See ACMENonceConfig.
+	Nonce ACMENonceConfig `yaml:"nonce"`
+
+	// Resilience configures the circuit breakers guarding the ACME server's
+	// outbound dependencies (the http-01 and dns-01 challenge verifiers, CT
+	// log submission, the tenant KMS signer, and CA-bundle storage access)
+	// and the degradation cache the directory and CA-bundle endpoints serve
+	// from while CA-bundle storage access is unavailable. See
+	// ACMEResilienceConfig.
+	Resilience ACMEResilienceConfig `yaml:"resilience"`
+
+	// Policy configures the ACME identifier issuance policy engine: the
+	// domain/FQDN/wildcard/CIDR blocklist, public-suffix and reserved-IP
+	// enforcement, and per-identifier-type challenge selection. See
+	// ACMEPolicyConfig.
+	Policy ACMEPolicyConfig `yaml:"policy"`
+
+	// RateLimit configures the per-client request-rate admission control
+	// applied to every ACME endpoint. It is on unless the operator turns it
+	// off; see ACMERateLimitConfig.
+	RateLimit ACMERateLimitConfig `yaml:"rate_limit"`
 }
 
 // ACMEEnrollmentConfig configures behavior specific to TPM-attestation
@@ -139,6 +200,61 @@ type ACMEEnrollmentConfig struct {
 	// actual challenge validation must reach the device at its real IP.
 	// Off by default: a loopback identifier is otherwise refused.
 	AllowLoopbackIdentifier bool `yaml:"allow_loopback_identifier"`
+}
+
+// DefaultACMENonceLifetime is the epoch lifetime ACMENonceConfig.ResolveLifetime
+// applies when acme.nonce.lifetime is unset. It matches the TTL the previous
+// in-memory nonce store used.
+const DefaultACMENonceLifetime = 10 * time.Minute
+
+// DefaultACMENonceMaxUsed is the per-epoch redeemed-nonce cap
+// ACMENonceConfig.ResolveMaxUsed applies when acme.nonce.max_used is unset.
+const DefaultACMENonceMaxUsed = nonce.DefaultMaxUsed
+
+// ACMENonceConfig configures the ACME replay-nonce service (pkg/acme/nonce),
+// RFC 8555 Section 6.5's Replay-Nonce / badNonce mechanism.
+type ACMENonceConfig struct {
+	// Lifetime bounds how long a nonce-signing epoch lives before the service
+	// rotates to a fresh counter window, retiring every nonce still
+	// outstanding from the previous epoch. pkg/acme/nonce tracks validity by
+	// a monotonic counter, not a per-nonce timestamp, so this is how a
+	// wall-clock lifetime is enforced. Zero selects DefaultACMENonceLifetime.
+	Lifetime time.Duration `yaml:"lifetime"`
+
+	// MaxUsed bounds the number of redeemed nonces tracked within a single
+	// signing epoch (see Lifetime) before the oldest is retired — the
+	// defense against an unbounded-memory nonce flood. Zero selects
+	// DefaultACMENonceMaxUsed.
+	MaxUsed int `yaml:"max_used"`
+}
+
+// ResolveLifetime returns the configured epoch lifetime, defaulting to
+// DefaultACMENonceLifetime when unset.
+func (n ACMENonceConfig) ResolveLifetime() time.Duration {
+	if n.Lifetime <= 0 {
+		return DefaultACMENonceLifetime
+	}
+	return n.Lifetime
+}
+
+// ResolveMaxUsed returns the configured per-epoch redeemed-nonce cap,
+// defaulting to DefaultACMENonceMaxUsed when unset.
+func (n ACMENonceConfig) ResolveMaxUsed() int {
+	if n.MaxUsed <= 0 {
+		return DefaultACMENonceMaxUsed
+	}
+	return n.MaxUsed
+}
+
+// Validate checks the nonce section. Negative values have no meaning.
+func (n ACMENonceConfig) Validate() error {
+	if n.Lifetime < 0 {
+		return ErrACMENonceNegativeLifetime
+	}
+	if n.MaxUsed < 0 {
+		return ErrACMENonceNegativeMaxUsed
+	}
+	return nil
 }
 
 // Audit trail defaults. Zero-valued rotation knobs in the configuration select
@@ -296,6 +412,322 @@ func (a ACMEAuditConfig) Validate() error {
 	return nil
 }
 
+// Rate-limit defaults. A zero-valued acme.rate_limit.max_requests or
+// .interval selects these. They match the standalone TrustedCA's long-
+// standing built-in default (20 requests/second per client), so xkmsd and
+// the standalone CA throttle identically out of the box.
+const (
+	// DefaultACMERateLimitMaxRequests is the number of requests a single
+	// client (JWS KID, or client IP before an account exists) may make
+	// within DefaultACMERateLimitInterval.
+	DefaultACMERateLimitMaxRequests = 20
+
+	// DefaultACMERateLimitInterval is the sliding window
+	// DefaultACMERateLimitMaxRequests is measured over.
+	DefaultACMERateLimitInterval = time.Second
+
+	// DefaultACMETenantRateLimitMaxRequests is the number of requests every
+	// account belonging to the same tenant may make, combined, within
+	// DefaultACMETenantRateLimitInterval. It matches the per-client overall
+	// default so a single-tenant deployment throttles identically to today.
+	DefaultACMETenantRateLimitMaxRequests = 20
+
+	// DefaultACMETenantRateLimitInterval is the sliding window
+	// DefaultACMETenantRateLimitMaxRequests is measured over.
+	DefaultACMETenantRateLimitInterval = time.Second
+
+	// DefaultACMENewAccountRateLimitMaxRequests is the number of accounts a
+	// single client IP may create within DefaultACMENewAccountRateLimitInterval.
+	// Matches the standalone TrustedCA's and Let's Encrypt's long-standing
+	// convention.
+	DefaultACMENewAccountRateLimitMaxRequests = 10
+
+	// DefaultACMENewAccountRateLimitInterval is the sliding window
+	// DefaultACMENewAccountRateLimitMaxRequests is measured over.
+	DefaultACMENewAccountRateLimitInterval = time.Hour
+
+	// DefaultACMENewOrderRateLimitMaxRequests is the number of orders a
+	// single account may create within DefaultACMENewOrderRateLimitInterval.
+	DefaultACMENewOrderRateLimitMaxRequests = 300
+
+	// DefaultACMENewOrderRateLimitInterval is the sliding window
+	// DefaultACMENewOrderRateLimitMaxRequests is measured over.
+	DefaultACMENewOrderRateLimitInterval = 3 * time.Hour
+
+	// DefaultACMECertificateRateLimitMaxRequests is the number of
+	// certificates a single account may have issued within
+	// DefaultACMECertificateRateLimitInterval.
+	DefaultACMECertificateRateLimitMaxRequests = 50
+
+	// DefaultACMECertificateRateLimitInterval is the sliding window
+	// DefaultACMECertificateRateLimitMaxRequests is measured over.
+	DefaultACMECertificateRateLimitInterval = 3 * time.Hour
+
+	// DefaultACMEFailedValidationRateLimitMaxRequests is the number of failed
+	// challenge validations a single account may accrue within
+	// DefaultACMEFailedValidationRateLimitInterval before further validation
+	// attempts are refused.
+	DefaultACMEFailedValidationRateLimitMaxRequests = 5
+
+	// DefaultACMEFailedValidationRateLimitInterval is the sliding window
+	// DefaultACMEFailedValidationRateLimitMaxRequests is measured over.
+	DefaultACMEFailedValidationRateLimitInterval = time.Hour
+)
+
+// ACMERateLimitConfig configures the per-client (JWS KID once an ACME
+// account exists, otherwise the client IP) request-rate admission control
+// applied to every endpoint on the ACME listener. Per RFC 8555 Section 6.6,
+// an exceeded limit is reported as HTTP 429 with a Retry-After header and an
+// urn:ietf:params:acme:error:rateLimited problem document
+// (pkg/acme/server/rate_limiter.go).
+//
+// This is the only barrier between a public ACME endpoint and unbounded
+// new-account/new-order/challenge traffic, so it is enabled by default
+// whenever ACME is enabled: an absent "rate_limit" section means the
+// listener throttles with the defaults below, not that it is unthrottled.
+// Turning it off is an explicit act that Config.ComplianceGaps reports, and
+// the daemon then refuses to start; there is no override.
+type ACMERateLimitConfig struct {
+	// Enabled controls whether the ACME listener enforces a request-rate
+	// cap. It is a pointer so an omitted "enabled" key can be told apart
+	// from an explicit "false": omitting it leaves the limiter on. Use
+	// IsEnabled to read it.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// MaxRequests is the number of requests a single client may make within
+	// Interval before receiving HTTP 429. Zero selects
+	// DefaultACMERateLimitMaxRequests.
+	MaxRequests int `yaml:"max_requests,omitempty"`
+
+	// Interval is the sliding window MaxRequests is measured over. Zero
+	// selects DefaultACMERateLimitInterval.
+	Interval time.Duration `yaml:"interval,omitempty"`
+
+	// Tenant configures the per-tenant OVERALL admission-control quota,
+	// shared across every account belonging to the same tenant, applied on
+	// top of (never instead of) the per-client limiter above. The tenant
+	// bucket is keyed exclusively from an authenticated JWS "kid" resolved
+	// and verified by handlers.RestService.TenantAuthMiddleware — never from
+	// a client-asserted header, host, or path — so it cannot be spoofed or
+	// used to escape another tenant's quota. Meaningful only for a
+	// multi-tenant deployment (accounts created with an External Account
+	// Binding that names a TenantID); a request whose account has no tenant
+	// is bucketed under the empty tenant ID, which behaves as one shared
+	// bucket for every non-tenant account. See ACMECategoryRateLimitConfig.
+	Tenant ACMECategoryRateLimitConfig `yaml:"tenant,omitempty"`
+
+	// NewAccount configures the RFC 8555 Section 6.6 new-account category:
+	// how many accounts a single client IP may create in a window. The
+	// tenant is never known at this point (no account exists yet), so this
+	// category is always keyed by client IP, never by tenant. See
+	// ACMECategoryRateLimitConfig.
+	NewAccount ACMECategoryRateLimitConfig `yaml:"new_account,omitempty"`
+
+	// NewOrder configures the RFC 8555 Section 6.6 new-order category: how
+	// many orders a single account may create in a window, scoped within its
+	// tenant when the account has one. See ACMECategoryRateLimitConfig.
+	NewOrder ACMECategoryRateLimitConfig `yaml:"new_order,omitempty"`
+
+	// Certificate configures the RFC 8555 Section 6.6 certificate-issuance
+	// category, enforced at order finalize: how many certificates a single
+	// account may have issued in a window, scoped within its tenant when the
+	// account has one. See ACMECategoryRateLimitConfig.
+	Certificate ACMECategoryRateLimitConfig `yaml:"certificate,omitempty"`
+
+	// FailedValidation configures the RFC 8555 Section 6.6 failed-validation
+	// category: how many failed challenge validations a single account may
+	// accrue in a window, scoped within its tenant when the account has one,
+	// before further validation attempts are refused. See
+	// ACMECategoryRateLimitConfig.
+	FailedValidation ACMECategoryRateLimitConfig `yaml:"failed_validation,omitempty"`
+}
+
+// IsEnabled reports whether the ACME listener should enforce a request-rate
+// cap. An omitted "enabled" key leaves the limiter on, so only an explicit
+// false disables it.
+func (r ACMERateLimitConfig) IsEnabled() bool {
+	return r.Enabled == nil || *r.Enabled
+}
+
+// ResolveMaxRequests returns the configured request cap, defaulting to
+// DefaultACMERateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) ResolveMaxRequests() int {
+	if r.MaxRequests > 0 {
+		return r.MaxRequests
+	}
+	return DefaultACMERateLimitMaxRequests
+}
+
+// ResolveInterval returns the configured rate-limit window, defaulting to
+// DefaultACMERateLimitInterval when unset.
+func (r ACMERateLimitConfig) ResolveInterval() time.Duration {
+	if r.Interval > 0 {
+		return r.Interval
+	}
+	return DefaultACMERateLimitInterval
+}
+
+// TenantIsEnabled reports whether the per-tenant overall quota is enforced.
+func (r ACMERateLimitConfig) TenantIsEnabled() bool { return r.Tenant.IsEnabled() }
+
+// TenantResolveMaxRequests returns the configured per-tenant request cap,
+// defaulting to DefaultACMETenantRateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) TenantResolveMaxRequests() int {
+	return r.Tenant.resolveMaxRequests(DefaultACMETenantRateLimitMaxRequests)
+}
+
+// TenantResolveInterval returns the configured per-tenant rate-limit window,
+// defaulting to DefaultACMETenantRateLimitInterval when unset.
+func (r ACMERateLimitConfig) TenantResolveInterval() time.Duration {
+	return r.Tenant.resolveInterval(DefaultACMETenantRateLimitInterval)
+}
+
+// NewAccountIsEnabled reports whether the new-account category is enforced.
+func (r ACMERateLimitConfig) NewAccountIsEnabled() bool { return r.NewAccount.IsEnabled() }
+
+// NewAccountResolveMaxRequests returns the configured new-account request
+// cap, defaulting to DefaultACMENewAccountRateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) NewAccountResolveMaxRequests() int {
+	return r.NewAccount.resolveMaxRequests(DefaultACMENewAccountRateLimitMaxRequests)
+}
+
+// NewAccountResolveInterval returns the configured new-account rate-limit
+// window, defaulting to DefaultACMENewAccountRateLimitInterval when unset.
+func (r ACMERateLimitConfig) NewAccountResolveInterval() time.Duration {
+	return r.NewAccount.resolveInterval(DefaultACMENewAccountRateLimitInterval)
+}
+
+// NewOrderIsEnabled reports whether the new-order category is enforced.
+func (r ACMERateLimitConfig) NewOrderIsEnabled() bool { return r.NewOrder.IsEnabled() }
+
+// NewOrderResolveMaxRequests returns the configured new-order request cap,
+// defaulting to DefaultACMENewOrderRateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) NewOrderResolveMaxRequests() int {
+	return r.NewOrder.resolveMaxRequests(DefaultACMENewOrderRateLimitMaxRequests)
+}
+
+// NewOrderResolveInterval returns the configured new-order rate-limit
+// window, defaulting to DefaultACMENewOrderRateLimitInterval when unset.
+func (r ACMERateLimitConfig) NewOrderResolveInterval() time.Duration {
+	return r.NewOrder.resolveInterval(DefaultACMENewOrderRateLimitInterval)
+}
+
+// CertificateIsEnabled reports whether the certificate category is enforced.
+func (r ACMERateLimitConfig) CertificateIsEnabled() bool { return r.Certificate.IsEnabled() }
+
+// CertificateResolveMaxRequests returns the configured certificate request
+// cap, defaulting to DefaultACMECertificateRateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) CertificateResolveMaxRequests() int {
+	return r.Certificate.resolveMaxRequests(DefaultACMECertificateRateLimitMaxRequests)
+}
+
+// CertificateResolveInterval returns the configured certificate rate-limit
+// window, defaulting to DefaultACMECertificateRateLimitInterval when unset.
+func (r ACMERateLimitConfig) CertificateResolveInterval() time.Duration {
+	return r.Certificate.resolveInterval(DefaultACMECertificateRateLimitInterval)
+}
+
+// FailedValidationIsEnabled reports whether the failed-validation category
+// is enforced.
+func (r ACMERateLimitConfig) FailedValidationIsEnabled() bool {
+	return r.FailedValidation.IsEnabled()
+}
+
+// FailedValidationResolveMaxRequests returns the configured
+// failed-validation request cap, defaulting to
+// DefaultACMEFailedValidationRateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) FailedValidationResolveMaxRequests() int {
+	return r.FailedValidation.resolveMaxRequests(DefaultACMEFailedValidationRateLimitMaxRequests)
+}
+
+// FailedValidationResolveInterval returns the configured failed-validation
+// rate-limit window, defaulting to
+// DefaultACMEFailedValidationRateLimitInterval when unset.
+func (r ACMERateLimitConfig) FailedValidationResolveInterval() time.Duration {
+	return r.FailedValidation.resolveInterval(DefaultACMEFailedValidationRateLimitInterval)
+}
+
+// Validate checks the rate-limit section, including every per-tenant and
+// per-category sub-section. It is only meaningful for a sub-section that is
+// enabled; a disabled one is reported by Config.ComplianceGaps instead.
+func (r ACMERateLimitConfig) Validate() error {
+	if r.IsEnabled() {
+		if r.MaxRequests < 0 {
+			return ErrACMERateLimitNegativeMaxRequests
+		}
+		if r.Interval < 0 {
+			return ErrACMERateLimitNegativeInterval
+		}
+	}
+	for _, category := range []ACMECategoryRateLimitConfig{
+		r.Tenant, r.NewAccount, r.NewOrder, r.Certificate, r.FailedValidation,
+	} {
+		if err := category.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ACMECategoryRateLimitConfig configures one RFC 8555 Section 6.6 rate-limit
+// category, or the per-tenant overall quota. It follows the same tri-state,
+// secure-by-default pattern as ACMERateLimitConfig: an explicit
+// enabled=false is the only way to turn it off, and Config.ComplianceGaps
+// reports it.
+type ACMECategoryRateLimitConfig struct {
+	// Enabled controls whether this category is enforced. It is a pointer so
+	// an omitted "enabled" key can be told apart from an explicit "false":
+	// omitting it leaves the category on. Use IsEnabled to read it.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// MaxRequests is the number of requests allowed within Interval before
+	// receiving HTTP 429. Zero selects this category's own default.
+	MaxRequests int `yaml:"max_requests,omitempty"`
+
+	// Interval is the sliding window MaxRequests is measured over. Zero
+	// selects this category's own default.
+	Interval time.Duration `yaml:"interval,omitempty"`
+}
+
+// IsEnabled reports whether this category is enforced. An omitted "enabled"
+// key leaves it on, so only an explicit false disables it.
+func (c ACMECategoryRateLimitConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// resolveMaxRequests returns the configured request cap, defaulting to def
+// when unset.
+func (c ACMECategoryRateLimitConfig) resolveMaxRequests(def int) int {
+	if c.MaxRequests > 0 {
+		return c.MaxRequests
+	}
+	return def
+}
+
+// resolveInterval returns the configured rate-limit window, defaulting to
+// def when unset.
+func (c ACMECategoryRateLimitConfig) resolveInterval(def time.Duration) time.Duration {
+	if c.Interval > 0 {
+		return c.Interval
+	}
+	return def
+}
+
+// validate checks the category. It is only meaningful when the category is
+// enabled; a disabled category is reported by Config.ComplianceGaps instead.
+func (c ACMECategoryRateLimitConfig) validate() error {
+	if !c.IsEnabled() {
+		return nil
+	}
+	if c.MaxRequests < 0 {
+		return ErrACMERateLimitNegativeMaxRequests
+	}
+	if c.Interval < 0 {
+		return ErrACMERateLimitNegativeInterval
+	}
+	return nil
+}
+
 // ACMEChallengesConfig selects which challenge verifiers are registered.
 type ACMEChallengesConfig struct {
 	// HTTP01 enables the http-01 challenge verifier (RFC 8555 Section 8.3).
@@ -315,8 +747,7 @@ type ACMEChallengesConfig struct {
 	Endorse01 bool `yaml:"endorse01"`
 }
 
-// ACMETLSConfig configures TLS for the ACME listener. These values are only
-// consulted when ACMEConfig.ReuseTLS is false.
+// ACMETLSConfig configures TLS for the ACME listener.
 type ACMETLSConfig struct {
 	// CertFile is the PEM-encoded server certificate.
 	CertFile string `yaml:"cert_file"`
@@ -355,13 +786,28 @@ func (c *ACMEConfig) Validate() error {
 	if c.KeystoreBackend == "" {
 		return ErrACMEMissingKeystoreBackend
 	}
-	if !c.ReuseTLS && (c.TLS.CertFile == "" || c.TLS.KeyFile == "") {
+	if len(c.CAAIdentities) == 0 {
+		return ErrACMEMissingCAAIdentities
+	}
+	if c.TLS.CertFile == "" || c.TLS.KeyFile == "" {
 		return ErrACMEMissingTLS
 	}
 	if !c.Challenges.HTTP01 && !c.Challenges.DNS01 && !c.Challenges.Enroll01 && !c.Challenges.Endorse01 {
 		return &errs.Message{Msg: "acme: at least one challenge type must be enabled (challenges.http01, dns01, enroll01, or endorse01)"}
 	}
 	if err := c.Audit.Validate(); err != nil {
+		return err
+	}
+	if err := c.Nonce.Validate(); err != nil {
+		return err
+	}
+	if err := c.Resilience.Validate(); err != nil {
+		return err
+	}
+	if err := c.Policy.Validate(); err != nil {
+		return err
+	}
+	if err := c.RateLimit.Validate(); err != nil {
 		return err
 	}
 	return nil

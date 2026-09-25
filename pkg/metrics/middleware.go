@@ -29,6 +29,7 @@ const (
 	ProtocolGRPC = "grpc"
 	ProtocolQUIC = "quic"
 	ProtocolMCP  = "mcp"
+	ProtocolUnix = "unix"
 )
 
 // HTTPMiddleware returns an HTTP middleware that records request metrics.

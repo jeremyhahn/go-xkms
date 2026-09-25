@@ -267,6 +267,7 @@ var rpcMethodHandlers = map[string]rpcHandler{
 
 	// XKMS key operations
 	"xkms.listBackends":        (*Server).handleListBackends,
+	"xkms.getBackend":          (*Server).handleGetBackend,
 	"xkms.generateKey":         (*Server).handleGenerateKey,
 	"xkms.getKey":              (*Server).handleGetKey,
 	"xkms.deleteKey":           (*Server).handleDeleteKey,
@@ -292,6 +293,7 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	// JSON-RPC error codes.
 	"xkms.attestKey":         (*Server).handleAttestKey,
 	"xkms.deriveKeyECDH":     (*Server).handleDeriveKeyECDH,
+	"xkms.deriveKey":         (*Server).handleDeriveKey,
 	"xkms.exportKeyMaterial": (*Server).handleExportKeyMaterial,
 	"xkms.wrapKeyByID":       (*Server).handleWrapKeyByID,
 	"xkms.unwrapKeyByID":     (*Server).handleUnwrapKeyByID,
@@ -355,6 +357,41 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	// Trust bootstrap listener (go-xkms#632).
 	"bootstrap.showKeys": (*Server).handleBootstrapShowKeys,
 
+	// PIN management (SO PIN / user PIN / lockout). Delegate entirely to the
+	// xkms service layer's composed qrdbsdk.PINBackend (go-xkms#773).
+	"xkms.setSOPIN":         (*Server).handleSetSOPIN,
+	"xkms.setUserPIN":       (*Server).handleSetUserPIN,
+	"xkms.changeSOPIN":      (*Server).handleChangeSOPIN,
+	"xkms.changeUserPIN":    (*Server).handleChangeUserPIN,
+	"xkms.verifySOPIN":      (*Server).handleVerifySOPIN,
+	"xkms.verifyUserPIN":    (*Server).handleVerifyUserPIN,
+	"xkms.getLockoutStatus": (*Server).handleGetLockoutStatus,
+	"xkms.resetLockout":     (*Server).handleResetLockout,
+
+	// Custodian groups (Shamir share custody roster). Custodian state lives
+	// in the embedded go-qrdb node, reached through the XKMS service
+	// (go-xkms#773).
+	"xkms.createCustodianGroup":  (*Server).handleCreateCustodianGroup,
+	"xkms.getCustodianGroup":     (*Server).handleGetCustodianGroup,
+	"xkms.listCustodianGroups":   (*Server).handleListCustodianGroups,
+	"xkms.deleteCustodianGroup":  (*Server).handleDeleteCustodianGroup,
+	"xkms.addCustodianMember":    (*Server).handleAddCustodianMember,
+	"xkms.removeCustodianMember": (*Server).handleRemoveCustodianMember,
+	"xkms.distributeShares":      (*Server).handleDistributeShares,
+
+	// Tenant administration (multi-tenant lifecycle plus per-tenant
+	// barrier). Delegates to the xkms service layer's composed go-qrdb
+	// TenantService (go-xkms#773).
+	"xkms.createTenant":             (*Server).handleCreateTenant,
+	"xkms.getTenant":                (*Server).handleGetTenant,
+	"xkms.listTenants":              (*Server).handleListTenants,
+	"xkms.deleteTenant":             (*Server).handleDeleteTenant,
+	"xkms.tenantBarrierInit":        (*Server).handleTenantBarrierInit,
+	"xkms.tenantBarrierUnseal":      (*Server).handleTenantBarrierUnseal,
+	"xkms.tenantBarrierStatus":      (*Server).handleTenantBarrierStatus,
+	"xkms.updateTenantEntitlements": (*Server).handleUpdateTenantEntitlements,
+	"xkms.updateTenantQuotas":       (*Server).handleUpdateTenantQuotas,
+
 	// Shamir share operations. Share state lives in the embedded go-qrdb
 	// node, reached through the XKMS service.
 	"xkms.submitShare":              (*Server).handleSubmitShare,
@@ -379,16 +416,28 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"credentials.submit":   (*Server).handleCredentialSubmit,
 	"credentials.strategy": (*Server).handleCredentialStrategy,
 
+	// User management operations. xkms presents its own user model; the
+	// backing store is the embedded qrdb node (see pkg/xkms/servicer_user.go).
+	"user.create":          (*Server).handleCreateUser,
+	"user.list":            (*Server).handleListUsers,
+	"user.get":             (*Server).handleGetUser,
+	"user.delete":          (*Server).handleDeleteUser,
+	"user.enable":          (*Server).handleEnableUser,
+	"user.disable":         (*Server).handleDisableUser,
+	"user.bindCert":        (*Server).handleBindUserCert,
+	"user.listCredentials": (*Server).handleListUserCredentials,
+
 	// Password store operations
-	"password.add":      (*Server).handlePasswordAdd,
-	"password.get":      (*Server).handlePasswordGet,
-	"password.list":     (*Server).handlePasswordList,
-	"password.update":   (*Server).handlePasswordUpdate,
-	"password.delete":   (*Server).handlePasswordDelete,
-	"password.unlock":   (*Server).handlePasswordUnlock,
-	"password.lock":     (*Server).handlePasswordLock,
-	"password.status":   (*Server).handlePasswordStatus,
-	"password.generate": (*Server).handlePasswordGenerate,
+	"password.add":           (*Server).handlePasswordAdd,
+	"password.get":           (*Server).handlePasswordGet,
+	"password.list":          (*Server).handlePasswordList,
+	"password.update":        (*Server).handlePasswordUpdate,
+	"password.delete":        (*Server).handlePasswordDelete,
+	"password.unlock":        (*Server).handlePasswordUnlock,
+	"password.lock":          (*Server).handlePasswordLock,
+	"password.status":        (*Server).handlePasswordStatus,
+	"password.generate":      (*Server).handlePasswordGenerate,
+	"password.setAccessMode": (*Server).handlePasswordSetAccessMode,
 
 	// Platform-sealed store (machine-local sealed credential store)
 	"sealStore.put":    (*Server).handleSealStorePut,

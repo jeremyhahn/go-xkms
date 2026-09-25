@@ -73,12 +73,14 @@ func (s *PasswordProtectionService) SetAuditLogger(logger audit.Logger) {
 }
 
 // logPasswordStoreOp logs a password store operation to the audit log.
-func (s *PasswordProtectionService) logPasswordStoreOp(op audit.OperationType, source string, success bool, err error, details map[string]any) {
+// Callers must propagate a non-nil return: op.Severity() (audit package)
+// decides whether that failure is required to fail the caller.
+func (s *PasswordProtectionService) logPasswordStoreOp(op audit.OperationType, source string, success bool, err error, details map[string]any) error {
 	ptr := s.auditLog.Load()
 	if ptr == nil {
-		return
+		return nil
 	}
-	(*ptr).LogPasswordStoreOperation(op, source, success, err, details)
+	return (*ptr).LogPasswordStoreOperation(op, source, success, err, details)
 }
 
 // GetStatus returns the current password protection status.
@@ -86,7 +88,11 @@ func (s *PasswordProtectionService) logPasswordStoreOp(op audit.OperationType, s
 func (s *PasswordProtectionService) GetStatus() (*PasswordProtectionStatus, error) {
 	tpmAvailable := false
 	if s.sealSvc != nil {
-		tpmAvailable, _ = s.sealSvc.CanSeal()
+		var err error
+		tpmAvailable, err = s.sealSvc.CanSeal()
+		if err != nil {
+			s.log.Warn("failed to check whether the sealer can seal", "error", err)
+		}
 	}
 
 	pwCount := 0

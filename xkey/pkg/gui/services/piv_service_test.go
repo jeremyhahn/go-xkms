@@ -65,6 +65,12 @@ type mockPIVClient struct {
 	// listing error was discarded and success reported anyway.
 	listKeysResp *transport.ListKeysResponse
 	listKeysErr  error
+
+	// deleteKeyResp/deleteKeyErr make the remote key-delete call expressible,
+	// completing the DeleteCertificate remote success path alongside
+	// listKeysResp above.
+	deleteKeyResp *transport.DeleteKeyResponse
+	deleteKeyErr  error
 }
 
 var errMockNotImplemented = errors.New("mock: not implemented")
@@ -105,6 +111,9 @@ func (m *mockPIVClient) GetKey(_ context.Context, _, _ string) (*transport.GetKe
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) DeleteKey(_ context.Context, _, _ string) (*transport.DeleteKeyResponse, error) {
+	if m.deleteKeyResp != nil || m.deleteKeyErr != nil {
+		return m.deleteKeyResp, m.deleteKeyErr
+	}
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) Sign(_ context.Context, _ *transport.SignRequest) (*transport.SignResponse, error) {
@@ -1201,6 +1210,39 @@ func TestPIVService_LocalExportCertificate_NoCert(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrPIVNoCertificate))
 }
 
+func TestPIVService_ExportPublicKey_EmptySlot(t *testing.T) {
+	svc := NewPIVService(nil, "")
+	_, err := svc.ExportPublicKey("")
+	assert.True(t, errors.Is(err, ErrPIVInvalidSlot))
+}
+
+func TestPIVService_ExportPublicKey_ClientNotSet(t *testing.T) {
+	svc := NewPIVService(nil, "")
+	_, err := svc.ExportPublicKey("9a")
+	assert.True(t, errors.Is(err, ErrPIVClientNotSet))
+}
+
+// TestPIVService_LocalExportPublicKey_ListKeysFails documents the same
+// limitation as TestPIVService_LocalDeleteCertificate (#313): the test
+// harness's initTestPIVManager provisions the PIV certificate store but not
+// the general xkms key store xkms.ListKeys reads from, so the local path
+// surfaces a wrapped "keystore: not initialized" error rather than silently
+// discarding it.
+func TestPIVService_LocalExportPublicKey_ListKeysFails(t *testing.T) {
+	initTestPIVManager(t)
+
+	svc := NewPIVService(nil, "software")
+	svc.SetLocalEnabled(true)
+	svc.SetContext(context.Background())
+
+	_, err := svc.GenerateKey("9a", "ECCP256")
+	require.NoError(t, err)
+
+	_, err = svc.ExportPublicKey("9A") // uppercase should be normalized
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "export public key for slot 9a")
+}
+
 func TestPIVService_LocalDeleteCertificate(t *testing.T) {
 	initTestPIVManager(t)
 
@@ -1224,6 +1266,59 @@ func TestPIVService_LocalDeleteCertificate(t *testing.T) {
 	// The certificate half did happen.
 	_, err = svc.GetCertificate("9a")
 	assert.True(t, errors.Is(err, ErrPIVNoCertificate))
+}
+
+func TestPIVService_RemoteDeleteCertificate_Success(t *testing.T) {
+	client := &mockPIVClient{
+		listKeysResp: &transport.ListKeysResponse{
+			Keys: []transport.KeyInfo{{KeyID: "piv-9a", Backend: "software"}},
+		},
+		deleteKeyResp: &transport.DeleteKeyResponse{Success: true},
+	}
+	svc := NewPIVService(client, "software")
+	svc.SetContext(context.Background())
+
+	err := svc.DeleteCertificate("9a")
+	require.NoError(t, err)
+}
+
+func TestPIVService_RemoteDeleteCertificate_CertDeleteFails(t *testing.T) {
+	client := &mockPIVClient{
+		deletePIVCertErr: errors.New("token removed"),
+	}
+	svc := NewPIVService(client, "software")
+	svc.SetContext(context.Background())
+
+	err := svc.DeleteCertificate("9a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete slot 9a")
+}
+
+func TestPIVService_RemoteDeleteCertificate_KeyListingFails(t *testing.T) {
+	client := &mockPIVClient{
+		listKeysErr: errors.New("backend unreachable"),
+	}
+	svc := NewPIVService(client, "software")
+	svc.SetContext(context.Background())
+
+	err := svc.DeleteCertificate("9a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the key may remain")
+}
+
+func TestPIVService_RemoteDeleteCertificate_KeyDeleteFails(t *testing.T) {
+	client := &mockPIVClient{
+		listKeysResp: &transport.ListKeysResponse{
+			Keys: []transport.KeyInfo{{KeyID: "piv-9a", Backend: "software"}},
+		},
+		deleteKeyErr: errors.New("session closed"),
+	}
+	svc := NewPIVService(client, "software")
+	svc.SetContext(context.Background())
+
+	err := svc.DeleteCertificate("9a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete key for slot 9a")
 }
 
 func TestPIVService_LocalDeleteCertificate_NoCert(t *testing.T) {
@@ -1260,6 +1355,34 @@ func TestPIVService_LocalGenerateCSR(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, data)
 	assert.Contains(t, string(data), "BEGIN CERTIFICATE REQUEST")
+}
+
+func TestPIVService_SelfSignExistingKey_EmptySlot(t *testing.T) {
+	svc := NewPIVService(nil, "")
+	_, err := svc.SelfSignExistingKey("", "cn", 0)
+	assert.True(t, errors.Is(err, ErrPIVInvalidSlot))
+}
+
+func TestPIVService_SelfSignExistingKey_ClientNotSet(t *testing.T) {
+	svc := NewPIVService(nil, "")
+	_, err := svc.SelfSignExistingKey("9a", "cn", 0)
+	assert.True(t, errors.Is(err, ErrPIVClientNotSet))
+}
+
+// TestPIVService_LocalSelfSignExistingKey_ListKeysFails documents the same
+// initTestPIVManager limitation as TestPIVService_LocalExportPublicKey_ListKeysFails
+// (#313): xkms.SelfSignExistingPIVKey also reads the general key store via
+// xkms.ListKeys, which the PIV-only test harness never initializes.
+func TestPIVService_LocalSelfSignExistingKey_ListKeysFails(t *testing.T) {
+	initTestPIVManager(t)
+
+	svc := NewPIVService(nil, "software")
+	svc.SetLocalEnabled(true)
+	svc.SetContext(context.Background())
+
+	_, err := svc.SelfSignExistingKey("9a", "test.local", 30)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not initialized")
 }
 
 func TestPIVService_LocalImportCertificate(t *testing.T) {
@@ -1740,6 +1863,38 @@ func TestPIVService_ResolveXKMSBackendName_NotInRegistry(t *testing.T) {
 
 	// ID not in registry — returns the raw ID unchanged.
 	assert.Equal(t, "unknown-backend", svc.resolveXKMSBackendName("unknown-backend"))
+}
+
+func TestPIVService_SetBackendTypeFn(t *testing.T) {
+	svc := NewPIVService(nil, "")
+	assert.Nil(t, svc.backendTypeFn)
+
+	svc.SetBackendTypeFn(func(id string) string { return "pkcs11" })
+	require.NotNil(t, svc.backendTypeFn)
+}
+
+func TestPIVService_ResolveXKMSBackendName_FallsBackToBackendTypeFn(t *testing.T) {
+	reg := backendregistry.NewMemoryRegistry()
+	t.Cleanup(func() { reg.Close() })
+
+	svc := NewPIVService(nil, "")
+	svc.SetRegistry(reg)
+	svc.SetBackendTypeFn(func(id string) string {
+		if id == "softhsm-1" {
+			return "pkcs11"
+		}
+		return ""
+	})
+
+	// Not in the registry, but the backend type resolver knows it.
+	assert.Equal(t, "pkcs11", svc.resolveXKMSBackendName("softhsm-1"))
+}
+
+func TestPIVService_ResolveXKMSBackendName_BackendTypeFnEmpty_FallsBackToRawID(t *testing.T) {
+	svc := NewPIVService(nil, "")
+	svc.SetBackendTypeFn(func(id string) string { return "" })
+
+	assert.Equal(t, "mystery-backend", svc.resolveXKMSBackendName("mystery-backend"))
 }
 
 func TestPIVService_ResolveXKMSBackendName_SameIDAndCategory(t *testing.T) {

@@ -150,7 +150,13 @@ func (a *BackendAdapter) GenerateCredentialKey(algorithm int, credentialID []byt
 
 	// Refresh slot model occupancy after successful key generation.
 	if a.slotModel != nil {
-		_ = a.slotModel.Refresh()
+		if refreshErr := a.slotModel.Refresh(); refreshErr != nil {
+			a.logger.Error("FIDO2 adapter: slot model refresh failed after key generation",
+				"backend", a.backendType,
+				"store_type", attrs.StoreType,
+				"cn", attrs.CN,
+				"error", refreshErr)
+		}
 	}
 
 	// Extract public key from the generated private key.
@@ -441,6 +447,8 @@ func storeTypeForBackend(bt xkms.BackendType) xkms.StoreType {
 		return xkms.StoreVault
 	case xkms.BackendTypePhone:
 		return xkms.StorePhone
+	case xkms.BackendTypeAVR:
+		return xkms.StoreAVR
 	default:
 		// Handle module-ID-style backend types like "pkcs11-libykcs11"
 		// by matching the prefix to known backend types.

@@ -37,15 +37,16 @@ auth:
   enabled: true
   type: "composite"
 
-# Encryption at rest. Unlike configs/xkmsd.yaml this names a literal passphrase,
-# because the point of this file is to start a throwaway local daemon with no
-# out-of-band setup. It is a development secret and must not be used anywhere
-# else; a real deployment supplies XKMS_BARRIER_PASSPHRASE or a credential://
-# reference instead, and `xkmsd init` provisions one.
+# Encryption at rest. There is no config-sourced boot-time secret any more
+# (matching go-qrdb's own SealConfig): a software strategy never auto-unseals
+# from configuration. This file's storage backend is "file" (below), so the
+# qrdb node-barrier auto-unseal gate does not apply to it either way; the
+# daemon boots with xkms's own barrier sealed, and `xkmsctl barrier init` /
+# `xkmsctl barrier unseal` provision and unseal it, exactly as a real
+# deployment does.
 barrier:
   enabled: true
   strategy: "passphrase"
-  passphrase: "dev-only-passphrase"
 
 ratelimit:
   enabled: false
@@ -88,7 +89,7 @@ ca:
           ecc:
             curve: "P-256"
           hash: "SHA-256"
-          key_type: "CA"
+          key-type: "CA"
       keystore-type: "software"
       is-root: true
   selected-ca: 0

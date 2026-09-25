@@ -19,10 +19,7 @@ import (
 	"bytes"
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/rsa"
+	"crypto/fips140"
 	"crypto/sha1" // #nosec G505 -- SHA-1 required for TPM 2.0 specification compatibility
 	"crypto/sha256"
 	"crypto/sha512"
@@ -142,11 +139,30 @@ func (l *MockEventLog) AddSeparatorEvent(pcrIndex int) *MockEventLog {
 	})
 }
 
-// AddPostCodeEvent adds an EV_POST_CODE event for BIOS POST operations.
-func (l *MockEventLog) AddPostCodeEvent(pcrIndex int, data []byte) *MockEventLog {
+// sha1EventDigest returns a 20-byte digest for a mock TPM event log entry.
+// TCG event logs -- legacy and the SHA-1 bank of crypto-agile alike -- always
+// carry a SHA-1-sized digest per event, but crypto/sha1.Sum panics under
+// GODEBUG=fips140=only (Go's SHA-1 implementation refuses to run at all in
+// that mode, not just to report a weak-hash finding). The code under test
+// that consumes these fixtures (pkg/acme/server/handlers.extendPCR) already
+// refuses a SHA-1-bank replay under FIPS with a typed error before it would
+// ever compare digest bytes, so no test's result depends on this value being
+// a real SHA-1 output -- only its length. Substituting a truncated SHA-256
+// digest under fips140.Enforced() keeps every fixture buildable without
+// crashing the process assembling it.
+func sha1EventDigest(data []byte) []byte {
+	if fips140.Enforced() {
+		digest := sha256.Sum256(data)
+		return digest[:20]
+	}
 	h := sha1.New() // #nosec G401 -- SHA-1 required for legacy TPM event log format
 	h.Write(data)
-	digest := h.Sum(nil)
+	return h.Sum(nil)
+}
+
+// AddPostCodeEvent adds an EV_POST_CODE event for BIOS POST operations.
+func (l *MockEventLog) AddPostCodeEvent(pcrIndex int, data []byte) *MockEventLog {
+	digest := sha1EventDigest(data)
 	return l.AddEvent(MockEvent{
 		PCRIndex:  pcrIndex,
 		EventType: EVPostCode,
@@ -168,9 +184,7 @@ func (l *MockEventLog) AddNoActionEvent(pcrIndex int, data []byte) *MockEventLog
 // AddEFIBootEvent adds an EV_EFI_BOOT_SERVICES_APPLICATION event.
 func (l *MockEventLog) AddEFIBootEvent(pcrIndex int, appPath string) *MockEventLog {
 	data := []byte(appPath)
-	h := sha1.New() // #nosec G401 -- SHA-1 required for legacy TPM event log format
-	h.Write(data)
-	digest := h.Sum(nil)
+	digest := sha1EventDigest(data)
 	return l.AddEvent(MockEvent{
 		PCRIndex:  pcrIndex,
 		EventType: EVEFIBootServicesApplication,
@@ -574,38 +588,23 @@ func encodePCRBanks(banks []xkmssdk.PCRBank) []byte {
 	return buf.Bytes()
 }
 
-// computePCRFromEvents computes the expected PCR value by replaying events.
-// This simulates the TPM's PCR extend operation: newPCR = Hash(oldPCR || eventDigest)
-func computePCRFromEvents(events []MockEvent, initialPCR []byte, hashAlg crypto.Hash) []byte {
-	current := make([]byte, len(initialPCR))
-	copy(current, initialPCR)
-
-	for _, event := range events {
-		var h hash.Hash
-		switch hashAlg {
-		case crypto.SHA1:
-			h = sha1.New() // #nosec G401 -- SHA-1 required for TPM 2.0 specification compatibility
-		case crypto.SHA256:
-			h = sha256.New()
-		case crypto.SHA384:
-			h = sha512.New384()
-		case crypto.SHA512:
-			h = sha512.New()
-		default:
-			h = sha256.New()
+// hashSumTPM writes parts to a hasher of the requested algorithm and returns
+// its digest, except when hashAlg is SHA-1 and the process is running under
+// GODEBUG=fips140=only, where crypto/sha1's Sum panics unconditionally (see
+// sha1EventDigest above). The production PCR-replay path this package
+// exercises (extendPCR) already refuses a SHA-1 bank under FIPS enforcement
+// with a typed error before it would ever compare a digest computed this
+// way, so a same-length SHA-256-derived placeholder keeps the fixture
+// buildable without crashing the process assembling it.
+func hashSumTPM(hashAlg crypto.Hash, parts ...[]byte) []byte {
+	if hashAlg == crypto.SHA1 && fips140.Enforced() {
+		h := sha256.New()
+		for _, p := range parts {
+			h.Write(p)
 		}
-
-		// TPM PCR extend: new = Hash(old || digest)
-		h.Write(current)
-		h.Write(event.Digest)
-		current = h.Sum(nil)
+		return h.Sum(nil)[:20]
 	}
 
-	return current
-}
-
-// computeEventDigest computes the digest for event data using the specified algorithm.
-func computeEventDigest(eventData []byte, hashAlg crypto.Hash) []byte {
 	var h hash.Hash
 	switch hashAlg {
 	case crypto.SHA1:
@@ -619,8 +618,29 @@ func computeEventDigest(eventData []byte, hashAlg crypto.Hash) []byte {
 	default:
 		h = sha256.New()
 	}
-	h.Write(eventData)
+	for _, p := range parts {
+		h.Write(p)
+	}
 	return h.Sum(nil)
+}
+
+// computePCRFromEvents computes the expected PCR value by replaying events.
+// This simulates the TPM's PCR extend operation: newPCR = Hash(oldPCR || eventDigest)
+func computePCRFromEvents(events []MockEvent, initialPCR []byte, hashAlg crypto.Hash) []byte {
+	current := make([]byte, len(initialPCR))
+	copy(current, initialPCR)
+
+	for _, event := range events {
+		// TPM PCR extend: new = Hash(old || digest)
+		current = hashSumTPM(hashAlg, current, event.Digest)
+	}
+
+	return current
+}
+
+// computeEventDigest computes the digest for event data using the specified algorithm.
+func computeEventDigest(eventData []byte, hashAlg crypto.Hash) []byte {
+	return hashSumTPM(hashAlg, eventData)
 }
 
 // getHashSize returns the digest size for the given algorithm name.
@@ -662,49 +682,6 @@ func createMockEventLog(eventData [][]byte, pcrIndex int) ([]byte, []byte) {
 	expectedPCR := computePCRFromEvents(events, initialPCR, crypto.SHA1)
 
 	return log.Build(), expectedPCR
-}
-
-// =============================================================================
-// Test Key Pair Generation Helpers
-// =============================================================================
-
-// createTestRSAKeyPairForQuote creates an RSA key pair for testing quote verification.
-// Returns the private key and PKIX-encoded public key bytes.
-func createTestRSAKeyPairForQuote(t *testing.T) (*rsa.PrivateKey, []byte) {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	require.NoError(t, err)
-
-	return key, pubKeyBytes
-}
-
-// createTestECKeyPairForQuote creates an ECDSA key pair for testing quote verification.
-// Returns the private key and PKIX-encoded public key bytes.
-func createTestECKeyPairForQuote(t *testing.T) (*ecdsa.PrivateKey, []byte) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	require.NoError(t, err)
-
-	return key, pubKeyBytes
-}
-
-// createSignedQuoteProdCaData creates ProdCaData with a properly signed quote.
-// The quote is signed with the provided RSA private key.
-func createSignedQuoteProdCaData(t *testing.T, key *rsa.PrivateKey, nonce []byte, pcrs []byte) []byte {
-	t.Helper()
-
-	quoted := []byte("test quote data - TPMS_ATTEST structure")
-	hash := sha256.Sum256(quoted)
-	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
-	require.NoError(t, err)
-
-	return createMockProdCaData(quoted, signature, nonce, pcrs)
 }
 
 // =============================================================================
@@ -992,11 +969,24 @@ func TestTPMHelpers_computePCRFromEvents(t *testing.T) {
 		initialPCR := make([]byte, 20)
 		result := computePCRFromEvents([]MockEvent{event}, initialPCR, crypto.SHA1)
 
-		// Manual computation: SHA1(zeros || digest)
-		h := sha1.New() // #nosec G401 -- test code
-		h.Write(initialPCR)
-		h.Write(digest)
-		expected := h.Sum(nil)
+		var expected []byte
+		if fips140.Enforced() {
+			// crypto/sha1.Sum panics unconditionally under
+			// GODEBUG=fips140=only, so there is no independent SHA-1 to
+			// recompute against; hashSumTPM's own FIPS-only substitute
+			// (see its doc comment) is the only value that can agree with
+			// computePCRFromEvents here, which routes through the same
+			// helper. This still confirms computePCRFromEvents calls the
+			// extend step with (old, digest) in that order; "supports
+			// multiple events" below covers the chaining across steps.
+			expected = hashSumTPM(crypto.SHA1, initialPCR, digest)
+		} else {
+			// Manual computation: SHA1(zeros || digest)
+			h := sha1.New() // #nosec G401 -- test code
+			h.Write(initialPCR)
+			h.Write(digest)
+			expected = h.Sum(nil)
+		}
 
 		assert.Equal(t, expected, result)
 	})

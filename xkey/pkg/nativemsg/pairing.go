@@ -151,15 +151,23 @@ func (v *PairingVerifier) VerifyIdentity(identityKey, signature, ephemeralPubKey
 
 	if !ok {
 		// Origin not in map — might be a new extension or mismatch.
-		v.recordVerifyFailure()
-		v.logPairingEvent(audit.OpPairingIdentityFail, false, ErrIdentityOriginMismatch, map[string]any{"origin": origin})
+		if auditErr := v.recordVerifyFailure(); auditErr != nil {
+			return auditErr
+		}
+		if auditErr := v.logPairingEvent(audit.OpPairingIdentityFail, false, ErrIdentityOriginMismatch, map[string]any{"origin": origin}); auditErr != nil {
+			return auditErr
+		}
 		return ErrIdentityOriginMismatch
 	}
 
 	// Check identity key matches stored key.
 	if !ed25519.PublicKey(state.IdentityKey).Equal(ed25519.PublicKey(identityKey)) {
-		v.recordVerifyFailure()
-		v.logPairingEvent(audit.OpPairingIdentityFail, false, ErrIdentityMismatch, map[string]any{"origin": origin})
+		if auditErr := v.recordVerifyFailure(); auditErr != nil {
+			return auditErr
+		}
+		if auditErr := v.logPairingEvent(audit.OpPairingIdentityFail, false, ErrIdentityMismatch, map[string]any{"origin": origin}); auditErr != nil {
+			return auditErr
+		}
 		return ErrIdentityMismatch
 	}
 
@@ -167,15 +175,18 @@ func (v *PairingVerifier) VerifyIdentity(identityKey, signature, ephemeralPubKey
 	signData := computeSignData(ephemeralPubKey, origin)
 
 	if !ed25519.Verify(ed25519.PublicKey(identityKey), signData, signature) {
-		v.recordVerifyFailure()
-		v.logPairingEvent(audit.OpPairingIdentityFail, false, ErrIdentitySignature, map[string]any{"origin": origin})
+		if auditErr := v.recordVerifyFailure(); auditErr != nil {
+			return auditErr
+		}
+		if auditErr := v.logPairingEvent(audit.OpPairingIdentityFail, false, ErrIdentitySignature, map[string]any{"origin": origin}); auditErr != nil {
+			return auditErr
+		}
 		return ErrIdentitySignature
 	}
 
 	// Success - reset failure counter.
 	v.verifyFailures.Store(0)
-	v.logPairingEvent(audit.OpPairingIdentityOK, true, nil, map[string]any{"origin": origin})
-	return nil
+	return v.logPairingEvent(audit.OpPairingIdentityOK, true, nil, map[string]any{"origin": origin})
 }
 
 // StartPairing initiates a pairing ceremony by generating a 6-digit code.
@@ -184,7 +195,9 @@ func (v *PairingVerifier) StartPairing(identityKey []byte, origin string) (strin
 	// Check lockout.
 	if lockUntil := v.pairingLockUntil.Load(); lockUntil > 0 {
 		if time.Now().Unix() < lockUntil {
-			v.logPairingEvent(audit.OpPairingStarted, false, ErrPairingLocked, map[string]any{"origin": origin})
+			if auditErr := v.logPairingEvent(audit.OpPairingStarted, false, ErrPairingLocked, map[string]any{"origin": origin}); auditErr != nil {
+				return "", auditErr
+			}
 			return "", ErrPairingLocked
 		}
 		v.pairingFailures.Store(0)
@@ -193,7 +206,9 @@ func (v *PairingVerifier) StartPairing(identityKey []byte, origin string) (strin
 
 	code, err := generatePairingCode()
 	if err != nil {
-		v.logPairingEvent(audit.OpPairingStarted, false, err, map[string]any{"origin": origin})
+		if auditErr := v.logPairingEvent(audit.OpPairingStarted, false, err, map[string]any{"origin": origin}); auditErr != nil {
+			return "", auditErr
+		}
 		return "", &WrappedError{Msg: "nativemsg: failed to generate pairing code", Err: err}
 	}
 
@@ -206,7 +221,9 @@ func (v *PairingVerifier) StartPairing(identityKey []byte, origin string) (strin
 	}
 	v.mu.Unlock()
 
-	v.logPairingEvent(audit.OpPairingStarted, true, nil, map[string]any{"origin": origin})
+	if auditErr := v.logPairingEvent(audit.OpPairingStarted, true, nil, map[string]any{"origin": origin}); auditErr != nil {
+		return "", auditErr
+	}
 	return code, nil
 }
 
@@ -238,20 +255,32 @@ func (v *PairingVerifier) CompletePairing(identityKey []byte, origin, code strin
 
 	// Verify code.
 	if v.pending.code != code {
-		v.recordPairingFailure()
-		v.logPairingEvent(audit.OpPairingFailed, false, ErrPairingInvalidCode, map[string]any{"origin": origin})
+		if auditErr := v.recordPairingFailure(); auditErr != nil {
+			return auditErr
+		}
+		if auditErr := v.logPairingEvent(audit.OpPairingFailed, false, ErrPairingInvalidCode, map[string]any{"origin": origin}); auditErr != nil {
+			return auditErr
+		}
 		return ErrPairingInvalidCode
 	}
 
 	// Verify identity key and origin match the pending request.
 	if !ed25519.PublicKey(v.pending.identityKey).Equal(ed25519.PublicKey(identityKey)) {
-		v.recordPairingFailure()
-		v.logPairingEvent(audit.OpPairingFailed, false, ErrPairingRejected, map[string]any{"origin": origin})
+		if auditErr := v.recordPairingFailure(); auditErr != nil {
+			return auditErr
+		}
+		if auditErr := v.logPairingEvent(audit.OpPairingFailed, false, ErrPairingRejected, map[string]any{"origin": origin}); auditErr != nil {
+			return auditErr
+		}
 		return ErrPairingRejected
 	}
 	if v.pending.origin != origin {
-		v.recordPairingFailure()
-		v.logPairingEvent(audit.OpPairingFailed, false, ErrPairingRejected, map[string]any{"origin": origin})
+		if auditErr := v.recordPairingFailure(); auditErr != nil {
+			return auditErr
+		}
+		if auditErr := v.logPairingEvent(audit.OpPairingFailed, false, ErrPairingRejected, map[string]any{"origin": origin}); auditErr != nil {
+			return auditErr
+		}
 		return ErrPairingRejected
 	}
 
@@ -262,7 +291,9 @@ func (v *PairingVerifier) CompletePairing(identityKey []byte, origin, code strin
 	}
 	v.pending = nil
 	v.pairingFailures.Store(0)
-	v.logPairingEvent(audit.OpPairingCompleted, true, nil, map[string]any{"origin": origin})
+	if auditErr := v.logPairingEvent(audit.OpPairingCompleted, true, nil, map[string]any{"origin": origin}); auditErr != nil {
+		return auditErr
+	}
 
 	return v.saveLocked()
 }
@@ -274,7 +305,9 @@ func (v *PairingVerifier) UnpairOrigin(origin string) error {
 	defer v.mu.Unlock()
 
 	delete(v.states, origin)
-	v.logPairingEvent(audit.OpPairingUnpaired, true, nil, map[string]any{"origin": origin})
+	if auditErr := v.logPairingEvent(audit.OpPairingUnpaired, true, nil, map[string]any{"origin": origin}); auditErr != nil {
+		return auditErr
+	}
 
 	if len(v.states) == 0 {
 		return v.removeStateLocked()
@@ -289,7 +322,9 @@ func (v *PairingVerifier) UnpairAll() error {
 
 	v.states = make(map[string]*PairingState)
 	v.pending = nil
-	v.logPairingEvent(audit.OpPairingUnpaired, true, nil, map[string]any{"action": "unpair_all"})
+	if auditErr := v.logPairingEvent(audit.OpPairingUnpaired, true, nil, map[string]any{"action": "unpair_all"}); auditErr != nil {
+		return auditErr
+	}
 	return v.removeStateLocked()
 }
 
@@ -336,22 +371,30 @@ var supportedBrowsers = []string{
 	"firefox-bin",
 }
 
-// recordPairingFailure increments failure counter and sets lockout if threshold reached.
-func (v *PairingVerifier) recordPairingFailure() {
+// recordPairingFailure increments failure counter and sets lockout if
+// threshold reached. Callers must propagate a non-nil return: rate-limit
+// lockout is a SeveritySecurity event and a failed write must fail the
+// caller.
+func (v *PairingVerifier) recordPairingFailure() error {
 	failures := v.pairingFailures.Add(1)
 	if failures >= int32(maxPairingFailures) {
 		v.pairingLockUntil.Store(time.Now().Add(pairingLockoutDuration).Unix())
-		v.logPairingEvent(audit.OpPairingRateLimited, false, nil, map[string]any{"lockout_type": "pairing"})
+		return v.logPairingEvent(audit.OpPairingRateLimited, false, nil, map[string]any{"lockout_type": "pairing"})
 	}
+	return nil
 }
 
-// recordVerifyFailure increments failure counter and sets lockout if threshold reached.
-func (v *PairingVerifier) recordVerifyFailure() {
+// recordVerifyFailure increments failure counter and sets lockout if
+// threshold reached. Callers must propagate a non-nil return: rate-limit
+// lockout is a SeveritySecurity event and a failed write must fail the
+// caller.
+func (v *PairingVerifier) recordVerifyFailure() error {
 	failures := v.verifyFailures.Add(1)
 	if failures >= int32(maxVerifyFailures) {
 		v.verifyLockUntil.Store(time.Now().Add(verifyLockoutDuration).Unix())
-		v.logPairingEvent(audit.OpPairingRateLimited, false, nil, map[string]any{"lockout_type": "verify"})
+		return v.logPairingEvent(audit.OpPairingRateLimited, false, nil, map[string]any{"lockout_type": "verify"})
 	}
+	return nil
 }
 
 // load reads the pairing state from disk, handling both the new multi-browser
@@ -395,8 +438,22 @@ func (v *PairingVerifier) loadLocked() error {
 				PairedAt:    legacy.PairedAt,
 			},
 		}
-		// Persist in new format (best-effort; if it fails, the old file still works).
-		_ = v.saveLocked()
+		// Persist in new format is best-effort: the in-memory state is
+		// already migrated and valid, so a write failure here must not fail
+		// the load — the legacy on-disk file still parses next time. The
+		// failure is no longer silently dropped, though: it is audit-logged
+		// so an operator can see the migration never landed on disk (the
+		// process keeps re-migrating from the legacy file on every restart
+		// until the underlying write failure is fixed). OpPairingStateMigrated
+		// is a security event (#688): if the audit record of the failed write
+		// cannot be persisted either, nothing would record the failure, so
+		// the load fails closed with both errors.
+		if err := v.saveLocked(); err != nil {
+			if auditErr := v.logPairingEvent(audit.OpPairingStateMigrated, false, err,
+				map[string]any{"origin": legacy.ExtensionOrigin}); auditErr != nil {
+				return errors.Join(err, auditErr)
+			}
+		}
 		return nil
 	}
 
@@ -467,19 +524,23 @@ func (v *PairingVerifier) SetAuditLogger(l audit.Logger) {
 	v.auditLog.Store(&l)
 }
 
-// logPairingEvent logs an audit event for pairing operations.
-func (v *PairingVerifier) logPairingEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := v.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// logPairingEvent logs an audit event for pairing operations. Callers must
+// propagate a non-nil return: op.Severity() (audit package) decides
+// whether that failure is required to fail the caller.
+func (v *PairingVerifier) logPairingEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := v.auditLog.Load()
+	if p == nil {
+		return nil
 	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
 }

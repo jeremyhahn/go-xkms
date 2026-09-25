@@ -253,17 +253,24 @@ func TestMessageRouter_Stop_CancelsPending(t *testing.T) {
 	// Send a request that will never get a response because nobody is
 	// reading from the remote side's transport to produce one.
 	// However, the send will succeed since the channel has a buffer.
+	req := NewRequest(MethodPing, nil)
 	errCh := make(chan error, 1)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		req := NewRequest(MethodPing, nil)
 		_, err := router.SendRequest(ctx, req)
 		errCh <- err
 	}()
 
-	// Give the goroutine time to register the pending request and send.
-	time.Sleep(100 * time.Millisecond)
+	// Wait for req.ID to actually land in router.pending instead of sleeping
+	// a fixed duration: req.ID is fixed at NewRequest time above, so it is
+	// safe to read here before SendRequest runs.
+	require.Eventually(t, func() bool {
+		router.mu.Lock()
+		defer router.mu.Unlock()
+		_, ok := router.pending[req.ID]
+		return ok
+	}, 5*time.Second, time.Millisecond, "SendRequest never registered its pending request")
 
 	// Stop the router, which should cancel the pending request.
 	router.Stop()
@@ -306,10 +313,11 @@ func TestMessageRouter_NilHandler_InboundRequest(t *testing.T) {
 	require.NoError(t, err)
 
 	// Now send a real outbound request to verify the loop is still running.
+	// No wait needed before Receive: it blocks until the outbound request
+	// below arrives, which is on a separate channel direction from the
+	// dropped inbound request above (see newPipeTransports), so there is
+	// nothing to race.
 	go func() {
-		// Wait for the inbound request to be processed (dropped).
-		time.Sleep(100 * time.Millisecond)
-
 		// Simulate remote side responding to the outbound request.
 		ct, readErr := remoteTransport.Receive(context.Background())
 		if readErr != nil {
@@ -356,11 +364,12 @@ func TestMessageRouter_InvalidDecrypt(t *testing.T) {
 	err := remoteTransport.Send(context.Background(), []byte("this-is-not-valid-ciphertext-at-all"))
 	require.NoError(t, err)
 
-	// Then send a valid outbound request and remote side responds.
+	// Then send a valid outbound request and remote side responds. No wait
+	// needed before Receive: it blocks until the outbound request below
+	// arrives, which is on a separate channel direction from the
+	// undecryptable message above (see newPipeTransports), so there is
+	// nothing to race.
 	go func() {
-		// Give the invalid message time to be processed.
-		time.Sleep(100 * time.Millisecond)
-
 		ct, readErr := remoteTransport.Receive(context.Background())
 		if readErr != nil {
 			return
@@ -477,9 +486,11 @@ func TestMessageRouter_UnknownResponseID(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	// Verify the loop is still running by doing a successful round-trip.
+	// Verify the loop is still running by doing a successful round-trip. No
+	// wait needed before Receive: it blocks until the outbound request below
+	// arrives, which is on a separate channel direction from the unknown
+	// response above (see newPipeTransports), so there is nothing to race.
 	go func() {
-		time.Sleep(100 * time.Millisecond)
 		ct, readErr := remoteTransport.Receive(context.Background())
 		if readErr != nil {
 			return
@@ -527,9 +538,11 @@ func TestMessageRouter_InvalidJSON(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	// Verify the loop survives by doing a round-trip.
+	// Verify the loop survives by doing a round-trip. No wait needed before
+	// Receive: it blocks until the outbound request below arrives, which is
+	// on a separate channel direction from the invalid JSON above (see
+	// newPipeTransports), so there is nothing to race.
 	go func() {
-		time.Sleep(100 * time.Millisecond)
 		ct, readErr := remoteTransport.Receive(context.Background())
 		if readErr != nil {
 			return
@@ -697,9 +710,10 @@ func TestMessageRouter_TransportError(t *testing.T) {
 	router.Start()
 	defer router.Stop()
 
-	// Give the loop time to exit on error.
-	time.Sleep(200 * time.Millisecond)
-
+	// No wait needed: recvErr is set before Start, so receiveLoop's first
+	// Receive call returns it immediately and the loop exits well before
+	// SendRequest's own context deadline below is reached.
+	//
 	// SendRequest should still fail gracefully (context timeout since loop
 	// is dead and no response will come).
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -899,8 +913,11 @@ func TestMessageRouter_BiometricPendingNotification(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	// Give time for the notification to be processed.
-	time.Sleep(200 * time.Millisecond)
+	// Wait for the notifier to actually be called instead of sleeping a
+	// fixed duration.
+	require.Eventually(t, func() bool {
+		return len(notifier.getCalls()) > 0
+	}, 5*time.Second, time.Millisecond, "notifier was never called")
 
 	// Verify the notifier was called.
 	calls := notifier.getCalls()
@@ -946,10 +963,10 @@ func TestMessageRouter_BiometricPendingNotification_NoHandler(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	// Give time for the notification to be processed.
-	time.Sleep(200 * time.Millisecond)
-
-	// Verify the loop is still alive by doing a round-trip.
+	// Verify the loop is still alive by doing a round-trip. No wait needed
+	// before Receive: it blocks until the outbound request below arrives,
+	// which is on a separate channel direction from the notification above
+	// (see newPipeTransports), so there is nothing to race.
 	go func() {
 		ct, readErr := remoteTransport.Receive(context.Background())
 		if readErr != nil {
@@ -1026,8 +1043,11 @@ func TestMessageRouter_BiometricPendingNotification_RequestHandlerNotCalled(t *t
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	// Give time for the notification to be processed.
-	time.Sleep(200 * time.Millisecond)
+	// Wait for the notifier to actually be called instead of sleeping a
+	// fixed duration.
+	require.Eventually(t, func() bool {
+		return len(notifier.getCalls()) > 0
+	}, 5*time.Second, time.Millisecond, "notifier was never called")
 
 	// Verify the notifier was called but the request handler was not.
 	require.Len(t, notifier.getCalls(), 1)

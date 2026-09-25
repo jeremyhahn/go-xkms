@@ -63,17 +63,18 @@ func newCatchAllMCPServer(t *testing.T) (string, func()) {
 		case "xkms.canSeal":
 			d, _ := json.Marshal(map[string]bool{"can_seal": true})
 			return jsonrpcResponse{Result: d}
-		case "xkms.listUsers":
+		case "user.list":
 			d, _ := json.Marshal(map[string]interface{}{
 				"users": []map[string]interface{}{
-					{"username": "admin", "display_name": "Admin", "role": "admin", "enabled": true},
+					{"id": "1", "username": "admin", "display_name": "Admin", "role": "admin", "enabled": true},
 				},
-				"total": 1,
 			})
 			return jsonrpcResponse{Result: d}
-		case "xkms.getUser":
+		case "user.get":
 			d, _ := json.Marshal(map[string]interface{}{
-				"username": "admin", "display_name": "Admin", "role": "admin", "enabled": true,
+				"user": map[string]interface{}{
+					"id": "1", "username": "admin", "display_name": "Admin", "role": "admin", "enabled": true,
+				},
 			})
 			return jsonrpcResponse{Result: d}
 		case "sealStore.put":
@@ -1233,6 +1234,134 @@ func TestSealStoreStatus_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
+// --- User ---
+
+func TestCreateUser_Connected(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	resp, err := tr.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "alice", Email: "alice@example.com"})
+	require.NoError(t, err)
+	assert.NotNil(t, resp)
+}
+
+func TestCreateUser_NotConnected(t *testing.T) {
+	_, err := (&Transport{}).CreateUser(context.Background(), &transport.CreateUserRequest{})
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+func TestListUsers_Connected(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	resp, err := tr.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, resp.Users, 1)
+	assert.Equal(t, "admin", resp.Users[0].Username)
+}
+
+func TestListUsers_NotConnected(t *testing.T) {
+	_, err := (&Transport{}).ListUsers(context.Background())
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+func TestGetUser_Connected(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	resp, err := tr.GetUser(context.Background(), "admin")
+	require.NoError(t, err)
+	assert.Equal(t, "admin", resp.User.Username)
+}
+
+func TestGetUser_NotConnected(t *testing.T) {
+	_, err := (&Transport{}).GetUser(context.Background(), "admin")
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+func TestDeleteUser_Connected(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	err := tr.DeleteUser(context.Background(), "admin")
+	assert.NoError(t, err)
+}
+
+func TestDeleteUser_NotConnected(t *testing.T) {
+	err := (&Transport{}).DeleteUser(context.Background(), "admin")
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+func TestEnableUser_Connected(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	err := tr.EnableUser(context.Background(), "admin")
+	assert.NoError(t, err)
+}
+
+func TestEnableUser_NotConnected(t *testing.T) {
+	err := (&Transport{}).EnableUser(context.Background(), "admin")
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+func TestDisableUser_Connected(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	err := tr.DisableUser(context.Background(), "admin")
+	assert.NoError(t, err)
+}
+
+func TestDisableUser_NotConnected(t *testing.T) {
+	err := (&Transport{}).DisableUser(context.Background(), "admin")
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+func TestBindUserCert_Connected(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	err := tr.BindUserCert(context.Background(), "admin", "abcd1234", 1234567890)
+	assert.NoError(t, err)
+}
+
+func TestBindUserCert_NotConnected(t *testing.T) {
+	err := (&Transport{}).BindUserCert(context.Background(), "admin", "abcd1234", 1234567890)
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+func TestListUserCredentials_Connected(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	resp, err := tr.ListUserCredentials(context.Background(), "admin")
+	require.NoError(t, err)
+	assert.NotNil(t, resp)
+}
+
+func TestListUserCredentials_NotConnected(t *testing.T) {
+	_, err := (&Transport{}).ListUserCredentials(context.Background(), "admin")
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+// --- Policy (not supported) ---
 // --- Policy ---
 
 func TestPolicyCreate_NotConnected(t *testing.T) {

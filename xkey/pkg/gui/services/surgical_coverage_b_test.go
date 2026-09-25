@@ -40,21 +40,31 @@ type sbMockAuditStore struct {
 	entries []audit.Entry
 }
 
-func (m *sbMockAuditStore) Log(audit.Entry) {}
-func (m *sbMockAuditStore) LogKeyOperation(audit.OperationType, string, string, bool, error, int64) {
+func (m *sbMockAuditStore) Log(audit.Entry) error { return nil }
+func (m *sbMockAuditStore) LogKeyOperation(audit.OperationType, string, string, bool, error, int64) error {
+	return nil
 }
-func (m *sbMockAuditStore) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) {
+func (m *sbMockAuditStore) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) error {
+	return nil
 }
-func (m *sbMockAuditStore) LogConnectionEvent(audit.OperationType, string, string, map[string]any) {}
-func (m *sbMockAuditStore) LogServiceEvent(audit.OperationType, map[string]any)                    {}
-func (m *sbMockAuditStore) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (m *sbMockAuditStore) LogConnectionEvent(audit.OperationType, string, string, map[string]any) error {
+	return nil
 }
-func (m *sbMockAuditStore) LogTPMOperation(audit.OperationType, bool, error, map[string]any) {}
-func (m *sbMockAuditStore) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (m *sbMockAuditStore) LogServiceEvent(audit.OperationType, map[string]any) error { return nil }
+func (m *sbMockAuditStore) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
 }
-func (m *sbMockAuditStore) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) {}
-func (m *sbMockAuditStore) Count() int                                                             { return len(m.entries) }
-func (m *sbMockAuditStore) Query(_ audit.QueryFilter) []audit.Entry                                { return m.entries }
+func (m *sbMockAuditStore) LogTPMOperation(audit.OperationType, bool, error, map[string]any) error {
+	return nil
+}
+func (m *sbMockAuditStore) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
+}
+func (m *sbMockAuditStore) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) error {
+	return nil
+}
+func (m *sbMockAuditStore) Count() int                              { return len(m.entries) }
+func (m *sbMockAuditStore) Query(_ audit.QueryFilter) []audit.Entry { return m.entries }
 
 // sbMockStaticPWStore implements staticpw.Store for password protection tests.
 type sbMockStaticPWStore struct {
@@ -240,8 +250,10 @@ func TestSB_Clipboard_ScheduleClear_ReadFails(t *testing.T) {
 		log:  slog.Default().With("service", "clipboard"),
 		tool: clipToolNone,
 	}
+	// No assertion follows: this only exercises the goroutine's read-failure
+	// branch for coverage. The timer fires on its own schedule regardless of
+	// whether this test function has returned, so no wait is needed here.
 	svc.scheduleClear("test-text", 1*time.Millisecond)
-	time.Sleep(50 * time.Millisecond)
 }
 
 // TestSB_Clipboard_ScheduleClear_CancelPrevious covers L136-138:
@@ -251,9 +263,11 @@ func TestSB_Clipboard_ScheduleClear_CancelPrevious(t *testing.T) {
 		log:  slog.Default().With("service", "clipboard"),
 		tool: clipToolNone,
 	}
+	// No assertion follows: this only exercises the cancel-previous branch
+	// for coverage. The second timer fires on its own schedule regardless of
+	// whether this test function has returned, so no wait is needed here.
 	svc.scheduleClear("first", 10*time.Second)
 	svc.scheduleClear("second", 1*time.Millisecond)
-	time.Sleep(50 * time.Millisecond)
 }
 
 // TestSB_Clipboard_ReadClipboard_NoTool covers L204-205: no tool default case.

@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface
 
@@ -24,6 +24,12 @@ keystore; its `Type()` maps its composed key provider's `types.BackendType`
 through `backendTypeToStoreType` (`pkg/xkms/keyid.go`), so it reports the
 same keyword `ID()` and the Key ID parser expect regardless of the name it
 was registered under.
+
+`SignerStore() store.SignerStorer` (`pkg/signing/store`, go-xkms#724) is
+built once in `New()` from the same `storage.Backend` as `CertStorage`, so
+every backend gets it for free from `compositeBackend`. `TenantScopedBackend`
+does not pass it through unchanged — it wraps it so signature records are
+tenant-scoped too — see [`signing/architecture.md`](../signing/architecture.md).
 
 ### `types.KeyAttributes.Backend` and `.StoreType` — `pkg/types/types.go`
 
@@ -81,10 +87,49 @@ key encryption; cloud KMS → envelope encryption; PKCS#8 → HKDF + AES-GCM.
 | vault | `vault` | no | policy | no | transit | HashiCorp Vault transit engine |
 | frost | `frost` | n/a | n/a | no | — | threshold signing; see `../frost-threshold/` |
 | phone | — | **yes** (TEE/StrongBox) | no | yes | — | xkey-android as HSM; see `../../xkey/docs/phone-hsm/` |
+| avr | — | **yes** (secure element) when the device reports that tier | no | **yes** (DICE alias certificate) | — | read-only device identity; see `../avr-device-backend/` |
 
 Never assume a capability from this table at a call site — read
 `Capabilities` from the backend, because a deployment's token or provider policy
 can be stricter than the backend's ceiling.
+
+### `Exportable`/`Sensitive` round-tripping (go-xkms#932)
+
+`xkms.ExportKey`, `RotateKey` and `CopyKey` resolve a key's *persisted*
+policy — not the caller's current request — through `findKeyAttrs`
+(`pkg/xkms/servicer_helpers.go:140`) and `loadStoredKeyAttrs`
+(`pkg/xkms/service.go:859`), both of which read `Backend.ListKeys` and use
+whatever it reports for `types.KeyAttributes.Exportable` and `.Sensitive`
+as-is. A backend whose `ListKeys` does not populate these two fields
+truthfully therefore misreports every key it enumerates, independent of what
+policy the key was actually created with. The table below is each backend's
+source of truth for both fields, as of the fix for #932.
+
+| Backend | `Exportable` source of truth | `Sensitive` source of truth | Citation |
+|---|---|---|---|
+| software / pkcs8 / symmetric | Per-key metadata record (`keyMetadata.Exportable`/`.Sensitive`), written once at creation and never widened | Same record, `keyMetadata.Sensitive` | `pkg/keyprovider/symmetric/metadata.go:47` (`newKeyMetadata`), `pkg/backend/software/software.go:1014` (`SaveKeyMetadata` for the C_UnwrapKey path) |
+| pkcs11 | The token's own `CKA_EXTRACTABLE`, read per-key by `ListKeys` — never a parallel copy. A generated key pair is always `CKA_EXTRACTABLE=CK_FALSE` (`generatedKeyExtractable`), regardless of the caller's `Exportable` request; only `ImportKey`'s `buildImportKeyTemplate` honours the caller's policy, writing it straight to `CKA_EXTRACTABLE` | The token's own `CKA_SENSITIVE`, read the same way. Every private key this backend creates, generated or imported, is `CKA_SENSITIVE=CK_TRUE` | `pkg/backend/pkcs11/pkcs11.go` `ListKeys` (reads both via `readBoolAttribute`); `pkg/backend/pkcs11/signer_rsa.go:317` (`generatedKeySensitive`/`generatedKeyExtractable`); `pkg/backend/pkcs11/pkcs11_importexport.go:701` (`buildImportKeyTemplate` doc comment) |
+| tpm2 | Unconditionally `false` for every key `ListKeys` enumerates. `KeyTemplateSpec.Template` sets `FixedTPM=true`/`FixedParent=true` on every generated key (TCG TPM 2.0 Library Part 2 §12.2.3.5's "may never leave this TPM/parent"), and `ExportKey` refuses every key — generated or `ImportKey`'s duplicable sealed-keyedhash objects alike — unconditionally with `ErrExportNotSupported` | Unconditionally `true`: `ExportKeyMaterial` refuses every key unconditionally too, so plaintext is never released for any key this backend manages | `pkg/tpm2/template.go:165` (`FixedTPM`/`FixedParent` in `KeyTemplateSpec.Template`); `pkg/backend/tpm2/importexport.go:255` (`ExportKey` doc comment); `pkg/backend/tpm2/backend.go` `ListKeys` |
+| awskms | Unconditionally `false`. `Capabilities().Export` is `false` unconditionally, and `ExportKey`/`ExportKeyMaterial` refuse every key regardless of policy — AWS KMS never releases key material outside the service boundary | Unconditionally `true`, for the same reason | `pkg/backend/awskms/awskms.go:563` (`Capabilities`), `:1198` (`ExportKey`), `:1246` (`ExportKeyMaterial`), `ListKeys` |
+| gcpkms | Unconditionally `false`. `Capabilities().Export` is `false` unconditionally; GCP KMS exposes no API to release private key material for any protection level or import method | Unconditionally `true`, for the same reason | `pkg/backend/gcpkms/gcpkms.go:246` (`Capabilities`); `pkg/backend/gcpkms/gcpkms_importexport.go:264` (`ExportKey` doc comment), `:299` (`ExportKeyMaterial`); `ListKeys` |
+| azurekv | Unconditionally `false`. `Capabilities().Export` is `false` unconditionally; Azure Key Vault exposes no API to release private key material | Unconditionally `true`, for the same reason | `pkg/backend/azurekv/azurekv.go:290` (`Capabilities`); `pkg/backend/azurekv/azurekv_importexport.go:466` (`ExportKey`), `:502` (`ExportKeyMaterial`); `ListKeys` |
+| vault | Per-key metadata record (`"exportable"`), written by `GenerateKey` (unconditionally `false` — H8, an asymmetric private key's public half is already available through the ordinary read-key endpoint), `GenerateSymmetricKey` and `ImportKey` (both carry the caller's `Exportable`). `ExportKeyMaterial` is genuine for a symmetric key created exportable, via Transit's own `transit/export` endpoint; `ExportKey` (the wrapped-for-a-third-party form) has no Vault-native equivalent and always refuses | Per-key metadata record (`"sensitive"`), mirroring the caller's own `Sensitive`, consulted by the service layer the same way every backend's is | `pkg/backend/vault/vault.go:192` (`GenerateKey`, H8), `ListKeys`; `pkg/backend/vault/vault_symmetric.go:99` (`GenerateSymmetricKey`); `pkg/backend/vault/vault_importexport.go:296` (`ExportKey` doc comment), `:333` (`ExportKeyMaterial`) |
+
+Two consequences follow directly from this table:
+
+- On tpm2, awskms, gcpkms and azurekv, `Exportable: true` at key creation is
+  accepted but can never be honoured by any code path in that backend —
+  `ExportKey`/`ExportKeyMaterial` refuse unconditionally regardless of the
+  flag. `ListKeys` reports `Exportable: false` truthfully rather than
+  echoing the request, and the refusal error is the backend's own
+  capability error (`ErrExportNotSupported`/`ErrNotSupported`), not
+  `ErrKeyNotExportable` — the distinction a caller needs to tell "this
+  backend never does this" from "this specific key wasn't marked for it".
+- On pkcs11 and vault, `Exportable` is a real per-key policy that
+  round-trips and is genuinely enforced: pkcs11 via `CKA_EXTRACTABLE` on
+  import (never on generate — a generated key pair is always sealed in the
+  token, `generatedKeyExtractable`), vault via Transit's `exportable` flag
+  on a symmetric key (never on an asymmetric one — H8).
 
 ## Invariants
 
@@ -134,11 +179,14 @@ can be stricter than the backend's ceiling.
   requires on re-import), and an algorithm the backend does not produce is
   listed with `KeyAlgorithm` unset. It used to default both to RSA-2048
   (#154).
-- **Vault keys are non-exportable,** and the versioned ciphertext envelope is
-  preserved across operations; Vault key names use an injective (one-to-one)
-  escape to avoid name collision. Wrapped export is not supported; callers
-  requiring material export must use `ExportKeyMaterial` on keys stored in a
-  backend that declares `Export` capability.
+- **Vault asymmetric keys are non-exportable** (H8: the public half is
+  already available through the ordinary read-key endpoint); a **symmetric**
+  key created with `Exportable: true` is genuinely exportable through
+  `ExportKeyMaterial`, Transit's own `transit/export` endpoint (#932). The
+  versioned ciphertext envelope is preserved across operations; Vault key
+  names use an injective (one-to-one) escape to avoid name collision.
+  Wrapped export (`ExportKey`) has no Vault-native equivalent and is not
+  supported for any key.
 - **GCP resolves the live primary key version** at backend initialization, and
   Azure, Vault and GCP signers **pin the resolved version** at construction time
   so version rotations do not cause unexpected signing key changes mid-request.
@@ -227,6 +275,77 @@ practice:
 credential, or an unmet PIN requirement all return an error. No backend falls
 back to software.
 
+**The not-found contract is exact, not "any error means absent" (#801,
+#808).** It binds every backend method that resolves a key by name, not
+only `GetKey`: `Get` (the raw-blob path some backends route through KMS),
+`Signer`, `Decrypter`, `Encrypt`, `GetSymmetricKey`, `SymmetricEncrypter`,
+and `ExportKeyMaterial` all reach the same underlying lookup `GetKey` does —
+directly, through a shared helper such as `azurekv`'s `resolveKeyVersion` or
+`gcpkms`'s `resolvePrimaryVersionName`, or by delegating to `GetKey` itself
+— and every one of them must return an error satisfying
+`errors.Is(err, backend.ErrKeyNotFound)` if, and only if, the key genuinely
+does not exist: a missing object, a missing TPM handle or blob, a PKCS#11 or
+cloud-KMS search that returns zero results, a Key Vault or Vault 404. Every
+other failure — a login/auth failure, a transient I/O or network error,
+throttling, a corrupt or partially written blob — is a distinct error that
+must NOT satisfy that check. `pkg/ca`'s `getOrGenerateCAKey` (and any caller
+doing get-or-create) relies on this to decide whether generating a
+replacement key is safe; collapsing every failure into "not found" lets a
+reachability problem silently regenerate and persist a new key over a
+hardware-backed one the caller could not currently reach.
+
+Each backend's local `ErrKeyNotFound` (where one exists — `tpm2`, `awskms`,
+`gcpkms`, `azurekv`, `vault`) is an alias of `backend.ErrKeyNotFound`, not a
+separate `errors.New`, so `errors.Is` recognizes it with no wrapping
+required. `pkcs11`, `pkcs8` and `software` have no local sentinel and return
+`backend.ErrKeyNotFound` directly. The classification each backend applies
+before returning it, applied consistently across every method listed above:
+
+| Backend | Genuine not-found signal | Everything else |
+|---|---|---|
+| `software` / `pkcs8` / `quantum` | `storage.ErrNotFound` from the key store | wrapped, does not match |
+| `tpm2` | `storage.ErrNotFound` from `keyBackend.Get` (private or public blob), applied by `pkg/backend/tpm2.Backend.GetKey` and, since #816, by `pkg/tpm2.TPM2.GetSymmetricKey` (`SymmetricEncrypter` delegates to it) | `pkg/backend/tpm2.ErrKeyRetrievalFailed` for `GetKey`; `pkg/tpm2.ErrKeyRetrievalFailed` for `GetSymmetricKey`/`SymmetricEncrypter` |
+| `pkcs11` | a zero-result PKCS#11 object search (`FindObjectHandle` returns `(0, nil)`) | the search/session error itself (e.g. `ErrSessionPoolClosed`, `ErrSessionPoolFailed`) |
+| `awskms` | `*kmstypes.NotFoundException` from `DescribeKey` (`GetKey`, `GetSymmetricKey`) | `awskms.ErrKeyRetrievalFailed` |
+| `gcpkms` | `storage.ErrNotFound` from the metadata store, or a `codes.NotFound` gRPC status from `GetCryptoKey`/`GetPublicKey` (`GetKey`, `Get`, `Signer`, `Decrypter`, `GetSymmetricKey`, all through `resolvePrimaryVersionName` where applicable) | `gcpkms.ErrKeyRetrievalFailed` |
+| `azurekv` | an HTTP 404 `*azcore.ResponseError` from the Key Vault client's `GetKey` (`GetKey`, and `Signer`/`Decrypter` through `resolveKeyVersion`) | `azurekv.ErrKeyRetrievalFailed` |
+| `vault` | `storage.ErrNotFound` from the local metadata store for the metadata-existence check every method makes (`GetKey`, `Signer`, `Decrypter`, `Encrypt`, `ExportKeyMaterial`); for `GetSymmetricKey`'s Transit read, a nil secret with no error — Vault's own convention for a path that does not exist | `vault.ErrKeyRetrievalFailed` |
+
+`resolveKeyVersion` (`azurekv`) and `resolvePrimaryVersionName` (`gcpkms`)
+are the shared choke points `Signer`, `Decrypter` and, for `gcpkms`, `Get`
+and `Delete` funnel through to resolve a key's current version before an
+operation; classifying the lookup once there, rather than per caller, is
+what keeps every caller's not-found behavior in agreement (#808).
+
+`getOrGenerateCAKey` (`pkg/ca/ca.go`) is the canonical caller: it generates
+only when `errors.Is(err, backend.ErrKeyNotFound)`, and returns
+`ca.ErrKeyRetrievalFailed` (fail closed, no generation) for anything else.
+
+**`pkg/tpm2` is a lower layer than `pkg/backend/tpm2`, and both classify
+independently (#816).** `pkg/backend/tpm2.Backend.GetKey` reads its blobs
+directly and classifies there; `pkg/backend/tpm2.Backend.GetSymmetricKey`
+and `.SymmetricEncrypter` instead delegate straight to
+`pkg/tpm2.TPM2.GetSymmetricKey`, so the classification for the symmetric
+path lives in `pkg/tpm2` itself, not in the `Backend` wrapper. Before #816
+that method returned every store failure -- including a genuinely absent
+key -- as a generic wrapped error, so `errors.Is(err, backend.ErrKeyNotFound)`
+never matched for a missing symmetric key; `pkg/tpm2.ErrKeyRetrievalFailed`
+mirrors `pkg/backend/tpm2.ErrKeyRetrievalFailed`'s role for everything that
+is not a genuine absence.
+
+**`gcpkms.Backend.ExportKey`'s body was unreachable, not merely
+unclassified (#816).** GCP Cloud KMS exposes no API to release private key
+material for any protection level or import method -- an HSM-protected key
+never leaves the HSM, and a `SOFTWARE` key imported via
+`GetImportParameters`/`ImportKey` is write-only through that import job,
+with no corresponding export job. `Capabilities().Export` is therefore
+`false` unconditionally, so the capability check at the top of `ExportKey`
+always refuses first; a `GetCryptoKey` call and a `backend.ErrKeyNotFound`
+mapping below it could never run. That dead code is deleted; `ExportKey`
+now matches `awskms` and `azurekv`'s shape and returns
+`backend.ErrExportNotSupported` directly, consistent with the rest of the
+not-found contract never applying to a method that cannot reach a lookup.
+
 ## Configuration
 
 Build tags are assembled in the `Makefile`:
@@ -243,6 +362,20 @@ assemble `BUILD_TAGS` and then `TAG_FLAGS := -tags "$(BUILD_TAGS)"`.
 Runtime backend configuration is the `backends:` section of the server config
 (`pkg/config/config.go`). Provider credentials come from the server process's
 environment, never from a file in this repo.
+
+**`pkg/backend/tpm2.Config.KeyDir` has no default** (`config.go:108-118`,
+issue #926): `Validate` returns `*errs.Detail` wrapping `ErrKeyDirRequired`
+when it is empty rather than resolving a directory relative to the process's
+working directory. `pkg/server`'s `resolveTPM2KeyDir`
+(`pkg/server/backend_tpm2.go:31`, `pkg/server/embedded_node.go:84`) derives it
+from `storage.path` and itself returns `*ErrConfigRequired` when that is unset
+-- both layers fail closed with a typed error rather than falling back to a
+cwd-relative path. `pkg/xkms.AutoInitialize` derives it from
+`AutoConfig.DataDir` (`pkg/xkms/auto.go:158-166`) the same way it does for
+every other file-backed backend; a caller that leaves `DataDir` empty and
+wants the tpm2 backend must set `key_dir` explicitly in `BackendConfigs`, or
+the backend factory returns an error and `AutoInitialize` skips it (logged,
+not fatal, matching every other backend that fails to initialize).
 
 ## Persistence
 

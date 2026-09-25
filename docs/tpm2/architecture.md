@@ -1,6 +1,6 @@
 # TPM 2.0 — Architecture
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## The problem
 
@@ -30,6 +30,7 @@ sealed unlock — need the rest:
 | IDevID / TCG enrollment | `cert_idevid.go`, `idevid_csr.go`, `tcg_csr_serverside.go`, `cert_convert.go` |
 | IDevID / IAK key policy and delegation | `devid_policy.go`, `devid_policy_session.go`, `devid_delegation.go` |
 | Platform provisioning | `platform.go`, `platform_keystore.go`, `platform_types.go`, `provision.go` |
+| Provisioning state, reprovisioning, EK credential challenge | `provisioning_state.go`, `credential_challenge.go`, `activation_key.go` |
 | Capabilities | `capabilities.go`, `capability_device.go`, `version.go` |
 | Simulator | `tpm_simulator.go`, `tpm_simulator_stub.go` |
 
@@ -48,6 +49,12 @@ Rejected alternatives:
   suite for precisely this.
 - **Requiring hardware for development.** Rejected: `tpm_simulator.go` means
   the whole surface is testable without a TPM.
+- **Reimplementing `TPM2_MakeCredential`'s software construction by hand.**
+  Rejected in favour of go-tpm's own `tpm2.CreateCredential` /
+  `tpm2.ImportEncapsulationKey` (`credential_challenge.go`,
+  `NewCredentialChallenge`): the KDFa/AES-CFB/HMAC construction TCG TPM 2.0
+  Part 1 §24 defines is exactly what those functions already do, and go-tpm
+  is the one dependency every consumer of this package already carries.
 
 ## Component boundaries
 
@@ -87,16 +94,29 @@ EK (endorsement key, manufacturer-rooted)
       → pkg/attestation verifier: EK chain, AK certification, quote signature,
         PCR values against expectation
 IDevID: TCG-CSR-IDEVID  →  tcg_csr_serverside.go  →  CATCGEnrollment
+                             → pkg/ca verifyEKCertificateChain: EK chain,
+                               tcg-kp-EKCertificate EKU
 ```
 
 `TPM2_MakeCredential` / `TPM2_ActivateCredential` is what makes this
 unforgeable: a secret encrypted to the EK can only be recovered inside that
-TPM. It is the mechanism behind the ACME `enroll-01` challenge.
+TPM. It is the mechanism behind the ACME `enroll-01` challenge. But
+possession alone is not provenance: the CA verifies the EK certificate's
+chain (`pkg/ca/tcg_ek_trust.go`, `verifyEKCertificateChain`) before it will
+generate the `TPM2_MakeCredential` challenge or issue an IAK/IDevID, exactly
+as it verifies the AK's EK chain before trusting a quote (below) — the two
+checks share the same `pkg/attestation/truststore` trust-anchor
+configuration shape, configured independently
+(`ca.tcg-config.trust-anchors` for issuance,
+`attestation.formats.tpm2` for quote verification).
 
 ## Trust boundaries
 
 - **The EK chains to the manufacturer.** Attestation is only as good as the
-  manufacturer root you accept — `pkg/attestation/truststore`.
+  manufacturer root you accept — `pkg/attestation/truststore`. The same is
+  true of IAK/IDevID issuance: see
+  [`../certificate-authority/architecture.md`](../certificate-authority/architecture.md)
+  "Trust boundaries".
 - **Restricted and unrestricted signing keys are not interchangeable, and the
   device identity keys are one of each.** TCG "TPM 2.0 Keys for Device Identity
   and Attestation" v1.00 r12 (checked in under `docs/references/`) makes the
@@ -165,6 +185,14 @@ TPM. It is the mechanism behind the ACME `enroll-01` challenge.
   §7.3.5 — the operator running provisioning is the Owner). The authValue
   remains a USER path on Template H-0 (§7.2.4); the library does not forget
   it on the Owner's behalf.
+- **A verifier needs no TPM of its own to build an EK credential challenge.**
+  `NewCredentialChallenge` performs `TPM2_MakeCredential`'s construction in
+  software against any EK public key, so a CA or installer that has never
+  touched a TPM can still prove a remote device possesses one
+  (go-xkms#798); the device side still needs a real TPM to answer
+  (`AnswerCredentialChallenge` / `ActivateCredential`), which is the actual
+  proof of possession. `pkg/ca`'s `VerifyTCG_CSR_IDevIDBytes` uses this, and
+  no longer requires `SetTPM` to have been called.
 - **A quote proves state at a moment**, bound to a nonce. A quote without a
   fresh nonce proves nothing about now.
 - **PCR selection is the security policy.** Sealing to firmware PCRs survives
@@ -182,6 +210,60 @@ TPM. It is the mechanism behind the ACME `enroll-01` challenge.
   after a few hours".
 - **Hierarchy passwords are the platform's**, not the KMS's — which is why the
   TPM2 PIN backend has no SO PIN.
+- **The Owner hierarchy auth is never stored in configuration, for either
+  SRK — it is an operator input supplied at the moment of the operation.**
+  No Security Officer PIN means the Owner hierarchy carries empty auth, the
+  TCG factory-default state; `SRKConfig` (the Shared SRK) and
+  `PlatformSRKConfig` (the Platform SRK, this library's own storage parent,
+  handle `0x81000002`) both carry no hierarchy-auth field for this reason.
+  When an operator has set an SO PIN, it reaches `TPM2_CreatePrimary`,
+  `TPM2_EvictControl` and `TPM2_HierarchyChangeAuth` only as an explicit
+  function argument at the moment of the call — `soPIN` on
+  `Install`/`Provision`/`ProvisionOwner` for the Shared SRK, and the same
+  `soPIN` argument threaded through
+  `PlatformKeyStore.Initialize`/`EnrollPlatformSRK`/`ensureSRKAuth` for the
+  Platform SRK — never a config literal, and never persisted between calls.
+  `PlatformSRKAttributesFromConfig` reflects this: it always returns empty
+  `TPMAttributes.HierarchyAuth`, even when the SSRK config it borrows
+  algorithm and key parameters from carries a (runtime-supplied) value of its
+  own — the two keys' owner-hierarchy authorizations are never the same Go
+  value, only, at any moment, potentially the same TPM-level secret if the
+  caller happens to pass it to both calls.
+  `pkg/backend/tpm2`, which uses the Platform SRK as its own working key
+  precisely because that key does not need to follow the TCG-standard SSRK
+  workflow, never carries a hierarchy-auth field of its own for the same
+  reason and never falls back to the Shared SRK when the Platform SRK is
+  unavailable — construction fails instead.
+- **The Platform SRK's own authorization value (its `Password`, not its
+  owner-hierarchy auth) is the user PIN**, supplied the same way — as an
+  argument to `Initialize`/`EnrollPlatformSRK`/`ChangeAuth`/`VerifyAuth` —
+  never a config literal or a compiled-in default.
+- **Configuration is the source of truth for whether the Platform SRK is
+  platform-policy bound, on every path that resolves it.**
+  `TPM2.PlatformSRKAttributes` has two paths to the same answer: when a
+  `PlatformKeyStore` is attached (`TPM2.SetPlatformKeyStore`) it syncs
+  `PlatformPolicy` from the key store's own attrs; when none is attached —
+  the state an unattended daemon boot is in, since nothing in `pkg/server` or
+  `pkg/seal` calls `SetPlatformKeyStore` (only the interactive `xkey` GUI
+  does) — it calls `PlatformSRKAttributesFromConfig` itself, the same
+  function `PlatformKeyStore` uses, rather than leaving `PlatformPolicy` at
+  the Go zero value the way a bare `TPM2.KeyAttributes` read would (that read
+  has no configuration in scope, and deliberately does not infer the policy
+  from the object's read-back `AuthPolicy` either — that would let an
+  unrelated object's coincidentally-matching `AuthPolicy` silently select the
+  PCR branch). `defaultSealKeyAttributes`/`defaultUnsealKeyAttributes` — what
+  `TPM2.Seal`/`Unseal` apply when the caller passes no `KeyAttributes`, which
+  is what the barrier's `TPM2Strategy` and `PlatformSealer` do — inherit
+  whichever attrs `PlatformSRKAttributes` returns, so both paths agreeing is
+  what lets `CreateSession`/`PlatformPolicySession` choose the `PolicyPCR`
+  branch instead of a plain password session with empty auth bytes (which
+  the TPM would correctly refuse with `TPM_RC_AUTH_FAIL` against an enrolled
+  SRK's real, non-empty PIN) on an unattended boot with no `PlatformKeyStore`
+  attached yet. Both branches — unattended `PolicyPCR` and interactive
+  `PolicyAuthValue` — are exercised against the simulator in
+  `pkg/tpm2/platform_keystore_enroll_simulator_test.go`
+  (`TestEnrollPlatformSRK_DefaultSealUnseal_PCRBranchUnattended`,
+  `TestEnrollPlatformSRK_DefaultSealUnseal_PINBranchViaPlatformKeyStore`).
 
 ## What this feature deliberately does not do
 

@@ -156,7 +156,9 @@ func TestGenerateSymmetricKey(t *testing.T) {
 					"key_id": "existing-key-id",
 				}
 				metadataBytes, _ := json.Marshal(metadata)
-				b.metadata[tt.attrs.CN] = metadataBytes
+				if err := storage.SaveKey(context.Background(), config.KeyStorage, tt.attrs.CN, metadataBytes); err != nil {
+					t.Fatalf("failed to seed metadata: %v", err)
+				}
 			}
 
 			key, err := b.GenerateSymmetricKey(context.Background(), tt.attrs)
@@ -192,7 +194,11 @@ func TestGenerateSymmetricKey(t *testing.T) {
 			}
 
 			// Verify metadata was stored
-			if _, exists := b.metadata[tt.attrs.CN]; !exists {
+			exists, err := storage.KeyExists(context.Background(), config.KeyStorage, tt.attrs.CN)
+			if err != nil {
+				t.Fatalf("failed to check metadata existence: %v", err)
+			}
+			if !exists {
 				t.Error("Metadata not stored for generated key")
 			}
 		})
@@ -223,7 +229,7 @@ func TestGetSymmetricKey(t *testing.T) {
 					"algorithm": "aes256-gcm",
 				}
 				metadataBytes, _ := json.Marshal(metadata)
-				b.metadata["existing-key"] = metadataBytes
+				_ = storage.SaveKey(context.Background(), b.config.KeyStorage, "existing-key", metadataBytes)
 
 				m.DescribeKeyFunc = func(ctx context.Context, params *kms.DescribeKeyInput, optFns ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
 					return &kms.DescribeKeyOutput{
@@ -260,10 +266,10 @@ func TestGetSymmetricKey(t *testing.T) {
 					"key_id": "deleted-key-id",
 				}
 				metadataBytes, _ := json.Marshal(metadata)
-				b.metadata["deleted-key"] = metadataBytes
+				_ = storage.SaveKey(context.Background(), b.config.KeyStorage, "deleted-key", metadataBytes)
 
 				m.DescribeKeyFunc = func(ctx context.Context, params *kms.DescribeKeyInput, optFns ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
-					return nil, errors.New("NotFoundException: Key not found")
+					return nil, &kmstypes.NotFoundException{Message: aws.String("Key not found")}
 				}
 			},
 			wantErr:     true,
@@ -340,7 +346,7 @@ func TestSymmetricEncrypter(t *testing.T) {
 					"key_id": "encryption-key-id",
 				}
 				metadataBytes, _ := json.Marshal(metadata)
-				b.metadata["encryption-key"] = metadataBytes
+				_ = storage.SaveKey(context.Background(), b.config.KeyStorage, "encryption-key", metadataBytes)
 			},
 			wantErr: false,
 		},
@@ -484,7 +490,9 @@ func TestSymmetricEncrypt(t *testing.T) {
 				"key_id": "test-encryption-key",
 			}
 			metadataBytes, _ := json.Marshal(metadata)
-			b.metadata["test-key"] = metadataBytes
+			if err := storage.SaveKey(context.Background(), config.KeyStorage, "test-key", metadataBytes); err != nil {
+				t.Fatalf("failed to seed metadata: %v", err)
+			}
 
 			attrs := &types.KeyAttributes{
 				CN:                 "test-key",
@@ -622,7 +630,9 @@ func TestSymmetricDecrypt(t *testing.T) {
 				"key_id": "test-decryption-key",
 			}
 			metadataBytes, _ := json.Marshal(metadata)
-			b.metadata["test-key"] = metadataBytes
+			if err := storage.SaveKey(context.Background(), config.KeyStorage, "test-key", metadataBytes); err != nil {
+				t.Fatalf("failed to seed metadata: %v", err)
+			}
 
 			attrs := &types.KeyAttributes{
 				CN:                 "test-key",
@@ -711,7 +721,9 @@ func TestSymmetricEncryptDecryptRoundTrip(t *testing.T) {
 		"key_id": "test-round-trip-key",
 	}
 	metadataBytes, _ := json.Marshal(metadata)
-	b.metadata["round-trip-key"] = metadataBytes
+	if err := storage.SaveKey(context.Background(), config.KeyStorage, "round-trip-key", metadataBytes); err != nil {
+		t.Fatalf("failed to seed metadata: %v", err)
+	}
 
 	attrs := &types.KeyAttributes{
 		CN:                 "round-trip-key",

@@ -25,6 +25,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 	"github.com/spf13/cobra"
 )
 
@@ -81,11 +82,14 @@ Example (mTLS with PKCS#11 token):
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
+		fr := newFlagReader(cmd)
+		storagePath := fr.String("storage-path")
+		method := fr.String("method")
+		if err := fr.Err(); err != nil {
+			return err
+		}
 		storagePath = resolveStoragePath(storagePath)
 		printVerbose("Using user store at: %s", storagePath)
-
-		method, _ := cmd.Flags().GetString("method")
 
 		handler, ok := adminCreateHandlers[method]
 		if !ok {
@@ -105,11 +109,15 @@ Example (mTLS with PKCS#11 token):
 // server-side WebAuthn registration ceremony through the SDK. The admin role is
 // always assigned.
 func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer *Printer, storagePath string) error {
-	email, _ := cmd.Flags().GetString("email")
-	displayName, _ := cmd.Flags().GetString("display-name")
-	devicePath, _ := cmd.Flags().GetString("device")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
-	requireUV, _ := cmd.Flags().GetBool("user-verification")
+	fr := newFlagReader(cmd)
+	email := fr.String("email")
+	displayName := fr.String("display-name")
+	devicePath := fr.String("device")
+	timeout := fr.Duration("timeout")
+	requireUV := fr.Bool("user-verification")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 
 	if displayName == "" {
 		displayName = username
@@ -129,7 +137,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	if err != nil {
 		return &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -137,17 +145,18 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	}
 	printVerbose("Connected to xkms service")
 
-	// Create FIDO2 handler
+	// The hardware CTAP2 authenticator adapter is opened lazily by
+	// webAuthnRegistration, only after CreateUser and BeginRegistration have
+	// already succeeded server-side.
 	fidoConfig := fido2.DefaultConfig
 	fidoConfig.DevicePath = devicePath
 	fidoConfig.RequireUserVerification = requireUV
+	fidoConfig.UserPresenceTimeout = timeout
 	enumerator := fido2.NewDefaultEnumerator()
 
-	handler, err := fido2.NewHandler(&fidoConfig, enumerator)
-	if err != nil {
-		return &WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err}
+	newAdapter := func() (webauthnclient.AuthenticatorAdapter, error) {
+		return webauthnclient.NewHardwareAdapter(&fidoConfig, enumerator)
 	}
-	defer func() { _ = handler.Close() }()
 
 	if err := printer.PrintMessage("Creating administrator account..."); err != nil {
 		return err
@@ -165,7 +174,12 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 		return ErrEmailRequired
 	}
 
-	att, err := webAuthnRegistration(ctx, cl, handler, printer, username, email, displayName, string(RoleAdmin), "", requireUV, timeout, pin)
+	attestation, err := webAuthnRegistration(ctx, cl, newAdapter, printer, username, email, displayName, string(RoleAdmin), "", pin)
+	if err != nil {
+		return err
+	}
+
+	credentialID, err := extractWebAuthnCredentialID(attestation)
 	if err != nil {
 		return err
 	}
@@ -184,7 +198,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 			"display_name":  displayName,
 			"role":          "admin",
 			"auth_method":   "fido2",
-			"credential_id": base64.URLEncoding.EncodeToString(att.CredentialID),
+			"credential_id": base64.URLEncoding.EncodeToString(credentialID),
 		}
 		if err := printer.PrintJSON(summary); err != nil {
 			return err
@@ -192,7 +206,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	} else {
 		fmt.Printf("\nUsername: %s\n", username)
 		fmt.Printf("Role: %s\n", string(RoleAdmin))
-		fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(att.CredentialID))
+		fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(credentialID))
 		fmt.Printf("\nYou can now use this security key to authenticate to the xkms web UI.\n")
 	}
 
@@ -204,7 +218,11 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 // (--pkcs11-module), computes the canonical SPKI thumbprint, and creates an admin
 // user with a CertBinding.
 func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *Printer, storagePath string) error {
-	displayName, _ := cmd.Flags().GetString("display-name")
+	fr := newFlagReader(cmd)
+	displayName := fr.String("display-name")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if displayName == "" {
 		displayName = username
 	}
@@ -242,7 +260,7 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 	if err != nil {
 		return &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -307,7 +325,11 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 // loadEnrollmentCert loads an X.509 certificate from either --cert-file or --pkcs11-module.
 // Returns the parsed certificate or a typed error.
 func loadEnrollmentCert(cmd *cobra.Command, cfg *Config) (*x509.Certificate, error) {
-	certFile, _ := cmd.Flags().GetString("cert-file")
+	fr := newFlagReader(cmd)
+	certFile := fr.String("cert-file")
+	if err := fr.Err(); err != nil {
+		return nil, err
+	}
 
 	if certFile != "" {
 		return loadCertFromFile(certFile)
@@ -368,7 +390,7 @@ var adminListCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -456,7 +478,7 @@ var adminGetCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -548,7 +570,7 @@ Note: You cannot delete the last administrator account.`,
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -592,7 +614,7 @@ var adminDisableCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -637,7 +659,7 @@ var adminEnableCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -680,7 +702,7 @@ var adminStatusCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {

@@ -82,19 +82,6 @@ func addUserToRequest(r *http.Request, user *AuthenticatedUser) *http.Request {
 	return r.WithContext(withUser(r.Context(), user))
 }
 
-// extractTenantIDFromResource extracts the tenant ID from a resource path.
-// Resource paths follow the pattern: acme/tenants/{tenant_id}/...
-// This is used in tests for verifying tenant access.
-func extractTenantIDFromResource(resource string) string {
-	parts := strings.Split(resource, "/")
-	for i, part := range parts {
-		if part == "tenants" && i+1 < len(parts) {
-			return parts[i+1]
-		}
-	}
-	return ""
-}
-
 // newTestAuthMiddleware creates an AuthMiddleware for testing with a user of the given role
 func newTestAuthMiddleware(role string) *AuthMiddleware {
 	client := auth.NewMemoryClient()
@@ -238,6 +225,70 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 	return testCA, storageFactory, cleanup
 }
 
+// createRootOnlyTestCA builds a single-identity root CA (no intermediate),
+// so TrustedRoot() and the CA's own signer resolve to the same key pair —
+// unlike the intermediate CA createTestInfrastructure returns, whose
+// TrustedRoot() answers with the ultimate root's certificate while its own
+// signer is the intermediate's key. Tests exercising the "global CA as
+// parent" path (CreateTenantIntermediateCA's default ParentType) need a
+// global CA where those two agree.
+func createRootOnlyTestCA(t *testing.T) ca.TCGCA {
+	t.Helper()
+
+	xkmssdk.ServiceReset()
+	t.Cleanup(func() { _ = xkmssdk.ServiceClose() })
+
+	caDir := t.TempDir()
+
+	keyStorageBackend, err := xkmssdk.NewFileStorageBackend(caDir + "/keys")
+	require.NoError(t, err)
+	certStorageBackend, err := xkmssdk.NewFileStorageBackend(caDir + "/certs")
+	require.NoError(t, err)
+
+	softwareBackend, err := xkmssdk.NewSoftwareBackend(&xkmssdk.SoftwareBackendConfig{
+		KeyStorage: keyStorageBackend,
+	})
+	require.NoError(t, err)
+
+	keyStore, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
+		Backend:     softwareBackend,
+		CertStorage: certStorageBackend,
+	})
+	require.NoError(t, err)
+
+	err = xkmssdk.ServiceInitialize(&xkmssdk.ServiceConfig{
+		Backends: map[string]xkmssdk.ServiceBackend{
+			"software": keyStore,
+		},
+		DefaultBackend: "software",
+	})
+	require.NoError(t, err)
+
+	certAdapter := xkmssdk.NewStorageCertAdapter(certStorageBackend)
+	certStore, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{
+		CertStorage: certAdapter,
+	})
+	require.NoError(t, err)
+
+	rootConfig := ca.DefaultMultiIdentityCAConfig()
+	rootConfig.Identity[0].Subject.CommonName = "Global Root CA"
+	rootConfig.Identity[0].Subject.Organization = "Test Org"
+
+	root, _, err := ca.NewCA(context.Background(), &ca.Params{
+		Identity:        rootConfig.Identity,
+		Config:          &ca.CAConfig{DefaultCertValidityDays: rootConfig.GetDefaultValidityDays()},
+		KeyStore:        keyStore,
+		BackendForStore: singleBackendFactory(keyStore),
+		RevocationStore: xkmsstorage.NewMemory(),
+		CertStore:       certStore,
+	})
+	require.NoError(t, err)
+
+	testCA, ok := root.(ca.TCGCA)
+	require.True(t, ok, "root CA must implement TCGCA")
+	return testCA
+}
+
 // newTenantAwareTestService creates a TenantAwareAdminService backed by an
 // in-memory TenantAwareFactory over the kvadapter datastore path, with an
 // in-memory fake qrdb TenantServicer wired via SetTenantService. qrdb is the
@@ -256,7 +307,7 @@ func newTenantAwareTestService(t *testing.T) *TenantAwareAdminService {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
 
-	svc := NewTenantAwareAdminService(nil, factory, qrdbSvc, logger, "1.0.0")
+	svc := mustTenantAwareAdminService(t, nil, factory, qrdbSvc, logger, "1.0.0")
 	svc.SetTenantService(newFakeTenantServicer())
 	return svc
 }

@@ -25,6 +25,13 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
+// platformSRKHandle is the TCG-reserved persistent handle for the Platform
+// SRK (TPM 2.0 Part 1, Table 8 "Reserved Handles": platform-specific storage
+// range) and matches pkgtpm2.DefaultConfig.PlatformSRK.SRKHandle. This
+// backend uses the Platform SRK, not the Shared SRK at c.SRKHandle, as its
+// own storage parent (see ToTPMConfig).
+const platformSRKHandle = 0x81000002
+
 // Config holds the configuration for the TPM2 backend
 type Config struct {
 	// Device is the path to the TPM device (e.g., "/dev/tpmrm0")
@@ -51,17 +58,20 @@ type Config struct {
 	// EKHandle is the persistent handle for the Endorsement Key (default: 0x81010001)
 	EKHandle uint32 `yaml:"ek_handle" json:"ek_handle"`
 
-	// HierarchyAuth is the TPM Owner hierarchy authorization value, required
-	// to authorize TPM2_CreatePrimary under TPM_RH_OWNER when this backend
-	// provisions the Storage Root Key (see provisionSimulatorEKSRK and
-	// buildSRKAttrsFromConfig in pkg/tpm2). Previously this backend's config
-	// had no way to express it at all, so a non-default Owner hierarchy auth
-	// could never be supplied through this path. Empty (the zero value)
-	// preserves the prior behavior of an empty Owner hierarchy auth. Decodes
-	// from, and re-encodes to, a plain reference string in YAML/JSON; the
-	// resolved plaintext is sealed into this field's own memguard enclave
-	// rather than kept as a plain Go string. See types.SecretValue.
-	HierarchyAuth types.SecretValue `yaml:"hierarchy_auth,omitempty" json:"hierarchy_auth,omitempty"`
+	// Deliberately no HierarchyAuth field here. The Owner hierarchy
+	// authorization needed to create or evict this backend's Storage Root
+	// Key is never stored in configuration -- it is supplied only at the
+	// moment of the operation. This backend's own storage parent is the
+	// Platform SRK (see ToTPMConfig and Backend.srkAttrs in backend.go),
+	// which never carries one for the same reason pkgtpm2.PlatformSRKConfig
+	// does not (see that type's doc comment): a config-literal auth field
+	// that nothing legitimate reads is exactly the defect this project's
+	// no-config-literal-auth rule forbids. A caller who needs a non-default
+	// Owner hierarchy auth for genuine TCG provisioning supplies a
+	// fully-formed pkgtpm2.Config via TPMConfig instead, which reaches
+	// TPM2_CreatePrimary through the soPIN argument to
+	// Provision/Install/ProvisionOwner or
+	// PlatformKeyStore.Initialize/EnrollPlatformSRK, not through this struct.
 
 	// Hash specifies the hash algorithm to use (default: "SHA-256")
 	Hash string `yaml:"hash" json:"hash"`
@@ -95,8 +105,16 @@ func (c *Config) Validate() error {
 		c.Device = "/dev/tpmrm0"
 	}
 
+	// KeyDir has no default: this package has no notion of a meaningful
+	// process working directory to resolve one against (see
+	// ErrKeyDirRequired). Callers derive it from their own storage
+	// conventions -- e.g. pkg/server's resolveTPM2KeyDir joins it onto
+	// storage.path -- and supply it explicitly.
 	if c.KeyDir == "" {
-		c.KeyDir = "./tpm2-keys"
+		return &errs.Detail{
+			Err:    ErrKeyDirRequired,
+			Detail: "must be set explicitly; it is never derived from the process's working directory",
+		}
 	}
 
 	if c.SRKHandle == 0 {
@@ -157,16 +175,34 @@ func (c *Config) ToTPMConfig() *pkgtpm2.Config {
 				KeySize: 2048,
 			},
 		},
+		// SSRK is provisioned exactly per the TCG-standard workflow (empty
+		// hierarchy auth, well-known template, no platform policy -- see
+		// pkgtpm2.SRKConfig). This backend never authorizes with it and never
+		// carries a hierarchy auth for it: an operator who needs a non-default
+		// Owner hierarchy auth for genuine TCG provisioning supplies a
+		// fully-formed pkgtpm2.Config via TPMConfig instead of through this
+		// struct.
 		SSRK: &pkgtpm2.SRKConfig{
-			Handle: c.SRKHandle,
-			// HierarchyAuth carries the SecretValue's already-sealed enclave
-			// forward rather than re-copying the plaintext into a new Go
-			// string; c.HierarchyAuth's own enclave is untouched by the copy.
-			HierarchyAuth: c.HierarchyAuth,
-			KeyAlgorithm:  "RSA",
+			Handle:       c.SRKHandle,
+			KeyAlgorithm: "RSA",
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
+		},
+		// PlatformSRK is the storage parent this backend actually uses for
+		// its own key operations (see Backend.srkAttrs in backend.go): xkms's
+		// own purposes, which do not need to follow the TCG-standard SSRK
+		// workflow. PlatformPolicy is left false here -- this backend seals
+		// and signs with a plain password-authorized Platform SRK, not a
+		// PCR-policy-bound one; a caller that wants platform-policy binding
+		// configures it through TPMConfig. Its owner-hierarchy authorization
+		// is likewise never taken from this struct, for the same reason SSRK
+		// carries none: duplicating a hierarchy-auth field here risks it
+		// being wired to the wrong key, which is exactly the defect this
+		// config previously had (a HierarchyAuth field that fed SSRK instead
+		// of PlatformSRK).
+		PlatformSRK: &pkgtpm2.PlatformSRKConfig{
+			SRKHandle: platformSRKHandle,
 		},
 	}
 

@@ -167,6 +167,40 @@ func TestServerError_Is(t *testing.T) {
 	}
 }
 
+func TestRelyingPartyRejection_Error(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      *RelyingPartyRejection
+		expected string
+	}{
+		{
+			name:     "with message",
+			err:      &RelyingPartyRejection{Err: ErrRegistrationFailed, Message: "attestation rejected"},
+			expected: "webauthn/client: registration failed: attestation rejected",
+		},
+		{
+			name:     "without message",
+			err:      &RelyingPartyRejection{Err: ErrAuthenticationFailed},
+			expected: "webauthn/client: authentication failed: rejected",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.Error(); got != tt.expected {
+				t.Errorf("got %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRelyingPartyRejection_Unwrap(t *testing.T) {
+	err := &RelyingPartyRejection{Err: ErrRegistrationFailed, Message: "no"}
+	if !errors.Is(err, ErrRegistrationFailed) {
+		t.Error("errors.Is should match the wrapped sentinel")
+	}
+}
+
 func TestSentinelErrors_AreDistinct(t *testing.T) {
 	sentinels := []error{
 		ErrServerURLRequired,

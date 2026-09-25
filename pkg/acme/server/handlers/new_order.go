@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 )
 
 type NewOrderRequest struct {
@@ -88,18 +89,33 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if !s.challengePolicy.IsIdentifierTypeEnabled(id.Type) {
+			writeError(w, common.UnsupportedIdentifier(
+				fmt.Sprintf("Identifier type %q is disabled by policy", id.Type)))
+			return
+		}
+
+		// RFC 1035 (DNS) / RFC 8738 (IP) / minimal (permanent-identifier)
+		// syntax validation. A malformed identifier is a client error,
+		// regardless of what the server's issuance policy allows.
+		if err := validateIdentifierFormat(id); err != nil {
+			writeError(w, common.MalformedError(err.Error(), nil))
+			return
+		}
+
+		// Domain/FQDN/wildcard/CIDR blocklist, public-suffix, and
+		// reserved-IP policy enforcement. The identifier is well-formed but
+		// the server refuses to issue for it (RFC 8555 rejectedIdentifier).
+		if err := s.checkIdentifierPolicy(id); err != nil {
+			writeError(w, common.RejectedIdentifier(err.Error()))
+			return
+		}
+
 		domain := id.Value
 		isWildcard := false
-		if id.Type == common.AuthzTypeDNS {
-			if strings.HasPrefix(domain, "*.") {
-				isWildcard = true
-				domain = strings.TrimPrefix(domain, "*.")
-			}
-			// Validate domain name
-			if !isValidDomainName(domain) {
-				writeError(w, common.MalformedError("Invalid domain name", nil))
-				return
-			}
+		if id.Type == common.AuthzTypeDNS && strings.HasPrefix(domain, "*.") {
+			isWildcard = true
+			domain = strings.TrimPrefix(domain, "*.")
 		}
 
 		// Skip the issued check - the CA will handle duplicate certificate checks
@@ -140,6 +156,9 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 			writeError(w, common.ServerInternal(fmt.Sprintf("Failed to save authorization: %v", err)))
 			return
 		}
+		for range challenges {
+			metrics.IncPendingChallenges()
+		}
 
 		authzURLs = append(authzURLs, authzURL)
 	}
@@ -161,13 +180,20 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, common.ServerInternal("Failed to save order"))
 		return
 	}
+	metrics.IncActiveOrders()
+	if account.TenantID != "" {
+		metrics.IncTenantActiveOrders(account.TenantID)
+	}
 
 	orderIdentifiers := make([]string, 0, len(order.Identifiers))
 	for _, identifier := range order.Identifiers {
 		orderIdentifiers = append(orderIdentifiers, identifier.Value)
 	}
-	s.recordAudit(audit.LogOrderCreated(auditContext(r), s.auditLog,
-		auditAccountID(account.ID), strconv.FormatUint(order.ID, 10), orderIdentifiers))
+	if auditErr := s.recordAudit(audit.EventOrderCreated, audit.LogOrderCreated(auditContext(r), s.auditLog,
+		auditAccountID(account.ID), strconv.FormatUint(order.ID, 10), orderIdentifiers)); auditErr != nil {
+		writeError(w, common.ServerInternal("Failed to record audit event"))
+		return
+	}
 
 	// Respond with the order object
 	w.Header().Set("Location", orderURL)
@@ -180,60 +206,39 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 // Per RFC 8555, wildcard domains MUST only use DNS-01 challenge (HTTP-01 not allowed)
 func (s *RestService) createChallenges(accountID, authzID uint64, id entities.ACMEIdentifier, isWildcard bool) ([]entities.ACMEChallenge, error) {
 
-	s.logger.Info("Creating challenges",
-		"identifier_type", id.Type,
-		"identifier_value", id.Value,
-		"is_wildcard", isWildcard,
-		"num_challenge_types", len(s.challengeMap))
-
-	// Log all available challenge types
-	for ct := range s.challengeMap {
-		s.logger.Info("Available challenge type", "type", ct)
+	switch id.Type {
+	case common.AuthzTypeDNS, common.AuthzTypeIP, common.AuthzTypePermanentIdentifier:
+		// Supported identifier type
+	default:
+		s.logger.Error("Unsupported identifier type", "type", id.Type)
+		return []entities.ACMEChallenge{}, caerrors.UnsupportedIdentifierError("unsupported identifier type: %s", id.Type)
 	}
 
-	// Filter challenge types based on identifier type
-	var challengeTypes []string
-	for challengeType := range s.challengeMap {
-		s.logger.Info("Checking challenge type",
-			"type", challengeType,
-			"identifier_type", id.Type,
-			"is_wildcard", isWildcard)
+	// The challenge policy's wildcard restriction (RFC 8555 Section 7.1.4:
+	// wildcards MUST only use dns-01) is keyed off a "*."-prefixed value.
+	value := id.Value
+	if isWildcard && !strings.HasPrefix(value, "*.") {
+		value = "*." + value
+	}
 
-		switch id.Type {
-		case common.AuthzTypeDNS:
-			// For DNS identifiers, use HTTP and DNS challenges
-			// Per RFC 8555 Section 7.1.4: Wildcard domains MUST only use DNS-01 challenge
-			if isWildcard {
-				// Wildcard: only DNS-01 challenge allowed
-				if strings.HasPrefix(challengeType, "dns-") {
-					s.logger.Info("Matched DNS challenge for wildcard", "type", challengeType)
-					challengeTypes = append(challengeTypes, challengeType)
-				}
-			} else {
-				// Non-wildcard: HTTP-01 and DNS-01 allowed
-				if strings.HasPrefix(challengeType, "http-") || strings.HasPrefix(challengeType, "dns-") {
-					s.logger.Info("Matched DNS challenge", "type", challengeType)
-					challengeTypes = append(challengeTypes, challengeType)
-				}
-			}
-		case common.AuthzTypeIP, common.AuthzTypePermanentIdentifier:
-			// For IP and permanent-identifier, use enrollment challenges
-			s.logger.Info("Checking enrollment challenge prefixes",
-				"type", challengeType,
-				"has_enroll", strings.HasPrefix(challengeType, "enroll-"),
-				"has_endorse", strings.HasPrefix(challengeType, "endorse-"),
-				"has_device_attest", strings.HasPrefix(challengeType, "device-attest-"))
-			if strings.HasPrefix(challengeType, "enroll-") || strings.HasPrefix(challengeType, "endorse-") || strings.HasPrefix(challengeType, "device-attest-") {
-				s.logger.Info("Matched enrollment challenge", "type", challengeType)
-				challengeTypes = append(challengeTypes, challengeType)
-			}
-		default:
-			s.logger.Error("Unsupported identifier type", "type", id.Type)
-			return []entities.ACMEChallenge{}, caerrors.UnsupportedIdentifierError("unsupported identifier type: %s", id.Type)
+	// Candidates the policy allows for this identifier, intersected with the
+	// challenge verifiers actually registered for this server (a challenge
+	// type the policy allows but no verifier is registered for cannot be
+	// offered).
+	candidates := s.challengePolicy.AllowedChallenges(id.Type, value)
+	var challengeTypes []string
+	for _, challengeType := range candidates {
+		if _, registered := s.challengeMap[challengeType]; registered {
+			challengeTypes = append(challengeTypes, challengeType)
 		}
 	}
 
-	s.logger.Info("Challenge types selected", "count", len(challengeTypes), "types", challengeTypes)
+	s.logger.Info("Challenge types selected",
+		"identifier_type", id.Type,
+		"identifier_value", id.Value,
+		"is_wildcard", isWildcard,
+		"count", len(challengeTypes),
+		"types", challengeTypes)
 
 	if len(challengeTypes) == 0 {
 		s.logger.Error("No challenges configured for identifier type", "type", id.Type)

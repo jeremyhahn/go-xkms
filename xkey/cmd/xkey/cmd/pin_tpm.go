@@ -46,14 +46,14 @@ func openTPMModule(logger *slog.Logger, dataDir, device string, useSimulator boo
 	// requires the device to be present before attempting to open it.
 	if !useSimulator {
 		if _, err := os.Stat(resolvedDevice); err != nil {
-			return nil, nil, fmt.Errorf("tpm device %s not found: %w", resolvedDevice, err)
+			return nil, nil, &WrappedError{Msg: fmt.Sprintf("tpm device %s not found", resolvedDevice), Err: err}
 		}
 	}
 
 	tpmDataDir := filepath.Join(dataDir, "tpm")
 	factory, err := xkms.NewTPMStorageFactory(logger, tpmDataDir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("tpm storage factory: %w", err)
+		return nil, nil, &WrappedError{Msg: "tpm storage factory", Err: err}
 	}
 
 	cfg := xkms.DefaultTPMConfig
@@ -69,13 +69,15 @@ func openTPMModule(logger *slog.Logger, dataDir, device string, useSimulator boo
 	if err != nil {
 		// ErrTPMNotInitialized only means the EK/IDevID provisioning workflow
 		// has not run; the returned tpm still has a live transport and can
-		// serve its PlatformKeyStore (see TPM2.CanSeal and the SSRK fallback
-		// probeTPMSealer already tolerates for the barrier strategy).
+		// serve its PlatformKeyStore (see TPM2.CanSeal). Sealing itself still
+		// requires the Platform SRK to be enrolled -- xkms never falls back
+		// to the Shared SRK -- which is what probeTPMSealer's caller checks
+		// before using this TPM for the barrier strategy.
 		if errors.Is(err, xkms.ErrTPMNotInitialized) && tpm != nil {
 			return tpm, tpm, nil
 		}
 		_ = factory.Close()
-		return nil, nil, fmt.Errorf("open tpm: %w", err)
+		return nil, nil, &WrappedError{Msg: "open tpm", Err: err}
 	}
 
 	return tpm, tpm, nil

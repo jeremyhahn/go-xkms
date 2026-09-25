@@ -253,15 +253,6 @@ func (m *MockCertificateAuthority) ClientTLSConfig(ctx context.Context, attrs *t
 	return args.Get(0).(*tls.Config), args.Error(1)
 }
 
-// QuantumSafeTLSConfig returns a quantum-safe TLS configuration.
-func (m *MockCertificateAuthority) QuantumSafeTLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error) {
-	args := m.Called(attrs)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*tls.Config), args.Error(1)
-}
-
 // TLSBundle returns a PEM bundle (chain + private key).
 func (m *MockCertificateAuthority) TLSBundle(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	args := m.Called(attrs)

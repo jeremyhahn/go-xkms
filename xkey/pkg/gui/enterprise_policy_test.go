@@ -28,8 +28,16 @@ import (
 
 // relaxedPolicyYAML is an enterprise policy file that relaxes every secure
 // default this change guards: the values a local user would write to loosen
-// the authenticator and the extension gates.
+// the authenticator and the extension gates. The Require* fields are turned
+// off so this fixture exercises FIDO2/extension propagation only; the
+// startup-precondition gate they feed has its own fixtures and tests in
+// TestCheckStartupPreconditions* and
+// TestApp_ApplyVerifiedEnterprisePolicy_PreconditionsUnmet_KeepsDefaults
+// (#668).
 const relaxedPolicyYAML = `policy:
+  require_so_pin: false
+  require_user_pin: false
+  require_encrypted_storage: false
   fido2_require_user_presence: false
   fido2_user_intent_check: false
   extension_enabled: true
@@ -182,4 +190,94 @@ func TestApp_ApplyVerifiedEnterprisePolicy_ToleratesAbsentConsumers(t *testing.T
 	assert.NotPanics(t, func() {
 		app.applyVerifiedEnterprisePolicy(config.DefaultPolicy())
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Require* startup preconditions (#668).
+// ---------------------------------------------------------------------------
+
+func TestCheckStartupPreconditions_AllUnmet(t *testing.T) {
+	app := newMinimalApp(t)
+	// newMinimalApp's config has no StorageType set and its PIN/TPM services
+	// are freshly constructed with nothing configured, so every Require*
+	// precondition below is unmet by the host.
+
+	pol := &config.PolicySection{
+		RequireSOPIN:            true,
+		RequireUserPIN:          true,
+		RequireEncryptedStorage: true,
+		RequireTPM:              true,
+	}
+
+	err := app.checkStartupPreconditions(pol)
+	require.Error(t, err)
+	var precondErr *PolicyPreconditionError
+	require.ErrorAs(t, err, &precondErr)
+	assert.ElementsMatch(t, []string{
+		"require_so_pin", "require_user_pin", "require_encrypted_storage", "require_tpm",
+	}, precondErr.Unmet)
+}
+
+func TestCheckStartupPreconditions_NoneRequiredIsAlwaysMet(t *testing.T) {
+	app := newMinimalApp(t)
+
+	err := app.checkStartupPreconditions(config.DefaultPolicy())
+	// DefaultPolicy sets RequireSOPIN/RequireUserPIN/RequireEncryptedStorage
+	// true but not RequireTPM; none of the PIN/storage state is met by
+	// newMinimalApp's fresh services, so this is expected to report the
+	// three that DefaultPolicy turns on.
+	require.Error(t, err)
+	var precondErr *PolicyPreconditionError
+	require.ErrorAs(t, err, &precondErr)
+	assert.ElementsMatch(t, []string{
+		"require_so_pin", "require_user_pin", "require_encrypted_storage",
+	}, precondErr.Unmet)
+
+	// And when nothing is required, an unconfigured host always satisfies it.
+	err = app.checkStartupPreconditions(&config.PolicySection{})
+	assert.NoError(t, err)
+}
+
+func TestCheckStartupPreconditions_PartiallyMet(t *testing.T) {
+	app := newMinimalApp(t)
+	app.pinService = newStatePINService(t)
+	require.NoError(t, app.pinService.SetSOPIN("", "so-pin-123456"))
+	app.config.StorageType = "barrier"
+
+	pol := &config.PolicySection{
+		RequireSOPIN:            true,
+		RequireUserPIN:          true,
+		RequireEncryptedStorage: true,
+		RequireTPM:              false,
+	}
+
+	err := app.checkStartupPreconditions(pol)
+	require.Error(t, err)
+	var precondErr *PolicyPreconditionError
+	require.ErrorAs(t, err, &precondErr)
+	assert.Equal(t, []string{"require_user_pin"}, precondErr.Unmet,
+		"require_so_pin and require_encrypted_storage are now met; require_tpm was never required")
+}
+
+func TestApp_ApplyVerifiedEnterprisePolicy_PreconditionsUnmet_KeepsDefaults(t *testing.T) {
+	app := newPolicyTestApp(t)
+	// The secure defaults, applied the way startupEnterprisePolicy's caller
+	// applies them before SO login.
+	applyFIDO2Policy(app.authenticatorInstance, config.DefaultPolicy(), app.log)
+
+	// A policy whose Require* preconditions the host cannot meet.
+	strict := config.DefaultPolicy()
+	strict.RequireTPM = true
+
+	err := app.applyVerifiedEnterprisePolicy(strict)
+
+	require.Error(t, err)
+	var precondErr *PolicyPreconditionError
+	require.ErrorAs(t, err, &precondErr)
+	assert.Contains(t, precondErr.Unmet, "require_tpm")
+
+	// The defaults already applied to the authenticator stay in effect;
+	// the refused section never reaches it.
+	assert.True(t, app.authenticatorInstance.Config().RequireUserPresence)
+	assert.True(t, app.authenticatorInstance.Config().EnableUserIntentCheck)
 }

@@ -30,6 +30,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pwimport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 )
@@ -135,9 +136,10 @@ type UpdatePasswordParams struct {
 // It combines local store operations with server-side transport client operations
 // for access mode management, locking/unlocking, and password generation.
 type StaticPasswordService struct {
-	ctx    context.Context
-	store  staticpw.Store
-	client atomic.Pointer[transport.Client]
+	ctx      context.Context
+	store    staticpw.Store
+	client   atomic.Pointer[transport.Client]
+	auditLog atomic.Pointer[audit.Logger]
 }
 
 // NewStaticPasswordService creates a new StaticPasswordService. If store is nil,
@@ -152,6 +154,30 @@ func NewStaticPasswordService(store staticpw.Store) *StaticPasswordService {
 // SetContext is called by the Wails startup lifecycle hook.
 func (s *StaticPasswordService) SetContext(ctx context.Context) {
 	s.ctx = ctx
+}
+
+// SetAuditLogger sets the audit logger for security event logging.
+func (s *StaticPasswordService) SetAuditLogger(l audit.Logger) {
+	s.auditLog.Store(&l)
+}
+
+// logPasswordEvent logs a password store audit event. Callers must
+// propagate a non-nil return: op.Severity() (audit package) decides
+// whether that failure is required to fail the caller. Every op this
+// method is called with (create/update/delete/access/unlock/lock) is
+// SeveritySecurity.
+func (s *StaticPasswordService) logPasswordEvent(op audit.OperationType, idOrName string, success bool, err error, details map[string]any) error {
+	p := s.auditLog.Load()
+	if p == nil {
+		return nil
+	}
+	if details == nil {
+		details = make(map[string]any)
+	}
+	if idOrName != "" {
+		details["entry"] = idOrName
+	}
+	return (*p).LogPasswordStoreOperation(op, "gui", success, err, details)
 }
 
 // SetStore replaces the static password store. This is used for deferred
@@ -221,6 +247,10 @@ func (s *StaticPasswordService) GetPassword(idOrName string) (*StaticPasswordEnt
 		return nil, err
 	}
 
+	if auditErr := s.logPasswordEvent(audit.OpPasswordAccessed, idOrName, true, nil, nil); auditErr != nil {
+		return nil, auditErr
+	}
+
 	entry := staticPWToEntry(pw)
 	return &entry, nil
 }
@@ -256,6 +286,10 @@ func (s *StaticPasswordService) AddPassword(params AddPasswordParams) (*StaticPa
 
 	if err := s.store.Add(pw); err != nil {
 		return nil, err
+	}
+
+	if auditErr := s.logPasswordEvent(audit.OpPasswordCreated, params.Name, true, nil, nil); auditErr != nil {
+		return nil, auditErr
 	}
 
 	entry := staticPWToEntry(pw)
@@ -300,7 +334,11 @@ func (s *StaticPasswordService) UpdatePassword(params UpdatePasswordParams) erro
 		existing.ExpiresAt = time.Time{}
 	}
 
-	return s.store.Update(existing)
+	if err := s.store.Update(existing); err != nil {
+		return err
+	}
+
+	return s.logPasswordEvent(audit.OpPasswordUpdated, params.ID, true, nil, nil)
 }
 
 // DeletePassword removes a static password by ID or name. Returns
@@ -321,7 +359,11 @@ func (s *StaticPasswordService) DeletePassword(idOrName string) error {
 		return ErrStaticPWReadOnly
 	}
 
-	return s.store.Delete(idOrName)
+	if err := s.store.Delete(idOrName); err != nil {
+		return err
+	}
+
+	return s.logPasswordEvent(audit.OpPasswordDeleted, idOrName, true, nil, nil)
 }
 
 // DeletePasswordForce removes a static password by ID or name, bypassing
@@ -334,7 +376,10 @@ func (s *StaticPasswordService) DeletePasswordForce(idOrName string) error {
 	if idOrName == "" {
 		return ErrStaticPWInvalidID
 	}
-	return s.store.ForceDelete(idOrName)
+	if err := s.store.ForceDelete(idOrName); err != nil {
+		return err
+	}
+	return s.logPasswordEvent(audit.OpPasswordDeleted, idOrName, true, nil, map[string]any{"forced": true})
 }
 
 // GeneratePassword produces a cryptographically random password of the requested
@@ -425,11 +470,14 @@ func (s *StaticPasswordService) RenameFolder(oldPath string, newPath string) err
 		}
 	}
 
-	// Move persisted folder marker from old path to new path.
-	_ = s.store.RemoveFolder(oldPath)
-	_ = s.store.CreateFolder(newPath)
+	// Move persisted folder marker from old path to new path. Both steps are
+	// attempted regardless of the first's outcome, and any failure is
+	// reported rather than dropped -- the entries above have already moved,
+	// so a marker failure here leaves state worth surfacing, not undoing.
+	removeErr := s.store.RemoveFolder(oldPath)
+	createErr := s.store.CreateFolder(newPath)
 
-	return nil
+	return errors.Join(removeErr, createErr)
 }
 
 // DeleteFolder deletes all entries in the given folder and its subfolders.
@@ -455,9 +503,7 @@ func (s *StaticPasswordService) DeleteFolder(folderPath string) error {
 	}
 
 	// Remove the persisted folder marker (if any).
-	_ = s.store.RemoveFolder(folderPath)
-
-	return nil
+	return s.store.RemoveFolder(folderPath)
 }
 
 // SearchPasswords searches across title, username, URL, notes, and name
@@ -725,9 +771,13 @@ func (s *StaticPasswordService) Unlock(pin string) error {
 	if err != nil {
 		return err
 	}
-	return client.PasswordStoreUnlock(s.getContext(), &transport.PasswordStoreUnlockRequest{
+	unlockErr := client.PasswordStoreUnlock(s.getContext(), &transport.PasswordStoreUnlockRequest{
 		UserPIN: pin,
 	})
+	if auditErr := s.logPasswordEvent(audit.OpPasswordStoreUnlocked, "", unlockErr == nil, unlockErr, nil); auditErr != nil {
+		return auditErr
+	}
+	return unlockErr
 }
 
 // Lock locks the password store, requiring re-authentication before further
@@ -737,7 +787,11 @@ func (s *StaticPasswordService) Lock() error {
 	if err != nil {
 		return err
 	}
-	return client.PasswordStoreLock(s.getContext())
+	lockErr := client.PasswordStoreLock(s.getContext())
+	if auditErr := s.logPasswordEvent(audit.OpPasswordStoreLocked, "", lockErr == nil, lockErr, nil); auditErr != nil {
+		return auditErr
+	}
+	return lockErr
 }
 
 // GetStoreStatus returns the current password store status including lock

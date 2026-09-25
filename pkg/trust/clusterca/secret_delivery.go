@@ -160,7 +160,9 @@ func (s *SecretDeliveryService) Handler() http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(&secretDeliveryResponse{Secrets: secrets})
+		if encErr := json.NewEncoder(w).Encode(&secretDeliveryResponse{Secrets: secrets}); encErr != nil {
+			s.logger.Error("cluster secret delivery response encoding failed", "node", nodeURI, "error", encErr.Error())
+		}
 	}
 }
 
@@ -187,7 +189,11 @@ func FetchClusterSecrets(ctx context.Context, httpClient *http.Client, baseURL s
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Debug("clusterca: failed to close HTTP response body", "error", cerr)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return nil, &errs.Message{Msg: fmt.Sprintf("clusterca: secret delivery returned status %d", resp.StatusCode)}
 	}

@@ -19,22 +19,43 @@ No config flag is needed. The application infers the mode from filesystem state:
 
 ## Policy Section
 
-The `policy:` section of the unified config holds 24 SO-controlled fields that govern security requirements, backend selection, and user permissions. These fields are covered by the HMAC integrity tag.
+The `policy:` section of the unified config holds 37 SO-controlled fields that govern security requirements, backend selection, and user permissions. These fields are covered by the HMAC integrity tag.
+
+Every field below is either enforced at a specific service-layer call (a typed
+`*PolicyDeniedError` or `*PolicyPreconditionError`, refusing the operation and
+emitting an `audit.OpPolicyDenied` event) or is a plain configuration value a
+non-gated consumer reads. None is inert: a field that reached this state
+without an enforcement point was deleted (#668, and see the **BREAKING**
+change note below).
+
+**BREAKING**: `platform_pcrs`, `require_password_protection`,
+`password_protection_mode` and `fido2_require_resident_key` were removed.
+They were parsed and signed into the sealed policy but nothing read them.
+Deploying a build with this change re-seals the policy (the field set
+changed, so the HMAC changes); an enterprise config that sets any of these
+four keys is now rejected the way any unrecognized YAML key is. Delete them
+from the config file before upgrading.
 
 ### Security Requirements
+
+Since #668, `require_so_pin`, `require_user_pin`, `require_encrypted_storage`
+and `require_tpm` are checked once, right after the SO PIN verifies the
+sealed policy (`checkStartupPreconditions` in `pkg/gui/enterprise_policy.go`).
+If the host does not meet a requirement the policy declares, the verified
+section is **not** applied -- the secure `DefaultPolicy()` values already in
+effect for every other consumer stay in effect, and `LoginResult.Error`
+carries the unmet field list -- rather than refusing the SO's login itself,
+since that would lock out the one person who could fix the deployment.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `min_pin_length` | int | 6 | Minimum PIN length for SO and User PINs |
-| `require_so_pin` | bool | true | Require SO PIN to be set |
-| `require_user_pin` | bool | true | Require User PIN to be set |
-| `require_encrypted_storage` | bool | true | Require encrypted storage backend |
+| `require_so_pin` | bool | true | SO PIN must be configured on this host |
+| `require_user_pin` | bool | true | User PIN must be configured on this host |
+| `require_encrypted_storage` | bool | true | Storage backend must be `barrier` |
 | `storage_type` | string | "barrier" | Storage type: barrier, luks |
-| `require_tpm` | bool | false | Require TPM hardware |
-| `platform_pcrs` | []int | nil | PCR indices for platform binding |
-| `platform_pcr_bank` | string | "" | PCR hash bank (sha256, sha384) |
-| `require_password_protection` | bool | false | Require password store encryption |
-| `password_protection_mode` | string | "" | tpm_sealed, aes_software, none |
+| `require_tpm` | bool | false | TPM must be available on this host |
+| `platform_pcr_bank` | string | "" | PCR hash bank (sha256, sha384) used by TPM enrollment |
 
 ### Backend Control
 
@@ -48,25 +69,46 @@ The `policy:` section of the unified config holds 24 SO-controlled fields that g
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `fido2_always_uv` | bool | false | Force user verification on all FIDO2 ops |
-| `fido2_require_resident_key` | bool | false | Require discoverable credentials |
+| `fido2_require_user_presence` | bool | true | Require user presence even when PIN auth succeeds |
+| `fido2_user_intent_check` | bool | true | Show a presence dialog before `StatusPINRequired` |
 | `attestation_mode` | string | "" | Attestation enforcement mode |
 
 ### Auto-Unseal Policy
 
+Both fields gate `AppService.ToggleBarrierAutoUnseal` (#668): `allow_auto_unseal`
+is the organization-wide kill switch (off unless the SO opts in explicitly),
+`user_can_configure_auto_unseal` is the per-user deny switch. Both must be
+true to enable auto-unseal; either alone is enough to keep it off.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `allow_auto_unseal` | bool | false | Allow TPM-based auto-unseal |
-| `user_can_configure_auto_unseal` | bool | true | User can modify auto-unseal settings |
+| `allow_auto_unseal` | bool | false | Organization permits TPM-based auto-unseal at all |
+| `user_can_configure_auto_unseal` | bool | true | User can toggle auto-unseal in Settings |
 
 ### User Permissions
 
+Each `user_can_*` field below is a deny switch: false refuses the
+corresponding service call with a typed `*PolicyDeniedError` and logs an
+`audit.OpPolicyDenied` event, rather than merely hiding the control in the
+GUI (#668).
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `user_can_configure_theme` | bool | true | User can change UI theme |
-| `user_can_manage_trust_store` | bool | true | User can add/remove trust roots |
-| `user_can_view_audit_log` | bool | true | User can view audit logs |
-| `user_can_manage_sealed_data` | bool | true | User can seal/unseal data |
-| `user_can_change_own_pin` | bool | true | User can change their own PIN |
+| `user_can_configure_theme` | bool | true | User can change UI theme (`AppService.SetTheme`) |
+| `user_can_manage_trust_store` | bool | true | User can add/remove/import trust roots (`TrustService`) |
+| `user_can_view_audit_log` | bool | true | User can view or export the audit log (`AuditService`) |
+| `user_can_manage_sealed_data` | bool | true | User can seal or delete sealed data (`SealService`) |
+| `user_can_change_own_pin` | bool | true | User can change their own PIN (`PINService.ChangeUserPIN`) |
+| `user_can_toggle_dev_tools` | bool | true | User can toggle the Developer Tools panel |
+| `user_can_configure_extension` | bool | true | User can change browser-extension settings |
+
+### Developer Surface
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `api_explorer_enabled` | bool | true | API Explorer subsystem is enabled at all (`APIExplorerService.Execute`) |
+| `api_explorer_sandbox_policy` | string | "" | User-configurable API Explorer sandbox policy value |
+| `developer_tools_enabled` | bool | true | Developer Tools subsystem is enabled at all |
 
 ### Organization
 
@@ -150,7 +192,7 @@ The third case is an error rather than a state, so an unverified sealed section 
 
 The GUI follows the same rule. At startup, before any SO login, it resolves the section through `LoadVerifiedPolicy` with no SO PIN: in personal mode there is no enterprise policy and the GUI's own settings stand; in enterprise mode the sealed section cannot yet be authenticated, so `DefaultPolicy()` is applied to the FIDO2 authenticator (`fido2_require_user_presence`, `fido2_user_intent_check`) and to the browser-extension gates, never the file's relaxations. When the SO logs in and the HMAC verifies, the verified section replaces those defaults on both consumers for the rest of the session. A section that fails verification leaves the defaults in place.
 
-The authenticator core enforces its own lock independently of the GUI. When the authenticator opens with a policy integrity provider and the stored HMAC fails to verify, `Authenticator.TamperDetected` is set and every user-mode CTAP command and Go API registration or assertion is refused with `CTAP2_ERR_INTEGRITY_FAILURE` until the SO re-signs the policy and the authenticator is re-opened. `getInfo` and `selection` still answer so the device stays discoverable. See [Tamper Lock](../fido2/authenticator-security.md#tamper-lock).
+The authenticator core enforces its own lock independently of the GUI. When the authenticator opens with a policy integrity provider and the stored HMAC fails to verify, `Authenticator.TamperDetected` is set and every user-mode CTAP command and Go API registration or assertion is refused with `CTAP2_ERR_INTEGRITY_FAILURE` until the SO re-signs the policy and the authenticator is re-opened. `getInfo` and `selection` still answer so the device stays discoverable. See [Tamper Lock](../fido2/engineering.md#tamper-lock).
 
 ## Authentication Gate
 
@@ -198,7 +240,7 @@ type LoginResult struct {
 
 When authenticated as `so_admin`, the GUI shows the admin app shell with:
 
-- Policy editor (read/write access to all 24 policy fields)
+- Policy editor (read/write access to all 37 policy fields)
 - PIN management (set/change SO PIN, set/reset User PIN)
 - Hardware management (TPM provisioning, platform policy)
 - Policy re-signing (recompute HMAC after policy changes)
@@ -213,9 +255,14 @@ When authenticated as `user`, the GUI shows the standard app with navigation fil
 - Audit log viewer (if `user_can_view_audit_log`)
 - Sealed data management (if `user_can_manage_sealed_data`)
 - PIN change (if `user_can_change_own_pin`)
-- Auto-unseal configuration (if `user_can_configure_auto_unseal`)
+- Auto-unseal configuration (if `user_can_configure_auto_unseal` and `allow_auto_unseal`)
+- Developer Tools toggle (if `user_can_toggle_dev_tools` and `developer_tools_enabled`)
+- Browser-extension settings (if `user_can_configure_extension`)
+- API Explorer (if `api_explorer_enabled`)
 
-Navigation items for disabled permissions are hidden from the UI.
+Navigation items for disabled permissions are hidden from the UI, and the
+underlying service call refuses even if reached directly -- hiding the
+control is presentation, not the enforcement point (#668).
 
 ## SO Provisioning Flow
 

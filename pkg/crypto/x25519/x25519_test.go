@@ -16,6 +16,7 @@ package x25519
 import (
 	"bytes"
 	"crypto/ecdh"
+	"crypto/fips140"
 	"crypto/rand"
 	"encoding/hex"
 	"testing"
@@ -23,6 +24,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// requireGeneratedKeyPair generates an X25519 key pair for a test that needs
+// one to exercise other behavior. Under GODEBUG=fips140=only,
+// crypto/ecdh.X25519 refuses key generation outright (go-xkms deliberately
+// supports X25519 and disables it in FIPS mode; see docs/fips/README.md), so
+// this asserts that refusal and reports ok=false instead of letting the
+// caller dereference a nil *KeyPair -- the cause of go-xkms#23's
+// ExampleKeyAgreement panic under fips140=only.
+func requireGeneratedKeyPair(t *testing.T, ka KeyAgreement) (kp *KeyPair, ok bool) {
+	t.Helper()
+	kp, err := ka.GenerateKey()
+	if fips140.Enforced() {
+		require.Error(t, err, "X25519 must be refused under GODEBUG=fips140=only")
+		require.Nil(t, kp)
+		return nil, false
+	}
+	require.NoError(t, err)
+	return kp, true
+}
 
 func TestNew(t *testing.T) {
 	ka := New()
@@ -38,9 +58,10 @@ func TestGenerateKey(t *testing.T) {
 	ka := New()
 
 	t.Run("successful generation", func(t *testing.T) {
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
-		require.NotNil(t, keyPair)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 		require.NotNil(t, keyPair.PrivateKey)
 		require.NotNil(t, keyPair.PublicKey)
 
@@ -58,11 +79,15 @@ func TestGenerateKey(t *testing.T) {
 	})
 
 	t.Run("generates unique keys", func(t *testing.T) {
-		keyPair1, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair1, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
-		keyPair2, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair2, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		// Keys should be different
 		assert.NotEqual(t, keyPair1.PrivateKey.Bytes(), keyPair2.PrivateKey.Bytes())
@@ -72,9 +97,10 @@ func TestGenerateKey(t *testing.T) {
 	t.Run("multiple generations", func(t *testing.T) {
 		// Generate multiple keys to ensure consistency
 		for i := 0; i < 10; i++ {
-			keyPair, err := ka.GenerateKey()
-			require.NoError(t, err)
-			require.NotNil(t, keyPair)
+			keyPair, ok := requireGeneratedKeyPair(t, ka)
+			if !ok {
+				return
+			}
 			assert.Len(t, keyPair.PrivateKey.Bytes(), 32)
 			assert.Len(t, keyPair.PublicKey.Bytes(), 32)
 		}
@@ -86,11 +112,15 @@ func TestDeriveSharedSecret(t *testing.T) {
 
 	t.Run("successful key agreement", func(t *testing.T) {
 		// Generate two key pairs (Alice and Bob)
-		aliceKeyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		aliceKeyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
-		bobKeyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		bobKeyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		// Alice computes shared secret using her private key and Bob's public key
 		aliceSharedSecret, err := ka.DeriveSharedSecret(aliceKeyPair.PrivateKey, bobKeyPair.PublicKey)
@@ -108,29 +138,37 @@ func TestDeriveSharedSecret(t *testing.T) {
 	})
 
 	t.Run("nil private key", func(t *testing.T) {
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
-		_, err = ka.DeriveSharedSecret(nil, keyPair.PublicKey)
+		_, err := ka.DeriveSharedSecret(nil, keyPair.PublicKey)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "private key cannot be nil")
 	})
 
 	t.Run("nil peer public key", func(t *testing.T) {
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
-		_, err = ka.DeriveSharedSecret(keyPair.PrivateKey, nil)
+		_, err := ka.DeriveSharedSecret(keyPair.PrivateKey, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "peer public key cannot be nil")
 	})
 
 	t.Run("wrong curve for private key", func(t *testing.T) {
-		// Create a P-256 key (wrong curve)
-		p256PrivateKey, err := ecdh.P256().GenerateKey(rand.Reader)
-		require.NoError(t, err)
+		x25519KeyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
-		x25519KeyPair, err := ka.GenerateKey()
+		// Create a P-256 key (wrong curve). P-256 itself stays approved and
+		// unaffected under fips140=only, so this generation cannot fail the
+		// same way requireGeneratedKeyPair's does.
+		p256PrivateKey, err := ecdh.P256().GenerateKey(rand.Reader)
 		require.NoError(t, err)
 
 		_, err = ka.DeriveSharedSecret(p256PrivateKey, x25519KeyPair.PublicKey)
@@ -139,11 +177,13 @@ func TestDeriveSharedSecret(t *testing.T) {
 	})
 
 	t.Run("wrong curve for public key", func(t *testing.T) {
-		// Create a P-256 key (wrong curve)
-		p256PrivateKey, err := ecdh.P256().GenerateKey(rand.Reader)
-		require.NoError(t, err)
+		x25519KeyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
-		x25519KeyPair, err := ka.GenerateKey()
+		// Create a P-256 key (wrong curve).
+		p256PrivateKey, err := ecdh.P256().GenerateKey(rand.Reader)
 		require.NoError(t, err)
 
 		_, err = ka.DeriveSharedSecret(x25519KeyPair.PrivateKey, p256PrivateKey.PublicKey())
@@ -153,8 +193,10 @@ func TestDeriveSharedSecret(t *testing.T) {
 
 	t.Run("same key pair derives non-zero secret", func(t *testing.T) {
 		// Even with the same key pair, X25519 should derive a valid secret
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		sharedSecret, err := ka.DeriveSharedSecret(keyPair.PrivateKey, keyPair.PublicKey)
 		require.NoError(t, err)
@@ -168,11 +210,17 @@ func TestDeriveSharedSecret(t *testing.T) {
 func TestDeriveKey(t *testing.T) {
 	ka := New()
 
-	// Generate a shared secret for testing
-	aliceKeyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
-	bobKeyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	// Generate a shared secret for testing. Every subtest below derives from
+	// it, so a FIPS-only refusal here (X25519 key generation) is asserted
+	// once for the whole function rather than per subtest.
+	aliceKeyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
+	bobKeyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 	sharedSecret, err := ka.DeriveSharedSecret(aliceKeyPair.PrivateKey, bobKeyPair.PublicKey)
 	require.NoError(t, err)
 
@@ -311,8 +359,10 @@ func TestParsePrivateKey(t *testing.T) {
 	t.Run("valid private key", func(t *testing.T) {
 		// Generate a valid key
 		ka := New()
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		// Get the raw bytes
 		privateKeyBytes := keyPair.PrivateKey.Bytes()
@@ -351,8 +401,10 @@ func TestParsePublicKey(t *testing.T) {
 	t.Run("valid public key", func(t *testing.T) {
 		// Generate a valid key
 		ka := New()
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		// Get the raw bytes
 		publicKeyBytes := keyPair.PublicKey.Bytes()
@@ -389,8 +441,10 @@ func TestParsePublicKey(t *testing.T) {
 
 func TestPrivateKeyBytes(t *testing.T) {
 	ka := New()
-	keyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	keyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	privateKeyBytes := PrivateKeyBytes(keyPair.PrivateKey)
 	assert.Len(t, privateKeyBytes, 32)
@@ -399,8 +453,10 @@ func TestPrivateKeyBytes(t *testing.T) {
 
 func TestPublicKeyBytes(t *testing.T) {
 	ka := New()
-	keyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	keyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	publicKeyBytes := PublicKeyBytes(keyPair.PublicKey)
 	assert.Len(t, publicKeyBytes, 32)
@@ -411,12 +467,16 @@ func TestRoundTripKeyAgreement(t *testing.T) {
 	ka := New()
 
 	// Generate Alice's key pair
-	aliceKeyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	aliceKeyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	// Generate Bob's key pair
-	bobKeyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	bobKeyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	// Alice derives shared secret
 	aliceSharedSecret, err := ka.DeriveSharedSecret(aliceKeyPair.PrivateKey, bobKeyPair.PublicKey)
@@ -448,8 +508,10 @@ func TestKeySerializationRoundTrip(t *testing.T) {
 	ka := New()
 
 	// Generate a key pair
-	original, err := ka.GenerateKey()
-	require.NoError(t, err)
+	original, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	// Serialize private key
 	privateKeyBytes := PrivateKeyBytes(original.PrivateKey)
@@ -469,7 +531,9 @@ func TestKeySerializationRoundTrip(t *testing.T) {
 	assert.Equal(t, privateKeyBytes, parsedPrivateKey.Bytes())
 	assert.Equal(t, publicKeyBytes, parsedPublicKey.Bytes())
 
-	// Verify key agreement still works
+	// Verify key agreement still works. This process's FIPS posture cannot
+	// have changed since the requireGeneratedKeyPair call above succeeded,
+	// so a second generation is safe to require directly.
 	otherKeyPair, err := ka.GenerateKey()
 	require.NoError(t, err)
 
@@ -511,8 +575,17 @@ func TestAgainstRFC7748TestVectors(t *testing.T) {
 	expectedSharedSecret, err := hex.DecodeString(sharedSecretHex)
 	require.NoError(t, err)
 
-	// Parse keys
+	// Parse keys. ParsePrivateKey/ParsePublicKey construct an X25519 key
+	// through crypto/ecdh, which refuses under GODEBUG=fips140=only exactly
+	// as GenerateKey does (see requireGeneratedKeyPair) -- so the first
+	// parse in this FIPS-only-incompatible test vector asserts that refusal
+	// instead of running the RFC 7748 comparison.
 	alicePrivate, err := ParsePrivateKey(alicePrivateBytes)
+	if fips140.Enforced() {
+		require.Error(t, err, "X25519 must be refused under GODEBUG=fips140=only")
+		require.Nil(t, alicePrivate)
+		return
+	}
 	require.NoError(t, err)
 	alicePublic, err := ParsePublicKey(alicePublicBytes)
 	require.NoError(t, err)

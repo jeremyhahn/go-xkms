@@ -17,6 +17,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime"
 	"sync/atomic"
@@ -25,6 +26,7 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -205,6 +207,13 @@ type AppService struct {
 	pinStatusFn       PINStatusFunc
 	phoneStatusFn     PhoneStatusFunc
 	auditLog          atomic.Pointer[audit.Logger]
+
+	// policy is the enterprise policy section whose UserCanConfigureTheme,
+	// UserCanToggleDevTools, DeveloperToolsEnabled, UserCanConfigureAutoUnseal
+	// and AllowAutoUnseal fields gate SetTheme, SetDeveloperTools and
+	// ToggleBarrierAutoUnseal. nil in personal mode, where none of these
+	// operations is policy-gated. See SetPolicy.
+	policy atomic.Pointer[config.PolicySection]
 }
 
 // NewAppService creates a new AppService with the provided configuration data.
@@ -317,21 +326,48 @@ func (s *AppService) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)
 }
 
-// logConfigEvent logs a configuration-related audit event.
-func (s *AppService) logConfigEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := s.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// SetPolicy installs the enterprise policy section that gates SetTheme,
+// SetDeveloperTools and ToggleBarrierAutoUnseal. The GUI calls this with
+// config.DefaultPolicy() before SO login and the verified section
+// afterward; see startupEnterprisePolicy and applyVerifiedEnterprisePolicy
+// in pkg/gui/enterprise_policy.go. A nil policy (personal mode) leaves
+// every one of these operations ungated.
+func (s *AppService) SetPolicy(pol *config.PolicySection) {
+	s.policy.Store(pol)
+}
+
+// denyPolicy logs a policy denial and returns the typed refusal. The
+// request is refused either way, but OpPolicyDenied is SeveritySecurity: if
+// the audit write itself fails, that failure is joined onto the denial so
+// the caller sees both — the operation was denied, and that denial may not
+// be durably recorded.
+func (s *AppService) denyPolicy(field, operation string) error {
+	err := &PolicyDeniedError{Field: field}
+	if auditErr := s.logConfigEvent(audit.OpPolicyDenied, false, err, map[string]any{"operation": operation}); auditErr != nil {
+		return errors.Join(err, auditErr)
 	}
+	return err
+}
+
+// logConfigEvent logs a configuration-related audit event. Callers must
+// propagate a non-nil return: op.Severity() (audit package) decides
+// whether that failure is required to fail the caller.
+func (s *AppService) logConfigEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := s.auditLog.Load()
+	if p == nil {
+		return nil
+	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
 }
 
 // SetContext is called by the Wails startup lifecycle hook.
@@ -452,16 +488,17 @@ func (s *AppService) UpdateConfig(cfg *GUIConfigData) error {
 	}
 	if s.configUpdater != nil {
 		if err := s.configUpdater(cfg); err != nil {
-			s.logConfigEvent(audit.OpConfigUpdated, false, err, nil)
+			if auditErr := s.logConfigEvent(audit.OpConfigUpdated, false, err, nil); auditErr != nil {
+				return auditErr
+			}
 			return err
 		}
 	}
 	old := s.config.Load()
 	s.config.Store(cfg)
-	s.logConfigEvent(audit.OpConfigUpdated, true, nil, map[string]any{
+	return s.logConfigEvent(audit.OpConfigUpdated, true, nil, map[string]any{
 		"changed_fields": configChangedFields(old, cfg),
 	})
-	return nil
 }
 
 // configChangedFields compares two config snapshots and returns a list of
@@ -542,8 +579,12 @@ func (s *AppService) GetTheme() string {
 	return s.config.Load().Theme
 }
 
-// SetTheme updates the theme and persists the configuration.
+// SetTheme updates the theme and persists the configuration. Returns a
+// *PolicyDeniedError if enterprise policy's UserCanConfigureTheme is false.
 func (s *AppService) SetTheme(theme string) error {
+	if pol := s.policy.Load(); pol != nil && !pol.UserCanConfigureTheme {
+		return s.denyPolicy("user_can_configure_theme", "set_theme")
+	}
 	if s.themeValidator != nil {
 		if err := s.themeValidator(theme); err != nil {
 			return err
@@ -558,7 +599,20 @@ func (s *AppService) SetTheme(theme string) error {
 // ToggleBarrierAutoUnseal enables or disables automatic barrier unsealing
 // on startup. When enabled, the barrier is auto-unsealed via TPM PCR
 // policy or sealed password. When disabled, the user must enter their PIN.
+//
+// Returns a *PolicyDeniedError if enterprise policy's
+// UserCanConfigureAutoUnseal is false, or, when enabling, if AllowAutoUnseal
+// is false -- the enterprise has not opted the deployment into the feature
+// at all, independent of whether this user could otherwise configure it.
 func (s *AppService) ToggleBarrierAutoUnseal(enabled bool) error {
+	if pol := s.policy.Load(); pol != nil {
+		if !pol.UserCanConfigureAutoUnseal {
+			return s.denyPolicy("user_can_configure_auto_unseal", "toggle_barrier_auto_unseal")
+		}
+		if enabled && !pol.AllowAutoUnseal {
+			return s.denyPolicy("allow_auto_unseal", "toggle_barrier_auto_unseal")
+		}
+	}
 	cfg := s.config.Load()
 	updated := *cfg
 	updated.BarrierAutoUnsealEnabled = enabled
@@ -572,7 +626,20 @@ func (s *AppService) GetDeveloperTools() bool {
 
 // SetDeveloperTools enables or disables the Developer Tools sidebar section
 // and persists the configuration.
+//
+// Returns a *PolicyDeniedError if enterprise policy's UserCanToggleDevTools
+// is false, or, when enabling, if DeveloperToolsEnabled is false -- the
+// enterprise has disabled the subsystem entirely, independent of whether
+// this user could otherwise toggle it.
 func (s *AppService) SetDeveloperTools(enabled bool) error {
+	if pol := s.policy.Load(); pol != nil {
+		if !pol.UserCanToggleDevTools {
+			return s.denyPolicy("user_can_toggle_dev_tools", "set_developer_tools")
+		}
+		if enabled && !pol.DeveloperToolsEnabled {
+			return s.denyPolicy("developer_tools_enabled", "set_developer_tools")
+		}
+	}
 	cfg := s.config.Load()
 	updated := *cfg
 	updated.DeveloperTools = enabled

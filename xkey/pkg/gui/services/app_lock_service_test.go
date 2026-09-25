@@ -787,8 +787,9 @@ func TestAppLockService_AutoLock_FiresAndLocks(t *testing.T) {
 	})
 	svc.autoLockMu.Unlock()
 
-	time.Sleep(200 * time.Millisecond)
-	assert.True(t, svc.IsLocked())
+	// The 50ms AfterFunc fire is the behavior under test; poll rather than
+	// bet a fixed sleep is long enough under a loaded scheduler.
+	require.Eventually(t, svc.IsLocked, 5*time.Second, 10*time.Millisecond, "auto-lock timer did not fire")
 }
 
 func TestAppLockService_AutoLock_EmitsEvent(t *testing.T) {
@@ -810,7 +811,13 @@ func TestAppLockService_AutoLock_EmitsEvent(t *testing.T) {
 	})
 	svc.autoLockMu.Unlock()
 
-	time.Sleep(200 * time.Millisecond)
+	// The 50ms AfterFunc fire is the behavior under test; poll for the
+	// emitted event itself (Lock sets locked before emitting, so polling
+	// IsLocked alone would race the emit) rather than bet a fixed sleep is
+	// long enough under a loaded scheduler.
+	require.Eventually(t, func() bool {
+		return emittedEvent.Load() != nil
+	}, 5*time.Second, 10*time.Millisecond, "auto-lock timer did not emit")
 
 	assert.True(t, svc.IsLocked())
 	ev, ok := emittedEvent.Load().(string)
@@ -831,14 +838,22 @@ func TestAppLockService_AutoLock_NoEmitWhenAlreadyLocked(t *testing.T) {
 	require.NoError(t, err)
 	initialCount := emitCount.Load()
 
-	// Set up a timer that tries to auto-lock again.
+	// Set up a timer that tries to auto-lock again, and signal on a channel
+	// instead of sleeping a fixed duration so the assertion below only runs
+	// once the attempt has actually completed.
+	done := make(chan struct{})
 	svc.autoLockMu.Lock()
 	svc.autoLockTimer = time.AfterFunc(50*time.Millisecond, func() {
 		_ = svc.Lock() // Should return ErrAppLockAlreadyLocked, no emit.
+		close(done)
 	})
 	svc.autoLockMu.Unlock()
 
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("auto-lock timer did not fire")
+	}
 
 	// Lock returned ErrAppLockAlreadyLocked, so no additional emit should fire.
 	assert.Equal(t, initialCount, emitCount.Load())
@@ -1219,4 +1234,49 @@ func TestAppLockService_HandleUnlock_EmptyPIN(t *testing.T) {
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Error, "PIN required")
 	assert.False(t, barrier.unsealCalled)
+}
+
+// ---------------------------------------------------------------------------
+// autoLockNow
+// ---------------------------------------------------------------------------
+
+// autoLockNow is the body the inactivity timer runs; these tests call it
+// directly rather than waiting on a real timer, so they stay instantaneous.
+
+func TestAppLockService_AutoLockNow_LocksSuccessfully(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: false}
+	svc := NewAppLockService(NewPINService(), barrier)
+	svc.SetContext(context.Background())
+	require.False(t, svc.IsLocked())
+
+	svc.autoLockNow(5)
+
+	assert.True(t, svc.IsLocked())
+	assert.True(t, barrier.sealCalled)
+}
+
+func TestAppLockService_AutoLockNow_AlreadyLockedIsNotReported(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: false}
+	svc := NewAppLockService(NewPINService(), barrier)
+	svc.SetContext(context.Background())
+
+	require.NoError(t, svc.Lock())
+	require.True(t, svc.IsLocked())
+
+	// Races with a manual lock: must not panic and must remain locked.
+	svc.autoLockNow(5)
+	assert.True(t, svc.IsLocked())
+}
+
+func TestAppLockService_AutoLockNow_SealFailureStillLocksApp(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: false, sealErr: errors.New("tpm busy")}
+	svc := NewAppLockService(NewPINService(), barrier)
+	svc.SetContext(context.Background())
+	require.False(t, svc.IsLocked())
+
+	svc.autoLockNow(5)
+
+	// The app lock itself always succeeds; only the barrier seal failed.
+	assert.True(t, svc.IsLocked())
+	assert.True(t, barrier.sealCalled)
 }

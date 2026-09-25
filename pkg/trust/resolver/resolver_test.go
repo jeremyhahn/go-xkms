@@ -381,8 +381,8 @@ func TestTLSConfig_EmbeddedReturnsSystemPool(t *testing.T) {
 	if tlsCfg == nil {
 		t.Fatal("expected non-nil tls.Config")
 	}
-	if tlsCfg.MinVersion != tls.VersionTLS12 {
-		t.Fatalf("expected TLS 1.2 minimum, got %d", tlsCfg.MinVersion)
+	if tlsCfg.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("expected TLS 1.3 minimum, got %d", tlsCfg.MinVersion)
 	}
 }
 
@@ -1087,4 +1087,47 @@ func TestEmbedded_HTTPSDialable(t *testing.T) {
 		t.Fatalf("tls.Dial: %v", dialErr)
 	}
 	_ = conn.Close()
+}
+
+// TestTLSConfig_RejectsTLS12Client is the go-xkms#892 regression test: a
+// server configured with the resolver's TLS config (MinVersion 1.3) must
+// refuse a client that offers at most TLS 1.2. This proves the floor is
+// enforced on the wire, not just set on the struct.
+func TestTLSConfig_RejectsTLS12Client(t *testing.T) {
+	cfg := &resolver.Config{
+		Scopes: map[string]*resolver.ScopeConfig{
+			"default": {Strategies: []resolver.Strategy{resolver.StrategyEmbedded}},
+		},
+	}
+	r, err := resolver.New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	serverTLSCfg, err := r.TLSConfig(context.Background(), "default", "")
+	if err != nil {
+		t.Fatalf("TLSConfig: %v", err)
+	}
+	if serverTLSCfg.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("expected TLS 1.3 minimum, got %d", serverTLSCfg.MinVersion)
+	}
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.TLS = serverTLSCfg
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+
+	clientCfg := &tls.Config{
+		RootCAs:    pool,
+		MaxVersion: tls.VersionTLS12,
+	}
+	conn, dialErr := tls.Dial("tcp", srv.Listener.Addr().String(), clientCfg)
+	if dialErr == nil {
+		_ = conn.Close()
+		t.Fatal("expected a TLS 1.2-only client handshake to fail against a resolver TLS config with MinVersion 1.3")
+	}
 }

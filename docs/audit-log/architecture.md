@@ -1,6 +1,6 @@
 # Audit Log — Architecture
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## The problem
 
@@ -105,6 +105,45 @@ unbounded.
   audit log readable by everyone is an information-disclosure surface.
 - **`NoOpLogger` is a deliberate, visible choice.** A deployment running with
   audit disabled should know it.
+
+## Write-failure policy (issue #688)
+
+Every call site that had been discarding `Log`'s returned error (`_ =
+logger.Log(...)`) was auditable-but-unenforced: a broken audit backend and a
+healthy one produced the identical response to the caller. That is
+indistinguishable from "audit is optional" in practice, which contradicts
+"an audit write that fails should be visible" above.
+
+The fix classifies every event/operation constant, once, per package that
+owns a vocabulary (`pkg/audit`, `xkey/pkg/audit`, `pkg/acme/audit`) as
+`SeveritySecurity` or `SeverityInformational`, and threads the write result
+through a shared `HandleWriteFailure` helper every call site uses instead of
+discarding the error:
+
+- `SeveritySecurity` (PIN, seal/unseal, key create/delete/use, CA issuance
+  and revocation, authentication and authorization, and their desktop-app
+  equivalents): a write failure becomes a typed `*ErrAuditWriteFailed` the
+  caller must propagate, failing the request.
+- `SeverityInformational` (protocol/lifecycle progress): a write failure is
+  logged and counted in `metrics.AuditWriteFailuresTotal`, and the caller
+  proceeds.
+
+Rejected alternatives:
+
+- **Fail every operation on any audit write failure.** Rejected: this would
+  turn a degraded audit backend into a full outage for read-heavy,
+  low-risk operations (service start/stop, connection lifecycle) with no
+  proportional security benefit.
+- **Classify by call site instead of by event/operation constant.** Rejected:
+  the same event type (e.g. a key-created event) must mean the same thing
+  everywhere it is emitted; classifying per call site would let two call
+  sites of the identical event disagree about whether a write failure is
+  tolerable.
+- **Default unclassified events to informational.** Rejected: an event
+  nobody has reviewed is exactly the case fail-closed protects — silently
+  downgrading it to best-effort defeats the purpose. Each classification set
+  is a fixed, explicit list of `SeverityInformational` members; everything
+  else, known or not, is `SeveritySecurity`.
 
 ## What this feature deliberately does not do
 

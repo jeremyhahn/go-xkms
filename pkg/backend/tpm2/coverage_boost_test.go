@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -64,7 +65,7 @@ func TestDecrypter_KeyDoesNotImplementDecrypter(t *testing.T) {
 // TestDecrypter_GetKeyError verifies Decrypter returns error when GetKey fails
 func TestDecrypter_GetKeyError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: errors.New("key not found")}
+	mockKb := &mockKeyBackend{getError: storage.ErrNotFound}
 	b := &Backend{closed: false, tpm: &mockTPM{}, keyBackend: mockKb, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "nonexistent"}
@@ -80,7 +81,7 @@ func TestDecrypter_GetKeyError(t *testing.T) {
 // TestSigner_GetKeyError verifies Signer returns error when GetKey fails
 func TestSigner_GetKeyError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: errors.New("key not found")}
+	mockKb := &mockKeyBackend{getError: storage.ErrNotFound}
 	b := &Backend{closed: false, tpm: &mockTPM{}, keyBackend: mockKb, srkAttrs: srkAttrs}
 
 	attrs := &types.KeyAttributes{CN: "nonexistent"}
@@ -106,6 +107,7 @@ func TestConfig_Validate_EmptyDeviceWithoutSimulator(t *testing.T) {
 	config := &Config{
 		Device:       tmpFile.Name(),
 		UseSimulator: false,
+		KeyDir:       t.TempDir(),
 	}
 	if err := config.Validate(); err != nil {
 		t.Errorf("Validate() failed for existing device: %v", err)
@@ -186,16 +188,13 @@ func TestListKeys_SkipsNonBlobFiles(t *testing.T) {
 
 // TestConfig_Validate_AllDefaults verifies all defaults are set when empty config
 func TestConfig_Validate_AllDefaults(t *testing.T) {
-	config := &Config{UseSimulator: true}
+	config := &Config{UseSimulator: true, KeyDir: t.TempDir()}
 	err := config.Validate()
 	if err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
 
 	// Verify all defaults
-	if config.KeyDir != "./tpm2-keys" {
-		t.Errorf("KeyDir: expected ./tpm2-keys, got %s", config.KeyDir)
-	}
 	if config.SRKHandle != 0x81000001 {
 		t.Errorf("SRKHandle: expected 0x81000001, got 0x%x", config.SRKHandle)
 	}

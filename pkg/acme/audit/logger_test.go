@@ -177,6 +177,45 @@ func TestFileAuditLogger_LogWithContextSync(t *testing.T) {
 
 // TestFileAuditLogger_RapidFlushCycles tests multiple rapid flush cycles
 // to ensure the sync mechanism is robust under stress
+// TestFileAuditLogger_FlushSyncErrorPropagates verifies that Flush() reports
+// a failure to reopen the audit log file for the post-write disk sync,
+// rather than silently succeeding as if the sync had happened. logPath is
+// repointed through a regular file (not a directory) so the reopen fails
+// deterministically with ENOTDIR — no permission changes required.
+func TestFileAuditLogger_FlushSyncErrorPropagates(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "audit.log")
+
+	config := &Config{
+		Enabled:              true,
+		LogPath:              logPath,
+		MaxSizeMB:            10,
+		MaxAgeDays:           30,
+		BufferSize:           10,
+		FlushIntervalSeconds: 10,
+	}
+
+	logger, err := NewFileAuditLogger(config)
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+	defer func() {
+		_ = logger.Close()
+	}()
+
+	fileLogger, ok := logger.(*FileAuditLogger)
+	require.True(t, ok, "expected *FileAuditLogger")
+
+	// notADir is a regular file; opening a path "under" it fails with
+	// ENOTDIR deterministically.
+	notADir := filepath.Join(tmpDir, "not-a-directory")
+	require.NoError(t, os.WriteFile(notADir, []byte("x"), 0600))
+	fileLogger.logPath = filepath.Join(notADir, "audit.log")
+
+	err = logger.Flush()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to reopen audit log file for sync")
+}
+
 func TestFileAuditLogger_RapidFlushCycles(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "audit-rapid.log")

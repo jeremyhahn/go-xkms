@@ -20,7 +20,6 @@ package ca
 
 import (
 	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"log/slog"
 
@@ -39,11 +38,15 @@ import (
 //   - plainSecret     - original secret; callers compare this with the value
 //     returned from the device's ActivateCredential.
 //
-// sigAlg is currently unused (the TPM verifies the CSR signature internally
-// during MakeCredential), but is accepted to stay type-compatible with
-// callers that expect to pass an x509.SignatureAlgorithm.
+// sigAlg is currently unused (the CSR's own signature and the EK
+// certificate chain are what get verified here; TPM2_ActivateCredential is
+// what ultimately proves possession), but is accepted to stay
+// type-compatible with callers that expect to pass an x509.SignatureAlgorithm.
 //
-// Requires SetTPM() to have been called.
+// The challenge is built in software (tpm2.NewCredentialChallenge) using the
+// TCG-specified construction, so this method needs no TPM of its own --
+// SetTPM is not required for it (go-xkms#798). It shares that primitive with
+// enroll-01's own construction, so the two never drift apart.
 //
 // Thread-safe: Yes
 func (ca *CA) VerifyTCG_CSR_IDevIDBytes(
@@ -51,11 +54,6 @@ func (ca *CA) VerifyTCG_CSR_IDevIDBytes(
 	sigAlg x509.SignatureAlgorithm,
 ) (credentialBlob []byte, encryptedSecret []byte, plainSecret []byte, err error) {
 	_ = sigAlg // Reserved for future explicit signature verification.
-
-	tpm := ca.getTPM()
-	if tpm == nil {
-		return nil, nil, nil, ErrTPMNotConfigured
-	}
 
 	tcgCSR, err := tpm2.UnmarshalIDevIDCSR(packedCSR)
 	if err != nil {
@@ -67,30 +65,32 @@ func (ca *CA) VerifyTCG_CSR_IDevIDBytes(
 		return nil, nil, nil, ErrTCGMissingEKCert
 	}
 
-	var ekCert *x509.Certificate
-	if block, _ := pem.Decode(csrContent.EkCert); block != nil {
-		ekCert, err = x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return nil, nil, nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("pem: %v", err)}
-		}
-	} else {
-		ekCert, err = x509.ParseCertificate(csrContent.EkCert)
-		if err != nil {
-			return nil, nil, nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("der: %v", err)}
-		}
+	ekCert, ekIntermediates, err := parseEKCertificateChain(csrContent.EkCert)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// TPM 2.0 Keys for Device Identity and Attestation v1.10r9 §6.1.2 step 5b
+	// / §6.2.2 step 4b: verify the EK certificate against a configured
+	// TPM-manufacturer trust anchor before generating the MakeCredential
+	// challenge below -- TPM2_ActivateCredential proves possession of the
+	// EK, not that the EK belongs to a genuine TPM.
+	if err := ca.verifyEKCertificateChain(ekCert, ekIntermediates); err != nil {
+		return nil, nil, nil, err
 	}
 
 	slog.Debug("VerifyTCG_CSR_IDevIDBytes: generating MakeCredential challenge",
 		slog.Int("ek_cert_size", len(csrContent.EkCert)),
 		slog.Int("attest_pub_size", len(csrContent.AttestPub)))
 
-	credentialBlob, encryptedSecret, plainSecret, err = tpm.MakeCredentialWithExternalEK(
-		ekCert,
-		csrContent.AttestPub,
-		nil,
-	)
+	activationKeyName, err := tpm2.ActivationKeyName(csrContent.AttestPub)
 	if err != nil {
 		return nil, nil, nil, &errs.Detail{Err: ErrTCGMakeCredentialFailed, Detail: fmt.Sprintf("%v", err)}
 	}
-	return credentialBlob, encryptedSecret, plainSecret, nil
+
+	challenge, secret, err := tpm2.NewCredentialChallenge(ekCert.PublicKey, activationKeyName)
+	if err != nil {
+		return nil, nil, nil, &errs.Detail{Err: ErrTCGMakeCredentialFailed, Detail: fmt.Sprintf("%v", err)}
+	}
+	return challenge.CredentialBlob, challenge.EncryptedSecret, secret, nil
 }

@@ -93,6 +93,16 @@ type Service struct {
 	xkmsService *xkms.XKMSService
 	sshClient   sdkssh.Client
 
+	// ca is the CA servicer wired via SetCA, delegated to by the CA RPC
+	// handlers in service_ca.go and service_ca_tcg.go. Nil (the default)
+	// causes those RPCs to return codes.Unavailable.
+	ca any
+
+	// caBundler is the CA bundle source wired via SetCABundler, consulted by
+	// GetCABundle before it falls back to ca's own GetCABundle method. Nil
+	// (the default) causes GetCABundle to rely on ca alone.
+	caBundler CABundler
+
 	// localTrust marks this Service as constructed for a local IPC listener
 	// (the Unix domain socket) rather than a network listener. It exists to
 	// resolve the ambiguity of a nil authorizer for privileged RPCs: only a
@@ -202,8 +212,12 @@ func (s *Service) authorize(ctx context.Context, resource, action, resourceID st
 	if role != "" {
 		auditEvent.Details["role"] = role
 	}
-	// Best-effort audit logging; do not disrupt the request pipeline.
-	_ = s.auditLogger.Log(ctx, auditEvent)
+	// authorize is a SeveritySecurity action (docs/audit-log/engineering.md):
+	// a failed audit write fails the request rather than let an
+	// authorization decision proceed unaudited.
+	if auditErr := audit.HandleWriteFailure(nil, auditEvent.Action, s.auditLogger.Log(ctx, auditEvent)); auditErr != nil {
+		return status.Error(codes.Internal, auditErr.Error())
+	}
 
 	if err != nil {
 		if errors.Is(err, auth.ErrUnauthenticated) {
@@ -819,10 +833,11 @@ func (s *Service) Encrypt(ctx context.Context, req *pb.EncryptRequest) (*pb.Encr
 	}
 
 	return &pb.EncryptResponse{
-		Ciphertext: resp.Ciphertext,
-		Nonce:      resp.Nonce,
-		Tag:        resp.Tag,
-		Iv:         resp.IV,
+		Ciphertext:   resp.Ciphertext,
+		Nonce:        resp.Nonce,
+		Tag:          resp.Tag,
+		Iv:           resp.IV,
+		GcmNonceMode: resp.GCMNonceMode,
 	}, nil
 }
 
@@ -853,6 +868,7 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 		Nonce:          req.Nonce,
 		Tag:            req.Tag,
 		AdditionalData: req.AdditionalData,
+		GCMNonceMode:   req.GcmNonceMode,
 		Mode:           req.Mode,
 		IV:             req.Iv,
 		Padding:        req.Padding,

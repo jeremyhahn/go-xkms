@@ -207,6 +207,45 @@ func TestTokenData(t *testing.T) {
 	}
 }
 
+func TestNewForMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     string
+		execCmd  string
+		wantName string
+		wantErr  error
+	}{
+		{name: "default mode is aws-credentials", mode: "", wantName: "aws-credentials"},
+		{name: "aws-credentials", mode: ModeAWSCredentials, wantName: "aws-credentials"},
+		{name: "json", mode: ModeJSON, wantName: "json"},
+		{name: "exec with command", mode: ModeExec, execCmd: "echo hi", wantName: "exec"},
+		{name: "none", mode: ModeNone, wantName: "noop"},
+		{name: "exec without command", mode: ModeExec, wantErr: ErrExecModeRequiresCommand},
+		{name: "unknown mode", mode: "carrier-pigeon", wantErr: ErrUnknownOutputMode},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, err := NewForMode(tt.mode, "default", "/tmp/credentials", tt.execCmd)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("NewForMode() error = %v, want %v", err, tt.wantErr)
+				}
+				if handler != nil {
+					t.Error("NewForMode() should return a nil handler on error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewForMode() unexpected error = %v", err)
+			}
+			if handler.Name() != tt.wantName {
+				t.Errorf("NewForMode() handler name = %s, want %s", handler.Name(), tt.wantName)
+			}
+		})
+	}
+}
+
 // testHandler is a simple handler for testing.
 type testHandler struct {
 	fn func(ctx context.Context, data *TokenData) error

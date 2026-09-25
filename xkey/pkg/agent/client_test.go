@@ -77,12 +77,9 @@ func TestClient_ConnectToServer(t *testing.T) {
 		t.Fatalf("connect failed: %v", err)
 	}
 
-	// Give gRPC time to establish connection.
-	time.Sleep(100 * time.Millisecond)
-
-	if !client.IsConnected() {
-		t.Error("client should be connected")
-	}
+	// Wait for the real signal (IsConnected) instead of sleeping a fixed
+	// duration.
+	waitUntil(t, 5*time.Second, client.IsConnected, "client never reached the connected state")
 
 	if client.Connection() == nil {
 		t.Error("connection should not be nil")

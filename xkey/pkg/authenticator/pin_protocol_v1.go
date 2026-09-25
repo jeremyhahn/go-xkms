@@ -27,6 +27,7 @@ import (
 	"sync"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // PIN Protocol V1 constants.
@@ -371,12 +372,8 @@ func (p *PINProtocolV1) ResetSharedSecret() {
 	defer p.mu.Unlock()
 
 	// Clear sensitive shared secret data
-	if p.sharedSecret != nil {
-		for i := range p.sharedSecret {
-			p.sharedSecret[i] = 0
-		}
-		p.sharedSecret = nil
-	}
+	enclave.Wipe(p.sharedSecret)
+	p.sharedSecret = nil
 }
 
 // Reset clears the ephemeral key pair and shared secret.
@@ -386,12 +383,8 @@ func (p *PINProtocolV1) Reset() {
 	defer p.mu.Unlock()
 
 	// Clear sensitive shared secret data
-	if p.sharedSecret != nil {
-		for i := range p.sharedSecret {
-			p.sharedSecret[i] = 0
-		}
-		p.sharedSecret = nil
-	}
+	enclave.Wipe(p.sharedSecret)
+	p.sharedSecret = nil
 
 	p.privateKey = nil
 	p.publicKey = nil

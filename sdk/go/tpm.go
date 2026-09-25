@@ -18,6 +18,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 )
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,29 @@ type AKProfile = tpm2.AKProfile
 
 // Quote represents a TPM 2.0 quote.
 type Quote = tpm2.Quote
+
+// ProvisioningState classifies a TPM's current provisioning progress: see
+// TrustedPlatformModule.State.
+type ProvisioningState = tpm2.ProvisioningState
+
+// CredentialChallenge is a TPM2_MakeCredential challenge built in software
+// by NewCredentialChallenge, and answered by AnswerCredentialChallenge or
+// ActivateCredential.
+type CredentialChallenge = tpm2.CredentialChallenge
+
+// ActivationKey is a transient key created by
+// TrustedPlatformModule.CreateActivationKey, used only to answer an EK
+// credential challenge.
+type ActivationKey = tpm2.ActivationKey
+
+// NewCredentialChallenge builds a TPM2_MakeCredential challenge for an EK
+// public key entirely in software; the verifier needs no TPM of its own.
+var NewCredentialChallenge = tpm2.NewCredentialChallenge
+
+// ActivationKeyName computes the TPM Name of a public area received off the
+// wire (e.g. a TCG-CSR-IDEVID's AttestPub field), for use as
+// NewCredentialChallenge's activationKeyName argument.
+var ActivationKeyName = tpm2.ActivationKeyName
 
 // ---------------------------------------------------------------------------
 // PCR types
@@ -239,9 +263,6 @@ type TPMBlobStorer = store.BlobStorer
 
 // TPMCertificateStorer provides certificate storage operations for TPM.
 type TPMCertificateStorer = store.CertificateStorer
-
-// TPMSignerStorer provides crypto.Signer storage operations for TPM.
-type TPMSignerStorer = store.SignerStorer
 
 // TPMSignerOpts provides TPM-specific signer options.
 type TPMSignerOpts = store.SignerOpts
@@ -460,6 +481,16 @@ var (
 	ErrTPMNVSecretTooLarge            = tpm2.ErrNVSecretTooLarge
 	ErrTPMInvalidHierarchy            = tpm2.ErrInvalidHierarchy
 	ErrTPMFactoryReset                = tpm2.ErrFactoryReset
+	ErrTPMForceClear                  = tpm2.ErrForceClear
+	ErrTPMClearLockoutRefused         = tpm2.ErrClearLockoutRefused
+	ErrTPMClearPlatformRefused        = tpm2.ErrClearPlatformRefused
+	ErrTPMProvisioningStateRead       = tpm2.ErrProvisioningStateRead
+	ErrTPMCredentialChallenge         = tpm2.ErrCredentialChallenge
+	ErrTPMEKPublicRequired            = tpm2.ErrEKPublicRequired
+	ErrTPMActivationKeyNameRequired   = tpm2.ErrActivationKeyNameRequired
+	ErrTPMActivationKeyCreate         = tpm2.ErrActivationKeyCreate
+	ErrTPMActivationKeyRequired       = tpm2.ErrActivationKeyRequired
+	ErrTPMCredentialChallengeRequired = tpm2.ErrCredentialChallengeRequired
 	ErrTPMEKConfigNil                 = tpm2.ErrEKConfigNil
 	ErrTPMIAKConfigNil                = tpm2.ErrIAKConfigNil
 	ErrTPMIDevIDConfigNil             = tpm2.ErrIDevIDConfigNil
@@ -525,6 +556,11 @@ var OpenDeviceTransport = tpm2.OpenDeviceTransport
 
 // OpenSimulator opens a TPM simulator for testing.
 var OpenSimulator = tpm2.OpenSimulator
+
+// EnrollSimulatorPlatformSRK enrolls the Platform SRK on a freshly
+// provisioned simulator or swtpm, for tests. Provision creates only the
+// TCG-standard keys, and xkms seals under the Platform SRK.
+var EnrollSimulatorPlatformSRK = tpm2test.EnrollPlatformSRK
 
 // NewPlatformKeyStore creates a new PlatformKeyStore with integrated TPM PIN management.
 var NewPlatformKeyStore = tpm2.NewPlatformKeyStore

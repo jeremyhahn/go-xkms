@@ -194,6 +194,82 @@ func TestSSHProxy_DetectsExistingSocket(t *testing.T) {
 	}
 }
 
+// TestSSHProxy_StaleSocketRemovalFailure proves that Start reports a typed
+// error when a stale socket file cannot be removed, rather than silently
+// proceeding to a listen attempt that fails with a less informative error.
+func TestSSHProxy_StaleSocketRemovalFailure(t *testing.T) {
+	dir := t.TempDir()
+	socketPath := filepath.Join(dir, "ssh-agent.sock")
+
+	if err := os.WriteFile(socketPath, []byte("stale"), 0600); err != nil {
+		t.Fatalf("failed to create stale socket: %v", err)
+	}
+	// Remove permission on the parent directory so os.Remove(socketPath)
+	// fails with a permission error instead of succeeding.
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatalf("failed to lock socket directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0700); err != nil {
+			t.Errorf("failed to restore socket directory permissions: %v", err)
+		}
+	})
+
+	client := testSSHProxyClient(t)
+	proxy, _ := NewSSHProxy(socketPath, client, testLogger())
+
+	err := proxy.Start()
+	if err == nil {
+		t.Fatal("expected Start to fail when the stale socket cannot be removed")
+	}
+	var agentErr *AgentError
+	if !errors.As(err, &agentErr) {
+		t.Fatalf("expected *AgentError, got %T: %v", err, err)
+	}
+	if !errors.Is(agentErr, ErrSocketPath) {
+		t.Errorf("expected ErrSocketPath, got %v", agentErr)
+	}
+	if agentErr.Cause == nil {
+		t.Error("expected the removal failure to be reported as the cause")
+	}
+}
+
+// erroringConn is a minimal net.Conn stub whose Close reports a fixed
+// error, used to prove Stop joins connection-close failures into its
+// returned error instead of discarding them.
+type erroringConn struct {
+	net.Conn
+	closeErr error
+}
+
+func (c *erroringConn) Close() error { return c.closeErr }
+
+// TestSSHProxy_Stop_JoinsConnectionCloseError proves that a failure closing
+// a tracked in-flight connection is surfaced through Stop's return value
+// rather than being silently discarded.
+func TestSSHProxy_Stop_JoinsConnectionCloseError(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	client := testSSHProxyClient(t)
+
+	proxy, err := NewSSHProxy(socketPath, client, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	if err := proxy.Start(); err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+
+	closeErr := errors.New("boom: connection close failed")
+	proxy.mu.Lock()
+	proxy.conns[&erroringConn{closeErr: closeErr}] = struct{}{}
+	proxy.mu.Unlock()
+
+	err = proxy.Stop()
+	if !errors.Is(err, closeErr) {
+		t.Errorf("expected Stop's error to include the connection close failure, got %v", err)
+	}
+}
+
 func TestSSHProxy_RemovesStaleSocket(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
 

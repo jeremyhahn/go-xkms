@@ -23,6 +23,17 @@ import (
 	"github.com/makiuchi-d/gozxing/qrcode"
 )
 
+// The three screenshot entry points are held behind package-level function
+// variables rather than called directly, so ScanScreen's control flow (no
+// displays, an out-of-range index, a capture failure) can be exercised by a
+// unit test without depending on a real display or modifying the host.
+// Production code never reassigns these; only tests do.
+var (
+	numActiveDisplays = screenshot.NumActiveDisplays
+	getDisplayBounds  = screenshot.GetDisplayBounds
+	captureRect       = screenshot.CaptureRect
+)
+
 // ScanMode controls which QR code URI schemes the scanner accepts.
 type ScanMode int
 
@@ -72,13 +83,13 @@ func NewScanner() *Scanner {
 
 // NumDisplays returns the number of active displays.
 func NumDisplays() int {
-	return screenshot.NumActiveDisplays()
+	return numActiveDisplays()
 }
 
 // ScanScreen captures the specified display and scans for QR codes.
 // displayIndex is 0-based. Use -1 to scan all displays.
 func (s *Scanner) ScanScreen(displayIndex int) ([]*ScanResult, error) {
-	n := screenshot.NumActiveDisplays()
+	n := numActiveDisplays()
 	if n == 0 {
 		return nil, ErrNoDisplaysFound
 	}
@@ -131,8 +142,8 @@ func (s *Scanner) ScanAllScreens() ([]*ScanResult, error) {
 
 // scanDisplay captures and scans a single display.
 func (s *Scanner) scanDisplay(displayIndex int) ([]*ScanResult, error) {
-	bounds := screenshot.GetDisplayBounds(displayIndex)
-	img, err := screenshot.CaptureRect(bounds)
+	bounds := getDisplayBounds(displayIndex)
+	img, err := captureRect(bounds)
 	if err != nil {
 		return nil, ErrScreenCaptureFailed
 	}

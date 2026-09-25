@@ -72,7 +72,19 @@ func TestRenewalService_ForceRenewal(t *testing.T) {
 			switch r.URL.Path {
 			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"newOrder": server.URL + "/new-order",
+					"newNonce":   server.URL + "/new-nonce",
+					"newAccount": server.URL + "/new-account",
+					"newOrder":   server.URL + "/new-order",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
 				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
@@ -206,7 +218,19 @@ func TestRenewalService_RenewAll(t *testing.T) {
 			switch r.URL.Path {
 			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"newOrder": server.URL + "/new-order",
+					"newNonce":   server.URL + "/new-nonce",
+					"newAccount": server.URL + "/new-account",
+					"newOrder":   server.URL + "/new-order",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
 				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
@@ -431,7 +455,19 @@ func TestRenewalService_CheckAndRenewCertificates(t *testing.T) {
 			switch r.URL.Path {
 			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"newOrder": server.URL + "/new-order",
+					"newNonce":   server.URL + "/new-nonce",
+					"newAccount": server.URL + "/new-account",
+					"newOrder":   server.URL + "/new-order",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
 				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
@@ -585,7 +621,19 @@ func TestRenewalService_RenewCertificate_WithRetries(t *testing.T) {
 			switch r.URL.Path {
 			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"newOrder": server.URL + "/new-order",
+					"newNonce":   server.URL + "/new-nonce",
+					"newAccount": server.URL + "/new-account",
+					"newOrder":   server.URL + "/new-order",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
 				})
 			case "/new-order":
 				if attemptCount <= 2 {

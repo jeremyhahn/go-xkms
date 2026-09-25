@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -179,8 +180,7 @@ func Dial(ctx context.Context, req DialRequest, cfg Config) (Console, error) {
 	}
 	c, err := open(client, cfg, true)
 	if err != nil {
-		_ = client.Close()
-		return nil, err
+		return nil, errors.Join(err, client.Close())
 	}
 	return c, nil
 }
@@ -212,45 +212,7 @@ func Dial(ctx context.Context, req DialRequest, cfg Config) (Console, error) {
 func buildHostKeyCallback(ctx context.Context, req DialRequest) ssh.HostKeyCallback {
 	var confirm known_hosts.Confirmer
 	if len(req.KnownHostsExtraFiles) > 0 || req.HostKeyConfirm != nil {
-		confirm = func(cctx context.Context, host string, key ssh.PublicKey) (bool, error) {
-			for _, f := range req.KnownHostsExtraFiles {
-				pub, found, lerr := known_hosts.LookupFile(f, host)
-				if lerr != nil {
-					return false, lerr
-				}
-				if !found {
-					continue
-				}
-				if keys.Fingerprint(pub) != keys.Fingerprint(key) {
-					return false, &known_hosts.MismatchError{
-						Host:     host,
-						Expected: keys.Fingerprint(pub),
-						Received: keys.Fingerprint(key),
-					}
-				}
-				return true, nil // known via an external known_hosts file
-			}
-
-			if req.HostKeyConfirm == nil {
-				return false, nil
-			}
-			accept, cerr := req.HostKeyConfirm(cctx, host, key)
-			if cerr != nil || !accept {
-				return accept, cerr
-			}
-
-			// Fresh first contact: mirror into every external file.
-			// Best-effort — a write failure on an external file must not
-			// fail the session, matching pkg/ssh/connect's Sync()/
-			// mirrorKnownHosts treatment of the same class of failure.
-			pin := known_hosts.PinFromPublicKey(host, req.HostKeyScope, req.HostKeyOwner, key, known_hosts.SourceFirstContact)
-			if line, eerr := known_hosts.Emit(pin); eerr == nil {
-				for _, f := range req.KnownHostsExtraFiles {
-					_ = known_hosts.AppendMissing([]byte(line+"\n"), f)
-				}
-			}
-			return true, nil
-		}
+		confirm = firstContactConfirmer(req)
 	}
 
 	store := req.KnownHosts
@@ -258,6 +220,61 @@ func buildHostKeyCallback(ctx context.Context, req DialRequest) ssh.HostKeyCallb
 		store = noopHostKeyStore{}
 	}
 	return known_hosts.CallbackWithConfirm(ctx, store, req.HostKeyScope, req.HostKeyOwner, confirm)
+}
+
+// firstContactConfirmer builds the known_hosts.Confirmer buildHostKeyCallback
+// layers on top of the store: an external-file lookup first, then req's
+// HostKeyConfirm TOFU policy. It is a separate function (rather than an
+// inline closure) so its Emit/mirror best-effort path is directly testable
+// without a live SSH handshake.
+func firstContactConfirmer(req DialRequest) known_hosts.Confirmer {
+	return func(cctx context.Context, host string, key ssh.PublicKey) (bool, error) {
+		for _, f := range req.KnownHostsExtraFiles {
+			pub, found, lerr := known_hosts.LookupFile(f, host)
+			if lerr != nil {
+				return false, lerr
+			}
+			if !found {
+				continue
+			}
+			if keys.Fingerprint(pub) != keys.Fingerprint(key) {
+				return false, &known_hosts.MismatchError{
+					Host:     host,
+					Expected: keys.Fingerprint(pub),
+					Received: keys.Fingerprint(key),
+				}
+			}
+			return true, nil // known via an external known_hosts file
+		}
+
+		if req.HostKeyConfirm == nil {
+			return false, nil
+		}
+		accept, cerr := req.HostKeyConfirm(cctx, host, key)
+		if cerr != nil || !accept {
+			return accept, cerr
+		}
+
+		// Fresh first contact: mirror into every external file. Both the
+		// rendering (Emit) and the write (AppendMissing) are best-effort —
+		// a failure here must not fail the session, matching
+		// pkg/ssh/connect's Sync()/mirrorKnownHosts treatment of the same
+		// class of failure. The trust decision was already made above by
+		// HostKeyConfirm; this is purely a convenience mirror for external
+		// tools (e.g. the system ssh client) reading KnownHostsExtraFiles.
+		pin := known_hosts.PinFromPublicKey(host, req.HostKeyScope, req.HostKeyOwner, key, known_hosts.SourceFirstContact)
+		line, eerr := known_hosts.Emit(pin)
+		if eerr != nil {
+			slog.Warn("ssh/console: failed to render an accepted host key for known_hosts mirroring", "host", host, "error", eerr)
+			return true, nil
+		}
+		for _, f := range req.KnownHostsExtraFiles {
+			if aerr := known_hosts.AppendMissing([]byte(line+"\n"), f); aerr != nil {
+				slog.Warn("ssh/console: failed to mirror an accepted host key into an external known_hosts file", "host", host, "file", f, "error", aerr)
+			}
+		}
+		return true, nil
+	}
 }
 
 // noopHostKeyStore discards all writes and reports every lookup as absent.
@@ -293,6 +310,19 @@ func Open(client *ssh.Client, cfg Config) (Console, error) {
 	return open(client, cfg, false)
 }
 
+// closeSessionOnError closes sess after a setup failure (RequestPty, Shell,
+// or one of the pipe openers) and joins the close result into cause, the
+// error already being returned. The same filtering (*sshConsole).Close
+// applies on the success path: x/crypto/ssh reports "already closed" as
+// io.EOF, which means nothing more than the session never having gotten off
+// the ground and is not itself worth reporting.
+func closeSessionOnError(sess *ssh.Session, cause error) error {
+	if cerr := sess.Close(); cerr != nil && !errors.Is(cerr, io.EOF) {
+		return errors.Join(cause, cerr)
+	}
+	return cause
+}
+
 // open is the shared implementation. ownClient controls whether Close also
 // closes the *ssh.Client.
 func open(client *ssh.Client, cfg Config, ownClient bool) (Console, error) {
@@ -302,25 +332,28 @@ func open(client *ssh.Client, cfg Config, ownClient bool) (Console, error) {
 	}
 
 	for k, v := range cfg.Env {
-		_ = sess.Setenv(k, v)
+		// Best-effort: RFC 4254 6.4 lets a server silently accept only a
+		// subset of requested variables, so a rejection here is routine
+		// server policy, not a session-ending failure. Still worth knowing
+		// about, so it is logged rather than dropped.
+		if serr := sess.Setenv(k, v); serr != nil {
+			slog.Debug("ssh/console: remote rejected an environment variable", "key", k, "error", serr)
+		}
 	}
 
 	// For a terminal we want stderr merged into the single output stream the
 	// PTY presents, so wire stdin/stdout pipes and merge stderr to stdout.
 	stdin, err := sess.StdinPipe()
 	if err != nil {
-		_ = sess.Close()
-		return nil, &SessionError{Err: err}
+		return nil, closeSessionOnError(sess, &SessionError{Err: err})
 	}
 	stdout, err := sess.StdoutPipe()
 	if err != nil {
-		_ = sess.Close()
-		return nil, &SessionError{Err: err}
+		return nil, closeSessionOnError(sess, &SessionError{Err: err})
 	}
 	stderr, err := sess.StderrPipe()
 	if err != nil {
-		_ = sess.Close()
-		return nil, &SessionError{Err: err}
+		return nil, closeSessionOnError(sess, &SessionError{Err: err})
 	}
 
 	if err := sess.RequestPty(cfg.term(), cfg.rows(), cfg.cols(), ssh.TerminalModes{
@@ -328,12 +361,10 @@ func open(client *ssh.Client, cfg Config, ownClient bool) (Console, error) {
 		ssh.TTY_OP_ISPEED: 14400,
 		ssh.TTY_OP_OSPEED: 14400,
 	}); err != nil {
-		_ = sess.Close()
-		return nil, &SessionError{Err: err}
+		return nil, closeSessionOnError(sess, &SessionError{Err: err})
 	}
 	if err := sess.Shell(); err != nil {
-		_ = sess.Close()
-		return nil, &SessionError{Err: err}
+		return nil, closeSessionOnError(sess, &SessionError{Err: err})
 	}
 
 	c := &sshConsole{

@@ -21,10 +21,12 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -464,6 +466,12 @@ func TestHandlePasswordUnlock(t *testing.T) {
 	// password store to unlock. This is the opposite polarity from the tenant
 	// *scope gates* (tenant.go's tenantAccess): those pass a system-scoped
 	// caller through, this rejects it.
+	// go-xkms#912: this cross-tenant refusal used to return the bare
+	// staticpw.ErrInvalidTenantID sentinel, which pkg/apimodule's dispatcher
+	// cannot classify (only *KeyOpError carries a wire code), so the caller
+	// saw ErrCodeInternalError instead of Invalid params -- diverging from
+	// pkg/api/grpc/service_password.go's mapPasswordError, which reports
+	// codes.InvalidArgument for the identical staticpw.ErrInvalidTenantID.
 	t.Run("system-tenant caller is rejected", func(t *testing.T) {
 		server.passwordManager = createPasswordManager(t)
 		ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "webauthn-user", TenantID: "system"})
@@ -472,6 +480,10 @@ func TestHandlePasswordUnlock(t *testing.T) {
 		_, err := server.handlePasswordUnlock(ctx, req)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, staticpw.ErrInvalidTenantID)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr, "must be classified, matching gRPC's InvalidArgument")
+		assert.Equal(t, ErrCodeInvalidParams, keyErr.Code)
 	})
 }
 
@@ -510,6 +522,10 @@ func TestHandlePasswordLock(t *testing.T) {
 		_, err := server.handlePasswordLock(ctx, req)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, staticpw.ErrInvalidTenantID)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr, "must be classified, matching gRPC's InvalidArgument")
+		assert.Equal(t, ErrCodeInvalidParams, keyErr.Code)
 	})
 }
 
@@ -613,6 +629,124 @@ func TestHandlePasswordGenerate(t *testing.T) {
 	})
 }
 
+// TestHandlePasswordSetAccessMode exercises the password.setAccessMode
+// handler added for go-xkms#753: it must delegate to
+// XKMSService.PasswordStoreSetAccessMode and translate the servicer's
+// sentinels onto the JSON-RPC codes pkg/api/rest/password_handlers.go's
+// SetAccessModeHandler already reports for the same conditions.
+func TestHandlePasswordSetAccessMode(t *testing.T) {
+	server := createTestServer(t)
+	defer cleanupXKMS()
+
+	t.Run("fails when xkms service not configured", func(t *testing.T) {
+		bare := &Server{}
+		paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{Mode: "session_based"})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: paramsJSON, ID: 1}
+
+		_, err := bare.handlePasswordSetAccessMode(context.Background(), req)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrPasswordStoreNotConfigured)
+	})
+
+	t.Run("fails with invalid JSON params as InvalidParams", func(t *testing.T) {
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: json.RawMessage(`{bad`), ID: 1}
+
+		_, err := server.handlePasswordSetAccessMode(context.Background(), req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
+	})
+
+	t.Run("fails with empty mode as InvalidParams", func(t *testing.T) {
+		paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: paramsJSON, ID: 1}
+
+		_, err := server.handlePasswordSetAccessMode(context.Background(), req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
+		assert.ErrorIs(t, err, xkms.ErrInvalidAccessMode)
+	})
+
+	t.Run("fails with an out-of-vocabulary mode as InvalidParams", func(t *testing.T) {
+		manager := unlockTestManager(t)
+		server.xkmsService.SetPasswordStoreManager(manager)
+
+		paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{Mode: "bogus"})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: paramsJSON, ID: 1}
+
+		_, err := server.handlePasswordSetAccessMode(tenantCtx(), req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
+		assert.ErrorIs(t, err, xkms.ErrInvalidAccessMode)
+	})
+
+	t.Run("fails switching to an unsupported mode as MethodNotFound", func(t *testing.T) {
+		manager := unlockTestManager(t)
+		server.xkmsService.SetPasswordStoreManager(manager)
+
+		// tenantCtx's store is session based; requesting the other valid mode
+		// asks the wired store to change its enforced strategy, which
+		// PasswordStoreSetAccessMode refuses.
+		paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{Mode: "pin_per_operation"})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: paramsJSON, ID: 1}
+
+		_, err := server.handlePasswordSetAccessMode(tenantCtx(), req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeMethodNotFound, keyOpErr.Code)
+		assert.ErrorIs(t, err, xkms.ErrOperationNotSupported)
+	})
+
+	t.Run("succeeds requesting the mode already in force", func(t *testing.T) {
+		manager := unlockTestManager(t)
+		server.xkmsService.SetPasswordStoreManager(manager)
+
+		paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{Mode: "session_based"})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: paramsJSON, ID: 1}
+
+		result, err := server.handlePasswordSetAccessMode(tenantCtx(), req)
+		require.NoError(t, err)
+
+		modeResult, ok := result.(PasswordAccessModeResult)
+		require.True(t, ok)
+		assert.Equal(t, "session_based", modeResult.Mode)
+		assert.NotEmpty(t, modeResult.Message)
+	})
+}
+
+// TestHandlePasswordSetAccessMode_RBACDenied is the explicit RBAC-deny
+// regression for go-xkms#753: an authenticated caller without passwords:write
+// must be denied before the handler ever runs, exactly like every other
+// password.* method (see TestAuthorizeMethod_EveryPrivilegedMethod, which
+// also walks this method generically).
+func TestHandlePasswordSetAccessMode_RBACDenied(t *testing.T) {
+	svc := setupTestXKMS(t)
+	defer cleanupXKMS()
+
+	rbac := newFakeRBAC() // no grants
+	server := newRBACServer(t, svc, rbac)
+
+	paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{Mode: "session_based"})
+	resp := invokeRequest(server, authedCtx(), &JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "password.setAccessMode",
+		Params:  paramsJSON,
+		ID:      1,
+	})
+
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Error, "caller without passwords:write must be denied")
+	assert.Equal(t, ErrCodeForbidden, resp.Error.Code)
+	assert.Equal(t, "passwords:write", rbac.lastCall())
+	assert.Nil(t, resp.Result)
+}
+
 func TestMapPasswordError(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -634,10 +768,20 @@ func TestMapPasswordError(t *testing.T) {
 		})
 	}
 
-	t.Run("returns unknown error as-is", func(t *testing.T) {
+	t.Run("classifies an unknown error as internal, not bare", func(t *testing.T) {
+		// Pins go-xkms#912: mapPasswordError used to return the bare
+		// sentinel here, which pkg/apimodule's dispatcher (module_mcp.go)
+		// cannot classify -- only *KeyOpError -- so every unrecognised
+		// password error reached the caller as the generic "xkms: internal
+		// error" placeholder with no detail. It must now come back wrapped,
+		// carrying the original error and ErrCodeInternalError.
 		unknownErr := errors.New("something else")
 		err := mapPasswordError(unknownErr)
-		assert.Equal(t, unknownErr, err)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr)
+		assert.Equal(t, ErrCodeInternalError, keyErr.Code)
+		assert.ErrorIs(t, err, unknownErr)
 	})
 }
 
@@ -663,10 +807,15 @@ func TestMapPasswordStoreError(t *testing.T) {
 		})
 	}
 
-	t.Run("returns unknown error as-is", func(t *testing.T) {
+	t.Run("classifies an unknown error as internal, not bare", func(t *testing.T) {
+		// Pins go-xkms#912: see the identical case in TestMapPasswordError.
 		unknownErr := errors.New("something else")
 		err := mapPasswordStoreError(unknownErr)
-		assert.Equal(t, unknownErr, err)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr)
+		assert.Equal(t, ErrCodeInternalError, keyErr.Code)
+		assert.ErrorIs(t, err, unknownErr)
 	})
 }
 

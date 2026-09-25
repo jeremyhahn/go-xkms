@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -84,6 +86,40 @@ func TestRegisterMCP_RegistersFullToolSurface(t *testing.T) {
 	bare.RegisterMCP(mcpserver.NewMCPServer("bare", "0.0.0"))
 }
 
+// TestModule_MCPToolPermissions_MatchesMethodSpecs proves every module MCP
+// tool gets exactly one permission entry, derived from its MethodSpec: a
+// spec carrying a resource:action gets that permission, and one carrying
+// neither (public or handler-gated) gets qrdb's identity-gated sentinel —
+// the mapping qrdb's MCP authorization path relies on to decide, per tool,
+// whether authorization is enforced here or deferred to the module's own
+// dispatch gates.
+func TestModule_MCPToolPermissions_MatchesMethodSpecs(t *testing.T) {
+	m, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+
+	specs := xkmsmcp.ModuleMethods()
+	perms := m.MCPToolPermissions()
+	require.Len(t, perms, len(specs), "one permission entry per declared tool, no more, no fewer")
+
+	var sawResourceMapped, sawIdentityGated bool
+	for _, spec := range specs {
+		got, ok := perms[spec.Tool]
+		require.True(t, ok, "tool %q missing a permission entry", spec.Tool)
+
+		if spec.Resource != "" && spec.Action != "" {
+			assert.Equal(t, qrdbsdk.Permission(spec.Resource+":"+spec.Action), got,
+				"tool %q must carry its resource:action permission", spec.Tool)
+			sawResourceMapped = true
+		} else {
+			assert.Equal(t, qrdbsdk.PermissionIdentityGated, got,
+				"tool %q with no resource:action must carry the identity-gated sentinel", spec.Tool)
+			sawIdentityGated = true
+		}
+	}
+	assert.True(t, sawResourceMapped, "test fixture assumption: at least one tool carries a resource:action permission")
+	assert.True(t, sawIdentityGated, "test fixture assumption: at least one tool carries the identity-gated sentinel")
+}
+
 // TestMCPToolHandler_LazyAndDispatch proves the tool handler answers a tool
 // error while unresolved, dispatches a real method once resolved, and
 // rejects invalid params JSON.
@@ -111,4 +147,43 @@ func TestMCPToolHandler_LazyAndDispatch(t *testing.T) {
 	res, err = handler(context.Background(), toolCallRequest("{not-json"))
 	require.NoError(t, err)
 	assert.True(t, res.IsError)
+}
+
+// TestMCPToolHandler_GapMethods_RoundTrip proves the go-xkms#773 PIN,
+// custodian, tenant, and non-ECDH deriveKey methods reach InvokeMethod
+// through the real mcp-go tool-call boundary (ToolName translation, tool
+// registration, and params_json plumbing), one representative per group.
+// None of the backing sub-systems (PIN backend, custodian client, tenant
+// service) are composed on this fixture, so every call answers the
+// not-configured tool error rather than success; what this proves is that
+// dispatch reaches the handler at all, which is exactly the gap #773 found
+// (the method was previously "method not found" -- unreachable, not merely
+// unconfigured).
+func TestMCPToolHandler_GapMethods_RoundTrip(t *testing.T) {
+	backend := newMCPBackend(t)
+	m, err := NewModule(func() *xkms.XKMSService { return nil },
+		WithMCPServer(func() *xkmsmcp.Server { return backend }))
+	require.NoError(t, err)
+
+	for _, method := range []string{
+		"xkms.getLockoutStatus",
+		"xkms.listCustodianGroups",
+		"xkms.listTenants",
+		"xkms.deriveKey",
+	} {
+		t.Run(method, func(t *testing.T) {
+			spec := xkmsmcp.MethodSpec{Method: method, Tool: xkmsmcp.ToolName(method)}
+			handler := m.mcpToolHandler(spec)
+
+			res, err := handler(context.Background(), toolCallRequest(""))
+
+			require.NoError(t, err, "the tool call itself must not fail transport-level")
+			require.True(t, res.IsError, "no sub-system is composed on this fixture")
+			require.NotEmpty(t, res.Content)
+			text, ok := mcpgo.AsTextContent(res.Content[0])
+			require.True(t, ok)
+			assert.NotContains(t, text.Text, "method not found",
+				"the method must be dispatchable, not merely reported as unknown")
+		})
+	}
 }

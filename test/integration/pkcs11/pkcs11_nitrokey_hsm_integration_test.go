@@ -68,7 +68,7 @@ func TestNitrokeyHSM(t *testing.T) {
 	config := &pkcs11.Config{
 		Library:     libPath,
 		TokenLabel:  "go-xkms-test (UserPIN)",
-		PIN:         types.SecretValue{Raw: "648219"},
+		PIN:         &types.SecretValue{Raw: "648219"},
 		KeyStorage:  keyStorage,
 		CertStorage: certStorageBackend,
 	}

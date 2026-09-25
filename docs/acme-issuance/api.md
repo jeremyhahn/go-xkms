@@ -1,6 +1,6 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
@@ -31,6 +31,17 @@ clients only ever hard-code the directory URL.
 | Certificate | `POST /acme/cert/{id}` | JWS, account key |
 | Revoke certificate | `POST /acme/revoke-cert` | JWS, account or certificate key |
 | CA bundle | `GET /acme/ca-bundle` | public |
+| Health | `GET /acme/health` | public |
+
+`GET /acme/health` (non-RFC 8555) reports circuit breaker and
+graceful-degradation status: every breaker registered on the server's
+`circuitbreaker.Manager` (name, state, failure/success counts) and whether
+`GET /acme/directory`/`GET /acme/ca-bundle` are currently serving cached
+responses because CA-bundle storage access is unavailable. 200 when every
+breaker is closed, 503 otherwise. See
+[`../acme-issuance/engineering.md`](engineering.md)#circuit-breakers-and-degradation
+for what each breaker guards. A degraded `GET /acme/directory` or `GET
+/acme/ca-bundle` response carries `Warning: 110 - "Response is stale"`.
 
 The directory document is built in
 `pkg/acme/server/handlers/directory.go` from the configured `baseRESTURI`. When
@@ -87,6 +98,28 @@ public key the order asserts. An operator who registers the device through an
 EAB with `deviceInfo.tpmManufacturer` bounds it: the device may assert only
 that code, whether or not EAB is required for endorse-01.
 
+### device-attest-01 / permanent-identifier finalize
+
+A `permanent-identifier` order finalized with a standard x509 CSR (rather
+than a TCG-CSR-IDEVID) — `device-attest-01`, or `enroll-01` when the client
+sends a standard CSR instead of a TCG-CSR-IDEVID — is matched against the
+CSR's RFC 4043 `permanentIdentifier` otherName (OID `1.3.6.1.5.5.7.8.3`)
+inside its `subjectAltName` extension. The Common Name is never consulted for
+this identifier.
+
+| Condition | Problem |
+|---|---|
+| the CSR has no `permanentIdentifier` otherName | `badCSR` (400) |
+| the CSR carries more than one `permanentIdentifier` otherName, or an otherName of any other type | `badCSR` (400) |
+| the otherName's value does not equal an identifier the order authorizes | `rejectedIdentifier` (401) |
+| the CSR carries a DNS or IP SAN, or an email/URI SAN | `rejectedIdentifier` (401) / `malformed` (400) unless that exact name is one of the order's authorized `dns`/`ip` identifiers |
+
+As with endorse-01, each is refused before the order moves to `processing`.
+`endorse-01` is the one exception: its permanent identifier is the EK public
+key being certified, authorized when the endorse-01 challenge itself was
+validated, so its finalize CSR is never checked against the order's
+permanent identifier — only its DNS/IP SANs are.
+
 ## Transport adapters
 
 | Transport | What it carries | Package |
@@ -105,12 +138,57 @@ absence — ACME is a network enrollment protocol and a local socket has no
 identifiers to validate — but it is written as a gap rather than omitted so the
 decision is visible.
 
+### Interactive documentation (Swagger UI)
+
+`pkg/acme/api/swagger` embeds both OpenAPI specs (`acme-api.yaml`,
+`admin-api.yaml`) and a vendored copy of `swagger-ui-dist` — no CDN, no
+external fetch at runtime — and mounts them on the same gorilla mux router
+`pkg/acme/api/server` builds for the Admin API:
+
+| Path | Serves |
+|---|---|
+| `GET /docs` | Swagger UI; `?spec=acme-api` (default) or `?spec=admin-api` selects which spec renders |
+| `GET /openapi/acme-api.yaml` | the RFC 8555 surface documented above |
+| `GET /openapi/admin-api.yaml` | the `pkg/acme/admin` control-plane surface |
+
+Both `/docs` and `/openapi/*` require the same admin authentication (Bearer
+JWT or mTLS) and the `admin:capabilities` qrdb grant as `GET /admin/algorithms`
+— they are **not public**. The specs and the UI enumerate every admin route,
+parameter and permission this deployment exposes; publishing that attack
+surface map to unauthenticated callers would hand out a target list for free.
+The RFC 8555 endpoints in the table above remain public regardless — ACME's
+own directory (`GET /acme/directory`) already discovers them for standard
+clients, which is what ACME clients actually use, not the Swagger UI.
+
+The Swagger UI page sets a strict `Content-Security-Policy` (`script-src
+'self'`, no `unsafe-eval`, no `unsafe-inline` scripts): every script it loads
+is same-origin and vendored at build time, so there is nothing for a relaxed
+CSP to protect against.
+
 ## The xkms control-plane view of ACME
 
 Separately from the RFC surface, the ACME server's **administration** is
-reachable through `pkg/acme/admin` (accounts, policy, barrier). That plane is
-not RFC 8555 and is not documented as if it were; it follows the repo's normal
-authenticated-API conventions.
+reachable through `pkg/acme/admin` (accounts, certificates, EAB, tenants,
+roles, users, CA status/stats, policy, barrier). That plane is not RFC 8555
+and is not documented as if it were; it follows the repo's normal
+authenticated-API conventions. The SDK surface is `sdk/go/acme/client/admin`;
+the CLI surface is `xkmsctl acme` ([`cli.md`](cli.md#xkmsctl-acme-admin)).
+
+### Admin API response contract
+
+Every admin operation — tenants, tenant CA hierarchy, EAB, roles, users,
+certificates, accounts, orders, status/stats, audit, algorithms, barrier —
+follows one contract, with no success/error envelope: a single-resource
+operation's success body is the resource itself; a paginated list operation's
+success body is `{items, total, page, per_page}`; a mutation with nothing
+else to report succeeds with `{message}`. Every error, on every operation and
+at every layer (handler validation, service errors, and `PermissionGate`'s
+own 401/403), is an RFC 7807 `application/problem+json` body
+(`{type, title, detail, status}`). `admin-api.yaml`
+(`pkg/acme/api/swagger/openapi/admin-api.yaml`, served live at
+`GET /openapi/admin-api.yaml`) documents exactly this for every operation —
+there is no second copy of this document anywhere in the tree to drift from
+it.
 
 ## Response schemas
 
@@ -127,7 +205,7 @@ Errors are RFC 7807 problem documents with `urn:ietf:params:acme:error:*` types
 | nonce issued (`HEAD /acme/new-nonce`) | 200 with `Replay-Nonce` |
 | order still processing | 200 with `Retry-After` |
 | problem document | 4xx/5xx per the error table |
-| rate limited | 429 with `Retry-After` |
+| rate limited (standalone `TrustedCA` only — xkmsd's ACME server does not wire a rate limiter as of this writing; see [engineering.md](engineering.md) §Invariants) | 429 with `Retry-After` |
 
 Every response carries a fresh `Replay-Nonce` header — a client that does not
 read it will fail its next POST with `badNonce`.

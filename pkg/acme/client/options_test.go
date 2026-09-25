@@ -47,6 +47,7 @@ func TestWithAuthClient_SetsAuthClient(t *testing.T) {
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithAuthClient(fake),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tca)
@@ -59,6 +60,7 @@ func TestWithAuthClient_NilClient(t *testing.T) {
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithAuthClient(nil),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tca)

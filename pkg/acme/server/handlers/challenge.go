@@ -23,12 +23,13 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
-
-const challengeNonceSize = 16
 
 // loopbackIdentifier is the permanent-identifier value that, for enrollment
 // challenges, is eligible for substitution with the request's client IP when
@@ -295,6 +296,47 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// enroll-01 and endorse-01 verification is a trust decision (proving TPM
+	// residency of an identity key, or authorizing an EK-endorsement
+	// request), so the audit write is part of the decision: it happens
+	// before the challenge is allowed to transition to valid, and a failed
+	// write refuses the challenge rather than let an unaudited attestation
+	// decision stand. This mirrors the EventChallengeFailed gate below but
+	// applies only to the two TPM attestation challenge families; a plain
+	// http-01/dns-01 success stays covered by the existing (informational)
+	// EventChallengeValidated / EventAuthorizationValidated events elsewhere
+	// in the flow.
+	if validationSuccessful {
+		// baseType, not the broader isEnrollXChallenge/IsEndorseChallengeType
+		// family checks: those both match "endorse-01" (isEnrollXChallenge
+		// matches every enrollment-family type, including endorse-01 and the
+		// unwired device-attest-01), so an exact match is required to tell
+		// enroll-01 and endorse-01 apart here.
+		var eventType audit.EventType
+		switch baseType {
+		case "enroll-01":
+			eventType = audit.EventTPMAttestation
+		case "endorse-01":
+			eventType = audit.EventEndorsementVerified
+		}
+		if eventType != "" {
+			if auditErr := s.recordAudit(eventType, s.auditLog.LogWithContext(auditContext(r),
+				eventType,
+				auditAccountRef(account.ID),
+				"challenge:"+strconv.FormatUint(challenge.ID, 10),
+				"validate",
+				audit.ResultSuccess,
+				map[string]interface{}{
+					"challenge_type": challenge.Type,
+				},
+			)); auditErr != nil {
+				validationSuccessful = false
+				challenge.Status = common.StatusInvalid
+				challenge.Error = common.ServerInternal("Failed to record audit event")
+			}
+		}
+	}
+
 	if validationSuccessful {
 		// Validation succeeded
 		challenge.Status = common.StatusValid
@@ -309,6 +351,28 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		authz.Status = common.StatusInvalid
 		authz.Expires = ""
+
+		// A failed challenge can signal an attack attempt (domain takeover,
+		// enumeration), not just a misconfigured client, so it is audited
+		// like the other security-relevant failures in this package.
+		errDetail := ""
+		if challenge.Error != nil {
+			errDetail = challenge.Error.Error()
+		}
+		if auditErr := s.recordAudit(audit.EventChallengeFailed, s.auditLog.LogWithContext(auditContext(r),
+			audit.EventChallengeFailed,
+			auditAccountRef(account.ID),
+			"challenge:"+strconv.FormatUint(challenge.ID, 10),
+			"validate",
+			audit.ResultFailure,
+			map[string]interface{}{
+				"challenge_type": challenge.Type,
+				"reason":         errDetail,
+			},
+		)); auditErr != nil {
+			writeError(w, common.ServerInternal("Failed to record audit event"))
+			return
+		}
 	}
 
 	// Apply the updated challenge object to the Authorization
@@ -323,6 +387,12 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, common.ServerInternal("Failed to update authorization"))
 		return
 	}
+
+	// The challenge just left "pending" (to "valid" or "invalid"), and its
+	// outcome is now persisted, so it is recorded once here rather than at
+	// every possible earlier return above.
+	metrics.DecPendingChallenges()
+	metrics.NewMetricsCollector(account.TenantID).RecordChallenge(challenge.Type, challenge.Status)
 
 	// Look up the order associated with the authorization
 	order, err := orderDAO.Get(ctx, authz.OrderID)
@@ -366,6 +436,12 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 				writeError(w, common.ServerInternal("Failed to update order status"))
 				return
 			}
+			// The order reached its terminal "invalid" state because an
+			// authorization failed, not because finalize was attempted.
+			metrics.DecActiveOrders()
+			if account.TenantID != "" {
+				metrics.DecTenantActiveOrders(account.TenantID)
+			}
 			valid = false
 			break
 		}
@@ -378,17 +454,44 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// RFC 8555 Section 6.6 failed-validation category. This cannot be
+	// blanket route middleware like the other per-category limiters: it must
+	// count only actual validation failures. The persisted challenge/order
+	// state above always reflects this attempt; only the *response* to this
+	// specific request changes when the account (within its tenant, if any)
+	// has exceeded its recent-failure budget.
+	if !validationSuccessful && s.failedValidationLimiter != nil {
+		tenantID := server.TenantIDFromContext(ctx)
+		clientKey := strconv.FormatUint(account.ID, 10)
+		if !s.failedValidationLimiter.Allow(tenantID, clientKey) {
+			s.writeFailedValidationRateLimitError(w, tenantID)
+			return
+		}
+	}
+
 	s.writeChallengeResponse(w, challenge)
+}
+
+// writeFailedValidationRateLimitError writes an RFC 8555 Section 6.6
+// rateLimited response for a failed-validation quota exceeded for tenantID.
+// It mirrors server.TenantRateLimiter's own response construction (that
+// type's response writer is unexported and lives in a different package),
+// reusing TenantRateLimiter.RetryAfterSeconds so the reported window always
+// matches the limiter's actual configuration.
+func (s *RestService) writeFailedValidationRateLimitError(w http.ResponseWriter, tenantID string) {
+	retryAfterSeconds := s.failedValidationLimiter.RetryAfterSeconds(tenantID)
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds))
+	detail := fmt.Sprintf("Rate limit exceeded. Please retry after %d seconds.", retryAfterSeconds)
+	writeError(w, common.RateLimited(detail))
 }
 
 // writeChallengeResponse writes an ACME challenge response with proper RFC 8555 headers.
 func (s *RestService) writeChallengeResponse(w http.ResponseWriter, challenge *entities.ACMEChallenge) {
-	nonce, err := s.generateNonce(challengeNonceSize)
+	nonce, err := s.generateNonce()
 	if err != nil {
 		writeError(w, common.ServerInternal("Unable to generate nonce"))
 		return
 	}
-	s.nonceStore.Add(nonce)
 
 	w.Header().Set("Replay-Nonce", nonce)
 	w.Header().Set("Link", fmt.Sprintf("<%s/acme/directory>;rel=\"index\"", s.baseRESTURI))

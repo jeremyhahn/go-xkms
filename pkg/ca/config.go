@@ -135,7 +135,7 @@ type CAKeystoreSoftwareConfig struct {
 	// YAML/JSON; the resolved plaintext is sealed into this field's own
 	// memguard enclave rather than kept as a plain Go string. See
 	// types.SecretValue and types.NewPasswordFromSecretValue.
-	Password types.SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
+	Password *types.SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
 }
 
 // CAKeystoreTPM2Config carries per-identity configuration for the tpm2 backend.
@@ -158,9 +158,9 @@ type CAKeystorePKCS11Config struct {
 	// reference string in YAML/JSON; the resolved plaintext is sealed into
 	// this field's own memguard enclave rather than kept as a plain Go
 	// string. See types.SecretValue and types.SecretValueBytes.
-	Pin    types.SecretValue `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
-	Slot   int               `yaml:"slot,omitempty" json:"slot,omitempty" mapstructure:"slot"`
-	Module string            `yaml:"module,omitempty" json:"module,omitempty" mapstructure:"module"`
+	Pin    *types.SecretValue `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
+	Slot   int                `yaml:"slot,omitempty" json:"slot,omitempty" mapstructure:"slot"`
+	Module string             `yaml:"module,omitempty" json:"module,omitempty" mapstructure:"module"`
 }
 
 // CAKeystoresConfig holds per-backend keystore configuration for one CA
@@ -260,6 +260,16 @@ type MultiIdentityCAConfig struct {
 	// an independent, lower-level control for callers that use the raw
 	// pkcs8.PKCS8Backend directly.
 	RequireKeyPassword bool `yaml:"require-key-password" json:"require_key_password" mapstructure:"require-key-password"`
+
+	// TCGConfig holds the CA-wide TCG TPM 2.0 Keys for Device Identity and
+	// Attestation settings: the pool of TPM-manufacturer trust anchors an
+	// endorsement key certificate must chain to before the CA issues an IAK
+	// or IDevID credential (TPM 2.0 Keys for Device Identity and Attestation
+	// v1.10r9 §6.1.2 step 5b, §6.2.2 step 4b). Applies regardless of which
+	// identity issues the credential, so it is CA-wide rather than
+	// per-identity. Optional for a CA that never issues TCG credentials;
+	// required (and enforced with no fallback) for one that does.
+	TCGConfig *TCGConfig `yaml:"tcg-config,omitempty" json:"tcg_config,omitempty" mapstructure:"tcg-config"`
 }
 
 // Validate checks that the configuration is valid.
@@ -597,7 +607,7 @@ func (id *Identity) ToKeyAttributes() (*types.KeyAttributes, error) {
 	// Apply identity-level software keystore password as fallback when the
 	// per-key password was not set (Password is nil after KeyAttributesFromConfig).
 	if attrs.Password == nil && id.Keystores != nil && id.Keystores.Software != nil {
-		pw, err := types.NewPasswordFromSecretValue(&id.Keystores.Software.Password)
+		pw, err := types.NewPasswordFromSecretValue(id.Keystores.Software.Password)
 		if err != nil {
 			return nil, err
 		}
@@ -635,9 +645,9 @@ func (id *Identity) GetSignatureAlgorithm() (x509.SignatureAlgorithm, error) {
 		if keyConf.ECCConfig != nil && keyConf.ECCConfig.Curve != "" {
 			curveName = string(keyConf.ECCConfig.Curve)
 		}
-		parsedCurve, _ := types.ParseCurve(curveName)
-		if parsedCurve == nil {
-			return x509.ECDSAWithSHA256, nil
+		parsedCurve, err := types.ParseCurve(curveName)
+		if err != nil {
+			return x509.UnknownSignatureAlgorithm, err
 		}
 		switch parsedCurve.Params().BitSize {
 		case 224, 256:
@@ -666,17 +676,17 @@ func (id *Identity) GetKeyAlgorithm() (x509.PublicKeyAlgorithm, error) {
 }
 
 // GetCurve returns the elliptic curve for ECDSA keys.
-// Returns nil for non-ECDSA keys.
-func (id *Identity) GetCurve() elliptic.Curve {
+// Returns nil for non-ECDSA keys, and a *errs.Detail wrapping
+// types.ErrUnknownCurve if the configured curve name is not recognized.
+func (id *Identity) GetCurve() (elliptic.Curve, error) {
 	if len(id.Keys) == 0 {
-		return nil
+		return nil, nil
 	}
 	keyConf := id.Keys[0]
 	if keyConf.ECCConfig == nil || keyConf.ECCConfig.Curve == "" {
-		return nil
+		return nil, nil
 	}
-	curve, _ := types.ParseCurve(string(keyConf.ECCConfig.Curve))
-	return curve
+	return types.ParseCurve(string(keyConf.ECCConfig.Curve))
 }
 
 // GetKeySize returns the RSA key size.

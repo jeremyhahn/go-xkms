@@ -96,7 +96,8 @@ type Backend struct {
 	config        *Config
 	p11ctx        *pkcs11.Ctx
 	pool          *SessionPool
-	ownsP11ctx    bool // tracks if this backend owns the PKCS#11 context (should Finalize/Destroy)
+	ownsP11ctx    bool // tracks if this backend owns the *pkcs11.Ctx object (should Destroy)
+	ownsP11Init   bool // tracks if this backend's own C_Initialize call succeeded (should Finalize)
 	tracker       types.AEADSafetyTracker
 	supportsMLDSA bool // dynamically detected ML-DSA mechanism support
 	supportsMLKEM bool // dynamically detected ML-KEM mechanism support
@@ -157,7 +158,7 @@ func (b *Backend) Config() *Config {
 // leaves the PIN's SecretValue enclave only for the duration of this
 // accessor's return value. Returns "" when no PIN is configured.
 func (b *Backend) userPIN() (string, error) {
-	pin, err := types.SecretValueBytes(&b.config.PIN)
+	pin, err := types.SecretValueBytes(b.config.PIN)
 	if err != nil {
 		return "", err
 	}
@@ -168,7 +169,7 @@ func (b *Backend) userPIN() (string, error) {
 // the same miekg/pkcs11 boundary userPIN documents. Returns "" when no SO
 // PIN is configured.
 func (b *Backend) soPIN() (string, error) {
-	pin, err := types.SecretValueBytes(&b.config.SOPIN)
+	pin, err := types.SecretValueBytes(b.config.SOPIN)
 	if err != nil {
 		return "", err
 	}
@@ -430,7 +431,7 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 		return b.deleteKeyInSession(session, id, attrs.CN)
 	}
 
-	if b.config.IsYubiKeyPIV() && types.SecretValueSet(&b.config.SOPIN) {
+	if b.config.IsYubiKeyPIV() && b.config.SOPIN != nil {
 		soPIN, err := b.soPIN()
 		if err != nil {
 			return err
@@ -503,6 +504,28 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 			}
 
 			decodeKeyType(ka, ckULong(readAttrs[2].Value), string(readAttrs[1].Value))
+
+			// CKA_EXTRACTABLE and CKA_SENSITIVE are the token's own record of
+			// whether this key may ever be wrapped out and whether its value
+			// may ever be disclosed in plaintext (PKCS#11 3.2 Table 30) --
+			// the hardware source of truth, not a value this backend keeps a
+			// parallel copy of. readBoolAttribute reads each one on its own,
+			// so a token that does not implement one of them still reports
+			// the other correctly rather than dropping the whole key from
+			// the list. An attribute the token declines to disclose is
+			// reported as false, understating rather than overstating what
+			// the token guarantees (see readBoolAttribute).
+			extractable, err := b.readBoolAttribute(session, h, pkcs11.CKA_EXTRACTABLE)
+			if err != nil {
+				return &errs.Wrapped{Msg: "list keys: read CKA_EXTRACTABLE", Err: err}
+			}
+			ka.Exportable = extractable
+
+			sensitive, err := b.readBoolAttribute(session, h, pkcs11.CKA_SENSITIVE)
+			if err != nil {
+				return &errs.Wrapped{Msg: "list keys: read CKA_SENSITIVE", Err: err}
+			}
+			ka.Sensitive = sensitive
 
 			results = append(results, ka)
 		}
@@ -650,18 +673,23 @@ func (b *Backend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	var err error
 	if b.pool != nil {
-		b.pool.Close()
+		err = b.pool.Close()
 		b.pool = nil
 	}
 
 	if b.p11ctx != nil && b.ownsP11ctx {
-		b.p11ctx.Finalize()
+		if b.ownsP11Init {
+			if finalizeErr := b.p11ctx.Finalize(); finalizeErr != nil {
+				err = errors.Join(err, finalizeErr)
+			}
+		}
 		b.p11ctx.Destroy()
 		b.p11ctx = nil
 	}
 
-	return nil
+	return err
 }
 
 // Initialize sets up the PKCS#11 token with the provided SO PIN and user PIN.
@@ -698,7 +726,7 @@ func (b *Backend) Initialize(soPIN, userPIN string) error {
 	// Initialize token using low-level PKCS#11
 	if err := b.initializeToken(soPIN, userPIN); err != nil {
 		// If already initialized, that's okay
-		if err != ErrAlreadyInitialized {
+		if !errors.Is(err, ErrAlreadyInitialized) {
 			return &errs.Wrapped{Msg: "failed to initialize token", Err: err}
 		}
 	}
@@ -717,7 +745,7 @@ func (b *Backend) Login() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if !types.SecretValueSet(&b.config.PIN) {
+	if b.config.PIN == nil {
 		return ErrInvalidUserPIN
 	}
 
@@ -737,14 +765,27 @@ func (b *Backend) loginUser(pin string) error {
 		if p == nil {
 			return &errs.Message{Msg: fmt.Sprintf("failed to load PKCS#11 library: %s", b.config.Library)}
 		}
+		// C_Initialize/C_Finalize are process-global, not per-Ctx: only the
+		// backend whose call actually performed the initialization may
+		// Finalize it later. A backend that attaches to a library another
+		// backend already initialized (CKR_CRYPTOKI_ALREADY_INITIALIZED) must
+		// leave ownsP11Init false, or Close on both backends calls C_Finalize
+		// on the one shared module and the second call fails with
+		// CKR_CRYPTOKI_NOT_INITIALIZED (see errors.Join on Close's return).
+		// Destroying this backend's own *pkcs11.Ctx (unloading its private
+		// dlopen handle) is independent of that and always safe, so
+		// ownsP11ctx stays true regardless.
+		ownsInit := true
 		if err := p.Initialize(); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+			if !isCKR(err, pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 				p.Destroy()
 				return &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 			}
+			ownsInit = false
 		}
 		b.p11ctx = p
 		b.ownsP11ctx = true
+		b.ownsP11Init = ownsInit
 	}
 
 	// Resolve slot by token label or configured slot number
@@ -816,7 +857,7 @@ func (b *Backend) resolveSlot() (uint, error) {
 
 // initializeToken initializes a PKCS#11 token with SO and user PINs.
 // Must be called with mutex held.
-func (b *Backend) initializeToken(soPIN, userPIN string) error {
+func (b *Backend) initializeToken(soPIN, userPIN string) (err error) {
 	// Initialize low-level PKCS#11 context
 	p := pkcs11.New(b.config.Library)
 	if p == nil {
@@ -825,7 +866,7 @@ func (b *Backend) initializeToken(soPIN, userPIN string) error {
 
 	if err := p.Initialize(); err != nil {
 		// Check if already initialized
-		if err == pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+		if isCKR(err, pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 			p.Destroy()
 			return ErrAlreadyInitialized
 		}
@@ -834,12 +875,16 @@ func (b *Backend) initializeToken(soPIN, userPIN string) error {
 	}
 
 	defer p.Destroy()
-	defer p.Finalize()
+	defer func() {
+		if finalizeErr := p.Finalize(); finalizeErr != nil {
+			err = errors.Join(err, finalizeErr)
+		}
+	}()
 
 	// Get token slot
-	slots, err := p.GetSlotList(true)
-	if err != nil {
-		return &errs.Wrapped{Msg: "failed to get slot list", Err: err}
+	slots, slotErr := p.GetSlotList(true)
+	if slotErr != nil {
+		return &errs.Wrapped{Msg: "failed to get slot list", Err: slotErr}
 	}
 
 	if len(slots) == 0 {
@@ -852,34 +897,42 @@ func (b *Backend) initializeToken(soPIN, userPIN string) error {
 	}
 
 	// Get token info to check initialization status
-	tokenInfo, err := p.GetTokenInfo(slot)
-	if err != nil {
-		return &errs.Wrapped{Msg: "failed to get token info", Err: err}
+	tokenInfo, infoErr := p.GetTokenInfo(slot)
+	if infoErr != nil {
+		return &errs.Wrapped{Msg: "failed to get token info", Err: infoErr}
 	}
 
 	// Check if token needs initialization
 	if tokenInfo.Flags&pkcs11.CKF_TOKEN_INITIALIZED == 0 {
 		// Initialize token
-		if err := p.InitToken(slot, soPIN, b.config.TokenLabel); err != nil {
-			return &errs.Wrapped{Msg: "failed to init token", Err: err}
+		if initErr := p.InitToken(slot, soPIN, b.config.TokenLabel); initErr != nil {
+			return &errs.Wrapped{Msg: "failed to init token", Err: initErr}
 		}
 
 		// Open session and init user PIN
-		session, err := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
-		if err != nil {
-			return &errs.Wrapped{Msg: "failed to open session", Err: err}
+		session, sessionErr := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
+		if sessionErr != nil {
+			return &errs.Wrapped{Msg: "failed to open session", Err: sessionErr}
 		}
-		defer p.CloseSession(session)
+		defer func() {
+			if closeErr := p.CloseSession(session); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 
 		// Login as SO
-		if err := p.Login(session, pkcs11.CKU_SO, soPIN); err != nil {
-			return &errs.Wrapped{Msg: "failed to login as SO", Err: err}
+		if loginErr := p.Login(session, pkcs11.CKU_SO, soPIN); loginErr != nil {
+			return &errs.Wrapped{Msg: "failed to login as SO", Err: loginErr}
 		}
-		defer p.Logout(session)
+		defer func() {
+			if logoutErr := p.Logout(session); logoutErr != nil {
+				err = errors.Join(err, logoutErr)
+			}
+		}()
 
 		// Initialize user PIN
-		if err := p.InitPIN(session, userPIN); err != nil {
-			return &errs.Wrapped{Msg: "failed to init user PIN", Err: err}
+		if pinErr := p.InitPIN(session, userPIN); pinErr != nil {
+			return &errs.Wrapped{Msg: "failed to init user PIN", Err: pinErr}
 		}
 	} else {
 		return ErrAlreadyInitialized
@@ -1664,6 +1717,7 @@ func (b *Backend) SetSessionPool(pool *SessionPool) {
 	b.pool = pool
 	b.p11ctx = pool.Ctx()
 	b.ownsP11ctx = false
+	b.ownsP11Init = false
 	b.probeQuantumMechanisms()
 }
 

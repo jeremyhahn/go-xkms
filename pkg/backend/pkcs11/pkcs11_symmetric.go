@@ -274,7 +274,7 @@ type pkcs11SymmetricEncrypter struct {
 
 // Encrypt encrypts plaintext using the symmetric key on the HSM.
 // For AES-GCM, this provides authenticated encryption with additional data support.
-func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions) (encrypted *types.EncryptedData, err error) {
 	if opts == nil {
 		opts = &types.EncryptOptions{}
 	}
@@ -337,7 +337,11 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
-	defer e.backend.p11ctx.CloseSession(session)
+	defer func() {
+		if closeErr := e.backend.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login as user
 	// Note: We don't logout because C_Logout affects ALL sessions, not just this one
@@ -346,7 +350,7 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		return nil, err
 	}
 	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 	}
@@ -403,8 +407,8 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 
 	handles, _, err := e.backend.p11ctx.FindObjects(session, 1)
 	if err != nil {
-		e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
-		return nil, &errs.Wrapped{Msg: "failed to find objects", Err: err}
+		findFinalErr := e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
+		return nil, errors.Join(&errs.Wrapped{Msg: "failed to find objects", Err: err}, findFinalErr)
 	}
 
 	// Must finalize BEFORE starting encryption operation
@@ -464,7 +468,7 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 
 // Decrypt decrypts ciphertext using the symmetric key on the HSM.
 // For AES-GCM, this verifies authentication before decrypting.
-func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) (plaintextOut []byte, err error) {
 	if opts == nil {
 		opts = &types.DecryptOptions{}
 	}
@@ -521,7 +525,11 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
-	defer e.backend.p11ctx.CloseSession(session)
+	defer func() {
+		if closeErr := e.backend.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login as user
 	// Note: We don't logout because C_Logout affects ALL sessions, not just this one
@@ -530,7 +538,7 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 		return nil, err
 	}
 	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 	}
@@ -556,8 +564,8 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 
 	handles, _, err := e.backend.p11ctx.FindObjects(session, 1)
 	if err != nil {
-		e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
-		return nil, &errs.Wrapped{Msg: "failed to find objects", Err: err}
+		findFinalErr := e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
+		return nil, errors.Join(&errs.Wrapped{Msg: "failed to find objects", Err: err}, findFinalErr)
 	}
 
 	// Must finalize BEFORE starting decryption operation
@@ -601,7 +609,7 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 // calls C_Logout, because that affects every session on the token, not just
 // this one -- is written once for the three non-AEAD cipher modes, instead of
 // once per mode as Encrypt and Decrypt do for AES-GCM above.
-func (e *pkcs11SymmetricEncrypter) withKeySession(fn func(session pkcs11.SessionHandle, handle pkcs11.ObjectHandle) error) error {
+func (e *pkcs11SymmetricEncrypter) withKeySession(fn func(session pkcs11.SessionHandle, handle pkcs11.ObjectHandle) error) (err error) {
 	if e.backend.p11ctx == nil {
 		return &errs.Message{Msg: "PKCS#11 context not initialized"}
 	}
@@ -615,14 +623,18 @@ func (e *pkcs11SymmetricEncrypter) withKeySession(fn func(session pkcs11.Session
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
-	defer e.backend.p11ctx.CloseSession(session)
+	defer func() {
+		if closeErr := e.backend.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	userPIN, err := e.backend.userPIN()
 	if err != nil {
 		return err
 	}
 	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 	}
@@ -639,8 +651,8 @@ func (e *pkcs11SymmetricEncrypter) withKeySession(fn func(session pkcs11.Session
 
 	handles, _, err := e.backend.p11ctx.FindObjects(session, 1)
 	if err != nil {
-		e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
-		return &errs.Wrapped{Msg: "failed to find objects", Err: err}
+		findFinalErr := e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
+		return errors.Join(&errs.Wrapped{Msg: "failed to find objects", Err: err}, findFinalErr)
 	}
 
 	if err := e.backend.p11ctx.FindObjectsFinal(session); err != nil {

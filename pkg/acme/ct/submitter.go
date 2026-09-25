@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -96,7 +97,11 @@ func (s *HTTPLogSubmitter) SubmitPrecert(ctx interface{}, precertDER []byte, cha
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("ct: log submission failed: sending request: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Debug("ct: failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)

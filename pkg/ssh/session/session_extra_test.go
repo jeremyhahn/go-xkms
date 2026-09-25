@@ -147,9 +147,9 @@ func TestRun_NonZeroExitCode(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	defer sess.Close()
 
@@ -201,9 +201,9 @@ func TestRun_ContextCancellation(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	defer sess.Close()
 
@@ -220,6 +220,19 @@ func TestRun_ContextCancellation(t *testing.T) {
 	var te *session.TimeoutError
 	if !errors.As(runErr, &te) {
 		t.Fatalf("expected TimeoutError on context cancellation, got %T: %v", runErr, runErr)
+	}
+
+	// Cancellation races two Close calls against the same ssh.Session: the
+	// watcher's abort Close (which genuinely tears the channel down) and
+	// Run's own deferred cleanup Close. The second reports io.EOF per
+	// x/crypto/ssh's documented "already closed" shape, and must be
+	// filtered rather than joined in as extra noise (#701) -- so the
+	// returned error must carry exactly the one TimeoutError, not a
+	// two-element join.
+	if joined, ok := runErr.(interface{ Unwrap() []error }); ok {
+		if got := len(joined.Unwrap()); got != 1 {
+			t.Fatalf("expected exactly 1 joined error (the redundant Close's io.EOF must be filtered), got %d: %v", got, runErr)
+		}
 	}
 }
 
@@ -409,9 +422,9 @@ func TestShell_AfterClose_ReturnsClosedError(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	if err := sess.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -525,9 +538,9 @@ func TestShell_HappyPath(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	defer sess.Close()
 
@@ -634,9 +647,9 @@ func TestShell_ContextCancellation(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	defer sess.Close()
 

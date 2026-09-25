@@ -1,0 +1,239 @@
+# PKCS#11 Backend — Engineering Contract
+
+> **Status: NORMATIVE** · Feature: `pkcs11-backend` · Repo: `go-xkms` · Last verified: 2026-09-24
+
+All symbols below require `-tags pkcs11` and cgo. See
+[`architecture.md`](architecture.md) for the package's place in the stack.
+
+## Configuration — two layers
+
+| Type | Where | Purpose |
+|---|---|---|
+| `config.PKCS11Config` | `pkg/config/config.go:1056` | The fields exposed in `xkmsd.yaml` |
+| `pkcs11.Config` | `pkg/backend/pkcs11/config.go:32` | Full library-level configuration |
+
+`pkg/server/backend_pkcs11.go` maps the first onto the second. Anything not
+in the YAML is reachable only by constructing `pkcs11.Config` directly
+(library embedding, `xkey`, tests).
+
+### Daemon YAML (`configs/xkmsd.yaml`, commented out by default)
+
+```yaml
+# backends:
+#   pkcs11:
+#     enabled: true
+#     library: "/usr/lib/softhsm/libsofthsm2.so"
+#     token: "xkms"
+#     pin: "1234"
+```
+
+```go
+type PKCS11Config struct {
+	Enabled bool   `yaml:"enabled"`
+	Library string `yaml:"library"`
+	Token   string `yaml:"token"`
+	Pin     *types.SecretValue `yaml:"pin"`
+}
+```
+
+`Enabled: true` with an empty `Library` fails config validation
+(`"PKCS11 library is required"`, `pkg/config/config.go:1536`).
+`ListEnabledBackends()` reports `pkcs11`. Environment override:
+`backends.pkcs11.library` resolves under `XKMS_BACKENDS_PKCS11_LIBRARY`
+(the generic `XKMS_<SECTION>_<KEY>` rule — no field-specific override code,
+`pkg/config/load.go:210-249`).
+
+### PIN resolution — `*types.SecretValue`, not a plain string
+
+**Correcting a stale claim in the predecessor documentation
+(`docs/pkcs11/backend/configuration.md`):** that folder describes
+`Config.Pin` as a plain `string`, read literally from `xkmsd.yaml` with
+"no `credential://` resolver, no `${ENV}` expansion." As of the current
+source, `PKCS11Config.Pin` (and `pkcs11.Config.PIN`/`.SOPIN`,
+`pkg/backend/pkcs11/config.go:53,58`) are `*types.SecretValue` — one of the
+protected-target fields go-qrdb's `secret.ConfigProcessor` resolves
+(`docs/xkmsd-configuration/engineering.md` §"secret-bearing config field"
+lists `backends.pkcs11.pin` explicitly). Practically:
+
+- The YAML value is a reference string (e.g. `credential://...`), not a
+  literal PIN in plaintext — `stringToSecretValueHookFunc` decodes it into
+  the field's unresolved `Raw` form (`pkg/config/load.go:259`), and
+  `resolveConfigSecrets` walks the config resolving every such field before
+  the backend sees it.
+- `*types.SecretValue` is walked as a single leaf key by
+  `registerEnvKeys`/`walkYAMLKeys` (`pkg/config/load.go:214-249`), the same
+  as any other config leaf — `backends.pkcs11.pin` resolves under
+  `XKMS_BACKENDS_PKCS11_PIN` by the generic rule, contrary to the
+  predecessor doc's claim that no such override exists.
+- `nil` is the only way to spell "PIN not configured"; a present-but-empty
+  `SecretValue` fails config resolution outright (`pkg/config/load.go:251-257`).
+- The resolved plaintext lives in the `SecretValue`'s own memguard enclave,
+  never a plain Go string, until `types.SecretValueBytes(c.PIN)`
+  (`pkg/backend/pkcs11/config.go:121`) extracts it for the Cryptoki call.
+
+`config.PKCS11Config` still has **no `so-pin` field** — the daemon YAML
+cannot configure the SO PIN; it is reachable only via `pkcs11.Config.SOPIN`
+when embedding the package directly (matching the predecessor doc's claim,
+which is still accurate on this point).
+
+## `pkcs11.Config` fields (`pkg/backend/pkcs11/config.go:32`)
+
+| Field | YAML | Required | Meaning |
+|---|---|---|---|
+| `CN` | `cn` | no | Identifier for logs; the daemon sets `"pkcs11-backend"`. |
+| `Library` | `library` | **yes** | Path to the Cryptoki `.so`. `Validate()` stats it; missing is `ErrLibraryNotFound`. |
+| `LibraryConfig` | `config` | no | Vendor config file path (e.g. SoftHSM's `softhsm2.conf`). |
+| `PIN` | `pin` | for use | `*types.SecretValue`, user PIN (`CKU_USER`). Minimum 4 characters once resolved. |
+| `SOPIN` | `so-pin` | PIV / init | `*types.SecretValue`, Security Officer PIN or YubiKey management key. Same custody rules as `PIN`. |
+| `PlatformPolicy` | `platform-policy` | no | Platform policy flag carried on the config. |
+| `Slot` | `slot` | no | `*int`. Standard tokens: physical slot number. YubiKey PIV: the PIV slot (`0x9a`/`0x9c`/`0x9d`/`0x9e`). |
+| `TokenLabel` | `label` | **yes** | Preferred over `Slot` — slot numbers are not stable across reboots. `Validate()` rejects an empty label. |
+| `KeyStorage` | — | **yes** | `storage.Backend` for key **metadata only** — key material stays in the HSM. |
+| `CertStorage` | — | **yes** | `storage.Backend` for certificate material. |
+| `Tracker` | — | no | `types.AEADSafetyTracker`; defaults to `backend.NewMemoryAEADTracker()`. Production should inject a persistent one. |
+| `SessionPoolSize` | `session-pool-size` | no | `<= 0` falls back to `DefaultSessionPoolSize` (8). |
+
+`Validate()` enforces: library path set and present, token label set, PIN/SO
+PIN length once resolved, both storage backends non-nil. Convenience
+predicates: `IsSoftHSM()` (path contains `libsofthsm`), `IsYubiKeyPIV()`
+(path contains `ykcs11`). `String()` masks both PINs.
+
+## Storage wiring (`pkg/server/backend_pkcs11.go`)
+
+```go
+pkcs11Backend, err := pkcs11.NewBackend(&pkcs11.Config{
+	CN:          "pkcs11-backend",
+	Library:     s.config.Backends.PKCS11.Library,
+	TokenLabel:  s.config.Backends.PKCS11.Token,
+	PIN:         s.config.Backends.PKCS11.Pin,
+	KeyStorage:  keyStorage,
+	CertStorage: certStorage,
+})
+```
+
+`keyStorage` is `pkcs11/keys`, `certStorage` is `pkcs11/certs`
+(`s.createStorage(...)`). `KeyStorage` receives only JSON metadata — the
+only writer is `ImportKey`, recording handle, CN, key type, algorithm, store
+type, and an `imported: true` marker. `initPKCS11Backend` calls `Login()`,
+not `Initialize()` — token SO-initialization is an operator action, not a
+boot action; without `Login()` every operation fails with
+`ErrNotInitialized`.
+
+Certificates can additionally live inside the token: `CertStorageConfig`
+(`cert_config.go`) has modes `External` (default), `Hardware`, `Hybrid`.
+`External`/`Hybrid` both require `ExternalStorage`; `Hardware`/`Hybrid` both
+require `EnableHardwareStorage`.
+
+## Mechanism map
+
+| Operation | Mechanism | Source |
+|---|---|---|
+| RSA key pair generation | `CKM_RSA_PKCS_KEY_PAIR_GEN` | `signer_rsa.go:357` |
+| RSA PKCS#1 v1.5 sign | `CKM_RSA_PKCS` (DigestInfo prefix built in software) | `signer_rsa.go:112` |
+| RSA-PSS sign | `CKM_RSA_PKCS_PSS` | `signer_rsa.go:158` |
+| RSA PKCS#1 v1.5 decrypt | `CKM_RSA_PKCS` | `signer_rsa.go:193` |
+| RSA-OAEP decrypt | `CKM_RSA_PKCS_OAEP` | `signer_rsa.go:243` |
+| EC key pair generation | `CKM_EC_KEY_PAIR_GEN` | `signer_ecdsa.go:247` |
+| ECDSA sign | `CKM_ECDSA` (raw R‖S, re-encoded to ASN.1 DER) | `signer_ecdsa.go:91` |
+| Ed25519 key pair generation | `CKM_EC_EDWARDS_KEY_PAIR_GEN` (0x1055), `CKA_EC_PARAMS` = OID 1.3.101.112 | `pkcs11.go:1027` |
+| Ed25519 sign | `CKM_EDDSA` (0x1057) over the full message | `pkcs11.go:1547` |
+| ML-DSA / ML-KEM generation | `CKM_ML_DSA_KEY_PAIR_GEN` / `CKM_ML_KEM_KEY_PAIR_GEN` | `pkcs11.go:805` |
+| AES key generation | `CKM_AES_KEY_GEN` | `pkcs11.go:1091` |
+| AES-GCM encrypt/decrypt | `CKM_AES_GCM` | `pkcs11_symmetric.go:291,425` |
+| ECDH key agreement | `CKM_ECDH1_DERIVE` with `CKD_NULL` | `pkcs11_ecdh.go:362` |
+| Key unwrap (hybrid stage 2) | `CKM_AES_KEY_WRAP_PAD` | `pkcs11_importexport.go:483` |
+| Random | `C_GenerateRandom` | `pkcs11.go:500` |
+
+## Key generation and algorithm limits
+
+`GenerateKey(ctx, attrs)` dispatches on `attrs.QuantumAttributes` first, then
+`attrs.KeyAlgorithm`. RSA defaults key size to 2048 (`GenerateRSAWithSize`
+coerces anything `< 512` to 2048). ECDSA defaults to P-256; an unrecognized
+curve OID is `ErrUnsupportedKeyAlgorithm`. Ed25519 requires PKCS#11 v3.0
+Edwards support (SoftHSM ≥ 2.6) and is rejected on YubiKey PIV. ML-DSA/
+ML-KEM are refused unless `probeQuantumMechanisms` saw the key-pair-gen
+mechanism in `C_GetMechanismList`; `Capabilities().QuantumSigning`/
+`.KeyEncapsulation` mirror the same probe. AES accepts 128/192/256 bits
+only. Generated key pairs are `CKA_TOKEN=true`, `CKA_PRIVATE=true`,
+`CKA_SENSITIVE=true`.
+
+## Signing, decryption, symmetric, ECDH — see the mechanism map above for the wire mechanism; behavioral notes:
+
+- `Verify(attrs, digest, signature)` verifies **in software** from the
+  public key read back off the token; only ECDSA is implemented — RSA
+  returns `backend.ErrInvalidAlgorithm`.
+- AES-GCM: nonce fixed at 12 bytes; tag length defaults to 16 bytes,
+  accepts 12–16 (`resolveGCMTagSize`); every encrypt consults
+  `types.AEADSafetyTracker` (byte budget, then nonce uniqueness) before the
+  operation reaches the token.
+- ECDH (`DeriveKeyECDH`): rejects a cross-curve peer with `ErrCurveMismatch`;
+  the KDF from `kdfParams` runs **in software** after `C_DeriveKey`
+  produces the raw shared secret. Caveat: `generateECDSAKeyPair`'s
+  templates do not set `CKA_DERIVE` (PKCS#11 §4.9 default `CK_FALSE`), so a
+  key from `GenerateECDSA` cannot `C_DeriveKey` on a conforming token
+  without separately provisioning `CKA_DERIVE=true`.
+
+## Import/export ceremony
+
+`GetImportParameters -> WrapKey (host) -> ImportKey (C_UnwrapKey, in HSM)`;
+`ExportKey (C_WrapKey, in HSM)`. `GetImportParameters` finds or creates a
+persistent RSA-4096 wrapping key pair labeled `go-xkms-wrapping-key`
+(no expiry — the key lives in the token). Accepted algorithms:
+`RSAES_OAEP_SHA_1`, `RSAES_OAEP_SHA_256`, `RSA_AES_KEY_WRAP_SHA_1`,
+`RSA_AES_KEY_WRAP_SHA_256`. The hybrid unwrap path
+(`importKeyHybrid`) exists because SoftHSM2 refuses `C_UnwrapKey` with
+`CKM_RSA_PKCS_OAEP` for secret keys — it decrypts an ephemeral AES KEK to
+host memory, re-imports it as a session object, unwraps the target with
+`CKM_AES_KEY_WRAP_PAD`, and destroys the KEK. `UnwrapKey` deliberately
+returns `backend.ErrNotSupported` — unwrapping only happens inside the HSM
+during `ImportKey`. `ExportKeyMaterial` is restricted to `CKO_SECRET_KEY`;
+`GenerateSecretKey` hard-codes `CKA_EXTRACTABLE=false`, so generated AES
+keys can never be exported this way.
+
+## Security: `CKA_SENSITIVE` vs `CKA_EXTRACTABLE`
+
+Per PKCS#11 §4.9 Table 30: `CKA_SENSITIVE=CK_TRUE` means the value is never
+revealed in plaintext (`C_GetAttributeValue(CKA_VALUE)` fails; the key can
+still be wrapped). `CKA_EXTRACTABLE=CK_TRUE` means the key **may be
+wrapped** (`C_WrapKey` permitted — not plaintext export).
+`CKA_EXTRACTABLE=CK_FALSE` means the key can never leave the token in any
+form. The import template writes both explicitly rather than trusting token
+defaults, because `C_UnwrapKey`'s §5.18.4 default `CKA_EXTRACTABLE` is
+`CK_TRUE` and the secret-key table's `CKA_SENSITIVE` default is `CK_FALSE`
+— SoftHSM2 is stricter than the spec requires, so a template relying on
+defaults would pass CI and silently import a plaintext-readable key on a
+conforming HSM. `attrs.Exportable=false` at import time is permanent.
+`GenerateSecretKey` sets `CKA_SENSITIVE=true` and `CKA_EXTRACTABLE=false`;
+`generateRSAKeyPair`/`generateECDSAKeyPair` set `CKA_SENSITIVE=true` and
+leave `CKA_EXTRACTABLE` at the token default — verify with
+`pkcs11-tool --list-objects` on the device actually deployed.
+
+## Errors (representative, not exhaustive)
+
+`ErrLibraryNotFound`, `ErrNotInitialized`, `ErrAlreadyInitialized`,
+`ErrSOPINRequired`, `ErrUnsupportedKeyAlgorithm`, `ErrCurveMismatch`,
+`ErrInvalidKeyAttributes`, `ErrInvalidNonceLength`, `ErrInvalidTagSize`,
+`ErrInvalidTagLength`, `ErrAttestationUnsupported`,
+`ErrNoDeviceAttestationKey`, `ErrDeviceCertificateNotFound`,
+`backend.ErrNotSupported`, `backend.ErrKeyNotExportable`,
+`backend.ErrAsymmetricKeyExportNotAllowed`,
+`backend.ErrOperationNotSupported` (`RotateKey`; `Capabilities().KeyRotation
+== false`).
+
+## Testing (Makefile targets, verified current)
+
+| Target | Layer |
+|---|---|
+| `make integration-test-pkcs11-backend` (alias `integration-test-pkcs11`) | This backend, against SoftHSM2 in Docker (`test/integration/pkcs11`) |
+| `make integration-test-pkcs11-module-all` | The provider module — a different layer, see architecture.md |
+| `make integration-test-xkey-pkcs11` | xkey's FIDO2/PIV consumer tests |
+| `make coverage-pkcs11` | `./test/integration/pkcs11/...` + `./pkg/backend/pkcs11/...`, requires SoftHSM |
+| `make test-quantum-pkcs11` | ML-DSA/ML-KEM capability detection and key generation |
+| `make test-pkcs11-tagged` | The `pkcs11`-tag-gated unit suites against SoftHSM2 |
+
+The client suite's Docker environment
+(`test/integration/pkcs11/docker-compose.yml`) sets
+`PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so`,
+`PKCS11_TOKEN_LABEL=test-token`, `PKCS11_PIN=1234`, and initializes the
+token before running
+`go test -tags='integration pkcs11 codec_cbor codec_json codec_msgpack' ./test/integration/pkcs11`.

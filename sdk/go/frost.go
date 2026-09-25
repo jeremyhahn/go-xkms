@@ -96,6 +96,11 @@ var (
 	// NewFrostTrustedDealer creates a trusted-dealer key generator used to
 	// produce all participant key packages for a FROST group.
 	NewFrostTrustedDealer = frost.NewTrustedDealer
+
+	// ErrFrostThresholdSigningNotSupported reports that a crypto.Signer was
+	// requested for a threshold-2+ key, which needs the round-based
+	// distributed signing API instead.
+	ErrFrostThresholdSigningNotSupported = frost.ErrThresholdSigningNotSupported
 )
 
 // FROST ciphersuite constants re-exported from pkg/types. These are surfaced

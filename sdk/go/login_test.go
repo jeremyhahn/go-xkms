@@ -176,6 +176,19 @@ func TestNewLoginClient_RequiresBaseURL(t *testing.T) {
 	assert.Equal(t, "configure", lce.Op)
 }
 
+// TestLoginClientError_MessageAndUnwrap pins the Error() formatting (with
+// and without an underlying cause) and the Unwrap() contract.
+func TestLoginClientError_MessageAndUnwrap(t *testing.T) {
+	withCause := &LoginClientError{Op: "login/piv", Status: 401, Reason: "denied", Err: errors.New("tls: bad certificate")}
+	want := "xkms login client: login/piv: denied: tls: bad certificate"
+	assert.Equal(t, want, withCause.Error())
+	assert.True(t, errors.Is(withCause, withCause.Err))
+
+	noCause := &LoginClientError{Op: "configure", Reason: "BaseURL is required"}
+	assert.Equal(t, "xkms login client: configure: BaseURL is required", noCause.Error())
+	assert.Nil(t, noCause.Unwrap())
+}
+
 // TestLoginClient_SPKIPin proves a LoginClient configured with an SPKI pin
 // (the TOFU trust path xkey's server registry records) authenticates the
 // server by its SPKI hash instead of a CA chain, without requiring RootCAs

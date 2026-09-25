@@ -336,8 +336,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairing.Transport)
 	case staticKey == nil:
 		generated, err := pairing.GenerateStaticKey()
 		if err != nil {
-			_ = transport.Close()
-			return nil, err
+			return nil, errors.Join(err, transport.Close())
 		}
 		staticKey, ownedKey = generated, generated // we made it, we own it
 	case cfg.OwnsStaticKey:
@@ -372,8 +371,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairing.Transport)
 	// Validate trust settings: if no expected remote key and trust-new-devices is false,
 	// reject the connection to prevent connecting to unknown devices.
 	if len(cfg.ExpectedRemoteStatic) == 0 && !cfg.TrustNewDevices {
-		_ = transport.Close()
-		return nil, ErrUntrustedDevice
+		return nil, errors.Join(ErrUntrustedDevice, transport.Close())
 	}
 
 	// Create Noise session with empty prologue initially.
@@ -388,8 +386,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport pairing.Transport)
 		Prologue:             nil, // Set during identity exchange
 	})
 	if err != nil {
-		_ = transport.Close()
-		return nil, err
+		return nil, errors.Join(err, transport.Close())
 	}
 
 	constructed = true
@@ -497,14 +494,16 @@ func (b *PhoneKeyBackend) Connect(ctx context.Context) error {
 
 	// Log connection established
 	if b.auditLogger != nil {
-		b.auditLogger.LogConnectionEvent(
+		if auditErr := b.auditLogger.LogConnectionEvent(
 			audit.OpConnectionEstablished,
 			b.cfg.DeviceAddress,
 			b.cfg.DeviceName,
 			map[string]any{
 				"transport": "non-ble",
 			},
-		)
+		); auditErr != nil {
+			return auditErr
+		}
 	}
 
 	return nil
@@ -559,7 +558,9 @@ func (b *PhoneKeyBackend) connectBLE(ctx context.Context, bleTransport BLECapabl
 			// Other errors: force-remove and retry with fresh scan
 			// Force-remove to clear stale D-Bus state from failed connection
 			if attempt < maxRetries {
-				_ = bleTransport.DisconnectAndRemove()
+				if disconnectErr := bleTransport.DisconnectAndRemove(); disconnectErr != nil {
+					b.log.Warn("failed to disconnect and remove BLE device", "address", address, "error", disconnectErr)
+				}
 				b.log.Info("will retry with fresh scan after disconnect")
 				continue
 			}
@@ -575,7 +576,9 @@ func (b *PhoneKeyBackend) connectBLE(ctx context.Context, bleTransport BLECapabl
 			// D-Bus operation that blocks all future writes with "In Progress".
 			// Removing the device from BlueZ invalidates all cached GATT handles
 			// and stale D-Bus state, allowing a fresh connection with clean objects.
-			_ = bleTransport.DisconnectAndRemove()
+			if disconnectErr := bleTransport.DisconnectAndRemove(); disconnectErr != nil {
+				b.log.Warn("failed to disconnect and remove BLE device", "address", address, "error", disconnectErr)
+			}
 			lastErr = err
 
 			if attempt < maxRetries {
@@ -591,7 +594,7 @@ func (b *PhoneKeyBackend) connectBLE(ctx context.Context, bleTransport BLECapabl
 
 		// Log connection established
 		if b.auditLogger != nil {
-			b.auditLogger.LogConnectionEvent(
+			if auditErr := b.auditLogger.LogConnectionEvent(
 				audit.OpConnectionEstablished,
 				address,
 				b.cfg.DeviceName,
@@ -599,7 +602,9 @@ func (b *PhoneKeyBackend) connectBLE(ctx context.Context, bleTransport BLECapabl
 					"transport": "ble",
 					"mtu":       b.cfg.MTU,
 				},
-			)
+			); auditErr != nil {
+				return auditErr
+			}
 		}
 
 		return nil
@@ -1149,14 +1154,21 @@ func (b *PhoneKeyBackend) close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Log connection closed before actually closing
+	// Log connection closed before actually closing. OpConnectionClosed is
+	// SeverityInformational: LogConnectionEvent returns nil for it today.
+	// Logged defensively rather than propagated in case that classification
+	// ever changes — close() must still release the transport, router, and
+	// in-flight leases below even if the audit write failed; refusing to
+	// shut down here would leak the resources this method exists to free.
 	if b.auditLogger != nil && b.connected.Load() {
-		b.auditLogger.LogConnectionEvent(
+		if auditErr := b.auditLogger.LogConnectionEvent(
 			audit.OpConnectionClosed,
 			b.cfg.DeviceAddress,
 			b.cfg.DeviceName,
 			nil,
-		)
+		); auditErr != nil {
+			b.log.Error("audit log failed", "error", auditErr)
+		}
 	}
 
 	b.connected.Store(false)
@@ -1179,7 +1191,9 @@ func (b *PhoneKeyBackend) close() error {
 	// Also unblocks any leaseholder's round trip rather than leaving it to
 	// wait out its own timeout.
 	if b.transport != nil {
-		_ = b.transport.Close()
+		if closeErr := b.transport.Close(); closeErr != nil {
+			b.log.Warn("transport close failed", "error", closeErr)
+		}
 		b.transport = nil
 	}
 
@@ -1403,14 +1417,16 @@ func (b *PhoneKeyBackend) SendPairingConfirm(ctx context.Context, deviceName str
 	if resp.Error != nil {
 		// Log pairing denied
 		if b.auditLogger != nil {
-			b.auditLogger.LogConnectionEvent(
+			if auditErr := b.auditLogger.LogConnectionEvent(
 				audit.OpPairingDenied,
 				b.cfg.DeviceAddress,
 				b.cfg.DeviceName,
 				map[string]any{
 					"reason": resp.Error.Message,
 				},
-			)
+			); auditErr != nil {
+				return nil, auditErr
+			}
 		}
 		return nil, pairing.MapRPCError(resp.Error)
 	}
@@ -1423,26 +1439,30 @@ func (b *PhoneKeyBackend) SendPairingConfirm(ctx context.Context, deviceName str
 	if !result.Confirmed {
 		// Log pairing denied
 		if b.auditLogger != nil {
-			b.auditLogger.LogConnectionEvent(
+			if auditErr := b.auditLogger.LogConnectionEvent(
 				audit.OpPairingDenied,
 				b.cfg.DeviceAddress,
 				b.cfg.DeviceName,
 				map[string]any{
 					"reason": "user rejected",
 				},
-			)
+			); auditErr != nil {
+				return nil, auditErr
+			}
 		}
 		return nil, ErrPairingRejected
 	}
 
 	// Log pairing approved
 	if b.auditLogger != nil {
-		b.auditLogger.LogConnectionEvent(
+		if auditErr := b.auditLogger.LogConnectionEvent(
 			audit.OpPairingApproved,
 			b.cfg.DeviceAddress,
 			result.DeviceName,
 			nil,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return result, nil

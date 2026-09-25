@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -344,6 +345,36 @@ func TestAdapterJSONRPCCall(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "request failed with status 500") {
 			t.Errorf("Expected status 500 error, got: %v", err)
+		}
+	})
+
+	t.Run("call with HTTP error status and unreadable body", func(t *testing.T) {
+		// Declaring a larger Content-Length than actually written causes
+		// the client's io.ReadAll(resp.Body) to fail with an unexpected
+		// EOF once the server closes the connection, without any
+		// permission tricks.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", "1000")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("short"))
+		}))
+		defer server.Close()
+
+		addr := strings.TrimPrefix(server.URL, "http://")
+		adapter, err := NewAdapter(&api.AdapterConfig{MCPAddr: addr})
+		if err != nil {
+			t.Fatalf("NewAdapter() failed: %v", err)
+		}
+		defer adapter.Close()
+
+		ctx := context.Background()
+		var result interface{}
+		err = adapter.call(ctx, "test.method", nil, &result)
+		if err == nil {
+			t.Fatal("expected error for unreadable response body")
+		}
+		if !strings.Contains(err.Error(), "response body could not be read") {
+			t.Errorf("expected body-read failure message, got: %v", err)
 		}
 	})
 
@@ -1264,11 +1295,11 @@ func TestAdapterUserOperations(t *testing.T) {
 	t.Run("CreateTenantUser success", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.responses["admin.createUser"] = db.User{
-			ID:       1,
-			Username: "alice",
-			TenantID: "tenant-1",
-			RoleIDs:  []string{"role-1"},
-			Enabled:  true,
+			ID:        1,
+			Username:  "alice",
+			TenantID:  "tenant-1",
+			RoleIDs:   []string{"role-1"},
+			Lifecycle: string(qrdbsdk.LifecycleActive),
 		}
 		server := httptest.NewServer(handler)
 		defer server.Close()
@@ -1295,7 +1326,7 @@ func TestAdapterUserOperations(t *testing.T) {
 		if user.Username != "alice" {
 			t.Errorf("Expected username 'alice', got '%s'", user.Username)
 		}
-		if !user.Enabled {
+		if user.Lifecycle != string(qrdbsdk.LifecycleActive) {
 			t.Error("Expected user to be enabled")
 		}
 	})
@@ -1327,10 +1358,10 @@ func TestAdapterUserOperations(t *testing.T) {
 	t.Run("GetTenantUser success", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.responses["admin.getUser"] = db.User{
-			ID:       1,
-			Username: "alice",
-			TenantID: "tenant-1",
-			Enabled:  true,
+			ID:        1,
+			Username:  "alice",
+			TenantID:  "tenant-1",
+			Lifecycle: string(qrdbsdk.LifecycleActive),
 		}
 		handler.validateParams = func(method string, params json.RawMessage) error {
 			if method == "admin.getUser" {
@@ -1394,11 +1425,11 @@ func TestAdapterUserOperations(t *testing.T) {
 	t.Run("UpdateTenantUser success", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.responses["admin.updateUser"] = db.User{
-			ID:       1,
-			Username: "alice-updated",
-			TenantID: "tenant-1",
-			RoleIDs:  []string{"role-1", "role-2"},
-			Enabled:  true,
+			ID:        1,
+			Username:  "alice-updated",
+			TenantID:  "tenant-1",
+			RoleIDs:   []string{"role-1", "role-2"},
+			Lifecycle: string(qrdbsdk.LifecycleActive),
 		}
 		server := httptest.NewServer(handler)
 		defer server.Close()

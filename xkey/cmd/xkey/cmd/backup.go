@@ -66,6 +66,13 @@ var (
 	// for reading (backup) or writing (restore).
 	ErrBackupStoreUnavailable = errors.New("backup: data store unavailable")
 
+	// ErrBackupSourceMissing indicates a backup source path the operator
+	// named explicitly (--trust-store, --oath-store, --password-store) does
+	// not exist. Reading from a store is never allowed to auto-create it:
+	// that would silently turn a typo into an empty backup instead of an
+	// error (go-xkms#936).
+	ErrBackupSourceMissing = errors.New("backup: source does not exist")
+
 	// ErrBackupRestoreIncomplete indicates the backup held data in a
 	// category the CLI cannot write back, so the restore was partial.
 	ErrBackupRestoreIncomplete = errors.New("backup: restore incomplete")
@@ -79,14 +86,17 @@ var (
 			"or pass explicit --trust-store/--password-store paths")
 )
 
-// Default store locations beneath the xkey data directory ($XKEY_HOME/data,
-// e.g. ~/.xkey/data). These are exactly the paths the xkey GUI uses when the
-// barrier is not active, so a CLI backup captures what the GUI shows.
-const (
-	backupTrustStoreDir    = "trust"
-	backupOATHStoreFile    = "oath.json"
-	backupPasswordStoreDir = "passwords"
-)
+// The default store locations beneath the xkey data directory
+// ($XKEY_HOME/data, e.g. ~/.xkey/data) resolve through the same
+// feature-subdirectory constants their owning commands use:
+// trustDataSubdir (trust.go), oathStoreFilename (oath.go), and
+// passwordStoreFeature (password.go). A private copy of these names here
+// previously drifted from the owning command's default -- this package once
+// defined its own backupPasswordStoreDir as "passwords" while the static
+// password store actually lives at "staticpw" (passwordStoreFeature) -- so a
+// default backup silently captured no passwords (go-xkms#936). These are
+// exactly the paths the xkey GUI uses when the barrier is not active, so a
+// CLI backup captures what the GUI shows.
 
 // backupCASkipReason explains why a CLI-created backup never carries CA
 // material: the local CA lives inside the xkmsd daemon and is only reachable
@@ -212,7 +222,7 @@ func addBackupStoreFlags(cmd *cobra.Command) {
 			"(default: the barrier-encrypted store when a barrier is initialized, "+
 			"otherwise {xkey-home}/data/oath.json)")
 	cmd.Flags().String("password-store", "",
-		"Static password store directory (default: {xkey-home}/data/passwords)")
+		"Static password store directory (default: {xkey-home}/data/staticpw)")
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +322,7 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generated encryption key (save this):\n  %s\n\n", hex.EncodeToString(key))
 	}
 
-	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd))
+	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd), true)
 	if err != nil {
 		return err
 	}
@@ -388,7 +398,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		return classifyBackupDecryptError(err)
 	}
 
-	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd))
+	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd), false)
 	if err != nil {
 		return err
 	}
@@ -562,6 +572,19 @@ type backupSources struct {
 // that cannot be opened is a hard failure: omitting it would produce a backup
 // that silently misses data, or a restore that silently drops it.
 //
+// strict distinguishes a read (backup create, backup to-device) from a write
+// (backup restore, backup from-device, device sync) run:
+//
+//   - strict=true: a source whose default location has never been written to
+//     is reported in sources.skipped and left unopened rather than opened
+//     (which would auto-create an empty store and silently report zero
+//     entries, go-xkms#936); a source named explicitly with a flag that does
+//     not exist is a hard ErrBackupSourceMissing failure, since the operator
+//     asked to read a specific path.
+//   - strict=false: every source is opened as before, auto-creating its
+//     default or explicit location, because a write run always has somewhere
+//     new to put its first entry.
+//
 // The OATH store is barrier-aware (go-xkms#134/#148): resolveOATHBackupStore
 // opens it through the same --barrier-password / --barrier-password-file /
 // XKEY_BARRIER_PASSWORD reach as `xkey oath` and `xkey device oath-sync`
@@ -570,7 +593,7 @@ type backupSources struct {
 // stale or absent plaintext file. The trust store and password store do not
 // have a barrier-backed CLI path yet, so they keep the original refusal:
 // back up stale plaintext copies of those two, never.
-func resolveBackupSources(cmd *cobra.Command, paths backupStorePaths) (*backupSources, error) {
+func resolveBackupSources(cmd *cobra.Command, paths backupStorePaths, strict bool) (*backupSources, error) {
 	dataDir, err := backupDataDir()
 	if err != nil {
 		return nil, err
@@ -589,33 +612,67 @@ func resolveBackupSources(cmd *cobra.Command, paths backupStorePaths) (*backupSo
 	}
 
 	trustPath := paths.trust
+	var trustMissing bool
 	if trustPath == "" {
-		trustPath = filepath.Join(dataDir, backupTrustStoreDir)
+		trustPath = filepath.Join(dataDir, trustDataSubdir)
+		trustMissing, err = defaultSourceMissing(strict, backup.ItemTrustStore, trustPath)
+	} else {
+		err = requireExplicitSource(strict, backup.ItemTrustStore, trustPath)
 	}
-	trustStore, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: trustPath})
 	if err != nil {
 		sources.Close()
-		return nil, backupStoreError(backup.ItemTrustStore, trustPath, err)
+		return nil, err
 	}
-	sources.trust = &trustStoreAdapter{store: trustStore, path: trustPath}
+	if trustMissing {
+		sources.skipped = append(sources.skipped, backupSkippedSource{
+			Item: backup.ItemTrustStore, Reason: "no store found at " + trustPath,
+		})
+	} else {
+		trustStore, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: trustPath})
+		if err != nil {
+			sources.Close()
+			return nil, backupStoreError(backup.ItemTrustStore, trustPath, err)
+		}
+		sources.trust = &trustStoreAdapter{store: trustStore, path: trustPath}
+	}
 
-	oathStore, oathDisplayPath, err := resolveOATHBackupStore(cmd, dataDir, paths.oath)
+	oathStore, oathDisplayPath, oathMissing, err := resolveOATHBackupStore(cmd, dataDir, paths.oath, strict)
 	if err != nil {
 		sources.Close()
-		return nil, backupStoreError(backup.ItemOATH, oathDisplayPath, err)
+		return nil, err
 	}
-	sources.oath = &oathStoreAdapter{store: oathStore, path: oathDisplayPath}
+	if oathMissing {
+		sources.skipped = append(sources.skipped, backupSkippedSource{
+			Item: backup.ItemOATH, Reason: "no store found at " + oathDisplayPath,
+		})
+	} else {
+		sources.oath = &oathStoreAdapter{store: oathStore, path: oathDisplayPath}
+	}
 
 	passwordPath := paths.passwords
+	var passwordMissing bool
 	if passwordPath == "" {
-		passwordPath = filepath.Join(dataDir, backupPasswordStoreDir)
+		passwordPath = filepath.Join(dataDir, passwordStoreFeature)
+		passwordMissing, err = defaultSourceMissing(strict, backup.ItemPasswords, passwordPath)
+	} else {
+		err = requireExplicitSource(strict, backup.ItemPasswords, passwordPath)
 	}
-	passwordStore, err := openPasswordStore(passwordPath)
 	if err != nil {
 		sources.Close()
-		return nil, backupStoreError(backup.ItemPasswords, passwordPath, err)
+		return nil, err
 	}
-	sources.passwords = &passwordStoreAdapter{store: passwordStore, path: passwordPath}
+	if passwordMissing {
+		sources.skipped = append(sources.skipped, backupSkippedSource{
+			Item: backup.ItemPasswords, Reason: "no store found at " + passwordPath,
+		})
+	} else {
+		passwordStore, err := openPasswordStore(passwordPath)
+		if err != nil {
+			sources.Close()
+			return nil, backupStoreError(backup.ItemPasswords, passwordPath, err)
+		}
+		sources.passwords = &passwordStoreAdapter{store: passwordStore, path: passwordPath}
+	}
 
 	return sources, nil
 }
@@ -627,6 +684,58 @@ func backupStoreError(item, path string, cause error) error {
 		Sentinel: ErrBackupStoreUnavailable,
 		Cause:    &WrappedError{Msg: item + " (" + path + ")", Err: cause},
 	}
+}
+
+// pathExists reports whether path names an existing file or directory. An
+// error from the underlying stat other than "not found" (e.g. a parent
+// component that is a regular file, ENOTDIR) is returned unchanged so the
+// caller can report the real cause instead of treating it as "missing".
+func pathExists(path string) (bool, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// requireExplicitSource returns ErrBackupSourceMissing when strict (a read
+// run) and the operator-supplied path for item does not exist: reading is
+// never allowed to silently auto-create the store the operator explicitly
+// named. In non-strict (write) mode, or when the path exists, it returns
+// nil, and the caller proceeds to open (and, for a write run, possibly
+// create) the store.
+func requireExplicitSource(strict bool, item, path string) error {
+	if !strict {
+		return nil
+	}
+	exists, err := pathExists(path)
+	if err != nil {
+		return backupStoreError(item, path, err)
+	}
+	if !exists {
+		return &DetailError{Err: ErrBackupSourceMissing, Detail: fmt.Sprintf(": %s (%s)", item, path)}
+	}
+	return nil
+}
+
+// defaultSourceMissing reports, in strict (read) mode, whether item's
+// default location has never been written to, so the caller can skip
+// opening it and report it as missing instead of auto-creating an empty
+// store and silently backing up nothing from it (go-xkms#936). In
+// non-strict (write) mode it always returns false: the destination is
+// created on first write, which is the expected outcome for a restore into
+// a fresh store.
+func defaultSourceMissing(strict bool, item, path string) (bool, error) {
+	if !strict {
+		return false, nil
+	}
+	exists, err := pathExists(path)
+	if err != nil {
+		return false, backupStoreError(item, path, err)
+	}
+	return !exists, nil
 }
 
 // readerOptions returns the backup service options for every opened store.
@@ -674,7 +783,10 @@ func (s *backupSources) summary() string {
 	if s.passwords != nil {
 		parts = append(parts, backup.ItemPasswords+" ("+s.passwords.path+")")
 	}
-	summary := "no entries in " + strings.Join(parts, ", ")
+	summary := "no data stores opened"
+	if len(parts) > 0 {
+		summary = "no entries in " + strings.Join(parts, ", ")
+	}
 	for _, skip := range s.skipped {
 		summary += "; " + skip.Item + " skipped: " + skip.Reason
 	}
@@ -731,35 +843,55 @@ func backupDataDir() (string, error) {
 // with a barrier active reads the same ciphertext the GUI wrote instead of a
 // stale or absent plaintext file.
 //
-// Returns the opened store and the path or barrier location to use in error
-// and summary messages.
-func resolveOATHBackupStore(cmd *cobra.Command, dataDir, oathPath string) (oath.Store, string, error) {
+// strict carries the same read/write meaning as resolveBackupSources: in
+// strict (read) mode an explicit --oath-store path that does not exist is a
+// hard error, and a default oathStoreFilename that has never been written to
+// is reported back as missing (missing=true, store=nil) instead of being
+// auto-created and silently backed up as empty. The barrier-backed path never
+// reports missing: whether the barrier itself is reachable is
+// resolveSecretStoreBackend's decision, not an existence check on a file.
+//
+// Returns the opened store (nil when missing) and the path or barrier
+// location to use in error, summary, and skipped-source messages.
+func resolveOATHBackupStore(cmd *cobra.Command, dataDir, oathPath string, strict bool) (store oath.Store, path string, missing bool, err error) {
 	if oathPath != "" {
+		if err := requireExplicitSource(strict, backup.ItemOATH, oathPath); err != nil {
+			return nil, oathPath, false, err
+		}
 		store, err := oath.NewFileStore(oathPath)
 		if err != nil {
-			return nil, oathPath, err
+			return nil, oathPath, false, backupStoreError(backup.ItemOATH, oathPath, err)
 		}
-		return store, oathPath, nil
+		return store, oathPath, false, nil
 	}
+
+	defaultPath := filepath.Join(dataDir, oathStoreFilename)
 
 	backend, opened, err := resolveSecretStoreBackend(cmd, dataDir, "OATH", slog.Default())
 	if err != nil {
-		return nil, filepath.Join(dataDir, backupOATHStoreFile), err
+		return nil, defaultPath, false, backupStoreError(backup.ItemOATH, defaultPath, err)
 	}
 	if opened {
 		store, err := oath.NewBackendStore(backend, "oath/")
 		if err != nil {
-			return nil, "barrier:oath/", err
+			return nil, "barrier:oath/", false, backupStoreError(backup.ItemOATH, "barrier:oath/", err)
 		}
-		return store, "barrier:oath/", nil
+		return store, "barrier:oath/", false, nil
 	}
 
-	oathPath = filepath.Join(dataDir, backupOATHStoreFile)
-	store, err := oath.NewFileStore(oathPath)
+	oathMissing, err := defaultSourceMissing(strict, backup.ItemOATH, defaultPath)
 	if err != nil {
-		return nil, oathPath, err
+		return nil, defaultPath, false, err
 	}
-	return store, oathPath, nil
+	if oathMissing {
+		return nil, defaultPath, true, nil
+	}
+
+	store, err = oath.NewFileStore(defaultPath)
+	if err != nil {
+		return nil, defaultPath, false, backupStoreError(backup.ItemOATH, defaultPath, err)
+	}
+	return store, defaultPath, false, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,8 @@ import (
 	"strings"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // SudoElevator uses sudo to re-execute the current binary with CLI
@@ -176,7 +178,5 @@ func (e *SudoElevator) Run(args []string, stdinData []byte) ([]byte, error) {
 // zeroBytes overwrites a byte slice with zeros to clear sensitive data
 // from memory.
 func zeroBytes(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
+	enclave.Wipe(b)
 }

@@ -22,6 +22,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // NodeLocalBackendsParams configures NewNodeLocalBackends. It is the single,
@@ -68,11 +70,7 @@ func injectKeystorePassword(ctx context.Context, protection *KeyProtection, caCo
 		return nil
 	}
 	pwBytes := password.Bytes()
-	defer func() {
-		for i := range pwBytes {
-			pwBytes[i] = 0
-		}
-	}()
+	defer enclave.Wipe(pwBytes)
 	// Each target field gets its own enclave (NewLiteralSecretValue reseals
 	// pwBytes afresh per call) rather than sharing one SecretValue struct
 	// copy across every identity's key and keystore password fields.

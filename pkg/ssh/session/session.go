@@ -16,6 +16,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -84,8 +85,61 @@ type session struct {
 	closed bool
 }
 
+// NewSession wraps an already-dialed, host-key-verified *ssh.Client in a
+// Session. Closers run in LIFO order when the Session is closed, exactly as
+// Dial's do; pass none when the caller owns no local enclave for the
+// authentication key (e.g. a remote-signing proxy whose Sign calls forward
+// to a server that never releases the private key). Host and user are
+// carried through for error messages only.
+func NewSession(host, user string, client *ssh.Client, closers ...func()) Session {
+	return &session{
+		host:    host,
+		user:    user,
+		client:  client,
+		closers: closers,
+	}
+}
+
+// closeSession closes sess, filtering x/crypto/ssh's documented shape for
+// "the underlying channel is already closed": once the mux channel has been
+// torn down, sendMessage reports io.EOF (see (*channel).sendMessage and
+// (*channel).Close in golang.org/x/crypto/ssh), which is the expected result
+// of the second Close in a race against wireCancellation's abort Close
+// below, not a failure to report.
+func closeSession(sess *ssh.Session) error {
+	if err := sess.Close(); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
+}
+
+// wireCancellation closes sess when ctx is cancelled, to unblock a session
+// call currently blocked in the SSH transport -- the supported cancellation
+// path in x/crypto/ssh. The returned cleanup func must be deferred: it stops
+// the watcher goroutine (when ctx never fired) and, either way, waits for it
+// to fully exit before returning the Close error it may have produced, so
+// that error is never silently dropped (#701) and never read racily.
+func wireCancellation(ctx context.Context, sess *ssh.Session) (cleanup func() error) {
+	var abortErr error
+	watcherDone := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		select {
+		case <-ctx.Done():
+			abortErr = closeSession(sess)
+		case <-done:
+		}
+	}()
+	return func() error {
+		close(done)
+		<-watcherDone // synchronizes this read of abortErr with the write above
+		return abortErr
+	}
+}
+
 // Run implements Session.Run.
-func (s *session) Run(ctx context.Context, cmd string) ([]byte, []byte, error) {
+func (s *session) Run(ctx context.Context, cmd string) (stdout, stderr []byte, err error) {
 	s.mu.Lock()
 	if s.closed || s.client == nil {
 		s.mu.Unlock()
@@ -98,29 +152,18 @@ func (s *session) Run(ctx context.Context, cmd string) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, &SessionError{Host: s.host, Err: err}
 	}
-	defer func() { _ = sess.Close() }()
-
-	var stdout, stderr bytes.Buffer
-	sess.Stdout = &stdout
-	sess.Stderr = &stderr
-
-	// Wire context cancellation: if the caller cancels, close the
-	// session channel to unblock Run.
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			// Closing the ssh.Session on cancellation is the supported
-			// cancellation path in x/crypto/ssh.
-			_ = sess.Close()
-		case <-done:
-		}
+	cancelCleanup := wireCancellation(ctx, sess)
+	defer func() {
+		err = errors.Join(err, cancelCleanup(), closeSession(sess))
 	}()
-	defer close(done)
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	sess.Stdout = &stdoutBuf
+	sess.Stderr = &stderrBuf
 
 	if runErr := sess.Run(cmd); runErr != nil {
 		if ctx.Err() != nil {
-			return stdout.Bytes(), stderr.Bytes(), &TimeoutError{
+			return stdoutBuf.Bytes(), stderrBuf.Bytes(), &TimeoutError{
 				Host:     s.host,
 				Duration: 0,
 				Err:      ctx.Err(),
@@ -130,20 +173,20 @@ func (s *session) Run(ctx context.Context, cmd string) ([]byte, []byte, error) {
 		if ee, ok := runErr.(*ssh.ExitError); ok {
 			exit = ee.ExitStatus()
 		}
-		return stdout.Bytes(), stderr.Bytes(), &CommandError{
+		return stdoutBuf.Bytes(), stderrBuf.Bytes(), &CommandError{
 			Command:  cmd,
 			ExitCode: exit,
-			Stderr:   stderr.String(),
+			Stderr:   stderrBuf.String(),
 			Err:      runErr,
 		}
 	}
-	return stdout.Bytes(), stderr.Bytes(), nil
+	return stdoutBuf.Bytes(), stderrBuf.Bytes(), nil
 }
 
 // Shell implements Session.Shell. Wires Stdin/Stdout/Stderr of the
 // caller process through to the remote shell. Blocks until the shell
 // exits.
-func (s *session) Shell(ctx context.Context) error {
+func (s *session) Shell(ctx context.Context) (err error) {
 	s.mu.Lock()
 	if s.closed || s.client == nil {
 		s.mu.Unlock()
@@ -156,7 +199,10 @@ func (s *session) Shell(ctx context.Context) error {
 	if err != nil {
 		return &SessionError{Host: s.host, Err: err}
 	}
-	defer func() { _ = sess.Close() }()
+	cancelCleanup := wireCancellation(ctx, sess)
+	defer func() {
+		err = errors.Join(err, cancelCleanup(), closeSession(sess))
+	}()
 
 	sess.Stdin = stdin
 	sess.Stdout = stdout
@@ -168,17 +214,6 @@ func (s *session) Shell(ctx context.Context) error {
 	if err := sess.Shell(); err != nil {
 		return &SessionError{Host: s.host, Err: err}
 	}
-
-	// Wire cancellation.
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = sess.Close()
-		case <-done:
-		}
-	}()
-	defer close(done)
 
 	waitErr := sess.Wait()
 	if ctx.Err() != nil {
@@ -196,7 +231,7 @@ func (s *session) Shell(ctx context.Context) error {
 // "<remotePath>.partial" file, optionally chmods it, then atomically
 // renames it onto remotePath. The payload is streamed (never buffered in
 // memory), so multi-gigabyte transfers run in constant memory.
-func (s *session) Upload(ctx context.Context, src io.Reader, remotePath string, mode fs.FileMode) error {
+func (s *session) Upload(ctx context.Context, src io.Reader, remotePath string, mode fs.FileMode) (err error) {
 	if src == nil {
 		return &NilInputError{Field: "src"}
 	}
@@ -219,7 +254,9 @@ func (s *session) Upload(ctx context.Context, src io.Reader, remotePath string, 
 	if err != nil {
 		return &SessionError{Host: s.host, Err: err}
 	}
-	defer func() { _ = sess.Close() }()
+	defer func() {
+		err = errors.Join(err, closeSession(sess))
+	}()
 
 	stdinPipe, err := sess.StdinPipe()
 	if err != nil {
@@ -236,15 +273,7 @@ func (s *session) Upload(ctx context.Context, src io.Reader, remotePath string, 
 	// Wire context cancellation: closing the session on cancel aborts the
 	// remote command, which unblocks both the stdin copy below (writes on
 	// the closed channel return) and the Wait that follows.
-	cancelDone := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = sess.Close()
-		case <-cancelDone:
-		}
-	}()
-	defer close(cancelDone)
+	cancelCleanup := wireCancellation(ctx, sess)
 
 	// Stream the payload to the remote stdin, then close it to deliver EOF
 	// so the remote `cat` terminates and the command can complete.
@@ -252,15 +281,19 @@ func (s *session) Upload(ctx context.Context, src io.Reader, remotePath string, 
 	closeErr := stdinPipe.Close()
 
 	waitErr := sess.Wait()
+	abortErr := cancelCleanup()
 
 	if ctx.Err() != nil {
-		return &TimeoutError{Host: s.host, Err: ctx.Err()}
+		return errors.Join(&TimeoutError{Host: s.host, Err: ctx.Err()}, abortErr)
 	}
 	if copyErr != nil {
-		return &UploadError{Path: remotePath, Err: copyErr}
+		return errors.Join(&UploadError{Path: remotePath, Err: copyErr}, abortErr)
 	}
 	if closeErr != nil {
-		return &UploadError{Path: remotePath, Err: closeErr}
+		return errors.Join(&UploadError{Path: remotePath, Err: closeErr}, abortErr)
+	}
+	if abortErr != nil {
+		return abortErr
 	}
 	if waitErr != nil {
 		exit := -1

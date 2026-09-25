@@ -319,11 +319,6 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 	return t.DoRequest(ctx, http.MethodPost, method, req, resp)
 }
 
-// RequestStream opens a bidirectional stream (not fully supported for HTTP/3).
-func (t *Transport) RequestStream(ctx context.Context, method string, req interface{}) (transport.Stream, error) {
-	return nil, transport.ErrStreamNotSupported
-}
-
 // DoRequest performs an HTTP/3 request and unmarshals the response.
 func (t *Transport) DoRequest(ctx context.Context, httpMethod, path string, body interface{}, result interface{}) error {
 	respBody, err := t.DoRawRequest(ctx, httpMethod, path, body)
@@ -796,6 +791,9 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 	}
 	if req.TagSize != 0 {
 		body["tag_size"] = req.TagSize
+	}
+	if req.GCMNonceMode != "" {
+		body["gcm_nonce_mode"] = req.GCMNonceMode
 	}
 
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
@@ -2329,27 +2327,10 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 	return &resp, nil
 }
 
-// Escrow Operations
-//
-// No QUIC route exists yet for external key escrow (pkg/escrow); see
-// docs/escrow/architecture.md. These stubs keep Transport satisfying
-// transport.XKMSServicer.
-
-func (t *Transport) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) RevokeEscrow(_ context.Context, _ string) error {
-	return ErrNotSupported
-}
+// External key escrow (pkg/escrow) is embedded-only (go-xkms#692): its RBAC
+// model is undecided, so Transport does not implement EscrowKey/RecoverKey/
+// ListEscrowed/RevokeEscrow at all. transport.EscrowService is no longer
+// part of transport.Client — see docs/escrow/architecture.md.
 
 // Policy Operations
 //

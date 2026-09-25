@@ -23,10 +23,7 @@ import (
 	"os"
 	"time"
 
-	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
 	"github.com/spf13/cobra"
 )
 
@@ -35,75 +32,18 @@ import (
 type FIDO2HandlerFactory func(config *fido2.Config) (fido2.Handler, error)
 
 // fido2HandlerFactory is the package-level factory for creating FIDO2 handlers.
-// Can be overridden in tests for mocking.
+// Integration tests that need a software authenticator override this variable
+// from a //go:build integration && fido2 file; it is never overridden in the
+// release binary.
 var fido2HandlerFactory FIDO2HandlerFactory = defaultFIDO2HandlerFactory
 
-// defaultFIDO2HandlerFactory is the default implementation that creates real FIDO2 handlers.
-// If FIDO2_USE_VIRTUAL=true environment variable is set, it uses a virtual FIDO2 device
-// instead of requiring physical hardware.
-//
-// When FIDO2_VIRTUAL_STATE_DIR is also set, credential state is persisted to the filesystem
-// so that credentials survive across CLI invocations. Without it, credentials are stored
-// in memory and lost when the process exits.
+// defaultFIDO2HandlerFactory is the only FIDO2 handler factory shipped in the
+// release binary. It always enumerates physical hardware authenticators; it
+// has no environment-variable switch to a software authenticator, so no
+// process environment can redirect xkmsctl's FIDO2 operations away from real
+// hardware.
 func defaultFIDO2HandlerFactory(config *fido2.Config) (fido2.Handler, error) {
-	var enumerator fido2.HIDDeviceEnumerator
-
-	// Check if virtual device mode is enabled
-	if os.Getenv("FIDO2_USE_VIRTUAL") == "true" {
-		// Build virtual device configuration
-		deviceConfig := &virtualdevice.NativeVirtualDeviceConfig{
-			SerialNumber:               "XKMSCTL-VFIDO",
-			Manufacturer:               "go-xkms",
-			Product:                    "xKey Virtual",
-			EnablePIN:                  true,
-			EnableHMACSecret:           true,
-			EnableResidentKey:          true,
-			EnableCredentialManagement: true,
-		}
-
-		// Use file-based credential storage when a state directory is configured.
-		// This allows credentials registered in one CLI invocation to persist
-		// and be available for authentication in subsequent invocations.
-		if stateDir := os.Getenv("FIDO2_VIRTUAL_STATE_DIR"); stateDir != "" {
-			storage, err := newFileCredentialStorage(stateDir)
-			if err != nil {
-				return nil, err
-			}
-			deviceConfig.Storage = storage
-		}
-
-		device, err := virtualdevice.NewNativeVirtualDevice(deviceConfig)
-		if err != nil {
-			return nil, &WrappedError{Sentinel: ErrCreateVirtualDeviceFailed, Err: err}
-		}
-
-		virtualEnumerator := virtualdevice.NewNativeVirtualDeviceEnumerator()
-		if err := virtualEnumerator.RegisterDevice(device); err != nil {
-			return nil, &WrappedError{Sentinel: ErrRegisterVirtualDeviceFailed, Err: err}
-		}
-		enumerator = virtualEnumerator
-	} else {
-		enumerator = fido2.NewDefaultEnumerator()
-	}
-
-	return fido2.NewHandler(config, enumerator)
-}
-
-// newFileCredentialStorage creates a file-backed StatefulCredentialStorage using
-// the given directory as the root for file storage. This adapts the go-xkms
-// file storage backend into the authenticator's credential storage interface.
-func newFileCredentialStorage(stateDir string) (authenticator.StatefulCredentialStorage, error) {
-	backend, err := client.NewFileStorageBackend(stateDir)
-	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrVirtualStorageInit, Err: err}
-	}
-
-	storage, err := authenticator.NewBackendStorage(backend, "fido2/virtual/")
-	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrVirtualCredentialStorageInit, Err: err}
-	}
-
-	return storage, nil
+	return fido2.NewHandler(config, fido2.NewDefaultEnumerator())
 }
 
 // fido2Cmd represents the fido2 command
@@ -140,7 +80,7 @@ func runFIDO2ListDevicesWithWriter(cmd *cobra.Command, args []string, writer io.
 		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
-	defer func() { _ = handler.Close() }()
+	defer closeQuietly(handler)
 
 	// List devices
 	devices, err := handler.ListDevices()
@@ -195,7 +135,12 @@ func runFIDO2WaitDeviceWithWriter(cmd *cobra.Command, args []string, writer io.W
 	cfg := getConfig()
 	printer := NewPrinter(cfg.OutputFormat, writer)
 
-	timeout, _ := cmd.Flags().GetDuration("timeout")
+	fr := newFlagReader(cmd)
+	timeout := fr.Duration("timeout")
+	if err := fr.Err(); err != nil {
+		handleError(err)
+		return
+	}
 
 	if err := printer.PrintMessage("Waiting for FIDO2 device... (press Ctrl+C to cancel)"); err != nil {
 		handleError(err)
@@ -209,7 +154,7 @@ func runFIDO2WaitDeviceWithWriter(cmd *cobra.Command, args []string, writer io.W
 		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
-	defer func() { _ = handler.Close() }()
+	defer closeQuietly(handler)
 
 	// Wait for device
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -250,12 +195,17 @@ func runFIDO2RegisterWithWriter(cmd *cobra.Command, args []string, writer io.Wri
 	cfg := getConfig()
 	printer := NewPrinter(cfg.OutputFormat, writer)
 
-	rpID, _ := cmd.Flags().GetString("rp-id")
-	rpName, _ := cmd.Flags().GetString("rp-name")
-	displayName, _ := cmd.Flags().GetString("display-name")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
-	devicePath, _ := cmd.Flags().GetString("device")
-	requireUV, _ := cmd.Flags().GetBool("user-verification")
+	fr := newFlagReader(cmd)
+	rpID := fr.String("rp-id")
+	rpName := fr.String("rp-name")
+	displayName := fr.String("display-name")
+	timeout := fr.Duration("timeout")
+	devicePath := fr.String("device")
+	requireUV := fr.Bool("user-verification")
+	if err := fr.Err(); err != nil {
+		handleError(err)
+		return
+	}
 
 	if displayName == "" {
 		displayName = username
@@ -272,7 +222,7 @@ func runFIDO2RegisterWithWriter(cmd *cobra.Command, args []string, writer io.Wri
 		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
-	defer func() { _ = handler.Close() }()
+	defer closeQuietly(handler)
 
 	// Create enrollment config
 	enrollConfig := fido2.DefaultEnrollmentConfig(username)
@@ -343,13 +293,18 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 	cfg := getConfig()
 	printer := NewPrinter(cfg.OutputFormat, writer)
 
-	credIDStr, _ := cmd.Flags().GetString("credential-id")
-	saltStr, _ := cmd.Flags().GetString("salt")
-	rpID, _ := cmd.Flags().GetString("rp-id")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
-	devicePath, _ := cmd.Flags().GetString("device")
-	requireUV, _ := cmd.Flags().GetBool("user-verification")
-	outputHex, _ := cmd.Flags().GetBool("hex")
+	fr := newFlagReader(cmd)
+	credIDStr := fr.String("credential-id")
+	saltStr := fr.String("salt")
+	rpID := fr.String("rp-id")
+	timeout := fr.Duration("timeout")
+	devicePath := fr.String("device")
+	requireUV := fr.Bool("user-verification")
+	outputHex := fr.Bool("hex")
+	if err := fr.Err(); err != nil {
+		handleError(err)
+		return
+	}
 
 	if credIDStr == "" {
 		handleError(ErrCredentialIDRequired)
@@ -384,7 +339,7 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
-	defer func() { _ = handler.Close() }()
+	defer closeQuietly(handler)
 
 	// Create authentication config
 	authConfig := fido2.DefaultAuthenticationConfig(credID, salt)
@@ -420,13 +375,20 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 			"derived_key": keyOutput,
 			"key_length":  len(derivedKey),
 		}
-		data, _ := json.MarshalIndent(result, "", "  ")
-		_, _ = fmt.Fprintln(writer, string(data))
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			handleError(&WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err})
+			return
+		}
+		printer.println(string(data))
 	} else {
 		if err := printer.PrintSuccess("Authentication successful"); err != nil {
 			handleError(err)
 		}
-		_, _ = fmt.Fprintf(writer, "Derived Key (%d bytes): %s\n", len(derivedKey), keyOutput)
+		printer.printf("Derived Key (%d bytes): %s\n", len(derivedKey), keyOutput)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -448,7 +410,12 @@ func runFIDO2InfoWithWriter(cmd *cobra.Command, args []string, writer io.Writer)
 	cfg := getConfig()
 	printer := NewPrinter(cfg.OutputFormat, writer)
 
-	devicePath, _ := cmd.Flags().GetString("device")
+	fr := newFlagReader(cmd)
+	devicePath := fr.String("device")
+	if err := fr.Err(); err != nil {
+		handleError(err)
+		return
+	}
 
 	printVerbose("Getting FIDO2 device info...")
 
@@ -460,7 +427,7 @@ func runFIDO2InfoWithWriter(cmd *cobra.Command, args []string, writer io.Writer)
 		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
-	defer func() { _ = handler.Close() }()
+	defer closeQuietly(handler)
 
 	// List devices and get info for first one (or specified device)
 	devices, err := handler.ListDevices()
@@ -536,8 +503,8 @@ func init() {
 	fido2AuthenticateCmd.Flags().String("device", "", "specific device path to use")
 	fido2AuthenticateCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
 	fido2AuthenticateCmd.Flags().Bool("hex", false, "output derived key in hex format instead of base64")
-	_ = fido2AuthenticateCmd.MarkFlagRequired("credential-id")
-	_ = fido2AuthenticateCmd.MarkFlagRequired("salt")
+	markFlagRequired(fido2AuthenticateCmd, "credential-id")
+	markFlagRequired(fido2AuthenticateCmd, "salt")
 
 	// info flags
 	fido2InfoCmd.Flags().String("device", "", "specific device path to use")

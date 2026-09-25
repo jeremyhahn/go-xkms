@@ -50,7 +50,9 @@ var (
 	// ErrNotSupported is returned when an operation is not supported.
 	ErrNotSupported = errors.New("operation not supported by this protocol")
 
-	// ErrStreamNotSupported is returned when streaming is requested.
+	// ErrStreamNotSupported re-exports the package-level sentinel for SDK
+	// consumers that classify errors by it (go-xkms#727: this transport has
+	// no streaming operation left to return it from).
 	ErrStreamNotSupported = transport.ErrStreamNotSupported
 
 	// ErrNoiseNotConfigured is returned when the transport is asked to connect
@@ -72,6 +74,32 @@ var (
 	// key in place, so "not connected" is not the same as "nothing to
 	// release". Close first.
 	ErrDirtyState = errors.New("usb transport: still holds session state from a previous connection; Close first")
+)
+
+// JSON-RPC method names for the password store and seal store operations
+// this transport proxies to the phone's embedded xkmsd instance over the
+// Noise-encrypted USB channel. Each name matches the XKMSServicer method it
+// implements verbatim, the same convention the gRPC service definitions use
+// (see pkg/api/grpc/proto/xkmsv1), so the wire contract stays consistent
+// across every xkms transport rather than borrowing the unrelated "local.*"
+// namespace xkey/pkg/pairing reserves for Android Keystore operations.
+const (
+	methodPasswordAdd         = "PasswordAdd"
+	methodPasswordGet         = "PasswordGet"
+	methodPasswordList        = "PasswordList"
+	methodPasswordUpdate      = "PasswordUpdate"
+	methodPasswordDelete      = "PasswordDelete"
+	methodPasswordStoreUnlock = "PasswordStoreUnlock"
+	methodPasswordStoreLock   = "PasswordStoreLock"
+	methodPasswordStoreStatus = "PasswordStoreStatus"
+	methodPasswordGenerate    = "PasswordGenerate"
+
+	methodSealStorePut    = "SealStorePut"
+	methodSealStoreGet    = "SealStoreGet"
+	methodSealStoreDelete = "SealStoreDelete"
+	methodSealStoreList   = "SealStoreList"
+	methodSealStoreReseal = "SealStoreReseal"
+	methodSealStoreStatus = "SealStoreStatus"
 )
 
 // NoiseConfig carries the pairing key material for the Noise XX handshake.
@@ -470,8 +498,11 @@ func (t *Transport) discardPhoneUSB() {
 	t.phoneUSB = nil
 	t.busMu.Unlock()
 
-	if usb != nil {
-		_ = usb.Close()
+	if usb == nil {
+		return
+	}
+	if err := usb.Close(); err != nil {
+		t.log.Debug("failed to close the discarded USB bus transport", "error", err)
 	}
 }
 
@@ -570,12 +601,6 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 	return nil
 }
 
-// RequestStream returns ErrStreamNotSupported since USB AOA does not
-// support bidirectional streaming.
-func (t *Transport) RequestStream(_ context.Context, _ string, _ interface{}) (transport.Stream, error) {
-	return nil, ErrStreamNotSupported
-}
-
 // Config returns the transport configuration.
 func (t *Transport) Config() *transport.Config {
 	return t.config
@@ -584,43 +609,59 @@ func (t *Transport) Config() *transport.Config {
 // Password Store Operations
 
 // PasswordAdd adds a new static password.
-func (t *Transport) PasswordAdd(_ context.Context, _ *transport.PasswordAddRequest) (*transport.PasswordAddResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PasswordAdd(ctx context.Context, req *transport.PasswordAddRequest) (*transport.PasswordAddResponse, error) {
+	var resp transport.PasswordAddResponse
+	if err := t.Request(ctx, methodPasswordAdd, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // PasswordGet retrieves a password entry.
-func (t *Transport) PasswordGet(_ context.Context, _ *transport.PasswordGetRequest) (*transport.PasswordGetResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PasswordGet(ctx context.Context, req *transport.PasswordGetRequest) (*transport.PasswordGetResponse, error) {
+	var resp transport.PasswordGetResponse
+	if err := t.Request(ctx, methodPasswordGet, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // PasswordList lists password entries.
-func (t *Transport) PasswordList(_ context.Context, _ *transport.PasswordListRequest) (*transport.PasswordListResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PasswordList(ctx context.Context, req *transport.PasswordListRequest) (*transport.PasswordListResponse, error) {
+	var resp transport.PasswordListResponse
+	if err := t.Request(ctx, methodPasswordList, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // PasswordUpdate updates a password entry.
-func (t *Transport) PasswordUpdate(_ context.Context, _ *transport.PasswordUpdateRequest) error {
-	return ErrNotSupported
+func (t *Transport) PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) error {
+	return t.Request(ctx, methodPasswordUpdate, req, nil)
 }
 
 // PasswordDelete deletes a password entry.
-func (t *Transport) PasswordDelete(_ context.Context, _ *transport.PasswordDeleteRequest) error {
-	return ErrNotSupported
+func (t *Transport) PasswordDelete(ctx context.Context, req *transport.PasswordDeleteRequest) error {
+	return t.Request(ctx, methodPasswordDelete, req, nil)
 }
 
 // PasswordStoreUnlock unlocks the password store.
-func (t *Transport) PasswordStoreUnlock(_ context.Context, _ *transport.PasswordStoreUnlockRequest) error {
-	return ErrNotSupported
+func (t *Transport) PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error {
+	return t.Request(ctx, methodPasswordStoreUnlock, req, nil)
 }
 
 // PasswordStoreLock locks the password store.
-func (t *Transport) PasswordStoreLock(_ context.Context) error {
-	return ErrNotSupported
+func (t *Transport) PasswordStoreLock(ctx context.Context) error {
+	return t.Request(ctx, methodPasswordStoreLock, nil, nil)
 }
 
 // PasswordStoreStatus returns the password store status.
-func (t *Transport) PasswordStoreStatus(_ context.Context) (*transport.PasswordStoreStatusResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error) {
+	var resp transport.PasswordStoreStatusResponse
+	if err := t.Request(ctx, methodPasswordStoreStatus, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // PasswordStoreSetAccessMode sets the password store access mode.
@@ -629,62 +670,56 @@ func (t *Transport) PasswordStoreSetAccessMode(_ context.Context, _ *transport.P
 }
 
 // PasswordGenerate generates a random password.
-func (t *Transport) PasswordGenerate(_ context.Context, _ *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
+	var resp transport.PasswordGenerateResponse
+	if err := t.Request(ctx, methodPasswordGenerate, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // Platform Store Operations
 
 // SealStorePut stores a secret in the platform store.
-func (t *Transport) SealStorePut(_ context.Context, _ *transport.SealStorePutRequest) error {
-	return ErrNotSupported
+func (t *Transport) SealStorePut(ctx context.Context, req *transport.SealStorePutRequest) error {
+	return t.Request(ctx, methodSealStorePut, req, nil)
 }
 
 // SealStoreGet retrieves a secret from the platform store.
-func (t *Transport) SealStoreGet(_ context.Context, _ *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) SealStoreGet(ctx context.Context, req *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
+	var resp transport.SealStoreGetResponse
+	if err := t.Request(ctx, methodSealStoreGet, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // SealStoreDelete deletes a secret from the platform store.
-func (t *Transport) SealStoreDelete(_ context.Context, _ *transport.SealStoreDeleteRequest) error {
-	return ErrNotSupported
+func (t *Transport) SealStoreDelete(ctx context.Context, req *transport.SealStoreDeleteRequest) error {
+	return t.Request(ctx, methodSealStoreDelete, req, nil)
 }
 
 // SealStoreList lists all stored secret names.
-func (t *Transport) SealStoreList(_ context.Context) (*transport.SealStoreListResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) SealStoreList(ctx context.Context) (*transport.SealStoreListResponse, error) {
+	var resp transport.SealStoreListResponse
+	if err := t.Request(ctx, methodSealStoreList, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // SealStoreReseal reseals a secret with the current sealing key.
-func (t *Transport) SealStoreReseal(_ context.Context, _ *transport.SealStoreResealRequest) error {
-	return ErrNotSupported
+func (t *Transport) SealStoreReseal(ctx context.Context, req *transport.SealStoreResealRequest) error {
+	return t.Request(ctx, methodSealStoreReseal, req, nil)
 }
 
 // SealStoreStatus returns the platform store status.
-func (t *Transport) SealStoreStatus(_ context.Context) (*transport.SealStoreStatusResponse, error) {
-	return nil, ErrNotSupported
-}
-
-// Escrow Operations
-//
-// No USB route exists yet for external key escrow (pkg/escrow); see
-// docs/escrow/architecture.md. These stubs keep Transport satisfying
-// transport.XKMSServicer.
-
-func (t *Transport) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) RevokeEscrow(_ context.Context, _ string) error {
-	return ErrNotSupported
+func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreStatusResponse, error) {
+	var resp transport.SealStoreStatusResponse
+	if err := t.Request(ctx, methodSealStoreStatus, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // Policy Operations

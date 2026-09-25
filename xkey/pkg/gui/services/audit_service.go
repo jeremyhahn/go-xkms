@@ -17,9 +17,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // Audit service errors.
@@ -65,6 +67,11 @@ var validExportFormats = map[string]struct{}{
 type AuditService struct {
 	ctx   context.Context
 	store audit.Store
+
+	// policy is the enterprise policy section whose UserCanViewAuditLog
+	// field gates GetEntries and ExportEntries. nil in personal mode.
+	// See SetPolicy.
+	policy atomic.Pointer[config.PolicySection]
 }
 
 // NewAuditService creates a new AuditService.
@@ -79,8 +86,42 @@ func (s *AuditService) SetContext(ctx context.Context) {
 	s.ctx = ctx
 }
 
+// SetPolicy installs the enterprise policy section that gates GetEntries
+// and ExportEntries. The GUI calls this with config.DefaultPolicy() before
+// SO login and the verified section afterward; see startupEnterprisePolicy
+// and applyVerifiedEnterprisePolicy in pkg/gui/enterprise_policy.go.
+func (s *AuditService) SetPolicy(pol *config.PolicySection) {
+	s.policy.Store(pol)
+}
+
+// requireViewAuditLog returns a *PolicyDeniedError, and logs it to the
+// audit store itself (audit.Store embeds Logger), if enterprise policy's
+// UserCanViewAuditLog is false.
+func (s *AuditService) requireViewAuditLog(operation string) error {
+	pol := s.policy.Load()
+	if pol == nil || pol.UserCanViewAuditLog {
+		return nil
+	}
+	err := &PolicyDeniedError{Field: "user_can_view_audit_log"}
+	if s.store != nil {
+		if auditErr := s.store.Log(audit.Entry{
+			Timestamp: time.Now(),
+			Operation: audit.OpPolicyDenied,
+			Success:   false,
+			Error:     err.Error(),
+			Details:   map[string]any{"operation": operation},
+		}); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
+	}
+	return err
+}
+
 // GetEntries returns audit log entries matching the filter.
 func (s *AuditService) GetEntries(filter *AuditFilter) ([]AuditEntry, error) {
+	if err := s.requireViewAuditLog("get_entries"); err != nil {
+		return nil, err
+	}
 	if s.store == nil {
 		return []AuditEntry{}, nil
 	}

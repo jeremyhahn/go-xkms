@@ -17,7 +17,10 @@
 // automatic renewal.
 package service
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrChallengeSetupFailed indicates that setting up an ACME challenge failed.
 type ErrChallengeSetupFailed struct {
@@ -362,6 +365,17 @@ func (e ErrClientCreation) Unwrap() error {
 	return e.Err
 }
 
+// Sentinel causes wrapped by ErrDeployFailed when Deploy is called with an
+// incomplete or invalid DeployConfig. Callers can match a specific cause
+// with errors.Is, which walks ErrDeployFailed.Unwrap to reach these.
+var (
+	ErrDeployConfigNil     = errors.New("acme-client-service: deploy config is nil")
+	ErrDeployCertPEMEmpty  = errors.New("acme-client-service: certificate PEM data is empty")
+	ErrDeployCertPathEmpty = errors.New("acme-client-service: certificate path is empty")
+	ErrDeployKeyPathEmpty  = errors.New("acme-client-service: key path is empty")
+	ErrDeployKeyPEMEmpty   = errors.New("acme-client-service: private key PEM data is empty")
+)
+
 // ErrDeployFailed indicates that certificate deployment failed.
 type ErrDeployFailed struct {
 	CertName string
@@ -486,4 +500,102 @@ type ErrNoIssuedCertificate struct {
 
 func (e ErrNoIssuedCertificate) Error() string {
 	return fmt.Sprintf("acme-client-service: no issued certificate for spec %q — call Request first", e.Name)
+}
+
+// ErrDeviceSpecNotFound indicates the device spec name was not found.
+type ErrDeviceSpecNotFound struct {
+	Name string
+}
+
+func (e ErrDeviceSpecNotFound) Error() string {
+	return fmt.Sprintf("acme-client-service: device spec not found: %s", e.Name)
+}
+
+// ErrDeviceNotEnrolled indicates that a device spec exists in the
+// configuration but has not yet been enrolled or attested.
+type ErrDeviceNotEnrolled struct {
+	Name string
+}
+
+func (e ErrDeviceNotEnrolled) Error() string {
+	return fmt.Sprintf("acme-client-service: device %q has not been enrolled or attested — call Enroll or Attest first", e.Name)
+}
+
+// ErrDeviceTPMOpenFailed indicates that opening the TPM configured for a
+// device spec failed.
+type ErrDeviceTPMOpenFailed struct {
+	Name string
+	Err  error
+}
+
+func (e ErrDeviceTPMOpenFailed) Error() string {
+	return fmt.Sprintf("acme-client-service: failed to open TPM for device %q: %s", e.Name, e.Err.Error())
+}
+
+func (e ErrDeviceTPMOpenFailed) Unwrap() error {
+	return e.Err
+}
+
+// ErrDeviceTPMNotProvisioned indicates that a device's TPM has not been
+// provisioned (no EK/SRK/IAK at their configured persistent handles) and,
+// because it is not the in-process simulator, go-xkms will not provision it
+// automatically.
+type ErrDeviceTPMNotProvisioned struct {
+	Name string
+}
+
+func (e ErrDeviceTPMNotProvisioned) Error() string {
+	return fmt.Sprintf("acme-client-service: TPM for device %q is not provisioned; provision it through the platform's TPM provisioning path before enrolling or attesting", e.Name)
+}
+
+// ErrDeviceTPMProvisionFailed indicates that auto-provisioning the
+// in-process TPM simulator for a device spec failed.
+type ErrDeviceTPMProvisionFailed struct {
+	Name string
+	Err  error
+}
+
+func (e ErrDeviceTPMProvisionFailed) Error() string {
+	return fmt.Sprintf("acme-client-service: failed to provision simulator TPM for device %q: %s", e.Name, e.Err.Error())
+}
+
+func (e ErrDeviceTPMProvisionFailed) Unwrap() error {
+	return e.Err
+}
+
+// ErrDeviceTPMConfigIncomplete indicates the TPM configuration for a device
+// spec is missing a section required to auto-provision the simulator.
+type ErrDeviceTPMConfigIncomplete struct {
+	Name   string
+	Reason string
+}
+
+func (e ErrDeviceTPMConfigIncomplete) Error() string {
+	return fmt.Sprintf("acme-client-service: incomplete TPM configuration for device %q: %s", e.Name, e.Reason)
+}
+
+// ErrDeviceEKCertificateRequired indicates that a real (non-simulator) TPM
+// has no Endorsement Key certificate available and none was configured to
+// provision, so it cannot carry one in the TCG-CSR-IDEVID.
+type ErrDeviceEKCertificateRequired struct {
+	Name string
+	Err  error
+}
+
+func (e ErrDeviceEKCertificateRequired) Error() string {
+	return fmt.Sprintf("acme-client-service: device %q has no Endorsement Key certificate and none is configured: %s", e.Name, e.Err.Error())
+}
+
+func (e ErrDeviceEKCertificateRequired) Unwrap() error {
+	return e.Err
+}
+
+// ErrInvalidEKCertificatePEM indicates that DeviceTPMConfig.EKCertificatePEM
+// could not be decoded as a PEM certificate block.
+type ErrInvalidEKCertificatePEM struct {
+	Name string
+}
+
+func (e ErrInvalidEKCertificatePEM) Error() string {
+	return fmt.Sprintf("acme-client-service: EK certificate PEM for device %q is not a valid PEM-encoded certificate", e.Name)
 }

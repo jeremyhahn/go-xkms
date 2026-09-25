@@ -99,7 +99,7 @@ func (c *grpcClient) AuthorizedKeys() AuthorizedKeysClient {
 	return &grpcAuthorizedKeysClient{svc: c.svc}
 }
 
-func (c *grpcClient) Session() SessionClient { return &grpcSessionClient{} }
+func (c *grpcClient) Session() SessionClient { return &grpcSessionClient{svc: c.svc} }
 
 // Console is not supported over gRPC (or the Unix socket, which serves the
 // same service): the xkms server is a key vault and CA and never terminates an
@@ -400,13 +400,17 @@ func (a *grpcAuthorizedKeysClient) Verify(ctx context.Context, scope, owner stri
 // Session sub-client.
 // ----------------------------------------------------------------------------
 
-// grpcSessionClient does not support interactive outbound SSH sessions over
-// gRPC — sessions are an embedded-transport capability (the SDK dials the host
-// directly). Remote callers should use the Signer proxy with their own dialer.
-type grpcSessionClient struct{}
+// grpcSessionClient implements SessionClient over gRPC.
+type grpcSessionClient struct {
+	svc pb.KeystoreServiceClient
+}
 
-func (c *grpcSessionClient) Dial(_ context.Context, _ SessionDialRequest) (Session, error) {
-	return nil, &NotImplementedError{Transport: "grpc", Op: "Session.Dial"}
+// Dial resolves the authentication key to a forward-signing proxy and the
+// target host to a wire-verified callback, both over gRPC, then dials the
+// SSH connection directly from this process. See dialNetworkSession for the
+// shared implementation and its host-key trust model.
+func (c *grpcSessionClient) Dial(ctx context.Context, req SessionDialRequest) (Session, error) {
+	return dialNetworkSession(ctx, &grpcKeysClient{svc: c.svc}, &grpcKnownHostsClient{svc: c.svc}, req)
 }
 
 // protoToKey converts a proto SSHKeyInfo to the SDK Key DTO.
@@ -440,6 +444,8 @@ func mapGRPCError(err error) error {
 	switch st.Code() {
 	case codes.NotFound:
 		return &NotFoundError{Resource: "ssh", Message: st.Message()}
+	case codes.AlreadyExists:
+		return &DuplicateError{Resource: "ssh", Message: st.Message()}
 	case codes.InvalidArgument:
 		return &InvalidRequestError{Message: st.Message()}
 	case codes.FailedPrecondition, codes.Unavailable:

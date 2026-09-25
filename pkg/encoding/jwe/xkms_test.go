@@ -106,9 +106,9 @@ func TestXKMSEncrypter_RSA(t *testing.T) {
 	plaintext := []byte("xKMS encryption test")
 
 	// Encrypt with key ID
-	jweString, err := encrypter.EncryptWithKeyID(plaintext, "rsa-key-1")
-	if err != nil {
-		t.Fatalf("Encryption failed: %v", err)
+	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithKeyID(plaintext, "rsa-key-1") })
+	if !ok {
+		return
 	}
 
 	// Verify kid in header
@@ -154,9 +154,9 @@ func TestXKMSEncrypter_ECDSA(t *testing.T) {
 	plaintext := []byte("ECDH xkms test")
 
 	// Encrypt with key ID
-	jweString, err := encrypter.EncryptWithKeyID(plaintext, "ec-key-1")
-	if err != nil {
-		t.Fatalf("Encryption failed: %v", err)
+	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithKeyID(plaintext, "ec-key-1") })
+	if !ok {
+		return
 	}
 
 	// Verify kid in header
@@ -198,9 +198,9 @@ func TestXKMSDecrypter_ExplicitKeyID(t *testing.T) {
 
 	// Encrypt with key 1 (without kid in header)
 	encrypter1, _ := NewEncrypter("RSA-OAEP", "A256GCM", &rsaKey1.PublicKey)
-	jweString, err := encrypter1.Encrypt(plaintext)
-	if err != nil {
-		t.Fatalf("Encryption failed: %v", err)
+	jweString, ok := requireJWE(t, func() (string, error) { return encrypter1.Encrypt(plaintext) })
+	if !ok {
+		return
 	}
 
 	// Create xkms decrypter
@@ -233,9 +233,9 @@ func TestXKMSEncrypter_EncryptWithoutKID(t *testing.T) {
 	plaintext := []byte("Test without kid")
 
 	// Encrypt without kid
-	jweString, err := encrypter.Encrypt(plaintext, "rsa-key-1")
-	if err != nil {
-		t.Fatalf("Encryption failed: %v", err)
+	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext, "rsa-key-1") })
+	if !ok {
+		return
 	}
 
 	// Verify no kid in header
@@ -269,7 +269,10 @@ func TestXKMSDecrypter_DecryptAlias(t *testing.T) {
 	encrypter, _ := NewXKMSEncrypter("RSA-OAEP", "A256GCM", keyStore.GetPublicKey)
 	plaintext := []byte("Alias test")
 
-	jweString, _ := encrypter.EncryptWithKeyID(plaintext, "rsa-key-1")
+	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithKeyID(plaintext, "rsa-key-1") })
+	if !ok {
+		return
+	}
 
 	decrypter := NewXKMSDecrypter(keyStore.GetDecrypter)
 
@@ -379,7 +382,10 @@ func TestXKMSDecrypter_CryptoDecrypter(t *testing.T) {
 
 	// Encrypt
 	encrypter, _ := NewXKMSEncrypter("RSA-OAEP", "A256GCM", keyStore.GetPublicKey)
-	jweString, _ := encrypter.EncryptWithKeyID(plaintext, "hsm-key")
+	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithKeyID(plaintext, "hsm-key") })
+	if !ok {
+		return
+	}
 
 	// Decrypt using crypto.Decrypter interface
 	decrypter := NewXKMSDecrypter(keyStore.GetDecrypter)

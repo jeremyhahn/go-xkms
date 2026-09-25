@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 ## Exported surface
 
@@ -48,6 +48,170 @@ PIN state lives on the authenticator as `state.PINHash` with a fixed
 `PINHashSize` (`cmd_config.go:474`), and `key_manager.go:253` carries a
 `PINSyncPending` path that re-initializes the user PIN when a sync was deferred.
 
+### `xkey/pkg/authenticator` — exported Go surface
+
+Constructor: `authenticator.go:256` `NewAuthenticator(config *Config) (*Authenticator, error)`.
+Returns `ErrUserPresenceHandlerRequired` (`user_presence.go:28`) when
+`config.UserPresenceHandler` is nil.
+
+#### `Config` fields (`config.go:338`)
+
+| Field | Type | Effect |
+|---|---|---|
+| `AAGUID` | `[16]byte` | attestation GUID reported in `getInfo` |
+| `SupportedAlgorithms` | `[]int` | COSE algorithms advertised/accepted (default `[ES256]`) |
+| `MaxCredentials` | `int` | cap on stored credentials (default 100) |
+| `MaxResidentCredentials` | `int` | cap on discoverable credentials, must not exceed `MaxCredentials` (default 25) |
+| `PINMinLength` | `int` | minimum PIN length (default 4, the CTAP2 floor) |
+| `PINMaxRetries` | `int` | PIN attempts before lockout (default 8) |
+| `EnablePIN` | `bool` | enables PIN-based user verification (default true) |
+| `EnableResidentKey` | `bool` | enables discoverable credentials (default true) |
+| `EnableCredentialManagement` | `bool` | enables `authenticatorCredentialManagement` (default true) |
+| `EnableHMACSecret` | `bool` | enables the `hmac-secret` extension (default true) |
+| `AlwaysUV` | `bool` | forces UV on every operation regardless of RP request (default false) |
+| `UserPresenceHandler` | `UserPresenceHandler` | required — no default; see the constructor error above |
+| `TokenInitWindow` | `time.Duration` | trust-on-first-use window for establishing the SO PIN; `0` selects `DefaultTokenInitWindow` and it cannot be disabled |
+| `UserPresenceTimeout` | `time.Duration` | timeout for an interactive presence/verification request (default 30s) |
+| `RequireUserPresence` | `bool` | require a touch even after a verified PIN, like hardware keys (default false) |
+| `EnableUserIntentCheck` | `bool` | prompts for presence before returning `ErrPINRequired`, so a user can decline and fall through to another key (default false) |
+| `KeyBackend` | `keybackend.FIDO2KeyBackend` | pluggable key backend; nil uses the legacy `crypto.go` path |
+| `AttestationFormat` | `string` | `none`, `packed`, or `tpm`; an unprovisioned or uncertified attestation key falls back to `none` (default `none`) |
+| `Storage` | `CredentialStorage` | required; must be set before `Validate()` |
+| `Logger` | `*slog.Logger` | structured logging for CTAP2 commands; nil disables it |
+| `OnCredentialCreated` | `func(cred *StoredCredential)` | callback after `MakeCredential` stores a new credential |
+| `OnAssertionCompleted` | `func(rpID string)` | callback after a successful `GetAssertion`; used by AutoFill to suppress refiring |
+| `UnifiedPIN` | `bool` | propagates the host PIN service's user PIN to this authenticator's CTAP2 PIN hash on set/change/verify |
+| `PolicyIntegrityProvider` | `PolicyIntegrityProvider` | HMAC-signs and verifies RP policy integrity |
+| `RPPolicyStore` | `RPPolicyStore` | per-RP policy storage |
+| `Transports` | `[]string` | transports advertised in `getInfo` |
+| `EnableEnterpriseAttestation` | `bool` | enables enterprise attestation |
+| `EnableLargeBlobs` | `bool` | enables the `authenticatorLargeBlobs` command |
+| `MaxLargeBlobArray` | `int` | max size of the large-blob array |
+| `FirmwareVersion` | `uint32` | reported in `getInfo` key `0x0E`; encoded `major*10000 + minor*100 + patch` (default 0, not reported) |
+
+#### Exported `*Authenticator` methods
+
+| Method | Location | Purpose |
+|---|---|---|
+| `Close` | `authenticator.go:630` | releases authenticator resources |
+| `ProcessCBOR` | `authenticator.go:497` | dispatches one raw CTAP2 CBOR command |
+| `ProcessCBORWithContext` | `authenticator.go:524` | same, with cancellation/deadline; holds `cmdMu` for the whole call |
+| `MakeCredential` | `cmd_makecredential.go:1475` | in-process `authenticatorMakeCredential` |
+| `GetAssertion` | `cmd_getassertion.go:1539` | in-process `authenticatorGetAssertion` |
+| `ClearAssertionState` | `cmd_getassertion.go:1376` | drops `getNextAssertion` enumeration state |
+| `SetPINVerifier` | `authenticator.go:378` | installs a `PINVerifier` |
+| `SetFIDO2PINHash` | `authenticator.go:387` | sets the CTAP2 PIN hash directly (unified-PIN path) |
+| `SyncPINHash` | `authenticator.go:413` | re-syncs the PIN hash after a deferred change |
+| `SetInitialPIN` | `cmd_clientpin.go:475` | in-process counterpart of `setPIN`; refuses with `ErrPINAlreadySet` if one exists |
+| `IsPINSet` | `authenticator.go:845` | reports whether a user PIN is configured |
+| `PINRetries` | `authenticator.go:880` | remaining PIN attempts |
+| `GetPinUvAuthToken` | `cmd_clientpin.go:1329` | returns the current `pinUvAuthToken` |
+| `VerifyPinUvAuthToken` | `cmd_clientpin.go:1421` | verifies a token's HMAC over `clientDataHash` |
+| `AuthorizePinUvAuthToken` | `cmd_clientpin.go:1447` | checks and consumes a token for a permission/RP |
+| `CanAuthorizePinUvAuthToken` | `cmd_clientpin.go:1480` | checks without consuming |
+| `IsTokenInitialized` | `token.go:111` | reports whether the SO PIN has been established |
+| `TokenFlags` | `token.go:119` | PKCS#11-style `CKF_TOKEN_INITIALIZED` / `CKF_SO_PIN_*` view |
+| `InitializeToken` | `token.go:176` | establishes the SO PIN (`xkey fido2 init-token`) |
+| `ChangeSOPIN` | `token.go:219` | replaces the SO PIN, proving the current one (`xkey fido2 change-so-pin`) |
+| `UnlockSO` | `token.go:254` | authenticates the Security Officer for the current process |
+| `AttestationCSR` | `attestation.go:172` | generates the attestation key and its CSR (`xkey fido2 provision-attestation`) |
+| `InstallAttestationCertificate` | `attestation.go:212` | installs the CA-issued chain onto the device |
+| `GetKeyManager` | `authenticator.go:432` | returns the `KeyManager` |
+| `PolicyManager` | `authenticator.go:438` | returns the `PolicyManager` |
+| `RPPolicyStore` | `authenticator.go:444` | returns the configured `RPPolicyStore` |
+| `Storage` | `authenticator.go:886` | returns the configured `CredentialStorage` |
+| `Config` | `authenticator.go:674` | returns the effective `*Config` |
+| `GetState` / `State` | `authenticator.go:405`, `authenticator.go:831` | returns the live `*AuthenticatorState` |
+| `AAGUID` | `authenticator.go:838` | returns the configured AAGUID |
+| `SetOnCredentialCreated` | `authenticator.go:657` | installs the credential-created callback |
+| `SetOnAssertionCompleted` | `authenticator.go:667` | installs the assertion-completed callback |
+| `SetEnableUserIntentCheck` | `authenticator.go:682` | toggles `EnableUserIntentCheck` at runtime |
+| `SetRequireUserPresence` | `authenticator.go:689` | toggles `RequireUserPresence` at runtime |
+| `SetAlwaysUV` | `authenticator.go:696` | toggles `AlwaysUV` at runtime |
+| `SetUserPresenceHandler` | `authenticator.go:708` | swaps the presence handler, returns the previous one |
+| `UserPresenceHandler` | `authenticator.go:717` | returns the current presence handler |
+| `HasMatchingCredentials` | `authenticator.go:760` | inspects a raw command for matching credentials without executing it |
+| `NeedsPINBeforeTouch` | `authenticator.go:804` | reports whether a command needs the PIN before requesting presence |
+
+#### Storage and key-backend interfaces
+
+| Interface | Location | Contract |
+|---|---|---|
+| `CredentialStorage` | `config.go:77` | `Store`/`Load`/`LoadByRPID`/`Delete`/`Count`/`CountDiscoverable` |
+| `CredentialIndexer` | `config.go:107` | optional in-memory credProtect index for fast existence checks |
+| `StatefulCredentialStorage` | `storage.go:48` | `CredentialStorage` plus `SaveState`/`LoadState`/`Close` |
+| `ListableStorage` | `cmd_reset.go:212` | optional `ListAll() ([][]byte, error)` |
+| `ClearableStorage` | `cmd_reset.go:204` | optional `Clear() error` |
+| `RPPolicyStore` | `rp_policy.go:54` | `SetPolicy`/`UpdatePolicy`/`GetPolicy`/`DeletePolicy`/`ListPolicies` |
+| `KeyHandle` | `keybackend/keybackend.go:54` | opaque key reference: `CredentialID`/`Algorithm`/`BackendID` |
+| `FIDO2KeyBackend` | `keybackend/keybackend.go:99` | `Type`/`Capabilities`/`GenerateCredentialKey`/`Sign`/`LoadKey`/`DeleteKey`/`ExportPrivateKey`/`ImportPrivateKey`/`Close` |
+| `FIDO2AttestingKeyBackend` | `keybackend/keybackend.go:135` | `FIDO2KeyBackend` plus `GenerateAttestationKey`/`GetAttestationStatement`/`AttestationCertificateChain` |
+
+Concrete implementations: `BackendStorage` (`storage_backend.go`, over any
+`xkms.StorageBackend`), `MemoryStorage` (`storage_memory.go`),
+`MemoryRPPolicyStore` (`rp_policy_memory.go`), `BackendRPPolicyStore`
+(`rp_policy_backend.go`), `DAORPPolicyStore` (`dao_rp_policy_store.go`).
+
+#### Exported error sentinels
+
+164 sentinels across the package; the table below groups them by defining
+file with representative names. `errorToStatus` (below) is the map from
+sentinel to CTAP2 status byte for every one of them.
+
+| File | Count | Representative sentinels |
+|---|---|---|
+| `errors.go` | 29 | `ErrInvalidCommand`, `ErrInvalidParameter`, `ErrCredentialNotFound`, `ErrOperationDenied`, `ErrPINRequired`, `ErrPINInvalid`, `ErrPINBlocked`, `ErrUserPresenceRequired`, `ErrUserVerificationRequired`, `ErrCredentialExcluded` |
+| `storage.go` | 7 | `ErrStorageClosed`, `ErrCredentialExists`, `ErrStateNotFound`, `ErrInvalidCredentialID`, `ErrInvalidRPIDEmpty` |
+| `rp_policy.go` | 5 | `ErrRPPolicyNotFound`, `ErrRPPolicyInvalidRPID`, `ErrRPPolicyNil`, `ErrRPPolicyStoreClosed`, `ErrRPBlocked` |
+| `so_pin.go` | 7 | `ErrSOPINRequired`, `ErrSOPINInvalid`, `ErrSOPINBlocked`, `ErrSOPINAuthBlocked`, `ErrSOPINNotSet`, `ErrSOPINPolicyViolation`, `ErrSOPINAlreadySet` |
+| `token.go` | 2 | `ErrTokenUninitialized`, `ErrTokenInitWindowClosed` |
+| `key_manager.go` | 9 | `ErrKeyManagerAlreadyInitialized`, `ErrKeyManagerLocked` |
+| `user_presence.go` | 6 | `ErrUserPresenceHandlerRequired`, `ErrUserPresenceDenied`, `ErrUserPresenceTimeout` |
+| `cmd_clientpin.go` | 6 | ClientPIN subcommand errors (e.g. `ErrPINNotSet`, `ErrUnsupportedPINProtocol`) |
+| `cmd_config.go` | 7 | `authenticatorConfig` subcommand errors |
+| `cmd_credmgmt.go` | 6 | `ErrCredMgmtNotEnabled`, `ErrNoEnumerationInProgress` and related |
+| `cmd_getassertion.go` | 10 | GetAssertion request-validation errors |
+| `cmd_makecredential.go` | 10 | MakeCredential request-validation errors |
+| `cmd_largeblobs.go` | 10 | `ErrLargeBlobs*` family |
+| `ext_hmac_secret.go` | 14 | `hmac-secret` extension errors |
+| `ext_deviceconfig.go` | 3 | `deviceConfig` extension errors |
+| `pin_protocol.go` / `pin_protocol_v1.go` | 8 | PIN protocol negotiation errors |
+| `key_wrapper.go` | 7 | key-wrap/unwrap errors |
+| `hid_adapter.go` | 6 | CTAPHID transport errors |
+| `attestation.go` | 2 | `ErrAttestationOverrideUnsupported`, `ErrAttestationUnavailable` |
+| `authenticator.go` | 5 | top-level construction/processing errors |
+| `authdata.go`, `crypto.go`, `config.go`, `rp_policy_update.go` | 1–2 each | authenticator-data, crypto, config-validation, policy-update errors |
+
+#### CTAP2 status mapping
+
+`errorToStatus` (`authenticator.go:910`, called from `errorResponseFromError`,
+`authenticator.go:904`) maps every sentinel above to one of the exported
+`Status*` byte constants (`authenticator.go:47` onward) via `errors.Is`, with
+`StatusOtherError` (`0x7F`) as the default for anything unmapped. Groups:
+
+| Status | Sentinels mapped to it |
+|---|---|
+| `StatusPINRequired` | `ErrPINRequired`, `ErrSOPINRequired`, `ErrKeyManagerLocked` |
+| `StatusPINInvalid` | `ErrPINInvalid`, `ErrSOPINInvalid` |
+| `StatusPINBlocked` | `ErrPINBlocked`, `ErrSOPINBlocked` |
+| `StatusPINNotSet` | `ErrPINNotSet`, `ErrSOPINNotSet` |
+| `StatusPINPolicyViolation` | `ErrPINPolicyViolation`, `ErrSOPINPolicyViolation` |
+| `StatusPINAuthInvalid` / `StatusPINAuthBlocked` | `ErrPINAuthInvalid` / `ErrSOPINAuthBlocked` |
+| `StatusNotAllowed` | `ErrSOPINAlreadySet`, `ErrKeyManagerAlreadyInitialized`, `ErrTokenUninitialized`, `ErrTokenInitWindowClosed` |
+| `StatusOperationDenied` | `ErrOperationDenied`, `ErrRPBlocked`, `ErrAttestationUnavailable`, `ErrEnterpriseAttestationNotEntitled`, `ErrUserPresenceDenied` |
+| `StatusUnsupportedOption` | `ErrAttestationOverrideUnsupported` |
+| `StatusIntegrityFailure` | `ErrPolicyTamperLocked`, `ErrPolicyTampered`, `ErrLargeBlobsChecksumInvalid` |
+| `StatusNoCredentials` | `ErrCredentialNotFound`, `ErrNoCredentials`, `ErrNoEnumerationInProgress` |
+| `StatusUserActionTimeout` / `StatusKeepaliveCancel` | `ErrUserPresenceTimeout` / `context.Canceled` |
+| `StatusUPRequired` / `StatusUVBlocked` | `ErrUserPresenceRequired` / `ErrUserVerificationRequired`, `ErrUVBlocked` |
+| `StatusCredentialExcluded` | `ErrCredentialExcluded` |
+| `StatusUnsupportedExtension` | `ErrUnsupportedExtension` |
+| `StatusMissingParameter` | `ErrMissingClientDataHash`, `ErrMissingRP`, `ErrMissingRPID`, `ErrMissingUser`, `ErrMissingUserID`, `ErrMissingPubKeyCredParams`, `ErrMissingCredentialID`, `ErrMissingRPIDHash`, `ErrMissingUserInfo` |
+| `StatusKeyStoreFull` | `ErrResidentKeyLimitReached`, `ErrCredentialLimitReached` |
+| `StatusLimitExceeded` / `StatusUnsupportedAlgorithm` | `ErrLimitExceeded` / `ErrUnsupportedCryptoAlgorithm`, `ErrNoSupportedAlgorithm` |
+| `StatusLargeBlobStorageFull` / `StatusInvalidSeq` | `ErrLargeBlobsStorageFull` / `ErrLargeBlobsInvalidSeq` |
+| `StatusOtherError` (default) | `ErrStorageClosed`, `ErrStorageError`, and anything not explicitly matched |
+
 ## Configuration — `xkey fido2` flags
 
 Defaults are constants at `xkey/cmd/xkey/cmd/fido2.go:164-170`.
@@ -55,7 +219,7 @@ Defaults are constants at `xkey/cmd/xkey/cmd/fido2.go:164-170`.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--storage` | `memory` | `memory`, `file`, or `barrier` |
-| `--storage-path` | `./data` | path for file storage |
+| `--storage-path` | `~/.xkey/data/fido2` | path for file storage and the authenticator profile, resolved through the shared xkey data-directory chain (`resolveFIDO2StoragePath`, `fido2.go`; honors `XKEY_HOME`/`XKEY_DATA_DIR`) rather than the process's working directory (go-xkms#929) |
 | `--barrier-password` | `""` | barrier password for encrypted storage |
 | `--barrier-password-file` | `""` | read it from a file's first line |
 | `--name` | `xKey (go-xkms)` | device name the OS sees |
@@ -69,7 +233,7 @@ Defaults are constants at `xkey/cmd/xkey/cmd/fido2.go:164-170`.
 | `--tpm-device` | `/dev/tpmrm0` | TPM device path |
 | `--attestation` | `none` | `none`, `packed`, or `tpm` |
 | `--phone-device` | `""` | specific paired phone; default is the default phone |
-| `--password-store` | `./data/staticpw` | static password store path |
+| `--password-store` | `~/.xkey/data/staticpw` | static password store path — the same store `xkey password` uses (`passwordStoreFeature`, `password.go`); resolved through the shared xkey data-directory chain, never the working directory (go-xkms#929) |
 | `--socket` | `$XDG_RUNTIME_DIR/xkey/xkey.sock` | IPC socket |
 | `--default-password` | `""` | password name typed on a bare touch |
 | `--notify-command` | `""` | custom notification command |
@@ -113,7 +277,7 @@ first run and the wrong one for daily use.
   wrap of one protected key under another goes through `wrapFromProtected`,
   which releases the key borrow before the plaintext borrow is taken. The
   invariants and the deadlock rule are spelled out in
-  [`fido2/authenticator-security.md`](../fido2/authenticator-security.md).
+  [`fido2/engineering.md`](../fido2/engineering.md#key-material-handling-in-memory).
 - **`--storage memory` loses credentials on exit.** No warning is emitted; it is
   the documented default.
 - **go-qrdb's seal barrier is the only at-rest encryption in this stack; xkey
@@ -212,9 +376,10 @@ backend that cannot reach its TPM does not silently become `software`.
 ## Persistence
 
 - **`memory`** — nothing survives the process. `storage_memory.go`.
-- **`file`** — under `--storage-path` (default `./data`). `BackendStorage`
-  over a plain `xkms.StorageBackend`; plaintext at rest (see the at-rest
-  invariant above).
+- **`file`** — under `--storage-path` (default `~/.xkey/data/fido2`,
+  resolved through the shared xkey data-directory chain, go-xkms#929).
+  `BackendStorage` over a plain `xkms.StorageBackend`; plaintext at rest
+  (see the at-rest invariant above).
 - **`barrier`** — the same `BackendStorage` over the barrier's
   `xkms.StorageBackend` instead; encrypted, keyed by the barrier password.
 

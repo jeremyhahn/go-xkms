@@ -52,3 +52,38 @@ func TestWebAuthnMethods_ExcludedByDesign(t *testing.T) {
 	_, err = tr.FinishAuthentication(ctx, &transport.FinishAuthenticationRequest{})
 	assert.True(t, errors.Is(err, ErrIdentityCeremonyExcluded))
 }
+
+// TestNew_Success confirms New forwards valid options to the canonical
+// implementation and returns a usable Transport.
+func TestNew_Success(t *testing.T) {
+	tr, err := New(transport.WithAddress("127.0.0.1:0"))
+	assert.NoError(t, err)
+	assert.NotNil(t, tr)
+}
+
+// TestNew_OptionError confirms New propagates an error from a failing
+// option rather than swallowing it, since New is a bare pass-through to the
+// canonical constructor.
+func TestNew_OptionError(t *testing.T) {
+	_, err := New(transport.WithAddress(""))
+	assert.Error(t, err)
+}
+
+// TestNewWithConfig_NilConfig confirms NewWithConfig accepts a nil config
+// and forwards it to the canonical implementation without panicking.
+func TestNewWithConfig_NilConfig(t *testing.T) {
+	tr, err := NewWithConfig(nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, tr)
+}
+
+// TestNewWithConfig_ExplicitConfig confirms NewWithConfig forwards an
+// explicit, non-nil config to the canonical implementation.
+func TestNewWithConfig_ExplicitConfig(t *testing.T) {
+	cfg := transport.DefaultConfig()
+	cfg.Address = "127.0.0.1:0"
+
+	tr, err := NewWithConfig(cfg)
+	assert.NoError(t, err)
+	assert.NotNil(t, tr)
+}

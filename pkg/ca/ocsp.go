@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/fips140"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -146,6 +147,20 @@ func (o *OCSPResponder) parseRequest(requestBytes []byte) (*ocsp.Request, error)
 	}
 	if req.HashAlgorithm == 0 {
 		return nil, &errs.Detail{Err: ErrOCSPInvalidRequest, Detail: "missing hash algorithm"}
+	}
+	// RFC 6960 lets a client's CertID name any of SHA-1, SHA-256, SHA-384 or
+	// SHA-512 (golang.org/x/crypto/ocsp accepts no others), and section
+	// 4.2.1 has the responder echo that same algorithm back into the
+	// response's issuerNameHash/issuerKeyHash. SHA-1 is still what most
+	// deployed OCSP clients default to. Under GODEBUG=fips140=only,
+	// crypto/sha1 does not return an error for this -- it panics -- so a
+	// remote client's ordinary, spec-compliant SHA-1 request would crash
+	// this responder process at createResponse's ocsp.CreateResponse call
+	// if let through. Refused here instead, with the same invalid-request
+	// posture used for a request this responder otherwise cannot service.
+	if req.HashAlgorithm == crypto.SHA1 && fips140.Enforced() {
+		return nil, &errs.Detail{Err: ErrOCSPInvalidRequest,
+			Detail: "SHA-1 CertID hash algorithm is not available in FIPS 140-only mode"}
 	}
 	if req.SerialNumber == nil {
 		return nil, &errs.Detail{Err: ErrOCSPInvalidRequest, Detail: "missing serial number"}

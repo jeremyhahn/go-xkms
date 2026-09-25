@@ -29,6 +29,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -659,9 +660,24 @@ func TestAppendPEM_AddsCertToPool(t *testing.T) {
 
 func TestBufferBytes_ReadsToSlice(t *testing.T) {
 	data := []byte("hello buffer")
-	result := bufferBytes(&stubReader{data: data})
+	result, err := bufferBytes(&stubReader{data: data})
+	require.NoError(t, err)
 	assert.Equal(t, data, result)
 }
+
+func TestBufferBytes_ReadErrorSurfaces(t *testing.T) {
+	readErr := errors.New("coverage_gap_test: simulated read failure")
+	_, err := bufferBytes(&failingReader{err: readErr})
+	require.ErrorIs(t, err, readErr)
+}
+
+// failingReader is an io.Reader whose Read always fails, used to exercise
+// bufferBytes' error path.
+type failingReader struct {
+	err error
+}
+
+func (r *failingReader) Read([]byte) (int, error) { return 0, r.err }
 
 // =============================================================================
 // tls_extensions.go — TLSBundle (13%)
@@ -706,16 +722,6 @@ func TestTLSConfigWithXSigner_NilXSignerNoAttrError(t *testing.T) {
 	ca := setupTestCA(t)
 	_, err := ca.TLSConfigWithXSigner(context.Background(), nil, nil)
 	assert.ErrorIs(t, err, ErrInvalidTLSOptions)
-}
-
-// =============================================================================
-// tls.go — QuantumSafeTLSConfig (0%)
-// =============================================================================
-
-func TestQuantumSafeTLSConfig_NotInitialized(t *testing.T) {
-	ca := &CA{}
-	_, err := ca.QuantumSafeTLSConfig(context.Background(), &types.KeyAttributes{CN: "x"})
-	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 // =============================================================================

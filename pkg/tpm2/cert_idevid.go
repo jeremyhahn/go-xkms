@@ -72,7 +72,7 @@ func (tpm *TPM2) IDevIDCertificate() (*x509.Certificate, error) {
 		}
 		cert, err := tpm.certStore.Get(idevidAttrs)
 		if err != nil {
-			if err == store.ErrCertNotFound {
+			if errors.Is(err, store.ErrCertNotFound) {
 				return nil, ErrIDevIDCertNotFound
 			}
 			return nil, err
@@ -154,7 +154,7 @@ func (tpm *TPM2) IAKCertificate() (*x509.Certificate, error) {
 		}
 		cert, err := tpm.certStore.Get(iakAttrs)
 		if err != nil {
-			if err == store.ErrCertNotFound {
+			if errors.Is(err, store.ErrCertNotFound) {
 				return nil, ErrIAKCertNotFound
 			}
 			return nil, err

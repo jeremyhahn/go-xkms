@@ -1,14 +1,19 @@
 # WebAuthn Relying Party — CLI
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 The relying party is a server component and has **no CLI verbs of its own**.
-What the CLI offers is the client side of its ceremonies.
+What the CLI offers is the client side of its ceremonies, all driven through
+the single ceremony driver `pkg/webauthn/client` (re-exported at
+`sdk/go/webauthnclient`) — see [`engineering.md`](engineering.md)
+§"The headless client". `xkey`, `xkmsctl` and `xkmsctl fido2` each use their
+own `RelyingParty`/`AuthenticatorAdapter` pair over that one driver; none
+reimplements the ceremony.
 
 ## Driving a ceremony from `xkmsctl`
 
-`xkmsctl fido2` uses the headless client (`pkg/webauthn/client`) plus the CTAP2
-layer to run registration and authentication against a real authenticator:
+`xkmsctl fido2` uses the headless client's `HardwareAdapter` (`pkg/fido2`) to
+run registration and authentication against a real authenticator:
 
 ```
 xkmsctl fido2 list-devices
@@ -29,8 +34,11 @@ and no human, which is how agents and CI authenticate. See
 `xkmsctl user register` / `xkmsctl user login` / `xkmsctl admin create` drive
 the full server-side WebAuthn ceremony against a local CTAP2 authenticator. An
 authenticator with a CTAP2 PIN set refuses either ceremony unless the request
-carries the PIN, so all three verbs take the same three PIN sources, in the
-same precedence order as the `xkey auth` verbs:
+carries the PIN, so all three verbs take the same three PIN sources, resolved
+by `resolvePINInput` (`cmd/xkmsctl/pin_input.go:70-72,80-109`), in the same
+precedence order as the `xkey auth` verbs (`xkey`'s equivalent has no
+`--pin` flag; see
+[`../../xkey/docs/headless-webauthn/cli.md`](../../xkey/docs/headless-webauthn/cli.md)):
 
 | Source | Precedence | Notes |
 |---|---|---|

@@ -203,6 +203,42 @@ func TestJoinBeforeStopDoesNotLatchADrain(t *testing.T) {
 	}
 }
 
+// immediateErrorTransport fails every Receive right away, so a receiveLoop
+// reading from it exits on its own almost immediately regardless of when
+// Stop runs — Receive's error branch always returns, whether or not the
+// router has been marked closed yet.
+type immediateErrorTransport struct{}
+
+func (immediateErrorTransport) Connect(context.Context) error { return nil }
+func (immediateErrorTransport) IsConnected() bool             { return true }
+func (immediateErrorTransport) Close() error                  { return nil }
+func (immediateErrorTransport) Send(context.Context, []byte) error {
+	return nil
+}
+func (immediateErrorTransport) Receive(context.Context) ([]byte, error) {
+	return nil, ErrBackendClosed
+}
+func (t immediateErrorTransport) SendAndReceive(ctx context.Context, m []byte) ([]byte, error) {
+	if err := t.Send(ctx, m); err != nil {
+		return nil, err
+	}
+	return t.Receive(ctx)
+}
+
+// TestStopAndJoin_DrainsIdleRouter proves the StopAndJoin convenience method
+// combines Stop and Join correctly: a router whose receive loop has already
+// exited drains within the timeout.
+func TestStopAndJoin_DrainsIdleRouter(t *testing.T) {
+	session, _ := setupHandshakedNoiseSessions(t)
+
+	router := NewMessageRouter(immediateErrorTransport{}, session, nil, slog.Default())
+	router.Start()
+
+	if !router.StopAndJoin(joinTestWait) {
+		t.Fatal("StopAndJoin did not drain a router whose receive loop had already exited")
+	}
+}
+
 // TestStartAfterStopDoesNotRegister keeps the other half of the same
 // invariant: once Stop has run, nothing may take the WaitGroup from zero to
 // one, because a waiter may already be parked on it.

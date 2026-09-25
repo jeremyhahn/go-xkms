@@ -24,20 +24,25 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
 	"github.com/gorilla/mux"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/stretchr/testify/assert"
@@ -492,11 +497,15 @@ func TestRestService_AuditLoggerDefaultsToNoOp(t *testing.T) {
 	assert.Equal(t, service.AuditLogger(), service.params.AuditLogger)
 }
 
-// TestAuditTrail_WriteFailureDoesNotFailTheRequest verifies the fail-open
-// behaviour of recording: once a certificate has been revoked, a broken audit
-// writer must not turn a completed operation into an error response. The
-// failure is reported to the server log instead.
-func TestAuditTrail_WriteFailureDoesNotFailTheRequest(t *testing.T) {
+// TestAuditTrail_WriteFailureFailsSecurityOperation verifies the issue #688
+// audit write-failure policy: EventCertificateRevoked is SeveritySecurity,
+// so a broken audit writer must fail the request (HTTP 500) rather than let
+// a security-relevant ACME operation report success while its audit record
+// is lost. The CA-side revocation and the ACME record's Status update both
+// happen before the audit write in RevokeCertHandler, so the certificate is
+// still revoked in storage; what the client does not get is confirmation
+// that the operation is safe to consider durable and audited.
+func TestAuditTrail_WriteFailureFailsSecurityOperation(t *testing.T) {
 	trail := newAuditTrail(t, config.ACMEAuditConfig{})
 
 	service, _, cleanup := setupTestService(t)
@@ -516,13 +525,170 @@ func TestAuditTrail_WriteFailureDoesNotFailTheRequest(t *testing.T) {
 
 	resp := httptest.NewRecorder()
 	service.RevokeCertHandler(resp, req)
-	require.Equal(t, http.StatusOK, resp.Code)
+	require.Equal(t, http.StatusInternalServerError, resp.Code)
 
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
 	updated, err := certificateDAO.Get(req.Context(), acmeCert.ID)
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusRevoked, updated.Status)
+}
+
+// TestAuditTrail_InvalidNonceIsRecorded verifies that parseKID records
+// audit.EventInvalidNonce when the JWS carries a nonce the server never
+// issued or has already consumed.
+func TestAuditTrail_InvalidNonceIsRecorded(t *testing.T) {
+	trail := newAuditTrail(t, config.ACMEAuditConfig{})
+
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+	service.SetAuditLogger(trail.logger)
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	// A nonce the server never issued is indistinguishable, at redemption
+	// time, from one it issued and already consumed: both fail decryption
+	// or the used-map check in pkg/acme/nonce.Service.Redeem. Sign with a
+	// literal, never-issued nonce rather than a real one later invalidated,
+	// exercising the same "unknown nonce" path a replayed or forged nonce
+	// would take.
+	url := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
+	signerOpts := &jose.SignerOptions{
+		NonceSource: &staticNonceSource{nonce: "invalid-nonce-not-in-store"},
+		ExtraHeaders: map[jose.HeaderKey]interface{}{
+			"url": url,
+			"kid": url,
+		},
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{
+		Algorithm: jose.ES256,
+		Key:       key.PrivateKey,
+	}, signerOpts)
+	require.NoError(t, err)
+
+	jws, err := signer.Sign([]byte(""))
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, url, strings.NewReader(jws.FullSerialize()))
+	req.Header.Set("Content-Type", "application/jose+json")
+
+	resp := httptest.NewRecorder()
+	service.AccountHandler(resp, req)
+	require.Equal(t, http.StatusBadRequest, resp.Code)
+
+	page := trail.expectEvents(t, "event_type=INVALID_NONCE", 1)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, audit.ResultFailure, page.Items[0].Result)
+}
+
+// TestAuditTrail_InvalidSignatureIsRecorded verifies that parseKID records
+// audit.EventInvalidSignature when the JWS is signed by a key other than
+// the account's registered key — an impersonation attempt.
+func TestAuditTrail_InvalidSignatureIsRecorded(t *testing.T) {
+	trail := newAuditTrail(t, config.ACMEAuditConfig{})
+
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+	service.SetAuditLogger(trail.logger)
+
+	accountKey := generateTestKey(t)
+	account := createTestAccount(t, service, accountKey)
+
+	impostorKey := generateTestKey(t)
+	// Sign with a different key than the one registered for account.ID, so
+	// jws.Verify(publicKey) fails against the stored account key.
+	req := createJWSRequest(t, service, impostorKey,
+		fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID), nil, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.AccountHandler(resp, req)
+	require.Equal(t, http.StatusBadRequest, resp.Code)
+
+	page := trail.expectEvents(t, "event_type=INVALID_SIGNATURE", 1)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, audit.ResultFailure, page.Items[0].Result)
+}
+
+// TestAuditTrail_AccountDeactivatedIsRecorded verifies that AccountHandler
+// records audit.EventAccountDeactivated when an account deactivates itself
+// per RFC 8555 Section 7.3.6.
+func TestAuditTrail_AccountDeactivatedIsRecorded(t *testing.T) {
+	trail := newAuditTrail(t, config.ACMEAuditConfig{})
+
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+	service.SetAuditLogger(trail.logger)
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	req := createJWSRequest(t, service, key,
+		fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID),
+		AccountRequest{Status: common.StatusDeactivated}, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.AccountHandler(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code, "body: %s", resp.Body.String())
+
+	page := trail.expectEvents(t, "event_type=ACCOUNT_DEACTIVATED", 1)
+	require.Len(t, page.Items, 1)
+
+	event := page.Items[0]
+	assert.Equal(t, auditAccountRef(account.ID), event.Actor)
+	assert.Equal(t, "deactivate", event.Action)
+	assert.Equal(t, audit.ResultSuccess, event.Result)
+}
+
+// TestAuditTrail_ChallengeFailureIsRecorded verifies that ChallengeHandler
+// records audit.EventChallengeFailed when the registered challenge
+// verifier rejects the response — the single branch every challenge
+// validation failure (wrong token, unreachable domain, rejected
+// attestation, ...) funnels through.
+func TestAuditTrail_ChallengeFailureIsRecorded(t *testing.T) {
+	trail := newAuditTrail(t, config.ACMEAuditConfig{})
+
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+	service.SetAuditLogger(trail.logger)
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	verifyErr := errors.New("simulated verification failure")
+	service.challengeMap["http-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+		return verifyErr
+	}
+
+	order := createTestOrderSimple(t, service, account.ID)
+	authz := createTestAuthorization(t, service, account, order,
+		entities.ACMEIdentifier{Type: "dns", Value: "example.com"},
+		[]string{"http-01"})
+
+	// createTestOrderSimple seeds a placeholder authz URL; point the order
+	// at the authorization actually created above so ChallengeHandler's
+	// order-status update (after recording the failure) resolves it.
+	order.Authorizations = []string{authz.URL}
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+	require.NoError(t, orderDAO.Save(context.Background(), order))
+
+	challengeID := authz.Challenges[0].ID
+	url := fmt.Sprintf("%s/acme/challenge/%d", service.baseRESTURI, challengeID)
+	req := createJWSRequest(t, service, key, url, json.RawMessage(`{}`), true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.ChallengeHandler(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code, "body: %s", resp.Body.String())
+
+	page := trail.expectEvents(t, "event_type=CHALLENGE_FAILED", 1)
+	require.Len(t, page.Items, 1)
+
+	event := page.Items[0]
+	assert.Equal(t, auditAccountRef(account.ID), event.Actor)
+	assert.Equal(t, "validate", event.Action)
+	assert.Equal(t, audit.ResultFailure, event.Result)
+	assert.Equal(t, "http-01", event.Details["challenge_type"])
 }
 
 // TestAuditKeyFingerprint verifies the account-key identifier recorded on key

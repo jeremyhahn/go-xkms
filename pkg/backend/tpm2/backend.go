@@ -32,6 +32,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -74,6 +75,27 @@ type ExternalTPMConfig struct {
 	Tracker types.AEADSafetyTracker
 }
 
+// NewFileKeyBackend builds the file-backed store.KeyBackend NewBackend
+// constructs internally from Config.KeyDir, for callers of
+// NewBackendWithTPM: a caller sharing an already-open TPM connection (e.g.
+// pkg/server reusing the node-seal flip's or the platform store's single
+// open) still needs a real KeyBackend for the wrapper it builds over that
+// connection, and this is the one NewBackend itself uses, not a second
+// implementation of the same three steps.
+func NewFileKeyBackend(logger *slog.Logger, keyDir string) (store.KeyBackend, error) {
+	if err := os.MkdirAll(keyDir, 0700); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create key directory", Err: err}
+	}
+	fsBackend, err := file.New(keyDir)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create storage backend", Err: err}
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return store.NewFileBackend(logger, fsBackend), nil
+}
+
 // NewBackendWithTPM creates a new TPM2 backend using an existing TPM instance.
 // This is useful when the TPM has already been initialized and provisioned by
 // another component (e.g., go-trusted-platform's app.TPM).
@@ -103,8 +125,10 @@ func NewBackendWithTPM(config *ExternalTPMConfig) (*Backend, error) {
 		tracker = backend.NewMemoryAEADTracker()
 	}
 
-	// Get the SRK attributes for key creation
-	srkAttrs, err := config.TPM.SSRKAttributes()
+	// Get the storage parent attributes for key creation. This backend seals
+	// and signs for xkms's own purposes, so it always uses the Platform SRK,
+	// never the TCG-standard Shared SRK: see resolveSRKAttributes.
+	srkAttrs, err := resolveSRKAttributes(config.TPM)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get SRK attributes", Err: err}
 	}
@@ -140,17 +164,11 @@ func NewBackend(config *Config) (*Backend, error) {
 		tracker = backend.NewMemoryAEADTracker()
 	}
 
-	// Ensure key directory exists
-	if err := os.MkdirAll(config.KeyDir, 0700); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create key directory", Err: err}
-	}
-
 	// Create file-based key backend for storing TPM key blobs
-	fsBackend, err := file.New(config.KeyDir)
+	keyBackend, err := NewFileKeyBackend(log, config.KeyDir)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create storage backend", Err: err}
+		return nil, err
 	}
-	keyBackend := store.NewFileBackend(log, fsBackend)
 
 	// Create TPM2 configuration
 	tpmConfig := config.ToTPMConfig()
@@ -170,31 +188,33 @@ func NewBackend(config *Config) (*Backend, error) {
 		// (mirrors the seal first-boot recipe in go-quicbaas). Real hardware
 		// is NEVER auto-provisioned — boot-time provisioning of physical TPMs
 		// is an operator action (`xkmsd init`).
-		if err == pkgtpm2.ErrNotInitialized && config.UseSimulator && tpm != nil {
+		if errors.Is(err, pkgtpm2.ErrNotInitialized) && config.UseSimulator && tpm != nil {
 			if perr := provisionSimulatorEKSRK(tpm, tpmConfig); perr != nil {
-				_ = tpm.Close()
-				return nil, &errs.Joined{Lead: ErrNotInitialized, Detail: "simulator provisioning failed", Cause: perr}
+				closeErr := tpm.Close()
+				return nil, &errs.Joined{Lead: ErrNotInitialized, Detail: "simulator provisioning failed", Cause: errors.Join(perr, closeErr)}
 			}
 		} else {
 			// Close the TPM if it was partially initialized. Without closing,
 			// the simulator's global mutex is never released, causing
 			// deadlocks in subsequent calls.
+			var closeErr error
 			if tpm != nil {
-				_ = tpm.Close()
+				closeErr = tpm.Close()
 			}
 			// Check for initialization error - TPM may need provisioning
-			if err == pkgtpm2.ErrNotInitialized {
-				return nil, &errs.Detail{Err: ErrNotInitialized, Detail: "TPM needs provisioning"}
+			if errors.Is(err, pkgtpm2.ErrNotInitialized) {
+				return nil, errors.Join(&errs.Detail{Err: ErrNotInitialized, Detail: "TPM needs provisioning"}, closeErr)
 			}
-			return nil, &errs.Wrapped{Msg: "failed to initialize TPM", Err: err}
+			return nil, &errs.Wrapped{Msg: "failed to initialize TPM", Err: errors.Join(err, closeErr)}
 		}
 	}
 
-	// Get the SRK attributes for key creation
-	srkAttrs, err := tpm.SSRKAttributes()
+	// Get the storage parent attributes for key creation (see
+	// resolveSRKAttributes for why this backend always uses the Platform SRK).
+	srkAttrs, err := resolveSRKAttributes(tpm)
 	if err != nil {
-		_ = tpm.Close()
-		return nil, &errs.Wrapped{Msg: "failed to get SRK attributes", Err: err}
+		closeErr := tpm.Close()
+		return nil, &errs.Wrapped{Msg: "failed to get SRK attributes", Err: errors.Join(err, closeErr)}
 	}
 
 	return &Backend{
@@ -208,15 +228,42 @@ func NewBackend(config *Config) (*Backend, error) {
 	}, nil
 }
 
-// provisionSimulatorEKSRK provisions the endorsement key and storage root key
-// on a freshly-reset TPM simulator. It mirrors the proven first-boot recipe
-// used by the sshbackend/fido2 integration suites and the go-quicbaas seal
-// factory: EKAttributesFromConfig → CreateEK → SRKAttributesFromConfig
-// (parented to the EK) → CreateSRK. Callers must only invoke this for
-// simulator-backed configs; physical TPMs are provisioned by an operator.
+// resolveSRKAttributes returns the storage parent this backend uses for its
+// own key operations: the Platform SRK, always. This backend never uses the
+// TCG-standard Shared SRK -- it exists so other TCG-aware software sharing
+// the TPM finds it in its well-known, default state, not so xkms can borrow
+// it as a storage parent. A TPM opened by another component (e.g.
+// go-trusted-platform's app.TPM) that provisioned the SSRK but was never
+// enrolled through PlatformKeyStore.Initialize/EnrollPlatformSRK has no
+// Platform SRK yet, and construction fails rather than silently falling back
+// to the SSRK. This mirrors TPM2.defaultSealKeyAttributes in pkg/tpm2, so a
+// backend built here and a direct pkg/tpm2 Sealer resolve to the same parent
+// given the same TPM.
+func resolveSRKAttributes(tpm pkgtpm2.TrustedPlatformModule) (*types.KeyAttributes, error) {
+	srkAttrs, err := tpm.PlatformSRKAttributes()
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "Platform SRK unavailable", Err: err}
+	}
+	return srkAttrs, nil
+}
+
+// provisionSimulatorEKSRK provisions the endorsement key, the TCG-standard
+// Shared SRK and the Platform SRK on a freshly-reset TPM simulator. It
+// mirrors the proven first-boot recipe used by the sshbackend/fido2
+// integration suites and the go-quicbaas seal factory: EKAttributesFromConfig
+// → CreateEK → SRKAttributesFromConfig (parented to the EK) → CreateSRK for
+// the SSRK, then PlatformSRKAttributesFromConfig → CreateSRK for the Platform
+// SRK this backend actually uses (see NewBackend). Callers must only invoke
+// this for simulator-backed configs; physical TPMs are provisioned by an
+// operator.
+//
+// The simulator is freshly reset, so the Owner hierarchy carries empty auth
+// at this point regardless of what either SRK config declares -- neither
+// SRKAttributesFromConfig nor PlatformSRKAttributesFromConfig is asked to
+// authorize anything else here.
 func provisionSimulatorEKSRK(tpm pkgtpm2.TrustedPlatformModule, cfg *pkgtpm2.Config) error {
-	if cfg.EK == nil || cfg.SSRK == nil {
-		return &errs.Detail{Err: ErrInvalidConfig, Detail: "simulator provisioning requires EK and SSRK configs"}
+	if cfg.EK == nil || cfg.SSRK == nil || cfg.PlatformSRK == nil {
+		return &errs.Detail{Err: ErrInvalidConfig, Detail: "simulator provisioning requires EK, SSRK and PlatformSRK configs"}
 	}
 	ekAttrs, err := pkgtpm2.EKAttributesFromConfig(*cfg.EK, nil, nil)
 	if err != nil {
@@ -225,14 +272,29 @@ func provisionSimulatorEKSRK(tpm pkgtpm2.TrustedPlatformModule, cfg *pkgtpm2.Con
 	if err := tpm.CreateEK(ekAttrs); err != nil {
 		return &errs.Wrapped{Msg: "create EK", Err: err}
 	}
-	srkAttrs, err := pkgtpm2.SRKAttributesFromConfig(*cfg.SSRK)
+
+	// The TCG-standard Shared SRK, provisioned per spec even though this
+	// backend does not use it for its own key operations: other TCG-aware
+	// software sharing this TPM expects it at its well-known handle.
+	ssrkAttrs, err := pkgtpm2.SRKAttributesFromConfig(*cfg.SSRK)
 	if err != nil {
-		return &errs.Wrapped{Msg: "SRK attributes", Err: err}
+		return &errs.Wrapped{Msg: "SSRK attributes", Err: err}
 	}
-	srkAttrs.Parent = ekAttrs
-	if err := tpm.CreateSRK(srkAttrs); err != nil {
-		return &errs.Wrapped{Msg: "create SRK", Err: err}
+	ssrkAttrs.Parent = ekAttrs
+	if err := tpm.CreateSRK(ssrkAttrs); err != nil {
+		return &errs.Wrapped{Msg: "create SSRK", Err: err}
 	}
+
+	// The Platform SRK is this backend's own storage parent (see NewBackend).
+	platformSRKAttrs, err := pkgtpm2.PlatformSRKAttributesFromConfig(cfg)
+	if err != nil {
+		return &errs.Wrapped{Msg: "Platform SRK attributes", Err: err}
+	}
+	platformSRKAttrs.Parent = ekAttrs
+	if err := tpm.CreateSRK(platformSRKAttrs); err != nil {
+		return &errs.Wrapped{Msg: "create Platform SRK", Err: err}
+	}
+
 	return nil
 }
 
@@ -333,16 +395,29 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	// Set store type
 	attrs.StoreType = types.StoreTPM2
 
-	// Try to load the key from the backend to verify it exists
+	// Try to load the key from the backend to verify it exists. Only a
+	// genuine "no such object" result from the underlying store (which
+	// surfaces as storage.ErrNotFound through keyBackend.Get) is reported
+	// as ErrKeyNotFound. Any other failure -- a permission error, a
+	// transient I/O fault, a corrupt or partially written blob -- must not
+	// be conflated with "key does not exist yet", since callers such as
+	// getOrGenerateCAKey use that distinction to decide whether it is safe
+	// to generate a replacement key.
 	_, err := b.keyBackend.Get(attrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Get the public blob to determine key type
 	pubData, err := b.keyBackend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Parse the public key to determine algorithm
@@ -426,6 +501,35 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 			attrs := &types.KeyAttributes{
 				CN:        cn,
 				StoreType: types.StoreTPM2,
+
+				// Exportable is unconditionally false and Sensitive is
+				// unconditionally true for every key this backend enumerates,
+				// truthfully reporting what this backend's API surface can
+				// ever do rather than echoing whatever policy a caller once
+				// asked for at creation (go-xkms#932).
+				//
+				// GenerateKey builds every key from KeyTemplateSpec.Template
+				// (pkg/tpm2/template.go), which sets FixedTPM=true and
+				// FixedParent=true unconditionally -- TCG TPM 2.0 Library
+				// Part 2 12.2.3.5's flags for "may never leave this TPM" and
+				// "may never leave this parent" -- so a generated key is
+				// hardware-non-duplicable regardless of what attrs.Exportable
+				// the caller requested. ImportKey's sealed-keyedhash objects
+				// (buildSealedDuplicate) are built without those flags and so
+				// are duplicable at the TPM level, but ExportKey
+				// (importexport.go) refuses every key unconditionally with
+				// ErrExportNotSupported once the Exportable policy check
+				// passes -- there is no code path through this backend's API
+				// that ever returns key material for any key, generated or
+				// imported. Exportable=true would therefore be a promise this
+				// backend cannot keep for any key it manages.
+				//
+				// Sensitive=true mirrors the same fact from the other
+				// direction: ExportKeyMaterial (importexport.go) refuses
+				// every key unconditionally too, so plaintext is never
+				// released through this backend's API for any key.
+				Exportable: false,
+				Sensitive:  true,
 			}
 			// Recover the key algorithm from the persisted public blob so that
 			// downstream consumers (e.g. DeleteKey, which branches on

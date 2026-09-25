@@ -113,6 +113,21 @@ func (d *transitDouble) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// LIST /v1/transit/keys has no name segment, unlike every other keys
+	// operation this double serves -- it must be routed before the
+	// len(parts) < 3 guard below, which every named operation relies on.
+	//
+	// The vault/api client's Logical.list rewrites the wire method to GET
+	// with ?list=true (see logical.go's comment: "Set this for broader
+	// compatibility") rather than sending the literal LIST verb its own
+	// ListWithContext constructs, so the method to match here is GET, not
+	// LIST, with the list=true query parameter (rather than the path shape
+	// alone) disambiguating this from an ordinary single-key read.
+	if parts[1] == "keys" && len(parts) == 2 && r.Method == http.MethodGet && r.URL.Query().Get("list") == "true" {
+		d.listKeys(w)
+		return
+	}
+
 	if len(parts) < 3 {
 		writeVaultError(w, http.StatusNotFound, "unsupported path")
 		return
@@ -739,6 +754,30 @@ func (d *transitDouble) aeadForVersion(name string, version int) (cipher.AEAD, e
 	// aes256-gcm96 envelope is nonce || ciphertext || tag, which is exactly
 	// what Seal prepends and Open strips.
 	return cipher.NewGCMWithRandomNonce(block)
+}
+
+// listKeys implements Vault Transit's LIST /transit/keys, returning the
+// names of every key the double currently holds. Real Vault returns 404
+// when the collection is empty (surfaced to callers as secret == nil, not
+// an error, by the Go client), which this mirrors.
+func (d *transitDouble) listKeys(w http.ResponseWriter) {
+	d.mu.Lock()
+	names := make([]string, 0, len(d.keys))
+	for name := range d.keys {
+		names = append(names, name)
+	}
+	d.mu.Unlock()
+
+	if len(names) == 0 {
+		writeVaultError(w, http.StatusNotFound, "no keys found")
+		return
+	}
+
+	keysInterface := make([]interface{}, len(names))
+	for i, n := range names {
+		keysInterface[i] = n
+	}
+	writeVaultData(w, map[string]interface{}{"keys": keysInterface})
 }
 
 // keyCount reports how many keys the double currently holds, so a test can

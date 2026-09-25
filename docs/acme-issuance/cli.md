@@ -1,13 +1,23 @@
 # ACME Issuance — CLI
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
 
-Binary: **`trusted-acme-client`** (`cmd/acme-client`). Command groups:
-`account`, `cert`, `device`, `service`, plus `serve` and `version`.
+Two binaries cover ACME, on opposite sides of the protocol:
 
-`xkmsctl` has no ACME verbs. The CA operator verbs (`ca sign-csr`, `ca issue`,
-`ca revoke`, `ca crl`) are [`../certificate-authority/cli.md`](../certificate-authority/cli.md);
-ACME is the automated client side.
+- **`trusted-acme-client`** (`cmd/acme-client`) is the automated client
+  side — an ACME client that requests, renews, and deploys certificates.
+  Command groups: `account`, `cert`, `device`, `service`, plus `serve` and
+  `version`.
+- **`xkmsctl acme`** (`cmd/xkmsctl`) is the CA operator's administration
+  surface for the ACME server itself — accounts, issued certificates,
+  external account bindings (EAB), and CA status/statistics — documented in
+  [`xkmsctl acme` (admin)](#xkmsctl-acme-admin) below. It brings `xkmsctl` to
+  parity with go-trusted-ca's retired `cactl` for account, certificate, EAB,
+  and CA status/stats administration.
+
+The CA operator's *certificate hierarchy* verbs (`ca sign-csr`, `ca issue`,
+`ca revoke`, `ca crl`) are a separate, non-ACME surface documented at
+[`../certificate-authority/cli.md`](../certificate-authority/cli.md).
 
 ## `cactl` is retired, not undocumented
 
@@ -40,7 +50,7 @@ namespace.
 
 | Verb | Args | Purpose |
 |---|---|---|
-| `account add <name>` | account name | Register an ACME account |
+| `account add <name>` | account name | Add an ACME account configuration |
 | `account list` | — | List configured accounts |
 | `account show <name>` | account name | Account detail |
 | `account remove <name>` | account name | Remove an account |
@@ -64,6 +74,13 @@ trusted-acme-client account add prod \
 
 `--key-store tpm2` puts the **account key** in the TPM, which is the point: an
 account key in a file is a certificate-issuing capability sitting on disk.
+
+`account add` only stores this configuration locally; it makes no ACME
+`newAccount` request. The account is registered with the directory server
+the first time a command that needs an order for it runs — `cert request`,
+`cert renew`, or `device enroll`/`device attest` — and every later command
+reuses the same registration, since it is idempotent server-side (RFC 8555
+§7.3.1).
 
 ## `trusted-acme-client cert`
 
@@ -91,42 +108,51 @@ trusted-acme-client cert deploy web-prod
 ## `trusted-acme-client device`
 
 The hardware-identity path. This is what `enroll-01` and `device-attest-01`
-exist for.
+exist for. Like certificates, devices are named specs in the config file
+(`devices.<name>`) — the account, the TPM to open, the ACME permanent
+identifier, the common name, the PCR selection and the local challenge
+server's bind address/port are configured once, and the verbs act on the
+name. There is no flag-based, config-free form.
 
-### `device enroll`
-
-| Flag | Type | Default | Required |
-|---|---|---|---|
-| `--account` | string | — | **yes** |
-| `--device-id` | string | — | **yes** |
-| `--cn` | string | `""` | no — certificate common name |
-| `--output-cert` | string | `""` | no — write the certificate |
-| `--output-iak` | string | `""` | no — write the IAK certificate |
-
-```
-trusted-acme-client device enroll --account prod --device-id node-07 \
-    --cn node-07.example.com --output-cert node.crt --output-iak node-iak.crt
-```
-
-### `device attest`
-
-| Flag | Type | Default | Required |
-|---|---|---|---|
-| `--account` | string | — | **yes** |
-| `--device-id` | string | — | **yes** |
-| `--cn` | string | `""` | no |
-| `--pcrs` | string | `0,1,2,3,4,5,6,7` | no — comma-separated PCR indices |
-| `--output-cert` | string | `""` | no |
+| Verb | Args | Purpose |
+|---|---|---|
+| `device enroll <name>` | spec name | Enroll the device via `enroll-01`, issuing its IAK and IDevID certificates |
+| `device attest <name>` | spec name | Attest the device via `device-attest-01`, using the spec's PCR selection |
 
 ```
-trusted-acme-client device attest --account prod --device-id node-07 \
-    --pcrs 0,1,2,3,4,5,6,7 --output-cert node-attested.crt
+trusted-acme-client device enroll edge-gateway-01
+trusted-acme-client device attest edge-gateway-01
 ```
 
-Changing `--pcrs` changes what the certificate attests to. The default set is
-the firmware and boot measurements; adding a PCR that changes on every update
-makes the attestation fail after the next update, which is sometimes exactly
-what you want and sometimes an outage.
+A minimal device spec:
+
+```yaml
+devices:
+  edge-gateway-01:
+    account: prod
+    common-name: edge-gateway-01.example.com
+    identifier: edge-gateway-01.example.com   # ACME permanent-identifier value
+    pcr-selection: [0, 1, 2, 3, 4, 5, 6, 7]
+    challenge:
+      port: "8080"
+    tpm:
+      key-dir: /var/lib/trusted-acme/tpm-keys
+      config:
+        device: /dev/tpmrm0
+```
+
+`tpm` is optional. Left unset, the device opens go-xkms's own TPM2 defaults —
+the in-process simulator, provisioned on first use — which is appropriate
+only for development and testing; a production device spec must set
+`tpm.config.device` (or `tpm.config.simulator: true` for an explicitly
+simulated node) naming an already-provisioned TPM. go-xkms never
+auto-provisions real hardware: an unprovisioned physical TPM is refused, not
+silently provisioned, by this command.
+
+Changing `pcr-selection` changes what the attestation certificate attests to.
+The default set is the firmware and boot measurements; adding a PCR that
+changes on every update makes the attestation fail after the next update,
+which is sometimes exactly what you want and sometimes an outage.
 
 ## `trusted-acme-client service`
 
@@ -179,10 +205,112 @@ Never run `--no-tls` anywhere real. It is in the flag set for local test loops.
 
 Prints version, commit and build date.
 
+## `xkmsctl acme` (admin)
+
+`xkmsctl acme` administers the ACME certificate authority go-xkms hosts on
+its own dedicated HTTPS listener (`cfg.ACME.HTTPSAddr`) — a distinct service
+from xkmsd's own keystore/control-plane surface. Every verb goes through the
+ACME admin SDK (`sdk/go/acme`, `sdk/go/acme/client/admin`), never through
+`pkg/acme/admin` directly, and the admin API is permission-gated
+(`pkg/acme/admin`'s `PermissionGate`): a caller lacking the required role
+gets a typed permission-denied error rather than a generic failure.
+
+### Connecting
+
+The ACME admin plane is not reachable through `xkmsctl`'s usual
+`--server`/`--transport` flags — those address xkmsd. `acme` subcommands
+take their own connection flags instead:
+
+| Flag | Type | Default | Purpose |
+|---|---|---|---|
+| `--acme-server` | string | — | **required** — address of the ACME admin API (`https://host:8443`, `grpc://host:9443`, `grpcs://host:9443`, `quic://host:9444`, `mcp://host:9444`, `mcps://host:9444`, or a bare `host:port` routed by `--acme-transport`) |
+| `--acme-transport` | string | `grpc` | transport to use when `--acme-server` carries no scheme: `rest`, `grpc`, `quic`, `mcp` (there is no `unix` adapter for the ACME admin plane) |
+
+`xkmsctl`'s usual `--tls-cert`/`--tls-key`/`--tls-ca` flags supply client
+TLS material for `grpcs://`/`mcps://`/`quic://` targets or a bare address
+whose transport requires TLS.
+
+```
+xkmsctl acme --acme-server https://ca.example.com:8443 account list
+xkmsctl acme --acme-server grpc://ca.example.com:9443 --tls-ca ca.pem cert get 01:02:03:04
+```
+
+### `xkmsctl acme account`
+
+| Verb | Args | Flags | Purpose |
+|---|---|---|---|
+| `account list` | — | `--page`, `--per-page`, `--status` | List ACME accounts |
+| `account get <id>` | account ID | — | Get an account by ID |
+| `account disable <id>` | account ID | — | Disable an account (existing certificates remain valid until expiry) |
+
+```
+xkmsctl acme --acme-server https://ca.example.com:8443 account list --status valid
+xkmsctl acme --acme-server https://ca.example.com:8443 account get 12345
+xkmsctl acme --acme-server https://ca.example.com:8443 account disable 12345
+```
+
+### `xkmsctl acme cert`
+
+| Verb | Args | Flags | Purpose |
+|---|---|---|---|
+| `cert list` | — | `--page`, `--per-page`, `--status` | List issued certificates |
+| `cert get <serial>` | serial number | — | Get a certificate by serial number |
+| `cert revoke <serial>` | serial number | `--reason` (default `unspecified`) | Revoke a certificate (RFC 5280 reasons: `unspecified`, `keyCompromise`, `caCompromise`, `affiliationChanged`, `superseded`, `cessationOfOperation`, `certificateHold`, `removeFromCRL`, `privilegeWithdrawn`, `aaCompromise`) |
+
+```
+xkmsctl acme --acme-server https://ca.example.com:8443 cert list --status valid
+xkmsctl acme --acme-server https://ca.example.com:8443 cert get 01:02:03:04:05:06:07:08
+xkmsctl acme --acme-server https://ca.example.com:8443 cert revoke 01:02:03:04:05:06:07:08 --reason keyCompromise
+```
+
+### `xkmsctl acme eab`
+
+External Account Binding (RFC 8555 §7.3.4) lets an ACME client
+pre-authorize account creation with a MAC key issued out of band. go-xkms's
+ACME server is multi-tenant and EAB is scoped to a tenant, so every verb
+requires `--tenant`. This has no `cactl` equivalent — go-trusted-ca is
+single-tenant and never had EAB admin verbs.
+
+| Verb | Args | Flags | Purpose |
+|---|---|---|---|
+| `eab create` | — | `--tenant` (required), `--purpose`, `--external-account-id`, `--contact` (repeatable), `--expires-in-days` | Create an EAB; the MAC key is printed once, at creation, and is not retrievable again |
+| `eab get <kid>` | key ID | `--tenant` (required) | Get an EAB by key ID (never returns the MAC key) |
+| `eab delete <kid>` | key ID | `--tenant` (required) | Delete an EAB |
+| `eab list` | — | `--tenant` (required), `--page`, `--per-page`, `--status`, `--purpose` | List EABs for a tenant |
+
+```
+xkmsctl acme --acme-server https://ca.example.com:8443 eab create \
+    --tenant acme --purpose device-enrollment --contact mailto:ops@example.com
+xkmsctl acme --acme-server https://ca.example.com:8443 eab list --tenant acme
+xkmsctl acme --acme-server https://ca.example.com:8443 eab get --tenant acme <kid>
+xkmsctl acme --acme-server https://ca.example.com:8443 eab delete --tenant acme <kid>
+```
+
+### `xkmsctl acme status` / `xkmsctl acme stats`
+
+| Verb | Purpose |
+|---|---|
+| `status` | CA identity, version, initialization state, algorithms, root/intermediate CA |
+| `stats` | Certificate/account/order counts |
+
+```
+xkmsctl acme --acme-server https://ca.example.com:8443 status
+xkmsctl acme --acme-server https://ca.example.com:8443 stats
+```
+
+### Errors
+
+A permission-denied response from the admin API's `PermissionGate`
+surfaces as a distinct typed error (`ACMEAdminForbiddenError`) rather than
+the generic per-verb failure sentinel, and a missing resource surfaces as
+`ACMEAdminNotFoundError` — both readable at a glance and distinguishable
+with `errors.As` by anything scripting against the CLI's exit path.
+
 ## Exit codes
 
 `0` on success. On any error the binary writes `error: <message>` to stderr and
-exits non-zero (`cmd/acme-client/main.go`).
+exits non-zero (`cmd/acme-client/main.go`). `xkmsctl` follows the same
+convention (`error: <message>` to stderr, exit `1`).
 
 ## Parity coverage
 

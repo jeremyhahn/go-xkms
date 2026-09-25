@@ -244,7 +244,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
 			return &errs.Wrapped{Msg: "failed to save metadata", Err: err}
 		}
 	}
@@ -252,52 +252,23 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	return nil
 }
 
-// ExportKey exports a key in wrapped form for secure transport.
-// GCP KMS does not support key export for HSM keys, so this returns an error
-// unless the key was created with SOFTWARE protection level and EXPORTABLE set.
+// ExportKey exports a key in wrapped form for secure transport. GCP KMS
+// exposes no API to release private key material for any protection level
+// or import method: an HSM-protected key never leaves the HSM by design,
+// and a SOFTWARE key imported via GetImportParameters/ImportKey is
+// write-only through that same import job -- there is no corresponding
+// export job. Only the public half of an asymmetric key is retrievable
+// (GetPublicKey), which is not what this method returns. Capabilities()
+// reports Export: false unconditionally, so this always returns
+// backend.ErrExportNotSupported, matching awskms and azurekv.
 func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
-
-	// Check if backend supports export (it doesn't)
-	if !b.Capabilities().Export {
-		return nil, backend.ErrExportNotSupported
-	}
-
-	// This line is unreachable due to the check above, but included for completeness
-	// Check if key is marked as exportable
-	if !attrs.Exportable {
-		return nil, backend.ErrKeyNotExportable
-	}
-
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if b.client == nil {
-		return nil, ErrNotInitialized
-	}
-
-	// Get the crypto key to check its properties
-	cryptoKeyName := b.cryptoKeyName(attrs.CN)
-	cryptoKey, err := b.client.GetCryptoKey(ctx, &kmspb.GetCryptoKeyRequest{
-		Name: cryptoKeyName,
-	})
-	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get crypto key: %v", err)}
-	}
-
-	// Check if the key version is exportable
-	// In GCP KMS, only SOFTWARE keys can be exported, and only if they're marked as exportable
-	if cryptoKey.Primary == nil {
-		return nil, &errs.Message{Msg: "crypto key has no primary version"}
-	}
-
-	// GCP KMS keys created with ProtectionLevel_SOFTWARE can be exportable
-	// However, the actual export operation is not directly supported via the API
-	// You would need to use GetPublicKey for asymmetric keys (public key only)
-	// Private key material cannot be exported from GCP KMS for security reasons
-
+	// Capabilities().Export is unconditionally false for this backend, so
+	// there is no attrs.Exportable branch to check here: GCP KMS never
+	// releases key material -- imported or generated -- outside the
+	// service boundary, matching the awskms and vault ExportKey contracts.
 	return nil, backend.ErrExportNotSupported
 }
 

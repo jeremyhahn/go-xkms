@@ -193,86 +193,118 @@ func Routes() []RouteSpec {
 	hasBootstrapHandlers := func(s *Server) bool { return s.bootstrapHandlers != nil }
 	permIf("GET", "/bootstrap/keys", auth.ResourceBootstrap, auth.ActionRead, hasBootstrapHandlers, func(s *Server) http.HandlerFunc { return s.bootstrapHandlers.ShowKeysHandler })
 
-	// --- PIN management ---
-	session("POST", "/pin/so/set", nil, func(s *Server) http.HandlerFunc { return s.handlers.SetSOPINHandler })
-	session("POST", "/pin/user/set", nil, func(s *Server) http.HandlerFunc { return s.handlers.SetUserPINHandler })
-	session("POST", "/pin/so/change", nil, func(s *Server) http.HandlerFunc { return s.handlers.ChangeSOPINHandler })
-	session("POST", "/pin/user/change", nil, func(s *Server) http.HandlerFunc { return s.handlers.ChangeUserPINHandler })
-	session("POST", "/pin/so/verify", nil, func(s *Server) http.HandlerFunc { return s.handlers.VerifySOPINHandler })
-	session("POST", "/pin/user/verify", nil, func(s *Server) http.HandlerFunc { return s.handlers.VerifyUserPINHandler })
-	session("GET", "/pin/lockout", nil, func(s *Server) http.HandlerFunc { return s.handlers.GetLockoutStatusHandler })
-	session("POST", "/pin/lockout/reset", nil, func(s *Server) http.HandlerFunc { return s.handlers.ResetLockoutHandler })
+	// --- PIN management. Every route carries exactly the pin:* pair
+	// pkg/api/grpc/service_barrier_pin.go authorizes (and the proto's
+	// qrdb.v1.permission option declares) for the same operation: setting,
+	// changing, or resetting a PIN's lockout is pin:write; verifying a PIN
+	// or reading the lockout counters is pin:read. An authenticated session
+	// alone never reaches the token's PIN surface (go-xkms#780). ---
+	perm("POST", "/pin/so/set", auth.ResourcePIN, auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.handlers.SetSOPINHandler })
+	perm("POST", "/pin/user/set", auth.ResourcePIN, auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.handlers.SetUserPINHandler })
+	perm("POST", "/pin/so/change", auth.ResourcePIN, auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.handlers.ChangeSOPINHandler })
+	perm("POST", "/pin/user/change", auth.ResourcePIN, auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.handlers.ChangeUserPINHandler })
+	perm("POST", "/pin/so/verify", auth.ResourcePIN, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.VerifySOPINHandler })
+	perm("POST", "/pin/user/verify", auth.ResourcePIN, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.VerifyUserPINHandler })
+	perm("GET", "/pin/lockout", auth.ResourcePIN, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.GetLockoutStatusHandler })
+	perm("POST", "/pin/lockout/reset", auth.ResourcePIN, auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.handlers.ResetLockoutHandler })
 
-	// --- PIV ---
-	session("GET", "/piv/slots", nil, func(s *Server) http.HandlerFunc { return s.handlers.ListPIVSlotsHandler })
-	session("GET", "/piv/slots/{slot}/certificate", nil, func(s *Server) http.HandlerFunc { return s.handlers.GetPIVCertificateHandler })
-	session("POST", "/piv/slots/{slot}/certificate", nil, func(s *Server) http.HandlerFunc { return s.handlers.StorePIVCertificateHandler })
-	session("DELETE", "/piv/slots/{slot}/certificate", nil, func(s *Server) http.HandlerFunc { return s.handlers.DeletePIVCertificateHandler })
-	session("POST", "/piv/slots/{slot}/generate", nil, func(s *Server) http.HandlerFunc { return s.handlers.GeneratePIVKeyHandler })
-	session("POST", "/piv/slots/{slot}/import", nil, func(s *Server) http.HandlerFunc { return s.handlers.ImportPIVCertificateHandler })
-	session("GET", "/piv/slots/{slot}/export", nil, func(s *Server) http.HandlerFunc { return s.handlers.ExportPIVCertificateHandler })
-	session("POST", "/piv/slots/{slot}/csr", nil, func(s *Server) http.HandlerFunc { return s.handlers.GeneratePIVCSRHandler })
+	// --- PIV. The piv:* pairs of pkg/api/grpc/service_piv.go and the MCP
+	// xkms.*PIV* methods: reads are piv:read, certificate and key
+	// provisioning piv:write, deletion piv:delete, and CSR generation —
+	// a signature by a slot key that never leaves the card — piv:use. ---
+	perm("GET", "/piv/slots", auth.ResourcePIV, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.ListPIVSlotsHandler })
+	perm("GET", "/piv/slots/{slot}/certificate", auth.ResourcePIV, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.GetPIVCertificateHandler })
+	perm("POST", "/piv/slots/{slot}/certificate", auth.ResourcePIV, auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.handlers.StorePIVCertificateHandler })
+	perm("DELETE", "/piv/slots/{slot}/certificate", auth.ResourcePIV, auth.ActionDelete, func(s *Server) http.HandlerFunc { return s.handlers.DeletePIVCertificateHandler })
+	perm("POST", "/piv/slots/{slot}/generate", auth.ResourcePIV, auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.handlers.GeneratePIVKeyHandler })
+	perm("POST", "/piv/slots/{slot}/import", auth.ResourcePIV, auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.handlers.ImportPIVCertificateHandler })
+	perm("GET", "/piv/slots/{slot}/export", auth.ResourcePIV, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.ExportPIVCertificateHandler })
+	perm("POST", "/piv/slots/{slot}/csr", auth.ResourcePIV, auth.ActionUse, func(s *Server) http.HandlerFunc { return s.handlers.GeneratePIVCSRHandler })
 
 	// --- CA. When the full CA subsystem is absent the legacy bundle
-	// endpoint serves bootstrap alone. ---
+	// endpoint serves bootstrap alone; both variants of GET /ca/bundle carry
+	// the same pair, because the unified-server module registers a
+	// multi-variant route once under its first variant's permission. The
+	// certs:* pairs are pkg/api/grpc/service_ca*.go's and the MCP xkms.ca.*
+	// methods'. Unauthenticated first-contact trust stays on the public
+	// /v1/ca/bootstrap route. GET /ca/crl has no counterpart on any other
+	// transport (go-xkms#275), so it has no canonical pair to adopt and stays
+	// session-authenticated until one is defined. ---
 	hasCA := func(s *Server) bool { return s.caHandlers != nil }
 	noCA := func(s *Server) bool { return s.caHandlers == nil }
-	session("GET", "/ca/bundle", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCABundle })
-	session("GET", "/ca/certificate", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCACertificate })
-	session("POST", "/ca/sign-csr", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleSignCSR })
-	session("POST", "/ca/issue", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueCertificate })
-	session("POST", "/ca/revoke", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleRevokeCertificate })
-	session("POST", "/ca/crl", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGenerateCRL })
+	permIf("GET", "/ca/bundle", auth.ResourceCerts, auth.ActionRead, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCABundle })
+	permIf("GET", "/ca/certificate", auth.ResourceCerts, auth.ActionRead, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCACertificate })
+	permIf("POST", "/ca/sign-csr", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleSignCSR })
+	permIf("POST", "/ca/issue", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueCertificate })
+	permIf("POST", "/ca/revoke", auth.ResourceCerts, auth.ActionRevoke, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleRevokeCertificate })
+	permIf("POST", "/ca/crl", auth.ResourceCerts, auth.ActionRead, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGenerateCRL })
 	session("GET", "/ca/crl", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCRL })
-	session("GET", "/ca/revoked/{serial}", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIsRevoked })
-	session("POST", "/ca/tcg/ek", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueEKCertificate })
-	session("POST", "/ca/tcg/ak", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueAKCertificate })
-	session("POST", "/ca/tcg/sign-csr", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleSignTCGCSR })
-	session("POST", "/ca/tcg/enroll", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleEnrollDevice })
-	session("GET", "/ca/bundle", noCA, func(s *Server) http.HandlerFunc { return s.handlers.GetCABundleHandler })
+	permIf("GET", "/ca/revoked/{serial}", auth.ResourceCerts, auth.ActionRead, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIsRevoked })
+	permIf("POST", "/ca/tcg/ek", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueEKCertificate })
+	permIf("POST", "/ca/tcg/ak", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueAKCertificate })
+	permIf("POST", "/ca/tcg/sign-csr", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleSignTCGCSR })
+	permIf("POST", "/ca/tcg/enroll", auth.ResourceCerts, auth.ActionGenerate, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleEnrollDevice })
+	permIf("GET", "/ca/bundle", auth.ResourceCerts, auth.ActionRead, noCA, func(s *Server) http.HandlerFunc { return s.handlers.GetCABundleHandler })
 
-	// --- Custodian groups ---
+	// --- Custodian groups. The ceremony:* pairs of
+	// pkg/api/grpc/service_custodian_share_tenant.go: reads are
+	// ceremony:status; adding a custodian is ceremony:enroll_custodian and
+	// removing one ceremony:revoke_custodian, because each changes who can
+	// contribute an unseal share; distributing shares is
+	// ceremony:claim_share_begin. ---
 	hasCustodian := func(s *Server) bool { return s.custodianHandlers != nil }
-	session("POST", "/custodian/groups/", hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.CreateGroupHandler })
-	session("GET", "/custodian/groups/", hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.ListGroupsHandler })
-	session("GET", "/custodian/groups/{id}", hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.GetGroupHandler })
-	session("DELETE", "/custodian/groups/{id}", hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.DeleteGroupHandler })
-	session("POST", "/custodian/groups/{id}/members", hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.AddMemberHandler })
-	session("DELETE", "/custodian/groups/{id}/members/{userID}", hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.RemoveMemberHandler })
-	session("POST", "/custodian/groups/{id}/distribute", hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.DistributeSharesHandler })
+	permIf("POST", "/custodian/groups/", auth.ResourceCeremony, auth.ActionEnrollCustodian, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.CreateGroupHandler })
+	permIf("GET", "/custodian/groups/", auth.ResourceCeremony, auth.ActionStatus, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.ListGroupsHandler })
+	permIf("GET", "/custodian/groups/{id}", auth.ResourceCeremony, auth.ActionStatus, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.GetGroupHandler })
+	permIf("DELETE", "/custodian/groups/{id}", auth.ResourceCeremony, auth.ActionRevokeCustodian, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.DeleteGroupHandler })
+	permIf("POST", "/custodian/groups/{id}/members", auth.ResourceCeremony, auth.ActionEnrollCustodian, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.AddMemberHandler })
+	permIf("DELETE", "/custodian/groups/{id}/members/{userID}", auth.ResourceCeremony, auth.ActionRevokeCustodian, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.RemoveMemberHandler })
+	permIf("POST", "/custodian/groups/{id}/distribute", auth.ResourceCeremony, auth.ActionClaimShareBegin, hasCustodian, func(s *Server) http.HandlerFunc { return s.custodianHandlers.DistributeSharesHandler })
 
-	// --- Shares (Shamir custody) ---
+	// --- Shares (Shamir custody). Reads are ceremony:status; submitting
+	// or deleting a share moves quorum material and carries
+	// barrier:unseal-share — the gRPC and MCP pairs for the same calls. ---
 	hasShares := func(s *Server) bool { return s.shareHandlers != nil }
-	session("POST", "/shares/submit", hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.SubmitShareHandler })
-	session("GET", "/shares/", hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.ListSharesHandler })
-	session("GET", "/shares/{serverURL}/{groupID}/{shareIndex}", hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.GetShareHandler })
-	session("DELETE", "/shares/{serverURL}/{groupID}/{shareIndex}", hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.DeleteShareHandler })
-	session("GET", "/shares/status/{groupID}", hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.GetShareCollectionStatusHandler })
+	permIf("POST", "/shares/submit", auth.ResourceBarrier, auth.ActionUnsealShare, hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.SubmitShareHandler })
+	permIf("GET", "/shares/", auth.ResourceCeremony, auth.ActionStatus, hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.ListSharesHandler })
+	permIf("GET", "/shares/{serverURL}/{groupID}/{shareIndex}", auth.ResourceCeremony, auth.ActionStatus, hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.GetShareHandler })
+	permIf("DELETE", "/shares/{serverURL}/{groupID}/{shareIndex}", auth.ResourceBarrier, auth.ActionUnsealShare, hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.DeleteShareHandler })
+	permIf("GET", "/shares/status/{groupID}", auth.ResourceCeremony, auth.ActionStatus, hasShares, func(s *Server) http.HandlerFunc { return s.shareHandlers.GetShareCollectionStatusHandler })
 
-	// --- Tenants ---
+	// --- Tenants. Tenant metadata carries tenants:*; the per-tenant
+	// barrier lifecycle is its own tenant_barrier:* family, distinct from
+	// the system barrier's seal:*. Pairs are
+	// pkg/api/grpc/service_custodian_share_tenant.go's. The permission gate
+	// runs before the handler, so it answers 403 regardless of which
+	// tenantID was named; a caller holding the grant still gets the
+	// handlers' cross-tenant 404, which never distinguishes "belongs to
+	// another tenant" from "does not exist". ---
 	hasTenants := func(s *Server) bool { return s.tenantHandlers != nil }
-	session("POST", "/tenants/", hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.CreateTenantHandler })
-	session("GET", "/tenants/", hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.ListTenantsHandler })
-	session("GET", "/tenants/{tenantID}", hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.GetTenantHandler })
-	session("DELETE", "/tenants/{tenantID}", hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.DeleteTenantHandler })
-	session("GET", "/tenants/{tenantID}/barrier/status", hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierStatusHandler })
-	session("POST", "/tenants/{tenantID}/barrier/init", hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierInitHandler })
-	session("POST", "/tenants/{tenantID}/barrier/unseal", hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierUnsealHandler })
-	session("PUT", "/tenants/{tenantID}/entitlements", hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantEntitlementsHandler })
-	session("PUT", "/tenants/{tenantID}/quotas", hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantQuotasHandler })
+	permIf("POST", "/tenants/", auth.ResourceTenants, auth.ActionCreate, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.CreateTenantHandler })
+	permIf("GET", "/tenants/", auth.ResourceTenants, auth.ActionList, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.ListTenantsHandler })
+	permIf("GET", "/tenants/{tenantID}", auth.ResourceTenants, auth.ActionRead, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.GetTenantHandler })
+	permIf("DELETE", "/tenants/{tenantID}", auth.ResourceTenants, auth.ActionDelete, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.DeleteTenantHandler })
+	permIf("GET", "/tenants/{tenantID}/barrier/status", auth.ResourceTenantBarrier, auth.ActionStatus, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierStatusHandler })
+	permIf("POST", "/tenants/{tenantID}/barrier/init", auth.ResourceTenantBarrier, auth.ActionInit, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierInitHandler })
+	permIf("POST", "/tenants/{tenantID}/barrier/unseal", auth.ResourceTenantBarrier, auth.ActionUnseal, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierUnsealHandler })
+	permIf("PUT", "/tenants/{tenantID}/entitlements", auth.ResourceTenants, auth.ActionUpdate, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantEntitlementsHandler })
+	permIf("PUT", "/tenants/{tenantID}/quotas", auth.ResourceTenants, auth.ActionUpdate, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantQuotasHandler })
 
-	// --- Passwords ---
+	// --- Passwords. The passwords:* pairs of pkg/api/grpc/service_password.go
+	// and the MCP password.* methods. POST /passwords/access-mode has no
+	// counterpart on any other transport, so it has no canonical pair to
+	// adopt and stays session-authenticated until one is defined. ---
 	hasPasswords := func(s *Server) bool { return s.passwordHandlers != nil }
-	session("POST", "/passwords/", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.AddPasswordHandler })
-	session("GET", "/passwords/", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.ListPasswordsHandler })
-	session("GET", "/passwords/{id}", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.GetPasswordHandler })
-	session("PUT", "/passwords/{id}", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.UpdatePasswordHandler })
-	session("DELETE", "/passwords/{id}", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.DeletePasswordHandler })
-	session("POST", "/passwords/unlock", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.UnlockHandler })
-	session("POST", "/passwords/lock", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.LockHandler })
-	session("GET", "/passwords/status", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.StatusHandler })
+	permIf("POST", "/passwords/", auth.ResourcePasswords, auth.ActionWrite, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.AddPasswordHandler })
+	permIf("GET", "/passwords/", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.ListPasswordsHandler })
+	permIf("GET", "/passwords/{id}", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.GetPasswordHandler })
+	permIf("PUT", "/passwords/{id}", auth.ResourcePasswords, auth.ActionWrite, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.UpdatePasswordHandler })
+	permIf("DELETE", "/passwords/{id}", auth.ResourcePasswords, auth.ActionDelete, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.DeletePasswordHandler })
+	permIf("POST", "/passwords/unlock", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.UnlockHandler })
+	permIf("POST", "/passwords/lock", auth.ResourcePasswords, auth.ActionLock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.LockHandler })
+	permIf("GET", "/passwords/status", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.StatusHandler })
 	session("POST", "/passwords/access-mode", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.SetAccessModeHandler })
-	session("POST", "/passwords/generate", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.GeneratePasswordHandler })
+	permIf("POST", "/passwords/generate", auth.ResourcePasswords, auth.ActionGenerate, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.GeneratePasswordHandler })
 
 	// --- PKCS#11 remote state. Records are a token's key/object state, so
 	// they gate on the keys resource. All POST so opaque binary values
@@ -326,7 +358,12 @@ func Routes() []RouteSpec {
 	// without an account while the ceremony has not reached the
 	// operational state (publicCeremonyPaths in middleware_init_public.go
 	// — a middleware concern, not a table concern); sign-csr and officer
-	// enrolment stay behind authentication and RBAC on every transport. ---
+	// enrolment stay behind authentication and RBAC on every transport.
+	// status and claim-* stay session-authenticated rather than carrying
+	// MCP's ceremony:* pairs: the RequirePermission decorator has no
+	// pre-operational exemption, so gating them here would refuse the
+	// account-less officer the exemption exists for. officer/status has no
+	// counterpart on any other transport. ---
 	hasInit := func(s *Server) bool { return s.initHandlers != nil }
 	session("GET", "/init/status", hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleGetStatus })
 	session("POST", "/init/claim-cert/begin", hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleClaimCertBegin })
@@ -338,10 +375,15 @@ func Routes() []RouteSpec {
 	permIf("POST", "/init/enroll-external-officer", auth.ResourceCeremony, auth.ActionSignCSR, hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleEnrollExternalOfficer })
 	session("GET", "/init/officer/status", hasInit, func(s *Server) http.HandlerFunc { return s.initHandlers.HandleOfficerStatus })
 
-	// --- Credentials ---
+	// --- Credentials. submit and strategy carry the credentials:* pairs
+	// the MCP credentials.* methods are gated with; neither is on the
+	// pre-operational ceremony allowlist, so gating them never blocks an
+	// account-less officer. GET /credentials/ has no counterpart on any
+	// other transport, so it has no canonical pair to adopt and stays
+	// session-authenticated until one is defined. ---
 	hasCreds := func(s *Server) bool { return s.credentialHandlers != nil }
-	session("POST", "/credentials/submit", hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleSubmit })
-	session("GET", "/credentials/strategy", hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleGetStrategy })
+	permIf("POST", "/credentials/submit", auth.ResourceCredentials, auth.ActionSubmit, hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleSubmit })
+	permIf("GET", "/credentials/strategy", auth.ResourceCredentials, auth.ActionStrategy, hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleGetStrategy })
 	session("GET", "/credentials/", hasCreds, func(s *Server) http.HandlerFunc { return s.credentialHandlers.HandleList })
 
 	// --- User-side N-factor. Reads are users:read, mutations users:update
@@ -359,6 +401,23 @@ func Routes() []RouteSpec {
 	// a freebie for anyone already authenticated. ---
 	hasAudit := func(s *Server) bool { return s.auditHandlers != nil }
 	permIf("GET", "/audit/", auth.ResourceAudit, auth.ActionRead, hasAudit, func(s *Server) http.HandlerFunc { return s.auditHandlers.QueryHandler })
+
+	// --- Cluster (go-xkms#847). Raft shard status and membership, backed by
+	// the embedded go-qrdb node's own cluster client
+	// (pkg/xkms/servicer_cluster.go). Status and membership reads never fail
+	// on a standalone node — they report clustered:false and an empty
+	// member list — so both GET routes register unconditionally, matching
+	// clusterHandlers' own unconditional construction in NewServer.
+	// Membership mutation is NOT exposed over REST at all — there is no
+	// POST/DELETE here to stub out. Raft membership changes go through
+	// go-qrdb's own control plane exclusively, via `xkmsctl cluster
+	// add`/`remove` (docs/clustering/api.md, docs/web/parity.md "Cluster
+	// mutations"). Permissions mirror go-qrdb's own AdminService vocabulary
+	// exactly (admin:status, admin:peers — pkg/permission/constants.go),
+	// matching what xkmsd registers on its control-plane gRPC surface
+	// (pkg/server/qrdb_control_plane.go). ---
+	perm("GET", "/cluster/status", auth.ResourceAdmin, auth.ActionStatus, func(s *Server) http.HandlerFunc { return s.clusterHandlers.StatusHandler })
+	perm("GET", "/cluster/members", auth.ResourceAdmin, auth.ActionPeers, func(s *Server) http.HandlerFunc { return s.clusterHandlers.MembersHandler })
 
 	// --- Session endpoints. Exchange endpoints are unauthenticated (they
 	// ARE the authentication); introspection requires a live session. ---

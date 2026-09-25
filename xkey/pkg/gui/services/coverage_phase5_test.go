@@ -183,7 +183,7 @@ func TestP5B_OIDCService_SetDataDir_LoadProvidersError(t *testing.T) {
 }
 
 // TestP5B_OIDCService_Login_AWSProviderType verifies that logging in with an
-// AWS provider type returns the unsupported error.
+// AWS provider type with no aws_region is refused before any login attempt.
 func TestP5B_OIDCService_Login_AWSProviderType(t *testing.T) {
 	svc := NewOIDCService(nil)
 	svc.providers["aws-test"] = &OIDCProviderEntry{
@@ -195,7 +195,7 @@ func TestP5B_OIDCService_Login_AWSProviderType(t *testing.T) {
 	assert.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.Success)
-	assert.Contains(t, result.Error, "AWS")
+	assert.Contains(t, result.Error, "aws_region")
 }
 
 // TestP5B_OIDCService_Login_NilCtxFallsBack verifies that Login uses
@@ -539,8 +539,14 @@ func TestP5B_OIDCService_RefreshLoop_SuccessfulRefreshUpdatesStatus(t *testing.T
 		close(done)
 	}()
 
-	// Wait for at least one successful tick.
-	time.Sleep(2500 * time.Millisecond)
+	// Wait for at least one ticker.C fire instead of a fixed sleep: the
+	// AutoRefresh interval itself (1s, no clock seam) is the behavior under
+	// test, so polling the tick count is more deterministic than betting a
+	// fixed sleep is long enough under a loaded scheduler.
+	require.Eventually(t, func() bool {
+		status := proc.status.Load()
+		return status != nil && status.RefreshCount > 0
+	}, 10*time.Second, 20*time.Millisecond, "refreshLoop did not tick")
 	cancel()
 
 	select {
@@ -591,8 +597,13 @@ func TestP5B_OIDCService_RefreshLoop_NilStatusOnTick(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for a tick to fire.
-	time.Sleep(1500 * time.Millisecond)
+	// Wait for at least one ticker.C fire instead of a fixed sleep: the
+	// AutoRefresh interval itself (1s, no clock seam) is the behavior under
+	// test.
+	require.Eventually(t, func() bool {
+		status := proc.status.Load()
+		return status != nil && status.RefreshCount > 0
+	}, 10*time.Second, 20*time.Millisecond, "refreshLoop did not tick")
 	cancel()
 
 	select {
@@ -786,7 +797,10 @@ func TestP5B_OIDCService_Login_StoreTokenSaveError(t *testing.T) {
 		capturedAuthURL.Store(url)
 
 		go func() {
-			time.Sleep(100 * time.Millisecond)
+			// No readiness wait needed: Login binds the callback listener
+			// (oidc.BindCallback) before calling browserOpen, so the listener
+			// already accepts connections into the kernel backlog even
+			// before Serve's accept loop has started running.
 			authURL := capturedAuthURL.Load().(string)
 			// Extract state from the auth URL.
 			for _, part := range []string{"state="} {

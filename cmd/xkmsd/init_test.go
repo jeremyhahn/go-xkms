@@ -21,6 +21,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,8 @@ import (
 	"testing/iotest"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
+	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -108,6 +111,15 @@ func TestParseOfficerFlag_EmptyCSRPath(t *testing.T) {
 	if !errors.Is(err, ErrEmptyCSRPath) {
 		t.Errorf("expected ErrEmptyCSRPath, got %v", err)
 	}
+	// The rendered message (what an operator sees in the CLI's error output)
+	// must name the sentinel condition, not just satisfy errors.Is.
+	var detailErr *WrappedDetailError
+	if !errors.As(err, &detailErr) {
+		t.Fatalf("expected *WrappedDetailError, got %T", err)
+	}
+	if got := detailErr.Error(); !strings.Contains(got, ErrEmptyCSRPath.Error()) {
+		t.Errorf("WrappedDetailError.Error() = %q, want it to contain %q", got, ErrEmptyCSRPath.Error())
+	}
 }
 
 func TestParseOfficerFlag_WhitespaceHandling(t *testing.T) {
@@ -166,6 +178,15 @@ func TestReadAndValidateCSR_Directory(t *testing.T) {
 	}
 	if !errors.Is(err, ErrCSRReadFailed) {
 		t.Errorf("expected ErrCSRReadFailed, got %v", err)
+	}
+	// A WrappedDetailError with no underlying cause still names the path, so
+	// an operator sees which CSR it rejected without an "<nil>" suffix.
+	var detailErr *WrappedDetailError
+	if !errors.As(err, &detailErr) {
+		t.Fatalf("expected *WrappedDetailError, got %T", err)
+	}
+	if got := detailErr.Error(); !strings.Contains(got, dir) {
+		t.Errorf("WrappedDetailError.Error() = %q, want it to name the rejected path %q", got, dir)
 	}
 }
 
@@ -517,6 +538,33 @@ func TestResolveHostname_DefaultValue(t *testing.T) {
 	}
 }
 
+func TestResolveCredentialStrategy_ConfigUsedWhenFlagEmpty(t *testing.T) {
+	flags := &initFlags{}
+	cfg := &config.Config{Credentials: config.CredentialsConfig{SealStrategy: "pkcs11"}}
+	result := resolveCredentialStrategy(flags, cfg)
+	if result != "pkcs11" {
+		t.Errorf("expected the config value pkcs11 when the flag is unset, got %q", result)
+	}
+}
+
+func TestResolveDataDir_ConfigUsedWhenFlagEmpty(t *testing.T) {
+	flags := &initFlags{}
+	cfg := &config.Config{Storage: config.StorageConfig{Path: "/etc/configured/data"}}
+	result := resolveDataDir(flags, cfg)
+	if result != "/etc/configured/data" {
+		t.Errorf("expected the config value when the flag is unset, got %q", result)
+	}
+}
+
+func TestResolveHostname_ConfigUsedWhenFlagEmpty(t *testing.T) {
+	flags := &initFlags{}
+	cfg := &config.Config{Server: config.ServerConfig{Host: "configured.example.com"}}
+	result := resolveHostname(flags, cfg)
+	if result != "configured.example.com" {
+		t.Errorf("expected the config value when the flag is unset, got %q", result)
+	}
+}
+
 func TestParseInitFlags_InvalidFlag(t *testing.T) {
 	_, err := parseInitFlags([]string{"--nonexistent-flag", "value"})
 	if err == nil {
@@ -676,4 +724,119 @@ func TestResolveRelyingParty(t *testing.T) {
 			}
 		}
 	})
+}
+
+// =============================================================================
+// closeFIDO2Handler
+// =============================================================================
+
+// TestCloseFIDO2Handler_NilHandlerIsANoOp proves the common case (no passkey
+// planned, so runInit never opened a FIDO2 handler) does not panic on a nil
+// field.
+func TestCloseFIDO2Handler_NilHandlerIsANoOp(t *testing.T) {
+	closeFIDO2Handler(&ceremonyEnv{})
+}
+
+// TestCloseFIDO2Handler_ClosesAnOpenHandler proves the handler runInit opened
+// for a planned passkey is actually closed, using the same construction
+// (pkgfido2.NewHandler with the default enumerator) runInit itself uses; it
+// needs no attached hardware since FIDO2Handler.Close releases nothing but
+// its own bookkeeping.
+func TestCloseFIDO2Handler_ClosesAnOpenHandler(t *testing.T) {
+	handler, err := pkgfido2.NewHandler(nil, pkgfido2.NewDefaultEnumerator())
+	if err != nil {
+		t.Fatalf("pkgfido2.NewHandler: %v", err)
+	}
+	env := &ceremonyEnv{fido2Handler: handler}
+
+	// Must not panic; closeFIDO2Handler discards the Close error deliberately
+	// (see its doc comment on why runInit's os.Exit paths cannot afford one).
+	closeFIDO2Handler(env)
+}
+
+// =============================================================================
+// printInitSummary
+// =============================================================================
+
+func TestPrintInitSummary_SingleAdminMode(t *testing.T) {
+	out := captureStdout(t, func() {
+		printInitSummary(
+			&initialize.CeremonyConfig{Hostname: "node1.example.com", DataDir: "/var/lib/xkms"},
+			"barrier",
+			nil,
+			&initFlags{barrierStrategy: "passphrase"},
+		)
+	})
+
+	for _, want := range []string{"node1.example.com", "/var/lib/xkms", "passphrase", "barrier", "Single Admin", "Validation Passed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("printInitSummary output missing %q; got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "M-of-N") {
+		t.Errorf("single-admin summary must not mention M-of-N mode; got:\n%s", out)
+	}
+}
+
+func TestPrintInitSummary_MofNMode(t *testing.T) {
+	officers := []initialize.OfficerConfig{{Username: "officer-a"}, {Username: "officer-b"}}
+	out := captureStdout(t, func() {
+		printInitSummary(
+			&initialize.CeremonyConfig{Hostname: "node1.example.com", DataDir: "/data", Threshold: 2},
+			"barrier",
+			officers,
+			&initFlags{barrierStrategy: "passphrase"},
+		)
+	})
+
+	for _, want := range []string{"M-of-N (2-of-2)", "officer-a", "officer-b"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("printInitSummary output missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintInitSummary_ShamirStrategyReportsShareCounts(t *testing.T) {
+	out := captureStdout(t, func() {
+		printInitSummary(
+			&initialize.CeremonyConfig{Hostname: "node1.example.com", DataDir: "/data"},
+			"barrier",
+			nil,
+			&initFlags{barrierStrategy: "shamir", threshold: 3, shares: 5},
+		)
+	})
+
+	if !strings.Contains(out, "Shamir Mode:          3-of-5") {
+		t.Errorf("printInitSummary output missing the Shamir mode line; got:\n%s", out)
+	}
+	// Shamir mode has no single-admin/M-of-N administrator yet (officers
+	// claim in a later step), so neither mode line applies.
+	if strings.Contains(out, "Single Admin") || strings.Contains(out, "M-of-N") {
+		t.Errorf("Shamir summary must not claim a Mode line before any officer has claimed; got:\n%s", out)
+	}
+}
+
+// captureStdout redirects os.Stdout for the duration of fn and returns
+// everything written to it, restoring the original afterwards.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	original := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = original })
+
+	fn()
+
+	_ = w.Close()
+	os.Stdout = original
+
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+	return string(got)
 }

@@ -111,7 +111,11 @@ func (s *AutoUnsealService) GetStatus() *AutoUnsealStatus {
 	status := &AutoUnsealStatus{}
 
 	// Check if the default sealer can seal.
-	status.Available, _ = s.sealSvc.CanSeal()
+	available, err := s.sealSvc.CanSeal()
+	if err != nil {
+		s.log.Warn("failed to check whether the default sealer can seal", "error", err)
+	}
+	status.Available = available
 
 	// Check if auto-unseal is configured via the config.
 	if s.configFunc != nil {

@@ -16,6 +16,8 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -190,7 +192,11 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // Upgrade already wrote the response
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if cerr := conn.Close(); cerr != nil {
+			slog.Debug("ssh/console: failed to close the WebSocket connection", "error", cerr)
+		}
+	}()
 
 	// One write mutex serializes the hostkey-confirm frame (below, during
 	// Dial) with the post-Dial error frame. bridge() owns its own write
@@ -218,7 +224,11 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeControl(conn, &writeMu, controlMessage{Type: "error", Message: derr.Error()})
 		return
 	}
-	defer func() { _ = cons.Close() }()
+	defer func() {
+		if cerr := cons.Close(); cerr != nil {
+			slog.Debug("ssh/console: failed to close the bridged session", "error", cerr)
+		}
+	}()
 
 	bridge(conn, cons)
 }
@@ -256,8 +266,11 @@ func (h *wsHandler) buildHostKeyConfirm(target *Target, conn *websocket.Conn, wr
 				Mode:        "notify",
 			}
 			// Fire-and-forget: a notify write failure must not block or
-			// fail the accept-new policy.
-			_ = writeJSON(conn, writeMu, msg)
+			// fail the accept-new policy. Still worth knowing about, so it
+			// is logged rather than dropped.
+			if werr := writeJSON(conn, writeMu, msg); werr != nil {
+				slog.Warn("ssh/console: failed to send the accept-new hostkey notify frame", "host", host, "error", werr)
+			}
 			return true, nil
 		}
 	default: // "", "yes": strict — no prompt, no confirmer.
@@ -275,7 +288,11 @@ func (h *wsHandler) awaitHostKeyResponse(conn *websocket.Conn) (bool, error) {
 	if err := conn.SetReadDeadline(time.Now().Add(h.hostKeyConfirmTimeout)); err != nil {
 		return false, err
 	}
-	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+	defer func() {
+		if err := conn.SetReadDeadline(time.Time{}); err != nil {
+			slog.Debug("ssh/console: failed to clear the read deadline after host-key confirmation", "error", err)
+		}
+	}()
 
 	for {
 		mt, data, err := conn.ReadMessage()
@@ -310,7 +327,9 @@ func bridge(conn *websocket.Conn, cons Console) {
 	closeDone := func() { once.Do(func() { close(done) }) }
 
 	conn.SetReadLimit(wsReadLimit)
-	_ = conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	if err := conn.SetReadDeadline(time.Now().Add(wsPongWait)); err != nil {
+		slog.Debug("ssh/console: failed to set the initial read deadline", "error", err)
+	}
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(wsPongWait))
 	})
@@ -323,7 +342,9 @@ func bridge(conn *websocket.Conn, cons Console) {
 			n, rerr := cons.Read(buf)
 			if n > 0 {
 				writeMu.Lock()
-				_ = conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+				if err := conn.SetWriteDeadline(time.Now().Add(wsWriteWait)); err != nil {
+					slog.Debug("ssh/console: failed to set write deadline before sending console output", "error", err)
+				}
 				werr := conn.WriteMessage(websocket.BinaryMessage, buf[:n])
 				writeMu.Unlock()
 				if werr != nil {
@@ -347,7 +368,9 @@ func bridge(conn *websocket.Conn, cons Console) {
 				return
 			case <-ticker.C:
 				writeMu.Lock()
-				_ = conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+				if err := conn.SetWriteDeadline(time.Now().Add(wsWriteWait)); err != nil {
+					slog.Debug("ssh/console: failed to set write deadline before sending ping", "error", err)
+				}
 				err := conn.WriteMessage(websocket.PingMessage, nil)
 				writeMu.Unlock()
 				if err != nil {
@@ -371,7 +394,12 @@ func bridge(conn *websocket.Conn, cons Console) {
 		case websocket.TextMessage:
 			var msg controlMessage
 			if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" {
-				_ = cons.Resize(msg.Rows, msg.Cols)
+				// Best-effort: a rejected resize just leaves the remote PTY
+				// at its previous size. Still worth knowing about, so it is
+				// logged rather than dropped.
+				if rerr := cons.Resize(msg.Rows, msg.Cols); rerr != nil {
+					slog.Debug("ssh/console: remote rejected a PTY resize", "rows", msg.Rows, "cols", msg.Cols, "error", rerr)
+				}
 			}
 		}
 	}
@@ -384,15 +412,24 @@ stop:
 	// remote-side semantics are unchanged.
 	//
 	// Best-effort: this runs on the way out with the WebSocket already gone,
-	// so there is nobody left to report a failure to, and Close still
-	// terminates the session unconditionally.
-	_ = cons.CloseWrite()
+	// so there is nobody left to report a failure to over the wire, and
+	// Close still terminates the session unconditionally either way. Still
+	// worth knowing about, so it is logged rather than dropped.
+	if cerr := cons.CloseWrite(); cerr != nil {
+		slog.Debug("ssh/console: CloseWrite failed while tearing down a bridged session", "error", cerr)
+	}
 	closeDone()
 }
 
 // writeControl sends a JSON control frame as a WebSocket TEXT message.
+// Best-effort: every caller is itself reporting connection state (an error
+// or an exit notice) to a peer that may already be gone, so there is no
+// further action to take on a failed send here. Still worth knowing about,
+// so it is logged rather than dropped.
 func writeControl(conn *websocket.Conn, mu *sync.Mutex, msg controlMessage) {
-	_ = writeJSON(conn, mu, msg)
+	if err := writeJSON(conn, mu, msg); err != nil {
+		slog.Debug("ssh/console: failed to send a control frame", "type", msg.Type, "error", err)
+	}
 }
 
 // writeJSON marshals v and sends it as a WebSocket TEXT message, serialized
@@ -405,6 +442,6 @@ func writeJSON(conn *websocket.Conn, mu *sync.Mutex, v any) error {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	_ = conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
-	return conn.WriteMessage(websocket.TextMessage, data)
+	deadlineErr := conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+	return errors.Join(deadlineErr, conn.WriteMessage(websocket.TextMessage, data))
 }

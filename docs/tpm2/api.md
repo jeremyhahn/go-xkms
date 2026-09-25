@@ -1,6 +1,6 @@
 # TPM 2.0 — API
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -69,6 +69,27 @@ Errors: `ErrDevIDTemplateNonConformant`, `ErrDevIDUniqueString`,
 `ErrDevIDCNUnresolved`
 (`pkg/tpm2`); `ErrEmptyKeyCN` (`pkg/tpm2/store`). All refuse; nothing degrades.
 
+## Provisioning state, reprovisioning, and an EK credential challenge without a TPM
+
+Added for go-trusted-platform's own installer/orchestration use
+(go-xkms#798); re-exported through `sdk/go` unchanged (all four are type
+aliases or direct function re-exports, so new `TrustedPlatformModule`
+methods and new package functions appear automatically).
+
+| Symbol | What it is |
+|---|---|
+| `(*TPM2).State() (*ProvisioningState, error)` | one classification: the TPMA_PERMANENT `ownerAuthSet`/`endorsementAuthSet`/`lockoutAuthSet` bits, which of EK/SSRK/IAK/IDevID/Platform SRK's configured persistent handles exist, and whether the Platform SRK's `authPolicy` equals the current `PlatformPolicyDigest` |
+| `(*TPM2).ClearForReprovision() (rebootRequired bool, err error)` | `TPM2_Clear` via LOCKOUT, then PLATFORM, then UEFI PPI `ForceClear`; `rebootRequired` is true only for the PPI path. Replaces a consumer's private `TPM2_Clear`/PPI escalation |
+| `NewCredentialChallenge(ekPub crypto.PublicKey, activationKeyName []byte) (*CredentialChallenge, secret []byte, error)` | builds a `TPM2_MakeCredential` challenge (`TPM2B_ID_OBJECT` + `TPM2B_ENCRYPTED_SECRET`) entirely in software; the caller needs no TPM |
+| `ActivationKeyName(publicArea []byte) ([]byte, error)` | computes the TPM Name of a marshaled `TPMT_PUBLIC` a verifier received off the wire (a TCG-CSR-IDEVID's `AttestPub`, or an `ActivationKey.Public`), for use as `NewCredentialChallenge`'s `activationKeyName` |
+| `(*TPM2).CreateActivationKey() (*ActivationKey, error)` | creates a transient, unrestricted signing key in the null hierarchy (no hierarchy auth), used only to answer a credential challenge before any persistent identity key exists |
+| `(*TPM2).AnswerCredentialChallenge(key *ActivationKey, challenge *CredentialChallenge) ([]byte, error)` | answers a challenge using a `CreateActivationKey` object; generalises `ActivateCredential`'s hardcoded IAK path. Flushes the key when done |
+
+`pkg/ca`'s `VerifyTCG_CSR_IDevIDBytes` (below) uses `NewCredentialChallenge` +
+`ActivationKeyName` and no longer requires a TPM of its own; enroll-01's
+device side (`ActivateCredential`) and `AnswerCredentialChallenge` share the
+same `TPM2_ActivateCredential` mechanics under the hood.
+
 ## The one place TPM evidence crosses the wire
 
 Attestation. Three surfaces carry it, and they are worth reading together
@@ -84,7 +105,13 @@ because they are the trust chain:
    exchange, wrapped in RFC 8555 so standard tooling can drive it.
 
 In all three the server never trusts an assertion: it encrypts a secret to the
-endorsement key and requires the TPM to produce it.
+endorsement key and requires the TPM to produce it. For (2) and (3), that
+possession proof is not, by itself, provenance: before the CA generates the
+`TPM2_MakeCredential` payload or issues an IAK/IDevID, it separately verifies
+the EK certificate's chain against a configured TPM-manufacturer trust
+anchor and its tcg-kp-EKCertificate extended key usage
+(`verifyEKCertificateChain`, `pkg/ca/tcg_ek_trust.go`) — see
+[`../certificate-authority/engineering.md`](../certificate-authority/engineering.md).
 
 ## Verification is client-side too
 

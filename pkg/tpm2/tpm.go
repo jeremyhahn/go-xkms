@@ -1,7 +1,6 @@
 package tpm2
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -19,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
@@ -53,11 +54,27 @@ var simulatorOpener func() (SimulatorInterface, error)
 
 type TrustedPlatformModule interface {
 	ActivateCredential(credentialBlob, encryptedSecret []byte) ([]byte, error)
+	// AnswerCredentialChallenge answers a credential challenge built by
+	// NewCredentialChallenge, using an activation key this TPM created with
+	// CreateActivationKey. It generalises ActivateCredential's hardcoded IAK
+	// path to any transient activation key.
+	AnswerCredentialChallenge(key *ActivationKey, challenge *CredentialChallenge) ([]byte, error)
 	AKProfile() (AKProfile, error)
 	AlgID() tpm2.TPMAlgID
 	CalculateName(algID tpm2.TPMAlgID, publicArea []byte)
 	Clear(lockoutAuth []byte) error
+	// ClearForReprovision returns the TPM to factory-fresh hierarchy state
+	// so a new provisioning pass can start clean, trying TPM2_Clear via the
+	// LOCKOUT hierarchy, then the PLATFORM hierarchy, then UEFI PPI
+	// ForceClear in turn. rebootRequired is true only when the PPI path was
+	// used.
+	ClearForReprovision() (rebootRequired bool, err error)
 	Close() error
+	// CreateActivationKey creates a transient, unrestricted signing key in
+	// the null hierarchy, used only to answer an EK credential challenge
+	// (see AnswerCredentialChallenge) before any persistent identity key
+	// exists.
+	CreateActivationKey() (*ActivationKey, error)
 	FactoryReset(ownerAuth []byte) error
 	// FactoryResetWithClear is FactoryReset preceded by a destructive
 	// TPM2_Clear via the LOCKOUT hierarchy with empty auth. Callers MUST
@@ -194,6 +211,11 @@ type TrustedPlatformModule interface {
 	SecretFromShares(shares []string) (string, error)
 	ShareSecret(secret []byte, shares int) ([]string, error)
 	SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error)
+	// State classifies the TPM's current provisioning progress: TPMA_PERMANENT
+	// hierarchy-auth bits, which configured persistent handles exist, and
+	// whether the Platform SRK's authPolicy matches the current platform
+	// policy digest.
+	State() (*ProvisioningState, error)
 	SSRKAttributes() (*types.KeyAttributes, error)
 	PlatformSRKAttributes() (*types.KeyAttributes, error)
 	// SSRK returns the Storage Root Key configuration.
@@ -265,10 +287,16 @@ type Params struct {
 	Config       *Config
 	DebugSecrets bool
 	FQDN         string
-	Logger       *slog.Logger
-	SignerStore  store.SignerStorer
-	Tracker      types.AEADSafetyTracker // Optional: AEAD safety tracker for symmetric encryption
-	Transport    transport.TPM           // Optional: custom transport for testing
+	// HTTPClient overrides the client used for the manufacturer EK
+	// certificate service request made when Config.EK.CertDownload is true
+	// (see downloadEKCertFromManufacturer). Optional: tests inject a client
+	// pointed at an httptest server or one that fails the test if invoked;
+	// production callers leave it nil and get http.DefaultClient, bounded by
+	// the request context built from Config.EK.CertDownloadTimeout.
+	HTTPClient *http.Client
+	Logger     *slog.Logger
+	Tracker    types.AEADSafetyTracker // Optional: AEAD safety tracker for symmetric encryption
+	Transport  transport.TPM           // Optional: custom transport for testing
 }
 
 type TPM2 struct {
@@ -293,6 +321,11 @@ type TPM2 struct {
 	ekRSAPubKey *rsa.PublicKey
 	fqdn        string
 	// hash         crypto.Hash
+	// httpClient overrides the client used for the manufacturer EK
+	// certificate service request. Set from Params.HTTPClient; nil in
+	// production, where downloadEKCertFromManufacturer falls back to
+	// http.DefaultClient. See Params.HTTPClient.
+	httpClient       *http.Client
 	iakAttrs         *types.KeyAttributes
 	idevidAttrs      *types.KeyAttributes
 	logger           *slog.Logger
@@ -300,7 +333,6 @@ type TPM2 struct {
 	platformKeyStore PlatformKeyStorer
 	platformSRKAttrs *types.KeyAttributes
 	random           io.Reader
-	signerStore      store.SignerStorer
 	simulator        SimulatorInterface
 	ssrkAttrs        *types.KeyAttributes
 	tracker          types.AEADSafetyTracker
@@ -445,11 +477,11 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		backend:      params.Backend,
 		blobStore:    params.BlobStore,
 		certStore:    params.CertStore,
-		signerStore:  params.SignerStore,
 		debugSecrets: params.DebugSecrets,
 		config:       params.Config,
 		device:       device,
 		fqdn:         params.FQDN,
+		httpClient:   params.HTTPClient,
 		// hash:         hash,
 		simulator: sim,
 		tracker:   tracker,
@@ -532,7 +564,7 @@ func (tpm *TPM2) Open() error {
 			t = transport.FromReadWriter(f)
 		}
 	default:
-		return errors.New("invalid TPM transport configuration")
+		return ErrInvalidTPMTransport
 	}
 
 	tpm.transport = t
@@ -1148,10 +1180,14 @@ func isTPMBadAuth(err error) bool {
 
 // Retrieve the Endorsement Key Certificate. If the EK cert-handle is 0, the EK certificate
 // is managed using an internal certificate store. If an EK cert-handle is defined, the
-// certificate is retrieved from TPM NVRAM. If the certificate is not found in NVRAM, an
-// attempt is made to download the certificate from the Manufacturer's EK cert service.
-// If the configured certificate location fails, it falls back to checking both RSA and EC
-// standard NV indices.
+// certificate is retrieved from TPM NVRAM, falling back to checking both RSA and EC
+// standard NV indices, then the certificate store.
+//
+// If every local lookup fails and EKConfig.CertDownload is true, a bounded HTTPS request
+// is made to the manufacturer's EK certificate service as a last resort (see
+// downloadEKCertFromManufacturer). CertDownload defaults to false: an air-gapped host
+// never makes this outbound call, and EKCertificate returns ErrEndorsementCertNotFound as
+// soon as the local lookups are exhausted.
 func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 
 	tpm.logger.Debug("retrieving EK certificate")
@@ -1171,7 +1207,7 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 		}
 		ekCert, err := tpm.certStore.Get(ekAttrs)
 		if err != nil {
-			if err == store.ErrCertNotFound {
+			if errors.Is(err, store.ErrCertNotFound) {
 				return nil, ErrEndorsementCertNotFound
 			}
 			return nil, err
@@ -1221,10 +1257,18 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 		}
 	}
 
-	// As a last resort, try downloading from the manufacturer EK certificate service
-	cert, err := tpm.downloadEKCertFromManufacturer(indicesToTry[0])
-	if err == nil {
-		return cert, nil
+	// As a last resort, and only when explicitly enabled (EKConfig.CertDownload),
+	// try downloading from the manufacturer EK certificate service. An
+	// air-gapped host leaves CertDownload false -- the default -- so this
+	// branch, and the outbound HTTPS request it would otherwise make, is
+	// never reached; the loop below falls straight through to the
+	// ErrEndorsementCertNotFound return.
+	if tpm.config.EK.CertDownload {
+		cert, err := tpm.downloadEKCertFromManufacturer(indicesToTry[0])
+		if err == nil {
+			return cert, nil
+		}
+		lastErr = err
 	}
 
 	// If all attempts failed, surface the canonical "not found" sentinel
@@ -1899,10 +1943,10 @@ func (tpm *TPM2) SignValidate(
 	// Sign the digest
 	var hashSig []byte
 	if keyAttrs.TPMAttributes == nil || keyAttrs.TPMAttributes.Public.Type == 0 {
-		return nil, errors.New("TPMAttributes.Public is required for SignValidate")
+		return nil, ErrSignValidatePublicRequired
 	}
 	if keyAttrs.TPMAttributes.HashAlg == 0 {
-		return nil, errors.New("TPMAttributes.HashAlg is required for SignValidate")
+		return nil, ErrSignValidateHashAlgRequired
 	}
 	public := keyAttrs.TPMAttributes.Public
 	if public.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
@@ -2176,18 +2220,35 @@ func (tpm *TPM2) Flush(handle tpm2.TPMHandle) {
 	}
 }
 
+// ekCertServiceURL builds the manufacturer EK certificate service URL for
+// the supplied EK public key: base, with the URL-safe base64 SHA-256 digest
+// of the key's modulus and public exponent appended, per the convention
+// documented for EKConfig.CertDownloadURL. base is normally
+// intelEKCertServiceURL; the caller supplies EKConfig.CertDownloadURL
+// instead when it is set.
+//
 // Thanks, Google:
 // https://github.com/google/go-attestation/blob/master/attest/tpm.go#L263
-func intelEKURL(ekPub *rsa.PublicKey) string {
+func ekCertServiceURL(base string, ekPub *rsa.PublicKey) string {
 	pubHash := sha256.New()
 	pubHash.Write(ekPub.N.Bytes())
 	pubHash.Write([]byte{0x1, 0x00, 0x01})
 
-	return intelEKCertServiceURL + url.QueryEscape(base64.URLEncoding.EncodeToString(pubHash.Sum(nil)))
+	return base + url.QueryEscape(base64.URLEncoding.EncodeToString(pubHash.Sum(nil)))
+}
+
+// intelEKURL builds the compiled-in Intel EK certificate service URL for the
+// supplied EK public key: the base ekCertServiceURL uses when
+// EKConfig.CertDownloadURL is unset.
+func intelEKURL(ekPub *rsa.PublicKey) string {
+	return ekCertServiceURL(intelEKCertServiceURL, ekPub)
 }
 
 // downloadEKCertFromManufacturer downloads the EK certificate from the
-// manufacturer's EK cert service.
+// manufacturer's EK certificate service over a bounded HTTPS request. It is
+// reached only when EKConfig.CertDownload is true -- EKCertificate is the
+// sole caller, and it gates on that field before calling this method -- so
+// an air-gapped host with the default configuration never invokes it.
 func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x509.Certificate, error) {
 
 	attrs, err := tpm.KeyAttributes(tpm2.TPMHandle(ekIndex))
@@ -2198,7 +2259,7 @@ func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x5
 	ekPub := attrs.TPMAttributes.Public
 
 	if ekPub.Type != tpm2.TPMAlgRSA {
-		return nil, errors.New("ECC EK certificates unsupported at this time")
+		return nil, ErrECCEKCertUnsupported
 	}
 
 	rsaDetail, err := ekPub.Parameters.RSADetail()
@@ -2217,56 +2278,94 @@ func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x5
 		return nil, err
 	}
 
-	ekURL := intelEKURL(rsaPub)
+	base := intelEKCertServiceURL
+	if tpm.config.EK.CertDownloadURL != "" {
+		base = tpm.config.EK.CertDownloadURL
+	}
+	ekURL := ekCertServiceURL(base, rsaPub)
 	tpm.logger.Info("downloading EK certificate", slog.String("url", ekURL))
 
-	// Validate URL before making HTTP request
+	return tpm.fetchEKCertFromService(ekURL)
+}
+
+// ekCertDownloadTimeout returns the bound for the manufacturer EK
+// certificate service request: EKConfig.CertDownloadTimeout when set to a
+// positive value, or DefaultEKCertDownloadTimeout otherwise.
+func (tpm *TPM2) ekCertDownloadTimeout() time.Duration {
+	if tpm.config.EK.CertDownloadTimeout > 0 {
+		return tpm.config.EK.CertDownloadTimeout
+	}
+	return DefaultEKCertDownloadTimeout
+}
+
+// ekCertHTTPClient returns the HTTP client used for the manufacturer EK
+// certificate service request: the client injected via Params.HTTPClient
+// (tests), or http.DefaultClient otherwise. Either way the request is
+// bounded by the context fetchEKCertFromService builds from
+// ekCertDownloadTimeout, not by the client's own Timeout field, so the bound
+// applies uniformly regardless of which client is in use.
+func (tpm *TPM2) ekCertHTTPClient() *http.Client {
+	if tpm.httpClient != nil {
+		return tpm.httpClient
+	}
+	return http.DefaultClient
+}
+
+// fetchEKCertFromService performs the bounded HTTPS GET against the
+// manufacturer EK certificate service at ekURL and parses the response as a
+// DER or PEM encoded X.509 certificate. The request is bounded by
+// ekCertDownloadTimeout via its context, so a slow or unreachable service
+// never blocks the caller indefinitely -- the air-gapped-host concern #761
+// raised for the unconditional http.Get this replaces.
+func (tpm *TPM2) fetchEKCertFromService(ekURL string) (*x509.Certificate, error) {
 	parsedURL, err := url.Parse(ekURL)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid URL", Err: err}
+		return nil, &errs.Wrapped{Msg: "tpm: invalid EK certificate service URL", Err: err}
 	}
 	if parsedURL.Scheme != "https" {
-		return nil, &errs.Message{Msg: fmt.Sprintf("only HTTPS URLs are allowed, got: %s", parsedURL.Scheme)}
+		return nil, &errs.Message{Msg: fmt.Sprintf("tpm: only HTTPS EK certificate service URLs are allowed, got: %s", parsedURL.Scheme)}
 	}
-	resp, err := /* #nosec G107 */ http.Get(ekURL) // URL validated above
+
+	ctx, cancel := context.WithTimeout(context.Background(), tpm.ekCertDownloadTimeout())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ekURL, nil)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "tpm: failed to build EK certificate service request", Err: err}
+	}
+
+	resp, err := tpm.ekCertHTTPClient().Do(req)
 	if err != nil {
 		tpm.logger.Error("failed to download EK certificate", slog.String("error", err.Error()))
-		return nil, err
+		return nil, &errs.Detail{Err: ErrEKCertServiceUnreachable, Detail: err.Error()}
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			tpm.logger.Debug("failed to close EK certificate service response body", slog.String("error", cerr.Error()))
+		}
+	}()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEKCertServiceResponseBytes))
+	if err != nil {
+		tpm.logger.Error("failed to read EK certificate service response", slog.String("error", err.Error()))
+		return nil, &errs.Wrapped{Msg: "tpm: failed to read EK certificate service response", Err: err}
 	}
 
-	if resp.StatusCode != 200 {
-		body := new(strings.Builder)
-		_, err := io.Copy(body, resp.Body)
-		if err != nil {
-			tpm.logger.Error("failed to read response body", slog.String("error", err.Error()))
-			return nil, err
-		}
+	if resp.StatusCode != http.StatusOK {
 		tpm.logger.Error("error downloading EK certificate",
 			slog.Int("status_code", resp.StatusCode),
-			slog.String("body", body.String()))
-		return nil, ErrEndorsementCertNotFound
+			slog.String("body", string(body)))
+		return nil, &errs.Detail{Err: ErrEKCertServiceUnreachable, Detail: fmt.Sprintf("status %d", resp.StatusCode)}
 	}
 
-	buf := new(bytes.Buffer)
-	if _, err = io.Copy(buf, resp.Body); err != nil {
-		tpm.logger.Error("failed to read response body", slog.String("error", err.Error()))
-		return nil, err
+	der := body
+	if block, _ := pem.Decode(body); block != nil {
+		der = block.Bytes
 	}
-
-	result := make(map[string]interface{})
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		return nil, err
-	}
-
-	certificate, ok := result["certificate"].(string)
-	if !ok {
-		return nil, errors.New("failed to parse certificate from EK certificate service")
-	}
-
-	cert, err := x509.ParseCertificate([]byte(certificate))
+	cert, err := x509.ParseCertificate(der)
 	if err != nil {
-		tpm.logger.Error("failed to parse certificate", slog.String("error", err.Error()))
-		return nil, ErrEndorsementCertNotFound
+		tpm.logger.Error("failed to parse EK certificate service response", slog.String("error", err.Error()))
+		return nil, &errs.Detail{Err: ErrEKCertServiceParseFailed, Detail: err.Error()}
 	}
 
 	return cert, nil

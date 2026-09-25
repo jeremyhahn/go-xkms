@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -37,23 +38,23 @@ func TestResolveClusterCAKeyPassphrase_Empty(t *testing.T) {
 	assert.Nil(t, sec)
 }
 
-// TestResolveClusterCAKeyPassphrase_Literal verifies that a plain-string
-// passphrase (no credential:// scheme) resolves via the registry's literal
-// fallback into a *secure.Secret carrying that exact plaintext.
-func TestResolveClusterCAKeyPassphrase_Literal(t *testing.T) {
+// TestResolveClusterCAKeyPassphrase_UnresolvedLiteralFailsClosed verifies
+// go-xkms#654's core fix: a plain-string passphrase (no credential:// scheme)
+// that was never run through a secret.ConfigProcessor pass is refused rather
+// than trusted as the plaintext — go-qrdb's protected-target contract admits
+// no inline literal, however it arrived.
+func TestResolveClusterCAKeyPassphrase_UnresolvedLiteralFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	s := &Server{ctx: context.Background()}
 	sv := &types.SecretValue{Raw: "operator-secret"}
 
 	sec, err := s.resolveClusterCAKeyPassphrase(sv)
-	require.NoError(t, err)
-	require.NotNil(t, sec)
+	require.Error(t, err)
+	assert.Nil(t, sec)
 
-	buf, err := sec.Open()
-	require.NoError(t, err)
-	defer buf.Destroy()
-	assert.Equal(t, "operator-secret", string(buf.Bytes()))
+	var refErr *types.SecretReferenceUnresolvedError
+	require.True(t, errors.As(err, &refErr))
 }
 
 // TestResolveClusterCAKeyPassphrase_CredentialReference verifies that a
@@ -82,14 +83,14 @@ func TestResolveClusterCAKeyPassphrase_CredentialReference(t *testing.T) {
 		config: &config.Config{
 			Cluster: config.ClusterConfig{
 				RaftEnrollment: config.RaftEnrollmentConfig{
-					CAKeyPassphrase: types.SecretValue{Raw: "credential://" + credName},
+					CAKeyPassphrase: &types.SecretValue{Raw: "credential://" + credName},
 				},
 			},
 		},
 	}
 	require.NoError(t, s.resolveConfigSecrets())
 
-	sec, err := s.resolveClusterCAKeyPassphrase(&s.config.Cluster.RaftEnrollment.CAKeyPassphrase)
+	sec, err := s.resolveClusterCAKeyPassphrase(s.config.Cluster.RaftEnrollment.CAKeyPassphrase)
 	require.NoError(t, err)
 	require.NotNil(t, sec)
 
@@ -129,7 +130,7 @@ func TestResolveClusterCAKeyPassphrase_CredentialReferenceMissing(t *testing.T) 
 		config: &config.Config{
 			Cluster: config.ClusterConfig{
 				RaftEnrollment: config.RaftEnrollmentConfig{
-					CAKeyPassphrase: types.SecretValue{Raw: "credential://does-not-exist"},
+					CAKeyPassphrase: &types.SecretValue{Raw: "credential://does-not-exist"},
 				},
 			},
 		},
@@ -142,7 +143,7 @@ func TestResolveClusterCAKeyPassphrase_CredentialReferenceMissing(t *testing.T) 
 
 	// The field is left unresolved: resolveClusterCAKeyPassphrase must refuse
 	// it rather than treat the reference text as the passphrase.
-	sec, err := s.resolveClusterCAKeyPassphrase(&s.config.Cluster.RaftEnrollment.CAKeyPassphrase)
+	sec, err := s.resolveClusterCAKeyPassphrase(s.config.Cluster.RaftEnrollment.CAKeyPassphrase)
 	require.Error(t, err)
 	assert.Nil(t, sec)
 }

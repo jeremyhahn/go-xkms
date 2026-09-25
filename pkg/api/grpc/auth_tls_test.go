@@ -680,9 +680,6 @@ func TestGRPCServer_AuthenticationFailureScenarios(t *testing.T) {
 
 			client := pb.NewKeystoreServiceClient(conn)
 
-			// Give server a moment to fully initialize
-			time.Sleep(50 * time.Millisecond)
-
 			// Create context with metadata
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

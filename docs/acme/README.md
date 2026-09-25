@@ -121,10 +121,9 @@ cfg := &client.Config{
 }
 acmeClient, err := client.New(cfg)
 
-// Register account
-account, err := acmeClient.Register(ctx, &client.RegisterRequest{
-    Contact: []string{"mailto:admin@example.com"},
-})
+// RequestCertificate registers the account on its first call for this
+// client — there is no separate registration step. See docs/acme/client.md
+// for the full account-registration and certificate-request API.
 
 // Request certificate
 cert, err := acmeClient.RequestCertificate(ctx, &client.CertificateRequest{
@@ -165,7 +164,7 @@ tenants/{tenant_id}/counters/{entity_type}
 
 #### DAO Layer
 
-The `pkg/qrdb/dao/` package provides Data Access Objects for each ACME entity:
+The `pkg/acme/storage/objstore/` package provides Data Access Objects for each ACME entity:
 
 | DAO | Entity | Description |
 |-----|--------|-------------|
@@ -184,12 +183,11 @@ The storage factory implements the `TenantAwareFactory` interface, enabling tena
 
 ```go
 import (
-    "github.com/jeremyhahn/go-xkms/pkg/acme/qrdb/dao"
-    "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 )
 
-// Create factory from QRDB service
-factory, err := dao.NewFactoryFromService(qrdbService)
+// Create factory from a go-qrdb KVStore
+factory, err := objstore.NewTenantAwareFactoryFromKVStore(kvStore)
 
 // Get tenant-scoped factory
 tenantFactory, err := factory.ForTenant("tenant-123")
@@ -362,7 +360,7 @@ The ACME server supports the following JWS signature algorithms for account keys
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | System architecture and component design |
-| [Configuration](configuration.md) | Complete server configuration reference |
+| [Configuration](../acme-issuance/engineering.md) | Complete server configuration reference — `acme/configuration.md` was deleted by go-xkms#942 (pre-merge go-trusted-ca documentation for a nonexistent config shape); see `../acme-issuance/engineering.md` §Configuration |
 | [Challenges](challenges.md) | Challenge types and validation flows |
 | [DNS-01 Providers](dns-01/) | DNS-01 challenge provider configuration |
 | [API Reference](api-reference.md) | HTTP API endpoints and responses |

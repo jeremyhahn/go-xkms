@@ -295,7 +295,9 @@ func (s *FIDO2Service) GetCredential(id string) (*FIDO2Credential, error) {
 	cred := storedToFIDO2Credential(stored)
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpFIDO2CredentialAccessed, "fido2", id, true, nil, 0)
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpFIDO2CredentialAccessed, "fido2", id, true, nil, 0); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return &cred, nil
@@ -321,7 +323,9 @@ func (s *FIDO2Service) DeleteCredential(id string) error {
 	}
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpFIDO2CredentialDeleted, "fido2", id, true, nil, 0)
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpFIDO2CredentialDeleted, "fido2", id, true, nil, 0); auditErr != nil {
+			return auditErr
+		}
 	}
 
 	return nil
@@ -409,9 +413,11 @@ func (s *FIDO2Service) StartPhoneBridge() error {
 	s.bridgeReqs.Store(0)
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogServiceEvent(audit.OpServiceStarted, map[string]any{
+		if auditErr := s.auditLogger.LogServiceEvent(audit.OpServiceStarted, map[string]any{
 			"service": "fido2_phone_bridge",
-		})
+		}); auditErr != nil {
+			return auditErr
+		}
 	}
 	return nil
 }
@@ -424,19 +430,22 @@ func (s *FIDO2Service) StopPhoneBridge() error {
 	s.bridgeMu.Lock()
 	defer s.bridgeMu.Unlock()
 
+	var bridgeCloseErr error
 	if s.bridge != nil {
-		_ = s.bridge.Close()
+		bridgeCloseErr = s.bridge.Close()
 		s.bridge = nil
 	}
 	s.closeTPMEnroller()
 	s.bridgeRunning.Store(false)
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogServiceEvent(audit.OpServiceStopped, map[string]any{
+		if auditErr := s.auditLogger.LogServiceEvent(audit.OpServiceStopped, map[string]any{
 			"service": "fido2_phone_bridge",
-		})
+		}); auditErr != nil {
+			return errors.Join(bridgeCloseErr, auditErr)
+		}
 	}
-	return nil
+	return bridgeCloseErr
 }
 
 // openTPMEnroller opens this host's TPM for TCG device enrollment, or returns
@@ -533,7 +542,9 @@ func (s *FIDO2Service) StoreAuthResponse(resp *FIDO2AuthResponse) error {
 	}
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpFIDO2CredentialAccessed, "fido2", resp.CredentialID, true, nil, 0)
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpFIDO2CredentialAccessed, "fido2", resp.CredentialID, true, nil, 0); auditErr != nil {
+			return auditErr
+		}
 	}
 
 	return nil
@@ -609,7 +620,9 @@ func (s *FIDO2Service) ListRPPolicies() ([]FIDO2RPPolicy, error) {
 	}
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpFIDO2RPPolicyAccessed, "fido2", "", true, nil, 0)
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpFIDO2RPPolicyAccessed, "fido2", "", true, nil, 0); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return result, nil
@@ -629,7 +642,9 @@ func (s *FIDO2Service) GetRPPolicy(rpID string) (*FIDO2RPPolicy, error) {
 	gui := rpPolicyToGUI(policy)
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpFIDO2RPPolicyAccessed, "fido2", rpID, true, nil, 0)
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpFIDO2RPPolicyAccessed, "fido2", rpID, true, nil, 0); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return &gui, nil
@@ -651,7 +666,9 @@ func (s *FIDO2Service) SetRPPolicy(policy FIDO2RPPolicy) error {
 	}
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpFIDO2RPPolicySet, "fido2", policy.RPID, true, nil, 0)
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpFIDO2RPPolicySet, "fido2", policy.RPID, true, nil, 0); auditErr != nil {
+			return auditErr
+		}
 	}
 
 	return nil
@@ -668,7 +685,9 @@ func (s *FIDO2Service) DeleteRPPolicy(rpID string) error {
 	}
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpFIDO2RPPolicyDeleted, "fido2", rpID, true, nil, 0)
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpFIDO2RPPolicyDeleted, "fido2", rpID, true, nil, 0); auditErr != nil {
+			return auditErr
+		}
 	}
 
 	return nil

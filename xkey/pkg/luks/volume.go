@@ -14,6 +14,7 @@
 package luks
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -33,6 +34,24 @@ type Volume struct {
 	MapperName string // device-mapper name
 	LoopDevice string // Loop device path (set after setup)
 }
+
+// The following are go-luks2's kernel-facing primitives. Each is a variable,
+// following the same pattern as checkKeyringAvailable, so tests can stand in
+// for the kernel instead of requiring a real loop device, dm-crypt mapping
+// or mount.
+var (
+	setupLoopDevice  = luks2.SetupLoopDevice
+	detachLoopDevice = luks2.DetachLoopDevice
+	findLoopDeviceFn = luks2.FindLoopDevice
+	formatLUKS       = luks2.Format
+	unlockLUKS       = luks2.Unlock
+	lockLUKS         = luks2.Lock
+	makeFilesystem   = luks2.MakeFilesystem
+	mountLUKS        = luks2.Mount
+	unmountLUKS      = luks2.Unmount
+	isMountedFn      = luks2.IsMounted
+	isUnlockedFn     = luks2.IsUnlocked
+)
 
 // NewVolume creates a new Volume instance with paths resolved through
 // xhome.Resolve.
@@ -71,13 +90,13 @@ func (v *Volume) IsLUKS() bool {
 
 // IsMounted checks if the volume is mounted.
 func (v *Volume) IsMounted() bool {
-	mounted, _ := luks2.IsMounted(v.MountPoint)
+	mounted, _ := isMountedFn(v.MountPoint)
 	return mounted
 }
 
 // IsOpen checks if the LUKS volume is unlocked.
 func (v *Volume) IsOpen() bool {
-	return luks2.IsUnlocked(v.MapperName)
+	return isUnlockedFn(v.MapperName)
 }
 
 // Create creates a new LUKS volume using go-luks2 library.
@@ -104,20 +123,17 @@ func (v *Volume) Create(sizeBytes int64, passphrase string) error {
 		return &VolumeError{Operation: "create_file", Path: v.LUKSPath, Err: err}
 	}
 	if err := f.Truncate(sizeBytes); err != nil {
-		_ = f.Close()
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "truncate", Path: v.LUKSPath, Err: err}
+		cleanupErr := errors.Join(f.Close(), os.Remove(v.LUKSPath))
+		return &VolumeError{Operation: "truncate", Path: v.LUKSPath, Err: errors.Join(err, cleanupErr)}
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "close_file", Path: v.LUKSPath, Err: err}
+		return &VolumeError{Operation: "close_file", Path: v.LUKSPath, Err: errors.Join(err, os.Remove(v.LUKSPath))}
 	}
 
 	// Setup loop device using go-luks2
-	loopDev, err := luks2.SetupLoopDevice(v.LUKSPath)
+	loopDev, err := setupLoopDevice(v.LUKSPath)
 	if err != nil {
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "setup_loop", Path: v.LUKSPath, Err: err}
+		return &VolumeError{Operation: "setup_loop", Path: v.LUKSPath, Err: errors.Join(err, os.Remove(v.LUKSPath))}
 	}
 	v.LoopDevice = loopDev
 
@@ -126,35 +142,30 @@ func (v *Volume) Create(sizeBytes int64, passphrase string) error {
 		Device:     loopDev,
 		Passphrase: []byte(passphrase),
 	}
-	if err := luks2.Format(formatOpts); err != nil {
-		_ = luks2.DetachLoopDevice(loopDev)
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "luks_format", Path: loopDev, Err: err}
+	if err := formatLUKS(formatOpts); err != nil {
+		cleanupErr := errors.Join(detachLoopDevice(loopDev), os.Remove(v.LUKSPath))
+		return &VolumeError{Operation: "luks_format", Path: loopDev, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Unlock the volume
-	if err := luks2.Unlock(loopDev, []byte(passphrase), v.MapperName); err != nil {
-		_ = luks2.DetachLoopDevice(loopDev)
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "luks_unlock", Path: loopDev, Err: err}
+	if err := unlockLUKS(loopDev, []byte(passphrase), v.MapperName); err != nil {
+		cleanupErr := errors.Join(detachLoopDevice(loopDev), os.Remove(v.LUKSPath))
+		return &VolumeError{Operation: "luks_unlock", Path: loopDev, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Create ext4 filesystem using go-luks2
-	if err := luks2.MakeFilesystem(v.MapperName, "ext4", "xkey"); err != nil {
-		_ = luks2.Lock(v.MapperName)
-		_ = luks2.DetachLoopDevice(loopDev)
-		_ = os.Remove(v.LUKSPath)
-		return &VolumeError{Operation: "create_fs", Path: v.MapperName, Err: err}
+	if err := makeFilesystem(v.MapperName, "ext4", "xkey"); err != nil {
+		cleanupErr := errors.Join(lockLUKS(v.MapperName), detachLoopDevice(loopDev), os.Remove(v.LUKSPath))
+		return &VolumeError{Operation: "create_fs", Path: v.MapperName, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Lock it back
-	if err := luks2.Lock(v.MapperName); err != nil {
-		_ = luks2.DetachLoopDevice(loopDev)
-		return &VolumeError{Operation: "luks_lock", Path: v.MapperName, Err: err}
+	if err := lockLUKS(v.MapperName); err != nil {
+		return &VolumeError{Operation: "luks_lock", Path: v.MapperName, Err: errors.Join(err, detachLoopDevice(loopDev))}
 	}
 
 	// Detach loop device
-	if err := luks2.DetachLoopDevice(loopDev); err != nil {
+	if err := detachLoopDevice(loopDev); err != nil {
 		return &VolumeError{Operation: "detach_loop", Path: loopDev, Err: err}
 	}
 	v.LoopDevice = ""
@@ -179,23 +190,21 @@ func (v *Volume) Unlock(passphrase string) error {
 	}
 
 	// Setup loop device
-	loopDev, err := luks2.SetupLoopDevice(v.LUKSPath)
+	loopDev, err := setupLoopDevice(v.LUKSPath)
 	if err != nil {
 		return &VolumeError{Operation: "setup_loop", Path: v.LUKSPath, Err: err}
 	}
 	v.LoopDevice = loopDev
 
 	// Unlock LUKS
-	if err := luks2.Unlock(loopDev, []byte(passphrase), v.MapperName); err != nil {
-		_ = luks2.DetachLoopDevice(loopDev)
-		return &VolumeError{Operation: "luks_unlock", Path: loopDev, Err: err}
+	if err := unlockLUKS(loopDev, []byte(passphrase), v.MapperName); err != nil {
+		return &VolumeError{Operation: "luks_unlock", Path: loopDev, Err: errors.Join(err, detachLoopDevice(loopDev))}
 	}
 
 	// Create mount point
 	if err := os.MkdirAll(v.MountPoint, 0700); err != nil {
-		_ = luks2.Lock(v.MapperName)
-		_ = luks2.DetachLoopDevice(loopDev)
-		return &VolumeError{Operation: "create_mountpoint", Path: v.MountPoint, Err: err}
+		cleanupErr := errors.Join(lockLUKS(v.MapperName), detachLoopDevice(loopDev))
+		return &VolumeError{Operation: "create_mountpoint", Path: v.MountPoint, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Mount using go-luks2
@@ -205,10 +214,9 @@ func (v *Volume) Unlock(passphrase string) error {
 		FSType:     "ext4",
 		Flags:      0,
 	}
-	if err := luks2.Mount(mountOpts); err != nil {
-		_ = luks2.Lock(v.MapperName)
-		_ = luks2.DetachLoopDevice(loopDev)
-		return &VolumeError{Operation: "mount", Path: v.MountPoint, Err: err}
+	if err := mountLUKS(mountOpts); err != nil {
+		cleanupErr := errors.Join(lockLUKS(v.MapperName), detachLoopDevice(loopDev))
+		return &VolumeError{Operation: "mount", Path: v.MountPoint, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Chown the entire mount tree to the real (non-elevated) user when
@@ -227,22 +235,22 @@ func (v *Volume) Lock() error {
 
 	// Unmount if mounted
 	if v.IsMounted() {
-		if err := luks2.Unmount(v.MountPoint, 0); err != nil {
+		if err := unmountLUKS(v.MountPoint, 0); err != nil {
 			return &VolumeError{Operation: "unmount", Path: v.MountPoint, Err: err}
 		}
 	}
 
 	// Close LUKS if open
 	if v.IsOpen() {
-		if err := luks2.Lock(v.MapperName); err != nil {
+		if err := lockLUKS(v.MapperName); err != nil {
 			return &VolumeError{Operation: "luks_lock", Path: v.MapperName, Err: err}
 		}
 	}
 
 	// Find and detach loop device
-	loopDev, err := luks2.FindLoopDevice(v.LUKSPath)
+	loopDev, err := findLoopDeviceFn(v.LUKSPath)
 	if err == nil && loopDev != "" {
-		if err := luks2.DetachLoopDevice(loopDev); err != nil {
+		if err := detachLoopDevice(loopDev); err != nil {
 			return &VolumeError{Operation: "detach_loop", Path: loopDev, Err: err}
 		}
 	}
@@ -431,12 +439,16 @@ func copyDir(src, dst string) error {
 }
 
 // copyFile copies a single file.
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = srcFile.Close() }()
+	defer func() {
+		if closeErr := srcFile.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {
@@ -448,9 +460,8 @@ func copyFile(src, dst string) error {
 		return err
 	}
 
-	if _, err = io.Copy(dstFile, srcFile); err != nil {
-		_ = dstFile.Close()
-		return err
+	if _, copyErr := io.Copy(dstFile, srcFile); copyErr != nil {
+		return errors.Join(copyErr, dstFile.Close())
 	}
 
 	// Surface any flush error from closing the destination file.

@@ -344,7 +344,7 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 		t.healthy.Store(false)
 		return nil, errors.Wrap(err, errors.CodeConnection, op, "HTTP/3 request failed")
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer transport.CloseResponseBody(resp)
 
 	t.healthy.Store(true)
 
@@ -541,13 +541,6 @@ func httpStatusToError(op string, statusCode int, message string) error {
 		}
 		return errors.NewInvalidInput(op, message)
 	}
-}
-
-// RequestStream initiates a streaming request (not fully supported for HTTP/3 REST).
-// For ACME, streaming is typically not used, but this provides basic support
-// for potential future extensions like server-sent events.
-func (t *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
-	return nil, errors.NewUnimplemented("quic.Transport.RequestStream", "streaming not fully supported for QUIC/HTTP3 transport")
 }
 
 // Conn returns the underlying HTTP client.

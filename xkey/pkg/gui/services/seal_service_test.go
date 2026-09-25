@@ -27,6 +27,8 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // sealMockClient embeds mockClient and overrides Seal, Unseal, CanSeal
@@ -1417,5 +1419,80 @@ func TestSealServiceErrors_Distinct(t *testing.T) {
 			assert.NotEqual(t, errs[i], errs[j],
 				"errors %d and %d should be distinct", i, j)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UserCanManageSealedData policy gate (#668).
+// ---------------------------------------------------------------------------
+
+func TestSealService_SealData_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		wantErr bool
+	}{
+		{"no policy (personal mode) allows", nil, false},
+		{"UserCanManageSealedData false denies", &config.PolicySection{UserCanManageSealedData: false}, true},
+		{"UserCanManageSealedData true allows", &config.PolicySection{UserCanManageSealedData: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newSealServiceWithMockClient(t, defaultSealMockClient())
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			entry, err := svc.SealData(validSealRequest())
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_manage_sealed_data", denied.Field)
+				assert.Nil(t, entry)
+				assert.True(t, logger.hasPolicyDenial(), "denial must be audited")
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, entry)
+			}
+		})
+	}
+}
+
+func TestSealService_DeleteBlob_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		wantErr bool
+	}{
+		{"no policy (personal mode) allows", nil, false},
+		{"UserCanManageSealedData false denies", &config.PolicySection{UserCanManageSealedData: false}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newSealServiceWithMockClient(t, defaultSealMockClient())
+			entry, err := svc.SealData(validSealRequest())
+			require.NoError(t, err)
+
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			err = svc.DeleteBlob(entry.ID)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_manage_sealed_data", denied.Field)
+				assert.True(t, logger.hasPolicyDenial())
+
+				_, uerr := svc.UnsealData(entry.ID, "")
+				assert.NoError(t, uerr, "the blob must still be present when the delete is denied")
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }

@@ -18,6 +18,7 @@
 package types
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -36,6 +37,8 @@ import (
 	"github.com/google/go-tpm/tpm2"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // =============================================================================
@@ -94,6 +97,21 @@ var (
 	// substituting an empty password, which for TPM UserAuth would
 	// otherwise produce passwordless authentication.
 	ErrEnclaveUnavailable = errors.New("types: secure enclave unavailable")
+
+	// ErrBlobCNRequired is returned when VerifyOpts.IntegrityCheck is set
+	// without a BlobCN identifying which persisted record to check the
+	// digest against.
+	ErrBlobCNRequired = errors.New("verify: integrity check requires BlobCN")
+
+	// ErrChecksumProviderRequired is returned when VerifyOpts.IntegrityCheck
+	// is set without a ChecksumProvider to retrieve the persisted checksum
+	// from.
+	ErrChecksumProviderRequired = errors.New("verify: integrity check requires a ChecksumProvider")
+
+	// ErrIntegrityCheckFailed is returned when the digest presented for
+	// verification does not match the checksum recorded when the blob
+	// identified by VerifyOpts.BlobCN was signed.
+	ErrIntegrityCheckFailed = errors.New("verify: integrity check failed")
 )
 
 // =============================================================================
@@ -268,7 +286,12 @@ const (
 	StoreQuantum  StoreType = "quantum"
 	StoreFrost    StoreType = "frost"
 	StorePhone    StoreType = "phone"
-	StoreUnknown  StoreType = "unknown"
+	// StoreAVR labels a key that lives in the secure element of an AVR
+	// device reached over the arduino-generic wire protocol. The private
+	// half never leaves the element; what xkms holds is the public point
+	// and the device's attestation evidence.
+	StoreAVR     StoreType = "avr"
+	StoreUnknown StoreType = "unknown"
 )
 
 // String returns the string representation of the store type.
@@ -279,7 +302,7 @@ func (st StoreType) String() string {
 // IsValid returns true if the store type is recognized.
 func (st StoreType) IsValid() bool {
 	switch st {
-	case StoreSoftware, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum, StoreFrost:
+	case StoreSoftware, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum, StoreFrost, StorePhone, StoreAVR:
 		return true
 	default:
 		return false
@@ -309,6 +332,10 @@ func ParseStoreType(s string) StoreType {
 		return StoreQuantum
 	case "frost":
 		return StoreFrost
+	case "phone":
+		return StorePhone
+	case "avr":
+		return StoreAVR
 	default:
 		return StoreUnknown
 	}
@@ -336,6 +363,7 @@ const (
 	BackendTypeSmartCardHSM BackendType = "smartcardhsm" // SmartCard-HSM (Nitrokey HSM, CardContact)
 	BackendTypeYubiKey      BackendType = "yubikey"      // YubiKey PIV
 	BackendTypeSoftHSM      BackendType = "softhsm"      // SoftHSM2 (development/testing)
+	BackendTypeAVR          BackendType = "avr"          // AVR device with a DICE-rooted identity, over the arduino-generic wire protocol
 )
 
 // =============================================================================
@@ -602,6 +630,37 @@ const (
 	// NIST FIPS 203 standard - Security level 5
 	QuantumAlgorithmMLKEM1024 QuantumAlgorithm = "ML-KEM-1024"
 )
+
+// quantumAlgorithmKind classifies a QuantumAlgorithm as a signature scheme or
+// a key-encapsulation mechanism.
+type quantumAlgorithmKind uint8
+
+const (
+	quantumAlgorithmKindUnknown quantumAlgorithmKind = iota
+	quantumAlgorithmKindSignature
+	quantumAlgorithmKindKEM
+)
+
+// quantumAlgorithmKinds maps every known QuantumAlgorithm to its kind, so
+// IsSignature and IsKEM classify in O(1) instead of string prefix matching.
+var quantumAlgorithmKinds = map[QuantumAlgorithm]quantumAlgorithmKind{
+	QuantumAlgorithmMLDSA44:   quantumAlgorithmKindSignature,
+	QuantumAlgorithmMLDSA65:   quantumAlgorithmKindSignature,
+	QuantumAlgorithmMLDSA87:   quantumAlgorithmKindSignature,
+	QuantumAlgorithmMLKEM512:  quantumAlgorithmKindKEM,
+	QuantumAlgorithmMLKEM768:  quantumAlgorithmKindKEM,
+	QuantumAlgorithmMLKEM1024: quantumAlgorithmKindKEM,
+}
+
+// IsSignature reports whether algo is an ML-DSA digital-signature algorithm.
+func (algo QuantumAlgorithm) IsSignature() bool {
+	return quantumAlgorithmKinds[algo] == quantumAlgorithmKindSignature
+}
+
+// IsKEM reports whether algo is an ML-KEM key-encapsulation-mechanism algorithm.
+func (algo QuantumAlgorithm) IsKEM() bool {
+	return quantumAlgorithmKinds[algo] == quantumAlgorithmKindKEM
+}
 
 // QuantumAttributes contains quantum-safe cryptography specific parameters.
 // Used with ML-DSA (signatures) and ML-KEM (key encapsulation) algorithms.
@@ -958,9 +1017,7 @@ func (s *sealData) Bytes() []byte {
 
 // Clear overwrites the data memory with zeros.
 func (s *sealData) Clear() {
-	for i := range s.data {
-		s.data[i] = 0
-	}
+	enclave.Wipe(s.data)
 }
 
 // PasswordCacheConfig holds configuration for platform password caching.
@@ -1702,7 +1759,18 @@ type KeyProvider interface {
 	GenerateKey(ctx context.Context, attrs *KeyAttributes) (crypto.PrivateKey, error)
 
 	// GetKey retrieves an existing private key by its attributes.
-	// Returns an error if the key does not exist.
+	//
+	// Error contract: implementations must return an error satisfying
+	// errors.Is(err, backend.ErrKeyNotFound) if, and only if, the key
+	// genuinely does not exist -- a missing object, a missing TPM handle or
+	// blob, a PKCS#11/KMS search with zero results, or a 404/NotFound from
+	// a cloud or Vault API. Every other failure (an auth or login failure,
+	// a transient I/O or network error, throttling) must be returned as a
+	// distinct error that does NOT satisfy that check. Callers such as
+	// pkg/ca's getOrGenerateCAKey use errors.Is(err, backend.ErrKeyNotFound)
+	// to decide whether generating a replacement key is safe; collapsing
+	// every failure into "not found" would let a reachability problem
+	// silently generate and persist a new key over an existing one.
 	GetKey(ctx context.Context, attrs *KeyAttributes) (crypto.PrivateKey, error)
 
 	// DeleteKey removes a key identified by its attributes.
@@ -3323,6 +3391,34 @@ type VerifyOpts struct {
 
 	// PSSOptions for RSA-PSS signatures
 	PSSOptions *rsa.PSSOptions
+
+	// BlobCN identifies the persisted signature/digest record checked when
+	// IntegrityCheck is set. It must match the BlobCN the blob was signed
+	// under (see signing.SignerOpts.BlobCN). Required when IntegrityCheck
+	// is true.
+	BlobCN string
+
+	// IntegrityCheck, when true, additionally confirms that digest matches
+	// the checksum ChecksumProvider recorded for BlobCN at sign time, on top
+	// of the cryptographic signature check Verify always performs. Requires
+	// both BlobCN and ChecksumProvider to be set.
+	IntegrityCheck bool
+
+	// ChecksumProvider supplies the persisted checksum used by
+	// IntegrityCheck. Required when IntegrityCheck is true.
+	ChecksumProvider ChecksumProvider
+}
+
+// ChecksumProvider retrieves the checksum (digest) persisted for a signed
+// blob, keyed by VerifyOpts.KeyAttributes and VerifyOpts.BlobCN.
+// SimpleVerifier calls it when VerifyOpts.IntegrityCheck is set, to confirm
+// the digest presented for verification is the same one recorded when the
+// blob was signed.
+type ChecksumProvider interface {
+	// Checksum returns the persisted checksum for opts. It returns a typed
+	// error, never a nil checksum with a nil error, when no record exists or
+	// the lookup fails.
+	Checksum(opts *VerifyOpts) ([]byte, error)
 }
 
 // Verifier provides signature verification capabilities.
@@ -3373,30 +3469,64 @@ func NewVerifier(opts *VerifyOpts) Verifier {
 	return &SimpleVerifier{opts: opts}
 }
 
-// Verify verifies a signature against a digest
+// Verify verifies a signature against a digest. When opts.IntegrityCheck is
+// set, a successful signature check is followed by a check of digest against
+// the checksum opts.ChecksumProvider recorded for opts.BlobCN at sign time.
 func (v *SimpleVerifier) Verify(publicKey crypto.PublicKey, digest, signature []byte) error {
 	if publicKey == nil {
 		return &errs.Message{Msg: "public key is nil"}
 	}
+
+	var sigErr error
 	switch pub := publicKey.(type) {
 	case *rsa.PublicKey:
 		if v.opts.PSSOptions != nil {
-			return rsa.VerifyPSS(pub, v.opts.PSSOptions.Hash, digest, signature, v.opts.PSSOptions)
+			sigErr = rsa.VerifyPSS(pub, v.opts.PSSOptions.Hash, digest, signature, v.opts.PSSOptions)
+		} else {
+			sigErr = rsa.VerifyPKCS1v15(pub, v.opts.Hash, digest, signature)
 		}
-		return rsa.VerifyPKCS1v15(pub, v.opts.Hash, digest, signature)
 	case *ecdsa.PublicKey:
 		if !ecdsa.VerifyASN1(pub, digest, signature) {
-			return &errs.Message{Msg: "ECDSA signature verification failed"}
+			sigErr = &errs.Message{Msg: "ECDSA signature verification failed"}
 		}
-		return nil
 	case ed25519.PublicKey:
 		if !ed25519.Verify(pub, digest, signature) {
-			return &errs.Message{Msg: "Ed25519 signature verification failed"}
+			sigErr = &errs.Message{Msg: "Ed25519 signature verification failed"}
 		}
-		return nil
 	default:
 		return &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", publicKey)}
 	}
+	if sigErr != nil {
+		return sigErr
+	}
+
+	if v.opts.IntegrityCheck {
+		return v.verifyIntegrity(digest)
+	}
+
+	return nil
+}
+
+// verifyIntegrity confirms digest against the checksum persisted for
+// v.opts.BlobCN, retrieved through v.opts.ChecksumProvider.
+func (v *SimpleVerifier) verifyIntegrity(digest []byte) error {
+	if v.opts.BlobCN == "" {
+		return ErrBlobCNRequired
+	}
+	if v.opts.ChecksumProvider == nil {
+		return ErrChecksumProviderRequired
+	}
+
+	checksum, err := v.opts.ChecksumProvider.Checksum(v.opts)
+	if err != nil {
+		return err
+	}
+
+	if !bytes.Equal(checksum, digest) {
+		return &errs.Detail{Err: ErrIntegrityCheckFailed, Detail: v.opts.BlobCN}
+	}
+
+	return nil
 }
 
 // ECCConfig holds ECC-specific configuration for YAML serialization.
@@ -3424,14 +3554,15 @@ type KeyConfig struct {
 	Parent             *KeyConfig             `yaml:"parent,omitempty" json:"parent,omitempty" mapstructure:"parent"`
 	// Password is the passphrase that protects this key at rest. It decodes
 	// from, and re-encodes to, a plain reference string in YAML/JSON (a
-	// literal password or a "credential://..." URI); the resolved plaintext
-	// is sealed into this field's own memguard enclave rather than kept as a
-	// plain Go string. See SecretValue and NewPasswordFromSecretValue.
-	Password       SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
-	Secret         string      `yaml:"secret,omitempty" json:"secret,omitempty" mapstructure:"secret"`
-	PlatformPolicy bool        `yaml:"platform-policy,omitempty" json:"platform_policy,omitempty" mapstructure:"platform-policy"`
-	Debug          bool        `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
-	Default        bool        `yaml:"default,omitempty" json:"default,omitempty" mapstructure:"default"`
+	// "credential://..." URI); the resolved plaintext is sealed into this
+	// field's own memguard enclave rather than kept as a plain Go string. A
+	// nil pointer means unconfigured (an unprotected key); see SecretValue
+	// and NewPasswordFromSecretValue.
+	Password       *SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
+	Secret         string       `yaml:"secret,omitempty" json:"secret,omitempty" mapstructure:"secret"`
+	PlatformPolicy bool         `yaml:"platform-policy,omitempty" json:"platform_policy,omitempty" mapstructure:"platform-policy"`
+	Debug          bool         `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
+	Default        bool         `yaml:"default,omitempty" json:"default,omitempty" mapstructure:"default"`
 }
 
 // KeySerializer provides key serialization capabilities
@@ -3484,7 +3615,7 @@ func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
 	// encrypted-at-rest keys. When config.Password carries no material,
 	// attrs.Password stays nil and the pkcs8 backend enforces its
 	// AllowPlaintextKeys policy.
-	pw, err := NewPasswordFromSecretValue(&config.Password)
+	pw, err := NewPasswordFromSecretValue(config.Password)
 	if err != nil {
 		return nil, err
 	}

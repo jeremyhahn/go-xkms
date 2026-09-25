@@ -60,13 +60,13 @@ func TestCoveragePush_GetStorageFactory(t *testing.T) {
 	assert.Equal(t, service.storageFactory, factory)
 }
 
-func TestCoveragePush_GetNonceStore(t *testing.T) {
+func TestCoveragePush_GetNonceService(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	nonceStore := service.GetNonceStore()
-	assert.NotNil(t, nonceStore)
-	assert.Equal(t, service.nonceStore, nonceStore)
+	nonceService := service.GetNonceService()
+	assert.NotNil(t, nonceService)
+	assert.Equal(t, service.nonceService, nonceService)
 }
 
 func TestCoveragePush_SetOrderFinalizeHooks(t *testing.T) {
@@ -200,7 +200,7 @@ type mockCAAValidatorCovPush struct {
 	err error
 }
 
-func (m *mockCAAValidatorCovPush) Validate(_ context.Context, _ string, _ bool) error {
+func (m *mockCAAValidatorCovPush) Validate(_ context.Context, _ string, _ bool, _ string, _ string) error {
 	return m.err
 }
 
@@ -238,13 +238,13 @@ func TestCoveragePush_SetNonceGenerator(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	customGen := func(length int) (string, error) {
+	customGen := func() (string, error) {
 		return "custom-nonce", nil
 	}
 	service.SetNonceGenerator(customGen)
 
 	// Verify by calling the generator
-	nonce, err := service.nonceGenerator(16)
+	nonce, err := service.nonceGenerator()
 	assert.NoError(t, err)
 	assert.Equal(t, "custom-nonce", nonce)
 }
@@ -257,7 +257,7 @@ func TestCoveragePush_GetNonceGenerator(t *testing.T) {
 	assert.NotNil(t, gen)
 
 	// Test that it works
-	nonce, err := gen(16)
+	nonce, err := gen()
 	assert.NoError(t, err)
 	assert.NotEmpty(t, nonce)
 }
@@ -311,71 +311,6 @@ func TestCoveragePush_EncodeJSONWithLogger_WriteError(t *testing.T) {
 
 	// Verify error was logged
 	assert.Contains(t, logBuf.String(), "failed to encode JSON response")
-}
-
-// =============================================================================
-// isValidDomainName Tests (64.3% coverage -> target 100%)
-// =============================================================================
-
-func TestCoveragePush_IsValidDomainName_Valid(t *testing.T) {
-	testCases := []struct {
-		name   string
-		domain string
-	}{
-		{"simple", "example.com"},
-		{"subdomain", "sub.example.com"},
-		{"multi-subdomain", "a.b.c.example.com"},
-		{"with-hyphen", "my-domain.com"},
-		{"mixed-case", "Example.COM"},
-		{"numbers", "test123.com"},
-		{"single-char-labels", "a.b.c.d"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.True(t, isValidDomainName(tc.domain), "domain %s should be valid", tc.domain)
-		})
-	}
-}
-
-func TestCoveragePush_IsValidDomainName_Invalid(t *testing.T) {
-	testCases := []struct {
-		name   string
-		domain string
-	}{
-		{"empty", ""},
-		{"too-long", strings.Repeat("a", 254)},
-		{"label-too-long", strings.Repeat("a", 64) + ".com"},
-		{"starts-with-hyphen", "-example.com"},
-		{"ends-with-hyphen", "example-.com"},
-		{"empty-label", "example..com"},
-		{"label-starts-with-hyphen", "sub.-example.com"},
-		{"label-ends-with-hyphen", "sub.example-.com"},
-		{"invalid-char-underscore", "test_domain.com"},
-		{"invalid-char-space", "test domain.com"},
-		{"invalid-char-at", "test@domain.com"},
-		{"single-empty-label", ".com"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.False(t, isValidDomainName(tc.domain), "domain %s should be invalid", tc.domain)
-		})
-	}
-}
-
-func TestCoveragePush_IsValidDomainName_EdgeCases(t *testing.T) {
-	// Max length domain (253 chars): 63 + 1 + 63 + 1 + 63 + 1 + 61 = 253
-	maxLabel63 := strings.Repeat("a", 63)
-	lastLabel61 := strings.Repeat("b", 61)
-	maxDomain := maxLabel63 + "." + maxLabel63 + "." + maxLabel63 + "." + lastLabel61
-	assert.Equal(t, 253, len(maxDomain))
-	assert.True(t, isValidDomainName(maxDomain))
-
-	// Just over max length (254 chars)
-	overMaxDomain := maxDomain + "c"
-	assert.Equal(t, 254, len(overMaxDomain))
-	assert.False(t, isValidDomainName(overMaxDomain))
 }
 
 // =============================================================================
@@ -562,7 +497,7 @@ func TestCoveragePush_WriteChallengeResponse_NonceError(t *testing.T) {
 	defer cleanup()
 
 	// Set failing nonce generator
-	service.SetNonceGenerator(func(_ int) (string, error) {
+	service.SetNonceGenerator(func() (string, error) {
 		return "", errors.New("nonce generation failed")
 	})
 
@@ -721,9 +656,8 @@ func TestCoveragePush_NewAccountHandler_InvalidJSON(t *testing.T) {
 	key := generateTestKey(t)
 
 	// Create a request with raw bytes that are not valid JSON
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	signerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -900,9 +834,8 @@ func TestCoveragePush_NewOrderHandler_InvalidJSON(t *testing.T) {
 	account := createTestAccount(t, service, key)
 
 	// Create a request with invalid JSON payload
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	signerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -1351,7 +1284,11 @@ func TestCoveragePush_VerifyMAC_UnsupportedAlgorithm(t *testing.T) {
 }
 
 func TestCoveragePush_VerifyMAC_InvalidSignatureBase64(t *testing.T) {
-	err := verifyMAC("HS256", []byte("key"), []byte("message"), "invalid base64!")
+	// 32 bytes: a real EAB key is never this short, and crypto/hmac refuses
+	// any key under 112 bits (14 bytes) under GODEBUG=fips140=only, which
+	// would otherwise report the wrong cause for this bad-base64 signature.
+	key := []byte("32-byte-eab-hmac-key-for-tests!!")
+	err := verifyMAC("HS256", key, []byte("message"), "invalid base64!")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode signature")
 }
@@ -1418,7 +1355,7 @@ func TestCoveragePush_OrderResponse_NonceError(t *testing.T) {
 	defer cleanup()
 
 	// Set failing nonce generator
-	service.SetNonceGenerator(func(_ int) (string, error) {
+	service.SetNonceGenerator(func() (string, error) {
 		return "", errors.New("nonce generation failed")
 	})
 
@@ -1445,7 +1382,7 @@ func TestCoveragePush_RespondWithAccount_NonceError(t *testing.T) {
 	defer cleanup()
 
 	// Set failing nonce generator
-	service.SetNonceGenerator(func(_ int) (string, error) {
+	service.SetNonceGenerator(func() (string, error) {
 		return "", errors.New("nonce generation failed")
 	})
 
@@ -1512,9 +1449,8 @@ func TestCoveragePush_ParseKID_InvalidSignature(t *testing.T) {
 	account := createTestAccount(t, service, key)
 
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	// Create JWS with correct key
 	payload := map[string]interface{}{"test": "data"}
@@ -1847,7 +1783,7 @@ func TestCoveragePush_GenerateNonce(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	nonce, err := service.generateNonce(16)
+	nonce, err := service.generateNonce()
 	assert.NoError(t, err)
 	assert.NotEmpty(t, nonce)
 }
@@ -1856,11 +1792,11 @@ func TestCoveragePush_GenerateNonce_Error(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	service.SetNonceGenerator(func(_ int) (string, error) {
+	service.SetNonceGenerator(func() (string, error) {
 		return "", errors.New("generation failed")
 	})
 
-	nonce, err := service.generateNonce(16)
+	nonce, err := service.generateNonce()
 	assert.Error(t, err)
 	assert.Empty(t, nonce)
 }
@@ -1873,7 +1809,7 @@ func TestCoveragePush_NewRestService_CustomNonceGenerator(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	customGen := func(length int) (string, error) {
+	customGen := func() (string, error) {
 		return "custom-nonce", nil
 	}
 
@@ -1889,7 +1825,7 @@ func TestCoveragePush_NewRestService_CustomNonceGenerator(t *testing.T) {
 	require.NoError(t, err)
 
 	restService := newService.(*RestService)
-	nonce, err := restService.generateNonce(16)
+	nonce, err := restService.generateNonce()
 	assert.NoError(t, err)
 	assert.Equal(t, "custom-nonce", nonce)
 }

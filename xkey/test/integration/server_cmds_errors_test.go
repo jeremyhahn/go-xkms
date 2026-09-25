@@ -233,14 +233,17 @@ func TestServerCmds_CARevoke_UnsupportedScheme(t *testing.T) {
 // store with nothing enrolled in the default slot (9a).
 //
 // "cert show" reads from local PIV certificate storage (default: software
-// backend, file storage) rather than a remote server, and the file
-// storage path defaults to the CWD-relative "./data/piv" (see
-// defaultPIVStoragePath in cmd/xkey/cmd/piv.go). The working directory is
-// changed to an isolated temp directory for the duration of this test so
-// no artifacts are left in the repository.
+// backend, file storage) rather than a remote server. The file storage
+// path resolves through the shared xkey data-directory chain
+// (resolvePIVStoragePath, cmd/xkey/cmd/piv.go) to <XKEY_HOME>/data/piv,
+// never a path relative to the process's working directory (go-xkms#929).
+// The working directory is changed to an isolated temp directory distinct
+// from XKEY_HOME for the duration of this test, so a regression back to a
+// cwd-relative default would show up as a missing directory under
+// XKEY_HOME rather than a directory left behind in the repository.
 func TestServerCmds_CertShow_NoCertificateInSlot(t *testing.T) {
 	binary := getOrBuildBinary(t)
-	isolateServerCmdEnv(t)
+	xkeyHome := isolateServerCmdEnv(t)
 
 	workDir := t.TempDir()
 	origWd, err := os.Getwd()
@@ -252,10 +255,13 @@ func TestServerCmds_CertShow_NoCertificateInSlot(t *testing.T) {
 
 	assert.Contains(t, errOutput, "cert: no certificate found in slot")
 
-	// The command must not have written anything outside its own working
-	// directory tree.
-	_, statErr := os.Stat(filepath.Join(workDir, "data", "piv"))
-	assert.NoError(t, statErr, "expected relative PIV storage under the isolated working directory")
+	// The command must resolve PIV storage under XKEY_HOME, never under the
+	// process's working directory (go-xkms#929).
+	_, statErr := os.Stat(filepath.Join(xkeyHome, "data", "piv"))
+	assert.NoError(t, statErr, "expected PIV storage under XKEY_HOME's data directory")
+
+	_, cwdStatErr := os.Stat(filepath.Join(workDir, "data", "piv"))
+	assert.True(t, os.IsNotExist(cwdStatErr), "PIV storage must not be created relative to the working directory")
 }
 
 // ---------------------------------------------------------------------------

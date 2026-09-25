@@ -35,9 +35,14 @@ The result is output as base64-encoded ciphertext.`,
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		// Get flags
-		keyID, _ := cmd.Flags().GetString("key-id")
-		dataFile, _ := cmd.Flags().GetString("data-file")
-		aadStr, _ := cmd.Flags().GetString("aad")
+		fr := newFlagReader(cmd)
+		keyID := fr.String("key-id")
+		dataFile := fr.String("data-file")
+		aadStr := fr.String("aad")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		// Get data from args or file
 		var data []byte
@@ -68,7 +73,7 @@ func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -126,12 +131,17 @@ Use --nonce and --tag for algorithms that require them.`,
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		// Get flags
-		keyID, _ := cmd.Flags().GetString("key-id")
-		ciphertextStr, _ := cmd.Flags().GetString("ciphertext")
-		ciphertextFile, _ := cmd.Flags().GetString("ciphertext-file")
-		nonceStr, _ := cmd.Flags().GetString("nonce")
-		tagStr, _ := cmd.Flags().GetString("tag")
-		aadStr, _ := cmd.Flags().GetString("aad")
+		fr := newFlagReader(cmd)
+		keyID := fr.String("key-id")
+		ciphertextStr := fr.String("ciphertext")
+		ciphertextFile := fr.String("ciphertext-file")
+		nonceStr := fr.String("nonce")
+		tagStr := fr.String("tag")
+		aadStr := fr.String("aad")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		// Get ciphertext from args, flag, or file
 		var ciphertextB64 string
@@ -188,7 +198,7 @@ func unsealData(cfg *Config, printer *Printer, keyID string, ciphertext, nonce, 
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -247,7 +257,7 @@ func canSeal(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {

@@ -291,8 +291,15 @@ func TestAuthorizeMethod_EveryPrivilegedMethod(t *testing.T) {
 				// an authorization failure once the grant is held.
 				assert.NotEqual(t, ErrCodeForbidden, resp.Error.Code,
 					"holder of %s must not be denied: %s", grant, resp.Error.Message)
-				assert.NotEqual(t, ErrCodeUnauthorized, resp.Error.Code,
-					"holder of %s must not be challenged: %s", grant, resp.Error.Message)
+				// authedCtx carries an identity, so the gate never reports
+				// ErrCodeUnauthorized here. The one handler-level
+				// ErrCodeUnauthorized is the share-claim steps' missing mTLS
+				// peer certificate (ErrClientCertRequired), which is not an
+				// authorization failure.
+				if resp.Error.Code == ErrCodeUnauthorized {
+					assert.Equal(t, ErrClientCertRequired.Error(), resp.Error.Message,
+						"holder of %s must not be challenged: %s", grant, resp.Error.Message)
+				}
 			}
 		})
 	}
@@ -577,6 +584,7 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.generateKey":              "keys:create",
 	"xkms.generatePIVCSR":           "piv:use",
 	"xkms.generatePIVKey":           "piv:write",
+	"xkms.getBackend":               "backends:read",
 	"xkms.getCert":                  "certs:read",
 	"xkms.getCertChain":             "certs:read",
 	"xkms.getImportParameters":      "keys:import",
@@ -654,16 +662,27 @@ var goldenMethodPermissions = map[string]string{
 	"credentials.strategy": "credentials:strategy",
 	"credentials.submit":   "credentials:submit",
 
+	// User management — pkg/api/rest/routes.go's /api/v1/users decorators.
+	"user.bindCert":        "users:update",
+	"user.create":          "users:create",
+	"user.delete":          "users:delete",
+	"user.disable":         "users:update",
+	"user.enable":          "users:update",
+	"user.get":             "users:read",
+	"user.list":            "users:list",
+	"user.listCredentials": "users:read",
+
 	// Password vault — pkg/api/quic/handlers_password.go.
-	"password.add":      "passwords:write",
-	"password.delete":   "passwords:delete",
-	"password.generate": "passwords:generate",
-	"password.get":      "passwords:read",
-	"password.list":     "passwords:read",
-	"password.lock":     "passwords:lock",
-	"password.status":   "passwords:read",
-	"password.unlock":   "passwords:unlock",
-	"password.update":   "passwords:write",
+	"password.add":           "passwords:write",
+	"password.delete":        "passwords:delete",
+	"password.generate":      "passwords:generate",
+	"password.get":           "passwords:read",
+	"password.list":          "passwords:read",
+	"password.lock":          "passwords:lock",
+	"password.setAccessMode": "passwords:write",
+	"password.status":        "passwords:read",
+	"password.unlock":        "passwords:unlock",
+	"password.update":        "passwords:write",
 
 	// Platform-sealed store — pkg/api/mcp/handlers_seal_store.go. Same
 	// keys:* pairs as the PKCS#11 remote-state RPCs on every other
@@ -715,6 +734,41 @@ var goldenMethodPermissions = map[string]string{
 	"frost.listKeys":       "keys:list",
 	"frost.signRound":      "keys:sign",
 	"frost.verify":         "keys:verify",
+
+	// PIN management — pkg/api/grpc/service_barrier_pin.go (go-xkms#773).
+	"xkms.changeSOPIN":      "pin:write",
+	"xkms.changeUserPIN":    "pin:write",
+	"xkms.getLockoutStatus": "pin:read",
+	"xkms.resetLockout":     "pin:write",
+	"xkms.setSOPIN":         "pin:write",
+	"xkms.setUserPIN":       "pin:write",
+	"xkms.verifySOPIN":      "pin:read",
+	"xkms.verifyUserPIN":    "pin:read",
+
+	// Custodian groups — pkg/api/grpc/service_custodian_share_tenant.go
+	// (go-xkms#773).
+	"xkms.addCustodianMember":    "ceremony:enroll_custodian",
+	"xkms.createCustodianGroup":  "ceremony:enroll_custodian",
+	"xkms.deleteCustodianGroup":  "ceremony:revoke_custodian",
+	"xkms.distributeShares":      "ceremony:claim_share_begin",
+	"xkms.getCustodianGroup":     "ceremony:status",
+	"xkms.listCustodianGroups":   "ceremony:status",
+	"xkms.removeCustodianMember": "ceremony:revoke_custodian",
+
+	// Tenant administration — pkg/api/grpc/service_custodian_share_tenant.go
+	// (go-xkms#773).
+	"xkms.createTenant":             "tenants:create",
+	"xkms.deleteTenant":             "tenants:delete",
+	"xkms.getTenant":                "tenants:read",
+	"xkms.listTenants":              "tenants:list",
+	"xkms.tenantBarrierInit":        "tenant_barrier:init",
+	"xkms.tenantBarrierStatus":      "tenant_barrier:status",
+	"xkms.tenantBarrierUnseal":      "tenant_barrier:unseal",
+	"xkms.updateTenantEntitlements": "tenants:update",
+	"xkms.updateTenantQuotas":       "tenants:update",
+
+	// Non-ECDH key derivation — pkg/api/grpc/service.go (go-xkms#773).
+	"xkms.deriveKey": "keys:derive",
 }
 
 // TestMethodPermissions_MatchOtherTransports pins the resource:action string of
@@ -750,6 +804,8 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
 		auth.ResourcePolicy: {},
+		auth.ResourcePIN:    {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
+		auth.ResourceUsers: {},
 	}
 
 	for method, perm := range methodPermissions {

@@ -337,7 +337,7 @@ func TestBackupToDevice_ConnectFailure(t *testing.T) {
 func sealedDevicePayload(t *testing.T, password string) []byte {
 	t.Helper()
 
-	sources, err := resolveBackupSources(backupToDeviceCmd, backupStorePaths{})
+	sources, err := resolveBackupSources(backupToDeviceCmd, backupStorePaths{}, true)
 	require.NoError(t, err)
 	defer sources.Close()
 
@@ -381,7 +381,7 @@ func TestBackupFromDevice_RestoresIntoStores(t *testing.T) {
 	dataDir := backupTestDataDir(targetHome)
 
 	trustStore, err := truststore.NewFileStore(&truststore.FileStoreConfig{
-		BaseDir: filepath.Join(dataDir, backupTrustStoreDir),
+		BaseDir: filepath.Join(dataDir, trustDataSubdir),
 	})
 	require.NoError(t, err)
 	defer trustStore.Close()
@@ -390,7 +390,7 @@ func TestBackupFromDevice_RestoresIntoStores(t *testing.T) {
 	require.Len(t, certs, 1, "the restored certificate must land in the trust store")
 	assert.Equal(t, "backup-unit-test-ca", certs[0].Subject.CommonName)
 
-	oathStore, err := oath.NewFileStore(filepath.Join(dataDir, backupOATHStoreFile))
+	oathStore, err := oath.NewFileStore(filepath.Join(dataDir, oathStoreFilename))
 	require.NoError(t, err)
 	defer oathStore.Close()
 	creds, err := oathStore.List()
@@ -398,7 +398,7 @@ func TestBackupFromDevice_RestoresIntoStores(t *testing.T) {
 	require.Len(t, creds, 1)
 	assert.Equal(t, "UnitTestOATH", creds[0].Name)
 
-	passwordStore, err := openPasswordStore(filepath.Join(dataDir, backupPasswordStoreDir))
+	passwordStore, err := openPasswordStore(filepath.Join(dataDir, passwordStoreFeature))
 	require.NoError(t, err)
 	defer passwordStore.Close()
 	passwords, err := passwordStore.List()
@@ -463,7 +463,7 @@ func TestBackupFromDevice_WrongPasswordWritesNothing(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackupDecryptFailed)
 
-	oathStore, err := oath.NewFileStore(filepath.Join(backupTestDataDir(targetHome), backupOATHStoreFile))
+	oathStore, err := oath.NewFileStore(filepath.Join(backupTestDataDir(targetHome), oathStoreFilename))
 	require.NoError(t, err)
 	defer oathStore.Close()
 	creds, err := oathStore.List()
@@ -590,7 +590,7 @@ func TestBackupFromDevice_SkippedEntriesReported(t *testing.T) {
 	require.NoError(t, err, output)
 	assert.Contains(t, output, "skipped")
 
-	oathStore, err := oath.NewFileStore(filepath.Join(backupTestDataDir(home), backupOATHStoreFile))
+	oathStore, err := oath.NewFileStore(filepath.Join(backupTestDataDir(home), oathStoreFilename))
 	require.NoError(t, err)
 	defer oathStore.Close()
 	creds, err := oathStore.List()
@@ -617,7 +617,7 @@ func TestBackupFromDevice_RestoreWithHexKey(t *testing.T) {
 	})
 	require.NoError(t, err, output)
 
-	passwordStore, err := openPasswordStore(filepath.Join(backupTestDataDir(targetHome), backupPasswordStoreDir))
+	passwordStore, err := openPasswordStore(filepath.Join(backupTestDataDir(targetHome), passwordStoreFeature))
 	require.NoError(t, err)
 	defer passwordStore.Close()
 	passwords, err := passwordStore.List()

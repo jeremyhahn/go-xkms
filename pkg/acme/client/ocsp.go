@@ -16,6 +16,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/x509"
 	"encoding/asn1"
 	"errors"
@@ -185,8 +186,14 @@ func GetOCSP(ctx context.Context, cert, issuer *x509.Certificate, ocspURL string
 		ocspURL = cert.OCSPServer[0]
 	}
 
-	// Create OCSP request
-	ocspReq, err := ocsp.CreateRequest(cert, issuer, nil)
+	// Create OCSP request. golang.org/x/crypto/ocsp defaults RequestOptions
+	// to SHA-1 (crypto.Hash zero value) when opts is nil, and crypto/sha1
+	// panics rather than erroring under GODEBUG=fips140=only -- a request
+	// this client itself originates has no reason to default to a hash the
+	// runtime it is calling from cannot compute. SHA-256 is requested
+	// explicitly instead; every responder RFC 6960 was written against
+	// supports it.
+	ocspReq, err := ocsp.CreateRequest(cert, issuer, &ocsp.RequestOptions{Hash: crypto.SHA256})
 	if err != nil {
 		return nil, caerrors.OCSPFailureError("failed to create OCSP request: %v", err)
 	}
@@ -211,7 +218,11 @@ func GetOCSP(ctx context.Context, cert, issuer *x509.Certificate, ocspURL string
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("OCSP: HTTP request failed: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Debug("ocsp: failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	// Check HTTP status
 	if resp.StatusCode != http.StatusOK {

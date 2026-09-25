@@ -38,6 +38,64 @@ var secretValueType = reflect.TypeOf(types.SecretValue{})
 // server.host is XKMS_SERVER_HOST (nesting joined by underscores).
 const envPrefix = "XKMS"
 
+// removedConfigFields maps a removed dotted config key to the replacement an
+// operator should use instead. It is consulted by Load immediately after the
+// file and environment are merged (and before Unmarshal, which mapstructure
+// would otherwise silently drop the key for since it names no struct field
+// any more): unknown fields are never silently ignored, so a config or
+// environment variable still naming a removed field fails closed with
+// *RemovedFieldError instead of loading with a value nothing reads.
+var removedConfigFields = map[string]string{
+	"barrier.passphrase": "there is no config-sourced boot-time unseal secret any more " +
+		"(matching go-qrdb's own SealConfig, which carries none either). Supply the passphrase " +
+		"or Shamir quorum at Initialize/Unseal time via `xkmsctl barrier unseal` (or `unseal-shares`) " +
+		"or the equivalent API call, or configure a hardware seal strategy (barrier.strategy: " +
+		"\"tpm2\"/\"pkcs11\") for unattended auto-unseal",
+	"acme.reuse_tls": "the ACME listener always uses its own dedicated TLS material; " +
+		"tls.cert_file and tls.key_file are required when acme.enabled is true " +
+		"(there is no reuse of the primary xkmsd TLS config)",
+}
+
+// RemovedFieldError is returned by Load when the configuration file or
+// environment names a configuration field that no longer exists.
+type RemovedFieldError struct {
+	// Field is the removed field's dotted configuration key (e.g.
+	// "barrier.passphrase").
+	Field string
+	// Replacement describes what to use instead.
+	Replacement string
+}
+
+// Error implements the error interface.
+func (e *RemovedFieldError) Error() string {
+	return "config: \"" + e.Field + "\" was removed: " + e.Replacement
+}
+
+// rejectRemovedFields fails closed when v (already merged with the config
+// file and bound to the environment) carries a value for a key this version
+// no longer declares a struct field for. It must run before v.Unmarshal:
+// mapstructure has no notion of "this key used to mean something" and simply
+// leaves an unmapped key unread, which would silently accept an operator's
+// stale barrier.passphrase (file or XKMS_BARRIER_PASSPHRASE) as a no-op
+// instead of the fail-closed rejection a removed secret-bearing field
+// requires.
+func rejectRemovedFields(v *viper.Viper) error {
+	for field, replacement := range removedConfigFields {
+		// A removed field is, by construction, no longer walked by
+		// registerEnvKeys (it names no struct field), so AutomaticEnv would
+		// not otherwise resolve its XKMS_-prefixed environment variable.
+		// Bind it explicitly so a stale env var is rejected exactly like a
+		// stale file key, not silently ignored.
+		if err := v.BindEnv(field, canonicalEnvName(field)); err != nil {
+			return &errs.Wrapped{Msg: "failed to bind removed configuration key " + field, Err: err}
+		}
+		if v.IsSet(field) {
+			return &RemovedFieldError{Field: field, Replacement: replacement}
+		}
+	}
+	return nil
+}
+
 // Defaults returns the defaults layer: the configuration every deployment
 // starts from before the file, the environment and the flags are applied. It
 // is the one place a literal infrastructure value may live.
@@ -74,6 +132,10 @@ func Load(path string) (*Config, error) {
 	}
 	if err := v.MergeConfig(strings.NewReader(string(data))); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse config file", Err: err}
+	}
+
+	if err := rejectRemovedFields(v); err != nil {
+		return nil, err
 	}
 
 	// Start from the defaults so a field absent from every source keeps its
@@ -186,19 +248,37 @@ func walkYAMLKeys(t reflect.Type, prefix string, visit func(key ...string) error
 	return nil
 }
 
+// secretValuePtrType is the reflect.Type of *types.SecretValue, the shape
+// every secret-bearing config field now declares (go-xkms#653/#654): nil
+// means "not configured" to go-qrdb's secret.ConfigProcessor, which is the
+// ONLY way to spell an optional secret in its contract (a value-typed
+// SecretValue field is always "required" — an empty one fails the walk). See
+// stringToSecretValueHookFunc's doc for how a pointer target is filled.
+var secretValuePtrType = reflect.TypeOf((*types.SecretValue)(nil))
+
 // stringToSecretValueHookFunc is a mapstructure.DecodeHookFuncType that
-// converts a scalar string source into a types.SecretValue destination field.
+// converts a scalar string source into a types.SecretValue (or
+// *types.SecretValue) destination field.
 //
 // The main Load path decodes through viper's mapstructure chain, not
 // yaml.v3, so SecretValue's yaml.Unmarshaler never runs there — mapstructure
 // has no notion of it and would otherwise fail trying to decode a plain
 // string into a struct. This hook gives mapstructure the same behaviour
-// yaml.v3 already provides: the raw reference string (a literal password or
-// a "credential://..." URI) is stored unresolved in Raw, exactly as
-// SecretValue.UnmarshalYAML documents. Resolution into the enclave happens
-// later, wherever the field's owner has a ResolverRegistry available.
+// yaml.v3 already provides: the raw reference string (a "credential://..."
+// URI) is stored unresolved in Raw, exactly as SecretValue.UnmarshalYAML
+// documents. Resolution into the enclave happens later, wherever the field's
+// owner has a ResolverRegistry available.
+//
+// A *types.SecretValue target always matches here too (not just the bare
+// value type): mapstructure's decodePtr allocates the pointer and recurses
+// into decode() for the pointee with THIS hook's returned value as its new
+// input, so returning the bare types.SecretValue{Raw: raw} value — never a
+// pointer — lets decodeStruct's direct-assignment fast path
+// (dataVal.Type() == val.Type()) complete the recursion correctly; wrapping
+// it in a pointer here would recurse a second time with a non-string,
+// non-struct-matching input and fail to decode at all.
 func stringToSecretValueHookFunc(from reflect.Type, to reflect.Type, data any) (any, error) {
-	if to != secretValueType || from.Kind() != reflect.String {
+	if (to != secretValueType && to != secretValuePtrType) || from.Kind() != reflect.String {
 		return data, nil
 	}
 	raw, _ := data.(string)

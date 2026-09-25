@@ -37,6 +37,13 @@ const sshShutdownBound = 5 * time.Second
 // ErrSSHConnectTarget is returned when `ssh connect` gets no usable target.
 var ErrSSHConnectTarget = errors.New("ssh connect: a profile name or user@host target is required")
 
+// ErrSSHProfileAddRequired is returned when `ssh profile add` is missing a
+// name or a way to reach the host.
+var ErrSSHProfileAddRequired = errors.New("ssh profile add: --name and (--host or --ssh-config-alias) are required")
+
+// ErrSSHProfileMoveFolder is returned when `ssh profile mv` gets no target folder.
+var ErrSSHProfileMoveFolder = errors.New("ssh profile mv: --folder is required")
+
 var sshConnectCmd = &cobra.Command{
 	Use:   "connect [profile|user@host]",
 	Short: "Open an SSH session in the current terminal using an xkey key",
@@ -395,7 +402,7 @@ func runSSHProfileAdd(cmd *cobra.Command, _ []string) error {
 	localIdentity, _ := cmd.Flags().GetString("identity")
 	persistSession, _ := cmd.Flags().GetBool("persist-session")
 	if name == "" || (host == "" && sshConfigAlias == "") {
-		return errors.New("ssh profile add: --name and (--host or --ssh-config-alias) are required")
+		return ErrSSHProfileAddRequired
 	}
 	folder, _ := cmd.Flags().GetString("folder")
 	port, _ := cmd.Flags().GetInt("port")
@@ -489,7 +496,7 @@ func runSSHProfileMove(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	folder, _ := cmd.Flags().GetString("folder")
 	if folder == "" {
-		return errors.New("ssh profile mv: --folder is required")
+		return ErrSSHProfileMoveFolder
 	}
 	store, err := xkeyProfileStore()
 	if err != nil {

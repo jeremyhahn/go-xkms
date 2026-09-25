@@ -210,6 +210,21 @@ func TestAutoFillService_SetPolicy_Invalid(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestAutoFillService_SetPolicy_DeniedByEnterprisePolicy(t *testing.T) {
+	auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+	require.NoError(t, err)
+	svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
+	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{Enabled: true, UserCanConfigure: false})
+
+	policy := xkms.DefaultAutoFillPolicy()
+	err = svc.SetPolicy(policy)
+
+	require.Error(t, err)
+	var denied *PolicyDeniedError
+	require.ErrorAs(t, err, &denied)
+	assert.Equal(t, "user_can_configure_extension", denied.Field)
+}
+
 func TestAutoFillService_GetAutoFillPolicy(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
 	result := svc.GetAutoFillPolicy()
@@ -879,9 +894,13 @@ func TestAutoFillService_EnterpriseForceAudit(t *testing.T) {
 func TestAutoFillService_SetEnabledBlockedByEnterprise(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
 
-	// Enterprise disables the extension.
+	// Enterprise disables the extension. UserCanConfigure is set so this
+	// test exercises the Enabled gate specifically, not the separate
+	// UserCanConfigureExtension gate covered by
+	// TestAutoFillService_SetEnabled_PolicyGate (#668).
 	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{
-		Enabled: false,
+		Enabled:          false,
+		UserCanConfigure: true,
 	})
 
 	// Attempting to enable the extension should return ErrAutoFillPolicyEnforced.
@@ -897,10 +916,12 @@ func TestAutoFillService_SetEnabledBlockedByEnterprise(t *testing.T) {
 func TestAutoFillService_SetRequireAuthBlockedByEnterprise(t *testing.T) {
 	svc, _ := newTestAutoFillService(t)
 
-	// Enterprise requires authentication.
+	// Enterprise requires authentication. UserCanConfigure is set so this
+	// test exercises the RequireAuthentication gate specifically (#668).
 	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{
 		Enabled:               true,
 		RequireAuthentication: true,
+		UserCanConfigure:      true,
 	})
 
 	// Attempting to disable authentication should return ErrAutoFillPolicyEnforced.
@@ -1110,4 +1131,135 @@ func TestAutoFillService_HandleAutofillIgnoreDomain_Empty(t *testing.T) {
 
 	_, err := svc.HandleAutofillIgnoreDomain("")
 	assert.Error(t, err)
+}
+
+// TestAutoFillService_SearchCredentials_RecordsOpAutofillRequested verifies
+// that every search — whether or not it is ultimately allowed — records
+// audit.OpAutofillRequested, since it is logged unconditionally before
+// checkPreconditions runs.
+func TestAutoFillService_SearchCredentials_RecordsOpAutofillRequested(t *testing.T) {
+	svc, store := newTestAutoFillService(t)
+
+	_, err := svc.SearchCredentials("github.com")
+	require.NoError(t, err)
+
+	entries := store.Query(audit.QueryFilter{Operation: audit.OpAutofillRequested})
+	require.Len(t, entries, 1)
+	assert.Equal(t, "github.com", entries[0].Details["domain"])
+}
+
+// TestAutoFillService_SearchCredentials_AppLocked_RecordsOpAutofillDenied
+// verifies that a precondition failure records audit.OpAutofillDenied (not
+// the per-feature OperationType) so every denial reason is queryable under
+// one category.
+func TestAutoFillService_SearchCredentials_AppLocked_RecordsOpAutofillDenied(t *testing.T) {
+	svc, store := newTestAutoFillService(t)
+	svc.appLockSvc.LockForStartup()
+
+	_, err := svc.SearchCredentials("github.com")
+	require.ErrorIs(t, err, ErrAutoFillAppLocked)
+
+	entries := store.Query(audit.QueryFilter{Operation: audit.OpAutofillDenied})
+	require.Len(t, entries, 1)
+	assert.Equal(t, true, entries[0].Details["denied"])
+	assert.Equal(t, string(opAutoFillSearch), entries[0].Details["requested_op"])
+}
+
+// TestAutoFillService_SearchCredentials_AuditWriteFailureFailsRequest
+// verifies the issue #688 policy: OpAutofillDenied is SeveritySecurity, so
+// a failed audit write fails the request rather than silently let a denied
+// autofill attempt go unaudited.
+func TestAutoFillService_SearchCredentials_AuditWriteFailureFailsRequest(t *testing.T) {
+	svc, _ := newTestAutoFillService(t)
+	svc.appLockSvc.LockForStartup()
+	svc.auditStore = &failingAutofillAuditLogger{err: errors.New("audit backend unavailable")}
+
+	_, err := svc.SearchCredentials("github.com")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrAutoFillAppLocked, "the audit failure, not the original denial, must be reported")
+}
+
+// failingAutofillAuditLogger fails every write; used to exercise the
+// issue #688 fail-closed path for SeveritySecurity autofill events.
+type failingAutofillAuditLogger struct{ err error }
+
+func (f *failingAutofillAuditLogger) Log(audit.Entry) error { return f.err }
+func (f *failingAutofillAuditLogger) LogKeyOperation(audit.OperationType, string, string, bool, error, int64) error {
+	return f.err
+}
+func (f *failingAutofillAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) error {
+	return f.err
+}
+func (f *failingAutofillAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) error {
+	return f.err
+}
+func (f *failingAutofillAuditLogger) LogServiceEvent(audit.OperationType, map[string]any) error {
+	return f.err
+}
+func (f *failingAutofillAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return f.err
+}
+func (f *failingAutofillAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) error {
+	return f.err
+}
+func (f *failingAutofillAuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return f.err
+}
+func (f *failingAutofillAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) error {
+	return f.err
+}
+
+var _ audit.Logger = (*failingAutofillAuditLogger)(nil)
+
+// ---------------------------------------------------------------------------
+// UserCanConfigureExtension policy gate (#668).
+// ---------------------------------------------------------------------------
+
+func TestAutoFillService_SetEnabled_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *EnterpriseExtensionPolicy
+		wantErr bool
+	}{
+		{"no enterprise policy (personal mode) allows", nil, false},
+		{"UserCanConfigure false denies", &EnterpriseExtensionPolicy{Enabled: true, UserCanConfigure: false}, true},
+		{"UserCanConfigure true allows", &EnterpriseExtensionPolicy{Enabled: true, UserCanConfigure: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+			require.NoError(t, err)
+			svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
+			svc.SetEnterprisePolicy(tt.policy)
+
+			countBefore := auditStore.Count()
+			err = svc.SetEnabled(true)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_configure_extension", denied.Field)
+				assert.Greater(t, auditStore.Count(), countBefore, "denial must be audited")
+			} else {
+				require.NoError(t, err)
+				assert.True(t, svc.IsEnabled())
+			}
+		})
+	}
+}
+
+// TestAutoFillService_HandleAutofillFocus pins the current contract: an
+// empty, non-error result. It exists so a change to this placeholder (the
+// browser extension does not yet drive a focus event through it) shows up
+// as a deliberate behavior change here rather than a silent drift the
+// extension side discovers on its own.
+func TestAutoFillService_HandleAutofillFocus(t *testing.T) {
+	svc, _ := newTestAutoFillService(t)
+
+	result, err := svc.HandleAutofillFocus()
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, &ipc.AutofillResult{}, result)
 }

@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
@@ -1055,12 +1056,19 @@ func TestSymmetricEncrypter_CBC_RejectsNonAEADInputMisuse(t *testing.T) {
 		encrypted, err := encrypter.Encrypt([]byte("valid plaintext"), &types.EncryptOptions{Mode: types.CipherModeCBCPad})
 		require.NoError(t, err)
 
-		tampered := append([]byte(nil), encrypted.Ciphertext...)
-		tampered[len(tampered)-1] ^= 0xFF
+		// "valid plaintext" is 15 bytes, so it encrypts to one block whose
+		// PKCS#7 pad byte is 0x01. In CBC the IV is XORed into that block
+		// on decryption, so flipping IV[15] turns the pad byte into 0xFE,
+		// which is always invalid. Tampering the ciphertext block instead
+		// randomizes the whole plaintext block and yields valid padding
+		// about once in 256 runs.
+		require.Len(t, encrypted.Ciphertext, 16)
+		tamperedIV := append([]byte(nil), encrypted.IV...)
+		tamperedIV[len(tamperedIV)-1] ^= 0xFF
 
 		_, err = encrypter.Decrypt(&types.EncryptedData{
-			Ciphertext: tampered,
-			IV:         encrypted.IV,
+			Ciphertext: encrypted.Ciphertext,
+			IV:         tamperedIV,
 		}, &types.DecryptOptions{Mode: types.CipherModeCBCPad})
 		assert.ErrorIs(t, err, ErrInvalidPadding)
 	})
@@ -1589,5 +1597,34 @@ func TestSymmetricEncrypter_KeyUsageIsEnforced(t *testing.T) {
 		_, err = encrypter.Decrypt(encrypted, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to initialize decryption")
+	})
+}
+
+// TestResolveGCMTagSize verifies the tag-length mapping AES-GCM Encrypt/
+// Decrypt use: zero selects the full 128-bit tag, every SP 800-38D-approved
+// truncated length passes through unchanged, and any other length is
+// refused with the typed ErrInvalidTagSize rather than silently clamped to
+// the nearest approved value.
+func TestResolveGCMTagSize(t *testing.T) {
+	t.Run("zero selects the full tag", func(t *testing.T) {
+		got, err := resolveGCMTagSize(0)
+		require.NoError(t, err)
+		assert.Equal(t, gcmTagSize, got)
+	})
+
+	t.Run("every approved length passes through", func(t *testing.T) {
+		for requested := range gcmTagSizes {
+			got, err := resolveGCMTagSize(requested)
+			require.NoError(t, err)
+			assert.Equal(t, requested, got)
+		}
+	})
+
+	t.Run("an unapproved length is refused", func(t *testing.T) {
+		_, err := resolveGCMTagSize(10)
+		require.Error(t, err)
+		var typed *errs.Detail
+		require.True(t, errors.As(err, &typed), "expected *errs.Detail, got %T", err)
+		assert.ErrorIs(t, err, ErrInvalidTagSize)
 	})
 }

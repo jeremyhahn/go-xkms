@@ -565,6 +565,60 @@ func TestHeadlessHandler_HandleUnlock_WrongPIN(t *testing.T) {
 	}
 }
 
+// TestHeadlessHandler_AutofillDelegation covers the autofill IPC handler
+// methods that delegate to AutoFillService. The service starts disabled
+// (services.NewAutoFillService's documented default), so every call takes
+// the same real, hardware-free error path: this both proves the delegation
+// reaches the service unmodified and that a disabled extension refuses
+// every autofill operation, not just some of them.
+func TestHeadlessHandler_AutofillDelegation(t *testing.T) {
+	svc := services.NewAutoFillService(nil, nil, nil, nil, nil)
+	h := &headlessHandler{autofillSvc: svc}
+
+	if _, err := h.HandleAutofillSearch("example.com"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillSearch error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+	if _, err := h.HandleAutofillGet("cred-id", "challenge"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillGet error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+	if _, err := h.HandleAutofillTOTP("example.com"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillTOTP error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+	if _, err := h.HandleAutofillTOTPByID("cred-id"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillTOTPByID error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+	if _, err := h.HandleAutofillSave("example.com", "user", "pw", "title"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillSave error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+	if _, err := h.HandleAutofillIgnoreDomain("example.com"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillIgnoreDomain error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+
+	// HandleAutofillFocus and HandleAutofillStatus/Policy have no enabled
+	// gate in headless mode / the service itself: they must succeed.
+	focusResult, err := h.HandleAutofillFocus()
+	if err != nil {
+		t.Fatalf("HandleAutofillFocus unexpected error: %v", err)
+	}
+	if focusResult == nil {
+		t.Fatal("HandleAutofillFocus returned a nil result")
+	}
+}
+
+// TestHeadlessHandler_PairingNotifyCodeAndCompleted exercises the two
+// pairing callbacks, which only format terminal/log output and must never
+// fail regardless of what they are given.
+func TestHeadlessHandler_PairingNotifyCodeAndCompleted(t *testing.T) {
+	h := &headlessHandler{}
+
+	if err := h.HandlePairingNotifyCode("123456", "identity-key", "https://example.com"); err != nil {
+		t.Fatalf("HandlePairingNotifyCode unexpected error: %v", err)
+	}
+	if err := h.HandlePairingCompleted("https://example.com"); err != nil {
+		t.Fatalf("HandlePairingCompleted unexpected error: %v", err)
+	}
+}
+
 func TestReadBarrierStrategy_Software(t *testing.T) {
 	dataDir := t.TempDir()
 	barrierDir := filepath.Join(dataDir, "barrier")
@@ -669,6 +723,9 @@ func TestReadBarrierStrategy_MissingStrategyField(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing strategy field")
 	}
+	if !errors.Is(err, ErrServeRootKeyMissingStrategy) {
+		t.Fatalf("err = %v, want errors.Is match against ErrServeRootKeyMissingStrategy", err)
+	}
 }
 
 func TestServeErrors_AreDistinct(t *testing.T) {
@@ -677,6 +734,8 @@ func TestServeErrors_AreDistinct(t *testing.T) {
 		ErrServeStrategyUnsupported,
 		ErrServeTPMOpenFailed,
 		ErrServeAuthenticatorInitFailed,
+		ErrServePKCS11StrategyUnavailable,
+		ErrServeShamirStrategyUnavailable,
 	}
 	seen := make(map[string]bool, len(errs))
 	for _, e := range errs {
@@ -685,6 +744,120 @@ func TestServeErrors_AreDistinct(t *testing.T) {
 			t.Fatalf("duplicate error message: %s", msg)
 		}
 		seen[msg] = true
+	}
+}
+
+// writeSealedRootKey creates a minimal sealed root-key blob under dataDir
+// naming strategy, the same shape readBarrierStrategy parses, so
+// runExtensionServe's strategy dispatch is reached without a real seal.
+func writeSealedRootKey(t *testing.T, dataDir, strategy string) {
+	t.Helper()
+	barrierDir := filepath.Join(dataDir, "barrier")
+	if err := os.MkdirAll(barrierDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	rootKey := `{"version":1,"strategy":"` + strategy + `","sealed_data":{},"created_at":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(barrierDir, "root_key"), []byte(rootKey), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestExtensionServe_PKCS11Strategy_Refused proves headless mode refuses a
+// barrier sealed with the pkcs11 strategy with a typed error rather than
+// hanging or failing deep inside an HSM login with no PIN.
+func TestExtensionServe_PKCS11Strategy_Refused(t *testing.T) {
+	tmpDir := t.TempDir()
+	xhome.SetRoot(tmpDir)
+	defer xhome.ResetRoot()
+
+	writeSealedRootKey(t, filepath.Join(tmpDir, "data"), "pkcs11")
+
+	cmd := &cobra.Command{Use: "serve", RunE: runExtensionServe}
+	cmd.Flags().String("socket", filepath.Join(tmpDir, "test.sock"), "")
+	cmd.Flags().String("log-level", "error", "")
+	cmd.Flags().String("log-file", "", "")
+	cmd.Flags().String("barrier-password", "", "")
+	cmd.Flags().String("barrier-password-file", "", "")
+	cmd.Flags().Bool("no-barrier", false, "")
+	cmd.Flags().Int("auto-lock-minutes", 0, "")
+	cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
+	cmd.Flags().Bool("no-auth", false, "")
+	cmd.Flags().Bool("no-pairing", false, "")
+
+	err := cmd.Execute()
+	if !errors.Is(err, ErrServePKCS11StrategyUnavailable) {
+		t.Fatalf("expected ErrServePKCS11StrategyUnavailable, got %v", err)
+	}
+}
+
+// TestExtensionServe_ShamirStrategy_Refused proves headless mode refuses a
+// barrier sealed with the shamir strategy with a typed error naming the
+// interactive alternative, rather than hanging waiting for shares no
+// headless process can collect.
+func TestExtensionServe_ShamirStrategy_Refused(t *testing.T) {
+	tmpDir := t.TempDir()
+	xhome.SetRoot(tmpDir)
+	defer xhome.ResetRoot()
+
+	writeSealedRootKey(t, filepath.Join(tmpDir, "data"), "shamir")
+
+	cmd := &cobra.Command{Use: "serve", RunE: runExtensionServe}
+	cmd.Flags().String("socket", filepath.Join(tmpDir, "test.sock"), "")
+	cmd.Flags().String("log-level", "error", "")
+	cmd.Flags().String("log-file", "", "")
+	cmd.Flags().String("barrier-password", "", "")
+	cmd.Flags().String("barrier-password-file", "", "")
+	cmd.Flags().Bool("no-barrier", false, "")
+	cmd.Flags().Int("auto-lock-minutes", 0, "")
+	cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
+	cmd.Flags().Bool("no-auth", false, "")
+	cmd.Flags().Bool("no-pairing", false, "")
+
+	err := cmd.Execute()
+	if !errors.Is(err, ErrServeShamirStrategyUnavailable) {
+		t.Fatalf("expected ErrServeShamirStrategyUnavailable, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "xkey barrier unseal") {
+		t.Fatalf("expected the refusal to name the interactive command, got %q", err.Error())
+	}
+}
+
+// TestExtensionServe_CloudKMSStrategy_Attempted proves headless mode no
+// longer refuses a cloud KMS barrier strategy outright (go-xkms#757
+// replaces the #699 refusal): it reaches buildCloudKMSBarrierStrategy and
+// fails there. This binary is built without any cloud KMS build tag, so
+// every strategy ID has no registered builder and the error names the
+// build tag needed -- proving the strategy is genuinely attempted rather
+// than rejected by a blanket sentinel before ever trying.
+func TestExtensionServe_CloudKMSStrategy_Attempted(t *testing.T) {
+	for _, strategy := range []string{"awskms", "gcpkms", "azurekv", "vault"} {
+		t.Run(strategy, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			xhome.SetRoot(tmpDir)
+			defer xhome.ResetRoot()
+
+			writeSealedRootKey(t, filepath.Join(tmpDir, "data"), strategy)
+
+			cmd := &cobra.Command{Use: "serve", RunE: runExtensionServe}
+			cmd.Flags().String("socket", filepath.Join(tmpDir, "test.sock"), "")
+			cmd.Flags().String("log-level", "error", "")
+			cmd.Flags().String("log-file", "", "")
+			cmd.Flags().String("barrier-password", "", "")
+			cmd.Flags().String("barrier-password-file", "", "")
+			cmd.Flags().Bool("no-barrier", false, "")
+			cmd.Flags().Int("auto-lock-minutes", 0, "")
+			cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
+			cmd.Flags().Bool("no-auth", false, "")
+			cmd.Flags().Bool("no-pairing", false, "")
+
+			err := cmd.Execute()
+			if !errors.Is(err, ErrServeBarrierUnsealFailed) {
+				t.Fatalf("expected ErrServeBarrierUnsealFailed (build-tag-gated backend unavailable), got %v", err)
+			}
+			if !strings.Contains(err.Error(), "built without -tags") {
+				t.Fatalf("expected the cause to name the missing build tag, got %q", err.Error())
+			}
+		})
 	}
 }
 
@@ -983,13 +1156,20 @@ func TestProbeTPMSealer_SimulatorMode_SkipsDeviceStat(t *testing.T) {
 	// The device path does not exist on disk; if the stat-skip logic were
 	// broken, probeTPMSealer would short-circuit here with a "tpm device
 	// ... not found" debug message instead of attempting to open the TPM.
+	//
+	// The assertion below matches that exact message, not a bare "not
+	// found": under -tags tpm_simulator, opening the TPM proceeds far
+	// enough to log unrelated messages that also contain "not found" (e.g.
+	// "persistent EK not found, checking NV RAM for manufacturer
+	// certificate"), which is the success path this test wants, not the
+	// regression it guards against.
 	sealer, closer := probeTPMSealer(logger, t.TempDir(), "/nonexistent-tpm-device-for-test", true)
 	if closer != nil {
 		defer closer.Close()
 	}
 	_ = sealer
 
-	if strings.Contains(buf.String(), "not found") {
+	if strings.Contains(buf.String(), "tpm device") && strings.Contains(buf.String(), "not found") {
 		t.Fatalf("expected device stat to be skipped in simulator mode, got: %s", buf.String())
 	}
 }

@@ -18,10 +18,12 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	osuser "os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,6 +89,139 @@ func TestSSHConsole_OpenEndpoint(t *testing.T) {
 	}
 	if ep.Token == ep2.Token {
 		t.Fatal("tokens must be unique per request")
+	}
+}
+
+func TestSSHConsole_Bg_FallsBackToBackground(t *testing.T) {
+	svc := NewSSHConsoleService()
+	if svc.bg() == nil {
+		t.Fatal("expected a non-nil background context")
+	}
+}
+
+func TestSSHConsole_SetProfileServiceAndSetLogger(t *testing.T) {
+	svc := NewSSHConsoleService()
+	if svc.profiles != nil {
+		t.Fatal("expected nil profiles by default")
+	}
+	if svc.logger != nil {
+		t.Fatal("expected nil logger by default")
+	}
+
+	profiles := NewSSHProfileService(nil)
+	svc.SetProfileService(profiles)
+	if svc.profiles != profiles {
+		t.Fatal("SetProfileService did not store the profile service")
+	}
+
+	logger := slog.Default()
+	svc.SetLogger(logger)
+	if svc.logger != logger {
+		t.Fatal("SetLogger did not store the logger")
+	}
+}
+
+func TestSSHConsole_OpenProfileConsole_NotConfigured(t *testing.T) {
+	svc := NewSSHConsoleService()
+	if _, err := svc.OpenProfileConsole("any"); !errors.Is(err, ErrSSHConsoleNotConfigured) {
+		t.Fatalf("expected ErrSSHConsoleNotConfigured, got %v", err)
+	}
+}
+
+func TestSSHConsole_OpenProfileConsole_NotFound(t *testing.T) {
+	svc := setupConsole(t)
+	defer svc.Shutdown()
+
+	store, err := sshclient.NewProfileStore(storage.New())
+	if err != nil {
+		t.Fatalf("NewProfileStore: %v", err)
+	}
+	svc.SetProfileService(NewSSHProfileService(store))
+
+	if _, err := svc.OpenProfileConsole("missing"); !errors.Is(err, ErrSSHConsoleProfileNotFound) {
+		t.Fatalf("expected ErrSSHConsoleProfileNotFound, got %v", err)
+	}
+}
+
+func TestSSHConsole_OpenProfileConsole_ManagedKey(t *testing.T) {
+	svc := setupConsole(t)
+	defer svc.Shutdown()
+
+	backend := storage.New()
+	store, err := sshclient.NewProfileStore(backend)
+	if err != nil {
+		t.Fatalf("NewProfileStore: %v", err)
+	}
+	profileSvc := NewSSHProfileService(store)
+	svc.SetProfileService(profileSvc)
+
+	entry, err := profileSvc.AddProfile(SSHProfileParams{
+		Name: "prod", Host: "prod.example.com", User: "deploy",
+		KeyScope: "user", KeyOwner: "local", KeyName: "laptop",
+	})
+	if err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+
+	ep, err := svc.OpenProfileConsole(entry.ID)
+	if err != nil {
+		t.Fatalf("OpenProfileConsole: %v", err)
+	}
+	if ep.Token == "" {
+		t.Fatal("expected a non-empty token")
+	}
+}
+
+func TestSSHConsole_OpenProfileConsole_LocalAliasDelegatesToConfigHost(t *testing.T) {
+	pub, priv := newTestEd25519Key(t)
+	writeConfigHostAndIdentity(t, "bastion", pub)
+
+	// The identity file is a placeholder, so the signer must come from an
+	// agent. Serve one in-process instead of inheriting the host's
+	// SSH_AUTH_SOCK, which CI does not have.
+	keyring := sshagent.NewKeyring()
+	if err := keyring.Add(sshagent.AddedKey{PrivateKey: priv}); err != nil {
+		t.Fatalf("keyring.Add: %v", err)
+	}
+	t.Setenv("SSH_AUTH_SOCK", serveTestAgent(t, keyring))
+
+	svc := setupConsole(t)
+	defer svc.Shutdown()
+
+	backend := storage.New()
+	store, err := sshclient.NewProfileStore(backend)
+	if err != nil {
+		t.Fatalf("NewProfileStore: %v", err)
+	}
+	profileSvc := NewSSHProfileService(store)
+	svc.SetProfileService(profileSvc)
+
+	entry, err := profileSvc.AddProfile(SSHProfileParams{
+		Name: "bastion-profile", Host: "bastion.example.com",
+		KeySource: sshKeySourceLocal, SSHConfigAlias: "bastion",
+	})
+	if err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+
+	ep, err := svc.OpenProfileConsole(entry.ID)
+	if err != nil {
+		t.Fatalf("OpenProfileConsole: %v", err)
+	}
+	if ep.Token == "" {
+		t.Fatal("expected a non-empty token")
+	}
+}
+
+func TestCurrentOSUser(t *testing.T) {
+	// currentOSUser wraps os/user.Current(); it must return exactly what
+	// that call reports (empty string only if the lookup itself fails).
+	want := ""
+	if u, err := osuser.Current(); err == nil {
+		want = u.Username
+	}
+	if got := currentOSUser(); got != want {
+		t.Fatalf("currentOSUser() = %q, want %q", got, want)
 	}
 }
 

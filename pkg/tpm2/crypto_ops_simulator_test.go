@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/ecpoint"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -109,8 +110,8 @@ func TestCreateECDSA_SignsAndVerifiesUnderReturnedPublicKey(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, pub)
 	assert.Equal(t, elliptic.P256(), pub.Curve, "the key must use the requested curve")
-	assert.True(t, pub.Curve.IsOnCurve(pub.X, pub.Y),
-		"the returned public point must lie on the curve")
+	_, err = pub.ECDH()
+	require.NoError(t, err, "the returned public point must lie on the curve")
 
 	digest := sha256.Sum256([]byte("payload the TPM must sign with ECDSA"))
 	signature, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{
@@ -319,11 +320,16 @@ func TestECDHZGen_SigningKey_Rejected(t *testing.T) {
 
 	peerPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
+	peerRaw, err := peerPriv.PublicKey.Bytes()
+	require.NoError(t, err)
+	peerSize := ecpoint.CoordinateSize(peerPriv.Curve)
+	peerX, peerY := peerRaw[1:1+peerSize], peerRaw[1+peerSize:]
 	peerPoint := &tpm2.TPMSECCPoint{
-		X: tpm2.TPM2BECCParameter{Buffer: peerPriv.PublicKey.X.FillBytes(make([]byte, 32))},
-		Y: tpm2.TPM2BECCParameter{Buffer: peerPriv.PublicKey.Y.FillBytes(make([]byte, 32))},
+		X: tpm2.TPM2BECCParameter{Buffer: peerX},
+		Y: tpm2.TPM2BECCParameter{Buffer: peerY},
 	}
-	require.True(t, pub.Curve.IsOnCurve(peerPriv.PublicKey.X, peerPriv.PublicKey.Y),
+	_, err = ecpoint.PublicKey(pub.Curve, peerX, peerY)
+	require.NoError(t, err,
 		"precondition: the peer point is a valid point on the same curve, so any "+
 			"rejection is due to the key's attributes and not a bad point")
 
@@ -400,6 +406,16 @@ func TestCreateSecretKey_CreatesLoadableAESKeyUnderSRK(t *testing.T) {
 	require.Error(t, err,
 		"an AES cipher object is not a sealed data blob and must not unseal")
 	assert.Nil(t, out)
+}
+
+// TestCreateSecretKey_NilParentRefused proves CreateSecretKey refuses a key
+// with no parent rather than dereferencing keyAttrs.Parent.TPMAttributes.
+func TestCreateSecretKey_NilParentRefused(t *testing.T) {
+	h := newSimHarness(t, nil)
+
+	attrs := &types.KeyAttributes{CN: "no-parent-secret-key"}
+	err := h.TPM.CreateSecretKey(attrs, h.Backend)
+	assert.ErrorIs(t, err, store.ErrInvalidKeyAttributes)
 }
 
 // TestCreateSecretKey_TwoKeysAreDistinct proves each call creates independent

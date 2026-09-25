@@ -26,19 +26,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-webauthn/webauthn/protocol"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 	"github.com/spf13/cobra"
 )
 
 // webAuthnRegistration drives the server-side WebAuthn registration ceremony for
 // the given user. It creates the xkms user (in the embedded qrdb node), begins the
-// ceremony on the server, runs the local FIDO2 authenticator against the returned
-// options, and finishes the ceremony on the server. The returned attestation
-// carries the credential ID assigned by the authenticator.
+// ceremony on the server, runs the local CTAP2 authenticator against the returned
+// options through webauthnclient.AuthenticatorAdapter — the SDK re-export of the
+// single canonical WebAuthn ceremony driver (pkg/webauthn/client) — and finishes
+// the ceremony on the server. The returned attestation is the raw WebAuthn
+// PublicKeyCredential JSON the authenticator produced.
+//
+// newAdapter opens the local authenticator lazily, after CreateUser and
+// BeginRegistration have already succeeded: opening a CTAP2 authenticator can
+// itself fail closed (no security key attached), and that must not be
+// mistaken for a server-side failure or run before the server-side calls it
+// would otherwise precede.
 //
 // The role is resolved by the caller: admin enrollment always passes RoleAdmin,
 // while user registration passes RoleAdmin for the first user and the requested
@@ -53,13 +61,11 @@ import (
 func webAuthnRegistration(
 	ctx context.Context,
 	cl client.Client,
-	handler *fido2.FIDO2Handler,
+	newAdapter func() (webauthnclient.AuthenticatorAdapter, error),
 	printer *Printer,
 	username, email, displayName, role, origin string,
-	requireUV bool,
-	timeout time.Duration,
 	pin *secure.Secret,
-) (*fido2.WebAuthnAttestation, error) {
+) ([]byte, error) {
 	// Create the xkms user in the embedded qrdb node behind the server.
 	if _, err := cl.CreateUser(ctx, &client.CreateUserRequest{
 		Username: username,
@@ -87,41 +93,25 @@ func webAuthnRegistration(
 		return nil, &WrappedError{Sentinel: ErrBeginRegistrationFailed, Err: err}
 	}
 
-	// Parse the server's PublicKeyCredentialCreationOptions.
-	var creation protocol.CredentialCreation
-	if err := json.Unmarshal([]byte(beginResp.OptionsJSON), &creation); err != nil {
-		return nil, &WrappedError{Sentinel: ErrParseRegistrationOptionsFailed, Err: err}
-	}
-
-	rpID := creation.Response.RelyingParty.ID
-	rpName := creation.Response.RelyingParty.Name
-	userName := creation.Response.User.Name
-
-	userID, err := decodeWebAuthnUserID(creation.Response.User.ID)
+	adapter, err := newAdapter()
 	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrDecodeUserHandleFailed, Err: err}
+		return nil, &WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err}
 	}
-
-	if origin == "" {
-		origin = "https://" + rpID
+	if closer, ok := adapter.(interface{ Close() error }); ok {
+		defer closeQuietly(closer)
 	}
 
 	if err := printer.PrintPrompt("\nPlease touch your security key to register..."); err != nil {
 		return nil, err
 	}
 
-	// Run the local FIDO2 authenticator against the server's challenge.
-	att, err := handler.RegisterWebAuthn(fido2.WebAuthnRegistrationOptions{
-		Challenge:               creation.Response.Challenge,
-		Origin:                  origin,
-		RPID:                    rpID,
-		RPName:                  rpName,
-		UserID:                  userID,
-		UserName:                userName,
-		UserDisplayName:         displayName,
-		RequireUserVerification: requireUV,
-		Timeout:                 timeout,
-		PIN:                     pin,
+	// Run the local CTAP2 authenticator against the server's challenge. The
+	// adapter parses the options JSON itself (fido2.ParseWebAuthnRegistrationOptions),
+	// falling back to the WebAuthn same-origin default when origin is empty.
+	attestation, err := adapter.MakeCredential(ctx, &webauthnclient.CeremonyOptions{
+		OptionsJSON: []byte(beginResp.OptionsJSON),
+		Origin:      origin,
+		PIN:         pin,
 	})
 	if err != nil {
 		return nil, ceremonyFailure(ErrRegisterCredentialFailed, pin, err)
@@ -130,28 +120,33 @@ func webAuthnRegistration(
 	// Finish the server-side ceremony with the authenticator's attestation.
 	if _, err := cl.FinishRegistration(ctx, &client.FinishRegistrationRequest{
 		SessionID:       beginResp.SessionID,
-		AttestationJSON: string(att.PublicKeyCredentialJSON),
+		AttestationJSON: string(attestation),
 	}); err != nil {
 		return nil, &WrappedError{Sentinel: ErrFinishRegistrationFailed, Err: err}
 	}
 
-	return att, nil
+	return attestation, nil
 }
 
-// decodeWebAuthnUserID extracts the WebAuthn user handle bytes from the JSON-decoded
-// User.ID field of a CredentialCreation. The go-webauthn library serializes the
-// handle as a base64url string, so after json.Unmarshal it arrives as a Go string.
-func decodeWebAuthnUserID(id any) ([]byte, error) {
-	switch v := id.(type) {
-	case string:
-		return base64.RawURLEncoding.DecodeString(v)
-	case []byte:
-		return v, nil
-	case nil:
-		return nil, nil
-	default:
-		return nil, &UserHandleTypeError{Handle: id}
+// webAuthnAttestationResponse is the subset of the WebAuthn PublicKeyCredential
+// attestation document extractWebAuthnCredentialID reads.
+type webAuthnAttestationResponse struct {
+	RawID string `json:"rawId"`
+}
+
+// extractWebAuthnCredentialID recovers the authenticator-assigned credential
+// ID bytes from an attestation document's base64url-encoded "rawId" field, for
+// display after a successful registration.
+func extractWebAuthnCredentialID(attestationJSON []byte) ([]byte, error) {
+	var doc webAuthnAttestationResponse
+	if err := json.Unmarshal(attestationJSON, &doc); err != nil {
+		return nil, &WrappedError{Sentinel: ErrDecodeCredentialIDFailed, Err: err}
 	}
+	credentialID, err := base64.RawURLEncoding.DecodeString(doc.RawID)
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrDecodeCredentialIDFailed, Err: err}
+	}
+	return credentialID, nil
 }
 
 // userCmd represents the user command
@@ -194,12 +189,17 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		email, _ := cmd.Flags().GetString("email")
-		displayName, _ := cmd.Flags().GetString("display-name")
-		devicePath, _ := cmd.Flags().GetString("device")
-		timeout, _ := cmd.Flags().GetDuration("timeout")
-		requireUV, _ := cmd.Flags().GetBool("user-verification")
-		roleStr, _ := cmd.Flags().GetString("role")
+		fr := newFlagReader(cmd)
+		email := fr.String("email")
+		displayName := fr.String("display-name")
+		devicePath := fr.String("device")
+		timeout := fr.Duration("timeout")
+		requireUV := fr.Bool("user-verification")
+		roleStr := fr.String("role")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if email == "" {
 			// handleError, not print-and-return: a bare return leaves Cobra's
@@ -235,7 +235,7 @@ Example:
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -270,18 +270,18 @@ Example:
 			}
 		}
 
-		// Create FIDO2 handler.
+		// The hardware CTAP2 authenticator adapter is opened lazily by
+		// webAuthnRegistration, only after CreateUser and BeginRegistration have
+		// already succeeded server-side.
 		fidoConfig := fido2.DefaultConfig
 		fidoConfig.DevicePath = devicePath
 		fidoConfig.RequireUserVerification = requireUV
+		fidoConfig.UserPresenceTimeout = timeout
 		enumerator := fido2.NewDefaultEnumerator()
 
-		handler, err := fido2.NewHandler(&fidoConfig, enumerator)
-		if err != nil {
-			handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
-			return
+		newAdapter := func() (webauthnclient.AuthenticatorAdapter, error) {
+			return webauthnclient.NewHardwareAdapter(&fidoConfig, enumerator)
 		}
-		defer func() { _ = handler.Close() }()
 
 		if err := printer.PrintMessage("Registering new user..."); err != nil {
 			handleError(err)
@@ -300,7 +300,13 @@ Example:
 			return
 		}
 
-		att, err := webAuthnRegistration(ctx, cl, handler, printer, username, email, displayName, role, "", requireUV, timeout, pin)
+		attestation, err := webAuthnRegistration(ctx, cl, newAdapter, printer, username, email, displayName, role, "", pin)
+		if err != nil {
+			handleError(err)
+			return
+		}
+
+		credentialID, err := extractWebAuthnCredentialID(attestation)
 		if err != nil {
 			handleError(err)
 			return
@@ -321,7 +327,7 @@ Example:
 				"display_name":  displayName,
 				"role":          role,
 				"auth_method":   "fido2",
-				"credential_id": base64.URLEncoding.EncodeToString(att.CredentialID),
+				"credential_id": base64.URLEncoding.EncodeToString(credentialID),
 				"first_user":    firstUser,
 			}
 			if err := printer.PrintJSON(summary); err != nil {
@@ -330,42 +336,33 @@ Example:
 		} else {
 			fmt.Printf("\nUsername: %s\n", username)
 			fmt.Printf("Role: %s\n", role)
-			fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(att.CredentialID))
+			fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(credentialID))
 			fmt.Printf("\nYou can now use this security key to authenticate.\n")
 		}
 	},
 }
 
-// loginAssertion runs the local half of the login ceremony: it derives the
-// authenticator options from the server's BeginAuthentication output, carries
-// the resolved CTAP2 PIN into the assertion request, and classifies PIN
-// failures before they reach the operator (see ceremonyFailure).
+// loginAssertion runs the local half of the login ceremony: it drives
+// adapter, the SDK re-export of the single canonical WebAuthn ceremony
+// driver's hardware authenticator, against the server's BeginAuthentication
+// options, carries the resolved CTAP2 PIN into the assertion request, and
+// classifies PIN failures before they reach the operator (see
+// ceremonyFailure).
 //
 // It exists as a named function rather than inline in the command closure so
-// the one place the PIN enters fido2.WebAuthnAuthenticationOptions is
-// reachable by tests driving a real authenticator (go-xkms#309).
+// the one place the PIN enters the ceremony is reachable by tests driving a
+// real authenticator (go-xkms#309).
 func loginAssertion(
-	handler *fido2.FIDO2Handler,
-	assertionOpts protocol.CredentialAssertion,
-	requireUV bool,
-	timeout time.Duration,
+	ctx context.Context,
+	adapter webauthnclient.AuthenticatorAdapter,
+	optionsJSON []byte,
+	origin string,
 	pin *secure.Secret,
-) (*fido2.WebAuthnAssertion, error) {
-	rpID := assertionOpts.Response.RelyingPartyID
-
-	allowList := make([][]byte, 0, len(assertionOpts.Response.AllowedCredentials))
-	for _, cred := range assertionOpts.Response.AllowedCredentials {
-		allowList = append(allowList, cred.CredentialID)
-	}
-
-	assertion, err := handler.AuthenticateWebAuthn(fido2.WebAuthnAuthenticationOptions{
-		Challenge:               []byte(assertionOpts.Response.Challenge),
-		Origin:                  "https://" + rpID,
-		RPID:                    rpID,
-		AllowCredentialIDs:      allowList,
-		RequireUserVerification: requireUV,
-		Timeout:                 timeout,
-		PIN:                     pin,
+) ([]byte, error) {
+	assertion, err := adapter.GetAssertion(ctx, &webauthnclient.CeremonyOptions{
+		OptionsJSON: optionsJSON,
+		Origin:      origin,
+		PIN:         pin,
 	})
 	if err != nil {
 		return nil, ceremonyFailure(ErrAuthenticationFailed, pin, err)
@@ -418,9 +415,14 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		timeout, _ := cmd.Flags().GetDuration("timeout")
-		devicePath, _ := cmd.Flags().GetString("device")
-		requireUV, _ := cmd.Flags().GetBool("user-verification")
+		fr := newFlagReader(cmd)
+		timeout := fr.Duration("timeout")
+		devicePath := fr.String("device")
+		requireUV := fr.Bool("user-verification")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		// Resolve the PIN before anything reaches the network: a --pin-stdin
 		// with nothing on standard input is operator input to correct, and
@@ -439,7 +441,7 @@ Example:
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -460,33 +462,29 @@ Example:
 			return
 		}
 
-		// Step 2: Parse the server's PublicKeyCredentialRequestOptions to recover
-		// the challenge, relying-party ID, and the allowed credential IDs.
-		var assertionOpts protocol.CredentialAssertion
-		if err := json.Unmarshal([]byte(beginResp.OptionsJSON), &assertionOpts); err != nil {
-			handleError(&WrappedError{Sentinel: ErrParseAuthenticationOptionsFailed, Err: err})
-			return
-		}
-
-		// Step 3: Build the FIDO2 handler and drive the local authenticator.
+		// Step 2: Build the hardware CTAP2 authenticator adapter.
 		fidoConfig := fido2.DefaultConfig
 		fidoConfig.DevicePath = devicePath
 		fidoConfig.RequireUserVerification = requireUV
+		fidoConfig.UserPresenceTimeout = timeout
 		enumerator := fido2.NewDefaultEnumerator()
 
-		handler, err := fido2.NewHandler(&fidoConfig, enumerator)
+		adapter, err := webauthnclient.NewHardwareAdapter(&fidoConfig, enumerator)
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 			return
 		}
-		defer func() { _ = handler.Close() }()
+		defer closeQuietly(adapter)
 
 		if err := printer.PrintPrompt("\nPlease touch your security key to authenticate..."); err != nil {
 			handleError(err)
 			return
 		}
 
-		assertion, err := loginAssertion(handler, assertionOpts, requireUV, timeout, pin)
+		// Step 3: Drive the local authenticator against the server's
+		// PublicKeyCredentialRequestOptions. The adapter parses the options
+		// JSON itself (falling back to the WebAuthn same-origin default).
+		assertion, err := loginAssertion(ctx, adapter, []byte(beginResp.OptionsJSON), "", pin)
 		if err != nil {
 			handleError(err)
 			return
@@ -497,7 +495,7 @@ Example:
 		finishResp, err := cl.FinishAuthentication(ctx, &client.FinishAuthenticationRequest{
 			SessionID:     beginResp.SessionID,
 			Email:         email,
-			AssertionJSON: string(assertion.PublicKeyCredentialJSON),
+			AssertionJSON: string(assertion),
 		})
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrFinishAuthenticationFailed, Err: err})
@@ -547,7 +545,7 @@ var userListCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -633,7 +631,7 @@ var userGetCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -723,7 +721,7 @@ Note: You cannot delete the last administrator account.`,
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -767,7 +765,7 @@ var userDisableCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -812,7 +810,7 @@ var userEnableCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -855,7 +853,7 @@ var userStatusCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -929,7 +927,7 @@ Example:
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -996,8 +994,13 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		enable, _ := cmd.Flags().GetBool("enable")
-		disable, _ := cmd.Flags().GetBool("disable")
+		fr := newFlagReader(cmd)
+		enable := fr.Bool("enable")
+		disable := fr.Bool("disable")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if enable == disable {
 			handleError(ErrUserUpdateEnableFlagRequired)
@@ -1015,7 +1018,7 @@ func userUpdate(cfg *Config, printer *Printer, username string, enable bool) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1079,9 +1082,14 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		thumbprint, _ := cmd.Flags().GetString("thumbprint")
-		certFile, _ := cmd.Flags().GetString("cert-file")
-		notAfter, _ := cmd.Flags().GetInt64("not-after")
+		fr := newFlagReader(cmd)
+		thumbprint := fr.String("thumbprint")
+		certFile := fr.String("cert-file")
+		notAfter := fr.Int64("not-after")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if (thumbprint == "") == (certFile == "") {
 			handleError(ErrUserCertSourceRequired)
@@ -1127,7 +1135,7 @@ func userBindCert(cfg *Config, printer *Printer, username, thumbprint string, no
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1179,7 +1187,7 @@ func init() {
 	// register flags
 	userRegisterCmd.Flags().String("email", "", "canonical login key for the user (REQUIRED)")
 	userRegisterCmd.Flags().String("display-name", "", "user display name (defaults to username)")
-	userRegisterCmd.Flags().String("role", "", "user role (admin, operator, auditor, user, readonly, guest)")
+	userRegisterCmd.Flags().String("role", "", "user role (so, admin, operator, user, auditor, custodian)")
 	userRegisterCmd.Flags().String("rp-id", "go-xkms", "relying party ID")
 	userRegisterCmd.Flags().String("rp-name", "Go xKMS", "relying party name")
 	userRegisterCmd.Flags().Duration("timeout", 30*time.Second, "timeout for user presence")

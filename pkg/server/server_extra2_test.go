@@ -301,8 +301,8 @@ func TestInitializeQRDBStorage_QRDBEmptyTransportIsEmbedded(t *testing.T) {
 // ============================================================================
 
 // TestStartNoiseBootstrap_NoBundler verifies startNoiseBootstrap returns early
-// without panicking when no CA bundler has been set (grpcinternal.GetCABundler
-// returns nil). The goroutine completes quickly.
+// without panicking when no CA bundler has been set (server.grpcCABundler is
+// nil). The goroutine completes quickly.
 func TestStartNoiseBootstrap_NoBundler(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
@@ -422,8 +422,11 @@ func TestServer_Start_WithUnixSocket(t *testing.T) {
 	err = server.Start()
 	require.NoError(t, err)
 
-	// Give the goroutine a moment to start, then shut down.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for startUnix's goroutine to set the Unix gRPC server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		return server.UnixGRPCServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 	err = server.Shutdown()
 	assert.NoError(t, err)
 }
@@ -448,7 +451,13 @@ func TestServer_Shutdown_WithMetricsCollector(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, server.Start())
-	time.Sleep(50 * time.Millisecond)
+	// Wait for startMetrics's goroutine to set the metrics server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.metricsServer != nil
+	}, 10*time.Second, 10*time.Millisecond, "metrics server was not set")
 	err = server.Shutdown()
 	assert.NoError(t, err)
 }
@@ -681,16 +690,28 @@ func TestInitializeBarrierRegistry_NilBarrier(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — initializePlatformStore (with / without barrier)
+// Tests — initializePlatformStore no longer depends on s.barrier (go-xkms#718)
 // ============================================================================
 
-func TestInitializePlatformStore_NilBarrier(t *testing.T) {
+// TestInitializePlatformStore_ManualStrategySkipsRegardlessOfBarrier is the
+// regression test for go-xkms#718: initializePlatformStore used to gate on
+// s.barrier being non-nil (and never assigned s.platformStore even then).
+// The platform store now seals independently of s.barrier -- it is
+// s.config.Credentials.SealStrategy that decides whether it is built at
+// all. A default/manual strategy still skips it (nothing to store), with or
+// without a barrier.
+func TestInitializePlatformStore_ManualStrategySkipsRegardlessOfBarrier(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
 	s.barrier = nil
 	err := s.initializePlatformStore()
 	require.NoError(t, err)
 	assert.Nil(t, s.platformStore)
 }
+
+// TestInitializePlatformStore_BuildsWithoutBarrier (a non-skip strategy
+// building a working platform store with s.barrier nil) lives in
+// platform_store_simulator_test.go: it needs the tpm2 Platform SRK
+// enrollment harness, which needs the tpm_simulator build tag.
 
 // ============================================================================
 // Tests — initializePolicyManager (always logs + returns nil)
@@ -1932,7 +1953,11 @@ func TestServer_Shutdown_QRDBNodeNil(t *testing.T) {
 	server, err := New(cfg)
 	require.NoError(t, err)
 	require.NoError(t, server.Start())
-	time.Sleep(20 * time.Millisecond)
+	// Wait for startUnix's goroutine to set the Unix gRPC server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		return server.UnixGRPCServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 
 	// qrdbNode is nil for non-qrdb backends; Shutdown should succeed.
 	assert.Nil(t, server.qrdbNode)
@@ -2120,13 +2145,16 @@ func TestNew_WithCAConfig_Succeeds(t *testing.T) {
 	assert.NotNil(t, server)
 }
 
-// TestNew_WithCAConfig_LiteralKeyPasswordSucceeds proves that a CA identity
-// key password given as a plain literal (no "scheme://" reference) survives
-// New()'s full boot sequence -- resolveConfigSecrets leaves it exactly as
-// decoded, and initializeCA's ToKeyAttributes path reads it back through
-// types.NewPasswordFromSecretValue's literal fallback -- end to end, not
-// through a hand-built *Server.
-func TestNew_WithCAConfig_LiteralKeyPasswordSucceeds(t *testing.T) {
+// TestNew_WithCAConfig_LiteralKeyPasswordFailsClosed proves go-xkms#654's
+// core fix: a CA identity key password given as a plain literal (no
+// "scheme://" reference) no longer survives New()'s boot sequence.
+// resolveConfigSecrets now propagates go-qrdb's protected-target contract
+// unmodified (pkg/secret.ConfigProcessor): a protected *types.SecretValue
+// target must reference a secret held elsewhere, and an inline literal is
+// refused rather than honoured, so New() fails at the config-secret-
+// resolution stage instead of quietly booting a CA whose key password came
+// to rest in a Go string.
+func TestNew_WithCAConfig_LiteralKeyPasswordFailsClosed(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -2147,7 +2175,7 @@ func TestNew_WithCAConfig_LiteralKeyPasswordSucceeds(t *testing.T) {
 					{
 						KeyAlgorithm: types.AlgorithmECDSA,
 						ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
-						Password:     types.SecretValue{Raw: "dev-only-ca-key-password"},
+						Password:     &types.SecretValue{Raw: "dev-only-ca-key-password"},
 					},
 				},
 			},
@@ -2156,23 +2184,14 @@ func TestNew_WithCAConfig_LiteralKeyPasswordSucceeds(t *testing.T) {
 	cfg.TLS.Enabled = false
 
 	server, err := New(cfg)
-	if err != nil {
-		var caInit *ErrCAInit
-		if errors.As(err, &caInit) {
-			t.Logf("CA init failed (acceptable in unit test without full storage): %v", err)
-			return
-		}
-		require.NoError(t, err)
+	require.Error(t, err, "a literal CA key password must fail closed, not boot")
+	if server != nil {
+		defer func() { _ = server.Shutdown() }()
 	}
-	defer func() { _ = server.Shutdown() }()
-	require.NotNil(t, server)
 
-	// The literal survives untouched: resolveConfigSecrets does not treat a
-	// bare value as a reference, and SecretValueBytes reads it back exactly
-	// as configured.
-	got, err := types.SecretValueBytes(&cfg.CA.Identity[0].Keys[0].Password)
-	require.NoError(t, err)
-	assert.Equal(t, "dev-only-ca-key-password", string(got))
+	var secretErr *ErrConfigSecretResolution
+	require.True(t, errors.As(err, &secretErr),
+		"error must unwrap to *ErrConfigSecretResolution, got %v", err)
 }
 
 // ============================================================================
@@ -2916,12 +2935,19 @@ func TestBuildHardwareSealStrategies_DuplicateHardwareSkipped(t *testing.T) {
 // ============================================================================
 
 // awsKMSProvider implements SymmetricKeyProvider + sealMetadataSaver so the
-// AWS KMS metadata-seeding branch in ensureSealKey is exercised.
+// AWS KMS metadata-seeding branch in ensureSealKey is exercised. It also
+// implements OperatorSealKeyID (go-xkms#839) so tests can simulate an
+// operator-configured CMK (awskms.Config.KeyID); when operatorKeyID is "",
+// no metadata is pre-seeded and generateCalled/getKeyErr drive the natural
+// GetSymmetricKey/GenerateSymmetricKey check-and-skip instead.
 type awsKMSProvider struct {
 	nonSealerProvider
-	saveErr    error
-	saveCalled bool
-	getKeyErr  error
+	saveErr        error
+	saveCalled     bool
+	savedData      []byte
+	getKeyErr      error
+	generateCalled bool
+	operatorKeyID  string
 }
 
 func (p *awsKMSProvider) GetSymmetricKey(_ context.Context, _ *types.KeyAttributes) (types.SymmetricKey, error) {
@@ -2932,6 +2958,7 @@ func (p *awsKMSProvider) GetSymmetricKey(_ context.Context, _ *types.KeyAttribut
 }
 
 func (p *awsKMSProvider) GenerateSymmetricKey(_ context.Context, _ *types.KeyAttributes) (types.SymmetricKey, error) {
+	p.generateCalled = true
 	return nil, nil
 }
 
@@ -2939,34 +2966,61 @@ func (p *awsKMSProvider) SymmetricEncrypter(_ context.Context, _ *types.KeyAttri
 	return nil, nil
 }
 
-func (p *awsKMSProvider) Save(_ *types.KeyAttributes, _ []byte, _ types.FSExtension, _ bool) error {
+func (p *awsKMSProvider) Save(_ *types.KeyAttributes, data []byte, _ types.FSExtension, _ bool) error {
 	p.saveCalled = true
+	p.savedData = data
 	return p.saveErr
+}
+
+func (p *awsKMSProvider) OperatorSealKeyID() string {
+	return p.operatorKeyID
 }
 
 var _ types.SymmetricKeyProvider = (*awsKMSProvider)(nil)
 
-// TestEnsureSealKey_AWSKMSMetadataSaved verifies that when the strategy is
-// StrategyAWSKMS and the provider implements sealMetadataSaver, Save is called
-// to seed the in-process metadata store.
-func TestEnsureSealKey_AWSKMSMetadataSaved(t *testing.T) {
+// TestEnsureSealKey_AWSKMSOperatorKeyMetadataSaved verifies that when the
+// strategy is StrategyAWSKMS and the provider reports an operator-configured
+// CMK (OperatorSealKeyID), Save is called to seed the in-process metadata
+// store with that real key identifier.
+func TestEnsureSealKey_AWSKMSOperatorKeyMetadataSaved(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{})
+	prov := &awsKMSProvider{operatorKeyID: "arn:aws:kms:us-east-1:123456789012:key/operator-cmk"}
+	keyAttrs := sealKeyAttributesFor(types.StoreAWSKMS)
+	err := s.ensureSealKey(seal.StrategyAWSKMS, prov, keyAttrs)
+	require.NoError(t, err)
+	assert.True(t, prov.saveCalled, "Save should have been called to seed the operator-configured CMK")
+	assert.Contains(t, string(prov.savedData), prov.operatorKeyID)
+	assert.NotContains(t, string(prov.savedData), keyAttrs.CN,
+		"the seal key's CN must never be persisted as a KMS key identifier")
+}
+
+// TestEnsureSealKey_AWSKMSOperatorKeyMetadataSaveError verifies that when
+// Save returns an error while seeding an operator-configured CMK,
+// ensureSealKey propagates it.
+func TestEnsureSealKey_AWSKMSOperatorKeyMetadataSaveError(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{})
+	prov := &awsKMSProvider{
+		operatorKeyID: "arn:aws:kms:us-east-1:123456789012:key/operator-cmk",
+		saveErr:       errors.New("save failed"),
+	}
+	keyAttrs := sealKeyAttributesFor(types.StoreAWSKMS)
+	err := s.ensureSealKey(seal.StrategyAWSKMS, prov, keyAttrs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "save failed")
+}
+
+// TestEnsureSealKey_AWSKMSNoOperatorKeyCreatesOne verifies that without an
+// operator-configured CMK, ensureSealKey seeds no metadata (go-xkms#839: the
+// previous behavior seeded the seal key's CN itself, which skipped real key
+// creation) and instead lets GenerateSymmetricKey run.
+func TestEnsureSealKey_AWSKMSNoOperatorKeyCreatesOne(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
 	prov := &awsKMSProvider{}
 	keyAttrs := sealKeyAttributesFor(types.StoreAWSKMS)
 	err := s.ensureSealKey(seal.StrategyAWSKMS, prov, keyAttrs)
 	require.NoError(t, err)
-	assert.True(t, prov.saveCalled, "Save should have been called for AWS KMS metadata seeding")
-}
-
-// TestEnsureSealKey_AWSKMSMetadataSaveError verifies that when Save returns an
-// error, ensureSealKey propagates it.
-func TestEnsureSealKey_AWSKMSMetadataSaveError(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{})
-	prov := &awsKMSProvider{saveErr: errors.New("save failed")}
-	keyAttrs := sealKeyAttributesFor(types.StoreAWSKMS)
-	err := s.ensureSealKey(seal.StrategyAWSKMS, prov, keyAttrs)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "save failed")
+	assert.False(t, prov.saveCalled, "no metadata should be pre-seeded without an operator-configured key")
+	assert.True(t, prov.generateCalled, "GenerateSymmetricKey must run to create the seal key")
 }
 
 // ============================================================================
@@ -3000,11 +3054,6 @@ func TestStartNoiseBootstrap_WithBundler(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	// Set a mock CA bundler so the nil-guard is passed.
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = false // call startNoiseBootstrap manually
 	cfg.Server.NoisePort = 0    // bind on any available port
@@ -3012,6 +3061,9 @@ func TestStartNoiseBootstrap_WithBundler(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
+
+	// Set a mock CA bundler so the nil-guard is passed.
+	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	server.wg.Add(1)
 	done := make(chan struct{})
@@ -3041,10 +3093,6 @@ func TestStartNoiseBootstrap_TimingsOK(t *testing.T) {
 
 	// Verify startNoiseBootstrap with ReadTimeout/WriteTimeout config strings
 	// parses them correctly (exercises the timeout parse branches).
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = false
 	cfg.Server.NoisePort = 0
@@ -3055,6 +3103,8 @@ func TestStartNoiseBootstrap_TimingsOK(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
+
+	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	server.wg.Add(1)
 	done := make(chan struct{})
@@ -3082,10 +3132,6 @@ func TestServer_Shutdown_WithNoiseServer(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = true // enable noise so Start() launches it
 	cfg.Server.NoisePort = 0
@@ -3100,9 +3146,14 @@ func TestServer_Shutdown_WithNoiseServer(t *testing.T) {
 	server, err := New(cfg)
 	require.NoError(t, err)
 
+	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
+
 	require.NoError(t, server.Start())
-	// Give the noise server a moment to start its accept loop.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for startNoiseBootstrap's goroutine to set the noise server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		return server.NoiseBootstrapServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "noise bootstrap server was not set")
 
 	err = server.Shutdown()
 	assert.NoError(t, err)
@@ -3138,8 +3189,11 @@ func TestServer_StartUnix_EmptyProtocolDefaultsToGRPC(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the gRPC server a moment to start, then shut it down.
-	time.Sleep(30 * time.Millisecond)
+	// Wait for the gRPC server field to be set instead of sleeping a fixed
+	// duration.
+	require.Eventually(t, func() bool {
+		return server.UnixGRPCServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 	require.NoError(t, server.Shutdown())
 
 	select {
@@ -3333,7 +3387,8 @@ func TestServer_Shutdown_BackendCloseError(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, server.Start())
-	time.Sleep(10 * time.Millisecond)
+	// Every protocol is disabled above, so Start launches no background
+	// goroutine here to wait on.
 
 	// Inject a backend that errors on Close.
 	server.backends["error-backend"] = &errXKMSBackend{closeErr: errors.New("backend close error")}
@@ -3659,10 +3714,6 @@ func TestInitializeHealth_BackendUnhealthy(t *testing.T) {
 // Noise static key file exists but does not decode, startNoiseBootstrap logs
 // the error and returns without hanging.
 func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	dataDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dataDir, noiseStaticKeyFileName), []byte("not-a-valid-key"), 0600))
 
@@ -3670,6 +3721,7 @@ func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
 		Server:  config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
 		Storage: config.StorageConfig{Path: dataDir},
 	})
+	s.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	s.wg.Add(1)
 	done := make(chan struct{})
@@ -3693,10 +3745,6 @@ func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
 // MaxConnections exceeds the upper bound (10000), noiseboot.NewServer returns
 // an error and startNoiseBootstrap exits cleanly.
 func TestStartNoiseBootstrap_MaxConnectionsExceeded(t *testing.T) {
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	s := newMinimalServer(t, &config.Config{
 		Server: config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
 		Bootstrap: config.BootstrapConfig{
@@ -3706,6 +3754,7 @@ func TestStartNoiseBootstrap_MaxConnectionsExceeded(t *testing.T) {
 			},
 		},
 	})
+	s.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	s.wg.Add(1)
 	done := make(chan struct{})
@@ -4884,8 +4933,11 @@ func TestStartREST_WithCA(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the REST server a moment to start, then shut down.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the REST server field to be set instead of sleeping a fixed
+	// duration.
+	require.Eventually(t, func() bool {
+		return server.RESTServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "REST server was not set")
 	err = server.Shutdown()
 	assert.NoError(t, err)
 

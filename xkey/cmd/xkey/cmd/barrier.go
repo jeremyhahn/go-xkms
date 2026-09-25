@@ -16,6 +16,8 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -135,7 +137,15 @@ var strategyFlagToID = map[string]xkms.StrategyID{
 	"software": xkms.StrategyPassphrase,
 	"tpm2":     xkms.StrategyTPM2,
 	"pkcs11":   xkms.StrategyPKCS11,
+	"aws_kms":  xkms.StrategyAWSKMS,
+	"gcp_kms":  xkms.StrategyGCPKMS,
+	"azure_kv": xkms.StrategyAzureKV,
+	"vault":    xkms.StrategyVault,
 }
+
+// validStrategyNames is strategyFlagToID's CLI-facing names, for error
+// messages -- one list, so it and the map can never drift out of sync.
+var validStrategyNames = []string{"software", "tpm2", "pkcs11", "aws_kms", "gcp_kms", "azure_kv", "vault"}
 
 // strategyIDToDisplay maps canonical seal StrategyIDs back to the
 // user-facing CLI names. IDs without an entry display as themselves.
@@ -165,7 +175,7 @@ func resolveBarrierStrategyID(dataDir string) (xkms.StrategyID, error) {
 		if !ok {
 			return "", &BarrierError{
 				Operation: "validate_strategy",
-				Message:   fmt.Sprintf("unknown strategy %q, valid values: software, tpm2, pkcs11", barrierStrategy),
+				Message:   fmt.Sprintf("unknown strategy %q, valid values: %s", barrierStrategy, strings.Join(validStrategyNames, ", ")),
 			}
 		}
 		return id, nil
@@ -211,6 +221,8 @@ func assembleBarrierStrategy(id xkms.StrategyID, dataDir string) (xkms.SealingSt
 			Operation: "assemble_strategy",
 			Message:   "pkcs11 strategy requires an HSM module configuration, which the CLI barrier does not support",
 		}
+	case xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault:
+		return buildCloudKMSBarrierStrategy(context.Background(), id, dataDir)
 	default:
 		return nil, nil, &BarrierError{
 			Operation: "assemble_strategy",
@@ -328,7 +340,7 @@ func setBarrierStdin(r io.Reader) func() {
 func readBarrierLineFromPipedStdin() (string, error) {
 	reader := getBarrierStdinReader()
 	line, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", &BarrierError{Operation: "read_password", Err: err}
 	}
 	return strings.TrimRight(line, "\r\n"), nil

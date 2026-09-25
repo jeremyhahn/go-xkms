@@ -20,12 +20,14 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -181,6 +183,8 @@ func TestFileBackupAdapter_CreateBackup(t *testing.T) {
 		_, err := adapter.CreateBackup(ctx, nil, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "backup data is required")
+		var typed *errs.Message
+		assert.True(t, errors.As(err, &typed), "err = %v, want *errs.Message", err)
 	})
 
 	// Test creating an encrypted backup without encryption key
@@ -609,6 +613,15 @@ func TestFileBackupAdapter_VerifyBackup(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, result.DecryptionValid)
 		assert.NotEmpty(t, result.Errors)
+
+		var found *errs.Message
+		for _, verifyErr := range result.Errors {
+			if errors.As(verifyErr, &found) {
+				break
+			}
+		}
+		require.NotNil(t, found, "want one of result.Errors to be *errs.Message(\"decryption key not provided\"), got %v", result.Errors)
+		assert.Equal(t, "decryption key not provided", found.Msg)
 	})
 
 	// Test verifying a corrupted backup
@@ -1121,6 +1134,8 @@ func TestFileBackupAdapter_ImportBackup_NoMetadata(t *testing.T) {
 	_, err = adapter.ImportBackup(ctx, sourcePath)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "metadata is missing")
+	var typed *errs.Message
+	assert.True(t, errors.As(err, &typed), "err = %v, want *errs.Message", err)
 }
 
 func TestFileBackupAdapter_ImportBackup_DuplicateID(t *testing.T) {
@@ -1163,6 +1178,8 @@ func TestFileBackupAdapter_DecryptData_ShortCiphertext(t *testing.T) {
 	_, err = adapter.decryptData(shortData, key)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "too short")
+	var typed *errs.Message
+	assert.True(t, errors.As(err, &typed), "err = %v, want *errs.Message", err)
 }
 
 func TestFileBackupAdapter_CompressData_EmptyAlgorithm(t *testing.T) {

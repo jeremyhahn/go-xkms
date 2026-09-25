@@ -29,11 +29,26 @@ import (
 	"strings"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
+
+// testNodeConfig returns the *config.Config executeCeremony's single-admin
+// path opens the durable qrdb node with: qrdb-backed storage rooted at
+// dataDir, and the node's own barrier engaged with the "none" strategy so
+// the node auto-unseals unattended and the test needs no SO-pin credential
+// plumbing.
+func testNodeConfig(dataDir string) *config.Config {
+	return &config.Config{
+		Storage: config.StorageConfig{Backend: "qrdb", Path: dataDir},
+		Barrier: config.BarrierConfig{Enabled: true, Strategy: "none"},
+	}
+}
 
 // silentLogger returns a slog.Logger that discards all output. Suitable for
 // helpers under test that emit log lines we don't want polluting test output.
@@ -159,6 +174,7 @@ func TestExecuteCeremony_SingleAdmin_WritesArtifacts(t *testing.T) {
 		logger:   silentLogger(),
 		hostname: "test.example.com",
 		dataDir:  dataDir,
+		nodeCfg:  testNodeConfig(dataDir),
 	}
 	cs := buildCeremonyService(t, nil)
 
@@ -246,6 +262,7 @@ func TestExecuteCeremony_AlreadyInitialized(t *testing.T) {
 		logger:   silentLogger(),
 		hostname: "localhost",
 		dataDir:  dataDir,
+		nodeCfg:  testNodeConfig(dataDir),
 	}
 	cs := buildCeremonyService(t, nil)
 
@@ -409,5 +426,93 @@ func TestPrintCeremonyOutcome_MofNMentionsClaim(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected output to contain %q; got:\n%s", want, out)
 		}
+	}
+}
+
+// TestPrintCeremonyOutcome_ListsEnrolledFactors proves the "Login factors:"
+// summary line (printEnrolledFactors, invoked via printCeremonyOutcome's
+// defer) actually lists every factor the ceremony enrolled -- the branch
+// TestPrintCeremonyOutcome_SingleAdmin and
+// TestPrintCeremonyOutcome_MofNMentionsClaim never reach, since both leave
+// env.enrolledFactors empty.
+func TestPrintCeremonyOutcome_ListsEnrolledFactors(t *testing.T) {
+	originalStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = originalStderr })
+
+	env := &ceremonyEnv{
+		dataDir: "/var/lib/xkms",
+		enrolledFactors: []qrdbsdk.AdminEnrollmentResult{
+			{Factor: "passkey"},
+			{Factor: "totp"},
+		},
+	}
+	result := &initialize.InitResult{State: initialize.StateOperational}
+	printCeremonyOutcome(env, result)
+	_ = w.Close()
+	os.Stderr = originalStderr
+
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+	out := string(got)
+	if !strings.Contains(out, "Login factors: passkey, totp") {
+		t.Errorf("expected output to list enrolled factors \"passkey, totp\"; got:\n%s", out)
+	}
+}
+
+// =============================================================================
+// preflightAdminFactors
+// =============================================================================
+
+// TestPreflightAdminFactors_NilPlanIsANoOp proves the probe-only guarantee
+// documented on preflightAdminFactors: with no --admin-factor plan there is
+// nothing to preflight, so the ceremony proceeds without opening any
+// registry.
+func TestPreflightAdminFactors_NilPlanIsANoOp(t *testing.T) {
+	env := &ceremonyEnv{logger: silentLogger()}
+	if err := preflightAdminFactors(context.Background(), env); err != nil {
+		t.Fatalf("preflightAdminFactors(nil plan) = %v, want nil", err)
+	}
+}
+
+// TestPreflightAdminFactors_RefusesAPlanItCannotEnroll proves the whole point
+// of running preflight before the ceremony changes any state: a planned PIV
+// factor with no PIV hardware handler configured must be refused up front,
+// costing the operator one retry instead of an initialized barrier behind a
+// half-enrolled administrator.
+func TestPreflightAdminFactors_RefusesAPlanItCannotEnroll(t *testing.T) {
+	plan, err := qrdbsdk.NewAdminEnrollmentPlan([]qrdbsdk.AdminFactor{qrdbsdk.FactorPIV})
+	if err != nil {
+		t.Fatalf("NewAdminEnrollmentPlan: %v", err)
+	}
+	env := &ceremonyEnv{logger: silentLogger(), enrollmentPlan: plan}
+
+	if err := preflightAdminFactors(context.Background(), env); err == nil {
+		t.Fatal("preflightAdminFactors accepted a PIV plan with no PIV hardware configured")
+	}
+}
+
+// TestPreflightAdminFactors_AcceptsAPlanItCanEnroll proves the success side:
+// an mTLS-only plan (the baseline, backed by the admin certificate the
+// ceremony already issues) passes preflight with no hardware attached.
+func TestPreflightAdminFactors_AcceptsAPlanItCanEnroll(t *testing.T) {
+	plan, err := qrdbsdk.NewAdminEnrollmentPlan([]qrdbsdk.AdminFactor{qrdbsdk.FactorMTLS})
+	if err != nil {
+		t.Fatalf("NewAdminEnrollmentPlan: %v", err)
+	}
+	env := &ceremonyEnv{
+		logger:         silentLogger(),
+		enrollmentPlan: plan,
+		adminCertPEM:   generateECDSACSR(t, "administrator"),
+	}
+
+	if err := preflightAdminFactors(context.Background(), env); err != nil {
+		t.Fatalf("preflightAdminFactors(mtls plan) = %v, want nil", err)
 	}
 }

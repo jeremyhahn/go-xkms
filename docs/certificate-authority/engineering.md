@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface — `pkg/ca`
 
@@ -26,6 +26,11 @@ startup.
 **`CARevoker`** — `Revoke(ctx, serial *big.Int, reason int) error`,
 `RevokeCert(ctx, cert, opts RevokeOptions) error`, `GenerateCRL(ctx) ([]byte, error)`,
 `CRL(ctx) ([]byte, error)`, `IsRevoked(serial *big.Int) (bool, error)`.
+`RevokeCert`'s `RevokeOptions.DeleteKeys` deletes exactly the key the CA
+generated or resolved at issuance, resolved from the `issued-keys/` record
+(see "Issued-key persistence" under Persistence) rather than reconstructed
+from the certificate; a CSR-signed certificate — one whose key the CA never
+held — is a no-op, not a failure (go-xkms#751).
 `GenerateCRL` always signs a new CRL (the explicit force-refresh verb,
 `POST /ca/crl`); `CRL` returns the persisted DER, regenerating first only
 when none exists or the published `NextUpdate` has passed (`GET /ca/crl`).
@@ -74,6 +79,11 @@ and the `…WithXSigner` variants.
 
 **`CATCGEnrollment`** —
 `VerifyTCG_CSR_IDevIDBytes(packedCSR []byte, sigAlg x509.SignatureAlgorithm) (blob, secret, plain []byte, err error)`.
+The `TPM2_MakeCredential` challenge is built in software
+(`tpm2.NewCredentialChallenge`, `tpm2.ActivationKeyName`); this method no
+longer calls `ca.getTPM()` and no longer requires `SetTPM` to have been
+called (go-xkms#798) -- `EnrollDevice` (the full IAK/IDevID issuance path)
+still does, for `SignTCGCSRIDevID`.
 
 **TCG DevID certificate conformance** (`tcg.go`, `tcg_oids.go`,
 `tcg_devid_name.go`, `san.go`) — the IDevID and IAK certificates
@@ -118,8 +128,31 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
 
 - **`Init` is once.** A second `Init` returns `ErrAlreadyInitialized` rather
   than replacing the root. `Load` is the idempotent startup path.
+- **`Load` resolves every identity's key attributes through the same
+  `getCAKeyAttributes` default-filling `Init` uses**, never the bare
+  `Identity.ToKeyAttributes`. An identity's `KeyConfig` that leaves key-type
+  unset still stores and loads under the same `KeyTypeCA`-defaulted
+  attributes on every call; the two paths must never diverge (go-xkms#793).
+  See "CA reload / restart persistence" under Persistence.
+- **Only a genuine `storage.ErrNotFound` behind a certificate lookup becomes
+  `ErrCertificateNotFound`.** A `certStore.GetCertificate` failure for any
+  other reason (a corrupt or unparseable persisted certificate, a backend
+  I/O failure) is returned as a distinct error that does not satisfy
+  `errors.Is(_, ErrCertificateNotFound)`, so a caller — in particular
+  `pkg/server`'s `initializeCA` — can never mistake damaged existing state
+  for an empty store (`wrapCertLookupError`, go-xkms#793).
 - **Every operation requires `IsInitialized()`.** Issuance against an
   uninitialized CA fails closed.
+- **`getOrGenerateCAKey` (`pkg/ca/ca.go`) generates a key only when the
+  backend's `GetKey` reports it does not exist yet** —
+  `errors.Is(err, backend.ErrKeyNotFound)`, per the contract in
+  [`../crypto-backends/engineering.md`](../crypto-backends/engineering.md#error-semantics).
+  Any other `GetKey` failure (a TPM transient fault, a PKCS#11 login
+  failure, cloud KMS throttling, an I/O error against the metadata store)
+  returns `ErrKeyRetrievalFailed` and generates nothing (#801). Treating
+  "the backend could not answer" the same as "no key yet" would silently
+  replace a hardware-backed CA signing key the first time its backend had a
+  bad moment.
 - **Serial numbers are unique and never reused**, including across revocation.
 - **`Verify` returns chains, not a boolean**, so callers can inspect which path
   validated. An empty result with a nil error is not success.
@@ -177,11 +210,29 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
   public area: `TPM2_CreatePrimary` consumes the unique string as derivation
   input and returns a public area holding the generated key instead, so
   demanding it server-side would refuse every genuine device.
-- **The EK certificate chain is NOT verified against a manufacturer
-  truststore.** §6.2.2 step 7b calls for it and no code path in this
-  repository does it; what enrollment proves today is residency in *a* TPM,
-  not in one a manufacturer vouched for. Tracked as an open gap, not a
-  property to rely on.
+- **The EK certificate chain IS verified against a configured
+  TPM-manufacturer truststore**, per §6.1.2 step 5b and §6.2.2 step 4b
+  (`verifyEKCertificateChain`, `pkg/ca/tcg_ek_trust.go`), before
+  `SignTCGCSRIDevID`, `EnrollDevice` or `VerifyTCG_CSR_IDevIDBytes` do
+  anything else with the EK certificate -- including generating the
+  `TPM2_MakeCredential` challenge, which only proves possession of the EK
+  private key, not that the EK belongs to a genuine TPM. The trust anchors
+  are `MultiIdentityCAConfig.TCGConfig.TrustAnchors`
+  (`pkg/attestation/truststore.Config` -- the same shape
+  `pkg/config.AttestationConfig` uses for the "tpm2" attestation format,
+  reused rather than duplicated). **A CA with no anchors configured refuses
+  every EK certificate with `ErrTCGEKCertUntrusted`; there is no fallback to
+  residency-only proof.** This is a breaking behavior change for any
+  deployment enrolling TCG-CSR-IDEVID devices: `ca.tcg-config.trust-anchors`
+  (or the equivalent `CAConfig.TCGConfig`) must name at least one
+  TPM-manufacturer root before enrollment will succeed.
+  `requireTCGEKCertificateEKU` additionally requires the tcg-kp-EKCertificate
+  extended key usage (2.23.133.8.1) or anyExtendedKeyUsage on the leaf.
+  `parseEKCertificateChain` accepts intermediates the device concatenated
+  after the leaf in a PEM-encoded EkCert field; `stripTCGEKQuirks` accepts
+  the TCG EK Credential Profile's critical-subjectAltName-with-only-a-
+  directoryName encoding without weakening any other check
+  `x509.Certificate.Verify` performs.
 
 ## Error semantics
 
@@ -190,6 +241,9 @@ The lifecycle and validation errors named in the interface contract are
 `ErrAlreadyInitialized` and `ErrInvalidConfig`; key-layer failures surface as
 the keystore errors from `pkg/xkms/errors.go`
 (see [`../key-management/engineering.md`](../key-management/engineering.md)).
+`ErrKeyRetrievalFailed` is `getOrGenerateCAKey`'s fail-closed error for a
+backend `GetKey` failure that is not a genuine not-found result (#801, see
+the invariant above).
 
 Transport mapping is in `pkg/api/rest/handlers_ca.go` /
 `handlers_ca_bundle.go` / `handlers_ca_tcg.go`, `pkg/api/grpc/service_ca_bundle.go`,
@@ -198,12 +252,53 @@ to `404`; `ErrNotInitialized` maps to `503`; both are declared in
 `pkg/ca/errors.go` and joined into REST's `caErrorStatusMap` by
 `errors.Is`, so they map correctly even wrapped in `xkms.ErrCAOperation`.
 
+### gRPC/Unix CA wiring is per-`Service`, not a package global (go-xkms#951)
+
+`pkg/api/grpc.Service` carries its own `ca any` and `caBundler CABundler`
+fields (`service.go`), set via the instance methods `(*Service).SetCA` and
+`(*Service).SetCABundler` (`service_ca.go`, `service_ca_bundle.go`) — the
+same auxiliary-wiring pattern `SetSSHClient` already used. Before this fix,
+`SetCA`/`SetCABundler` were package-level functions writing a single
+process-wide global that no production composition root ever called, so
+every CA RPC (`GetCACertificate`, `SignCSR`, `IssueCertificate`,
+`RevokeCertificate`, `GenerateCRL`, `IsRevoked`, and the TCG EK/AK/enroll
+variants) answered `codes.Unavailable` over `unix://`, `grpc://` and
+`grpcs://` regardless of whether a CA was configured. REST was unaffected —
+`pkg/api/rest`'s `Config.CA` was always per-`Server`.
+
+Composition roots wire `SetCA`/`SetCABundler` right after `NewService`,
+under the same condition `pkg/server`'s `buildRESTConfig` uses for
+`restConfig.CA` (a configured CA **and** a composed `XKMSService`):
+
+- `pkg/server`'s `startUnix` (`server.go`) forwards `s.xkmsService` as the
+  CA servicer through `unix.GRPCConfig.CA`/`CABundler`, which
+  `unix.NewGRPCServer.Start` passes to `(*Service).SetCA`/`SetCABundler`
+  (`pkg/api/unix/grpc_server.go`).
+- `pkg/apimodule.Module.keystore` (`module.go`) — the unified qrdb server's
+  gRPC surface — wires the resolved `XKMSService` itself whenever
+  `XKMSService.CA() != nil`, since the same object exposes both the
+  transport-shaped CA methods and the `provider.CA` accessor.
+
+A CA servicer (`x any`) is duck-typed against the transport-shaped method
+sets in `service_ca.go`/`service_ca_tcg.go` (`grpcCAMethodCert`,
+`grpcCAMethodSignCSR`, ...) exactly as before; only the storage location of
+the configured value changed, from a package variable to a `Service` field.
+
+Any other binary embedding `pkg/api/grpc.Service` directly (rather than
+through `pkg/api/unix` or `pkg/apimodule`) must call the instance methods
+`(*Service).SetCA` / `(*Service).SetCABundler` on the constructed `*Service`
+before serving CA RPCs; the removed package-level `SetCA`/`GetCA`/
+`SetCABundler`/`GetCABundler` have no replacement free functions.
+
 **Fail-closed paths:** uninitialized CA; a CSR that fails policy; a revoked or
 expired issuer; an attestation quote that does not verify; a TCG CSR whose
 IDevID signature does not check; a TCG CSR with no EK certificate, with no
 determinable TPM manufacturer code, or whose IDevID/IAK public area departs
-from TCG Template H-0 or carries a foreign `authPolicy`. None of these fall
-back to issuing.
+from TCG Template H-0 or carries a foreign `authPolicy`; an EK certificate
+that does not chain to a configured TPM-manufacturer trust anchor, lacks the
+tcg-kp-EKCertificate extended key usage, or is presented with no trust
+anchors configured at all (`ErrTCGEKCertUntrusted`). None of these fall back
+to issuing.
 
 ## Configuration
 
@@ -214,6 +309,16 @@ behaviour rather than naming:
 - `DefaultKeyAlgorithm` / `DefaultSignatureAlgorithm` — what a request gets when
   it does not ask.
 - `DefaultValidityPeriod` — days, applied when the request omits validity.
+- `TCGConfig.TrustAnchors` (`MultiIdentityCAConfig.TCGConfig`, or the flat
+  `CAConfig.TCGConfig`) — CA-wide, not per-identity: the
+  `pkg/attestation/truststore.Config` naming the TPM-manufacturer root (and,
+  concatenated into the same file, any issuing intermediate) certificates an
+  endorsement key certificate must chain to before `IssueEKCertificate`'s
+  sibling issuance paths (`SignTCGCSRIDevID`, `EnrollDevice`,
+  `VerifyTCG_CSR_IDevIDBytes`) trust it. `NewFromMultiIdentityConfig`,
+  `NewHierarchicalCA`, `NewParentCA` and `NewIntermediateCA` all carry it
+  through from `Params.Config` / `MultiIdentityParams.Config` into the
+  constructed `CA`; there is no separate wiring step.
 - `IsAutoImportingIssuerCAs()` — whether the AIA walk runs automatically on
   import. Off means chains must be supplied.
 - Multi-keystore identities — one CA name, several `{storeType, keyAlgorithm}`
@@ -261,6 +366,79 @@ row → regenerate via `generateAndPersistCRL` when neither has a
 not-yet-stale entry. `GenerateCRL` always calls `generateAndPersistCRL`
 directly, skipping both freshness checks.
 
+### CA reload / restart persistence (go-xkms#793)
+
+`pkg/server`'s `initializeCA` calls `trustedCA.Load` on every start and falls
+through to `trustedCA.Init` only when `errors.Is(loadErr, ca.ErrCertificateNotFound)`
+— the one condition that legitimately means "this data directory has never
+held a CA": the root (or the selected intermediate's) certificate record is
+genuinely absent from `certStore`. Any other `Load` failure — a corrupt or
+unreadable persisted certificate (`wrapCertLookupError` classifies this),
+an unavailable keystore backend, a `KeyAttributes` validation defect — is
+returned to the caller as `*server.ErrCAInit{Operation: "load existing CA"}`
+and fails server startup closed. `Init` is never called over existing,
+merely-damaged state.
+
+Before this fix, `initializeCA` treated *any* `Load` error identically to
+"never initialized", and `Load` itself resolved a root or intermediate
+identity's key attributes via the bare `Identity.ToKeyAttributes` — which,
+unlike `Init`'s `getCAKeyAttributes`, never defaults `KeyType` to
+`KeyTypeCA`. An identity whose `KeyConfig` left `key-type` unset (or set it
+under the YAML field `key_type`, which the struct tag does not bind) failed
+`Load` with a `KeyAttributes.Validate` error — never a not-found — on every
+restart, and `initializeCA` silently re-ran `Init`, minting a new
+self-signed root certificate (new serial, new validity window; the key
+itself was often reused because `getOrGenerateCAKey` is get-or-generate) on
+every `xkmsd run` over the same data directory. This invalidated every
+certificate issued from the previous root and every client's pin to it.
+
+**The contract going forward:** an identity's key attributes must resolve
+identically across `Init` and `Load` (`getCAKeyAttributes`, not
+`ToKeyAttributes`, in both), and only `ErrCertificateNotFound` -- itself
+gated on the underlying cause being `storage.ErrNotFound`, not any
+`certStore.GetCertificate` failure -- authorizes `initializeCA` to
+(re-)initialize.
+
+### Issued-key persistence (#751)
+
+`pkg/ca/ca_extensions.go`. A third sibling of `revocations/` and `crl/` in
+the same `ca.revocationStore`, written once per certificate whose key the CA
+itself generated or resolved:
+
+| key | value | written by |
+|---|---|---|
+| `issued-keys/<serial-decimal>.json` | `persistedIssuedKey{Serial, CN, TenantID, Partition, Backend, StoreType, KeyType, KeyAlgorithm, ECCCurve, RSAKeySize}` | `recordIssuedKey` (`IssueCertificateWithProfile`, after `signCSR` succeeds) |
+
+Why this exists: a certificate's `Subject.CommonName` and
+`PublicKeyAlgorithm` are not enough to reconstruct a `types.KeyAttributes`
+that `types.KeyAttributes.Validate` accepts (`StoreType` and `KeyType` are
+also required) or that names the same key ID generation stored it under
+(`KeyAttributes.ID`, which also folds in `Partition` and `TenantID` when
+set). `RevokeCert`'s `DeleteKeys` option reads this record back
+(`resolveIssuedKeyAttributes`) instead of guessing, and deletes the record
+itself (`deleteIssuedKeyRecord`) once the key is gone.
+
+`recordIssuedKey` is called only when `CertificateRequest.Signer == nil` —
+i.e. `CreateCSR` generated or fetched the key through `ca.keyStore` for this
+request. `SignCSR` (the caller-supplied-CSR path) never calls it, because
+the CA never holds that key. `resolveIssuedKeyAttributes` returns `(nil,
+nil)` — not an error — when no record exists, which is both the CSR-signed
+case and a certificate issued before this recording existed;
+`RevokeCert(DeleteKeys: true)` treats that as a no-op key deletion, logs it,
+and still deletes the certificate from `certStore`.
+
+A real failure at any cleanup step (`keyStore.DeleteKey`,
+`deleteIssuedKeyRecord`, `certStore.DeleteCertificate`) is wrapped in a
+typed error and joined with `errors.Join` into `RevokeCert`'s return rather
+than discarded; the revocation record itself is already durable by the time
+cleanup runs, so a cleanup failure never leaves a certificate un-revoked
+(go-xkms#687, go-xkms#751). `RevokeCert` no longer calls
+`keyStore.DeleteCert`: the keystore's own certificate side is never
+populated for issued certificates — only `ImportCertificate` /
+`ImportCertificatePEM` call `keyStore.SaveCert`, and only best-effort — so
+`certStore` is the sole authoritative certificate store this method cleans
+up.
+
 ## Test strategy
 
 - **Unit** — `pkg/ca` carries the repo's densest suite: `ca_core_test.go`,
@@ -271,12 +449,38 @@ directly, skipping both freshness checks.
   `multi_keystore_tpm2_sim_test.go`. CRL persistence:
   `crl_persistence_test.go` (round trip across independent `*CA` instances
   sharing a backend, refresh-on-revoke, regenerate-on-read past/before
-  `NextUpdate` via an injected `Clock`, force-regenerate) and
-  `ocsp_revocationstore_test.go` (the OCSP cold-path fix).
+  `NextUpdate` via an injected `Clock`, force-regenerate),
+  `ocsp_revocationstore_test.go` (the OCSP cold-path fix), and
+  `revoke_delete_keys_test.go` (`RevokeCert(DeleteKeys)`: server-generated
+  key + certificate deleted and subsequently not found, CSR-signed no-op,
+  injected keystore/revocation-store failure propagation, and the
+  `recordIssuedKey`/`resolveIssuedKeyAttributes`/`deleteIssuedKeyRecord`
+  helpers directly). EK chain trust:
+  `tcg_ek_trust_test.go` — real generated root/intermediate/leaf chains
+  covering a trusted root, a trusted configured intermediate, a
+  request-supplied intermediate, an unknown root, a missing
+  tcg-kp-EKCertificate EKU, an expired leaf, no anchors configured, and the
+  critical-directory-name-only-SAN quirk; `tcg_iak_certstore_test.go`'s
+  `enrollSoftwareDevice` fixture configures a trust anchor per test so the
+  full `SignTCGCSRIDevID` path exercises the real check rather than a mock.
+  CA reload persistence (go-xkms#793): `ca_reload_793_test.go` — `Load`
+  succeeds over the same durable state `Init` wrote when the identity's
+  `KeyConfig` never set `key-type`, an uninitialized store fails `Load` with
+  `ErrCertificateNotFound`, and a corrupt persisted root certificate fails
+  `Load` with a distinct error that does not satisfy
+  `errors.Is(_, ErrCertificateNotFound)`.
 - **End to end** — `pkg/ca/issuance_e2e_test.go`,
   `pkg/api/rest/init_ceremony_e2e_test.go`.
 - **Integration** — `test/integration/certstore`, `test/integration/acme-tpm`,
-  `test/integration/cluster` (CA key custody across nodes).
+  `test/integration/cluster` (CA key custody across nodes). `pkg/server`
+  carries the `initializeCA` end of the go-xkms#793 contract over the
+  embedded qrdb storage backend: `server_ca_reload_793_test.go` —
+  `TestInitializeCA_QRDB_ReloadsPersistedCAAcrossRestarts` (a second `New()`
+  over the same data directory loads the persisted CA -- same serial, same
+  SPKI -- instead of re-initializing) and
+  `TestInitializeCA_QRDB_CorruptPersistedCertificateFailsClosed` (a damaged
+  persisted certificate fails startup with `*server.ErrCAInit` instead of
+  being silently replaced).
 - **Parity** — `CommandDefinition` entries exist for `ca-bundle`,
   `ca-certificate`, `ca-crl`, `ca-issue`, `ca-revoke`, `ca-sign-csr`,
   `ca-status`, `cert-info`, `cert-list`, `tls-cert`.

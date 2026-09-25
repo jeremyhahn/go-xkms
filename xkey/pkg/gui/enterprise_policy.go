@@ -14,8 +14,12 @@
 package gui
 
 import (
+	"errors"
 	"log/slog"
+	"strings"
+	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
@@ -60,9 +64,11 @@ func startupEnterprisePolicy(configDir string, log *slog.Logger) *config.PolicyS
 func applyFIDO2Policy(auth *authenticator.Authenticator, pol *config.PolicySection, log *slog.Logger) {
 	auth.SetRequireUserPresence(pol.FIDO2RequireUserPresence)
 	auth.SetEnableUserIntentCheck(pol.FIDO2UserIntentCheck)
+	auth.SetAlwaysUV(pol.FIDO2AlwaysUV)
 	log.Info("enterprise FIDO2 policy applied",
 		"require_user_presence", pol.FIDO2RequireUserPresence,
-		"user_intent_check", pol.FIDO2UserIntentCheck)
+		"user_intent_check", pol.FIDO2UserIntentCheck,
+		"always_uv", pol.FIDO2AlwaysUV)
 }
 
 // applyExtensionPolicy applies pol's browser-extension fields to the autofill
@@ -75,17 +81,136 @@ func applyExtensionPolicy(autofill *services.AutoFillService, pol *config.Policy
 		AllowedDomains:        pol.ExtensionAllowedDomains,
 		BlockedDomains:        pol.ExtensionBlockedDomains,
 		MaxFillsPerMinute:     pol.ExtensionMaxFillsPerMinute,
+		UserCanConfigure:      pol.UserCanConfigureExtension,
 	})
 }
 
+// applyCapabilityPolicy installs pol on every service whose operations are
+// gated directly by a PolicySection "UserCan*" deny switch or *Enabled kill
+// switch: Settings (theme, developer tools, auto-unseal), own-PIN change,
+// the trust store, the audit log viewer, sealed data management, and the
+// API explorer. Each service's SetPolicy stores the pointer and checks it
+// at the point of the gated operation; see PolicyDeniedError.
+func applyCapabilityPolicy(
+	appSvc *services.AppService,
+	pinSvc *services.PINService,
+	trustSvc *services.TrustService,
+	auditSvc *services.AuditService,
+	sealSvc *services.SealService,
+	apiExplorerSvc *services.APIExplorerService,
+	pol *config.PolicySection,
+) {
+	if appSvc != nil {
+		appSvc.SetPolicy(pol)
+	}
+	if pinSvc != nil {
+		pinSvc.SetPolicy(pol)
+	}
+	if trustSvc != nil {
+		trustSvc.SetPolicy(pol)
+	}
+	if auditSvc != nil {
+		auditSvc.SetPolicy(pol)
+	}
+	if sealSvc != nil {
+		sealSvc.SetPolicy(pol)
+	}
+	if apiExplorerSvc != nil {
+		apiExplorerSvc.SetPolicy(pol)
+	}
+}
+
+// PolicyPreconditionError indicates the enterprise policy's Require* startup
+// preconditions are not met by the current host state. Unmet names the
+// PolicySection fields responsible (their yaml/json tags). The policy
+// verified cryptographically -- this is a separate fact: the deployment
+// does not meet the minimum bar it declares for itself.
+type PolicyPreconditionError struct {
+	Unmet []string
+}
+
+// Error implements the error interface.
+func (e *PolicyPreconditionError) Error() string {
+	return "policy: unmet startup preconditions: " + strings.Join(e.Unmet, ", ")
+}
+
+// checkStartupPreconditions evaluates pol's Require* fields against the
+// current host state and returns a *PolicyPreconditionError listing every
+// field whose requirement is not met, or nil if all are met. Mirrors
+// EnsureSuiteAvailable in pkg/trust/bootstrap: preconditions are checked
+// once, at the point the policy becomes authoritative, rather than
+// re-checked on every operation.
+func (a *App) checkStartupPreconditions(pol *config.PolicySection) error {
+	var unmet []string
+
+	soPINSet, userPINSet := false, false
+	if a.pinService != nil {
+		if status, err := a.pinService.GetPINStatus(); err == nil && status != nil {
+			soPINSet, userPINSet = status.SOPINSet, status.UserPINSet
+		}
+	}
+	if pol.RequireSOPIN && !soPINSet {
+		unmet = append(unmet, "require_so_pin")
+	}
+	if pol.RequireUserPIN && !userPINSet {
+		unmet = append(unmet, "require_user_pin")
+	}
+
+	if pol.RequireEncryptedStorage && (a.config == nil || a.config.StorageType != "barrier") {
+		unmet = append(unmet, "require_encrypted_storage")
+	}
+
+	tpmAvailable := false
+	if a.tpmService != nil {
+		if status, err := a.tpmService.GetStatus(); err == nil && status != nil {
+			tpmAvailable = status.Available
+		}
+	}
+	if pol.RequireTPM && !tpmAvailable {
+		unmet = append(unmet, "require_tpm")
+	}
+
+	if len(unmet) == 0 {
+		return nil
+	}
+	return &PolicyPreconditionError{Unmet: unmet}
+}
+
 // applyVerifiedEnterprisePolicy is the AuthService's verified-policy hook. It
-// runs once the SO PIN has authenticated the sealed section and replaces the
-// startup defaults with the verified values on every consumer.
-func (a *App) applyVerifiedEnterprisePolicy(pol *config.PolicySection) {
+// runs once the SO PIN has authenticated the sealed section, and it decides
+// whether the verified section replaces the startup defaults on every
+// consumer.
+//
+// If pol's Require* preconditions are not met by the current host, the
+// verified section is refused and the startup defaults (already applied,
+// and already the secure choice -- see startupEnterprisePolicy) stay in
+// effect; the caller (AuthService.LoginSO) surfaces the returned error to
+// the SO without failing the login itself, since an SO who cannot log in
+// cannot fix the deployment that is failing its own preconditions.
+func (a *App) applyVerifiedEnterprisePolicy(pol *config.PolicySection) error {
+	if err := a.checkStartupPreconditions(pol); err != nil {
+		a.log.Warn("verified enterprise policy failed its own startup preconditions; keeping defaults",
+			"error", err)
+		if a.auditStore != nil {
+			if auditErr := a.auditStore.Log(audit.Entry{
+				Timestamp: time.Now(),
+				Operation: audit.OpPolicyDenied,
+				Success:   false,
+				Error:     err.Error(),
+				Details:   map[string]any{"operation": "apply_verified_policy"},
+			}); auditErr != nil {
+				return errors.Join(err, auditErr)
+			}
+		}
+		return err
+	}
+
 	if a.authenticatorInstance != nil {
 		applyFIDO2Policy(a.authenticatorInstance, pol, a.log)
 	}
 	if a.autofillService != nil {
 		applyExtensionPolicy(a.autofillService, pol)
 	}
+	applyCapabilityPolicy(a.appService, a.pinService, a.trustService, a.auditService, a.sealService, a.apiExplorerService, pol)
+	return nil
 }

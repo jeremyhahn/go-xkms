@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 func TestFIDO2Cmd_Help(t *testing.T) {
@@ -810,4 +811,69 @@ func TestFido2Device_Close_NilSubsystems_NoErrors(t *testing.T) {
 // but has no pending user presence request.
 func fakeSocketHandlerNoPending(n notify.Notifier, logger *slog.Logger) *authenticator.SocketHandler {
 	return authenticator.NewSocketHandler(n, logger)
+}
+
+// --- resolveFIDO2StoragePath (go-xkms#929) ---
+
+// TestResolveFIDO2StoragePath_ExplicitPathWins verifies that a caller-set
+// StoragePath is returned unchanged, without consulting the shared xkey
+// data-directory chain at all.
+func TestResolveFIDO2StoragePath_ExplicitPathWins(t *testing.T) {
+	cfg := &FIDO2Config{StoragePath: "/explicit/path"}
+
+	got, err := resolveFIDO2StoragePath(cfg)
+	if err != nil {
+		t.Fatalf("resolveFIDO2StoragePath: %v", err)
+	}
+	if got != "/explicit/path" {
+		t.Errorf("got %q, want %q", got, "/explicit/path")
+	}
+}
+
+// TestResolveFIDO2StoragePath_DefaultsUnderXKEYHome verifies that an unset
+// StoragePath resolves to an absolute path under the resolved xkey data
+// directory (<XKEY_HOME>/data/fido2), never a path relative to the
+// process's working directory, and that the resolved value is written back
+// onto cfg for later readers (go-xkms#929).
+func TestResolveFIDO2StoragePath_DefaultsUnderXKEYHome(t *testing.T) {
+	isolateDataDirSources(t)
+	root := t.TempDir()
+	xhome.SetRoot(root)
+
+	cfg := &FIDO2Config{}
+	got, err := resolveFIDO2StoragePath(cfg)
+	if err != nil {
+		t.Fatalf("resolveFIDO2StoragePath: %v", err)
+	}
+
+	want := filepath.Join(root, "data", "fido2")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("got %q, want an absolute path", got)
+	}
+	if cfg.StoragePath != want {
+		t.Errorf("cfg.StoragePath = %q, want it updated to %q", cfg.StoragePath, want)
+	}
+}
+
+// TestResolveFIDO2StoragePath_ErrorWhenHomeUnresolvable verifies that
+// resolution fails with a typed error, instead of falling back to a
+// cwd-relative path, when the xkey home cannot be resolved or created
+// (go-xkms#929).
+func TestResolveFIDO2StoragePath_ErrorWhenHomeUnresolvable(t *testing.T) {
+	isolateDataDirSources(t)
+
+	// A regular file, not a directory: XKEY_HOME can neither be used nor
+	// created as a directory.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Setenv(xhome.EnvHome, blocker)
+
+	if _, err := resolveFIDO2StoragePath(&FIDO2Config{}); err == nil {
+		t.Error("resolveFIDO2StoragePath should fail when the xkey home cannot be resolved")
+	}
 }

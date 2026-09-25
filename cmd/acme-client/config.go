@@ -176,6 +176,9 @@ func buildServiceConfig() *service.Config {
 	if cfg.Certificates == nil {
 		cfg.Certificates = make(map[string]*service.CertificateSpec)
 	}
+	if cfg.Devices == nil {
+		cfg.Devices = make(map[string]*service.DeviceSpec)
+	}
 	return cfg
 }
 

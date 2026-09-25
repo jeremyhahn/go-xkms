@@ -391,7 +391,8 @@ PKCS11_TEST_TIMEOUT ?= 10m
 XKMS_PKCS11_BACKENDS ?= software
 
 # Test configuration - include codec build tags for go-codec support
-TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator
+# Include frost tag for threshold signature scheme unit tests (issue #703)
+TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost
 TEST_FLAGS := -v -race -timeout 30m -tags="$(TEST_TAGS)"
 # FIPS variant. The `fips` tag has to join the SAME -tags list rather than
 # arrive as a second flag: go test keeps only the last -tags it is given, so
@@ -949,12 +950,26 @@ test-scripts:
 
 .PHONY: test-go
 ## test-go: Run the Go unit tests with coverage
+# Package exclusions from this lane (issue #703 -- every other exclusion
+# regex used to carry was unjustified and has been removed; pkg/pkcs11/...,
+# pkg/crypto/rand, pkg/storage/hardware, pkg/keyprovider/quantum, pkg/quantum,
+# cmd/xkmsd and cmd/pkcs11-module all build and run under $(TEST_TAGS) with no
+# extra setup, so they run here now):
+#   pkg/tpm2$$             - the simulator suite links -lcrypto (go-tpm-tools);
+#                            this job's environment doesn't install
+#                            libssl-dev, only the dedicated tpm2-simulator job
+#                            does. Measured by `make coverage-tpm2-simulator`
+#                            and merged into the report by `coverage-packages`.
+#   /mocks, /testutil       - generated/hand-written test doubles, not
+#   pkcs11test, /proto        production code; excluded from the per-package
+#                              threshold report in scripts/check-coverage.sh
+#   yubikey, smartcardhsm   - tests that need physical hardware to exercise
 test-go: check-insecure-tls
 	@echo "$(CYAN)$(BOLD)→ Running unit tests...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
 	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
-		$$(go list -e ./pkg/... ./cmd/... ./sdk/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2$$|pkg/logging|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand|/testutil|/frost$$|/proto|cmd/xkmsd|cmd/pkcs11-module|cmd/cgo|pkcs11test|yubikey|smartcardhsm)") \
+		$$(go list -e ./pkg/... ./cmd/... ./sdk/... 2>/dev/null | grep -v -E "(pkg/tpm2$$|/mocks|/testutil|/proto|pkcs11test|yubikey|smartcardhsm)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
 	if [ $$EXIT_CODE -eq 0 ]; then \
@@ -990,7 +1005,7 @@ coverage-full:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "$(CYAN)→ Step 1: Running unit tests with coverage...$(RESET)"
 	@$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
-		$$(go list -e ./pkg/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand)") \
+		$$(go list -e ./pkg/... 2>/dev/null | grep -v -E "(pkg/tpm2$$|/mocks|/testutil|/proto|pkcs11test|yubikey|smartcardhsm)") \
 		2>&1 | tee $(COVERAGE_DIR)/unit.log; \
 		unit_exit=$$?; \
 		if [ ! -f "$(COVERAGE_DIR)/unit.out" ] || [ ! -s "$(COVERAGE_DIR)/unit.out" ]; then \
@@ -1047,6 +1062,25 @@ coverage-report:
 	else \
 		echo "$(RED)✗ Coverage file not found. Run 'make test' first.$(RESET)"; \
 	fi
+
+
+.PHONY: coverage-threshold-check
+## coverage-threshold-check: Check per-package coverage against 90% threshold (issue #703)
+## Blocking: for local use, and the future CI gate once #704/#705/#706 close.
+coverage-threshold-check: coverage-packages
+	@bash scripts/check-coverage.sh 90 "$(COVERAGE_DIR)/all-packages.out"
+
+.PHONY: coverage-threshold-report
+## coverage-threshold-report: Report per-package coverage (non-blocking, for CI)
+coverage-threshold-report:
+	@if [ ! -f "$(COVERAGE_FILE)" ]; then \
+		echo "$(YELLOW)⚠ Coverage file not found. Skipping per-package report.$(RESET)"; \
+		exit 0; \
+	fi
+	@echo "$(CYAN)→ Per-package coverage report (90% threshold)...$(RESET)"
+	@echo ""
+	@$(MAKE) --no-print-directory coverage-packages || true
+	@bash scripts/check-coverage.sh 90 "$(COVERAGE_DIR)/all-packages.out" || true
 
 # ==============================================================================
 # Package-Specific Unit Tests
@@ -1131,11 +1165,45 @@ test-signing:
 	@echo "$(CYAN)→ Testing signing package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/signing/...
 
-.PHONY: test-verification
-## test-verification: Run verification package unit tests
-test-verification:
-	@echo "$(CYAN)→ Testing verification package...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/verification/...
+.PHONY: test-attestation
+## test-attestation: Run attestation package unit tests (invariants, android, dice)
+test-attestation:
+	@echo "$(CYAN)→ Testing attestation packages...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/attestation/...
+
+.PHONY: test-dice
+## test-dice: Run TCG DICE attestation package unit tests
+test-dice:
+	@echo "$(CYAN)→ Testing DICE attestation package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/attestation/dice/...
+
+.PHONY: bench-dice
+## bench-dice: Run TCG DICE attestation package benchmarks
+bench-dice:
+	@echo "$(CYAN)→ Benchmarking DICE attestation package...$(RESET)"
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/dice/... -bench=. -benchmem -run=^$$
+
+.PHONY: coverage-dice
+## coverage-dice: Generate coverage report for the TCG DICE attestation package
+coverage-dice:
+	@echo "$(CYAN)→ Generating DICE attestation coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/dice/... -coverprofile=$(COVERAGE_DIR)/dice.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/dice.out -o $(COVERAGE_DIR)/dice-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/dice.out > $(COVERAGE_DIR)/dice.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/dice.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)dice coverage: $${TOTAL}$(RESET)"
+
+.PHONY: coverage-attestation
+## coverage-attestation: Generate coverage report for the attestation packages
+coverage-attestation:
+	@echo "$(CYAN)→ Generating attestation coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/... -coverprofile=$(COVERAGE_DIR)/attestation.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/attestation.out -o $(COVERAGE_DIR)/attestation-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/attestation.out > $(COVERAGE_DIR)/attestation.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/attestation.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)attestation coverage: $${TOTAL}$(RESET)"
 
 .PHONY: test-certstore
 ## test-certstore: Run certstore package unit tests
@@ -1202,6 +1270,29 @@ test-x25519:
 test-chacha20poly1305:
 	@echo "$(CYAN)→ Testing ChaCha20-Poly1305 package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/crypto/chacha20poly1305/...
+
+.PHONY: test-avr
+## test-avr: Run AVR device backend unit tests
+test-avr:
+	@echo "$(CYAN)→ Testing AVR device backend...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/avr/...
+
+.PHONY: bench-avr
+## bench-avr: Run AVR device backend benchmarks
+bench-avr:
+	@echo "$(CYAN)→ Benchmarking AVR device backend...$(RESET)"
+	@$(GO) test $(TAG_FLAGS) ./pkg/backend/avr/... -bench=. -benchmem -run=^$$
+
+.PHONY: coverage-avr
+## coverage-avr: Generate coverage report for the AVR device backend
+coverage-avr:
+	@echo "$(CYAN)→ Generating AVR device backend coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/backend/avr/... -coverprofile=$(COVERAGE_DIR)/avr.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/avr.out -o $(COVERAGE_DIR)/avr-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/avr.out > $(COVERAGE_DIR)/avr.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/avr.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)avr coverage: $${TOTAL}$(RESET)"
 
 .PHONY: test-software
 ## test-software: Run unified software backend unit tests
@@ -1384,6 +1475,54 @@ bench-tpm2-simulator:
 	@echo "$(CYAN)→ Running tpm2 simulator benchmarks...$(RESET)"
 	@$(GO) test -timeout $(TPM2_SIMULATOR_TIMEOUT) -tags="$(TPM2_SIMULATOR_TAGS)" -bench=. -benchmem -run=^$$ ./pkg/tpm2/...
 
+# Packages that only exist, or only compile their production code paths,
+# behind the `pkcs11` build tag (issue #703): pkg/backend/pkcs11,
+# pkg/factor/pkcs11 and pkg/pivcert/pkcs11 have no buildable files at all
+# without it, and pkg/crypto/rand / pkg/storage/hardware each carry a
+# pkcs11.go alongside a `!pkcs11` stub, so the tagged build is the only way
+# to exercise the real implementation rather than the stub. None of this
+# needs a physical HSM: the suite runs against SoftHSM2 (miekg/pkcs11 dlopens
+# the module at runtime), which the `test` CI job already installs as an
+# unconditional cgo dependency of the module graph.
+PKCS11_TAGGED_TAGS := $(TEST_TAGS) pkcs11
+PKCS11_TAGGED_PKGS := ./pkg/backend/pkcs11/... ./pkg/factor/pkcs11/... ./pkg/pivcert/pkcs11/... ./pkg/crypto/rand/... ./pkg/storage/hardware/...
+
+.PHONY: test-pkcs11-tagged
+## test-pkcs11-tagged: Run the pkcs11-tag-gated unit suites against SoftHSM2
+test-pkcs11-tagged:
+	@echo "$(CYAN)→ Testing pkcs11-tagged packages...$(RESET)"
+	@CGO_ENABLED=1 $(GO) test -timeout 20m -tags="$(PKCS11_TAGGED_TAGS)" $(PKCS11_TAGGED_PKGS)
+	@echo "$(GREEN)✓ pkcs11-tagged tests passed$(RESET)"
+
+.PHONY: coverage-pkcs11-tagged
+## coverage-pkcs11-tagged: Generate a coverage report for the pkcs11-tag-gated packages
+coverage-pkcs11-tagged:
+	@echo "$(CYAN)→ Generating pkcs11-tagged coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@CGO_ENABLED=1 $(GO) test -timeout 20m -tags="$(PKCS11_TAGGED_TAGS)" \
+		-coverprofile=$(COVERAGE_DIR)/pkcs11-tagged.raw -covermode=atomic $(PKCS11_TAGGED_PKGS)
+	@grep -v -E "/mocks/|_test\.go" $(COVERAGE_DIR)/pkcs11-tagged.raw > $(COVERAGE_DIR)/pkcs11-tagged.out
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/pkcs11-tagged.out -o $(COVERAGE_DIR)/pkcs11-tagged.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/pkcs11-tagged.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/pkcs11-tagged.html$(RESET)"
+
+.PHONY: coverage-packages
+## coverage-packages: Merge every per-package coverage lane (main unit lane,
+## tpm2 simulator, pkcs11-tagged) into one profile (issue #703). Requires
+## $(COVERAGE_FILE) to already exist -- run `make coverage` (or `test-go`)
+## first; this target only runs the lanes `test-go` cannot reach itself.
+coverage-packages: coverage-tpm2-simulator coverage-pkcs11-tagged
+	@if [ ! -f "$(COVERAGE_FILE)" ]; then \
+		echo "$(RED)✗ $(COVERAGE_FILE) not found -- run 'make coverage' first$(RESET)"; \
+		exit 1; \
+	fi
+	@mkdir -p $(COVERAGE_DIR)
+	@echo "mode: atomic" > $(COVERAGE_DIR)/all-packages.out
+	@tail -n +2 $(COVERAGE_FILE) >> $(COVERAGE_DIR)/all-packages.out
+	@tail -n +2 $(COVERAGE_DIR)/tpm2-simulator.out >> $(COVERAGE_DIR)/all-packages.out
+	@tail -n +2 $(COVERAGE_DIR)/pkcs11-tagged.out >> $(COVERAGE_DIR)/all-packages.out
+	@echo "$(GREEN)✓ Merged coverage profile: $(COVERAGE_DIR)/all-packages.out$(RESET)"
+
 .PHONY: test-importexport
 ## test-importexport: Run import/export unit tests for all backends
 test-importexport:
@@ -1531,7 +1670,7 @@ coverage-xkmsctl:
 # lane used to be represented here by integration-test-pkcs11-conformance alone,
 # which left the C ABI and the whole OpenSSL/OpenSSH interop surface out of every
 # default run -- the exact surface real callers reach the module through.
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-bootstrap
+integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-run-images
@@ -2178,16 +2317,11 @@ integration-test-quantum:
 	@echo "$(GREEN)✓ Quantum-safe integration tests complete$(RESET)"
 
 .PHONY: test-frost
-## test-frost: Run FROST unit tests
+## test-frost: Run FROST unit tests (always enabled, frost tag in TEST_TAGS)
 test-frost:
-ifeq ($(WITH_FROST),1)
 	@echo "$(CYAN)$(BOLD)→ Running FROST unit tests...$(RESET)"
-	@$(GOTEST) -v -tags="frost" ./pkg/keyprovider/frost/...
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/keyprovider/frost/...
 	@echo "$(GREEN)✓ FROST unit tests complete$(RESET)"
-else
-	@echo "$(YELLOW)⚠ Skipping FROST unit tests (WITH_FROST=0)$(RESET)"
-	@echo "$(YELLOW)  To enable, run: make test-frost WITH_FROST=1$(RESET)"
-endif
 
 .PHONY: integration-test-frost
 ## integration-test-frost: Run FROST threshold signature integration tests
@@ -2486,13 +2620,17 @@ devcontainer-server-wait:
 
 .PHONY: integration-test-fido2
 ## integration-test-fido2: Run all FIDO2 integration tests (runs in devcontainer)
+# xkmsctl is built with the same "integration,fido2" tags as the test package:
+# only that build compiles in the //go:build integration && fido2 virtual-device
+# seam (cmd/xkmsctl/fido2_virtual.go) the CLI-exec tests below need. The release
+# binary (make build / make release-*) never carries those tags. See #807.
 integration-test-fido2:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags=gms_pure_go -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='integration$(comma)fido2$(comma)gms_pure_go' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
 integration-test-fido2-cli:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags=gms_pure_go -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='integration$(comma)fido2$(comma)gms_pure_go' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
 
 .PHONY: integration-test-fido2-hardware
 ## integration-test-fido2-hardware: Run FIDO2 ceremonies against a REAL attached authenticator (requires a physical YubiKey/CTAP2 key and a human to touch it)
@@ -2504,12 +2642,12 @@ integration-test-fido2-hardware:
 .PHONY: integration-test-fido2-webauthn
 ## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
 integration-test-fido2-webauthn:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags=gms_pure_go -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2$(comma)webauthn' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='integration$(comma)fido2$(comma)gms_pure_go' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2$(comma)webauthn' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
 
 .PHONY: integration-test-fido2-multiprotocol
 ## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
 integration-test-fido2-multiprotocol:
-	$(call run_in_devcontainer,$(GO) build -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
+	$(call run_in_devcontainer,$(GO) build -tags='integration$(comma)fido2' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
 
 .PHONY: integration-test-uhid
 ## integration-test-uhid: Run UHID package integration tests (runs in devcontainer with /dev/uhid access)
@@ -2522,6 +2660,16 @@ integration-test-uhid:
 ## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
 integration-test-xkey-fido2:
 	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' ./test/integration/... -timeout 5m,integration-test-xkey-fido2)
+
+.PHONY: integration-test-secretservice
+## integration-test-secretservice: Run the freedesktop Secret Service daemon integration tests
+## (secret-tool store/lookup/clear and git-credential-libsecret store/get/erase round trips)
+## against `xkey secret-service` under a private dbus-run-session bus. Runs only in the
+## devcontainer: it execs the real secret-tool and git-credential-libsecret binaries, which
+## are not installed in the devcontainer image today (see docs/secret-service/engineering.md
+## and go-xkms#723) -- this target reports that missing-tool failure rather than skip it.
+integration-test-secretservice:
+	$(call run_in_devcontainer,cd xkey && dbus-run-session -- $(GO) test -v -tags='integration$(comma)linux' -run 'TestSecretService' ./test/integration -timeout 5m,integration-test-secretservice)
 
 .PHONY: integration-test-xkey-webauthn
 ## integration-test-xkey-webauthn: Run Playwright browser tests against webauthn.io (Docker)
@@ -3458,18 +3606,34 @@ LINT_MODULES := . sdk/go xkey web/desktop
 
 # Build tags per module. A linter only analyses packages the tags select, so a
 # module linted without its tags reports a confident total having skipped the
-# code behind them -- xkey shows 69 findings untagged and 82 tagged.
+# code behind them -- xkey shows 69 findings untagged and 82 tagged, and the
+# root module shows 0 findings untagged against 107 under TEST_TAGS (#682):
+# every *_simulator_test.go finding, including the deprecated ecdsa.PublicKey
+# X/Y and elliptic.Curve.IsOnCurve accesses CI never saw, lives behind
+# tpm_simulator and was invisible to a lint run that never passed that tag.
 #
 # It matters in the other direction too: `unused` needs the tagged code
-# COMPILED to see the call sites, so linting xkey untagged reports helpers as
-# unused that are used perfectly well behind a tag.
+# COMPILED to see the call sites, so linting a module untagged reports
+# helpers as unused that are used perfectly well behind a tag.
 #
-# The list is therefore the widest set that compiles together, checked rather
-# than assumed: the transport/hardware tags plus every production backend --
-# tpm2 and the awskms/azurekv/gcpkms/vault implementations, which would
-# otherwise sit outside both vet and lint entirely. All ten build, vet and
-# lint together, so no tag matrix is needed here; if two ever become mutually
-# exclusive this has to become one.
+# Each module is linted under exactly the tags its OWN tests build with --
+# `make lint`/`make vet` are a coverage promise for `make test`, not a
+# separate declaration that can drift from it:
+#   - root and sdk/go build their tests under TEST_TAGS (test-sdk-go runs
+#     `go test $(TEST_FLAGS) ./...`, and TEST_FLAGS carries TEST_TAGS), so
+#     both lint under LINT_TAGS_root, TEST_TAGS comma-joined for
+#     golangci-lint/go vet's -tags flag.
+#   - xkey's LINT_TAGS_xkey is the widest set that compiles together, checked
+#     rather than assumed: the transport/hardware tags plus every production
+#     backend -- tpm2 and the awskms/azurekv/gcpkms/vault implementations,
+#     which would otherwise sit outside both vet and lint entirely. All ten
+#     build, vet and lint together, so no tag matrix is needed here; if two
+#     ever become mutually exclusive this has to become one.
+#   - web/desktop has no test target (it needs cgo + WebKit headers `make
+#     vet`/`make lint` do not carry), so it stays untagged.
+empty :=
+space := $(empty) $(empty)
+LINT_TAGS_root := $(subst $(space),$(comma),$(strip $(TEST_TAGS)))
 LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gcpkms,vault
 
 .PHONY: vet
@@ -3477,8 +3641,11 @@ LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gc
 vet:
 	@echo "$(CYAN)$(BOLD)→ Running go vet...$(RESET)"
 	@for m in $(LINT_MODULES); do \
-		tags="$(LINT_TAGS_xkey)"; \
-		if [ "$$m" != "xkey" ]; then tags=""; fi; \
+		case "$$m" in \
+			xkey) tags="$(LINT_TAGS_xkey)" ;; \
+			web/desktop) tags="" ;; \
+			*) tags="$(LINT_TAGS_root)" ;; \
+		esac; \
 		echo "$(CYAN)  → go vet ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
 		( cd "$$m" && $(GOVET) $${tags:+-tags "$$tags"} ./... ) || exit 1; \
 	done
@@ -3502,8 +3669,11 @@ lint:
 		exit 1; \
 	fi; \
 	for m in $(LINT_MODULES); do \
-		tags="$(LINT_TAGS_xkey)"; \
-		if [ "$$m" != "xkey" ]; then tags=""; fi; \
+		case "$$m" in \
+			xkey) tags="$(LINT_TAGS_xkey)" ;; \
+			web/desktop) tags="" ;; \
+			*) tags="$(LINT_TAGS_root)" ;; \
+		esac; \
 		echo "$(CYAN)  → golangci-lint ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
 		if ! ( cd "$$m" && $$GOLANGCI_LINT_BIN run $${tags:+--build-tags "$$tags"} ); then \
 			echo "$(RED)$(BOLD)✗ Linting failed in $$m$(RESET)"; \
@@ -3546,10 +3716,10 @@ lint:
 # and the pre-existing rule-3 residue reported for triage rather than
 # guessed at in the change that only wires the gate. An entry that stops
 # matching anything fails the sweep as stale rather than aging out silently.
-empty :=
-space := $(empty) $(empty)
-SECURE_ANALYZER_ROOT_TAGS := $(subst $(space),$(comma),$(strip $(TEST_TAGS)))
-export SECURE_ANALYZER_RUNGS := . - . $(SECURE_ANALYZER_ROOT_TAGS) sdk/go - xkey $(LINT_TAGS_xkey) web/desktop -
+# LINT_TAGS_root (declared with LINT_MODULES above) is the same TEST_TAGS,
+# comma-joined; reused here rather than recomputed so the two sweeps cannot
+# drift apart on what "the root module's tags" means.
+export SECURE_ANALYZER_RUNGS := . - . $(LINT_TAGS_root) sdk/go - xkey $(LINT_TAGS_xkey) web/desktop -
 export SECURE_ANALYZER_ALLOWLIST := $(CURDIR)/scripts/secure-analyzer-allowlist.txt
 
 .PHONY: secure-analyzer
@@ -4136,6 +4306,13 @@ integration-test-sshagent:
 	@echo "$(CYAN)$(BOLD)→ Running agent-only SSH session integration tests...$(RESET)"
 	$(call run_in_devcontainer,$(GO) test -v -tags='integration' ./test/integration/sshagent/... -timeout 5m,integration-test-sshagent)
 	@echo "$(GREEN)✓ Agent-only SSH session integration tests complete$(RESET)"
+
+.PHONY: integration-test-initceremony
+## integration-test-initceremony: xkmsd init persists admin factors across a restart (builds and runs its own xkmsd)
+integration-test-initceremony:
+	@echo "$(CYAN)$(BOLD)→ Running init-ceremony integration tests...$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration initceremony codec_cbor codec_json codec_msgpack tpm_simulator' ./test/integration/initceremony/... -timeout 10m,integration-test-initceremony)
+	@echo "$(GREEN)✓ Init-ceremony integration tests complete$(RESET)"
 
 .PHONY: integration-test-sdk-go-remote
 ## integration-test-sdk-go-remote: Run Go SDK remote protocol integration tests against docker-compose server

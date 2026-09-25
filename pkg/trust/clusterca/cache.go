@@ -38,6 +38,10 @@ const (
 	renewalFraction = 4
 )
 
+// ErrEmptyPEMChain is returned when a cached certificate chain PEM file
+// decodes no certificate blocks.
+var ErrEmptyPEMChain = errors.New("clusterca: no certificates in PEM chain")
+
 // AnchorCachePath returns the path of the cached trust-anchor bundle beneath
 // dataDir (the cluster trust anchor advertised to joining nodes).
 func AnchorCachePath(dataDir string) string {
@@ -104,7 +108,7 @@ func parseChainPEM(pemBytes []byte) (*x509.Certificate, []*x509.Certificate, err
 		certs = append(certs, cert)
 	}
 	if len(certs) == 0 {
-		return nil, nil, errors.New("clusterca: no certificates in PEM chain")
+		return nil, nil, ErrEmptyPEMChain
 	}
 	return certs[0], certs[1:], nil
 }

@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // StorageType indicates where a sealed blob is physically stored.
@@ -301,6 +302,11 @@ type SealService struct {
 	backend        xkms.StorageBackend // barrier-encrypted storage (nil = direct disk fallback)
 	blobPrefix     string              // key prefix for backend storage (e.g. "sealed/")
 	auditLog       atomic.Pointer[audit.Logger]
+
+	// policy is the enterprise policy section whose UserCanManageSealedData
+	// field gates SealData and DeleteBlob. nil in personal mode. See
+	// SetPolicy.
+	policy atomic.Pointer[config.PolicySection]
 }
 
 // NewSealService creates a new SealService that stores sealed blobs in storageDir.
@@ -378,21 +384,50 @@ func (s *SealService) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)
 }
 
-// logSealEvent logs a seal-related audit event.
-func (s *SealService) logSealEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := s.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// SetPolicy installs the enterprise policy section that gates SealData and
+// DeleteBlob. The GUI calls this with config.DefaultPolicy() before SO
+// login and the verified section afterward; see startupEnterprisePolicy and
+// applyVerifiedEnterprisePolicy in pkg/gui/enterprise_policy.go.
+func (s *SealService) SetPolicy(pol *config.PolicySection) {
+	s.policy.Store(pol)
+}
+
+// requireManageSealedData returns a *PolicyDeniedError, and logs it, if
+// enterprise policy's UserCanManageSealedData is false. The request is
+// refused either way, but OpPolicyDenied is SeveritySecurity: if the audit
+// write itself fails, that failure is joined onto the denial so the caller
+// sees both.
+func (s *SealService) requireManageSealedData(operation string) error {
+	pol := s.policy.Load()
+	if pol == nil || pol.UserCanManageSealedData {
+		return nil
 	}
+	err := &PolicyDeniedError{Field: "user_can_manage_sealed_data"}
+	if auditErr := s.logSealEvent(audit.OpPolicyDenied, false, err, map[string]any{"operation": operation}); auditErr != nil {
+		return errors.Join(err, auditErr)
+	}
+	return err
+}
+
+// logSealEvent logs a seal-related audit event. Seal, unseal, and blob
+// deletion are all SeveritySecurity, so the caller must propagate a
+// non-nil return and fail the request rather than proceed unaudited.
+func (s *SealService) logSealEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := s.auditLog.Load()
+	if p == nil {
+		return nil
+	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
 }
 
 // BestSealer returns the most secure available sealer, or nil if none available.
@@ -687,6 +722,10 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		}
 	}()
 
+	if err := s.requireManageSealedData("seal_data"); err != nil {
+		return nil, err
+	}
+
 	if req == nil || req.Label == "" {
 		return nil, ErrSealInvalidLabel
 	}
@@ -760,7 +799,17 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 	resp, err := client.Seal(ctx, sdkReq)
 	if err != nil {
 		s.log.Error("seal operation failed", "backend", backend, "error", err)
-		s.logSealEvent(audit.OpSealData, false, err, map[string]any{"label": req.Label, "backend": backend})
+		// TPM-backed seal failures are also recorded under OpTPMSealFailed so
+		// they surface in a TPM-scoped audit query, in addition to the
+		// backend-agnostic OpSealData trail every strategy gets.
+		if backend == "tpm2" {
+			if auditErr := s.logSealEvent(audit.OpTPMSealFailed, false, err, map[string]any{"label": req.Label}); auditErr != nil {
+				return nil, auditErr
+			}
+		}
+		if auditErr := s.logSealEvent(audit.OpSealData, false, err, map[string]any{"label": req.Label, "backend": backend}); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 
@@ -825,7 +874,9 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 	if entryErr != nil {
 		return nil, entryErr
 	}
-	s.logSealEvent(audit.OpSealData, true, nil, map[string]any{"label": req.Label, "backend": backend})
+	if auditErr := s.logSealEvent(audit.OpSealData, true, nil, map[string]any{"label": req.Label, "backend": backend}); auditErr != nil {
+		return nil, auditErr
+	}
 	return &result, nil
 }
 
@@ -893,16 +944,32 @@ func (s *SealService) UnsealData(id string, password string) (result string, ret
 	resp, err := client.Unseal(ctx, sdkReq)
 	if err != nil {
 		s.log.Error("unseal operation failed", "backend", backend, "blob_id", id, "error", err)
-		s.logSealEvent(audit.OpUnsealData, false, err, map[string]any{"blob_id": id})
+		// TPM-backed unseal failures are also recorded under
+		// OpTPMUnsealFailed so they surface in a TPM-scoped audit query, in
+		// addition to the backend-agnostic OpUnsealData trail every
+		// strategy gets.
+		if backend == "tpm2" {
+			if auditErr := s.logSealEvent(audit.OpTPMUnsealFailed, false, err, map[string]any{"blob_id": id}); auditErr != nil {
+				return "", auditErr
+			}
+		}
+		if auditErr := s.logSealEvent(audit.OpUnsealData, false, err, map[string]any{"blob_id": id}); auditErr != nil {
+			return "", auditErr
+		}
 		return "", err
 	}
 
-	s.logSealEvent(audit.OpUnsealData, true, nil, map[string]any{"blob_id": id})
+	if auditErr := s.logSealEvent(audit.OpUnsealData, true, nil, map[string]any{"blob_id": id}); auditErr != nil {
+		return "", auditErr
+	}
 	return base64.StdEncoding.EncodeToString(resp.Plaintext), nil
 }
 
 // DeleteBlob removes a sealed blob from storage.
 func (s *SealService) DeleteBlob(id string) error {
+	if err := s.requireManageSealedData("delete_blob"); err != nil {
+		return err
+	}
 	if id == "" {
 		return ErrSealBlobNotFound
 	}
@@ -917,26 +984,30 @@ func (s *SealService) DeleteBlob(id string) error {
 
 	if s.backend != nil {
 		if err := s.backend.Delete(ctx, s.blobPrefix+id); err != nil {
-			s.logSealEvent(audit.OpSealBlobDeleted, false, err, map[string]any{"blob_id": id})
+			if auditErr := s.logSealEvent(audit.OpSealBlobDeleted, false, err, map[string]any{"blob_id": id}); auditErr != nil {
+				return auditErr
+			}
 			return ErrSealBlobNotFound
 		}
-		s.logSealEvent(audit.OpSealBlobDeleted, true, nil, map[string]any{"blob_id": id})
-		return nil
+		return s.logSealEvent(audit.OpSealBlobDeleted, true, nil, map[string]any{"blob_id": id})
 	}
 
 	path := s.blobPath(id)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		s.logSealEvent(audit.OpSealBlobDeleted, false, ErrSealBlobNotFound, map[string]any{"blob_id": id})
+		if auditErr := s.logSealEvent(audit.OpSealBlobDeleted, false, ErrSealBlobNotFound, map[string]any{"blob_id": id}); auditErr != nil {
+			return auditErr
+		}
 		return ErrSealBlobNotFound
 	}
 
 	if err := os.Remove(path); err != nil {
-		s.logSealEvent(audit.OpSealBlobDeleted, false, err, map[string]any{"blob_id": id})
+		if auditErr := s.logSealEvent(audit.OpSealBlobDeleted, false, err, map[string]any{"blob_id": id}); auditErr != nil {
+			return auditErr
+		}
 		return ErrSealStorageFailed
 	}
 
-	s.logSealEvent(audit.OpSealBlobDeleted, true, nil, map[string]any{"blob_id": id})
-	return nil
+	return s.logSealEvent(audit.OpSealBlobDeleted, true, nil, map[string]any{"blob_id": id})
 }
 
 // ensureStorageDir creates the storage directory if it doesn't exist.

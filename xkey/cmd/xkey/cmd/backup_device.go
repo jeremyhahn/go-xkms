@@ -156,7 +156,7 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd))
+	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd), true)
 	if err != nil {
 		return err
 	}
@@ -317,7 +317,7 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 		return classifyBackupDecryptError(err)
 	}
 
-	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd))
+	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd), false)
 	if err != nil {
 		return err
 	}

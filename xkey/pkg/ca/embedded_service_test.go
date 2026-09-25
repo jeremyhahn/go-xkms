@@ -285,10 +285,6 @@ func (m *mockTrustedCA) PubKey(_ context.Context, _ *xkms.KeyAttributes) (crypto
 	return nil, nil
 }
 
-func (m *mockTrustedCA) QuantumSafeTLSConfig(_ context.Context, _ *xkms.KeyAttributes) (*tls.Config, error) {
-	return nil, nil
-}
-
 func (m *mockTrustedCA) RevokeCert(_ context.Context, _ *x509.Certificate, _ xkms.RevokeOptions) error {
 	return nil
 }

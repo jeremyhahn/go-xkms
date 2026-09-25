@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
@@ -1105,4 +1106,47 @@ func TestAPIExplorerListAvailableTokens_NilOIDCService(t *testing.T) {
 	assert.Equal(t, "fido2", tokens[0].Source)
 	assert.Equal(t, "some-jwt", tokens[0].Token)
 	assert.Nil(t, svc.oidcService)
+}
+
+// ---------------------------------------------------------------------------
+// APIExplorerEnabled policy gate (#668).
+// ---------------------------------------------------------------------------
+
+func TestAPIExplorerService_Execute_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		wantErr bool
+	}{
+		{"no policy (personal mode) allows", nil, false},
+		{"APIExplorerEnabled false denies", &config.PolicySection{APIExplorerEnabled: false}, true},
+		{"APIExplorerEnabled true allows", &config.PolicySection{APIExplorerEnabled: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := newTestServer(t)
+			defer ts.Close()
+
+			svc := newTestExplorerService(t, newTestExplorerConfig())
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			resp, err := svc.Execute(&ExplorerRequest{Method: "GET", URL: ts.URL + "/api/v1/keys"})
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "api_explorer_enabled", denied.Field)
+				assert.Nil(t, resp)
+				assert.True(t, logger.hasPolicyDenial(), "denial must be audited")
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, resp)
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				assert.False(t, logger.hasPolicyDenial())
+			}
+		})
+	}
 }

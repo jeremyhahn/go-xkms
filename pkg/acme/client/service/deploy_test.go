@@ -117,6 +117,7 @@ func TestDeployer_Deploy_NilConfig(t *testing.T) {
 	var deployErr ErrDeployFailed
 	require.True(t, errors.As(err, &deployErr))
 	assert.Equal(t, "unknown", deployErr.CertName)
+	assert.ErrorIs(t, err, ErrDeployConfigNil)
 }
 
 func TestDeployer_Deploy_EmptyCertPEM(t *testing.T) {
@@ -132,7 +133,7 @@ func TestDeployer_Deploy_EmptyCertPEM(t *testing.T) {
 
 	var deployErr ErrDeployFailed
 	require.True(t, errors.As(err, &deployErr))
-	assert.Contains(t, deployErr.Error(), "certificate PEM data is empty")
+	assert.ErrorIs(t, err, ErrDeployCertPEMEmpty)
 }
 
 func TestDeployer_Deploy_EmptyKeyPEM(t *testing.T) {
@@ -148,7 +149,7 @@ func TestDeployer_Deploy_EmptyKeyPEM(t *testing.T) {
 
 	var deployErr ErrDeployFailed
 	require.True(t, errors.As(err, &deployErr))
-	assert.Contains(t, deployErr.Error(), "private key PEM data is empty")
+	assert.ErrorIs(t, err, ErrDeployKeyPEMEmpty)
 }
 
 func TestDeployer_Deploy_EmptyCertPath(t *testing.T) {
@@ -164,7 +165,7 @@ func TestDeployer_Deploy_EmptyCertPath(t *testing.T) {
 
 	var deployErr ErrDeployFailed
 	require.True(t, errors.As(err, &deployErr))
-	assert.Contains(t, deployErr.Error(), "certificate path is empty")
+	assert.ErrorIs(t, err, ErrDeployCertPathEmpty)
 }
 
 func TestDeployer_Deploy_EmptyKeyPath(t *testing.T) {
@@ -180,7 +181,7 @@ func TestDeployer_Deploy_EmptyKeyPath(t *testing.T) {
 
 	var deployErr ErrDeployFailed
 	require.True(t, errors.As(err, &deployErr))
-	assert.Contains(t, deployErr.Error(), "key path is empty")
+	assert.ErrorIs(t, err, ErrDeployKeyPathEmpty)
 }
 
 func TestDeployer_Deploy_CertPermissions(t *testing.T) {

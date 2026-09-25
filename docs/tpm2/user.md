@@ -1,6 +1,6 @@
 # TPM 2.0 — User Guide
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## What a TPM gives you that software cannot
 
@@ -148,7 +148,10 @@ name are not found by the new one. A configured `iak.cn` is unaffected.
 
 **Provisioning either completes or refuses.** With an `idevid` section
 configured, `Install` needs the TPM's EK certificate: the enrollment CSR
-carries it and the CA checks it before issuing an identity. If the
+carries it and the CA checks it -- both that it is present and that it
+chains to a TPM-manufacturer trust anchor the CA operator configured (see
+[`../certificate-authority/user.md`](../certificate-authority/user.md)
+"Enrolling a device with a TPM") -- before issuing an identity. If the
 certificate is not in NV RAM (`ek.cert-handle`) or the certificate store,
 provisioning stops with `ErrDevIDProvisionEKCert` and mints no IDevID —
 previously it logged "continuing without it" and reported success, leaving a
@@ -158,6 +161,27 @@ step if the platform is not meant to carry an identity. A failed key creation
 or an unreadable key handle is reported the same way
 (`ErrDevIDProvisionIDevID`, `ErrDevIDProvisionIAK`,
 `ErrDevIDProvisionLookup`) rather than skipped.
+
+**The manufacturer EK certificate download is off by default.** If the
+certificate is not in NV RAM or the certificate store, `EKCertificate`
+returns `ErrEndorsementCertNotFound` without making any network call — an
+air-gapped host is never at risk of blocking on it. To opt in, set
+`ek.cert-download: true`; `EKCertificate` then makes one bounded HTTPS
+request to the manufacturer's EK certificate service
+(`https://ekop.intel.com/ekcertservice/` by default,
+`ek.cert-download-url` to point elsewhere) as a last resort. Bound the
+request with `ek.cert-download-timeout` (10s if unset); a slow or
+unreachable service fails with `ErrEKCertServiceUnreachable` instead of
+hanging, and a response that is not a valid DER or PEM certificate fails
+with `ErrEKCertServiceParseFailed`.
+
+```yaml
+tpm:
+  ek:
+    cert-download: true
+    cert-download-timeout: 10s
+    # cert-download-url: https://ekop.intel.com/ekcertservice/
+```
 
 ## The lockout counter
 
@@ -194,6 +218,8 @@ The simulator covers the whole surface. Two things surprise people:
 | TPM refuses everything | dictionary-attack lockout | `pin lockout-reset --so-pin -`, or wait out the interval |
 | NV space exhausted | too many NV indices | free some, or review the PIV NV base index |
 | attestation rejected | the EK does not chain to a trusted manufacturer root | import the manufacturer chain server-side |
+| EK certificate missing and `ErrEndorsementCertNotFound` on an air-gapped host | `ek.cert-download` is off (the default), so no network lookup is attempted | write the certificate locally (`ProvisionEKCert`), or set `ek.cert-download: true` if the host does have a path to the manufacturer service |
+| IAK/IDevID enrollment refused, "endorsement key certificate is not chained to a trusted tpm manufacturer root" | `ca.tcg-config.trust-anchors` is unset or does not name this device's manufacturer | see [`../certificate-authority/user.md`](../certificate-authority/user.md) "Enrolling a device with a TPM" |
 | the TPM "stops working" after hours of uptime | leaked sessions or object contexts | a code defect — the leak test suites exist for this |
 | a node's TPM behaves oddly in ways nothing explains | firmware bugs are real | check the chip's firmware revision before the code |
 

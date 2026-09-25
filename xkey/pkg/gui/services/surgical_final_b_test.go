@@ -207,11 +207,26 @@ func TestSurgB_OIDCService_RefreshLoop_TickAndCancel(t *testing.T) {
 	initialStatus := &OIDCRefreshStatus{Provider: "test", Running: true}
 	proc.status.Store(initialStatus)
 
-	go svc.refreshLoop(ctx, proc, entry)
+	done := make(chan struct{})
+	go func() {
+		svc.refreshLoop(ctx, proc, entry)
+		close(done)
+	}()
 
-	time.Sleep(1500 * time.Millisecond)
+	// Wait for at least one ticker.C fire instead of a fixed sleep: the
+	// AutoRefresh interval itself (1s, no clock seam) is the behavior under
+	// test.
+	require.Eventually(t, func() bool {
+		status := proc.status.Load()
+		return status != nil && status.RefreshCount >= 1
+	}, 10*time.Second, 20*time.Millisecond, "refreshLoop did not tick")
 	cancel()
-	time.Sleep(100 * time.Millisecond)
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("refreshLoop did not exit")
+	}
 
 	status := proc.status.Load()
 	require.NotNil(t, status)
@@ -633,6 +648,8 @@ func TestSurgB_PhoneService_SetDisconnected_WithEmitter(t *testing.T) {
 // OIDC Service: Additional paths
 // ---------------------------------------------------------------------------
 
+// TestSurgB_OIDCService_Login_AWSProviderRejected proves an AWS provider
+// with no aws_region is refused before any login attempt.
 func TestSurgB_OIDCService_Login_AWSProviderRejected(t *testing.T) {
 	svc := NewOIDCService(nil)
 	svc.providers["aws-test"] = &OIDCProviderEntry{
@@ -642,7 +659,7 @@ func TestSurgB_OIDCService_Login_AWSProviderRejected(t *testing.T) {
 
 	result, err := svc.Login("aws-test")
 	assert.NoError(t, err)
-	assert.Contains(t, result.Error, "AWS")
+	assert.Contains(t, result.Error, "aws_region")
 	require.NotNil(t, result)
 	assert.False(t, result.Success)
 }

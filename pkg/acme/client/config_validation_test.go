@@ -26,6 +26,16 @@ func TestValidateConfig_Valid(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestValidateConfig_Nil proves Validate rejects a nil receiver with a typed
+// error instead of panicking: WithConfig(nil) is a caller error New must
+// fail closed on (go-xkms#938).
+func TestValidateConfig_Nil(t *testing.T) {
+	var cfg *TrustedCAConfig
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config is required")
+}
+
 func TestValidateConfig_InvalidACME(t *testing.T) {
 	cfg := validConfig()
 	cfg.ACME.HTTPSAddr = ""
@@ -51,15 +61,6 @@ func TestValidateConfig_InvalidAdmin(t *testing.T) {
 	assert.Contains(t, err.Error(), "admin.https_addr")
 }
 
-func TestValidateConfig_InvalidMultiTenant(t *testing.T) {
-	cfg := validConfig()
-	cfg.MultiTenant.Enabled = true
-	cfg.MultiTenant.DefaultTenantID = ""
-	err := cfg.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "multi_tenant.default_tenant_id")
-}
-
 // --- ACMEConfig ---
 
 func TestValidateACMEConfig_Valid(t *testing.T) {
@@ -76,12 +77,16 @@ func TestValidateACMEConfig_MissingHTTPSAddr(t *testing.T) {
 	assert.Contains(t, err.Error(), "acme.https_addr is required")
 }
 
-func TestValidateACMEConfig_MissingExternalURL(t *testing.T) {
+// TestValidateACMEConfig_ExternalURLOptional verifies that Validate accepts a
+// config with no ExternalURL: TrustedCA.Serve derives an origin from the
+// listen address in that case (go-xkms#140), so requiring it unconditionally
+// here would refuse a construction path Serve legitimately supports
+// (go-xkms#938).
+func TestValidateACMEConfig_ExternalURLOptional(t *testing.T) {
 	acme := validACMEConfig()
 	acme.ExternalURL = ""
 	err := acme.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "acme.external_url is required")
+	require.NoError(t, err)
 }
 
 func TestValidateACMEConfig_ExternalURLNotHTTPS(t *testing.T) {
@@ -106,6 +111,14 @@ func TestValidateACMEConfig_ExternalURLInvalid(t *testing.T) {
 	err := acme.Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "external_url")
+}
+
+func TestValidateACMEConfig_MissingCAIdentifiers(t *testing.T) {
+	acme := validACMEConfig()
+	acme.CAIdentifiers = nil
+	err := acme.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "acme.ca_identifiers is required")
 }
 
 func TestValidateACMEConfig_InvalidTLS(t *testing.T) {
@@ -273,43 +286,14 @@ func TestValidateAdminConfig_EnabledInvalidTLS(t *testing.T) {
 	assert.Contains(t, err.Error(), "tls.min_version")
 }
 
-// --- MultiTenantConfig ---
-
-func TestValidateMultiTenantConfig_ValidEnabled(t *testing.T) {
-	mt := MultiTenantConfig{
-		Enabled:         true,
-		DefaultTenantID: "my-tenant",
-	}
-	err := mt.Validate()
-	require.NoError(t, err)
-}
-
-func TestValidateMultiTenantConfig_DisabledSkipsValidation(t *testing.T) {
-	mt := MultiTenantConfig{
-		Enabled:         false,
-		DefaultTenantID: "", // would be invalid if enabled
-	}
-	err := mt.Validate()
-	require.NoError(t, err)
-}
-
-func TestValidateMultiTenantConfig_EnabledMissingTenantID(t *testing.T) {
-	mt := MultiTenantConfig{
-		Enabled:         true,
-		DefaultTenantID: "",
-	}
-	err := mt.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "multi_tenant.default_tenant_id")
-}
-
 // --- helpers ---
 
 func validACMEConfig() TCAACMEConfig {
 	return TCAACMEConfig{
-		HTTPSAddr:   ":8443",
-		ExternalURL: "https://acme.example.com",
-		TLS:         TCATLSConfig{MinVersion: "1.3", MaxVersion: "1.3"},
+		HTTPSAddr:     ":8443",
+		ExternalURL:   "https://acme.example.com",
+		CAIdentifiers: []string{"ca.example.com"},
+		TLS:           TCATLSConfig{MinVersion: "1.3", MaxVersion: "1.3"},
 	}
 }
 
@@ -329,10 +313,6 @@ func validConfig() *TrustedCAConfig {
 			Enabled:   false,
 			HTTPSAddr: ":9443",
 			TLS:       TCATLSConfig{MinVersion: "1.3", MaxVersion: "1.3"},
-		},
-		MultiTenant: MultiTenantConfig{
-			Enabled:         false,
-			DefaultTenantID: "default",
 		},
 	}
 }

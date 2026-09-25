@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -52,7 +53,10 @@ type Backend interface {
 	// Ed25519 keys have a fixed size and do not require additional parameters.
 	GenerateEd25519(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
-	// GetKey retrieves an existing private key by its attributes.
+	// GetKey retrieves an existing private key by its attributes. See the
+	// error contract documented on types.KeyProvider.GetKey: only a
+	// genuine not-found condition may satisfy
+	// errors.Is(err, backend.ErrKeyNotFound).
 	GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
 	// DeleteKey removes a key identified by its attributes.
@@ -189,6 +193,19 @@ type Backend interface {
 	// CertStorage returns the underlying certificate storage for direct access if needed.
 	CertStorage() certstore.CertificateStorageAdapter
 
+	// SignerStore returns the backend's persisted signature/checksum store.
+	// The package-level Sign function uses it to persist the signature and
+	// digest for a blob when SignOptions.BlobCN is set; the package-level
+	// Verify function uses it as the types.ChecksumProvider when
+	// VerifyOpts.IntegrityCheck is set.
+	//
+	// Signatures are metadata about a signing operation, not key material --
+	// exactly like a certificate is metadata about a key -- so they persist
+	// through the same external storage.Backend as CertStorage, regardless of
+	// which KeyProvider (TPM2, PKCS#11, a cloud KMS, or software) produced the
+	// signature.
+	SignerStore() store.SignerStorer
+
 	// Close releases all resources held by the xkms.
 	// This closes both the key provider and certificate storage.
 	Close() error
@@ -238,9 +255,15 @@ func New(config *BackendConfig) (Backend, error) {
 	// certificate-specific operations (SaveCert, GetCert, etc.)
 	certAdapter := storage.NewCertAdapter(config.CertStorage)
 
+	// The signer store shares the same external storage.Backend as
+	// certificates. See the SignerStore doc comment on the Backend interface
+	// for why that is the right home for it.
+	signerStore := store.NewSignerStore(nil, config.CertStorage)
+
 	return &compositeBackend{
 		backend:     config.Backend,
 		certStorage: certAdapter,
+		signerStore: signerStore,
 	}, nil
 }
 
@@ -249,6 +272,7 @@ func New(config *BackendConfig) (Backend, error) {
 type compositeBackend struct {
 	backend     types.KeyProvider
 	certStorage *storage.CertAdapter
+	signerStore store.SignerStorer
 }
 
 // Verify interface compliance at compile time

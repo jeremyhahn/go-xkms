@@ -21,6 +21,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -69,11 +70,6 @@ func createInvalidProdCaData() []byte {
 	_ = binary.Write(&buf, binary.BigEndian, uint32(0))
 	_ = binary.Write(&buf, binary.BigEndian, uint32(0))
 	return buf.Bytes()
-}
-
-// createTruncatedProdCaData creates data that is truncated mid-header.
-func createTruncatedProdCaData() []byte {
-	return []byte{0x00, 0x00, 0x00} // Only 3 bytes, not enough for version
 }
 
 // createTestRSAKeyPair creates an RSA key pair for testing quote verification.
@@ -639,6 +635,16 @@ func TestExtendPCR(t *testing.T) {
 		digest[0] = 0xAB
 
 		result, err := extendPCR(current, digest, TCGAlgSHA1)
+		if fips140.Enforced() {
+			// A SHA-1 PCR bank cannot be verified under GODEBUG=fips140=only
+			// (see extendPCR's FIPS 140-only comment, go-xkms#23): the
+			// construction that used to panic now returns
+			// ErrUnsupportedHashAlgorithm cleanly instead.
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrUnsupportedHashAlgorithm)
+			assert.Nil(t, result)
+			return
+		}
 		require.NoError(t, err)
 		assert.Len(t, result, 20)
 		// Result should not be all zeros

@@ -70,14 +70,28 @@ type FIDO2AttestationStatement struct {
 	// Algorithm is the COSE algorithm used for signing.
 	Algorithm int
 
-	// Signature is the attestation signature.
+	// Signature is the attestation signature. For "packed" this is a raw
+	// signature over authData‖clientDataHash; for "tpm" this is the IAK's
+	// ordinary signature over CertInfo -- ASN.1 DER for ECDSA, the raw
+	// big-endian value for RSA -- in the same encoding every other WebAuthn
+	// format's "sig" uses (WebAuthn L2 §8.3 "sig").
 	Signature []byte
 
 	// CertificateChain is the X.509 certificate chain for verification.
 	CertificateChain []*x509.Certificate
 
-	// TPMData contains TPM-specific attestation data (for "tpm" format).
-	TPMData []byte
+	// Ver is the attestation statement format version, required by the "tpm"
+	// format's "ver" field. WebAuthn L2 §8.3 defines only "2.0".
+	Ver string
+
+	// CertInfo is the raw TPMS_ATTEST structure TPM2_Certify produced over the
+	// credential key, required by the "tpm" format's "certInfo" field.
+	CertInfo []byte
+
+	// PubArea is the credential key's raw TPMT_PUBLIC structure, required by
+	// the "tpm" format's "pubArea" field. Its Name must match the Name
+	// TPM2_Certify attested to in CertInfo.
+	PubArea []byte
 }
 
 // FIDO2KeyBackend abstracts key operations for FIDO2 credentials.

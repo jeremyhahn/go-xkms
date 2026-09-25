@@ -31,18 +31,61 @@ import (
 type capturedModuleRoute struct {
 	method, pattern string
 	public          bool
+	handler         http.HandlerFunc
 }
 
 func newCaptureModuleRegistrar() (*qrdbsdk.ModuleHTTPRegistrar, *[]capturedModuleRoute) {
 	var recs []capturedModuleRoute
 	r := qrdbsdk.NewModuleHTTPRegistrar(chi.NewRouter(),
 		func(method, pattern string, perm qrdbsdk.Permission, h http.HandlerFunc) {
-			recs = append(recs, capturedModuleRoute{method: method, pattern: pattern})
+			recs = append(recs, capturedModuleRoute{method: method, pattern: pattern, handler: h})
 		},
 		func(method, pattern string, h http.HandlerFunc) {
-			recs = append(recs, capturedModuleRoute{method: method, pattern: pattern, public: true})
+			recs = append(recs, capturedModuleRoute{method: method, pattern: pattern, public: true, handler: h})
 		})
 	return r, &recs
+}
+
+// TestAdminModule_LazyResolverBranches exercises newAdminModule's resolver
+// closure directly through the registered handler (rather than only
+// checking route patterns, as TestAdminModule_ReachableOnUnifiedListener
+// does): before adminRouterState is published, every request answers 503
+// (AdminModule's documented "server still composing" behavior); once
+// finalizeAdminModule publishes a router, the same handler reaches it.
+func TestAdminModule_LazyResolverBranches(t *testing.T) {
+	original := adminRouterState.Load()
+	t.Cleanup(func() { adminRouterState.Store(original) })
+	adminRouterState.Store(nil)
+
+	m, err := newAdminModule()
+	require.NoError(t, err)
+
+	reg, recs := newCaptureModuleRegistrar()
+	m.RegisterHTTP(reg)
+
+	var adminHandler http.HandlerFunc
+	for _, r := range *recs {
+		if r.method == http.MethodGet && r.pattern == "/admin" {
+			adminHandler = r.handler
+			break
+		}
+	}
+	require.NotNil(t, adminHandler, "expected a captured handler for GET /admin")
+
+	rec := httptest.NewRecorder()
+	adminHandler(rec, httptest.NewRequest(http.MethodGet, "/admin", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code,
+		"unpublished adminRouterState must answer 503, not panic or 200")
+
+	published := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	adminRouterState.Store(&published)
+
+	rec2 := httptest.NewRecorder()
+	adminHandler(rec2, httptest.NewRequest(http.MethodGet, "/admin", nil))
+	assert.Equal(t, http.StatusTeapot, rec2.Code,
+		"once published, the resolver must reach the stored router")
 }
 
 // TestAdminModule_ReachableOnUnifiedListener proves the ACME admin
@@ -77,7 +120,7 @@ func TestAdminModule_ReachableOnUnifiedListener(t *testing.T) {
 // never dispatched to an ACME RFC 8555 handler or the admin surface.
 func TestAdminModule_AbsentFromACMEListener(t *testing.T) {
 	svc := &stubRestService{}
-	acmeRouter := buildACMERouter(svc, "/acme")
+	acmeRouter := buildACMERouter(svc, "/acme", nil, nil)
 	ts := httptest.NewServer(acmeRouter)
 	t.Cleanup(ts.Close)
 

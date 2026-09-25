@@ -701,7 +701,6 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 			},
 		},
 		PlatformSRK: &PlatformSRKConfig{
-			SRKAuth:        "testme",
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
 		},
@@ -936,6 +935,15 @@ func TestOpenSimulatorFunction(t *testing.T) {
 		rw := sim.ReadWriter()
 		assert.NotNil(t, rw)
 	})
+
+	// A zero-value simulatorWrapper (sim == nil) never comes from
+	// OpenSimulator, but newSimHarness's cleanup pattern -- "always call
+	// Close, even after a partial failure" -- means Close must not dereference
+	// a nil *simulator.Simulator if construction never got that far.
+	t.Run("close on zero-value wrapper is a no-op", func(t *testing.T) {
+		wrapper := &simulatorWrapper{}
+		assert.NoError(t, wrapper.Close())
+	})
 }
 
 // TestExtractPublicKeyFromTPMPublic_Errors tests error paths
@@ -1154,6 +1162,7 @@ func TestOpenWithSimulator(t *testing.T) {
 		err := tpmInstance.Open()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid TPM transport configuration")
+		assert.ErrorIs(t, err, ErrInvalidTPMTransport)
 	})
 
 	t.Run("opens socket connection error with nonexistent socket", func(t *testing.T) {

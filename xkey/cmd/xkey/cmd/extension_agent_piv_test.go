@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"log/slog"
 	"math/big"
 	"os"
@@ -490,4 +491,319 @@ func TestRunPIVStatus_ReportsConfiguredBackend(t *testing.T) {
 	out, err := runDetached(t, runPIVStatus)
 	require.NoError(t, err)
 	assert.Contains(t, out, string(PIVBackendSoftware))
+}
+
+// writePEMCertFile writes cert to a temp file in PEM form and returns its
+// path.
+func writePEMCertFile(t *testing.T, cert *x509.Certificate) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "cert.pem")
+	block := &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(block), 0600))
+	return path
+}
+
+func TestRunPIVStore_StoresParsedCertificate(t *testing.T) {
+	withFilePIVStorage(t)
+
+	certFile := writePEMCertFile(t, pivTestCert(t, "stored-cert"))
+
+	out, err := runDetached(t, runPIVStore, string(xkms.PIVSlotAuthentication), certFile)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Certificate stored in slot")
+	assert.Contains(t, out, "stored-cert")
+
+	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+
+	got, err := storage.Retrieve(xkms.PIVSlotAuthentication)
+	require.NoError(t, err)
+	assert.Equal(t, "stored-cert", got.Subject.CommonName)
+}
+
+func TestRunPIVStore_RejectsUnreadableCertFile(t *testing.T) {
+	withFilePIVStorage(t)
+
+	_, err := runDetached(t, runPIVStore, string(xkms.PIVSlotAuthentication),
+		filepath.Join(t.TempDir(), "does-not-exist.pem"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVCertificateReadFailed)
+}
+
+func TestRunPIVStore_RejectsInvalidSlot(t *testing.T) {
+	withFilePIVStorage(t)
+
+	certFile := writePEMCertFile(t, pivTestCert(t, "irrelevant"))
+	_, err := runDetached(t, runPIVStore, "not-a-slot", certFile)
+	require.Error(t, err)
+}
+
+func TestRunPIVStore_RejectsUnparseableCertData(t *testing.T) {
+	withFilePIVStorage(t)
+
+	path := filepath.Join(t.TempDir(), "garbage.pem")
+	require.NoError(t, os.WriteFile(path, []byte("not a certificate"), 0600))
+
+	_, err := runDetached(t, runPIVStore, string(xkms.PIVSlotAuthentication), path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVCertificateParseFailed)
+}
+
+// newPIVExportTestCmd builds a detached export command carrying the
+// --format and --output flags the handler reads.
+func newPIVExportTestCmd(t *testing.T, format, output string) *cobra.Command {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("format", format, "")
+	cmd.Flags().String("output", output, "")
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	return cmd
+}
+
+func TestRunPIVExport_WritesPEMToOutputFile(t *testing.T) {
+	withFilePIVStorage(t)
+
+	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "exported-cert")))
+	require.NoError(t, storage.Close())
+
+	outPath := filepath.Join(t.TempDir(), "out.pem")
+	cmd := newPIVExportTestCmd(t, "pem", outPath)
+	require.NoError(t, runPIVExport(cmd, []string{string(xkms.PIVSlotAuthentication)}))
+
+	data, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	block, _ := pem.Decode(data)
+	require.NotNil(t, block, "exported file must contain a PEM block")
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	assert.Equal(t, "exported-cert", cert.Subject.CommonName)
+}
+
+func TestRunPIVExport_MissingCertificateIsAnError(t *testing.T) {
+	withFilePIVStorage(t)
+
+	cmd := newPIVExportTestCmd(t, "pem", filepath.Join(t.TempDir(), "out.pem"))
+	err := runPIVExport(cmd, []string{string(xkms.PIVSlotAuthentication)})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVExportFailed)
+}
+
+func TestRunPIVExport_RejectsInvalidFormat(t *testing.T) {
+	withFilePIVStorage(t)
+
+	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "irrelevant")))
+	require.NoError(t, storage.Close())
+
+	cmd := newPIVExportTestCmd(t, "carrier-pigeon", "")
+	err = runPIVExport(cmd, []string{string(xkms.PIVSlotAuthentication)})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVInvalidFormat)
+}
+
+// ---------------------------------------------------------------
+// piv generate / csr / import (software key generator)
+// ---------------------------------------------------------------
+
+// newPIVGenerateTestCmd builds a detached generate command carrying the
+// same flags pivGenerateCmd registers in production.
+func newPIVGenerateTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringP("algorithm", "a", "ECCP256", "")
+	cmd.Flags().String("pin-policy", "once", "")
+	cmd.Flags().String("touch-policy", "never", "")
+	cmd.Flags().BoolP("force", "f", false, "")
+	cmd.Flags().String("output-format", "self-signed", "")
+	cmd.Flags().String("subject", "", "")
+	cmd.Flags().String("organization", "", "")
+	cmd.Flags().String("country", "", "")
+	cmd.Flags().Int("validity-days", 0, "")
+	cmd.Flags().StringP("output", "o", "", "")
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	return cmd, &buf
+}
+
+func TestRunPivGenerate_SelfSignedDefault(t *testing.T) {
+	withFilePIVStorage(t)
+
+	cmd, buf := newPIVGenerateTestCmd(t)
+	require.NoError(t, runPivGenerate(cmd, []string{string(xkms.PIVSlotAuthentication)}))
+	out := buf.String()
+	assert.Contains(t, out, "Key generated in slot")
+	assert.Contains(t, out, "Public Key:")
+
+	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+	cert, err := storage.Retrieve(xkms.PIVSlotAuthentication)
+	require.NoError(t, err, "self-signed output must store a certificate in the slot")
+	assert.NotEmpty(t, cert.Subject.CommonName)
+}
+
+func TestRunPivGenerate_PublicKeyOutputFormat_WritesFile(t *testing.T) {
+	withFilePIVStorage(t)
+
+	cmd, _ := newPIVGenerateTestCmd(t)
+	require.NoError(t, cmd.Flags().Set("output-format", "public-key"))
+	outPath := filepath.Join(t.TempDir(), "pub.pem")
+	require.NoError(t, cmd.Flags().Set("output", outPath))
+
+	require.NoError(t, runPivGenerate(cmd, []string{string(xkms.PIVSlotDigitalSignature)}))
+
+	data, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	block, _ := pem.Decode(data)
+	require.NotNil(t, block)
+	assert.Equal(t, "PUBLIC KEY", block.Type)
+}
+
+func TestRunPivGenerate_RejectsInvalidAlgorithm(t *testing.T) {
+	withFilePIVStorage(t)
+
+	cmd, _ := newPIVGenerateTestCmd(t)
+	require.NoError(t, cmd.Flags().Set("algorithm", "carrier-pigeon"))
+
+	err := runPivGenerate(cmd, []string{string(xkms.PIVSlotAuthentication)})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVInvalidAlgorithm)
+}
+
+func TestRunPivGenerate_RejectsInvalidSlot(t *testing.T) {
+	withFilePIVStorage(t)
+
+	cmd, _ := newPIVGenerateTestCmd(t)
+	err := runPivGenerate(cmd, []string{"not-a-slot"})
+	require.Error(t, err)
+}
+
+// newPIVCSRTestCmd builds a detached csr command carrying the flags
+// pivCSRCmd registers in production.
+func newPIVCSRTestCmd(t *testing.T, cn string) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("cn", cn, "")
+	cmd.Flags().String("organization", "", "")
+	cmd.Flags().String("organizational-unit", "", "")
+	cmd.Flags().String("country", "", "")
+	cmd.Flags().String("province", "", "")
+	cmd.Flags().String("locality", "", "")
+	cmd.Flags().StringSlice("san", nil, "")
+	cmd.Flags().StringSlice("san-dns", nil, "")
+	cmd.Flags().StringSlice("san-ip", nil, "")
+	cmd.Flags().StringSlice("san-uri", nil, "")
+	cmd.Flags().StringP("output", "o", "", "")
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	return cmd, &buf
+}
+
+func TestRunPivCSR_WritesCSRToOutputFile(t *testing.T) {
+	withFilePIVStorage(t)
+
+	genCmd, _ := newPIVGenerateTestCmd(t)
+	require.NoError(t, runPivGenerate(genCmd, []string{string(xkms.PIVSlotAuthentication)}))
+
+	csrCmd, _ := newPIVCSRTestCmd(t, "user@example.com")
+	outPath := filepath.Join(t.TempDir(), "req.csr")
+	require.NoError(t, csrCmd.Flags().Set("output", outPath))
+
+	require.NoError(t, runPivCSR(csrCmd, []string{string(xkms.PIVSlotAuthentication)}))
+
+	data, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	block, _ := pem.Decode(data)
+	require.NotNil(t, block)
+	assert.Equal(t, "CERTIFICATE REQUEST", block.Type)
+}
+
+func TestRunPivCSR_RequiresCommonName(t *testing.T) {
+	withFilePIVStorage(t)
+
+	csrCmd, _ := newPIVCSRTestCmd(t, "")
+	err := runPivCSR(csrCmd, []string{string(xkms.PIVSlotAuthentication)})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVCSRCommonNameRequired)
+}
+
+func TestRunPivCSR_RejectsInvalidSlot(t *testing.T) {
+	withFilePIVStorage(t)
+
+	csrCmd, _ := newPIVCSRTestCmd(t, "user@example.com")
+	err := runPivCSR(csrCmd, []string{"not-a-slot"})
+	require.Error(t, err)
+}
+
+// newPIVImportTestCmd builds a detached import command carrying the
+// --verify and --force flags pivImportCmd registers in production.
+func newPIVImportTestCmd(t *testing.T, verify, force bool) *cobra.Command {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool("verify", verify, "")
+	cmd.Flags().Bool("force", force, "")
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	return cmd
+}
+
+func TestRunPivImport_MatchingKeySucceeds(t *testing.T) {
+	withFilePIVStorage(t)
+
+	cert := pivTestCert(t, "matching-cert")
+	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, cert))
+	require.NoError(t, storage.Close())
+
+	certFile := writePEMCertFile(t, cert)
+	cmd := newPIVImportTestCmd(t, true, false)
+	require.NoError(t, runPivImport(cmd, []string{string(xkms.PIVSlotAuthentication), certFile}))
+}
+
+func TestRunPivImport_NoExistingKeyFailsVerification(t *testing.T) {
+	withFilePIVStorage(t)
+
+	certFile := writePEMCertFile(t, pivTestCert(t, "no-key-yet"))
+	cmd := newPIVImportTestCmd(t, true, false)
+
+	err := runPivImport(cmd, []string{string(xkms.PIVSlotAuthentication), certFile})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVSlotKeyNotFound)
+}
+
+func TestRunPivImport_ForceOverridesVerificationFailure(t *testing.T) {
+	withFilePIVStorage(t)
+
+	certFile := writePEMCertFile(t, pivTestCert(t, "forced-import"))
+	cmd := newPIVImportTestCmd(t, true, true)
+
+	require.NoError(t, runPivImport(cmd, []string{string(xkms.PIVSlotAuthentication), certFile}))
+
+	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = storage.Close() }()
+	got, err := storage.Retrieve(xkms.PIVSlotAuthentication)
+	require.NoError(t, err)
+	assert.Equal(t, "forced-import", got.Subject.CommonName)
+}
+
+func TestRunPivImport_RejectsUnreadableFile(t *testing.T) {
+	withFilePIVStorage(t)
+
+	cmd := newPIVImportTestCmd(t, true, false)
+	err := runPivImport(cmd, []string{string(xkms.PIVSlotAuthentication),
+		filepath.Join(t.TempDir(), "missing.pem")})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVCertReadFailed)
 }

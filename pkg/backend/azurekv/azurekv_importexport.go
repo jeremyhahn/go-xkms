@@ -357,7 +357,7 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 	metadata := map[string]interface{}{
 		"cn":          attrs.CN,
 		"algorithm":   attrs.KeyAlgorithm.String(),
-		"key_type":    string(attrs.KeyType),
+		"key_type":    attrs.KeyType.String(), // see the CreateKey comment in azurekv.go
 		"imported":    true,
 		"import_time": time.Now().Unix(),
 	}
@@ -437,7 +437,7 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 	metadata := map[string]interface{}{
 		"cn":          attrs.CN,
 		"algorithm":   attrs.KeyAlgorithm.String(),
-		"key_type":    string(attrs.KeyType),
+		"key_type":    attrs.KeyType.String(), // see the CreateKey comment in azurekv.go
 		"imported":    true,
 		"import_time": time.Now().Unix(),
 	}
@@ -463,22 +463,14 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 // ExportKey exports a key in wrapped form for secure transport.
 // Azure Key Vault does not support exporting private keys directly.
 // This method returns ErrNotSupported.
+//
+// Capabilities().Export is unconditionally false for this backend, so
+// there is no attrs.Exportable branch to check here, matching the awskms
+// and gcpkms ExportKey contracts.
 func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
-
-	// Check if backend supports export (it doesn't)
-	if !b.Capabilities().Export {
-		return nil, backend.ErrNotSupported
-	}
-
-	// This line is unreachable due to the check above, but included for completeness
-	// Check if key is marked as exportable
-	if !attrs.Exportable {
-		return nil, backend.ErrKeyNotExportable
-	}
-
 	return nil, backend.ErrNotSupported
 }
 

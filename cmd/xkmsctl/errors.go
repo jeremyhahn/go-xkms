@@ -428,8 +428,10 @@ var (
 	// ErrDecodeTagFailed is the sentinel error "failed to decode tag".
 	ErrDecodeTagFailed = errors.New("failed to decode tag")
 
-	// ErrDecodeUserHandleFailed is the sentinel error "failed to decode user handle".
-	ErrDecodeUserHandleFailed = errors.New("failed to decode user handle")
+	// ErrDecodeCredentialIDFailed is the sentinel error "failed to decode
+	// credential ID" - returned when the credential ID cannot be recovered
+	// from the authenticator's attestation JSON.
+	ErrDecodeCredentialIDFailed = errors.New("failed to decode credential ID")
 
 	// ErrDecryptDataFailed is the sentinel error "failed to decrypt data".
 	ErrDecryptDataFailed = errors.New("failed to decrypt data")
@@ -774,9 +776,6 @@ var (
 	// ErrPINRequired is the sentinel error "--pin is required".
 	ErrPINRequired = errors.New("--pin is required")
 
-	// ErrParseAuthenticationOptionsFailed is the sentinel error "failed to parse authentication options".
-	ErrParseAuthenticationOptionsFailed = errors.New("failed to parse authentication options")
-
 	// ErrParseCACertificateFailed is the sentinel error "failed to parse CA certificate".
 	ErrParseCACertificateFailed = errors.New("failed to parse CA certificate")
 
@@ -794,9 +793,6 @@ var (
 
 	// ErrParsePackageFileFailed is the sentinel error "failed to parse package file".
 	ErrParsePackageFileFailed = errors.New("failed to parse package file")
-
-	// ErrParseRegistrationOptionsFailed is the sentinel error "failed to parse registration options".
-	ErrParseRegistrationOptionsFailed = errors.New("failed to parse registration options")
 
 	// ErrQueryAuditFailed is the sentinel error "failed to query audit log".
 	ErrQueryAuditFailed = errors.New("failed to query audit log")
@@ -1040,6 +1036,66 @@ var (
 
 	// ErrWriteWrappedKeyFileFailed is the sentinel error "failed to write wrapped key file".
 	ErrWriteWrappedKeyFileFailed = errors.New("failed to write wrapped key file")
+)
+
+// ACME admin errors (cmd/xkmsctl/acme*.go). Kept distinct from the local
+// xkms admin/cert sentinels above: both domains speak of "accounts" and
+// "certificates", but they name different servers over different SDKs, and
+// collapsing them onto the same sentinel would make an error message from
+// one read as if it came from the other.
+var (
+	// ErrInvalidAccountID is returned when an ACME account ID argument does
+	// not parse as an unsigned integer.
+	ErrInvalidAccountID = errors.New("invalid ACME account ID")
+
+	// ErrListAccountsFailed is the sentinel error "failed to list ACME accounts".
+	ErrListAccountsFailed = errors.New("failed to list ACME accounts")
+
+	// ErrGetACMEAccountFailed is the sentinel error "failed to get ACME account".
+	ErrGetACMEAccountFailed = errors.New("failed to get ACME account")
+
+	// ErrDisableACMEAccountFailed is the sentinel error "failed to disable ACME account".
+	ErrDisableACMEAccountFailed = errors.New("failed to disable ACME account")
+
+	// ErrListACMECertificatesFailed is the sentinel error "failed to list ACME certificates".
+	ErrListACMECertificatesFailed = errors.New("failed to list ACME certificates")
+
+	// ErrGetACMECertificateFailed is the sentinel error "failed to get ACME certificate".
+	ErrGetACMECertificateFailed = errors.New("failed to get ACME certificate")
+
+	// ErrRevokeACMECertificateFailed is the sentinel error "failed to revoke ACME certificate".
+	ErrRevokeACMECertificateFailed = errors.New("failed to revoke ACME certificate")
+
+	// ErrInvalidACMESerial is returned when an ACME certificate serial
+	// argument is empty.
+	ErrInvalidACMESerial = errors.New("certificate serial number is required")
+
+	// ErrACMETenantIDRequired is returned when an "acme eab" verb is
+	// invoked without --tenant. EAB is tenant-scoped in go-xkms's ACME
+	// admin plane, so there is no default tenant to fall back to.
+	ErrACMETenantIDRequired = errors.New("--tenant is required for EAB operations")
+
+	// ErrACMEEABKIDRequired is returned when "acme eab get/delete" is
+	// invoked without a key-ID argument.
+	ErrACMEEABKIDRequired = errors.New("EAB key ID is required")
+
+	// ErrCreateACMEEABFailed is the sentinel error "failed to create EAB".
+	ErrCreateACMEEABFailed = errors.New("failed to create EAB")
+
+	// ErrGetACMEEABFailed is the sentinel error "failed to get EAB".
+	ErrGetACMEEABFailed = errors.New("failed to get EAB")
+
+	// ErrDeleteACMEEABFailed is the sentinel error "failed to delete EAB".
+	ErrDeleteACMEEABFailed = errors.New("failed to delete EAB")
+
+	// ErrListACMEEABFailed is the sentinel error "failed to list EABs".
+	ErrListACMEEABFailed = errors.New("failed to list EABs")
+
+	// ErrGetACMEStatusFailed is the sentinel error "failed to get CA status".
+	ErrGetACMEStatusFailed = errors.New("failed to get CA status")
+
+	// ErrGetACMEStatsFailed is the sentinel error "failed to get CA statistics".
+	ErrGetACMEStatsFailed = errors.New("failed to get CA statistics")
 )
 
 // Sentinel errors for the password / platform / policy / pin / status
@@ -1595,18 +1651,6 @@ type ParticipantPackageNotFoundError struct {
 // Error returns a human-readable description.
 func (e *ParticipantPackageNotFoundError) Error() string {
 	return fmt.Sprintf("package for participant %d not found", e.ID)
-}
-
-// UserHandleTypeError is returned when a WebAuthn user handle has an
-// unexpected dynamic type.
-type UserHandleTypeError struct {
-	// Handle is the value with the unexpected type.
-	Handle any
-}
-
-// Error returns a human-readable description.
-func (e *UserHandleTypeError) Error() string {
-	return fmt.Sprintf("unexpected user handle type %T", e.Handle)
 }
 
 // UserNoCredentialsError is returned when a user has no registered credentials.

@@ -236,8 +236,8 @@ func TestClient_ConnectDisconnectCycle(t *testing.T) {
 			t.Fatalf("cycle %d: connect failed: %v", i, err)
 		}
 
-		time.Sleep(50 * time.Millisecond)
-
+		// No wait needed: ReconnectBackoffMax is 0 above, so Connect starts
+		// no monitor goroutine for Disconnect to race.
 		if err := client.Disconnect(); err != nil {
 			t.Fatalf("cycle %d: disconnect failed: %v", i, err)
 		}
@@ -325,8 +325,6 @@ func TestClient_ConnectWithTLS(t *testing.T) {
 		t.Fatalf("connect failed: %v", err)
 	}
 	defer client.Disconnect()
-
-	time.Sleep(100 * time.Millisecond)
 }
 
 // TestRejectEnrollment_DoubleReject tests rejecting an already-rejected
@@ -410,15 +408,11 @@ func TestClient_IsConnected_AfterServerStop(t *testing.T) {
 	ctx := context.Background()
 	_ = client.Connect(ctx)
 
-	time.Sleep(50 * time.Millisecond)
-
 	// Stop the server.
 	server.Stop()
 
-	// Give time for the connection to notice.
-	time.Sleep(100 * time.Millisecond)
-
-	// Disconnect client.
+	// No assertion follows, and ReconnectBackoffMax is 0 above, so Connect
+	// started no monitor goroutine for Disconnect to race.
 	client.Disconnect()
 }
 
@@ -440,15 +434,14 @@ func TestClient_MonitorConnection(t *testing.T) {
 	defer cancel()
 
 	_ = client.Connect(ctx)
-	time.Sleep(100 * time.Millisecond)
 
 	// Stop the server to trigger reconnection logic.
 	server.Stop()
-	time.Sleep(200 * time.Millisecond)
 
-	// Cancel the context to stop the monitor.
+	// Cancel the context to stop the monitor. No assertion follows, and
+	// conn is an atomic pointer (#968), so cancel/Disconnect racing the
+	// monitor goroutine's loop is safe regardless of timing.
 	cancel()
-	time.Sleep(100 * time.Millisecond)
 
 	client.Disconnect()
 }
@@ -472,6 +465,4 @@ func TestServer_GRPCClientConnection(t *testing.T) {
 		t.Fatalf("failed to create gRPC client: %v", err)
 	}
 	defer conn.Close()
-
-	time.Sleep(50 * time.Millisecond)
 }

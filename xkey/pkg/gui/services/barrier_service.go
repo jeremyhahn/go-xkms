@@ -15,6 +15,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -71,6 +72,15 @@ type BarrierService struct {
 	// If nil, TPM2 strategy is unavailable.
 	tpmSealerFn func() xkms.Sealer
 
+	// cloudKMSStrategyFn is called to obtain a cloud KMS sealing strategy
+	// (aws_kms/gcp_kms/azure_kv/vault) when assembleStrategy needs one. If
+	// nil, the four cloud KMS strategies are unavailable: BarrierService has
+	// no cloud backend wiring of its own -- the caller (xkey's headless
+	// `extension serve` or a future GUI flow) builds the backend from its own
+	// configuration and injects the assembled strategy here, the same
+	// pattern SetTPMSealerFunc uses for TPM2 (go-xkms#757).
+	cloudKMSStrategyFn func(strategyID string) (xkms.SealingStrategy, error)
+
 	// postUnsealHook is called after a successful Unseal() to allow the
 	// application to initialize services that depend on the barrier backend
 	// (e.g., FIDO2 storage, OATH, static passwords). Called outside the
@@ -115,6 +125,17 @@ func (s *BarrierService) SetTPMSealerFunc(fn func() xkms.Sealer) {
 	s.tpmSealerFn = fn
 }
 
+// SetCloudKMSStrategyFunc sets the function used to obtain a cloud KMS
+// sealing strategy (aws_kms, gcp_kms, azure_kv, or vault, identified by
+// strategyID) when Initialize or Unseal is called with one of those strategy
+// IDs. When nil (the default), the four cloud KMS strategies are
+// unavailable and assembleStrategy reports ErrBarrierStrategyUnavailable.
+func (s *BarrierService) SetCloudKMSStrategyFunc(fn func(strategyID string) (xkms.SealingStrategy, error)) {
+	s.mu.Lock()
+	s.cloudKMSStrategyFn = fn
+	s.mu.Unlock()
+}
+
 // SetBaseBackendFactory sets the function used to create the base storage backend.
 // When nil (the default), filestorage.New is used. Override with a LUKS backend
 // factory when LUKS is the selected storage type.
@@ -146,21 +167,37 @@ func (s *BarrierService) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)
 }
 
-// logBarrierEvent logs a barrier-related audit event.
-func (s *BarrierService) logBarrierEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := s.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// logBarrierEvent logs a barrier-related audit event. Every barrier
+// operation is SeveritySecurity, so the caller must propagate a non-nil
+// return and fail the request rather than proceed unaudited.
+func (s *BarrierService) logBarrierEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := s.auditLog.Load()
+	if p == nil {
+		return nil
 	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
+}
+
+// barrierAuditErr logs a barrier-related audit event and reports the
+// error the caller should return: the audit write failure if
+// logBarrierEvent returned one (a SeveritySecurity write failure must
+// fail the request), otherwise origErr so the operation's own failure
+// reason is preserved.
+func (s *BarrierService) barrierAuditErr(op audit.OperationType, success bool, origErr error, details map[string]any) error {
+	if auditErr := s.logBarrierEvent(op, success, origErr, details); auditErr != nil {
+		return auditErr
+	}
+	return origErr
 }
 
 // IsInitialized returns true if the barrier root key exists in storage.
@@ -235,15 +272,21 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 		}
 		exists, err := base.Exists(context.Background(), barrierRootKeyPath)
 		if err != nil {
-			_ = base.Close()
 			s.log.Error("barrier: root key existence check failed", "error", err)
+			if closeErr := base.Close(); closeErr != nil {
+				s.log.Warn("barrier: failed to close base backend after existence check failure", "error", closeErr)
+			}
 			return err
 		}
 		if exists {
-			_ = base.Close()
+			if closeErr := base.Close(); closeErr != nil {
+				s.log.Warn("barrier: failed to close base backend after already-initialized check", "error", closeErr)
+			}
 			return ErrBarrierAlreadyInit
 		}
-		_ = base.Close()
+		if closeErr := base.Close(); closeErr != nil {
+			s.log.Warn("barrier: failed to close base backend after existing-dir preflight", "error", closeErr)
+		}
 	}
 
 	// Validate password for the passphrase strategy: a missing password is
@@ -279,9 +322,9 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 		PreferenceOrder: []xkms.StrategyID{strategy.ID()},
 	}, strategy)
 	if bErr != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.log.Error("barrier: NewBarrier failed", "error", bErr)
-		return bErr
+		return errors.Join(bErr, closeErr)
 	}
 
 	ctx := s.context()
@@ -293,18 +336,20 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	// additional exposure here.
 	creds, credErr := xkms.CredentialsFor([]byte(password))
 	if credErr != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.log.Error("barrier: CredentialsFor failed", "error", credErr)
-		return credErr
+		return errors.Join(credErr, closeErr)
 	}
 	defer creds.Secret.Destroy()
 
 	if initErr := barrier.Initialize(ctx, creds); initErr != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.log.Error("barrier: barrier.Initialize failed",
 			"strategy", strategyID, "error", initErr)
-		s.logBarrierEvent(audit.OpBarrierInitialized, false, initErr, map[string]any{"strategy": strategyID})
-		return initErr
+		if auditErr := s.logBarrierEvent(audit.OpBarrierInitialized, false, initErr, map[string]any{"strategy": strategyID}); auditErr != nil {
+			return errors.Join(auditErr, closeErr)
+		}
+		return errors.Join(initErr, closeErr)
 	}
 
 	s.barrier = barrier
@@ -312,7 +357,9 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	s.lastStrategy = strategyID
 	hook := s.postUnsealHook
 	s.log.Info("barrier initialized", slog.String("strategy", strategyID))
-	s.logBarrierEvent(audit.OpBarrierInitialized, true, nil, map[string]any{"strategy": strategyID})
+	if auditErr := s.logBarrierEvent(audit.OpBarrierInitialized, true, nil, map[string]any{"strategy": strategyID}); auditErr != nil {
+		return auditErr
+	}
 	unlocked = true
 	s.mu.Unlock()
 
@@ -358,18 +405,19 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 		creds, credErr := xkms.CredentialsFor([]byte(password))
 		if credErr != nil {
 			s.mu.Unlock()
-			s.logBarrierEvent(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
-			return credErr
+			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
 		}
 		defer creds.Secret.Destroy()
 
 		if err := s.barrier.Unseal(s.context(), creds); err != nil {
 			s.mu.Unlock()
-			s.logBarrierEvent(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": s.lastStrategy})
-			return err
+			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": s.lastStrategy})
 		}
 		s.log.Info("barrier re-unsealed in place", slog.String("strategy", s.lastStrategy))
-		s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": s.lastStrategy})
+		if auditErr := s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": s.lastStrategy}); auditErr != nil {
+			s.mu.Unlock()
+			return auditErr
+		}
 		s.mu.Unlock()
 		return nil
 	}
@@ -418,9 +466,9 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 		PreferenceOrder: []xkms.StrategyID{strategy.ID()},
 	}, strategy)
 	if bErr != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.mu.Unlock()
-		return bErr
+		return errors.Join(bErr, closeErr)
 	}
 
 	ctx := s.context()
@@ -428,18 +476,16 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	// may be hardware-backed and password may be empty.
 	creds, credErr := xkms.CredentialsFor([]byte(password))
 	if credErr != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.mu.Unlock()
-		s.logBarrierEvent(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID})
-		return credErr
+		return errors.Join(s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID}), closeErr)
 	}
 	defer creds.Secret.Destroy()
 
 	if err := barrier.Unseal(ctx, creds); err != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.mu.Unlock()
-		s.logBarrierEvent(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": strategyID})
-		return err
+		return errors.Join(s.barrierAuditErr(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": strategyID}), closeErr)
 	}
 
 	s.barrier = barrier
@@ -447,8 +493,11 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	s.lastStrategy = strategyID
 	hook := s.postUnsealHook
 	s.log.Info("barrier unsealed", slog.String("strategy", strategyID))
-	s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": strategyID})
+	auditErr := s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": strategyID})
 	s.mu.Unlock()
+	if auditErr != nil {
+		return auditErr
+	}
 
 	// Run the post-unseal hook outside the mutex to allow re-entrant
 	// calls to BarrierService methods (e.g. GetBackend, IsUnsealed).
@@ -472,11 +521,9 @@ func (s *BarrierService) Seal() error {
 	}
 	err := s.barrier.Seal()
 	if err != nil {
-		s.logBarrierEvent(audit.OpBarrierSealed, false, err, nil)
-		return err
+		return s.barrierAuditErr(audit.OpBarrierSealed, false, err, nil)
 	}
-	s.logBarrierEvent(audit.OpBarrierSealed, true, nil, nil)
-	return nil
+	return s.logBarrierEvent(audit.OpBarrierSealed, true, nil, nil)
 }
 
 // ChangePassword re-seals the barrier root key with new credentials.
@@ -497,17 +544,17 @@ func (s *BarrierService) ChangePassword(newPassword string) error {
 	// the doc comment above); NewCredentials would reject that empty input.
 	creds, credErr := xkms.CredentialsFor([]byte(newPassword))
 	if credErr != nil {
-		s.logBarrierEvent(audit.OpBarrierPasswordChanged, false, credErr, nil)
-		return credErr
+		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
 	defer creds.Secret.Destroy()
 
 	if err := s.barrier.ChangePassword(ctx, creds); err != nil {
-		s.logBarrierEvent(audit.OpBarrierPasswordChanged, false, err, nil)
-		return err
+		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, err, nil)
 	}
 
-	s.logBarrierEvent(audit.OpBarrierPasswordChanged, true, nil, nil)
+	if auditErr := s.logBarrierEvent(audit.OpBarrierPasswordChanged, true, nil, nil); auditErr != nil {
+		return auditErr
+	}
 	s.log.Info("barrier password changed")
 	return nil
 }
@@ -600,7 +647,11 @@ func (s *BarrierService) probeRootKey(dir string) bool {
 	if err != nil {
 		return false
 	}
-	defer func() { _ = base.Close() }()
+	defer func() {
+		if closeErr := base.Close(); closeErr != nil {
+			s.log.Warn("barrier: failed to close base backend after root key probe", "dir", dir, "error", closeErr)
+		}
+	}()
 
 	exists, err := base.Exists(context.Background(), barrierRootKeyPath)
 	if err != nil {
@@ -625,6 +676,18 @@ func (s *BarrierService) assembleStrategy(strategyID string) (xkms.SealingStrate
 		return xkms.NewTPM2Strategy(sealer, nil), nil
 	case xkms.StrategyPassphrase:
 		return xkms.NewSoftwareSealStrategy(), nil
+	case xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault:
+		if s.cloudKMSStrategyFn == nil {
+			return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
+		}
+		strategy, err := s.cloudKMSStrategyFn(strategyID)
+		if err != nil {
+			return nil, err
+		}
+		if strategy == nil {
+			return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
+		}
+		return strategy, nil
 	default:
 		return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
 	}

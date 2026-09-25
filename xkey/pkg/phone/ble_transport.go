@@ -363,7 +363,9 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 
 	// Trust the device BEFORE connecting to avoid pairing prompts.
 	// For BLE, the pairing happens at the application level (Noise handshake).
-	_ = trustBlueZDevice(address)
+	if err := trustBlueZDevice(address); err != nil {
+		t.log.Warn("failed to trust BlueZ device", "address", address, "error", err)
+	}
 	time.Sleep(100 * time.Millisecond)
 
 	// Connect with retry logic and D-Bus error recovery
@@ -395,12 +397,18 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 			t.log.Info("BlueZ D-Bus stale object detected, removing device for fresh discovery",
 				"address", address)
 
-			_ = t.adapter.StopScan()
-			_ = removeBlueZDevice(address)
+			if stopErr := t.adapter.StopScan(); stopErr != nil {
+				t.log.Warn("failed to stop scan", "error", stopErr)
+			}
+			if removeErr := removeBlueZDevice(address); removeErr != nil {
+				t.log.Warn("failed to remove BlueZ device", "address", address, "error", removeErr)
+			}
 
 			// Also remove any stale old bonded address
 			if bondedAddress != "" && bondedAddress != address {
-				_ = removeBlueZDevice(bondedAddress)
+				if removeErr := removeBlueZDevice(bondedAddress); removeErr != nil {
+					t.log.Warn("failed to remove bonded BlueZ device", "address", bondedAddress, "error", removeErr)
+				}
 			}
 
 			time.Sleep(500 * time.Millisecond)
@@ -411,9 +419,13 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 
 		// Non D-Bus error: retry with standard cleanup
 		if attempt < connectRetries {
-			_ = t.adapter.StopScan()
+			if stopErr := t.adapter.StopScan(); stopErr != nil {
+				t.log.Warn("failed to stop scan", "error", stopErr)
+			}
 			refreshBlueZDevice(address, t.log)
-			_ = trustBlueZDevice(address)
+			if err := trustBlueZDevice(address); err != nil {
+				t.log.Warn("failed to trust BlueZ device", "address", address, "error", err)
+			}
 			time.Sleep(300 * time.Millisecond)
 		}
 	}
@@ -462,7 +474,9 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 		if err != nil {
 			t.log.Error("failed to discover services", "address", address, "error", err, "attempt", attempt)
 			if attempt == maxRetries {
-				_ = device.Disconnect()
+				if disconnectErr := device.Disconnect(); disconnectErr != nil {
+					t.log.Warn("failed to disconnect after service discovery failure", "address", address, "error", disconnectErr)
+				}
 				return ErrServiceNotFound
 			}
 			time.Sleep(retryDelay)
@@ -502,7 +516,9 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 			"expected", XKeyServiceUUID.String(),
 			"maxRetries", maxRetries,
 			"hint", "Try: 1) Restart xKey app on phone, 2) Toggle Bluetooth off/on, 3) Run 'bluetoothctl remove "+address+"' to clear cache")
-		_ = device.Disconnect()
+		if disconnectErr := device.Disconnect(); disconnectErr != nil {
+			t.log.Warn("failed to disconnect after missing xKey service", "address", address, "error", disconnectErr)
+		}
 		return ErrServiceNotFound
 	}
 
@@ -516,7 +532,9 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 	})
 	if err != nil {
 		t.log.Error("failed to discover characteristics", "address", address, "error", err)
-		_ = device.Disconnect()
+		if disconnectErr := device.Disconnect(); disconnectErr != nil {
+			t.log.Warn("failed to disconnect after characteristic discovery failure", "address", address, "error", disconnectErr)
+		}
 		return ErrCharacteristicNotFound
 	}
 
@@ -542,7 +560,9 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 		t.log.Error("missing required characteristics",
 			"hasControl", controlChar.UUID() != (bluetooth.UUID{}),
 			"hasResponse", responseChar.UUID() != (bluetooth.UUID{}))
-		_ = device.Disconnect()
+		if disconnectErr := device.Disconnect(); disconnectErr != nil {
+			t.log.Warn("failed to disconnect after missing characteristics", "address", address, "error", disconnectErr)
+		}
 		return ErrCharacteristicNotFound
 	}
 
@@ -560,19 +580,25 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 		t.handleResponseNotification(data)
 	}); err != nil {
 		t.log.Error("failed to enable response notifications", "error", err)
-		_ = device.Disconnect()
+		if disconnectErr := device.Disconnect(); disconnectErr != nil {
+			t.log.Warn("failed to disconnect after response notification failure", "address", address, "error", disconnectErr)
+		}
 		return ErrCharacteristicNotFound
 	}
 
-	// Subscribe to status notifications if available
+	// Subscribe to status notifications if available. Best-effort: status
+	// updates are a bonus feature, so a failure here does not abort the
+	// connection the way a response notification failure does above.
 	if statusChar.UUID() != (bluetooth.UUID{}) {
 		t.log.Debug("enabling status notifications", "conn_epoch", epoch)
-		_ = statusChar.EnableNotifications(func(data []byte) {
+		if err := statusChar.EnableNotifications(func(data []byte) {
 			if t.connEpoch.Load() != epoch {
 				return // stale notification from previous connection
 			}
 			t.handleStatusNotification(data)
-		})
+		}); err != nil {
+			t.log.Warn("failed to enable status notifications", "address", address, "error", err)
+		}
 	}
 
 	t.device = device
@@ -587,7 +613,9 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 	// Check context cancellation
 	select {
 	case <-ctx.Done():
-		_ = t.disconnectLocked(false)
+		if disconnectErr := t.disconnectLocked(false); disconnectErr != nil {
+			t.log.Warn("failed to disconnect after context cancellation", "address", address, "error", disconnectErr)
+		}
 		return ErrTimeout
 	default:
 	}
@@ -790,7 +818,9 @@ func (t *BLETransport) disconnectLocked(forceRemove bool) error {
 			if addr := t.connectedAddress.Load(); addr != nil {
 				address := addr.(string)
 				t.log.Info("force-removing BlueZ device (not connected)", "address", address)
-				_ = removeBlueZDevice(address)
+				if err := removeBlueZDevice(address); err != nil {
+					t.log.Warn("failed to remove BlueZ device", "address", address, "error", err)
+				}
 				time.Sleep(500 * time.Millisecond)
 			}
 		}
@@ -826,13 +856,17 @@ func (t *BLETransport) disconnectLocked(forceRemove bool) error {
 			// a pending D-Bus operation that blocks new writes with "In Progress".
 			t.log.Info("force-removing BlueZ device to clear stale GATT state", "address", address)
 			time.Sleep(200 * time.Millisecond)
-			_ = removeBlueZDevice(address)
+			if err := removeBlueZDevice(address); err != nil {
+				t.log.Warn("failed to remove BlueZ device", "address", address, "error", err)
+			}
 			time.Sleep(500 * time.Millisecond)
 		} else {
 			// Just ensure disconnected, don't remove bonding
 			t.log.Debug("ensuring BlueZ disconnect state", "address", address)
 			time.Sleep(200 * time.Millisecond)
-			_ = disconnectBlueZDevice(address)
+			if err := disconnectBlueZDevice(address); err != nil {
+				t.log.Warn("failed to disconnect BlueZ device", "address", address, "error", err)
+			}
 		}
 	}
 
@@ -919,17 +953,21 @@ func (t *BLETransport) CleanStaleBlueZEntry(address string) {
 
 	t.log.Info("removing stale classic Bluetooth cache entry before scan",
 		"address", address)
-	_ = removeBlueZDevice(address)
+	if err := removeBlueZDevice(address); err != nil {
+		t.log.Warn("failed to remove stale BlueZ device", "address", address, "error", err)
+	}
 	time.Sleep(500 * time.Millisecond)
 }
 
 // Close closes the transport and releases resources.
-func (t *BLETransport) Close() error {
+func (t *BLETransport) Close() (err error) {
 	if t.closed.Swap(true) {
 		return nil // Already closed
 	}
 
-	_ = t.Disconnect()
+	if disconnectErr := t.Disconnect(); disconnectErr != nil {
+		err = disconnectErr
+	}
 
 	if t.responseChan != nil {
 		close(t.responseChan)
@@ -938,7 +976,7 @@ func (t *BLETransport) Close() error {
 		close(t.statusChan)
 	}
 
-	return nil
+	return err
 }
 
 // StatusChannel returns the channel for status updates.
@@ -1013,12 +1051,16 @@ func refreshBlueZDevice(address string, log *slog.Logger) {
 	if isDevicePaired(address) {
 		// Device is bonded - don't remove, just disconnect and let it reconnect
 		log.Debug("device is bonded, refreshing without removing", "address", address)
-		_ = disconnectBlueZDevice(address)
+		if err := disconnectBlueZDevice(address); err != nil {
+			log.Warn("failed to disconnect BlueZ device", "address", address, "error", err)
+		}
 		time.Sleep(300 * time.Millisecond)
 	} else {
 		// Not bonded - safe to remove stale cache entry
 		log.Debug("device is not bonded, removing stale cache entry", "address", address)
-		_ = removeBlueZDevice(address)
+		if err := removeBlueZDevice(address); err != nil {
+			log.Warn("failed to remove BlueZ device", "address", address, "error", err)
+		}
 		time.Sleep(300 * time.Millisecond)
 	}
 }

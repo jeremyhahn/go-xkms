@@ -47,7 +47,7 @@ Barrier Status
   Hardware Backed: false
 ```
 
-> **Deep dive**: [Barrier Architecture](../seal/README.md) | [Barrier CLI Reference](cli/barrier.md)
+> **Deep dive**: [Barrier Architecture](../seal/architecture.md) | [Barrier CLI Reference](cli/barrier.md)
 
 ## Step 3: Set Up PINs
 
@@ -172,7 +172,7 @@ xkmsctl piv export 9a --backend pkcs11 > /etc/xkms/tls/admin-piv.pem
 
 **3. Configure mTLS to trust the PIV CA** and connect using the PIV-backed certificate. The PKCS#11 module handles the private key operations on the hardware token.
 
-> **Deep dive**: [PIV Documentation](../piv/README.md) | [PIV CLI Reference](cli/piv.md) | [PKCS#11 Backend](../backends/pkcs11.md)
+> **Deep dive**: [PIV Documentation](../piv/user.md) | [PIV CLI Reference](cli/piv.md) | [PKCS#11 Backend](../backends/pkcs11.md)
 
 ---
 
@@ -204,7 +204,7 @@ Follow the prompts to touch your security key or approve in the xkey terminal.
 xkmsctl --auth fido2 admin status
 ```
 
-> **Deep dive**: [WebAuthn Documentation](webauthn.md) | [FIDO2 CLI Reference](cli/fido2.md) | [xKey FIDO2](../fido2/README.md)
+> **Deep dive**: [WebAuthn Documentation](webauthn.md) | [FIDO2 CLI Reference](cli/fido2.md) | [xKey FIDO2](../fido2/architecture.md)
 
 ---
 
@@ -252,7 +252,7 @@ The global `--backend` flag selects which backend the *server* should use
 > **Note**: this is separate from the FIDO2 daemon's key backend.
 > `xkey fido2 --backend` is a local flag that shadows the global one and accepts
 > only `software`, `tpm2` or `phone`. The FIDO2 authenticator has no
-> xkmsd-backed key mode — see [FIDO2 Daemon Configuration](../fido2/daemon-configuration.md).
+> xkmsd-backed key mode — see [FIDO2 Daemon Configuration](../virtual-authenticator/cli.md).
 
 > **Deep dive**: [xKey Overview](../README.md) | [xKey Phone Backend](../phone/README.md)
 
@@ -283,9 +283,9 @@ xkmsctl barrier seal
 |-------|----------|
 | Backend selection and Go API | [Getting Started](getting-started.md) |
 | Full initialization procedures | [Initialization Guide](initialization.md) |
-| Barrier encryption architecture | [Seal/Unseal Architecture](../seal/README.md) |
+| Barrier encryption architecture | [Seal/Unseal Architecture](../seal/architecture.md) |
 | Bootstrap for new nodes | [Bootstrap Configuration](../configuration/bootstrap.md) |
 | CLI command reference | [CLI Overview](cli/README.md) |
-| PIV slot management | [PIV Documentation](../piv/README.md) |
+| PIV slot management | [PIV Documentation](../piv/user.md) |
 | xKey security key interface | [xKey Overview](../README.md) |
 | Docker deployment | [Docker Quick Start](../deployment/docker-quickstart.md) |

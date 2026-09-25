@@ -29,8 +29,10 @@ import (
 
 // dialPinned spins up a pinned, host-key-verified session against srv using
 // a fresh enclave-backed client key. The session owns the key on success;
-// callers defer sess.Close().
-func dialPinned(t *testing.T, srv *testServer, hostSigner ssh.Signer) session.Session {
+// callers defer sess.Close(). The bool return is false when the handshake
+// was refused for the expected GODEBUG=fips140=only reason (see
+// requireHandshake); the caller must return immediately in that case.
+func dialPinned(t *testing.T, srv *testServer, hostSigner ssh.Signer) (session.Session, bool) {
 	t.Helper()
 	store, sc := pinHost(t, srv.host(), hostSigner, "alice")
 	clientKey := generateClientKey(t)
@@ -46,11 +48,11 @@ func dialPinned(t *testing.T, srv *testServer, hostSigner ssh.Signer) session.Se
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return nil, false
 	}
-	return sess
+	return sess, true
 }
 
 // execCommand extracts the command string from an "exec" request payload.
@@ -93,7 +95,10 @@ func TestUpload_StreamsPayloadAndBuildsCommand(t *testing.T) {
 	srv := newTestServer(t, hostSigner, captureUploadHandler(resCh))
 	defer srv.close()
 
-	sess := dialPinned(t, srv, hostSigner)
+	sess, ok := dialPinned(t, srv, hostSigner)
+	if !ok {
+		return
+	}
 	defer sess.Close()
 
 	payload := []byte("streamed ISO payload \x00\x01\x02\xff binary data spanning bytes")
@@ -127,7 +132,10 @@ func TestUpload_ZeroModeSkipsChmod(t *testing.T) {
 	srv := newTestServer(t, hostSigner, captureUploadHandler(resCh))
 	defer srv.close()
 
-	sess := dialPinned(t, srv, hostSigner)
+	sess, ok := dialPinned(t, srv, hostSigner)
+	if !ok {
+		return
+	}
 	defer sess.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -152,7 +160,10 @@ func TestUpload_RejectsSingleQuotePath(t *testing.T) {
 	srv := newTestServer(t, hostSigner, echoHandler)
 	defer srv.close()
 
-	sess := dialPinned(t, srv, hostSigner)
+	sess, ok := dialPinned(t, srv, hostSigner)
+	if !ok {
+		return
+	}
 	defer sess.Close()
 
 	err := sess.Upload(context.Background(), strings.NewReader("x"), "/data/it's.iso", 0o644)
@@ -171,7 +182,10 @@ func TestUpload_NilSrc(t *testing.T) {
 	srv := newTestServer(t, hostSigner, echoHandler)
 	defer srv.close()
 
-	sess := dialPinned(t, srv, hostSigner)
+	sess, ok := dialPinned(t, srv, hostSigner)
+	if !ok {
+		return
+	}
 	defer sess.Close()
 
 	err := sess.Upload(context.Background(), nil, "/data/file", 0o644)
@@ -190,7 +204,10 @@ func TestUpload_EmptyPath(t *testing.T) {
 	srv := newTestServer(t, hostSigner, echoHandler)
 	defer srv.close()
 
-	sess := dialPinned(t, srv, hostSigner)
+	sess, ok := dialPinned(t, srv, hostSigner)
+	if !ok {
+		return
+	}
 	defer sess.Close()
 
 	err := sess.Upload(context.Background(), strings.NewReader("x"), "", 0o644)
@@ -210,7 +227,10 @@ func TestUpload_AfterClose_ReturnsClosedError(t *testing.T) {
 	srv := newTestServer(t, hostSigner, echoHandler)
 	defer srv.close()
 
-	sess := dialPinned(t, srv, hostSigner)
+	sess, ok := dialPinned(t, srv, hostSigner)
+	if !ok {
+		return
+	}
 	if err := sess.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -235,7 +255,10 @@ func TestUpload_NonZeroExit(t *testing.T) {
 	srv := newTestServer(t, hostSigner, failHandler)
 	defer srv.close()
 
-	sess := dialPinned(t, srv, hostSigner)
+	sess, ok := dialPinned(t, srv, hostSigner)
+	if !ok {
+		return
+	}
 	defer sess.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -272,7 +295,10 @@ func TestUpload_ContextCancellation(t *testing.T) {
 		srv.close()
 	}()
 
-	sess := dialPinned(t, srv, hostSigner)
+	sess, ok := dialPinned(t, srv, hostSigner)
+	if !ok {
+		return
+	}
 	defer sess.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)

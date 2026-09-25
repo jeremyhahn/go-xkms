@@ -33,9 +33,9 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
-	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -79,6 +79,23 @@ var (
 	// public key does not match the issuer certificate it would be paired
 	// with, which would produce a certificate chain that never verifies.
 	ErrTenantSignerIssuerMismatch = errors.New("handlers: tenant CA signer does not match issuer certificate")
+
+	// ErrCAAAuthorizationLookup is returned when an order's authorization
+	// cannot be retrieved from storage while resolving the challenge type
+	// that validated a DNS identifier, needed to enforce a CAA record's RFC
+	// 8657 validationmethods parameter.
+	ErrCAAAuthorizationLookup = errors.New("handlers: failed to retrieve order authorization for CAA validation")
+
+	// ErrCAAAuthorizationNotFound is returned when none of an order's
+	// authorizations match the DNS identifier and wildcard flag being CAA
+	// validated, so the challenge type that validated it cannot be
+	// determined.
+	ErrCAAAuthorizationNotFound = errors.New("handlers: no authorization found for CAA-validated identifier")
+
+	// ErrCAAChallengeNotValidated is returned when an identifier's
+	// authorization has no challenge in the "valid" state, so the RFC 8657
+	// validationmethods check cannot determine which method validated it.
+	ErrCAAChallengeNotValidated = errors.New("handlers: authorization has no validated challenge")
 )
 
 // resolveTenantSigningCA determines which CA should sign certificates for the given account.
@@ -362,6 +379,12 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	s.logger.Debug("OrderFinalizeHandler", "method", r.Method, "url", r.URL)
 	ctx := r.Context()
 
+	// start covers the whole finalize call, from request parsing through
+	// signing (or the terminal failure), matching what operators mean by
+	// "issuance latency": ObserveCertificateIssuanceDuration in
+	// sendFinalizeResponse/failOrder measures time.Since(start).
+	start := time.Now()
+
 	account, payload, err := s.parseKID(ctx, r)
 	if err != nil {
 		writeError(w, common.MalformedError("Failed to parse account key", nil))
@@ -448,7 +471,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				}
 
 				// Send the final order response
-				s.sendFinalizeResponse(ctx, orderDAO, order, serialNumber, pem, w)
+				s.sendFinalizeResponse(ctx, orderDAO, order, account, start, serialNumber, pem, w)
 				return
 			}
 		}
@@ -520,8 +543,17 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Perform CAA validation for DNS identifiers before certificate issuance
-	// per RFC 8555 Section 8.1 and RFC 8659
+	// per RFC 8555 Section 8.1, RFC 8659, and RFC 8657 (accounturi /
+	// validationmethods).
 	if s.caaValidator != nil {
+		authzDAO, err := s.storageFactory.AuthorizationDAO(account.ID)
+		if err != nil {
+			writeError(w, common.ServerInternal("Failed to create authorization DAO"))
+			return
+		}
+
+		accountURI := s.accountURL(account)
+
 		for _, identifier := range order.Identifiers {
 			// Only validate DNS identifiers - skip IP and permanent-identifier types
 			if identifier.Type != common.AuthzTypeDNS {
@@ -536,8 +568,19 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				domain = strings.TrimPrefix(domain, "*.")
 			}
 
+			// RFC 8657 Section 4 restricts issuance to the challenge type
+			// that actually validated the identifier, so resolve it before
+			// invoking the CAA validator.
+			validationMethod, err := s.caaValidationMethod(ctx, authzDAO, order, domain, isWildcard)
+			if err != nil {
+				s.logger.Error("Failed to resolve validated challenge type for CAA",
+					"domain", domain, "wildcard", isWildcard, "error", err)
+				s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to resolve validated challenge type for CAA validation"))
+				return
+			}
+
 			// Perform CAA validation
-			if err := s.caaValidator.Validate(ctx, domain, isWildcard); err != nil {
+			if err := s.caaValidator.Validate(ctx, domain, isWildcard, accountURI, validationMethod); err != nil {
 				s.logger.Error("CAA validation failed",
 					"domain", domain,
 					"wildcard", isWildcard,
@@ -546,12 +589,12 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				// Check if this is a CAA validation failure
 				var caaErr *server.ErrCAAValidationFailed
 				if errors.As(err, &caaErr) {
-					s.failOrder(ctx, orderDAO, order, w, common.CAAError(err.Error()))
+					s.failOrder(ctx, orderDAO, order, account, start, w, common.CAAError(err.Error()))
 					return
 				}
 
 				// Other errors (DNS errors, etc.) - return as CAA error per RFC
-				s.failOrder(ctx, orderDAO, order, w, common.CAAError(fmt.Sprintf("CAA validation error: %v", err)))
+				s.failOrder(ctx, orderDAO, order, account, start, w, common.CAAError(fmt.Sprintf("CAA validation error: %v", err)))
 				return
 			}
 
@@ -576,7 +619,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		s.logger.Error("Failed to resolve tenant signing CA",
 			"error", err, "account_id", account.ID, "tenant_id", account.TenantID)
-		s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(err))
+		s.failOrder(ctx, orderDAO, order, account, start, w, tenantSigningCAProblem(err))
 		return
 	}
 
@@ -588,7 +631,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		s.logger.Error("Failed to get tenant CA signer",
 			"error", err, "tenant_id", account.TenantID)
-		s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(err))
+		s.failOrder(ctx, orderDAO, order, account, start, w, tenantSigningCAProblem(err))
 		return
 	}
 
@@ -603,14 +646,14 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			s.logger.Error("Failed to resolve tenant CA issuer certificate",
 				"error", err, "tenant_id", signingCAInfo.TenantID)
-			s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(err))
+			s.failOrder(ctx, orderDAO, order, account, start, w, tenantSigningCAProblem(err))
 			return
 		}
 
 		if !signerMatchesIssuer(tenantSigner, issuerCert) {
 			s.logger.Error("Tenant CA signer does not match issuer certificate",
 				"error", ErrTenantSignerIssuerMismatch, "tenant_id", signingCAInfo.TenantID)
-			s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(ErrTenantSignerIssuerMismatch))
+			s.failOrder(ctx, orderDAO, order, account, start, w, tenantSigningCAProblem(ErrTenantSignerIssuerMismatch))
 			return
 		}
 	}
@@ -678,7 +721,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			cert, err = s.ca.IssueEKCertificate(r.Context(), ekRequest, ekPubKey)
 			if err != nil {
 				s.logger.Error("Failed to issue EK certificate", "error", err)
-				s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to issue EK certificate"))
+				s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to issue EK certificate"))
 				return
 			}
 		} else {
@@ -714,7 +757,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 					"error", err,
 					"order_id", order.ID,
 					"account_id", account.ID)
-				s.failOrder(ctx, orderDAO, order, w,
+				s.failOrder(ctx, orderDAO, order, account, start, w,
 					common.Unauthorized(fmt.Sprintf("Pre-issuance check failed: %v", err)))
 				return
 			}
@@ -743,7 +786,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 					"error", hookErr,
 					"order_id", order.ID,
 					"account_id", account.ID)
-				s.failOrder(ctx, orderDAO, order, w,
+				s.failOrder(ctx, orderDAO, order, account, start, w,
 					common.ServerInternal(fmt.Sprintf("Pre-sign hook failed: %v", hookErr)))
 				return
 			}
@@ -752,7 +795,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 
 		cert, err = s.ca.SignCSR(r.Context(), csrPEM, signOpts)
 		if err != nil {
-			s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to sign CSR"))
+			s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to sign CSR"))
 			return
 		}
 	}
@@ -761,7 +804,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// X.509 serial numbers can be up to 20 bytes, but we store as uint64
 	// If the serial number is too large, extract only the lower 64 bits
 	if cert.SerialNumber == nil {
-		s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Certificate serial number is nil"))
+		s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Certificate serial number is nil"))
 		return
 	}
 	if cert.SerialNumber.IsUint64() {
@@ -780,7 +823,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// the client. We pass nil for the signer since we don't have access
 	// to the client's private key and we're just validating the chain.
 	if _, err := s.ca.Verify(cert, nil); err != nil {
-		s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to verify certificate"))
+		s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to verify certificate"))
 		return
 	}
 
@@ -793,12 +836,15 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// it is audited now rather than after delivery. A finalization hook or a
 	// storage failure below may still abort the response, but it cannot unsign
 	// the certificate, and an audit trail that omitted it would be wrong.
-	s.recordAudit(audit.LogCertificateIssued(auditContext(r), s.auditLog,
+	if auditErr := s.recordAudit(audit.EventCertificateIssued, audit.LogCertificateIssued(auditContext(r), s.auditLog,
 		auditAccountID(account.ID),
 		strconv.FormatUint(order.ID, 10),
 		cert.Subject.CommonName,
 		auditValidityDays(cert),
-		cert.SerialNumber.String()))
+		cert.SerialNumber.String())); auditErr != nil {
+		s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to record audit event"))
+		return
+	}
 
 	// Execute order finalization hooks if registered
 	if s.params != nil && s.params.OrderFinalizeHooks != nil {
@@ -818,7 +864,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			"client_ip", r.RemoteAddr)
 
 		if err := s.params.OrderFinalizeHooks.Execute(hookCtx); err != nil {
-			s.failOrder(ctx, orderDAO, order, w,
+			s.failOrder(ctx, orderDAO, order, account, start, w,
 				common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err)))
 			return
 		}
@@ -829,14 +875,22 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Send the final order response
-	s.sendFinalizeResponse(ctx, orderDAO, order, serialNumber, pem, w)
+	s.sendFinalizeResponse(ctx, orderDAO, order, account, start, serialNumber, pem, w)
 }
 
-// sendFinalizeResponse sends the final order response to the client.
+// sendFinalizeResponse sends the final order response to the client. It is
+// the single success sink for OrderFinalizeHandler (the standard x509 CSR
+// path and the TCG-CSR-IDEVID path both funnel through it), so it is also
+// where a completed order stops counting as active and where issuance is
+// recorded as successful: account carries the tenant scope for the
+// tenant-aware counters, and start is when OrderFinalizeHandler began, used
+// to observe the finalize call's total latency.
 func (s *RestService) sendFinalizeResponse(
 	ctx context.Context,
 	orderDAO qrdbsdk.GenericDAO[*entities.ACMEOrder],
 	order *entities.ACMEOrder,
+	account *entities.ACMEAccount,
+	start time.Time,
 	serialNumber uint64,
 	pem []byte,
 	w http.ResponseWriter) {
@@ -868,31 +922,42 @@ func (s *RestService) sendFinalizeResponse(
 		return
 	}
 
+	metrics.DecActiveOrders()
+	if account.TenantID != "" {
+		metrics.DecTenantActiveOrders(account.TenantID)
+	}
+	metrics.NewMetricsCollector(account.TenantID).RecordCertificateIssued()
+	metrics.ObserveCertificateIssuanceDuration(time.Since(start).Seconds())
+
 	s.orderResponse(w, order)
 }
 
-// matchesIdentifier verifies that a CSR's complete identity set - its
-// Subject Common Name together with every DNS and IP Subject Alternative
-// Name - corresponds exactly to the order's authorized identifiers, per
-// RFC 8555 Section 7.4. Both directions are checked: a name the CSR carries
-// that the order did not authorize is rejected (this is what previously let
+// matchesIdentifier verifies that a CSR's complete identity set corresponds
+// exactly to the order's authorized identifiers, per RFC 8555 Section 7.4.
+//
+// An order carrying a permanent-identifier identifier (enroll-01,
+// device-attest-01) is delegated to matchesPermanentIdentifierOrder in full:
+// every identifier the order authorizes - permanent-identifier as well as
+// any accompanying dns/ip identifiers - must be satisfied, and the CSR's
+// Subject Common Name is never consulted, since RFC 4043 defines the
+// permanent identifier as a subjectAltName otherName, not a name in the
+// subject DN. The endorse-01 flow, where the order's permanent identifier is
+// the EK public key being certified rather than a name the CSR carries,
+// uses matchesEndorse01Identifier instead and never reaches this branch.
+//
+// Otherwise the CSR's Subject Common Name together with every DNS and IP
+// Subject Alternative Name must correspond exactly to the order's
+// identifiers. Both directions are checked: a name the CSR carries that the
+// order did not authorize is rejected (this is what previously let
 // unauthorized SAN issuance through, since only the CommonName was ever
 // compared), and an authorized identifier the CSR omits is also rejected. A
 // CSR with no CommonName is valid as long as its SANs alone cover the
 // authorized set exactly.
 //
 // Email address and URI SANs are never permitted in an ACME CSR and are
-// rejected outright, since the CA has no order-identifier type to authorize
-// them against and RFC 8555 orders only ever carry "dns" or "ip"
-// identifiers (aside from the permanent-identifier extension handled
-// below).
-//
-// Orders authorizing a permanent-identifier (enroll-01, device-attest-01)
-// are matched by comparing the permanent identifier embedded in the CSR
-// against the order's identifier value, preserving the pre-existing
-// permanent-identifier semantics unchanged. The endorse-01 flow, where the
-// order's permanent identifier is the EK public key being certified rather
-// than a name the CSR carries, uses matchesEndorse01Identifier instead.
+// rejected outright in either case, since the CA has no order-identifier
+// type to authorize them against and RFC 8555 orders only ever carry "dns"
+// or "ip" identifiers (aside from the permanent-identifier extension).
 func matchesIdentifier(
 	csr *x509.CertificateRequest,
 	order *entities.ACMEOrder) (bool, error) {
@@ -904,25 +969,22 @@ func matchesIdentifier(
 		return false, common.MalformedError("CSR must not contain URI SANs", nil)
 	}
 
-	for _, identifier := range order.Identifiers {
-		if identifier.Type == common.AuthzTypePermanentIdentifier {
-			permanentID, err := parseCertificateRequestPermanentIdentifier(csr)
-			if err != nil {
-				return false, common.MalformedError("Failed to parse permanent-identifier", nil)
-			}
-			return identifier.Value == permanentID, nil
-		}
-	}
-
+	var permanentIDs []string
 	authorized := make(map[string]bool, len(order.Identifiers))
 	for _, identifier := range order.Identifiers {
 		switch identifier.Type {
 		case common.AuthzTypeDNS, common.AuthzTypeIP:
 			authorized[identifier.Value] = true
+		case common.AuthzTypePermanentIdentifier:
+			permanentIDs = append(permanentIDs, identifier.Value)
 		default:
 			return false,
 				common.UnsupportedIdentifier(fmt.Sprintf("Invalid identifier: %s", identifier.Type))
 		}
+	}
+
+	if len(permanentIDs) > 0 {
+		return matchesPermanentIdentifierOrder(csr, permanentIDs, authorized)
 	}
 
 	requested := make(map[string]bool, len(csr.DNSNames)+len(csr.IPAddresses)+1)
@@ -942,6 +1004,84 @@ func matchesIdentifier(
 	for name := range requested {
 		if !authorized[name] {
 			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// matchesPermanentIdentifierOrder validates a permanent-identifier order's
+// CSR (enroll-01 or device-attest-01, arriving as a standard x509 CSR rather
+// than a TCG-CSR-IDEVID) against every identifier the order authorizes.
+//
+// The permanent identifier is read from the CSR's RFC 4043
+// permanentIdentifier otherName (OID 1.3.6.1.5.5.7.8.3) inside its
+// subjectAltName extension - never from the Subject Common Name, which is
+// unauthenticated display text a client controls freely. A CSR missing the
+// otherName, carrying more than one, or carrying any other otherName is
+// rejected as badCSR: the shape of the request is wrong regardless of the
+// order. A CSR whose otherName decodes but names a value the order did not
+// authorize, or whose DNS/IP SANs are not exactly the order's authorized
+// dns/ip identifiers, is rejected as rejectedIdentifier: the request is
+// well-formed but asserts an identity the order does not grant.
+func matchesPermanentIdentifierOrder(
+	csr *x509.CertificateRequest,
+	permanentIDs []string,
+	authorizedNames map[string]bool) (bool, error) {
+
+	otherNames, err := ca.ParseOtherNames(csr.Extensions)
+	if err != nil {
+		return false, common.BadCSR(fmt.Sprintf("certificate request subjectAltName could not be decoded: %v", err))
+	}
+
+	var permanentIdentifierValue string
+	foundPermanentIdentifier := false
+	for _, other := range otherNames {
+		if !other.TypeID.Equal(ca.OIDPermanentIdentifier) {
+			return false, common.BadCSR(fmt.Sprintf(
+				"certificate request subjectAltName carries an otherName (%s) the order does not authorize",
+				other.TypeID))
+		}
+		if foundPermanentIdentifier {
+			return false, common.BadCSR(
+				"certificate request subjectAltName carries more than one permanentIdentifier otherName")
+		}
+		parsed, err := ca.ParsePermanentIdentifierExtension(other.Value)
+		if err != nil {
+			return false, common.BadCSR("certificate request permanentIdentifier otherName could not be decoded")
+		}
+		permanentIdentifierValue = parsed.IdentifierValue
+		foundPermanentIdentifier = true
+	}
+	if !foundPermanentIdentifier {
+		return false, common.BadCSR(
+			"certificate request subjectAltName must carry an RFC 4043 permanentIdentifier otherName " +
+				"(OID 1.3.6.1.5.5.7.8.3)")
+	}
+
+	authorizedPermanentIDs := make(map[string]bool, len(permanentIDs))
+	for _, id := range permanentIDs {
+		authorizedPermanentIDs[id] = true
+	}
+	if !authorizedPermanentIDs[permanentIdentifierValue] {
+		return false, common.RejectedIdentifier(
+			"certificate request permanent identifier is not authorized by the order")
+	}
+
+	requested := make(map[string]bool, len(csr.DNSNames)+len(csr.IPAddresses))
+	for _, name := range csr.DNSNames {
+		requested[name] = true
+	}
+	for _, ip := range csr.IPAddresses {
+		requested[ip.String()] = true
+	}
+	if len(requested) != len(authorizedNames) {
+		return false, common.RejectedIdentifier(
+			"certificate request DNS/IP names do not match the order's authorized identifiers")
+	}
+	for name := range requested {
+		if !authorizedNames[name] {
+			return false, common.RejectedIdentifier(fmt.Sprintf(
+				"certificate request contains a name the order did not authorize: %s", name))
 		}
 	}
 	return true, nil
@@ -1073,11 +1213,17 @@ func decodeEndorse01PublicKey(identifierValue string) (crypto.PublicKey, bool) {
 // failure that occurs once the order has moved to "processing": per RFC
 // 8555 Section 7.1.6, an order the CA cannot fulfill must reach a terminal
 // state with its error field populated, never remain stranded in
-// "processing" indefinitely.
+// "processing" indefinitely. Being the single failure sink for
+// OrderFinalizeHandler also makes it the single place a failed finalize is
+// recorded: account carries the tenant scope for the tenant-aware counters,
+// and start is when OrderFinalizeHandler began, used to observe the
+// finalize call's total latency even on failure.
 func (s *RestService) failOrder(
 	ctx context.Context,
 	orderDAO qrdbsdk.GenericDAO[*entities.ACMEOrder],
 	order *entities.ACMEOrder,
+	account *entities.ACMEAccount,
+	start time.Time,
 	w http.ResponseWriter,
 	acmeErr *entities.Error) {
 
@@ -1087,7 +1233,65 @@ func (s *RestService) failOrder(
 		s.logger.Error("Failed to persist invalid order status",
 			"error", saveErr, "order_id", order.ID)
 	}
+	metrics.DecActiveOrders()
+	if account.TenantID != "" {
+		metrics.DecTenantActiveOrders(account.TenantID)
+	}
+	metrics.RecordError("issuance_failed")
+	metrics.ObserveCertificateIssuanceDuration(time.Since(start).Seconds())
 	writeError(w, acmeErr)
+}
+
+// caaValidationMethod returns the RFC 8657 method-label (e.g. "http-01",
+// "dns-01") of the challenge that validated the order's authorization for
+// domain, so the CAA validator can enforce a record's validationmethods
+// parameter (RFC 8657 Section 4). It matches authorizations by identifier
+// value and wildcard flag, since a wildcard and non-wildcard identifier for
+// the same domain name are authorized separately per RFC 8555 Section 7.1.3.
+func (s *RestService) caaValidationMethod(
+	ctx context.Context,
+	authzDAO qrdbsdk.GenericDAO[*entities.ACMEAuthorization],
+	order *entities.ACMEOrder,
+	domain string,
+	isWildcard bool,
+) (string, error) {
+
+	for _, authzURL := range order.Authorizations {
+		pieces := strings.Split(authzURL, "/")
+		authzID, err := strconv.ParseUint(pieces[len(pieces)-1], 10, 64)
+		if err != nil {
+			s.logger.Error("Failed to parse authorization ID from URL for CAA validation",
+				"authz_url", authzURL, "error", err)
+			return "", ErrCAAAuthorizationLookup
+		}
+
+		authz, err := authzDAO.Get(ctx, authzID)
+		if err != nil {
+			s.logger.Error("Failed to retrieve authorization for CAA validation",
+				"authz_id", authzID, "error", err)
+			return "", ErrCAAAuthorizationLookup
+		}
+
+		if authz.Identifier.Type != common.AuthzTypeDNS ||
+			!strings.EqualFold(authz.Identifier.Value, domain) ||
+			authz.Wildcard != isWildcard {
+			continue
+		}
+
+		for _, challenge := range authz.Challenges {
+			if challenge.Status == common.StatusValid {
+				return challenge.Type, nil
+			}
+		}
+
+		s.logger.Error("Authorization has no validated challenge for CAA validation",
+			"authz_id", authzID, "domain", domain, "wildcard", isWildcard)
+		return "", ErrCAAChallengeNotValidated
+	}
+
+	s.logger.Error("No authorization found for CAA-validated identifier",
+		"domain", domain, "wildcard", isWildcard, "order_id", order.ID)
+	return "", ErrCAAAuthorizationNotFound
 }
 
 // Finalize a TCG-CSR-IDEVID for a successful enroll-01 challenge verification
@@ -1298,15 +1502,19 @@ func (s *RestService) finalizeTCGCSR(
 	// enroll-01 binds a device identity to a TPM, so the trail records both the
 	// enrollment decision and the IDevID certificate it produced.
 	auditCtx := auditContext(r)
-	s.recordAudit(audit.LogTPMEnrollment(auditCtx, s.auditLog,
+	if auditErr := s.recordAudit(audit.EventTPMEnrollment, audit.LogTPMEnrollment(auditCtx, s.auditLog,
 		auditAccountID(account.ID), idevidCN,
-		ekcert.Subject.CommonName, idevidCert.Subject.CommonName))
-	s.recordAudit(audit.LogCertificateIssued(auditCtx, s.auditLog,
+		ekcert.Subject.CommonName, idevidCert.Subject.CommonName)); auditErr != nil {
+		return 0, nil, common.ServerInternal("Failed to record audit event")
+	}
+	if auditErr := s.recordAudit(audit.EventCertificateIssued, audit.LogCertificateIssued(auditCtx, s.auditLog,
 		auditAccountID(account.ID),
 		strconv.FormatUint(order.ID, 10),
 		idevidCert.Subject.CommonName,
 		auditValidityDays(idevidCert),
-		idevidCert.SerialNumber.String()))
+		idevidCert.SerialNumber.String())); auditErr != nil {
+		return 0, nil, common.ServerInternal("Failed to record audit event")
+	}
 
 	// Execute order finalization hooks if registered
 	if s.params != nil && s.params.OrderFinalizeHooks != nil {
@@ -1421,28 +1629,6 @@ func encodeCSRToPEM(derBytes []byte) []byte {
 		Bytes: derBytes,
 	}
 	return pem.EncodeToMemory(block)
-}
-
-// parseCertificateRequestPermanentIdentifier extracts the permanent identifier
-// from a certificate request's Subject Alternative Name extension.
-func parseCertificateRequestPermanentIdentifier(csr *x509.CertificateRequest) (string, error) {
-	// Look for the permanent identifier in the SAN extension
-	// This is a simplified implementation - you may need to expand based on your requirements
-	for _, ext := range csr.Extensions {
-		// OID 2.5.29.17 is SubjectAltName
-		if ext.Id.Equal([]int{2, 5, 29, 17}) {
-			// For now, we'll just return the subject CN as a fallback
-			// A full implementation would parse the ASN.1 structure properly
-			break
-		}
-	}
-
-	// Fallback to subject common name
-	if csr.Subject.CommonName != "" {
-		return csr.Subject.CommonName, nil
-	}
-
-	return "", caerrors.MalformedError("no permanent identifier found in CSR")
 }
 
 // ErrClusterIssuerUnsupported is returned when cluster CA issuance is configured

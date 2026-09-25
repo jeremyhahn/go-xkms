@@ -55,6 +55,9 @@ type mockTPM struct {
 	// Configurable returns for methods used by TPMService.
 	fixedProps        *xkms.PropertiesFixed
 	fixedPropsErr     error
+	clearAllowed      bool
+	clearCalled       bool
+	clearErr          error
 	device            string
 	config            *xkms.TPMConfig
 	ekAttrs           *xkms.KeyAttributes
@@ -240,6 +243,18 @@ func (m *mockTPM) DictionaryAttackLockoutReset(_ []byte) error {
 func (m *mockTPM) ActivateCredential(_, _ []byte) ([]byte, error) {
 	panic("mockTPM: ActivateCredential not expected")
 }
+func (m *mockTPM) AnswerCredentialChallenge(_ *xkms.ActivationKey, _ *xkms.CredentialChallenge) ([]byte, error) {
+	panic("mockTPM: AnswerCredentialChallenge not expected")
+}
+func (m *mockTPM) ClearForReprovision() (bool, error) {
+	panic("mockTPM: ClearForReprovision not expected")
+}
+func (m *mockTPM) CreateActivationKey() (*xkms.ActivationKey, error) {
+	panic("mockTPM: CreateActivationKey not expected")
+}
+func (m *mockTPM) State() (*xkms.ProvisioningState, error) {
+	panic("mockTPM: State not expected")
+}
 func (m *mockTPM) AKProfile() (xkms.AKProfile, error) {
 	panic("mockTPM: AKProfile not expected")
 }
@@ -247,9 +262,15 @@ func (m *mockTPM) AlgID() tpm2.TPMAlgID { panic("mockTPM: AlgID not expected") }
 func (m *mockTPM) CalculateName(_ tpm2.TPMAlgID, _ []byte) {
 	panic("mockTPM: CalculateName not expected")
 }
-func (m *mockTPM) Clear(_ []byte) error { panic("mockTPM: Clear not expected") }
-func (m *mockTPM) ForceClear() error    { return nil }
-func (m *mockTPM) Close() error         { return nil }
+func (m *mockTPM) Clear(_ []byte) error {
+	if !m.clearAllowed {
+		panic("mockTPM: Clear not expected")
+	}
+	m.clearCalled = true
+	return m.clearErr
+}
+func (m *mockTPM) ForceClear() error { return nil }
+func (m *mockTPM) Close() error      { return nil }
 func (m *mockTPM) CreateECDSA(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend, _ bool) (*ecdsa.PublicKey, error) {
 	panic("mockTPM: CreateECDSA not expected")
 }

@@ -360,6 +360,10 @@ func TestGRPCKeys_GenerateErrorMapping(t *testing.T) {
 			var t *sdkssh.NotFoundError
 			return errors.As(e, &t)
 		}},
+		{"already_exists", codes.AlreadyExists, func(e error) bool {
+			var t *sdkssh.DuplicateError
+			return errors.As(e, &t)
+		}},
 		{"invalid_argument", codes.InvalidArgument, func(e error) bool {
 			var t *sdkssh.InvalidRequestError
 			return errors.As(e, &t)
@@ -1082,20 +1086,25 @@ func TestGRPCAuthorizedKeys_VerifyListFailurePropagates(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// Session (unsupported over gRPC).
+// Session.
 // ----------------------------------------------------------------------------
 
-func TestGRPCSession_DialUnsupported(t *testing.T) {
+// TestGRPCSession_DialPropagatesSignerFailure exercises Session.Dial against
+// the wire-marshalling fakeKeystore (not the real KeystoreService — see
+// grpc_dial_test.go for the genuine end-to-end dial/handshake coverage). The
+// fake's canned nil SSHExportPublic response makes key resolution fail, and
+// that failure — not a *NotImplementedError, now that gRPC dials directly —
+// must surface to the caller as a typed *ProtocolError.
+func TestGRPCSession_DialPropagatesSignerFailure(t *testing.T) {
 	fake := &fakeKeystore{}
 	client := newGRPCFixture(t, fake)
 
-	_, err := client.Session().Dial(context.Background(), sdkssh.SessionDialRequest{Host: "h", User: "u"})
-	var ni *sdkssh.NotImplementedError
-	if !errors.As(err, &ni) {
-		t.Fatalf("expected *NotImplementedError, got %T %v", err, err)
-	}
-	if ni.Transport != "grpc" || ni.Op != "Session.Dial" {
-		t.Errorf("error detail = %+v", ni)
+	_, err := client.Session().Dial(context.Background(), sdkssh.SessionDialRequest{
+		KeyScope: "user", KeyOwner: "alice", KeyName: "ssh", Host: "h", User: "u",
+	})
+	var pe *sdkssh.ProtocolError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
 	}
 }
 

@@ -18,12 +18,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
@@ -136,6 +138,12 @@ type RateLimiter struct {
 	Tokens      map[string]int       // Remaining tokens per resource key
 	LastRequest map[string]time.Time // Timestamp of last request per resource key
 	mu          sync.Mutex           // Mutex to synchronize access
+
+	// auditLog records EventRateLimitExceeded when a request is throttled.
+	// Nil (the default) disables audit emission entirely; SetAuditLogger
+	// wires a real logger without changing NewRateLimiter's signature,
+	// which every existing caller (production and test) depends on.
+	auditLog audit.AuditLogger
 }
 
 // NewRateLimiter creates a new rate limiter with the specified maximum requests and interval.
@@ -153,6 +161,53 @@ func NewRateLimiter(maxRequests int, interval time.Duration) *RateLimiter {
 		Tokens:      make(map[string]int),
 		LastRequest: make(map[string]time.Time),
 	}
+}
+
+// SetAuditLogger wires the audit logger EventRateLimitExceeded is recorded
+// to. A nil logger (the default) disables audit emission: the rate limiter
+// still enforces the policy, it just does not record a trail entry.
+func (rl *RateLimiter) SetAuditLogger(logger audit.AuditLogger) {
+	rl.auditLog = logger
+}
+
+// NewClientRateLimiterMiddleware builds the overall per-client ACME
+// admission-control middleware mounted on the whole "/acme" surface: a
+// RateLimiter keyed by ClientID (the JWS KID once an account exists, the
+// client IP before one does), wired to auditLog so a throttled request is
+// recorded via EventRateLimitExceeded. It is the single construction path
+// for that blanket limiter — the standalone TrustedCA
+// (pkg/acme/client/trustedca.go) and xkmsd's embedded ACME listener
+// (cmd/xkmsd/acme.go) both call it instead of hand-rolling their own
+// NewRateLimiter + SetAuditLogger + MiddlewareFunc wiring.
+func NewClientRateLimiterMiddleware(maxRequests int, interval time.Duration, auditLog audit.AuditLogger) func(http.Handler) http.Handler {
+	limiter := NewRateLimiter(maxRequests, interval)
+	limiter.SetAuditLogger(auditLog)
+	return limiter.MiddlewareFunc(ClientID)
+}
+
+// recordRateLimitExceeded logs EventRateLimitExceeded for resourceKey.
+// EventRateLimitExceeded is SeveritySecurity (repeated throttling can signal
+// a credential-stuffing or enumeration attempt), so a failed write is
+// returned rather than swallowed: the caller must refuse the request rather
+// than let it proceed with a degraded trail. A nil auditLog (rate limiting
+// used without audit wiring) is not a failure.
+func (rl *RateLimiter) recordRateLimitExceeded(r *http.Request, resourceKey string) error {
+	if rl.auditLog == nil {
+		return nil
+	}
+	writeErr := rl.auditLog.LogWithContext(
+		audit.RequestContext(r.Context(), r),
+		audit.EventRateLimitExceeded,
+		resourceKey,
+		"acme:rate_limit",
+		"throttle",
+		audit.ResultFailure,
+		map[string]interface{}{
+			"max_requests": rl.MaxRequests,
+			"interval":     rl.Interval.String(),
+		},
+	)
+	return audit.HandleWriteFailure(nil, audit.EventRateLimitExceeded, writeErr)
 }
 
 // MiddlewareFunc generates a rate-limiting middleware function using a resource key function.
@@ -193,7 +248,14 @@ func (rl *RateLimiter) MiddlewareFunc(resourceKeyFunc func(r *http.Request) stri
 				rl.Tokens[resourceKey]--
 				next.ServeHTTP(w, r) // Serve the request
 			} else {
-				// Rate limit exceeded - return RFC 8555 compliant error response
+				// Rate limit exceeded - return RFC 8555 compliant error response.
+				// The request is refused either way, so a failed audit write
+				// cannot change the outcome to "allow" here (there is no more
+				// permissive action to withhold); it is surfaced through the
+				// default logger since RateLimiter has no logger of its own.
+				if auditErr := rl.recordRateLimitExceeded(r, resourceKey); auditErr != nil {
+					slog.Default().Error("audit log failed", "error", auditErr)
+				}
 				rl.writeRateLimitError(w)
 			}
 		})
@@ -428,6 +490,9 @@ func ClientID(r *http.Request) string {
 	if err != nil {
 		return ClientIP(r)
 	}
+	// The body has already been read in full above, and net/http closes the
+	// server request body itself once the handler returns, so a close error
+	// here is neither actionable nor meaningful (go-xkms#866).
 	defer func() { _ = r.Body.Close() }()
 
 	// Restore the body so it can be read again by the handler

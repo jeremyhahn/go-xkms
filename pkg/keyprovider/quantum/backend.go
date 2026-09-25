@@ -27,6 +27,7 @@ import (
 	"crypto/mlkem"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -226,12 +227,13 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 		}
 	}()
 
-	algorithm := string(attrs.QuantumAttributes.Algorithm)
+	quantumAlgo := attrs.QuantumAttributes.Algorithm
+	algorithm := string(quantumAlgo)
 
 	switch {
-	case strings.HasPrefix(algorithm, "ML-DSA"):
+	case quantumAlgo.IsSignature():
 		privateKey, metadata, err = b.generateMLDSAKey(algorithm)
-	case strings.HasPrefix(algorithm, "ML-KEM"):
+	case quantumAlgo.IsKEM():
 		privateKey, metadata, err = b.generateMLKEMKey(algorithm, keyID)
 	default:
 		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: algorithm}
@@ -246,7 +248,7 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 	}
 
 	// Initialize AEAD tracking for ML-KEM keys (they use AES-GCM internally)
-	if strings.HasPrefix(algorithm, "ML-KEM") {
+	if quantumAlgo.IsKEM() {
 		aeadOpts := types.DefaultAEADOptions()
 		if err := b.tracker.SetAEADOptions(keyID, aeadOpts); err != nil {
 			fmt.Printf("Warning: failed to set AEAD options for key %s: %v\n", keyID, err)
@@ -430,7 +432,7 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 	keyID := attrs.ID()
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
@@ -448,9 +450,9 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 	defer secure.Wipe(metadata.Seed)
 
 	switch {
-	case strings.HasPrefix(metadata.Algorithm, "ML-DSA"):
+	case types.QuantumAlgorithm(metadata.Algorithm).IsSignature():
 		return b.loadMLDSAKey(&metadata)
-	case strings.HasPrefix(metadata.Algorithm, "ML-KEM"):
+	case types.QuantumAlgorithm(metadata.Algorithm).IsKEM():
 		return b.loadMLKEMKey(&metadata, keyID)
 	default:
 		return nil, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
@@ -544,7 +546,7 @@ func (b *QuantumBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttribut
 
 	keyID := attrs.ID()
 	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
@@ -575,19 +577,16 @@ func (b *QuantumBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, 
 		}
 
 		// Key ID format: storetype:keytype:cn:algorithm
-		// Only include quantum keys (ml-dsa-* or ml-kem-*)
+		// Only include quantum keys (ML-DSA-* or ML-KEM-*)
 		algorithmStr := parts[len(parts)-1]
-		algoLower := strings.ToLower(algorithmStr)
-		if !strings.HasPrefix(algoLower, "ml-dsa") && !strings.HasPrefix(algoLower, "ml-kem") {
+		algo := types.QuantumAlgorithm(strings.ToUpper(algorithmStr))
+		if !algo.IsSignature() && !algo.IsKEM() {
 			continue
 		}
 
 		cn := parts[len(parts)-2]
 		storeTypeStr := parts[0]
 		keyTypeStr := parts[1]
-
-		// Map the algorithm string back to a QuantumAlgorithm
-		algo := types.QuantumAlgorithm(strings.ToUpper(algorithmStr))
 
 		attr := &types.KeyAttributes{
 			CN:        cn,
@@ -671,12 +670,14 @@ func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribut
 	var rotated crypto.PrivateKey
 	defer func() { cleanPrivateKey(rotated) }()
 
+	rotatedAlgo := types.QuantumAlgorithm(metadata.Algorithm)
+
 	switch {
-	case strings.HasPrefix(metadata.Algorithm, "ML-DSA"):
+	case rotatedAlgo.IsSignature():
 		var mldsaKey *MLDSAPrivateKey
 		mldsaKey, newMetadata, err = b.generateMLDSAKey(metadata.Algorithm)
 		rotated = mldsaKey
-	case strings.HasPrefix(metadata.Algorithm, "ML-KEM"):
+	case rotatedAlgo.IsKEM():
 		var mlkemKey *MLKEMPrivateKey
 		mlkemKey, newMetadata, err = b.generateMLKEMKey(metadata.Algorithm, keyID)
 		rotated = mlkemKey
@@ -693,7 +694,7 @@ func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribut
 	}
 
 	// Reset AEAD tracking for the rotated key (ML-KEM only)
-	if strings.HasPrefix(metadata.Algorithm, "ML-KEM") {
+	if rotatedAlgo.IsKEM() {
 		if err := b.tracker.ResetTracking(keyID); err != nil {
 			fmt.Printf("Warning: failed to reset AEAD tracking for rotated key %s: %v\n", keyID, err)
 		}

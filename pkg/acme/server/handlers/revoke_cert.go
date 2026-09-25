@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
@@ -122,7 +123,7 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 			slog.Uint64("account_id", account.ID),
 			slog.String("serial", cert.SerialNumber.String()))
 
-		s.recordAudit(s.auditLog.LogWithContext(auditContext(r),
+		if auditErr := s.recordAudit(audit.EventAuthorizationFailed, s.auditLog.LogWithContext(auditContext(r),
 			audit.EventAuthorizationFailed,
 			auditAccountRef(account.ID),
 			"certificate:"+cert.SerialNumber.String(),
@@ -131,7 +132,10 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 			map[string]interface{}{
 				"serial_number":     cert.SerialNumber.String(),
 				"unauthorized_kind": "submitted certificate does not match stored record",
-			}))
+			})); auditErr != nil {
+			writeError(w, common.ServerInternal("Failed to record audit event"))
+			return
+		}
 		writeError(w, common.Unauthorized("Certificate does not match the certificate on record"))
 		return
 	}
@@ -200,7 +204,7 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 			// An account trying to revoke a certificate it never proved control
 			// over is a security event, so it is recorded even though nothing
 			// changed.
-			s.recordAudit(s.auditLog.LogWithContext(auditContext(r),
+			if auditErr := s.recordAudit(audit.EventAuthorizationFailed, s.auditLog.LogWithContext(auditContext(r),
 				audit.EventAuthorizationFailed,
 				auditAccountRef(account.ID),
 				"certificate:"+cert.SerialNumber.String(),
@@ -210,7 +214,10 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 					"serial_number":     cert.SerialNumber.String(),
 					"domain":            domain,
 					"unauthorized_kind": "no valid authorization for certificate domain",
-				}))
+				})); auditErr != nil {
+				writeError(w, common.ServerInternal("Failed to record audit event"))
+				return
+			}
 			writeError(w, common.Unauthorized("Account not authorized for certificate domain: "+domain))
 			return
 		}
@@ -244,8 +251,12 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.logger.Debug("Revoked certificate", slog.String("serial", cert.SerialNumber.String()))
-	s.recordAudit(audit.LogCertificateRevoked(auditContext(r), s.auditLog,
-		auditAccountID(account.ID), cert.SerialNumber.String(), reason))
+	if auditErr := s.recordAudit(audit.EventCertificateRevoked, audit.LogCertificateRevoked(auditContext(r), s.auditLog,
+		auditAccountID(account.ID), cert.SerialNumber.String(), reason)); auditErr != nil {
+		writeError(w, common.ServerInternal("Failed to record audit event"))
+		return
+	}
+	metrics.NewMetricsCollector(account.TenantID).RecordCertificateRevoked()
 
 	w.WriteHeader(http.StatusOK)
 }

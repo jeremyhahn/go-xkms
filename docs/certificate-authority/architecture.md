@@ -1,6 +1,6 @@
 # Certificate Authority — Architecture
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## The problem
 
@@ -137,6 +137,14 @@ of truth — the persisted artifact in `revocationStore`/`objectStore` is, and
 every path that bypasses the cache (a miss, or a different instance) reads
 that.
 
+A fourth sibling row shares the same rationale: `issued-keys/<serial>`
+(`pkg/ca/ca_extensions.go`, go-xkms#751) records the exact `KeyAttributes` a
+server-side key generation used, written by whichever node issued the
+certificate. `RevokeCert`'s `DeleteKeys` option can be served by any
+instance, so that record has to be replicated state in `revocationStore`
+like the revocation record itself, not something held only in the memory of
+the node that issued the certificate.
+
 OCSP (`pkg/ca/ocsp.go`) answers from the same revocation state: its hot path
 is the in-memory map, refreshed by every `Revoke`/`RevokeCert` on that
 instance; its cold path (a fresh process, or a revocation written by another
@@ -153,6 +161,28 @@ that has no trust yet cannot authenticate to get it. It is safe because the
 bundle is public information and the client verifies it out of band — DANE,
 SPKI pin, or Noise. See [`../trust-bootstrap/`](../trust-bootstrap/architecture.md).
 
+### CA reload across restarts: `Load` before `Init` (go-xkms#793)
+
+`pkg/server`'s `initializeCA` never assumes a data directory is new: it
+always calls `TrustedCA.Load` first and falls through to `Init` only when
+`Load` reports `errors.Is(err, ca.ErrCertificateNotFound)` — the certificate
+record genuinely does not exist under this CN. Any other `Load` failure
+(a corrupt or unreadable persisted certificate, an unavailable keystore
+backend) fails server startup closed rather than treating damaged existing
+state as "never initialized" and silently forging a new root over it. This
+is the boot-time complement to the CRL/revocation replication design above:
+just as a stale CRL is repaired by regenerating from the persisted
+revocation state rather than assumed absent, a CA that fails to `Load` is
+assumed damaged, not absent, unless the specific evidence (no certificate
+record at all) says otherwise.
+
+The design puts one obligation on `Load` itself: it must resolve an
+identity's key attributes exactly the way `Init` did when it wrote that
+identity's key, or the two can disagree over the identical persisted state.
+`Init` and `Load` share `getCAKeyAttributes` for this reason — see
+[`engineering.md`](engineering.md) for the persistence contract this
+enforces.
+
 ## Trust boundaries
 
 - **The CA signing key is a keystore key.** Its protection is the backend's
@@ -165,14 +195,17 @@ SPKI pin, or Noise. See [`../trust-bootstrap/`](../trust-bootstrap/architecture.
   that every issuer is trusted.
 - **Attestation import is not attestation trust.** `ImportAttestation*` stores
   evidence; `VerifyAttestationQuote` is the check. Storing is not verifying.
-- **A TCG DevID enrollment proves TPM residency, not TPM provenance.** The
-  stateless verifier establishes that the IDevID and IAK are Template H-0 keys
-  in one TPM, and that the IAK certified the IDevID. It does not verify the
-  endorsement key certificate against the manufacturer's roots, which TCG
-  DevID v1 r12 §6.2.2 step 7b calls for; nothing in this repository does. Until
-  a manufacturer truststore exists, a device that supplies its own EK
-  certificate is trusted to name its own TPM, and the hardwareModuleName in
-  the issued certificate inherits that limit.
+- **A TCG DevID enrollment proves both TPM residency and TPM provenance.**
+  The stateless verifier establishes that the IDevID and IAK are Template H-0
+  keys in one TPM, and that the IAK certified the IDevID; `verifyEKCertificateChain`
+  (`pkg/ca/tcg_ek_trust.go`) separately verifies the endorsement key
+  certificate against the CA's configured TPM-manufacturer trust anchors, per
+  TPM 2.0 Keys for Device Identity and Attestation v1.10r9 §6.1.2 step 5b and
+  §6.2.2 step 4b, before either check's result is trusted enough to issue
+  from. **A CA with no anchors configured refuses every EK certificate**
+  (`ErrTCGEKCertUntrusted`) rather than falling back to residency-only proof
+  -- there is no permissive default a device can rely on by supplying its own
+  EK certificate.
 - **Multi-keystore CAs** (`pkg/ca/multi_keystore*.go`) let one CA identity hold
   parallel keys of different algorithms in different backends. Each is a
   distinct trust root even though they share a name — `CABundleFiltered(storeType, keyAlgorithm)`
@@ -194,7 +227,10 @@ SPKI pin, or Noise. See [`../trust-bootstrap/`](../trust-bootstrap/architecture.
   `pkg/acme/server/handlers/ocsp.go`'s `OCSPHandler` adapts it to
   `net/http`, but no route registers that handler today; a caller mounts it
   or feeds the responder DER-encoded requests directly.
-- **It does not anchor endorsement key certificates.** No manufacturer
-  truststore, no vendor root distribution, no AIA walk for EK issuers. Adding
-  one is an architecture decision about where manufacturer roots come from and
-  what an unanchored enrollment should do, not a local change to the CSR path.
+- **It does not distribute vendor roots or walk AIA for EK issuers.** It
+  anchors EK certificates against the operator-configured
+  `TCGConfig.TrustAnchors` (`pkg/attestation/truststore.Config`) -- see
+  "Trust boundaries" above -- but does not ship, fetch, or auto-discover a
+  TPM manufacturer's root; the operator supplies it, the same way
+  `pkg/config.AttestationConfig` requires an operator-supplied trust store
+  per attestation format.

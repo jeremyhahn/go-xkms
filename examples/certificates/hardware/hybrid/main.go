@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -171,7 +172,7 @@ func main() {
 	for _, id := range testIDs {
 		cert, err := hwStorage.GetCert(id)
 		if err != nil {
-			if err == storage.ErrNotFound {
+			if errors.Is(err, storage.ErrNotFound) {
 				log.Printf("ℹ Certificate %s not found", id)
 			} else {
 				log.Printf("Error retrieving %s: %v", id, err)
@@ -218,7 +219,7 @@ func main() {
 	deleteIDs := []string{"cert-1", "cert-10", "legacy-20"}
 	for _, id := range deleteIDs {
 		err = hwStorage.DeleteCert(id)
-		if err != nil && err != storage.ErrNotFound {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			log.Printf("Warning: Failed to delete %s: %v", id, err)
 		} else {
 			log.Printf("✓ Deleted: %s", id)

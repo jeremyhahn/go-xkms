@@ -18,6 +18,7 @@ package truststore
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -239,8 +240,8 @@ func (s *LinuxCertStore) Install(cert *x509.Certificate, label string) error {
 
 	if err := s.RefreshSystemStore(); err != nil {
 		// Clean up the written file on refresh failure.
-		_ = os.Remove(certPath)
-		return err
+		removeErr := os.Remove(certPath)
+		return errors.Join(err, removeErr)
 	}
 
 	return nil

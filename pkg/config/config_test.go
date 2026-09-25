@@ -14,13 +14,14 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // TestLoad_Success tests successful loading of a valid config file
@@ -1090,6 +1091,11 @@ func TestCredentialsConfig_YAMLParsing(t *testing.T) {
 		expectedStrategy string
 	}{
 		{
+			// "barrier" is only satisfiable when this deployment's barrier IS
+			// the qrdb node's own (CredentialsBarrierStrategySupported): the
+			// embedded transport, barrier.enabled, and a NodeFlipWired
+			// strategy. See TestValidate_CredentialsBarrierStrategy for the
+			// refusal cases.
 			name: "seal_strategy set to barrier",
 			yaml: `
 server:
@@ -1110,6 +1116,10 @@ tls:
 storage:
   backend: "qrdb"
   path: "/data/xkms"
+
+barrier:
+  enabled: true
+  strategy: "passphrase"
 
 default_backend: "pkcs8"
 
@@ -1244,6 +1254,139 @@ backends:
 			}
 		})
 	}
+}
+
+// TestCredentialsBarrierStrategySupported covers CredentialsBarrierStrategySupported
+// directly: only an embedded-qrdb-hosted, node-flip-wired barrier makes the
+// credential service's "barrier" strategy satisfiable (go-xkms#812).
+func TestCredentialsBarrierStrategySupported(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{
+			name: "embedded qrdb, barrier enabled, passphrase strategy",
+			cfg: Config{
+				Storage: StorageConfig{Backend: "qrdb", QRDB: QRDBConfig{Transport: "embedded"}},
+				Barrier: BarrierConfig{Enabled: true, Strategy: "passphrase"},
+			},
+			want: true,
+		},
+		{
+			name: "empty transport defaults to embedded",
+			cfg: Config{
+				Storage: StorageConfig{Backend: "qrdb"},
+				Barrier: BarrierConfig{Enabled: true, Strategy: "tpm2"},
+			},
+			want: true,
+		},
+		{
+			name: "backend case-insensitive",
+			cfg: Config{
+				Storage: StorageConfig{Backend: "QRDB"},
+				Barrier: BarrierConfig{Enabled: true, Strategy: "none"},
+			},
+			want: true,
+		},
+		{
+			name: "non-qrdb storage backend",
+			cfg: Config{
+				Storage: StorageConfig{Backend: "file"},
+				Barrier: BarrierConfig{Enabled: true, Strategy: "passphrase"},
+			},
+			want: false,
+		},
+		{
+			name: "remote qrdb transport (no node to adopt a barrier from)",
+			cfg: Config{
+				Storage: StorageConfig{Backend: "qrdb", QRDB: QRDBConfig{Transport: "rest"}},
+				Barrier: BarrierConfig{Enabled: true, Strategy: "passphrase"},
+			},
+			want: false,
+		},
+		{
+			name: "barrier disabled",
+			cfg: Config{
+				Storage: StorageConfig{Backend: "qrdb", QRDB: QRDBConfig{Transport: "embedded"}},
+				Barrier: BarrierConfig{Enabled: false},
+			},
+			want: false,
+		},
+		{
+			name: "strategy not node-flip-wired (pkcs11)",
+			cfg: Config{
+				Storage: StorageConfig{Backend: "qrdb", QRDB: QRDBConfig{Transport: "embedded"}},
+				Barrier: BarrierConfig{Enabled: true, Strategy: "pkcs11"},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.CredentialsBarrierStrategySupported(); got != tt.want {
+				t.Errorf("CredentialsBarrierStrategySupported() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestValidate_CredentialsBarrierStrategy covers the Validate() refusal
+// (go-xkms#812): credentials.seal_strategy "barrier" is a typed validation
+// error outside a configuration CredentialsBarrierStrategySupported reports
+// true for, and a no-op everywhere else (including every other strategy,
+// which Validate never inspects Storage/Barrier for).
+func TestValidate_CredentialsBarrierStrategy(t *testing.T) {
+	baseline := func() Config {
+		return Config{
+			Protocols: ProtocolsConfig{Unix: true},
+			Server:    ServerConfig{RESTPort: 8443},
+			Logging:   LoggingConfig{Level: "info", Format: "json"},
+			Default:   "pkcs8",
+			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+		}
+	}
+
+	t.Run("supported configuration passes", func(t *testing.T) {
+		cfg := baseline()
+		cfg.Storage = StorageConfig{Backend: "qrdb", Path: "/data", QRDB: QRDBConfig{Transport: "embedded"}}
+		cfg.Barrier = BarrierConfig{Enabled: true, Strategy: "passphrase"}
+		cfg.Credentials = CredentialsConfig{SealStrategy: "barrier"}
+
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() error = %v, want nil", err)
+		}
+	})
+
+	t.Run("unsupported configuration is a typed error", func(t *testing.T) {
+		cfg := baseline()
+		cfg.Storage = StorageConfig{Backend: "file", Path: "/data"}
+		cfg.Barrier = BarrierConfig{Enabled: true, Strategy: "passphrase"}
+		cfg.Credentials = CredentialsConfig{SealStrategy: "barrier"}
+
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("Validate() error = nil, want error")
+		}
+		var typed *errs.Message
+		if !errors.As(err, &typed) {
+			t.Fatalf("Validate() error type = %T, want *errs.Message", err)
+		}
+		if !strings.Contains(typed.Msg, "barrier") {
+			t.Errorf("Validate() error = %q, want it to name the barrier strategy", typed.Msg)
+		}
+	})
+
+	t.Run("non-barrier strategy is unaffected by storage/barrier shape", func(t *testing.T) {
+		cfg := baseline()
+		cfg.Storage = StorageConfig{Backend: "file", Path: "/data"}
+		cfg.Credentials = CredentialsConfig{SealStrategy: "manual"}
+
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() error = %v, want nil", err)
+		}
+	})
 }
 
 // TestValidate_NoisePort tests validation of Noise protocol port
@@ -1921,13 +2064,16 @@ func TestConfig_ComplianceGaps_ClusterCAKeyProtection(t *testing.T) {
 func TestConfig_ComplianceGaps_RBACWithoutIdentityPlane(t *testing.T) {
 	// baseline returns a config that is compliant on every other dimension, so
 	// any gap reported is attributable to the RBAC/storage combination alone.
-	// The barrier passphrase matters: selecting the qrdb backend also brings the
-	// embedded data plane under the auto-unseal check, and without a boot secret
-	// that would report its own gap and mask the one under test.
+	// The barrier strategy matters: selecting the qrdb backend also brings the
+	// embedded data plane under the auto-unseal check, and a software strategy
+	// never auto-unseals (there is no config-sourced secret), which would
+	// report its own gap and mask the one under test. A hardware strategy
+	// auto-unseals, so it closes that gap without requiring real hardware —
+	// this check is config-only (BarrierConfig.IsHardwareSealStrategy).
 	baseline := func() *Config {
 		c := &Config{}
 		c.Barrier.Enabled = true
-		c.Barrier.Passphrase = types.SecretValue{Raw: "test-boot-secret"}
+		c.Barrier.Strategy = "tpm2"
 		c.TLS.Enabled = true
 		c.Auth.Enabled = true
 		c.Auth.Type = "mtls"

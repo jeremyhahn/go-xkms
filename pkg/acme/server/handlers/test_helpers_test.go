@@ -45,6 +45,7 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
@@ -142,9 +143,6 @@ func (m *MockCA) ServerTLSConfig(_ context.Context, _ *types.KeyAttributes, _ bo
 	return &tls.Config{}, nil
 }
 func (m *MockCA) ClientTLSConfig(_ context.Context, _ *types.KeyAttributes, _ string) (*tls.Config, error) {
-	return &tls.Config{}, nil
-}
-func (m *MockCA) QuantumSafeTLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
 	return &tls.Config{}, nil
 }
 func (m *MockCA) TLSBundle(_ context.Context, _ *types.KeyAttributes) ([]byte, error) {
@@ -371,6 +369,45 @@ func setupTestService(t *testing.T) (*RestService, string, func()) {
 	return service.(*RestService), tmpDir, cleanup
 }
 
+// setupTestServiceWithPolicy is setupTestService with an explicit
+// policy.PolicyConfig, for tests exercising the identifier blocklist,
+// public-suffix, reserved-IP, and challenge-policy enforcement that a nil
+// Params.Policy leaves permissive.
+func setupTestServiceWithPolicy(t *testing.T, policyCfg *policy.PolicyConfig) (*RestService, string, func()) {
+	tmpDir, err := os.MkdirTemp("", "acme-handler-test-*")
+	require.NoError(t, err)
+
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
+	require.NoError(t, err)
+
+	factory, err := objstore.NewFactoryFromKVStore(kv)
+	require.NoError(t, err)
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelError, // Reduce noise in tests
+	}))
+
+	params := &Params{
+		BaseRESTURI:    "https://acme.test.example.com",
+		CA:             &MockCA{},
+		CAAIdentities:  []string{"acme.test.example.com"},
+		ChallengeMap:   make(map[string]common.ChallengeVerifierFunc),
+		Logger:         logger,
+		Policy:         policyCfg,
+		StorageFactory: factory,
+		TermsOfService: "https://acme.test.example.com/tos",
+	}
+
+	service, err := NewRestService(params)
+	require.NoError(t, err)
+
+	cleanup := func() {
+		_ = os.RemoveAll(tmpDir)
+	}
+
+	return service.(*RestService), tmpDir, cleanup
+}
+
 // generateTestKey creates a test ECDSA key pair and its JWK representation
 func generateTestKey(t *testing.T) *TestKey {
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -393,9 +430,8 @@ func generateTestKey(t *testing.T) *TestKey {
 // createJWSRequest creates a signed JWS request for testing
 func createJWSRequest(t *testing.T, service *RestService, key *TestKey, url string, payload interface{}, useKID bool, accountID uint64) *http.Request {
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	// Marshal payload
 	var payloadBytes []byte

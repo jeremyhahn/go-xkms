@@ -29,7 +29,6 @@ import (
 	"math/big"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -1400,7 +1399,7 @@ func TestQuantumKeyID_RoundTripsThroughListKeys(t *testing.T) {
 	}
 	keyTypes := map[types.QuantumAlgorithm]uint{}
 	for _, algorithm := range algorithms {
-		if strings.HasPrefix(string(algorithm), "ML-DSA") {
+		if algorithm.IsSignature() {
 			keyTypes[algorithm] = CKK_ML_DSA
 			continue
 		}
@@ -1854,7 +1853,15 @@ func staleSessionBackend(t *testing.T, owner *Backend) *Backend {
 
 	pool, err := NewSessionPool(owner.p11ctx, slot, secretValueString(owner.config.PIN), 1)
 	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() {
+		// The session this helper hands back is deliberately closed out from
+		// under the pool by the caller to simulate a vanished token, so
+		// Close's drain legitimately fails to close it too. That is the
+		// condition under test, not a defect.
+		if closeErr := pool.Close(); closeErr != nil {
+			t.Logf("pool.Close: %v", closeErr)
+		}
+	})
 
 	var stale pkcs11.SessionHandle
 	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {

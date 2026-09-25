@@ -133,8 +133,8 @@ func TestFA_OIDCService_Close_NilTokenStore(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestFA_OIDCService_Login_AWSType covers L452-453: Login with an AWS-type
-// provider returns ErrOIDCUnsupportedAWSLogin.
+// TestFA_OIDCService_Login_AWSType covers Login with an AWS-type provider
+// that has no aws_region: it is refused before any login attempt.
 func TestFA_OIDCService_Login_AWSType(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
 	svc.providers["aws-test"] = &OIDCProviderEntry{
@@ -145,7 +145,7 @@ func TestFA_OIDCService_Login_AWSType(t *testing.T) {
 
 	result, err := svc.Login("aws-test")
 	assert.NoError(t, err)
-	assert.Contains(t, result.Error, "AWS")
+	assert.Contains(t, result.Error, "aws_region")
 	assert.False(t, result.Success)
 }
 

@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 )
@@ -36,6 +37,14 @@ const (
 	// https://trustedcomputinggroup.org/wp-content/uploads/TCG_IWG_DevID_v1r2_02dec2020.pdf
 	idevIDNVIndex = 0x01C90020
 	iakNVIndex    = 0x01C90021
+
+	// TPMA_PERMANENT bits (TCG TPM 2.0 Part 2, section 8.3, Table 32).
+	// formatPermanentFlags and ProvisioningState.State both decode these
+	// from PropertiesFixed.Permanent, and share these three values so the
+	// bit positions cannot drift apart between the two call sites.
+	permanentOwnerAuthSet       = 0x00000001
+	permanentEndorsementAuthSet = 0x00000002
+	permanentLockoutAuthSet     = 0x00000004
 
 	ekCertIndexRSA2048 = 0x01C00002
 	ekCertIndexECCP256 = 0x01C0000a
@@ -70,6 +79,13 @@ const (
 	infoOpeningPlatformAddress = "tpm: opening TPM 2.0 TCP connection"
 	infoClosingConnection      = "tpm: closing TPM 2.0"
 
+	// maxEKCertServiceResponseBytes bounds how much of the manufacturer EK
+	// certificate service response body downloadEKCertFromManufacturer reads,
+	// so a malicious or misbehaving service cannot exhaust memory by streaming
+	// an unbounded body at a client that only ever needs a few KB of
+	// certificate DER/PEM.
+	maxEKCertServiceResponseBytes = 64 * 1024
+
 	EnrollmentStrategyIAK                    = EnrollmentStrategy("IAK")
 	EnrollmentStrategyIAK_IDEVID_SINGLE_PASS = EnrollmentStrategy("IAK_IDEVID_SINGLE_PASS")
 
@@ -83,37 +99,73 @@ const (
 	binaryMeasurementsFileNameTemplate = "/sys/kernel/security/%s/binary_bios_measurements"
 )
 
+// DefaultEKCertDownloadTimeout bounds the manufacturer EK certificate
+// service HTTP request when EKConfig.CertDownloadTimeout is left at its
+// zero value. See EKConfig.CertDownload.
+const DefaultEKCertDownloadTimeout = 10 * time.Second
+
 var (
 	// debugPCR and debugPCRBank are used in test files.
 	debugPCR     = uint(16)      //nolint:unused // used in tests
 	debugPCRBank = PCRBankSHA256 //nolint:unused // used in tests
 
-	ErrInvalidAKAttributes             = errors.New("tpm: invalid AK attributes")
-	ErrInvalidEKCertFormat             = errors.New("tpm: invalid endorsement certificate format")
-	ErrInvalidEKAttributes             = errors.New("tpm: invalid EK attributes")
-	ErrInvalidEKCert                   = errors.New("tpm: failed to verify endorsement key certificate")
-	ErrDeviceAlreadyOpen               = errors.New("tpm: device already open")
-	ErrOpeningDevice                   = errors.New("tpm: error opening device")
-	ErrInvalidSessionType              = errors.New("tpm: invalid session type")
-	ErrInvalidSRKAuth                  = errors.New("tpm: invalid storage root key auth")
-	ErrInvalidActivationCredential     = errors.New("tpm: invalid activation credential")
-	ErrHashAlgorithmNotSupported       = errors.New("tpm: hash algorithm not supported")
-	ErrInvalidKeyAttributes            = errors.New("tpm: invalid key attributes")
-	ErrInvalidPolicyDigest             = errors.New("tpm: invalid policy digest")
-	ErrInvalidHandle                   = errors.New("tpm: invalid entity handle")
-	ErrUnexpectedRandomBytes           = errors.New("tpm: unexpected number of random bytes read")
-	ErrInvalidRandomBytesLength        = errors.New("tpm: invalid random bytes length")
-	ErrInvalidPCRIndex                 = errors.New("tpm: invalid PCR index")
-	ErrInvalidNonce                    = errors.New("tpm: invalid nonce")
-	ErrNotInitialized                  = errors.New("tpm: not initialized")
-	ErrNotConfigured                   = errors.New("tpm: IDevID not configured")
-	ErrEndorsementCertNotFound         = errors.New("tpm: endorsement certificate not found")
+	ErrPlatformPasswordUnavailable = errors.New("tpm: failed to retrieve platform password")
+	ErrCertStoreNotInitialized     = errors.New("tpm: certificate store not initialized")
+	ErrInvalidAKAttributes         = errors.New("tpm: invalid AK attributes")
+	ErrInvalidEKCertFormat         = errors.New("tpm: invalid endorsement certificate format")
+	ErrInvalidEKAttributes         = errors.New("tpm: invalid EK attributes")
+	ErrInvalidEKCert               = errors.New("tpm: failed to verify endorsement key certificate")
+	ErrDeviceAlreadyOpen           = errors.New("tpm: device already open")
+	ErrOpeningDevice               = errors.New("tpm: error opening device")
+	ErrInvalidSessionType          = errors.New("tpm: invalid session type")
+	ErrInvalidSRKAuth              = errors.New("tpm: invalid storage root key auth")
+	ErrInvalidActivationCredential = errors.New("tpm: invalid activation credential")
+	ErrHashAlgorithmNotSupported   = errors.New("tpm: hash algorithm not supported")
+	ErrInvalidKeyAttributes        = errors.New("tpm: invalid key attributes")
+	ErrInvalidPolicyDigest         = errors.New("tpm: invalid policy digest")
+	ErrInvalidHandle               = errors.New("tpm: invalid entity handle")
+	ErrUnexpectedRandomBytes       = errors.New("tpm: unexpected number of random bytes read")
+	ErrInvalidRandomBytesLength    = errors.New("tpm: invalid random bytes length")
+	ErrInvalidPCRIndex             = errors.New("tpm: invalid PCR index")
+	ErrInvalidNonce                = errors.New("tpm: invalid nonce")
+	ErrNotInitialized              = errors.New("tpm: not initialized")
+
+	// ErrKeyRetrievalFailed indicates GetSymmetricKey could not determine
+	// whether a symmetric key exists because the underlying key store
+	// (store.KeyBackend) returned an error other than "not found" -- a
+	// transient I/O failure, permission error, or corrupt blob. Callers
+	// must not treat this as backend.ErrKeyNotFound: doing so risks
+	// silently generating a replacement for a key that merely failed to
+	// read. Mirrors pkg/backend/tpm2.ErrKeyRetrievalFailed.
+	ErrKeyRetrievalFailed = errors.New("tpm: symmetric key retrieval failed")
+
+	ErrNotConfigured           = errors.New("tpm: IDevID not configured")
+	ErrEndorsementCertNotFound = errors.New("tpm: endorsement certificate not found")
+
+	// ErrEKCertServiceUnreachable reports that the manufacturer EK
+	// certificate service could not be reached within the configured bound
+	// (EKConfig.CertDownloadTimeout / DefaultEKCertDownloadTimeout) or
+	// answered with a non-200 status. It wraps the underlying transport
+	// error, including a context-deadline timeout, as detail via errs.Detail
+	// so callers can still match it with errors.Is.
+	ErrEKCertServiceUnreachable = errors.New("tpm: ek certificate service unreachable")
+
 	ErrInvalidPlatformSRKConfiguration = errors.New("tpm: invalid platform SRK configuration")
 	ErrInvalidHashFunction             = errors.New("tpm: invalid hash function")
 	ErrInvalidSessionAuthorization     = errors.New("tpm: invalid session authorization")
 	ErrUnsupportedCertifyScheme        = errors.New("tpm: attestation key signing scheme is not supported for certification")
 	ErrMissingMeasurementLog           = errors.New("tpm: binary measurement log not found")
-	ErrRSAPSSNotSupported              = errors.New("tpm: RSA-PSS / FIPS 140-2 not supported by this TPM")
+	ErrInvalidTPMTransport             = errors.New("tpm: invalid TPM transport configuration")
+	ErrSignValidatePublicRequired      = errors.New("tpm: TPMAttributes.Public is required for SignValidate")
+	ErrSignValidateHashAlgRequired     = errors.New("tpm: TPMAttributes.HashAlg is required for SignValidate")
+	ErrECCEKCertUnsupported            = errors.New("tpm: ECC EK certificates unsupported at this time")
+
+	// ErrEKCertServiceParseFailed reports that the manufacturer EK
+	// certificate service returned a response that could not be parsed as a
+	// DER or PEM encoded X.509 certificate.
+	ErrEKCertServiceParseFailed = errors.New("tpm: failed to parse ek certificate service response")
+
+	ErrRSAPSSNotSupported = errors.New("tpm: RSA-PSS / FIPS 140-2 not supported by this TPM")
 
 	// ErrRawRSASignUnsupported reports that a TPM cannot produce a PKCS#1 v1.5
 	// signature over a caller-supplied DigestInfo -- the operation PKCS#11 calls
@@ -361,10 +413,52 @@ var (
 	ErrInvalidHierarchy               = errors.New("tpm: invalid hierarchy")
 	ErrFactoryReset                   = errors.New("tpm: factory reset failed")
 	ErrForceClear                     = errors.New("tpm: force clear via PPI failed")
-	ErrEKConfigNil                    = errors.New("tpm: EK config is nil")
-	ErrIAKConfigNil                   = errors.New("tpm: IAK config is nil")
-	ErrIDevIDConfigNil                = errors.New("tpm: IDevID config is nil")
-	ErrSSRKConfigNil                  = errors.New("tpm: SSRK config is nil")
+
+	// ErrClearLockoutRefused reports that TPM2_Clear via the LOCKOUT
+	// hierarchy with empty auth was refused -- typically because a previous
+	// provisioning run set the lockout auth, or dictionary-attack lockout
+	// is engaged. ClearForReprovision falls through to the PLATFORM
+	// hierarchy when this occurs.
+	ErrClearLockoutRefused = errors.New("tpm: TPM2_Clear via LOCKOUT hierarchy refused")
+
+	// ErrClearPlatformRefused reports that TPM2_Clear via the PLATFORM
+	// hierarchy with empty auth was refused -- the common case, since most
+	// firmware clears the platform hierarchy's auth at every boot before
+	// handing control to the OS (TCG TPM 2.0 Part 1, section 13.7).
+	// ClearForReprovision falls through to PPI ForceClear when this occurs.
+	ErrClearPlatformRefused = errors.New("tpm: TPM2_Clear via PLATFORM hierarchy refused")
+
+	// ErrProvisioningStateRead reports that State could not read one of the
+	// TPM properties or persistent handles it classifies.
+	ErrProvisioningStateRead = errors.New("tpm: failed to read TPM provisioning state")
+
+	// ErrCredentialChallenge reports that NewCredentialChallenge could not
+	// build a TPM2_MakeCredential challenge in software.
+	ErrCredentialChallenge = errors.New("tpm: failed to build credential challenge")
+
+	// ErrEKPublicRequired reports that NewCredentialChallenge was called
+	// with a nil EK public key.
+	ErrEKPublicRequired = errors.New("tpm: EK public key is required")
+
+	// ErrActivationKeyNameRequired reports that NewCredentialChallenge was
+	// called with an empty activation key Name.
+	ErrActivationKeyNameRequired = errors.New("tpm: activation key name is required")
+
+	// ErrActivationKeyCreate reports that CreateActivationKey could not
+	// create the transient null-hierarchy key.
+	ErrActivationKeyCreate = errors.New("tpm: failed to create activation key")
+
+	// ErrActivationKeyRequired reports that AnswerCredentialChallenge was
+	// called with a nil ActivationKey.
+	ErrActivationKeyRequired = errors.New("tpm: activation key is required")
+
+	// ErrCredentialChallengeRequired reports that AnswerCredentialChallenge
+	// was called with a nil CredentialChallenge.
+	ErrCredentialChallengeRequired = errors.New("tpm: credential challenge is required")
+	ErrEKConfigNil                 = errors.New("tpm: EK config is nil")
+	ErrIAKConfigNil                = errors.New("tpm: IAK config is nil")
+	ErrIDevIDConfigNil             = errors.New("tpm: IDevID config is nil")
+	ErrSSRKConfigNil               = errors.New("tpm: SSRK config is nil")
 
 	// Handle enumeration errors
 	ErrListPersistentHandles = errors.New("tpm: list persistent handles")

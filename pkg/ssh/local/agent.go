@@ -44,7 +44,7 @@ import (
 // cannot be dialed.
 func DialAgent(sockPath string) ([]ssh.Signer, error) {
 	if sockPath == "" {
-		return nil, &AgentUnavailableError{Path: sockPath, Err: errors.New("no agent socket configured")}
+		return nil, &AgentUnavailableError{Path: sockPath, Err: ErrNoAgentSocket}
 	}
 
 	conn, err := net.Dial("unix", sockPath)
@@ -55,8 +55,7 @@ func DialAgent(sockPath string) ([]ssh.Signer, error) {
 	client := sshagent.NewClient(conn)
 	signers, err := client.Signers()
 	if err != nil {
-		_ = conn.Close()
-		return nil, &AgentUnavailableError{Path: sockPath, Err: err}
+		return nil, errors.Join(&AgentUnavailableError{Path: sockPath, Err: err}, conn.Close())
 	}
 
 	return signers, nil

@@ -75,6 +75,11 @@ const (
 	// BackendSymmetric represents the symmetric encryption backend.
 	// Always compiled in.
 	BackendSymmetric BackendType = "symmetric"
+
+	// BackendAVR represents an AVR device with a DICE-rooted identity,
+	// reached over the arduino-generic wire protocol.
+	// Always compiled in.
+	BackendAVR BackendType = "avr"
 )
 
 // String returns the string representation of the backend type.
@@ -88,7 +93,7 @@ func (b BackendType) IsValid() bool {
 	case BackendSoftware, BackendTPM2, BackendPKCS11, BackendPKCS8,
 		BackendAWSKMS, BackendGCPKMS,
 		BackendAzureKV, BackendVault, BackendQuantum, BackendFROST,
-		BackendSymmetric:
+		BackendSymmetric, BackendAVR:
 		return true
 	default:
 		return false

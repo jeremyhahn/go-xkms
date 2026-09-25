@@ -25,6 +25,8 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/term"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
@@ -371,11 +373,16 @@ func checkLUKSVolume() error {
 		return nil
 	}
 
-	// LUKS file exists but not mounted - need root privileges
+	// LUKS file exists but not mounted - need root privileges. Report the
+	// canonical xkms.ErrLUKSVolumeLocked sentinel (the same one the GUI
+	// surfaces from StorageService.RequireUnlocked) so callers checking
+	// errors.Is(err, xkmssdk.ErrLUKSVolumeLocked) recognize a locked volume
+	// the same way regardless of which front end hit it; ErrPermissionDenied
+	// remains reachable as the cause for the specific reason it's locked.
 	if os.Geteuid() != 0 {
 		fmt.Fprintf(os.Stderr, "Encrypted storage detected at %s\n", vol.LUKSPath)
 		fmt.Fprintf(os.Stderr, "Run with sudo to unlock: sudo xkey luks2 unseal\n")
-		return luks.ErrPermissionDenied
+		return &SentinelCauseError{Sentinel: xkmssdk.ErrLUKSVolumeLocked, Cause: luks.ErrPermissionDenied}
 	}
 
 	// Prompt for passphrase

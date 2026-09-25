@@ -28,6 +28,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,7 +51,7 @@ type mockCAAValidator92Push struct {
 	validateCount int
 }
 
-func (m *mockCAAValidator92Push) Validate(_ context.Context, domain string, _ bool) error {
+func (m *mockCAAValidator92Push) Validate(_ context.Context, domain string, _ bool, _ string, _ string) error {
 	m.validateCount++
 	if m.shouldFail {
 		if m.failDomain != "" && domain != m.failDomain {
@@ -65,6 +66,42 @@ func (m *mockCAAValidator92Push) Validate(_ context.Context, domain string, _ bo
 		return caerrors.InternalServerError("DNS resolution error for %s", domain)
 	}
 	return nil
+}
+
+// createCAAValidatedAuthz saves a valid, single-challenge authorization
+// matching order's first (DNS) identifier at the authorization URL
+// createTestOrderSimple already put in order.Authorizations. The
+// mockCAAValidator92Push-backed tests below drive the CAA outcome entirely
+// through the mock, not through this authorization's own state, but the
+// finalize handler now resolves an RFC 8657 validated method from a real
+// authorization before it ever calls the CAA validator, so one must exist.
+func createCAAValidatedAuthz(t *testing.T, service *RestService, account *entities.ACMEAccount, order *entities.ACMEOrder) {
+	t.Helper()
+	require.NotEmpty(t, order.Authorizations)
+
+	authzDAO, err := service.storageFactory.AuthorizationDAO(account.ID)
+	require.NoError(t, err)
+
+	authzID, err := ParseAccountID(order.Authorizations[0])
+	require.NoError(t, err)
+
+	identifier := order.Identifiers[0]
+	wildcard := strings.HasPrefix(identifier.Value, "*.")
+	domain := strings.TrimPrefix(identifier.Value, "*.")
+
+	authz := &entities.ACMEAuthorization{
+		ID:         authzID,
+		Identifier: entities.ACMEIdentifier{Type: common.AuthzTypeDNS, Value: domain},
+		Status:     common.StatusValid,
+		Expires:    time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		Wildcard:   wildcard,
+		AccountID:  account.ID,
+		OrderID:    order.ID,
+		Challenges: []entities.ACMEChallenge{
+			{ID: 1, Type: common.ChallengeTypeHTTP01, Status: common.StatusValid, AccountID: account.ID},
+		},
+	}
+	require.NoError(t, authzDAO.Save(context.Background(), authz))
 }
 
 // --- OrderFinalizeHandler CAA validation tests ---
@@ -89,6 +126,7 @@ func TestCov92_OrderFinalizeHandler_CAAValidationSuccess(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	createCAAValidatedAuthz(t, service, account, order)
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -141,6 +179,7 @@ func TestCov92_OrderFinalizeHandler_CAAValidationFailure(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	createCAAValidatedAuthz(t, service, account, order)
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -192,6 +231,7 @@ func TestCov92_OrderFinalizeHandler_CAAValidationDNSError(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	createCAAValidatedAuthz(t, service, account, order)
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -255,12 +295,10 @@ func TestCov92_OrderFinalizeHandler_CAAValidationSkipsNonDNS(t *testing.T) {
 			CommonName: "test-device-id",
 		},
 	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "test-device-id")
 
 	payload := OrderFinalizeRequest{
-		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
+		CSR: base64.RawURLEncoding.EncodeToString(csr.Raw),
 	}
 
 	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
@@ -301,6 +339,7 @@ func TestCov92_OrderFinalizeHandler_CAAValidationWildcard(t *testing.T) {
 	require.NoError(t, err)
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
+	createCAAValidatedAuthz(t, service, account, order)
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -524,12 +563,10 @@ func TestCov92_OrderFinalizeHandler_PermanentIDNotBase64(t *testing.T) {
 			CommonName: "device-hostname-123",
 		},
 	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "device-hostname-123")
 
 	payload := OrderFinalizeRequest{
-		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
+		CSR: base64.RawURLEncoding.EncodeToString(csr.Raw),
 	}
 
 	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)

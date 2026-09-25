@@ -20,6 +20,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -333,7 +335,17 @@ func (s *SecureBrowserService) Rebuild() error {
 // platform certificates as untrusted.
 func (s *SecureBrowserService) syncIfChanged(family nativemsg.Browser, certs []*x509.Certificate) error {
 	currentHash := computeTrustHash(certs)
-	storedHash, _ := s.readTrustHash(family)
+	storedHash, hashErr := s.readTrustHash(family)
+	if hashErr != nil && !errors.Is(hashErr, fs.ErrNotExist) {
+		// A missing hash file (first sync) is expected and already handled
+		// below: storedHash stays "" and mismatches currentHash, forcing a
+		// sync. Any other read failure (permissions, a corrupted file) is
+		// not expected, so it is logged rather than silently treated the
+		// same as "never synced" — the effect (force a resync) is
+		// identical either way, but only a genuine failure is worth an
+		// operator's attention.
+		s.log.Warn("failed to read stored trust hash; forcing resync", "family", family, "error", hashErr)
+	}
 
 	if currentHash == storedHash && s.browserStorePresent(family) {
 		return nil
@@ -372,7 +384,11 @@ func (s *SecureBrowserService) syncChrome(certs []*x509.Certificate) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserNSSDB, Cause: err}
 	}
-	defer func() { _ = writer.Close() }()
+	defer func() {
+		if closeErr := writer.Close(); closeErr != nil {
+			s.log.Warn("failed to close nssdb writer", "error", closeErr)
+		}
+	}()
 
 	// Remove all existing xkey-managed certs then re-add.
 	if removeErr := writer.RemoveByPrefix(nssdbCertLabelPrefix); removeErr != nil {
@@ -416,10 +432,15 @@ func (s *SecureBrowserService) syncFirefox(certs []*x509.Certificate) error {
 	}
 
 	// Remove old PEM files.
-	entries, _ := os.ReadDir(certsDir)
+	entries, readErr := os.ReadDir(certsDir)
+	if readErr != nil {
+		s.log.Warn("failed to list firefox certs directory for cleanup", "dir", certsDir, "error", readErr)
+	}
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name(), ".pem") {
-			_ = os.Remove(filepath.Join(certsDir, entry.Name()))
+			if removeErr := os.Remove(filepath.Join(certsDir, entry.Name())); removeErr != nil {
+				s.log.Warn("failed to remove stale firefox cert PEM file", "file", entry.Name(), "error", removeErr)
+			}
 		}
 	}
 
@@ -471,7 +492,11 @@ func (s *SecureBrowserService) injectFirefoxNSSDB(certs []*x509.Certificate) err
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrSecureBrowserNSSDB, Cause: err}
 	}
-	defer func() { _ = writer.Close() }()
+	defer func() {
+		if closeErr := writer.Close(); closeErr != nil {
+			s.log.Warn("failed to close firefox nssdb writer", "error", closeErr)
+		}
+	}()
 
 	if removeErr := writer.RemoveByPrefix(nssdbCertLabelPrefix); removeErr != nil {
 		s.log.Warn("failed to remove existing xkey certs from firefox nssdb", "error", removeErr)

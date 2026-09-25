@@ -412,7 +412,11 @@ func (s *SecurityFactorService) do(req *http.Request, dst any) error {
 	if err != nil {
 		return &WrappedError{Msg: fmt.Sprintf("security_factor: %s %s", req.Method, req.URL.Path), Err: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			s.log.Debug("failed to close security factor response body", "error", closeErr)
+		}
+	}()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -421,7 +425,12 @@ func (s *SecurityFactorService) do(req *http.Request, dst any) error {
 
 	if resp.StatusCode >= 400 {
 		var body apiErrBody
-		_ = json.Unmarshal(data, &body)
+		if unmarshalErr := json.Unmarshal(data, &body); unmarshalErr != nil {
+			// Best-effort: the server's error body did not parse as JSON.
+			// Fall through to the generic "HTTP %d" message below rather
+			// than failing the whole request over an unparsable body.
+			s.log.Debug("failed to parse error response body", "error", unmarshalErr)
+		}
 		msg := body.Error
 		if msg == "" {
 			msg = body.Message

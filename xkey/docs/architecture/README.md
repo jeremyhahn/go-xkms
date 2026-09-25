@@ -509,7 +509,7 @@ Barrier auto-unseal is configured via `BarrierAutoUnsealBlobID`. When using the 
 
 Static passwords and other sensitive data stored through the barrier backend are transparently encrypted by the barrier's AES-256-GCM layer before reaching the base storage.
 
-For full details on the barrier and LUKS integration, see [Barrier Encryption Architecture](../../docs/seal/README.md) and [LUKS + Barrier Layered Architecture](../../docs/seal/barrier.md).
+For full details on the barrier, barrier auto-unseal, and LUKS integration, see [Seal & Auto-Unseal Architecture](../../docs/seal/architecture.md).
 
 ### CredentialStorage Interface
 

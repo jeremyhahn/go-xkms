@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -347,6 +348,102 @@ func (t *TenantScopedBackend) KeyProvider() types.KeyProvider {
 // CertStorage returns the underlying certificate storage adapter.
 func (t *TenantScopedBackend) CertStorage() certstore.CertificateStorageAdapter {
 	return t.base.CertStorage()
+}
+
+// SignerStore returns the base backend's signer store wrapped in a
+// tenant-scoped view. store.SignerStore keys every record -- crypto.Signer
+// material and persisted signatures alike -- off KeyAttributes.CN (and
+// BlobCN for signatures), never off KeyAttributes.TenantID, so the usual
+// TenantID stamp scopeAttrs applies elsewhere does not by itself separate
+// tenants here. tenantScopedSignerStore closes that gap the same way
+// scopeCertKeyID does for certificates: by folding the tenant ID into the
+// string identifier the base store actually keys its records by.
+func (t *TenantScopedBackend) SignerStore() store.SignerStorer {
+	base := t.base.SignerStore()
+	if base == nil {
+		return nil
+	}
+	return &tenantScopedSignerStore{base: base, tenantID: t.tenantID}
+}
+
+// tenantScopedSignerStore scopes a store.SignerStorer to one tenant by
+// prefixing the signing key's CN with "{tenantID}/", exactly as
+// scopeCertKeyID prefixes a certificate's key ID. Every record the base
+// store computes -- crypto.Signer material via Get/Save/Delete, and
+// signature records via SaveSignature/GetSignature/Checksum -- derives its
+// storage key from this CN (see store.signatureKey), so the prefix alone is
+// what keeps two tenants' identically-named keys and identical BlobCNs from
+// colliding.
+type tenantScopedSignerStore struct {
+	base     store.SignerStorer
+	tenantID string
+}
+
+// Verify interface compliance at compile time.
+var _ store.SignerStorer = (*tenantScopedSignerStore)(nil)
+
+// scopeAttrs returns a copy of attrs with CN prefixed by the tenant
+// namespace and TenantID set, mirroring TenantScopedBackend.scopeAttrs. A
+// nil attrs stays nil, so callers that pass nil (an already-invalid
+// argument the base store rejects with its own typed error) see that same
+// rejection rather than a nil-pointer panic here.
+func (s *tenantScopedSignerStore) scopeAttrs(attrs *types.KeyAttributes) *types.KeyAttributes {
+	if attrs == nil {
+		return nil
+	}
+	scoped := *attrs
+	scoped.TenantID = s.tenantID
+	scoped.CN = s.tenantID + "/" + attrs.CN
+	return &scoped
+}
+
+// scopeSignerOpts returns a copy of opts with KeyAttributes tenant-scoped.
+// A nil opts stays nil for the same reason scopeAttrs preserves a nil attrs.
+func (s *tenantScopedSignerStore) scopeSignerOpts(opts *store.SignerOpts) *store.SignerOpts {
+	if opts == nil {
+		return nil
+	}
+	scoped := *opts
+	scoped.KeyAttributes = s.scopeAttrs(opts.KeyAttributes)
+	return &scoped
+}
+
+// Get retrieves a crypto.Signer scoped to this tenant.
+func (s *tenantScopedSignerStore) Get(attrs *types.KeyAttributes) (interface{}, error) {
+	return s.base.Get(s.scopeAttrs(attrs))
+}
+
+// Save stores a crypto.Signer scoped to this tenant.
+func (s *tenantScopedSignerStore) Save(attrs *types.KeyAttributes, signer interface{}) error {
+	return s.base.Save(s.scopeAttrs(attrs), signer)
+}
+
+// Delete removes a crypto.Signer scoped to this tenant.
+func (s *tenantScopedSignerStore) Delete(attrs *types.KeyAttributes) error {
+	return s.base.Delete(s.scopeAttrs(attrs))
+}
+
+// SaveSignature persists a signature/digest record scoped to this tenant.
+func (s *tenantScopedSignerStore) SaveSignature(opts *store.SignerOpts, signature, digest []byte) error {
+	return s.base.SaveSignature(s.scopeSignerOpts(opts), signature, digest)
+}
+
+// GetSignature retrieves a signature/digest record scoped to this tenant.
+func (s *tenantScopedSignerStore) GetSignature(opts *store.SignerOpts) (digest, signature []byte, err error) {
+	return s.base.GetSignature(s.scopeSignerOpts(opts))
+}
+
+// Checksum implements types.ChecksumProvider, scoped to this tenant, so a
+// types.SimpleVerifier performing IntegrityCheck against a tenant-scoped
+// backend's SignerStore only ever sees that tenant's own record for a given
+// KeyAttributes.CN and BlobCN.
+func (s *tenantScopedSignerStore) Checksum(opts *types.VerifyOpts) ([]byte, error) {
+	if opts == nil {
+		return s.base.Checksum(opts)
+	}
+	scoped := *opts
+	scoped.KeyAttributes = s.scopeAttrs(opts.KeyAttributes)
+	return s.base.Checksum(&scoped)
 }
 
 // Close delegates to the underlying backend.

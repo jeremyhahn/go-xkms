@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface — `pkg/tpm2`
 
@@ -18,6 +18,8 @@ The package is large; the map in [`architecture.md`](architecture.md)
 | IDevID / TCG enrollment | `cert_idevid.go`, `idevid_csr.go`, `tcg_csr_serverside.go`, `cert_convert.go` |
 | IDevID / IAK key policy and delegation | `devid_policy.go`, `devid_policy_session.go`, `devid_delegation.go` |
 | provision the platform | `platform.go`, `platform_keystore.go`, `platform_types.go`, `provision.go` |
+| classify provisioning state, clear for reprovisioning | `provisioning_state.go` (`ProvisioningState`, `(*TPM2).State`), `provision.go` (`(*TPM2).ClearForReprovision`, `(*TPM2).ForceClear`) |
+| build/answer an EK credential challenge without a provisioned identity key | `credential_challenge.go` (`NewCredentialChallenge`, `ActivationKeyName`), `activation_key.go` (`(*TPM2).CreateActivationKey`, `(*TPM2).AnswerCredentialChallenge`) |
 | ask what this TPM can do | `capabilities.go`, `capability_device.go`, `version.go` |
 | lockout state | `lockout.go` |
 | randomness | `random.go` |
@@ -54,6 +56,33 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   around with retries.
 - **Concurrency.** TPM access is serialised — the device has a single command
   channel. Do not expect parallel throughput.
+- **`(*TPM2).State` never fails on a property read.** `FixedProperties`
+  degrades every individual `TPM2_GetCapability` failure to a zero value
+  rather than returning an error, so `State`'s only real failure surface is
+  computing the live platform policy digest for `PlatformSRKPolicyCurrent`
+  (`PlatformPolicyDigest`, which reads the live PCR) when a Platform SRK is
+  present — wrapped as `ErrProvisioningStateRead`. This is deliberate:
+  `State` is a classification a caller polls, not a health check, and a
+  caller that wants to know why a single property is unavailable reads it
+  directly.
+- **`(*TPM2).ClearForReprovision` tries LOCKOUT, then PLATFORM, then PPI
+  `ForceClear`, and only the last one needs a reboot.** Each refused step is
+  logged with its own typed error (`ErrClearLockoutRefused`,
+  `ErrClearPlatformRefused`) before falling through; `ForceClear`'s own error
+  (typically `ErrForceClear`, wrapping the seam failure) is returned
+  directly, since it is the last path. `ForceClear`'s single sysfs write
+  goes through the package-level `ppiRequestWriter` seam
+  (`os.WriteFile` in production) so it is never exercised against a real
+  host in a test.
+- **`NewCredentialChallenge` needs no TPM; `AnswerCredentialChallenge` and
+  `ActivateCredential` need the real one.** The verifier-side construction
+  (`credential_challenge.go`) is pure software over an EK public key and an
+  activation key's Name (`ActivationKeyName`); only the device side that
+  actually decrypts the seed with the EK's private key proves possession.
+  `CreateActivationKey` creates its transient key in the null hierarchy
+  (`TPM_RH_NULL`, re-randomized every TPM reset), so it needs no hierarchy
+  auth, and `AnswerCredentialChallenge` flushes it once the challenge has
+  been answered — it is a one-shot object, not a key a caller reuses.
 - **An ECC public area is only ever accepted as a point on its curve.** Every
   reconstruction of an `ecdsa.PublicKey` from a `TPMT_PUBLIC` goes through the
   one unexported helper `eccPublicKey` (`eccpub.go`), which delegates to
@@ -236,6 +265,15 @@ vocabulary. The categories that need distinguishing:
 | `ErrDevIDProvisionLookup` | reading the IDevID or IAK persistent handle answered something other than TPM_RC_HANDLE. Only that code means "absent, create it"; anything else — a transport fault, a lockout — is a fault and is not treated as a provisioned key |
 | `ErrTCGCSRAttestation` | the TPM refused the quote that fills the CSR's `prodCaData`. Absence — no transport to quote over — is still an absent field (`prodCaDataSz` 0), which §13.1 allows; a refusal is not |
 | `ErrTCGCSRPad` | the TPM's RNG could not supply the §13.1 random pad |
+| `ErrEKCertServiceUnreachable` | `EKConfig.CertDownload` is `true` and the manufacturer EK certificate service request (`downloadEKCertFromManufacturer`) failed to connect, timed out, or answered a non-200 status. The underlying transport error — including a context-deadline timeout — is reachable as detail through `errors.Is` |
+| `ErrEKCertServiceParseFailed` | the manufacturer EK certificate service answered 200 but the body was neither valid DER nor PEM `x509.Certificate` bytes |
+| `ErrProvisioningStateRead` | `State` could not compute the live platform policy digest needed for `PlatformSRKPolicyCurrent` |
+| `ErrClearLockoutRefused`, `ErrClearPlatformRefused` | `ClearForReprovision`'s LOCKOUT or PLATFORM `TPM2_Clear` attempt was refused; logged, then the next path is tried |
+| `ErrForceClear` | the PPI sysfs write (`ForceClear`, the seam `ppiRequestWriter`) failed |
+| `ErrCredentialChallenge` | `NewCredentialChallenge` or `ActivationKeyName` failed converting the EK public key, importing it as an encapsulation key, or unmarshalling/naming a public area |
+| `ErrEKPublicRequired`, `ErrActivationKeyNameRequired` | `NewCredentialChallenge` was called with a nil EK public key or an empty activation key Name |
+| `ErrActivationKeyCreate` | `CreateActivationKey`'s `TPM2_CreatePrimary` (null hierarchy) failed |
+| `ErrActivationKeyRequired`, `ErrCredentialChallengeRequired` | `AnswerCredentialChallenge` was called with a nil `*ActivationKey` or `*CredentialChallenge` |
 
 **Fail closed:** every one of these refuses. Nothing degrades to a software key
 or an unverified acceptance.
@@ -274,7 +312,29 @@ CA on this release still enrolls a device on the previous one.
   `CommandAddress` and clears the device path. The integration config
   (`configs/xkmsd-integration.yaml`) documents this at length because it has
   cost time before.
-- **Hierarchy authorizations** — endorsement, lockout, owner. Platform-held.
+- **Hierarchy authorizations** — endorsement, lockout, owner. Platform-held,
+  never stored in configuration and never defaulted to a fixed password.
+  `EKConfig` and `SRKConfig` carry a `HierarchyAuth types.SecretValue` field
+  used only as the *current* auth `Install` transitions away from (never as
+  a substitute for the live `soPIN` argument); `PlatformSRKConfig` carries no
+  hierarchy-auth field at all. When no SO PIN has been set the Owner
+  hierarchy carries empty auth — the TCG factory-default state. When one has
+  been set, it reaches `TPM2_CreatePrimary`/`TPM2_EvictControl` only as the
+  `soPIN` argument threaded through `Install`/`Provision`/`ProvisionOwner`
+  (Shared SRK) or through
+  `PlatformKeyStore.Initialize`/`EnrollPlatformSRK`/`ensureSRKAuth` (Platform
+  SRK) at the moment of the call — see [`architecture.md`](architecture.md)
+  §"Trust boundaries" for why the two keys' calls are never conflated.
+  `PlatformSRKAttributesFromConfig` builds the Platform SRK from the SSRK
+  config's algorithm and key parameters only, and always leaves
+  `TPMAttributes.HierarchyAuth` empty. The Platform SRK's own authorization
+  value — its `Password`, distinct from the owner-hierarchy auth — is the
+  user PIN, supplied the same way, never a config literal.
+  `pkg/backend/tpm2`, which uses the Platform SRK as its own working key, has
+  no hierarchy-auth field of its own and routes through the `pkgtpm2.Config`
+  it builds (or a caller-supplied one via `Config.TPMConfig`) instead of
+  duplicating one, and never falls back to the Shared SRK when the Platform
+  SRK is unavailable.
 - **`idevid.platform-policy` / `iak.platform-policy`** — provisions the key's
   Policy NV Index with the platform Delegation Policy (see Invariants). The
   default configuration sets it on the IDevID. It does not alter the key.
@@ -282,6 +342,19 @@ CA on this release still enrolls a device on the previous one.
 - **Session encryption** — TPM2 session encryption is configurable; see the
   legacy `docs/configuration/tpm2-session-encryption.md` pending its own
   migration.
+- **`ek.cert-download`** (`EKConfig.CertDownload`, default `false`) — opts in
+  to downloading the EK certificate from the TPM manufacturer's EK
+  certificate service (`https://ekop.intel.com/ekcertservice/` by default)
+  when `EKCertificate` finds no certificate in NV RAM or the certificate
+  store. **Off by default**: with it `false`, `EKCertificate` returns
+  `ErrEndorsementCertNotFound` as soon as the local lookups are exhausted and
+  makes no outbound network call — an air-gapped host never blocks on it
+  (#761). `ek.cert-download-url` overrides the compiled-in endpoint (must be
+  `https://`); `ek.cert-download-timeout` bounds the request
+  (`DefaultEKCertDownloadTimeout`, 10s, when unset). The request is bounded
+  through its context regardless of which `*http.Client` serves it
+  (`Params.HTTPClient` overrides the client for tests; production uses
+  `http.DefaultClient`).
 
 ## Persistence
 
@@ -340,11 +413,39 @@ The suite is unusually large and deliberately structured:
   (`devid_provision_simulator_test.go` — `Install` with an IDevID configured
   and no EK certificate, a transport fault on the lookup, and a fault on
   `TPM2_CreatePrimary`, each of which returned nil before).
+- **EK certificate download** (`ek_cert_download_simulator_test.go`) — proves
+  `EKConfig.CertDownload=false` (the default) makes `EKCertificate` return
+  `ErrEndorsementCertNotFound` without any HTTP call (an injected
+  `RoundTripper` fails the test if invoked); with it `true`, an `httptest`
+  TLS server stands in for the manufacturer service for a successful
+  DER/PEM download, a request that exceeds `CertDownloadTimeout`
+  (`ErrEKCertServiceUnreachable`, bounded rather than blocking), and a
+  malformed response (`ErrEKCertServiceParseFailed`).
 - **Leak suites** — object contexts, auth sessions, auth sessions under
   transport fault, general resources. These are the regression guard for the
   package's hardest rule.
 - **Regression fixtures** — `loadkeypair_delete_regression_simulator_test.go`,
   `left_alone_fixes_test.go` keep specific past bugs from returning.
+  `provision_test.go` has two tests that keep the FactoryReset handle-table
+  fix (go-xkms#798) from regressing. `TestFactoryReset_IAKAtLegacyECCHandle_Evicted`:
+  an IAK at 0x81010002 (this package's default IAK handle, which is also the
+  TCG ECC EK address) is evicted. `TestFactoryReset_ForeignObjectAtTCGECCEKHandle_Preserved`:
+  an object at that address that the configuration does not own, such as a
+  manufacturer ECC EK, is kept. `factoryResetInternal` preserves both TCG EK
+  addresses and `Config.EK.Handle`, minus the handles the configuration owns
+  (`ownedPersistentHandles`: IAK, IDevID, Platform SRK).
+- **Provisioning state / reprovisioning / credential challenge** —
+  `provisioning_state_simulator_test.go` (`State` on a fresh, provisioned and
+  owned TPM, and the one real failure surface reached through a
+  command-selective fault injection), `clear_for_reprovision_simulator_test.go`
+  (`ClearForReprovision` on all three paths, the PPI path through its
+  injectable seam, never the host's sysfs), `credential_challenge_test.go`
+  (the pure-software half: building and naming a challenge, no simulator
+  needed) and `activation_key_simulator_test.go` (the full device round
+  trip, including that a challenge built against one EK or one activation
+  key's Name cannot be answered by a different EK or a different key on the
+  same TPM, and that the software-built challenge is answered correctly by
+  the real IAK-bound `ActivateCredential` path enroll-01 and `pkg/ca` use).
 - **Harness** — `simharness_simulator_test.go`.
 - **Integration** — `test/integration/tpm2`, `test/integration/acme-tpm`.
 

@@ -850,7 +850,12 @@ func TestBarrierMethodRouting(t *testing.T) {
 		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.NotNil(t, resp.Error)
-		assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
+		// Pins go-xkms#912: a missing secret is a malformed request, not a
+		// server fault. It used to report ErrCodeInternalError because
+		// ErrBarrierSecretRequired reached InvokeMethod as a bare sentinel,
+		// which pkg/apimodule's dispatcher cannot classify as anything but
+		// internal (only *KeyOpError carries a code).
+		assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 	})
 
 }

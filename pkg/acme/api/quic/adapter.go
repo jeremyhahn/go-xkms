@@ -224,7 +224,7 @@ func (a *Adapter) CreateTenant(ctx context.Context, req *admin.CreateTenantReque
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var tenant admin.TenantInfo
 	if err := decodeResponse(resp, &tenant); err != nil {
@@ -239,7 +239,7 @@ func (a *Adapter) GetTenant(ctx context.Context, tenantID string) (*admin.Tenant
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var tenant admin.TenantInfo
 	if err := decodeResponse(resp, &tenant); err != nil {
@@ -254,7 +254,7 @@ func (a *Adapter) UpdateTenant(ctx context.Context, tenantID string, req *admin.
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var tenant admin.TenantInfo
 	if err := decodeResponse(resp, &tenant); err != nil {
@@ -269,7 +269,7 @@ func (a *Adapter) DeleteTenant(ctx context.Context, tenantID string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	return decodeResponse(resp, nil)
 }
@@ -281,7 +281,7 @@ func (a *Adapter) ListTenants(ctx context.Context, req *admin.ListTenantsRequest
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var tenants []*admin.TenantInfo
 	pagination, err := decodeListResponse(resp, &tenants)
@@ -299,7 +299,7 @@ func (a *Adapter) CreateEAB(ctx context.Context, tenantID string, req *admin.Cre
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var eab admin.CreateEABResponse
 	if err := decodeResponse(resp, &eab); err != nil {
@@ -314,7 +314,7 @@ func (a *Adapter) GetEAB(ctx context.Context, tenantID, kid string) (*admin.EABI
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var eab admin.EABInfo
 	if err := decodeResponse(resp, &eab); err != nil {
@@ -329,7 +329,7 @@ func (a *Adapter) DeleteEAB(ctx context.Context, tenantID, kid string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	return decodeResponse(resp, nil)
 }
@@ -341,7 +341,7 @@ func (a *Adapter) ListEABs(ctx context.Context, tenantID string, req *admin.List
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var eabs []*admin.EABInfo
 	pagination, err := decodeListResponse(resp, &eabs)
@@ -359,7 +359,7 @@ func (a *Adapter) CreateTenantRole(ctx context.Context, tenantID string, req *db
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var role db.Role
 	if err := decodeResponse(resp, &role); err != nil {
@@ -374,7 +374,7 @@ func (a *Adapter) GetTenantRole(ctx context.Context, tenantID, roleID string) (*
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var role db.Role
 	if err := decodeResponse(resp, &role); err != nil {
@@ -389,7 +389,7 @@ func (a *Adapter) UpdateTenantRole(ctx context.Context, tenantID string, req *db
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var role db.Role
 	if err := decodeResponse(resp, &role); err != nil {
@@ -404,7 +404,7 @@ func (a *Adapter) DeleteTenantRole(ctx context.Context, tenantID, roleID string)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	return decodeResponse(resp, nil)
 }
@@ -416,7 +416,7 @@ func (a *Adapter) ListTenantRoles(ctx context.Context, tenantID string, req *db.
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var listResp db.ListRolesResponse
 	if err := decodeResponse(resp, &listResp); err != nil {
@@ -433,7 +433,7 @@ func (a *Adapter) CreateTenantUser(ctx context.Context, tenantID string, req *db
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var user db.User
 	if err := decodeResponse(resp, &user); err != nil {
@@ -448,7 +448,7 @@ func (a *Adapter) GetTenantUser(ctx context.Context, tenantID, userID string) (*
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var user db.User
 	if err := decodeResponse(resp, &user); err != nil {
@@ -463,7 +463,7 @@ func (a *Adapter) UpdateTenantUser(ctx context.Context, tenantID string, req *db
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var user db.User
 	if err := decodeResponse(resp, &user); err != nil {
@@ -478,7 +478,7 @@ func (a *Adapter) DeleteTenantUser(ctx context.Context, tenantID, userID string)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	return decodeResponse(resp, nil)
 }
@@ -490,7 +490,7 @@ func (a *Adapter) ListTenantUsers(ctx context.Context, tenantID string, req *db.
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var listResp db.ListUsersResponse
 	if err := decodeResponse(resp, &listResp); err != nil {
@@ -508,7 +508,7 @@ func (a *Adapter) ListCertificates(ctx context.Context, req *admin.ListCertifica
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var certs []*admin.CertificateInfo
 	pagination, err := decodeListResponse(resp, &certs)
@@ -524,7 +524,7 @@ func (a *Adapter) GetCertificate(ctx context.Context, serial string) (*admin.Cer
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var cert admin.CertificateInfo
 	if err := decodeResponse(resp, &cert); err != nil {
@@ -540,7 +540,7 @@ func (a *Adapter) RevokeCertificate(ctx context.Context, serial, reason string) 
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	return decodeResponse(resp, nil)
 }
@@ -557,7 +557,7 @@ func (a *Adapter) ListAccounts(ctx context.Context, req *admin.ListAccountsReque
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var accounts []*admin.AccountInfo
 	pagination, err := decodeListResponse(resp, &accounts)
@@ -574,7 +574,7 @@ func (a *Adapter) GetAccount(ctx context.Context, accountID uint64) (*admin.Acco
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var account admin.AccountInfo
 	if err := decodeResponse(resp, &account); err != nil {
@@ -590,7 +590,7 @@ func (a *Adapter) DisableAccount(ctx context.Context, accountID uint64) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	return decodeResponse(resp, nil)
 }
@@ -603,7 +603,7 @@ func (a *Adapter) GetStatus(ctx context.Context) (*admin.CAStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var status admin.CAStatus
 	if err := decodeResponse(resp, &status); err != nil {
@@ -618,7 +618,7 @@ func (a *Adapter) GetStats(ctx context.Context) (*admin.CAStats, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	var stats admin.CAStats
 	if err := decodeResponse(resp, &stats); err != nil {

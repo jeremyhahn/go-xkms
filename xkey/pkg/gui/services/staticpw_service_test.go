@@ -484,6 +484,30 @@ func TestStaticPasswordService_ListFolders_NilStore(t *testing.T) {
 	assert.ErrorIs(t, err, ErrStaticPWStoreNotSet)
 }
 
+// --- CreateFolder ---
+
+func TestStaticPasswordService_CreateFolder(t *testing.T) {
+	svc, _ := newTestStaticPWService(t)
+
+	require.NoError(t, svc.CreateFolder("Work/Archive"))
+
+	folders, err := svc.ListFolders()
+	require.NoError(t, err)
+	assert.Contains(t, folders, "Work/Archive")
+}
+
+func TestStaticPasswordService_CreateFolder_EmptyPath(t *testing.T) {
+	svc, _ := newTestStaticPWService(t)
+	err := svc.CreateFolder("")
+	assert.ErrorIs(t, err, ErrStaticPWInvalidFolderPath)
+}
+
+func TestStaticPasswordService_CreateFolder_NilStore(t *testing.T) {
+	svc := NewStaticPasswordService(nil)
+	err := svc.CreateFolder("Work")
+	assert.ErrorIs(t, err, ErrStaticPWStoreNotSet)
+}
+
 // --- ListPasswordsByFolder ---
 
 func TestStaticPasswordService_ListPasswordsByFolder(t *testing.T) {

@@ -29,8 +29,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Default password storage path.
-const defaultPasswordStorePath = "./data/staticpw"
+// passwordStoreFeature is the featureDataDir (datadir.go) subdirectory the
+// static password store defaults to when --store is not set: <xkey data
+// dir>/staticpw, resolved through the CLI's shared data-directory chain
+// (XKEY_HOME, XKEY_DATA_DIR, config data_dir, or ~/.xkey/data) rather than a
+// cwd-relative default (go-xkms#929).
+const passwordStoreFeature = "staticpw"
 
 // Valid access modes for the password store.
 const (
@@ -396,7 +400,10 @@ func runPasswordAdd(cmd *cobra.Command, args []string) error {
 	title, _ := cmd.Flags().GetString("title")
 	username, _ := cmd.Flags().GetString("username")
 	url, _ := cmd.Flags().GetString("url")
-	storePath := passwordStorePath(cmd)
+	storePath, err := passwordStorePath(cmd)
+	if err != nil {
+		return err
+	}
 
 	if name == "" {
 		return ErrPasswordMissingName
@@ -587,7 +594,10 @@ func resolvePasswordList(cmd *cobra.Command, selection string, showPasswords boo
 // the correct authority when no daemon holds the barrier, and the only path
 // that can reveal password values.
 func readPasswordListFromDisk(cmd *cobra.Command) ([]passwordListEntry, string, error) {
-	storePath := passwordStorePath(cmd)
+	storePath, err := passwordStorePath(cmd)
+	if err != nil {
+		return nil, "", err
+	}
 
 	store, err := openPasswordStore(storePath)
 	if err != nil {
@@ -629,18 +639,23 @@ func readPasswordListFromDisk(cmd *cobra.Command) ([]passwordListEntry, string, 
 // passwordTimeLayout is the timestamp format used in password listings.
 const passwordTimeLayout = "2006-01-02 15:04:05"
 
-// passwordStorePath returns the on-disk store path a command should use.
-func passwordStorePath(cmd *cobra.Command) string {
+// passwordStorePath returns the on-disk store path a command should use: the
+// --store flag when the operator set one, otherwise the resolved
+// passwordStoreFeature default (see its doc comment).
+func passwordStorePath(cmd *cobra.Command) (string, error) {
 	if path := strings.TrimSpace(commandFlagString(cmd, "store")); path != "" {
-		return path
+		return path, nil
 	}
-	return defaultPasswordStorePath
+	return featureDataDir(passwordStoreFeature)
 }
 
 // runPasswordGet executes the password get command.
 func runPasswordGet(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
-	storePath := passwordStorePath(cmd)
+	storePath, err := passwordStorePath(cmd)
+	if err != nil {
+		return err
+	}
 
 	if len(args) == 0 {
 		return ErrPasswordMissingGetArg
@@ -664,7 +679,10 @@ func runPasswordGet(cmd *cobra.Command, args []string) error {
 // runPasswordRemove executes the password remove command.
 func runPasswordRemove(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
-	storePath := passwordStorePath(cmd)
+	storePath, err := passwordStorePath(cmd)
+	if err != nil {
+		return err
+	}
 	force, err := commandFlagBool(cmd, "force")
 	if err != nil {
 		return err
@@ -1016,22 +1034,22 @@ func init() {
 	passwordAddCmd.Flags().String("title", "", "Display title for credential")
 	passwordAddCmd.Flags().String("username", "", "Username or login")
 	passwordAddCmd.Flags().String("url", "", "Website URL for domain matching")
-	passwordAddCmd.Flags().String("store", defaultPasswordStorePath, "Path to password store")
+	passwordAddCmd.Flags().String("store", "", "Path to password store (default: ~/.xkey/data/staticpw)")
 
 	// password list flags.
-	passwordListCmd.Flags().String("store", defaultPasswordStorePath, "Path to password store")
+	passwordListCmd.Flags().String("store", "", "Path to password store (default: ~/.xkey/data/staticpw)")
 	passwordListCmd.Flags().Bool("show-passwords", false, "Show password values (requires --source disk)")
 	addStateSourceFlags(passwordListCmd, stateSelectorsLocal)
 
 	// password status flags.
-	passwordStatusCmd.Flags().String("store", defaultPasswordStorePath, "Path to password store")
+	passwordStatusCmd.Flags().String("store", "", "Path to password store (default: ~/.xkey/data/staticpw)")
 	addStateSourceFlags(passwordStatusCmd, stateSelectorsWithXKMSd)
 
 	// password get flags.
-	passwordGetCmd.Flags().String("store", defaultPasswordStorePath, "Path to password store")
+	passwordGetCmd.Flags().String("store", "", "Path to password store (default: ~/.xkey/data/staticpw)")
 
 	// password remove flags.
-	passwordRemoveCmd.Flags().String("store", defaultPasswordStorePath, "Path to password store")
+	passwordRemoveCmd.Flags().String("store", "", "Path to password store (default: ~/.xkey/data/staticpw)")
 	passwordRemoveCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 
 	// password type flags.

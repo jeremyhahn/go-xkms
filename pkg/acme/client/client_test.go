@@ -1739,6 +1739,15 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
 
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
+				})
+
 			case "/new-order":
 				w.Header().Set("Location", server.URL+"/order/1")
 				w.WriteHeader(http.StatusCreated)
@@ -1899,6 +1908,16 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 					"newNonce":   server.URL + "/new-nonce",
 					"newAccount": server.URL + "/new-account",
 					"newOrder":   server.URL + "/new-order",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
 				})
 			case "/new-order":
 				w.Header().Set("Location", server.URL+"/order/1")
@@ -2071,7 +2090,19 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			switch r.URL.Path {
 			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"newOrder": server.URL + "/new-order",
+					"newNonce":   server.URL + "/new-nonce",
+					"newAccount": server.URL + "/new-account",
+					"newOrder":   server.URL + "/new-order",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
 				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
@@ -2112,6 +2143,7 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			accountEmail:  "test@example.com",
 			accountSigner: privateKey,
 			client:        acmeClient,
+			config:        DefaultConfig(),
 			logger:        slog.New(slog.NewTextHandler(os.Stdout, nil)),
 		}
 
@@ -2142,7 +2174,19 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			switch r.URL.Path {
 			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"newOrder": server.URL + "/new-order",
+					"newNonce":   server.URL + "/new-nonce",
+					"newAccount": server.URL + "/new-account",
+					"newOrder":   server.URL + "/new-order",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
 				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
@@ -2187,6 +2231,7 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			accountEmail:  "test@example.com",
 			accountSigner: privateKey,
 			client:        acmeClient,
+			config:        DefaultConfig(),
 			logger:        slog.New(slog.NewTextHandler(os.Stdout, nil)),
 		}
 
@@ -2231,7 +2276,19 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			switch r.URL.Path {
 			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"newOrder": server.URL + "/new-order",
+					"newNonce":   server.URL + "/new-nonce",
+					"newAccount": server.URL + "/new-account",
+					"newOrder":   server.URL + "/new-order",
+				})
+			case "/new-nonce":
+				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
 				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
@@ -4560,6 +4617,14 @@ func TestClient_RequestCertificate_ChallengeNotOffered(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusOK)
+		case "/new-account":
+			w.Header().Set("Location", server.URL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  server.URL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", server.URL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -4660,6 +4725,14 @@ func TestClient_RequestCertificate_ChallengeSetupError(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusOK)
+		case "/new-account":
+			w.Header().Set("Location", server.URL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  server.URL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", server.URL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -4756,6 +4829,14 @@ func TestClient_RequestCertificate_MissingCSR(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusOK)
+		case "/new-account":
+			w.Header().Set("Location", server.URL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  server.URL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", server.URL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -4877,6 +4958,14 @@ func TestClient_RequestCertificate_WithChallengeCleanup(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusOK)
+		case "/new-account":
+			w.Header().Set("Location", server.URL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  server.URL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", server.URL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -5613,6 +5702,14 @@ func TestRequestCert_GetAuthorizationError(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -5697,6 +5794,14 @@ func TestRequestCert_ChallengeTypeNotOffered(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -5787,6 +5892,14 @@ func TestRequestCert_ChallengeSetupError(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -5879,6 +5992,14 @@ func TestRequestCert_AcceptChallengeError(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -5977,6 +6098,14 @@ func TestRequestCert_AuthorizationStatusNotValid(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -6094,6 +6223,14 @@ func TestRequestCert_WithChallengeCleanup(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -6391,6 +6528,14 @@ func TestCrossSignWithChal_SetupFails(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -6482,6 +6627,14 @@ func TestCrossSignWithChal_NoSuitableChallenge(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -6569,6 +6722,14 @@ func TestCrossSignWithChal_AlreadyValidAuthz(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -7139,6 +7300,14 @@ func TestCrossSign_AuthorizeOrderError(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -7204,6 +7373,14 @@ func TestCrossSign_ProcessAuthorizationError(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -7280,6 +7457,14 @@ func TestProcessAuthz_NoSuitableChallenge(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -7438,6 +7623,14 @@ func TestCrossSignWithChal_AcceptChallengeError(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -7532,6 +7725,14 @@ func TestCrossSignWithChal_WaitAuthorizationError(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -7760,6 +7961,14 @@ func TestCrossSignWithChal_GetAuthorizationError(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
@@ -7839,6 +8048,14 @@ func TestCrossSignWithChal_OrderError(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", serverURL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  serverURL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -8406,11 +8623,20 @@ func TestClient_RequestCertificate_ErrorPaths(t *testing.T) {
 			switch r.URL.Path {
 			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"newNonce": server.URL + "/new-nonce",
-					"newOrder": server.URL + "/new-order",
+					"newNonce":   server.URL + "/new-nonce",
+					"newAccount": server.URL + "/new-account",
+					"newOrder":   server.URL + "/new-order",
 				})
 			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
+				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -8475,11 +8701,20 @@ func TestClient_RequestCertificate_ErrorPaths(t *testing.T) {
 			switch r.URL.Path {
 			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"newNonce": server.URL + "/new-nonce",
-					"newOrder": server.URL + "/new-order",
+					"newNonce":   server.URL + "/new-nonce",
+					"newAccount": server.URL + "/new-account",
+					"newOrder":   server.URL + "/new-order",
 				})
 			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
+				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -11039,6 +11274,14 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 				})
 			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
+				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				w.Header().Set("Location", server.URL+"/order/1")
@@ -11133,6 +11376,14 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 				})
 			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
+				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				w.Header().Set("Location", server.URL+"/order/1")
@@ -11232,6 +11483,14 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 				})
 			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
+			case "/new-account":
+				w.Header().Set("Location", server.URL+"/account/1")
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "valid",
+					"contact": []string{"mailto:test@example.com"},
+					"orders":  server.URL + "/account/1/orders",
+				})
 			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				w.Header().Set("Location", server.URL+"/order/1")

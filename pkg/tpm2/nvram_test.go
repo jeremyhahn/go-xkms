@@ -1453,3 +1453,36 @@ func nvramTestCert(t *testing.T) *x509.Certificate {
 
 	return cert
 }
+
+// TestNVIndexMaxSize_TransportFailure proves nvIndexMaxSize propagates a
+// transport fault from its own TPM_PT_NV_INDEX_MAX query rather than
+// returning a zero size that writeCertToNVRAM's size check would silently
+// trust.
+func TestNVIndexMaxSize_TransportFailure(t *testing.T) {
+	_, err := nvIndexMaxSize(failingTransport{})
+	require.Error(t, err)
+}
+
+// TestNvExtendExecute_TransportFailure proves the hand-rolled TPM2_NV_Extend
+// command sender surfaces a transport fault (wrapped, never a bare error)
+// rather than silently treating a dead transport as an extend that never
+// happened.
+func TestNvExtendExecute_TransportFailure(t *testing.T) {
+	err := nvExtendExecute(
+		failingTransport{},
+		tpm2.TPMRHOwner,
+		tpm2.TPMHandle(0x01500040),
+		tpm2.TPM2BName{Buffer: []byte("nv-index-name")},
+		nil,
+		[]byte("extend-data"),
+	)
+	require.Error(t, err)
+}
+
+// TestNVBufferMaxUint16_TransportFailureFallsBackToConservativeDefault
+// proves nvBufferMaxUint16 degrades to nvChunkSizeFallback rather than
+// returning zero (which would make every NV read/write loop spin forever)
+// when the device cannot answer TPM_PT_NV_BUFFER_MAX.
+func TestNVBufferMaxUint16_TransportFailureFallsBackToConservativeDefault(t *testing.T) {
+	assert.Equal(t, nvChunkSizeFallback, nvBufferMaxUint16(failingTransport{}))
+}

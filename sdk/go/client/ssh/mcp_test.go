@@ -1,5 +1,5 @@
-// Copyright (c) 2026 Jeremy Hahn
-// Copyright (c) 2026 Automate The Things, LLC
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
 //
 // This file is part of go-xkms.
 //
@@ -14,152 +14,159 @@
 package ssh_test
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
 	gossh "golang.org/x/crypto/ssh"
 
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
+
+	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+
+	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // ----------------------------------------------------------------------------
-// Fake MCP (JSON-RPC 2.0 over newline-delimited TCP) server.
+// Fake MCP server: a real mcp-go Streamable HTTP server exposing the ssh.*
+// tool surface, matching what the unified qrdb MCP server serves in
+// production (pkg/apimodule.RegisterMCP registers one tool per
+// xkmsmcp.ModuleMethods() entry, dispatching to pkg/api/mcp.Server.
+// InvokeMethod, whose SSH errors pass through mapSSHError onto a real
+// go-qrdb wire.ErrorEnvelope). sdkssh.NewMCP reaches this exact tool-call
+// framing through pkg/mcptool, so this fixture is the same shape as
+// pkg/mcptool's own client_test.go newTestServer / pkg/api/transport/mcp's
+// startMockServer.
 // ----------------------------------------------------------------------------
 
-// mcpCall is one recorded request as it arrived on the wire.
-type mcpCall struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
-	ID      int64           `json:"id"`
+// sshMethods is every JSON-RPC method the SDK's MCP SSH client calls, plus
+// "health". Each is pre-registered as an MCP tool at server construction
+// (mcp-go has no wildcard tool registration), so tests toggle behavior
+// through fakeMCPServer.handle/ok/fail rather than registering tools
+// per-test.
+var sshMethods = []string{
+	"health",
+	"ssh.keys.generate",
+	"ssh.keys.import",
+	"ssh.keys.get",
+	"ssh.keys.list",
+	"ssh.keys.delete",
+	"ssh.keys.export",
+	"ssh.keys.sign",
+	"ssh.knownHosts.add",
+	"ssh.knownHosts.list",
+	"ssh.knownHosts.remove",
+	"ssh.knownHosts.verify",
+	"ssh.authorizedKeys.add",
+	"ssh.authorizedKeys.get",
+	"ssh.authorizedKeys.list",
+	"ssh.authorizedKeys.remove",
+	"ssh.authorizedKeys.emit",
+	"ssh.authorizedKeys.verify",
 }
 
-// mcpHandler produces the JSON-RPC result for a method. Returning a non-nil
-// rpcErr makes the server answer with an "error" member instead.
-type mcpHandler func(params json.RawMessage) (result interface{}, code int, message string)
+// mcpCall is one recorded tool call as it arrived, decoded back to its
+// JSON-RPC method name and params.
+type mcpCall struct {
+	Method string
+	Params json.RawMessage
+}
+
+// mcpHandler produces the JSON-RPC-shaped result for a method. A non-empty
+// message makes the server answer with a tool-level error instead; when
+// code is non-zero (not wire.CodeOK) the error also carries a go-qrdb
+// wire.ErrorEnvelope, exactly as the real server's mapSSHError-backed
+// dispatch does.
+type mcpHandler func(params json.RawMessage) (result interface{}, message string, code wire.Code)
 
 type fakeMCPServer struct {
-	t        *testing.T
-	ln       net.Listener
+	t          *testing.T
+	testServer *httptest.Server
+
 	handlers map[string]mcpHandler
 
-	// rawResponse, when set for a method, is written verbatim instead of a
-	// well-formed envelope — used to exercise hostile/broken servers.
+	// rawResponse, when set for a method, is returned verbatim as the tool's
+	// text content instead of a marshaled handler result — used to exercise
+	// a server whose response body is malformed or the wrong shape.
 	rawResponse map[string]string
-
-	// closeOn names a method that makes the server hang up without replying.
-	closeOn string
 
 	mu    sync.Mutex
 	calls []mcpCall
-	wg    sync.WaitGroup
 }
 
 func newFakeMCPServer(t *testing.T) *fakeMCPServer {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
 	s := &fakeMCPServer{
 		t:           t,
-		ln:          ln,
 		handlers:    map[string]mcpHandler{},
 		rawResponse: map[string]string{},
 	}
 	// Health always succeeds unless a test overrides it.
-	s.handlers["health"] = func(json.RawMessage) (interface{}, int, string) {
-		return map[string]string{"status": "ok"}, 0, ""
+	s.handlers["health"] = func(json.RawMessage) (interface{}, string, wire.Code) {
+		return map[string]string{"status": "ok"}, "", wire.CodeOK
 	}
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		for {
-			conn, aerr := ln.Accept()
-			if aerr != nil {
-				return
+	mcpSrv := mcpserver.NewMCPServer("xkms-ssh-test", "1.0.0")
+	for _, method := range sshMethods {
+		method := method
+		mcpSrv.AddTool(mcpgo.Tool{Name: mcptool.ToolName(method)}, func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			paramsJSON, _ := req.GetArguments()["params_json"].(string)
+			var params json.RawMessage
+			if paramsJSON != "" {
+				params = json.RawMessage(paramsJSON)
 			}
-			s.wg.Add(1)
-			go func() {
-				defer s.wg.Done()
-				s.serve(conn)
-			}()
-		}
-	}()
 
-	t.Cleanup(func() {
-		_ = ln.Close()
-		s.wg.Wait()
-	})
+			s.mu.Lock()
+			s.calls = append(s.calls, mcpCall{Method: method, Params: params})
+			raw, hasRaw := s.rawResponse[method]
+			handler, hasHandler := s.handlers[method]
+			s.mu.Unlock()
+
+			if hasRaw {
+				return mcpgo.NewToolResultText(raw), nil
+			}
+			if !hasHandler {
+				res := mcpgo.NewToolResultError("method not found: " + method)
+				res.StructuredContent = wire.NewErrorEnvelope(mcptool.ToolName(method), wire.CodeUnimplemented, "method not found: "+method)
+				return res, nil
+			}
+			result, message, code := handler(params)
+			if message != "" {
+				res := mcpgo.NewToolResultError(message)
+				if code != wire.CodeOK {
+					res.StructuredContent = wire.NewErrorEnvelope(mcptool.ToolName(method), code, message)
+				}
+				return res, nil
+			}
+			body, err := json.Marshal(result)
+			if err != nil {
+				res := mcpgo.NewToolResultError(err.Error())
+				res.StructuredContent = wire.NewErrorEnvelope(mcptool.ToolName(method), wire.CodeInternal, err.Error())
+				return res, nil
+			}
+			return mcpgo.NewToolResultText(string(body)), nil
+		})
+	}
+
+	httpServer := mcpserver.NewStreamableHTTPServer(mcpSrv)
+	s.testServer = httptest.NewServer(httpServer)
+	t.Cleanup(s.testServer.Close)
 	return s
 }
 
-func (s *fakeMCPServer) serve(conn net.Conn) {
-	defer func() { _ = conn.Close() }()
-	scanner := bufio.NewScanner(conn)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	for scanner.Scan() {
-		var call mcpCall
-		if err := json.Unmarshal(scanner.Bytes(), &call); err != nil {
-			return
-		}
-		s.mu.Lock()
-		s.calls = append(s.calls, call)
-		closeOn := s.closeOn
-		raw, hasRaw := s.rawResponse[call.Method]
-		handler, hasHandler := s.handlers[call.Method]
-		s.mu.Unlock()
+// close shuts the server down immediately, for tests that need the server
+// to become unreachable mid-test rather than at cleanup.
+func (s *fakeMCPServer) close() { s.testServer.Close() }
 
-		if closeOn != "" && call.Method == closeOn {
-			return // hang up mid-conversation
-		}
-		if hasRaw {
-			_, _ = conn.Write([]byte(raw + "\n"))
-			continue
-		}
-		if !hasHandler {
-			s.writeError(conn, call.ID, -32601, "method not found: "+call.Method)
-			continue
-		}
-		result, code, message := handler(call.Params)
-		if code != 0 {
-			s.writeError(conn, call.ID, code, message)
-			continue
-		}
-		body, err := json.Marshal(result)
-		if err != nil {
-			s.writeError(conn, call.ID, -32603, err.Error())
-			continue
-		}
-		resp := map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      call.ID,
-			"result":  json.RawMessage(body),
-		}
-		line, _ := json.Marshal(resp)
-		_, _ = conn.Write(append(line, '\n'))
-	}
-}
-
-func (s *fakeMCPServer) writeError(conn net.Conn, id int64, code int, message string) {
-	resp := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"error":   map[string]interface{}{"code": code, "message": message},
-	}
-	line, _ := json.Marshal(resp)
-	_, _ = conn.Write(append(line, '\n'))
-}
-
-func (s *fakeMCPServer) addr() string { return s.ln.Addr().String() }
+func (s *fakeMCPServer) addr() string { return strings.TrimPrefix(s.testServer.URL, "http://") }
 
 func (s *fakeMCPServer) handle(method string, fn mcpHandler) {
 	s.mu.Lock()
@@ -168,11 +175,20 @@ func (s *fakeMCPServer) handle(method string, fn mcpHandler) {
 }
 
 func (s *fakeMCPServer) ok(method string, result interface{}) {
-	s.handle(method, func(json.RawMessage) (interface{}, int, string) { return result, 0, "" })
+	s.handle(method, func(json.RawMessage) (interface{}, string, wire.Code) { return result, "", wire.CodeOK })
 }
 
-func (s *fakeMCPServer) fail(method string, code int, message string) {
-	s.handle(method, func(json.RawMessage) (interface{}, int, string) { return nil, code, message })
+// fail registers method to answer with a coded tool error, exactly as the
+// real server's mapSSHError-backed dispatch classifies an SSH failure.
+func (s *fakeMCPServer) fail(method string, code wire.Code, message string) {
+	s.handle(method, func(json.RawMessage) (interface{}, string, wire.Code) { return nil, message, code })
+}
+
+// failUncoded registers method to answer with a tool error carrying no
+// go-qrdb wire envelope at all — a response that did not come from the
+// real server's classification contract.
+func (s *fakeMCPServer) failUncoded(method string, message string) {
+	s.handle(method, func(json.RawMessage) (interface{}, string, wire.Code) { return nil, message, wire.CodeOK })
 }
 
 // lastCall returns the most recent recorded call for method.
@@ -260,13 +276,17 @@ func TestNewMCP_DialFailure(t *testing.T) {
 	if !errors.As(err, &protoErr) {
 		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
 	}
-	if !strings.Contains(protoErr.Message, "dial") {
-		t.Errorf("Message = %q, want a dial failure", protoErr.Message)
+	if !strings.Contains(protoErr.Message, "connect") {
+		t.Errorf("Message = %q, want a connect failure", protoErr.Message)
+	}
+	if !errors.Is(err, mcptool.ErrConnectionFailed) {
+		t.Errorf("expected mcptool.ErrConnectionFailed in the chain, got %v", err)
 	}
 }
 
 // TestNewMCP_HealthCheckPerformed pins the connect-time health probe: without
-// it, a wrong-protocol endpoint would only be detected on the first real call.
+// it, a server that never serves the ssh.* tools would only be detected on
+// the first real call.
 func TestNewMCP_HealthCheckPerformed(t *testing.T) {
 	srv := newFakeMCPServer(t)
 	client := newMCPFixture(t, srv)
@@ -276,14 +296,11 @@ func TestNewMCP_HealthCheckPerformed(t *testing.T) {
 	if call == nil {
 		t.Fatal("NewMCP did not perform a health check")
 	}
-	if call.JSONRPC != "2.0" {
-		t.Errorf("jsonrpc = %q, want 2.0", call.JSONRPC)
-	}
 }
 
 func TestNewMCP_HealthCheckFailureIsFatal(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("health", -32000, "not ready")
+	srv.fail("health", wire.CodeUnavailable, "not ready")
 
 	_, err := sdkssh.NewMCP(sdkssh.MCPOptions{Addr: srv.addr()})
 	if err == nil {
@@ -298,9 +315,10 @@ func TestNewMCP_HealthCheckFailureIsFatal(t *testing.T) {
 	}
 }
 
-// TestMCP_RequestEnvelopeAndIDs pins the JSON-RPC 2.0 framing: a wrong version
-// string or a repeated ID breaks every conforming server.
-func TestMCP_RequestEnvelopeAndIDs(t *testing.T) {
+// TestMCP_RepeatedCallsReachServer pins that each call on the connected
+// client reaches the server with its own recorded params, independent of
+// how many calls preceded it.
+func TestMCP_RepeatedCallsReachServer(t *testing.T) {
 	srv := newFakeMCPServer(t)
 	srv.ok("ssh.keys.list", map[string]interface{}{"items": []interface{}{}})
 	client := newMCPFixture(t, srv)
@@ -312,23 +330,14 @@ func TestMCP_RequestEnvelopeAndIDs(t *testing.T) {
 	}
 
 	calls := srv.allCalls()
-	if len(calls) < 4 { // health + 3 lists
-		t.Fatalf("expected at least 4 calls, got %d", len(calls))
-	}
-	seen := map[int64]bool{}
-	var prev int64
+	listCalls := 0
 	for _, c := range calls {
-		if c.JSONRPC != "2.0" {
-			t.Errorf("jsonrpc = %q on %s", c.JSONRPC, c.Method)
+		if c.Method == "ssh.keys.list" {
+			listCalls++
 		}
-		if seen[c.ID] {
-			t.Errorf("duplicate request id %d on %s", c.ID, c.Method)
-		}
-		if c.ID <= prev {
-			t.Errorf("ids must increase monotonically: %d after %d", c.ID, prev)
-		}
-		seen[c.ID] = true
-		prev = c.ID
+	}
+	if listCalls != 3 {
+		t.Errorf("server saw %d ssh.keys.list calls, want 3", listCalls)
 	}
 }
 
@@ -339,8 +348,8 @@ func TestMCPClose_Idempotent(t *testing.T) {
 	if err := client.Close(); err != nil {
 		t.Fatalf("first Close: %v", err)
 	}
-	// A second Close on an already-closed TCP conn reports an error from the
-	// net stack; it must not panic.
+	// A second Close on an already-closed session must not panic, whatever
+	// the underlying HTTP client reports.
 	_ = client.Close()
 }
 
@@ -350,7 +359,7 @@ func TestMCPClose_Idempotent(t *testing.T) {
 
 func TestMCP_ServerErrorBecomesProtocolError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.keys.get", -32004, "key not found")
+	srv.fail("ssh.keys.get", wire.CodeInvalidArgument, "key not found")
 	client := newMCPFixture(t, srv)
 
 	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
@@ -358,9 +367,106 @@ func TestMCP_ServerErrorBecomesProtocolError(t *testing.T) {
 	if !errors.As(err, &protoErr) {
 		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
 	}
-	// Both the code and the operator-facing message must survive.
-	if !strings.Contains(protoErr.Message, "-32004") || !strings.Contains(protoErr.Message, "key not found") {
-		t.Errorf("server error detail lost: %q", protoErr.Message)
+	// wire.CodeInvalidArgument reconstitutes as *InvalidRequestError, the
+	// bucket a not-found/duplicate/mismatch/validation failure all share --
+	// see mcp.go's package doc comment.
+	var invalidErr *sdkssh.InvalidRequestError
+	if !errors.As(err, &invalidErr) {
+		t.Fatalf("expected *InvalidRequestError in the chain, got %T %v", err, err)
+	}
+	if invalidErr.Message != "key not found" {
+		t.Errorf("Message = %q", invalidErr.Message)
+	}
+}
+
+// TestMCP_NotFoundCodeBecomesNotFoundError proves a store NotFound error
+// (issue #769: "keys-store errors fall through to Internal") reconstructs as
+// *NotFoundError instead of the generic *ProtocolError every SSH store error
+// used to collapse into. go-qrdb's wire.ErrorEnvelope carries only Code and
+// Message (no Resource field -- see mcp.go's package doc comment), so
+// Resource stays empty; Message survives intact.
+func TestMCP_NotFoundCodeBecomesNotFoundError(t *testing.T) {
+	srv := newFakeMCPServer(t)
+	srv.fail("ssh.keys.get", wire.CodeNotFound, "ssh/keys: key not found: ghost")
+	client := newMCPFixture(t, srv)
+
+	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
+	var notFound *sdkssh.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected *NotFoundError, got %T %v", err, err)
+	}
+	if notFound.Message != "ssh/keys: key not found: ghost" {
+		t.Errorf("Message = %q", notFound.Message)
+	}
+}
+
+// TestMCP_DuplicateCodeBecomesDuplicateError covers the known_hosts/
+// authorized_keys "Add called twice" case, which REST reports as 409.
+func TestMCP_DuplicateCodeBecomesDuplicateError(t *testing.T) {
+	srv := newFakeMCPServer(t)
+	srv.fail("ssh.knownHosts.add", wire.CodeAlreadyExists, "pin already exists")
+	client := newMCPFixture(t, srv)
+
+	err := client.KnownHosts().Add(context.Background(), sdkssh.AddKnownHostRequest{
+		Scope: "user", Owner: "alice", Host: "git.example.com", PublicKey: "ssh-ed25519 AAAA",
+	})
+	var dupErr *sdkssh.DuplicateError
+	if !errors.As(err, &dupErr) {
+		t.Fatalf("expected *DuplicateError, got %T %v", err, err)
+	}
+	if dupErr.Message != "pin already exists" {
+		t.Errorf("Message = %q", dupErr.Message)
+	}
+}
+
+// TestMCP_MismatchCodeBecomesMismatchError proves a known_hosts host-key
+// mismatch (the MITM-indicating case the issue calls out by name) round-trips
+// as *MismatchError, not a bare *ProtocolError a caller cannot branch on.
+// Host and Received come from Verify's own parameters (mcpKnownHostsClient.
+// Verify fills them in locally -- see mcp.go); Expected has no wire source
+// and stays empty, a real, documented gap rather than a fabrication.
+func TestMCP_MismatchCodeBecomesMismatchError(t *testing.T) {
+	_, sshPub := testPublicKeyLine(t)
+	srv := newFakeMCPServer(t)
+	srv.fail("ssh.knownHosts.verify", wire.CodeFailedPrecondition, "host key mismatch for git.example.com")
+	client := newMCPFixture(t, srv)
+
+	err := client.KnownHosts().Verify(context.Background(), "user", "alice", "git.example.com", sshPub)
+	var mismatch *sdkssh.MismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("expected *MismatchError, got %T %v", err, err)
+	}
+	if mismatch.Host != "git.example.com" {
+		t.Errorf("Host = %q, want %q", mismatch.Host, "git.example.com")
+	}
+	if mismatch.Received != gossh.FingerprintSHA256(sshPub) {
+		t.Errorf("Received = %q, want the presented key's own fingerprint", mismatch.Received)
+	}
+	if mismatch.Expected != "" {
+		t.Errorf("Expected = %q, want empty (the wire has no field for it)", mismatch.Expected)
+	}
+}
+
+// TestMCP_UnknownCodeStaysProtocolErrorNotLeaked proves a code this SDK does
+// not recognize still surfaces as *ProtocolError (never as one of the typed
+// store errors) and carries only the server's own message -- it must not
+// synthesize additional internal detail the server never sent.
+func TestMCP_UnknownCodeStaysProtocolErrorNotLeaked(t *testing.T) {
+	srv := newFakeMCPServer(t)
+	srv.fail("ssh.keys.get", wire.Code(-32099), "opaque failure")
+	client := newMCPFixture(t, srv)
+
+	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
+	var protoErr *sdkssh.ProtocolError
+	if !errors.As(err, &protoErr) {
+		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
+	}
+	var notFound *sdkssh.NotFoundError
+	if errors.As(err, &notFound) {
+		t.Fatal("an unrecognized code must never be classified as NotFound")
+	}
+	if !strings.Contains(protoErr.Error(), "opaque failure") {
+		t.Errorf("server message lost: %v", protoErr)
 	}
 }
 
@@ -376,19 +482,20 @@ func TestMCP_MalformedResponseBecomesProtocolError(t *testing.T) {
 	if !errors.As(err, &protoErr) {
 		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
 	}
-	if !strings.Contains(protoErr.Message, "decode response") {
-		t.Errorf("Message = %q", protoErr.Message)
+	var unmarshalErr *mcptool.UnmarshalError
+	if !errors.As(err, &unmarshalErr) {
+		t.Fatalf("expected *mcptool.UnmarshalError in the chain, got %T %v", err, err)
 	}
-	if protoErr.Unwrap() == nil {
+	if unmarshalErr.Unwrap() == nil {
 		t.Error("the underlying decode error should be unwrappable")
 	}
 }
 
 func TestMCP_WronglyTypedResultBecomesProtocolError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	// Well-formed envelope, but "result" is a string where an object is due.
+	// Well-formed JSON, but the wrong shape for the expected result.
 	srv.mu.Lock()
-	srv.rawResponse["ssh.keys.get"] = `{"jsonrpc":"2.0","id":2,"result":"surprise"}`
+	srv.rawResponse["ssh.keys.get"] = `"surprise"`
 	srv.mu.Unlock()
 	client := newMCPFixture(t, srv)
 
@@ -397,28 +504,125 @@ func TestMCP_WronglyTypedResultBecomesProtocolError(t *testing.T) {
 	if !errors.As(err, &protoErr) {
 		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
 	}
-	if !strings.Contains(protoErr.Message, "decode result") {
-		t.Errorf("Message = %q", protoErr.Message)
+	var unmarshalErr *mcptool.UnmarshalError
+	if !errors.As(err, &unmarshalErr) {
+		t.Fatalf("expected *mcptool.UnmarshalError in the chain, got %T %v", err, err)
 	}
 }
 
-func TestMCP_ConnectionClosedMidCallBecomesProtocolError(t *testing.T) {
+// TestMCP_UncodedFailureBecomesEnvelopeMissingError proves a tool failure
+// with no go-qrdb wire envelope -- one that did not come from the real
+// server's mapSSHError-backed dispatch -- surfaces as a protocol error, per
+// the project's no-backward-compatibility rule: there is no text-based
+// fallback classification (go-xkms#797).
+func TestMCP_UncodedFailureBecomesEnvelopeMissingError(t *testing.T) {
+	srv := newFakeMCPServer(t)
+	srv.failUncoded("ssh.keys.get", "boom, no envelope")
+	client := newMCPFixture(t, srv)
+
+	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
+	var protoErr *sdkssh.ProtocolError
+	if !errors.As(err, &protoErr) {
+		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
+	}
+	var envErr *mcptool.EnvelopeMissingError
+	if !errors.As(err, &envErr) {
+		t.Fatalf("expected *mcptool.EnvelopeMissingError in the chain, got %T %v", err, err)
+	}
+}
+
+// TestMCP_ServerUnreachableMidSessionBecomesProtocolError asserts that once
+// the server goes away after a successful connect, the next call surfaces a
+// typed error rather than hanging or panicking.
+func TestMCP_ServerUnreachableMidSessionBecomesProtocolError(t *testing.T) {
 	srv := newFakeMCPServer(t)
 	srv.ok("ssh.keys.list", map[string]interface{}{"items": []interface{}{}})
 	client := newMCPFixture(t, srv)
 
-	// Now make the server hang up instead of answering.
-	srv.mu.Lock()
-	srv.closeOn = "ssh.keys.list"
-	srv.mu.Unlock()
+	srv.close()
 
 	_, err := client.Keys().List(context.Background(), sdkssh.ListKeysRequest{})
 	var protoErr *sdkssh.ProtocolError
 	if !errors.As(err, &protoErr) {
 		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
 	}
-	if !strings.Contains(protoErr.Message, "receive") {
-		t.Errorf("Message = %q, want a receive failure", protoErr.Message)
+	var receiveErr *mcptool.ReceiveError
+	if !errors.As(err, &receiveErr) {
+		t.Fatalf("expected *mcptool.ReceiveError in the chain, got %T %v", err, err)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Wire-code classification (classifyMCPError, mcp.go).
+// ----------------------------------------------------------------------------
+
+func TestMCP_WireCodeClassification(t *testing.T) {
+	tests := []struct {
+		name string
+		code wire.Code
+		want func(*testing.T, error)
+	}{
+		{"unauthenticated", wire.CodeUnauthenticated, func(t *testing.T, err error) {
+			var authErr *sdkssh.AuthError
+			if !errors.As(err, &authErr) || authErr.StatusCode != 401 {
+				t.Fatalf("expected *AuthError{StatusCode:401}, got %#v", err)
+			}
+		}},
+		{"permission denied", wire.CodePermissionDenied, func(t *testing.T, err error) {
+			var authErr *sdkssh.AuthError
+			if !errors.As(err, &authErr) || authErr.StatusCode != 403 {
+				t.Fatalf("expected *AuthError{StatusCode:403}, got %#v", err)
+			}
+		}},
+		{"unimplemented", wire.CodeUnimplemented, func(t *testing.T, err error) {
+			var niErr *sdkssh.NotImplementedError
+			if !errors.As(err, &niErr) || niErr.Transport != "mcp" {
+				t.Fatalf("expected *NotImplementedError{Transport:\"mcp\"}, got %#v", err)
+			}
+		}},
+		{"unavailable", wire.CodeUnavailable, func(t *testing.T, err error) {
+			var srvErr *sdkssh.ServerError
+			if !errors.As(err, &srvErr) || srvErr.StatusCode != 503 {
+				t.Fatalf("expected *ServerError{StatusCode:503}, got %#v", err)
+			}
+		}},
+		{"not found (forward compatibility)", wire.CodeNotFound, func(t *testing.T, err error) {
+			var nfErr *sdkssh.NotFoundError
+			if !errors.As(err, &nfErr) {
+				t.Fatalf("expected *NotFoundError, got %#v", err)
+			}
+		}},
+		{"already exists (forward compatibility)", wire.CodeAlreadyExists, func(t *testing.T, err error) {
+			var dupErr *sdkssh.DuplicateError
+			if !errors.As(err, &dupErr) {
+				t.Fatalf("expected *DuplicateError, got %#v", err)
+			}
+		}},
+		{"invalid argument", wire.CodeInvalidArgument, func(t *testing.T, err error) {
+			var invErr *sdkssh.InvalidRequestError
+			if !errors.As(err, &invErr) {
+				t.Fatalf("expected *InvalidRequestError, got %#v", err)
+			}
+		}},
+		{"internal falls back to RPCError", wire.CodeInternal, func(t *testing.T, err error) {
+			var rpcErr *mcptool.RPCError
+			if !errors.As(err, &rpcErr) {
+				t.Fatalf("expected *mcptool.RPCError, got %#v", err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newFakeMCPServer(t)
+			srv.fail("ssh.keys.get", tt.code, "classified failure")
+			client := newMCPFixture(t, srv)
+
+			_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "k"})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			tt.want(t, err)
+		})
 	}
 }
 
@@ -464,7 +668,7 @@ func TestMCPKeys_GenerateMethodAndParams(t *testing.T) {
 
 func TestMCPKeys_GenerateError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.keys.generate", -32602, "unsupported algorithm")
+	srv.fail("ssh.keys.generate", wire.CodeInvalidArgument, "unsupported algorithm")
 	client := newMCPFixture(t, srv)
 
 	if _, err := client.Keys().Generate(context.Background(), sdkssh.GenerateRequest{Algorithm: "rot13"}); err == nil {
@@ -616,7 +820,7 @@ func TestMCPKeys_DeleteAndExport(t *testing.T) {
 
 func TestMCPKeys_DeleteError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.keys.delete", -32004, "no such key")
+	srv.fail("ssh.keys.delete", wire.CodeInvalidArgument, "no such key")
 	client := newMCPFixture(t, srv)
 
 	if err := client.Keys().Delete(context.Background(), sdkssh.DeleteKeyRequest{Name: "ghost"}); err == nil {
@@ -683,7 +887,7 @@ func TestMCPKeys_SignerUnparsablePublicKey(t *testing.T) {
 
 func TestMCPKeys_SignerExportFailure(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.keys.export", -32004, "no key")
+	srv.fail("ssh.keys.export", wire.CodeInvalidArgument, "no key")
 	client := newMCPFixture(t, srv)
 
 	if _, err := client.Keys().Signer(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"}); err == nil {
@@ -695,7 +899,7 @@ func TestMCPSigner_SignServerError(t *testing.T) {
 	line, _ := testPublicKeyLine(t)
 	srv := newFakeMCPServer(t)
 	srv.ok("ssh.keys.export", map[string]interface{}{"line": line})
-	srv.fail("ssh.keys.sign", -32000, "hardware locked")
+	srv.fail("ssh.keys.sign", wire.CodeInternal, "hardware locked")
 	client := newMCPFixture(t, srv)
 
 	signer, err := client.Keys().Signer(context.Background(), sdkssh.GetKeyRequest{Name: "laptop"})
@@ -752,7 +956,7 @@ func TestMCPKnownHosts_AddListRemove(t *testing.T) {
 
 func TestMCPKnownHosts_ListError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.knownHosts.list", -32000, "store offline")
+	srv.fail("ssh.knownHosts.list", wire.CodeInternal, "store offline")
 	client := newMCPFixture(t, srv)
 
 	if _, err := client.KnownHosts().List(context.Background(), sdkssh.ListKnownHostsRequest{}); err == nil {
@@ -799,19 +1003,27 @@ func TestMCPKnownHosts_VerifyRejectsNilKey(t *testing.T) {
 	}
 }
 
+// TestMCPKnownHosts_VerifyServerRejectionPropagates proves a server-side
+// host-key mismatch reaches the caller as an error carrying the server's
+// message -- classified as *InvalidRequestError, the same bucket a
+// not-found or duplicate lands on (see mapSSHError's doc comment for why
+// the wire has no dedicated code for it) -- never silent trust.
 func TestMCPKnownHosts_VerifyServerRejectionPropagates(t *testing.T) {
 	_, sshPub := testPublicKeyLine(t)
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.knownHosts.verify", -32003, "host key mismatch")
+	srv.fail("ssh.knownHosts.verify", wire.CodeInvalidArgument, "host key mismatch")
 	client := newMCPFixture(t, srv)
 
-	// A server-side mismatch must surface as an error — never silent trust.
 	err := client.KnownHosts().Verify(context.Background(), "user", "alice", "git.example.com", sshPub)
 	if err == nil {
 		t.Fatal("a server-reported mismatch must not be treated as trust")
 	}
 	if !strings.Contains(err.Error(), "host key mismatch") {
 		t.Errorf("error detail lost: %v", err)
+	}
+	var invalidErr *sdkssh.InvalidRequestError
+	if !errors.As(err, &invalidErr) {
+		t.Fatalf("expected *InvalidRequestError in the chain, got %T %v", err, err)
 	}
 }
 
@@ -888,7 +1100,7 @@ func TestMCPAuthorizedKeys_AddGetListRemove(t *testing.T) {
 
 func TestMCPAuthorizedKeys_GetNotFound(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.authorizedKeys.get", -32004, "no entry")
+	srv.fail("ssh.authorizedKeys.get", wire.CodeInvalidArgument, "no entry")
 	client := newMCPFixture(t, srv)
 
 	if _, err := client.AuthorizedKeys().Get(context.Background(), "service", "svc", "ghost"); err == nil {
@@ -898,7 +1110,7 @@ func TestMCPAuthorizedKeys_GetNotFound(t *testing.T) {
 
 func TestMCPAuthorizedKeys_ListError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.authorizedKeys.list", -32000, "store offline")
+	srv.fail("ssh.authorizedKeys.list", wire.CodeInternal, "store offline")
 	client := newMCPFixture(t, srv)
 
 	if _, err := client.AuthorizedKeys().List(context.Background(), sdkssh.ListAuthorizedKeysRequest{}); err == nil {
@@ -908,7 +1120,7 @@ func TestMCPAuthorizedKeys_ListError(t *testing.T) {
 
 func TestMCPAuthorizedKeys_RemoveError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.authorizedKeys.remove", -32004, "no entry")
+	srv.fail("ssh.authorizedKeys.remove", wire.CodeInvalidArgument, "no entry")
 	client := newMCPFixture(t, srv)
 
 	if err := client.AuthorizedKeys().Remove(context.Background(), "service", "svc", "ghost"); err == nil {
@@ -938,7 +1150,7 @@ func TestMCPAuthorizedKeys_Emit(t *testing.T) {
 
 func TestMCPAuthorizedKeys_EmitError(t *testing.T) {
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.authorizedKeys.emit", -32602, "unparsable public key")
+	srv.fail("ssh.authorizedKeys.emit", wire.CodeInvalidArgument, "unparsable public key")
 	client := newMCPFixture(t, srv)
 
 	line, err := client.AuthorizedKeys().Emit(context.Background(), sdkssh.EmitRequest{PublicKey: "junk"})
@@ -989,7 +1201,7 @@ func TestMCPAuthorizedKeys_VerifyRejectsNilKey(t *testing.T) {
 func TestMCPAuthorizedKeys_VerifyRejectionPropagates(t *testing.T) {
 	_, sshPub := testPublicKeyLine(t)
 	srv := newFakeMCPServer(t)
-	srv.fail("ssh.authorizedKeys.verify", -32004, "key not authorized")
+	srv.fail("ssh.authorizedKeys.verify", wire.CodeInvalidArgument, "key not authorized")
 	client := newMCPFixture(t, srv)
 
 	entry, err := client.AuthorizedKeys().Verify(context.Background(), "service", "svc", sshPub)
@@ -1020,16 +1232,27 @@ func TestMCPConsole_Unsupported(t *testing.T) {
 	}
 }
 
-func TestMCPSession_DialUnsupported(t *testing.T) {
+// TestMCPSession_DialPropagatesSignerFailure exercises Session.Dial against
+// the bare fakeMCPServer (no ssh.keys.* handlers registered — see
+// mcp_dial_test.go for the genuine end-to-end dial/handshake coverage over a
+// server wired to a real embedded client). Session.Dial resolves the
+// remote-signer proxy through ssh.keys.export before it ever reaches the
+// target host. The fake server answers that call with a wire.CodeUnimplemented
+// envelope for the unregistered method, which the client decodes into a
+// typed *NotImplementedError (go-xkms#769) naming ssh.keys.export: the
+// signer lookup failed, not Dial.
+func TestMCPSession_DialPropagatesSignerFailure(t *testing.T) {
 	srv := newFakeMCPServer(t)
 	client := newMCPFixture(t, srv)
 
-	_, err := client.Session().Dial(context.Background(), sdkssh.SessionDialRequest{Host: "h", User: "u"})
+	_, err := client.Session().Dial(context.Background(), sdkssh.SessionDialRequest{
+		KeyScope: "user", KeyOwner: "alice", KeyName: "ssh", Host: "h", User: "u",
+	})
 	var ni *sdkssh.NotImplementedError
 	if !errors.As(err, &ni) {
 		t.Fatalf("expected *NotImplementedError, got %T %v", err, err)
 	}
-	if ni.Transport != "mcp" {
-		t.Errorf("Transport = %q", ni.Transport)
+	if !strings.Contains(ni.Error(), "ssh.keys.export") {
+		t.Fatalf("expected the signer lookup to be named, got: %v", ni)
 	}
 }

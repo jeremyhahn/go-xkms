@@ -434,13 +434,13 @@ func (h *HybridCertStorage) GetCert(id string) (*x509.Certificate, error) {
 	}
 
 	// If not found in hardware, try external
-	if hwErr == storage.ErrNotFound || IsHardwareError(hwErr) {
+	if errors.Is(hwErr, storage.ErrNotFound) || IsHardwareError(hwErr) {
 		cert, extErr := h.external.GetCert(id)
 		if extErr == nil {
 			return cert, nil
 		}
 		// If external also returns not found, use that error
-		if extErr == storage.ErrNotFound {
+		if errors.Is(extErr, storage.ErrNotFound) {
 			return nil, storage.ErrNotFound
 		}
 		// Return external error
@@ -591,13 +591,13 @@ func (h *HybridCertStorage) GetCertChain(id string) ([]*x509.Certificate, error)
 	}
 
 	// If not found in hardware, try external
-	if hwErr == storage.ErrNotFound || IsHardwareError(hwErr) {
+	if errors.Is(hwErr, storage.ErrNotFound) || IsHardwareError(hwErr) {
 		chain, extErr := h.external.GetCertChain(id)
 		if extErr == nil {
 			return chain, nil
 		}
 		// If external also returns not found, use that error
-		if extErr == storage.ErrNotFound {
+		if errors.Is(extErr, storage.ErrNotFound) {
 			return nil, storage.ErrNotFound
 		}
 		return nil, &errs.Wrapped{Msg: "external storage failed", Err: extErr}

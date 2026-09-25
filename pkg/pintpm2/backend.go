@@ -28,6 +28,8 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // Compile-time interface conformance against the canonical qrdb contract.
@@ -50,8 +52,9 @@ const minPINLength = 6
 // qrdbsdk.ErrPINNotSet.
 //
 // FIDO2 PIN hash verification is supported by caching SHA-256(PIN)[:16]
-// in a go-enclave MemoryEnclave (mlock'd, guard-paged memory) when the
-// user PIN is set, verified, or changed.
+// in a go-enclave MemoryEnclave (mlock'd, guard-paged memory), admitted
+// through enclave.ProcessAllocator, when the user PIN is set, verified, or
+// changed.
 type TPM2Backend struct {
 	platformStore PlatformAuthProvider
 	userPINSet    atomic.Bool
@@ -88,7 +91,10 @@ func (b *TPM2Backend) SetSOPIN(_, _ string) error { return qrdbsdk.ErrPINNotSet 
 // backend does not use SO PINs; the first parameter exists to satisfy
 // the PINBackend interface.
 //
-// On success the FIDO2 hash is cached in a MemoryEnclave.
+// On success the FIDO2 hash is cached in a MemoryEnclave. If that cache
+// cannot be allocated the PIN is still recorded as set -- the TPM confirmed
+// it -- and ErrFIDO2HashCacheFailed is returned so the caller learns that
+// FIDO2 hash verification is unavailable.
 func (b *TPM2Backend) SetUserPIN(_ string, newUserPIN string) error {
 	if err := validatePINLength(newUserPIN); err != nil {
 		return err
@@ -99,16 +105,17 @@ func (b *TPM2Backend) SetUserPIN(_ string, newUserPIN string) error {
 		}
 		return err
 	}
-	b.cacheFIDO2Hash([]byte(newUserPIN))
 	b.userPINSet.Store(true)
-	return nil
+	return b.cacheFIDO2Hash([]byte(newUserPIN))
 }
 
 // ChangeSOPIN is not supported for the TPM2 backend.
 func (b *TPM2Backend) ChangeSOPIN(_, _ string) error { return qrdbsdk.ErrPINNotSet }
 
 // ChangeUserPIN changes the user PIN via the PlatformAuthProvider's
-// ChangeAuth. On success the FIDO2 hash is updated.
+// ChangeAuth. On success the FIDO2 hash is updated; if the new hash cannot
+// be cached the change still stands, the old hash is discarded, and
+// ErrFIDO2HashCacheFailed is returned.
 func (b *TPM2Backend) ChangeUserPIN(currentUserPIN, newUserPIN string) error {
 	if err := validatePINLength(newUserPIN); err != nil {
 		return err
@@ -128,9 +135,7 @@ func (b *TPM2Backend) ChangeUserPIN(currentUserPIN, newUserPIN string) error {
 		ready := b.platformStore.IsAuthReady()
 		b.userPINSet.Store(ready)
 		if !ready {
-			if enc := b.fido2Enclave.Swap(nil); enc != nil {
-				enc.Destroy()
-			}
+			b.dropFIDO2Hash()
 		}
 		if isAuthError(err) {
 			return b.buildAuthFailureError()
@@ -140,15 +145,16 @@ func (b *TPM2Backend) ChangeUserPIN(currentUserPIN, newUserPIN string) error {
 	// ChangeAuth proved the current auth value and installed the new one, so
 	// the credential is now known either way.
 	b.userPINSet.Store(true)
-	b.cacheFIDO2Hash([]byte(newUserPIN))
-	return nil
+	return b.cacheFIDO2Hash([]byte(newUserPIN))
 }
 
 // VerifySOPIN is not supported for the TPM2 backend.
 func (b *TPM2Backend) VerifySOPIN(_ string) error { return qrdbsdk.ErrPINNotSet }
 
 // VerifyUserPIN verifies the user PIN against the PlatformSRK's auth value.
-// On success the FIDO2 hash is lazily cached if not already present.
+// On success the FIDO2 hash is lazily cached if not already present; a PIN
+// the TPM accepted whose hash cannot be cached returns
+// ErrFIDO2HashCacheFailed.
 // On failure the DA lockout status is queried and surfaced via
 // qrdbsdk.PINTPMLockedError or qrdbsdk.PINInvalidWithStatusError.
 func (b *TPM2Backend) VerifyUserPIN(p string) error {
@@ -167,7 +173,7 @@ func (b *TPM2Backend) VerifyUserPIN(p string) error {
 	b.userPINSet.Store(true)
 	enc := b.fido2Enclave.Load()
 	if enc == nil || !enc.IsAlive() {
-		b.cacheFIDO2Hash([]byte(p))
+		return b.cacheFIDO2Hash([]byte(p))
 	}
 	return nil
 }
@@ -245,19 +251,41 @@ func (b *TPM2Backend) buildAuthFailureError() error {
 }
 
 // cacheFIDO2Hash computes SHA-256(pinBytes)[:16] and stores it in a
-// MemoryEnclave; the prior enclave is destroyed. NewMemoryEnclave takes
-// ownership of the slice handed to it and wipes it before returning, so
-// the remainder of digest (bytes 16:32, never handed to the enclave) is
-// wiped separately to leave nothing of the digest on the heap.
-func (b *TPM2Backend) cacheFIDO2Hash(pinBytes []byte) {
+// MemoryEnclave admitted through the process allocator; the prior enclave is
+// destroyed. Allocator.New takes ownership of the slice handed to it and
+// wipes it before returning on every path, so the remainder of digest
+// (bytes 16:32, never handed to the enclave) is wiped separately to leave
+// nothing of the digest on the heap.
+//
+// On failure the prior enclave is destroyed as well: it holds the hash of
+// whatever PIN was cached before, which after a ChangeUserPIN is a PIN the
+// TPM no longer accepts, so keeping it would let VerifyFIDO2Hash accept a
+// stale credential.
+func (b *TPM2Backend) cacheFIDO2Hash(pinBytes []byte) error {
 	digest := sha256.Sum256(pinBytes)
-	enc, err := enclave.NewMemoryEnclave(digest[:qrdbsdk.FIDO2PINHashSize])
+	alloc, err := enclave.ProcessAllocator()
+	if err != nil {
+		enclave.Wipe(digest[:])
+		b.dropFIDO2Hash()
+		return &errs.Joined{Lead: ErrFIDO2HashCacheFailed, Cause: err}
+	}
+	enc, err := alloc.New(digest[:qrdbsdk.FIDO2PINHashSize])
 	enclave.Wipe(digest[:])
 	if err != nil {
-		return
+		b.dropFIDO2Hash()
+		return &errs.Joined{Lead: ErrFIDO2HashCacheFailed, Cause: err}
 	}
 	if old := b.fido2Enclave.Swap(enc); old != nil {
 		old.Destroy()
+	}
+	return nil
+}
+
+// dropFIDO2Hash destroys the cached FIDO2 hash, if any, so VerifyFIDO2Hash
+// reports false until a new hash is cached.
+func (b *TPM2Backend) dropFIDO2Hash() {
+	if enc := b.fido2Enclave.Swap(nil); enc != nil {
+		enc.Destroy()
 	}
 }
 

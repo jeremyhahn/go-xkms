@@ -20,9 +20,40 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// classToGRPCCode translates apierrors.Class onto its gRPC status code. It is
+// total over every Class the apierrors tables this package reads
+// (ImportExportSentinelClasses, and the PIV and barrier tables consumed by
+// service_piv.go and service_barrier_pin.go) can produce, so a table entry
+// can never resolve to an unmapped Class silently; grpcCodeForClass's
+// codes.Internal floor exists only for a Class a future apierrors table
+// introduces without a row here.
+var classToGRPCCode = map[apierrors.Class]codes.Code{
+	apierrors.ClassInternal:           codes.Internal,
+	apierrors.ClassInvalidArgument:    codes.InvalidArgument,
+	apierrors.ClassNotFound:           codes.NotFound,
+	apierrors.ClassAlreadyExists:      codes.AlreadyExists,
+	apierrors.ClassPermissionDenied:   codes.PermissionDenied,
+	apierrors.ClassFailedPrecondition: codes.FailedPrecondition,
+	apierrors.ClassUnavailable:        codes.Unavailable,
+	apierrors.ClassUnimplemented:      codes.Unimplemented,
+	apierrors.ClassUnauthenticated:    codes.Unauthenticated,
+	apierrors.ClassDataLoss:           codes.DataLoss,
+	apierrors.ClassDeadlineExceeded:   codes.DeadlineExceeded,
+	apierrors.ClassResourceExhausted:  codes.ResourceExhausted,
+}
+
+// grpcCodeForClass renders an apierrors.Class as its gRPC status code,
+// falling back to codes.Internal for a Class classToGRPCCode does not cover.
+func grpcCodeForClass(c apierrors.Class) codes.Code {
+	if code, ok := classToGRPCCode[c]; ok {
+		return code
+	}
+	return codes.Internal
+}
 
 // keyOpSentinelCodes maps the service-layer sentinels raised by the key and
 // crypto operations onto gRPC status codes. It is an ordered slice rather than
@@ -84,37 +115,24 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 	return status.Error(codes.Internal, err.Error())
 }
 
-// importExportSentinelCodes maps the backend-layer capability sentinels a
-// direct backend.ImportBackend / backend.ExportBackend call can return onto
-// gRPC status codes. WrapKey, UnwrapKey, GetImportParameters, ImportKey,
-// ExportKey and CopyKey call these backend methods directly rather than
-// through the xkms service layer (their own doc comments explain why: the
-// service layer's versions drop fields these RPCs need), so mapKeyOpError's
-// xkms.* sentinel table does not apply to them. Without this table, every
-// backend refusal from these calls -- including the exact capability
-// boundaries this project asks a backend to report precisely, such as AWS
-// KMS's ErrExportNotSupported -- was flattened to codes.Internal.
-var importExportSentinelCodes = []struct {
-	sentinel error
-	code     codes.Code
-}{
-	{backend.ErrExportNotSupported, codes.Unimplemented},
-	{backend.ErrImportNotSupported, codes.Unimplemented},
-	{backend.ErrAsymmetricKeyExportNotAllowed, codes.InvalidArgument},
-	{backend.ErrKeyNotExportable, codes.PermissionDenied},
-}
-
 // mapImportExportError converts an error returned directly by a
 // backend.ImportBackend / backend.ExportBackend method into a gRPC status
-// error, classifying the capability sentinels in importExportSentinelCodes
-// and falling back to codes.Internal (with msg as a prefix, matching the
-// %v-formatted messages these call sites used before this existed) for
-// anything else.
+// error, classifying the capability sentinels in
+// apierrors.ImportExportSentinelClasses -- the table go-xkms#912 made this
+// package share with pkg/api/mcp's mirror of this function -- and falling
+// back to codes.Internal (with msg as a prefix, matching the %v-formatted
+// messages these call sites used before this existed) for anything else.
+// WrapKey, UnwrapKey, GetImportParameters, ImportKey, ExportKey and CopyKey
+// call the backend.ImportBackend / backend.ExportBackend methods directly
+// rather than through the xkms service layer (their own doc comments explain
+// why: the service layer's versions drop fields these RPCs need), so
+// mapKeyOpError's xkms.* sentinel table does not apply to them. Without this
+// table, every backend refusal from these calls -- including the exact
+// capability boundaries this project asks a backend to report precisely,
+// such as AWS KMS's ErrExportNotSupported -- was flattened to codes.Internal.
 func mapImportExportError(msg string, err error) error {
-	for _, entry := range importExportSentinelCodes {
-		if errors.Is(err, entry.sentinel) {
-			return status.Errorf(entry.code, "%s: %v", msg, err)
-		}
+	if class, ok := apierrors.ClassOf(apierrors.ImportExportSentinelClasses, err); ok {
+		return status.Errorf(grpcCodeForClass(class), "%s: %v", msg, err)
 	}
 	return status.Errorf(codes.Internal, "%s: %v", msg, err)
 }

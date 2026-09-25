@@ -97,6 +97,31 @@ func TestParseChainPEM_RejectsUnusableInput(t *testing.T) {
 	}
 }
 
+// TestParseChainPEM_EmptyChainIsTheTypedSentinel verifies that input with no
+// CERTIFICATE blocks at all (not merely a decode failure) fails with the
+// typed ErrEmptyPEMChain sentinel, reachable with errors.Is (#700).
+func TestParseChainPEM_EmptyChainIsTheTypedSentinel(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input []byte
+	}{
+		{name: "nil input", input: nil},
+		{name: "not PEM at all", input: []byte("this is not a certificate")},
+		{
+			name: "PEM blocks but none are certificates",
+			input: pem.EncodeToMemory(&pem.Block{
+				Type:  "EC PRIVATE KEY",
+				Bytes: []byte("key material, not a certificate"),
+			}),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := parseChainPEM(tt.input)
+			require.ErrorIs(t, err, ErrEmptyPEMChain)
+		})
+	}
+}
+
 // TestParseChainPEM_SkipsNonCertificateBlocks verifies non-CERTIFICATE PEM
 // blocks interleaved with the chain are ignored rather than aborting the parse.
 // Operator-assembled bundles routinely carry comments or key blocks.
@@ -244,6 +269,29 @@ func TestCacheIdentity_FailsWhenDataDirUnusable(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Error(t, p.cacheIdentity([]byte("chain"), []byte("anchor")))
+}
+
+// TestCacheIdentity_FailsWhenNodeCertPathIsADirectory verifies that a write
+// failure on the node certificate specifically (as opposed to the data
+// directory itself, covered above) is also surfaced rather than silently
+// swallowed. A directory sitting where the file should be is a failure even
+// root cannot bypass with chmod.
+func TestCacheIdentity_FailsWhenNodeCertPathIsADirectory(t *testing.T) {
+	dataDir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dataDir, nodeCertFile), 0o700),
+		"pre-create a directory where the node cert file must be written")
+
+	p, err := New(&Options{
+		RaftAddress: "10.0.0.1:8300", TrustDomain: "test.cluster", DataDir: dataDir,
+	}, testLogger())
+	require.NoError(t, err)
+
+	require.Error(t, p.cacheIdentity([]byte("chain"), []byte("anchor")),
+		"writing the node cert must fail when its path is a directory")
+
+	if _, statErr := os.Stat(filepath.Join(dataDir, anchorCertFile)); statErr == nil {
+		t.Error("anchor file must not be written when the node cert write fails first")
+	}
 }
 
 // TestLoadCachedIdentity_MissingFiles verifies a partial cache is reported as

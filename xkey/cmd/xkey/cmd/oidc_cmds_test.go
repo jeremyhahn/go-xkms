@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -260,6 +261,7 @@ func TestRunOIDCStop_RequiresProviderOrAll(t *testing.T) {
 	err := runOIDCStop(cmd, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "specify provider name or use --all")
+	assert.True(t, errors.Is(err, ErrOIDCMissingProviderArg), "want errors.Is match against ErrOIDCMissingProviderArg")
 }
 
 func TestRunOIDCStop_AllWithNoPIDDirectory(t *testing.T) {

@@ -18,9 +18,11 @@ package frost
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -40,12 +42,6 @@ const (
 
 	// verificationSharesDir is the directory for verification shares
 	verificationSharesDir = "verification_shares"
-
-	// secretShareFile is the filename for the secret key share
-	secretShareFile = "secret_share.bin"
-
-	// sessionsPrefix is the base prefix for signing sessions
-	sessionsPrefix = "frost/sessions"
 
 	// noncesPrefix is the base prefix for used nonce tracking
 	noncesPrefix = "frost/nonces"
@@ -133,16 +129,27 @@ func (ks *KeyStore) StoreKeyPackage(ctx context.Context, keyID string, pkg *KeyP
 
 	// Store secret share using the secret backend
 	// The secret backend handles encryption/protection
+	//
+	// KeyType is required by types.KeyAttributes.Validate, which a real
+	// backend (e.g. the software backend) enforces on GenerateKey; FROST is
+	// signing-only (RFC 9591), so KeyTypeSigning is the only correct value.
 	attrs := &types.KeyAttributes{
 		CN:        keyID,
+		KeyType:   types.KeyTypeSigning,
 		StoreType: types.StoreFrost,
 		SealData:  types.NewSealData(pkg.SecretShare.Value),
+		FrostAttributes: &types.FrostAttributes{
+			Threshold:     metadata.Threshold,
+			Total:         metadata.Total,
+			Algorithm:     metadata.Algorithm,
+			ParticipantID: metadata.ParticipantID,
+		},
 	}
 
 	if _, err := ks.secretBackend.GenerateKey(ctx, attrs); err != nil {
 		// Clean up public components on failure
-		_ = ks.DeleteKey(ctx, keyID)
-		return &errs.Wrapped{Msg: "failed to store secret share", Err: err}
+		cleanupErr := ks.DeleteKey(ctx, keyID)
+		return errors.Join(&errs.Wrapped{Msg: "failed to store secret share", Err: err}, cleanupErr)
 	}
 
 	return nil
@@ -190,7 +197,14 @@ func (ks *KeyStore) LoadKeyPackage(ctx context.Context, keyID string, participan
 	// Load secret share from secret backend
 	attrs := &types.KeyAttributes{
 		CN:        keyID,
+		KeyType:   types.KeyTypeSigning,
 		StoreType: types.StoreFrost,
+		FrostAttributes: &types.FrostAttributes{
+			Threshold:     metadata.Threshold,
+			Total:         metadata.Total,
+			Algorithm:     metadata.Algorithm,
+			ParticipantID: metadata.ParticipantID,
+		},
 	}
 
 	secretKey, err := ks.secretBackend.GetKey(ctx, attrs)
@@ -277,30 +291,70 @@ func (ks *KeyStore) LoadPublicKeyPackage(ctx context.Context, keyID string) (*Pu
 }
 
 // DeleteKey deletes a FROST key and all its components.
+//
+// Deletion order is chosen so that a failure partway through leaves a key a
+// retried DeleteKey can still find and finish deleting, rather than an
+// orphaned remainder no path can reach: the secret share goes first
+// (through the secret backend), then the verification shares and the group
+// public key, and the metadata record — the one component KeyExists,
+// LoadKeyPackage, and this method itself all use to find the key at all —
+// goes last. Every failure is propagated (joined with errors.Join when more
+// than one step fails) rather than ignored; a retry after a partial failure
+// resumes at whichever step did not yet report success, since an already
+// deleted component's own "not found" is not itself treated as failure
+// (storage.ErrNotFound for public components; backend.ErrKeyNotFound, the
+// one typed not-found errors.Is can match across every current secret
+// backend implementation, for the secret share).
 func (ks *KeyStore) DeleteKey(ctx context.Context, keyID string) error {
-
-	// Load metadata first to know how many verification shares to delete
 	metadataBytes, err := ks.publicStorage.Get(ctx, keyPath(keyID, metadataFile))
-	if err == nil {
-		var metadata KeyMetadata
-		if json.Unmarshal(metadataBytes, &metadata) == nil {
-			// Delete verification shares
-			for i := uint32(1); i <= uint32(metadata.Total); i++ {
-				_ = ks.publicStorage.Delete(ctx, verificationSharePath(keyID, i))
-			}
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return &KeyNotFoundError{KeyID: keyID}
 		}
+		return &errs.Wrapped{Msg: "failed to load metadata", Err: err}
+	}
+	var metadata KeyMetadata
+	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+		return &errs.Wrapped{Msg: "failed to unmarshal metadata", Err: err}
 	}
 
-	// Delete public components
-	_ = ks.publicStorage.Delete(ctx, keyPath(keyID, metadataFile))
-	_ = ks.publicStorage.Delete(ctx, keyPath(keyID, groupPublicKeyFile))
-
-	// Delete secret share
+	// Delete the secret share first, through the secret backend.
 	attrs := &types.KeyAttributes{
 		CN:        keyID,
+		KeyType:   types.KeyTypeSigning,
 		StoreType: types.StoreFrost,
+		FrostAttributes: &types.FrostAttributes{
+			Threshold:     metadata.Threshold,
+			Total:         metadata.Total,
+			Algorithm:     metadata.Algorithm,
+			ParticipantID: metadata.ParticipantID,
+		},
 	}
-	_ = ks.secretBackend.DeleteKey(ctx, attrs)
+	if err := ks.secretBackend.DeleteKey(ctx, attrs); err != nil && !errors.Is(err, backend.ErrKeyNotFound) {
+		return &errs.Wrapped{Msg: "failed to delete secret share", Err: err}
+	}
+
+	// Delete verification shares and the group public key next, collecting
+	// every failure instead of stopping at the first so a retry has as
+	// little left to redo as possible.
+	var deleteErrs []error
+	for i := uint32(1); i <= uint32(metadata.Total); i++ {
+		if err := ks.publicStorage.Delete(ctx, verificationSharePath(keyID, i)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+			deleteErrs = append(deleteErrs, &errs.Wrapped{Msg: fmt.Sprintf("failed to delete verification share for participant %d", i), Err: err})
+		}
+	}
+	if err := ks.publicStorage.Delete(ctx, keyPath(keyID, groupPublicKeyFile)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		deleteErrs = append(deleteErrs, &errs.Wrapped{Msg: "failed to delete group public key", Err: err})
+	}
+	if len(deleteErrs) > 0 {
+		return errors.Join(deleteErrs...)
+	}
+
+	// Metadata last: while it is still present, a retry resumes exactly
+	// here rather than re-attempting steps that already succeeded.
+	if err := ks.publicStorage.Delete(ctx, keyPath(keyID, metadataFile)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return &errs.Wrapped{Msg: "failed to delete metadata", Err: err}
+	}
 
 	return nil
 }

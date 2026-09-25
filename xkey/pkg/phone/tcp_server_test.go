@@ -745,10 +745,10 @@ func TestTCPPairingServer_MaxConnections(t *testing.T) {
 		sessions[i] = clientHandshake(t, c)
 	}
 
-	// Give the server a moment for both connections to be fully registered
-	// in the accept loop (semaphore acquired before goroutine spawn).
-	time.Sleep(100 * time.Millisecond)
-
+	// No wait needed: the accept loop is single-threaded and acquires the
+	// semaphore slot before spawning each connection's handler goroutine, so
+	// a completed handshake already proves that connection's slot was taken.
+	//
 	// The 3rd connection should be accepted at TCP level but immediately
 	// closed by the server because the semaphore is full.
 	c3, err := net.DialTimeout("tcp", srv.Addr(), 2*time.Second)
@@ -801,6 +801,116 @@ func TestTCPPairingServer_HandshakeTimeout(t *testing.T) {
 	_, readErr := conn.Read(buf)
 	if readErr == nil {
 		t.Fatal("expected connection to be closed by server after handshake timeout")
+	}
+}
+
+// failingDeadlineConn wraps a net.Conn and lets tests force SetDeadline /
+// SetReadDeadline / SetWriteDeadline to fail regardless of the underlying
+// connection's real state. A real net.Conn essentially only fails these
+// calls once already closed, at which point the following Read/Write would
+// fail too and mask the deadline-specific code path; this decorator
+// reproduces the failure deterministically on an otherwise healthy pipe.
+type failingDeadlineConn struct {
+	net.Conn
+	failSetDeadline      bool
+	failSetReadDeadline  bool
+	failSetWriteDeadline bool
+}
+
+var errInjectedDeadlineFailure = errors.New("injected deadline failure")
+
+func (c *failingDeadlineConn) SetDeadline(t time.Time) error {
+	if c.failSetDeadline {
+		return errInjectedDeadlineFailure
+	}
+	return c.Conn.SetDeadline(t)
+}
+
+func (c *failingDeadlineConn) SetReadDeadline(t time.Time) error {
+	if c.failSetReadDeadline {
+		return errInjectedDeadlineFailure
+	}
+	return c.Conn.SetReadDeadline(t)
+}
+
+func (c *failingDeadlineConn) SetWriteDeadline(t time.Time) error {
+	if c.failSetWriteDeadline {
+		return errInjectedDeadlineFailure
+	}
+	return c.Conn.SetWriteDeadline(t)
+}
+
+// TestTCPPairingServer_HandshakeDeadlineFailureReturnsPromptly verifies that
+// handleConnection treats a SetDeadline failure as fatal. Before this was
+// handled, the error from SetDeadline was discarded and the handshake read
+// that follows had no deadline at all: on a healthy but non-deadline-capable
+// connection, that read blocks forever instead of ever timing out. Here nothing
+// is ever written to the pipe, so the old behavior would hang this test.
+func TestTCPPairingServer_HandshakeDeadlineFailureReturnsPromptly(t *testing.T) {
+	srv, err := NewTCPPairingServer(&TCPPairingConfig{
+		HandshakeTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewTCPPairingServer: %v", err)
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	wrapped := &failingDeadlineConn{Conn: server, failSetDeadline: true}
+
+	// handleConnection expects to be entered the same way acceptLoop enters
+	// it: a semaphore slot already acquired and the WaitGroup already counting
+	// this connection.
+	srv.connSem <- struct{}{}
+	srv.wg.Add(1)
+
+	done := make(chan struct{})
+	go func() {
+		srv.handleConnection(wrapped)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// handleConnection returned promptly after the deadline failure,
+		// as expected.
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleConnection did not return after SetDeadline failure; " +
+			"it is blocked reading with no deadline set")
+	}
+}
+
+// TestTCPPairingServer_RequestLoopReadDeadlineFailureReturnsPromptly verifies
+// that requestLoop treats a SetReadDeadline failure as fatal for the same
+// reason: silently reading with no idle-timeout deadline set would hang this
+// test forever since nothing is ever written to the pipe.
+func TestTCPPairingServer_RequestLoopReadDeadlineFailureReturnsPromptly(t *testing.T) {
+	srv, err := NewTCPPairingServer(&TCPPairingConfig{
+		IdleTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewTCPPairingServer: %v", err)
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	wrapped := &failingDeadlineConn{Conn: server, failSetReadDeadline: true}
+
+	// requestLoop returns before ever touching session on this failure path,
+	// so a nil session is safe here.
+	done := make(chan struct{})
+	go func() {
+		srv.requestLoop(wrapped, nil, "test")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// requestLoop returned promptly after the deadline failure, as
+		// expected.
+	case <-time.After(2 * time.Second):
+		t.Fatal("requestLoop did not return after SetReadDeadline failure; " +
+			"it is blocked reading with no deadline set")
 	}
 }
 

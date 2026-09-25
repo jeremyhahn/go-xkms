@@ -35,6 +35,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
@@ -243,8 +245,14 @@ func (fb *FileBackend) Delete(slot pivcert.PIVSlot) error {
 	derKey := certKey(slot, extDER)
 	pemKey := certKey(slot, extPEM)
 
-	derExists, _ := fb.backend.Exists(context.Background(), derKey)
-	pemExists, _ := fb.backend.Exists(context.Background(), pemKey)
+	derExists, err := fb.backend.Exists(context.Background(), derKey)
+	if err != nil {
+		return pivcert.NewStorageError("Delete", slot, err)
+	}
+	pemExists, err := fb.backend.Exists(context.Background(), pemKey)
+	if err != nil {
+		return pivcert.NewStorageError("Delete", slot, err)
+	}
 
 	if !derExists && !pemExists {
 		return pivcert.NewStorageError("Delete", slot, pivcert.ErrCertificateNotFound)
@@ -291,7 +299,10 @@ func (fb *FileBackend) List() ([]pivcert.PIVSlotInfo, error) {
 
 	result := make([]pivcert.PIVSlotInfo, 0, len(metadata.Slots))
 	for slotID, meta := range metadata.Slots {
-		storedAt, _ := time.Parse(time.RFC3339, meta.StoredAt)
+		storedAt, err := time.Parse(time.RFC3339, meta.StoredAt)
+		if err != nil {
+			return nil, pivcert.NewStorageError("List", pivcert.PIVSlot(slotID), &errs.Wrapped{Msg: "corrupt StoredAt metadata", Err: err})
+		}
 		result = append(result, pivcert.PIVSlotInfo{
 			Slot:         pivcert.PIVSlot(slotID),
 			Subject:      meta.Subject,

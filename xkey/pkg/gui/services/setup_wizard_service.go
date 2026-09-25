@@ -938,7 +938,11 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 			// inside the method before any nil check of ours runs.
 			canSeal := false
 			if s.sealSvc != nil {
-				canSeal, _ = s.sealSvc.CanSeal()
+				var canSealErr error
+				canSeal, canSealErr = s.sealSvc.CanSeal()
+				if canSealErr != nil {
+					slog.Warn("wizard: failed to check whether the sealer can seal", "error", canSealErr)
+				}
 			}
 			if barrierPW != "" && s.sealSvc != nil && canSeal {
 				policyType := string(PolicyTypeNone)
@@ -1342,14 +1346,9 @@ func (s *SetupWizardService) ApplySOProvisioning(choices *SetupChoices) (result 
 	policy := config.DefaultPolicy()
 
 	// Core security requirements — PlatformSRK is always created.
-	policy.PlatformPCRs = []int{0, 7, 9}
 	policy.PlatformPCRBank = "sha256"
 	if choices.StorageType != "" {
 		policy.StorageType = choices.StorageType
-	}
-	if choices.PasswordStoreMode != "" {
-		policy.PasswordProtectionMode = choices.PasswordStoreMode
-		policy.RequirePasswordProtection = choices.PasswordStoreMode != "none"
 	}
 
 	// Enterprise policy fields from SO wizard. Only override the

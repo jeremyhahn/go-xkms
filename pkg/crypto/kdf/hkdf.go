@@ -14,9 +14,7 @@
 package kdf
 
 import (
-	"io"
-
-	"golang.org/x/crypto/hkdf"
+	"crypto/hkdf"
 )
 
 // HKDFAdapter implements the KDFAdapter interface using HKDF (RFC 5869)
@@ -39,13 +37,13 @@ func (h *HKDFAdapter) DeriveKey(ikm []byte, params *KDFParams) ([]byte, error) {
 		return nil, ErrInvalidIKM
 	}
 
-	// Create HKDF reader
-	hash := params.Hash.New
-	kdf := hkdf.New(hash, ikm, params.Salt, params.Info)
-
-	// Derive key
-	key := make([]byte, params.KeyLength)
-	if _, err := io.ReadFull(kdf, key); err != nil {
+	// crypto/hkdf.Key (the stdlib RFC 5869 implementation, Go 1.24+) is used
+	// instead of golang.org/x/crypto/hkdf.New: the x/crypto Reader
+	// constructor converts the stdlib's own FIPS 140-only refusals (short
+	// IKM, a non-approved hash) into a panic, which would crash this process
+	// instead of returning the error DeriveKey's signature promises.
+	key, err := hkdf.Key(params.Hash.New, ikm, params.Salt, string(params.Info), params.KeyLength)
+	if err != nil {
 		return nil, err
 	}
 

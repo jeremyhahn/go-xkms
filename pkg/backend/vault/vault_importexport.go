@@ -40,6 +40,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -264,12 +265,16 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	metadata := map[string]interface{}{
 		"cn":                  attrs.CN,
 		"symmetric_algorithm": string(attrs.SymmetricAlgorithm),
-		"key_type":            string(attrs.KeyType),
-		"store_type":          backend.STORE_VAULT,
-		"vault_name":          keyName,
-		"key_size":            256,
-		"symmetric":           true,
-		"exportable":          attrs.Exportable,
+		// uint8: see the matching comment in vault_symmetric.go's
+		// GenerateSymmetricKey for why string(attrs.KeyType) is wrong here
+		// (go-xkms#705).
+		"key_type":   uint8(attrs.KeyType),
+		"store_type": backend.STORE_VAULT,
+		"vault_name": keyName,
+		"key_size":   256,
+		"symmetric":  true,
+		"exportable": attrs.Exportable,
+		"sensitive":  attrs.Sensitive,
 	}
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
@@ -344,9 +349,15 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
+	// Only a genuine storage.ErrNotFound is reported as ErrKeyNotFound; any
+	// other failure from the metadata store must not be conflated with "no
+	// key yet" (matches GetKey's classification).
 	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {

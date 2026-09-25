@@ -16,6 +16,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -33,7 +34,34 @@ var (
 	ErrSolverAlreadyExists    = errors.New("acme-client: solver already registered for this type")
 	ErrResolverClosed         = errors.New("acme-client: resolver has been closed")
 	ErrInvalidChallengeStatus = errors.New("acme-client: challenge has invalid status")
+	ErrChallengeCleanupFailed = errors.New("acme-client: challenge cleanup failed")
 )
+
+// ChallengeCleanupError reports a failure to clean up challenge-provisioned
+// state (e.g. a DNS TXT record or an HTTP-01 token) after a challenge
+// completes. It wraps ErrChallengeCleanupFailed so callers can match it with
+// errors.Is.
+type ChallengeCleanupError struct {
+	ChallengeType string
+	Domain        string
+	Err           error
+}
+
+// Error implements the error interface.
+func (e *ChallengeCleanupError) Error() string {
+	return fmt.Sprintf("acme-client: %s: failed to clean up challenge state for %q: %v",
+		e.ChallengeType, e.Domain, e.Err)
+}
+
+// Unwrap returns the underlying cause.
+func (e *ChallengeCleanupError) Unwrap() error {
+	return e.Err
+}
+
+// Is reports whether target is ErrChallengeCleanupFailed.
+func (e *ChallengeCleanupError) Is(target error) bool {
+	return target == ErrChallengeCleanupFailed
+}
 
 // ChallengeSolver defines the interface for solving ACME challenges.
 // Implementations are responsible for presenting proof of domain control
@@ -286,7 +314,7 @@ func (r *ChallengeResolver) SolveWithCleanup(
 	authz *acme.Authorization,
 	keyAuth string,
 	afterSolve func(ctx context.Context, challenge *acme.Challenge) error,
-) error {
+) (err error) {
 	challenge, err := r.Solve(ctx, authz, keyAuth)
 	if err != nil {
 		return err
@@ -301,9 +329,18 @@ func (r *ChallengeResolver) SolveWithCleanup(
 	// Ensure cleanup is called
 	domain := authz.Identifier.Value
 	defer func() {
-		// Use a fresh context for cleanup since the original might be cancelled
+		// Use a fresh context for cleanup since the original might be
+		// cancelled. A cleanup failure leaves provisioned challenge state
+		// (e.g. a DNS TXT record) behind, so it's joined into the result
+		// rather than dropped.
 		cleanupCtx := context.Background()
-		_ = solver.Cleanup(cleanupCtx, domain, challenge)
+		if cleanupErr := solver.Cleanup(cleanupCtx, domain, challenge); cleanupErr != nil {
+			err = errors.Join(err, &ChallengeCleanupError{
+				ChallengeType: challenge.Type,
+				Domain:        domain,
+				Err:           cleanupErr,
+			})
+		}
 	}()
 
 	// Execute the after-solve function (typically accepting the challenge)

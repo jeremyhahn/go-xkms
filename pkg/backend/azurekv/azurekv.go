@@ -25,15 +25,17 @@ import (
 	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
+	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -41,7 +43,16 @@ import (
 )
 
 // KeyVaultClient defines the interface for Azure Key Vault operations.
-// This interface allows for mocking in tests.
+// This interface allows for mocking in tests. It lists exactly the
+// operations Backend calls; WrapKey, UnwrapKey and NewListKeyPropertiesPager
+// were removed (go-xkms#705) because no Backend method ever called them --
+// Backend.WrapKey/UnwrapKey perform the BYOK RSA wrapping ceremony locally
+// (see azurekv_importexport.go) rather than through Azure Key Vault's own
+// wrap/unwrap key operations, and ListKeys is reconstructed from local
+// metadata rather than Key Vault's paginated key listing. An unused
+// interface method can only be covered by a test that calls it directly
+// with no Backend behavior to assert, which is coverage padding, not a
+// real test.
 type KeyVaultClient interface {
 	CreateKey(ctx context.Context, name string, params azkeys.CreateKeyParameters, options *azkeys.CreateKeyOptions) (azkeys.CreateKeyResponse, error)
 	GetKey(ctx context.Context, name, version string, options *azkeys.GetKeyOptions) (azkeys.GetKeyResponse, error)
@@ -49,11 +60,8 @@ type KeyVaultClient interface {
 	Sign(ctx context.Context, keyName, keyVersion string, params azkeys.SignParameters, options *azkeys.SignOptions) (azkeys.SignResponse, error)
 	Verify(ctx context.Context, keyName, keyVersion string, params azkeys.VerifyParameters, options *azkeys.VerifyOptions) (azkeys.VerifyResponse, error)
 	Decrypt(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.DecryptOptions) (azkeys.DecryptResponse, error)
-	WrapKey(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.WrapKeyOptions) (azkeys.WrapKeyResponse, error)
-	UnwrapKey(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.UnwrapKeyOptions) (azkeys.UnwrapKeyResponse, error)
 	ImportKey(ctx context.Context, name string, params azkeys.ImportKeyParameters, options *azkeys.ImportKeyOptions) (azkeys.ImportKeyResponse, error)
 	GetPublicKey(ctx context.Context, name, version string) ([]byte, error)
-	NewListKeyPropertiesPager(options *azkeys.ListKeyPropertiesOptions) *runtime.Pager[azkeys.ListKeyPropertiesResponse]
 	RotateKey(ctx context.Context, name string, options *azkeys.RotateKeyOptions) (azkeys.RotateKeyResponse, error)
 	Close() error
 }
@@ -87,14 +95,6 @@ func (r *realKeyVaultClient) Decrypt(ctx context.Context, keyName, keyVersion st
 	return r.Client.Decrypt(ctx, keyName, keyVersion, params, options)
 }
 
-func (r *realKeyVaultClient) WrapKey(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.WrapKeyOptions) (azkeys.WrapKeyResponse, error) {
-	return r.Client.WrapKey(ctx, keyName, keyVersion, params, options)
-}
-
-func (r *realKeyVaultClient) UnwrapKey(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.UnwrapKeyOptions) (azkeys.UnwrapKeyResponse, error) {
-	return r.Client.UnwrapKey(ctx, keyName, keyVersion, params, options)
-}
-
 func (r *realKeyVaultClient) ImportKey(ctx context.Context, name string, params azkeys.ImportKeyParameters, options *azkeys.ImportKeyOptions) (azkeys.ImportKeyResponse, error) {
 	return r.Client.ImportKey(ctx, name, params, options)
 }
@@ -124,10 +124,6 @@ func (r *realKeyVaultClient) GetPublicKey(ctx context.Context, name, version str
 	}
 
 	return derBytes, nil
-}
-
-func (r *realKeyVaultClient) NewListKeyPropertiesPager(options *azkeys.ListKeyPropertiesOptions) *runtime.Pager[azkeys.ListKeyPropertiesResponse] {
-	return r.Client.NewListKeyPropertiesPager(options)
 }
 
 func (r *realKeyVaultClient) RotateKey(ctx context.Context, name string, options *azkeys.RotateKeyOptions) (azkeys.RotateKeyResponse, error) {
@@ -199,7 +195,7 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 // prerequisite for azidentity.NewClientSecretCredential over
 // azidentity.NewDefaultAzureCredential.
 func (b *Backend) hasServicePrincipal() bool {
-	return b.config.ClientID != "" && b.config.TenantID != "" && types.SecretValueSet(&b.config.ClientSecret)
+	return b.config.ClientID != "" && b.config.TenantID != "" && b.config.ClientSecret != nil
 }
 
 // newClientSecretCredential builds an azidentity.ClientSecretCredential from
@@ -208,7 +204,7 @@ func (b *Backend) hasServicePrincipal() bool {
 // boundary (go-xkms#610): the plaintext leaves ClientSecret's SecretValue
 // enclave only for the duration of this constructor call.
 func (b *Backend) newClientSecretCredential(credOptions *azidentity.ClientSecretCredentialOptions) (*azidentity.ClientSecretCredential, error) {
-	clientSecret, err := types.SecretValueBytes(&b.config.ClientSecret)
+	clientSecret, err := types.SecretValueBytes(b.config.ClientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -442,10 +438,15 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 
 	keyID := *resp.Key.KID
 
-	// Store metadata
+	// Store metadata. key_type is serialized through its String() form (not
+	// the raw uint8 value, and not a bare string() conversion of it) because
+	// ListKeys reads it back with types.ParseKeyType, which expects the
+	// same "SIGNING"-style spelling; a raw numeric value round-trips through
+	// json.Marshal as a JSON number and silently fails ListKeys' .(string)
+	// type assertion, dropping the key's type on every read (go-xkms#705).
 	metadata := map[string]interface{}{
 		"key_id":    keyID,
-		"key_type":  attrs.KeyType,
+		"key_type":  attrs.KeyType.String(),
 		"cn":        attrs.CN,
 		"algorithm": attrs.KeyAlgorithm.String(),
 	}
@@ -719,10 +720,11 @@ func (b *Backend) CreateSecretKey(attrs *types.KeyAttributes, keySize int) (stri
 
 	keyID := *resp.Key.KID
 
-	// Store metadata
+	// Store metadata. See the identical comment in CreateKey: key_type must
+	// be attrs.KeyType.String(), not the raw KeyType value.
 	metadata := map[string]interface{}{
 		"key_id":    keyID,
-		"key_type":  attrs.KeyType,
+		"key_type":  attrs.KeyType.String(),
 		"cn":        attrs.CN,
 		"key_size":  keySize,
 		"symmetric": true,
@@ -788,10 +790,19 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
-	// Verify key exists in Azure Key Vault
+	// Verify key exists in Azure Key Vault. Only an HTTP 404 -- Key Vault's
+	// signal that the key genuinely does not exist -- is reported as
+	// ErrKeyNotFound. Any other failure (throttling, a transport fault, an
+	// RBAC/authorization denial) must not be conflated with "no key yet":
+	// getOrGenerateCAKey relies on that distinction to decide whether
+	// generating a replacement key is safe.
 	_, err := b.client.GetKey(ctx, attrs.CN, "", nil)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+		var respErr *azcore.ResponseError
+		if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("failed to get key: %v", err)}
 	}
 
 	// Return nil for private key since it's not extractable from Azure Key Vault
@@ -885,6 +896,17 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		// Set store type
 		attrs.StoreType = backend.STORE_AZUREKV
 
+		// Exportable is unconditionally false and Sensitive is unconditionally
+		// true for every key this backend enumerates (go-xkms#932).
+		// Capabilities().Export is false unconditionally, and
+		// ExportKey/ExportKeyMaterial (azurekv_importexport.go) both refuse
+		// every key with backend.ErrNotSupported regardless of policy: Azure
+		// Key Vault exposes no API to release private key material for any
+		// key this backend manages, generated or imported, so Exportable=true
+		// would be a promise this backend cannot keep.
+		attrs.Exportable = false
+		attrs.Sensitive = true
+
 		allKeys = append(allKeys, attrs)
 	}
 
@@ -919,10 +941,19 @@ type azurekvDecrypter struct {
 // construction and pass it explicitly on every subsequent operation instead
 // of the empty string, which Azure would otherwise resolve to whatever is
 // latest at call time.
+//
+// As with GetKey, only an HTTP 404 -- Key Vault's signal that the key
+// genuinely does not exist -- is reported as ErrKeyNotFound. Any other
+// failure (throttling, a transport fault, an RBAC/authorization denial)
+// becomes ErrKeyRetrievalFailed so it is never conflated with "no key yet".
 func (b *Backend) resolveKeyVersion(ctx context.Context, name string) (string, error) {
 	resp, err := b.client.GetKey(ctx, name, "", nil)
 	if err != nil {
-		return "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+		var respErr *azcore.ResponseError
+		if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+			return "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+		}
+		return "", &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("failed to get key: %v", err)}
 	}
 	if resp.Key == nil || resp.Key.KID == nil {
 		return "", &errs.Detail{Err: ErrKeyNotFound, Detail: name}

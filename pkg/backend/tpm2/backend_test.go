@@ -33,6 +33,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -110,6 +111,8 @@ type mockTPM struct {
 	parsePublicKeyValue        crypto.PublicKey
 	ssrkAttrsErr               error
 	ssrkAttrsValue             *types.KeyAttributes
+	platformSRKAttrsErr        error
+	platformSRKAttrsValue      *types.KeyAttributes
 	rsaPublicKey               *rsa.PublicKey
 	ecdsaPublicKey             *ecdsa.PublicKey
 	signatureValue             []byte
@@ -131,6 +134,12 @@ type mockTPM struct {
 func (m *mockTPM) ActivateCredential(credentialBlob, encryptedSecret []byte) ([]byte, error) {
 	return nil, nil
 }
+func (m *mockTPM) AnswerCredentialChallenge(key *pkgtpm2.ActivationKey, challenge *pkgtpm2.CredentialChallenge) ([]byte, error) {
+	return nil, nil
+}
+func (m *mockTPM) ClearForReprovision() (bool, error)                   { return false, nil }
+func (m *mockTPM) CreateActivationKey() (*pkgtpm2.ActivationKey, error) { return nil, nil }
+func (m *mockTPM) State() (*pkgtpm2.ProvisioningState, error)           { return nil, nil }
 func (m *mockTPM) AKProfile() (pkgtpm2.AKProfile, error)                { return pkgtpm2.AKProfile{}, nil }
 func (m *mockTPM) AlgID() tpm2.TPMAlgID                                 { return tpm2.TPMAlgSHA256 }
 func (m *mockTPM) CalculateName(algID tpm2.TPMAlgID, publicArea []byte) {}
@@ -311,6 +320,12 @@ func (m *mockTPM) SSRKAttributes() (*types.KeyAttributes, error) {
 	return &types.KeyAttributes{CN: "ssrk"}, nil
 }
 func (m *mockTPM) PlatformSRKAttributes() (*types.KeyAttributes, error) {
+	if m.platformSRKAttrsErr != nil {
+		return nil, m.platformSRKAttrsErr
+	}
+	if m.platformSRKAttrsValue != nil {
+		return m.platformSRKAttrsValue, nil
+	}
 	return &types.KeyAttributes{CN: "platform-srk"}, nil
 }
 func (m *mockTPM) Transport() transport.TPM {
@@ -411,7 +426,8 @@ func TestConfig_Validate(t *testing.T) {
 	}{
 		{"ValidConfigWithDevice", &Config{Device: "/dev/null", KeyDir: t.TempDir(), SRKHandle: 0x81000001}, false},
 		{"ValidConfigWithSimulator", &Config{UseSimulator: true, KeyDir: t.TempDir()}, false},
-		{"DefaultValues", &Config{Device: "/dev/null"}, false},
+		{"DefaultValues", &Config{Device: "/dev/null", KeyDir: t.TempDir()}, false},
+		{"MissingKeyDir", &Config{Device: "/dev/null"}, true},
 		{"NonExistentDevice", &Config{Device: "/dev/nonexistent-tpm-device-xyz", KeyDir: t.TempDir()}, true},
 	}
 	for _, tt := range tests {
@@ -424,13 +440,29 @@ func TestConfig_Validate(t *testing.T) {
 	}
 }
 
-func TestConfig_Validate_DefaultValues(t *testing.T) {
+// TestConfig_Validate_MissingKeyDir verifies Validate returns a typed,
+// wrapped ErrKeyDirRequired when KeyDir is unset rather than defaulting to a
+// directory resolved relative to the process's working directory (issue
+// #926).
+func TestConfig_Validate_MissingKeyDir(t *testing.T) {
 	config := &Config{UseSimulator: true}
+
+	err := config.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, want ErrKeyDirRequired")
+	}
+	if !errors.Is(err, ErrKeyDirRequired) {
+		t.Errorf("Validate() error = %v, want it to wrap ErrKeyDirRequired", err)
+	}
+	if config.KeyDir != "" {
+		t.Errorf("KeyDir: expected to remain empty on validation failure, got %q", config.KeyDir)
+	}
+}
+
+func TestConfig_Validate_DefaultValues(t *testing.T) {
+	config := &Config{UseSimulator: true, KeyDir: t.TempDir()}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
-	}
-	if config.KeyDir != "./tpm2-keys" {
-		t.Errorf("KeyDir default: expected ./tpm2-keys, got %q", config.KeyDir)
 	}
 	if config.SRKHandle != 0x81000001 {
 		t.Errorf("SRKHandle default: expected 0x81000001, got 0x%x", config.SRKHandle)
@@ -767,7 +799,7 @@ func TestBackend_GenerateKey_UnsupportedAlgorithm(t *testing.T) {
 }
 
 func TestConfig_Validate_DeviceDoesNotExist(t *testing.T) {
-	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: false}
+	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: false, KeyDir: t.TempDir()}
 	err := config.Validate()
 	if err == nil {
 		t.Error("Expected error for non-existent device")
@@ -778,7 +810,7 @@ func TestConfig_Validate_DeviceDoesNotExist(t *testing.T) {
 }
 
 func TestConfig_Validate_SimulatorSkipsDeviceCheck(t *testing.T) {
-	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: true}
+	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: true, KeyDir: t.TempDir()}
 	if err := config.Validate(); err != nil {
 		t.Errorf("Expected no error when using simulator, got %v", err)
 	}
@@ -821,9 +853,13 @@ func TestBackend_CloseWithNilTPM(t *testing.T) {
 	}
 }
 
+// TestBackend_GetKey_KeyNotFound verifies that a genuine "no such blob"
+// result from the key store (storage.ErrNotFound) is reported as
+// ErrKeyNotFound, which satisfies errors.Is(err, backend.ErrKeyNotFound)
+// since ErrKeyNotFound is an alias of it.
 func TestBackend_GetKey_KeyNotFound(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: errors.New("key not found")}}
+	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: storage.ErrNotFound}}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
 	_, err := b.GetKey(context.Background(), attrs)
 	if err == nil {
@@ -831,6 +867,32 @@ func TestBackend_GetKey_KeyNotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrKeyNotFound) {
 		t.Errorf("Expected ErrKeyNotFound, got %v", err)
+	}
+	if !errors.Is(err, backend.ErrKeyNotFound) {
+		t.Errorf("Expected err to satisfy errors.Is(err, backend.ErrKeyNotFound), got %v", err)
+	}
+}
+
+// TestBackend_GetKey_RetrievalError verifies that a key-store failure other
+// than "not found" -- a transient I/O error, a permission failure, a
+// corrupt blob -- is reported as ErrKeyRetrievalFailed and does NOT satisfy
+// errors.Is(err, backend.ErrKeyNotFound). Callers such as
+// pkg/ca.getOrGenerateCAKey rely on this distinction to avoid generating a
+// replacement key when the backend merely failed to answer.
+func TestBackend_GetKey_RetrievalError(t *testing.T) {
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	transientErr := errors.New("i/o timeout reading key blob")
+	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: transientErr}}
+	attrs := &types.KeyAttributes{CN: "some-key"}
+	_, err := b.GetKey(context.Background(), attrs)
+	if err == nil {
+		t.Fatal("Expected error for a transient key-store failure")
+	}
+	if errors.Is(err, backend.ErrKeyNotFound) {
+		t.Errorf("Transient retrieval error must not satisfy errors.Is(err, backend.ErrKeyNotFound), got %v", err)
+	}
+	if !errors.Is(err, ErrKeyRetrievalFailed) {
+		t.Errorf("Expected ErrKeyRetrievalFailed, got %v", err)
 	}
 }
 
@@ -866,7 +928,7 @@ func TestBackend_PreservesExistingParent(t *testing.T) {
 }
 
 func TestNewBackendWithTPM_Success(t *testing.T) {
-	mockTpm := &mockTPM{ssrkAttrsValue: &types.KeyAttributes{CN: "test-ssrk"}}
+	mockTpm := &mockTPM{platformSRKAttrsValue: &types.KeyAttributes{CN: "test-platform-srk"}}
 	mockKb := &mockKeyBackend{}
 	logger := slog.Default()
 	tracker := backend.NewMemoryAEADTracker()
@@ -893,13 +955,13 @@ func TestNewBackendWithTPM_Success(t *testing.T) {
 	if !b.externalTPM {
 		t.Error("Expected externalTPM flag to be true")
 	}
-	if b.srkAttrs.CN != "test-ssrk" {
-		t.Errorf("Expected SRK CN to be test-ssrk, got %s", b.srkAttrs.CN)
+	if b.srkAttrs.CN != "test-platform-srk" {
+		t.Errorf("Expected SRK CN to be test-platform-srk, got %s", b.srkAttrs.CN)
 	}
 }
 
 func TestNewBackendWithTPM_DefaultLogger(t *testing.T) {
-	mockTpm := &mockTPM{ssrkAttrsValue: &types.KeyAttributes{CN: "test-ssrk"}}
+	mockTpm := &mockTPM{platformSRKAttrsValue: &types.KeyAttributes{CN: "test-platform-srk"}}
 	mockKb := &mockKeyBackend{}
 	cfg := &ExternalTPMConfig{TPM: mockTpm, KeyBackend: mockKb, Logger: nil, Tracker: nil}
 	b, err := NewBackendWithTPM(cfg)
@@ -914,17 +976,43 @@ func TestNewBackendWithTPM_DefaultLogger(t *testing.T) {
 	}
 }
 
-func TestNewBackendWithTPM_SSRKAttributesError(t *testing.T) {
-	expectedErr := errors.New("ssrk error")
-	mockTpm := &mockTPM{ssrkAttrsErr: expectedErr}
+// TestNewBackendWithTPM_PlatformSRKUnavailable_ReturnsError proves
+// resolveSRKAttributes never falls back to the Shared SRK when no Platform
+// SRK is available -- the case of a TPM opened by another component that
+// provisioned the SSRK but was never enrolled through
+// PlatformKeyStore.Initialize/EnrollPlatformSRK. This backend must not use
+// the SSRK for anything of its own; construction fails with a typed, wrapped
+// error instead of silently borrowing it.
+func TestNewBackendWithTPM_PlatformSRKUnavailable_ReturnsError(t *testing.T) {
+	platformErr := errors.New("platform srk not provisioned")
+	mockTpm := &mockTPM{
+		platformSRKAttrsErr: platformErr,
+		ssrkAttrsValue:      &types.KeyAttributes{CN: "ssrk"},
+	}
 	mockKb := &mockKeyBackend{}
 	cfg := &ExternalTPMConfig{TPM: mockTpm, KeyBackend: mockKb}
 	_, err := NewBackendWithTPM(cfg)
 	if err == nil {
-		t.Error("Expected error when SSRKAttributes fails")
+		t.Fatal("Expected error when the Platform SRK is unavailable, even though the SSRK is")
 	}
-	if !errors.Is(err, expectedErr) {
-		t.Errorf("Expected error to wrap ssrk error, got %v", err)
+	if !errors.Is(err, platformErr) {
+		t.Errorf("Expected error to wrap platform srk error, got %v", err)
+	}
+}
+
+// TestNewBackendWithTPM_NoSRKAvailable_ReturnsError proves construction fails
+// with a typed, wrapped error when the Platform SRK is not available.
+func TestNewBackendWithTPM_NoSRKAvailable_ReturnsError(t *testing.T) {
+	platformErr := errors.New("platform srk error")
+	mockTpm := &mockTPM{platformSRKAttrsErr: platformErr}
+	mockKb := &mockKeyBackend{}
+	cfg := &ExternalTPMConfig{TPM: mockTpm, KeyBackend: mockKb}
+	_, err := NewBackendWithTPM(cfg)
+	if err == nil {
+		t.Fatal("Expected error when the Platform SRK is not available")
+	}
+	if !errors.Is(err, platformErr) {
+		t.Errorf("Expected error to wrap platform srk error, got %v", err)
 	}
 }
 
@@ -1051,6 +1139,10 @@ func TestBackend_GetKey_Success(t *testing.T) {
 	}
 }
 
+// TestBackend_GetKey_PublicBlobError covers a corrupt-state read: the
+// private blob is present (so it does not classify as not-found) but the
+// public blob read fails with a generic error. That must surface as
+// ErrKeyRetrievalFailed, not ErrKeyNotFound: the key plainly exists.
 func TestBackend_GetKey_PublicBlobError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicBlobError: errors.New("public blob error")}
@@ -1060,8 +1152,28 @@ func TestBackend_GetKey_PublicBlobError(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when public blob retrieval fails")
 	}
-	if !errors.Is(err, ErrKeyNotFound) {
-		t.Errorf("Expected ErrKeyNotFound, got %v", err)
+	if errors.Is(err, backend.ErrKeyNotFound) {
+		t.Errorf("A corrupt-state public blob failure must not satisfy errors.Is(err, backend.ErrKeyNotFound), got %v", err)
+	}
+	if !errors.Is(err, ErrKeyRetrievalFailed) {
+		t.Errorf("Expected ErrKeyRetrievalFailed, got %v", err)
+	}
+}
+
+// TestBackend_GetKey_PublicBlobNotFound covers the genuine not-found case
+// for the public blob specifically: the private blob is present but the
+// public blob was never written (or was already deleted).
+func TestBackend_GetKey_PublicBlobNotFound(t *testing.T) {
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicBlobError: storage.ErrNotFound}
+	b := &Backend{closed: false, tpm: &mockTPM{}, keyBackend: mockKb, srkAttrs: srkAttrs}
+	attrs := &types.KeyAttributes{CN: "test-key"}
+	_, err := b.GetKey(context.Background(), attrs)
+	if err == nil {
+		t.Error("Expected error when public blob is missing")
+	}
+	if !errors.Is(err, backend.ErrKeyNotFound) {
+		t.Errorf("Expected errors.Is(err, backend.ErrKeyNotFound), got %v", err)
 	}
 }
 
@@ -1339,7 +1451,7 @@ func TestBackend_ECDSA_WithExistingCurve(t *testing.T) {
 
 func TestBackend_Signer_GetKeyError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: errors.New("key not found")}
+	mockKb := &mockKeyBackend{getError: storage.ErrNotFound}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: mockKb}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
 	_, err := b.Signer(context.Background(), attrs)
@@ -1353,7 +1465,7 @@ func TestBackend_Signer_GetKeyError(t *testing.T) {
 
 func TestBackend_Decrypter_GetKeyError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: errors.New("key not found")}
+	mockKb := &mockKeyBackend{getError: storage.ErrNotFound}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: mockKb}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
 	_, err := b.Decrypter(context.Background(), attrs)
@@ -1366,7 +1478,7 @@ func TestBackend_Decrypter_GetKeyError(t *testing.T) {
 }
 
 func TestConfig_Validate_ExistingDevice(t *testing.T) {
-	config := &Config{Device: "/dev/null", UseSimulator: false}
+	config := &Config{Device: "/dev/null", UseSimulator: false, KeyDir: t.TempDir()}
 	err := config.Validate()
 	if err != nil {
 		t.Errorf("Expected no error for existing device, got %v", err)
@@ -1387,7 +1499,7 @@ func TestBackend_ListKeys_ReadDirError(t *testing.T) {
 }
 
 func TestConfig_Validate_EmptyDeviceSimulator(t *testing.T) {
-	config := &Config{Device: "", UseSimulator: true}
+	config := &Config{Device: "", UseSimulator: true, KeyDir: t.TempDir()}
 	err := config.Validate()
 	if err != nil {
 		t.Errorf("Expected no error with empty device and simulator, got %v", err)
@@ -1774,6 +1886,7 @@ func TestNewBackend_ConfigWithPresetTPMConfig(t *testing.T) {
 func TestNewBackend_VerifyConfigDefaults(t *testing.T) {
 	config := &Config{
 		UseSimulator: true,
+		KeyDir:       t.TempDir(),
 	}
 
 	if err := config.Validate(); err != nil {
@@ -1781,9 +1894,6 @@ func TestNewBackend_VerifyConfigDefaults(t *testing.T) {
 	}
 
 	// Check all defaults
-	if config.KeyDir != "./tpm2-keys" {
-		t.Errorf("KeyDir default: got %q, want %q", config.KeyDir, "./tpm2-keys")
-	}
 	if config.SRKHandle != 0x81000001 {
 		t.Errorf("SRKHandle default: got 0x%x, want 0x81000001", config.SRKHandle)
 	}

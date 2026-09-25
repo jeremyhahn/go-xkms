@@ -20,6 +20,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -50,8 +51,8 @@ func newSimulatorTPMProvider(t *testing.T) types.KeyProvider {
 	tpmConfig := xkms.DefaultTPMConfig
 	tpmConfig.UseSimulator = true
 	tpmConfig.EK.PlatformPolicy = false
-	tpmConfig.EK.HierarchyAuth = types.SecretValue{}
-	tpmConfig.SSRK.HierarchyAuth = types.SecretValue{}
+	tpmConfig.EK.HierarchyAuth = nil
+	tpmConfig.SSRK.HierarchyAuth = nil
 	tpmConfig.IDevID = nil
 	tpmConfig.IAK = nil
 
@@ -87,6 +88,14 @@ func newSimulatorTPMProvider(t *testing.T) types.KeyProvider {
 		}
 	}
 	t.Cleanup(func() { tpm.Close() })
+
+	// The manual provisioning above only creates the TCG-standard EK and
+	// Shared SRK. xkms.NewTPM2BackendWithTPM below resolves its storage
+	// parent exclusively off the Platform SRK -- never the Shared SRK -- so
+	// it must be enrolled here too, whenever it is not already present.
+	if psrkErr := tpm2test.EnrollPlatformSRK(tpm, &tpmConfig); psrkErr != nil {
+		t.Fatalf("enroll Platform SRK: %v", psrkErr)
+	}
 
 	provider, err := xkms.NewTPM2BackendWithTPM(&xkms.TPM2BackendExternalConfig{
 		TPM:        tpm,

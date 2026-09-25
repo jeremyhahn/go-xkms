@@ -15,6 +15,7 @@ package seal
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -52,13 +53,17 @@ func (a *auditLoggerAdapter) Close() error {
 	return a.inner.Close()
 }
 
-// emitAudit is a fire-and-forget helper for PlatformSealer audit events.
-// It silently ignores nil loggers and logging errors.
-func emitAudit(logger audit.Logger, action, resource, resourceID, outcome string, details map[string]string) {
+// emitAudit is the PlatformSealer audit helper. seal and unseal are
+// SeveritySecurity actions (docs/audit-log/engineering.md): if the audit
+// write fails, emitAudit returns *audit.ErrAuditWriteFailed so the caller
+// fails the seal/unseal request rather than complete a security-relevant
+// operation that could not be audited. A nil logger disables audit logging
+// entirely (opt-in wiring) and is not itself a failure.
+func emitAudit(logger audit.Logger, slogger *slog.Logger, action, resource, resourceID, outcome string, details map[string]string) error {
 	if logger == nil {
-		return
+		return nil
 	}
-	_ = logger.Log(context.Background(), &audit.Event{
+	writeErr := logger.Log(context.Background(), &audit.Event{
 		Timestamp:  time.Now(),
 		Subject:    "seal",
 		Action:     action,
@@ -67,4 +72,5 @@ func emitAudit(logger audit.Logger, action, resource, resourceID, outcome string
 		Outcome:    outcome,
 		Details:    details,
 	})
+	return audit.HandleWriteFailure(slogger, action, writeErr)
 }

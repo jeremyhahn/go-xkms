@@ -15,6 +15,7 @@ package chacha20poly1305
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"crypto/rand"
 	"encoding/hex"
 	"testing"
@@ -25,15 +26,47 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
+// requireCipher constructs an AEAD via New for a test that needs one to
+// exercise other behavior. ChaCha20-Poly1305 is refused outright under
+// GODEBUG=fips140=only (go-xkms deliberately supports it and disables it in
+// FIPS mode; see docs/fips/README.md), so this asserts that refusal and
+// reports ok=false instead of letting the caller dereference a nil AEAD.
+func requireCipher(t *testing.T, key []byte) (cipher AEAD, ok bool) {
+	t.Helper()
+	cipher, err := New(key)
+	if fips140.Enforced() {
+		require.Error(t, err, "ChaCha20-Poly1305 must be refused under GODEBUG=fips140=only")
+		require.Nil(t, cipher)
+		return nil, false
+	}
+	require.NoError(t, err)
+	return cipher, true
+}
+
+// requireCipherX is requireCipher for NewX (XChaCha20-Poly1305), refused for
+// the same reason under the same mode.
+func requireCipherX(t *testing.T, key []byte) (cipher AEAD, ok bool) {
+	t.Helper()
+	cipher, err := NewX(key)
+	if fips140.Enforced() {
+		require.Error(t, err, "XChaCha20-Poly1305 must be refused under GODEBUG=fips140=only")
+		require.Nil(t, cipher)
+		return nil, false
+	}
+	require.NoError(t, err)
+	return cipher, true
+}
+
 func TestNew(t *testing.T) {
 	t.Run("valid 32-byte key", func(t *testing.T) {
 		key := make([]byte, 32)
 		_, err := rand.Read(key)
 		require.NoError(t, err)
 
-		cipher, err := New(key)
-		require.NoError(t, err)
-		require.NotNil(t, cipher)
+		cipher, ok := requireCipher(t, key)
+		if !ok {
+			return
+		}
 
 		// Verify properties
 		assert.Equal(t, 12, cipher.NonceSize())
@@ -67,9 +100,10 @@ func TestNewX(t *testing.T) {
 		_, err := rand.Read(key)
 		require.NoError(t, err)
 
-		cipher, err := NewX(key)
-		require.NoError(t, err)
-		require.NotNil(t, cipher)
+		cipher, ok := requireCipherX(t, key)
+		if !ok {
+			return
+		}
 
 		// XChaCha20-Poly1305 uses 24-byte nonces
 		assert.Equal(t, 24, cipher.NonceSize())
@@ -88,8 +122,10 @@ func TestEncrypt(t *testing.T) {
 	key, err := GenerateKey()
 	require.NoError(t, err)
 
-	cipher, err := New(key)
-	require.NoError(t, err)
+	cipher, ok := requireCipher(t, key)
+	if !ok {
+		return
+	}
 
 	t.Run("successful encryption", func(t *testing.T) {
 		plaintext := []byte("Hello, ChaCha20-Poly1305!")
@@ -186,8 +222,10 @@ func TestDecrypt(t *testing.T) {
 	key, err := GenerateKey()
 	require.NoError(t, err)
 
-	cipher, err := New(key)
-	require.NoError(t, err)
+	cipher, ok := requireCipher(t, key)
+	if !ok {
+		return
+	}
 
 	t.Run("successful decryption", func(t *testing.T) {
 		plaintext := []byte("Hello, ChaCha20-Poly1305!")
@@ -337,8 +375,10 @@ func TestXChaCha20Poly1305(t *testing.T) {
 	key, err := GenerateKey()
 	require.NoError(t, err)
 
-	cipher, err := NewX(key)
-	require.NoError(t, err)
+	cipher, ok := requireCipherX(t, key)
+	if !ok {
+		return
+	}
 
 	t.Run("successful encryption and decryption", func(t *testing.T) {
 		plaintext := []byte("Hello, XChaCha20-Poly1305!")
@@ -409,8 +449,10 @@ func TestRoundTrip(t *testing.T) {
 	key, err := GenerateKey()
 	require.NoError(t, err)
 
-	cipher, err := New(key)
-	require.NoError(t, err)
+	cipher, ok := requireCipher(t, key)
+	if !ok {
+		return
+	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -457,9 +499,10 @@ func TestGenerateKey(t *testing.T) {
 		key, err := GenerateKey()
 		require.NoError(t, err)
 
-		cipher, err := New(key)
-		require.NoError(t, err)
-		require.NotNil(t, cipher)
+		cipher, ok := requireCipher(t, key)
+		if !ok {
+			return
+		}
 
 		// Test encryption/decryption
 		plaintext := []byte("Test message")
@@ -478,15 +521,19 @@ func TestNonceSize(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("ChaCha20-Poly1305", func(t *testing.T) {
-		cipher, err := New(key)
-		require.NoError(t, err)
+		cipher, ok := requireCipher(t, key)
+		if !ok {
+			return
+		}
 		assert.Equal(t, chacha20poly1305.NonceSize, cipher.NonceSize())
 		assert.Equal(t, 12, cipher.NonceSize())
 	})
 
 	t.Run("XChaCha20-Poly1305", func(t *testing.T) {
-		cipher, err := NewX(key)
-		require.NoError(t, err)
+		cipher, ok := requireCipherX(t, key)
+		if !ok {
+			return
+		}
 		assert.Equal(t, chacha20poly1305.NonceSizeX, cipher.NonceSize())
 		assert.Equal(t, 24, cipher.NonceSize())
 	})
@@ -496,8 +543,10 @@ func TestOverhead(t *testing.T) {
 	key, err := GenerateKey()
 	require.NoError(t, err)
 
-	cipher, err := New(key)
-	require.NoError(t, err)
+	cipher, ok := requireCipher(t, key)
+	if !ok {
+		return
+	}
 
 	assert.Equal(t, chacha20poly1305.Overhead, cipher.Overhead())
 	assert.Equal(t, 16, cipher.Overhead())
@@ -528,8 +577,10 @@ func TestAgainstRFC8439TestVectors(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create cipher
-	cipher, err := New(key)
-	require.NoError(t, err)
+	cipher, ok := requireCipher(t, key)
+	if !ok {
+		return
+	}
 
 	// Encrypt with provided nonce
 	opts := &types.EncryptOptions{
@@ -561,8 +612,10 @@ func TestCompatibilityWithStandardLibrary(t *testing.T) {
 	key, err := GenerateKey()
 	require.NoError(t, err)
 
-	cipher, err := New(key)
-	require.NoError(t, err)
+	cipher, ok := requireCipher(t, key)
+	if !ok {
+		return
+	}
 
 	plaintext := []byte("Test compatibility")
 	additionalData := []byte("context")

@@ -40,6 +40,26 @@ import (
 	"github.com/youmark/pkcs8"
 )
 
+// pkcs8EncryptOpts pins the PBKDF2 salt size youmark/pkcs8 uses to encrypt a
+// PKCS#8 key, instead of leaving MarshalPrivateKey to fall back to its own
+// package-level pkcs8.DefaultOpts.
+//
+// DefaultOpts.KDFOpts.SaltSize is 8 bytes (64 bits). Go's crypto/pbkdf2
+// refuses any salt under 128 bits under GODEBUG=fips140=only, and it refuses
+// by panicking (golang.org/x/crypto/pbkdf2.Key converts the stdlib's error
+// return into a panic) -- a wrong-salt-size call otherwise crashes the
+// process instead of returning an error. The cipher and iteration count are
+// carried over unchanged from DefaultOpts; only the salt grows to the FIPS
+// floor.
+var pkcs8EncryptOpts = &pkcs8.Opts{
+	Cipher: pkcs8.AES256CBC,
+	KDFOpts: pkcs8.PBKDF2Opts{
+		SaltSize:       16,
+		IterationCount: 10000,
+		HMACHash:       crypto.SHA256,
+	},
+}
+
 // PKCS8Backend implements the Backend interface using PKCS#8 encoding
 // for key storage. Keys are stored using the provided storage Backend implementation.
 //
@@ -322,7 +342,7 @@ func (b *PKCS8Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (
 	keyID := attrs.ID()
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
@@ -353,7 +373,7 @@ func (b *PKCS8Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 
 	keyID := attrs.ID()
 	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
@@ -477,7 +497,8 @@ func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 
 		// Skip quantum keys - they are handled by the quantum backend
 		algoLower := strings.ToLower(parsed.Algorithm)
-		if strings.HasPrefix(algoLower, "ml-dsa") || strings.HasPrefix(algoLower, "ml-kem") {
+		quantumAlgo := types.QuantumAlgorithm(strings.ToUpper(parsed.Algorithm))
+		if quantumAlgo.IsSignature() || quantumAlgo.IsKEM() {
 			continue
 		}
 
@@ -678,7 +699,7 @@ func (b *PKCS8Backend) encodeKey(privateKey crypto.PrivateKey, password types.Pa
 	// Encode the key
 	if len(passwordBytes) > 0 {
 		// Encrypted PKCS#8
-		keyData, err := pkcs8.MarshalPrivateKey(actualPrivateKey, passwordBytes, nil)
+		keyData, err := pkcs8.MarshalPrivateKey(actualPrivateKey, passwordBytes, pkcs8EncryptOpts)
 		if err != nil {
 			return nil, &errs.Detail{Err: ErrKeyEncodingFailed, Detail: fmt.Sprintf("%v", err)}
 		}

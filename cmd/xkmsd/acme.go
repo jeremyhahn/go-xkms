@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,10 +35,14 @@ import (
 	dns01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
 	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	acmenonce "github.com/jeremyhahn/go-xkms/pkg/acme/nonce"
 	acmesdk "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
 
+	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
+	acmemetrics "github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -77,6 +82,10 @@ var (
 	// loaded from disk.
 	ErrACMEClientCALoad = errors.New("acme: failed to load client CA bundle")
 
+	// ErrACMENoClientCAPEM is returned when a client CA bundle file
+	// contains no parseable PEM certificates.
+	ErrACMENoClientCAPEM = errors.New("acme: no PEM certificates parsed")
+
 	// ErrACMEListen is returned when the ACME listener cannot be bound.
 	ErrACMEListen = errors.New("acme: failed to bind listener")
 
@@ -84,6 +93,10 @@ var (
 	// The ACME CA does not start without it: a CA that issues and revokes
 	// certificates it cannot record is not a CA any compliance regime accepts.
 	ErrACMEAuditLogger = errors.New("acme: failed to open audit trail")
+
+	// ErrACMECAAValidator is returned when the CAA validator cannot be
+	// constructed from the supplied configuration.
+	ErrACMECAAValidator = errors.New("acme: failed to create CAA validator")
 )
 
 // acmeServer holds the runtime state of the embedded ACME HTTPS server so it
@@ -103,6 +116,11 @@ type acmeServer struct {
 	// identical CA and storage state instead of standing up a second copy.
 	tcgCA          nativeca.TCGCA
 	storageFactory storage.Factory
+
+	// routerLimiters holds the tenant-aware and per-category rate limiters
+	// mounted on the router. Several of these own a background cleanup
+	// goroutine (server.TenantRateLimiter) that Shutdown stops.
+	routerLimiters *acmeRouterLimiters
 
 	// doneCh is closed when the server goroutine exits.
 	doneCh chan struct{}
@@ -155,7 +173,9 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	started := false
 	defer func() {
 		if !started {
-			_ = auditLogger.Close()
+			if cerr := auditLogger.Close(); cerr != nil {
+				logger.Warn("acme: failed to close the audit trail after a failed start-up", "error", cerr)
+			}
 		}
 	}()
 	if auditLogger.Enabled() {
@@ -207,8 +227,15 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		return nil, &acmeInitError{Stage: "create storage factory", Err: err}
 	}
 
+	// The shared circuit breaker manager backs every wrapped ACME outbound
+	// dependency: the challenge verifiers wrapped below, and the storage
+	// breaker RestService creates for its own CA-bundle access. Threading one
+	// Manager through both means HealthHandler reports every breaker from a
+	// single registry.
+	breakers := circuitbreaker.NewManager()
+
 	// Build the challenge verifier map based on configured challenge types.
-	challengeMap := buildChallengeMap(acmeCfg.Challenges)
+	challengeMap := buildChallengeMap(acmeCfg.Challenges, acmeCfg.Resilience, breakers)
 
 	// When cluster ACME enrollment is active, register the pre-sign hook that
 	// stamps the SPIFFE node identity (spiffe://<trust-domain>/node/<raft-addr>)
@@ -225,32 +252,97 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	}
 	directoryPath = "/" + strings.Trim(directoryPath, "/")
 
+	// Build the CAA (RFC 8659) validator that order finalize consults before
+	// signing (pkg/acme/server/handlers/order_finalize.go), per the RFC 8555
+	// Section 8.1 requirement to check CAA before issuance. This is the one
+	// construction path for a CAA validator; pkg/acme/client/trustedca.go's
+	// standalone TrustedCA composition builds its own from the same
+	// server.NewCAAValidator constructor. pkg/config/acme.go's Validate
+	// requires CAAIdentities whenever ACME is enabled, so acmeCfg.CAAIdentities
+	// is never empty here in a validated configuration.
+	caaValidator, err := acmeserver.NewCAAValidator(&acmeserver.CAAValidatorParams{
+		CAAIdentities: acmeCfg.CAAIdentities,
+		Logger:        logger,
+		Resolver:      acmeCfg.CAADNSServer,
+	})
+	if err != nil {
+		return nil, &acmeInitError{Stage: "create CAA validator", Sentinel: ErrACMECAAValidator, Err: err}
+	}
+
+	// Build the per-client admission-control middleware. acmeserver.
+	// NewClientRateLimiterMiddleware is the single construction path shared
+	// with the standalone TrustedCA (pkg/acme/client/trustedca.go) so
+	// neither composition hand-rolls its own limiter wiring. Disabling it is
+	// an explicit, logged act: Config.ComplianceGaps reports it and xkmsd
+	// refuses to start, so there is no silent way to run the ACME listener
+	// unthrottled.
+	var rateLimitMiddleware mux.MiddlewareFunc
+	if acmeCfg.RateLimit.IsEnabled() {
+		rateLimitMiddleware = acmeserver.NewClientRateLimiterMiddleware(
+			acmeCfg.RateLimit.ResolveMaxRequests(),
+			acmeCfg.RateLimit.ResolveInterval(),
+			auditLogger,
+		)
+		logger.Info("ACME rate limiting enabled",
+			slog.Int("max_requests", acmeCfg.RateLimit.ResolveMaxRequests()),
+			slog.Duration("interval", acmeCfg.RateLimit.ResolveInterval()))
+	} else {
+		logger.Warn("ACME rate limiting disabled: the ACME endpoint accepts unlimited " +
+			"new-account, new-order, and challenge requests")
+	}
+
+	// Build the tenant-aware admission control: the per-tenant overall quota
+	// and the RFC 8555 Section 6.6 per-category limiters (new-account,
+	// new-order, certificate, failed-validation). Every one of these keys on
+	// the tenant handlers.RestService.TenantAuthMiddleware resolves from a
+	// fully verified JWS "kid" — never on X-Tenant-ID, the host, or the
+	// path — so a client cannot spoof its way into another tenant's bucket
+	// or escape its own.
+	routerLimiters := buildACMERouterLimiters(&acmeCfg.RateLimit, logger)
+
 	// Construct the REST service that implements all ACME HTTP handlers.
 	// tcgCA is the primary xkmsd TrustedCA asserted to TCGCA above; the
 	// ACME handlers rely on the TCG extensions (IssueEKCertificate,
 	// SignTCGCSRIDevID, ...) exposed by *pkg/ca.CA.
 	service, err := handlers.NewRestService(&handlers.Params{
-		AllowLoopbackIdentifier: acmeCfg.Enrollment.AllowLoopbackIdentifier,
-		AuditLogger:             auditLogger,
-		BaseRESTURI:             acmeCfg.ExternalURL,
-		CA:                      tcgCA,
-		CAAIdentities:           acmeCfg.CAAIdentities,
-		ChallengeMap:            challengeMap,
-		ClusterCACN:             clusterACMEIssuerCN(cfg),
-		EndorseEABRequired:      acmeCfg.EndorseEABRequired,
-		EndorseDeviceIDMetaKey:  acmeCfg.EndorseDeviceIDMetaKey,
-		ExternalAccountRequired: acmeCfg.ExternalAccountRequired,
-		Logger:                  logger,
-		OrderPreSignHooks:       preSignHooks,
-		StorageFactory:          storageFactory,
-		TermsOfService:          acmeCfg.TermsOfService,
+		AllowLoopbackIdentifier:     acmeCfg.Enrollment.AllowLoopbackIdentifier,
+		AuditLogger:                 auditLogger,
+		BaseRESTURI:                 acmeCfg.ExternalURL,
+		CA:                          tcgCA,
+		CAAIdentities:               acmeCfg.CAAIdentities,
+		CAAValidator:                caaValidator,
+		ChallengeMap:                challengeMap,
+		ClusterCACN:                 clusterACMEIssuerCN(cfg),
+		EndorseEABRequired:          acmeCfg.EndorseEABRequired,
+		EndorseDeviceIDMetaKey:      acmeCfg.EndorseDeviceIDMetaKey,
+		ExternalAccountRequired:     acmeCfg.ExternalAccountRequired,
+		FailedValidationRateLimiter: routerLimiters.failedValidation,
+		Logger:                      logger,
+		NoncePrefix:                 clusterNoncePrefix(cfg),
+		NonceLifetime:               acmeCfg.Nonce.ResolveLifetime(),
+		NonceMaxUsed:                acmeCfg.Nonce.ResolveMaxUsed(),
+		OrderPreSignHooks:           preSignHooks,
+		Policy:                      acmeCfg.Policy.PolicyConfig(),
+		StorageFactory:              storageFactory,
+		TermsOfService:              acmeCfg.TermsOfService,
+		Breakers:                    breakers,
+		StorageBreaker:              acmeCfg.Resilience.Storage.CircuitBreakerConfig("storage"),
+		KMSBreaker:                  acmeCfg.Resilience.KMS.CircuitBreakerConfig("kms"),
+		DegradationCacheTTL:         acmeCfg.Resilience.Degradation.ResolveCacheTTL(),
+		DegradationStaleTTL:         acmeCfg.Resilience.Degradation.ResolveStaleTTL(),
+		DegradationMaxCacheSize:     acmeCfg.Resilience.Degradation.ResolveMaxCacheSize(),
 	})
 	if err != nil {
 		return nil, &acmeInitError{Stage: "create REST service", Sentinel: ErrACMERestService, Err: err}
 	}
 
 	// Build the HTTP router and mount the ACME routes.
-	router := buildACMERouter(service, directoryPath)
+	router := buildACMERouter(service, directoryPath, rateLimitMiddleware, routerLimiters)
+
+	// Make the ACME metrics registry part of the same /metrics response
+	// xkmsd already serves (pkg/server/server.go startMetrics), rather than
+	// standing up a second scrape endpoint.
+	srv.RegisterMetricsGatherer(acmemetrics.Registry)
 
 	// When the cluster CA key strategy delivers post-enrollment material (the
 	// tpm-kek cluster seed), mount its secret-delivery endpoint on the same
@@ -263,8 +355,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		}
 	}
 
-	// Build the TLS configuration. Currently only dedicated TLS material is
-	// supported; reusing the xkmsd TLS config is deferred to a follow-up.
+	// Build the TLS configuration for the dedicated ACME listener.
 	tlsCfg, err := buildACMETLSConfig(acmeCfg)
 	if err != nil {
 		return nil, &acmeInitError{Stage: "build TLS config", Sentinel: ErrACMETLSConfig, Err: err}
@@ -293,6 +384,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		auditLog:       auditLogger,
 		tcgCA:          tcgCA,
 		storageFactory: storageFactory,
+		routerLimiters: routerLimiters,
 		doneCh:         make(chan struct{}),
 	}
 	started = true
@@ -349,6 +441,12 @@ func (a *acmeServer) Shutdown(ctx context.Context) error {
 		// proceed to release remaining resources. httpServer.Shutdown will
 		// have already returned ctx.Err() in this case.
 	}
+	// Stop every tenant rate limiter's background cleanup goroutine before
+	// the audit trail closes, so nothing can still be recording through it.
+	for _, limiter := range a.routerLimiters.stoppableLimiters() {
+		limiter.Stop()
+	}
+
 	// Close the audit trail last so any event recorded by an in-flight request
 	// is flushed to disk before the process exits.
 	if a.auditLog != nil {
@@ -368,23 +466,35 @@ func (a *acmeServer) Shutdown(ctx context.Context) error {
 // buildChallengeMap builds the map of challenge type -> verifier function
 // based on the supplied configuration. At least one challenge type must be
 // enabled; this is enforced by config.ACMEConfig.Validate.
-func buildChallengeMap(cfg config.ACMEChallengesConfig) map[string]common.ChallengeVerifierFunc {
+//
+// The http-01 and dns-01 verifiers are wrapped with a breaker from breakers,
+// configured from resilience, so a target that stops responding trips its
+// own breaker instead of holding up every challenge validation sharing the
+// same worker. acmeserver.WrapChallengeVerifiers does the wrapping; it is
+// the one construction path shared with the standalone TrustedCA
+// (pkg/acme/client/trustedca.go), so neither composition hand-rolls its own
+// wrapping. A nil breakers leaves both verifiers unwrapped.
+func buildChallengeMap(
+	cfg config.ACMEChallengesConfig,
+	resilience config.ACMEResilienceConfig,
+	breakers *circuitbreaker.Manager,
+) map[string]common.ChallengeVerifierFunc {
 	m := make(map[string]common.ChallengeVerifierFunc, 2)
 	if cfg.HTTP01 {
-		m[common.ChallengeTypeHTTP01] = func(
+		m[common.ChallengeTypeHTTP01] = common.ChallengeVerifierFunc(func(
 			resolver *net.Resolver,
 			_ common.CertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 			return http01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
-		}
+		})
 	}
 	if cfg.DNS01 {
-		m[common.ChallengeTypeDNS01] = func(
+		m[common.ChallengeTypeDNS01] = common.ChallengeVerifierFunc(func(
 			resolver *net.Resolver,
 			_ common.CertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 			return dns01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
-		}
+		})
 	}
 	// The TPM attestation challenges (enroll-01/endorse-01) use the shared SDK
 	// wiring so every ACME server in the stack (xkmsd, quicbaas) enables them
@@ -392,7 +502,7 @@ func buildChallengeMap(cfg config.ACMEChallengesConfig) map[string]common.Challe
 	for challengeType, verifier := range acmesdk.ACMEAttestationVerifiers(cfg.Enroll01, cfg.Endorse01) {
 		m[challengeType] = verifier
 	}
-	return m
+	return acmeserver.WrapChallengeVerifiers(m, resilience, breakers)
 }
 
 // buildClusterPreSignHooks returns the pre-sign hook registry for the ACME
@@ -428,6 +538,30 @@ func clusterACMEIssuerCN(cfg *config.Config) string {
 	return cfg.Cluster.RaftEnrollment.ClusterCACN
 }
 
+// noncePrefixSalt is the HMAC key nonce.DerivePrefix uses to turn a node ID
+// into an 8-character ACME nonce prefix. The prefix is a public routing tag
+// embedded in every issued nonce (pkg/acme/nonce.MultiService routes
+// redemption by it), not a value that needs to stay secret, so a fixed salt
+// shared by every deployment is sufficient — it only needs to be stable so
+// the same node ID always derives the same prefix.
+var noncePrefixSalt = []byte("go-xkms/acme/nonce-prefix-v1")
+
+// clusterNoncePrefix derives this node's ACME nonce-service prefix from its
+// Raft NodeID, so pkg/acme/nonce.MultiService can distinguish nonces minted
+// by different nodes in a load-balanced deployment. A standalone node (Raft
+// clustering off) has no peer to disambiguate from and mints unprefixed
+// nonces.
+//
+// The prefix alone does not make nonces portable across nodes: that also
+// requires every node to encrypt with the same key (handlers.Params.NonceKey),
+// which is not wired here — see docs/acme-issuance/engineering.md.
+func clusterNoncePrefix(cfg *config.Config) string {
+	if !cfg.Cluster.Enabled {
+		return ""
+	}
+	return acmenonce.DerivePrefix(strconv.FormatUint(cfg.Cluster.NodeID, 10), noncePrefixSalt)
+}
+
 // defaultClusterTrustDomain mirrors pkg/server's defaultRaftTrustDomain so the
 // ACME server stamps the same SPIFFE trust domain the node provisioner uses
 // when the operator leaves cluster.raft_enrollment.trust_domain unset.
@@ -436,15 +570,47 @@ const defaultClusterTrustDomain = "xkms.cluster"
 // buildACMERouter mounts the ACME REST handlers on a gorilla/mux router
 // under the given directory path prefix. The route layout follows
 // RFC 8555 Section 7.1.
-func buildACMERouter(svc handlers.RestServicer, directoryPath string) http.Handler {
+//
+// rateLimitMiddleware, when non-nil, is applied to every route on the
+// returned router (including any handler a caller mounts on it afterward,
+// e.g. the cluster secret-delivery endpoint in startACMEServer) via
+// mux.Router.Use, which every ACME server composition in the stack builds
+// through acmeserver.NewClientRateLimiterMiddleware. A nil value mounts the
+// router unthrottled — callers pass nil only when acme.rate_limit.enabled
+// is false, which Config.ComplianceGaps reports.
+//
+// routerLimiters mounts the tenant-aware admission control (#886) alongside
+// rateLimitMiddleware: TenantAuthMiddleware runs first so every tenant-keyed
+// limiter after it (the overall quota, and the per-route new-order and
+// certificate category limiters) reads an already-resolved, already-verified
+// tenant from the request context. The new-account category limiter is
+// mounted directly on its route since the tenant is never known at that
+// point (no account exists yet).
+func buildACMERouter(svc handlers.RestServicer, directoryPath string, rateLimitMiddleware mux.MiddlewareFunc, routerLimiters *acmeRouterLimiters) http.Handler {
 	r := mux.NewRouter()
+
+	// acmemetrics.Mount initializes the ACME Prometheus registry (base and
+	// production metric sets) and attaches the request-instrumentation
+	// middleware, the same shared entry point pkg/acme/client/trustedca.go
+	// uses for the standalone TrustedCA, so both ACME server compositions
+	// expose identical metrics. Mounted before the rate limiter so a
+	// rate-limited (429) request is still recorded.
+	acmemetrics.Mount(r)
+
+	if rateLimitMiddleware != nil {
+		r.Use(rateLimitMiddleware)
+	}
+	r.Use(svc.TenantAuthMiddleware)
+	if routerLimiters != nil && routerLimiters.tenant != nil {
+		r.Use(routerLimiters.tenant.Middleware())
+	}
 	r.HandleFunc(directoryPath+"/directory", svc.DirectoryHandler).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc(directoryPath+"/new-nonce", svc.NewNonceHandler).Methods(http.MethodGet, http.MethodHead)
-	r.HandleFunc(directoryPath+"/new-account", svc.NewAccountHandler).Methods(http.MethodPost)
+	r.Handle(directoryPath+"/new-account", routerLimiters.wrapNewAccount(http.HandlerFunc(svc.NewAccountHandler))).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/account/{id:[0-9]+}", svc.AccountHandler).Methods(http.MethodPost)
-	r.HandleFunc(directoryPath+"/new-order", svc.NewOrderHandler).Methods(http.MethodPost)
+	r.Handle(directoryPath+"/new-order", routerLimiters.wrapNewOrder(http.HandlerFunc(svc.NewOrderHandler))).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/order/{id:[0-9]+}", svc.OrderHandler).Methods(http.MethodPost)
-	r.HandleFunc(directoryPath+"/order/{id:[0-9]+}/finalize", svc.OrderFinalizeHandler).Methods(http.MethodPost)
+	r.Handle(directoryPath+"/order/{id:[0-9]+}/finalize", routerLimiters.wrapCertificate(http.HandlerFunc(svc.OrderFinalizeHandler))).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/orders/{id:[0-9]+}", svc.OrdersListHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/authz/{id:[0-9]+}", svc.AuthorizationHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/challenge/{id:[0-9]+}", svc.ChallengeHandler).Methods(http.MethodPost)
@@ -452,20 +618,181 @@ func buildACMERouter(svc handlers.RestServicer, directoryPath string) http.Handl
 	r.HandleFunc(directoryPath+"/revoke-cert", svc.RevokeCertHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/key-change", svc.KeyChangeHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/ca-bundle", svc.CABundleHandler).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc(directoryPath+"/health", svc.HealthHandler).Methods(http.MethodGet)
 	return r
+}
+
+// acmeRouterLimiters bundles the tenant-aware overall quota and the RFC 8555
+// Section 6.6 per-category limiters buildACMERouter mounts alongside the
+// per-client blanket limiter (#885). A nil field mounts its route(s)
+// unthrottled for that one control — callers leave a field nil only when the
+// corresponding acme.rate_limit.* sub-section is disabled, which
+// Config.ComplianceGaps reports.
+type acmeRouterLimiters struct {
+	// tenant is the per-tenant overall admission-control quota, shared
+	// across every account belonging to the same tenant (tenantSharedClientKey).
+	tenant *acmeserver.TenantRateLimiter
+
+	// newAccount is the RFC 8555 Section 6.6 new-account category, keyed by
+	// client IP: the tenant is never known before an account exists.
+	newAccount mux.MiddlewareFunc
+
+	// newOrder and certificate are the RFC 8555 Section 6.6 new-order and
+	// certificate-issuance categories, keyed by account within the account's
+	// tenant (or the shared "" bucket for a non-tenant account).
+	newOrder    *acmeserver.TenantRateLimiter
+	certificate *acmeserver.TenantRateLimiter
+
+	// failedValidation is the RFC 8555 Section 6.6 failed-validation
+	// category. It cannot be mounted as route middleware — it must count
+	// only actual validation failures — so it is handed to
+	// handlers.Params.FailedValidationRateLimiter instead, and
+	// handlers.RestService.ChallengeHandler consults it directly.
+	failedValidation *acmeserver.TenantRateLimiter
+}
+
+// wrapNewAccount applies the new-account category limiter to next, or
+// returns next unwrapped when the category is disabled.
+func (l *acmeRouterLimiters) wrapNewAccount(next http.Handler) http.Handler {
+	if l == nil || l.newAccount == nil {
+		return next
+	}
+	return l.newAccount(next)
+}
+
+// wrapNewOrder applies the new-order category limiter to next, or returns
+// next unwrapped when the category is disabled.
+func (l *acmeRouterLimiters) wrapNewOrder(next http.Handler) http.Handler {
+	if l == nil || l.newOrder == nil {
+		return next
+	}
+	return l.newOrder.Middleware()(next)
+}
+
+// wrapCertificate applies the certificate category limiter to next, or
+// returns next unwrapped when the category is disabled.
+func (l *acmeRouterLimiters) wrapCertificate(next http.Handler) http.Handler {
+	if l == nil || l.certificate == nil {
+		return next
+	}
+	return l.certificate.Middleware()(next)
+}
+
+// stoppableLimiters returns every TenantRateLimiter that owns a background
+// cleanup goroutine, for Shutdown to Stop.
+func (l *acmeRouterLimiters) stoppableLimiters() []*acmeserver.TenantRateLimiter {
+	if l == nil {
+		return nil
+	}
+	var limiters []*acmeserver.TenantRateLimiter
+	for _, limiter := range []*acmeserver.TenantRateLimiter{l.tenant, l.newOrder, l.certificate, l.failedValidation} {
+		if limiter != nil {
+			limiters = append(limiters, limiter)
+		}
+	}
+	return limiters
+}
+
+// tenantSharedClientKey is the TenantRateLimiter client-key function the
+// per-tenant overall quota uses: a constant, so every account belonging to
+// the same tenant draws from one shared bucket rather than being
+// sub-divided per account or client IP within the tenant. This is what
+// makes the quota a genuinely per-tenant control (RFC 8555 Section 6.6 does
+// not define multi-tenancy, so go-xkms extends "per account" to "per
+// tenant, shared across its accounts" here).
+func tenantSharedClientKey(*http.Request) string { return "" }
+
+// buildACMERouterLimiters constructs the tenant-aware overall quota and the
+// four RFC 8555 Section 6.6 per-category limiters from cfg, logging each
+// enabled/disabled decision. Every limiter keys on
+// acmeserver.TenantRateLimiterFromRequestContext, the tenant
+// handlers.RestService.TenantAuthMiddleware resolves and publishes from a
+// verified JWS "kid" — the same mechanism, never a client-asserted header,
+// host, or path.
+func buildACMERouterLimiters(cfg *config.ACMERateLimitConfig, logger *slog.Logger) *acmeRouterLimiters {
+	limiters := &acmeRouterLimiters{}
+
+	if cfg.TenantIsEnabled() {
+		limiters.tenant = acmeserver.NewTenantRateLimiter(
+			&acmeserver.TenantRateLimiterConfig{
+				DefaultConfig: &acmeserver.RateLimitConfig{
+					OverallRequestRate: &acmeserver.RateLimit{
+						MaxRequests: cfg.TenantResolveMaxRequests(),
+						Interval:    cfg.TenantResolveInterval(),
+					},
+				},
+			},
+			acmeserver.TenantRateLimiterFromRequestContext(),
+			tenantSharedClientKey,
+			"overall",
+		)
+		logger.Info("ACME tenant rate limiting enabled",
+			slog.Int("max_requests", cfg.TenantResolveMaxRequests()),
+			slog.Duration("interval", cfg.TenantResolveInterval()))
+	} else {
+		logger.Warn("ACME tenant rate limiting disabled: a multi-tenant deployment's accounts share no per-tenant quota")
+	}
+
+	if cfg.NewAccountIsEnabled() {
+		limiters.newAccount = acmeserver.NewAccountRateLimiter(&acmeserver.RateLimit{
+			MaxRequests: cfg.NewAccountResolveMaxRequests(),
+			Interval:    cfg.NewAccountResolveInterval(),
+		})
+	} else {
+		logger.Warn("ACME new-account rate limiting disabled (acme.rate_limit.new_account.enabled=false)")
+	}
+
+	if cfg.NewOrderIsEnabled() {
+		limiters.newOrder = acmeserver.NewTenantOrderRateLimiter(&acmeserver.TenantRateLimiterConfig{
+			DefaultConfig: &acmeserver.RateLimitConfig{
+				NewOrderRate: &acmeserver.RateLimit{
+					MaxRequests: cfg.NewOrderResolveMaxRequests(),
+					Interval:    cfg.NewOrderResolveInterval(),
+				},
+			},
+		}, acmeserver.TenantRateLimiterFromRequestContext())
+	} else {
+		logger.Warn("ACME new-order rate limiting disabled (acme.rate_limit.new_order.enabled=false)")
+	}
+
+	if cfg.CertificateIsEnabled() {
+		limiters.certificate = acmeserver.NewTenantCertificateRateLimiter(&acmeserver.TenantRateLimiterConfig{
+			DefaultConfig: &acmeserver.RateLimitConfig{
+				CertificateRate: &acmeserver.RateLimit{
+					MaxRequests: cfg.CertificateResolveMaxRequests(),
+					Interval:    cfg.CertificateResolveInterval(),
+				},
+			},
+		}, acmeserver.TenantRateLimiterFromRequestContext())
+	} else {
+		logger.Warn("ACME certificate rate limiting disabled (acme.rate_limit.certificate.enabled=false)")
+	}
+
+	if cfg.FailedValidationIsEnabled() {
+		limiters.failedValidation = acmeserver.NewTenantFailedValidationRateLimiter(&acmeserver.TenantRateLimiterConfig{
+			DefaultConfig: &acmeserver.RateLimitConfig{
+				FailedValidationRate: &acmeserver.RateLimit{
+					MaxRequests: cfg.FailedValidationResolveMaxRequests(),
+					Interval:    cfg.FailedValidationResolveInterval(),
+				},
+			},
+		}, acmeserver.TenantRateLimiterFromRequestContext())
+	} else {
+		logger.Warn("ACME failed-validation rate limiting disabled (acme.rate_limit.failed_validation.enabled=false)")
+	}
+
+	return limiters
 }
 
 // buildACMETLSConfig loads the TLS material for the ACME listener.
 //
-// Reuse of the primary xkmsd TLS config (acme.reuse_tls: true) is a
-// follow-up item: the xkmsd TLS stack is authenticated against the xkmsd
-// REST/gRPC server CN and would generally not match an ACME client's
-// expected hostname. Operators should provision a dedicated TLS cert for
-// the ACME endpoint until that support lands.
+// The ACME listener always uses its own dedicated TLS certificate rather
+// than the primary xkmsd TLS config: the xkmsd TLS stack is authenticated
+// against the xkmsd REST/gRPC server CN and would generally not match an
+// ACME client's expected hostname. Operators provision a dedicated TLS
+// cert/key pair for the ACME endpoint via acme.tls.cert_file and
+// acme.tls.key_file.
 func buildACMETLSConfig(cfg *config.ACMEConfig) (*tls.Config, error) {
-	if cfg.ReuseTLS {
-		return nil, errors.New("acme: reuse_tls is not yet supported; set acme.tls.cert_file and acme.tls.key_file")
-	}
 	cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
 	if err != nil {
 		return nil, err
@@ -504,7 +831,7 @@ func buildACMETLSConfig(cfg *config.ACMEConfig) (*tls.Config, error) {
 				return nil, &acmeInitError{Stage: "read client CA " + path, Sentinel: ErrACMEClientCALoad, Err: err}
 			}
 			if !pool.AppendCertsFromPEM(data) {
-				return nil, &acmeInitError{Stage: "parse client CA " + path, Sentinel: ErrACMEClientCALoad, Err: errors.New("no PEM certificates parsed")}
+				return nil, &acmeInitError{Stage: "parse client CA " + path, Sentinel: ErrACMEClientCALoad, Err: ErrACMENoClientCAPEM}
 			}
 		}
 		tlsCfg.ClientCAs = pool
@@ -554,9 +881,15 @@ func (e *acmeInitError) Error() string {
 	return "acme: " + e.Stage + ": " + e.Err.Error()
 }
 
-func (e *acmeInitError) Unwrap() error {
-	if e.Sentinel != nil {
-		return e.Sentinel
+// Unwrap returns both the classifying sentinel and the underlying cause, so
+// errors.Is matches either: callers typically match Sentinel, but the cause
+// (e.g. a typed error stored in Err) must also be reachable.
+func (e *acmeInitError) Unwrap() []error {
+	if e.Sentinel != nil && e.Err != nil {
+		return []error{e.Sentinel, e.Err}
 	}
-	return e.Err
+	if e.Sentinel != nil {
+		return []error{e.Sentinel}
+	}
+	return []error{e.Err}
 }

@@ -247,11 +247,6 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 	return t.DoRequest(ctx, http.MethodPost, method, req, resp)
 }
 
-// RequestStream opens a bidirectional stream (not supported for REST).
-func (t *Transport) RequestStream(ctx context.Context, method string, req interface{}) (transport.Stream, error) {
-	return nil, transport.ErrStreamNotSupported
-}
-
 // DoRequest performs an HTTP request and unmarshals the response.
 func (t *Transport) DoRequest(ctx context.Context, httpMethod, path string, body interface{}, result interface{}) error {
 	respBody, err := t.DoRawRequest(ctx, httpMethod, path, body)
@@ -771,6 +766,9 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 	}
 	if len(req.AdditionalData) > 0 {
 		body["additional_data"] = req.AdditionalData
+	}
+	if req.GCMNonceMode != "" {
+		body["gcm_nonce_mode"] = req.GCMNonceMode
 	}
 	if req.Mode != "" {
 		body["mode"] = req.Mode
@@ -2316,33 +2314,10 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 	return &resp, nil
 }
 
-// Escrow Operations
-//
-// No REST route exists yet for external key escrow (pkg/escrow): every
-// other key-material route is gated by an RBAC resource:action permission
-// drawn from go-qrdb's canonical registry, and that registry has no escrow
-// family yet. See docs/escrow/architecture.md. These stubs keep Transport
-// satisfying transport.XKMSServicer.
-
-// EscrowKey is not supported over the REST transport yet.
-func (t *Transport) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
-	return nil, ErrNotSupported
-}
-
-// RecoverKey is not supported over the REST transport yet.
-func (t *Transport) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
-	return nil, ErrNotSupported
-}
-
-// ListEscrowed is not supported over the REST transport yet.
-func (t *Transport) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
-	return nil, ErrNotSupported
-}
-
-// RevokeEscrow is not supported over the REST transport yet.
-func (t *Transport) RevokeEscrow(_ context.Context, _ string) error {
-	return ErrNotSupported
-}
+// External key escrow (pkg/escrow) is embedded-only (go-xkms#692): its RBAC
+// model is undecided, so Transport does not implement EscrowKey/RecoverKey/
+// ListEscrowed/RevokeEscrow at all. transport.EscrowService is no longer
+// part of transport.Client — see docs/escrow/architecture.md.
 
 // Policy Operations
 //

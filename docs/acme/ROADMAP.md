@@ -105,7 +105,10 @@ Feature parity across all protocols:
 
 ### Production Hardening
 
-- [ ] Extended monitoring and metrics (Prometheus exporters)
+- [x] Prometheus exporters for issuance/challenge/revocation/account events
+      (`pkg/acme/server/metrics`, wired #734); see
+      `docs/acme-issuance/engineering.md#observability`. Per-tenant
+      rate-limit metrics remain unwired.
 - [ ] Performance optimization and benchmarking
 - [ ] Security audit and penetration testing
 - [ ] Rate limiting per tenant

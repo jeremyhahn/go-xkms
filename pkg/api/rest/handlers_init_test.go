@@ -201,9 +201,6 @@ func (m *initTestMockCA) IssueCertificate(_ context.Context, req *ca.Certificate
 func (m *initTestMockCA) IssueCertificateWithProfile(ctx context.Context, req *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
 	return m.IssueCertificate(ctx, req)
 }
-func (m *initTestMockCA) QuantumSafeTLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
-	return nil, nil
-}
 func (m *initTestMockCA) CABundleCertPool() (*x509.CertPool, error) { return nil, nil }
 func (m *initTestMockCA) TrustedRootCertPool(_ *x509.Certificate) (*x509.CertPool, error) {
 	return nil, nil

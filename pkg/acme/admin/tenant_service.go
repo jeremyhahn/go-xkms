@@ -103,18 +103,64 @@ func (s *TenantAwareAdminService) SetTenantService(svc qrdbsdk.ServiceTenantServ
 	s.tenantSvc = svc
 }
 
+// TenantDAOInitError reports a failure to obtain the tenant-aware storage
+// factory's DAO for entities.Tenant while constructing a tenant-aware admin
+// service. Unlike a storage.TenantAwareFactory type assertion failing (which
+// legitimately means "this deployment has no local tenant DAO" and leaves
+// tenantDAO nil — see the NewTenantAwareAdminService doc comment), this means
+// the factory claims tenant-aware support but could not produce the DAO — a
+// real, actionable failure, distinct from the ordinary degraded mode that
+// every tenantDAO-nil check throughout this file already handles.
+// NewTenantAwareAdminService refuses construction and returns this error
+// rather than starting in a silently degraded state nobody asked for.
+type TenantDAOInitError struct {
+	Err error
+}
+
+// Error implements the error interface.
+func (e *TenantDAOInitError) Error() string {
+	return fmt.Sprintf("admin: failed to initialize tenant DAO: %v", e.Err)
+}
+
+// Unwrap returns the underlying cause.
+func (e *TenantDAOInitError) Unwrap() error {
+	return e.Err
+}
+
 // NewTenantAwareAdminService creates a new tenant-aware admin service.
+//
+// A storageFactory that does not implement storage.TenantAwareFactory
+// leaves the service's local tenant DAO nil, and that is a legitimate
+// configuration, not a misconfiguration to refuse: the local tenantDAO is
+// never authoritative for tenant existence (qrdb, via tenantSvc, is the
+// single tenant authority — see the tenantSvc field doc comment); it is
+// only an optional linkage row for the CA/EAB/status state qrdb has no
+// concept of. Every method on this service already guards s.tenantDAO !=
+// nil before touching it, and xkmsd's only production wiring
+// (cmd/xkmsd/acme.go, via objstore.NewFactoryFromKVStore) constructs the
+// plain, non-tenant-aware storage.Factory today, so this is the normal
+// production path, not an edge case.
+//
+// A storageFactory that DOES implement storage.TenantAwareFactory but
+// fails to produce the DAO is different: the factory promised tenant-aware
+// support and could not deliver it, which is a real, actionable failure.
+// Construction is refused with a *TenantDAOInitError wrapping the cause,
+// rather than logging and continuing in the degraded mode above.
 func NewTenantAwareAdminService(
 	certificateAuthority ca.TCGCA,
 	storageFactory storage.Factory,
 	qrdbService qrdb.Service,
 	logger *slog.Logger,
 	version string,
-) *TenantAwareAdminService {
+) (*TenantAwareAdminService, error) {
 	// Get TenantDAO from the storage factory if it supports tenant-aware operations
 	var tenantDAO qrdbsdk.GenericDAO[*entities.Tenant]
 	if tenantAwareFactory, ok := storageFactory.(storage.TenantAwareFactory); ok {
-		tenantDAO, _ = tenantAwareFactory.TenantDAO()
+		dao, err := tenantAwareFactory.TenantDAO()
+		if err != nil {
+			return nil, &TenantDAOInitError{Err: err}
+		}
+		tenantDAO = dao
 	}
 
 	return &TenantAwareAdminService{
@@ -123,7 +169,7 @@ func NewTenantAwareAdminService(
 		tenantDAO:    tenantDAO,
 		logger:       logger,
 		tenantCAs:    make(map[string]*tenantCAEntry),
-	}
+	}, nil
 }
 
 // BarrierSvc returns the barrier service for seal/unseal operations.
@@ -375,7 +421,12 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 		if err == nil && roles != nil {
 			for _, role := range roles.Roles {
 				if !role.System {
-					_ = s.qrdbService.Roles().DeleteRole(ctx, role.ID)
+					if err := s.qrdbService.Roles().DeleteRole(ctx, role.ID); err != nil {
+						s.logger.Warn("failed to delete tenant RBAC role",
+							slog.String("tenant_id", tenantID),
+							slog.String("role_id", role.ID),
+							slog.String("error", err.Error()))
+					}
 				}
 			}
 		}
@@ -403,7 +454,12 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 
 		// Delete default CA setting
 		defaultCAKey := fmt.Sprintf("tenants/%s/default_intermediate_ca", tenantID)
-		_ = s.qrdbService.KV().Delete(ctx, defaultCAKey)
+		if err := s.qrdbService.KV().Delete(ctx, defaultCAKey); err != nil {
+			s.logger.Warn("failed to delete tenant default CA setting",
+				slog.String("tenant_id", tenantID),
+				slog.String("key", defaultCAKey),
+				slog.String("error", err.Error()))
+		}
 	}
 
 	// Canonical deletion: hard delete of the tenant's identity record in qrdb.
@@ -723,8 +779,16 @@ func (s *TenantAwareAdminService) CreateTenantIntermediateCA(ctx context.Context
 		parentSigner = entry.rootSigner
 		parentCert = entry.rootCA
 	} else {
-		// Use global CA as parent (default)
-		parentCert, _ = s.ca.TrustedRoot()
+		// Use global CA as parent (default). Its error is no longer
+		// discarded: proceeding with a nil parentCert would sign the new
+		// intermediate CA without the parent chain data it needs, silently
+		// producing a certificate that cannot be chained back to a trusted
+		// root.
+		root, err := s.ca.TrustedRoot()
+		if err != nil {
+			return nil, caerrors.Wrap(caerrors.StorageFailure, err, "admin: failed to load global CA trusted root: %s", err)
+		}
+		parentCert = root
 		parentSigner = s.ca
 	}
 

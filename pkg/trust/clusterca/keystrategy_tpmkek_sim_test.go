@@ -38,6 +38,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -201,6 +202,12 @@ func newProvisionedSimulatorBackend(t *testing.T) (*tpm2backend.Backend, pkgtpm2
 	t.Cleanup(func() { require.NoError(t, tpmIface.Close()) })
 
 	require.NoError(t, tpmIface.Provision(nil), "simulator must provision EK, SSRK and IAK")
+
+	// Provision is TCG-only (EK + Shared SRK); tpm2backend.NewBackendWithTPM
+	// resolves its storage parent exclusively off the Platform SRK (never the
+	// Shared SRK), so it must be enrolled before the backend is constructed.
+	require.NoError(t, tpm2test.EnrollPlatformSRK(tpmIface, config),
+		"simulator must enroll the Platform SRK xkms's own backend uses")
 
 	backend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
 		TPM:        tpmIface,

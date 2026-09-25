@@ -20,6 +20,7 @@ import (
 	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -41,6 +42,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	localwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -554,6 +556,10 @@ func (m *mockKeyStoreWithImportExport) CertStorage() certstore.CertificateStorag
 	return nil
 }
 
+func (m *mockKeyStoreWithImportExport) SignerStore() store.SignerStorer {
+	return nil
+}
+
 // Type derives the store type from the wrapped mock backend's own
 // BackendType, exactly as a real compositeBackend does.
 func (m *mockKeyStoreWithImportExport) Type() types.StoreType {
@@ -704,6 +710,19 @@ func TestEncryptHandler_SymmetricSuccessPath(t *testing.T) {
 
 		router.ServeHTTP(w, req)
 
+		if fips140.Enforced() {
+			// mockSymmetricEncrypter (above) builds its AES-GCM AEAD with
+			// cipher.NewGCM directly -- the arbitrary-IV constructor --
+			// rather than routing through pkg/crypto/aead.
+			// NewGCMForFreshEncrypt the way the real symmetric backend
+			// does, so it cannot produce a ciphertext at all under
+			// GODEBUG=fips140=only. This is a fidelity gap in the mock,
+			// not in EncryptHandler, which the real backend's own FIPS
+			// coverage (pkg/keyprovider/symmetric) already exercises.
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+			return
+		}
+
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		var resp EncryptResponse
@@ -731,6 +750,12 @@ func TestEncryptHandler_SymmetricSuccessPath(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
+
+		if fips140.Enforced() {
+			// See the identical guard in the subtest above.
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+			return
+		}
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})

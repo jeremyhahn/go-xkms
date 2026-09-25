@@ -18,6 +18,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -202,6 +203,85 @@ func TestSSHConnect_LocalPassthrough_MissingTarget(t *testing.T) {
 	// an empty target must fail with ErrSSHConnectMissingTarget specifically.
 	if err := svc.ConnectOneTime(SSHConnectParams{KeySource: "local"}); !errors.Is(err, ErrSSHConnectMissingTarget) {
 		t.Fatalf("expected ErrSSHConnectMissingTarget, got %v", err)
+	}
+}
+
+func TestSSHConnect_Bg_FallsBackToBackground(t *testing.T) {
+	svc := NewSSHConnectService()
+	if svc.bg() == nil {
+		t.Fatal("expected a non-nil background context")
+	}
+}
+
+func TestSSHConnect_SetProfileServiceAndSetLogger(t *testing.T) {
+	svc := NewSSHConnectService()
+	if svc.profiles != nil {
+		t.Fatal("expected nil profiles by default")
+	}
+	if svc.logger != nil {
+		t.Fatal("expected nil logger by default")
+	}
+
+	profiles := NewSSHProfileService(nil)
+	svc.SetProfileService(profiles)
+	if svc.profiles != profiles {
+		t.Fatal("SetProfileService did not store the profile service")
+	}
+
+	logger := slog.Default()
+	svc.SetLogger(logger)
+	if svc.logger != logger {
+		t.Fatal("SetLogger did not store the logger")
+	}
+}
+
+func TestSSHConnect_ConnectProfile_NoProfileService(t *testing.T) {
+	svc := NewSSHConnectService()
+	if err := svc.ConnectProfile("any"); !errors.Is(err, ErrSSHConnectNotConfigured) {
+		t.Fatalf("expected ErrSSHConnectNotConfigured, got %v", err)
+	}
+}
+
+func TestSSHConnect_ConnectProfile_NotFound(t *testing.T) {
+	svc, _ := setupConnect(t)
+	defer svc.StopAll()
+
+	store, err := sshclient.NewProfileStore(storage.New())
+	if err != nil {
+		t.Fatalf("NewProfileStore: %v", err)
+	}
+	svc.SetProfileService(NewSSHProfileService(store))
+
+	if err := svc.ConnectProfile("does-not-exist"); !errors.Is(err, ErrSSHConnectProfileNotFound) {
+		t.Fatalf("expected ErrSSHConnectProfileNotFound, got %v", err)
+	}
+}
+
+func TestSSHConnect_ConnectProfile_Success(t *testing.T) {
+	svc, cap := setupConnect(t)
+	defer svc.StopAll()
+
+	backend := storage.New()
+	store, err := sshclient.NewProfileStore(backend)
+	if err != nil {
+		t.Fatalf("NewProfileStore: %v", err)
+	}
+	profileSvc := NewSSHProfileService(store)
+	svc.SetProfileService(profileSvc)
+
+	entry, err := profileSvc.AddProfile(SSHProfileParams{
+		Name: "bastion", Host: "bastion.example.com", User: "ops",
+		KeySource: "local",
+	})
+	if err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+
+	if err := svc.ConnectProfile(entry.ID); err != nil {
+		t.Fatalf("ConnectProfile: %v", err)
+	}
+	if !cap.argsContain("ops@bastion.example.com") {
+		t.Fatalf("expected target in argv, got %v", cap.args)
 	}
 }
 
@@ -399,5 +479,84 @@ func TestSSHConnect_WatcherShutdownIsNotBlockedByAWedgedStore(t *testing.T) {
 
 	if _, serr := os.Stat(sockPath); !errors.Is(serr, os.ErrNotExist) {
 		t.Fatalf("the agent socket outlived shutdown: %v", serr)
+	}
+}
+
+// --- SetKnownHostsPolicy / SetStrictHostKeyChecking ---
+
+// TestSSHConnectService_SetKnownHostsPolicy_ValidatesInput pins the
+// validating switch: only "system" and "both" are accepted verbatim.
+func TestSSHConnectService_SetKnownHostsPolicy_ValidatesInput(t *testing.T) {
+	svc := NewSSHConnectService()
+
+	svc.SetKnownHostsPolicy("both")
+	if svc.knownHostsPolicy != "both" {
+		t.Fatalf("knownHostsPolicy = %q, want %q", svc.knownHostsPolicy, "both")
+	}
+
+	svc.SetKnownHostsPolicy("system")
+	if svc.knownHostsPolicy != "system" {
+		t.Fatalf("knownHostsPolicy = %q, want %q", svc.knownHostsPolicy, "system")
+	}
+}
+
+// TestSSHConnectService_SetKnownHostsPolicy_UnknownValueFailsClosed pins the
+// default branch: a value that isn't one of the recognized policies resets
+// to "barrier" (the strictest option) rather than silently accepting
+// garbage or leaving a stale value in place.
+func TestSSHConnectService_SetKnownHostsPolicy_UnknownValueFailsClosed(t *testing.T) {
+	svc := NewSSHConnectService()
+	svc.SetKnownHostsPolicy("system")
+
+	svc.SetKnownHostsPolicy("not-a-real-policy")
+
+	if svc.knownHostsPolicy != "barrier" {
+		t.Fatalf("knownHostsPolicy = %q, want %q (an unrecognized policy must fail closed)", svc.knownHostsPolicy, "barrier")
+	}
+}
+
+// TestSSHConnectService_SetStrictHostKeyChecking_EmptyResetsToAsk pins the
+// normalization: an empty policy is not stored as-is, it resets to the
+// documented default "ask".
+func TestSSHConnectService_SetStrictHostKeyChecking_EmptyResetsToAsk(t *testing.T) {
+	svc := NewSSHConnectService()
+	svc.SetStrictHostKeyChecking("yes")
+
+	svc.SetStrictHostKeyChecking("")
+
+	if svc.strictPolicy != "ask" {
+		t.Fatalf("strictPolicy = %q, want %q", svc.strictPolicy, "ask")
+	}
+}
+
+// --- envPrefix / shellJoin ---
+
+func TestEnvPrefix(t *testing.T) {
+	if got := envPrefix(nil); got != "" {
+		t.Fatalf("envPrefix(nil) = %q, want empty", got)
+	}
+	if got := envPrefix([]string{}); got != "" {
+		t.Fatalf("envPrefix([]) = %q, want empty", got)
+	}
+	if got := envPrefix([]string{"FOO=bar"}); got != "FOO=bar " {
+		t.Fatalf("envPrefix single = %q, want %q", got, "FOO=bar ")
+	}
+	if got := envPrefix([]string{"FOO=bar", "BAZ=qux"}); got != "FOO=bar BAZ=qux " {
+		t.Fatalf("envPrefix multiple = %q, want %q", got, "FOO=bar BAZ=qux ")
+	}
+}
+
+func TestShellJoin(t *testing.T) {
+	if got := shellJoin([]string{"ssh", "-p", "22", "host"}); got != "ssh -p 22 host" {
+		t.Fatalf("shellJoin plain = %q", got)
+	}
+	if got := shellJoin([]string{"echo", "hello world"}); got != `echo 'hello world'` {
+		t.Fatalf("shellJoin with space = %q, want %q", got, `echo 'hello world'`)
+	}
+	if got := shellJoin([]string{"echo", "it's a test"}); got != `echo 'it'\''s a test'` {
+		t.Fatalf("shellJoin with embedded quote = %q, want %q", got, `echo 'it'\''s a test'`)
+	}
+	if got := shellJoin(nil); got != "" {
+		t.Fatalf("shellJoin(nil) = %q, want empty", got)
 	}
 }

@@ -53,6 +53,25 @@ func TestPKCS11Service_SetContext(t *testing.T) {
 	assert.Equal(t, ctx, svc.ctx)
 }
 
+// TestPKCS11Service_GetSlotOccupancy_NoManager and
+// TestPKCS11Service_HasSlotModel_NoManager pin the guard on a
+// zero-value PKCS11Service{}: neither reads slot state through a nil
+// manager.
+func TestPKCS11Service_GetSlotOccupancy_NoManager(t *testing.T) {
+	var svc PKCS11Service
+
+	occupancy, err := svc.GetSlotOccupancy("module-1", 0)
+
+	assert.ErrorIs(t, err, ErrPKCS11ServiceNotInitialized)
+	assert.Nil(t, occupancy)
+}
+
+func TestPKCS11Service_HasSlotModel_NoManager(t *testing.T) {
+	var svc PKCS11Service
+
+	assert.False(t, svc.HasSlotModel("module-1", 0))
+}
+
 func TestPKCS11Service_SetManager(t *testing.T) {
 	svc := NewPKCS11Service()
 	originalManager := svc.manager
@@ -230,6 +249,34 @@ func TestConvertModule_AllFields(t *testing.T) {
 	// This is a simple struct mapping test
 	result := convertSlots(nil)
 	assert.NotNil(t, result)
+}
+
+func TestPKCS11Service_ConnectHook(t *testing.T) {
+
+	t.Run("SetConnectHook_NilHook", func(t *testing.T) {
+		svc := NewPKCS11Service()
+		svc.SetConnectHook(nil)
+		assert.Nil(t, svc.connectHook)
+	})
+
+	t.Run("SetConnectHook_StoresHook", func(t *testing.T) {
+		svc := NewPKCS11Service()
+		var gotModule, gotLib, gotUser, gotSO, gotLabel string
+		var gotSlot uint
+		svc.SetConnectHook(func(moduleID, libraryPath string, slotID uint, userPIN, soPin, tokenLabel string) {
+			gotModule, gotLib, gotSlot = moduleID, libraryPath, slotID
+			gotUser, gotSO, gotLabel = userPIN, soPin, tokenLabel
+		})
+		require.NotNil(t, svc.connectHook)
+
+		svc.connectHook("soft-hsm", "/usr/lib/softhsm2.so", 2, "1234", "5678", "token-1")
+		assert.Equal(t, "soft-hsm", gotModule)
+		assert.Equal(t, "/usr/lib/softhsm2.so", gotLib)
+		assert.Equal(t, uint(2), gotSlot)
+		assert.Equal(t, "1234", gotUser)
+		assert.Equal(t, "5678", gotSO)
+		assert.Equal(t, "token-1", gotLabel)
+	})
 }
 
 func TestPKCS11Service_DisconnectHook(t *testing.T) {

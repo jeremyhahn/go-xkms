@@ -91,8 +91,12 @@ func WithVersion(version string) Option {
 	}
 }
 
-// WithMultiTenant enables multi-tenant mode.
-// This requires a QRDB instance to be configured.
+// WithMultiTenant enables multi-tenant mode. This requires a QRDB instance
+// to be configured with WithQRDB; New returns ErrMissingQRDB otherwise. It
+// is the only switch for multi-tenancy on a standalone TrustedCA -- there is
+// no config-file equivalent, matching xkmsd's embedded ACME server, which
+// always constructs its admin service tenant-aware and has no
+// pkg/config.ACMEConfig multi-tenant key (go-xkms#946).
 func WithMultiTenant() Option {
 	return func(tca *TrustedCA) error {
 		tca.multiTenant = true
@@ -157,6 +161,20 @@ func WithRateLimit(maxRequests int, interval time.Duration) Option {
 	return func(tca *TrustedCA) error {
 		tca.rateLimitRequests = maxRequests
 		tca.rateLimitInterval = interval
+		return nil
+	}
+}
+
+// WithTenantRateLimit sets the per-tenant overall admission-control quota
+// (#886), shared across every account belonging to the same tenant, applied
+// on top of (never instead of) WithRateLimit's per-client limiter. It is
+// only meaningful in multi-tenant mode (WithMultiTenant); Serve mounts it
+// only when maxRequests > 0, so leaving it unset keeps today's behavior (no
+// per-tenant quota) instead of silently picking a default.
+func WithTenantRateLimit(maxRequests int, interval time.Duration) Option {
+	return func(tca *TrustedCA) error {
+		tca.tenantRateLimitRequests = maxRequests
+		tca.tenantRateLimitInterval = interval
 		return nil
 	}
 }

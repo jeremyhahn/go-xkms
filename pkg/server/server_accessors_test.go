@@ -1,0 +1,160 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package server
+
+import (
+	"context"
+	"net"
+	"net/http"
+	"testing"
+	"testing/fstest"
+
+	"google.golang.org/grpc/metadata"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// namedAuthenticator is a minimal auth.Authenticator whose Name() reports a
+// fixed marker, so a test can prove a decorator's return value became the
+// server's live authenticator instead of being silently ignored.
+type namedAuthenticator struct{ name string }
+
+func (n *namedAuthenticator) AuthenticateHTTP(*http.Request) (*auth.Identity, error) {
+	return nil, auth.ErrUnauthenticated
+}
+
+func (n *namedAuthenticator) AuthenticateGRPC(context.Context, metadata.MD) (*auth.Identity, error) {
+	return nil, auth.ErrUnauthenticated
+}
+
+func (n *namedAuthenticator) Name() string { return n.name }
+
+// TestSetUIAssets proves SetUIAssets installs the given filesystem for the
+// REST transport to serve.
+func TestSetUIAssets(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	s, err := New(cfg)
+	require.NoError(t, err)
+
+	require.Nil(t, s.uiAssets)
+	assets := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}}
+	s.SetUIAssets(assets)
+	require.Equal(t, assets, s.uiAssets)
+}
+
+// TestSetRESTListener proves SetRESTListener stores the pre-bound listener
+// for the REST transport to serve instead of binding the configured port.
+func TestSetRESTListener(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	s, err := New(cfg)
+	require.NoError(t, err)
+	require.Nil(t, s.restListener)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = ln.Close() }()
+
+	s.SetRESTListener(ln)
+	require.Same(t, ln, s.restListener)
+}
+
+// TestWithAuthenticatorDecorator proves the decorator option's return value
+// replaces the server's built authenticator, not merely gets invoked and
+// discarded.
+func TestWithAuthenticatorDecorator(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	marker := &namedAuthenticator{name: "decorator-marker"}
+	decorator := func(auth.Authenticator) auth.Authenticator { return marker }
+
+	s, err := New(cfg, WithAuthenticatorDecorator(decorator))
+	require.NoError(t, err)
+	require.Equal(t, "decorator-marker", s.authenticator.Name())
+}
+
+// TestWithExtraModules proves the option appends every supplied module to
+// the server's extra-module list, preserving order, rather than replacing or
+// dropping any of them.
+func TestWithExtraModules(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	mod1 := &fakeServiceModule{name: "mod1"}
+	mod2 := &fakeServiceModule{name: "mod2"}
+
+	s, err := New(cfg, WithExtraModules(mod1, mod2))
+	require.NoError(t, err)
+	require.Len(t, s.extraModules, 2)
+	require.Equal(t, "mod1", s.extraModules[0].Name())
+	require.Equal(t, "mod2", s.extraModules[1].Name())
+}
+
+// fakeServiceModule is a minimal qrdbsdk.ServiceModule for exercising
+// WithExtraModules without depending on any real module implementation.
+type fakeServiceModule struct {
+	qrdbsdk.BaseModule
+	name string
+}
+
+func (m *fakeServiceModule) Name() string { return m.name }
+
+// TestEscrowRegistry_NilByDefault proves EscrowRegistry reports nil when
+// escrow is not configured, matching initializeEscrow's documented no-op.
+func TestEscrowRegistry_NilByDefault(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	s, err := New(cfg)
+	require.NoError(t, err)
+	require.Nil(t, s.EscrowRegistry())
+}
+
+// TestQRDBClient_NilBeforeNodeConstruction proves QRDBClient reports nil
+// before the embedded qrdb node has been constructed, matching CA()/
+// Backend()'s "nil until wired" contract.
+func TestQRDBClient_NilBeforeNodeConstruction(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	s, err := New(cfg)
+	require.NoError(t, err)
+	require.Nil(t, s.QRDBClient())
+}
+
+// TestTenantService_NilWithoutNodeFlip proves TenantService reports nil when
+// the node barrier flip is not engaged.
+func TestTenantService_NilWithoutNodeFlip(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	s, err := New(cfg)
+	require.NoError(t, err)
+	require.Nil(t, s.TenantService())
+}

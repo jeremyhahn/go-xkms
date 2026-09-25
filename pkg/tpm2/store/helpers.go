@@ -18,7 +18,6 @@ import (
 	"crypto/elliptic"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -57,7 +56,7 @@ func EncodePubKey(pub crypto.PublicKey) ([]byte, error) {
 func DecodePEM(data []byte) (*pem.Block, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, errors.New("failed to decode PEM block")
+		return nil, &errs.Message{Msg: "failed to decode PEM block"}
 	}
 	return block, nil
 }

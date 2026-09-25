@@ -1,6 +1,6 @@
 # PIN Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface
 
@@ -83,16 +83,24 @@ The interface, `PINStrategyID`, `PINLockoutStatus` and `ErrPINNotSet` are
 - **The cached FIDO2 hash lives in protected memory.** `TPM2Backend` caches
   it in a go-enclave `MemoryEnclave` (mlock'd, guard-paged, wiped on
   release), never a plain `[]byte`, per the stack-wide protected-memory
-  mandate. `VerifyFIDO2Hash` compares via `MemoryEnclave.EqualTo`
-  (constant-time, and fail-closed: a nil or destroyed enclave reports no
-  match). `Close` destroys the enclave; safe to call more than once.
+  mandate. The enclave is admitted through `enclave.ProcessAllocator()`, the
+  one locked-memory budget the process shares. `VerifyFIDO2Hash` compares via
+  `MemoryEnclave.EqualTo` (constant-time, and fail-closed: a nil or destroyed
+  enclave reports no match). `Close` destroys the enclave; safe to call more
+  than once.
+- **A hash that cannot be cached is an error, never a silent skip.** When the
+  budget refuses the allocation, or the kernel refuses to lock the pages,
+  `SetUserPIN`, `ChangeUserPIN` and `VerifyUserPIN` return
+  `ErrFIDO2HashCacheFailed`. The TPM's decision still stands — the PIN is
+  reported set — but any previously cached hash is destroyed, so
+  `VerifyFIDO2Hash` never accepts the hash of a PIN the TPM no longer holds.
 - **Concurrency.** `UserPINSet()` is backed by an atomic; the backend is safe for
   concurrent verification. Device access is serialised where the device demands
   it.
 
 ## Error semantics
 
-`pkg/pinselect/errors.go` and the qrdb PIN vocabulary.
+`pkg/pinselect/errors.go`, `pkg/pintpm2/errors.go` and the qrdb PIN vocabulary.
 
 | Error | Meaning |
 |---|---|
@@ -100,6 +108,7 @@ The interface, `PINStrategyID`, `PINLockoutStatus` and `ErrPINNotSet` are
 | `qrdbsdk.ErrPINNotSet` | this backend has no such PIN (every SO method on TPM2) |
 | auth failure | wrong PIN; `buildAuthFailureError` distinguishes it from a device error |
 | lockout | the device is refusing further attempts |
+| `pintpm2.ErrFIDO2HashCacheFailed` | the TPM accepted the PIN but its FIDO2 hash could not be placed in locked memory; wraps `enclave.ErrBudgetExhausted`, `enclave.ErrLockedMemoryUnavailable` or `enclave.ErrLimitDiscoveryFailed` |
 
 **Fail closed:** an unprovisioned platform, a locked-out device, a wrong PIN, an
 absent device. None of them fall through to a weaker backend at operation time —
@@ -132,7 +141,10 @@ subsystem, not a view of this one — see the note in
 
 - **Unit** — `pkg/pinselect/pinselect_test.go` (preference order, skipping,
   `ErrNoSoftwareProvider`), `pkg/pinselect/errors_test.go`,
-  `pkg/pintpm2/backend_test.go`.
+  `pkg/pintpm2/backend_test.go`, and
+  `pkg/pintpm2/backend_budget_test.go`, which re-executes the test under a
+  one-page process allocator (`pkg/testing/enclavetest`) to pin the
+  `ErrFIDO2HashCacheFailed` paths and the stale-hash discard.
 - **Transport** — `pkg/api/rest/handlers_barrier_pin_test.go`,
   `pkg/api/grpc/service_barrier_pin_test.go`.
 - **CLI** — `cmd/xkmsctl/pin.go` paths.

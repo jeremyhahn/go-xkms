@@ -16,6 +16,7 @@ package mcp
 import (
 	"context"
 	"crypto"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -510,7 +511,17 @@ func TestHandler_Decrypt_PKCS1v15Supported(t *testing.T) {
 	pub := generateRSAKey(t, server, "mcp-v15-decrypt")
 	plaintext := []byte("v15 secret")
 	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, pub, plaintext) //nolint:staticcheck // SA1019: covers the CKM_RSA_PKCS (PKCS#1 v1.5) request path
-	require.NoError(t, err)
+	if err != nil {
+		// PKCS#1 v1.5 encryption is refused outright under
+		// GODEBUG=fips140=only; the handler's own PKCS#1 v1.5 default
+		// decrypt path this test targets uses the same construction (see
+		// pkg/xkms/servicer_crypto.go), so there is no ciphertext this
+		// fixture can build to exercise it in that mode.
+		if fips140.Enforced() {
+			return
+		}
+		require.NoError(t, err)
+	}
 
 	result, err := mcpCall(t, server.handleDecrypt, "xkms.decrypt", DecryptParams{
 		KeyID: "mcp-v15-decrypt", Backend: "software", Ciphertext: ciphertext,
@@ -638,6 +649,7 @@ func TestHandler_EncryptDecrypt_AADAuthenticated(t *testing.T) {
 	result, err := mcpCall(t, server.handleDecrypt, "xkms.decrypt", DecryptParams{
 		KeyID: "mcp-aes-aad", Backend: "software",
 		Ciphertext: enc.Ciphertext, Nonce: enc.Nonce, Tag: enc.Tag, AdditionalData: aad,
+		GCMNonceMode: enc.GCMNonceMode,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, result.(DecryptResult).Plaintext)
@@ -645,6 +657,7 @@ func TestHandler_EncryptDecrypt_AADAuthenticated(t *testing.T) {
 	_, err = mcpCall(t, server.handleDecrypt, "xkms.decrypt", DecryptParams{
 		KeyID: "mcp-aes-aad", Backend: "software",
 		Ciphertext: enc.Ciphertext, Nonce: enc.Nonce, Tag: enc.Tag,
+		GCMNonceMode: enc.GCMNonceMode,
 	})
 	assert.Error(t, err, "decryption must fail when the AAD the tag authenticates is omitted")
 
@@ -652,6 +665,7 @@ func TestHandler_EncryptDecrypt_AADAuthenticated(t *testing.T) {
 		KeyID: "mcp-aes-aad", Backend: "software",
 		Ciphertext: enc.Ciphertext, Nonce: enc.Nonce, Tag: enc.Tag,
 		AdditionalData: []byte("different-context"),
+		GCMNonceMode:   enc.GCMNonceMode,
 	})
 	assert.Error(t, err, "decryption must fail when the AAD is altered")
 }
@@ -675,7 +689,17 @@ func TestHandler_Encrypt_NonceArrives(t *testing.T) {
 		KeyID: "mcp-aes-nonce", Backend: "software",
 		Plaintext: []byte("pinned nonce"), Nonce: nonce,
 	})
-	require.NoError(t, err)
+	if err != nil {
+		// A caller-supplied nonce requires the arbitrary-IV GCM
+		// construction, which GODEBUG=fips140=only refuses outright (see
+		// docs/fips/README.md "AEAD construction"); only a
+		// process-generated nonce is available in that mode, so this
+		// fixture's whole premise cannot be exercised there.
+		if fips140.Enforced() {
+			return
+		}
+		require.NoError(t, err)
+	}
 	assert.Equal(t, nonce, encrypted.(EncryptResult).Nonce,
 		"the caller-supplied nonce must be the one used")
 }
@@ -710,13 +734,25 @@ func TestHandler_EncryptDecrypt_TagSizeArrives(t *testing.T) {
 	encrypted, err := mcpCall(t, server.handleEncrypt, "xkms.encrypt", EncryptParams{
 		KeyID: "mcp-aes-tagsize", Backend: "software", Plaintext: plaintext, TagSize: 12,
 	})
-	require.NoError(t, err)
+	if err != nil {
+		// A truncated tag requires cipher.NewGCMWithTagSize, which
+		// GODEBUG=fips140=only refuses the same way it refuses the
+		// arbitrary-IV constructor: only a process-generated nonce with
+		// the cipher's full 16-byte tag is available in that mode (see
+		// docs/fips/README.md "AEAD construction"), so this fixture's
+		// whole premise cannot be exercised there.
+		if fips140.Enforced() {
+			return
+		}
+		require.NoError(t, err)
+	}
 	enc := encrypted.(EncryptResult)
 	assert.Len(t, enc.Tag, 12, "the tag must be truncated to the requested length")
 
 	result, err := mcpCall(t, server.handleDecrypt, "xkms.decrypt", DecryptParams{
 		KeyID: "mcp-aes-tagsize", Backend: "software",
 		Ciphertext: enc.Ciphertext, Nonce: enc.Nonce, Tag: enc.Tag, TagSize: 12,
+		GCMNonceMode: enc.GCMNonceMode,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, result.(DecryptResult).Plaintext)
@@ -724,6 +760,7 @@ func TestHandler_EncryptDecrypt_TagSizeArrives(t *testing.T) {
 	_, err = mcpCall(t, server.handleDecrypt, "xkms.decrypt", DecryptParams{
 		KeyID: "mcp-aes-tagsize", Backend: "software",
 		Ciphertext: enc.Ciphertext, Nonce: enc.Nonce, Tag: enc.Tag,
+		GCMNonceMode: enc.GCMNonceMode,
 	})
 	assert.Error(t, err, "a 12-byte tag must not be verified at the cipher's full tag length")
 }
@@ -924,15 +961,57 @@ func TestDecodeSignature(t *testing.T) {
 		_, err := decodeSignature(nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "required")
+		// go-xkms#930: a malformed/absent signature is the caller's fault,
+		// so it must reach dispatch as a *KeyOpError carrying
+		// ErrCodeInvalidParams rather than a bare *errs.Message that
+		// InvokeMethod could only report as ErrCodeInternalError.
+		assertKeyOpCode(t, err, ErrCodeInvalidParams)
 	})
 
 	t.Run("non-byte array is refused", func(t *testing.T) {
 		_, err := decodeSignature([]interface{}{"not a number"})
 		require.Error(t, err)
+		assertKeyOpCode(t, err, ErrCodeInvalidParams)
 	})
 
 	t.Run("object is refused", func(t *testing.T) {
 		_, err := decodeSignature(map[string]interface{}{"foo": "bar"})
 		require.Error(t, err)
+		assertKeyOpCode(t, err, ErrCodeInvalidParams)
 	})
+}
+
+// TestHandleVerify_MalformedSignature_WireCodeThroughInvokeMethod drives
+// xkms.verify's decodeSignature refusal through Server.InvokeMethod, the
+// production dispatch path, and pins the code a caller actually sees
+// (go-xkms#930): a malformed signature encoding must report Invalid params,
+// not the ErrCodeInternalError floor a bare *errs.Message used to fall to.
+// A real key is generated first so the call reaches decodeSignature at all
+// -- requireKey's own not-found gate runs first and would otherwise mask
+// the condition this test exists to pin.
+func TestHandleVerify_MalformedSignature_WireCodeThroughInvokeMethod(t *testing.T) {
+	server := createTestServer(t)
+	ctx := context.Background()
+
+	genParamsJSON, err := json.Marshal(GenerateKeyParams{
+		KeyID: "verify-malformed-sig-key", Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
+	})
+	require.NoError(t, err)
+	_, err = server.handleGenerateKey(ctx, &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1})
+	require.NoError(t, err)
+
+	raw, err := json.Marshal(map[string]interface{}{
+		"key_id":    "verify-malformed-sig-key",
+		"data":      []byte("data"),
+		"signature": map[string]interface{}{"not": "a signature"},
+	})
+	require.NoError(t, err)
+
+	resp := invokeRequest(server, ctx, &JSONRPCRequest{
+		JSONRPC: "2.0", Method: "xkms.verify", Params: raw, ID: 1,
+	})
+
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 }

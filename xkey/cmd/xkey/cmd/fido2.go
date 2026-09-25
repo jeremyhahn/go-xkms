@@ -33,6 +33,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/cdp"
@@ -183,7 +184,6 @@ const (
 // Default FIDO2 configuration values.
 const (
 	defaultFIDO2DeviceName  = "xKey (go-xkms)"
-	defaultFIDO2StoragePath = "./data"
 	defaultFIDO2Backend     = "software"
 	defaultFIDO2TPMDevice   = "/dev/tpmrm0"
 	defaultFIDO2Attestation = "none"
@@ -359,8 +359,8 @@ func init() {
 	// Storage configuration flags
 	fido2Cmd.Flags().String("storage", defaultFIDO2StorageType,
 		"Storage type: memory, file, or barrier")
-	fido2Cmd.Flags().String("storage-path", defaultFIDO2StoragePath,
-		"Path for file storage")
+	fido2Cmd.Flags().String("storage-path", "",
+		"Path for file storage and the authenticator profile (default: ~/.xkey/data/fido2, see --data-dir/XKEY_DATA_DIR)")
 	fido2Cmd.Flags().String("barrier-password", "",
 		"Barrier password for encrypted storage")
 	fido2Cmd.Flags().String("barrier-password-file", "",
@@ -397,8 +397,8 @@ func init() {
 		"Specific phone name or address to use (default: use default paired phone)")
 
 	// Password and IPC configuration flags
-	fido2Cmd.Flags().String("password-store", defaultPasswordStorePath,
-		"Path to static password store")
+	fido2Cmd.Flags().String("password-store", "",
+		"Path to static password store (default: ~/.xkey/data/staticpw, the same store `xkey password` uses)")
 	fido2Cmd.Flags().String("socket", "",
 		"IPC socket path (default: $XDG_RUNTIME_DIR/xkey/xkey.sock)")
 	fido2Cmd.Flags().String("default-password", "",
@@ -451,6 +451,15 @@ func runFIDO2(cmd *cobra.Command, args []string) error {
 
 	// Build configuration from Viper (merges flags, env vars, config file)
 	cfg := buildFIDO2Config()
+
+	// Resolve the file-storage default (issue #929) before validating: an
+	// unset --storage-path must resolve through the shared xkey data
+	// directory, not fail closed as "required".
+	if cfg.StorageType == FIDO2StorageTypeFile {
+		if _, err := resolveFIDO2StoragePath(cfg); err != nil {
+			return err
+		}
+	}
 
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
@@ -669,6 +678,15 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 		logger = slog.Default()
 	}
 
+	// Resolve the file-storage default (issue #929) before validating, same
+	// as runFIDO2: callers that build a *FIDO2Config directly (tests,
+	// future callers) get the same resolution rather than a bare "required".
+	if cfg.StorageType == FIDO2StorageTypeFile {
+		if _, err := resolveFIDO2StoragePath(cfg); err != nil {
+			return nil, err
+		}
+	}
+
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -737,6 +755,17 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 		_ = storage.Close()
 		return nil, errors.Join(ErrFIDO2AuthenticatorCreationFailed, err)
 	}
+
+	// Wire audit logging before any PIN or credential operation can reach
+	// the authenticator (SetInitialPIN below is the first one). This daemon
+	// has no durable audit store of its own, so it uses the same
+	// slog-backed audit.Logger the headless `xkey extension serve` daemon
+	// uses for its own security events (#688): SeveritySecurity events
+	// (OpPINSeeded, OpFIDO2CredentialCreated) are recorded in the structured
+	// log stream this daemon already writes, and SlogLogger has no
+	// persistent store to fail, so it never refuses an operation.
+	auth.SetAuditLogger(audit.NewSlogLogger(logger))
+
 	// Establish the initial PIN if configured. --set-pin is the operator
 	// seeding a first PIN, so it goes through the authenticator's
 	// SetInitialPIN: the same policy, retry-reset and pinUvAuthToken
@@ -876,6 +905,22 @@ func (d *fido2Device) cdpLoop(ctx context.Context) error {
 // store, and starts the IPC server. Failures in any subsystem are logged but
 // do not prevent the FIDO2 device from operating.
 func (d *fido2Device) initSupplementarySubsystems(ctx context.Context) {
+	// Resolve the static password store: --password-store if set, otherwise
+	// the same shared xkey data directory the `xkey password` commands
+	// resolve to (go-xkms#929), so bare-touch typing reaches the store an
+	// operator populated with `xkey password add` instead of a cwd-relative
+	// default. Resolution failure only disables the password-store feature
+	// below -- this method logs and continues for every subsystem it sets
+	// up, never fails the daemon.
+	if d.cfg.PasswordStorePath == "" {
+		if resolved, err := featureDataDir(passwordStoreFeature); err != nil {
+			d.logger.Warn("password store unavailable: could not resolve default store directory",
+				slog.String("error", err.Error()))
+		} else {
+			d.cfg.PasswordStorePath = resolved
+		}
+	}
+
 	// Create virtual keyboard for password typing (only when needed)
 	if d.cfg.PasswordStorePath != "" || d.cfg.DefaultPassword != "" {
 		kb, err := keyboard.New(d.logger)
@@ -1404,6 +1449,30 @@ func (d *fido2Device) syncCredentialsToCDPVia(ctx context.Context, syncer creden
 		slog.Int("synced", len(cdpCreds)))
 }
 
+// resolveFIDO2StoragePath returns cfg.StoragePath if the operator set one
+// (--storage-path, or the fido2.storage_path config key), otherwise resolves
+// the FIDO2 file-storage default through the CLI's single data-directory
+// chain (datadir.go): XKEY_HOME, XKEY_DATA_DIR, the config data_dir key, or
+// ~/.xkey/data, creating it if necessary. Every file-backed FIDO2 consumer
+// -- credential storage (createFIDO2Storage), the RP policy store
+// (createFIDO2RPPolicyStore), and the profile store (fido2ProfileStorePath)
+// -- resolves through this one function so a missing --storage-path lands
+// them all in the same directory instead of a cwd-relative default
+// (go-xkms#929). cfg.StoragePath is updated with the resolved value so
+// later readers (describeStorage, status output) observe the same path
+// without re-resolving.
+func resolveFIDO2StoragePath(cfg *FIDO2Config) (string, error) {
+	if cfg.StoragePath != "" {
+		return cfg.StoragePath, nil
+	}
+	dir, err := featureDataDir("fido2")
+	if err != nil {
+		return "", err
+	}
+	cfg.StoragePath = dir
+	return dir, nil
+}
+
 // createFIDO2Storage creates the appropriate storage backend based on configuration.
 func createFIDO2Storage(cfg *FIDO2Config, logger *slog.Logger) (authenticator.StatefulCredentialStorage, error) {
 	switch cfg.StorageType {
@@ -1411,7 +1480,11 @@ func createFIDO2Storage(cfg *FIDO2Config, logger *slog.Logger) (authenticator.St
 		return authenticator.NewMemoryStorage(), nil
 
 	case FIDO2StorageTypeFile:
-		backend, err := xkms.NewFileStorageBackend(cfg.StoragePath)
+		storagePath, err := resolveFIDO2StoragePath(cfg)
+		if err != nil {
+			return nil, err
+		}
+		backend, err := xkms.NewFileStorageBackend(storagePath)
 		if err != nil {
 			return nil, err
 		}
@@ -1441,9 +1514,11 @@ func createFIDO2Storage(cfg *FIDO2Config, logger *slog.Logger) (authenticator.St
 
 // createBarrierStorage creates barrier-encrypted storage that reads the same
 // FIDO2 credentials as the GUI. It resolves the xkey home directory and
-// unseals the barrier with the provided password through openBarrierBackend
-// (barrier_store.go), the same low-level unseal the oath/backup/device-sync
-// commands use.
+// unseals the barrier through openBarrierBackend (barrier_store.go), the
+// same low-level unseal the oath/backup/device-sync commands use: a
+// tpm2-strategy barrier tries PCR-policy auto-unseal first (see `xkey
+// policy set-auto-unseal`), then a direct TPM unseal using cfg.TPMDevice;
+// every other strategy uses the password resolved below.
 func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialStorage, error) {
 	// Resolve xkey home and data directory.
 	home, err := xhome.Resolve()
@@ -1465,7 +1540,7 @@ func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialSto
 		password = strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0])
 	}
 
-	barrierBackend, err := openBarrierBackend(password, dataDir)
+	barrierBackend, err := openBarrierBackend(password, dataDir, cfg.TPMDevice, false)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
 	}
@@ -1743,7 +1818,15 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 	}
 
 	logger.Info("using TPM2 key backend", slog.String("device", cfg.TPMDevice))
-	return keybackend.NewBackendAdapter(backend, xkms.BackendTypeTPM2), nil
+
+	// The TPM2 backend attests in hardware: it certifies each credential key
+	// with TPM2_Certify under the device's own Initial Attestation Key, rather
+	// than delegating to the generic software device-attestation identity
+	// NewAuthenticator wraps every other backend with. Wrapping here, not
+	// there, is what lets NewAuthenticator tell the two apart (see
+	// FIDO2AttestingKeyBackend's doc comment).
+	adapter := keybackend.NewBackendAdapter(backend, xkms.BackendTypeTPM2)
+	return keybackend.NewTPM2AttestingBackend(adapter, tpm, keyBackend), nil
 }
 
 // formatCID formats a channel ID from a HID packet for logging.

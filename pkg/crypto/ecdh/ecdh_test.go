@@ -333,7 +333,11 @@ func TestDeriveSharedSecret_AllCurvesRoundTrip(t *testing.T) {
 // TestDeriveKey_ExcessiveLength tests HKDF with excessive key length request
 // HKDF-SHA256 can output at most 255 * 32 = 8160 bytes
 func TestDeriveKey_ExcessiveLength(t *testing.T) {
-	sharedSecret := []byte("test-secret")
+	// 32 bytes: a P-256 ECDH shared secret is never shorter than this, and
+	// crypto/hkdf refuses any HKDF input keying material under 112 bits
+	// (14 bytes) under GODEBUG=fips140=only, which would otherwise report
+	// the wrong cause for this test's over-length request.
+	sharedSecret := []byte("test-secret-32-bytes-long-000000")
 
 	// Request more than HKDF can produce (255 * 32 bytes for SHA-256)
 	_, err := DeriveKey(sharedSecret, nil, []byte("info"), 8161)
@@ -343,7 +347,7 @@ func TestDeriveKey_ExcessiveLength(t *testing.T) {
 
 // TestDeriveKey_LargeButValidLength tests HKDF with large but valid key length
 func TestDeriveKey_LargeButValidLength(t *testing.T) {
-	sharedSecret := []byte("test-secret")
+	sharedSecret := []byte("test-secret-32-bytes-long-000000")
 
 	// Request exactly the maximum HKDF output
 	key, err := DeriveKey(sharedSecret, nil, []byte("info"), 8160)
@@ -390,10 +394,13 @@ func TestDeriveKey_SameInputsSameOutput(t *testing.T) {
 
 // TestDeriveKey_DifferentSecretsProduceDifferentKeys tests that different secrets produce different keys
 func TestDeriveKey_DifferentSecretsProduceDifferentKeys(t *testing.T) {
-	key1, err := DeriveKey([]byte("secret1"), nil, []byte("info"), 32)
+	// 32 bytes each: see TestDeriveKey_ExcessiveLength for why a short
+	// fixture here would fail under GODEBUG=fips140=only for a reason
+	// unrelated to what this test checks.
+	key1, err := DeriveKey([]byte("shared-secret-one-32-bytes-000000"), nil, []byte("info"), 32)
 	require.NoError(t, err)
 
-	key2, err := DeriveKey([]byte("secret2"), nil, []byte("info"), 32)
+	key2, err := DeriveKey([]byte("shared-secret-two-32-bytes-000000"), nil, []byte("info"), 32)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, key1, key2)

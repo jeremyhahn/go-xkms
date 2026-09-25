@@ -192,6 +192,57 @@ func TestWriteError_SetsErrorField(t *testing.T) {
 	}
 }
 
+// failingResponseWriter is an http.ResponseWriter whose Write always fails,
+// simulating a client that disconnects mid-response so json.Encoder.Encode
+// cannot finish writing the body.
+type failingResponseWriter struct {
+	header http.Header
+}
+
+func (w *failingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *failingResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("simulated write failure")
+}
+
+func (w *failingResponseWriter) WriteHeader(int) {}
+
+// TestWriteJSON_LogsEncodeFailure verifies that a failure to write the
+// response body — which can no longer be reported to the client because
+// headers are already sent — is logged rather than silently dropped.
+func TestWriteJSON_LogsEncodeFailure(t *testing.T) {
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer slog.SetDefault(prev)
+
+	writeJSON(&failingResponseWriter{}, http.StatusOK, map[string]string{"k": "v"})
+
+	if !strings.Contains(logBuf.String(), "failed to write JSON response") {
+		t.Errorf("expected write failure to be logged, got: %s", logBuf.String())
+	}
+}
+
+// TestWriteError_LogsEncodeFailure is TestWriteJSON_LogsEncodeFailure for
+// the error-response encoder.
+func TestWriteError_LogsEncodeFailure(t *testing.T) {
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer slog.SetDefault(prev)
+
+	writeError(&failingResponseWriter{}, http.StatusBadRequest, "bad input")
+
+	if !strings.Contains(logBuf.String(), "failed to write JSON error response") {
+		t.Errorf("expected write failure to be logged, got: %s", logBuf.String())
+	}
+}
+
 // =============================================================================
 // guard middleware, router built without options (browser deployment)
 // =============================================================================
@@ -600,22 +651,53 @@ func TestDeployCertificate_NotInConfig(t *testing.T) {
 }
 
 // =============================================================================
-// device handlers
+// device handlers — error paths. Success-path (200) coverage lives in
+// device_handlers_simulator_test.go, gated by the tpm_simulator build tag:
+// a real device enrollment/attestation needs the in-process TPM 2.0
+// simulator, which is only compiled in under that tag.
 // =============================================================================
 
-func TestDeviceEnroll_Returns501(t *testing.T) {
-	rec := doRequest(emptyRouter(), http.MethodPost, "/api/v1/device/enroll",
-		jsonBody(t, map[string]string{}))
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", rec.Code)
+func TestDeviceEnroll_MissingName(t *testing.T) {
+	rec := doRequest(emptyRouter(), http.MethodPost, "/api/v1/device/enroll", jsonBody(t, map[string]string{}))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing name, got %d", rec.Code)
 	}
 }
 
-func TestDeviceAttest_Returns501(t *testing.T) {
+func TestDeviceEnroll_InvalidJSON(t *testing.T) {
+	rec := doRequest(emptyRouter(), http.MethodPost, "/api/v1/device/enroll", bytes.NewReader([]byte("not-json")))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestDeviceEnroll_UnknownDevice(t *testing.T) {
+	rec := doRequest(emptyRouter(), http.MethodPost, "/api/v1/device/enroll",
+		jsonBody(t, map[string]string{"name": "missing"}))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for unknown device, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeviceAttest_MissingName(t *testing.T) {
+	rec := doRequest(emptyRouter(), http.MethodPost, "/api/v1/device/attest", jsonBody(t, map[string]string{}))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing name, got %d", rec.Code)
+	}
+}
+
+func TestDeviceAttest_InvalidJSON(t *testing.T) {
+	rec := doRequest(emptyRouter(), http.MethodPost, "/api/v1/device/attest", bytes.NewReader([]byte("not-json")))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestDeviceAttest_UnknownDevice(t *testing.T) {
 	rec := doRequest(emptyRouter(), http.MethodPost, "/api/v1/device/attest",
-		jsonBody(t, map[string]string{}))
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", rec.Code)
+		jsonBody(t, map[string]string{"name": "missing"}))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for unknown device, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

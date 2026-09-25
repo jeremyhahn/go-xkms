@@ -16,6 +16,7 @@
 package pkcs11
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -153,8 +154,8 @@ func NewSessionPool(ctx *pkcs11.Ctx, slotID uint, pin string, size int) (*Sessio
 		session, err := ctx.OpenSession(slotID, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
 		if err != nil {
 			// Close any sessions we already opened
-			pool.drainAndClose()
-			return nil, &errs.Detail{Err: ErrSessionPoolOpen, Detail: fmt.Sprintf("%v", err)}
+			drainErr := pool.drainAndClose()
+			return nil, errors.Join(&errs.Detail{Err: ErrSessionPoolOpen, Detail: fmt.Sprintf("%v", err)}, drainErr)
 		}
 		pool.pool <- session
 	}
@@ -168,9 +169,9 @@ func NewSessionPool(ctx *pkcs11.Ctx, slotID uint, pin string, size int) (*Sessio
 		if err != nil {
 			// CKR_USER_ALREADY_LOGGED_IN is expected when the manager
 			// or another pool already logged in on this token
-			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
-				pool.drainAndClose()
-				return nil, &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("%v", err)}
+			if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+				drainErr := pool.drainAndClose()
+				return nil, errors.Join(&errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("%v", err)}, drainErr)
 			}
 		}
 	}
@@ -210,8 +211,7 @@ func (p *SessionPool) acquire() (pkcs11.SessionHandle, error) {
 	// it back to the transition that is draining rather than to the caller: the
 	// ruling is that EVERY checkout on a failed pool reports the failure.
 	if err := p.state(); err != nil {
-		p.release(session)
-		return 0, err
+		return 0, errors.Join(err, p.release(session))
 	}
 	return session, nil
 }
@@ -221,10 +221,10 @@ func (p *SessionPool) acquire() (pkcs11.SessionHandle, error) {
 // ErrSessionPoolFailed.
 //
 // The session handle must not be stored or used outside the fn callback.
-func (p *SessionPool) WithSession(fn func(session pkcs11.SessionHandle) error) error {
-	session, err := p.acquire()
-	if err != nil {
-		return err
+func (p *SessionPool) WithSession(fn func(session pkcs11.SessionHandle) error) (err error) {
+	session, acquireErr := p.acquire()
+	if acquireErr != nil {
+		return acquireErr
 	}
 
 	// Deferred, not a plain statement after fn: fn is arbitrary caller code,
@@ -250,11 +250,21 @@ func (p *SessionPool) WithSession(fn func(session pkcs11.SessionHandle) error) e
 			// opened so the pool keeps its size. Login is per-token, not per
 			// session (see NewSessionPool), so the replacement is already
 			// authenticated and needs no PIN.
-			p.discardAndReplace(session)
+			//
+			// discardAndReplace's own error (the CloseSession that discarded
+			// this session, or a lost replacement) is not joined into r: r is
+			// the original panic value and must propagate unchanged, and this
+			// package has no logger to report a second failure to. A lost
+			// replacement is not silently swallowed, though -- it drives the
+			// pool into its failed state, which every subsequent checkout
+			// reports (see discardAndReplace and failLocked).
+			_ = p.discardAndReplace(session)
 			panic(r)
 		}
 
-		p.release(session)
+		if releaseErr := p.release(session); releaseErr != nil {
+			err = errors.Join(err, releaseErr)
+		}
 	}()
 
 	return fn(session)
@@ -267,27 +277,29 @@ func (p *SessionPool) WithSession(fn func(session pkcs11.SessionHandle) error) e
 // again, to be closed later against a possibly finalized *pkcs11.Ctx.
 //
 // The lock is held only across a non-blocking channel send, never across a
-// driver call.
-func (p *SessionPool) release(session pkcs11.SessionHandle) {
+// driver call. The returned error is the C_CloseSession failure when the
+// session is closed rather than recirculated, or nil when it is returned to
+// the pool.
+func (p *SessionPool) release(session pkcs11.SessionHandle) error {
 	p.lifecycle.Lock()
 	defer p.lifecycle.Unlock()
-	p.releaseLocked(session)
+	return p.releaseLocked(session)
 }
 
 // releaseLocked is release with lifecycle already held.
-func (p *SessionPool) releaseLocked(session pkcs11.SessionHandle) {
+func (p *SessionPool) releaseLocked(session pkcs11.SessionHandle) error {
 	if p.state() != nil {
-		_ = p.ctx.CloseSession(session)
-		return
+		return p.ctx.CloseSession(session)
 	}
 	select {
 	case p.pool <- session:
+		return nil
 	default:
 		// The caller removed this handle, so the buffer has room for it and
 		// this cannot be reached while the pool is open. Closing rather than
 		// blocking keeps that assumption from becoming a deadlock if the
 		// capacity accounting is ever wrong.
-		_ = p.ctx.CloseSession(session)
+		return p.ctx.CloseSession(session)
 	}
 }
 
@@ -310,8 +322,13 @@ func (p *SessionPool) releaseLocked(session pkcs11.SessionHandle) {
 // the check and the publication: it waits for this to finish and then drains
 // whatever was published, instead of returning while an OpenSession is in
 // flight and leaving its result in a pool nothing will drain.
-func (p *SessionPool) discardAndReplace(session pkcs11.SessionHandle) {
-	_ = p.ctx.CloseSession(session)
+//
+// The returned error joins every C_CloseSession/C_OpenSession failure this
+// call encountered -- the discarded session's close, and, if the pool failed
+// as a result, whatever drainAndClose could not close either. It is always
+// non-nil-safe to join: errors.Join drops nil entries.
+func (p *SessionPool) discardAndReplace(session pkcs11.SessionHandle) error {
+	closeErr := p.ctx.CloseSession(session)
 
 	p.lifecycle.Lock()
 	defer p.lifecycle.Unlock()
@@ -319,13 +336,12 @@ func (p *SessionPool) discardAndReplace(session pkcs11.SessionHandle) {
 	// A pool that has already stopped serving wants no replacement: Close will
 	// drain nothing extra, and a failed pool is terminal.
 	if p.state() != nil {
-		return
+		return closeErr
 	}
 
 	replacement, err := p.ctx.OpenSession(p.slotID, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
 	if err != nil {
-		p.failLocked()
-		return
+		return errors.Join(closeErr, err, p.failLocked())
 	}
 
 	if testHookReplacementOpened != nil {
@@ -334,13 +350,14 @@ func (p *SessionPool) discardAndReplace(session pkcs11.SessionHandle) {
 
 	select {
 	case p.pool <- replacement:
+		return closeErr
 	default:
 		// Unreachable while the pool is open and holding lifecycle -- this
 		// goroutine removed a handle, so the buffer has room. If the accounting
 		// is ever wrong, the pool has lost a session just as surely as if the
 		// open had failed, so it fails rather than dropping one quietly.
-		_ = p.ctx.CloseSession(replacement)
-		p.failLocked()
+		replCloseErr := p.ctx.CloseSession(replacement)
+		return errors.Join(closeErr, replCloseErr, p.failLocked())
 	}
 }
 
@@ -357,16 +374,17 @@ var testHookReplacementOpened func()
 // failLocked puts the pool into its terminal failed state: every checkout from
 // here on returns ErrSessionPoolFailed, waiters already blocked are released,
 // and the sessions still in the channel are closed rather than left open in a
-// pool that will never serve them.
+// pool that will never serve them. It returns the joined C_CloseSession
+// errors from that drain, or nil if the pool had already failed.
 //
 // The caller must hold lifecycle. The flag is set before done is closed so a
 // released waiter reads the reason.
-func (p *SessionPool) failLocked() {
+func (p *SessionPool) failLocked() error {
 	if !p.failed.CompareAndSwap(false, true) {
-		return
+		return nil
 	}
 	p.signalDoneLocked()
-	p.drainAndClose()
+	return p.drainAndClose()
 }
 
 // signalDoneLocked closes done exactly once. Close and failLocked can both
@@ -405,7 +423,7 @@ func (p *SessionPool) searchLock(session pkcs11.SessionHandle) *sync.Mutex {
 //
 // find must not call FindObjectsInit or FindObjectsFinal itself; WithSearch
 // owns both ends of the search it opens.
-func (p *SessionPool) WithSearch(session pkcs11.SessionHandle, template []*pkcs11.Attribute, find func() error) error {
+func (p *SessionPool) WithSearch(session pkcs11.SessionHandle, template []*pkcs11.Attribute, find func() error) (err error) {
 	lock := p.searchLock(session)
 	lock.Lock()
 	defer lock.Unlock()
@@ -414,15 +432,12 @@ func (p *SessionPool) WithSearch(session pkcs11.SessionHandle, template []*pkcs1
 		return err
 	}
 	defer func() {
-		// The search is being torn down regardless of find's outcome, and a
-		// Final that fails here has no direct recourse -- the caller already
-		// has find's error, if any, to report. Discarding it here does leave
-		// the next searcher on this handle to discover a still-open search
-		// the hard way, via its own Init, but that failure carries the same
-		// information a checked return here would have, and this keeps the
-		// one Final call this method makes on find's behalf from masking
-		// find's own error with an unrelated one.
-		_ = p.ctx.FindObjectsFinal(session)
+		// The search is being torn down regardless of find's outcome. A Final
+		// that fails here is joined onto find's error rather than replacing
+		// it, so neither is masked -- the caller sees both via errors.Is.
+		if finalErr := p.ctx.FindObjectsFinal(session); finalErr != nil {
+			err = errors.Join(err, finalErr)
+		}
 	}()
 
 	return find()
@@ -465,10 +480,10 @@ func (p *SessionPool) FindObjectHandle(session pkcs11.SessionHandle, template []
 //   - soPin: Security Officer PIN (management key)
 //   - userPin: user PIN to restore after the SO operation
 //   - fn: operation to execute under SO authentication
-func (p *SessionPool) WithSOSession(soPin, userPin string, fn func(session pkcs11.SessionHandle) error) error {
-	session, err := p.acquire()
-	if err != nil {
-		return err
+func (p *SessionPool) WithSOSession(soPin, userPin string, fn func(session pkcs11.SessionHandle) error) (err error) {
+	session, acquireErr := p.acquire()
+	if acquireErr != nil {
+		return acquireErr
 	}
 
 	// discard tracks whether this session's PKCS#11 login state could not be
@@ -482,26 +497,30 @@ func (p *SessionPool) WithSOSession(soPin, userPin string, fn func(session pkcs1
 	discard := false
 	defer func() {
 		if discard {
-			p.discardAndReplace(session)
+			if discardErr := p.discardAndReplace(session); discardErr != nil {
+				err = errors.Join(err, discardErr)
+			}
 			return
 		}
-		p.release(session)
+		if releaseErr := p.release(session); releaseErr != nil {
+			err = errors.Join(err, releaseErr)
+		}
 	}()
 
 	// Logout current user (CKU_USER)
-	if err := p.ctx.Logout(session); err != nil && err != pkcs11.Error(pkcs11.CKR_USER_NOT_LOGGED_IN) {
+	if err := p.ctx.Logout(session); err != nil && !isCKR(err, pkcs11.CKR_USER_NOT_LOGGED_IN) {
 		discard = true
 		return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("logout before SO login: %v", err)}
 	}
 
 	// Login as Security Officer
 	if err := p.ctx.Login(session, pkcs11.CKU_SO, soPin); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			// Restore user login before returning. If the restore itself
 			// fails, the token's login state is unknown, so the session is
 			// discarded on the way out.
 			detail := fmt.Sprintf("SO login: %v", err)
-			if restoreErr := p.ctx.Login(session, pkcs11.CKU_USER, userPin); restoreErr != nil && restoreErr != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+			if restoreErr := p.ctx.Login(session, pkcs11.CKU_USER, userPin); restoreErr != nil && !isCKR(restoreErr, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 				discard = true
 				detail = fmt.Sprintf("%s (user login restore also failed: %v)", detail, restoreErr)
 			}
@@ -513,13 +532,13 @@ func (p *SessionPool) WithSOSession(soPin, userPin string, fn func(session pkcs1
 	fnErr := fn(session)
 
 	// Restore user login: logout SO, then login as user
-	if err := p.ctx.Logout(session); err != nil && err != pkcs11.Error(pkcs11.CKR_USER_NOT_LOGGED_IN) {
+	if err := p.ctx.Logout(session); err != nil && !isCKR(err, pkcs11.CKR_USER_NOT_LOGGED_IN) {
 		discard = true
 		return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("logout after SO operation: %v (original: %v)", err, fnErr)}
 	}
 	if userPin != "" {
 		if err := p.ctx.Login(session, pkcs11.CKU_USER, userPin); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+			if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 				discard = true
 				return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("user login restore: %v (original: %v)", err, fnErr)}
 			}
@@ -541,10 +560,12 @@ func (p *SessionPool) SlotID() uint {
 
 // Close marks the pool as closed and drains all sessions, closing each one.
 // After Close returns, WithSession calls will return ErrSessionPoolClosed.
-// Close is idempotent.
-func (p *SessionPool) Close() {
+// Close is idempotent; the second and later calls return nil without
+// re-closing anything. The returned error joins every C_CloseSession failure
+// encountered while draining.
+func (p *SessionPool) Close() error {
 	if !p.closed.CompareAndSwap(false, true) {
-		return // already closed
+		return nil // already closed
 	}
 
 	// Taking lifecycle is what makes Close a barrier rather than a race: a
@@ -558,21 +579,23 @@ func (p *SessionPool) Close() {
 	// cannot be left holding a receive against a channel that will never be
 	// written to again.
 	p.signalDoneLocked()
-	p.drainAndClose()
+	return p.drainAndClose()
 }
 
-// drainAndClose closes all sessions currently in the pool channel.
+// drainAndClose closes all sessions currently in the pool channel, joining
+// every C_CloseSession failure it encounters into a single returned error.
 //
 // Callers hold lifecycle, except NewSessionPool's cleanup of a half-built pool,
 // which has no other goroutine to race with because the pool has not been
 // returned to anyone yet.
-func (p *SessionPool) drainAndClose() {
+func (p *SessionPool) drainAndClose() error {
+	var err error
 	for {
 		select {
 		case session := <-p.pool:
-			_ = p.ctx.CloseSession(session)
+			err = errors.Join(err, p.ctx.CloseSession(session))
 		default:
-			return
+			return err
 		}
 	}
 }

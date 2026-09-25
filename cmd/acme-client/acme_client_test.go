@@ -350,118 +350,42 @@ func TestVersionVariables(t *testing.T) {
 }
 
 // =============================================================================
-// deviceEnrollCmd / deviceAttestCmd
+// deviceEnrollCmd / deviceAttestCmd — error paths. Success-path coverage
+// (a real TPM 2.0 simulator enrollment/attestation) lives in
+// device_simulator_test.go, gated by the tpm_simulator build tag.
 // =============================================================================
 
-func TestDeviceEnrollCmd_MissingAccount(t *testing.T) {
+func TestDeviceEnrollCmd_UnknownSpec(t *testing.T) {
+	viper.Reset()
+	setDefaults()
+	viper.Set("logging.level", "info")
+
 	cmd := deviceEnrollCmd
+	cmd.SetContext(context.Background())
 	buf := &bytes.Buffer{}
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
 
-	err := deviceEnrollCmd.RunE(cmd, nil)
+	err := deviceEnrollCmd.RunE(cmd, []string{"nonexistent"})
 	if err == nil {
-		t.Fatal("expected error for missing --account")
-	}
-	if !strings.Contains(err.Error(), "--account") {
-		t.Errorf("expected '--account' in error: %q", err.Error())
+		t.Fatal("expected error for unknown device spec")
 	}
 }
 
-func TestDeviceEnrollCmd_MissingDeviceID(t *testing.T) {
-	// Set account but not device-id.
-	cmd := deviceEnrollCmd
-	if err := cmd.Flags().Set("account", "trusted-ca"); err != nil {
-		t.Fatal(err)
-	}
-	// Reset device-id to empty.
-	if err := cmd.Flags().Set("device-id", ""); err != nil {
-		t.Fatal(err)
-	}
+func TestDeviceAttestCmd_UnknownSpec(t *testing.T) {
+	viper.Reset()
+	setDefaults()
+	viper.Set("logging.level", "info")
 
-	buf := &bytes.Buffer{}
-	cmd.SetOut(buf)
-
-	err := deviceEnrollCmd.RunE(cmd, nil)
-	if err == nil {
-		t.Fatal("expected error for missing --device-id")
-	}
-	if !strings.Contains(err.Error(), "--device-id") {
-		t.Errorf("expected '--device-id' in error: %q", err.Error())
-	}
-}
-
-func TestDeviceEnrollCmd_Success(t *testing.T) {
-	cmd := deviceEnrollCmd
-	if err := cmd.Flags().Set("account", "trusted-ca"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Flags().Set("device-id", "node-01"); err != nil {
-		t.Fatal(err)
-	}
-
-	buf := &bytes.Buffer{}
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-
-	if err := deviceEnrollCmd.RunE(cmd, nil); err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-}
-
-func TestDeviceAttestCmd_MissingAccount(t *testing.T) {
 	cmd := deviceAttestCmd
-	// Reset flags to ensure account is empty.
-	if err := cmd.Flags().Set("account", ""); err != nil {
-		t.Fatal(err)
-	}
-
+	cmd.SetContext(context.Background())
 	buf := &bytes.Buffer{}
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
 
-	err := deviceAttestCmd.RunE(cmd, nil)
+	err := deviceAttestCmd.RunE(cmd, []string{"nonexistent"})
 	if err == nil {
-		t.Fatal("expected error for missing --account")
-	}
-	if !strings.Contains(err.Error(), "--account") {
-		t.Errorf("expected '--account' in error: %q", err.Error())
-	}
-}
-
-func TestDeviceAttestCmd_MissingDeviceID(t *testing.T) {
-	cmd := deviceAttestCmd
-	if err := cmd.Flags().Set("account", "trusted-ca"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Flags().Set("device-id", ""); err != nil {
-		t.Fatal(err)
-	}
-
-	err := deviceAttestCmd.RunE(cmd, nil)
-	if err == nil {
-		t.Fatal("expected error for missing --device-id")
-	}
-	if !strings.Contains(err.Error(), "--device-id") {
-		t.Errorf("expected '--device-id' in error: %q", err.Error())
-	}
-}
-
-func TestDeviceAttestCmd_Success(t *testing.T) {
-	cmd := deviceAttestCmd
-	if err := cmd.Flags().Set("account", "trusted-ca"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Flags().Set("device-id", "node-01"); err != nil {
-		t.Fatal(err)
-	}
-
-	buf := &bytes.Buffer{}
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-
-	if err := deviceAttestCmd.RunE(cmd, nil); err != nil {
-		t.Fatalf("expected nil error, got %v", err)
+		t.Fatal("expected error for unknown device spec")
 	}
 }
 
@@ -931,7 +855,7 @@ func TestCertCmd_HasSubcommands(t *testing.T) {
 func TestDeviceCmd_HasSubcommands(t *testing.T) {
 	subcmds := map[string]bool{}
 	for _, sub := range deviceCmd.Commands() {
-		subcmds[sub.Use] = true
+		subcmds[sub.Name()] = true
 	}
 	for _, expected := range []string{"enroll", "attest"} {
 		if !subcmds[expected] {

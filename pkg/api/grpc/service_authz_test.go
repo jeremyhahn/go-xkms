@@ -109,6 +109,20 @@ func (m *mockAuditLogger) LastEvent() *audit.Event {
 	return m.events[len(m.events)-1]
 }
 
+// failingAuditLoggerGRPC always fails to persist, so authorize's audit
+// write-failure handling can be exercised without a real backend.
+type failingAuditLoggerGRPC struct {
+	err error
+}
+
+func (f *failingAuditLoggerGRPC) Log(_ context.Context, _ *audit.Event) error {
+	return f.err
+}
+
+func (f *failingAuditLoggerGRPC) Close() error {
+	return nil
+}
+
 // setupAuthzServiceTest initializes the xkms and returns a service with
 // the given authorizer and audit logger.
 func setupAuthzServiceTest(t *testing.T, authorizer *auth.Authorizer, auditLogger audit.Logger) *Service {
@@ -147,6 +161,36 @@ func setupAuthzServiceTest(t *testing.T, authorizer *auth.Authorizer, auditLogge
 }
 
 // --- authorize helper tests ---
+
+// TestAuthz_AuthorizeAuditWriteFailureFailsRequest verifies the issue #688
+// policy: "authorize" is a SeveritySecurity action, so a failed audit write
+// fails the request (codes.Internal) even though the RBAC decision itself
+// was allow.
+func TestAuthz_AuthorizeAuditWriteFailureFailsRequest(t *testing.T) {
+	defer xkms.Reset()
+
+	authorizer, _ := allowAuthorizer()
+	auditErr := errors.New("audit backend unavailable")
+	svc := setupAuthzServiceTest(t, authorizer, &failingAuditLoggerGRPC{err: auditErr})
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "user-1",
+		Roles:   []string{"admin"},
+	})
+
+	err := svc.authorize(ctx, "keys", "get", "test-key")
+	if err == nil {
+		t.Fatal("Expected error when audit write fails, got nil")
+	}
+
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("Expected gRPC status error, got: %v", err)
+	}
+	if st.Code() != codes.Internal {
+		t.Errorf("Expected Internal, got %s", st.Code())
+	}
+}
 
 func TestAuthz_AuthorizeAllowed(t *testing.T) {
 	defer xkms.Reset()

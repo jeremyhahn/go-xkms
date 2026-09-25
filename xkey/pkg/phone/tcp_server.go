@@ -280,7 +280,9 @@ func (s *TCPPairingServer) stop() error {
 	joined := true
 	if wasRunning {
 		if s.listener != nil {
-			_ = s.listener.Close()
+			if closeErr := s.listener.Close(); closeErr != nil {
+				s.log.Warn("failed to close TCP listener", "error", closeErr)
+			}
 		}
 
 		// Close active connections so handler goroutines blocked on a read
@@ -388,7 +390,9 @@ func (s *TCPPairingServer) acceptLoop() {
 			// Acquired a slot.
 		default:
 			s.log.Warn("max connections reached, rejecting", "remote", remoteAddr)
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				s.log.Warn("failed to close rejected connection", "remote", remoteAddr, "error", closeErr)
+			}
 			continue
 		}
 
@@ -403,7 +407,9 @@ func (s *TCPPairingServer) acceptLoop() {
 		// happen before any Wait.
 		if !s.registerConn(conn) {
 			<-s.connSem
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				s.log.Warn("failed to close connection refused during shutdown", "remote", remoteAddr, "error", closeErr)
+			}
 			continue
 		}
 
@@ -456,7 +462,9 @@ func (s *TCPPairingServer) closeAllConns() {
 	s.connMu.Unlock()
 
 	for _, conn := range conns {
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			s.log.Warn("failed to close tracked connection", "error", closeErr)
+		}
 	}
 }
 
@@ -466,14 +474,22 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
 	defer func() {
 		s.untrackConn(conn)
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			s.log.Warn("failed to close connection", "error", closeErr)
+		}
 	}()
 	defer func() { <-s.connSem }()
 
 	remoteAddr := conn.RemoteAddr().String()
 
-	// Set a deadline for the entire handshake phase.
-	_ = conn.SetDeadline(time.Now().Add(s.cfg.HandshakeTimeout))
+	// Set a deadline for the entire handshake phase. A failure here means
+	// the connection cannot be bounded, so reads below could block forever
+	// instead of honoring HandshakeTimeout; treat it as fatal rather than
+	// silently handshaking without a deadline.
+	if err := conn.SetDeadline(time.Now().Add(s.cfg.HandshakeTimeout)); err != nil {
+		s.log.Error("failed to set handshake deadline", "remote", remoteAddr, "error", err)
+		return
+	}
 
 	// Create a Noise session as responder for this connection.
 	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
@@ -549,8 +565,12 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 		return
 	}
 
-	// Clear the handshake deadline before entering the request loop.
-	_ = conn.SetDeadline(time.Time{})
+	// Clear the handshake deadline before entering the request loop. Not
+	// fatal if it fails: requestLoop sets its own idle-timeout deadline
+	// before every read, which unconditionally supersedes this one.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		s.log.Warn("failed to clear handshake deadline", "remote", remoteAddr, "error", err)
+	}
 
 	s.log.Info("noise handshake completed", "remote", remoteAddr)
 
@@ -567,8 +587,13 @@ func (s *TCPPairingServer) requestLoop(conn net.Conn, session *pairing.NoiseSess
 			return
 		}
 
-		// Set idle timeout before each read.
-		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
+		// Set idle timeout before each read. A failure here means the read
+		// below could block forever instead of honoring IdleTimeout; treat
+		// it as fatal rather than silently reading without a deadline.
+		if err := conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout)); err != nil {
+			s.log.Error("failed to set idle read deadline", "remote", remoteAddr, "error", err)
+			return
+		}
 
 		// Read encrypted request.
 		ciphertext, err := tcpReceive(conn)
@@ -612,8 +637,14 @@ func (s *TCPPairingServer) requestLoop(conn net.Conn, session *pairing.NoiseSess
 			response = []byte(`{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"}}`)
 		}
 
-		// Set write deadline for the response.
-		_ = conn.SetWriteDeadline(time.Now().Add(s.cfg.RequestTimeout))
+		// Set write deadline for the response. A failure here means the
+		// write below could block forever instead of honoring
+		// RequestTimeout; treat it as fatal rather than silently writing
+		// without a deadline.
+		if err := conn.SetWriteDeadline(time.Now().Add(s.cfg.RequestTimeout)); err != nil {
+			s.log.Error("failed to set write deadline", "remote", remoteAddr, "error", err)
+			return
+		}
 
 		// Encrypt and send the response.
 		encrypted, err := session.Encrypt(response)

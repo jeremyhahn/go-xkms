@@ -107,6 +107,11 @@ type CAConfig struct {
 	// to fetch and store the complete issuer chain.
 	// Default: false
 	AutoImportIssuingCA bool `yaml:"auto-import-issuing-ca" json:"auto_import_issuing_ca" mapstructure:"auto-import-issuing-ca"`
+
+	// TCGConfig holds the CA-wide TCG TPM 2.0 Keys for Device Identity and
+	// Attestation settings. See MultiIdentityCAConfig.TCGConfig; this is the
+	// same setting on the flat configuration path. Optional.
+	TCGConfig *TCGConfig `yaml:"tcg-config,omitempty" json:"tcg_config,omitempty" mapstructure:"tcg-config"`
 }
 
 // Validate checks that the CAConfig has valid required fields.

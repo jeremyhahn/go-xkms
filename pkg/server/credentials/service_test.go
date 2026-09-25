@@ -353,8 +353,22 @@ func TestSubmitCredential_Manual_UnblocksWaiter(t *testing.T) {
 		valCh <- val
 	}()
 
-	// Give the goroutine time to register the waiter.
-	time.Sleep(20 * time.Millisecond)
+	// Wait for the goroutine to register its waiter instead of sleeping a
+	// fixed duration: submitting before the waiter is registered would drop
+	// the notification and block RetrieveCredential until ctx is done.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		svc.waitersMu.Lock()
+		n := len(svc.waiters["delayed-cred"])
+		svc.waitersMu.Unlock()
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("waiter for \"delayed-cred\" was never registered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	if err := svc.SubmitCredential(ctx, "delayed-cred", []byte("delayed-value")); err != nil {
 		t.Fatalf("SubmitCredential: %v", err)

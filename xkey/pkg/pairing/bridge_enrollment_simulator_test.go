@@ -55,9 +55,15 @@ func enrollmentTPM(t *testing.T) tpm2.TrustedPlatformModule {
 
 	sim, err := tpm2.OpenSimulator()
 	require.NoError(t, err, "TPM simulator must be available; build with -tags tpm_simulator")
+	// Release the process-global simulator on every exit path. A cleanup
+	// registered only after the fixture finished would be skipped when an
+	// earlier require fails, and the next simulator test would block on the
+	// simulator lock until the test binary times out.
+	t.Cleanup(func() { assert.NoError(t, sim.Close(), "closing the TPM simulator") })
 
 	storageFactory, err := store.NewStorageFactory(logger, t.TempDir())
 	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, storageFactory.Close(), "closing the storage factory") })
 
 	// The simulator has no manufacturer EK certificate in NV RAM, so the
 	// certificate store stands in for the manufacturer. A CSR without an EK
@@ -81,18 +87,15 @@ func enrollmentTPM(t *testing.T) tpm2.TrustedPlatformModule {
 		Transport: sim.Transport(),
 		FQDN:      "laptop.example.com",
 	})
+	if tpm != nil {
+		t.Cleanup(func() { assert.NoError(t, tpm.Close(), "closing the TPM") })
+	}
 	if err == tpm2.ErrNotInitialized {
 		require.NotNil(t, tpm)
 		require.NoError(t, tpm.Provision(nil), "provisioning the simulator must succeed")
 	} else {
 		require.NoError(t, err)
 	}
-
-	t.Cleanup(func() {
-		_ = tpm.Close()
-		_ = sim.Close()
-		_ = storageFactory.Close()
-	})
 
 	// Publish an EK certificate over the TPM's real EK public key, then mint
 	// the IDevID that the CSR binds to the IAK.

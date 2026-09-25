@@ -25,6 +25,17 @@ var (
 	ErrCSRGenerationFailed = errors.New("ca: csr generation failed")
 )
 
+// SubjectAltName errors indicate issues decoding a GeneralNames extension by
+// hand. crypto/x509 parses dNSName, iPAddress, rfc822Name and
+// uniformResourceIdentifier GeneralNames but silently discards otherName, so
+// recovering an RFC 4043 permanentIdentifier or RFC 4108 hardwareModuleName
+// from a request or certificate requires decoding the extension directly.
+var (
+	// ErrSANDecoding indicates a subjectAltName extension's GeneralNames
+	// SEQUENCE, or one of its otherName entries, could not be ASN.1 decoded.
+	ErrSANDecoding = errors.New("ca: subjectAltName decoding failed")
+)
+
 // Certificate errors indicate issues with certificate operations.
 var (
 	// ErrInvalidCertificate indicates the certificate is malformed or invalid.
@@ -43,6 +54,10 @@ var (
 	// ErrCertificateAlreadyExists indicates a certificate with the same
 	// identifier already exists.
 	ErrCertificateAlreadyExists = errors.New("ca: certificate already exists")
+
+	// ErrCertificateEncoding indicates a certificate could not be PEM
+	// encoded into a bundle.
+	ErrCertificateEncoding = errors.New("ca: certificate pem encoding failed")
 )
 
 // Signing errors indicate issues with cryptographic signing operations.
@@ -106,6 +121,17 @@ var (
 	// password on the KeyConfig (or the identity-level Keystores.Software.Password)
 	// or set RequireKeyPassword to false to permit plaintext key storage.
 	ErrKeyPasswordRequired = errors.New("ca: key password required (RequireKeyPassword=true)")
+
+	// ErrKeyRetrievalFailed indicates the configured backend returned an
+	// error other than "key not found" (errors.Is(err, backend.ErrKeyNotFound))
+	// while getOrGenerateCAKey checked whether a CA key already exists.
+	// getOrGenerateCAKey fails closed on this rather than falling through to
+	// generation: a TPM transient fault, a PKCS#11 login failure, cloud KMS
+	// throttling, or any other I/O error must never be treated as "no key
+	// yet", because doing so would silently generate and persist a
+	// replacement for a hardware-backed signing key the backend merely
+	// failed to reach.
+	ErrKeyRetrievalFailed = errors.New("ca: key retrieval failed")
 )
 
 // Storage errors indicate issues with key and certificate storage.
@@ -170,6 +196,11 @@ var (
 
 	// ErrKeyCertMismatch indicates the private key does not match the certificate.
 	ErrKeyCertMismatch = errors.New("ca: private key does not match certificate")
+
+	// ErrInvalidKeyAttributes indicates a caller passed nil or incomplete
+	// KeyAttributes to an operation that requires a fully resolved key
+	// identity, such as recordIssuedKey.
+	ErrInvalidKeyAttributes = errors.New("ca: invalid key attributes")
 
 	// ErrInvalidPEM indicates the PEM data is malformed or invalid.
 	ErrInvalidPEM = errors.New("ca: invalid pem data")
@@ -314,6 +345,19 @@ var (
 	// TPM holds the key; a relying party reading it would conclude only that
 	// the CA had verified less than it did. Issuance refuses instead.
 	ErrTCGMandatoryExtension = errors.New("ca: mandatory tcg certificate extension could not be built")
+
+	// ErrTCGEKCertUntrusted indicates the endorsement key certificate could
+	// not be chained to a configured TPM-manufacturer trust anchor, or does
+	// not carry the tcg-kp-EKCertificate extended key usage (or the
+	// anyExtendedKeyUsage purpose that subsumes it).
+	//
+	// TPM 2.0 Keys for Device Identity and Attestation v1.10r9 §6.1.2 step 5b
+	// and §6.2.2 step 4b make this a SHALL before the CA issues an IAK or
+	// IDevID: TPM2_ActivateCredential proves the requester holds the EK
+	// private key, not that the EK belongs to a genuine TPM. A CA with no EK
+	// trust anchors configured returns this error for every request rather
+	// than skipping the check.
+	ErrTCGEKCertUntrusted = errors.New("ca: endorsement key certificate is not chained to a trusted tpm manufacturer root")
 )
 
 // FIDO2 attestation errors indicate that a certificate signing request cannot
@@ -350,4 +394,18 @@ var (
 	// certifying any other would put a claim in the certificate that nobody
 	// vouched for. The accompanying detail names the refused AAGUID.
 	ErrFIDO2AttestationAAGUIDNotPermitted = errors.New("ca: id-fido-gen-ce-aaguid extension names an authenticator model this profile does not certify")
+
+	// ErrDICEEvidenceMissing indicates the request carries no
+	// tcg-dice-TcbInfo extension, so an IDevID issued from it would assert a
+	// device identity while saying nothing about the firmware that identity
+	// was derived from.
+	ErrDICEEvidenceMissing = errors.New("ca: request carries no tcg-dice-TcbInfo extension")
+
+	// ErrDICEEvidenceInvalid indicates a DICE evidence extension on the
+	// request could not be decoded.
+	//
+	// Evidence the issuer cannot read is never signed. A certificate carrying
+	// a DiceTcbInfo the CA could not parse invites a relying party to trust
+	// claims nobody checked.
+	ErrDICEEvidenceInvalid = errors.New("ca: dice evidence extension could not be decoded")
 )

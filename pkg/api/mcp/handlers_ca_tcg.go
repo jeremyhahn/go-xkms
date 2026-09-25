@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
@@ -25,15 +24,19 @@ import (
 func (s *Server) handleIssueEKCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.IssueEKCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.IssueEKCertificate(ctx, &params)
+	resp, err := svc.IssueEKCertificate(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }
 
 // handleIssueAKCertificate handles the xkms.ca.tcg.issue-ak method.
@@ -41,15 +44,19 @@ func (s *Server) handleIssueEKCertificate(ctx context.Context, req *JSONRPCReque
 func (s *Server) handleIssueAKCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.IssueAKCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.IssueAKCertificate(ctx, &params)
+	resp, err := svc.IssueAKCertificate(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }
 
 // handleSignTCGCSR handles the xkms.ca.tcg.sign-csr method.
@@ -57,15 +64,19 @@ func (s *Server) handleIssueAKCertificate(ctx context.Context, req *JSONRPCReque
 func (s *Server) handleSignTCGCSR(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.SignTCGCSRRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.SignTCGCSR(ctx, &params)
+	resp, err := svc.SignTCGCSR(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }
 
 // handleEnrollDevice handles the xkms.ca.tcg.enroll method.
@@ -73,13 +84,17 @@ func (s *Server) handleSignTCGCSR(ctx context.Context, req *JSONRPCRequest) (int
 func (s *Server) handleEnrollDevice(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.EnrollDeviceRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.EnrollDevice(ctx, &params)
+	resp, err := svc.EnrollDevice(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }

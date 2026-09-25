@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -76,11 +75,16 @@ func (g *gatedPhone) Connect(ctx context.Context) error {
 	return g.fakePhone.Connect(ctx)
 }
 
-func newGatedTransport(t *testing.T) (*Transport, *gatedPhone) {
+// newGatedTransport returns nil, nil, false when the handshake key was
+// refused for the expected GODEBUG=fips140=only reason (see
+// requireStaticKey); the caller must return immediately in that case.
+func newGatedTransport(t *testing.T) (*Transport, *gatedPhone, bool) {
 	t.Helper()
 
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	key, ok := requireStaticKey(t)
+	if !ok {
+		return nil, nil, false
+	}
 	t.Cleanup(key.Destroy)
 
 	g := &gatedPhone{
@@ -93,7 +97,7 @@ func newGatedTransport(t *testing.T) (*Transport, *gatedPhone) {
 	require.NoError(t, err)
 	tr.phoneUSB = g
 	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: key.Private})
-	return tr, g
+	return tr, g, true
 }
 
 // TestCloseWaitsForInFlightConnect is the race Codex named: Close landing
@@ -110,7 +114,10 @@ func newGatedTransport(t *testing.T) (*Transport, *gatedPhone) {
 // this test failing, and the gate is released from a cleanup so a failure
 // midway cannot wedge the goroutines.
 func TestCloseWaitsForInFlightConnect(t *testing.T) {
-	tr, g := newGatedTransport(t)
+	tr, g, ok := newGatedTransport(t)
+	if !ok {
+		return
+	}
 
 	var gateOnce sync.Once
 	releaseGate := func() { gateOnce.Do(func() { close(g.gate) }) }
@@ -165,7 +172,10 @@ func TestCloseWaitsForInFlightConnect(t *testing.T) {
 // Connects failed — it could not fail for the right reason, and it went on
 // passing after round 7 changed the contract underneath it.
 func TestConcurrentConnectsSerialize(t *testing.T) {
-	tr, g := newGatedTransport(t)
+	tr, g, ok := newGatedTransport(t)
+	if !ok {
+		return
+	}
 	close(g.gate) // no blocking; we only care that they do not overlap.
 
 	var wg sync.WaitGroup
@@ -226,8 +236,10 @@ func (f *failingSendPhone) SendAndReceive(ctx context.Context, message []byte) (
 // and overwrote localKey — leaking the previous key's locked pages on every
 // transient failure.
 func TestConnectRejectsResidualStateAfterFailedRequest(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	key, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 	t.Cleanup(key.Destroy)
 
 	fake := &failingSendPhone{fakePhone: &fakePhone{}}
@@ -287,9 +299,9 @@ func (p *terminalPhone) Connect(context.Context) error {
 // that meant every reconnect after a Close handshaked over a dead bus,
 // permanently. The advice the error gives could not be followed.
 func TestCloseDiscardsTheBusTransport(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
-	if err != nil {
-		t.Fatalf("GenerateStaticKey: %v", err)
+	key, ok := requireStaticKey(t)
+	if !ok {
+		return
 	}
 	defer key.Destroy()
 
@@ -374,7 +386,10 @@ func (p *stalledPhone) Close() error {
 // the lock exactly as before.
 func TestCloseIsNotHostageToAStalledRequest(t *testing.T) {
 	bus := newStalledPhone()
-	tr := newPairedTransport(t, bus.fakePhone)
+	tr, ok := newPairedTransport(t, bus.fakePhone)
+	if !ok {
+		return
+	}
 
 	// newPairedTransport handshakes through the embedded fake; swap in the
 	// stalling wrapper for the request phase.

@@ -16,6 +16,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -139,6 +140,64 @@ func TestAgent_ServeRoundTrip(t *testing.T) {
 	select {
 	case err := <-srvErr:
 		require.NoError(t, err, "graceful shutdown should return nil")
+	case <-time.After(3 * time.Second):
+		t.Fatal("Serve did not return after context cancellation")
+	}
+}
+
+// TestAgent_ServeReturnsHandlerProtocolError verifies that a genuine
+// per-connection protocol error is joined into Serve's returned error rather
+// than being silently discarded (#701): the tracker records it, and Serve
+// joins tracker.err() with its own listener-level result before returning.
+func TestAgent_ServeReturnsHandlerProtocolError(t *testing.T) {
+	sock := SocketPath(privateDir(t))
+	ctx, cancel := context.WithCancel(context.Background())
+
+	srvErr := make(chan error, 1)
+	go func() { srvErr <- Serve(ctx, sock, New(newEd25519Signer(t))) }()
+
+	var conn *net.UnixConn
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c, err := net.Dial("unix", sock)
+		if err == nil {
+			var ok bool
+			conn, ok = c.(*net.UnixConn)
+			require.True(t, ok, "unix socket connection expected")
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("agent socket never became available: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// A length-prefixed frame claiming 10 bytes, only 1 of which follows
+	// before the write half closes: the server's io.ReadFull of the body
+	// reports io.ErrUnexpectedEOF, a real error rather than an ordinary
+	// disconnect.
+	_, err := conn.Write([]byte{0, 0, 0, 10, 0xff})
+	require.NoError(t, err)
+
+	// Half-close the write side instead of fully closing: it still delivers
+	// the EOF that turns the truncated body into io.ErrUnexpectedEOF, but
+	// leaves the read side open so this goroutine can observe the *server*
+	// closing its end. serveListener's handler records its error
+	// (t.recordErr) before its own deferred Close runs, so an EOF read here
+	// is proof the error has already been recorded -- deterministic, with no
+	// head-start connection, no sleep, and no tracker accessor required.
+	require.NoError(t, conn.CloseWrite())
+	n, rerr := conn.Read(make([]byte, 1))
+	assert.Equal(t, 0, n)
+	assert.ErrorIs(t, rerr, io.EOF, "server must close its end only after recording the handler error")
+	require.NoError(t, conn.Close())
+
+	cancel()
+	select {
+	case err := <-srvErr:
+		require.Error(t, err, "a genuine protocol error on a served connection must not vanish")
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	case <-time.After(3 * time.Second):
 		t.Fatal("Serve did not return after context cancellation")
 	}

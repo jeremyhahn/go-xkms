@@ -16,7 +16,6 @@ package services
 import (
 	"context"
 	"crypto/ecdsa"
-	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -47,15 +46,14 @@ import (
 
 // Phone service errors.
 var (
-	ErrPhoneNotConnected         = errors.New("phone_service: no device connected")
-	ErrPhoneDeviceNotFound       = errors.New("phone_service: device not found")
-	ErrPhoneScanFailed           = errors.New("phone_service: scan failed")
-	ErrPhonePairFailed           = errors.New("phone_service: pairing failed")
-	ErrPhoneAttestFailed         = errors.New("phone_service: attestation failed")
-	ErrPhoneInvalidTimeout       = errors.New("phone_service: invalid timeout value")
-	ErrPhoneBLEUnavailable       = errors.New("phone_service: bluetooth unavailable - ensure bluetooth is enabled")
-	ErrPhoneAlreadyPaired        = errors.New("phone_service: device already paired")
-	ErrPhoneAttestNotImplemented = errors.New("phone_service: attestation requires BLE connection to device")
+	ErrPhoneNotConnected   = errors.New("phone_service: no device connected")
+	ErrPhoneDeviceNotFound = errors.New("phone_service: device not found")
+	ErrPhoneScanFailed     = errors.New("phone_service: scan failed")
+	ErrPhonePairFailed     = errors.New("phone_service: pairing failed")
+	ErrPhoneAttestFailed   = errors.New("phone_service: attestation failed")
+	ErrPhoneInvalidTimeout = errors.New("phone_service: invalid timeout value")
+	ErrPhoneBLEUnavailable = errors.New("phone_service: bluetooth unavailable - ensure bluetooth is enabled")
+	ErrPhoneAlreadyPaired  = errors.New("phone_service: device already paired")
 	// ErrPhoneShutdownIncomplete reports that a teardown finished without
 	// confirming every in-flight operation had released the connection, so
 	// the protected static key was retained rather than destroyed. The
@@ -524,7 +522,11 @@ func (s *PhoneService) Scan(timeoutSeconds int) ([]DiscoveredDevice, error) {
 		s.log.Error("failed to create BLE transport", "error", err)
 		return nil, ErrPhoneScanFailed
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() {
+		if closeErr := transport.Close(); closeErr != nil {
+			s.log.Warn("failed to close BLE transport", "error", closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -622,7 +624,11 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		s.log.Error("failed to create BLE transport for pairing", "error", err)
 		return nil, ErrPhonePairFailed
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() {
+		if closeErr := transport.Close(); closeErr != nil {
+			s.log.Warn("failed to close BLE transport", "error", closeErr)
+		}
+	}()
 
 	// Connect to the device.
 	connectCtx, connectCancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -634,7 +640,11 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		return nil, ErrPhonePairFailed
 	}
 	// Disconnect after pairing, whatever its outcome (reconnects on demand).
-	defer func() { _ = transport.Disconnect() }()
+	defer func() {
+		if disconnectErr := transport.Disconnect(); disconnectErr != nil {
+			s.log.Warn("failed to disconnect BLE transport", "error", disconnectErr)
+		}
+	}()
 
 	return s.pairOverTransport(connectCtx, transport, session, localKey, address)
 }
@@ -1129,9 +1139,9 @@ func (s *PhoneService) Connect(name string) error {
 
 	s.log.Info("connecting to device", "device", name, "address", device.Address)
 	if err := transport.Connect(connectCtx, device.Address); err != nil {
-		_ = transport.Close()
+		closeErr := transport.Close()
 		s.log.Error("BLE connection failed", "device", name, "address", device.Address, "error", err)
-		return ErrPhoneConnectFailed
+		return errors.Join(ErrPhoneConnectFailed, closeErr)
 	}
 
 	// Perform Noise XX handshake with identity exchange for prologue binding.
@@ -1146,10 +1156,9 @@ func (s *PhoneService) Connect(name string) error {
 		ExpectedDeviceFingerprint: expectedFingerprint,
 	}
 	if err := pairing.PerformHandshake(connectCtx, handshakeCfg); err != nil {
-		_ = transport.Disconnect()
-		_ = transport.Close()
+		cleanupErr := errors.Join(transport.Disconnect(), transport.Close())
 		s.log.Error("Noise handshake failed", "device", name, "error", err)
-		return ErrPhoneHandshakeFailed
+		return errors.Join(ErrPhoneHandshakeFailed, cleanupErr)
 	}
 
 	// The #129 liveness proof, BEFORE the session is published (#130).
@@ -1164,20 +1173,18 @@ func (s *PhoneService) Connect(name string) error {
 	// GUI-local copy. That this package could not reach the verifier at all is
 	// why the GUI went without the check while the CLI had it.
 	if err := s.proveDeviceLiveness(connectCtx, transport, session, device); err != nil {
-		_ = transport.Disconnect()
-		_ = transport.Close()
+		cleanupErr := errors.Join(transport.Disconnect(), transport.Close())
 		s.log.Error("device liveness attestation failed; refusing to publish the session",
 			"device", name, "error", err)
-		return errors.Join(ErrPhoneAttestationRequired, err)
+		return errors.Join(ErrPhoneAttestationRequired, err, cleanupErr)
 	}
 
 	// Store transport + session on PhoneService fields. A refusal is ours to
 	// clean up: published stays false, so the deferred cleanup releases the
 	// key this call generated.
 	if err := s.publishConnection(name, transport, session, localKey); err != nil {
-		_ = transport.Disconnect()
-		_ = transport.Close()
-		return err
+		cleanupErr := errors.Join(transport.Disconnect(), transport.Close())
+		return errors.Join(err, cleanupErr)
 	}
 	published = true
 
@@ -1419,31 +1426,71 @@ func (s *PhoneService) acquireActiveConnection() (*phone.BLETransport, *pairing.
 	return transport, session, release, true
 }
 
-// performAttestation runs the attestation flow using the active BLE connection.
-// It sends an attestation challenge over the existing encrypted Noise channel
-// and verifies the returned Android hardware certificate chain.
+// performAttestation runs the attestation flow using the active BLE
+// connection. It leases the transport and session -- the round trip is far
+// too long to hold connMu, but teardown must not destroy the session's
+// static key while it is in flight -- then delegates to attestOverTransport
+// for the actual exchange.
 func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*AttestationResult, error) {
-	// Lease the transport and session: attestation runs BLE round trips, far
-	// too long to hold connMu, but teardown must not destroy the session's
-	// static key while those round trips are in flight.
 	transport, session, release, ok := s.acquireActiveConnection()
 	if !ok {
 		return nil, ErrPhoneNotConnected
 	}
 	defer release()
 
-	// Generate 32-byte random nonce.
-	nonce := make([]byte, 32)
-	if _, err := cryptorand.Read(nonce); err != nil {
-		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": nonce generation failed"}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	return s.attestOverTransport(ctx, transport, session, device)
+}
+
+// attestOverTransport runs one challenge-response device attestation
+// (local.attestDevice, protocol version 2) over transport/session and builds
+// the GUI's display-rich AttestationResult.
+//
+// The accept/reject decision is xkeyAttestation.VerifyDeviceAttestation --
+// the SAME decision attestForPairing and proveDeviceLiveness judge a device
+// by -- so a device this method accepts is a device every surface would
+// accept (#95, #129). Everything below that call is display enrichment: the
+// parsed certificate chain and the Android key description are read again,
+// independently, purely to populate fields the frontend shows; nothing
+// derived from them feeds back into whether the device was trusted.
+//
+// transport takes the pairing.Transport interface rather than the active
+// connection's concrete BLE type -- the same seam pairOverTransport uses --
+// so this can be driven by an in-memory phone fake in tests.
+func (s *PhoneService) attestOverTransport(
+	ctx context.Context,
+	transport pairing.Transport,
+	session *pairing.NoiseSession,
+	device *phoneConfigDevice,
+) (*AttestationResult, error) {
+	if s.trustStore == nil {
+		// No trust store means nothing to judge the evidence against, so the
+		// evidence is not even requested. Absent authorization material must
+		// never be less restrictive than the policy it implements.
+		s.log.Error("attestation impossible: no trust store is configured", "device", device.Name)
+		return nil, ErrPhoneAttestFailed
+	}
+	trust, err := xkeyAttestation.LoadTrust(s.trustStore)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
 	}
 
-	// Send attestation request via encrypted BLE.
-	attestReq := pairing.NewRequest(pairing.MethodLocalAttestKey, &pairing.LocalAttestKeyParams{
-		KeyID: "device-attest",
-		Nonce: nonce,
-	})
-	reqPlaintext, err := pairing.EncodeRequest(attestReq)
+	// The challenge is bound to THIS session, exactly as attestForPairing and
+	// proveDeviceLiveness derive theirs, so the device's answer is useless to
+	// anyone relaying it onto a different connection.
+	channelBinding, err := session.AttestChannelBinding()
+	if err != nil {
+		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": channel binding unavailable"}
+	}
+	challenge, err := xkeyAttestation.NewChallenge(pairing.AttestPurposeReattest, channelBinding)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
+	}
+
+	req := pairing.NewRequest(pairing.MethodLocalAttestDevice, challenge.Params())
+	reqPlaintext, err := pairing.EncodeRequest(req)
 	if err != nil {
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": encode request failed"}
 	}
@@ -1452,10 +1499,7 @@ func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*Attestati
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": encrypt failed"}
 	}
 
-	opCtx, opCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer opCancel()
-
-	respCiphertext, err := transport.SendAndReceive(opCtx, reqCiphertext)
+	respCiphertext, err := transport.SendAndReceive(ctx, reqCiphertext)
 	if err != nil {
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": send/receive failed"}
 	}
@@ -1483,106 +1527,73 @@ func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*Attestati
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: fmt.Sprintf(": %s", resp.Error.Message)}
 	}
 
-	attestResult, err := pairing.DecodeResult[pairing.LocalAttestKeyResult](resp)
+	attestResult, err := pairing.DecodeResult[pairing.LocalAttestDeviceResult](resp)
 	if err != nil {
 		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": decode result failed"}
 	}
 
-	// Parse DER certificate chain.
-	chain, err := parseDERChain(attestResult.CertificateChain)
-	if err != nil {
-		return nil, &DetailError{Err: ErrPhoneAttestFailed, Detail: ": invalid cert chain"}
-	}
-
-	// Build trust pool from embedded roots + local trust store.
-	embeddedRoots := truststore.LoadEmbeddedRoots(truststore.PurposeAndroidHardware)
-
-	rootPool, err := s.buildAttestationTrustPool(embeddedRoots)
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
-	}
-
-	// Verify attestation chain.
-	verifyOpts := &xkms.AndroidVerifyOptions{
-		TrustedRoots:  rootPool,
-		ExpectedNonce: nonce,
-	}
-
-	desc, verifyErr := xkms.VerifyAndroidKeyAttestation(chain, verifyOpts)
+	// The security decision: identical to attestForPairing and
+	// proveDeviceLiveness. The verified record itself is not consulted
+	// below: the display fields are populated from an independent parse
+	// (see the comment above the function), so this is only the
+	// accept/reject outcome.
+	_, verifyErr := xkeyAttestation.VerifyDeviceAttestation(attestResult, challenge, trust)
 
 	now := time.Now()
 	result := &AttestationResult{
-		DeviceName:  device.Name,
-		Verified:    verifyErr == nil,
-		ChainLength: len(chain),
-		AttestTime:  now,
+		DeviceName: device.Name,
+		Verified:   verifyErr == nil,
+		AttestTime: now,
 	}
 	if verifyErr != nil {
 		result.ErrorMessage = verifyErr.Error()
 	}
 
-	// Build certificate info list.
-	result.Certificates = buildCertInfoList(chain, embeddedRoots)
+	// From here on, everything is DISPLAY enrichment: the certificate chain
+	// and the Android key description are read again, independently, purely
+	// to populate fields the frontend shows. Whether the device was trusted
+	// was already decided above.
+	chain, chainErr := parseDERChain(attestResult.CertificateChain)
+	if chainErr != nil {
+		return result, nil
+	}
+	result.ChainLength = len(chain)
 
-	// Find trust anchor.
-	matchedRoot := findMatchingTrustRoot(chain, embeddedRoots)
-	if matchedRoot != nil {
+	embeddedRoots := truststore.LoadEmbeddedRoots(truststore.PurposeAndroidHardware)
+	result.Certificates = buildCertInfoList(chain, embeddedRoots)
+	if matchedRoot := findMatchingTrustRoot(chain, embeddedRoots); matchedRoot != nil {
 		result.TrustAnchorSubject = formatTrustAnchorName(matchedRoot)
 		result.TrustAnchorFingerprint = certFP(matchedRoot)
 	}
 
-	// Populate extension data if verification succeeded.
-	if desc != nil {
-		result.AttestVersion = desc.AttestationVersion
-		result.SecurityLevel = desc.AttestationSecurityLevel.String()
-		result.KeymasterVersion = desc.KeymasterVersion
-		result.KeymasterSecurity = desc.KeymasterSecurityLevel.String()
+	desc, descErr := xkms.VerifyAndroidKeyAttestation(chain, xkeyAttestation.VerifyOptions(trust.Pool))
+	if descErr != nil || desc == nil {
+		return result, nil
+	}
 
-		// TEE enforced authorization.
-		tee := &desc.TeeEnforced
-		if tee.Algorithm > 0 {
-			result.KeyAlgorithm = keymasterAlgorithmName(tee.Algorithm)
-		}
-		result.KeySize = tee.KeySize
-		result.KeyPurposes = keymasterPurposeNameList(tee.Purpose)
-		if tee.Origin > 0 {
-			result.KeyOrigin = keymasterOriginName(tee.Origin)
-		}
+	result.AttestVersion = desc.AttestationVersion
+	result.SecurityLevel = desc.AttestationSecurityLevel.String()
+	result.KeymasterVersion = desc.KeymasterVersion
+	result.KeymasterSecurity = desc.KeymasterSecurityLevel.String()
 
-		// Root of Trust.
-		if tee.RootOfTrust != nil {
-			rot := tee.RootOfTrust
-			result.BootKeyHash = hex.EncodeToString(rot.VerifiedBootKey)
-			result.BootHash = hex.EncodeToString(rot.VerifiedBootHash)
-			result.BootState = verifiedBootStateName(rot.VerifiedBootState)
-			result.DeviceLocked = rot.DeviceLocked
-		}
+	tee := &desc.TeeEnforced
+	if tee.Algorithm > 0 {
+		result.KeyAlgorithm = keymasterAlgorithmName(tee.Algorithm)
+	}
+	result.KeySize = tee.KeySize
+	result.KeyPurposes = keymasterPurposeNameList(tee.Purpose)
+	if tee.Origin > 0 {
+		result.KeyOrigin = keymasterOriginName(tee.Origin)
+	}
+	if tee.RootOfTrust != nil {
+		rot := tee.RootOfTrust
+		result.BootKeyHash = hex.EncodeToString(rot.VerifiedBootKey)
+		result.BootHash = hex.EncodeToString(rot.VerifiedBootHash)
+		result.BootState = verifiedBootStateName(rot.VerifiedBootState)
+		result.DeviceLocked = rot.DeviceLocked
 	}
 
 	return result, nil
-}
-
-// buildAttestationTrustPool constructs an x509.CertPool for Android hardware
-// attestation verification, merging the local trust store with embedded roots.
-func (s *PhoneService) buildAttestationTrustPool(embeddedRoots []*x509.Certificate) (*x509.CertPool, error) {
-	if s.trustStore != nil {
-		verifier, err := xkeyAttestation.NewVerifier(s.trustStore, truststore.LoadEmbeddedRoots)
-		if err != nil {
-			return nil, &WrappedError{Msg: "verifier creation failed", Err: err}
-		}
-		pool, err := verifier.BuildTrustPool(truststore.PurposeAndroidHardware)
-		if err != nil {
-			return nil, &WrappedError{Msg: "trust pool build failed", Err: err}
-		}
-		return pool, nil
-	}
-
-	// Fallback: use only embedded roots.
-	pool := x509.NewCertPool()
-	for _, root := range embeddedRoots {
-		pool.AddCert(root)
-	}
-	return pool, nil
 }
 
 // emitAttestationEvent sends an attestation result event to the frontend.
@@ -1882,9 +1893,12 @@ func (s *PhoneService) closeActiveConnectionLocked() error {
 
 	// Disconnect first so any leaseholder's round trip fails fast rather than
 	// waiting out its own timeout.
+	var cleanupErr error
 	if transport != nil {
-		_ = transport.Disconnect()
-		_ = transport.Close()
+		cleanupErr = errors.Join(transport.Disconnect(), transport.Close())
+		if cleanupErr != nil {
+			s.log.Warn("failed to cleanly disconnect BLE transport during shutdown", "error", cleanupErr)
+		}
 	}
 
 	// Bounded: a leaseholder is mid BLE round trip with a handset that may
@@ -1900,7 +1914,7 @@ func (s *PhoneService) closeActiveConnectionLocked() error {
 	// pages an in-flight operation is still reading.
 	if drained {
 		key.Destroy()
-		return nil
+		return cleanupErr
 	}
 
 	// Parked, not dropped. The local would otherwise go out of scope here,
@@ -1921,7 +1935,7 @@ func (s *PhoneService) closeActiveConnectionLocked() error {
 			"finish within the shutdown window",
 			"in_flight", s.activeUsers.InFlight(), "timeout", connShutdownTimeout)
 	}
-	return ErrPhoneShutdownIncomplete
+	return errors.Join(ErrPhoneShutdownIncomplete, cleanupErr)
 }
 
 // connShutdownTimeout bounds how long teardown waits for in-flight operations

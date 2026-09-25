@@ -17,8 +17,19 @@ import (
 	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
+// XKMSServicer is the full surface the embedded transport requires from its
+// backing service. It composes pkgtransport.XKMSServicer with
+// pkgtransport.EscrowServicer: external key escrow (go-xkms#692) is
+// embedded-only until Escrow's RBAC model is decided, so this is the one
+// place in the stack that still requires it. It is a genuine composed
+// interface, not a re-export like the rest of this file, precisely because
+// pkgtransport.XKMSServicer itself no longer carries Escrow.
+type XKMSServicer interface {
+	pkgtransport.XKMSServicer
+	pkgtransport.EscrowServicer
+}
+
 // Servicer interfaces re-exported from pkg/transport.
-type XKMSServicer = pkgtransport.XKMSServicer
 type HealthServicer = pkgtransport.HealthServicer
 type BackendServicer = pkgtransport.BackendServicer
 type KeyServicer = pkgtransport.KeyServicer

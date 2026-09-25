@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -1227,6 +1228,154 @@ func TestImportFromTrustStrap_DispatchesByMethod(t *testing.T) {
 			require.NoError(t, err, "method %q must build a config", tc.req.Method)
 			require.Equal(t, tc.wantMode, cfg.Mode)
 			require.Equal(t, tc.req.Server, cfg.ServerURL)
+		})
+	}
+}
+
+// TestTrustService_ExportBrowserTrustBundle_ManifestWriteFailurePropagates is
+// the failure-injection test for issue #687: the manifest sidecar write
+// (`_ = os.WriteFile(manifestPath, ...)`) used to be discarded. It proves
+// the failure now surfaces — wrapped in ErrBrowserTrustBundleManifestWrite —
+// while the bundle export itself, which already succeeded and durably wrote
+// the certificate data, is not undone: the returned count still reflects
+// the certificates written, and the bundle file on disk is real.
+func TestTrustService_ExportBrowserTrustBundle_ManifestWriteFailurePropagates(t *testing.T) {
+	store := newTestFileStore(t)
+	defer store.Close()
+	svc := NewTrustService(store)
+
+	cert := generateTestCert(t)
+	require.NoError(t, store.AddCertificate(cert))
+	fp := truststore.Fingerprint(cert)
+	require.NoError(t, store.SetTags(fp, []string{TagBrowserExport}))
+
+	bundleDir := t.TempDir()
+	bundlePath := filepath.Join(bundleDir, "trust-bundle.pem")
+
+	// Pre-create the manifest sidecar path as a directory so the write to
+	// it fails (EISDIR) while the bundle file itself, a different path in
+	// the same directory, writes normally.
+	manifestPath := filepath.Join(bundleDir, browserBundleManifestFile)
+	require.NoError(t, os.MkdirAll(manifestPath, 0o700))
+
+	count, err := svc.ExportBrowserTrustBundle(bundlePath)
+	require.Error(t, err, "a discarded manifest write failure must now surface")
+	assert.ErrorIs(t, err, ErrBrowserTrustBundleManifestWrite)
+	assert.Equal(t, 1, count, "the bundle export itself succeeded and its count is still reported")
+
+	data, readErr := os.ReadFile(bundlePath)
+	require.NoError(t, readErr, "the bundle file must exist despite the manifest failure")
+	assert.NotEmpty(t, data)
+}
+
+// TestTrustService_ExportBrowserTrustBundle_ManifestWriteSuccess proves the
+// happy path writes both the bundle and its manifest without error.
+func TestTrustService_ExportBrowserTrustBundle_ManifestWriteSuccess(t *testing.T) {
+	store := newTestFileStore(t)
+	defer store.Close()
+	svc := NewTrustService(store)
+
+	cert := generateTestCert(t)
+	require.NoError(t, store.AddCertificate(cert))
+	fp := truststore.Fingerprint(cert)
+	require.NoError(t, store.SetTags(fp, []string{TagBrowserExport}))
+
+	bundleDir := t.TempDir()
+	bundlePath := filepath.Join(bundleDir, "trust-bundle.pem")
+
+	count, err := svc.ExportBrowserTrustBundle(bundlePath)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	manifestPath := filepath.Join(bundleDir, browserBundleManifestFile)
+	_, statErr := os.Stat(manifestPath)
+	require.NoError(t, statErr, "the manifest sidecar must be written on success")
+}
+
+// ---------------------------------------------------------------------------
+// UserCanManageTrustStore policy gate (#668).
+// ---------------------------------------------------------------------------
+
+func TestTrustService_AddCertificatesPEM_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		wantErr bool
+	}{
+		{"no policy (personal mode) allows", nil, false},
+		{"UserCanManageTrustStore false denies", &config.PolicySection{UserCanManageTrustStore: false}, true},
+		{"UserCanManageTrustStore true allows", &config.PolicySection{UserCanManageTrustStore: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestFileStore(t)
+			defer store.Close()
+			svc := NewTrustService(store)
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			cert := generateTestCert(t)
+			pemData := certToPEM(cert)
+
+			count, err := svc.AddCertificatesPEM(pemData)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_manage_trust_store", denied.Field)
+				assert.Equal(t, 0, count)
+				assert.True(t, logger.hasPolicyDenial(), "denial must be audited")
+
+				total, cerr := svc.CertificateCount()
+				require.NoError(t, cerr)
+				assert.Equal(t, 0, total, "the certificate must not be added when denied")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, 1, count)
+				assert.False(t, logger.hasPolicyDenial())
+			}
+		})
+	}
+}
+
+func TestTrustService_RemoveCertificate_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		wantErr bool
+	}{
+		{"no policy (personal mode) allows", nil, false},
+		{"UserCanManageTrustStore false denies", &config.PolicySection{UserCanManageTrustStore: false}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestFileStore(t)
+			defer store.Close()
+			svc := NewTrustService(store)
+
+			fp := seedAndGetFingerprint(t, svc)
+
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			err := svc.RemoveCertificate(fp)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_manage_trust_store", denied.Field)
+				assert.True(t, logger.hasPolicyDenial())
+
+				_, gerr := svc.GetCertificatePEM(fp)
+				assert.NoError(t, gerr, "the certificate must still be present when denied")
+			} else {
+				require.NoError(t, err)
+				assert.False(t, logger.hasPolicyDenial())
+			}
 		})
 	}
 }

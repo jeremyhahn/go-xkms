@@ -15,11 +15,26 @@
 
 package vault
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+)
 
 var (
-	// ErrKeyNotFound is returned when a key doesn't exist in Vault
-	ErrKeyNotFound = errors.New("vault: key not found")
+	// ErrKeyNotFound is returned when a key doesn't exist in Vault. It is
+	// an alias of backend.ErrKeyNotFound so
+	// errors.Is(err, backend.ErrKeyNotFound) recognizes it without any
+	// wrapping, matching every other backend.
+	ErrKeyNotFound = backend.ErrKeyNotFound
+
+	// ErrKeyRetrievalFailed is returned when a key lookup fails for a
+	// reason other than the key genuinely not existing -- a network fault,
+	// an unavailable metadata store, or an ACL/authorization denial. It
+	// must not satisfy errors.Is(err, backend.ErrKeyNotFound): callers use
+	// that distinction to decide whether generating a replacement key is
+	// safe.
+	ErrKeyRetrievalFailed = errors.New("vault: key retrieval failed")
 
 	// ErrInvalidAlgorithm is returned when an unsupported algorithm is specified
 	ErrInvalidAlgorithm = errors.New("vault: invalid algorithm")

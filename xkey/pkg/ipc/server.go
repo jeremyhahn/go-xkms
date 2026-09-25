@@ -497,7 +497,9 @@ func NewServer(socketPath string, handler Handler, logger *slog.Logger) (*Server
 	if _, statErr := os.Stat(socketPath); statErr == nil {
 		probe, dialErr := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
 		if dialErr == nil {
-			_ = probe.Close()
+			if closeErr := probe.Close(); closeErr != nil {
+				logger.Warn("probe socket close failed", "error", closeErr)
+			}
 			return nil, &DetailError{Err: ErrSocketCreateFailed, Detail: fmt.Sprintf(": another IPC server is already listening on %s", socketPath)}
 		}
 		// Socket file exists but nobody is listening — stale, safe to remove.
@@ -512,15 +514,15 @@ func NewServer(socketPath string, handler Handler, logger *slog.Logger) (*Server
 	}
 
 	if err := os.Chmod(socketPath, socketFileMode); err != nil {
-		_ = listener.Close()
-		return nil, &SentinelCauseError{Sentinel: ErrSocketPermission, Cause: err}
+		closeErr := listener.Close()
+		return nil, &SentinelCauseError{Sentinel: ErrSocketPermission, Cause: errors.Join(err, closeErr)}
 	}
 
 	// When running as root via sudo, chown the socket to the original user.
 	if uid, gid, ok := sudoOwnership(); ok {
 		if err := os.Chown(socketPath, uid, gid); err != nil {
-			_ = listener.Close()
-			return nil, &DetailError{Err: ErrSocketPermission, Detail: fmt.Sprintf(": chown socket: %v", err)}
+			closeErr := listener.Close()
+			return nil, &DetailError{Err: ErrSocketPermission, Detail: fmt.Sprintf(": chown socket: %v", errors.Join(err, closeErr))}
 		}
 	}
 
@@ -561,7 +563,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	// Watch for context cancellation to close the listener.
 	go func() {
 		<-ctx.Done()
-		_ = s.Close()
+		if err := s.Close(); err != nil {
+			s.logger.Error("close on context cancellation failed", "error", err)
+		}
 	}()
 
 	for {
@@ -583,7 +587,9 @@ func (s *Server) Serve(ctx context.Context) error {
 		s.shutdownMu.Lock()
 		if s.closed.Load() {
 			s.shutdownMu.Unlock()
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				s.logger.Error("close rejected connection failed", "error", closeErr)
+			}
 			continue
 		}
 		s.wg.Add(1)
@@ -626,8 +632,11 @@ func (s *Server) Close() error {
 
 	s.wg.Wait()
 
-	// Best-effort removal of the socket file.
-	_ = os.Remove(s.socketPath)
+	// Best-effort removal of the socket file; fold any failure into the
+	// returned error rather than dropping it.
+	if removeErr := os.Remove(s.socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		err = errors.Join(err, removeErr)
+	}
 
 	return err
 }
@@ -635,31 +644,47 @@ func (s *Server) Close() error {
 // handleConnection processes a single client connection: reads one JSON
 // message, dispatches to the appropriate handler, and writes the JSON response.
 func (s *Server) handleConnection(conn net.Conn) {
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			s.logger.Error("close connection failed", "error", err)
+		}
+	}()
 
 	if err := conn.SetReadDeadline(time.Now().Add(readDeadline)); err != nil {
 		s.logger.Error("set read deadline failed", "error", err)
 		return
 	}
 
+	// OpIPCMessageFailed/OpIPCMessageDispatched are SeverityInformational:
+	// logIPCEvent returns nil for them today. auditLogFailure below is
+	// defensive in case that classification ever changes; handleConnection
+	// has no caller to propagate a failure to (it runs per accepted
+	// connection in its own goroutine), so the strongest response available
+	// here is to log loudly rather than silently drop the failure.
+	auditLogFailure := func(auditErr error) {
+		if auditErr != nil {
+			s.logger.Error("audit log failed", "error", auditErr)
+		}
+	}
+
 	var msg Message
 	decoder := json.NewDecoder(conn)
 	if err := decoder.Decode(&msg); err != nil {
 		s.logger.Debug("decode failed", "error", err)
-		s.logIPCEvent(audit.OpIPCMessageFailed, false, err, nil)
+		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, err, nil))
 		s.writeResponse(conn, ErrorResponse(fmt.Sprintf("%v: %v", ErrProtocolError, err)))
 		return
 	}
 
 	if err := msg.Validate(); err != nil {
-		s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type})
+		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type}))
 		s.writeResponse(conn, ErrorResponse(err.Error()))
 		return
 	}
 
 	fn, ok := handlers[msg.Type]
 	if !ok {
-		s.logIPCEvent(audit.OpIPCMessageFailed, false, ErrInvalidMessage, map[string]any{"message_type": msg.Type})
+		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, ErrInvalidMessage, map[string]any{"message_type": msg.Type}))
 		s.writeResponse(conn, ErrorResponse(
 			fmt.Sprintf("%v: unknown message type %q", ErrInvalidMessage, msg.Type)))
 		return
@@ -668,13 +693,13 @@ func (s *Server) handleConnection(conn net.Conn) {
 	resp, err := fn(s.handler, &msg)
 	if err != nil {
 		s.logger.Error("handler failed", "type", msg.Type, "error", err)
-		s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type})
+		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type}))
 		s.writeResponse(conn, ErrorResponse(
 			fmt.Sprintf("%v: %v", ErrHandlerFailed, err)))
 		return
 	}
 
-	s.logIPCEvent(audit.OpIPCMessageDispatched, true, nil, map[string]any{"message_type": msg.Type})
+	auditLogFailure(s.logIPCEvent(audit.OpIPCMessageDispatched, true, nil, map[string]any{"message_type": msg.Type}))
 	s.writeResponse(conn, resp)
 }
 
@@ -691,19 +716,23 @@ func (s *Server) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)
 }
 
-// logIPCEvent logs an audit event for IPC message processing.
-func (s *Server) logIPCEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := s.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// logIPCEvent logs an audit event for IPC message processing. Callers must
+// propagate a non-nil return: op.Severity() (audit package) decides
+// whether that failure is required to fail the caller.
+func (s *Server) logIPCEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := s.auditLog.Load()
+	if p == nil {
+		return nil
 	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
 }

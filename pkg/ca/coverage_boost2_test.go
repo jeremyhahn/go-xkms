@@ -175,23 +175,6 @@ func TestTLSConfigWithXSigner_NilXSigner_ReturnsCfg(t *testing.T) {
 }
 
 // =============================================================================
-// tls.go — QuantumSafeTLSConfig (60% → exercise the success branch)
-// =============================================================================
-
-func TestQuantumSafeTLSConfig_Success(t *testing.T) {
-	ca := setupTestCA(t)
-	cn := "quantum-leaf.example.com"
-	issueCertAndSaveToKeyStore(t, ca, cn)
-
-	attrs := softwareKeyAttrs(cn)
-	cfg, err := ca.QuantumSafeTLSConfig(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, cfg)
-	// CurvePreferences must be nil after QuantumSafeTLSConfig.
-	assert.Nil(t, cfg.CurvePreferences)
-}
-
-// =============================================================================
 // tls.go — TLSConfigWithOptions server mode (34%)
 // =============================================================================
 

@@ -125,17 +125,23 @@ func (c *Client) GetRenewalInfo(ctx context.Context, certID string) (*RenewalInf
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("renewal info request failed: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	// Handle error responses
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		c.logger.Error("renewal info request failed",
-			slog.Int("status", resp.StatusCode),
-			slog.String("body", string(body)))
+		body, readErr := io.ReadAll(resp.Body)
+		attrs := []any{slog.Int("status", resp.StatusCode), slog.String("body", string(body))}
+		if readErr != nil {
+			attrs = append(attrs, slog.String("bodyReadError", readErr.Error()))
+		}
+		c.logger.Error("renewal info request failed", attrs...)
 
-		// Parse ACME error if present
-		if resp.StatusCode >= 400 {
+		// Parse ACME error if present and the body was actually read.
+		if resp.StatusCode >= 400 && readErr == nil {
 			acmeErr, parseErr := ParseACMEErrorFromBytes(body, resp.StatusCode)
 			if parseErr == nil && acmeErr != nil {
 				return nil, acmeErr
@@ -268,8 +274,10 @@ func (c *Client) createOrderWithReplacesInternal(ctx context.Context, authzIDs [
 	c.logger.Warn("creating order without replaces field - full ARI order creation requires custom JWS implementation",
 		slog.String("replacesCertID", replacesCertID))
 
-	// Use the standard authorize order method
-	order, err := c.client.AuthorizeOrder(ctx, authzIDs)
+	// Use the standard authorize order method. authorizeOrder registers the
+	// account on first use, so this request is signed with the
+	// server-issued KID rather than a bare JWK.
+	order, err := c.authorizeOrder(ctx, authzIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +377,11 @@ func (c *Client) getRenewalInfoEndpoint(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", caerrors.ConnectionFailureError("failed to fetch directory: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", caerrors.ConnectionFailureError("directory request failed with status %d", resp.StatusCode)

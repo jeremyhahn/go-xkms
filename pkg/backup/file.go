@@ -135,7 +135,7 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 	defer f.mu.Unlock()
 
 	if data == nil {
-		return nil, errors.New("backup data is required")
+		return nil, &errs.Message{Msg: "backup data is required"}
 	}
 
 	if opts == nil {
@@ -534,7 +534,7 @@ func (f *FileBackupAdapter) VerifyBackup(ctx context.Context, backupID string, o
 	if metadata.Encrypted {
 		if len(opts.DecryptionKey) == 0 {
 			result.DecryptionValid = false
-			result.Errors = append(result.Errors, errors.New("decryption key not provided"))
+			result.Errors = append(result.Errors, &errs.Message{Msg: "decryption key not provided"})
 		} else {
 			decrypted, err := f.decryptData(backupBytes, opts.DecryptionKey)
 			if err != nil {
@@ -633,7 +633,7 @@ func (f *FileBackupAdapter) ImportBackup(ctx context.Context, source string) (*B
 	}
 
 	if data.Metadata == nil {
-		return nil, errors.New("backup metadata is missing")
+		return nil, &errs.Message{Msg: "backup metadata is missing"}
 	}
 
 	// Generate a new ID if one wasn't supplied, and reject anything that
@@ -905,7 +905,7 @@ func (f *FileBackupAdapter) decryptData(data []byte, key []byte) ([]byte, error)
 	// Overhead covers the prepended nonce and the trailing tag; Open extracts
 	// the nonce itself.
 	if len(data) < gcm.Overhead() {
-		return nil, errors.New("ciphertext too short")
+		return nil, &errs.Message{Msg: "ciphertext too short"}
 	}
 
 	// Decrypt

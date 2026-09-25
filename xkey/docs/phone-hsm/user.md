@@ -33,7 +33,7 @@ same attestation as `xkey device pair` and applies the same policy: a phone
 whose hardware attestation cannot be verified is **refused by default**, and
 nothing is written down. If you have decided to accept such a device anyway,
 set `allow_unattestable_devices: true` under `attestation_policy` in
-`devices.yaml` (see [`../device/README.md`](../device/README.md)); the pairing
+`devices.yaml` (see [`../device/engineering.md`](../device/engineering.md)); the pairing
 then completes with no security level, boot state or device fingerprint on
 record, and the GUI says so. An enterprise policy can lock that choice closed.
 

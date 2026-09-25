@@ -215,12 +215,12 @@ func VerifyLogFile(r io.Reader) (*VerificationResult, error) {
 		content, valid, err := VerifyLogLine(line)
 		result.TotalLines++
 
-		if err == ErrEmptyLine {
+		if errors.Is(err, ErrEmptyLine) {
 			result.EmptyLines++
 			continue
 		}
 
-		if err == ErrInvalidChecksumFormat {
+		if errors.Is(err, ErrInvalidChecksumFormat) {
 			result.InvalidLines = append(result.InvalidLines, InvalidLine{
 				LineNumber: lineNum,
 				Content:    line,

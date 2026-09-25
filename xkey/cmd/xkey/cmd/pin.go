@@ -16,6 +16,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -365,7 +366,7 @@ func readPINFromStdin() (string, error) {
 func readLineFromPipedStdin() (string, error) {
 	reader := getPINStdinReader()
 	line, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", &PINCommandError{Operation: "read_pin", Err: err}
 	}
 	// Trim BOTH \n and a preceding \r: CRLF input (a Windows console, or a
