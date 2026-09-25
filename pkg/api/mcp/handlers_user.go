@@ -15,11 +15,13 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // User management handlers. xkms presents its own user model; the backing
@@ -77,36 +79,65 @@ type UserListCredentialsResult struct {
 // but none was provided.
 var ErrUsernameRequired = errors.New("username is required")
 
-// unmarshalUserParams decodes req.Params into dst, wrapping a decode failure
-// in *errs.Wrapped so its message names the fault as invalid params.
+// mapUserError converts an error returned by a user.* handler -- either its
+// own params validation or a failure from the xkms user service layer
+// (pkg/xkms/servicer_user.go, backed by the embedded qrdb node's user
+// servicer) -- into a *KeyOpError carrying the JSON-RPC code InvokeMethod
+// should report. It plays the same role mapKeyOpError and mapSSHError play
+// for their own sub-systems (errors_keyops.go, errors_ssh.go).
 //
-// Unlike the key/crypto handlers' *xkms.ErrValidation (see
-// errors_keyops.go's mapKeyOpError), a plain *errs.Wrapped is not itself a
-// *KeyOpError, so pkg/apimodule's mcpToolHandler does not classify it and it
-// reaches the caller as wire.CodeInternal rather than
-// wire.CodeInvalidArgument. Before go-xkms#797 the SDK client's now-deleted
-// keyword matcher independently read "invalid" out of the message text and
-// reported ErrCodeInvalidParams anyway, which is the fail-open classification
-// that change removed; this handler was never updated to carry a real code
-// once that text-based safety net went away. Tracked as a follow-up, not
-// fixed here.
-func unmarshalUserParams(req *JSONRPCRequest, dst interface{}) error {
-	if err := json.Unmarshal(req.Params, dst); err != nil {
-		return &errs.Wrapped{Msg: "invalid params", Err: err}
+// Before this function existed, every user.* handler returned the bare
+// service error: unmarshalUserParams's decode failure was a plain
+// *errs.Wrapped (not a *KeyOpError, so pkg/apimodule's mcpToolHandler could
+// not classify it), and ErrUsernameRequired and every downstream service
+// error were returned completely unwrapped. Both reached the caller as
+// wire.CodeInternal regardless of cause (go-xkms#774, #814).
+//
+// A *qrdbsdk.UserNotFoundError is go-qrdb's own not-found type
+// (pkg/user.UserNotFoundError, aliased through transport.UserNotFoundError
+// and re-exported here as qrdbsdk.UserNotFoundError): go-qrdb's own gRPC,
+// QUIC, and MCP-wire transports all classify it as NotFound
+// (pkg/api/grpc/service_auth.go's mapUserNotFound, pkg/api/quic/errors.go,
+// pkg/api/mcp/wire's ErrorPayload doc comment), so this adopts that
+// classification rather than inventing a second one for the same condition
+// ("lower layers win"). sdkssh.JSONRPCCodeNotFound is the JSON-RPC code this
+// package already uses for the identical wire.CodeNotFound outcome
+// (errors_ssh.go's mapSSHError), so xkms.* key/backend and user lookups
+// funnel through the same reserved-range code rather than each minting its
+// own.
+//
+// ErrUsernameRequired and xkms.ErrEmailRequired are the caller's own
+// mistake, so they join decodeParams's family under Invalid params, matching
+// pkg/api/grpc/service_user.go's createUserErrorCode and every username
+// guard in that file (codes.InvalidArgument). Anything else falls to
+// Internal, unchanged from the behavior before this function existed.
+func mapUserError(err error) error {
+	if err == nil {
+		return nil
 	}
-	return nil
+
+	if errors.Is(err, ErrUsernameRequired) || errors.Is(err, xkms.ErrEmailRequired) {
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	}
+
+	var notFound *qrdbsdk.UserNotFoundError
+	if errors.As(err, &notFound) {
+		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: err}
+	}
+
+	return &KeyOpError{Code: ErrCodeInternalError, Err: err}
 }
 
 // handleCreateUser handles the user.create method.
 func (s *Server) handleCreateUser(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.CreateUserRequest
-	if err := unmarshalUserParams(req, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
 	resp, err := s.xkmsService.CreateUser(ctx, &params)
 	if err != nil {
-		return nil, err
+		return nil, mapUserError(err)
 	}
 	return resp, nil
 }
@@ -117,7 +148,7 @@ func (s *Server) handleCreateUser(ctx context.Context, req *JSONRPCRequest) (int
 func (s *Server) handleListUsers(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
 	resp, err := s.xkmsService.ListUsers(ctx)
 	if err != nil {
-		return nil, err
+		return nil, mapUserError(err)
 	}
 	return resp, nil
 }
@@ -125,16 +156,16 @@ func (s *Server) handleListUsers(ctx context.Context, _ *JSONRPCRequest) (interf
 // handleGetUser handles the user.get method.
 func (s *Server) handleGetUser(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UserUsernameParams
-	if err := unmarshalUserParams(req, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 	if params.Username == "" {
-		return nil, ErrUsernameRequired
+		return nil, mapUserError(ErrUsernameRequired)
 	}
 
 	resp, err := s.xkmsService.GetUser(ctx, params.Username)
 	if err != nil {
-		return nil, err
+		return nil, mapUserError(err)
 	}
 	return resp, nil
 }
@@ -142,15 +173,15 @@ func (s *Server) handleGetUser(ctx context.Context, req *JSONRPCRequest) (interf
 // handleDeleteUser handles the user.delete method.
 func (s *Server) handleDeleteUser(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UserUsernameParams
-	if err := unmarshalUserParams(req, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 	if params.Username == "" {
-		return nil, ErrUsernameRequired
+		return nil, mapUserError(ErrUsernameRequired)
 	}
 
 	if err := s.xkmsService.DeleteUser(ctx, params.Username); err != nil {
-		return nil, err
+		return nil, mapUserError(err)
 	}
 	return UserDeleteResult{Username: params.Username, Status: "deleted"}, nil
 }
@@ -161,19 +192,19 @@ func (s *Server) handleDeleteUser(ctx context.Context, req *JSONRPCRequest) (int
 // acknowledgement.
 func (s *Server) handleEnableUser(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UserUsernameParams
-	if err := unmarshalUserParams(req, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 	if params.Username == "" {
-		return nil, ErrUsernameRequired
+		return nil, mapUserError(ErrUsernameRequired)
 	}
 
 	if err := s.xkmsService.EnableUser(ctx, params.Username); err != nil {
-		return nil, err
+		return nil, mapUserError(err)
 	}
 	resp, err := s.xkmsService.GetUser(ctx, params.Username)
 	if err != nil {
-		return nil, err
+		return nil, mapUserError(err)
 	}
 	return resp, nil
 }
@@ -182,19 +213,19 @@ func (s *Server) handleEnableUser(ctx context.Context, req *JSONRPCRequest) (int
 // for why it reads the user back after mutating.
 func (s *Server) handleDisableUser(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UserUsernameParams
-	if err := unmarshalUserParams(req, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 	if params.Username == "" {
-		return nil, ErrUsernameRequired
+		return nil, mapUserError(ErrUsernameRequired)
 	}
 
 	if err := s.xkmsService.DisableUser(ctx, params.Username); err != nil {
-		return nil, err
+		return nil, mapUserError(err)
 	}
 	resp, err := s.xkmsService.GetUser(ctx, params.Username)
 	if err != nil {
-		return nil, err
+		return nil, mapUserError(err)
 	}
 	return resp, nil
 }
@@ -202,15 +233,15 @@ func (s *Server) handleDisableUser(ctx context.Context, req *JSONRPCRequest) (in
 // handleBindUserCert handles the user.bindCert method.
 func (s *Server) handleBindUserCert(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UserBindCertParams
-	if err := unmarshalUserParams(req, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 	if params.Username == "" {
-		return nil, ErrUsernameRequired
+		return nil, mapUserError(ErrUsernameRequired)
 	}
 
 	if err := s.xkmsService.BindUserCert(ctx, params.Username, params.Thumbprint, params.NotAfterUnix); err != nil {
-		return nil, err
+		return nil, mapUserError(err)
 	}
 	return UserBindCertResult{Username: params.Username, Status: "bound"}, nil
 }
@@ -218,16 +249,16 @@ func (s *Server) handleBindUserCert(ctx context.Context, req *JSONRPCRequest) (i
 // handleListUserCredentials handles the user.listCredentials method.
 func (s *Server) handleListUserCredentials(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UserUsernameParams
-	if err := unmarshalUserParams(req, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 	if params.Username == "" {
-		return nil, ErrUsernameRequired
+		return nil, mapUserError(ErrUsernameRequired)
 	}
 
 	resp, err := s.xkmsService.ListUserCredentials(ctx, params.Username)
 	if err != nil {
-		return nil, err
+		return nil, mapUserError(err)
 	}
 
 	items := make([]UserCredentialItem, 0, len(resp.Credentials))

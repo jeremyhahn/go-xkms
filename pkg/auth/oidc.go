@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,6 +28,16 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc/metadata"
 )
+
+// closeOIDCResponseBody closes resp.Body and logs a failure at debug level.
+// Every call site here has already decided its result (success or error)
+// before this deferred call runs, so a close failure changes nothing about
+// the caller's outcome.
+func closeOIDCResponseBody(resp *http.Response) {
+	if err := resp.Body.Close(); err != nil {
+		slog.Debug("auth: failed to close OIDC HTTP response body", "error", err)
+	}
+}
 
 // OIDCAuthenticatorError represents an error from the OIDC authenticator.
 type OIDCAuthenticatorError struct {
@@ -248,7 +259,7 @@ func (a *OIDCAuthenticator) discover(ctx context.Context) error {
 	if err != nil {
 		return &OIDCAuthenticatorError{Message: ErrOIDCDiscoveryFailed.Message, Cause: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeOIDCResponseBody(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return &OIDCAuthenticatorError{
@@ -304,7 +315,7 @@ func (a *OIDCAuthenticator) getJWKS(ctx context.Context) (*jose.JSONWebKeySet, e
 	if err != nil {
 		return nil, &OIDCAuthenticatorError{Message: ErrOIDCJWKSFetchFailed.Message, Cause: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeOIDCResponseBody(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, &OIDCAuthenticatorError{
@@ -425,7 +436,7 @@ func (a *OIDCAuthenticator) validateAccessToken(ctx context.Context, tokenString
 	if err != nil {
 		return nil, &OIDCAuthenticatorError{Message: ErrOIDCUserInfoFailed.Message, Cause: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeOIDCResponseBody(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, &OIDCAuthenticatorError{

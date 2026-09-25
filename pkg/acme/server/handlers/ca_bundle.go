@@ -44,5 +44,7 @@ func (s *RestService) CABundleHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/pem-certificate-chain")
 	setDegradedHeader(w, degraded)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(bundle)
+	if _, err := w.Write(bundle); err != nil {
+		s.logger.Error("failed to write CA bundle response", "error", err.Error())
+	}
 }

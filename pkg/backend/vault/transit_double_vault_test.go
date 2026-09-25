@@ -113,6 +113,15 @@ func (d *transitDouble) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// LIST /transit/keys arrives as GET with ?list=true (see the Vault Go
+	// client's Logical.ListWithContext), on the bare "keys" collection path
+	// rather than a per-key path, so it must be recognized before the
+	// len(parts) < 3 check below rejects it as too short.
+	if len(parts) == 2 && parts[1] == "keys" && r.Method == http.MethodGet && r.URL.Query().Get("list") == "true" {
+		d.listKeys(w)
+		return
+	}
+
 	if len(parts) < 3 {
 		writeVaultError(w, http.StatusNotFound, "unsupported path")
 		return
@@ -739,6 +748,30 @@ func (d *transitDouble) aeadForVersion(name string, version int) (cipher.AEAD, e
 	// aes256-gcm96 envelope is nonce || ciphertext || tag, which is exactly
 	// what Seal prepends and Open strips.
 	return cipher.NewGCMWithRandomNonce(block)
+}
+
+// listKeys implements Vault Transit's LIST /transit/keys, returning the
+// names of every key the double currently holds. Real Vault returns 404
+// when the collection is empty (surfaced to callers as secret == nil, not
+// an error, by the Go client), which this mirrors.
+func (d *transitDouble) listKeys(w http.ResponseWriter) {
+	d.mu.Lock()
+	names := make([]string, 0, len(d.keys))
+	for name := range d.keys {
+		names = append(names, name)
+	}
+	d.mu.Unlock()
+
+	if len(names) == 0 {
+		writeVaultError(w, http.StatusNotFound, "no keys found")
+		return
+	}
+
+	keysInterface := make([]interface{}, len(names))
+	for i, n := range names {
+		keysInterface[i] = n
+	}
+	writeVaultData(w, map[string]interface{}{"keys": keysInterface})
 }
 
 // keyCount reports how many keys the double currently holds, so a test can

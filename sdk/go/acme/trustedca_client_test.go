@@ -37,9 +37,11 @@ import (
 // NewClient — transport selection and validation.
 // ----------------------------------------------------------------------------
 
-// TestNewClient_TransportSelection covers every arm of the createTransport
-// dispatch. Each transport must be constructible through the public API;
-// a broken arm would only surface at runtime in a downstream project.
+// TestNewClient_TransportSelection covers every constructible arm of the
+// createTransport dispatch. Each transport must be constructible through the
+// public API; a broken arm would only surface at runtime in a downstream
+// project. TransportGRPC is covered separately by
+// TestNewClient_GRPCRefusedAtConstruction: it is not a constructible arm.
 func TestNewClient_TransportSelection(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "acme.sock")
 
@@ -48,7 +50,6 @@ func TestNewClient_TransportSelection(t *testing.T) {
 		address string
 		opts    []Option
 	}{
-		{"grpc_default", "localhost:8443", nil},
 		{"rest", "https://ca.example.com", []Option{WithREST()}},
 		{"quic", "ca.example.com:8444", []Option{WithQUIC(), WithTLSConfig(&tls.Config{MinVersion: tls.VersionTLS13})}},
 		{"unix", "unix://" + socketPath, []Option{WithUnix(socketPath)}},
@@ -67,6 +68,27 @@ func TestNewClient_TransportSelection(t *testing.T) {
 				t.Fatal("client must expose a constructed transport")
 			}
 		})
+	}
+}
+
+// TestNewClient_GRPCRefusedAtConstruction pins go-xkms#727: ACME is RFC 8555
+// HTTP+JWS and has no gRPC binding, so selecting gRPC — whether by leaving
+// the transport unset (TransportGRPC is the zero value) or by constructing
+// clientOptions with it explicitly — must fail immediately with a typed
+// Unimplemented error rather than handing back a client whose Account,
+// Order, Directory, Nonce, Challenge, Authorization, and Certificate calls
+// would each fail individually on their first Request.
+func TestNewClient_GRPCRefusedAtConstruction(t *testing.T) {
+	c, err := NewClient("localhost:8443")
+	if err == nil {
+		t.Cleanup(func() { _ = c.Close() })
+		t.Fatal("NewClient: expected an error for the default (gRPC) transport, got nil")
+	}
+	if c != nil {
+		t.Errorf("NewClient: expected a nil client alongside the error, got %#v", c)
+	}
+	if !errors.IsUnimplemented(err) {
+		t.Errorf("NewClient error = %v, want an Unimplemented typed error", err)
 	}
 }
 
@@ -537,7 +559,7 @@ func TestWithTLS_EmptyConfigIsTLS13Baseline(t *testing.T) {
 // client per call would silently discard any per-client state and churn
 // allocations on hot paths.
 func TestClient_SubClientsAreCached(t *testing.T) {
-	c, err := NewClient("localhost:8443")
+	c, err := NewClient("localhost:8443", WithREST())
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -576,7 +598,7 @@ func TestClient_SubClientsAreCached(t *testing.T) {
 // Under -race this is the regression test for the double-checked locking; a
 // missing lock or an unguarded field write fails here.
 func TestClient_SubClientAccessorsAreRaceFree(t *testing.T) {
-	c, err := NewClient("localhost:8443")
+	c, err := NewClient("localhost:8443", WithREST())
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -621,7 +643,7 @@ func TestClient_SubClientAccessorsAreRaceFree(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 func TestClient_CloseIsIdempotent(t *testing.T) {
-	c, err := NewClient("localhost:8443")
+	c, err := NewClient("localhost:8443", WithREST())
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -635,7 +657,7 @@ func TestClient_CloseIsIdempotent(t *testing.T) {
 }
 
 func TestClient_CloseIsRaceFree(t *testing.T) {
-	c, err := NewClient("localhost:8443")
+	c, err := NewClient("localhost:8443", WithREST())
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -655,7 +677,7 @@ func TestClient_CloseIsRaceFree(t *testing.T) {
 }
 
 func TestClient_TransportAccessor(t *testing.T) {
-	c, err := NewClient("localhost:8443")
+	c, err := NewClient("localhost:8443", WithREST())
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

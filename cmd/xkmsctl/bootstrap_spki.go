@@ -34,7 +34,12 @@ from a TLS certificate. This pin is used for SPKI-pinned TLS bootstrap.
 The pin is computed from a PEM certificate file (--cert-file). To obtain the
 server's certificate, use: openssl s_client -connect host:port </dev/null | openssl x509 > cert.pem`,
 	Run: func(cmd *cobra.Command, args []string) {
-		certFile, _ := cmd.Flags().GetString("cert-file")
+		fr := newFlagReader(cmd)
+		certFile := fr.String("cert-file")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		showSPKIPin(certFile)
 	},
 }

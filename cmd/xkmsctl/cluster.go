@@ -22,8 +22,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -178,7 +176,7 @@ func defaultQRDBControlClientFactory(ctx context.Context) (*QRDBControlClient, f
 		return nil, nil, &QRDBControlConnectError{Cause: err}
 	}
 	if err := qc.Connect(ctx); err != nil {
-		_ = qc.Close()
+		closeQuietly(qc)
 		return nil, nil, &QRDBControlConnectError{Cause: err}
 	}
 
@@ -283,7 +281,7 @@ func newClusterStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closer() }()
+			defer closeFuncQuietly(closer)
 
 			leaderID, hasLeader, err := ctrl.Cluster.Leader(cmd.Context(), shardID)
 			if err != nil {
@@ -315,7 +313,7 @@ func newClusterMembersCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closer() }()
+			defer closeFuncQuietly(closer)
 
 			members, err := ctrl.Cluster.Members(cmd.Context(), shardID)
 			if err != nil {
@@ -348,7 +346,7 @@ func newClusterAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closer() }()
+			defer closeFuncQuietly(closer)
 
 			if err := ctrl.Cluster.AddReplica(cmd.Context(), shardID, replicaID, raftAddr); err != nil {
 				return &WrappedError{Sentinel: ErrClusterAddReplicaFailed, Err: err}
@@ -363,8 +361,8 @@ func newClusterAddCmd() *cobra.Command {
 	cmd.Flags().Uint64Var(&shardID, "shard", defaultShardID, "shard ID to modify")
 	cmd.Flags().Uint64Var(&replicaID, "replica-id", 0, "replica ID to add (required)")
 	cmd.Flags().StringVar(&raftAddr, "raft-address", "", "replica Raft address host:port (required)")
-	_ = cmd.MarkFlagRequired("replica-id")
-	_ = cmd.MarkFlagRequired("raft-address")
+	markFlagRequired(cmd, "replica-id")
+	markFlagRequired(cmd, "raft-address")
 	return cmd
 }
 
@@ -383,7 +381,7 @@ func newClusterRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closer() }()
+			defer closeFuncQuietly(closer)
 
 			if err := ctrl.Cluster.RemoveReplica(cmd.Context(), shardID, replicaID); err != nil {
 				return &WrappedError{Sentinel: ErrClusterRemoveReplicaFailed, Err: err}
@@ -397,7 +395,7 @@ func newClusterRemoveCmd() *cobra.Command {
 
 	cmd.Flags().Uint64Var(&shardID, "shard", defaultShardID, "shard ID to modify")
 	cmd.Flags().Uint64Var(&replicaID, "replica-id", 0, "replica ID to remove (required)")
-	_ = cmd.MarkFlagRequired("replica-id")
+	markFlagRequired(cmd, "replica-id")
 	return cmd
 }
 
@@ -413,10 +411,10 @@ func init() {
 // Output
 // ---------------------------------------------------------------------------
 
-// fprintf writes formatted output, discarding the writer's return values
-// the same way the other Printer methods in output.go do.
-func fprintf(w io.Writer, format string, args ...interface{}) {
-	_, _ = fmt.Fprintf(w, format, args...)
+// fprintf writes formatted output through w, recording rather than
+// discarding a write failure. See outputWriter.
+func fprintf(w *outputWriter, format string, args ...interface{}) {
+	w.printf(format, args...)
 }
 
 // clusterMemberJSON is the wire shape of one member in JSON output.
@@ -488,7 +486,7 @@ func (p *Printer) PrintClusterStatus(shardID, leaderID uint64, hasLeader bool, m
 			fprintf(p.writer, "Leader:  none elected\n")
 		}
 		fprintf(p.writer, "Members: %d\n", len(members))
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -504,7 +502,7 @@ func (p *Printer) PrintClusterMembers(members []qrdbsdk.Member) error {
 	case OutputFormatTable:
 		if len(members) == 0 {
 			fprintf(p.writer, "No members found\n")
-			return nil
+			return p.writer.Err()
 		}
 		fprintf(p.writer, "%-12s %-25s %-8s %s\n", "REPLICA ID", "RAFT ADDRESS", "LEADER", "API ENDPOINTS")
 		fprintf(p.writer, "%s\n", strings.Repeat("-", 72))
@@ -512,11 +510,11 @@ func (p *Printer) PrintClusterMembers(members []qrdbsdk.Member) error {
 			fprintf(p.writer, "%-12d %-25s %-8t %s\n",
 				m.ReplicaID, m.Address, m.IsLeader, formatAPIEndpoints(m.APIEndpoints))
 		}
-		return nil
+		return p.writer.Err()
 	case OutputFormatText:
 		if len(members) == 0 {
 			fprintf(p.writer, "No members found\n")
-			return nil
+			return p.writer.Err()
 		}
 		fprintf(p.writer, "Members:\n")
 		for _, m := range members {
@@ -527,7 +525,7 @@ func (p *Printer) PrintClusterMembers(members []qrdbsdk.Member) error {
 			fprintf(p.writer, "  - replica %d at %s%s (api: %s)\n",
 				m.ReplicaID, m.Address, role, formatAPIEndpoints(m.APIEndpoints))
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}

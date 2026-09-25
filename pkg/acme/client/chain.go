@@ -234,7 +234,11 @@ func (c *Client) fetchAlternateChains(ctx context.Context, certURL string) ([][]
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("alternate chains HEAD request failed: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	// Parse Link headers
 	alternateURLs := parseLinkHeaders(resp.Header.Values("Link"))
@@ -315,7 +319,11 @@ func (c *Client) fetchChainFromURL(ctx context.Context, url string) ([]*x509.Cer
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("chain fetch request failed: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, caerrors.ConnectionFailureError("chain fetch server returned status %d", resp.StatusCode)

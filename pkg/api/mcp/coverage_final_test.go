@@ -46,7 +46,7 @@ func TestHandleDeleteKey_SymmetricFallback(t *testing.T) {
 
 	_, err = server.handleDeleteKey(context.Background(), req)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to find key")
+	assert.Contains(t, err.Error(), "key not found")
 }
 
 // TestHandleDeleteKey_SpecificBackendNotFound exercises the error path when
@@ -68,7 +68,7 @@ func TestHandleDeleteKey_SpecificBackendNotFound(t *testing.T) {
 
 	_, err = server.handleDeleteKey(context.Background(), req)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to find key")
+	assert.Contains(t, err.Error(), "key not found")
 }
 
 // TestHandleListKeys_InvalidBackendParam exercises the error path when an

@@ -123,7 +123,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	metadata := map[string]interface{}{
 		"cn":                  attrs.CN,
 		"symmetric_algorithm": string(attrs.SymmetricAlgorithm),
-		"key_type":            string(attrs.KeyType),
+		"key_type":            uint8(attrs.KeyType), // matches vault.go ListKeys' .(float64) read (go-xkms#705)
 		"store_type":          backend.STORE_VAULT,
 		"vault_name":          keyName,
 		"key_size":            256,

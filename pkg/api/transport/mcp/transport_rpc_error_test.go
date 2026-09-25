@@ -14,6 +14,7 @@ import (
 	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,6 +96,12 @@ func TestHealthy_Connected_Success(t *testing.T) {
 // wire.CodeNotFound, go-qrdb#438's addition) onto the JSON-RPC error code
 // this SDK has always exposed as *RPCError.Code — never by matching the
 // message text, which the server is free to phrase however it likes.
+//
+// wire.CodeNotFound classifies onto sdkssh.JSONRPCCodeNotFound, not
+// xkmsmcp.ErrCodeInvalidParams (go-xkms#814): a missing key or user is
+// reported distinctly from a malformed request, matching go-qrdb's own
+// MCP/gRPC/QUIC transports' NotFound classification for the same
+// conditions ("lower layers win").
 func TestRpcCall_ToolError_ClassifiedByCode(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -104,7 +111,7 @@ func TestRpcCall_ToolError_ClassifiedByCode(t *testing.T) {
 	}{
 		{"unauthenticated", wire.CodeUnauthenticated, "missing credential", xkmsmcp.ErrCodeUnauthorized},
 		{"permission denied", wire.CodePermissionDenied, "role required", xkmsmcp.ErrCodeForbidden},
-		{"not found", wire.CodeNotFound, "key k1 not found", xkmsmcp.ErrCodeInvalidParams},
+		{"not found", wire.CodeNotFound, "key k1 not found", sdkssh.JSONRPCCodeNotFound},
 		{"unavailable", wire.CodeUnavailable, "backend unavailable", xkmsmcp.ErrCodeServiceUnavailable},
 		{"invalid argument", wire.CodeInvalidArgument, "validation failed: weak hash refused", xkmsmcp.ErrCodeInvalidParams},
 		{"unimplemented", wire.CodeUnimplemented, "operation not supported by this backend", xkmsmcp.ErrCodeMethodNotFound},

@@ -60,13 +60,13 @@ func TestCoveragePush_GetStorageFactory(t *testing.T) {
 	assert.Equal(t, service.storageFactory, factory)
 }
 
-func TestCoveragePush_GetNonceStore(t *testing.T) {
+func TestCoveragePush_GetNonceService(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	nonceStore := service.GetNonceStore()
-	assert.NotNil(t, nonceStore)
-	assert.Equal(t, service.nonceStore, nonceStore)
+	nonceService := service.GetNonceService()
+	assert.NotNil(t, nonceService)
+	assert.Equal(t, service.nonceService, nonceService)
 }
 
 func TestCoveragePush_SetOrderFinalizeHooks(t *testing.T) {
@@ -238,13 +238,13 @@ func TestCoveragePush_SetNonceGenerator(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	customGen := func(length int) (string, error) {
+	customGen := func() (string, error) {
 		return "custom-nonce", nil
 	}
 	service.SetNonceGenerator(customGen)
 
 	// Verify by calling the generator
-	nonce, err := service.nonceGenerator(16)
+	nonce, err := service.nonceGenerator()
 	assert.NoError(t, err)
 	assert.Equal(t, "custom-nonce", nonce)
 }
@@ -257,7 +257,7 @@ func TestCoveragePush_GetNonceGenerator(t *testing.T) {
 	assert.NotNil(t, gen)
 
 	// Test that it works
-	nonce, err := gen(16)
+	nonce, err := gen()
 	assert.NoError(t, err)
 	assert.NotEmpty(t, nonce)
 }
@@ -497,7 +497,7 @@ func TestCoveragePush_WriteChallengeResponse_NonceError(t *testing.T) {
 	defer cleanup()
 
 	// Set failing nonce generator
-	service.SetNonceGenerator(func(_ int) (string, error) {
+	service.SetNonceGenerator(func() (string, error) {
 		return "", errors.New("nonce generation failed")
 	})
 
@@ -656,9 +656,8 @@ func TestCoveragePush_NewAccountHandler_InvalidJSON(t *testing.T) {
 	key := generateTestKey(t)
 
 	// Create a request with raw bytes that are not valid JSON
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	signerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -835,9 +834,8 @@ func TestCoveragePush_NewOrderHandler_InvalidJSON(t *testing.T) {
 	account := createTestAccount(t, service, key)
 
 	// Create a request with invalid JSON payload
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	signerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -1357,7 +1355,7 @@ func TestCoveragePush_OrderResponse_NonceError(t *testing.T) {
 	defer cleanup()
 
 	// Set failing nonce generator
-	service.SetNonceGenerator(func(_ int) (string, error) {
+	service.SetNonceGenerator(func() (string, error) {
 		return "", errors.New("nonce generation failed")
 	})
 
@@ -1384,7 +1382,7 @@ func TestCoveragePush_RespondWithAccount_NonceError(t *testing.T) {
 	defer cleanup()
 
 	// Set failing nonce generator
-	service.SetNonceGenerator(func(_ int) (string, error) {
+	service.SetNonceGenerator(func() (string, error) {
 		return "", errors.New("nonce generation failed")
 	})
 
@@ -1451,9 +1449,8 @@ func TestCoveragePush_ParseKID_InvalidSignature(t *testing.T) {
 	account := createTestAccount(t, service, key)
 
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	// Create JWS with correct key
 	payload := map[string]interface{}{"test": "data"}
@@ -1786,7 +1783,7 @@ func TestCoveragePush_GenerateNonce(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	nonce, err := service.generateNonce(16)
+	nonce, err := service.generateNonce()
 	assert.NoError(t, err)
 	assert.NotEmpty(t, nonce)
 }
@@ -1795,11 +1792,11 @@ func TestCoveragePush_GenerateNonce_Error(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	service.SetNonceGenerator(func(_ int) (string, error) {
+	service.SetNonceGenerator(func() (string, error) {
 		return "", errors.New("generation failed")
 	})
 
-	nonce, err := service.generateNonce(16)
+	nonce, err := service.generateNonce()
 	assert.Error(t, err)
 	assert.Empty(t, nonce)
 }
@@ -1812,7 +1809,7 @@ func TestCoveragePush_NewRestService_CustomNonceGenerator(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	customGen := func(length int) (string, error) {
+	customGen := func() (string, error) {
 		return "custom-nonce", nil
 	}
 
@@ -1828,7 +1825,7 @@ func TestCoveragePush_NewRestService_CustomNonceGenerator(t *testing.T) {
 	require.NoError(t, err)
 
 	restService := newService.(*RestService)
-	nonce, err := restService.generateNonce(16)
+	nonce, err := restService.generateNonce()
 	assert.NoError(t, err)
 	assert.Equal(t, "custom-nonce", nonce)
 }

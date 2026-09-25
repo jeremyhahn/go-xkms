@@ -16,6 +16,7 @@ package unix
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
@@ -110,6 +111,20 @@ type GRPCConfig struct {
 	// service so SSH RPCs are served over the unix socket. Optional; when nil
 	// the SSH RPCs return codes.Unavailable.
 	SSHClient sdkssh.Client
+
+	// CA is the CA servicer forwarded to the keystore gRPC service (via
+	// grpcinternal.Service.SetCA) so CA RPCs (GetCACertificate, SignCSR,
+	// IssueCertificate, the TCG EK/AK/enroll variants, ...) are served over
+	// the unix socket. Optional; when nil those RPCs return
+	// codes.Unavailable, mirroring the REST transport's Config.CA gate
+	// (go-xkms#951).
+	CA any
+
+	// CABundler optionally overrides how the keystore gRPC service's
+	// GetCABundle resolves its response (via
+	// grpcinternal.Service.SetCABundler). When nil, GetCABundle falls back
+	// to the CA servicer's own GetCABundle method (see CA above).
+	CABundler grpcinternal.CABundler
 
 	// BarrierRegistry gates per-request tenant access the same way the
 	// network gRPC, REST, QUIC, and MCP transports do (see
@@ -210,8 +225,8 @@ func (s *GRPCServer) Start() error {
 
 	// Set socket permissions
 	if err := os.Chmod(s.config.SocketPath, s.config.SocketMode); err != nil {
-		_ = s.listener.Close()
-		return &errs.Wrapped{Msg: "failed to set socket permissions", Err: err}
+		closeErr := s.listener.Close()
+		return errors.Join(&errs.Wrapped{Msg: "failed to set socket permissions", Err: err}, closeErr)
 	}
 
 	s.logger.Info("gRPC Unix socket created", slog.String("path", s.config.SocketPath))
@@ -242,7 +257,9 @@ func (s *GRPCServer) Start() error {
 		// Stop already ran; do not start serving a listener nothing can
 		// stop. Release the socket and return as a clean shutdown.
 		s.mu.Unlock()
-		_ = listener.Close()
+		if err := listener.Close(); err != nil {
+			s.logger.Warn("Failed to close listener during shutdown race", slog.String("error", err.Error()))
+		}
 		if err := os.Remove(s.config.SocketPath); err != nil && !os.IsNotExist(err) {
 			s.logger.Warn("Failed to remove socket file", slog.String("error", err.Error()))
 		}
@@ -258,6 +275,8 @@ func (s *GRPCServer) Start() error {
 	// file mode and directory permissions, not RBAC.
 	service := grpcinternal.NewService(nil, nil, s.config.XKMSService, grpcinternal.WithLocalTrust())
 	service.SetSSHClient(s.config.SSHClient)
+	service.SetCA(s.config.CA)
+	service.SetCABundler(s.config.CABundler)
 	pb.RegisterKeystoreServiceServer(s.server, service)
 
 	// Composition-root service registrations (e.g. the embedded qrdb node's

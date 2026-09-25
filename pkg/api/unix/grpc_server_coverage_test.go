@@ -18,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,15 +99,7 @@ func TestGRPCServer_Stop_ContextAlreadyCancelled(t *testing.T) {
 		_ = server.Start()
 	}()
 
-	// Wait for socket to appear
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	time.Sleep(50 * time.Millisecond)
+	waitForGRPCServerReady(t, server, socketPath)
 
 	// Use an already-cancelled context to force the timeout path
 	ctx, cancel := context.WithCancel(context.Background())

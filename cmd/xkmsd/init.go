@@ -502,8 +502,11 @@ func exitInit(creds seal.Credentials, env *ceremonyEnv, code int) {
 // Called explicitly at every runInit exit point (including os.Exit paths,
 // where a deferred close would never run) rather than via defer.
 func closeFIDO2Handler(env *ceremonyEnv) {
-	if env.fido2Handler != nil {
-		_ = env.fido2Handler.Close()
+	if env.fido2Handler == nil {
+		return
+	}
+	if err := env.fido2Handler.Close(); err != nil {
+		env.logger.Warn("init: failed to close the FIDO2 handler", "error", err)
 	}
 }
 

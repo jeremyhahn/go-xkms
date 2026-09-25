@@ -74,6 +74,9 @@ type testAdminClient struct {
 	shardCount int
 	isLeader   bool
 	peers      *db.PeersResponse
+	// drainErr, when set, is returned by Drain instead of succeeding, so
+	// callers can exercise a failed-drain path.
+	drainErr error
 }
 
 func newTestAdminClient() *testAdminClient {
@@ -132,6 +135,9 @@ func (a *testAdminClient) RequestSnapshot(ctx context.Context, shardID uint64) e
 }
 
 func (a *testAdminClient) Drain(ctx context.Context) error {
+	if a.drainErr != nil {
+		return a.drainErr
+	}
 	a.isDraining = true
 	return nil
 }

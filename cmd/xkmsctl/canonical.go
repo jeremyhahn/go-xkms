@@ -21,7 +21,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -134,7 +133,9 @@ func resolveCanonicalInitEnvFallbacks(cmd *cobra.Command, f *canonicalInitFlags)
 		"sans":             "SANS",
 	}
 	for flagName, envKey := range bindings {
-		_ = v.BindEnv(flagName, "XKMS_"+envKey)
+		if err := v.BindEnv(flagName, "XKMS_"+envKey); err != nil {
+			return &InitEnvValueError{Flag: flagName, Err: err}
+		}
 		if !cmd.Flags().Changed(flagName) {
 			if val := v.GetString(flagName); val != "" {
 				if err := cmd.Flags().Set(flagName, val); err != nil {
@@ -183,20 +184,20 @@ func runCanonicalInit(cmd *cobra.Command, _ []string) error {
 		return ErrInitSharesRequireShamir
 	}
 
-	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintln(out, "=== xkmsctl init: Canonical Surface Validated ===")
-	_, _ = fmt.Fprintf(out, "  BarrierStrategy: %s\n", f.barrierStrategy)
+	out := newOutputWriter(cmd.OutOrStdout())
+	out.println("=== xkmsctl init: Canonical Surface Validated ===")
+	out.printf("  BarrierStrategy: %s\n", f.barrierStrategy)
 	if f.barrierStrategy == "shamir" {
-		_, _ = fmt.Fprintf(out, "  Shamir Mode:     %d-of-%d\n", f.threshold, f.shares)
+		out.printf("  Shamir Mode:     %d-of-%d\n", f.threshold, f.shares)
 	}
-	_, _ = fmt.Fprintf(out, "  Hostname:        %s\n", f.hostname)
+	out.printf("  Hostname:        %s\n", f.hostname)
 	if f.sans != "" {
-		_, _ = fmt.Fprintf(out, "  SANs:            %s\n", f.sans)
+		out.printf("  SANs:            %s\n", f.sans)
 	}
-	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintln(out, "Note: SDK ceremony delegation pending; xkmsctl init wires the canonical")
-	_, _ = fmt.Fprintln(out, "shape that calls quicbaas SDK Ceremony().Initialize() once available.")
-	return nil
+	out.println()
+	out.println("Note: SDK ceremony delegation pending; xkmsctl init wires the canonical")
+	out.println("shape that calls quicbaas SDK Ceremony().Initialize() once available.")
+	return out.Err()
 }
 
 // newCanonicalAuthCmd builds the canonical auth command group.
@@ -298,14 +299,12 @@ Example:
 			if info.IsDir() {
 				return &BundlePathIsDirError{Path: bundlePath}
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Direct CA bundle accepted: %s (%d bytes)\n", bundlePath, info.Size())
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Direct CA bundle accepted: %s (%d bytes)\n", bundlePath, info.Size()); err != nil {
+				return err
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&bundlePath, "bundle", "", "Path to the CA bundle PEM file")
 	return cmd
 }
-
-// strconvForLinter prevents an unused-import lint when only the
-// integer formatting is needed elsewhere.
-var _ = strings.Builder{}

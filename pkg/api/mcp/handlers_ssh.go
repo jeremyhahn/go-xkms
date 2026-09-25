@@ -47,6 +47,28 @@ import (
 // was constructed without an SSH client.
 var ErrSSHNotConfigured = errors.New("mcp/ssh: client not configured")
 
+// Required-field sentinels for SSH handlers whose params decode
+// successfully but omit a field the operation cannot proceed without. Each
+// is wrapped in a *SSHInvalidParamsError at its call site so it reports the
+// same JSON-RPC Invalid params code as a decode failure.
+var (
+	// ErrSSHDigestRequired is returned by ssh.keys.sign when params.Digest
+	// is empty.
+	ErrSSHDigestRequired = errors.New("digest is required")
+
+	// ErrSSHHostRequired is returned by ssh.knownHosts.verify when
+	// params.Host is empty.
+	ErrSSHHostRequired = errors.New("host is required")
+
+	// ErrSSHPublicKeyRequired is returned by ssh.knownHosts.verify when
+	// params.PublicKey is empty.
+	ErrSSHPublicKeyRequired = errors.New("public_key is required")
+
+	// ErrSSHFingerprintRequired is returned by ssh.authorizedKeys.verify
+	// when params.Fingerprint is empty.
+	ErrSSHFingerprintRequired = errors.New("fingerprint is required")
+)
+
 // checkSSHClient returns ErrSSHNotConfigured when s.sshClient is nil.
 func (s *Server) checkSSHClient() error {
 	if s.sshClient == nil {
@@ -184,7 +206,7 @@ func (s *Server) handleSSHKeysSign(ctx context.Context, req *JSONRPCRequest) (in
 		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if len(params.Digest) == 0 {
-		return nil, mapSSHError(&SSHInvalidParamsError{Err: errors.New("digest is required")})
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: ErrSSHDigestRequired})
 	}
 	signer, err := s.sshClient.Keys().Signer(ctx, sdkssh.GetKeyRequest{
 		Scope: params.Scope,
@@ -268,10 +290,10 @@ func (s *Server) handleSSHKnownHostsVerify(ctx context.Context, req *JSONRPCRequ
 		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if params.Host == "" {
-		return nil, mapSSHError(&SSHInvalidParamsError{Err: errors.New("host is required")})
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: ErrSSHHostRequired})
 	}
 	if params.PublicKey == "" {
-		return nil, mapSSHError(&SSHInvalidParamsError{Err: errors.New("public_key is required")})
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: ErrSSHPublicKeyRequired})
 	}
 	pub, _, _, _, perr := gossh.ParseAuthorizedKey([]byte(params.PublicKey))
 	if perr != nil {
@@ -379,7 +401,7 @@ func (s *Server) handleSSHAuthorizedKeysVerify(ctx context.Context, req *JSONRPC
 		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if params.Fingerprint == "" {
-		return nil, mapSSHError(&SSHInvalidParamsError{Err: errors.New("fingerprint is required")})
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: ErrSSHFingerprintRequired})
 	}
 	entries, err := s.sshClient.AuthorizedKeys().List(ctx, sdkssh.ListAuthorizedKeysRequest{
 		Scope: params.Scope,

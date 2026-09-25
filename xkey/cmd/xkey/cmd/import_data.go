@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -246,7 +247,7 @@ func readImportPassphrase(out io.Writer) (string, error) {
 
 	reader := bufio.NewReader(os.Stdin)
 	passphrase, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", &ImportDataError{Operation: "read_passphrase", Err: err}
 	}
 	return strings.TrimSuffix(passphrase, "\n"), nil

@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 // TestGRPC_InvalidTCPAddress tests starting gRPC with an invalid TCP address.
@@ -107,13 +108,21 @@ func TestGRPC_StaleSocketRemovalError(t *testing.T) {
 		errCh <- server.startGRPC(context.Background())
 	}()
 
-	// Give time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify gRPC Unix server was created
-	server.mu.RLock()
-	grpcUnixServer := server.grpcUnixServer
-	server.mu.RUnlock()
+	// Poll for the gRPC Unix server field to be assigned instead of sleeping
+	// a fixed duration. Unlike the other tests in this file, a nil result
+	// here is a tolerated outcome (socket creation may still fail), so this
+	// uses a bounded poll rather than require.Eventually.
+	var grpcUnixServer *grpc.Server
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		server.mu.RLock()
+		grpcUnixServer = server.grpcUnixServer
+		server.mu.RUnlock()
+		if grpcUnixServer != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	if grpcUnixServer == nil {
 		// The test may fail to create socket, but that's acceptable
@@ -165,15 +174,18 @@ func TestGRPC_ServerCreation(t *testing.T) {
 		_ = server.startGRPC(context.Background())
 	}()
 
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the gRPC server field to be assigned instead of sleeping a
+	// fixed duration: under a loaded scheduler the goroutine may not have run
+	// yet within a short sleep.
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.grpcServer != nil
+	}, 10*time.Second, 10*time.Millisecond, "gRPC server was not created")
 
-	// Verify gRPC server was created
 	server.mu.RLock()
 	grpcServer := server.grpcServer
 	server.mu.RUnlock()
-
-	require.NotNil(t, grpcServer)
 
 	// Stop immediately
 	grpcServer.Stop()
@@ -206,8 +218,13 @@ func TestGRPC_UnixServerCreation(t *testing.T) {
 		_ = server.startGRPC(context.Background())
 	}()
 
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the Unix listener to actually bind instead of sleeping a fixed
+	// duration: under a loaded scheduler the goroutine may not have reached
+	// net.ListenUnix within a short sleep.
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(unixSocketPath)
+		return statErr == nil
+	}, 10*time.Second, 10*time.Millisecond, "gRPC Unix socket file was not created")
 
 	// Verify gRPC Unix server was created
 	server.mu.RLock()
@@ -215,10 +232,6 @@ func TestGRPC_UnixServerCreation(t *testing.T) {
 	server.mu.RUnlock()
 
 	require.NotNil(t, grpcUnixServer)
-
-	// Verify socket file exists
-	_, err = os.Stat(unixSocketPath)
-	assert.NoError(t, err)
 
 	// Stop immediately
 	grpcUnixServer.Stop()
@@ -248,15 +261,17 @@ func TestGRPC_TLSServerCreation(t *testing.T) {
 		_ = server.startGRPC(context.Background())
 	}()
 
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the gRPC server field to be assigned instead of sleeping a
+	// fixed duration.
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.grpcServer != nil
+	}, 10*time.Second, 10*time.Millisecond, "gRPC server was not created")
 
-	// Verify gRPC server was created
 	server.mu.RLock()
 	grpcServer := server.grpcServer
 	server.mu.RUnlock()
-
-	require.NotNil(t, grpcServer)
 
 	// Stop immediately
 	grpcServer.Stop()
@@ -284,15 +299,17 @@ func TestGRPC_NilRoleMapping(t *testing.T) {
 		_ = server.startGRPC(context.Background())
 	}()
 
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the gRPC server field to be assigned instead of sleeping a
+	// fixed duration (meaning default role mapping worked once assigned).
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.grpcServer != nil
+	}, 10*time.Second, 10*time.Millisecond, "gRPC server was not created")
 
-	// Verify gRPC server was created (meaning default role mapping worked)
 	server.mu.RLock()
 	grpcServer := server.grpcServer
 	server.mu.RUnlock()
-
-	require.NotNil(t, grpcServer)
 
 	// Stop immediately
 	grpcServer.Stop()

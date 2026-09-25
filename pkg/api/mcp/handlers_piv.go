@@ -15,9 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
-
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -26,13 +23,13 @@ import (
 // handleListPIVSlots handles the listPIVSlots method.
 func (s *Server) handleListPIVSlots(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.ListPIVSlotsRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := xkms.ListPIVSlots(ctx, &params)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to list PIV slots", Err: err}
+		return nil, mapPIVError(err, "failed to list PIV slots")
 	}
 
 	return resp, nil
@@ -41,13 +38,13 @@ func (s *Server) handleListPIVSlots(ctx context.Context, req *JSONRPCRequest) (i
 // handleGetPIVCertificate handles the getPIVCertificate method.
 func (s *Server) handleGetPIVCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.GetPIVCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := xkms.GetPIVCertificate(ctx, &params)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get PIV certificate", Err: err}
+		return nil, mapPIVError(err, "failed to get PIV certificate")
 	}
 
 	return resp, nil
@@ -56,12 +53,12 @@ func (s *Server) handleGetPIVCertificate(ctx context.Context, req *JSONRPCReques
 // handleStorePIVCertificate handles the storePIVCertificate method.
 func (s *Server) handleStorePIVCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.StorePIVCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := xkms.StorePIVCertificate(ctx, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to store PIV certificate", Err: err}
+		return nil, mapPIVError(err, "failed to store PIV certificate")
 	}
 
 	return map[string]string{"status": "ok"}, nil
@@ -70,12 +67,12 @@ func (s *Server) handleStorePIVCertificate(ctx context.Context, req *JSONRPCRequ
 // handleDeletePIVCertificate handles the deletePIVCertificate method.
 func (s *Server) handleDeletePIVCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.DeletePIVCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := xkms.DeletePIVCertificate(ctx, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to delete PIV certificate", Err: err}
+		return nil, mapPIVError(err, "failed to delete PIV certificate")
 	}
 
 	return map[string]string{"status": "ok"}, nil
@@ -84,13 +81,13 @@ func (s *Server) handleDeletePIVCertificate(ctx context.Context, req *JSONRPCReq
 // handleGeneratePIVKey handles the generatePIVKey method.
 func (s *Server) handleGeneratePIVKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.GeneratePIVKeyRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := xkms.GeneratePIVKey(ctx, &params)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate PIV key", Err: err}
+		return nil, mapPIVError(err, "failed to generate PIV key")
 	}
 
 	return resp, nil
@@ -99,12 +96,12 @@ func (s *Server) handleGeneratePIVKey(ctx context.Context, req *JSONRPCRequest) 
 // handleImportPIVCertificate handles the importPIVCertificate method.
 func (s *Server) handleImportPIVCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.StorePIVCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := xkms.ImportPIVCertificate(ctx, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to import PIV certificate", Err: err}
+		return nil, mapPIVError(err, "failed to import PIV certificate")
 	}
 
 	return map[string]string{"status": "ok"}, nil
@@ -113,13 +110,13 @@ func (s *Server) handleImportPIVCertificate(ctx context.Context, req *JSONRPCReq
 // handleExportPIVCertificate handles the exportPIVCertificate method.
 func (s *Server) handleExportPIVCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.GetPIVCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := xkms.ExportPIVCertificate(ctx, &params)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to export PIV certificate", Err: err}
+		return nil, mapPIVError(err, "failed to export PIV certificate")
 	}
 
 	return resp, nil
@@ -128,13 +125,13 @@ func (s *Server) handleExportPIVCertificate(ctx context.Context, req *JSONRPCReq
 // handleGeneratePIVCSR handles the generatePIVCSR method.
 func (s *Server) handleGeneratePIVCSR(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.GeneratePIVCSRRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := xkms.GeneratePIVCSR(ctx, &params)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate PIV CSR", Err: err}
+		return nil, mapPIVError(err, "failed to generate PIV CSR")
 	}
 
 	return resp, nil

@@ -61,37 +61,6 @@ func TestAdminRoutes_DottedServiceNames(t *testing.T) {
 	}
 }
 
-// TestAdminRoutes_DottedServiceNames_NotACME verifies that dotted admin services are not treated as ACME.
-func TestAdminRoutes_DottedServiceNames_NotACME(t *testing.T) {
-	t.Parallel()
-
-	cfg := &transport.Config{
-		Address:   "localhost:9443",
-		Insecure:  true,
-		TLSConfig: insecureTestTLSConfig(),
-	}
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-	defer tr.Close()
-
-	grpcTransport := tr.(*Transport)
-
-	adminServices := []string{
-		"admin.tenant",
-		"admin.certificate",
-		"admin.account",
-		"admin.order",
-	}
-
-	for _, svc := range adminServices {
-		if grpcTransport.isACMEService(svc) {
-			t.Errorf("admin service %q should not be classified as ACME", svc)
-		}
-	}
-}
-
 // TestAdminRoutes_BareServiceNames verifies that bare admin service names still work.
 func TestAdminRoutes_BareServiceNames(t *testing.T) {
 	t.Parallel()

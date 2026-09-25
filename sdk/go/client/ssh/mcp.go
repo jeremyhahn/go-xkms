@@ -129,8 +129,7 @@ func NewMCP(opts MCPOptions) (Client, error) {
 	// same guarantee the retired TCP transport gave with its post-dial
 	// health probe.
 	if err := client.Call(context.Background(), "health", nil, nil); err != nil {
-		_ = client.Close()
-		return nil, &ProtocolError{Message: "health check after connect", Err: err}
+		return nil, errors.Join(&ProtocolError{Message: "health check after connect", Err: err}, client.Close())
 	}
 
 	return &mcpClient{client: client}, nil

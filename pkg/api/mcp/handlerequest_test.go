@@ -268,6 +268,14 @@ func TestHandleRequest_CARoutes(t *testing.T) {
 	}
 }
 
+// TestHandleRequest_ErrorLogging pins go-xkms#774: malformed params report
+// Invalid params (-32602), not Internal error (-32603). handleGenerateKey
+// used to decode with a bare json.Unmarshal and return the failure as a
+// plain *errs.Wrapped, which is not a *KeyOpError, so invokeRequest's
+// errors.As never matched and every malformed xkms.generateKey request
+// reached the caller as an indistinguishable internal fault. It now decodes
+// through the shared decodeParams helper (utils.go), which always returns a
+// *KeyOpError carrying ErrCodeInvalidParams.
 func TestHandleRequest_ErrorLogging(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
@@ -284,7 +292,7 @@ func TestHandleRequest_ErrorLogging(t *testing.T) {
 	resp := invokeRequest(server, ctx, req)
 	require.NotNil(t, resp)
 	assert.NotNil(t, resp.Error)
-	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
+	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 }
 
 func TestSetPasswordManager(t *testing.T) {

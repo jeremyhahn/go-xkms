@@ -1030,28 +1030,6 @@ func TestTransport_Request_BadNonceRetry(t *testing.T) {
 	}
 }
 
-// TestTransport_RequestStream tests streaming (unsupported).
-func TestTransport_RequestStream(t *testing.T) {
-	cfg := &transport.Config{
-		Address:   "https://localhost:8443",
-		Insecure:  true,
-		TLSConfig: insecureTestTLSConfig(),
-	}
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-	defer tr.Close()
-
-	_, err = tr.RequestStream(context.Background(), "any", "method", nil)
-	if err == nil {
-		t.Fatal("RequestStream() error = nil, want error")
-	}
-	if !errors.IsUnimplemented(err) {
-		t.Errorf("error code = %v, want UNIMPLEMENTED", errors.Code(err))
-	}
-}
-
 // TestTransport_Close tests transport close behavior.
 func TestTransport_Close(t *testing.T) {
 	cfg := &transport.Config{

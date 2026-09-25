@@ -171,7 +171,7 @@ func (s *XKMSService) ClusterMembers(ctx context.Context) ([]ClusterMember, erro
 // Raft membership mutation is go-qrdb's own control plane, driven directly
 // by xkmsctl over gRPC/the Unix socket (pkg/server/qrdb_control_plane.go,
 // cmd/xkmsctl/cluster.go) and, over REST, deliberately refused by design
-// (docs/cluster/api.md, docs/web/parity.md "Cluster mutations") rather than
+// (docs/clustering/api.md, docs/web/parity.md "Cluster mutations") rather than
 // proxied. The ClusterMutator half of the ClusterClient contract exists so
 // the adapter can satisfy the qrdb SDK's cluster client shape, but the
 // servicer intentionally never calls AddReplica/RemoveReplica: doing so

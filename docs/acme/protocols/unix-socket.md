@@ -2,6 +2,16 @@
 
 Unix domain socket IPC using gRPC for local administration.
 
+> **Correction (go-xkms#942):** there is no `trusted-acme-server` binary,
+> no `cactl` binary, and no `TRUSTEDCA_` environment prefix. More
+> substantially: [`../../acme-issuance/cli.md`](../../acme-issuance/cli.md)
+> (NORMATIVE) states the ACME admin plane's `xkmsctl acme
+> --acme-transport` supports `rest`, `grpc`, `quic`, `mcp` — explicitly
+> **"there is no `unix` adapter for the ACME admin plane."** This page's
+> premise (a Unix-socket ACME admin transport) conflicts with that and is
+> unverified; treat this whole page as unconfirmed rather than adapting
+> its specific commands.
+
 ## Overview
 
 The Unix socket transport provides high-performance local IPC with kernel-enforced peer authentication. It uses the same gRPC service as TCP connections but over a Unix domain socket.
@@ -30,11 +40,7 @@ api:
 
 ### Command Line
 
-```bash
-trusted-acme-server \
-  --grpc-addr :9443 \
-  --grpc-unix-path /run/trusted-ca-grpc.sock
-```
+Unverified — see the correction above.
 
 ## Authentication
 
@@ -68,15 +74,10 @@ grpcurl -plaintext -unix -d '{"limit": 10}' \
   trustedca.admin.v1.AdminService/ListCertificates
 ```
 
-### cactl CLI
+### CLI
 
-```bash
-# Default uses Unix socket
-cactl status
-
-# Explicit Unix socket
-cactl --transport unix --address /run/trusted-ca-grpc.sock status
-```
+There is no `cactl` binary and no Unix-socket adapter for the ACME admin
+plane — see the correction above.
 
 ### Go Client
 
@@ -102,4 +103,4 @@ status, err := adapter.GetStatus(ctx)
 
 - [gRPC Protocol](grpc.md)
 - [Protocol Overview](README.md)
-- [cactl CLI](../cli/cactl.md)
+- [`xkmsctl acme` CLI](../../acme-issuance/cli.md)
