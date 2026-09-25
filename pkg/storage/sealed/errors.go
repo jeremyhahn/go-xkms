@@ -34,8 +34,10 @@ var (
 	// ErrGuardEnclaveFailed indicates the unsealed guard value could not be
 	// placed in locked memory, so the comparison was never performed. It is
 	// distinct from ErrUnsealFailed: the decryption succeeded, and what failed
-	// is the protection the comparison is required to happen under -- typically
-	// the kernel refusing to lock pages under RLIMIT_MEMLOCK.
+	// is the protection the comparison is required to happen under -- the
+	// process allocator's budget refusing it (enclave.ErrBudgetExhausted) or
+	// the kernel refusing to lock the pages (enclave.ErrLockedMemoryUnavailable).
+	// The cause is wrapped alongside it.
 	ErrGuardEnclaveFailed = errors.New("sealed: could not protect unsealed guard value")
 
 	// ErrUnsealIntoUnsupported indicates the configured sealer cannot decrypt

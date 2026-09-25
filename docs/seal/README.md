@@ -746,8 +746,14 @@ defer enclave.Wipe(dek) // caller must zero when done
 go-xkms holds no locked-memory implementation of its own — the
 `pkg/crypto/mem` package (`GuardedBuffer`) was retired in favor of
 [go-enclave](https://github.com/jeremyhahn/go-enclave)'s `MemoryEnclave`,
-admitted through an `Allocator`. `MemoryEnclave` provides the same OS-level
-memory protection for sensitive key material:
+admitted through the process allocator, `enclave.ProcessAllocator()`.
+Libraries in this repository allocate through it and never construct an
+`Allocator` of their own, so every enclave in the process is charged against
+the one `RLIMIT_MEMLOCK` ceiling it shares; a request past that budget is
+refused with `enclave.ErrBudgetExhausted` before any locked memory is
+requested, and a kernel refusal is `enclave.ErrLockedMemoryUnavailable`.
+Neither ever proceeds on swappable memory. `MemoryEnclave` provides the same
+OS-level memory protection for sensitive key material:
 
 | Protection | Mechanism |
 |-----------|-----------|
@@ -760,9 +766,11 @@ memory protection for sensitive key material:
 ```go
 // Material about to be generated is produced directly into locked pages —
 // no unprotected copy ever exists on the heap.
-enc, err := enclave.NewMemoryEnclaveSized(32)
+alloc, err := enclave.ProcessAllocator()
 if err != nil { ... }
-defer enc.Destroy()
+enc, err := alloc.NewSized(32)
+if err != nil { ... } // ErrBudgetExhausted / ErrLockedMemoryUnavailable
+defer enc.Destroy()   // also returns the reservation to the budget
 
 if err := enc.WithBytes(func(b []byte) error {
     _, err := io.ReadFull(rand.Reader, b) // straight into locked memory
@@ -772,7 +780,7 @@ if err := enc.Freeze(); err != nil { ... } // fault-on-write from here on
 
 // Material that already exists and can be given up moves in and is wiped
 // from the caller's slice on return.
-enc2, err := enclave.NewMemoryEnclave(secretKey)
+enc2, err := alloc.New(secretKey)
 if err != nil { ... }
 defer enc2.Destroy()
 
@@ -781,8 +789,7 @@ equal := enc2.EqualTo(otherHash) // constant-time compare under the read lock
 
 `Destroy` is idempotent, safe on a nil `*MemoryEnclave`, and safe to `defer`
 unconditionally. See go-enclave's package documentation for the full set of
-constructors (`NewMemoryEnclaveCopy`, `NewMemoryEnclaveFromString`) and their
-tradeoffs.
+constructors and their tradeoffs.
 
 ## See Also
 
