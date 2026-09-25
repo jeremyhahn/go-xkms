@@ -242,3 +242,76 @@ func TestBuildACMERouter_TenantQuotaSharedAcrossAccounts(t *testing.T) {
 		t.Fatalf("account-a (3rd): got %d, want 429 (tenant's shared budget exhausted)", resp.StatusCode)
 	}
 }
+
+// TestClusterNoncePrefix_DisabledIsEmpty proves a standalone node (cluster
+// disabled) mints unprefixed nonces, matching clusterNoncePrefix's doc
+// comment: there is no peer to disambiguate from.
+func TestClusterNoncePrefix_DisabledIsEmpty(t *testing.T) {
+	cfg := &config.Config{Cluster: config.ClusterConfig{Enabled: false, NodeID: 7}}
+	if got := clusterNoncePrefix(cfg); got != "" {
+		t.Errorf("clusterNoncePrefix(cluster disabled) = %q, want empty", got)
+	}
+}
+
+// TestClusterNoncePrefix_EnabledDerivesFromNodeID proves a clustered node
+// derives a non-empty, deterministic prefix from its Raft NodeID, and that
+// two different node IDs derive two different prefixes -- the whole point
+// of the prefix being to let pkg/acme/nonce.MultiService distinguish nonces
+// minted by different nodes.
+func TestClusterNoncePrefix_EnabledDerivesFromNodeID(t *testing.T) {
+	cfgA := &config.Config{Cluster: config.ClusterConfig{Enabled: true, NodeID: 1}}
+	cfgB := &config.Config{Cluster: config.ClusterConfig{Enabled: true, NodeID: 2}}
+
+	prefixA := clusterNoncePrefix(cfgA)
+	if prefixA == "" {
+		t.Fatal("clusterNoncePrefix(cluster enabled) = empty, want a derived prefix")
+	}
+	// Deterministic: the same NodeID always derives the same prefix.
+	if got := clusterNoncePrefix(cfgA); got != prefixA {
+		t.Errorf("clusterNoncePrefix is not deterministic: got %q and %q for the same NodeID", got, prefixA)
+	}
+	if prefixB := clusterNoncePrefix(cfgB); prefixB == prefixA {
+		t.Errorf("clusterNoncePrefix(NodeID=1) == clusterNoncePrefix(NodeID=2) == %q, want distinct prefixes", prefixA)
+	}
+}
+
+// TestAcmeRouterLimiters_WrapMethodsApplyEnabledLimiter is the counterpart
+// to TestAcmeRouterLimiters_WrapMethodsNilSafe: with every category
+// enabled, each wrap* helper must actually apply its TenantRateLimiter
+// (proven by exhausting the configured budget and observing 429) rather
+// than passing next through unwrapped.
+func TestAcmeRouterLimiters_WrapMethodsApplyEnabledLimiter(t *testing.T) {
+	cfg := &config.ACMERateLimitConfig{
+		NewAccount:  config.ACMECategoryRateLimitConfig{MaxRequests: 1, Interval: time.Minute},
+		NewOrder:    config.ACMECategoryRateLimitConfig{MaxRequests: 1, Interval: time.Minute},
+		Certificate: config.ACMECategoryRateLimitConfig{MaxRequests: 1, Interval: time.Minute},
+	}
+	limiters := buildACMERouterLimiters(cfg, discardLogger())
+	t.Cleanup(func() {
+		for _, l := range limiters.stoppableLimiters() {
+			l.Stop()
+		}
+	})
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	for _, wrap := range []func(http.Handler) http.Handler{
+		limiters.wrapNewAccount, limiters.wrapNewOrder, limiters.wrapCertificate,
+	} {
+		handler := wrap(next)
+
+		rec1 := httptest.NewRecorder()
+		handler.ServeHTTP(rec1, httptest.NewRequest(http.MethodPost, "/acme/x", nil))
+		if rec1.Code != http.StatusOK {
+			t.Fatalf("first request = %d, want 200 (budget not yet exhausted)", rec1.Code)
+		}
+
+		rec2 := httptest.NewRecorder()
+		handler.ServeHTTP(rec2, httptest.NewRequest(http.MethodPost, "/acme/x", nil))
+		if rec2.Code != http.StatusTooManyRequests {
+			t.Fatalf("second request = %d, want 429 (budget of 1 exhausted, proving the limiter is actually applied)", rec2.Code)
+		}
+	}
+}

@@ -538,6 +538,33 @@ func TestResolveHostname_DefaultValue(t *testing.T) {
 	}
 }
 
+func TestResolveCredentialStrategy_ConfigUsedWhenFlagEmpty(t *testing.T) {
+	flags := &initFlags{}
+	cfg := &config.Config{Credentials: config.CredentialsConfig{SealStrategy: "pkcs11"}}
+	result := resolveCredentialStrategy(flags, cfg)
+	if result != "pkcs11" {
+		t.Errorf("expected the config value pkcs11 when the flag is unset, got %q", result)
+	}
+}
+
+func TestResolveDataDir_ConfigUsedWhenFlagEmpty(t *testing.T) {
+	flags := &initFlags{}
+	cfg := &config.Config{Storage: config.StorageConfig{Path: "/etc/configured/data"}}
+	result := resolveDataDir(flags, cfg)
+	if result != "/etc/configured/data" {
+		t.Errorf("expected the config value when the flag is unset, got %q", result)
+	}
+}
+
+func TestResolveHostname_ConfigUsedWhenFlagEmpty(t *testing.T) {
+	flags := &initFlags{}
+	cfg := &config.Config{Server: config.ServerConfig{Host: "configured.example.com"}}
+	result := resolveHostname(flags, cfg)
+	if result != "configured.example.com" {
+		t.Errorf("expected the config value when the flag is unset, got %q", result)
+	}
+}
+
 func TestParseInitFlags_InvalidFlag(t *testing.T) {
 	_, err := parseInitFlags([]string{"--nonexistent-flag", "value"})
 	if err == nil {
