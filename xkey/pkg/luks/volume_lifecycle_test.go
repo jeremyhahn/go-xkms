@@ -145,6 +145,30 @@ func TestVolume_Create_FormatFails(t *testing.T) {
 	assert.False(t, v.Exists())
 }
 
+// TestVolume_Create_FormatFails_JoinsCleanupError proves that when the loop
+// detach performed while unwinding a failed format itself fails, that
+// cleanup error is joined into the returned error rather than discarded.
+func TestVolume_Create_FormatFails_JoinsCleanupError(t *testing.T) {
+	withKeyringCheck(t, func() error { return nil })
+	stubLoopSeams(t)
+
+	detachErr := errors.New("detach failed")
+	detachLoopDevice = func(string) error { return detachErr }
+	formatLUKS = func(luks2.FormatOptions) error { return errors.New("format rejected") }
+
+	dir := t.TempDir()
+	luksPath := filepath.Join(dir, "vault.luks")
+	v := NewVolumeWithPaths(luksPath, filepath.Join(dir, "mnt"))
+
+	err := v.Create(1<<20, "passphrase")
+	require.Error(t, err)
+
+	var volErr *VolumeError
+	require.ErrorAs(t, err, &volErr)
+	assert.Equal(t, "luks_format", volErr.Operation)
+	assert.ErrorIs(t, err, detachErr, "a detach failure during format cleanup must not be swallowed")
+}
+
 // TestVolume_Create_UnlockFails proves a failed post-format unlock cleans up
 // the loop device and container the same way a format failure does.
 func TestVolume_Create_UnlockFails(t *testing.T) {
@@ -349,6 +373,31 @@ func TestVolume_Unlock_MountFails(t *testing.T) {
 	assert.Equal(t, "mount", volErr.Operation)
 	assert.Equal(t, 1, lockCalls)
 	assert.Equal(t, 1, detachCalls)
+}
+
+// TestVolume_Unlock_MountFails_JoinsCleanupError proves that when the
+// LUKS re-lock performed while unwinding a failed mount itself fails, that
+// cleanup error is joined into the returned error rather than discarded.
+func TestVolume_Unlock_MountFails_JoinsCleanupError(t *testing.T) {
+	withKeyringCheck(t, func() error { return nil })
+	stubLoopSeams(t)
+
+	lockErr := errors.New("lock cleanup failed")
+	lockLUKS = func(string) error { return lockErr }
+	mountLUKS = func(luks2.MountOptions) error { return errors.New("mount failed") }
+
+	dir := t.TempDir()
+	luksPath := filepath.Join(dir, "vault.luks")
+	require.NoError(t, os.WriteFile(luksPath, []byte("container"), 0600))
+	v := NewVolumeWithPaths(luksPath, filepath.Join(dir, "mnt"))
+
+	err := v.Unlock("passphrase")
+	require.Error(t, err)
+
+	var volErr *VolumeError
+	require.ErrorAs(t, err, &volErr)
+	assert.Equal(t, "mount", volErr.Operation)
+	assert.ErrorIs(t, err, lockErr, "a lock cleanup failure during mount rollback must not be swallowed")
 }
 
 // TestVolume_Unlock_Success drives the full happy path with every kernel

@@ -333,10 +333,16 @@ func (s *AutoFillService) SearchCredentials(domain string) ([]ipc.AutofillCreden
 		return nil, err
 	}
 
-	// Prefetch OATH accounts once for cross-referencing.
+	// Prefetch OATH accounts once for cross-referencing. Best-effort: a
+	// failure here only means autofill results omit TOTP availability, not
+	// that the password search itself should fail.
 	var oathAccounts []OATHAccount
 	if s.oathSvc != nil {
-		oathAccounts, _ = s.oathSvc.ListAccounts()
+		var oathErr error
+		oathAccounts, oathErr = s.oathSvc.ListAccounts()
+		if oathErr != nil {
+			s.log.Warn("failed to list OATH accounts for autofill cross-reference", "error", oathErr)
+		}
 	}
 
 	results := make([]ipc.AutofillCredential, 0)

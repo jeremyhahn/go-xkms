@@ -446,7 +446,9 @@ func (s *SSHConsoleService) Shutdown() {
 	if srv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(ctx)
+		if err := srv.Shutdown(ctx); err != nil {
+			s.logger.Warn("failed to shut down SSH console loopback server", "error", err)
+		}
 	}
 }
 

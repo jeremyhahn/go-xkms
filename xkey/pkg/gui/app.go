@@ -1416,7 +1416,9 @@ func (a *App) initLocalKeyStore(dataDir string) {
 			if name == "software" {
 				// Software uses the root path (backward compatible).
 				if a.pivFileStore != nil {
-					_ = xkmssdk.RegisterPIVStore(name, a.pivFileStore)
+					if regErr := xkmssdk.RegisterPIVStore(name, a.pivFileStore); regErr != nil {
+						a.log.Debug("PIV store registration failed", "backend", name, "error", regErr)
+					}
 				}
 				continue
 			}
@@ -1471,7 +1473,9 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 	if existingBackend, err := xkmssdk.GetBackend("pkcs11"); err == nil {
 		a.log.Info("replacing existing PKCS#11 xkms backend (reconnect)")
 		if closer, ok := existingBackend.(interface{ Close() error }); ok {
-			_ = closer.Close()
+			if closeErr := closer.Close(); closeErr != nil {
+				a.log.Warn("failed to close existing PKCS#11 xkms backend before reconnect", "error", closeErr)
+			}
 		}
 		xkmssdk.UnregisterBackend("pkcs11")
 	}
@@ -1832,8 +1836,15 @@ func NewApp(cfg *GUIConfig) *App {
 	if err != nil {
 		// Corrupt config file -- remove and retry with defaults.
 		log.Warn("browser config corrupt, resetting to defaults", "error", err)
-		_ = os.Remove(browserConfigPath)
-		browserSvc, _ = services.NewBrowserService(browserConfigPath, log)
+		if removeErr := os.Remove(browserConfigPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Error("failed to remove corrupt browser config", "path", browserConfigPath, "error", removeErr)
+			panic("browser service initialization failed: could not remove corrupt config: " + removeErr.Error())
+		}
+		browserSvc, err = services.NewBrowserService(browserConfigPath, log)
+		if err != nil {
+			log.Error("failed to create browser service after resetting config", "error", err)
+			panic("browser service initialization failed: " + err.Error())
+		}
 	}
 
 	home, _ := os.UserHomeDir()
@@ -1870,7 +1881,9 @@ func NewApp(cfg *GUIConfig) *App {
 		log.Warn("failed to enable autofill service", "error", setErr)
 	}
 	if cfg.AutoFillPolicy != nil {
-		_ = autofillSvc.SetPolicy(cfg.AutoFillPolicy)
+		if setErr := autofillSvc.SetPolicy(cfg.AutoFillPolicy); setErr != nil {
+			log.Warn("failed to apply configured autofill policy", "error", setErr)
+		}
 	}
 
 	// Create audit service now (rather than inline in the App struct
@@ -2403,7 +2416,9 @@ func NewApp(cfg *GUIConfig) *App {
 			a.log.Warn("enterprise policy prevents enabling extension", "error", setErr)
 		}
 		if guiCfg.AutoFillPolicy != nil {
-			_ = autofillSvc.SetPolicy(guiCfg.AutoFillPolicy)
+			if setErr := autofillSvc.SetPolicy(guiCfg.AutoFillPolicy); setErr != nil {
+				a.log.Warn("failed to apply updated autofill policy", "error", setErr)
+			}
 		}
 
 		// Sync sealer backend when config changes.
@@ -2532,7 +2547,9 @@ func (a *App) getTPM() xkmssdk.TrustedPlatformModule {
 		}
 		a.log.Warn("failed to open TPM", "error", err)
 		if factory != nil {
-			_ = factory.Close()
+			if closeErr := factory.Close(); closeErr != nil {
+				a.log.Warn("failed to close TPM storage factory after open failure", "error", closeErr)
+			}
 		}
 		return nil
 	}
@@ -3436,23 +3453,38 @@ func (a *App) shutdown(ctx context.Context) {
 		})
 
 		// Close storage backends.
-		if a.oathStore != nil {
-			_ = a.oathStore.Close()
-		}
-		if closer, ok := a.fido2Storage.(interface{ Close() error }); ok && closer != nil {
-			_ = closer.Close()
-		}
-		if a.staticpwStore != nil {
-			_ = a.staticpwStore.Close()
-		}
-		if a.trustStore != nil {
-			_ = a.trustStore.Close()
-		}
+		shutdownStep(a.log, "oath-store-close", 1*time.Second, func() error {
+			if a.oathStore != nil {
+				return a.oathStore.Close()
+			}
+			return nil
+		})
+		shutdownStep(a.log, "fido2-storage-close", 1*time.Second, func() error {
+			if closer, ok := a.fido2Storage.(interface{ Close() error }); ok && closer != nil {
+				return closer.Close()
+			}
+			return nil
+		})
+		shutdownStep(a.log, "staticpw-store-close", 1*time.Second, func() error {
+			if a.staticpwStore != nil {
+				return a.staticpwStore.Close()
+			}
+			return nil
+		})
+		shutdownStep(a.log, "trust-store-close", 1*time.Second, func() error {
+			if a.trustStore != nil {
+				return a.trustStore.Close()
+			}
+			return nil
+		})
 
 		// Close the backend registry.
-		if a.backendRegistry != nil {
-			_ = a.backendRegistry.Close()
-		}
+		shutdownStep(a.log, "backend-registry-close", 1*time.Second, func() error {
+			if a.backendRegistry != nil {
+				return a.backendRegistry.Close()
+			}
+			return nil
+		})
 
 		// Close TPM if it was initialized.
 		shutdownStep(a.log, "tpm-close", 2*time.Second, func() error {
@@ -3619,7 +3651,11 @@ func detectEKHandle(log *slog.Logger, device string) uint32 {
 	if err != nil {
 		return 0
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.Debug("failed to close TPM device after EK probe", "device", device, "error", closeErr)
+		}
+	}()
 
 	t := tpmtransport.FromReadWriter(f)
 

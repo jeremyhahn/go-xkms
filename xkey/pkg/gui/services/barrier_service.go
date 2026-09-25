@@ -15,6 +15,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -271,15 +272,21 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 		}
 		exists, err := base.Exists(context.Background(), barrierRootKeyPath)
 		if err != nil {
-			_ = base.Close()
 			s.log.Error("barrier: root key existence check failed", "error", err)
+			if closeErr := base.Close(); closeErr != nil {
+				s.log.Warn("barrier: failed to close base backend after existence check failure", "error", closeErr)
+			}
 			return err
 		}
 		if exists {
-			_ = base.Close()
+			if closeErr := base.Close(); closeErr != nil {
+				s.log.Warn("barrier: failed to close base backend after already-initialized check", "error", closeErr)
+			}
 			return ErrBarrierAlreadyInit
 		}
-		_ = base.Close()
+		if closeErr := base.Close(); closeErr != nil {
+			s.log.Warn("barrier: failed to close base backend after existing-dir preflight", "error", closeErr)
+		}
 	}
 
 	// Validate password for the passphrase strategy: a missing password is
@@ -315,9 +322,9 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 		PreferenceOrder: []xkms.StrategyID{strategy.ID()},
 	}, strategy)
 	if bErr != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.log.Error("barrier: NewBarrier failed", "error", bErr)
-		return bErr
+		return errors.Join(bErr, closeErr)
 	}
 
 	ctx := s.context()
@@ -329,20 +336,20 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	// additional exposure here.
 	creds, credErr := xkms.CredentialsFor([]byte(password))
 	if credErr != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.log.Error("barrier: CredentialsFor failed", "error", credErr)
-		return credErr
+		return errors.Join(credErr, closeErr)
 	}
 	defer creds.Secret.Destroy()
 
 	if initErr := barrier.Initialize(ctx, creds); initErr != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.log.Error("barrier: barrier.Initialize failed",
 			"strategy", strategyID, "error", initErr)
 		if auditErr := s.logBarrierEvent(audit.OpBarrierInitialized, false, initErr, map[string]any{"strategy": strategyID}); auditErr != nil {
-			return auditErr
+			return errors.Join(auditErr, closeErr)
 		}
-		return initErr
+		return errors.Join(initErr, closeErr)
 	}
 
 	s.barrier = barrier
@@ -459,9 +466,9 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 		PreferenceOrder: []xkms.StrategyID{strategy.ID()},
 	}, strategy)
 	if bErr != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.mu.Unlock()
-		return bErr
+		return errors.Join(bErr, closeErr)
 	}
 
 	ctx := s.context()
@@ -469,16 +476,16 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	// may be hardware-backed and password may be empty.
 	creds, credErr := xkms.CredentialsFor([]byte(password))
 	if credErr != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.mu.Unlock()
-		return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID})
+		return errors.Join(s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID}), closeErr)
 	}
 	defer creds.Secret.Destroy()
 
 	if err := barrier.Unseal(ctx, creds); err != nil {
-		_ = base.Close()
+		closeErr := base.Close()
 		s.mu.Unlock()
-		return s.barrierAuditErr(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": strategyID})
+		return errors.Join(s.barrierAuditErr(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": strategyID}), closeErr)
 	}
 
 	s.barrier = barrier
@@ -640,7 +647,11 @@ func (s *BarrierService) probeRootKey(dir string) bool {
 	if err != nil {
 		return false
 	}
-	defer func() { _ = base.Close() }()
+	defer func() {
+		if closeErr := base.Close(); closeErr != nil {
+			s.log.Warn("barrier: failed to close base backend after root key probe", "dir", dir, "error", closeErr)
+		}
+	}()
 
 	exists, err := base.Exists(context.Background(), barrierRootKeyPath)
 	if err != nil {

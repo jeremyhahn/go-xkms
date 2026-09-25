@@ -378,9 +378,15 @@ func (s *FIDO2DeviceService) Stop() error {
 	// Close the virtual device BEFORE waiting for goroutines. Goroutine 2
 	// blocks on device.Read() which waits on respChan; closing the device
 	// closes respChan, unblocking the read and allowing the goroutine to exit.
-	// Without this, bridgeWg.Wait() deadlocks against cleanup().
+	// Without this, bridgeWg.Wait() deadlocks against cleanup(). The close
+	// error, if any, is reported once the rest of teardown has run rather
+	// than dropped.
+	var deviceCloseErr error
 	if s.device != nil {
-		_ = s.device.Close()
+		deviceCloseErr = s.device.Close()
+		if deviceCloseErr != nil {
+			s.log.Warn("failed to close virtual FIDO2 device", "error", deviceCloseErr)
+		}
 	}
 
 	s.bridgeWg.Wait()
@@ -407,11 +413,11 @@ func (s *FIDO2DeviceService) Stop() error {
 		if err := s.auditLogger.LogServiceEvent(audit.OpServiceStopped, map[string]any{
 			"service": "fido2_virtual_device",
 		}); err != nil {
-			return err
+			return errors.Join(deviceCloseErr, err)
 		}
 	}
 
-	return nil
+	return deviceCloseErr
 }
 
 // IsRunning reports whether the virtual FIDO2 device bridge is active.

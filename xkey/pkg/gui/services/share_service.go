@@ -218,7 +218,11 @@ func (s *ShareService) ReceiveShares(serverURL, spkiPin string) ([]ShareInfo, er
 		s.log.Error("failed to connect to server", "server", serverURL, "error", err)
 		return nil, ErrShareReceiveFailed
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			s.log.Warn("failed to close SDK client", "server", serverURL, "error", closeErr)
+		}
+	}()
 
 	resp, err := client.ListShares(ctx)
 	if err != nil {
@@ -297,7 +301,11 @@ func (s *ShareService) SubmitShare(serverURL, groupID string, shareIndex int, sp
 		s.log.Error("failed to connect to server", "server", serverURL, "error", err)
 		return ErrShareSubmitFailed
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			s.log.Warn("failed to close SDK client", "server", serverURL, "error", closeErr)
+		}
+	}()
 
 	_, err = client.SubmitShare(ctx, &transport.SubmitShareRequest{
 		GroupID:   groupID,
@@ -345,7 +353,11 @@ func (s *ShareService) GetShareStatus(serverURL, groupID, spkiPin string) (*tran
 	if err := client.Connect(ctx); err != nil {
 		return nil, err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			s.log.Warn("failed to close SDK client", "server", serverURL, "error", closeErr)
+		}
+	}()
 
 	return client.GetShareCollectionStatus(ctx, groupID)
 }

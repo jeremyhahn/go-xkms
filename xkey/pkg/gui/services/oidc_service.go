@@ -264,7 +264,10 @@ func (s *OIDCService) SetDataDir(dir string) {
 	store, err := oidc.NewFileTokenStore(tokensPath, []byte(oidcTokenEncKey))
 	if err != nil {
 		s.log.Warn("failed to open OIDC token store", "error", err)
-		store, _ = oidc.NewFileTokenStore(tokensPath, nil)
+		store, err = oidc.NewFileTokenStore(tokensPath, nil)
+		if err != nil {
+			s.log.Error("failed to open OIDC token store without encryption; OIDC tokens will not persist", "error", err)
+		}
 	}
 	s.tokenStore = store
 
@@ -508,7 +511,9 @@ func (s *OIDCService) DeleteProvider(name string) error {
 	}
 
 	// Stop refresh first (outside provider lock to avoid deadlock).
-	_ = s.StopAutoRefresh(name)
+	if err := s.StopAutoRefresh(name); err != nil {
+		s.log.Warn("failed to stop auto-refresh before deleting provider", "provider", name, "error", err)
+	}
 
 	s.providersMu.Lock()
 	defer s.providersMu.Unlock()
@@ -654,7 +659,9 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 
 		if errParam := query.Get("error"); errParam != "" {
 			w.Header().Set("Content-Type", "text/html")
-			_, _ = w.Write([]byte("<html><body><h1>Authentication Failed</h1></body></html>"))
+			if _, writeErr := w.Write([]byte("<html><body><h1>Authentication Failed</h1></body></html>")); writeErr != nil {
+				s.log.Debug("failed to write OIDC callback error page", "error", writeErr)
+			}
 			errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, query.Get("error_description"))}
 			return
 		}
@@ -662,7 +669,9 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 		code := query.Get("code")
 		if code == "" {
 			w.Header().Set("Content-Type", "text/html")
-			_, _ = w.Write([]byte("<html><body><h1>Authentication Failed</h1><p>No code received</p></body></html>"))
+			if _, writeErr := w.Write([]byte("<html><body><h1>Authentication Failed</h1><p>No code received</p></body></html>")); writeErr != nil {
+				s.log.Debug("failed to write OIDC callback no-code page", "error", writeErr)
+			}
 			errChan <- ErrOIDCCallbackNoCode
 			return
 		}
@@ -670,7 +679,9 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 		receivedState.Store(query.Get("state"))
 
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte("<html><body><h1>Authentication Successful</h1><p>You may close this window.</p></body></html>"))
+		if _, writeErr := w.Write([]byte("<html><body><h1>Authentication Successful</h1><p>You may close this window.</p></body></html>")); writeErr != nil {
+			s.log.Debug("failed to write OIDC callback success page", "error", writeErr)
+		}
 		codeChan <- code
 	}))
 
@@ -685,7 +696,9 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		_ = server.Shutdown(shutdownCtx)
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			s.log.Debug("failed to shut down OIDC callback server", "error", shutdownErr)
+		}
 	}()
 
 	// Open browser.
@@ -1146,7 +1159,9 @@ func (s *OIDCService) Logout(providerName string) error {
 		return err
 	}
 
-	_ = s.StopAutoRefresh(providerName)
+	if err := s.StopAutoRefresh(providerName); err != nil {
+		s.log.Warn("failed to stop auto-refresh during logout", "provider", providerName, "error", err)
+	}
 
 	if s.tokenStore == nil {
 		return ErrOIDCTokenStoreUnavailable
@@ -1303,7 +1318,11 @@ func (s *OIDCService) ExecuteScript(providerName string, script string) (*OIDCEx
 
 	var tokenResp *oidc.TokenResponse
 	if s.tokenStore != nil {
-		tokenResp, _ = s.tokenStore.Load(entry.Issuer)
+		var loadErr error
+		tokenResp, loadErr = s.tokenStore.Load(entry.Issuer)
+		if loadErr != nil {
+			s.log.Debug("no stored token available for script execution", "provider", providerName, "error", loadErr)
+		}
 	}
 
 	payload := s.buildExecPayload(providerName, entry, tokenResp)
@@ -1374,7 +1393,11 @@ func (s *OIDCService) ExecuteProgram(providerName string, programPath string) (*
 
 	var tokenResp *oidc.TokenResponse
 	if s.tokenStore != nil {
-		tokenResp, _ = s.tokenStore.Load(entry.Issuer)
+		var loadErr error
+		tokenResp, loadErr = s.tokenStore.Load(entry.Issuer)
+		if loadErr != nil {
+			s.log.Debug("no stored token available for program execution", "provider", providerName, "error", loadErr)
+		}
 	}
 
 	payload := s.buildExecPayload(providerName, entry, tokenResp)

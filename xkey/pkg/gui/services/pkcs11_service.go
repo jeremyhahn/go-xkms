@@ -990,7 +990,10 @@ func (s *PKCS11Service) TestConnection(libraryPath string, slotID uint, userPIN 
 	if loginErr != nil {
 		// Cleanup: unregister the module on failure so the next attempt
 		// starts fresh (e.g., after the user corrects the PIN).
-		_ = s.manager.UnregisterModule(moduleID)
+		if unregErr := s.manager.UnregisterModule(moduleID); unregErr != nil {
+			s.log.Warn("test connection: failed to unregister module after login failure",
+				"module_id", moduleID, "error", unregErr)
+		}
 		return &WrappedError{Msg: "connection test failed", Err: loginErr}
 	}
 
@@ -1038,7 +1041,10 @@ func (s *PKCS11Service) ProbeSlots(libraryPath string) ([]PKCS11SlotInfo, error)
 	// Get module info to retrieve slots
 	mod, err := s.manager.GetModule(moduleID)
 	if err != nil {
-		_ = s.manager.UnregisterModule(moduleID)
+		if unregErr := s.manager.UnregisterModule(moduleID); unregErr != nil {
+			s.log.Warn("probe slots: failed to unregister module after GetModule failure",
+				"module_id", moduleID, "error", unregErr)
+		}
 		return nil, &WrappedError{Msg: "failed to get module info", Err: err}
 	}
 
@@ -1055,7 +1061,9 @@ func (s *PKCS11Service) ProbeSlots(libraryPath string) ([]PKCS11SlotInfo, error)
 	}
 
 	// Unregister the module
-	_ = s.manager.UnregisterModule(moduleID)
+	if unregErr := s.manager.UnregisterModule(moduleID); unregErr != nil {
+		s.log.Warn("probe slots: failed to unregister module", "module_id", moduleID, "error", unregErr)
+	}
 
 	return slots, nil
 }

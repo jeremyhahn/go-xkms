@@ -430,8 +430,9 @@ func (s *FIDO2Service) StopPhoneBridge() error {
 	s.bridgeMu.Lock()
 	defer s.bridgeMu.Unlock()
 
+	var bridgeCloseErr error
 	if s.bridge != nil {
-		_ = s.bridge.Close()
+		bridgeCloseErr = s.bridge.Close()
 		s.bridge = nil
 	}
 	s.closeTPMEnroller()
@@ -441,10 +442,10 @@ func (s *FIDO2Service) StopPhoneBridge() error {
 		if auditErr := s.auditLogger.LogServiceEvent(audit.OpServiceStopped, map[string]any{
 			"service": "fido2_phone_bridge",
 		}); auditErr != nil {
-			return auditErr
+			return errors.Join(bridgeCloseErr, auditErr)
 		}
 	}
-	return nil
+	return bridgeCloseErr
 }
 
 // openTPMEnroller opens this host's TPM for TCG device enrollment, or returns
