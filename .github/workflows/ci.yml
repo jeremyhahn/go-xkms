@@ -836,6 +836,9 @@ jobs:
         id: pkgs
         env:
           MERGE_BASE: ${{ needs.changes.outputs.merge_base }}
+          # Must match the -tags of "Unit tests for changed packages" below,
+          # so packages gated behind other tags are left out of the set.
+          GO_TEST_TAGS: codec_cbor codec_json codec_msgpack tpm_simulator frost
         run: .github/scripts/changed-go-packages.sh
 
       # Same tag set as test-go's TEST_TAGS (Makefile), minus the hardware

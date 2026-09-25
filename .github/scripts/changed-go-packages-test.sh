@@ -116,6 +116,16 @@ mkdir -p "$fakebin"
 cat >"$fakebin/go" <<'FAKE'
 #!/bin/sh
 case "$1 $2" in
+"list -e")
+	# the build-tag filter: every package in this fixture has Go files.
+	for p; do
+		case "$p" in
+		./pkg/leaf) echo "github.com/jeremyhahn/go-xkms/pkg/leaf 1 0 1 0" ;;
+		./pkg/caller) echo "github.com/jeremyhahn/go-xkms/pkg/caller 1 0 0 0" ;;
+		esac
+	done
+	exit 0
+	;;
 "list -deps")
 	# emit the two packages this fixture repo declares, caller depending
 	# on leaf, in the -f '{{.ImportPath}} {{join .Deps ","}}' shape.
@@ -145,6 +155,48 @@ result="$(outval)"
 check "includes the changed leaf package" sh -c "case ' $result ' in *' ./pkg/leaf '*) exit 0;; *) exit 1;; esac"
 check "includes the reverse-dependent caller package" sh -c "case ' $result ' in *' ./pkg/caller '*) exit 0;; *) exit 1;; esac"
 (cd "$repo" && git checkout -q main && git branch -q -D root-change)
+
+echo "== changed package with no Go files under the test tags is dropped =="
+(
+	cd "$repo"
+	git checkout -q -b tagged-change
+	echo 'package leaf' >>pkg/leaf/leaf.go
+	echo 'package caller' >>pkg/caller/caller.go
+	git add -A
+	git commit -q -m "tagged-only leaf change"
+)
+tagbin="$work/tagbin"
+mkdir -p "$tagbin"
+cat >"$tagbin/go" <<'FAKE'
+#!/bin/sh
+case "$1 $2" in
+"list -e")
+	# pkg/leaf is gated entirely behind a tag the test step does not set.
+	for p; do
+		case "$p" in
+		./pkg/leaf) echo "github.com/jeremyhahn/go-xkms/pkg/leaf 0 0 0 0" ;;
+		./pkg/caller) echo "github.com/jeremyhahn/go-xkms/pkg/caller 1 0 1 0" ;;
+		esac
+	done
+	exit 0
+	;;
+"list -deps")
+	echo "github.com/jeremyhahn/go-xkms/pkg/leaf "
+	echo "github.com/jeremyhahn/go-xkms/pkg/caller "
+	exit 0
+	;;
+esac
+case "$1" in
+list) exit 0 ;;
+esac
+echo "unhandled fake go invocation: $*" >&2
+exit 1
+FAKE
+chmod +x "$tagbin/go"
+run "$base_sha" "$tagbin"
+check "exit 0" [ "$rc" -eq 0 ]
+check "packages is exactly ./pkg/caller" [ "$(outval)" = "./pkg/caller" ]
+(cd "$repo" && git checkout -q main && git branch -q -D tagged-change)
 
 echo ""
 echo "passed ${pass}, failed ${fail}"
