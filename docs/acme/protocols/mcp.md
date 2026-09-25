@@ -2,6 +2,14 @@
 
 Model Context Protocol for AI/LLM integration.
 
+> **Correction (go-xkms#942):** there is no `trusted-acme-server` binary,
+> no `cactl` binary, and no `TRUSTEDCA_` environment prefix. The real CLI
+> is `xkmsctl acme` (`docs/acme-issuance/cli.md`); the ACME admin surface
+> is mounted on `xkmsd`'s own unified listener
+> (`cmd/xkmsd/admin.go:finalizeAdminModule`). This page's tool catalog,
+> addresses and `claude_desktop_config.json` example are otherwise
+> unverified against the current wiring.
+
 ## Overview
 
 The MCP (Model Context Protocol) API enables AI assistants and Large Language Models to interact with the CA administration interface. It provides structured tool definitions that LLMs can use to perform certificate operations.
@@ -19,15 +27,12 @@ The MCP (Model Context Protocol) API enables AI assistants and Large Language Mo
 
 ### Server
 
-```bash
-# Admin addresses are configured via environment variables
-TRUSTEDCA_ADMIN_MCP_ADDR=:9446 trusted-acme-server --admin-enabled
-```
+Unverified — see the correction above.
 
-### Client (cactl)
+### Client (`xkmsctl acme`)
 
 ```bash
-cactl --transport mcp --address localhost:9445 status
+xkmsctl acme --acme-server mcp://localhost:9444 status
 ```
 
 ## MCP Tools
@@ -157,8 +162,7 @@ Add to `claude_desktop_config.json`:
 {
   "mcpServers": {
     "trusted-ca": {
-      "command": "cactl",
-      "args": ["--transport", "mcp", "--address", "localhost:9445", "mcp-server"],
+      "command": "<unverified — there is no cactl binary; see the correction above>",
       "env": {}
     }
   }
@@ -254,13 +258,7 @@ func main() {
 
 For local integrations, MCP can run over stdio:
 
-```bash
-# Start MCP server on stdio
-cactl mcp-server --stdio
-
-# Pipe commands
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | cactl mcp-server --stdio
-```
+Unverified — there is no `cactl` binary; see the correction above.
 
 ## Use Cases
 
@@ -293,9 +291,6 @@ MCP requests are rate-limited per client to prevent abuse.
 ### List Available Tools
 
 ```bash
-# Via cactl
-cactl --transport mcp --address localhost:9445 tools list
-
 # Via curl
 curl -X POST https://localhost:9445/mcp \
   -H "Content-Type: application/json" \
@@ -304,14 +299,11 @@ curl -X POST https://localhost:9445/mcp \
 
 ### Test Tool Call
 
-```bash
-cactl --transport mcp --address localhost:9445 \
-  tools call ca.getStatus '{}'
-```
+Unverified — there is no `cactl` binary; see the correction above.
 
 ## See Also
 
 - [Protocol Overview](README.md)
 - [REST Protocol](rest.md)
-- [cactl CLI](../cli/cactl.md)
+- [`xkmsctl acme` CLI](../../acme-issuance/cli.md)
 - [Model Context Protocol Specification](https://modelcontextprotocol.io/)

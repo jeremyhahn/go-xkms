@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -24,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // --- Request types ---
@@ -178,6 +178,15 @@ var (
 	ErrCopyKeyIncomplete = errors.New("mcp: copy key did not complete")
 )
 
+// errPasswordStoreNotConfigured classifies ErrPasswordStoreNotConfigured as
+// Service unavailable, matching pkg/api/grpc/service_password.go's
+// codes.Unavailable for the identical "no manager wired" condition
+// (mapPasswordError's staticpw.ErrNotConfigured / xkms.ErrNotConfigured
+// cases).
+func errPasswordStoreNotConfigured() error {
+	return &KeyOpError{Code: ErrCodeServiceUnavailable, Err: ErrPasswordStoreNotConfigured}
+}
+
 // resolvePasswordStore returns the appropriate store for the request context.
 // When a manager is configured and the identity has a TenantID, a scoped store
 // (with personal/shared separation) is returned. Otherwise, the system store
@@ -198,7 +207,7 @@ func (s *Server) resolvePasswordStore(ctx context.Context) (staticpw.Store, erro
 // handlePasswordAdd handles the password.add method.
 func (s *Server) handlePasswordAdd(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordAddParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -232,12 +241,12 @@ func (s *Server) handlePasswordAdd(ctx context.Context, req *JSONRPCRequest) (in
 // handlePasswordGet handles the password.get method.
 func (s *Server) handlePasswordGet(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordGetParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
 	if params.ID == "" {
-		return nil, ErrPasswordIDRequired
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: ErrPasswordIDRequired}
 	}
 
 	store, err := s.resolvePasswordStore(ctx)
@@ -270,7 +279,7 @@ func (s *Server) handlePasswordGet(ctx context.Context, req *JSONRPCRequest) (in
 // handlePasswordList handles the password.list method.
 func (s *Server) handlePasswordList(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordListParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -286,7 +295,7 @@ func (s *Server) handlePasswordList(ctx context.Context, req *JSONRPCRequest) (i
 	case params.Scope != "":
 		ps := staticpw.PasswordScope(params.Scope)
 		if !ps.IsValid() {
-			return nil, staticpw.ErrInvalidScope
+			return nil, mapPasswordStoreError(staticpw.ErrInvalidScope)
 		}
 		if scopedStore, ok := store.(*staticpw.ScopedStore); ok {
 			entries, err = scopedStore.ListByScope(ps)
@@ -328,12 +337,12 @@ func (s *Server) handlePasswordList(ctx context.Context, req *JSONRPCRequest) (i
 // handlePasswordUpdate handles the password.update method.
 func (s *Server) handlePasswordUpdate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordUpdateParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
 	if params.ID == "" {
-		return nil, ErrPasswordIDRequired
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: ErrPasswordIDRequired}
 	}
 
 	store, err := s.resolvePasswordStore(ctx)
@@ -384,12 +393,12 @@ func (s *Server) handlePasswordUpdate(ctx context.Context, req *JSONRPCRequest) 
 // handlePasswordDelete handles the password.delete method.
 func (s *Server) handlePasswordDelete(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordDeleteParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
 	if params.ID == "" {
-		return nil, ErrPasswordIDRequired
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: ErrPasswordIDRequired}
 	}
 
 	store, err := s.resolvePasswordStore(ctx)
@@ -414,12 +423,12 @@ func (s *Server) handlePasswordDelete(ctx context.Context, req *JSONRPCRequest) 
 // credential check, so any authenticated tenant user could open the store.
 func (s *Server) handlePasswordUnlock(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.passwordManager == nil || s.xkmsService == nil {
-		return nil, ErrPasswordStoreNotConfigured
+		return nil, errPasswordStoreNotConfigured()
 	}
 
 	identity := auth.GetIdentity(ctx)
 	if auth.IsCrossTenant(identity) {
-		return nil, staticpw.ErrInvalidTenantID
+		return nil, mapPasswordError(staticpw.ErrInvalidTenantID)
 	}
 
 	// The user PIN is optional on the wire so an unprovisioned deployment gets
@@ -428,8 +437,8 @@ func (s *Server) handlePasswordUnlock(ctx context.Context, req *JSONRPCRequest) 
 	// servicer rejects.
 	var unlockReq transport.PasswordStoreUnlockRequest
 	if len(req.Params) > 0 {
-		if err := json.Unmarshal(req.Params, &unlockReq); err != nil {
-			return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+		if err := decodeParams(req, &unlockReq); err != nil {
+			return nil, err
 		}
 	}
 
@@ -439,7 +448,7 @@ func (s *Server) handlePasswordUnlock(ctx context.Context, req *JSONRPCRequest) 
 
 	status, err := s.passwordManager.TenantStoreStatus(identity.TenantID)
 	if err != nil {
-		return nil, err
+		return nil, mapPasswordStoreError(err)
 	}
 
 	return PasswordStoreStatusResult{
@@ -454,12 +463,12 @@ func (s *Server) handlePasswordUnlock(ctx context.Context, req *JSONRPCRequest) 
 // handlePasswordLock handles the password.lock method.
 func (s *Server) handlePasswordLock(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.passwordManager == nil {
-		return nil, ErrPasswordStoreNotConfigured
+		return nil, errPasswordStoreNotConfigured()
 	}
 
 	identity := auth.GetIdentity(ctx)
 	if auth.IsCrossTenant(identity) {
-		return nil, staticpw.ErrInvalidTenantID
+		return nil, mapPasswordError(staticpw.ErrInvalidTenantID)
 	}
 
 	if err := s.passwordManager.LockTenant(identity.TenantID); err != nil {
@@ -468,7 +477,7 @@ func (s *Server) handlePasswordLock(ctx context.Context, req *JSONRPCRequest) (i
 
 	status, err := s.passwordManager.TenantStoreStatus(identity.TenantID)
 	if err != nil {
-		return nil, err
+		return nil, mapPasswordStoreError(err)
 	}
 
 	return PasswordStoreStatusResult{
@@ -493,10 +502,7 @@ func (s *Server) handlePasswordStatus(ctx context.Context, req *JSONRPCRequest) 
 	if identity != nil && identity.TenantID != "" {
 		status, err := s.passwordManager.TenantStoreStatus(identity.TenantID)
 		if err != nil {
-			if errors.Is(err, seal.ErrTenantNotFound) {
-				return nil, seal.ErrTenantNotFound
-			}
-			return nil, err
+			return nil, mapPasswordStoreError(err)
 		}
 
 		return PasswordStoreStatusResult{
@@ -518,7 +524,7 @@ func (s *Server) handlePasswordStatus(ctx context.Context, req *JSONRPCRequest) 
 // handlePasswordGenerate handles the password.generate method.
 func (s *Server) handlePasswordGenerate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordGenerateParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -535,7 +541,7 @@ func (s *Server) handlePasswordGenerate(ctx context.Context, req *JSONRPCRequest
 
 	password, err := staticpw.GeneratePassword(length, charset)
 	if err != nil {
-		return nil, err
+		return nil, mapPasswordError(err)
 	}
 
 	return PasswordGenerateResult{
@@ -551,12 +557,12 @@ func (s *Server) handlePasswordGenerate(ctx context.Context, req *JSONRPCRequest
 // pkg/api/rest/password_handlers.go's SetAccessModeHandler.
 func (s *Server) handlePasswordSetAccessMode(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.xkmsService == nil {
-		return nil, ErrPasswordStoreNotConfigured
+		return nil, errPasswordStoreNotConfigured()
 	}
 
 	var params transport.PasswordStoreSetAccessModeRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "invalid params", Err: err}}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if params.Mode == "" {
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: xkms.ErrInvalidAccessMode}
@@ -594,27 +600,46 @@ func mapPasswordAccessModeError(err error) error {
 	}
 }
 
-// mapPasswordError maps staticpw errors to appropriate MCP error messages.
+// mapPasswordError converts an error from a staticpw.Store method (or a
+// caller-supplied sentinel such as staticpw.ErrInvalidTenantID) into a
+// *KeyOpError, mirroring the JSON-RPC-vocabulary-appropriate code
+// pkg/api/grpc/service_password.go's mapPasswordError chooses for the same
+// sentinel (its own per-case gRPC status message is not reproduced here;
+// this transport keeps its own established wording per case). It used to
+// return an unclassified, unwrapped sentinel for every case:
+// pkg/apimodule's dispatcher (module_mcp.go) only recognises *KeyOpError, so
+// every password.* handler that reached this function -- add, get, list,
+// update, delete, unlock, lock, generate -- reported ErrCodeInternalError
+// regardless of the actual condition (go-xkms#912).
 func mapPasswordError(err error) error {
 	switch {
 	case errors.Is(err, staticpw.ErrInvalidName):
-		return ErrPasswordNameRequired
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: ErrPasswordNameRequired}
 	case errors.Is(err, staticpw.ErrEmptyPassword):
-		return ErrPasswordRequired
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: ErrPasswordRequired}
+	case errors.Is(err, staticpw.ErrInvalidLength):
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidLength}
+	case errors.Is(err, staticpw.ErrInvalidCharset):
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidCharset}
+	case errors.Is(err, staticpw.ErrInvalidTenantID):
+		// Matches gRPC's codes.InvalidArgument for the same cross-tenant
+		// condition (service_password.go). handlePasswordUnlock and
+		// handlePasswordLock route their cross-tenant refusal through here
+		// rather than returning the bare sentinel.
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidTenantID}
 	case errors.Is(err, staticpw.ErrPasswordExists):
-		return staticpw.ErrPasswordExists
+		return &KeyOpError{Code: sdkssh.JSONRPCCodeDuplicate, Err: staticpw.ErrPasswordExists}
 	case errors.Is(err, staticpw.ErrStoreClosed):
-		return staticpw.ErrStoreClosed
+		return &KeyOpError{Code: ErrCodeServiceUnavailable, Err: staticpw.ErrStoreClosed}
 	case errors.Is(err, staticpw.ErrPasswordNotFound):
-		return staticpw.ErrPasswordNotFound
+		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: staticpw.ErrPasswordNotFound}
 	case errors.Is(err, staticpw.ErrPasswordReadOnly):
-		return staticpw.ErrPasswordReadOnly
+		return &KeyOpError{Code: ErrCodeForbidden, Err: staticpw.ErrPasswordReadOnly}
 	default:
-		return err
+		return &KeyOpError{Code: ErrCodeInternalError, Err: err}
 	}
 }
 
-// mapPasswordStoreError maps store resolution errors to appropriate MCP error messages.
 // mapPasswordUnlockError converts an error returned by
 // XKMSService.PasswordStoreUnlock into a *KeyOpError carrying the JSON-RPC
 // code InvokeMethod should report. It reuses the KeyOpError envelope so the
@@ -637,29 +662,37 @@ func mapPasswordUnlockError(err error) error {
 	case errors.Is(err, staticpw.ErrStoreNotLocked),
 		errors.Is(err, seal.ErrTenantSealed),
 		errors.Is(err, seal.ErrTenantNotFound):
-		return &KeyOpError{Code: ErrCodeInternalError, Err: mapPasswordStoreError(err)}
+		return &KeyOpError{Code: ErrCodeInternalError, Err: err}
 	default:
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "user PIN verification failed"}}
 	}
 }
 
+// mapPasswordStoreError converts an error from resolvePasswordStore or a
+// staticpw.Store/seal.Barrier method into a *KeyOpError. Like
+// mapPasswordError, it used to return an unclassified, unwrapped sentinel
+// for every case, so every caller of resolvePasswordStore -- and
+// handlePasswordLock's LockTenant, handlePasswordStatus's
+// TenantStoreStatus -- reported ErrCodeInternalError regardless of cause
+// (go-xkms#912).
 func mapPasswordStoreError(err error) error {
 	switch {
-	case errors.Is(err, staticpw.ErrStoreLocked):
-		return staticpw.ErrStoreLocked
-	case errors.Is(err, seal.ErrTenantSealed):
-		return seal.ErrTenantSealed
+	case errors.Is(err, ErrPasswordStoreNotConfigured), errors.Is(err, staticpw.ErrNotConfigured):
+		return errPasswordStoreNotConfigured()
 	case errors.Is(err, seal.ErrTenantNotFound):
-		return seal.ErrTenantNotFound
-	case errors.Is(err, staticpw.ErrNotConfigured):
-		return ErrPasswordStoreNotConfigured
+		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: seal.ErrTenantNotFound}
 	case errors.Is(err, staticpw.ErrInvalidUserID):
-		return staticpw.ErrInvalidUserID
-	case errors.Is(err, staticpw.ErrNotOwner):
-		return staticpw.ErrNotOwner
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidUserID}
 	case errors.Is(err, staticpw.ErrInvalidScope):
-		return staticpw.ErrInvalidScope
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: staticpw.ErrInvalidScope}
+	case errors.Is(err, staticpw.ErrNotOwner):
+		return &KeyOpError{Code: ErrCodeForbidden, Err: staticpw.ErrNotOwner}
+	case errors.Is(err, staticpw.ErrStoreLocked), errors.Is(err, seal.ErrTenantSealed):
+		// JSON-RPC has no FailedPrecondition code; matches the internal
+		// floor mapPasswordUnlockError already uses for the same two
+		// sentinels on the unlock path.
+		return &KeyOpError{Code: ErrCodeInternalError, Err: err}
 	default:
-		return err
+		return &KeyOpError{Code: ErrCodeInternalError, Err: err}
 	}
 }

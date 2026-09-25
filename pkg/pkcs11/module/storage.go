@@ -446,7 +446,7 @@ func (s *ModuleStorage) LoadTokenState(slotID SlotID) (*PersistentTokenState, er
 	defer cancel()
 	data, err := s.backend.Get(ctx, key)
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, nil // Token not initialized yet
 		}
 		return nil, &errs.Wrapped{Msg: "failed to load token state", Err: err}
@@ -608,7 +608,7 @@ func (s *ModuleStorage) DeleteObject(handle ObjectHandle) error {
 	key := prefixObject + strconv.FormatUint(uint64(handle), 10)
 	ctx, cancel := s.opContext()
 	defer cancel()
-	if err := s.backend.Delete(ctx, key); err != nil && err != storage.ErrNotFound {
+	if err := s.backend.Delete(ctx, key); err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return &errs.Wrapped{Msg: "failed to delete object", Err: err}
 	}
 
@@ -628,7 +628,7 @@ func (s *ModuleStorage) GetNextHandle() (ObjectHandle, error) {
 	ctx, cancel := s.opContext()
 	defer cancel()
 	data, err := s.backend.Get(ctx, key)
-	if err != nil && err != storage.ErrNotFound {
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return 0, &errs.Wrapped{Msg: "failed to get handle counter", Err: err}
 	}
 

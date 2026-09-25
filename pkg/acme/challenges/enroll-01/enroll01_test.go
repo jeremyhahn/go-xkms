@@ -155,6 +155,21 @@ func (fr *failingReader) Read(p []byte) (int, error) {
 	return 0, caerrors.InternalServerError("read failed")
 }
 
+// countingReader wraps an io.Reader and records how many bytes were
+// actually pulled from it, so a test can assert that http.MaxBytesReader
+// is bounding the read rather than merely rejecting an already-buffered
+// oversized body.
+type countingReader struct {
+	r     io.Reader
+	count int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.count += n
+	return n, err
+}
+
 // TestVerify_Success tests successful verification flow
 func TestVerify_Success(t *testing.T) {
 	expectedSecret := []byte("test-secret-value")
@@ -824,6 +839,45 @@ func TestActivateCredentialHandler_ReadBodyError(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestActivateCredentialHandler_BodyTooLarge verifies that the request
+// body size limit (go-xkms#891) is enforced against the raw connection
+// before any JSON parsing is attempted: http.MaxBytesReader must wrap
+// r.Body before the handler's first read, so an oversized body is
+// rejected with 413 and the handler never buffers more than the limit
+// (plus the one extra byte MaxBytesReader reads to detect the overflow).
+func TestActivateCredentialHandler_BodyTooLarge(t *testing.T) {
+	tpm := &mockTPM{}
+	handler := activateCredentialHandlerWithShutdown(tpm, nil, nil)
+
+	const maxBodySize = 1048576 // must match activateCredentialHandlerWithShutdown's limit
+	oversized := bytes.Repeat([]byte("a"), maxBodySize+4096)
+	counting := &countingReader{r: bytes.NewReader(oversized)}
+
+	httpReq := httptest.NewRequest(http.MethodPost, secretPath+"test-token", counting)
+	httpReq.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler(w, httpReq)
+
+	resp := w.Result()
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("Expected status 413, got %d", resp.StatusCode)
+	}
+
+	if counting.count > maxBodySize+1 {
+		t.Errorf("handler read %d bytes from an oversized body, want at most %d (limit + 1)", counting.count, maxBodySize+1)
+	}
+	if counting.count == 0 {
+		t.Error("handler never read from the body; the size limit test is not exercising MaxBytesReader")
+	}
+
+	if tpm.activateCallCount != 0 {
+		t.Errorf("Expected ActivateCredential not to be called for an oversized body, got %d calls", tpm.activateCallCount)
 	}
 }
 

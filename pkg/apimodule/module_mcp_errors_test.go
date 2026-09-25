@@ -221,16 +221,27 @@ func TestMCPToolHandler_ErrorCodesReachCaller(t *testing.T) {
 		assert.Equal(t, wire.CodePermissionDenied, payload.Code)
 	})
 
+	// The untagged build's routeFrostMethods "not compiled in" refusal --
+	// before go-xkms#930 a bare *errs.Message that mcpToolHandler could only
+	// report as the generic internal-fault floor below -- is now a
+	// *KeyOpError carrying ErrCodeMethodNotFound and reaches the caller as
+	// wire.CodeUnimplemented. That behaviour is build-tag-dependent (it
+	// flips to a real FROST call under -tags frost), so it is pinned in
+	// pkg/api/mcp's own build-tagged tests
+	// (server_frost_stub_test.go's TestServer_HandleRequest_FrostMethodWithError)
+	// rather than duplicated in this frost-tag-portable file.
+
 	t.Run("unclassified error degrades to a generic internal fault", func(t *testing.T) {
-		// The untagged build's routeFrostMethods answers every frost.* method
-		// with a bare *errs.Message, never a *KeyOpError -- exactly the
-		// "InvokeMethod returned something mcpToolHandler cannot classify"
-		// case this test exists to pin.
-		res := callXKMSTool(t, client, context.Background(), "xkms_frost_generateKey", map[string]any{})
-		payload := decodeToolErrorCode(t, res)
-		assert.Equal(t, wire.CodeInternal, payload.Code)
-		// The detail behind an unclassified fault is not the caller's to see.
-		assert.Equal(t, "xkms: internal error", payload.Message)
+		// go-xkms#930 closed every known bare-error path in pkg/api/mcp's
+		// registered handler set (see that package's own
+		// TestEveryRegisteredHandler_ReturnsKeyOpErrorOrNil guard), so this
+		// fallback in mcpToolHandler (module_mcp.go) currently has no live
+		// production trigger left to drive it end-to-end through a real MCP
+		// call. The branch itself -- "an error InvokeMethod did not classify
+		// reports wire.CodeInternal with no detail" -- is still load-bearing
+		// defense-in-depth for a future handler that regresses, so it stays
+		// in module_mcp.go; it is no longer exercised here because doing so
+		// requires reintroducing the exact bug this issue fixed.
 	})
 }
 

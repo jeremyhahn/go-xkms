@@ -177,7 +177,7 @@ func (h *Handlers) GetCertificate(w http.ResponseWriter, r *http.Request) {
 
 	cert, err := h.service.GetCertificate(ctx, serial)
 	if err != nil {
-		if err == ErrCertificateNotFound {
+		if errors.Is(err, ErrCertificateNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Certificate not found")
 			return
 		}
@@ -202,7 +202,7 @@ func (h *Handlers) RevokeCertificate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.RevokeCertificate(ctx, serial, req.Reason); err != nil {
-		if err == ErrCertificateNotFound {
+		if errors.Is(err, ErrCertificateNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Certificate not found")
 			return
 		}
@@ -274,7 +274,7 @@ func (h *Handlers) GetAccount(w http.ResponseWriter, r *http.Request) {
 
 	account, err := h.service.GetAccount(ctx, accountID)
 	if err != nil {
-		if err == ErrAccountNotFound {
+		if errors.Is(err, ErrAccountNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Account not found")
 			return
 		}
@@ -297,7 +297,7 @@ func (h *Handlers) DisableAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.DisableAccount(ctx, accountID); err != nil {
-		if err == ErrAccountNotFound {
+		if errors.Is(err, ErrAccountNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Account not found")
 			return
 		}
@@ -360,7 +360,7 @@ func (h *Handlers) GetOrder(w http.ResponseWriter, r *http.Request) {
 
 	order, err := h.service.GetOrder(ctx, orderID, accountID)
 	if err != nil {
-		if err == ErrOrderNotFound {
+		if errors.Is(err, ErrOrderNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Order not found")
 			return
 		}

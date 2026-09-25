@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -238,6 +239,28 @@ func TestGetCertificate_NotFound(t *testing.T) {
 	service := &mockService{
 		getCertificateFunc: func(ctx context.Context, serial string) (*CertificateInfo, error) {
 			return nil, ErrCertificateNotFound
+		},
+	}
+	handlers := NewHandlers(service, slog.Default())
+
+	req := httptest.NewRequest("GET", "/admin/certificates/nonexistent", nil)
+	req = mux.SetURLVars(req, map[string]string{"serial": "nonexistent"})
+	w := httptest.NewRecorder()
+
+	handlers.GetCertificate(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestGetCertificate_NotFound_Wrapped is go-xkms#894's regression case: the
+// handler compares the service error with errors.Is, so a service that
+// wraps ErrCertificateNotFound with call-site context (fmt.Errorf's %w)
+// must still map to 404, not fall through to the 500 branch a bare ==
+// comparison would take.
+func TestGetCertificate_NotFound_Wrapped(t *testing.T) {
+	service := &mockService{
+		getCertificateFunc: func(ctx context.Context, serial string) (*CertificateInfo, error) {
+			return nil, fmt.Errorf("lookup serial %s: %w", serial, ErrCertificateNotFound)
 		},
 	}
 	handlers := NewHandlers(service, slog.Default())

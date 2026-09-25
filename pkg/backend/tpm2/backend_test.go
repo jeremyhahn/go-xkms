@@ -426,7 +426,8 @@ func TestConfig_Validate(t *testing.T) {
 	}{
 		{"ValidConfigWithDevice", &Config{Device: "/dev/null", KeyDir: t.TempDir(), SRKHandle: 0x81000001}, false},
 		{"ValidConfigWithSimulator", &Config{UseSimulator: true, KeyDir: t.TempDir()}, false},
-		{"DefaultValues", &Config{Device: "/dev/null"}, false},
+		{"DefaultValues", &Config{Device: "/dev/null", KeyDir: t.TempDir()}, false},
+		{"MissingKeyDir", &Config{Device: "/dev/null"}, true},
 		{"NonExistentDevice", &Config{Device: "/dev/nonexistent-tpm-device-xyz", KeyDir: t.TempDir()}, true},
 	}
 	for _, tt := range tests {
@@ -439,13 +440,29 @@ func TestConfig_Validate(t *testing.T) {
 	}
 }
 
-func TestConfig_Validate_DefaultValues(t *testing.T) {
+// TestConfig_Validate_MissingKeyDir verifies Validate returns a typed,
+// wrapped ErrKeyDirRequired when KeyDir is unset rather than defaulting to a
+// directory resolved relative to the process's working directory (issue
+// #926).
+func TestConfig_Validate_MissingKeyDir(t *testing.T) {
 	config := &Config{UseSimulator: true}
+
+	err := config.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, want ErrKeyDirRequired")
+	}
+	if !errors.Is(err, ErrKeyDirRequired) {
+		t.Errorf("Validate() error = %v, want it to wrap ErrKeyDirRequired", err)
+	}
+	if config.KeyDir != "" {
+		t.Errorf("KeyDir: expected to remain empty on validation failure, got %q", config.KeyDir)
+	}
+}
+
+func TestConfig_Validate_DefaultValues(t *testing.T) {
+	config := &Config{UseSimulator: true, KeyDir: t.TempDir()}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
-	}
-	if config.KeyDir != "./tpm2-keys" {
-		t.Errorf("KeyDir default: expected ./tpm2-keys, got %q", config.KeyDir)
 	}
 	if config.SRKHandle != 0x81000001 {
 		t.Errorf("SRKHandle default: expected 0x81000001, got 0x%x", config.SRKHandle)
@@ -782,7 +799,7 @@ func TestBackend_GenerateKey_UnsupportedAlgorithm(t *testing.T) {
 }
 
 func TestConfig_Validate_DeviceDoesNotExist(t *testing.T) {
-	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: false}
+	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: false, KeyDir: t.TempDir()}
 	err := config.Validate()
 	if err == nil {
 		t.Error("Expected error for non-existent device")
@@ -793,7 +810,7 @@ func TestConfig_Validate_DeviceDoesNotExist(t *testing.T) {
 }
 
 func TestConfig_Validate_SimulatorSkipsDeviceCheck(t *testing.T) {
-	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: true}
+	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: true, KeyDir: t.TempDir()}
 	if err := config.Validate(); err != nil {
 		t.Errorf("Expected no error when using simulator, got %v", err)
 	}
@@ -1461,7 +1478,7 @@ func TestBackend_Decrypter_GetKeyError(t *testing.T) {
 }
 
 func TestConfig_Validate_ExistingDevice(t *testing.T) {
-	config := &Config{Device: "/dev/null", UseSimulator: false}
+	config := &Config{Device: "/dev/null", UseSimulator: false, KeyDir: t.TempDir()}
 	err := config.Validate()
 	if err != nil {
 		t.Errorf("Expected no error for existing device, got %v", err)
@@ -1482,7 +1499,7 @@ func TestBackend_ListKeys_ReadDirError(t *testing.T) {
 }
 
 func TestConfig_Validate_EmptyDeviceSimulator(t *testing.T) {
-	config := &Config{Device: "", UseSimulator: true}
+	config := &Config{Device: "", UseSimulator: true, KeyDir: t.TempDir()}
 	err := config.Validate()
 	if err != nil {
 		t.Errorf("Expected no error with empty device and simulator, got %v", err)
@@ -1869,6 +1886,7 @@ func TestNewBackend_ConfigWithPresetTPMConfig(t *testing.T) {
 func TestNewBackend_VerifyConfigDefaults(t *testing.T) {
 	config := &Config{
 		UseSimulator: true,
+		KeyDir:       t.TempDir(),
 	}
 
 	if err := config.Validate(); err != nil {
@@ -1876,9 +1894,6 @@ func TestNewBackend_VerifyConfigDefaults(t *testing.T) {
 	}
 
 	// Check all defaults
-	if config.KeyDir != "./tpm2-keys" {
-		t.Errorf("KeyDir default: got %q, want %q", config.KeyDir, "./tpm2-keys")
-	}
 	if config.SRKHandle != 0x81000001 {
 		t.Errorf("SRKHandle default: got 0x%x, want 0x81000001", config.SRKHandle)
 	}

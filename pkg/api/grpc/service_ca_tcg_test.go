@@ -70,9 +70,7 @@ func TestIssueEKCertificate(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
-		old := GetCA()
-		SetCA(nil)
-		defer SetCA(old)
+		svc.SetCA(nil)
 
 		_, err := svc.IssueEKCertificate(context.Background(), &pb.IssueEKCertificateRequest{
 			CommonName:  "test",
@@ -85,9 +83,7 @@ func TestIssueEKCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when common name is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssueEK{})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIssueEK{})
 
 		_, err := svc.IssueEKCertificate(context.Background(), &pb.IssueEKCertificateRequest{
 			CommonName:  "",
@@ -100,9 +96,7 @@ func TestIssueEKCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when EK public key is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssueEK{})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIssueEK{})
 
 		_, err := svc.IssueEKCertificate(context.Background(), &pb.IssueEKCertificateRequest{
 			CommonName: "test",
@@ -114,9 +108,7 @@ func TestIssueEKCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when CA does not support TCG", func(t *testing.T) {
-		old := GetCA()
-		SetCA("not-tcg-ca")
-		defer SetCA(old)
+		svc.SetCA("not-tcg-ca")
 
 		_, err := svc.IssueEKCertificate(context.Background(), &pb.IssueEKCertificateRequest{
 			CommonName:  "test",
@@ -129,9 +121,7 @@ func TestIssueEKCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when issuance fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssueEK{err: errors.New("ek issue failed")})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIssueEK{err: errors.New("ek issue failed")})
 
 		_, err := svc.IssueEKCertificate(context.Background(), &pb.IssueEKCertificateRequest{
 			CommonName:  "test",
@@ -144,13 +134,11 @@ func TestIssueEKCertificate(t *testing.T) {
 	})
 
 	t.Run("returns certificate on success", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssueEK{resp: &transport.IssueEKCertificateResponse{
+		svc.SetCA(&mockCAIssueEK{resp: &transport.IssueEKCertificateResponse{
 			CertificateDER: []byte("der"),
 			CertificatePEM: []byte("pem"),
 			SerialNumber:   "abc123",
 		}})
-		defer SetCA(old)
 
 		resp, err := svc.IssueEKCertificate(context.Background(), &pb.IssueEKCertificateRequest{
 			CommonName:   "test",
@@ -168,9 +156,7 @@ func TestIssueAKCertificate(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
-		old := GetCA()
-		SetCA(nil)
-		defer SetCA(old)
+		svc.SetCA(nil)
 
 		_, err := svc.IssueAKCertificate(context.Background(), &pb.IssueAKCertificateRequest{
 			CommonName: "test",
@@ -183,9 +169,7 @@ func TestIssueAKCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when common name is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssueAK{})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIssueAK{})
 
 		_, err := svc.IssueAKCertificate(context.Background(), &pb.IssueAKCertificateRequest{
 			PublicKey: []byte("key"),
@@ -197,9 +181,7 @@ func TestIssueAKCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when public key is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssueAK{})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIssueAK{})
 
 		_, err := svc.IssueAKCertificate(context.Background(), &pb.IssueAKCertificateRequest{
 			CommonName: "test",
@@ -211,9 +193,7 @@ func TestIssueAKCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when CA does not support TCG", func(t *testing.T) {
-		old := GetCA()
-		SetCA("not-tcg-ca")
-		defer SetCA(old)
+		svc.SetCA("not-tcg-ca")
 
 		_, err := svc.IssueAKCertificate(context.Background(), &pb.IssueAKCertificateRequest{
 			CommonName: "test",
@@ -226,9 +206,7 @@ func TestIssueAKCertificate(t *testing.T) {
 	})
 
 	t.Run("returns error when issuance fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssueAK{err: errors.New("ak issue failed")})
-		defer SetCA(old)
+		svc.SetCA(&mockCAIssueAK{err: errors.New("ak issue failed")})
 
 		_, err := svc.IssueAKCertificate(context.Background(), &pb.IssueAKCertificateRequest{
 			CommonName: "test",
@@ -241,13 +219,11 @@ func TestIssueAKCertificate(t *testing.T) {
 	})
 
 	t.Run("returns certificate on success", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAIssueAK{resp: &transport.IssueAKCertificateResponse{
+		svc.SetCA(&mockCAIssueAK{resp: &transport.IssueAKCertificateResponse{
 			CertificateDER: []byte("der"),
 			CertificatePEM: []byte("pem"),
 			SerialNumber:   "def456",
 		}})
-		defer SetCA(old)
 
 		resp, err := svc.IssueAKCertificate(context.Background(), &pb.IssueAKCertificateRequest{
 			CommonName:   "test",
@@ -265,9 +241,7 @@ func TestSignTCGCSR(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
-		old := GetCA()
-		SetCA(nil)
-		defer SetCA(old)
+		svc.SetCA(nil)
 
 		_, err := svc.SignTCGCSR(context.Background(), &pb.SignTCGCSRRequest{
 			CommonName: "test",
@@ -280,9 +254,7 @@ func TestSignTCGCSR(t *testing.T) {
 	})
 
 	t.Run("returns error when common name is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCASignTCGCSR{})
-		defer SetCA(old)
+		svc.SetCA(&mockCASignTCGCSR{})
 
 		_, err := svc.SignTCGCSR(context.Background(), &pb.SignTCGCSRRequest{TcgCsr: []byte("csr")})
 		require.Error(t, err)
@@ -292,9 +264,7 @@ func TestSignTCGCSR(t *testing.T) {
 	})
 
 	t.Run("returns error when TCG CSR is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCASignTCGCSR{})
-		defer SetCA(old)
+		svc.SetCA(&mockCASignTCGCSR{})
 
 		_, err := svc.SignTCGCSR(context.Background(), &pb.SignTCGCSRRequest{CommonName: "test"})
 		require.Error(t, err)
@@ -304,9 +274,7 @@ func TestSignTCGCSR(t *testing.T) {
 	})
 
 	t.Run("returns error when CA does not support TCG", func(t *testing.T) {
-		old := GetCA()
-		SetCA("not-tcg-ca")
-		defer SetCA(old)
+		svc.SetCA("not-tcg-ca")
 
 		_, err := svc.SignTCGCSR(context.Background(), &pb.SignTCGCSRRequest{
 			CommonName: "test",
@@ -319,9 +287,7 @@ func TestSignTCGCSR(t *testing.T) {
 	})
 
 	t.Run("returns error when signing fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCASignTCGCSR{err: errors.New("sign failed")})
-		defer SetCA(old)
+		svc.SetCA(&mockCASignTCGCSR{err: errors.New("sign failed")})
 
 		_, err := svc.SignTCGCSR(context.Background(), &pb.SignTCGCSRRequest{
 			CommonName: "test",
@@ -334,12 +300,10 @@ func TestSignTCGCSR(t *testing.T) {
 	})
 
 	t.Run("returns certificates on success", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCASignTCGCSR{resp: &transport.SignTCGCSRResponse{
+		svc.SetCA(&mockCASignTCGCSR{resp: &transport.SignTCGCSRResponse{
 			IAKCertDER:    []byte("iak-der"),
 			IDevIDCertDER: []byte("idevid-der"),
 		}})
-		defer SetCA(old)
 
 		resp, err := svc.SignTCGCSR(context.Background(), &pb.SignTCGCSRRequest{
 			CommonName:   "test",
@@ -356,9 +320,7 @@ func TestEnrollDevice(t *testing.T) {
 	svc := NewService(nil, nil, nil)
 
 	t.Run("returns error when CA not configured", func(t *testing.T) {
-		old := GetCA()
-		SetCA(nil)
-		defer SetCA(old)
+		svc.SetCA(nil)
 
 		_, err := svc.EnrollDevice(context.Background(), &pb.EnrollDeviceRequest{
 			CommonName: "test",
@@ -371,9 +333,7 @@ func TestEnrollDevice(t *testing.T) {
 	})
 
 	t.Run("returns error when common name is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAEnrollDevice{})
-		defer SetCA(old)
+		svc.SetCA(&mockCAEnrollDevice{})
 
 		_, err := svc.EnrollDevice(context.Background(), &pb.EnrollDeviceRequest{PackedCsr: []byte("csr")})
 		require.Error(t, err)
@@ -383,9 +343,7 @@ func TestEnrollDevice(t *testing.T) {
 	})
 
 	t.Run("returns error when packed CSR is empty", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAEnrollDevice{})
-		defer SetCA(old)
+		svc.SetCA(&mockCAEnrollDevice{})
 
 		_, err := svc.EnrollDevice(context.Background(), &pb.EnrollDeviceRequest{CommonName: "test"})
 		require.Error(t, err)
@@ -395,9 +353,7 @@ func TestEnrollDevice(t *testing.T) {
 	})
 
 	t.Run("returns error when CA does not support TCG", func(t *testing.T) {
-		old := GetCA()
-		SetCA("not-tcg-ca")
-		defer SetCA(old)
+		svc.SetCA("not-tcg-ca")
 
 		_, err := svc.EnrollDevice(context.Background(), &pb.EnrollDeviceRequest{
 			CommonName: "test",
@@ -410,9 +366,7 @@ func TestEnrollDevice(t *testing.T) {
 	})
 
 	t.Run("returns error when enrollment fails", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAEnrollDevice{err: errors.New("enroll failed")})
-		defer SetCA(old)
+		svc.SetCA(&mockCAEnrollDevice{err: errors.New("enroll failed")})
 
 		_, err := svc.EnrollDevice(context.Background(), &pb.EnrollDeviceRequest{
 			CommonName: "test",
@@ -425,15 +379,13 @@ func TestEnrollDevice(t *testing.T) {
 	})
 
 	t.Run("returns enrollment response on success", func(t *testing.T) {
-		old := GetCA()
-		SetCA(&mockCAEnrollDevice{resp: &transport.EnrollDeviceResponse{
+		svc.SetCA(&mockCAEnrollDevice{resp: &transport.EnrollDeviceResponse{
 			IAKCertDER:      []byte("iak-der"),
 			IDevIDCertDER:   []byte("idevid-der"),
 			CredentialBlob:  []byte("cred-blob"),
 			EncryptedSecret: []byte("enc-secret"),
 			PlainSecret:     []byte("plain-secret"),
 		}})
-		defer SetCA(old)
 
 		resp, err := svc.EnrollDevice(context.Background(), &pb.EnrollDeviceRequest{
 			CommonName:   "test",

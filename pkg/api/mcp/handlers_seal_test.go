@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // TestHandler_Seal tests the seal handler for sealing data with a backend.
@@ -666,5 +668,124 @@ func TestHandler_CanSeal_Idempotent(t *testing.T) {
 			assert.Equal(t, results[0], results[i],
 				"canSeal should return consistent results")
 		}
+	})
+}
+
+// TestInvokeMethod_Seal_WireCodes proves handleSeal's failure conditions
+// reach the caller as the classified *KeyOpError code matching
+// pkg/api/grpc/service.go's Seal for the identical condition, through the
+// real InvokeMethod dispatch (go-xkms#921 sweep): before this change every
+// one of these three conditions returned a bare, unclassified error that
+// pkg/apimodule's dispatcher reported as wire.CodeInternal regardless of
+// cause.
+func TestInvokeMethod_Seal_WireCodes(t *testing.T) {
+	t.Run("data required is InvalidParams", func(t *testing.T) {
+		server := createTestServer(t)
+		defer cleanupXKMS()
+
+		params, err := json.Marshal(SealParams{Backend: "software"})
+		require.NoError(t, err)
+
+		_, dispatchErr := server.InvokeMethod(context.Background(), "xkms.seal", params)
+		require.Error(t, dispatchErr)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, dispatchErr, &keyErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyErr.Code)
+	})
+
+	t.Run("unknown backend is NotFound", func(t *testing.T) {
+		server := createTestServer(t)
+		defer cleanupXKMS()
+
+		params, err := json.Marshal(SealParams{
+			Backend: "nonexistent-backend",
+			KeyID:   "test-key",
+			Data:    []byte("some data"),
+		})
+		require.NoError(t, err)
+
+		_, dispatchErr := server.InvokeMethod(context.Background(), "xkms.seal", params)
+		require.Error(t, dispatchErr)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, dispatchErr, &keyErr)
+		assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyErr.Code)
+	})
+
+	t.Run("unknown key ID is NotFound", func(t *testing.T) {
+		server := createTestServer(t)
+		defer cleanupXKMS()
+
+		params, err := json.Marshal(SealParams{
+			Backend: "software",
+			KeyID:   "does-not-exist",
+			Data:    []byte("some data"),
+		})
+		require.NoError(t, err)
+
+		_, dispatchErr := server.InvokeMethod(context.Background(), "xkms.seal", params)
+		require.Error(t, dispatchErr)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, dispatchErr, &keyErr)
+		assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyErr.Code)
+	})
+}
+
+// TestInvokeMethod_Unseal_WireCodes mirrors TestInvokeMethod_Seal_WireCodes
+// for handleUnseal, matching pkg/api/grpc/service.go's Unseal for the
+// identical conditions (go-xkms#921 sweep).
+func TestInvokeMethod_Unseal_WireCodes(t *testing.T) {
+	t.Run("ciphertext required is InvalidParams", func(t *testing.T) {
+		server := createTestServer(t)
+		defer cleanupXKMS()
+
+		params, err := json.Marshal(UnsealParams{Backend: "software"})
+		require.NoError(t, err)
+
+		_, dispatchErr := server.InvokeMethod(context.Background(), "xkms.unseal", params)
+		require.Error(t, dispatchErr)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, dispatchErr, &keyErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyErr.Code)
+	})
+
+	t.Run("unknown backend is NotFound", func(t *testing.T) {
+		server := createTestServer(t)
+		defer cleanupXKMS()
+
+		params, err := json.Marshal(UnsealParams{
+			Backend:    "nonexistent-backend",
+			Ciphertext: []byte("blob"),
+		})
+		require.NoError(t, err)
+
+		_, dispatchErr := server.InvokeMethod(context.Background(), "xkms.unseal", params)
+		require.Error(t, dispatchErr)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, dispatchErr, &keyErr)
+		assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyErr.Code)
+	})
+
+	t.Run("unknown key ID is NotFound", func(t *testing.T) {
+		server := createTestServer(t)
+		defer cleanupXKMS()
+
+		params, err := json.Marshal(UnsealParams{
+			Backend:    "software",
+			KeyID:      "does-not-exist",
+			Ciphertext: []byte("blob"),
+		})
+		require.NoError(t, err)
+
+		_, dispatchErr := server.InvokeMethod(context.Background(), "xkms.unseal", params)
+		require.Error(t, dispatchErr)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, dispatchErr, &keyErr)
+		assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyErr.Code)
 	})
 }

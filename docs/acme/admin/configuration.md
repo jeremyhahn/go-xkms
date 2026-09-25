@@ -2,14 +2,30 @@
 
 Complete configuration reference for the Admin API server.
 
+> **Correction (go-xkms#942):** there is no `TRUSTEDCA_*` environment
+> prefix and no standalone `admin.*` multi-protocol listener config in this
+> repository — both are pre-merge go-trusted-ca documentation that was
+> never adapted. The ACME admin surface (`pkg/acme/admin`) is mounted on
+> `xkmsd`'s own unified mTLS listener by `finalizeAdminModule`
+> (`cmd/xkmsd/admin.go:130`), under the `/admin` and `/api/v1/tenants`
+> path prefixes — it is not a separately configured REST/gRPC/QUIC/MCP
+> port set. The environment prefix for every `xkmsd` setting, ACME
+> included, is `XKMS_` (`pkg/config/load.go:39`). The tables below citing
+> a `TRUSTEDCA_ADMIN_*` variable or an `admin.*` YAML key have not been
+> verified against `pkg/config` and should not be treated as a working
+> configuration reference; see
+> [`../../acme-issuance/engineering.md`](../../acme-issuance/engineering.md)
+> §Configuration and [`../../xkmsd-configuration/`](../../xkmsd-configuration/)
+> for the verified surface.
+
 ## Overview
 
 The Admin API is configured via Viper with support for config files, environment variables, and CLI flags. All keys are managed by [go-xkms](https://github.com/jeremyhahn/go-xkms) - no filesystem key paths required.
 
 **Configuration priority (lowest to highest):**
 1. Built-in defaults
-2. Config file (`/etc/trustedca/config.yaml`)
-3. Environment variables (`TRUSTEDCA_*`)
+2. Config file
+3. Environment variables (`XKMS_*` — see correction above; not `TRUSTEDCA_*`)
 4. CLI flags
 
 ## Configuration Structure
@@ -70,12 +86,8 @@ admin:
   mcp_addr: ":9446"
 ```
 
-**Environment Variables:**
-```bash
-TRUSTEDCA_ADMIN_ENABLED=true
-TRUSTEDCA_ADMIN_REST_ADDR=":9443"
-TRUSTEDCA_ADMIN_GRPC_ADDR=":9444"
-```
+**Environment Variables:** none of this section's keys have a verified
+environment-variable form — see the correction at the top of this page.
 
 ### TLS Configuration
 
@@ -109,11 +121,8 @@ admin:
 | `require` | Require client certificate |
 | `verify` | Require and verify client certificate |
 
-**Environment Variables:**
-```bash
-TRUSTEDCA_ADMIN_TLS_MIN_VERSION="1.3"
-TRUSTEDCA_ADMIN_TLS_CLIENT_AUTH="require"
-```
+**Environment Variables:** none of this section's keys have a verified
+environment-variable form — see the correction at the top of this page.
 
 ## Authentication Configuration
 
@@ -417,8 +426,10 @@ admin:
 
 ## Complete Configuration Example
 
+Unverified — see the correction at the top of this page; there is no
+`/etc/trustedca/` config path in this repository.
+
 ```yaml
-# /etc/trustedca/config.yaml
 # All keys managed by go-xkms - NO filesystem key paths!
 # TLS 1.3 enforced by default
 
@@ -512,22 +523,10 @@ admin:
 
 ## Environment Variables Reference
 
-All configuration can be overridden via environment variables with the `TRUSTEDCA_` prefix:
-
-| Environment Variable | Configuration Path |
-|---------------------|-------------------|
-| `TRUSTEDCA_ADMIN_ENABLED` | `admin.enabled` |
-| `TRUSTEDCA_ADMIN_REST_ADDR` | `admin.rest_addr` |
-| `TRUSTEDCA_ADMIN_GRPC_ADDR` | `admin.grpc_addr` |
-| `TRUSTEDCA_ADMIN_QUIC_ADDR` | `admin.quic_addr` |
-| `TRUSTEDCA_ADMIN_MCP_ADDR` | `admin.mcp_addr` |
-| `TRUSTEDCA_ADMIN_TLS_MIN_VERSION` | `admin.tls.min_version` |
-| `TRUSTEDCA_ADMIN_TLS_CLIENT_AUTH` | `admin.tls.client_auth` |
-| `TRUSTEDCA_ADMIN_AUTH_QRDB_ENDPOINT` | `admin.auth.qrdb.endpoint` |
-| `TRUSTEDCA_ADMIN_RATE_LIMIT_ENABLED` | `admin.rate_limit.enabled` |
-| `TRUSTEDCA_ADMIN_RATE_LIMIT_REQUESTS_PER_MINUTE` | `admin.rate_limit.requests_per_minute` |
-| `TRUSTEDCA_ADMIN_LOGGING_LEVEL` | `admin.logging.level` |
-| `TRUSTEDCA_ADMIN_LOGGING_FORMAT` | `admin.logging.format` |
+There is no `TRUSTEDCA_` prefix, and none of the `admin.*` paths below
+have a verified environment-variable form. The real environment prefix for
+every `xkmsd` setting is `XKMS_` (`pkg/config/load.go:39`); see the
+correction at the top of this page.
 
 ## Configuration Best Practices
 

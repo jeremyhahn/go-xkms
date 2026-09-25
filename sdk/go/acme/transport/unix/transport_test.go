@@ -623,9 +623,9 @@ func setupTestServer(t *testing.T, socketPath string, handler http.Handler) (*ht
 		os.Remove(socketPath)
 	}
 
-	// Give the server time to start
-	time.Sleep(10 * time.Millisecond)
-
+	// No readiness wait needed: the listener is already bound above, so a
+	// caller dialing immediately queues in the kernel accept backlog even
+	// before Serve's accept loop has started running.
 	return server, cleanup
 }
 

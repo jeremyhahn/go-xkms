@@ -64,7 +64,6 @@ func TestSignerOpts_HashFunc(t *testing.T) {
 }
 
 func TestSignerOpts_FullConfiguration(t *testing.T) {
-	blobCN := "test-blob"
 	opts := &SignerOpts{
 		KeyAttributes: &types.KeyAttributes{
 			CN:                 "test-key",
@@ -74,7 +73,6 @@ func TestSignerOpts_FullConfiguration(t *testing.T) {
 			SignatureAlgorithm: x509.SHA256WithRSAPSS,
 		},
 		Backend: nil,
-		BlobCN:  &blobCN,
 	}
 
 	// Verify HashFunc works with full configuration
@@ -82,7 +80,6 @@ func TestSignerOpts_FullConfiguration(t *testing.T) {
 
 	// Verify fields are accessible
 	assert.Equal(t, "test-key", opts.KeyAttributes.CN)
-	assert.Equal(t, "test-blob", *opts.BlobCN)
 }
 
 func TestFSExtensionConstants(t *testing.T) {

@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package apierrors
+
+import (
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// SealStoreSentinelClasses classifies the errors the machine-local
+// platform-sealed credential store (pkg/xkms's SealStoreServicer,
+// pkg/seal's Store) returns. Both pkg/api/grpc/service_seal_store.go's
+// mapSealStoreError and pkg/api/mcp's mirror of it read this table
+// (go-xkms#921).
+var SealStoreSentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+	{xkms.ErrNilRequest, ClassInvalidArgument},
+	{seal.ErrSecretNotFound, ClassNotFound},
+	{seal.ErrInvalidSecretName, ClassInvalidArgument},
+	{seal.ErrResealFailed, ClassInternal},
+}
+
+// ImportExportSentinelClasses classifies the backend-layer capability
+// sentinels a direct backend.ImportBackend / backend.ExportBackend call can
+// return: WrapKey, UnwrapKey, GetImportParameters, ImportKey, ExportKey and
+// CopyKey call these backend methods directly rather than through the xkms
+// service layer, so the general key-op sentinel tables do not apply to them.
+// Both pkg/api/grpc's mapImportExportError and pkg/api/mcp's mirror of it
+// read this table (go-xkms#912); it used to be two independently maintained
+// copies.
+var ImportExportSentinelClasses = []SentinelClass{
+	{backend.ErrExportNotSupported, ClassUnimplemented},
+	{backend.ErrImportNotSupported, ClassUnimplemented},
+	{backend.ErrAsymmetricKeyExportNotAllowed, ClassInvalidArgument},
+	{backend.ErrKeyNotExportable, ClassPermissionDenied},
+}
+
+// PIVSentinelClasses classifies the PIV domain errors pkg/xkms's PIV
+// operations (ListPIVSlots, GetPIVCertificate, GeneratePIVKey, ...) return.
+// Both pkg/api/grpc's mapPIVError and pkg/api/mcp's mirror of it read this
+// table (go-xkms#912).
+var PIVSentinelClasses = []SentinelClass{
+	{xkms.ErrPIVNotInitialized, ClassFailedPrecondition},
+	{xkms.ErrPIVBackendNotFound, ClassNotFound},
+	{xkms.ErrPIVInvalidAlgorithm, ClassInvalidArgument},
+	{xkms.ErrPIVInvalidSlot, ClassInvalidArgument},
+	{xkms.ErrPIVInvalidFormat, ClassInvalidArgument},
+	{xkms.ErrPIVKeyNotFound, ClassNotFound},
+}
+
+// BarrierSentinelClasses classifies the pkg/seal barrier and Shamir
+// domain errors. Both pkg/api/grpc's mapBarrierError and pkg/api/mcp's
+// mirror of it read this table (go-xkms#912).
+var BarrierSentinelClasses = []SentinelClass{
+	// Core barrier errors.
+	{seal.ErrSealed, ClassFailedPrecondition},
+	{seal.ErrAlreadyUnsealed, ClassAlreadyExists},
+	{seal.ErrAlreadyInitialized, ClassAlreadyExists},
+	{seal.ErrNotInitialized, ClassFailedPrecondition},
+	{seal.ErrInvalidCredentials, ClassUnauthenticated},
+	// Software strategies report a wrong passphrase as ErrDecryptionFailed;
+	// hardware ones raise ErrInvalidCredentials. Both are Unauthenticated.
+	{seal.ErrDecryptionFailed, ClassUnauthenticated},
+	{seal.ErrNoAvailableStrategy, ClassUnavailable},
+	{seal.ErrStrategyNotFound, ClassNotFound},
+	{seal.ErrStrategyMismatch, ClassFailedPrecondition},
+	{seal.ErrCorruptRootKey, ClassDataLoss},
+	{seal.ErrEncryptorNotAvailable, ClassFailedPrecondition},
+
+	// Shamir secret sharing errors.
+	{seal.ErrShamirNotConfigured, ClassFailedPrecondition},
+	{seal.ErrShamirThresholdInvalid, ClassInvalidArgument},
+	{seal.ErrShamirQuorumIncomplete, ClassFailedPrecondition},
+	{seal.ErrShamirQuorumExpired, ClassDeadlineExceeded},
+	{seal.ErrShamirDuplicateShare, ClassAlreadyExists},
+	{seal.ErrShamirCombineFailed, ClassInternal},
+	{seal.ErrShamirShareNotFound, ClassNotFound},
+	{seal.ErrShamirNoSharesFound, ClassNotFound},
+	{seal.ErrShamirVerificationFailed, ClassDataLoss},
+	{seal.ErrShamirStorageFailed, ClassInternal},
+
+	// Recovery and root token errors.
+	{seal.ErrRecoveryKeysNotFound, ClassNotFound},
+	{seal.ErrRootTokenVerificationFailed, ClassUnauthenticated},
+}

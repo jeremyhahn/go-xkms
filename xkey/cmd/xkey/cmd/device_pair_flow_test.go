@@ -16,12 +16,10 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -37,18 +35,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
-
-// captureDefaultLog temporarily replaces slog's default logger -- what
-// runDevicePair itself logs through -- with one that writes to the returned
-// buffer, and restores the previous default when the test ends.
-func captureDefaultLog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-	return &buf
-}
 
 // xorTestBarrier is a minimal in-memory pairing.NoiseKeyBarrier for tests
 // that need to drive the pairing flow's sealing without a real barrier's

@@ -79,7 +79,7 @@ func openDeviceTPM(name string, spec *DeviceSpec, logger *slog.Logger) (client.T
 		Logger:    logger,
 	})
 	if err != nil {
-		if err == xkmssdk.ErrTPMNotInitialized && simulator && tpm != nil {
+		if errors.Is(err, xkmssdk.ErrTPMNotInitialized) && simulator && tpm != nil {
 			if perr := provisionSimulatorIdentity(name, tpm, tpmCfg); perr != nil {
 				return nil, errors.Join(perr, tpm.Close(), factory.Close())
 			}
@@ -89,7 +89,7 @@ func openDeviceTPM(name string, spec *DeviceSpec, logger *slog.Logger) (client.T
 				closeErrs = append(closeErrs, tpm.Close())
 			}
 			closeErrs = append(closeErrs, factory.Close())
-			if err == xkmssdk.ErrTPMNotInitialized {
+			if errors.Is(err, xkmssdk.ErrTPMNotInitialized) {
 				return nil, errors.Join(append([]error{ErrDeviceTPMNotProvisioned{Name: name}}, closeErrs...)...)
 			}
 			return nil, errors.Join(append([]error{ErrDeviceTPMOpenFailed{Name: name, Err: err}}, closeErrs...)...)
