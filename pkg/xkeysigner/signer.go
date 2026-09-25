@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"sync/atomic"
@@ -287,7 +288,11 @@ func (s *Signer) sendIPC(msg *ipcMessage) (*ipcResponse, error) {
 		}
 		return nil, ErrConnectionFailed
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if cerr := conn.Close(); cerr != nil {
+			slog.Debug("xkeysigner: failed to close IPC connection", "error", cerr)
+		}
+	}()
 
 	if err := conn.SetDeadline(time.Now().Add(ipcTimeout)); err != nil {
 		return nil, ErrConnectionFailed

@@ -1,6 +1,6 @@
 # Certificate Authority — API
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 Transport shapes are described once in
 [`../key-management/api.md`](../key-management/api.md) §"How the six transports
@@ -19,6 +19,13 @@ transport (#275), so there is no canonical permission for it to adopt yet.
 
 `GET /v1/ca/bootstrap` is the exception — `GroupRoot`, `RouteAuthPublic`,
 unauthenticated by design.
+
+The gRPC/Unix column below reflects the wiring fixed in go-xkms#951: the
+CA servicer these RPCs delegate to is per-`Service` state
+(`(*Service).SetCA`/`SetCABundler`, `pkg/api/grpc/service_ca.go`), set by
+each composition root (`pkg/server`'s Unix listener, `pkg/apimodule`'s
+unified-server module) the same way `pkg/api/rest`'s `Config.CA` is. See
+[engineering.md](engineering.md#grpcunix-ca-wiring-is-per-service-not-a-package-global-go-xkms951).
 
 ## Capability matrix
 
@@ -102,7 +109,7 @@ CA-specific cases:
 | Condition | REST | gRPC / Unix | MCP |
 |---|---|---|---|
 | caller lacks the route's `certs:*` permission | 403 | `PermissionDenied` | error object |
-| CA not configured | 501 | `Unimplemented` | error object |
+| CA not configured | 501 (route not registered — `hasCA`, `pkg/api/rest/routes.go`) | `Unavailable` (`ErrCANotConfigured`, `pkg/api/grpc/service_ca.go`) | error object |
 | CA not initialized | 409 | `FailedPrecondition` | error object |
 | CSR fails policy | 400 | `InvalidArgument` | JSON-RPC `-32602` |
 | serial not found | 404 | `NotFound` | error object |

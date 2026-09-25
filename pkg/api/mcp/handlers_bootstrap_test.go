@@ -35,6 +35,14 @@ func TestHandleBootstrapShowKeys(t *testing.T) {
 		_, err := server.handleBootstrapShowKeys(context.Background(), req)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, xkms.ErrBootstrapListenerNotEnabled)
+
+		// go-xkms#930: the refusal must reach dispatch as a *KeyOpError
+		// carrying ErrCodeServiceUnavailable, matching
+		// pkg/api/grpc/service_bootstrap.go's mapBootstrapError
+		// (codes.Unavailable), not a bare sentinel error.
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr)
+		assert.Equal(t, ErrCodeServiceUnavailable, keyErr.Code)
 	})
 
 	t.Run("returns the published keys", func(t *testing.T) {

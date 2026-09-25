@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/asn1"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -278,8 +279,8 @@ func (tpm *TPM2) EKAttributes() (*types.KeyAttributes, error) {
 		ekAttrs, err := tpm.KeyAttributes(ekHandle)
 		if err != nil {
 			// Check if this is a "handle not found" error (persistent EK doesn't exist)
-			isPersistentHandleError := err == tpm2.TPMRC(0x184) || // TPM_RC_VALUE
-				err == tpm2.TPMRC(0x18b) // TPM_RC_HANDLE
+			isPersistentHandleError := errors.Is(err, tpm2.TPMRC(0x184)) || // TPM_RC_VALUE
+				errors.Is(err, tpmRCHandle) // TPM_RC_HANDLE
 
 			if isPersistentHandleError {
 				// Persistent EK doesn't exist - check for manufacturer EK certificate in NV RAM
@@ -476,7 +477,7 @@ func (tpm *TPM2) KeyAttributes(
 	}.Execute(tpm.transport)
 	if err != nil {
 		// TPM_RC_HANDLE (0x18b) is expected when key doesn't exist - log at debug level
-		if err == tpm2.TPMRC(0x18b) {
+		if errors.Is(err, tpmRCHandle) {
 			tpm.logger.Debug("key handle not found (expected during initialization)",
 				slog.String("handle", fmt.Sprintf("0x%x", handle)),
 				slog.String("error", err.Error()))

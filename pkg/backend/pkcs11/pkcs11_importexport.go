@@ -273,7 +273,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		}
 
 		if err := p.Initialize(); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+			if !isCKR(err, pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 				return &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 			}
 		}
@@ -307,7 +307,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		return err
 	}
 	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 		// Already logged in, don't logout later
@@ -782,7 +782,7 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		}
 
 		if err := p.Initialize(); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+			if !isCKR(err, pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 				return nil, &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 			}
 		}
@@ -816,7 +816,7 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		return nil, err
 	}
 	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
 		// Already logged in, don't logout later
@@ -1097,7 +1097,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 			return nil, err
 		}
 		if err := b.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+			if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 				return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 			}
 		}

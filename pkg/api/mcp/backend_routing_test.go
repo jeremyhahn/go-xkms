@@ -171,7 +171,7 @@ func TestGetTLSCertificate_LooksTheKeyUpInTheNamedBackend(t *testing.T) {
 	_, err = server.handleGetTLSCertificate(context.Background(),
 		rpc(t, "xkms.getTLSCertificate", GetTLSCertificateParams{KeyID: "routed-tls"}))
 	require.Error(t, err, "the default backend does not hold the key")
-	assert.Contains(t, err.Error(), "failed to find key")
+	assert.Contains(t, err.Error(), "key not found")
 }
 
 // TestAsymmetricCrypto_ChecksTheKeyInTheNamedBackend proves the key
@@ -179,7 +179,7 @@ func TestGetTLSCertificate_LooksTheKeyUpInTheNamedBackend(t *testing.T) {
 // the request names: a key that exists only in "second" passes the precheck
 // for that name and is reported missing for the default, where a precheck
 // against the default backend would refuse valid named-backend crypto with
-// "failed to find key".
+// "key not found".
 func TestAsymmetricCrypto_ChecksTheKeyInTheNamedBackend(t *testing.T) {
 	server, _ := createTwoBackendServer(t)
 	_, err := server.handleGenerateKey(context.Background(),
@@ -202,10 +202,10 @@ func TestAsymmetricCrypto_ChecksTheKeyInTheNamedBackend(t *testing.T) {
 	_, err = server.handleAsymmetricEncrypt(context.Background(),
 		rpc(t, "xkms.asymmetricEncrypt", AsymmetricEncryptParams{KeyID: "routed-rsa", Plaintext: []byte("routed")}))
 	require.Error(t, err, "the default backend does not hold the key")
-	assert.Contains(t, err.Error(), "failed to find key")
+	assert.Contains(t, err.Error(), "key not found")
 
 	_, err = server.handleAsymmetricDecrypt(context.Background(),
 		rpc(t, "xkms.asymmetricDecrypt", AsymmetricDecryptParams{KeyID: "routed-rsa", Ciphertext: encrypted.Ciphertext}))
 	require.Error(t, err, "the default backend does not hold the key")
-	assert.Contains(t, err.Error(), "failed to find key")
+	assert.Contains(t, err.Error(), "key not found")
 }

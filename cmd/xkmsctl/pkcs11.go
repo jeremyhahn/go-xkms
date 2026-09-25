@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/pkcs11/manager"
@@ -61,7 +62,9 @@ var pkcs11ProbeCmd = &cobra.Command{
 
 		if len(probed) == 0 {
 			if cfg.OutputFormat == "json" {
-				_ = printer.PrintJSON([]interface{}{})
+				if err := printer.PrintJSON([]interface{}{}); err != nil {
+					handleError(err)
+				}
 			} else {
 				fmt.Println("No PKCS#11 modules found.")
 			}
@@ -71,7 +74,9 @@ var pkcs11ProbeCmd = &cobra.Command{
 		printVerbose("Found %d PKCS#11 modules", len(probed))
 
 		if cfg.OutputFormat == "json" {
-			_ = printer.PrintJSON(probed)
+			if err := printer.PrintJSON(probed); err != nil {
+				handleError(err)
+			}
 		} else {
 			fmt.Println("Available PKCS#11 Modules:")
 			fmt.Println()
@@ -93,8 +98,13 @@ var pkcs11RegisterCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		modulePath, _ := cmd.Flags().GetString("module")
-		displayName, _ := cmd.Flags().GetString("name")
+		fr := newFlagReader(cmd)
+		modulePath := fr.String("module")
+		displayName := fr.String("name")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if modulePath == "" {
 			handleError(ErrModuleRequired)
@@ -102,7 +112,7 @@ var pkcs11RegisterCmd = &cobra.Command{
 		}
 
 		mgr := manager.New()
-		defer func() { _ = mgr.Close() }()
+		defer closeQuietly(mgr)
 
 		moduleID, err := mgr.RegisterModule(modulePath, displayName)
 		if err != nil {
@@ -119,7 +129,9 @@ var pkcs11RegisterCmd = &cobra.Command{
 		}
 
 		if cfg.OutputFormat == "json" {
-			_ = printer.PrintJSON(result)
+			if err := printer.PrintJSON(result); err != nil {
+				handleError(err)
+			}
 		} else {
 			fmt.Printf("Module registered successfully\n")
 			fmt.Printf("  Module ID: %s\n", moduleID)
@@ -129,6 +141,21 @@ var pkcs11RegisterCmd = &cobra.Command{
 			}
 		}
 	},
+}
+
+// registerProbedModules registers every auto-detected module with mgr.
+// Registration failures are logged and skipped rather than aborting the
+// listing: manager state does not persist across CLI invocations, so this
+// best-effort re-registration exists only to populate the manager for this
+// one command; a module that fails to (re-)register simply does not appear
+// in the list, exactly as it would not have before this loop existed.
+func registerProbedModules(mgr manager.Manager, probed []manager.ModuleProbe) {
+	for _, p := range probed {
+		if _, err := mgr.RegisterModule(p.LibraryPath, p.DisplayName); err != nil {
+			slog.Default().Debug("xkmsctl: pkcs11: auto-register probed module failed",
+				"library_path", p.LibraryPath, "error", err)
+		}
+	}
 }
 
 // pkcs11ListModulesCmd lists registered PKCS#11 modules.
@@ -141,20 +168,19 @@ var pkcs11ListModulesCmd = &cobra.Command{
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		mgr := manager.New()
-		defer func() { _ = mgr.Close() }()
+		defer closeQuietly(mgr)
 
 		// For this command to be useful, we need to auto-register probed modules
 		// since manager state doesn't persist across CLI invocations
-		probed := manager.ProbeModulesWithNames()
-		for _, p := range probed {
-			_, _ = mgr.RegisterModule(p.LibraryPath, p.DisplayName)
-		}
+		registerProbedModules(mgr, manager.ProbeModulesWithNames())
 
 		modules := mgr.ListModules()
 
 		if len(modules) == 0 {
 			if cfg.OutputFormat == "json" {
-				_ = printer.PrintJSON([]interface{}{})
+				if err := printer.PrintJSON([]interface{}{}); err != nil {
+					handleError(err)
+				}
 			} else {
 				fmt.Println("No PKCS#11 modules registered.")
 			}
@@ -162,7 +188,9 @@ var pkcs11ListModulesCmd = &cobra.Command{
 		}
 
 		if cfg.OutputFormat == "json" {
-			_ = printer.PrintJSON(modules)
+			if err := printer.PrintJSON(modules); err != nil {
+				handleError(err)
+			}
 		} else {
 			fmt.Println("Registered PKCS#11 Modules:")
 			fmt.Println()
@@ -203,19 +231,18 @@ var pkcs11ListTokensCmd = &cobra.Command{
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		mgr := manager.New()
-		defer func() { _ = mgr.Close() }()
+		defer closeQuietly(mgr)
 
 		// Auto-register probed modules
-		probed := manager.ProbeModulesWithNames()
-		for _, p := range probed {
-			_, _ = mgr.RegisterModule(p.LibraryPath, p.DisplayName)
-		}
+		registerProbedModules(mgr, manager.ProbeModulesWithNames())
 
 		tokens := mgr.ListTokens()
 
 		if len(tokens) == 0 {
 			if cfg.OutputFormat == "json" {
-				_ = printer.PrintJSON([]interface{}{})
+				if err := printer.PrintJSON([]interface{}{}); err != nil {
+					handleError(err)
+				}
 			} else {
 				fmt.Println("No PKCS#11 tokens found.")
 			}
@@ -223,7 +250,9 @@ var pkcs11ListTokensCmd = &cobra.Command{
 		}
 
 		if cfg.OutputFormat == "json" {
-			_ = printer.PrintJSON(tokens)
+			if err := printer.PrintJSON(tokens); err != nil {
+				handleError(err)
+			}
 		} else {
 			fmt.Println("PKCS#11 Tokens:")
 			fmt.Println()
@@ -269,12 +298,17 @@ WARNING: This will erase all data on the token!`,
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		modulePath, _ := cmd.Flags().GetString("module")
-		moduleID, _ := cmd.Flags().GetString("module-id")
-		slotID, _ := cmd.Flags().GetUint("slot")
-		label, _ := cmd.Flags().GetString("label")
-		soPin, _ := cmd.Flags().GetString("so-pin")
-		userPin, _ := cmd.Flags().GetString("user-pin")
+		fr := newFlagReader(cmd)
+		modulePath := fr.String("module")
+		moduleID := fr.String("module-id")
+		slotID := fr.Uint("slot")
+		label := fr.String("label")
+		soPin := fr.String("so-pin")
+		userPin := fr.String("user-pin")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if label == "" {
 			handleError(ErrLabelRequired)
@@ -290,7 +324,7 @@ WARNING: This will erase all data on the token!`,
 		}
 
 		mgr := manager.New()
-		defer func() { _ = mgr.Close() }()
+		defer closeQuietly(mgr)
 
 		// If module path is provided, register it and use the derived ID
 		if modulePath != "" {
@@ -333,7 +367,9 @@ WARNING: This will erase all data on the token!`,
 		}
 
 		if cfg.OutputFormat == "json" {
-			_ = printer.PrintJSON(result)
+			if err := printer.PrintJSON(result); err != nil {
+				handleError(err)
+			}
 		} else {
 			fmt.Printf("Token initialized successfully\n")
 			fmt.Printf("  Module:  %s\n", moduleID)
@@ -352,10 +388,15 @@ var pkcs11ConnectCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		modulePath, _ := cmd.Flags().GetString("module")
-		moduleID, _ := cmd.Flags().GetString("module-id")
-		slotID, _ := cmd.Flags().GetUint("slot")
-		pin, _ := cmd.Flags().GetString("pin")
+		fr := newFlagReader(cmd)
+		modulePath := fr.String("module")
+		moduleID := fr.String("module-id")
+		slotID := fr.Uint("slot")
+		pin := fr.String("pin")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if pin == "" {
 			handleError(ErrPINRequired)
@@ -363,7 +404,7 @@ var pkcs11ConnectCmd = &cobra.Command{
 		}
 
 		mgr := manager.New()
-		defer func() { _ = mgr.Close() }()
+		defer closeQuietly(mgr)
 
 		// Register module if path provided
 		if modulePath != "" {
@@ -398,7 +439,9 @@ var pkcs11ConnectCmd = &cobra.Command{
 		}
 
 		if cfg.OutputFormat == "json" {
-			_ = printer.PrintJSON(result)
+			if err := printer.PrintJSON(result); err != nil {
+				handleError(err)
+			}
 		} else {
 			fmt.Printf("Connected to token\n")
 			fmt.Printf("  Module:         %s\n", moduleID)
@@ -418,8 +461,13 @@ var pkcs11DisconnectCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		moduleID, _ := cmd.Flags().GetString("module-id")
-		slotID, _ := cmd.Flags().GetUint("slot")
+		fr := newFlagReader(cmd)
+		moduleID := fr.String("module-id")
+		slotID := fr.Uint("slot")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if moduleID == "" {
 			handleError(ErrModuleIDRequired)
@@ -427,7 +475,7 @@ var pkcs11DisconnectCmd = &cobra.Command{
 		}
 
 		mgr := manager.New()
-		defer func() { _ = mgr.Close() }()
+		defer closeQuietly(mgr)
 
 		printVerbose("Disconnecting from module %s, slot %d", moduleID, slotID)
 
@@ -444,7 +492,9 @@ var pkcs11DisconnectCmd = &cobra.Command{
 		}
 
 		if cfg.OutputFormat == "json" {
-			_ = printer.PrintJSON(result)
+			if err := printer.PrintJSON(result); err != nil {
+				handleError(err)
+			}
 		} else {
 			fmt.Printf("Disconnected from token\n")
 			fmt.Printf("  Module: %s\n", moduleID)

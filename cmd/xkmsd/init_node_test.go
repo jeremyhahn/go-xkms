@@ -94,6 +94,36 @@ func TestOpenDurableInitNode_NilConfig(t *testing.T) {
 	}
 }
 
+// TestUnsealDurableInitNode_PassphraseStrategyCompletesTheUnseal is the
+// success path unsealDurableInitNode exists for: `xkmsd init` IS the
+// operator-present ceremony, so a "passphrase" node barrier that comes up
+// sealed after construction is completed directly with the operator's
+// --so-pin rather than waiting on a remote sealed-window listener (that is
+// what `xkmsd run` does instead; see the function's doc comment).
+func TestUnsealDurableInitNode_PassphraseStrategyCompletesTheUnseal(t *testing.T) {
+	dataDir := t.TempDir()
+	nodeCfg := &config.Config{
+		Storage: config.StorageConfig{Backend: "qrdb", Path: dataDir},
+		Barrier: config.BarrierConfig{Enabled: true, Strategy: "passphrase"},
+	}
+	node, sealRes, err := openDurableInitNode(context.Background(), nodeCfg, silentLogger())
+	if err != nil {
+		t.Fatalf("openDurableInitNode: %v", err)
+	}
+	defer func() { _ = node.Close() }()
+
+	if !node.IsSealed() {
+		t.Fatal("fixture setup: a fresh passphrase-strategy node must come up sealed")
+	}
+
+	if err := unsealDurableInitNode(context.Background(), node, sealRes, "passphrase", []byte("test-so-pin")); err != nil {
+		t.Fatalf("unsealDurableInitNode: %v", err)
+	}
+	if node.IsSealed() {
+		t.Fatal("unsealDurableInitNode returned nil but the node is still sealed")
+	}
+}
+
 func TestUnsealDurableInitNode_RefusesShamir(t *testing.T) {
 	dataDir := t.TempDir()
 	nodeCfg := &config.Config{

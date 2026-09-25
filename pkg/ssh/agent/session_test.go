@@ -868,16 +868,27 @@ func TestStartSession_ErrSurfacesHandlerProtocolError(t *testing.T) {
 	require.NoError(t, conn.Close())
 
 	// The malformed connection's handler runs concurrently with this test
-	// goroutine, and Stop's listener-close races it if fired immediately.
-	// A second, well-behaved round trip only completes once the accept
-	// loop -- a strictly sequential for-loop -- has moved past accepting
-	// the connection above, which gives its handler goroutine a head start
-	// on reading (and erroring on) the partial frame before shutdown begins.
+	// goroutine. A second, well-behaved round trip only completes once the
+	// accept loop -- a strictly sequential for-loop -- has moved past
+	// accepting the connection above, which exercises the agent continuing
+	// to serve other clients after one connection errors.
 	confirm, err := net.Dial("unix", sess.SockPath)
 	require.NoError(t, err)
 	_, err = sshagent.NewClient(confirm).List()
 	require.NoError(t, err)
 	require.NoError(t, confirm.Close())
+
+	// That ordering is only a head start, not a guarantee: it says handler 1
+	// was launched before handler 2's round trip, not that handler 1 has
+	// finished reading and recording its error by the time it completes.
+	// Poll the tracker directly -- deterministic, and available here since
+	// this test lives in the same package -- rather than firing Stop's
+	// unconditional listener-close and client-drain (which would turn a
+	// still-unread partial frame into net.ErrClosed instead of
+	// io.ErrUnexpectedEOF) on a race.
+	require.Eventually(t, func() bool {
+		return errors.Is(sess.track.err(), io.ErrUnexpectedEOF)
+	}, 10*time.Second, 10*time.Millisecond, "handler did not record the protocol error")
 
 	stopClean(t, sess)
 	waitDone(t, sess)

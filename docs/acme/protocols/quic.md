@@ -2,6 +2,15 @@
 
 Low-latency QUIC/HTTP3 API for Admin operations.
 
+> **Correction (go-xkms#942):** there is no `trusted-acme-server` binary,
+> no `cactl` binary, and no `TRUSTEDCA_` environment prefix. The real CLI
+> is `xkmsctl acme` (`docs/acme-issuance/cli.md`); the ACME admin surface
+> is mounted on `xkmsd`'s own unified listener
+> (`cmd/xkmsd/admin.go:finalizeAdminModule`). The default QUIC port this
+> page assumes (9444/9445) is otherwise unverified against the current
+> wiring — `docs/acme-issuance/engineering.md` notes a distinct, currently
+> unwired `DefaultQUICPort = 9444` collision in `pkg/acme/api/server`.
+
 ## Overview
 
 The QUIC API provides UDP-based access to all Admin operations using HTTP/3. It's optimized for low-latency connections, mobile clients, and networks with packet loss.
@@ -19,17 +28,14 @@ The QUIC API provides UDP-based access to all Admin operations using HTTP/3. It'
 
 ### Server
 
-```bash
-# Admin addresses are configured via environment variables
-TRUSTEDCA_ADMIN_QUIC_ADDR=:9445 trusted-acme-server --admin-enabled
-```
+Unverified — see the correction above.
 
 **Note:** QUIC requires TLS 1.3. TLS is automatically configured via go-xkms.
 
-### Client (cactl)
+### Client (`xkmsctl acme`)
 
 ```bash
-cactl --transport quic --address localhost:9444 status
+xkmsctl acme --acme-server quic://localhost:9444 status
 ```
 
 ## Advantages
@@ -58,19 +64,16 @@ All endpoints from the [REST API](rest.md) are available via QUIC.
 
 ## Client Usage
 
-### cactl
+### `xkmsctl acme`
 
 ```bash
 # Get status via QUIC
-cactl --transport quic --address localhost:9444 status
-
-# List certificates
-cactl --transport quic --address localhost:9444 cert list
-
-# Create tenant
-cactl --transport quic --address localhost:9444 \
-  tenant create --name example --display-name "Example"
+xkmsctl acme --acme-server quic://localhost:9444 status
 ```
+
+The `cert`/`account`/`eab` verb catalog is documented in
+[`../../acme-issuance/cli.md`](../../acme-issuance/cli.md); there is no
+`tenant create` verb there today, and no `cactl` binary.
 
 ### Go Client
 
@@ -130,10 +133,7 @@ curl --http3 https://localhost:9444/api/v1/status \
 
 QUIC inherits mTLS authentication from TLS 1.3:
 
-```bash
-# Server with mTLS (TLS configured via go-xkms)
-TRUSTEDCA_ADMIN_QUIC_ADDR=:9445 trusted-acme-server --admin-enabled
-```
+Unverified — see the correction above.
 
 Client certificates are verified during the TLS handshake.
 
@@ -182,8 +182,8 @@ If QUIC is unavailable, clients can fall back to REST:
 
 ```bash
 # Try QUIC first, fall back to REST
-cactl --transport quic --address localhost:9444 status || \
-cactl --transport rest --address https://localhost:8443 status
+xkmsctl acme --acme-server quic://localhost:9444 status || \
+xkmsctl acme --acme-server https://localhost:8443 status
 ```
 
 ## Debugging
@@ -194,8 +194,8 @@ cactl --transport rest --address https://localhost:8443 status
 # Test UDP connectivity
 nc -u -z localhost 9444
 
-# Check server logs for QUIC startup
-trusted-acme-server --admin-enabled --log-level debug 2>&1 | grep -i quic
+# Check xkmsd's logs for QUIC startup (there is no trusted-acme-server binary)
+journalctl -u xkmsd -f | grep -i quic
 ```
 
 ### Wireshark
@@ -210,4 +210,4 @@ udp.port == 9444
 - [Protocol Overview](README.md)
 - [REST Protocol](rest.md)
 - [gRPC Protocol](grpc.md)
-- [cactl CLI](../cli/cactl.md)
+- [`xkmsctl acme` CLI](../../acme-issuance/cli.md)

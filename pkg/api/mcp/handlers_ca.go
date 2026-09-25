@@ -15,25 +15,36 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
+
+// errXKMSServiceUnavailable classifies ErrXKMSServiceUnavailable as Service
+// unavailable, mirroring pkg/api/grpc/service_ca.go's codes.Unavailable
+// check for a nil CA instance: neither transport can serve a CA method when
+// the CA (or, here, the whole xkms service) is not wired up.
+func errXKMSServiceUnavailable() error {
+	return &KeyOpError{Code: ErrCodeServiceUnavailable, Err: ErrXKMSServiceUnavailable}
+}
 
 // handleGetCABundle handles the xkms.ca.bundle method.
 // It retrieves the CA certificate bundle in PEM format.
 func (s *Server) handleGetCABundle(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.GetCABundleRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.GetCABundle(ctx, &params)
+	resp, err := svc.GetCABundle(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }
 
 // handleGetCACertificate handles the xkms.ca.certificate method.
@@ -41,15 +52,19 @@ func (s *Server) handleGetCABundle(ctx context.Context, req *JSONRPCRequest) (in
 func (s *Server) handleGetCACertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.GetCACertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.GetCACertificate(ctx, &params)
+	resp, err := svc.GetCACertificate(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }
 
 // handleSignCSR handles the xkms.ca.sign-csr method.
@@ -57,15 +72,19 @@ func (s *Server) handleGetCACertificate(ctx context.Context, req *JSONRPCRequest
 func (s *Server) handleSignCSR(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.SignCSRRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.SignCSR(ctx, &params)
+	resp, err := svc.SignCSR(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }
 
 // handleIssueCertificate handles the xkms.ca.issue method.
@@ -73,15 +92,19 @@ func (s *Server) handleSignCSR(ctx context.Context, req *JSONRPCRequest) (interf
 func (s *Server) handleIssueCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.IssueCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.IssueCertificate(ctx, &params)
+	resp, err := svc.IssueCertificate(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }
 
 // handleRevokeCertificate handles the xkms.ca.revoke method.
@@ -89,15 +112,19 @@ func (s *Server) handleIssueCertificate(ctx context.Context, req *JSONRPCRequest
 func (s *Server) handleRevokeCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.RevokeCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.RevokeCertificate(ctx, &params)
+	resp, err := svc.RevokeCertificate(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }
 
 // handleGenerateCRL handles the xkms.ca.crl method.
@@ -105,15 +132,19 @@ func (s *Server) handleRevokeCertificate(ctx context.Context, req *JSONRPCReques
 func (s *Server) handleGenerateCRL(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.GenerateCRLRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.GenerateCRL(ctx, &params)
+	resp, err := svc.GenerateCRL(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }
 
 // handleIsRevoked handles the xkms.ca.is-revoked method.
@@ -121,13 +152,17 @@ func (s *Server) handleGenerateCRL(ctx context.Context, req *JSONRPCRequest) (in
 func (s *Server) handleIsRevoked(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
-		return nil, ErrXKMSServiceUnavailable
+		return nil, errXKMSServiceUnavailable()
 	}
 
 	var params transport.IsRevokedRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	return svc.IsRevoked(ctx, &params)
+	resp, err := svc.IsRevoked(ctx, &params)
+	if err != nil {
+		return nil, mapCAError(err)
+	}
+	return resp, nil
 }

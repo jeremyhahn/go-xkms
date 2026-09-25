@@ -36,7 +36,13 @@ func init() {
 //
 // Supported configuration keys:
 //   - "device" (string): Path to TPM device (default: "/dev/tpmrm0")
-//   - "key_dir" (string): Directory for TPM key blob storage (default: "./tpm2-keys")
+//   - "key_dir" (string): Directory for TPM key blob storage. Required --
+//     there is no default, and it is never resolved relative to the
+//     process's working directory (see tpm2.ErrKeyDirRequired). AutoInitialize
+//     supplies one automatically when AutoConfig.DataDir is set; callers that
+//     leave DataDir empty and want the tpm2 backend must set "key_dir"
+//     explicitly in BackendConfigs, or the backend factory returns an error
+//     and AutoInitialize skips it.
 //   - "use_simulator" (bool): Use TPM simulator instead of hardware
 //   - "simulator_host" (string): Simulator hostname (default: "localhost")
 //   - "simulator_port" (int): Simulator port (default: 2321)

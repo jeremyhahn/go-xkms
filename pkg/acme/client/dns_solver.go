@@ -40,6 +40,29 @@ var (
 	ErrDNSSolverClosed       = errors.New("acme-client: DNS solver has been closed")
 )
 
+// DNSCleanupError reports a failure to remove a DNS-01 challenge TXT record.
+// It wraps ErrDNSRecordCleanup so callers can match it with errors.Is,
+// leaving a stale record visible instead of silently dropped.
+type DNSCleanupError struct {
+	Domain string
+	Err    error
+}
+
+// Error implements the error interface.
+func (e *DNSCleanupError) Error() string {
+	return fmt.Sprintf("acme-client: dns-01: failed to clean up TXT record for %q: %v", e.Domain, e.Err)
+}
+
+// Unwrap returns the underlying cause.
+func (e *DNSCleanupError) Unwrap() error {
+	return e.Err
+}
+
+// Is reports whether target is ErrDNSRecordCleanup.
+func (e *DNSCleanupError) Is(target error) bool {
+	return target == ErrDNSRecordCleanup
+}
+
 // DNSSolverOption is a functional option for configuring a DNSSolver.
 type DNSSolverOption func(*DNSSolver)
 
@@ -365,9 +388,15 @@ func (s *PreCheckDNSSolver) Solve(ctx context.Context, domain string, challenge 
 		err := s.runPreCheck(ctx, fqdn, challengeValue)
 		if err != nil {
 			if !s.option.AllowFailure {
-				// Clean up on pre-check failure
-				_ = s.solver.Cleanup(ctx, domain, challenge)
-				return caerrors.DNSError("dns-01: pre-check failed: %v", err)
+				// Clean up on pre-check failure. Surface both the
+				// pre-check failure and any cleanup failure so a stale
+				// TXT record left behind isn't hidden by the original
+				// error.
+				precheckErr := caerrors.DNSError("dns-01: pre-check failed: %v", err)
+				if cleanupErr := s.solver.Cleanup(ctx, domain, challenge); cleanupErr != nil {
+					return errors.Join(precheckErr, &DNSCleanupError{Domain: domain, Err: cleanupErr})
+				}
+				return precheckErr
 			}
 			// Log but continue if AllowFailure is true
 		}

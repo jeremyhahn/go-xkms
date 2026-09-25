@@ -18,7 +18,7 @@ package mcp
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -27,7 +27,43 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
+
+// frostInvalidParamsError wraps a malformed FROST request field (a bad hex
+// encoding, an out-of-range threshold) as a *KeyOpError carrying
+// ErrCodeInvalidParams. err is optional context for a decode failure; it is
+// nil for a plain "X is required" refusal. The frost-tagged gRPC transport
+// (service_frost.go) carries no counterpart for the hex-decode failures this
+// JSON-RPC surface alone can produce -- proto's FROST messages carry raw
+// bytes, not hex-encoded strings -- so these are classified the same way
+// this package's own "invalid curve"/"invalid wrapping public key PEM"
+// checks in handlers.go are: a malformed field is the caller's fault, not
+// the server's.
+func frostInvalidParamsError(msg string, err error) error {
+	if err == nil {
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: msg}}
+	}
+	return &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: msg, Err: err}}
+}
+
+// frostOperationError wraps an error from a FROST backend operation as a
+// *KeyOpError carrying ErrCodeInternalError, mirroring service_frost.go's
+// FrostGenerateKey/FrostImportKey/FrostListKeys/FrostDeleteKey/
+// FrostGenerateNonces/FrostSignRound/FrostAggregate, which all report
+// codes.Internal unconditionally for the same underlying FROST backend
+// calls.
+func frostOperationError(msg string, err error) error {
+	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: msg, Err: err}}
+}
+
+// frostKeyNotFoundError wraps a FROST key lookup failure as a *KeyOpError
+// carrying sdkssh.JSONRPCCodeNotFound, mirroring service_frost.go's
+// FrostGetKey and FrostSignRound, which both report codes.NotFound for the
+// identical GetKey failure.
+func frostKeyNotFoundError(msg string, err error) error {
+	return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: &errs.Wrapped{Msg: msg, Err: err}}
+}
 
 // FROST request/response types
 
@@ -194,15 +230,15 @@ type FrostVerifyResult struct {
 // handleFrostGenerateKey handles the frost.generateKey method
 func (s *Server) handleFrostGenerateKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostGenerateKeyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.Threshold < 2 {
-		return nil, &errs.Message{Msg: "threshold must be at least 2"}
+		return nil, frostInvalidParamsError("threshold must be at least 2", nil)
 	}
 	if params.Total < params.Threshold {
-		return nil, &errs.Message{Msg: "total must be >= threshold"}
+		return nil, frostInvalidParamsError("total must be >= threshold", nil)
 	}
 
 	algorithm := params.Algorithm
@@ -231,7 +267,7 @@ func (s *Server) handleFrostGenerateKey(ctx context.Context, req *JSONRPCRequest
 
 		packages, pubPkg, err := td.Generate(frostConfig)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to generate FROST packages", Err: err}
+			return nil, frostOperationError("failed to generate FROST packages", err)
 		}
 
 		respPackages := make([]FrostKeyPackage, len(packages))
@@ -271,7 +307,7 @@ func (s *Server) handleFrostGenerateKey(ctx context.Context, req *JSONRPCRequest
 	}
 
 	if params.ParticipantID == 0 {
-		return nil, &errs.Message{Msg: "participant_id is required in participant mode"}
+		return nil, frostInvalidParamsError("participant_id is required in participant mode", nil)
 	}
 
 	attrs := &types.KeyAttributes{
@@ -289,7 +325,7 @@ func (s *Server) handleFrostGenerateKey(ctx context.Context, req *JSONRPCRequest
 
 	key, err := be.GenerateKey(ctx, attrs)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate FROST key", Err: err}
+		return nil, frostOperationError("failed to generate FROST key", err)
 	}
 
 	handle := key.(*frost.FrostKeyHandle)
@@ -308,13 +344,13 @@ func (s *Server) handleFrostGenerateKey(ctx context.Context, req *JSONRPCRequest
 // handleFrostImportKey handles the frost.importKey method
 func (s *Server) handleFrostImportKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostImportKeyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	pkg := params.Package
 	if pkg.KeyID == "" {
-		return nil, &errs.Message{Msg: "package.key_id is required"}
+		return nil, frostInvalidParamsError("package.key_id is required", nil)
 	}
 
 	be, err := s.getFrostBackend()
@@ -324,19 +360,19 @@ func (s *Server) handleFrostImportKey(ctx context.Context, req *JSONRPCRequest) 
 
 	secretShare, err := hex.DecodeString(strings.TrimPrefix(pkg.SecretShare, "0x"))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid secret_share hex", Err: err}
+		return nil, frostInvalidParamsError("invalid secret_share hex", err)
 	}
 
 	groupPubKey, err := hex.DecodeString(strings.TrimPrefix(pkg.GroupPublicKey, "0x"))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid group_public_key hex", Err: err}
+		return nil, frostInvalidParamsError("invalid group_public_key hex", err)
 	}
 
 	vsMap := make(map[uint32][]byte)
 	for id, vsHex := range pkg.VerificationShares {
 		vs, err := hex.DecodeString(strings.TrimPrefix(vsHex, "0x"))
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: fmt.Sprintf("invalid verification_share hex for participant %d", id), Err: err}
+			return nil, frostInvalidParamsError(fmt.Sprintf("invalid verification_share hex for participant %d", id), err)
 		}
 		vsMap[id] = vs
 	}
@@ -365,7 +401,7 @@ func (s *Server) handleFrostImportKey(ctx context.Context, req *JSONRPCRequest) 
 
 	ks := be.KeyStore()
 	if err := ks.StoreKeyPackage(ctx, pkg.KeyID, keyPackage, metadata); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to store key package", Err: err}
+		return nil, frostOperationError("failed to store key package", err)
 	}
 
 	return FrostImportKeyResult{
@@ -386,7 +422,7 @@ func (s *Server) handleFrostListKeys(ctx context.Context, req *JSONRPCRequest) (
 
 	keys, err := be.ListKeys(ctx)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
+		return nil, frostOperationError("failed to list keys", err)
 	}
 
 	respKeys := make([]FrostKeyInfo, 0, len(keys))
@@ -422,12 +458,12 @@ func (s *Server) handleFrostListKeys(ctx context.Context, req *JSONRPCRequest) (
 // handleFrostGetKey handles the frost.getKey method
 func (s *Server) handleFrostGetKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostGetKeyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, frostInvalidParamsError("key_id is required", nil)
 	}
 
 	be, err := s.getFrostBackend()
@@ -443,7 +479,7 @@ func (s *Server) handleFrostGetKey(ctx context.Context, req *JSONRPCRequest) (in
 
 	key, err := be.GetKey(ctx, attrs)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "key not found", Err: err}
+		return nil, frostKeyNotFoundError("key not found", err)
 	}
 
 	handle := key.(*frost.FrostKeyHandle)
@@ -482,12 +518,12 @@ func (s *Server) handleFrostGetKey(ctx context.Context, req *JSONRPCRequest) (in
 // handleFrostDeleteKey handles the frost.deleteKey method
 func (s *Server) handleFrostDeleteKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostDeleteKeyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, frostInvalidParamsError("key_id is required", nil)
 	}
 
 	be, err := s.getFrostBackend()
@@ -502,7 +538,7 @@ func (s *Server) handleFrostDeleteKey(ctx context.Context, req *JSONRPCRequest) 
 	}
 
 	if err := be.DeleteKey(ctx, attrs); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to delete key", Err: err}
+		return nil, frostOperationError("failed to delete key", err)
 	}
 
 	return FrostDeleteKeyResult{
@@ -514,12 +550,12 @@ func (s *Server) handleFrostDeleteKey(ctx context.Context, req *JSONRPCRequest) 
 // handleFrostGenerateNonces handles the frost.generateNonces method
 func (s *Server) handleFrostGenerateNonces(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostGenerateNoncesParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, frostInvalidParamsError("key_id is required", nil)
 	}
 
 	be, err := s.getFrostBackend()
@@ -529,7 +565,7 @@ func (s *Server) handleFrostGenerateNonces(ctx context.Context, req *JSONRPCRequ
 
 	noncePackage, err := be.GenerateNonces(params.KeyID)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate nonces", Err: err}
+		return nil, frostOperationError("failed to generate nonces", err)
 	}
 
 	return FrostGenerateNoncesResult{
@@ -545,12 +581,12 @@ func (s *Server) handleFrostGenerateNonces(ctx context.Context, req *JSONRPCRequ
 // handleFrostSignRound handles the frost.signRound method
 func (s *Server) handleFrostSignRound(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostSignRoundParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, frostInvalidParamsError("key_id is required", nil)
 	}
 
 	be, err := s.getFrostBackend()
@@ -561,27 +597,27 @@ func (s *Server) handleFrostSignRound(ctx context.Context, req *JSONRPCRequest) 
 	// Decode hex values
 	message, err := hex.DecodeString(strings.TrimPrefix(params.Message, "0x"))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid message hex", Err: err}
+		return nil, frostInvalidParamsError("invalid message hex", err)
 	}
 
 	hidingNonce, err := hex.DecodeString(strings.TrimPrefix(params.HidingNonce, "0x"))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid hiding_nonce hex", Err: err}
+		return nil, frostInvalidParamsError("invalid hiding_nonce hex", err)
 	}
 
 	bindingNonce, err := hex.DecodeString(strings.TrimPrefix(params.BindingNonce, "0x"))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid binding_nonce hex", Err: err}
+		return nil, frostInvalidParamsError("invalid binding_nonce hex", err)
 	}
 
 	hidingCommitment, err := hex.DecodeString(strings.TrimPrefix(params.HidingCommitment, "0x"))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid hiding_commitment hex", Err: err}
+		return nil, frostInvalidParamsError("invalid hiding_commitment hex", err)
 	}
 
 	bindingCommitment, err := hex.DecodeString(strings.TrimPrefix(params.BindingCommitment, "0x"))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid binding_commitment hex", Err: err}
+		return nil, frostInvalidParamsError("invalid binding_commitment hex", err)
 	}
 
 	attrs := &types.KeyAttributes{
@@ -591,7 +627,7 @@ func (s *Server) handleFrostSignRound(ctx context.Context, req *JSONRPCRequest) 
 	}
 	key, err := be.GetKey(ctx, attrs)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "key not found", Err: err}
+		return nil, frostKeyNotFoundError("key not found", err)
 	}
 	handle := key.(*frost.FrostKeyHandle)
 
@@ -613,11 +649,11 @@ func (s *Server) handleFrostSignRound(ctx context.Context, req *JSONRPCRequest) 
 	for i, c := range params.Commitments {
 		hc, err := hex.DecodeString(strings.TrimPrefix(c.HidingCommitment, "0x"))
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "invalid hiding_commitment hex", Err: err}
+			return nil, frostInvalidParamsError("invalid hiding_commitment hex", err)
 		}
 		bc, err := hex.DecodeString(strings.TrimPrefix(c.BindingCommitment, "0x"))
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "invalid binding_commitment hex", Err: err}
+			return nil, frostInvalidParamsError("invalid binding_commitment hex", err)
 		}
 		commitments[i] = &frost.Commitment{
 			ParticipantID: c.ParticipantID,
@@ -631,7 +667,7 @@ func (s *Server) handleFrostSignRound(ctx context.Context, req *JSONRPCRequest) 
 
 	share, err := be.SignRound(params.KeyID, message, noncePackage, commitments)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate signature share", Err: err}
+		return nil, frostOperationError("failed to generate signature share", err)
 	}
 
 	return FrostSignRoundResult{
@@ -644,12 +680,12 @@ func (s *Server) handleFrostSignRound(ctx context.Context, req *JSONRPCRequest) 
 // handleFrostAggregate handles the frost.aggregate method
 func (s *Server) handleFrostAggregate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostAggregateParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, frostInvalidParamsError("key_id is required", nil)
 	}
 
 	be, err := s.getFrostBackend()
@@ -659,18 +695,18 @@ func (s *Server) handleFrostAggregate(ctx context.Context, req *JSONRPCRequest) 
 
 	message, err := hex.DecodeString(strings.TrimPrefix(params.Message, "0x"))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid message hex", Err: err}
+		return nil, frostInvalidParamsError("invalid message hex", err)
 	}
 
 	commitments := make([]*frost.Commitment, len(params.Commitments))
 	for i, c := range params.Commitments {
 		hc, err := hex.DecodeString(strings.TrimPrefix(c.HidingCommitment, "0x"))
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "invalid hiding_commitment hex", Err: err}
+			return nil, frostInvalidParamsError("invalid hiding_commitment hex", err)
 		}
 		bc, err := hex.DecodeString(strings.TrimPrefix(c.BindingCommitment, "0x"))
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "invalid binding_commitment hex", Err: err}
+			return nil, frostInvalidParamsError("invalid binding_commitment hex", err)
 		}
 		commitments[i] = &frost.Commitment{
 			ParticipantID: c.ParticipantID,
@@ -686,7 +722,7 @@ func (s *Server) handleFrostAggregate(ctx context.Context, req *JSONRPCRequest) 
 	for i, sh := range params.Shares {
 		share, err := hex.DecodeString(strings.TrimPrefix(sh.Share, "0x"))
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "invalid share hex", Err: err}
+			return nil, frostInvalidParamsError("invalid share hex", err)
 		}
 		shares[i] = &frost.SignatureShare{
 			ParticipantID: sh.ParticipantID,
@@ -697,7 +733,7 @@ func (s *Server) handleFrostAggregate(ctx context.Context, req *JSONRPCRequest) 
 
 	signature, err := be.Aggregate(params.KeyID, message, commitments, shares)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to aggregate signatures", Err: err}
+		return nil, frostOperationError("failed to aggregate signatures", err)
 	}
 
 	verified := false
@@ -716,12 +752,12 @@ func (s *Server) handleFrostAggregate(ctx context.Context, req *JSONRPCRequest) 
 // handleFrostVerify handles the frost.verify method
 func (s *Server) handleFrostVerify(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostVerifyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, frostInvalidParamsError("key_id is required", nil)
 	}
 
 	be, err := s.getFrostBackend()
@@ -731,12 +767,12 @@ func (s *Server) handleFrostVerify(ctx context.Context, req *JSONRPCRequest) (in
 
 	message, err := hex.DecodeString(strings.TrimPrefix(params.Message, "0x"))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid message hex", Err: err}
+		return nil, frostInvalidParamsError("invalid message hex", err)
 	}
 
 	signature, err := hex.DecodeString(strings.TrimPrefix(params.Signature, "0x"))
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid signature hex", Err: err}
+		return nil, frostInvalidParamsError("invalid signature hex", err)
 	}
 
 	if err := be.Verify(params.KeyID, message, signature); err != nil {
@@ -752,7 +788,15 @@ func (s *Server) handleFrostVerify(ctx context.Context, req *JSONRPCRequest) (in
 	}, nil
 }
 
-// getFrostBackend retrieves the FROST backend from the xkms service
+// ErrFrostBackendNotConfigured is returned when no registered backend is a
+// FROST backend.
+var ErrFrostBackendNotConfigured = errors.New("mcp: no FROST backend configured")
+
+// getFrostBackend retrieves the FROST backend from the xkms service. Its
+// error is already a *KeyOpError, mirroring service_frost.go's own
+// getFrostBackend, whose every caller reports the identical failure as
+// codes.Internal ("failed to get FROST backend: %v"): the callers here just
+// forward it (return nil, err) rather than re-wrapping it individually.
 func (s *Server) getFrostBackend() (*frost.FrostBackend, error) {
 	backends := s.xkmsService.BackendNames()
 	for _, name := range backends {
@@ -767,7 +811,7 @@ func (s *Server) getFrostBackend() (*frost.FrostBackend, error) {
 			}
 		}
 	}
-	return nil, &errs.Message{Msg: "no FROST backend configured"}
+	return nil, frostOperationError("failed to get FROST backend", ErrFrostBackendNotConfigured)
 }
 
 // routeFrostMethods routes FROST-related MCP methods

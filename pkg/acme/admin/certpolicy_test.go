@@ -152,7 +152,7 @@ func TestCertificatePolicy_PlatformProfileReachesTenantCAs(t *testing.T) {
 		Build()
 	require.NoError(t, concrete.Profiles().Register(ca.ProfileNameCA, stricter))
 
-	svc := NewTenantAwareAdminService(
+	svc := mustTenantAwareAdminService(t,
 		testCA,
 		storageFactory,
 		nil,
@@ -191,7 +191,7 @@ func TestCertificatePolicy_TenantParentIdentity(t *testing.T) {
 	testCA, storageFactory, cleanup := createTestInfrastructure(t)
 	defer cleanup()
 
-	wired := NewTenantAwareAdminService(
+	wired := mustTenantAwareAdminService(t,
 		testCA,
 		storageFactory,
 		nil,

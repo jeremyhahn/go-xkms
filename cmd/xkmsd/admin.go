@@ -135,13 +135,16 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 		qrdbSvc = &embeddedQRDBService{Client: qrdbClient}
 	}
 
-	adminSvc := admin.NewTenantAwareAdminService(
+	adminSvc, err := admin.NewTenantAwareAdminService(
 		acme.CA(),
 		acme.StorageFactory(),
 		qrdbSvc,
 		logger,
 		version,
 	)
+	if err != nil {
+		return &acmeInitError{Stage: "construct tenant-aware admin service", Err: err}
+	}
 	adminSvc.SetTenantService(srv.TenantService())
 
 	handlers := admin.NewHandlers(adminSvc, logger)

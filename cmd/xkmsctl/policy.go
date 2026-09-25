@@ -58,8 +58,13 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		bank, _ := cmd.Flags().GetString("bank")
-		pcrs, _ := cmd.Flags().GetIntSlice("pcrs")
+		fr := newFlagReader(cmd)
+		bank := fr.String("bank")
+		pcrs := fr.IntSlice("pcrs")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if len(pcrs) == 0 {
 			handleError(ErrPolicyPCRsRequired)
@@ -175,7 +180,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		outputFile, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		outputFile := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		policyExport(cfg, printer, args[0], outputFile)
 	},
@@ -190,11 +200,11 @@ func createPolicyClient(cfg *Config) (client.Client, func(), error) {
 	}
 
 	if err := cl.Connect(context.Background()); err != nil {
-		_ = cl.Close()
+		closeQuietly(cl)
 		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
-	return cl, func() { _ = cl.Close() }, nil
+	return cl, func() { closeQuietly(cl) }, nil
 }
 
 // policyCreate creates a policy via the SDK client.
@@ -220,8 +230,11 @@ func policyCreate(cfg *Config, printer *Printer, req *client.PolicyCreateRequest
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Policy Created:\n")
+		printer.printf("Policy Created:\n")
 		printPolicyBody(printer, resp.Name, resp.Bank, resp.PCRs, resp.Values, resp.CreatedAt, "")
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -252,28 +265,31 @@ func policyList(cfg *Config, printer *Printer) {
 		}
 	case OutputFormatTable:
 		if len(resp.Policies) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No policies found")
+			printer.println("No policies found")
 			return
 		}
-		_, _ = fmt.Fprintf(printer.writer, "%-24s %-10s %-20s %-25s\n", "NAME", "BANK", "PCRS", "CREATED")
-		_, _ = fmt.Fprintln(printer.writer, repeatString("-", 81))
+		printer.printf("%-24s %-10s %-20s %-25s\n", "NAME", "BANK", "PCRS", "CREATED")
+		printer.println(repeatString("-", 81))
 		for _, p := range resp.Policies {
-			_, _ = fmt.Fprintf(printer.writer, "%-24s %-10s %-20s %-25s\n",
+			printer.printf("%-24s %-10s %-20s %-25s\n",
 				truncateString(p.Name, 24),
 				truncateString(p.Bank, 10),
 				truncateString(fmt.Sprint(p.PCRs), 20),
 				truncateString(p.CreatedAt, 25))
 		}
-		_, _ = fmt.Fprintf(printer.writer, "\nTotal: %d policy(ies)\n", len(resp.Policies))
+		printer.printf("\nTotal: %d policy(ies)\n", len(resp.Policies))
 	case OutputFormatText:
 		if len(resp.Policies) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No policies found")
+			printer.println("No policies found")
 			return
 		}
-		_, _ = fmt.Fprintln(printer.writer, "Policies:")
+		printer.println("Policies:")
 		for _, p := range resp.Policies {
-			_, _ = fmt.Fprintf(printer.writer, "  - %s (%s %v)\n", p.Name, p.Bank, p.PCRs)
+			printer.printf("  - %s (%s %v)\n", p.Name, p.Bank, p.PCRs)
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -403,7 +419,10 @@ func policyExport(cfg *Config, printer *Printer, name, outputFile string) {
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(printer.writer, resp.Data)
+		printer.println(resp.Data)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -415,19 +434,22 @@ func printPolicy(printer *Printer, resp *client.PolicyGetResponse, heading strin
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "%s:\n", heading)
+		printer.printf("%s:\n", heading)
 		printPolicyBody(printer, resp.Name, resp.Bank, resp.PCRs, resp.Values, resp.CreatedAt, resp.UpdatedAt)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
 // printPolicyBody prints the shared policy fields for text/table output.
 func printPolicyBody(printer *Printer, name, bank string, pcrs []int, values map[int]string, createdAt, updatedAt string) {
-	_, _ = fmt.Fprintf(printer.writer, "  Name:    %s\n", name)
-	_, _ = fmt.Fprintf(printer.writer, "  Bank:    %s\n", bank)
-	_, _ = fmt.Fprintf(printer.writer, "  PCRs:    %v\n", pcrs)
-	_, _ = fmt.Fprintf(printer.writer, "  Created: %s\n", createdAt)
+	printer.printf("  Name:    %s\n", name)
+	printer.printf("  Bank:    %s\n", bank)
+	printer.printf("  PCRs:    %v\n", pcrs)
+	printer.printf("  Created: %s\n", createdAt)
 	if updatedAt != "" {
-		_, _ = fmt.Fprintf(printer.writer, "  Updated: %s\n", updatedAt)
+		printer.printf("  Updated: %s\n", updatedAt)
 	}
 	if len(values) > 0 {
 		indexes := make([]int, 0, len(values))
@@ -435,9 +457,9 @@ func printPolicyBody(printer *Printer, name, bank string, pcrs []int, values map
 			indexes = append(indexes, idx)
 		}
 		sort.Ints(indexes)
-		_, _ = fmt.Fprintln(printer.writer, "  Values:")
+		printer.println("  Values:")
 		for _, idx := range indexes {
-			_, _ = fmt.Fprintf(printer.writer, "    PCR %2d: %s\n", idx, values[idx])
+			printer.printf("    PCR %2d: %s\n", idx, values[idx])
 		}
 	}
 }

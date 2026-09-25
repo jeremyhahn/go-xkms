@@ -105,8 +105,16 @@ func (c *Config) Validate() error {
 		c.Device = "/dev/tpmrm0"
 	}
 
+	// KeyDir has no default: this package has no notion of a meaningful
+	// process working directory to resolve one against (see
+	// ErrKeyDirRequired). Callers derive it from their own storage
+	// conventions -- e.g. pkg/server's resolveTPM2KeyDir joins it onto
+	// storage.path -- and supply it explicitly.
 	if c.KeyDir == "" {
-		c.KeyDir = "./tpm2-keys"
+		return &errs.Detail{
+			Err:    ErrKeyDirRequired,
+			Detail: "must be set explicitly; it is never derived from the process's working directory",
+		}
 	}
 
 	if c.SRKHandle == 0 {

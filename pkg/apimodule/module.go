@@ -297,6 +297,16 @@ func (m *Module) keystore() (pb.KeystoreServiceServer, error) {
 			svc.SetSSHClient(client)
 		}
 	}
+	// x itself is the CA servicer: it exposes the transport-shaped CA
+	// methods (GetCACertificate, SignCSR, IssueCertificate, ...) the CA RPC
+	// handlers delegate to. Gated on x.CA() != nil, mirroring the condition
+	// pkg/server's buildRESTConfig uses for restConfig.CA (s.ca != nil) and
+	// the Unix listener uses for GRPCConfig.CA (go-xkms#951): a host whose
+	// XKMSService composed no CA gets no CA RPC surface here either, instead
+	// of a surface that always answers "not configured" at a lower layer.
+	if x.CA() != nil {
+		svc.SetCA(x)
+	}
 	if m.service.CompareAndSwap(nil, svc) {
 		return svc, nil
 	}

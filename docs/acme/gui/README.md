@@ -1,5 +1,18 @@
 # GUI System
 
+> **Correction (go-xkms#942):** this page describes `pkg/acme/gui/{admin,client,guard,webui}`
+> and a `cactl` binary. **There is no `cactl` in this repository, and
+> `pkg/acme/gui/admin`/`pkg/acme/api/server` (which would mount its web
+> build at `/ui/admin/`) have no current `cmd/` entry point** — grepping
+> the tree turns up no caller of `server.NewMultiProtocolServer`
+> (`pkg/acme/api/server/server.go:164`) outside its own package. The web
+> admin UI that **is** wired today is a separate implementation,
+> `pkg/acme/web/packages/admin`, served by `xkmsd` itself at `/admin-ui`
+> (`cmd/xkmsd/admin.go:73`, `finalizeAdminModule`). Whether these are two
+> generations of the same feature or a genuine duplication is unresolved;
+> see go-xkms#942's handback for follow-up. Only the *client* GUI below
+> (`trusted-acme-client`, `cmd/acme-client/gui.go`) is confirmed wired.
+
 go-xkms provides a dual-mode GUI for both the ACME client and the CA admin interface. A single Svelte 4 frontend bundle runs identically in two environments:
 
 - **Desktop mode** -- Wails v2 wraps the SPA in a native webview and serves the REST API from the same in-process asset server, opening no network listener
@@ -29,9 +42,11 @@ go-xkms provides a dual-mode GUI for both the ACME client and the CA admin inter
 
 | Binary | CLI | Desktop GUI | Web GUI |
 |--------|-----|-------------|---------|
-| `trusted-acme-client` | cobra subcommands | no subcommand = GUI | -- |
-| `cactl` | cobra subcommands | no subcommand = GUI | -- |
-| `trusted-acme-server` | yes | -- | hosts admin at `/ui/admin/` |
+| `trusted-acme-client` (`cmd/acme-client`) | cobra subcommands | no subcommand = GUI (`-tags gui`) | -- |
+| `xkmsd` | yes | -- | hosts the (separately implemented) admin web UI at `/admin-ui` |
+
+There is no `cactl` binary and no `trusted-acme-server` binary in this
+repository.
 
 ## Quick Start
 
@@ -45,8 +60,8 @@ make build
 # 3. Build GUI-enabled binaries (requires CGO + Wails + WebKit2GTK)
 make build-gui
 
-# 4. Launch desktop admin GUI
-./bin/cactl
+# 4. Launch the desktop client GUI
+./bin/trusted-acme-client
 ```
 
 ## Documentation

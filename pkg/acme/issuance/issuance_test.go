@@ -14,6 +14,7 @@
 package issuance
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -21,6 +22,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
+	"log/slog"
 	"math/big"
 	"testing"
 	"time"
@@ -169,8 +172,9 @@ func (m *mockCTSubmitter) GetSCTs(ctx context.Context, precertDER []byte, chain 
 
 // mockSerialStorage implements SerialStorage for testing.
 type mockSerialStorage struct {
-	reserved map[string]bool
-	err      error
+	reserved  map[string]bool
+	err       error
+	revokeErr error
 }
 
 func newMockSerialStorage() *mockSerialStorage {
@@ -194,6 +198,9 @@ func (m *mockSerialStorage) ConfirmSerial(ctx context.Context, serial *big.Int) 
 }
 
 func (m *mockSerialStorage) RevokeReservation(ctx context.Context, serial *big.Int) error {
+	if m.revokeErr != nil {
+		return m.revokeErr
+	}
 	delete(m.reserved, serial.String())
 	return nil
 }
@@ -244,11 +251,16 @@ type mockAuditLogger struct {
 	cts       int
 	completes int
 	failures  int
+
+	// intentErr, when set, is returned by LogIssuanceIntent so tests can
+	// verify that a best-effort audit failure is surfaced (logged) without
+	// blocking issuance.
+	intentErr error
 }
 
 func (m *mockAuditLogger) LogIssuanceIntent(ctx context.Context, req *Request, serial *big.Int) error {
 	m.intents++
-	return nil
+	return m.intentErr
 }
 
 func (m *mockAuditLogger) LogPrecertCreated(ctx context.Context, precert *x509.Certificate) error {
@@ -477,6 +489,94 @@ func TestIssuer_Issue(t *testing.T) {
 
 		var lintErr *LintError
 		assert.ErrorAs(t, err, &lintErr)
+	})
+
+	t.Run("revoke reservation failure is joined into the returned error", func(t *testing.T) {
+		signer := newMockSigner(t)
+		linter := &mockLinter{
+			passed:  false,
+			summary: "Certificate failed linting",
+			errors:  []string{"e_sub_cert_not_is_ca"},
+		}
+		revokeErr := errors.New("serial storage unavailable")
+		serialStorage := newMockSerialStorage()
+		serialStorage.revokeErr = revokeErr
+
+		config := Config{
+			Signer:        signer,
+			Linter:        linter,
+			SerialStorage: serialStorage,
+			Enabled:       true,
+		}
+
+		issuer, err := NewIssuer(config)
+		require.NoError(t, err)
+
+		csr, _ := createTestCSR(t)
+		req := &Request{
+			CSR:       csr,
+			NotBefore: time.Now(),
+			NotAfter:  time.Now().AddDate(0, 0, 90),
+		}
+
+		_, err = issuer.Issue(context.Background(), req)
+		require.Error(t, err)
+
+		// The lint failure that triggered cleanup is still visible...
+		var lintErr *LintError
+		assert.ErrorAs(t, err, &lintErr)
+		// ...and so is the failure to revoke the serial reservation, instead
+		// of the cleanup failure being silently dropped.
+		assert.ErrorIs(t, err, revokeErr)
+	})
+
+	t.Run("audit logger failure does not block issuance but is logged", func(t *testing.T) {
+		signer := newMockSigner(t)
+		linter := &mockLinter{passed: true}
+		certStorage := newMockCertStorage()
+		serialStorage := newMockSerialStorage()
+		auditErr := errors.New("audit backend unreachable")
+		auditLogger := &mockAuditLogger{intentErr: auditErr}
+
+		config := Config{
+			Signer:        signer,
+			Linter:        linter,
+			CertStorage:   certStorage,
+			SerialStorage: serialStorage,
+			AuditLogger:   auditLogger,
+			Enabled:       true,
+			Profiles: map[string]Profile{
+				"internal": InternalProfile(),
+			},
+			DefaultProfile: "internal",
+		}
+
+		issuer, err := NewIssuer(config)
+		require.NoError(t, err)
+
+		csr, _ := createTestCSR(t)
+		req := &Request{
+			CSR:       csr,
+			NotBefore: time.Now(),
+			NotAfter:  time.Now().AddDate(0, 0, 90),
+			Profile:   "internal",
+			SkipCT:    true,
+		}
+
+		var logBuf bytes.Buffer
+		prevLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+		defer slog.SetDefault(prevLogger)
+
+		result, err := issuer.Issue(context.Background(), req)
+		require.NoError(t, err, "a best-effort audit failure must never fail issuance")
+		require.NotNil(t, result)
+
+		// The audit call was attempted...
+		assert.Equal(t, 1, auditLogger.intents)
+		// ...and its failure was reported rather than silently dropped.
+		assert.Contains(t, logBuf.String(), auditErr.Error())
+		assert.Contains(t, logBuf.String(), string(PhaseAudit))
 	})
 
 	t.Run("key validation failure", func(t *testing.T) {

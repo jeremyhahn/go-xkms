@@ -58,7 +58,7 @@ func init() {
 
 	// import flags
 	frostImportCmd.Flags().String("package", "", "Path to key package file (required)")
-	_ = frostImportCmd.MarkFlagRequired("package")
+	markFlagRequired(frostImportCmd, "package")
 
 	// list flags
 	frostListCmd.Flags().StringP("format", "f", "table", "Output format (table, json)")
@@ -73,8 +73,8 @@ func init() {
 	// round1 flags
 	frostRound1Cmd.Flags().StringP("key-id", "k", "", "Key identifier (required)")
 	frostRound1Cmd.Flags().StringP("output", "o", "", "Output file for commitment (required)")
-	_ = frostRound1Cmd.MarkFlagRequired("key-id")
-	_ = frostRound1Cmd.MarkFlagRequired("output")
+	markFlagRequired(frostRound1Cmd, "key-id")
+	markFlagRequired(frostRound1Cmd, "output")
 
 	// round2 flags
 	frostRound2Cmd.Flags().StringP("key-id", "k", "", "Key identifier (required)")
@@ -84,10 +84,10 @@ func init() {
 	frostRound2Cmd.Flags().String("nonces", "", "This participant's nonce package file (required)")
 	frostRound2Cmd.Flags().StringP("commitments", "c", "", "Comma-separated commitment files (required)")
 	frostRound2Cmd.Flags().StringP("output", "o", "", "Output file for signature share (required)")
-	_ = frostRound2Cmd.MarkFlagRequired("key-id")
-	_ = frostRound2Cmd.MarkFlagRequired("nonces")
-	_ = frostRound2Cmd.MarkFlagRequired("commitments")
-	_ = frostRound2Cmd.MarkFlagRequired("output")
+	markFlagRequired(frostRound2Cmd, "key-id")
+	markFlagRequired(frostRound2Cmd, "nonces")
+	markFlagRequired(frostRound2Cmd, "commitments")
+	markFlagRequired(frostRound2Cmd, "output")
 
 	// aggregate flags
 	frostAggregateCmd.Flags().StringP("key-id", "k", "", "Key identifier (required)")
@@ -99,10 +99,10 @@ func init() {
 	frostAggregateCmd.Flags().StringP("output", "o", "", "Output file for signature (required)")
 	frostAggregateCmd.Flags().String("format", "raw", "Signature format (raw, hex, base64)")
 	frostAggregateCmd.Flags().Bool("verify", true, "Verify signature after aggregation")
-	_ = frostAggregateCmd.MarkFlagRequired("key-id")
-	_ = frostAggregateCmd.MarkFlagRequired("commitments")
-	_ = frostAggregateCmd.MarkFlagRequired("shares")
-	_ = frostAggregateCmd.MarkFlagRequired("output")
+	markFlagRequired(frostAggregateCmd, "key-id")
+	markFlagRequired(frostAggregateCmd, "commitments")
+	markFlagRequired(frostAggregateCmd, "shares")
+	markFlagRequired(frostAggregateCmd, "output")
 
 	// verify flags
 	frostVerifyCmd.Flags().StringP("key-id", "k", "", "Key identifier")
@@ -165,13 +165,18 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		algorithm, _ := cmd.Flags().GetString("algorithm")
-		threshold, _ := cmd.Flags().GetInt("threshold")
-		total, _ := cmd.Flags().GetInt("total")
-		participantsStr, _ := cmd.Flags().GetString("participants")
-		keyID, _ := cmd.Flags().GetString("key-id")
-		participantID, _ := cmd.Flags().GetUint32("participant-id")
-		exportDir, _ := cmd.Flags().GetString("export-dir")
+		fr := newFlagReader(cmd)
+		algorithm := fr.String("algorithm")
+		threshold := fr.Int("threshold")
+		total := fr.Int("total")
+		participantsStr := fr.String("participants")
+		keyID := fr.String("key-id")
+		participantID := fr.Uint32("participant-id")
+		exportDir := fr.String("export-dir")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		// Parse participant names
 		var participants []string
@@ -316,7 +321,7 @@ Examples:
 				handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 				return
 			}
-			defer func() { _ = be.Close() }()
+			defer closeQuietly(be)
 
 			// Generate key via backend (which handles storage)
 			attrs := &client.KeyAttributes{
@@ -375,7 +380,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		packagePath, _ := cmd.Flags().GetString("package")
+		fr := newFlagReader(cmd)
+		packagePath := fr.String("package")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		// Read package file
 		data, err := os.ReadFile(packagePath)
@@ -500,14 +510,19 @@ var frostListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-		format, _ := cmd.Flags().GetString("format")
+		fr := newFlagReader(cmd)
+		format := fr.String("format")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
-		defer func() { _ = be.Close() }()
+		defer closeQuietly(be)
 
 		keys, err := be.ListKeys(cmd.Context())
 		if err != nil {
@@ -554,14 +569,19 @@ var frostInfoCmd = &cobra.Command{
 		keyID := args[0]
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-		showPubKey, _ := cmd.Flags().GetBool("show-public-key")
+		fr := newFlagReader(cmd)
+		showPubKey := fr.Bool("show-public-key")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
-		defer func() { _ = be.Close() }()
+		defer closeQuietly(be)
 
 		attrs := &client.KeyAttributes{
 			CN:        keyID,
@@ -603,13 +623,20 @@ var frostDeleteCmd = &cobra.Command{
 		keyID := args[0]
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-		force, _ := cmd.Flags().GetBool("force")
+		fr := newFlagReader(cmd)
+		force := fr.Bool("force")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if !force {
 			fmt.Printf("Are you sure you want to delete key '%s'? [y/N]: ", keyID)
 			var response string
-			_, _ = fmt.Scanln(&response)
-			if !strings.EqualFold(response, "y") {
+			// A read failure (including an empty line, which Scanln reports
+			// as an error) is treated the same as any other non-"y" answer:
+			// abort rather than delete.
+			if _, err := fmt.Scanln(&response); err != nil || !strings.EqualFold(response, "y") {
 				fmt.Println("Aborted")
 				return
 			}
@@ -620,7 +647,7 @@ var frostDeleteCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
-		defer func() { _ = be.Close() }()
+		defer closeQuietly(be)
 
 		attrs := &client.KeyAttributes{
 			CN:        keyID,
@@ -662,15 +689,20 @@ var frostRound1Cmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		keyID, _ := cmd.Flags().GetString("key-id")
-		outputPath, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		keyID := fr.String("key-id")
+		outputPath := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
-		defer func() { _ = be.Close() }()
+		defer closeQuietly(be)
 
 		// Generate nonces
 		noncePackage, err := be.GenerateNonces(keyID)
@@ -738,10 +770,15 @@ var frostRound2Cmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		keyID, _ := cmd.Flags().GetString("key-id")
-		noncesPath, _ := cmd.Flags().GetString("nonces")
-		commitmentsStr, _ := cmd.Flags().GetString("commitments")
-		outputPath, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		keyID := fr.String("key-id")
+		noncesPath := fr.String("nonces")
+		commitmentsStr := fr.String("commitments")
+		outputPath := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		// Get message
 		message, err := getMessage(cmd)
@@ -755,7 +792,7 @@ var frostRound2Cmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
-		defer func() { _ = be.Close() }()
+		defer closeQuietly(be)
 
 		// Load nonces (from the .nonces file)
 		noncePath := noncesPath
@@ -873,12 +910,17 @@ var frostAggregateCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		keyID, _ := cmd.Flags().GetString("key-id")
-		commitmentsStr, _ := cmd.Flags().GetString("commitments")
-		sharesStr, _ := cmd.Flags().GetString("shares")
-		outputPath, _ := cmd.Flags().GetString("output")
-		format, _ := cmd.Flags().GetString("format")
-		verify, _ := cmd.Flags().GetBool("verify")
+		fr := newFlagReader(cmd)
+		keyID := fr.String("key-id")
+		commitmentsStr := fr.String("commitments")
+		sharesStr := fr.String("shares")
+		outputPath := fr.String("output")
+		format := fr.String("format")
+		verify := fr.Bool("verify")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		// Get message
 		message, err := getMessage(cmd)
@@ -892,7 +934,7 @@ var frostAggregateCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
-		defer func() { _ = be.Close() }()
+		defer closeQuietly(be)
 
 		// Load commitments
 		commitmentFiles := strings.Split(commitmentsStr, ",")
@@ -1001,9 +1043,14 @@ var frostVerifyCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		keyID, _ := cmd.Flags().GetString("key-id")
-		sigFile, _ := cmd.Flags().GetString("signature")
-		sigHex, _ := cmd.Flags().GetString("signature-hex")
+		fr := newFlagReader(cmd)
+		keyID := fr.String("key-id")
+		sigFile := fr.String("signature")
+		sigHex := fr.String("signature-hex")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		// Get message
 		message, err := getMessage(cmd)
@@ -1042,7 +1089,7 @@ var frostVerifyCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
-		defer func() { _ = be.Close() }()
+		defer closeQuietly(be)
 
 		if err := be.Verify(keyID, message, signature); err != nil {
 			handleError(&WrappedError{Sentinel: ErrFROSTVerifyFailed, Err: err})
@@ -1063,9 +1110,13 @@ var frostVerifyCmd = &cobra.Command{
 
 // getMessage extracts the message from command flags
 func getMessage(cmd *cobra.Command) ([]byte, error) {
-	msgStr, _ := cmd.Flags().GetString("message")
-	msgFile, _ := cmd.Flags().GetString("message-file")
-	msgHex, _ := cmd.Flags().GetString("message-hex")
+	fr := newFlagReader(cmd)
+	msgStr := fr.String("message")
+	msgFile := fr.String("message-file")
+	msgHex := fr.String("message-hex")
+	if err := fr.Err(); err != nil {
+		return nil, err
+	}
 
 	if msgStr != "" {
 		return []byte(msgStr), nil

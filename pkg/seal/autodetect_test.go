@@ -16,6 +16,9 @@ package seal
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,19 +30,56 @@ import (
 )
 
 // fakeTPMSealer stands in for a probed *tpm2backend.Backend so the autodetect
-// policy can be tested without hardware. It records whether Close was called.
+// policy can be tested without hardware. It records whether Close was called
+// and can be scripted to fail Close so go-xkms#876's "log, don't fail" close
+// contract is testable without hardware.
 type fakeTPMSealer struct {
-	canSeal bool
-	closed  atomic.Bool
+	canSeal  bool
+	closeErr error
+	closed   atomic.Bool
 }
 
 func (f *fakeTPMSealer) CanSeal() bool { return f.canSeal }
-func (f *fakeTPMSealer) Close() error  { f.closed.Store(true); return nil }
+func (f *fakeTPMSealer) Close() error {
+	f.closed.Store(true)
+	return f.closeErr
+}
 func (f *fakeTPMSealer) Seal(context.Context, []byte, *types.SealOptions) (*types.SealedData, error) {
 	return &types.SealedData{}, nil
 }
 func (f *fakeTPMSealer) Unseal(context.Context, *types.SealedData, *types.UnsealOptions) ([]byte, error) {
 	return nil, nil
+}
+
+// recordingHandler is a minimal slog.Handler that records every record
+// passed to Handle, so a test can assert a specific message/level was
+// logged without parsing formatted output.
+type recordingHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r)
+	return nil
+}
+
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *recordingHandler) hasRecordContaining(level slog.Level, substr string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.records {
+		if r.Level == level && strings.Contains(r.Message, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 // withStubbedOpen swaps the package open seam for the duration of a test.
@@ -102,6 +142,25 @@ func TestBuildBestStrategy_NotSealCapableClosesAndFallsBack(t *testing.T) {
 	assert.True(t, sealer.closed.Load())
 }
 
+// TestBuildBestStrategy_NotSealCapableCloseFailure_LoggedNotFatal proves
+// go-xkms#876's "log, don't fail" contract for the not-seal-capable close
+// path: a Close failure on the discarded backend must not stop autodetect
+// from falling back to software, and must be logged at debug rather than
+// silently dropped.
+func TestBuildBestStrategy_NotSealCapableCloseFailure_LoggedNotFatal(t *testing.T) {
+	sealer := &fakeTPMSealer{canSeal: false, closeErr: errors.New("simulated close failure")}
+	withStubbedOpen(t, func(*TPM2ProbeConfig) (tpm2Sealer, error) { return sealer, nil })
+
+	handler := &recordingHandler{}
+	opts := probeCfg()
+	opts.Logger = slog.New(handler)
+
+	res := BuildBestStrategy(opts)
+	assert.False(t, res.HardwareAvailable())
+	assert.True(t, sealer.closed.Load())
+	assert.True(t, handler.hasRecordContaining(slog.LevelDebug, "failed to close a non-seal-capable TPM backend"))
+}
+
 func TestBuildBestStrategy_TimeoutFallsBack(t *testing.T) {
 	release := make(chan struct{})
 	sealer := &fakeTPMSealer{canSeal: true}
@@ -118,6 +177,33 @@ func TestBuildBestStrategy_TimeoutFallsBack(t *testing.T) {
 	// Releasing the late open lets the drain goroutine close it (no leak).
 	close(release)
 	assert.Eventually(t, func() bool { return sealer.closed.Load() }, time.Second, 5*time.Millisecond)
+}
+
+// TestBuildBestStrategy_TimeoutCloseFailure_LoggedNotFatal proves go-xkms#876's
+// "log, don't fail" contract for the late-arriving-open drain path: a Close
+// failure there must be logged at debug, and must not panic or block the
+// drain goroutine.
+func TestBuildBestStrategy_TimeoutCloseFailure_LoggedNotFatal(t *testing.T) {
+	release := make(chan struct{})
+	sealer := &fakeTPMSealer{canSeal: true, closeErr: errors.New("simulated close failure")}
+	withStubbedOpen(t, func(*TPM2ProbeConfig) (tpm2Sealer, error) {
+		<-release // block past the probe timeout
+		return sealer, nil
+	})
+
+	handler := &recordingHandler{}
+	opts := probeCfg()
+	opts.ProbeTimeout = 20 * time.Millisecond
+	opts.Logger = slog.New(handler)
+
+	res := BuildBestStrategy(opts)
+	assert.False(t, res.HardwareAvailable())
+
+	close(release)
+	assert.Eventually(t, func() bool { return sealer.closed.Load() }, time.Second, 5*time.Millisecond)
+	assert.Eventually(t, func() bool {
+		return handler.hasRecordContaining(slog.LevelDebug, "failed to close a late-arriving TPM open")
+	}, time.Second, 5*time.Millisecond)
 }
 
 func TestProbeStrategies_ListsAvailable(t *testing.T) {

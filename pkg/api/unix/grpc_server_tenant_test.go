@@ -80,14 +80,7 @@ func startTenantTestGRPCServer(t *testing.T, registry *seal.BarrierRegistry) (pb
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Start() }()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, statErr := os.Stat(socketPath); statErr == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	time.Sleep(100 * time.Millisecond)
+	waitForGRPCServerReady(t, server, socketPath)
 
 	conn, err := grpc.NewClient("unix://"+socketPath,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),

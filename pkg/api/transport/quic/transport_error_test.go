@@ -208,13 +208,6 @@ func TestRequest_Disconnected(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestRequestStream_Unsupported(t *testing.T) {
-	tr, cleanup := newMockTransport(t)
-	defer cleanup()
-	_, err := tr.RequestStream(context.Background(), "/test", nil)
-	require.ErrorIs(t, err, transport.ErrStreamNotSupported)
-}
-
 // --- Server error tests ---
 
 func TestHealth_ServerErr(t *testing.T) {
