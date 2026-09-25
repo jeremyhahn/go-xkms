@@ -26,6 +26,185 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
 )
 
+// fakeImportDataVolume stands in for *luks.Volume in importDataToVolume and
+// removeTempMount tests. By default every operation succeeds and tracks
+// mount state the same way a real volume would: Unlock mounts it, Lock
+// unmounts it.
+type fakeImportDataVolume struct {
+	unlockFn func(passphrase string) error
+	copyFn   func(sourceDir string) error
+	lockFn   func() error
+	mounted  bool
+
+	unlockCalls int
+	copyCalls   int
+	lockCalls   int
+}
+
+func (f *fakeImportDataVolume) Unlock(passphrase string) error {
+	f.unlockCalls++
+	if f.unlockFn != nil {
+		if err := f.unlockFn(passphrase); err != nil {
+			return err
+		}
+	}
+	f.mounted = true
+	return nil
+}
+
+func (f *fakeImportDataVolume) CopyDataToVolume(sourceDir string) error {
+	f.copyCalls++
+	if f.copyFn != nil {
+		return f.copyFn(sourceDir)
+	}
+	return nil
+}
+
+func (f *fakeImportDataVolume) Lock() error {
+	f.lockCalls++
+	if f.lockFn != nil {
+		if err := f.lockFn(); err != nil {
+			return err
+		}
+	}
+	f.mounted = false
+	return nil
+}
+
+func (f *fakeImportDataVolume) IsMounted() bool { return f.mounted }
+
+// TestImportDataToVolume_Success verifies the happy path unlocks, copies
+// and locks the volume exactly once each and leaves it unmounted.
+func TestImportDataToVolume_Success(t *testing.T) {
+	fake := &fakeImportDataVolume{}
+
+	var out bytes.Buffer
+	err := importDataToVolume(&out, fake, "/source", "/tmp-mount", "correct-horse")
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, fake.unlockCalls)
+	assert.Equal(t, 1, fake.copyCalls)
+	assert.Equal(t, 1, fake.lockCalls)
+	assert.False(t, fake.mounted, "a successful import must leave the volume locked")
+}
+
+// TestImportDataToVolume_UnlockFailure verifies an unlock failure is
+// reported and never reaches the copy or lock steps.
+func TestImportDataToVolume_UnlockFailure(t *testing.T) {
+	unlockErr := errors.New("wrong passphrase")
+	fake := &fakeImportDataVolume{unlockFn: func(string) error { return unlockErr }}
+
+	var out bytes.Buffer
+	err := importDataToVolume(&out, fake, "/source", "/tmp-mount", "wrong-passphrase")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, unlockErr)
+
+	var importErr *ImportDataError
+	require.ErrorAs(t, err, &importErr)
+	assert.Equal(t, "unlock", importErr.Operation)
+
+	assert.Equal(t, 0, fake.copyCalls)
+	assert.Equal(t, 0, fake.lockCalls)
+	assert.False(t, fake.mounted)
+}
+
+// TestImportDataToVolume_CopyFailure_LockSucceeds verifies a copy failure
+// is reported and that the volume is still locked best-effort afterward.
+func TestImportDataToVolume_CopyFailure_LockSucceeds(t *testing.T) {
+	copyErr := errors.New("disk full")
+	fake := &fakeImportDataVolume{copyFn: func(string) error { return copyErr }}
+
+	var out bytes.Buffer
+	err := importDataToVolume(&out, fake, "/source", "/tmp-mount", "correct-horse")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, copyErr)
+
+	var importErr *ImportDataError
+	require.ErrorAs(t, err, &importErr)
+	assert.Equal(t, "copy_data", importErr.Operation)
+
+	assert.Equal(t, 1, fake.lockCalls, "a best-effort lock must be attempted after a copy failure")
+	assert.False(t, fake.mounted, "the best-effort lock succeeded, so the volume must be unmounted")
+	assert.NotContains(t, out.String(), "still mounted")
+}
+
+// TestImportDataToVolume_CopyFailure_LockAlsoFails verifies that when both
+// the copy and the subsequent best-effort lock fail, the caller is warned
+// the temporary mount point is still mounted and holds the copied data.
+func TestImportDataToVolume_CopyFailure_LockAlsoFails(t *testing.T) {
+	copyErr := errors.New("disk full")
+	lockErr := errors.New("target is busy")
+	fake := &fakeImportDataVolume{
+		copyFn: func(string) error { return copyErr },
+		lockFn: func() error { return lockErr },
+	}
+
+	var out bytes.Buffer
+	err := importDataToVolume(&out, fake, "/source", "/tmp-mount", "correct-horse")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, copyErr)
+
+	assert.True(t, fake.mounted, "a failed lock must leave the volume mounted")
+	assert.Contains(t, out.String(), "could not lock volume")
+	assert.Contains(t, out.String(), "still mounted and holds the copied data")
+}
+
+// TestImportDataToVolume_LockFailure verifies that when the final lock
+// fails after a successful copy, the caller is warned the temporary mount
+// point is still mounted and holds the copied data.
+func TestImportDataToVolume_LockFailure(t *testing.T) {
+	lockErr := errors.New("target is busy")
+	fake := &fakeImportDataVolume{lockFn: func() error { return lockErr }}
+
+	var out bytes.Buffer
+	err := importDataToVolume(&out, fake, "/source", "/tmp-mount", "correct-horse")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, lockErr)
+
+	var importErr *ImportDataError
+	require.ErrorAs(t, err, &importErr)
+	assert.Equal(t, "lock", importErr.Operation)
+
+	assert.True(t, fake.mounted, "a failed lock must leave the volume mounted")
+	assert.Contains(t, out.String(), "still mounted and holds the copied data")
+}
+
+// TestRemoveTempMount_NotMounted verifies the temporary mount point is
+// removed once the volume is confirmed unmounted.
+func TestRemoveTempMount_NotMounted(t *testing.T) {
+	dir := t.TempDir()
+	tmpMount := filepath.Join(dir, "mnt")
+	require.NoError(t, os.MkdirAll(tmpMount, 0700))
+
+	fake := &fakeImportDataVolume{mounted: false}
+
+	var out bytes.Buffer
+	removeTempMount(&out, fake, tmpMount)
+
+	assert.NoDirExists(t, tmpMount)
+}
+
+// TestRemoveTempMount_StillMounted verifies a mounted temporary mount
+// point is left in place and reported instead of being deleted, so its
+// contents (the copied volume data) are never lost.
+func TestRemoveTempMount_StillMounted(t *testing.T) {
+	dir := t.TempDir()
+	tmpMount := filepath.Join(dir, "mnt")
+	require.NoError(t, os.MkdirAll(tmpMount, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpMount, "data.txt"), []byte("copied data"), 0600))
+
+	fake := &fakeImportDataVolume{mounted: true}
+
+	var out bytes.Buffer
+	removeTempMount(&out, fake, tmpMount)
+
+	assert.DirExists(t, tmpMount)
+	data, err := os.ReadFile(filepath.Join(tmpMount, "data.txt"))
+	require.NoError(t, err, "the mounted directory's contents must survive")
+	assert.Equal(t, "copied data", string(data))
+	assert.Contains(t, out.String(), "still mounted")
+}
+
 // TestImportDataCmd_Help verifies import-data command help output.
 func TestImportDataCmd_Help(t *testing.T) {
 	buf := new(bytes.Buffer)
