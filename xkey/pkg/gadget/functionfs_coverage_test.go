@@ -381,6 +381,97 @@ func TestFunctionFSTransport_Write_Error(t *testing.T) {
 	cancel()
 }
 
+func TestFunctionFSTransport_Read_SetDeadlineError(t *testing.T) {
+	dir := t.TempDir()
+	for _, ep := range []string{"ep0", "ep1", "ep2"} {
+		f, err := os.Create(filepath.Join(dir, ep))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+
+	tr, err := NewFunctionFSTransport(dir, &OSFileSystem{}, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := tr.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	// Close the underlying epOut fd directly so SetReadDeadline fails
+	// before Read is attempted.
+	tr.epOut.Close()
+
+	_, readErr := tr.Read(ctx)
+	if readErr == nil {
+		t.Fatal("expected error from Read when SetReadDeadline fails")
+	}
+	if !errors.Is(readErr, ErrEndpointIOFailed) {
+		t.Errorf("got %v, want ErrEndpointIOFailed", readErr)
+	}
+
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+	tr.Close()
+}
+
+func TestFunctionFSTransport_MonitorEvents_SetDeadlineError(t *testing.T) {
+	dir := t.TempDir()
+	for _, ep := range []string{"ep0", "ep1", "ep2"} {
+		f, err := os.Create(filepath.Join(dir, ep))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+
+	tr, err := NewFunctionFSTransport(dir, &OSFileSystem{}, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := tr.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	// Open a second handle to ep0 and close it immediately so
+	// SetReadDeadline fails on it, independent of the transport's own
+	// ep0 field (which the background monitor started by Initialize
+	// still holds open).
+	ep0, err := os.Open(filepath.Join(dir, "ep0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep0.Close()
+
+	// Call monitorEvents directly with the closed handle: it should treat
+	// the SetReadDeadline failure as terminal and return, rather than
+	// falling through to an unbounded Read with no deadline set.
+	done := make(chan struct{})
+	go func() {
+		tr.monitorEvents(ctx, ep0)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("monitorEvents did not return after SetReadDeadline failure")
+	}
+
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+	tr.Close()
+}
+
 func TestFunctionFSTransport_Close_WithOpenEndpoints(t *testing.T) {
 	dir := t.TempDir()
 	for _, ep := range []string{"ep0", "ep1", "ep2"} {
