@@ -946,6 +946,7 @@ test-scripts:
 	@bash test/scripts/release-tag.test.sh
 	@bash test/scripts/release-assets.test.sh
 	@bash test/scripts/changelog-assemble.test.sh
+	@bash test/scripts/retry.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 .PHONY: test-go

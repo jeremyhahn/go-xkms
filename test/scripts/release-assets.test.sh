@@ -113,6 +113,25 @@ OUT=$("$SCRIPT" verify "$V" 2>&1); RC=$?
 eq "a complete release passes verify" "0" "$RC"
 eq "list sees all 20" "20" "$("$SCRIPT" list | wc -l | tr -d ' ')"
 
+# --- verify-complete: the final-gate form, matrix + checksums.txt, no extras --
+# (go-xkms#1026). Picks up right where "verify" left off: all 20 matrix
+# assets present, no checksums.txt yet -- exactly the state create-checksums
+# is in right before it decides whether to build checksums.txt.
+section "verify-complete"
+OUT=$("$SCRIPT" verify-complete "$V" 2>&1); RC=$?
+eq "the matrix alone is NOT complete -- checksums.txt is still missing" "1" "$RC"
+eq "names exactly checksums.txt as missing" "missing: checksums.txt" "$(grep '^missing: ' <<<"$OUT")"
+printf 'master\n' > "$ASSETS/checksums.txt"
+OUT=$("$SCRIPT" verify-complete "$V" 2>&1); RC=$?
+eq "matrix + checksums.txt passes verify-complete" "0" "$RC"
+eq "states the exact count" "1" "$(grep -c '21 asset' <<<"$OUT")"
+printf 'stray\n' > "$ASSETS/xkmsd-$V-linux-mips.sha256"
+OUT=$("$SCRIPT" verify-complete "$V" 2>&1); RC=$?
+eq "an asset outside the matrix fails verify-complete" "1" "$RC"
+eq "names it as unexpected, not missing" "unexpected: xkmsd-$V-linux-mips.sha256" "$(grep '^unexpected: ' <<<"$OUT")"
+rm -f "$ASSETS/xkmsd-$V-linux-mips.sha256" "$ASSETS/checksums.txt"
+eq "state restored to the 20-asset matrix for the sections below" "20" "$("$SCRIPT" list | wc -l | tr -d ' ')"
+
 # --- download: honours the glob and the token ---------------------------------
 section "download"
 D="$STUB/dl"

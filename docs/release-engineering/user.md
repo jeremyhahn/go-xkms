@@ -1,7 +1,7 @@
 # Release engineering — user guide
 
 **Status:** implemented.
-**Last verified:** 2026-09-21.
+**Last verified:** 2026-09-25.
 
 ## Cutting a release, in two steps (go-xkms#419, go-xkms#211)
 
@@ -145,10 +145,49 @@ and arm64, standard and FIPS), each uploading its own binaries and per-asset
 `.sha256` files; `Create Master Checksums` then verifies the release carries
 every asset the matrix produces and uploads `checksums.txt`.
 
-If one leg fails for a reason unrelated to the code (the shared runner's
-QEMU toolcache race is the known one), **re-run the workflow** — from the
-run's page, or `POST /repos/<owner>/<repo>/actions/runs/<id>/rerun`, the only
-rerun endpoint Gitea exposes. Every job runs again, and that is fine:
+### Infrastructure resilience (go-xkms#1026)
+
+Three of seven tags in one measured window shipped an incomplete release
+because a runner-infrastructure failure — not a code defect — took out a leg
+and nothing after it ran. Two mitigations landed for this, one architectural
+and one defensive:
+
+- **Only one leg still needs QEMU at all.** Of the four `build-binaries` legs,
+  the standard build genuinely links CGO (`miekg/pkcs11`, plus the
+  unconditional `dolthub/go-icu-regex`/`google/gousb` cgo deps of the module
+  graph) against arm64 system libraries, so its arm64 leg still builds inside
+  an emulated arm64 container. The FIPS build is `CGO_ENABLED=0` on **both**
+  architectures — pure Go, no C toolchain, nothing to cross-link — so its
+  arm64 leg now cross-compiles natively (`GOARCH=arm64` inside the same amd64
+  container the amd64 leg uses) and never touches QEMU. `build-docker` and
+  `build-docker-cli` never needed arm64 QEMU at all on this Gitea instance in
+  the first place: their multi-arch step is guarded to `github.server_url ==
+  'https://github.com'` and never runs here, so their QEMU setup step now
+  carries the same guard instead of registering binfmt for a build that can't
+  run.
+- **Bounded retries, on the two things that actually failed:** the
+  `build-binaries` container build (`docker create`/`cp`/`start`/`cp`) and the
+  two amd64 Docker-image scan builds (`scripts/retry.sh`, 3 attempts, linear
+  backoff). A code failure still fails, just three times over instead of
+  once — the same shell loop cannot distinguish a bad build from a flaky
+  daemon, so it does not try to.
+- `docker/setup-qemu-action` now runs with `cache-image: false` on the one leg
+  that still needs it, so it never writes to (or races) the shared
+  hostedtoolcache binfmt image — the specific ENOENT copy race the issue
+  recorded at v0.24.0-alpha.
+- `build-binaries`' matrix caps at `max-parallel: 2`, so at most two of the
+  four legs compete for a runner host's docker daemon at once.
+
+None of this changes what a release publishes: the same 21 assets (20 from
+the build matrix, plus `checksums.txt`), the same names, on the same
+Docker image tags.
+
+### Recovery
+
+If a leg still fails for a reason unrelated to the code, **re-run the
+workflow** — from the run's page, or `POST
+/repos/<owner>/<repo>/actions/runs/<id>/rerun`, the only rerun endpoint Gitea
+exposes. Every job runs again, and that is fine:
 
 - a leg whose assets are already on the release finds each one present with
   the same SHA-256 and leaves it alone;
@@ -160,3 +199,16 @@ A tag cannot be re-cut (versioning §3), so this is the only recovery path;
 before #447 it did not exist, and one flaked leg cost the release its
 checksums for good. If `Verify the release carries every matrix asset` still
 fails after the re-run, something is genuinely missing: the step names it.
+
+### The final check: `Verify Release Assets`
+
+The last job in the workflow, `verify-release-assets`, runs whenever a
+release object exists at all — `if: always()`, independent of whether every
+other job in the run went green — and calls `scripts/release-assets.sh
+verify-complete <version>`. Unlike the checksums job's own verification (which
+necessarily runs *before* `checksums.txt` exists, to decide whether creating
+it is safe), this is the run's true terminal state: it requires the full 21
+asset set — the build matrix plus `checksums.txt` — names anything `missing:`
+or `unexpected:`, and fails loudly on either. A green run here is the only
+statement in the workflow that the published release is actually complete,
+regardless of which individual jobs happened to succeed in that run.
