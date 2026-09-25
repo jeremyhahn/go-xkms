@@ -186,7 +186,13 @@ func TestBuildRESTConfig_TLSEnabledBuildsTLSConfig(t *testing.T) {
 // composed XKMSService are present -- the transport-level methods
 // (GetCABundle, IssueCertificate, etc.) live on XKMSService, not the raw CA.
 func TestBuildRESTConfig_CAServicerSetWhenComposed(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{Server: config.ServerConfig{Host: "127.0.0.1", RESTPort: 8443}})
+	// A composed XKMSService makes buildRESTConfig build the SSH client,
+	// whose storage view defaults to Pebble at a path relative to the
+	// working directory, which would be the source tree. Keep it in memory.
+	s := newMinimalServer(t, &config.Config{
+		Server:  config.ServerConfig{Host: "127.0.0.1", RESTPort: 8443},
+		Storage: config.StorageConfig{Backend: "memory"},
+	})
 	s.ca = &mockTrustedCA{initialized: true}
 	s.xkmsService = &xkms.XKMSService{}
 
