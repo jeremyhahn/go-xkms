@@ -1,7 +1,7 @@
 # Release engineering — engineering
 
 **Status:** implemented.
-**Last verified:** 2026-09-21.
+**Last verified:** 2026-09-25.
 
 ## Surface
 
@@ -20,11 +20,26 @@ part of its precondition checks; see below.
 workflow's view of a Gitea release's assets: `list`, `expected VERSION` (the
 asset names the build matrix produces — the one statement of the matrix
 outside the workflow), `verify VERSION` (exit 1 naming what the release
-lacks), `download DIR [GLOB]`, and `upload FILE...`, which is idempotent: an
-asset present with the same SHA-256 is left alone, one with a different
-digest is replaced, one that is absent is added. It reads `RELEASE_API`,
-`RELEASE_REPO`, `RELEASE_TAG` and `RELEASE_TOKEN` from the environment, and
-`DRY_RUN=1` makes `upload` print its decisions without changing anything.
+lacks), `verify-complete VERSION` (go-xkms#1026: `verify` plus a required
+`checksums.txt` and a check for any asset the matrix does NOT expect —
+`create-checksums` runs plain `verify` because it runs *before*
+`checksums.txt` exists; the workflow's final `verify-release-assets` job runs
+`verify-complete` because by then it must exist too), `download DIR [GLOB]`,
+and `upload FILE...`, which is idempotent: an asset present with the same
+SHA-256 is left alone, one with a different digest is replaced, one that is
+absent is added. It reads `RELEASE_API`, `RELEASE_REPO`, `RELEASE_TAG` and
+`RELEASE_TOKEN` from the environment, and `DRY_RUN=1` makes `upload` print its
+decisions without changing anything.
+
+`scripts/retry.sh` (go-xkms#1026) is a generic bounded-attempt/linear-backoff
+wrapper — `retry.sh [--attempts N] [--backoff SECONDS] -- CMD [ARG...]`,
+defaulting to 3 attempts and a 15s base backoff — used by `release.yml`
+around the `build-binaries` container build and the two Docker image scan
+builds, all three of which have failed on runner infrastructure (a docker
+daemon timeout, a binfmt cache race) rather than on the code being built. It
+does not distinguish an infrastructure failure from a code failure — nothing
+outside the wrapped command can — so a genuine build defect also retries and
+then fails with its own real exit code, just three times over.
 
 ## Declared constants
 
@@ -243,12 +258,25 @@ architecture.md.
 
 `make test-scripts` (also reached by `make test`) runs
 `test/scripts/release-alpha.test.sh`, `test/scripts/release-tag.test.sh`,
-`test/scripts/release-assets.test.sh` and `test/scripts/changelog-assemble.test.sh`.
+`test/scripts/release-assets.test.sh`, `test/scripts/changelog-assemble.test.sh`
+and `test/scripts/retry.test.sh`.
 `release-assets.test.sh` stands up a local HTTP stub of the two Gitea endpoints the asset
 script uses and asserts the whole decision table: `expected` is the matrix,
-`verify` names exactly the missing assets, `download` honours the glob, and
-`upload` skips an identical asset, replaces a differing one (DELETE then POST)
-and adds an absent one, with the requests the stub recorded as the evidence.
+`verify` names exactly the missing assets, `verify-complete` additionally
+requires `checksums.txt` and names any asset the matrix does not expect,
+`download` honours the glob, and `upload` skips an identical asset, replaces
+a differing one (DELETE then POST) and adds an absent one, with the requests
+the stub recorded as the evidence.
+
+`retry.test.sh` drives `scripts/retry.sh` against a fake command that fails a
+fixed number of times before succeeding (`--backoff 0` throughout, so the
+suite stays fast): it asserts the eventual-success case stops retrying the
+moment the command succeeds, the exhausted-budget case propagates the
+wrapped command's own exit code rather than swallowing it, a command that
+succeeds on the first try is never retried, and malformed `--attempts`/no
+command at all are refused with a distinct usage exit code (2) that a
+wrapped command's own failure (whatever it happens to be) is never confused
+with.
 
 `release-alpha.test.sh` covers the pure functions directly — the `v0.7.9 ->
 v0.7.10` carry, the `0.9.10 > 0.9.9` ordering that lexical comparison gets

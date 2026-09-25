@@ -4,10 +4,11 @@
 #
 # Usage:
 #	scripts/release-assets.sh list
-#	scripts/release-assets.sh expected VERSION
-#	scripts/release-assets.sh verify   VERSION
-#	scripts/release-assets.sh download DIR [GLOB]
-#	scripts/release-assets.sh upload   FILE...
+#	scripts/release-assets.sh expected        VERSION
+#	scripts/release-assets.sh verify          VERSION
+#	scripts/release-assets.sh verify-complete VERSION
+#	scripts/release-assets.sh download        DIR [GLOB]
+#	scripts/release-assets.sh upload          FILE...
 #
 # Environment (all required except DRY_RUN):
 #	RELEASE_API   Gitea API root, e.g. http://host:3001/api/v1 (github.api_url)
@@ -31,7 +32,7 @@
 # through the API, never against what this run happens to have built.
 set -euo pipefail
 
-usage() { sed -n '3,15p' "$0" >&2; exit 2; }
+usage() { sed -n '3,17p' "$0" >&2; exit 2; }
 
 need_env() {
 	local v
@@ -110,6 +111,51 @@ cmd_verify() {
 	echo "release ${RELEASE_TAG}: all $(cmd_expected "$version" | wc -l) expected assets present"
 }
 
+# verify-complete VERSION — the final-gate form of `verify` (go-xkms#1026): a
+# release is complete only when it carries EXACTLY the build matrix's assets
+# PLUS the master `checksums.txt` create-checksums adds afterward -- no
+# fewer (a flaked leg) and no more (a stray or misnamed upload). `verify`
+# itself cannot require checksums.txt: create-checksums calls `verify` BEFORE
+# checksums.txt exists, to decide whether it is safe to create it at all, so
+# baking that requirement into `cmd_expected` would make that call fail
+# every single run. This is deliberately the one caller that adds it.
+cmd_verify_complete() {
+	need_env
+	local version="$1" name rc=0
+	local present expected
+	present="$(release_assets | cut -f2 | sort)"
+	expected="$( { cmd_expected "$version"; echo "checksums.txt"; } | sort)"
+	while IFS= read -r name; do
+		[ -n "$name" ] || continue
+		if ! grep -qx -- "$name" <<<"$present"; then
+			echo "missing: $name"
+			rc=1
+		fi
+	done <<<"$expected"
+	while IFS= read -r name; do
+		[ -n "$name" ] || continue
+		if ! grep -qx -- "$name" <<<"$expected"; then
+			echo "unexpected: $name"
+			rc=1
+		fi
+	done <<<"$present"
+	local want have
+	want="$(wc -l <<<"$expected" | tr -d ' ')"
+	have="$(wc -l <<<"$present" | tr -d ' ')"
+	if [ "$rc" -ne 0 ]; then
+		echo "release ${RELEASE_TAG}: ${have} asset(s) present, ${want} expected (name mismatch listed above)" >&2
+		return 1
+	fi
+	if [ "$have" != "$want" ]; then
+		# Every name matched 1:1 above, so equal sets with unequal counts
+		# means a duplicate name reached the API twice -- state that
+		# explicitly rather than let it pass silently.
+		echo "release ${RELEASE_TAG}: ${have} asset(s) present but names are a 1:1 match against ${want} expected -- duplicate asset name" >&2
+		return 1
+	fi
+	echo "release ${RELEASE_TAG}: complete -- exactly the expected ${want} asset(s) (matrix + checksums.txt), no extras"
+}
+
 download_asset() {
 	# download_asset URL DEST — the download URL honours the token header.
 	local url="$1" dest="$2"
@@ -179,10 +225,11 @@ cmd_upload() {
 [ $# -ge 1 ] || usage
 cmd="$1"; shift
 case "$cmd" in
-list)     cmd_list "$@" ;;
-expected) [ $# -eq 1 ] || usage; cmd_expected "$@" ;;
-verify)   [ $# -eq 1 ] || usage; cmd_verify "$@" ;;
-download) [ $# -ge 1 ] || usage; cmd_download "$@" ;;
-upload)   [ $# -ge 1 ] || usage; cmd_upload "$@" ;;
+list)            cmd_list "$@" ;;
+expected)        [ $# -eq 1 ] || usage; cmd_expected "$@" ;;
+verify)          [ $# -eq 1 ] || usage; cmd_verify "$@" ;;
+verify-complete) [ $# -eq 1 ] || usage; cmd_verify_complete "$@" ;;
+download)        [ $# -ge 1 ] || usage; cmd_download "$@" ;;
+upload)          [ $# -ge 1 ] || usage; cmd_upload "$@" ;;
 *) usage ;;
 esac
