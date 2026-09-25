@@ -15,6 +15,7 @@ package ct
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -207,13 +208,16 @@ func (p *CTPolicy) submitToLogs(ctx context.Context, precertDER []byte, chain []
 // collectSCTs collects SCTs from results and validates against policy.
 func (p *CTPolicy) collectSCTs(results <-chan SCTResult, config PolicyConfig) ([]SignedCertificateTimestamp, error) {
 	var scts []SignedCertificateTimestamp
+	var submissionErrs []error
 	operators := make(map[string]struct{})
 	hasRFC6962 := false
 
 	for result := range results {
 		if result.Error != nil {
-			// Track errors but continue collecting SCTs from other logs
-			_ = NewCTSubmissionError(result.Log.Name, result.Log.URL, result.Error)
+			// Track errors but continue collecting SCTs from other logs. If
+			// the policy ultimately can't be satisfied, these explain why.
+			submissionErrs = append(submissionErrs,
+				NewCTSubmissionError(result.Log.Name, result.Log.URL, result.Error))
 			continue
 		}
 
@@ -233,15 +237,15 @@ func (p *CTPolicy) collectSCTs(results <-chan SCTResult, config PolicyConfig) ([
 
 	// Check final state
 	if len(scts) < config.MinSCTs {
-		return nil, NewPolicyViolationError("SCTs", len(scts), config.MinSCTs)
+		return nil, errors.Join(append([]error{NewPolicyViolationError("SCTs", len(scts), config.MinSCTs)}, submissionErrs...)...)
 	}
 
 	if len(operators) < config.MinOperators {
-		return nil, NewPolicyViolationError("operators", len(operators), config.MinOperators)
+		return nil, errors.Join(append([]error{NewPolicyViolationError("operators", len(operators), config.MinOperators)}, submissionErrs...)...)
 	}
 
 	if config.RequireRFC6962Log && !hasRFC6962 {
-		return nil, ErrNoRFC6962Log
+		return nil, errors.Join(append([]error{ErrNoRFC6962Log}, submissionErrs...)...)
 	}
 
 	return scts, nil

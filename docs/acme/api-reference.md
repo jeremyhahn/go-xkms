@@ -902,6 +902,6 @@ Recommended polling strategy:
 
 - [README](README.md) - Module overview
 - [Architecture](architecture.md) - System architecture
-- [Configuration](configuration.md) - Server configuration
+- [Configuration](../acme-issuance/engineering.md) - Server configuration (`acme/configuration.md` was deleted by go-xkms#942)
 - [Challenges](challenges.md) - Challenge type details
 - [RFC 8555](https://tools.ietf.org/html/rfc8555) - ACME Protocol Specification

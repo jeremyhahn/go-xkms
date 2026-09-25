@@ -212,9 +212,12 @@ func (c *Config) createClientFromProtocol() (client.Client, error) {
 		JWTToken:    c.JWTToken,
 	}
 
-	// Wire PKCS#11-backed mTLS if --pkcs11-module is set
+	// Wire PKCS#11-backed mTLS if --pkcs11-module is set. The returned
+	// cleanup is intentionally not called: the PKCS#11 session/module
+	// backing tlsCfg lives for the lifetime of the client and is cleaned up
+	// when the process exits.
 	if c.PKCS11Module != "" {
-		tlsCfg, cleanup, err := client.NewPKCS11TLSConfig(&client.PKCS11TLSConfig{
+		tlsCfg, _, err := client.NewPKCS11TLSConfig(&client.PKCS11TLSConfig{
 			ModulePath: c.PKCS11Module,
 			SlotID:     c.PKCS11Slot,
 			PIN:        c.PKCS11PIN,
@@ -222,9 +225,6 @@ func (c *Config) createClientFromProtocol() (client.Client, error) {
 		if err != nil {
 			return nil, &WrappedError{Sentinel: ErrCreatePKCS11TLSConfigFailed, Err: err}
 		}
-		// Note: cleanup is not called here - resources live for the lifetime of the client.
-		// The PKCS#11 session/module will be cleaned up when the process exits.
-		_ = cleanup
 		cfg.TLSConfig = tlsCfg
 		cfg.TLSEnabled = true
 	}
@@ -280,9 +280,12 @@ func (c *Config) createClientWithTLS() (client.Client, error) {
 		JWTToken:    c.JWTToken,
 	}
 
-	// Wire PKCS#11-backed mTLS if --pkcs11-module is set
+	// Wire PKCS#11-backed mTLS if --pkcs11-module is set. The returned
+	// cleanup is intentionally not called: the PKCS#11 session/module
+	// backing tlsCfg lives for the lifetime of the client and is cleaned up
+	// when the process exits.
 	if c.PKCS11Module != "" {
-		tlsCfg, cleanup, err := client.NewPKCS11TLSConfig(&client.PKCS11TLSConfig{
+		tlsCfg, _, err := client.NewPKCS11TLSConfig(&client.PKCS11TLSConfig{
 			ModulePath: c.PKCS11Module,
 			SlotID:     c.PKCS11Slot,
 			PIN:        c.PKCS11PIN,
@@ -290,9 +293,6 @@ func (c *Config) createClientWithTLS() (client.Client, error) {
 		if err != nil {
 			return nil, &WrappedError{Sentinel: ErrCreatePKCS11TLSConfigFailed, Err: err}
 		}
-		// Note: cleanup is not called here - resources live for the lifetime of the client.
-		// The PKCS#11 session/module will be cleaned up when the process exits.
-		_ = cleanup
 		cfg.TLSConfig = tlsCfg
 		cfg.TLSEnabled = true
 	}

@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -339,7 +340,7 @@ func setBarrierStdin(r io.Reader) func() {
 func readBarrierLineFromPipedStdin() (string, error) {
 	reader := getBarrierStdinReader()
 	line, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", &BarrierError{Operation: "read_password", Err: err}
 	}
 	return strings.TrimRight(line, "\r\n"), nil

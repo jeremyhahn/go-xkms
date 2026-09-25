@@ -19,6 +19,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -227,6 +228,97 @@ func TestController_RekeyChangePasswordFailureSurfacesErrorAndReseals(t *testing
 	// commit a new (invalid) password.
 	require.NoError(t, ctrl.Unseal(pin))
 	got, err := sealed.Get(ctx, "keys/priv")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("material"), got, "data must survive a rejected rekey")
+}
+
+// errCredentialsFor is the sentinel a failing seal.CredentialsFor stand-in
+// returns, so assertions can tell "the injected failure" from any other
+// error the barrier itself might produce.
+var errCredentialsFor = errors.New("localseal test: CredentialsFor unavailable")
+
+// withFailingCredentialsFor swaps the package-level seal.CredentialsFor seam
+// (pkg/seal/strategy.go) for the duration of the calling test with a stand-in
+// that always fails, and restores the original via t.Cleanup. It is the
+// only way to force the credErr branches in Unseal and Rekey: the real
+// CredentialsFor only errors when go-enclave's mlock fails to protect a
+// non-empty secret, which is not a fault a portable, host-safe unit test can
+// reliably trigger.
+func withFailingCredentialsFor(t *testing.T) {
+	t.Helper()
+	original := seal.CredentialsFor
+	seal.CredentialsFor = func(secret []byte) (seal.Credentials, error) {
+		return seal.Credentials{}, errCredentialsFor
+	}
+	t.Cleanup(func() { seal.CredentialsFor = original })
+}
+
+// TestController_Unseal_CredentialsFailureSurfacesError proves Unseal returns
+// the CredentialsFor failure rather than proceeding as if no passphrase were
+// supplied.
+func TestController_Unseal_CredentialsFailureSurfacesError(t *testing.T) {
+	ctrl, _, err := New(storage.NewMemory(), testRootKeyPath, nil)
+	require.NoError(t, err)
+
+	withFailingCredentialsFor(t)
+
+	err = ctrl.Unseal([]byte("pin"))
+	assert.ErrorIs(t, err, errCredentialsFor,
+		"Unseal must surface a CredentialsFor failure rather than swallow it")
+}
+
+// TestController_Rekey_OldCredentialsFailureSurfacesError proves the
+// oldPassphrase CredentialsFor failure inside a sealed Rekey is returned to
+// the caller.
+func TestController_Rekey_OldCredentialsFailureSurfacesError(t *testing.T) {
+	base := storage.NewMemory()
+	ctrl, sealed, err := New(base, testRootKeyPath, nil)
+	require.NoError(t, err)
+	require.NoError(t, ctrl.Unseal([]byte("correct-pin")))
+	require.NoError(t, sealed.Put(context.Background(), "keys/priv", []byte("material")))
+	require.NoError(t, ctrl.Seal())
+
+	withFailingCredentialsFor(t)
+
+	err = ctrl.Rekey([]byte("correct-pin"), []byte("new-pin"))
+	assert.ErrorIs(t, err, errCredentialsFor,
+		"Rekey must surface a failure building credentials for the old passphrase")
+	assert.True(t, ctrl.barrier.IsSealed(), "a Rekey that never unsealed must leave the barrier sealed")
+}
+
+// TestController_Rekey_NewCredentialsFailureSurfacesErrorAndReseals proves the
+// newPassphrase CredentialsFor failure inside Rekey is returned to the
+// caller and, because the failure occurs after the barrier was unsealed to
+// verify the old PIN, that the barrier is left resealed rather than exposed.
+func TestController_Rekey_NewCredentialsFailureSurfacesErrorAndReseals(t *testing.T) {
+	base := storage.NewMemory()
+	ctrl, sealed, err := New(base, testRootKeyPath, nil)
+	require.NoError(t, err)
+	pin := []byte("correct-pin")
+	require.NoError(t, ctrl.Unseal(pin))
+	require.NoError(t, sealed.Put(context.Background(), "keys/priv", []byte("material")))
+	require.NoError(t, ctrl.Seal())
+
+	original := seal.CredentialsFor
+	seal.CredentialsFor = func(secret []byte) (seal.Credentials, error) {
+		// Let the real implementation authenticate the old PIN so Rekey
+		// reaches the newPassphrase call, which is the one made to fail.
+		if string(secret) == string(pin) {
+			return original(secret)
+		}
+		return seal.Credentials{}, errCredentialsFor
+	}
+	t.Cleanup(func() { seal.CredentialsFor = original })
+
+	err = ctrl.Rekey(pin, []byte("new-pin"))
+	assert.ErrorIs(t, err, errCredentialsFor,
+		"Rekey must surface a failure building credentials for the new passphrase")
+	assert.True(t, ctrl.barrier.IsSealed(),
+		"a Rekey that fails after unsealing to verify the old PIN must reseal before returning")
+
+	// The old PIN must still open the barrier: nothing committed.
+	require.NoError(t, ctrl.Unseal(pin))
+	got, err := sealed.Get(context.Background(), "keys/priv")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("material"), got, "data must survive a rejected rekey")
 }

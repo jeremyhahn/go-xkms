@@ -13,21 +13,33 @@
   `ca_bundle.go`, `endorse_eab.go`, `audit.go`, `compliance_attestation.go`,
   `service.go`.
 - `pkg/acme/entities` — the protocol objects themselves.
-- `pkg/acme/nonce` — nonce issue and consume.
-- `pkg/acme/issuance` — the bridge to `pkg/ca`.
+- `pkg/acme/nonce` — encrypted-counter nonce issue and redemption
+  (`Service`), plus prefix-routed multi-node dispatch (`MultiService`).
+  `RestService` wires it as described under Configuration and Persistence
+  below.
+- `pkg/acme/issuance` — **not on any production path.** It exists as a
+  standalone bridge type to `pkg/ca`, but nothing outside its own tests
+  imports it; `OrderFinalizeHandler` calls `s.ca.SignCSR` /
+  `s.ca.IssueEKCertificate` / `s.ca.SignTCGCSRIDevID`
+  (`pkg/acme/server/handlers/order_finalize.go:677,752,1343`) directly.
 - `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
 - `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy (blocklist,
   public suffix, reserved-IP, per-identifier-type challenge selection) and
   CAA. `pkg/acme/policy` is wired into `NewOrderHandler` and
   `createChallenges`; see Identifier policy below.
 - `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go` — request-rate
-  enforcement.
+  enforcement. `rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
+  wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA`
+  (`pkg/acme/client/trustedca.go:384-393`); the tenant limiter is
+  constructed nowhere outside its own file. See Invariants below and
+  go-xkms#882.
 - `pkg/acme/server/circuitbreaker` — the one circuit breaker implementation
   (`CircuitBreaker`, `Manager`, the `Middleware` HTTP wrapper, and the
-  `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators) and
-  `pkg/acme/server/degradation` (the cache-backed graceful-degradation
-  primitives) — the protective layer. See "Circuit breakers and degradation"
-  below.
+  `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators;
+  go-xkms#735 folded the previously-duplicate `pkg/acme/server/circuit_breaker.go`
+  into it and deleted that file) and `pkg/acme/server/degradation` (the
+  cache-backed graceful-degradation primitives) — the protective layer,
+  wired into xkmsd. See "Circuit breakers and degradation" below.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
   `barrier_handlers.go`, `barrier_service.go`, `ca_adapter.go`).
 - `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — the transport
@@ -130,11 +142,43 @@ once, to the externally visible base.
   parameter model. A DNS failure that prevents determining the RRset
   (SERVFAIL, timeout, any non-NXDOMAIN error) fails closed per RFC 8659
   Section 5.1: it denies issuance rather than "proceeding with caution".
-- **Rate limits are per account and per tenant.** Exceeding either refuses the
-  order; it does not queue it.
+- **Rate limiting is a per-client cap, enforced before RFC 8555 processing
+  begins.** `acmeserver.NewClientRateLimiterMiddleware`
+  (`pkg/acme/server/rate_limiter.go`) is mounted on the whole ACME surface —
+  by the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`) and by
+  xkmsd's embedded listener (`cmd/xkmsd/acme.go`'s `buildACMERouter`) — and
+  keys each client by JWS KID once an account exists, falling back to the
+  client IP before one does (`server.ClientID`). Exceeding the cap refuses
+  the request with `rateLimited`; it does not queue it. **Per-tenant and
+  per-endpoint-category (new-account/new-order/certificate/
+  failed-validation) limits are not wired to anything** —
+  `pkg/acme/server/tenant_rate_limiter.go`'s `TenantRateLimiter` and
+  `rate_limiter.go`'s `NewAccountRateLimiter`/`NewOrderRateLimiter`/
+  `CertificateRateLimiter`/`FailedValidationRateLimiter` constructors and
+  `DefaultRateLimitConfig` exist and are unit-tested but have no caller
+  outside their own package's tests (go-xkms#882). xkmsd resolves an ACME
+  account's tenant only as a side effect of business logic already deep
+  inside a handler — `NewAccountHandler` sets `entities.Account.TenantID`
+  from the verified External Account Binding
+  (`pkg/acme/server/handlers/new_account.go`), and `order_finalize.go` reads
+  it back to select a signing CA — never from a cheap, pre-dispatch,
+  authenticated request attribute a middleware could key on. The
+  `handlers.TenantMiddleware` header/subdomain/path extractor
+  (`pkg/acme/server/handlers/middleware.go`) is also unwired anywhere in the
+  tree; even if wired, it trusts a client-supplied `X-Tenant-ID` header (or
+  host/path) with no authentication, so using it to key admission control
+  would let a client opt out of its own tenant quota by omitting or
+  spoofing the header — the opposite of what rate limiting is for. A
+  per-tenant cap that means something requires resolving tenant from an
+  authenticated source (e.g. an account lookup keyed by JWS KID) before
+  dispatch, which is new work, not a rewiring of the existing
+  `TenantRateLimiter`; it is filed as a follow-up rather than forced into
+  this cap.
 - **A breaker guards the one dependency it wraps, not order creation, and
-  degradation never means "issue without validating".** See "Circuit
-  breakers and degradation" below for exactly what is and is not covered.
+  degradation never means "issue without validating".** `pkg/acme/server/circuitbreaker`
+  is wired into xkmsd (`cmd/xkmsd/acme.go`); the standalone `TrustedCA` does
+  not yet opt in. See "Circuit breakers and degradation" below for exactly
+  what is and is not covered.
 - **An advertised URL is configured or derived, never glued to a bind
   address.** `TrustedCA.Serve` advertises `acme.external_url` (or
   `WithExternalURL`) as given; with neither set it derives the URL from the
@@ -302,7 +346,8 @@ The mapping an implementer needs:
 | permanent-identifier or DNS/IP SAN not authorized by the order | `rejectedIdentifier` | 401 |
 
 **Fail closed:** unvalidated authorization, failed CAA, an undetermined CAA
-RRset (DNS failure), failed attestation, exceeded rate limit, an open circuit
+RRset (DNS failure), failed attestation, an exceeded rate limit (standalone
+`TrustedCA` only — see Invariants above), and, on xkmsd, an open circuit
 breaker on a dependency the order's path needs (a challenge verifier during
 validation, the KMS signer during finalize). Every one of them refuses to
 issue for that order. None of them refuses `POST /acme/new-order` itself —
@@ -344,6 +389,22 @@ cluster:
 
 `RaftACMEConfigError` (`Field`, `Reason`) renders as
 `cluster: raft_enrollment.acme.<field>: <reason>`.
+
+`acme.nonce` (`ACMENonceConfig`, `pkg/config/acme.go`) configures the
+Replay-Nonce service, `pkg/acme/nonce`:
+
+```yaml
+acme:
+  nonce:
+    lifetime: 10m   # ACMENonceConfig.ResolveLifetime; 0 selects DefaultACMENonceLifetime
+    max_used: 65536 # ACMENonceConfig.ResolveMaxUsed; 0 selects nonce.DefaultMaxUsed
+```
+
+Both are optional with the documented defaults, and both are also
+`handlers.Params` fields (`NonceLifetime`, `NonceMaxUsed`) for an embedder
+that does not go through `pkg/config`. See Persistence below for how they
+bound the service's memory, and #733 for the multi-node gap
+(`handlers.Params.NonceKey`) neither field closes.
 
 `acme.enrollment.allow_loopback_identifier` (`ACMEEnrollmentConfig`,
 `pkg/config/acme.go`) gates a development-only substitution in
@@ -435,6 +496,32 @@ desktop binding `GetApiBaseUrl`. `pkg/webui` renders the value into
 `index.html` as a JSON-encoded JavaScript string literal, so it cannot
 terminate the injected script.
 
+**Rate-limit configuration (`ACMERateLimitConfig`, `pkg/config/acme.go`).**
+`acme.rate_limit` configures the per-client admission-control cap described
+under Invariants above. It follows the same secure-by-default, tri-state
+pattern as `acme.audit`: `enabled` is a `*bool`, so an omitted key leaves the
+limiter on — only an explicit `enabled: false` turns it off, and doing so is
+reported by `Config.ComplianceGaps` ("ACME rate limiting disabled"), which
+`cmd/xkmsd` refuses to start on; there is no override. `max_requests` and
+`interval` default to `DefaultACMERateLimitMaxRequests` (20) and
+`DefaultACMERateLimitInterval` (`1s`) when zero/unset, matching the
+standalone `TrustedCA`'s long-standing built-in default
+(`pkg/acme/client/trustedca.go`'s zero-value `rateLimitRequests`/
+`rateLimitInterval`, settable via `client.WithRateLimit`), so xkmsd and the
+standalone CA throttle identically out of the box:
+
+```yaml
+acme:
+  rate_limit:
+    enabled: true      # default; omit the key entirely for the same effect
+    max_requests: 20    # per client, per interval
+    interval: 1s
+```
+
+A negative `max_requests` or `interval` is refused by `Validate`
+(`ErrACMERateLimitNegativeMaxRequests`/`ErrACMERateLimitNegativeInterval`)
+rather than silently coerced to the default.
+
 Port note: `pkg/acme/api/server/server.go:49` sets `DefaultQUICPort = 9444`,
 which collides with the SDK's `DefaultMCPAddress` of `localhost:9444`. See
 [`../key-management/api.md`](../key-management/api.md) §Port conflicts.
@@ -465,12 +552,30 @@ not do" in architecture.md).
 
 ## Persistence
 
-Accounts, orders, authorizations, challenges, nonces and issued certificates
-persist through `pkg/acme/storage` over `go-qrdb/sdk/go` (`pkg/acme/qrdb`).
+Accounts, orders, authorizations, challenges and issued certificates persist
+through `pkg/acme/storage` over `go-qrdb/sdk/go` (`pkg/acme/qrdb`).
 Certificate blobs land in the certificate store like any other certificate.
 
-Nonces are short-lived and single-use; their store is deliberately separate so
-expiry is cheap.
+Nonces do not persist anywhere, by design. `pkg/acme/nonce.Service` validates
+a nonce by decrypting it (AES-GCM, RFC 8555 Section 6.5), not by looking it up,
+so there is no durable table to write or expire out of — the whole point of
+the encrypted-counter scheme is that "was this ever issued, and is it still
+in the valid window" is answered from the ciphertext itself plus a small,
+`NonceMaxUsed`-bounded in-memory redeemed-set. `RestService` rotates to a
+fresh counter window every `NonceLifetime` (`nonceEpochPrefix`,
+`pkg/acme/server/handlers/service.go`), retiring every nonce still
+outstanding from the previous window; that is the wall-clock lifetime
+substitute for a scheme with no per-nonce timestamp to expire.
+
+Multi-node caveat: nonces from different xkmsd processes only validate on
+each other when every node is configured with the same
+`handlers.Params.NonceKey` (there is no `pkg/config` field for it yet — see
+#733). Absent a shared key, each process mints from its own random key, which
+is correct for a single-node deployment but means a load-balanced deployment
+without sticky routing sees `badNonce` on any request that lands on a
+different node than the one that issued the nonce. RFC 8555 clients already
+handle `badNonce` by retrying with a fresh nonce, so this degrades
+availability, not correctness.
 
 Migration: the ACME object model is RFC-defined on the wire and internal in
 storage. Changing the storage layout requires a data migration step.
@@ -525,20 +630,41 @@ storage. Changing the storage layout requires a data migration step.
 
 ## Observability
 
-`pkg/acme/server/metrics` exposes issuance, challenge and rate-limit metrics,
-plus the circuit breaker and degradation-cache counters `pkg/acme/server/
-circuitbreaker` and `pkg/acme/server/degradation` record against (failure/
-success/trip per breaker; hit/miss/size per cache) — not yet wired to a
-Prometheus exporter, see "Known gap" below. `GET /acme/health`
+`pkg/acme/server/metrics` defines a Prometheus registry with issuance,
+challenge and rate-limit counters (`RecordRequest`, `RecordCertificateIssued`,
+...), plus the circuit breaker and degradation-cache counters
+`pkg/acme/server/circuitbreaker` and `pkg/acme/server/degradation` record
+against (`RecordCircuitBreakerFailure`/`Success`/`Trip`,
+`RecordCacheHit`/`Miss`, `SetCacheSize`, `SetDegradationActive` —
+`pkg/acme/server/metrics/production.go`). No handler in
+`pkg/acme/server/handlers` calls the issuance/challenge/rate-limit `Record*`
+functions, so those counters stay at zero in every deployment; the circuit
+breaker and degradation counters, by contrast, are live on xkmsd's request
+path whenever `Params.Breakers` is set. Neither set reaches a scrape
+endpoint today: `InitProduction` — the function that registers the circuit
+breaker/degradation collectors on `metrics.Registry` — is called nowhere in
+the tree outside its own file, and xkmsd never calls `metrics.Init()` or
+mounts `/metrics` for ACME at all (`cmd/xkmsd/acme.go`). The standalone
+`TrustedCA` calls `metrics.Init()` and mounts
+`promhttp.HandlerFor(metrics.Registry, ...)` at `/metrics`
+(`pkg/acme/client/trustedca.go:378,414`), but since neither the issuance
+counters nor `InitProduction`'s collectors are registered or incremented on
+that path (it does not opt into `Params.Breakers` either), the endpoint
+reports only the Go runtime collectors. `GET /acme/health`
 (`RestService.HealthHandler`) is the synchronous, poll-driven view of the
-same state: every breaker's name, state and counters, and whether
-`storage` being open is currently degrading the directory/CA-bundle
-responses (see "Circuit breakers and degradation"). `pkg/acme/audit` and
-`pkg/acme/server/handlers/audit.go` write audit records for account, order
-and issuance events. Correlation IDs propagate from the transport
-middleware.
+circuit breaker/degradation state instead: every breaker's name, state and
+counters, and whether `storage` being open is currently degrading the
+directory/CA-bundle responses (see "Circuit breakers and degradation").
+`pkg/acme/audit` and `pkg/acme/server/handlers/audit.go` write audit records
+for account, order and issuance events, and those are live on both paths —
+audit, not metrics, is where issuance activity is actually observable today.
+Correlation IDs propagate from the transport middleware. Instrumenting the
+metrics package into the request path is tracked in go-xkms#734.
 
-**Known gap:** Prometheus exporters, per-tenant rate-limit dashboards, OCSP
-stapling, CRL distribution-point automation, CT log submission automation and
-cross-signing automation are roadmap items, not implemented. They are tracked in
-`docs/acme/ROADMAP.md` and deliberately not documented here as if they existed.
+**Known gap:** Prometheus exporters (beyond the unwired registry above),
+per-tenant rate-limit *enforcement* (`TenantRateLimiter` is unwired — see
+Rate limiting under Invariants) and dashboards, OCSP stapling, CRL
+distribution-point automation, CT log submission automation and
+cross-signing automation are roadmap items, not implemented. They are
+tracked in `docs/acme/ROADMAP.md` and deliberately not documented here as if
+they existed.

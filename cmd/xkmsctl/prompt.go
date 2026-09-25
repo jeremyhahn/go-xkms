@@ -68,9 +68,13 @@ func resolveSecret(value, prompt string) (string, error) {
 
 	fd := secretStdinFd()
 	if isTerminalFn(fd) {
-		_, _ = fmt.Fprintf(os.Stderr, "%s: ", prompt)
+		if _, err := fmt.Fprintf(os.Stderr, "%s: ", prompt); err != nil {
+			return "", &WrappedError{Sentinel: ErrReadSecretFailed, Err: err}
+		}
 		secret, err := readPasswordFn(fd)
-		_, _ = fmt.Fprintln(os.Stderr)
+		if _, perr := fmt.Fprintln(os.Stderr); perr != nil && err == nil {
+			err = perr
+		}
 		if err != nil {
 			return "", &WrappedError{Sentinel: ErrReadSecretFailed, Err: err}
 		}

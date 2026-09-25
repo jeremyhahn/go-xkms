@@ -127,6 +127,34 @@ func TestDefaultKDFs_ReturnPBKDF2UnderFIPS140On(t *testing.T) {
 	}
 }
 
+// TestDefaultKDF_TracksFIPS140Enabled and
+// TestDefaultLUKSKDF_TracksFIPS140Enabled call DefaultKDF/DefaultLUKSKDF
+// directly in this test process, rather than through a re-exec'd child as
+// the FIPS-pinned tests above do. A child process's coverage counters are
+// never merged into this package's -coverprofile, so the two selector
+// branches were otherwise exercised only by an untracked process. Calling
+// the functions here, and asserting their result against
+// crypto/fips140.Enabled() read at the same instant, keeps the assertion
+// true under either polarity this suite runs under (plain, or
+// GODEBUG=fips140=only per go-xkms#23) instead of hard-coding one.
+func TestDefaultKDF_TracksFIPS140Enabled(t *testing.T) {
+	want := KDFArgon2id
+	if fips140.Enabled() {
+		want = KDFPBKDF2
+	}
+	assert.Equal(t, want, DefaultKDF(),
+		"DefaultKDF must track this process's actual FIPS state")
+}
+
+func TestDefaultLUKSKDF_TracksFIPS140Enabled(t *testing.T) {
+	want := KDFArgon2id
+	if fips140.Enabled() {
+		want = KDFPBKDF2
+	}
+	assert.Equal(t, want, DefaultLUKSKDF(),
+		"DefaultLUKSKDF must track this process's actual FIPS state")
+}
+
 // buildSettingFrom must find the recorded GOFIPS140 value among the other
 // settings cmd/go stamps in, whichever selector the build ran with.
 func TestBuildSettingFrom_ReturnsRecordedSelector(t *testing.T) {

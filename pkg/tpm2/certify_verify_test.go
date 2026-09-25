@@ -633,3 +633,49 @@ func TestVerifyCertifySignature_UnsupportedAlgorithmRejected(t *testing.T) {
 	_, err := verifyCertifySignature(&attester, []byte("data"), &sig)
 	assert.ErrorIs(t, err, ErrCertifyMalformed)
 }
+
+// TestRSAPublicFromAreaWrapsAsCertifyMalformed keeps the certify surface's
+// error identity for a public area whose Type claims RSA but whose
+// Parameters union carries a different algorithm: rsaPublicFromArea's
+// RSADetail() call fails, and the caller still sees ErrCertifyMalformed
+// rather than a bare go-tpm decode error, mirroring
+// TestECDSAPublicFromAreaWrapsAsCertifyMalformed for the ECC path.
+func TestRSAPublicFromAreaWrapsAsCertifyMalformed(t *testing.T) {
+	mistyped := &tpm2.TPMTPublic{
+		Type:    tpm2.TPMAlgRSA,
+		NameAlg: tpm2.TPMAlgSHA256,
+		Parameters: tpm2.NewTPMUPublicParms(
+			tpm2.TPMAlgECC,
+			&tpm2.TPMSECCParms{CurveID: tpm2.TPMECCNistP256},
+		),
+	}
+
+	_, err := rsaPublicFromArea(mistyped)
+	assert.ErrorIs(t, err, ErrCertifyMalformed)
+}
+
+// TestRSAPublicFromAreaWrapsUniqueMismatchAsCertifyMalformed covers
+// rsaPublicFromArea's second failure branch: Parameters is RSA-shaped, so
+// RSADetail() succeeds, but Unique carries an ECC point instead of an RSA
+// modulus, so Unique.RSA() fails and must still surface as
+// ErrCertifyMalformed.
+func TestRSAPublicFromAreaWrapsUniqueMismatchAsCertifyMalformed(t *testing.T) {
+	mistypedUnique := &tpm2.TPMTPublic{
+		Type:    tpm2.TPMAlgRSA,
+		NameAlg: tpm2.TPMAlgSHA256,
+		Parameters: tpm2.NewTPMUPublicParms(
+			tpm2.TPMAlgRSA,
+			&tpm2.TPMSRSAParms{},
+		),
+		Unique: tpm2.NewTPMUPublicID(
+			tpm2.TPMAlgECC,
+			&tpm2.TPMSECCPoint{
+				X: tpm2.TPM2BECCParameter{Buffer: make([]byte, 32)},
+				Y: tpm2.TPM2BECCParameter{Buffer: make([]byte, 32)},
+			},
+		),
+	}
+
+	_, err := rsaPublicFromArea(mistypedUnique)
+	assert.ErrorIs(t, err, ErrCertifyMalformed)
+}

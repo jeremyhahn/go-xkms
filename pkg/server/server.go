@@ -328,6 +328,16 @@ type Server struct {
 	// CA for certificate authority operations
 	ca ca.TrustedCA
 
+	// grpcCABundler is the CA bundle source computed in Start (from the TLS
+	// CA file or the CA instance) and forwarded to the gRPC transports
+	// (unix.GRPCConfig.CABundler -> grpcapi.Service.SetCABundler) and to
+	// startNoiseBootstrap, which all served it through a package-level
+	// grpcinternal.SetCABundler/GetCABundler global before go-xkms#951.
+	// Nil until Start computes one; the Noise bootstrap subsystem and the
+	// gRPC transports both read this same field rather than each other's
+	// package-level state.
+	grpcCABundler grpcinternal.CABundler
+
 	// Credential service for managing backend credentials
 	credentialService *credentialspkg.Service
 
@@ -2540,7 +2550,7 @@ func (s *Server) Start() error {
 			s.logger.Warn("Failed to initialize CA bundler", slog.Any("error", err))
 		} else {
 			rest.SetCABundler(bundler)
-			grpcinternal.SetCABundler(bundler)
+			s.grpcCABundler = bundler
 			s.logger.Info("CA bundler initialized from TLS CA file", "ca_file", s.config.TLS.CAFile)
 		}
 	} else if s.config.TLS.Enabled && s.ca != nil && s.ca.IsInitialized() {
@@ -2550,7 +2560,7 @@ func (s *Server) Start() error {
 			s.logger.Warn("Failed to initialize CA bundler from CA instance", slog.Any("error", err))
 		} else {
 			rest.SetCABundler(bundler)
-			grpcinternal.SetCABundler(bundler)
+			s.grpcCABundler = bundler
 			s.logger.Info("CA bundler initialized from CA instance")
 		}
 	}
@@ -2645,6 +2655,17 @@ func (s *Server) startUnix() {
 	case "grpc":
 		s.logger.Info("Starting Unix socket with gRPC protocol", "socket", socketPath)
 
+		// The XKMSService is forwarded as the CA servicer under the same
+		// condition buildRESTConfig gates restConfig.CA on: a configured CA
+		// (s.ca != nil) AND a composed XKMSService. Before go-xkms#951, CA
+		// RPCs over this listener always answered Unavailable because
+		// nothing wired a CA into the gRPC service's (then package-level)
+		// SetCA at all.
+		var caServicer any
+		if s.ca != nil && s.xkmsService != nil {
+			caServicer = s.xkmsService
+		}
+
 		// Create Unix gRPC server configuration
 		// Note: Logger is nil - the unix package will use its internal noOpLogger
 		grpcConfig := &unix.GRPCConfig{
@@ -2653,6 +2674,8 @@ func (s *Server) startUnix() {
 			XKMSService:     s.xkmsService,
 			SSHClient:       s.ensureSSHClient(),
 			BarrierRegistry: s.barrierRegistry,
+			CA:              caServicer,
+			CABundler:       s.grpcCABundler,
 			// Host the embedded qrdb node's control plane (cluster admin,
 			// rebalance, user auth factors) on the unix socket — xkmsctl's
 			// default transport. Same socket-file-mode trust boundary as the
@@ -2912,10 +2935,21 @@ func (s *Server) startREST() {
 
 	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
 	// cancelled) before we got here, do not start — return so this goroutine
-	// releases its wg slot instead of blocking in Start.
+	// releases its wg slot instead of blocking in Start. The pre-bound
+	// loopback listener (already open before this goroutine ran; see
+	// SetRESTListener) is this goroutine's to close in that case: it is only
+	// registered with the stdlib http.Server's listener tracking — which is
+	// what Shutdown closes — once Start below calls Serve/ServeTLS, so
+	// returning here without closing it would leak the open socket for the
+	// life of the process.
 	s.mu.Lock()
 	if s.ctx.Err() != nil {
 		s.mu.Unlock()
+		if s.restListener != nil {
+			if cerr := s.restListener.Close(); cerr != nil {
+				s.logger.Warn("Failed to close pre-bound REST listener during aborted startup", slog.Any("error", cerr))
+			}
+		}
 		return
 	}
 	s.restServer = restSrv
@@ -3182,7 +3216,7 @@ func (s *Server) startNoiseBootstrap() {
 	addr := s.listenAddr(s.config.Server.NoisePort)
 
 	// Get CA bundler
-	bundler := grpcinternal.GetCABundler()
+	bundler := s.grpcCABundler
 	if bundler == nil {
 		s.logger.Error("Noise bootstrap requires a CA bundler to be configured")
 		return

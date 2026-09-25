@@ -60,7 +60,7 @@
 //
 //	// Initialize token (first time only)
 //	err = backend.Initialize("admin5678", "user1234")
-//	if err != nil && err != pkcs11.ErrAlreadyInitialized {
+//	if err != nil && !errors.Is(err, pkcs11.ErrAlreadyInitialized) {
 //		log.Fatal(err)
 //	}
 //

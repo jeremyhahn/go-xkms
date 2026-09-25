@@ -398,7 +398,7 @@ func Routes() []RouteSpec {
 	// Membership mutation is NOT exposed over REST at all — there is no
 	// POST/DELETE here to stub out. Raft membership changes go through
 	// go-qrdb's own control plane exclusively, via `xkmsctl cluster
-	// add`/`remove` (docs/cluster/api.md, docs/web/parity.md "Cluster
+	// add`/`remove` (docs/clustering/api.md, docs/web/parity.md "Cluster
 	// mutations"). Permissions mirror go-qrdb's own AdminService vocabulary
 	// exactly (admin:status, admin:peers — pkg/permission/constants.go),
 	// matching what xkmsd registers on its control-plane gRPC surface

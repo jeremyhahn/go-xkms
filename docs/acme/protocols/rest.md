@@ -2,6 +2,16 @@
 
 HTTP/HTTPS REST API for Admin operations.
 
+> **Correction (go-xkms#942):** there is no `trusted-acme-server` binary,
+> no `cactl` binary, and no `TRUSTEDCA_` environment prefix. The ACME
+> admin REST surface is `pkg/acme/admin` (`RegisterRoutes`,
+> `pkg/acme/admin/handlers.go:97`), mounted under `/admin` (not
+> `/api/v1` as the examples below show) on `xkmsd`'s own unified
+> listener by `cmd/xkmsd/admin.go:finalizeAdminModule` — not a
+> standalone `--admin-enabled` flag. The real CLI is `xkmsctl acme`
+> (`docs/acme-issuance/cli.md`). This page's other REST examples are
+> otherwise unverified against the current route table.
+
 ## Overview
 
 The REST API provides standard HTTP-based access to all Admin operations. It's the most universally compatible protocol, supporting web browsers, curl, and any HTTP client.
@@ -19,15 +29,12 @@ The REST API provides standard HTTP-based access to all Admin operations. It's t
 
 ### Server
 
-```bash
-# Admin addresses are configured via environment variables
-TRUSTEDCA_ADMIN_REST_ADDR=:8443 trusted-acme-server --admin-enabled
-```
+Unverified — see the correction above.
 
-### Client (cactl)
+### Client (`xkmsctl acme`)
 
 ```bash
-cactl --transport rest --address https://localhost:8443 status
+xkmsctl acme --acme-server https://localhost:8443 status
 ```
 
 ## Authentication
@@ -43,12 +50,7 @@ development bypass: a request with no identity is refused with 401.
 Configure client certificates for passwordless authentication:
 
 ```bash
-# Server with mTLS
-trusted-acme-server --admin-enabled \
-  --admin-tls-cert server.crt \
-  --admin-tls-key server.key \
-  --admin-tls-ca ca.crt \
-  --admin-tls-verify
+# Server-side mTLS setup is unverified — see the correction above.
 
 # Client with certificate
 curl --cert client.crt --key client.key --cacert ca.crt \
@@ -258,4 +260,4 @@ Retry-After: 60
 
 - [Protocol Overview](README.md)
 - [gRPC Protocol](grpc.md)
-- [cactl CLI](../cli/cactl.md)
+- [`xkmsctl acme` CLI](../../acme-issuance/cli.md)

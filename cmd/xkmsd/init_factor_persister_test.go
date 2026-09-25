@@ -24,6 +24,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,6 +97,15 @@ func TestEnrollmentToAuthFactor_MTLS_MissingThumbprint(t *testing.T) {
 	if !errors.As(err, &convErr) {
 		t.Fatalf("expected *FactorConversionError, got %T: %v", err, err)
 	}
+	// No underlying cause here (the metadata key is simply absent, not
+	// malformed): the rendered message must still name the factor and the
+	// reason, without an errant "<nil>" trailer from a nil Err.
+	if got := convErr.Error(); !strings.Contains(got, "mtls") || !strings.Contains(got, "cert_spki_thumbprint") {
+		t.Errorf("FactorConversionError.Error() = %q, want it to name the factor and the missing field", got)
+	}
+	if convErr.Unwrap() != nil {
+		t.Errorf("Unwrap() = %v, want nil: this failure carries no underlying cause", convErr.Unwrap())
+	}
 }
 
 func TestEnrollmentToAuthFactor_PIV(t *testing.T) {
@@ -150,6 +160,17 @@ func TestEnrollmentToAuthFactor_PIV_InvalidCertificate(t *testing.T) {
 	var convErr *FactorConversionError
 	if !errors.As(err, &convErr) {
 		t.Fatalf("expected *FactorConversionError, got %T: %v", err, err)
+	}
+	// This failure DOES carry an underlying cause (x509.ParseCertificate's
+	// own error), which must both unwrap and appear in the message -- an
+	// operator debugging a bad enrollment needs the parser's reason, not
+	// just "parsing enrolled certificate".
+	if convErr.Unwrap() == nil {
+		t.Fatal("Unwrap() = nil, want the underlying x509 parse error")
+	}
+	if got := convErr.Error(); !strings.Contains(got, "piv") || !strings.Contains(got, convErr.Unwrap().Error()) {
+		t.Errorf("FactorConversionError.Error() = %q, want it to name the factor and the underlying cause %q",
+			got, convErr.Unwrap().Error())
 	}
 }
 
@@ -207,6 +228,9 @@ func TestEnrollmentToAuthFactor_UnsupportedFactor(t *testing.T) {
 	var unsupportedErr *UnsupportedPersistFactorError
 	if !errors.As(err, &unsupportedErr) {
 		t.Fatalf("expected *UnsupportedPersistFactorError, got %T: %v", err, err)
+	}
+	if got := unsupportedErr.Error(); !strings.Contains(got, "pkcs11") {
+		t.Errorf("UnsupportedPersistFactorError.Error() = %q, want it to name the unsupported factor %q", got, "pkcs11")
 	}
 }
 

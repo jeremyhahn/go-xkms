@@ -203,7 +203,7 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 
 	keyID := attrs.ID()
 	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return backend.ErrKeyNotFound
 		}
 		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
@@ -492,7 +492,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	keyID := attrs.ID()
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, backend.ErrKeyNotFound
 		}
 		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
@@ -1711,7 +1711,7 @@ func (b *Backend) exportableKeyMaterial(ctx context.Context, attrs *types.KeyAtt
 	keyID := attrs.ID()
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, backend.ErrKeyNotFound
 		}
 		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
@@ -1763,7 +1763,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	keyID := attrs.ID()
 	keyData, err := storage.GetKey(ctx, b.storage, keyID)
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, backend.ErrKeyNotFound
 		}
 		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}

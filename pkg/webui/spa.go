@@ -117,6 +117,16 @@ type spaFileServer struct {
 	apiBaseURL string // injected into index.html as window.__API_BASE_URL__
 }
 
+// closeQuiet closes f and logs a failure at debug level. Every call site is
+// read-only static-asset serving that has already served (or is about to
+// serve a fallback for) the response, so a close failure changes nothing
+// about what was sent to the client.
+func (s *spaFileServer) closeQuiet(f http.File) {
+	if err := f.Close(); err != nil {
+		s.logger.Debug("webui: failed to close static asset file", "error", err)
+	}
+}
+
 // ServeHTTP serves the requested file or falls back to index.html for client-side routing.
 func (s *spaFileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
@@ -132,7 +142,7 @@ func (s *spaFileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveIndex(w, r)
 		return
 	}
-	defer func() { _ = f.Close() }()
+	defer s.closeQuiet(f)
 
 	stat, err := f.Stat()
 	if err != nil {
@@ -141,14 +151,14 @@ func (s *spaFileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if stat.IsDir() {
-		_ = f.Close()
+		s.closeQuiet(f)
 		// Try index.html in the directory, then fall back to root index.html
 		dirIndex, dirErr := s.fs.Open(path + "/index.html")
 		if dirErr != nil {
 			s.serveIndex(w, r)
 			return
 		}
-		defer func() { _ = dirIndex.Close() }()
+		defer s.closeQuiet(dirIndex)
 
 		stat, err = dirIndex.Stat()
 		if err != nil {
@@ -171,7 +181,7 @@ func (s *spaFileServer) serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index.html not found", http.StatusNotFound)
 		return
 	}
-	defer func() { _ = f.Close() }()
+	defer s.closeQuiet(f)
 
 	// If apiBaseURL is configured, inject it into the HTML.
 	if s.apiBaseURL != "" {

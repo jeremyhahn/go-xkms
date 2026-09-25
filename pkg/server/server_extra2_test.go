@@ -301,8 +301,8 @@ func TestInitializeQRDBStorage_QRDBEmptyTransportIsEmbedded(t *testing.T) {
 // ============================================================================
 
 // TestStartNoiseBootstrap_NoBundler verifies startNoiseBootstrap returns early
-// without panicking when no CA bundler has been set (grpcinternal.GetCABundler
-// returns nil). The goroutine completes quickly.
+// without panicking when no CA bundler has been set (server.grpcCABundler is
+// nil). The goroutine completes quickly.
 func TestStartNoiseBootstrap_NoBundler(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
@@ -422,8 +422,11 @@ func TestServer_Start_WithUnixSocket(t *testing.T) {
 	err = server.Start()
 	require.NoError(t, err)
 
-	// Give the goroutine a moment to start, then shut down.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for startUnix's goroutine to set the Unix gRPC server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		return server.UnixGRPCServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 	err = server.Shutdown()
 	assert.NoError(t, err)
 }
@@ -448,7 +451,13 @@ func TestServer_Shutdown_WithMetricsCollector(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, server.Start())
-	time.Sleep(50 * time.Millisecond)
+	// Wait for startMetrics's goroutine to set the metrics server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.metricsServer != nil
+	}, 10*time.Second, 10*time.Millisecond, "metrics server was not set")
 	err = server.Shutdown()
 	assert.NoError(t, err)
 }
@@ -1944,7 +1953,11 @@ func TestServer_Shutdown_QRDBNodeNil(t *testing.T) {
 	server, err := New(cfg)
 	require.NoError(t, err)
 	require.NoError(t, server.Start())
-	time.Sleep(20 * time.Millisecond)
+	// Wait for startUnix's goroutine to set the Unix gRPC server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		return server.UnixGRPCServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 
 	// qrdbNode is nil for non-qrdb backends; Shutdown should succeed.
 	assert.Nil(t, server.qrdbNode)
@@ -3041,11 +3054,6 @@ func TestStartNoiseBootstrap_WithBundler(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	// Set a mock CA bundler so the nil-guard is passed.
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = false // call startNoiseBootstrap manually
 	cfg.Server.NoisePort = 0    // bind on any available port
@@ -3053,6 +3061,9 @@ func TestStartNoiseBootstrap_WithBundler(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
+
+	// Set a mock CA bundler so the nil-guard is passed.
+	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	server.wg.Add(1)
 	done := make(chan struct{})
@@ -3082,10 +3093,6 @@ func TestStartNoiseBootstrap_TimingsOK(t *testing.T) {
 
 	// Verify startNoiseBootstrap with ReadTimeout/WriteTimeout config strings
 	// parses them correctly (exercises the timeout parse branches).
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = false
 	cfg.Server.NoisePort = 0
@@ -3096,6 +3103,8 @@ func TestStartNoiseBootstrap_TimingsOK(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
+
+	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	server.wg.Add(1)
 	done := make(chan struct{})
@@ -3123,10 +3132,6 @@ func TestServer_Shutdown_WithNoiseServer(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = true // enable noise so Start() launches it
 	cfg.Server.NoisePort = 0
@@ -3141,9 +3146,14 @@ func TestServer_Shutdown_WithNoiseServer(t *testing.T) {
 	server, err := New(cfg)
 	require.NoError(t, err)
 
+	server.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
+
 	require.NoError(t, server.Start())
-	// Give the noise server a moment to start its accept loop.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for startNoiseBootstrap's goroutine to set the noise server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		return server.NoiseBootstrapServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "noise bootstrap server was not set")
 
 	err = server.Shutdown()
 	assert.NoError(t, err)
@@ -3179,8 +3189,11 @@ func TestServer_StartUnix_EmptyProtocolDefaultsToGRPC(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the gRPC server a moment to start, then shut it down.
-	time.Sleep(30 * time.Millisecond)
+	// Wait for the gRPC server field to be set instead of sleeping a fixed
+	// duration.
+	require.Eventually(t, func() bool {
+		return server.UnixGRPCServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 	require.NoError(t, server.Shutdown())
 
 	select {
@@ -3374,7 +3387,8 @@ func TestServer_Shutdown_BackendCloseError(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, server.Start())
-	time.Sleep(10 * time.Millisecond)
+	// Every protocol is disabled above, so Start launches no background
+	// goroutine here to wait on.
 
 	// Inject a backend that errors on Close.
 	server.backends["error-backend"] = &errXKMSBackend{closeErr: errors.New("backend close error")}
@@ -3700,10 +3714,6 @@ func TestInitializeHealth_BackendUnhealthy(t *testing.T) {
 // Noise static key file exists but does not decode, startNoiseBootstrap logs
 // the error and returns without hanging.
 func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	dataDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dataDir, noiseStaticKeyFileName), []byte("not-a-valid-key"), 0600))
 
@@ -3711,6 +3721,7 @@ func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
 		Server:  config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
 		Storage: config.StorageConfig{Path: dataDir},
 	})
+	s.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	s.wg.Add(1)
 	done := make(chan struct{})
@@ -3734,10 +3745,6 @@ func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
 // MaxConnections exceeds the upper bound (10000), noiseboot.NewServer returns
 // an error and startNoiseBootstrap exits cleanly.
 func TestStartNoiseBootstrap_MaxConnectionsExceeded(t *testing.T) {
-	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
-	grpcinternal.SetCABundler(bundler)
-	defer grpcinternal.SetCABundler(nil)
-
 	s := newMinimalServer(t, &config.Config{
 		Server: config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
 		Bootstrap: config.BootstrapConfig{
@@ -3747,6 +3754,7 @@ func TestStartNoiseBootstrap_MaxConnectionsExceeded(t *testing.T) {
 			},
 		},
 	})
+	s.grpcCABundler = &mockCABundlerForNoise{cert: selfSignedCert(t)}
 
 	s.wg.Add(1)
 	done := make(chan struct{})
@@ -4925,8 +4933,11 @@ func TestStartREST_WithCA(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the REST server a moment to start, then shut down.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the REST server field to be set instead of sleeping a fixed
+	// duration.
+	require.Eventually(t, func() bool {
+		return server.RESTServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "REST server was not set")
 	err = server.Shutdown()
 	assert.NoError(t, err)
 

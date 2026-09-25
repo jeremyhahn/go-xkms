@@ -15,6 +15,7 @@ package symmetric
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -63,7 +64,7 @@ func (b *Backend) DeriveFromSymmetricKey(ctx context.Context, attrs *types.KeyAt
 
 	keyData, err := storage.GetKey(ctx, b.storage, attrs.ID())
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, backend.ErrKeyNotFound
 		}
 		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}

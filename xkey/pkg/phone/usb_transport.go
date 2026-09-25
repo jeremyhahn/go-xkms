@@ -18,6 +18,7 @@ package phone
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -403,7 +404,7 @@ func (t *USBTransport) readFull(ctx context.Context, inEP usbInEndpoint, buf []b
 	for offset < len(buf) {
 		n, err := inEP.ReadContext(ctx, buf[offset:])
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				t.connected.Store(false)
 				return ErrNotConnected
 			}

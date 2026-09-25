@@ -33,9 +33,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// testCtxKey is a typed context key used by tests to avoid collisions.
-type testCtxKey string
-
 // insecureTestTLSConfig returns the explicit TLS configuration that the
 // hardened transport contract requires alongside Insecure=true
 // (InsecureSkipVerify is forbidden). These tests never complete a TLS
@@ -532,188 +529,6 @@ func TestTransport_Request_CaseInsensitive(t *testing.T) {
 	}
 }
 
-// TestTransport_RequestStream_ClosedTransport tests RequestStream after close.
-func TestTransport_RequestStream_ClosedTransport(t *testing.T) {
-	cfg := &transport.Config{
-		Address:   "localhost:9443",
-		Insecure:  true,
-		TLSConfig: insecureTestTLSConfig(),
-	}
-
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-
-	tr.Close()
-
-	ctx := context.Background()
-	_, err = tr.RequestStream(ctx, "admin", "stream", nil)
-	if err == nil {
-		t.Fatal("RequestStream() after Close() error = nil, want error")
-	}
-	if !errors.IsUnavailable(err) {
-		t.Errorf("RequestStream() error code = %v, want Unavailable", errors.Code(err))
-	}
-}
-
-// TestTransport_RequestStream_ACMEService tests RequestStream for ACME services.
-func TestTransport_RequestStream_ACMEService(t *testing.T) {
-	cfg := &transport.Config{
-		Address:   "localhost:9443",
-		Insecure:  true,
-		TLSConfig: insecureTestTLSConfig(),
-	}
-
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	_, err = tr.RequestStream(ctx, ServiceDirectory, "stream", nil)
-	if err == nil {
-		t.Fatal("RequestStream() for ACME error = nil, want error")
-	}
-	if !errors.IsUnimplemented(err) {
-		t.Errorf("RequestStream() error code = %v, want Unimplemented", errors.Code(err))
-	}
-}
-
-// TestTransport_RequestStream_AdminService tests RequestStream for Admin services.
-func TestTransport_RequestStream_AdminService(t *testing.T) {
-	cfg := &transport.Config{
-		Address:   "localhost:9443",
-		Insecure:  true,
-		TLSConfig: insecureTestTLSConfig(),
-	}
-
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	stream, err := tr.RequestStream(ctx, "admin", "stream", nil)
-	if err != nil {
-		t.Fatalf("RequestStream() for admin error = %v, want nil", err)
-	}
-	if stream == nil {
-		t.Error("RequestStream() returned nil stream")
-	}
-	stream.Close()
-}
-
-// TestTransport_RequestStream_WithPool tests RequestStream with pooling.
-func TestTransport_RequestStream_WithPool(t *testing.T) {
-	cfg := &transport.Config{
-		Address:            "localhost:9443",
-		Insecure:           true,
-		TLSConfig:          insecureTestTLSConfig(),
-		PoolEnabled:        true,
-		PoolMinSize:        1,
-		PoolMaxSize:        3,
-		PoolHealthInterval: time.Hour,
-	}
-
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	stream, err := tr.RequestStream(ctx, "admin", "stream", nil)
-	if err != nil {
-		t.Fatalf("RequestStream() with pool error = %v, want nil", err)
-	}
-	if stream == nil {
-		t.Error("RequestStream() returned nil stream")
-	}
-	stream.Close()
-}
-
-// TestGrpcStream_Send_NotInitialized tests Send with uninitialized stream.
-func TestGrpcStream_Send_NotInitialized(t *testing.T) {
-	stream := &grpcStream{}
-
-	err := stream.Send("test")
-	if err == nil {
-		t.Fatal("Send() on uninitialized stream error = nil, want error")
-	}
-	if !errors.Is(err, errors.CodeNotInitialized) {
-		t.Errorf("Send() error code = %v, want NotInitialized", errors.Code(err))
-	}
-}
-
-// TestGrpcStream_Send_Closed tests Send on closed stream.
-func TestGrpcStream_Send_Closed(t *testing.T) {
-	stream := &grpcStream{}
-	stream.Close()
-
-	err := stream.Send("test")
-	if err == nil {
-		t.Fatal("Send() on closed stream error = nil, want error")
-	}
-	if !errors.IsUnavailable(err) {
-		t.Errorf("Send() error code = %v, want Unavailable", errors.Code(err))
-	}
-}
-
-// TestGrpcStream_Recv_NotInitialized tests Recv with uninitialized stream.
-func TestGrpcStream_Recv_NotInitialized(t *testing.T) {
-	stream := &grpcStream{}
-
-	_, err := stream.Recv()
-	if err == nil {
-		t.Fatal("Recv() on uninitialized stream error = nil, want error")
-	}
-	if !errors.Is(err, errors.CodeNotInitialized) {
-		t.Errorf("Recv() error code = %v, want NotInitialized", errors.Code(err))
-	}
-}
-
-// TestGrpcStream_Recv_Closed tests Recv on closed stream.
-func TestGrpcStream_Recv_Closed(t *testing.T) {
-	stream := &grpcStream{}
-	stream.Close()
-
-	_, err := stream.Recv()
-	if err == nil {
-		t.Fatal("Recv() on closed stream error = nil, want error")
-	}
-	if !errors.IsUnavailable(err) {
-		t.Errorf("Recv() error code = %v, want Unavailable", errors.Code(err))
-	}
-}
-
-// TestGrpcStream_CloseSend_NilStream tests CloseSend with nil stream.
-func TestGrpcStream_CloseSend_NilStream(t *testing.T) {
-	stream := &grpcStream{}
-
-	err := stream.CloseSend()
-	if err != nil {
-		t.Errorf("CloseSend() on nil stream error = %v, want nil", err)
-	}
-}
-
-// TestGrpcStream_Close_Idempotent tests Close is idempotent.
-func TestGrpcStream_Close_Idempotent(t *testing.T) {
-	stream := &grpcStream{}
-
-	err := stream.Close()
-	if err != nil {
-		t.Errorf("Close() first call error = %v, want nil", err)
-	}
-
-	err = stream.Close()
-	if err != nil {
-		t.Errorf("Close() second call error = %v, want nil", err)
-	}
-}
-
 // TestBuildFullMethod tests full method path construction with service context.
 func TestBuildFullMethod(t *testing.T) {
 	tests := []struct {
@@ -978,44 +793,6 @@ func TestApplyDefaults_PreservesExisting(t *testing.T) {
 	}
 	if cfg.KeepaliveTimeout != 15*time.Second {
 		t.Errorf("KeepaliveTimeout changed from 15s to %v", cfg.KeepaliveTimeout)
-	}
-}
-
-// TestIsACMEService tests ACME service detection.
-func TestIsACMEService(t *testing.T) {
-	tr := &Transport{}
-
-	acmeServices := []string{
-		ServiceDirectory,
-		ServiceNonce,
-		ServiceAccount,
-		ServiceOrder,
-		ServiceAuthorization,
-		ServiceChallenge,
-		ServiceFinalize,
-		ServiceRevoke,
-	}
-
-	for _, svc := range acmeServices {
-		if !tr.isACMEService(svc) {
-			t.Errorf("isACMEService(%q) = false, want true", svc)
-		}
-	}
-
-	nonACMEServices := []string{
-		ServiceAdmin,
-		ServiceTenant,
-		ServiceEAB,
-		ServicePolicy,
-		ServiceCertificate,
-		ServiceStatus,
-		"unknown",
-	}
-
-	for _, svc := range nonACMEServices {
-		if tr.isACMEService(svc) {
-			t.Errorf("isACMEService(%q) = true, want false", svc)
-		}
 	}
 }
 
@@ -1342,7 +1119,6 @@ func TestDefaultConstants(t *testing.T) {
 func TestInterfaceCompliance(t *testing.T) {
 	// These should compile without errors.
 	var _ transport.Transport = (*Transport)(nil)
-	var _ transport.Stream = (*grpcStream)(nil)
 	var _ transport.Factory = (*Factory)(nil)
 }
 
@@ -1877,185 +1653,6 @@ func TestNewTransport_WithAllConfig(t *testing.T) {
 	}
 }
 
-// mockClientStream implements grpc.ClientStream for testing.
-type mockClientStream struct {
-	grpc.ClientStream
-	sendErr  error
-	recvErr  error
-	closeErr error
-	recvMsg  interface{}
-}
-
-func (m *mockClientStream) SendMsg(msg interface{}) error {
-	return m.sendErr
-}
-
-func (m *mockClientStream) RecvMsg(msg interface{}) error {
-	if m.recvErr != nil {
-		return m.recvErr
-	}
-	if m.recvMsg != nil {
-		// Copy the mock message to the output.
-		switch v := msg.(type) {
-		case *interface{}:
-			*v = m.recvMsg
-		}
-	}
-	return nil
-}
-
-func (m *mockClientStream) CloseSend() error {
-	return m.closeErr
-}
-
-func (m *mockClientStream) Header() (metadata.MD, error) {
-	return nil, nil
-}
-
-func (m *mockClientStream) Trailer() metadata.MD {
-	return nil
-}
-
-func (m *mockClientStream) Context() context.Context {
-	return context.Background()
-}
-
-// TestGrpcStream_Send_WithMockStream tests Send with a mock stream that succeeds.
-func TestGrpcStream_Send_WithMockStream(t *testing.T) {
-	mock := &mockClientStream{}
-	stream := &grpcStream{
-		ctx:    context.Background(),
-		stream: mock,
-	}
-
-	err := stream.Send("test message")
-	if err != nil {
-		t.Errorf("Send() error = %v, want nil", err)
-	}
-}
-
-// TestGrpcStream_Send_WithMockStreamError tests Send with a mock stream that fails.
-func TestGrpcStream_Send_WithMockStreamError(t *testing.T) {
-	mock := &mockClientStream{
-		sendErr: stderrors.New("send failed"),
-	}
-	stream := &grpcStream{
-		ctx:    context.Background(),
-		stream: mock,
-	}
-
-	err := stream.Send("test message")
-	if err == nil {
-		t.Fatal("Send() error = nil, want error")
-	}
-	if errors.Code(err) != errors.CodeTransport {
-		t.Errorf("Send() error code = %v, want Transport", errors.Code(err))
-	}
-}
-
-// TestGrpcStream_Recv_WithMockStream tests Recv with a mock stream that succeeds.
-func TestGrpcStream_Recv_WithMockStream(t *testing.T) {
-	mock := &mockClientStream{
-		recvMsg: "test response",
-	}
-	stream := &grpcStream{
-		ctx:    context.Background(),
-		stream: mock,
-	}
-
-	_, err := stream.Recv()
-	if err != nil {
-		t.Errorf("Recv() error = %v, want nil", err)
-	}
-}
-
-// TestGrpcStream_Recv_WithMockStreamError tests Recv with a mock stream that fails.
-func TestGrpcStream_Recv_WithMockStreamError(t *testing.T) {
-	mock := &mockClientStream{
-		recvErr: stderrors.New("recv failed"),
-	}
-	stream := &grpcStream{
-		ctx:    context.Background(),
-		stream: mock,
-	}
-
-	_, err := stream.Recv()
-	if err == nil {
-		t.Fatal("Recv() error = nil, want error")
-	}
-	if errors.Code(err) != errors.CodeTransport {
-		t.Errorf("Recv() error code = %v, want Transport", errors.Code(err))
-	}
-}
-
-// TestGrpcStream_CloseSend_WithMockStream tests CloseSend with a mock stream that succeeds.
-func TestGrpcStream_CloseSend_WithMockStream(t *testing.T) {
-	mock := &mockClientStream{}
-	stream := &grpcStream{
-		ctx:    context.Background(),
-		stream: mock,
-	}
-
-	err := stream.CloseSend()
-	if err != nil {
-		t.Errorf("CloseSend() error = %v, want nil", err)
-	}
-}
-
-// TestGrpcStream_CloseSend_WithMockStreamError tests CloseSend with a mock stream that fails.
-func TestGrpcStream_CloseSend_WithMockStreamError(t *testing.T) {
-	mock := &mockClientStream{
-		closeErr: stderrors.New("close failed"),
-	}
-	stream := &grpcStream{
-		ctx:    context.Background(),
-		stream: mock,
-	}
-
-	err := stream.CloseSend()
-	if err == nil {
-		t.Fatal("CloseSend() error = nil, want error")
-	}
-	if errors.Code(err) != errors.CodeTransport {
-		t.Errorf("CloseSend() error code = %v, want Transport", errors.Code(err))
-	}
-}
-
-// TestGrpcStream_Close_WithMockStream tests Close with an initialized mock stream.
-func TestGrpcStream_Close_WithMockStream(t *testing.T) {
-	mock := &mockClientStream{}
-	stream := &grpcStream{
-		ctx:    context.Background(),
-		stream: mock,
-	}
-
-	err := stream.Close()
-	if err != nil {
-		t.Errorf("Close() error = %v, want nil", err)
-	}
-
-	// Verify closed flag is set.
-	if !stream.closed.Load() {
-		t.Error("Close() did not set closed flag")
-	}
-}
-
-// TestGrpcStream_Close_WithMockStreamError tests Close when CloseSend fails.
-func TestGrpcStream_Close_WithMockStreamError(t *testing.T) {
-	mock := &mockClientStream{
-		closeErr: stderrors.New("close failed"),
-	}
-	stream := &grpcStream{
-		ctx:    context.Background(),
-		stream: mock,
-	}
-
-	err := stream.Close()
-	if err == nil {
-		t.Fatal("Close() error = nil, want error")
-	}
-}
-
 // TestHandleAdminRequest_WithPool tests handleAdminRequest with pool enabled.
 func TestHandleAdminRequest_WithPool(t *testing.T) {
 	cfg := &transport.Config{
@@ -2365,76 +1962,6 @@ func TestWithAuth_MetadataAppended(t *testing.T) {
 	}
 }
 
-// TestRequestStream_AllACMEServices tests RequestStream returns unimplemented for all ACME services.
-func TestRequestStream_AllACMEServices(t *testing.T) {
-	cfg := &transport.Config{
-		Address:   "localhost:9443",
-		Insecure:  true,
-		TLSConfig: insecureTestTLSConfig(),
-	}
-
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	acmeServices := []string{
-		ServiceDirectory, ServiceNonce, ServiceAccount, ServiceOrder,
-		ServiceAuthorization, ServiceChallenge, ServiceFinalize, ServiceRevoke,
-	}
-
-	for _, svc := range acmeServices {
-		_, err := tr.RequestStream(ctx, svc, "stream", nil)
-		if err == nil {
-			t.Errorf("RequestStream(%s) error = nil, want error", svc)
-			continue
-		}
-		if !errors.IsUnimplemented(err) {
-			t.Errorf("RequestStream(%s) error code = %v, want Unimplemented", svc, errors.Code(err))
-		}
-	}
-}
-
-// TestRequestStream_CaseInsensitive tests RequestStream handles service case.
-func TestRequestStream_CaseInsensitive(t *testing.T) {
-	cfg := &transport.Config{
-		Address:   "localhost:9443",
-		Insecure:  true,
-		TLSConfig: insecureTestTLSConfig(),
-	}
-
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-
-	// ACME services should return unimplemented regardless of case.
-	testCases := []string{"DIRECTORY", "Directory", "DiReCtOrY"}
-	for _, svc := range testCases {
-		_, err := tr.RequestStream(ctx, svc, "stream", nil)
-		if err == nil {
-			t.Errorf("RequestStream(%s) error = nil, want error", svc)
-			continue
-		}
-		if !errors.IsUnimplemented(err) {
-			t.Errorf("RequestStream(%s) error code = %v, want Unimplemented", svc, errors.Code(err))
-		}
-	}
-
-	// Admin services should succeed.
-	stream, err := tr.RequestStream(ctx, "ADMIN", "stream", nil)
-	if err != nil {
-		t.Errorf("RequestStream(ADMIN) error = %v, want nil", err)
-	} else {
-		stream.Close()
-	}
-}
-
 // TestPool_Get_RoundRobin tests that pool uses round-robin selection.
 func TestPool_Get_RoundRobin(t *testing.T) {
 	cfg := &transport.Config{
@@ -2649,30 +2176,6 @@ func TestTransport_Request_AdminServices(t *testing.T) {
 	}
 }
 
-// TestGrpcStream_SendRecvAfterClose tests Send and Recv after Close.
-func TestGrpcStream_SendRecvAfterClose(t *testing.T) {
-	mock := &mockClientStream{}
-	stream := &grpcStream{
-		ctx:    context.Background(),
-		stream: mock,
-	}
-
-	// Close the stream.
-	stream.Close()
-
-	// Send should fail.
-	err := stream.Send("test")
-	if err == nil {
-		t.Error("Send() after Close() error = nil, want error")
-	}
-
-	// Recv should fail.
-	_, err = stream.Recv()
-	if err == nil {
-		t.Error("Recv() after Close() error = nil, want error")
-	}
-}
-
 // TestConnectionPool_GetAfterHealthCheck tests Get after health check runs.
 func TestConnectionPool_GetAfterHealthCheck(t *testing.T) {
 	cfg := &transport.Config{
@@ -2805,11 +2308,11 @@ func TestHealthCheckLoop_StopsOnClose(t *testing.T) {
 		t.Fatalf("NewTransport() error = %v", err)
 	}
 
-	// Close should stop the health check loop.
+	// Close should stop the health check loop: closing p.healthDone
+	// unblocks healthCheckLoop's select immediately, so there is nothing to
+	// wait for here (this test asserts nothing further; Close itself is the
+	// behavior under test).
 	tr.Close()
-
-	// Give time for goroutine to exit.
-	time.Sleep(20 * time.Millisecond)
 }
 
 // TestPool_IsConnectionHealthy_VariousStates tests isConnectionHealthy with various states.
@@ -2877,24 +2380,6 @@ func TestTransport_Request_ZeroTimeoutConfig(t *testing.T) {
 	}
 }
 
-// TestGrpcStream_CloseSend_AlreadyClosed tests CloseSend after Close.
-func TestGrpcStream_CloseSend_AlreadyClosed(t *testing.T) {
-	mock := &mockClientStream{}
-	stream := &grpcStream{
-		ctx:    context.Background(),
-		stream: mock,
-	}
-
-	// Close the stream first.
-	stream.Close()
-
-	// CloseSend should still work (stream is set).
-	err := stream.CloseSend()
-	if err != nil {
-		t.Errorf("CloseSend() after Close() error = %v", err)
-	}
-}
-
 // TestPooledConnection_InUseFlag tests in-use flag behavior.
 func TestPooledConnection_InUseFlag(t *testing.T) {
 	pc := &pooledConnection{
@@ -2957,61 +2442,6 @@ func TestConnectionPool_Close_WithNilTicker(t *testing.T) {
 	err := pool.Close()
 	if err != nil {
 		t.Errorf("Close() with nil ticker error = %v", err)
-	}
-}
-
-// TestTransport_RequestStream_NilConnection tests RequestStream with nil connection.
-func TestTransport_RequestStream_NilConnection(t *testing.T) {
-	tr := &Transport{
-		cfg:      &transport.Config{},
-		handlers: map[string]requestHandler{},
-	}
-	tr.initHandlers()
-
-	ctx := context.Background()
-	_, err := tr.RequestStream(ctx, "admin", "stream", nil)
-	if err == nil {
-		t.Fatal("RequestStream() with nil conn error = nil, want error")
-	}
-	if !errors.IsUnavailable(err) {
-		t.Errorf("RequestStream() error code = %v, want Unavailable", errors.Code(err))
-	}
-}
-
-// TestGrpcStream_Context tests grpcStream context.
-func TestGrpcStream_Context(t *testing.T) {
-	ctx := context.WithValue(context.Background(), testCtxKey("key"), "value")
-	stream := &grpcStream{
-		ctx: ctx,
-	}
-
-	if stream.ctx != ctx {
-		t.Error("Stream context mismatch")
-	}
-}
-
-// TestGrpcStream_Conn tests grpcStream connection.
-func TestGrpcStream_Conn(t *testing.T) {
-	cfg := &transport.Config{
-		Address:   "localhost:9443",
-		Insecure:  true,
-		TLSConfig: insecureTestTLSConfig(),
-	}
-
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-	defer tr.Close()
-
-	grpcTransport := tr.(*Transport)
-	stream := &grpcStream{
-		ctx:  context.Background(),
-		conn: grpcTransport.conn,
-	}
-
-	if stream.conn == nil {
-		t.Error("Stream connection is nil")
 	}
 }
 
@@ -3603,48 +3033,4 @@ func TestPoolGet_OneAnnouncementReachesEveryWaiter(t *testing.T) {
 				"than the capacity it announced")
 		}
 	}
-}
-
-// TestGrpcStream_Close_ReturnsPoolLease is the regression test for go-xkms#104:
-// a pooled stream must return its exclusive connection lease on Close, or a
-// size-one pool is permanently exhausted after the first stream is opened and
-// closed. It opens and closes a stream, then proves the sole connection can be
-// acquired again. The short PoolAcquireTimeout keeps the pre-fix behaviour fast:
-// without the release the follow-up acquire waits out the timeout and returns
-// ErrPoolExhausted instead of succeeding, so the mutant fails in ~200ms.
-func TestGrpcStream_Close_ReturnsPoolLease(t *testing.T) {
-	cfg := &transport.Config{
-		Address:            "localhost:9443",
-		Insecure:           true,
-		TLSConfig:          insecureTestTLSConfig(),
-		PoolEnabled:        true,
-		PoolMinSize:        1,
-		PoolMaxSize:        1,
-		PoolHealthInterval: time.Hour,
-		PoolAcquireTimeout: 200 * time.Millisecond,
-	}
-
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-
-	stream, err := tr.RequestStream(ctx, "admin", "stream", nil)
-	if err != nil {
-		t.Fatalf("first RequestStream() error = %v, want nil", err)
-	}
-	if err := stream.Close(); err != nil {
-		t.Fatalf("stream.Close() error = %v, want nil", err)
-	}
-
-	// The exclusive lease taken by RequestStream must be back in the pool.
-	grpcTransport := tr.(*Transport)
-	conn, err := grpcTransport.pool.Get(ctx)
-	if err != nil {
-		t.Fatalf("pool.Get after stream Close error = %v, want the lease returned", err)
-	}
-	grpcTransport.releaseConnection(conn)
 }

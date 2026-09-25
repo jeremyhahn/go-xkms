@@ -247,7 +247,7 @@ when supplied, otherwise a generated one), the client address (honouring
 
 | Document | Description |
 |----------|-------------|
-| Configuration | Planned. Audit logging configuration currently lives in [../configuration.md](../configuration.md). |
+| Configuration | Planned. `acme/configuration.md` was deleted by go-xkms#942 (pre-merge go-trusted-ca documentation for a nonexistent config shape); the real `acme.audit` config (`pkg/config/acme.go`'s `ACMEAuditConfig`) is described in [`../../acme-issuance/engineering.md`](../../acme-issuance/engineering.md) §Configuration. |
 | Event Types | Planned. The event type constants are the reference until then. |
 | Integration | Planned. No SIEM integration guide has been written. |
 

@@ -59,6 +59,20 @@ func TestLocalKeyDir_Resolution(t *testing.T) {
 			t.Errorf("localKeyDir = %q, want %q", got, want)
 		}
 	})
+
+	t.Run("falls back to a per-user directory when no storage path is configured", func(t *testing.T) {
+		t.Setenv(envLocalKeyDir, "")
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		want := filepath.Join(home, ".xkms", "pkcs11", "keys")
+
+		if got := localKeyDir(nil); got != want {
+			t.Errorf("localKeyDir(nil) = %q, want %q", got, want)
+		}
+		if got := localKeyDir(&module.Config{}); got != want {
+			t.Errorf("localKeyDir(&Config{}) = %q, want %q", got, want)
+		}
+	})
 }
 
 // TestBuildOfflineModule_InitializesWithoutNetwork is the decisive wiring test:

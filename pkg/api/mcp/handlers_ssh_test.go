@@ -200,7 +200,10 @@ func TestSSHKeys_SignRejectsEmptyDigest(t *testing.T) {
 	require.Error(t, err)
 	var invalid *SSHInvalidParamsError
 	require.ErrorAs(t, err, &invalid)
-	assert.Contains(t, err.Error(), "digest is required")
+	assert.ErrorIs(t, err, ErrSSHDigestRequired)
+	var opErr *KeyOpError
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, ErrCodeInvalidParams, opErr.Code)
 }
 
 // TestSSHKeys_SignUnknownKey proves a signer lookup failure surfaces as an
@@ -444,12 +447,12 @@ func TestSSHKnownHosts_VerifyRequiredFields(t *testing.T) {
 	_, err := server.handleSSHKnownHostsVerify(context.Background(), sshRequest(t, "ssh.knownHosts.verify",
 		SSHKnownHostsVerifyParams{PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA=="}))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "host is required")
+	assert.ErrorIs(t, err, ErrSSHHostRequired)
 
 	_, err = server.handleSSHKnownHostsVerify(context.Background(), sshRequest(t, "ssh.knownHosts.verify",
 		SSHKnownHostsVerifyParams{Host: "git.example.com"}))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "public_key is required")
+	assert.ErrorIs(t, err, ErrSSHPublicKeyRequired)
 }
 
 // TestSSHKnownHosts_VerifyMalformedKey proves an unparsable authorized_keys
@@ -526,7 +529,7 @@ func TestSSHAuthorizedKeys_VerifyRequiresFingerprint(t *testing.T) {
 		SSHAuthorizedKeysVerifyParams{Scope: "user", Owner: "alice"}))
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "fingerprint is required")
+	assert.ErrorIs(t, err, ErrSSHFingerprintRequired)
 }
 
 // TestSSHAuthorizedKeys_AddRejectsMalformedLine proves a line that is not a

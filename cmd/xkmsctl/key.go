@@ -48,13 +48,18 @@ var keyGenerateCmd = &cobra.Command{
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		// Get flags
-		keyType, _ := cmd.Flags().GetString("key-type")
-		algorithm, _ := cmd.Flags().GetString("algorithm")
-		keyAlgorithm, _ := cmd.Flags().GetString("key-algorithm")
-		keySize, _ := cmd.Flags().GetInt("key-size")
-		curve, _ := cmd.Flags().GetString("curve")
-		exportable, _ := cmd.Flags().GetBool("exportable")
-		sensitive, _ := cmd.Flags().GetBool("sensitive")
+		fr := newFlagReader(cmd)
+		keyType := fr.String("key-type")
+		algorithm := fr.String("algorithm")
+		keyAlgorithm := fr.String("key-algorithm")
+		keySize := fr.Int("key-size")
+		curve := fr.String("curve")
+		exportable := fr.Bool("exportable")
+		sensitive := fr.Bool("sensitive")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		printVerbose("Generating %s key with ID: %s (exportable: %v, sensitive: %v)",
 			keyType, keyID, exportable, sensitive)
@@ -70,7 +75,7 @@ func generateKey(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAl
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -143,7 +148,7 @@ func listKeys(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -199,7 +204,7 @@ func getKey(cfg *Config, printer *Printer, keyID string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -250,7 +255,7 @@ func deleteKey(cfg *Config, printer *Printer, keyID string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -287,7 +292,12 @@ var keySignCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		hashAlg, _ := cmd.Flags().GetString("hash")
+		fr := newFlagReader(cmd)
+		hashAlg := fr.String("hash")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		printVerbose("Signing data with key: %s", keyID)
 
@@ -302,7 +312,7 @@ func sign(cfg *Config, printer *Printer, keyID, data, hashAlg string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -345,7 +355,12 @@ var keyVerifyCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		hashAlg, _ := cmd.Flags().GetString("hash")
+		fr := newFlagReader(cmd)
+		hashAlg := fr.String("hash")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		printVerbose("Verifying signature with key: %s", keyID)
 
@@ -360,7 +375,7 @@ func verify(cfg *Config, printer *Printer, keyID, data, signatureBase64, hashAlg
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -411,7 +426,12 @@ var keyEncryptCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		aad, _ := cmd.Flags().GetString("aad")
+		fr := newFlagReader(cmd)
+		aad := fr.String("aad")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		printVerbose("Encrypting data with key: %s", keyID)
 
@@ -426,7 +446,7 @@ func encrypt(cfg *Config, printer *Printer, keyID, plaintext, aad string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -477,9 +497,14 @@ var keyDecryptCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		aad, _ := cmd.Flags().GetString("aad")
-		nonce, _ := cmd.Flags().GetString("nonce")
-		tag, _ := cmd.Flags().GetString("tag")
+		fr := newFlagReader(cmd)
+		aad := fr.String("aad")
+		nonce := fr.String("nonce")
+		tag := fr.String("tag")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		printVerbose("Decrypting data with key: %s", keyID)
 
@@ -494,7 +519,7 @@ func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag s
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -563,7 +588,12 @@ var keyEncryptAsymCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		hashAlg, _ := cmd.Flags().GetString("hash")
+		fr := newFlagReader(cmd)
+		hashAlg := fr.String("hash")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		printVerbose("Encrypting data with key: %s", keyID)
 
@@ -578,7 +608,7 @@ func encryptAsym(cfg *Config, printer *Printer, keyID, plaintext, hashAlg string
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -634,7 +664,7 @@ func rotateKey(cfg *Config, printer *Printer, keyID string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -693,13 +723,18 @@ var keyImportCmd = &cobra.Command{
 
 		printVerbose("Wrapped key algorithm: %s", wrapped.Algorithm)
 
-		importKeyType, _ := cmd.Flags().GetString("key-type")
-		importKeySize, _ := cmd.Flags().GetInt("key-size")
-		importAESKeySize, _ := cmd.Flags().GetInt("aes-key-size")
-		importCurve, _ := cmd.Flags().GetString("curve")
-		importHash, _ := cmd.Flags().GetString("hash")
-		importPartition, _ := cmd.Flags().GetString("partition")
-		importSensitive, _ := cmd.Flags().GetBool("sensitive")
+		fr := newFlagReader(cmd)
+		importKeyType := fr.String("key-type")
+		importKeySize := fr.Int("key-size")
+		importAESKeySize := fr.Int("aes-key-size")
+		importCurve := fr.String("curve")
+		importHash := fr.String("hash")
+		importPartition := fr.String("partition")
+		importSensitive := fr.Bool("sensitive")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		spec := importKeySpec{
 			keyType:    strings.TrimSpace(importKeyType),
@@ -714,7 +749,12 @@ var keyImportCmd = &cobra.Command{
 		// write-once default (aes exportable, others not) when the request
 		// says nothing, and a plain bool cannot say "nothing".
 		if cmd.Flags().Changed("exportable") {
-			exportable, _ := cmd.Flags().GetBool("exportable")
+			fr := newFlagReader(cmd)
+			exportable := fr.Bool("exportable")
+			if err := fr.Err(); err != nil {
+				handleError(err)
+				return
+			}
 			spec.exportable = &exportable
 		}
 		if spec.keyType == "" {
@@ -748,7 +788,7 @@ func importKey(cfg *Config, printer *Printer, keyID string, wrapped *client.Wrap
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -796,7 +836,12 @@ var keyExportCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		algorithmStr, _ := cmd.Flags().GetString("algorithm")
+		fr := newFlagReader(cmd)
+		algorithmStr := fr.String("algorithm")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		printVerbose("Exporting key: %s to file: %s", keyID, outputFile)
 
@@ -814,7 +859,7 @@ func exportKey(cfg *Config, printer *Printer, keyID, outputFile string, algorith
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -877,12 +922,17 @@ var keyCopyCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		destBackend, _ := cmd.Flags().GetString("dest-backend")
-		keyType, _ := cmd.Flags().GetString("key-type")
-		keyAlgorithm, _ := cmd.Flags().GetString("key-algorithm")
-		keySize, _ := cmd.Flags().GetInt("key-size")
-		curve, _ := cmd.Flags().GetString("curve")
-		algorithmStr, _ := cmd.Flags().GetString("algorithm")
+		fr := newFlagReader(cmd)
+		destBackend := fr.String("dest-backend")
+		keyType := fr.String("key-type")
+		keyAlgorithm := fr.String("key-algorithm")
+		keySize := fr.Int("key-size")
+		curve := fr.String("curve")
+		algorithmStr := fr.String("algorithm")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		printVerbose("Copying key: %s -> %s (backend: %s -> %s)", sourceKeyID, destKeyID, cfg.Backend, destBackend)
 
@@ -900,7 +950,7 @@ func copyKey(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend,
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -950,12 +1000,17 @@ var keyGetImportParamsCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		keyType, _ := cmd.Flags().GetString("key-type")
-		keyAlgorithm, _ := cmd.Flags().GetString("key-algorithm")
-		keySize, _ := cmd.Flags().GetInt("key-size")
-		curve, _ := cmd.Flags().GetString("curve")
-		algorithmStr, _ := cmd.Flags().GetString("algorithm")
-		outputFile, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		keyType := fr.String("key-type")
+		keyAlgorithm := fr.String("key-algorithm")
+		keySize := fr.Int("key-size")
+		curve := fr.String("curve")
+		algorithmStr := fr.String("algorithm")
+		outputFile := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		printVerbose("Getting import parameters for key: %s", keyID)
 
@@ -973,7 +1028,7 @@ func getImportParams(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1091,7 +1146,7 @@ func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.I
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1206,7 +1261,7 @@ func unwrapKey(cfg *Config, printer *Printer, wrapped *client.WrappedKeyMaterial
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1261,8 +1316,13 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		nonceBase64, _ := cmd.Flags().GetString("nonce")
-		outputFile, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		nonceBase64 := fr.String("nonce")
+		outputFile := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		var nonce []byte
 		if nonceBase64 != "" {
@@ -1293,7 +1353,7 @@ func attestKey(cfg *Config, printer *Printer, keyID string, nonce []byte, output
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1337,16 +1397,19 @@ func attestKey(cfg *Config, printer *Printer, keyID string, nonce []byte, output
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Key Attestation:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Backend:      %s\n", resp.Backend)
-		_, _ = fmt.Fprintf(printer.writer, "  Format:       %s\n", resp.Format)
+		printer.printf("Key Attestation:\n")
+		printer.printf("  Backend:      %s\n", resp.Backend)
+		printer.printf("  Format:       %s\n", resp.Format)
 		if resp.SignatureAlgorithm != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Sig Alg:      %s\n", resp.SignatureAlgorithm)
+			printer.printf("  Sig Alg:      %s\n", resp.SignatureAlgorithm)
 		}
-		_, _ = fmt.Fprintf(printer.writer, "  Nonce:        %s\n", base64.StdEncoding.EncodeToString(resp.Nonce))
-		_, _ = fmt.Fprintf(printer.writer, "  Data:         %s\n", base64.StdEncoding.EncodeToString(resp.AttestationData))
-		_, _ = fmt.Fprintf(printer.writer, "  Signature:    %s\n", base64.StdEncoding.EncodeToString(resp.Signature))
-		_, _ = fmt.Fprintf(printer.writer, "  Certificates: %d\n", len(resp.CertificateChain))
+		printer.printf("  Nonce:        %s\n", base64.StdEncoding.EncodeToString(resp.Nonce))
+		printer.printf("  Data:         %s\n", base64.StdEncoding.EncodeToString(resp.AttestationData))
+		printer.printf("  Signature:    %s\n", base64.StdEncoding.EncodeToString(resp.Signature))
+		printer.printf("  Certificates: %d\n", len(resp.CertificateChain))
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -1370,14 +1433,19 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		peerKeyFile, _ := cmd.Flags().GetString("peer-key")
-		kdf, _ := cmd.Flags().GetString("kdf")
-		kdfHash, _ := cmd.Flags().GetString("kdf-hash")
-		saltBase64, _ := cmd.Flags().GetString("salt")
-		info, _ := cmd.Flags().GetString("info")
-		label, _ := cmd.Flags().GetString("label")
-		keyLength, _ := cmd.Flags().GetInt("length")
-		outputFile, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		peerKeyFile := fr.String("peer-key")
+		kdf := fr.String("kdf")
+		kdfHash := fr.String("kdf-hash")
+		saltBase64 := fr.String("salt")
+		info := fr.String("info")
+		label := fr.String("label")
+		keyLength := fr.Int("length")
+		outputFile := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if peerKeyFile == "" {
 			handleError(ErrPeerPublicKeyRequired)
@@ -1429,7 +1497,7 @@ func deriveKeyECDH(cfg *Config, printer *Printer, req *client.DeriveKeyECDHReque
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1465,8 +1533,11 @@ func deriveKeyECDH(cfg *Config, printer *Printer, req *client.DeriveKeyECDHReque
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Derived Key (%d bytes):\n", len(resp.DerivedKey))
-		_, _ = fmt.Fprintf(printer.writer, "  %s\n", base64.StdEncoding.EncodeToString(resp.DerivedKey))
+		printer.printf("Derived Key (%d bytes):\n", len(resp.DerivedKey))
+		printer.printf("  %s\n", base64.StdEncoding.EncodeToString(resp.DerivedKey))
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -1489,11 +1560,16 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		wrappingKeyID, _ := cmd.Flags().GetString("wrapping-key")
-		wrappingBackend, _ := cmd.Flags().GetString("wrapping-backend")
-		targetBackend, _ := cmd.Flags().GetString("target-backend")
-		algorithm, _ := cmd.Flags().GetString("algorithm")
-		outputFile, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		wrappingKeyID := fr.String("wrapping-key")
+		wrappingBackend := fr.String("wrapping-backend")
+		targetBackend := fr.String("target-backend")
+		algorithm := fr.String("algorithm")
+		outputFile := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if wrappingKeyID == "" {
 			handleError(ErrWrappingKeyIDRequired)
@@ -1525,7 +1601,7 @@ func wrapKeyByID(cfg *Config, printer *Printer, req *client.WrapKeyByIDRequest, 
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1561,8 +1637,11 @@ func wrapKeyByID(cfg *Config, printer *Printer, req *client.WrapKeyByIDRequest, 
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Wrapped Key (%s):\n", resp.Algorithm)
-		_, _ = fmt.Fprintf(printer.writer, "  %s\n", base64.StdEncoding.EncodeToString(resp.WrappedKey))
+		printer.printf("Wrapped Key (%s):\n", resp.Algorithm)
+		printer.printf("  %s\n", base64.StdEncoding.EncodeToString(resp.WrappedKey))
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -1587,15 +1666,20 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		wrappedFile, _ := cmd.Flags().GetString("wrapped-file")
-		unwrappingKeyID, _ := cmd.Flags().GetString("unwrapping-key")
-		unwrappingBackend, _ := cmd.Flags().GetString("unwrapping-backend")
-		targetBackend, _ := cmd.Flags().GetString("target-backend")
-		algorithm, _ := cmd.Flags().GetString("algorithm")
-		keyType, _ := cmd.Flags().GetString("key-type")
-		keySize, _ := cmd.Flags().GetInt("key-size")
-		curve, _ := cmd.Flags().GetString("curve")
-		exportable, _ := cmd.Flags().GetBool("exportable")
+		fr := newFlagReader(cmd)
+		wrappedFile := fr.String("wrapped-file")
+		unwrappingKeyID := fr.String("unwrapping-key")
+		unwrappingBackend := fr.String("unwrapping-backend")
+		targetBackend := fr.String("target-backend")
+		algorithm := fr.String("algorithm")
+		keyType := fr.String("key-type")
+		keySize := fr.Int("key-size")
+		curve := fr.String("curve")
+		exportable := fr.Bool("exportable")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if wrappedFile == "" {
 			handleError(ErrWrappedKeyFileRequired)
@@ -1642,7 +1726,7 @@ func unwrapKeyByID(cfg *Config, printer *Printer, req *client.UnwrapKeyByIDReque
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1688,7 +1772,12 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		outputFile, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		outputFile := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		printVerbose("Exporting raw key material for: %s", keyID)
 
@@ -1703,7 +1792,7 @@ func exportKeyMaterial(cfg *Config, printer *Printer, keyID, outputFile string) 
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1745,8 +1834,11 @@ func exportKeyMaterial(cfg *Config, printer *Printer, keyID, outputFile string) 
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Key Material (%s, %d bits):\n", resp.KeyType, resp.KeySize)
-		_, _ = fmt.Fprintf(printer.writer, "  %s\n", base64.StdEncoding.EncodeToString(resp.KeyMaterial))
+		printer.printf("Key Material (%s, %d bits):\n", resp.KeyType, resp.KeySize)
+		printer.printf("  %s\n", base64.StdEncoding.EncodeToString(resp.KeyMaterial))
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 

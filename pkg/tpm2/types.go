@@ -38,6 +38,14 @@ const (
 	idevIDNVIndex = 0x01C90020
 	iakNVIndex    = 0x01C90021
 
+	// TPMA_PERMANENT bits (TCG TPM 2.0 Part 2, section 8.3, Table 32).
+	// formatPermanentFlags and ProvisioningState.State both decode these
+	// from PropertiesFixed.Permanent, and share these three values so the
+	// bit positions cannot drift apart between the two call sites.
+	permanentOwnerAuthSet       = 0x00000001
+	permanentEndorsementAuthSet = 0x00000002
+	permanentLockoutAuthSet     = 0x00000004
+
 	ekCertIndexRSA2048 = 0x01C00002
 	ekCertIndexECCP256 = 0x01C0000a
 	ekCertIndexECCP384 = 0x01C00016
@@ -405,10 +413,52 @@ var (
 	ErrInvalidHierarchy               = errors.New("tpm: invalid hierarchy")
 	ErrFactoryReset                   = errors.New("tpm: factory reset failed")
 	ErrForceClear                     = errors.New("tpm: force clear via PPI failed")
-	ErrEKConfigNil                    = errors.New("tpm: EK config is nil")
-	ErrIAKConfigNil                   = errors.New("tpm: IAK config is nil")
-	ErrIDevIDConfigNil                = errors.New("tpm: IDevID config is nil")
-	ErrSSRKConfigNil                  = errors.New("tpm: SSRK config is nil")
+
+	// ErrClearLockoutRefused reports that TPM2_Clear via the LOCKOUT
+	// hierarchy with empty auth was refused -- typically because a previous
+	// provisioning run set the lockout auth, or dictionary-attack lockout
+	// is engaged. ClearForReprovision falls through to the PLATFORM
+	// hierarchy when this occurs.
+	ErrClearLockoutRefused = errors.New("tpm: TPM2_Clear via LOCKOUT hierarchy refused")
+
+	// ErrClearPlatformRefused reports that TPM2_Clear via the PLATFORM
+	// hierarchy with empty auth was refused -- the common case, since most
+	// firmware clears the platform hierarchy's auth at every boot before
+	// handing control to the OS (TCG TPM 2.0 Part 1, section 13.7).
+	// ClearForReprovision falls through to PPI ForceClear when this occurs.
+	ErrClearPlatformRefused = errors.New("tpm: TPM2_Clear via PLATFORM hierarchy refused")
+
+	// ErrProvisioningStateRead reports that State could not read one of the
+	// TPM properties or persistent handles it classifies.
+	ErrProvisioningStateRead = errors.New("tpm: failed to read TPM provisioning state")
+
+	// ErrCredentialChallenge reports that NewCredentialChallenge could not
+	// build a TPM2_MakeCredential challenge in software.
+	ErrCredentialChallenge = errors.New("tpm: failed to build credential challenge")
+
+	// ErrEKPublicRequired reports that NewCredentialChallenge was called
+	// with a nil EK public key.
+	ErrEKPublicRequired = errors.New("tpm: EK public key is required")
+
+	// ErrActivationKeyNameRequired reports that NewCredentialChallenge was
+	// called with an empty activation key Name.
+	ErrActivationKeyNameRequired = errors.New("tpm: activation key name is required")
+
+	// ErrActivationKeyCreate reports that CreateActivationKey could not
+	// create the transient null-hierarchy key.
+	ErrActivationKeyCreate = errors.New("tpm: failed to create activation key")
+
+	// ErrActivationKeyRequired reports that AnswerCredentialChallenge was
+	// called with a nil ActivationKey.
+	ErrActivationKeyRequired = errors.New("tpm: activation key is required")
+
+	// ErrCredentialChallengeRequired reports that AnswerCredentialChallenge
+	// was called with a nil CredentialChallenge.
+	ErrCredentialChallengeRequired = errors.New("tpm: credential challenge is required")
+	ErrEKConfigNil                 = errors.New("tpm: EK config is nil")
+	ErrIAKConfigNil                = errors.New("tpm: IAK config is nil")
+	ErrIDevIDConfigNil             = errors.New("tpm: IDevID config is nil")
+	ErrSSRKConfigNil               = errors.New("tpm: SSRK config is nil")
 
 	// Handle enumeration errors
 	ErrListPersistentHandles = errors.New("tpm: list persistent handles")

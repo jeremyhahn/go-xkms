@@ -15,11 +15,36 @@ package xkms
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestAutoInitialize_NoDataDirNeverWritesTPM2KeysInCWD is the regression test
+// for #926: AutoInitialize with no DataDir (and no BackendConfigs override)
+// never sets a "key_dir" for the tpm2 backend, so the tpm2 backend factory
+// must fail closed (tpm2.ErrKeyDirRequired) rather than defaulting to a
+// tpm2-keys directory resolved relative to the process's working directory.
+// AutoInitialize tolerates the failure -- tpm2 is skipped with a warning,
+// exactly like a host with no TPM hardware -- and software still comes up.
+func TestAutoInitialize_NoDataDirNeverWritesTPM2KeysInCWD(t *testing.T) {
+	t.Cleanup(func() { Reset() })
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	strayDir := filepath.Join(wd, "tpm2-keys")
+	_, statErr := os.Stat(strayDir)
+	require.True(t, os.IsNotExist(statErr), "precondition: no stray tpm2-keys dir in the working directory")
+
+	require.NoError(t, AutoInitialize(nil))
+	assert.True(t, IsInitialized())
+
+	_, statErr = os.Stat(strayDir)
+	assert.True(t, os.IsNotExist(statErr), "AutoInitialize must never create tpm2-keys under the working directory")
+}
 
 func TestAutoInitialize_NilConfig(t *testing.T) {
 	t.Cleanup(func() { Reset() })

@@ -171,14 +171,14 @@ func encodeCertsToPEM(certs []*x509.Certificate) []byte {
 	return buf.Bytes()
 }
 
-// TestGRPCSetGetCABundler tests setting and getting the CA bundler.
-func TestGRPCSetGetCABundler(t *testing.T) {
-	// Clean up after test
-	defer SetCABundler(nil)
+// TestServiceSetGetCABundler tests setting and getting the CA bundler on a
+// Service instance.
+func TestServiceSetGetCABundler(t *testing.T) {
+	svc := NewService(nil, nil, nil)
 
 	t.Run("returns nil when not configured", func(t *testing.T) {
-		SetCABundler(nil)
-		bundler := GetCABundler()
+		svc.SetCABundler(nil)
+		bundler := svc.CABundler()
 		if bundler != nil {
 			t.Error("Expected nil bundler when not configured")
 		}
@@ -188,9 +188,9 @@ func TestGRPCSetGetCABundler(t *testing.T) {
 		mockBundler := &mockCABundler{
 			bundle: []byte("test bundle"),
 		}
-		SetCABundler(mockBundler)
+		svc.SetCABundler(mockBundler)
 
-		bundler := GetCABundler()
+		bundler := svc.CABundler()
 		if bundler == nil {
 			t.Fatal("Expected non-nil bundler")
 		}
@@ -203,10 +203,10 @@ func TestGRPCSetGetCABundler(t *testing.T) {
 		firstBundler := &mockCABundler{bundle: []byte("first")}
 		secondBundler := &mockCABundler{bundle: []byte("second")}
 
-		SetCABundler(firstBundler)
-		SetCABundler(secondBundler)
+		svc.SetCABundler(firstBundler)
+		svc.SetCABundler(secondBundler)
 
-		bundler := GetCABundler()
+		bundler := svc.CABundler()
 		if bundler != secondBundler {
 			t.Error("Expected second bundler to replace first")
 		}
@@ -215,10 +215,6 @@ func TestGRPCSetGetCABundler(t *testing.T) {
 
 // TestGetCABundle_NoBundlerConfigured tests GetCABundle when no bundler is configured.
 func TestGetCABundle_NoBundlerConfigured(t *testing.T) {
-	// Ensure bundler is not configured
-	SetCABundler(nil)
-	defer SetCABundler(nil)
-
 	service := NewService(nil, nil, nil)
 
 	_, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
@@ -240,14 +236,12 @@ func TestGetCABundle_NoBundlerConfigured(t *testing.T) {
 
 // TestGetCABundle_EmptyBundle tests GetCABundle when bundler returns empty bundle.
 func TestGetCABundle_EmptyBundle(t *testing.T) {
-	defer SetCABundler(nil)
-
 	mockBundler := &mockCABundler{
 		bundle: []byte{},
 	}
-	SetCABundler(mockBundler)
 
 	service := NewService(nil, nil, nil)
+	service.SetCABundler(mockBundler)
 
 	_, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	if err == nil {
@@ -268,15 +262,13 @@ func TestGetCABundle_EmptyBundle(t *testing.T) {
 
 // TestGetCABundle_BundlerError tests GetCABundle when bundler returns an error.
 func TestGetCABundle_BundlerError(t *testing.T) {
-	defer SetCABundler(nil)
-
 	expectedErr := errors.New("bundler error")
 	mockBundler := &mockCABundler{
 		err: expectedErr,
 	}
-	SetCABundler(mockBundler)
 
 	service := NewService(nil, nil, nil)
+	service.SetCABundler(mockBundler)
 
 	_, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	if err == nil {
@@ -294,8 +286,6 @@ func TestGetCABundle_BundlerError(t *testing.T) {
 
 // TestGetCABundle_Success tests successful CA bundle retrieval.
 func TestGetCABundle_Success(t *testing.T) {
-	defer SetCABundler(nil)
-
 	rootCA, _ := createTestRootCACert(t)
 	bundlePEM := encodeCertsToPEM([]*x509.Certificate{rootCA})
 
@@ -303,9 +293,9 @@ func TestGetCABundle_Success(t *testing.T) {
 		bundle: bundlePEM,
 		cert:   rootCA,
 	}
-	SetCABundler(mockBundler)
 
 	service := NewService(nil, nil, nil)
+	service.SetCABundler(mockBundler)
 
 	resp, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	if err != nil {
@@ -331,8 +321,6 @@ func TestGetCABundle_Success(t *testing.T) {
 
 // TestGetCABundle_MultipleCertificates tests bundle with multiple certificates.
 func TestGetCABundle_MultipleCertificates(t *testing.T) {
-	defer SetCABundler(nil)
-
 	rootCA, rootKey := createTestRootCACert(t)
 	intermediateCA, intermediateKey := createTestIntermediateCACert(t, rootCA, rootKey)
 	leafCert := createTestLeafCert(t, intermediateCA, intermediateKey)
@@ -343,9 +331,9 @@ func TestGetCABundle_MultipleCertificates(t *testing.T) {
 	mockBundler := &mockCABundler{
 		bundle: bundlePEM,
 	}
-	SetCABundler(mockBundler)
 
 	service := NewService(nil, nil, nil)
+	service.SetCABundler(mockBundler)
 
 	resp, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{})
 	if err != nil {
@@ -359,8 +347,6 @@ func TestGetCABundle_MultipleCertificates(t *testing.T) {
 
 // TestGetCABundle_WithStoreTypeFilter tests filtering by store type.
 func TestGetCABundle_WithStoreTypeFilter(t *testing.T) {
-	defer SetCABundler(nil)
-
 	rootCA, rootKey := createTestRootCACert(t)
 	intermediateCA, intermediateKey := createTestIntermediateCACert(t, rootCA, rootKey)
 	leafCert := createTestLeafCert(t, intermediateCA, intermediateKey)
@@ -371,9 +357,9 @@ func TestGetCABundle_WithStoreTypeFilter(t *testing.T) {
 	mockBundler := &mockCABundler{
 		bundle: bundlePEM,
 	}
-	SetCABundler(mockBundler)
 
 	service := NewService(nil, nil, nil)
+	service.SetCABundler(mockBundler)
 
 	testCases := []struct {
 		name          string
@@ -420,8 +406,6 @@ func TestGetCABundle_WithStoreTypeFilter(t *testing.T) {
 
 // TestGetCABundle_WithAlgorithmFilter tests filtering by algorithm.
 func TestGetCABundle_WithAlgorithmFilter(t *testing.T) {
-	defer SetCABundler(nil)
-
 	rootCA, rootKey := createTestRootCACert(t)
 	intermediateCA, intermediateKey := createTestIntermediateCACert(t, rootCA, rootKey)
 	leafCert := createTestLeafCert(t, intermediateCA, intermediateKey)
@@ -432,9 +416,9 @@ func TestGetCABundle_WithAlgorithmFilter(t *testing.T) {
 	mockBundler := &mockCABundler{
 		bundle: bundlePEM,
 	}
-	SetCABundler(mockBundler)
 
 	service := NewService(nil, nil, nil)
+	service.SetCABundler(mockBundler)
 
 	testCases := []struct {
 		name          string
@@ -476,17 +460,15 @@ func TestGetCABundle_WithAlgorithmFilter(t *testing.T) {
 
 // TestGetCABundle_FilterNoMatch tests filtering when no certificates match.
 func TestGetCABundle_FilterNoMatch(t *testing.T) {
-	defer SetCABundler(nil)
-
 	rootCA, _ := createTestRootCACert(t)
 	bundlePEM := encodeCertsToPEM([]*x509.Certificate{rootCA})
 
 	mockBundler := &mockCABundler{
 		bundle: bundlePEM,
 	}
-	SetCABundler(mockBundler)
 
 	service := NewService(nil, nil, nil)
+	service.SetCABundler(mockBundler)
 
 	t.Run("unknown store type returns empty", func(t *testing.T) {
 		_, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{
@@ -543,8 +525,6 @@ func TestGetCABundle_FilterNoMatch(t *testing.T) {
 
 // TestGetCABundle_CombinedFilters tests using both store type and algorithm filters.
 func TestGetCABundle_CombinedFilters(t *testing.T) {
-	defer SetCABundler(nil)
-
 	rootCA, rootKey := createTestRootCACert(t)
 	intermediateCA, intermediateKey := createTestIntermediateCACert(t, rootCA, rootKey)
 	leafCert := createTestLeafCert(t, intermediateCA, intermediateKey)
@@ -555,9 +535,9 @@ func TestGetCABundle_CombinedFilters(t *testing.T) {
 	mockBundler := &mockCABundler{
 		bundle: bundlePEM,
 	}
-	SetCABundler(mockBundler)
 
 	service := NewService(nil, nil, nil)
+	service.SetCABundler(mockBundler)
 
 	t.Run("filter root + RSA returns RSA root", func(t *testing.T) {
 		resp, err := service.GetCABundle(context.Background(), &pb.GetCABundleRequest{

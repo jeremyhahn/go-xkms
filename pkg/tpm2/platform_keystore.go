@@ -231,7 +231,7 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 		// TPM_RC_NV_DEFINED (0x14c) means the persistent handle is already
 		// occupied - the SRK exists from a prior provisioning attempt.
 		// Treat this as success but ensure auth matches below.
-		if err == tpmRCNVDefined {
+		if errors.Is(err, tpmRCNVDefined) {
 			pks.logger.Info("platform SRK already exists at persistent handle")
 			pks.initialized.Store(true)
 			return pks.ensureSRKAuth(soPIN, userPIN)
@@ -395,7 +395,7 @@ func (pks *PlatformKeyStore) InitializeWithDefaults() error {
 		// occupied - the SRK exists from a prior provisioning attempt.
 		// Mark initialized (SRK exists) but NOT authReady — auth state is
 		// unknown. The app layer decides via persisted PINStrategy config.
-		if err == tpmRCNVDefined {
+		if errors.Is(err, tpmRCNVDefined) {
 			pks.logger.Info("platform SRK already exists at persistent handle")
 			pks.initialized.Store(true)
 			pks.logger.Info("platform key store initialized with defaults (existing SRK)",

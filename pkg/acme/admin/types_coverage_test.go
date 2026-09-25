@@ -17,6 +17,7 @@ package admin
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -86,6 +87,15 @@ func TestIsNotFoundError_AllErrors(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// TestIsNotFoundError_WrappedSentinel is go-xkms#894's regression case for
+// IsNotFoundError itself: before the fix it switched on err directly, so a
+// sentinel wrapped by a call site (fmt.Errorf's %w, the common pattern for
+// adding context) would silently fall through to "not a not-found error".
+func TestIsNotFoundError_WrappedSentinel(t *testing.T) {
+	wrapped := fmt.Errorf("resolve tenant %s: %w", "tenant-1", ErrTenantNotFound)
+	assert.True(t, IsNotFoundError(wrapped), "a wrapped ErrTenantNotFound must still classify as not-found")
 }
 
 func TestIsValidationError(t *testing.T) {

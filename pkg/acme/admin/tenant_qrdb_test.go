@@ -178,7 +178,7 @@ var _ qrdbsdk.ServiceTenantServicer = (*fakeTenantServicer)(nil)
 // DAO — the owner decision this change implements.
 func TestTenantAwareAdminService_CreateTenant_DelegatesToQRDB(t *testing.T) {
 	fake := newFakeTenantServicer()
-	svc := NewTenantAwareAdminService(nil, nil, nil, slog.Default(), "1.0.0")
+	svc := mustTenantAwareAdminService(t, nil, nil, nil, slog.Default(), "1.0.0")
 	svc.SetTenantService(fake)
 
 	info, err := svc.CreateTenant(context.Background(), CreateTenantRequest{ID: "acme-corp", Name: "ACME Corp"})
@@ -198,7 +198,7 @@ func TestTenantAwareAdminService_CreateTenant_DelegatesToQRDB(t *testing.T) {
 // not need to know which backing store served the request.
 func TestTenantAwareAdminService_CreateTenant_QRDBAlreadyExists(t *testing.T) {
 	fake := newFakeTenantServicer()
-	svc := NewTenantAwareAdminService(nil, nil, nil, slog.Default(), "1.0.0")
+	svc := mustTenantAwareAdminService(t, nil, nil, nil, slog.Default(), "1.0.0")
 	svc.SetTenantService(fake)
 
 	_, err := svc.CreateTenant(context.Background(), CreateTenantRequest{ID: "dup", Name: "Dup"})
@@ -213,7 +213,7 @@ func TestTenantAwareAdminService_CreateTenant_QRDBAlreadyExists(t *testing.T) {
 // qrdb does not know about, and returns qrdb's copy for one it does.
 func TestTenantAwareAdminService_GetTenant_DelegatesToQRDB(t *testing.T) {
 	fake := newFakeTenantServicer()
-	svc := NewTenantAwareAdminService(nil, nil, nil, slog.Default(), "1.0.0")
+	svc := mustTenantAwareAdminService(t, nil, nil, nil, slog.Default(), "1.0.0")
 	svc.SetTenantService(fake)
 
 	_, err := svc.GetTenant(context.Background(), "missing")
@@ -231,7 +231,7 @@ func TestTenantAwareAdminService_GetTenant_DelegatesToQRDB(t *testing.T) {
 // patch reaches qrdb.
 func TestTenantAwareAdminService_UpdateTenant_DelegatesToQRDB(t *testing.T) {
 	fake := newFakeTenantServicer()
-	svc := NewTenantAwareAdminService(nil, nil, nil, slog.Default(), "1.0.0")
+	svc := mustTenantAwareAdminService(t, nil, nil, nil, slog.Default(), "1.0.0")
 	svc.SetTenantService(fake)
 
 	_, err := fake.CreateTenant(context.Background(), "t1", "Old Name", "")
@@ -251,7 +251,7 @@ func TestTenantAwareAdminService_UpdateTenant_DelegatesToQRDB(t *testing.T) {
 // delete answers ErrTenantNotFound.
 func TestTenantAwareAdminService_DeleteTenant_DelegatesToQRDB(t *testing.T) {
 	fake := newFakeTenantServicer()
-	svc := NewTenantAwareAdminService(nil, nil, nil, slog.Default(), "1.0.0")
+	svc := mustTenantAwareAdminService(t, nil, nil, nil, slog.Default(), "1.0.0")
 	svc.SetTenantService(fake)
 
 	_, err := fake.CreateTenant(context.Background(), "gone-soon", "Gone Soon", "")
@@ -269,7 +269,7 @@ func TestTenantAwareAdminService_DeleteTenant_DelegatesToQRDB(t *testing.T) {
 // set comes from qrdb rather than an empty/local-only result.
 func TestTenantAwareAdminService_ListTenants_DelegatesToQRDB(t *testing.T) {
 	fake := newFakeTenantServicer()
-	svc := NewTenantAwareAdminService(nil, nil, nil, slog.Default(), "1.0.0")
+	svc := mustTenantAwareAdminService(t, nil, nil, nil, slog.Default(), "1.0.0")
 	svc.SetTenantService(fake)
 
 	_, err := fake.CreateTenant(context.Background(), "a", "A", "")
@@ -289,7 +289,7 @@ func TestTenantAwareAdminService_ListTenants_DelegatesToQRDB(t *testing.T) {
 // local-only entities.Tenant model — qrdb is the single tenant authority,
 // per the owner decision this change implements.
 func TestTenantAwareAdminService_TenantLifecycle_NoQRDBFailsClosed(t *testing.T) {
-	svc := NewTenantAwareAdminService(nil, nil, nil, slog.Default(), "1.0.0")
+	svc := mustTenantAwareAdminService(t, nil, nil, nil, slog.Default(), "1.0.0")
 	// No SetTenantService call.
 	ctx := context.Background()
 
