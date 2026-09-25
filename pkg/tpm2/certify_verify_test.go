@@ -679,3 +679,17 @@ func TestRSAPublicFromAreaWrapsUniqueMismatchAsCertifyMalformed(t *testing.T) {
 	_, err := rsaPublicFromArea(mistypedUnique)
 	assert.ErrorIs(t, err, ErrCertifyMalformed)
 }
+
+// TestVerifyCertifyRaw_MalformedAttesterPublic proves VerifyCertifyRaw
+// refuses an attesterPub byte string that will not unmarshal as a
+// TPMT_PUBLIC before it ever attempts to derive a scheme or signature from
+// it.
+func TestVerifyCertifyRaw_MalformedAttesterPublic(t *testing.T) {
+	_, err := VerifyCertifyRaw(
+		[]byte("certify-info"),
+		[]byte("raw-signature"),
+		[]byte{0x00, 0x01, 0x02},
+		[]byte("subject-public"),
+		nil)
+	assert.ErrorIs(t, err, ErrCertifyMalformed)
+}

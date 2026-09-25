@@ -124,6 +124,43 @@ func TestDevIDPolicyNVName_MatchesTCGTable18(t *testing.T) {
 	}
 }
 
+// TestDevidPolicyNVDataSize covers both branches of the Policy NV Index
+// dataSize computation directly: a supported nameAlg returns 2 (the TPMT_HA
+// algorithm ID) plus its digest size, and an unsupported one is refused
+// rather than silently sized as zero.
+func TestDevidPolicyNVDataSize(t *testing.T) {
+	size, err := devidPolicyNVDataSize(tpm2.TPMAlgSHA256)
+	require.NoError(t, err)
+	assert.Equal(t, uint16(0x0022), size, "2 bytes of algorithm ID plus a 32-byte SHA-256 digest")
+
+	_, err = devidPolicyNVDataSize(tpm2.TPMAlgSHA1)
+	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported)
+}
+
+// TestDevIDPolicyNVPublic_UnsupportedNameAlg proves the refusal from
+// DevIDPolicyNVIndex propagates out of DevIDPolicyNVPublic unchanged for a
+// hash algorithm the specification defines no Policy NV Index template for.
+func TestDevIDPolicyNVPublic_UnsupportedNameAlg(t *testing.T) {
+	_, err := DevIDPolicyNVPublic(DevIDKeySigning, tpm2.TPMAlgSHA1)
+	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported)
+}
+
+// TestDevIDPolicyNVName_UnsupportedNameAlg proves DevIDPolicyNVName refuses
+// the same unsupported algorithm DevIDPolicyNVPublic does, rather than
+// computing a Name over a zero-value public area.
+func TestDevIDPolicyNVName_UnsupportedNameAlg(t *testing.T) {
+	_, err := DevIDPolicyNVName(DevIDKeySigning, tpm2.TPMAlgSHA1)
+	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported)
+}
+
+// TestDevIDPolicyDelegationNVDigest_UnsupportedNameAlg proves the refusal
+// from DevIDPolicyNVIndex propagates out of DevIDPolicyDelegationNVDigest
+// unchanged, before any trial-policy calculator is even built.
+func TestDevIDPolicyDelegationNVDigest_UnsupportedNameAlg(t *testing.T) {
+	_, err := DevIDPolicyDelegationNVDigest(DevIDKeySigning, tpm2.TPMAlgSHA1)
+	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported)
+}
+
 func TestDevIDPolicyDelegationNVDigest_MatchesTCGTable17(t *testing.T) {
 	for kind, want := range tcgPolicyDelegationNVSHA256 {
 		t.Run(kind.String(), func(t *testing.T) {
@@ -290,4 +327,33 @@ func TestDevIDDelegationPolicyPayload_RefusesAWrongLengthDigest(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0x32, len(payload), "Template I-2 dataSize")
 	assert.Equal(t, []byte{0x00, 0x0c}, payload[:2], "TPM_ALG_SHA384 leads the TPMT_HA")
+}
+
+// TestDevidPolicyCommandDigest_UnsupportedNameAlg proves the calculator
+// refusal in devidPolicyCalculator propagates out of devidPolicyCommandDigest
+// before either trial-policy Update call runs, for an algorithm the
+// specification defines no Policy NV Index template for.
+func TestDevidPolicyCommandDigest_UnsupportedNameAlg(t *testing.T) {
+	digest, err := devidPolicyCommandDigest(tpm2.TPMAlgSHA1, tpm2.TPMCCSign)
+	assert.Nil(t, digest)
+	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported)
+}
+
+// TestDevidPolicyCommandDigest_IsDeterministicAndCommandSpecific proves the
+// ordinary success path: the same (nameAlg, code) pair always trial-computes
+// the same digest, and two different command codes produce different
+// digests -- otherwise a session admitted for one privileged command would
+// also satisfy the policy for another it was never granted.
+func TestDevidPolicyCommandDigest_IsDeterministicAndCommandSpecific(t *testing.T) {
+	signDigest, err := devidPolicyCommandDigest(tpm2.TPMAlgSHA256, tpm2.TPMCCSign)
+	require.NoError(t, err)
+	assert.Len(t, signDigest, 32)
+
+	again, err := devidPolicyCommandDigest(tpm2.TPMAlgSHA256, tpm2.TPMCCSign)
+	require.NoError(t, err)
+	assert.Equal(t, signDigest, again, "the same command code must trial-compute the same digest")
+
+	certifyDigest, err := devidPolicyCommandDigest(tpm2.TPMAlgSHA256, tpm2.TPMCCCertify)
+	require.NoError(t, err)
+	assert.NotEqual(t, signDigest, certifyDigest, "different command codes must not collide")
 }

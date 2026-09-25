@@ -1263,6 +1263,29 @@ func TestFormatFixedProperty_Manufacturer(t *testing.T) {
 	}
 }
 
+// TestFormatFixedProperty_Manufacturer_UnknownVendorFallsBackToASCII proves
+// a manufacturer code that is not in the TCG vendor ID registry, but whose
+// four bytes are printable ASCII, renders as that ASCII string rather than
+// the empty string or the known-vendor name.
+func TestFormatFixedProperty_Manufacturer_UnknownVendorFallsBackToASCII(t *testing.T) {
+	// "ZZZZ" = 0x5A5A5A5A, not a registered TCG vendor ID.
+	result := formatFixedProperty(tpm2.TPMPTManufacturer, 0x5A5A5A5A)
+	if result != "ZZZZ" {
+		t.Errorf("formatFixedProperty(Manufacturer, unknown ASCII): expected %q, got %q", "ZZZZ", result)
+	}
+}
+
+// TestFormatFixedProperty_Manufacturer_UnknownVendorNonPrintableIsEmpty
+// proves a manufacturer code that is neither a registered vendor ID nor
+// printable ASCII renders as the empty string, letting the caller fall back
+// to the raw hex value rather than displaying garbage.
+func TestFormatFixedProperty_Manufacturer_UnknownVendorNonPrintableIsEmpty(t *testing.T) {
+	result := formatFixedProperty(tpm2.TPMPTManufacturer, 0x00000000)
+	if result != "" {
+		t.Errorf("formatFixedProperty(Manufacturer, non-printable): expected empty string, got %q", result)
+	}
+}
+
 func TestFormatFixedProperty_VendorString(t *testing.T) {
 	// "SW  " = 0x53572020
 	val := uint32(0x53572020)
