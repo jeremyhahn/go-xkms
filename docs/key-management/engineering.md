@@ -88,6 +88,23 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
   carries an exportability field, so a caller cannot assert one. The MCP
   handler used to build the source attributes by hand, which left the flag
   false and refused every copy (#155).
+- **The kid-based Simplified API resolves a key's stored attributes, never
+  the attributes its kid string implies.** `xkms.ExportKey`, `RotateKey` and
+  `CopyKey` (`pkg/xkms/service.go`) take a kid (`backend:type:algo:keyname`)
+  and used to pass it straight through `getBackendForKID` →
+  `ParseKeyIDToAttributes`, whose result can only carry the fields the kid
+  format itself encodes — `Exportable` is not one of them, so it was always
+  `false` regardless of what the key was created with, and `ExportKey` by kid
+  refused every key (#925). All three now resolve the backend's own record
+  via `loadStoredKeyAttrs` (`pkg/xkms/service.go`), which wraps the
+  tenant-aware servicer's `findKeyAttrs` (`servicer_helpers.go`) and
+  reports a miss as `backend.ErrKeyNotFound`. `RotateKey` by kid needs this for the same contract the bullet
+  above states for `CopyKey`: regenerating with the reconstructed attrs
+  silently downgraded every rotated key to `Exportable: false`. Every other
+  kid-based function (`GetKey`, `Signer`, `Decrypter`, `Delete`, `Sign`,
+  `Verify`, `Encrypt`, `Decrypt`, `GetSymmetricKey`, the certificate-by-kid
+  group) was audited and left on the reconstructed attrs: none of those
+  operations gate on a field the kid cannot encode.
 - **`CopyKey` wraps for the DESTINATION's own key, never the source's.**
   `CopyKey` calls the destination's `GetImportParameters` first, then the
   source's `ExportKeyTo(ctx, attrs, dstParams)` — never plain `ExportKey`,
