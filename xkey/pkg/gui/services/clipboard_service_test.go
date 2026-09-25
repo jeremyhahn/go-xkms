@@ -244,11 +244,10 @@ func TestClipboardService_ScheduleClear_GoroutineCancellation(t *testing.T) {
 	svc.cancelFn()
 	svc.clearMu.Unlock()
 
-	// Give the goroutine a moment to exit via ctx.Done().
-	time.Sleep(50 * time.Millisecond)
-
-	// The goroutine should have exited without performing any clipboard
-	// operations. No panic or hang means success.
+	// No wait needed: ctx.Done() is closed synchronously by cancelFn above,
+	// and the goroutine's select observes it on its own schedule -- this
+	// test only exercises the cancel path, with no assertion that depends
+	// on the goroutine having exited yet.
 }
 
 // --- CopyWithClear with timeout disabled (writeClipboard fails) ---

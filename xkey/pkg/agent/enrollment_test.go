@@ -258,9 +258,8 @@ func TestEnrollWithCode_ExpiredCode(t *testing.T) {
 		t.Fatalf("failed to generate code: %v", err)
 	}
 
-	// Wait for the code to expire.
-	time.Sleep(10 * time.Millisecond)
-
+	// No wait needed: 1ns has already elapsed by the time this statement
+	// runs, since GenerateOneTimeCode returning at all takes far longer.
 	_, _, err = svc.EnrollWithCode(code.Code, csrPEM)
 	if !errors.Is(err, ErrEnrollmentCodeExpired) {
 		t.Errorf("expected ErrEnrollmentCodeExpired, got %v", err)
@@ -558,8 +557,8 @@ func TestCleanExpiredCodes(t *testing.T) {
 		t.Fatalf("failed to generate code: %v", err)
 	}
 
-	time.Sleep(10 * time.Millisecond)
-
+	// No wait needed: the first code's 1ns expiry has already elapsed by
+	// the time this statement runs.
 	removed, err := svc.CleanExpiredCodes()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -654,8 +653,9 @@ func TestEnrollWithCode_ExpiredAcrossInstancesFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate code: %v", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 
+	// No wait needed: 1ns has already elapsed by the time this statement
+	// runs, since GenerateOneTimeCode returning at all takes far longer.
 	_, _, err = b.EnrollWithCode(code.Code, testCSR(t))
 	if !errors.Is(err, ErrEnrollmentCodeExpired) {
 		t.Errorf("expected ErrEnrollmentCodeExpired, got %v", err)

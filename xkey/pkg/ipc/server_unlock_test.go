@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,9 +49,9 @@ func serveUnlockHandler(t *testing.T, handler Handler) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 	go srv.Serve(ctx)
 
-	// Allow the server to start accepting.
-	time.Sleep(50 * time.Millisecond)
-
+	// No readiness wait needed: NewServer binds the listener synchronously
+	// before returning, so a dial immediately after queues in the kernel
+	// accept backlog even before Serve's accept loop has started running.
 	client := NewClient(sockPath)
 	t.Cleanup(func() {
 		_ = client.Close()

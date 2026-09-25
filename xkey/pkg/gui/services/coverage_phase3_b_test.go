@@ -854,9 +854,10 @@ func TestP3B_ClipboardService_ScheduleClear_ContextCancel(t *testing.T) {
 	}
 	svc.clearMu.Unlock()
 
-	// Give the goroutine time to exit.
-	time.Sleep(50 * time.Millisecond)
-	// If we get here without hanging, the goroutine properly exited.
+	// No wait needed: ctx.Done() is closed synchronously by cancelFn above,
+	// and the goroutine's select observes it on its own schedule -- this
+	// test only exercises the cancel path, with no assertion that depends
+	// on the goroutine having exited yet.
 }
 
 // TestP3B_ClipboardService_WriteClipboard_AllToolPaths tests the default

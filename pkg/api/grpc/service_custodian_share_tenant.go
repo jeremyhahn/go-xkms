@@ -26,6 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -55,21 +56,6 @@ const (
 	defaultCustodianPurpose = "barrier"
 	defaultCustodianMethod  = "manual"
 )
-
-// custodianErrorToGRPC maps custodian domain errors to gRPC status codes.
-var custodianErrorToGRPC = map[error]codes.Code{
-	qrdbsdk.ErrCeremonyGroupNotFound:       codes.NotFound,
-	qrdbsdk.ErrCeremonyMemberNotFound:      codes.NotFound,
-	qrdbsdk.ErrCeremonyUserNotFound:        codes.NotFound,
-	qrdbsdk.ErrCeremonyGroupAlreadyExists:  codes.AlreadyExists,
-	qrdbsdk.ErrCeremonyMemberAlreadyExists: codes.AlreadyExists,
-	qrdbsdk.ErrCeremonyGroupFull:           codes.FailedPrecondition,
-	qrdbsdk.ErrCeremonyInsufficientMembers: codes.FailedPrecondition,
-	qrdbsdk.ErrCeremonyEmptyGroupID:        codes.InvalidArgument,
-	qrdbsdk.ErrCeremonyEmptyGroupName:      codes.InvalidArgument,
-	qrdbsdk.ErrCeremonyInvalidThreshold:    codes.InvalidArgument,
-	qrdbsdk.ErrCeremonyInvalidTotal:        codes.InvalidArgument,
-}
 
 // shareErrorToGRPC maps share domain errors (surfaced by the embedded go-qrdb
 // node's share client) to gRPC status codes.
@@ -139,17 +125,18 @@ func GetBarrierRegistry() *seal.BarrierRegistry {
 	return barrierRegistry
 }
 
-// mapCustodianError converts a custodian domain error to the appropriate gRPC
-// status error. If the error is a known custodian error, it maps to the
+// mapCustodianError converts a custodian domain error to the appropriate
+// gRPC status error, classifying it through apierrors.CustodianSentinelClasses
+// -- the table go-xkms#773 made this package share with pkg/api/mcp's mirror
+// of this function, following the go-xkms#912 precedent set for PIV and
+// barrier. If the error is a known custodian error, it maps to the
 // corresponding gRPC code. Otherwise, it returns an Internal error.
 func mapCustodianError(err error, operation string) error {
 	if err == nil {
 		return nil
 	}
-	for domainErr, code := range custodianErrorToGRPC {
-		if errors.Is(err, domainErr) {
-			return status.Errorf(code, "%s: %v", operation, err)
-		}
+	if class, ok := apierrors.ClassOf(apierrors.CustodianSentinelClasses, err); ok {
+		return status.Errorf(grpcCodeForClass(class), "%s: %v", operation, err)
 	}
 	return status.Errorf(codes.Internal, "%s: %v", operation, err)
 }

@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,8 +81,10 @@ func newMockIPCServer(t *testing.T, handler func(*ipc.Message) *ipc.Response) (*
 		}
 	}()
 
-	// Give the server time to start.
-	time.Sleep(20 * time.Millisecond)
+	// No wait needed: net.Listen above binds the listener synchronously
+	// before this function returns, so a dial immediately after queues in
+	// the kernel accept backlog even before the accept loop goroutine has
+	// started running.
 	return srv, sockPath
 }
 
@@ -386,8 +387,9 @@ func TestIPCTransport_SendMessage_MalformedResponse(t *testing.T) {
 		conn.Write([]byte("this is not json\n"))
 	}()
 
-	time.Sleep(20 * time.Millisecond)
-
+	// No wait needed: net.Listen above binds the listener synchronously, so
+	// a dial immediately after queues in the kernel accept backlog even
+	// before the goroutine's Accept call has started running.
 	tr := NewIPCTransport(sockPath)
 	resp, signErr := tr.Sign(context.Background(), &transport.SignRequest{
 		Backend: "software",
