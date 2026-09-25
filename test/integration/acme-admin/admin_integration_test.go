@@ -65,7 +65,8 @@ func setupTestContext(t *testing.T) *TestContext {
 	qrdbSvc := qrdb.NewTestService()
 
 	// Create admin service with storage factory
-	adminSvc := admin.NewTenantAwareAdminService(nil, storageFactory, qrdbSvc, logger, "1.0.0-test")
+	adminSvc, err := admin.NewTenantAwareAdminService(nil, storageFactory, qrdbSvc, logger, "1.0.0-test")
+	require.NoError(t, err)
 
 	return &TestContext{
 		logger:         logger,
@@ -417,7 +418,8 @@ func BenchmarkTenantCreation(b *testing.B) {
 	qrdbSvc := qrdb.NewTestService()
 	defer qrdbSvc.Close()
 
-	adminSvc := admin.NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "bench")
+	adminSvc, err := admin.NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "bench")
+	require.NoError(b, err)
 	testCtx := context.Background()
 
 	b.ResetTimer()

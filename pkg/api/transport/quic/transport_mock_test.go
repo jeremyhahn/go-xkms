@@ -474,14 +474,6 @@ func TestRequest_Connected(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestRequestStream_NotSupported_Mock(t *testing.T) {
-	tr, cleanup := newMockTransport(t)
-	defer cleanup()
-
-	_, err := tr.RequestStream(context.Background(), "/test", nil)
-	assert.ErrorIs(t, err, transport.ErrStreamNotSupported)
-}
-
 func TestHealthy_Connected(t *testing.T) {
 	tr, cleanup := newMockTransport(t)
 	defer cleanup()

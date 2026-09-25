@@ -15,17 +15,19 @@ package mcp
 
 import (
 	"context"
-
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // handleAlgorithms handles the xkms.algorithms method. Like the REST route it
 // mirrors, this is public discovery: the inventory is derived from the
-// compiled-in backend registry and reads no state.
+// compiled-in backend registry and reads no state. XKMSService.Algorithms
+// never actually returns a non-nil error today, but the error is still
+// routed through mapKeyOpError -- matching pkg/api/grpc/service.go's
+// Algorithms, which does the same through its own mapKeyOpError -- rather
+// than a bare wrap, so this handler stays correct if that ever changes.
 func (s *Server) handleAlgorithms(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
 	resp, err := s.xkmsService.Algorithms(ctx)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to discover algorithms", Err: err}
+		return nil, mapKeyOpError(err)
 	}
 	return resp, nil
 }

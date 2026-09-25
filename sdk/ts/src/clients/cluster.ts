@@ -12,19 +12,14 @@
 //     Contact licensing@automatethethings.com for commercial licensing options.
 
 import type { HttpCore } from '../http.js';
-import type {
-  AddClusterReplicaRequest,
-  ClusterReplicaResponse,
-  ClusterStatusResponse,
-  ListClusterMembersResponse,
-} from '../types/cluster.js';
+import type { ClusterStatusResponse, ListClusterMembersResponse } from '../types/cluster.js';
 
 const BASE = '/api/v1/cluster';
 
 /**
- * Cluster status and membership. Membership mutation requires RBAC
- * (admin:add_member / admin:remove_member); without RBAC wired the server
- * fails closed with 403.
+ * Cluster status and membership — read-only. Membership mutation is never
+ * exposed over REST, by design: it goes through go-qrdb's own control plane
+ * exclusively, via `xkmsctl cluster add`/`remove`.
  */
 export class ClusterClient {
   constructor(private readonly http: HttpCore) {}
@@ -37,15 +32,5 @@ export class ClusterClient {
   /** GET /api/v1/cluster/members */
   members(): Promise<ListClusterMembersResponse> {
     return this.http.request('GET', `${BASE}/members`);
-  }
-
-  /** POST /api/v1/cluster/members */
-  addMember(req: AddClusterReplicaRequest): Promise<ClusterReplicaResponse> {
-    return this.http.request('POST', `${BASE}/members`, { body: req });
-  }
-
-  /** DELETE /api/v1/cluster/members/{replicaID} */
-  removeMember(replicaId: number): Promise<ClusterReplicaResponse> {
-    return this.http.request('DELETE', `${BASE}/members/${encodeURIComponent(String(replicaId))}`);
   }
 }

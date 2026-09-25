@@ -4,8 +4,8 @@
 > (`cmd/xkmsctl/fido2.go`), which drives *external* FIDO2 hardware security
 > keys over CTAP2/HID. It is **not** `xkey fido2`, which runs xKey's own
 > virtual authenticator. For that, see
-> [../../fido2/overview.md](../../fido2/overview.md) and
-> [../../fido2/daemon-configuration.md](../../fido2/daemon-configuration.md).
+> [../../fido2/architecture.md](../../fido2/architecture.md) and
+> [../../virtual-authenticator/cli.md](../../virtual-authenticator/cli.md).
 
 The `fido2` command group provides tools for managing FIDO2/WebAuthn security keys for authentication and key derivation.
 

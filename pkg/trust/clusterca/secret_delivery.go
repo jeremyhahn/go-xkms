@@ -187,7 +187,11 @@ func FetchClusterSecrets(ctx context.Context, httpClient *http.Client, baseURL s
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Debug("clusterca: failed to close HTTP response body", "error", cerr)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return nil, &errs.Message{Msg: fmt.Sprintf("clusterca: secret delivery returned status %d", resp.StatusCode)}
 	}

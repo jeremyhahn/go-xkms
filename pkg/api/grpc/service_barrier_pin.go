@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -38,40 +39,6 @@ var (
 	// been configured via SetPINManager.
 	ErrPINManagerNotConfigured = errors.New("grpc: PIN manager not configured")
 )
-
-// barrierErrorToGRPC maps barrier domain errors to gRPC status codes.
-var barrierErrorToGRPC = map[error]codes.Code{
-	// Core barrier errors.
-	seal.ErrSealed:             codes.FailedPrecondition,
-	seal.ErrAlreadyUnsealed:    codes.AlreadyExists,
-	seal.ErrAlreadyInitialized: codes.AlreadyExists,
-	seal.ErrNotInitialized:     codes.FailedPrecondition,
-	seal.ErrInvalidCredentials: codes.Unauthenticated,
-	// Software strategies report a wrong passphrase as ErrDecryptionFailed;
-	// hardware ones raise ErrInvalidCredentials. Both are Unauthenticated.
-	seal.ErrDecryptionFailed:      codes.Unauthenticated,
-	seal.ErrNoAvailableStrategy:   codes.Unavailable,
-	seal.ErrStrategyNotFound:      codes.NotFound,
-	seal.ErrStrategyMismatch:      codes.FailedPrecondition,
-	seal.ErrCorruptRootKey:        codes.DataLoss,
-	seal.ErrEncryptorNotAvailable: codes.FailedPrecondition,
-
-	// Shamir secret sharing errors.
-	seal.ErrShamirNotConfigured:      codes.FailedPrecondition,
-	seal.ErrShamirThresholdInvalid:   codes.InvalidArgument,
-	seal.ErrShamirQuorumIncomplete:   codes.FailedPrecondition,
-	seal.ErrShamirQuorumExpired:      codes.DeadlineExceeded,
-	seal.ErrShamirDuplicateShare:     codes.AlreadyExists,
-	seal.ErrShamirCombineFailed:      codes.Internal,
-	seal.ErrShamirShareNotFound:      codes.NotFound,
-	seal.ErrShamirNoSharesFound:      codes.NotFound,
-	seal.ErrShamirVerificationFailed: codes.DataLoss,
-	seal.ErrShamirStorageFailed:      codes.Internal,
-
-	// Recovery and root token errors.
-	seal.ErrRecoveryKeysNotFound:        codes.NotFound,
-	seal.ErrRootTokenVerificationFailed: codes.Unauthenticated,
-}
 
 // pinErrorToGRPC maps PIN domain errors to gRPC status codes.
 var pinErrorToGRPC = map[error]codes.Code{
@@ -116,16 +83,16 @@ func GetPINManager() qrdbsdk.PINBackend {
 }
 
 // mapBarrierError converts a barrier domain error to the appropriate gRPC
-// status error. If the error is a known barrier error, it maps to the
+// status error, classifying it through apierrors.BarrierSentinelClasses --
+// the table go-xkms#912 made this package share with pkg/api/mcp's mirror of
+// this function. If the error is a known barrier error, it maps to the
 // corresponding gRPC code. Otherwise, it returns an Internal error.
 func mapBarrierError(err error, operation string) error {
 	if err == nil {
 		return nil
 	}
-	for barrierErr, code := range barrierErrorToGRPC {
-		if errors.Is(err, barrierErr) {
-			return status.Errorf(code, "%s: %v", operation, err)
-		}
+	if class, ok := apierrors.ClassOf(apierrors.BarrierSentinelClasses, err); ok {
+		return status.Errorf(grpcCodeForClass(class), "%s: %v", operation, err)
 	}
 	return status.Errorf(codes.Internal, "%s: %v", operation, err)
 }

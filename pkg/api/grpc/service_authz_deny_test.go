@@ -258,14 +258,12 @@ func TestAuthzDeny_CAMethods(t *testing.T) {
 
 	// CA methods need a CA configured
 	cert := generateTestCert(t)
-	old := GetCA()
-	SetCA(&mockCAAll{
+	svc.SetCA(&mockCAAll{
 		mockCACert:      mockCACert{cert: cert},
 		mockCARevoke:    mockCARevoke{},
 		mockCACRL:       mockCACRL{crlDER: []byte("crl")},
 		mockCAIsRevoked: mockCAIsRevoked{},
 	})
-	defer SetCA(old)
 
 	tests := []struct {
 		name string
@@ -304,9 +302,7 @@ func TestAuthzDeny_CATCGMethods(t *testing.T) {
 	svc := newDeniedService()
 	ctx := deniedCtx()
 
-	old := GetCA()
-	SetCA(&mockCAIssueEK{})
-	defer SetCA(old)
+	svc.SetCA(&mockCAIssueEK{})
 
 	tests := []struct {
 		name string
@@ -317,17 +313,17 @@ func TestAuthzDeny_CATCGMethods(t *testing.T) {
 			return err
 		}},
 		{"IssueAKCertificate", func() error {
-			SetCA(&mockCAIssueAK{})
+			svc.SetCA(&mockCAIssueAK{})
 			_, err := svc.IssueAKCertificate(ctx, &pb.IssueAKCertificateRequest{CommonName: "test", PublicKey: []byte("k")})
 			return err
 		}},
 		{"SignTCGCSR", func() error {
-			SetCA(&mockCASignTCGCSR{})
+			svc.SetCA(&mockCASignTCGCSR{})
 			_, err := svc.SignTCGCSR(ctx, &pb.SignTCGCSRRequest{CommonName: "test", TcgCsr: []byte("csr")})
 			return err
 		}},
 		{"EnrollDevice", func() error {
-			SetCA(&mockCAEnrollDevice{})
+			svc.SetCA(&mockCAEnrollDevice{})
 			_, err := svc.EnrollDevice(ctx, &pb.EnrollDeviceRequest{CommonName: "test", PackedCsr: []byte("csr")})
 			return err
 		}},

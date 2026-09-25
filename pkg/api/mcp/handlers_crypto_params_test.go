@@ -961,15 +961,57 @@ func TestDecodeSignature(t *testing.T) {
 		_, err := decodeSignature(nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "required")
+		// go-xkms#930: a malformed/absent signature is the caller's fault,
+		// so it must reach dispatch as a *KeyOpError carrying
+		// ErrCodeInvalidParams rather than a bare *errs.Message that
+		// InvokeMethod could only report as ErrCodeInternalError.
+		assertKeyOpCode(t, err, ErrCodeInvalidParams)
 	})
 
 	t.Run("non-byte array is refused", func(t *testing.T) {
 		_, err := decodeSignature([]interface{}{"not a number"})
 		require.Error(t, err)
+		assertKeyOpCode(t, err, ErrCodeInvalidParams)
 	})
 
 	t.Run("object is refused", func(t *testing.T) {
 		_, err := decodeSignature(map[string]interface{}{"foo": "bar"})
 		require.Error(t, err)
+		assertKeyOpCode(t, err, ErrCodeInvalidParams)
 	})
+}
+
+// TestHandleVerify_MalformedSignature_WireCodeThroughInvokeMethod drives
+// xkms.verify's decodeSignature refusal through Server.InvokeMethod, the
+// production dispatch path, and pins the code a caller actually sees
+// (go-xkms#930): a malformed signature encoding must report Invalid params,
+// not the ErrCodeInternalError floor a bare *errs.Message used to fall to.
+// A real key is generated first so the call reaches decodeSignature at all
+// -- requireKey's own not-found gate runs first and would otherwise mask
+// the condition this test exists to pin.
+func TestHandleVerify_MalformedSignature_WireCodeThroughInvokeMethod(t *testing.T) {
+	server := createTestServer(t)
+	ctx := context.Background()
+
+	genParamsJSON, err := json.Marshal(GenerateKeyParams{
+		KeyID: "verify-malformed-sig-key", Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
+	})
+	require.NoError(t, err)
+	_, err = server.handleGenerateKey(ctx, &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1})
+	require.NoError(t, err)
+
+	raw, err := json.Marshal(map[string]interface{}{
+		"key_id":    "verify-malformed-sig-key",
+		"data":      []byte("data"),
+		"signature": map[string]interface{}{"not": "a signature"},
+	})
+	require.NoError(t, err)
+
+	resp := invokeRequest(server, ctx, &JSONRPCRequest{
+		JSONRPC: "2.0", Method: "xkms.verify", Params: raw, ID: 1,
+	})
+
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 }

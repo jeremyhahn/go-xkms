@@ -264,9 +264,8 @@ func TestOrderFinalizeHandler_InvalidPayloadJSONCoverage(t *testing.T) {
 	// Invalid JSON payload
 	url := service.baseRESTURI + "/acme/order/12346/finalize"
 
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	signerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},

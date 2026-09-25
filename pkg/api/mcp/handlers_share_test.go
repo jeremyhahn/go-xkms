@@ -19,14 +19,20 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // testShareServerURL is the server URL used to address a share.
@@ -85,6 +91,7 @@ func TestHandleSubmitShare_RequiresGroupID(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "group_id")
+	assertKeyOpCode(t, err, ErrCodeInvalidParams)
 }
 
 func TestHandleSubmitShare_RequiresShareData(t *testing.T) {
@@ -95,6 +102,7 @@ func TestHandleSubmitShare_RequiresShareData(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "share_data")
+	assertKeyOpCode(t, err, ErrCodeInvalidParams)
 }
 
 func TestHandleSubmitShare_InvalidParams(t *testing.T) {
@@ -114,6 +122,9 @@ func TestHandleSubmitShare_NotConfigured(t *testing.T) {
 		shareRequest(t, "xkms.submitShare", transport.SubmitShareRequest{GroupID: "g1", ShareData: []byte("s")}))
 
 	require.Error(t, err, "a service with no go-qrdb node must report failure, not panic")
+	// go-xkms#930: xkms.ErrNotConfigured is Service unavailable, not the
+	// ErrCodeInternalError floor a bare *errs.Wrapped used to fall to.
+	assertKeyOpCode(t, err, ErrCodeServiceUnavailable)
 }
 
 func TestHandleListShares_NotConfigured(t *testing.T) {
@@ -122,6 +133,7 @@ func TestHandleListShares_NotConfigured(t *testing.T) {
 	_, err := server.handleListShares(context.Background(), shareRequest(t, "xkms.listShares", struct{}{}))
 
 	require.Error(t, err)
+	assertKeyOpCode(t, err, ErrCodeServiceUnavailable)
 }
 
 func TestHandleGetShare_RequiresCoordinates(t *testing.T) {
@@ -143,6 +155,7 @@ func TestHandleGetShare_RequiresCoordinates(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
+			assertKeyOpCode(t, err, ErrCodeInvalidParams)
 		})
 	}
 }
@@ -154,6 +167,7 @@ func TestHandleGetShare_NotConfigured(t *testing.T) {
 		ShareCoordinatesParams{ServerURL: testShareServerURL, GroupID: "g1", ShareIndex: 2}))
 
 	require.Error(t, err)
+	assertKeyOpCode(t, err, ErrCodeServiceUnavailable)
 }
 
 func TestHandleDeleteShare_RequiresCoordinates(t *testing.T) {
@@ -164,6 +178,7 @@ func TestHandleDeleteShare_RequiresCoordinates(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "server_url")
+	assertKeyOpCode(t, err, ErrCodeInvalidParams)
 }
 
 func TestHandleDeleteShare_NotConfigured(t *testing.T) {
@@ -173,6 +188,7 @@ func TestHandleDeleteShare_NotConfigured(t *testing.T) {
 		ShareCoordinatesParams{ServerURL: testShareServerURL, GroupID: "g1", ShareIndex: 2}))
 
 	require.Error(t, err)
+	assertKeyOpCode(t, err, ErrCodeServiceUnavailable)
 }
 
 func TestHandleGetShareCollectionStatus_RequiresGroupID(t *testing.T) {
@@ -183,6 +199,7 @@ func TestHandleGetShareCollectionStatus_RequiresGroupID(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "group_id")
+	assertKeyOpCode(t, err, ErrCodeInvalidParams)
 }
 
 func TestHandleGetShareCollectionStatus_NotConfigured(t *testing.T) {
@@ -192,6 +209,7 @@ func TestHandleGetShareCollectionStatus_NotConfigured(t *testing.T) {
 		shareRequest(t, "xkms.getShareCollectionStatus", GetShareCollectionStatusParams{GroupID: "g1"}))
 
 	require.Error(t, err)
+	assertKeyOpCode(t, err, ErrCodeServiceUnavailable)
 }
 
 // TestShareCoordinates_InvalidParams covers the decode failure path shared by
@@ -234,4 +252,66 @@ func TestWithoutShareData(t *testing.T) {
 
 	assert.Equal(t, []byte("secret-share-material"), info.ShareData,
 		"the caller's own value must not be mutated")
+}
+
+// TestMapShareError pins mapShareError's classification (go-xkms#930)
+// against the two sentinels shareSentinelCodes names and the internal-error
+// fallback for anything else.
+func TestMapShareError(t *testing.T) {
+	t.Run("nil is nil", func(t *testing.T) {
+		assert.Nil(t, mapShareError(nil, "op"))
+	})
+
+	t.Run("share not found is Not found, matching gRPC's shareErrorToGRPC", func(t *testing.T) {
+		err := mapShareError(qrdbsdk.ErrCeremonyShareNotFound, "get share")
+		assertKeyOpCode(t, err, sdkssh.JSONRPCCodeNotFound)
+	})
+
+	t.Run("wrapped share not found still classifies", func(t *testing.T) {
+		wrapped := fmt.Errorf("qrdb: %w", qrdbsdk.ErrCeremonyShareNotFound)
+		err := mapShareError(wrapped, "get share")
+		assertKeyOpCode(t, err, sdkssh.JSONRPCCodeNotFound)
+	})
+
+	t.Run("not configured is Service unavailable, MCP-only (no gRPC share RPC uses the service layer)", func(t *testing.T) {
+		err := mapShareError(xkms.ErrNotConfigured, "list shares")
+		assertKeyOpCode(t, err, ErrCodeServiceUnavailable)
+	})
+
+	t.Run("unrecognized error is Internal", func(t *testing.T) {
+		err := mapShareError(errors.New("boom"), "delete share")
+		assertKeyOpCode(t, err, ErrCodeInternalError)
+	})
+}
+
+// TestShareMethods_WireCodesThroughInvokeMethod drives the share family
+// through Server.InvokeMethod -- the production dispatch path
+// pkg/apimodule's MCP tools and the retired wire transport both used -- and
+// pins the exact JSON-RPC code each condition reaches the caller with
+// (go-xkms#930). The test server carries no go-qrdb node, so every call
+// here takes the xkms.ErrNotConfigured path; the sentinel-specific codes
+// (share-not-found) are pinned directly against mapShareError above, since
+// producing a live ErrCeremonyShareNotFound would require a running go-qrdb
+// node.
+func TestShareMethods_WireCodesThroughInvokeMethod(t *testing.T) {
+	server := newShareServer(t)
+	ctx := context.Background()
+
+	t.Run("xkms.submitShare: missing group_id is Invalid params", func(t *testing.T) {
+		resp := invokeRequest(server, ctx, shareRequest(t, "xkms.submitShare", transport.SubmitShareRequest{ShareData: []byte("s")}))
+		require.NotNil(t, resp.Error)
+		assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
+	})
+
+	t.Run("xkms.listShares: not configured is Service unavailable", func(t *testing.T) {
+		resp := invokeRequest(server, ctx, shareRequest(t, "xkms.listShares", struct{}{}))
+		require.NotNil(t, resp.Error)
+		assert.Equal(t, ErrCodeServiceUnavailable, resp.Error.Code)
+	})
+
+	t.Run("xkms.getShareCollectionStatus: not configured is Service unavailable", func(t *testing.T) {
+		resp := invokeRequest(server, ctx, shareRequest(t, "xkms.getShareCollectionStatus", GetShareCollectionStatusParams{GroupID: "g1"}))
+		require.NotNil(t, resp.Error)
+		assert.Equal(t, ErrCodeServiceUnavailable, resp.Error.Code)
+	})
 }

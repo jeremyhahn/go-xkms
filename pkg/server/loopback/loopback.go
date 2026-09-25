@@ -26,6 +26,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net"
 
@@ -87,8 +88,7 @@ func Launch(ctx context.Context, o Options) (*Instance, error) {
 	}
 	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
 	if !ok {
-		_ = ln.Close()
-		return nil, &LaunchError{Reason: "unexpected listener address type"}
+		return nil, errors.Join(&LaunchError{Reason: "unexpected listener address type"}, ln.Close())
 	}
 	port := tcpAddr.Port
 
@@ -116,8 +116,7 @@ func Launch(ctx context.Context, o Options) (*Instance, error) {
 
 	srv, err := server.New(cfg, server.WithAuthenticatorDecorator(decorator))
 	if err != nil {
-		_ = ln.Close()
-		return nil, &LaunchError{Reason: "construct engine", Err: err}
+		return nil, errors.Join(&LaunchError{Reason: "construct engine", Err: err}, ln.Close())
 	}
 	srv.SetRESTListener(ln)
 
@@ -134,12 +133,23 @@ func Launch(ctx context.Context, o Options) (*Instance, error) {
 		logger:  logger,
 	}
 
-	// Start the engine in the background; Start blocks while serving.
-	go func() {
-		if startErr := srv.Start(); startErr != nil {
-			logger.Error("loopback engine stopped", "error", startErr)
+	// Start the engine synchronously. Server.Start does not block — it only
+	// registers each transport's serving goroutine (via sync.WaitGroup.Add)
+	// and returns — so running it in a background goroutine bought nothing
+	// and cost correctness: a caller that calls Close immediately after
+	// Launch returns (a real pattern, not just a test) could win the race
+	// against Start's own goroutine and have Shutdown's wg.Wait observe the
+	// WaitGroup before Start's wg.Add ran, which is undefined by
+	// sync.WaitGroup's contract and left the REST listener leaked besides.
+	// Calling Start here, before Launch returns, makes every wg.Add
+	// happen-before any Close the caller can possibly issue.
+	if err := srv.Start(); err != nil {
+		if shutdownErr := srv.Shutdown(); shutdownErr != nil {
+			logger.Error("loopback engine shutdown after failed start", "error", shutdownErr)
 		}
-	}()
+		_ = ln.Close()
+		return nil, &LaunchError{Reason: "start engine", Err: err}
+	}
 
 	logger.Info("loopback engine launched", "base_url", inst.BaseURL, "port", port)
 	return inst, nil

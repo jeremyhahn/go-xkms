@@ -1065,3 +1065,54 @@ func TestEmbeddedLoader_PurposeFiltering(t *testing.T) {
 		t.Error("cross-purpose: Verified = true, want false")
 	}
 }
+
+// --- LoadTrust tests ---
+//
+// LoadTrust (device.go) is the entry point every pairing surface calls
+// before asking a phone for an attestation (see the "load it BEFORE asking"
+// note on the function itself). Both of its failure branches must refuse
+// fatally rather than hand the caller unjudgeable trust material.
+
+// TestLoadTrust_NilStoreRefuses pins the first failure branch: a nil store
+// makes NewVerifier refuse, and LoadTrust must surface that as its own
+// umbrella refusal rather than panicking on a nil receiver later.
+func TestLoadTrust_NilStoreRefuses(t *testing.T) {
+	trust, err := LoadTrust(nil)
+
+	if err == nil {
+		t.Fatal("LoadTrust(nil) succeeded, want a refusal")
+	}
+	if !errors.Is(err, ErrDeviceAttestVerifyFailed) {
+		t.Errorf("error = %v, want wrapping %v", err, ErrDeviceAttestVerifyFailed)
+	}
+	if !errors.Is(err, ErrNilTrustStore) {
+		t.Errorf("error = %v, want wrapping %v", err, ErrNilTrustStore)
+	}
+	if trust != nil {
+		t.Error("LoadTrust returned non-nil trust material on failure")
+	}
+}
+
+// TestLoadTrust_StoreQueryFailureRefuses pins the second failure branch: a
+// store that cannot answer the Android-hardware query must refuse rather
+// than silently proceed on the embedded roots alone.
+func TestLoadTrust_StoreQueryFailureRefuses(t *testing.T) {
+	storeErr := errors.New("trust store unavailable")
+	store := newMockTrustStore()
+	store.err = storeErr
+
+	trust, err := LoadTrust(store)
+
+	if err == nil {
+		t.Fatal("LoadTrust succeeded against a broken store, want a refusal")
+	}
+	if !errors.Is(err, ErrDeviceAttestVerifyFailed) {
+		t.Errorf("error = %v, want wrapping %v", err, ErrDeviceAttestVerifyFailed)
+	}
+	if !errors.Is(err, ErrTrustStoreQuery) {
+		t.Errorf("error = %v, want wrapping %v", err, ErrTrustStoreQuery)
+	}
+	if trust != nil {
+		t.Error("LoadTrust returned non-nil trust material on failure")
+	}
+}

@@ -31,6 +31,7 @@ func newBootstrapAutoCmdCopy() *cobra.Command {
 	cmd.Flags().String("dane-hostname", "", "")
 	cmd.Flags().String("dane-dns-server", "", "")
 	cmd.Flags().String("noise-key", "", "")
+	cmd.Flags().String("p256-key", "", "")
 	cmd.Flags().String("noise-addr", "", "")
 	cmd.Flags().String("spki-pin", "", "")
 	cmd.Flags().Bool("direct", false, "")

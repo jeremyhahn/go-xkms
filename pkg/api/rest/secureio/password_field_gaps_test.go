@@ -98,6 +98,9 @@ func TestPasswordField_UnmarshalJSON_ShortToken(t *testing.T) {
 	if bad.Unwrap() == nil {
 		t.Fatal("BadBodyError should wrap underlying cause")
 	}
+	if !errors.Is(err, ErrPasswordFieldNotString) {
+		t.Fatalf("expected errors.Is to match ErrPasswordFieldNotString, got %v", err)
+	}
 }
 
 // TestPasswordField_UnmarshalJSON_DecodedLenZero covers the
@@ -124,6 +127,9 @@ func TestPasswordField_UnmarshalJSON_DecodedLenZero(t *testing.T) {
 			}
 			if bad.Unwrap() == nil {
 				t.Fatal("BadBodyError should wrap underlying cause")
+			}
+			if !errors.Is(err, ErrPasswordFieldEmptyAfterDecode) {
+				t.Fatalf("expected errors.Is to match ErrPasswordFieldEmptyAfterDecode, got %v", err)
 			}
 			if req.Password.Buffer() != nil {
 				t.Fatal("Buffer() should remain nil on decode failure")

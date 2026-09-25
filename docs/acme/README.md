@@ -361,7 +361,7 @@ The ACME server supports the following JWS signature algorithms for account keys
 | Document | Description |
 |----------|-------------|
 | [Architecture](architecture.md) | System architecture and component design |
-| [Configuration](configuration.md) | Complete server configuration reference |
+| [Configuration](../acme-issuance/engineering.md) | Complete server configuration reference — `acme/configuration.md` was deleted by go-xkms#942 (pre-merge go-trusted-ca documentation for a nonexistent config shape); see `../acme-issuance/engineering.md` §Configuration |
 | [Challenges](challenges.md) | Challenge types and validation flows |
 | [DNS-01 Providers](dns-01/) | DNS-01 challenge provider configuration |
 | [API Reference](api-reference.md) | HTTP API endpoints and responses |

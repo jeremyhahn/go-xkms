@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -42,28 +43,18 @@ var (
 	ErrPIVCertificateRequired = errors.New("grpc: piv certificate data is required")
 )
 
-// pivErrorToGRPC maps PIV domain errors to gRPC status codes.
-var pivErrorToGRPC = map[error]codes.Code{
-	xkms.ErrPIVNotInitialized:   codes.FailedPrecondition,
-	xkms.ErrPIVBackendNotFound:  codes.NotFound,
-	xkms.ErrPIVInvalidAlgorithm: codes.InvalidArgument,
-	xkms.ErrPIVInvalidSlot:      codes.InvalidArgument,
-	xkms.ErrPIVInvalidFormat:    codes.InvalidArgument,
-	xkms.ErrPIVKeyNotFound:      codes.NotFound,
-}
-
-// mapPIVError converts a PIV domain error to the appropriate gRPC status error.
-// If the error is a known PIV error, it maps to the corresponding gRPC code.
-// Otherwise, it returns an Internal error.
+// mapPIVError converts a PIV domain error to the appropriate gRPC status
+// error, classifying it through apierrors.PIVSentinelClasses -- the table
+// go-xkms#912 made this package share with pkg/api/mcp's mirror of this
+// function. If the error is a known PIV error, it maps to the corresponding
+// gRPC code. Otherwise, it returns an Internal error.
 func mapPIVError(err error, operation string) error {
 	if err == nil {
 		return nil
 	}
 
-	for pivErr, code := range pivErrorToGRPC {
-		if errors.Is(err, pivErr) {
-			return status.Errorf(code, "%s: %v", operation, err)
-		}
+	if class, ok := apierrors.ClassOf(apierrors.PIVSentinelClasses, err); ok {
+		return status.Errorf(grpcCodeForClass(class), "%s: %v", operation, err)
 	}
 
 	return status.Errorf(codes.Internal, "%s: %v", operation, err)

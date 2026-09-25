@@ -22,10 +22,18 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
-// routeFrostMethods returns an error for FROST methods when not compiled with frost tag
+// routeFrostMethods returns an error for FROST methods when not compiled with
+// frost tag. The code is ErrCodeMethodNotFound, matching
+// pkg/api/grpc/service_frost_stub.go's errFrostNotCompiled
+// (codes.Unimplemented) -- classToJSONRPCCode's mapping for
+// apierrors.ClassUnimplemented is ErrCodeMethodNotFound, so this keeps the
+// two transports' "not compiled in" refusal in the same class.
 func (s *Server) routeFrostMethods(ctx context.Context, req *JSONRPCRequest) (interface{}, error, bool) {
 	if strings.HasPrefix(req.Method, "frost.") {
-		return nil, &errs.Message{Msg: "FROST support not compiled - rebuild with '-tags frost'"}, true
+		return nil, &KeyOpError{
+			Code: ErrCodeMethodNotFound,
+			Err:  &errs.Message{Msg: "FROST support not compiled - rebuild with '-tags frost'"},
+		}, true
 	}
 	return nil, nil, false
 }

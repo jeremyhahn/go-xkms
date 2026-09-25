@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -82,6 +84,40 @@ func TestRegisterMCP_RegistersFullToolSurface(t *testing.T) {
 	bare, err := NewModule(func() *xkms.XKMSService { return nil })
 	require.NoError(t, err)
 	bare.RegisterMCP(mcpserver.NewMCPServer("bare", "0.0.0"))
+}
+
+// TestModule_MCPToolPermissions_MatchesMethodSpecs proves every module MCP
+// tool gets exactly one permission entry, derived from its MethodSpec: a
+// spec carrying a resource:action gets that permission, and one carrying
+// neither (public or handler-gated) gets qrdb's identity-gated sentinel —
+// the mapping qrdb's MCP authorization path relies on to decide, per tool,
+// whether authorization is enforced here or deferred to the module's own
+// dispatch gates.
+func TestModule_MCPToolPermissions_MatchesMethodSpecs(t *testing.T) {
+	m, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+
+	specs := xkmsmcp.ModuleMethods()
+	perms := m.MCPToolPermissions()
+	require.Len(t, perms, len(specs), "one permission entry per declared tool, no more, no fewer")
+
+	var sawResourceMapped, sawIdentityGated bool
+	for _, spec := range specs {
+		got, ok := perms[spec.Tool]
+		require.True(t, ok, "tool %q missing a permission entry", spec.Tool)
+
+		if spec.Resource != "" && spec.Action != "" {
+			assert.Equal(t, qrdbsdk.Permission(spec.Resource+":"+spec.Action), got,
+				"tool %q must carry its resource:action permission", spec.Tool)
+			sawResourceMapped = true
+		} else {
+			assert.Equal(t, qrdbsdk.PermissionIdentityGated, got,
+				"tool %q with no resource:action must carry the identity-gated sentinel", spec.Tool)
+			sawIdentityGated = true
+		}
+	}
+	assert.True(t, sawResourceMapped, "test fixture assumption: at least one tool carries a resource:action permission")
+	assert.True(t, sawIdentityGated, "test fixture assumption: at least one tool carries the identity-gated sentinel")
 }
 
 // TestMCPToolHandler_LazyAndDispatch proves the tool handler answers a tool

@@ -48,6 +48,6 @@ func (r *xkeyAuthResolver) HasCertificate() bool {
 	if err != nil {
 		return false
 	}
-	defer func() { _ = signer.Close() }()
+	defer func() { _ = signer.Close() }() // xkeysigner.Signer.Close only flips a flag; it never returns a non-nil error
 	return signer.Public() != nil
 }
