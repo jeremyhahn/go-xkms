@@ -771,7 +771,7 @@ func (s *Server) handleSaveCert(ctx context.Context, req *JSONRPCRequest) (inter
 	}
 
 	if err := s.keystore.SaveCert(ctx, params.KeyID, cert); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to save certificate", Err: err}
+		return nil, certOperationError("failed to save certificate", err)
 	}
 
 	return map[string]interface{}{
@@ -792,7 +792,7 @@ func (s *Server) handleGetCert(ctx context.Context, req *JSONRPCRequest) (interf
 
 	cert, err := s.keystore.GetCert(ctx, params.KeyID)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get certificate", Err: err}
+		return nil, getCertError("failed to get certificate", err)
 	}
 
 	// Encode to PEM
@@ -820,7 +820,7 @@ func (s *Server) handleDeleteCert(ctx context.Context, req *JSONRPCRequest) (int
 	}
 
 	if err := s.keystore.DeleteCert(ctx, params.KeyID); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to delete certificate", Err: err}
+		return nil, certOperationError("failed to delete certificate", err)
 	}
 
 	return map[string]interface{}{
@@ -832,7 +832,7 @@ func (s *Server) handleDeleteCert(ctx context.Context, req *JSONRPCRequest) (int
 func (s *Server) handleListCerts(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	keyIDs, err := s.keystore.ListCerts(ctx)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to list certificates", Err: err}
+		return nil, certOperationError("failed to list certificates", err)
 	}
 
 	// Apply pagination if params are provided
@@ -863,7 +863,7 @@ func (s *Server) handleCertExists(ctx context.Context, req *JSONRPCRequest) (int
 
 	exists, err := s.keystore.CertExists(ctx, params.KeyID)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to check certificate existence", Err: err}
+		return nil, certOperationError("failed to check certificate existence", err)
 	}
 
 	return CertExistsResult{
@@ -903,7 +903,7 @@ func (s *Server) handleSaveCertChain(ctx context.Context, req *JSONRPCRequest) (
 	}
 
 	if err := s.keystore.SaveCertChain(ctx, params.KeyID, chain); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to save certificate chain", Err: err}
+		return nil, certOperationError("failed to save certificate chain", err)
 	}
 
 	return map[string]interface{}{
@@ -924,7 +924,7 @@ func (s *Server) handleGetCertChain(ctx context.Context, req *JSONRPCRequest) (i
 
 	chain, err := s.keystore.GetCertChain(ctx, params.KeyID)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get certificate chain", Err: err}
+		return nil, certOperationError("failed to get certificate chain", err)
 	}
 
 	// Encode all certificates to PEM
@@ -1100,7 +1100,7 @@ func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interf
 	// Wrap the key material
 	wrapped, err := importBackend.WrapKey(ctx, params.KeyMaterial, importParams)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to wrap key", Err: err}
+		return nil, mapImportExportError("failed to wrap key", err)
 	}
 
 	return WrapKeyResult{
@@ -1163,7 +1163,7 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 
 	keyMaterial, err := importBackend.UnwrapKey(ctx, wrapped, importParams)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to unwrap key", Err: err}
+		return nil, mapImportExportError("failed to unwrap key", err)
 	}
 
 	return UnwrapKeyResult{
@@ -1297,7 +1297,7 @@ func (s *Server) handleExportKey(ctx context.Context, req *JSONRPCRequest) (inte
 	// Export the key
 	wrapped, err := exportBackend.ExportKey(ctx, attrs, algorithm)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to export key", Err: err}
+		return nil, mapImportExportError("failed to export key", err)
 	}
 
 	return ExportKeyResult{

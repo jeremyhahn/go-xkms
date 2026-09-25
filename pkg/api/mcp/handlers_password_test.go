@@ -466,6 +466,12 @@ func TestHandlePasswordUnlock(t *testing.T) {
 	// password store to unlock. This is the opposite polarity from the tenant
 	// *scope gates* (tenant.go's tenantAccess): those pass a system-scoped
 	// caller through, this rejects it.
+	// go-xkms#912: this cross-tenant refusal used to return the bare
+	// staticpw.ErrInvalidTenantID sentinel, which pkg/apimodule's dispatcher
+	// cannot classify (only *KeyOpError carries a wire code), so the caller
+	// saw ErrCodeInternalError instead of Invalid params -- diverging from
+	// pkg/api/grpc/service_password.go's mapPasswordError, which reports
+	// codes.InvalidArgument for the identical staticpw.ErrInvalidTenantID.
 	t.Run("system-tenant caller is rejected", func(t *testing.T) {
 		server.passwordManager = createPasswordManager(t)
 		ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "webauthn-user", TenantID: "system"})
@@ -474,6 +480,10 @@ func TestHandlePasswordUnlock(t *testing.T) {
 		_, err := server.handlePasswordUnlock(ctx, req)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, staticpw.ErrInvalidTenantID)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr, "must be classified, matching gRPC's InvalidArgument")
+		assert.Equal(t, ErrCodeInvalidParams, keyErr.Code)
 	})
 }
 
@@ -512,6 +522,10 @@ func TestHandlePasswordLock(t *testing.T) {
 		_, err := server.handlePasswordLock(ctx, req)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, staticpw.ErrInvalidTenantID)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr, "must be classified, matching gRPC's InvalidArgument")
+		assert.Equal(t, ErrCodeInvalidParams, keyErr.Code)
 	})
 }
 
@@ -754,10 +768,20 @@ func TestMapPasswordError(t *testing.T) {
 		})
 	}
 
-	t.Run("returns unknown error as-is", func(t *testing.T) {
+	t.Run("classifies an unknown error as internal, not bare", func(t *testing.T) {
+		// Pins go-xkms#912: mapPasswordError used to return the bare
+		// sentinel here, which pkg/apimodule's dispatcher (module_mcp.go)
+		// cannot classify -- only *KeyOpError -- so every unrecognised
+		// password error reached the caller as the generic "xkms: internal
+		// error" placeholder with no detail. It must now come back wrapped,
+		// carrying the original error and ErrCodeInternalError.
 		unknownErr := errors.New("something else")
 		err := mapPasswordError(unknownErr)
-		assert.Equal(t, unknownErr, err)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr)
+		assert.Equal(t, ErrCodeInternalError, keyErr.Code)
+		assert.ErrorIs(t, err, unknownErr)
 	})
 }
 
@@ -783,10 +807,15 @@ func TestMapPasswordStoreError(t *testing.T) {
 		})
 	}
 
-	t.Run("returns unknown error as-is", func(t *testing.T) {
+	t.Run("classifies an unknown error as internal, not bare", func(t *testing.T) {
+		// Pins go-xkms#912: see the identical case in TestMapPasswordError.
 		unknownErr := errors.New("something else")
 		err := mapPasswordStoreError(unknownErr)
-		assert.Equal(t, unknownErr, err)
+
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr)
+		assert.Equal(t, ErrCodeInternalError, keyErr.Code)
+		assert.ErrorIs(t, err, unknownErr)
 	})
 }
 
