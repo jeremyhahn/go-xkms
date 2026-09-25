@@ -793,7 +793,7 @@ constructors and their tradeoffs.
 
 ## See Also
 
-- [LUKS + Barrier Layered Architecture](barrier.md) -- LUKS storage backend and dual-layer encryption
+- [LUKS + Barrier Layered Architecture](../../xkey/docs/luks/architecture.md) -- LUKS storage backend and dual-layer encryption (moved; see `docs/README.md`'s migration record)
 - [API Reference](api.md) -- REST endpoint reference for barrier operations
 - [PIN Management](pin.md) -- PIN-based authentication for barrier unseal
 - [Configuration Reference](../configuration/README.md)

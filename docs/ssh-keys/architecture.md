@@ -15,11 +15,14 @@ agent-signing sessions — those are
 that capability — nor the xkey desktop application's connection-profile
 manager (`pkg/ssh/connect`, `pkg/ssh/profile`, `pkg/ssh/sessions`,
 `pkg/ssh/local`), which is a consumer of this feature and of
-`ssh-agent-sessions`, not part of either. The legacy
-[`../ssh/README.md`](../ssh/README.md) covers all of the above in one file;
-this folder is normative for the keys/known-hosts/authorized-keys slice of
-it, and that file remains the reference for console/connect/profiles until
-those get their own folders.
+`ssh-agent-sessions`, not part of either: that manager, plus interactive
+console sessions, is now [`../ssh-sessions/`](../ssh-sessions/)
+(go-xkms#707), which is NORMATIVE for it. The legacy
+[`../ssh/README.md`](../ssh/README.md) covered all of the above in one
+file; with `ssh-keys`, `ssh-agent-sessions`, and `ssh-sessions` together,
+every subpackage of `pkg/ssh` now has a NORMATIVE home and that legacy
+file is fully superseded, though not yet deleted (no single folder
+absorbs it end to end — see `docs/README.md`'s migration record).
 
 ## No build tag — always compiled, always mounted
 
