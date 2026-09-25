@@ -1,6 +1,6 @@
 # PIV Certificate Management — CLI
 
-> **Status: NORMATIVE** · Feature: `piv` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `piv` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 Binary: `xkey`. Parent command: `xkey piv` (`PIVCmd`, `cmd/xkey/cmd/piv.go`).
 
@@ -136,9 +136,12 @@ xkey piv import 9a new-cert.pem --force
 
 ## Phone-held PIV slots
 
-`device phone-list`, `device phone-generate`, `device phone-push-cert`,
-`device phone-pull-cert`, `device piv-sync` operate on a paired phone's PIV
-material, not this device's local storage. See
+`piv phone-list`, `piv phone-generate <slot>`, `piv phone-push-cert <slot>
+<cert-file>`, `piv phone-pull-cert <slot>` operate on a paired phone's PIV
+material, not this device's local storage. Each takes `--device` (paired
+device name) and `--timeout` (default `1m0s`); `phone-generate` also takes
+`--algorithm`/`-a` (default `ECDSA-P256`) and `phone-pull-cert` also takes
+`--output` (default stdout). Documented in full in
 [phone-hsm/cli.md](../phone-hsm/cli.md#piv-on-the-phone).
 
 ## mTLS login with a PIV certificate

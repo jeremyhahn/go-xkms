@@ -15,7 +15,7 @@ call `OATHService.GenerateTOTP` directly to fill a TOTP field during browser
 autofill — see [autofill/api.md](../autofill/api.md). That path is still a
 same-process Go method call, not a second network surface.
 
-Phone-backed OATH sync (`xkey device oath-sync`/`oath-push`/`oath-pull`,
+Phone-backed OATH sync (`xkey oath sync`/`push`/`pull`,
 `cmd/xkey/cmd/device_oath_sync.go`) does cross a transport (BLE/USB to a
 paired phone), but it is owned by the `device`/`phone` feature folders, not
 this one.

@@ -1,10 +1,14 @@
 # Share Custody Client — CLI
 
-> **Status: NORMATIVE** · Feature: `share-custody` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `share-custody` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 Binary: `xkey`, group `share` (`xkey/cmd/xkey/cmd/share.go`). The operator's
 side — creating groups and distributing shares — is `xkmsctl custodian`, in
 [`../../../docs/share-custody/cli.md`](../../../docs/share-custody/cli.md).
+
+Persistent flag on the whole group, inherited by every subcommand below:
+`--tls-ca` (PEM CA bundle used to verify the xkmsd server; empty uses the
+default trust chain).
 
 ## `xkey share list`
 
