@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
@@ -255,6 +256,7 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, common.ServerInternal("Failed to record audit event"))
 		return
 	}
+	metrics.NewMetricsCollector(account.TenantID).RecordCertificateRevoked()
 
 	w.WriteHeader(http.StatusOK)
 }

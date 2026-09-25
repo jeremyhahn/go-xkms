@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -378,6 +379,12 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	s.logger.Debug("OrderFinalizeHandler", "method", r.Method, "url", r.URL)
 	ctx := r.Context()
 
+	// start covers the whole finalize call, from request parsing through
+	// signing (or the terminal failure), matching what operators mean by
+	// "issuance latency": ObserveCertificateIssuanceDuration in
+	// sendFinalizeResponse/failOrder measures time.Since(start).
+	start := time.Now()
+
 	account, payload, err := s.parseKID(ctx, r)
 	if err != nil {
 		writeError(w, common.MalformedError("Failed to parse account key", nil))
@@ -464,7 +471,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				}
 
 				// Send the final order response
-				s.sendFinalizeResponse(ctx, orderDAO, order, serialNumber, pem, w)
+				s.sendFinalizeResponse(ctx, orderDAO, order, account, start, serialNumber, pem, w)
 				return
 			}
 		}
@@ -568,7 +575,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			if err != nil {
 				s.logger.Error("Failed to resolve validated challenge type for CAA",
 					"domain", domain, "wildcard", isWildcard, "error", err)
-				s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to resolve validated challenge type for CAA validation"))
+				s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to resolve validated challenge type for CAA validation"))
 				return
 			}
 
@@ -582,12 +589,12 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				// Check if this is a CAA validation failure
 				var caaErr *server.ErrCAAValidationFailed
 				if errors.As(err, &caaErr) {
-					s.failOrder(ctx, orderDAO, order, w, common.CAAError(err.Error()))
+					s.failOrder(ctx, orderDAO, order, account, start, w, common.CAAError(err.Error()))
 					return
 				}
 
 				// Other errors (DNS errors, etc.) - return as CAA error per RFC
-				s.failOrder(ctx, orderDAO, order, w, common.CAAError(fmt.Sprintf("CAA validation error: %v", err)))
+				s.failOrder(ctx, orderDAO, order, account, start, w, common.CAAError(fmt.Sprintf("CAA validation error: %v", err)))
 				return
 			}
 
@@ -612,7 +619,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		s.logger.Error("Failed to resolve tenant signing CA",
 			"error", err, "account_id", account.ID, "tenant_id", account.TenantID)
-		s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(err))
+		s.failOrder(ctx, orderDAO, order, account, start, w, tenantSigningCAProblem(err))
 		return
 	}
 
@@ -624,7 +631,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		s.logger.Error("Failed to get tenant CA signer",
 			"error", err, "tenant_id", account.TenantID)
-		s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(err))
+		s.failOrder(ctx, orderDAO, order, account, start, w, tenantSigningCAProblem(err))
 		return
 	}
 
@@ -639,14 +646,14 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			s.logger.Error("Failed to resolve tenant CA issuer certificate",
 				"error", err, "tenant_id", signingCAInfo.TenantID)
-			s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(err))
+			s.failOrder(ctx, orderDAO, order, account, start, w, tenantSigningCAProblem(err))
 			return
 		}
 
 		if !signerMatchesIssuer(tenantSigner, issuerCert) {
 			s.logger.Error("Tenant CA signer does not match issuer certificate",
 				"error", ErrTenantSignerIssuerMismatch, "tenant_id", signingCAInfo.TenantID)
-			s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(ErrTenantSignerIssuerMismatch))
+			s.failOrder(ctx, orderDAO, order, account, start, w, tenantSigningCAProblem(ErrTenantSignerIssuerMismatch))
 			return
 		}
 	}
@@ -714,7 +721,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			cert, err = s.ca.IssueEKCertificate(r.Context(), ekRequest, ekPubKey)
 			if err != nil {
 				s.logger.Error("Failed to issue EK certificate", "error", err)
-				s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to issue EK certificate"))
+				s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to issue EK certificate"))
 				return
 			}
 		} else {
@@ -750,7 +757,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 					"error", err,
 					"order_id", order.ID,
 					"account_id", account.ID)
-				s.failOrder(ctx, orderDAO, order, w,
+				s.failOrder(ctx, orderDAO, order, account, start, w,
 					common.Unauthorized(fmt.Sprintf("Pre-issuance check failed: %v", err)))
 				return
 			}
@@ -779,7 +786,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 					"error", hookErr,
 					"order_id", order.ID,
 					"account_id", account.ID)
-				s.failOrder(ctx, orderDAO, order, w,
+				s.failOrder(ctx, orderDAO, order, account, start, w,
 					common.ServerInternal(fmt.Sprintf("Pre-sign hook failed: %v", hookErr)))
 				return
 			}
@@ -788,7 +795,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 
 		cert, err = s.ca.SignCSR(r.Context(), csrPEM, signOpts)
 		if err != nil {
-			s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to sign CSR"))
+			s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to sign CSR"))
 			return
 		}
 	}
@@ -797,7 +804,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// X.509 serial numbers can be up to 20 bytes, but we store as uint64
 	// If the serial number is too large, extract only the lower 64 bits
 	if cert.SerialNumber == nil {
-		s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Certificate serial number is nil"))
+		s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Certificate serial number is nil"))
 		return
 	}
 	if cert.SerialNumber.IsUint64() {
@@ -816,7 +823,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// the client. We pass nil for the signer since we don't have access
 	// to the client's private key and we're just validating the chain.
 	if _, err := s.ca.Verify(cert, nil); err != nil {
-		s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to verify certificate"))
+		s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to verify certificate"))
 		return
 	}
 
@@ -835,7 +842,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		cert.Subject.CommonName,
 		auditValidityDays(cert),
 		cert.SerialNumber.String())); auditErr != nil {
-		s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to record audit event"))
+		s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Failed to record audit event"))
 		return
 	}
 
@@ -857,7 +864,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			"client_ip", r.RemoteAddr)
 
 		if err := s.params.OrderFinalizeHooks.Execute(hookCtx); err != nil {
-			s.failOrder(ctx, orderDAO, order, w,
+			s.failOrder(ctx, orderDAO, order, account, start, w,
 				common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err)))
 			return
 		}
@@ -868,14 +875,22 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Send the final order response
-	s.sendFinalizeResponse(ctx, orderDAO, order, serialNumber, pem, w)
+	s.sendFinalizeResponse(ctx, orderDAO, order, account, start, serialNumber, pem, w)
 }
 
-// sendFinalizeResponse sends the final order response to the client.
+// sendFinalizeResponse sends the final order response to the client. It is
+// the single success sink for OrderFinalizeHandler (the standard x509 CSR
+// path and the TCG-CSR-IDEVID path both funnel through it), so it is also
+// where a completed order stops counting as active and where issuance is
+// recorded as successful: account carries the tenant scope for the
+// tenant-aware counters, and start is when OrderFinalizeHandler began, used
+// to observe the finalize call's total latency.
 func (s *RestService) sendFinalizeResponse(
 	ctx context.Context,
 	orderDAO qrdbsdk.GenericDAO[*entities.ACMEOrder],
 	order *entities.ACMEOrder,
+	account *entities.ACMEAccount,
+	start time.Time,
 	serialNumber uint64,
 	pem []byte,
 	w http.ResponseWriter) {
@@ -906,6 +921,13 @@ func (s *RestService) sendFinalizeResponse(
 		writeError(w, common.ServerInternal("Failed to update order"))
 		return
 	}
+
+	metrics.DecActiveOrders()
+	if account.TenantID != "" {
+		metrics.DecTenantActiveOrders(account.TenantID)
+	}
+	metrics.NewMetricsCollector(account.TenantID).RecordCertificateIssued()
+	metrics.ObserveCertificateIssuanceDuration(time.Since(start).Seconds())
 
 	s.orderResponse(w, order)
 }
@@ -1191,11 +1213,17 @@ func decodeEndorse01PublicKey(identifierValue string) (crypto.PublicKey, bool) {
 // failure that occurs once the order has moved to "processing": per RFC
 // 8555 Section 7.1.6, an order the CA cannot fulfill must reach a terminal
 // state with its error field populated, never remain stranded in
-// "processing" indefinitely.
+// "processing" indefinitely. Being the single failure sink for
+// OrderFinalizeHandler also makes it the single place a failed finalize is
+// recorded: account carries the tenant scope for the tenant-aware counters,
+// and start is when OrderFinalizeHandler began, used to observe the
+// finalize call's total latency even on failure.
 func (s *RestService) failOrder(
 	ctx context.Context,
 	orderDAO qrdbsdk.GenericDAO[*entities.ACMEOrder],
 	order *entities.ACMEOrder,
+	account *entities.ACMEAccount,
+	start time.Time,
 	w http.ResponseWriter,
 	acmeErr *entities.Error) {
 
@@ -1205,6 +1233,12 @@ func (s *RestService) failOrder(
 		s.logger.Error("Failed to persist invalid order status",
 			"error", saveErr, "order_id", order.ID)
 	}
+	metrics.DecActiveOrders()
+	if account.TenantID != "" {
+		metrics.DecTenantActiveOrders(account.TenantID)
+	}
+	metrics.RecordError("issuance_failed")
+	metrics.ObserveCertificateIssuanceDuration(time.Since(start).Seconds())
 	writeError(w, acmeErr)
 }
 

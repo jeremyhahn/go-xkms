@@ -69,14 +69,6 @@ func BenchmarkRecordError(b *testing.B) {
 	})
 }
 
-func BenchmarkSetActiveOrders(b *testing.B) {
-	Init()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		SetActiveOrders(float64(i % 100))
-	}
-}
-
 func BenchmarkIncActiveOrders(b *testing.B) {
 	Init()
 	b.ResetTimer()
@@ -97,14 +89,6 @@ func BenchmarkDecActiveOrders(b *testing.B) {
 	})
 }
 
-func BenchmarkSetPendingChallenges(b *testing.B) {
-	Init()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		SetPendingChallenges(float64(i % 100))
-	}
-}
-
 func BenchmarkIncPendingChallenges(b *testing.B) {
 	Init()
 	b.ResetTimer()
@@ -123,14 +107,6 @@ func BenchmarkDecPendingChallenges(b *testing.B) {
 			DecPendingChallenges()
 		}
 	})
-}
-
-func BenchmarkSetCertificatesExpiringSoon(b *testing.B) {
-	Init()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		SetCertificatesExpiringSoon(float64(i % 50))
-	}
 }
 
 func BenchmarkObserveRequestDuration(b *testing.B) {

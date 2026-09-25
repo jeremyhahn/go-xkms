@@ -35,7 +35,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -198,6 +200,16 @@ type Server struct {
 	// Shutdown can stop it; otherwise its ListenAndServe blocks forever and the
 	// startMetrics goroutine never releases its wg slot.
 	metricsServer *http.Server
+
+	// extraGatherers holds additional Prometheus gatherers combined with the
+	// default registry when /metrics is scraped, registered via
+	// RegisterMetricsGatherer. The ACME subsystem's collectors live in their
+	// own private registry (pkg/acme/server/metrics.Registry) rather than the
+	// default one, so this is how they become part of the same /metrics
+	// response xkmsd already serves instead of a second endpoint. Guarded by
+	// mu because ACME starts after Start (and therefore after startMetrics'
+	// goroutine begins serving).
+	extraGatherers []prometheus.Gatherer
 
 	// Authentication
 	authenticator auth.Authenticator
@@ -3095,6 +3107,36 @@ func (s *Server) listenAddr(port int) string {
 	return net.JoinHostPort(s.config.Server.Host, strconv.Itoa(port))
 }
 
+// RegisterMetricsGatherer adds an additional Prometheus gatherer to be
+// combined with the default registry when /metrics is scraped. The gatherer
+// list is re-read on every scrape (see serverGatherer), so a gatherer
+// registered after the metrics server has already started listening -
+// which is the normal case for the ACME subsystem, started after Start -
+// is still picked up on the next request. Safe for concurrent use.
+func (s *Server) RegisterMetricsGatherer(g prometheus.Gatherer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.extraGatherers = append(s.extraGatherers, g)
+}
+
+// serverGatherer combines prometheus.DefaultGatherer with any gatherers
+// registered on s via RegisterMetricsGatherer. It reads the registration
+// list fresh on every Gather call rather than capturing it once, so /metrics
+// reflects gatherers registered after the metrics server started serving.
+type serverGatherer struct {
+	s *Server
+}
+
+// Gather implements prometheus.Gatherer.
+func (g serverGatherer) Gather() ([]*dto.MetricFamily, error) {
+	g.s.mu.RLock()
+	gatherers := make(prometheus.Gatherers, 0, len(g.s.extraGatherers)+1)
+	gatherers = append(gatherers, prometheus.DefaultGatherer)
+	gatherers = append(gatherers, g.s.extraGatherers...)
+	g.s.mu.RUnlock()
+	return gatherers.Gather()
+}
+
 // startMetrics starts the Prometheus metrics server
 func (s *Server) startMetrics() {
 	defer s.wg.Done()
@@ -3102,7 +3144,7 @@ func (s *Server) startMetrics() {
 	addr := s.listenAddr(s.config.Metrics.Port)
 
 	mux := http.NewServeMux()
-	mux.Handle(s.config.Metrics.Path, promhttp.Handler())
+	mux.Handle(s.config.Metrics.Path, promhttp.HandlerFor(serverGatherer{s: s}, promhttp.HandlerOpts{}))
 
 	server := &http.Server{
 		Addr:              addr,

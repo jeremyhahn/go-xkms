@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 )
 
 type NewOrderRequest struct {
@@ -155,6 +156,9 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 			writeError(w, common.ServerInternal(fmt.Sprintf("Failed to save authorization: %v", err)))
 			return
 		}
+		for range challenges {
+			metrics.IncPendingChallenges()
+		}
 
 		authzURLs = append(authzURLs, authzURL)
 	}
@@ -175,6 +179,10 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 	if err := orderDAO.Save(ctx, order); err != nil {
 		writeError(w, common.ServerInternal("Failed to save order"))
 		return
+	}
+	metrics.IncActiveOrders()
+	if account.TenantID != "" {
+		metrics.IncTenantActiveOrders(account.TenantID)
 	}
 
 	orderIdentifiers := make([]string, 0, len(order.Identifiers))

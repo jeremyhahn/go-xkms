@@ -42,6 +42,7 @@ import (
 	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
+	acmemetrics "github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -338,6 +339,11 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	// Build the HTTP router and mount the ACME routes.
 	router := buildACMERouter(service, directoryPath, rateLimitMiddleware, routerLimiters)
 
+	// Make the ACME metrics registry part of the same /metrics response
+	// xkmsd already serves (pkg/server/server.go startMetrics), rather than
+	// standing up a second scrape endpoint.
+	srv.RegisterMetricsGatherer(acmemetrics.Registry)
+
 	// When the cluster CA key strategy delivers post-enrollment material (the
 	// tpm-kek cluster seed), mount its secret-delivery endpoint on the same
 	// HTTPS server the joiner already reaches for enrollment. A no-op for
@@ -582,6 +588,15 @@ const defaultClusterTrustDomain = "xkms.cluster"
 // point (no account exists yet).
 func buildACMERouter(svc handlers.RestServicer, directoryPath string, rateLimitMiddleware mux.MiddlewareFunc, routerLimiters *acmeRouterLimiters) http.Handler {
 	r := mux.NewRouter()
+
+	// acmemetrics.Mount initializes the ACME Prometheus registry (base and
+	// production metric sets) and attaches the request-instrumentation
+	// middleware, the same shared entry point pkg/acme/client/trustedca.go
+	// uses for the standalone TrustedCA, so both ACME server compositions
+	// expose identical metrics. Mounted before the rate limiter so a
+	// rate-limited (429) request is still recorded.
+	acmemetrics.Mount(r)
+
 	if rateLimitMiddleware != nil {
 		r.Use(rateLimitMiddleware)
 	}
