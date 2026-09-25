@@ -278,6 +278,27 @@ func TestAppLockService_Unlock_SuccessResetsTheBudget(t *testing.T) {
 	assert.Equal(t, int32(AppLockPINMaxAttempts), backend.verifyUserCalls.Load())
 }
 
+// TestAppLockService_ResetAttempts_PersistFailure pins the error branch
+// ResetAttempts logs and returns: when the counter cannot be persisted
+// (here, its subdirectory is blocked by a same-named file), the reset must
+// fail loudly rather than report success while the budget is still
+// exhausted on disk.
+func TestAppLockService_ResetAttempts_PersistFailure(t *testing.T) {
+	svc, _ := newCountingPINLockService(t, errors.New("wrong pin"))
+
+	dir := t.TempDir()
+	// "pin" exists as a regular file, so MkdirAll(dir/pin, ...) -- which
+	// save() must perform to write dir/pin/unlock_attempts -- fails.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pin"), []byte("not a directory"), 0600))
+	svc.SetDataDir(dir)
+
+	err := svc.ResetAttempts()
+
+	require.Error(t, err)
+	var saveErr *AppLockAttemptsSaveError
+	assert.ErrorAs(t, err, &saveErr)
+}
+
 func TestAppLockService_ResetAttempts_RestoresTheBudget(t *testing.T) {
 	svc, backend := newCountingPINLockService(t, errors.New("wrong pin"))
 
@@ -440,4 +461,49 @@ func TestAppLockService_SetDataDir_PersistsAcrossServiceRestarts(t *testing.T) {
 	err = svc2.Unlock("wrong-pin")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAppLockPINBlocked))
+}
+
+// TestAppLockService_AttemptCounter_ZeroValueServiceNeverReturnsNil pins the
+// guard documented on attemptCounter: a zero-value AppLockService{} (never
+// passed through NewAppLockService, so s.attempts holds nothing) must still
+// get a usable counter rather than a nil the caller would crash on.
+func TestAppLockService_AttemptCounter_ZeroValueServiceNeverReturnsNil(t *testing.T) {
+	var svc AppLockService
+
+	counter := svc.attemptCounter()
+
+	require.NotNil(t, counter)
+	_, _, err := counter.blocked()
+	assert.NoError(t, err)
+}
+
+// TestAppLockAttemptsLoadError_ErrorAndUnwrap and
+// TestAppLockAttemptsSaveError_ErrorAndUnwrap pin the errors.Is/errors.As
+// chain callers depend on to tell a corrupt-counter-file failure (load)
+// apart from a can't-persist-the-reset failure (save) -- see
+// TestAppLockService_ResetAttempts_PersistFailure, which asserts the
+// concrete *AppLockAttemptsSaveError type reaches the caller. Unwrap losing
+// the cause, or the message dropping the path, would surface as a
+// generic/unhelpful error at the one place an operator needs the path to
+// fix a permissions problem.
+func TestAppLockAttemptsLoadError_ErrorAndUnwrap(t *testing.T) {
+	cause := errors.New("permission denied")
+	err := &AppLockAttemptsLoadError{Path: "/var/lib/xkey/attempts.json", Cause: cause}
+
+	msg := err.Error()
+	assert.Contains(t, msg, "/var/lib/xkey/attempts.json")
+	assert.Contains(t, msg, "permission denied")
+	assert.Same(t, cause, err.Unwrap())
+	assert.ErrorIs(t, err, cause)
+}
+
+func TestAppLockAttemptsSaveError_ErrorAndUnwrap(t *testing.T) {
+	cause := errors.New("disk full")
+	err := &AppLockAttemptsSaveError{Path: "/var/lib/xkey/attempts.json", Cause: cause}
+
+	msg := err.Error()
+	assert.Contains(t, msg, "/var/lib/xkey/attempts.json")
+	assert.Contains(t, msg, "disk full")
+	assert.Same(t, cause, err.Unwrap())
+	assert.ErrorIs(t, err, cause)
 }

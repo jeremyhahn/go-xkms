@@ -656,14 +656,6 @@ var ClusterClient = class {
   members() {
     return this.http.request("GET", `${BASE5}/members`);
   }
-  /** POST /api/v1/cluster/members */
-  addMember(req) {
-    return this.http.request("POST", `${BASE5}/members`, { body: req });
-  }
-  /** DELETE /api/v1/cluster/members/{replicaID} */
-  removeMember(replicaId) {
-    return this.http.request("DELETE", `${BASE5}/members/${encodeURIComponent(String(replicaId))}`);
-  }
 };
 
 // src/clients/credentials.ts

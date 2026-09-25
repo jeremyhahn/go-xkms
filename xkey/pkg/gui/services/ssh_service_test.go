@@ -15,6 +15,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -247,5 +248,32 @@ func TestSSHService_Errors(t *testing.T) {
 	empty := NewSSHService(nil)
 	if _, err := empty.ListKeys(); err == nil {
 		t.Fatal("expected ErrSSHUnavailable when no client configured")
+	}
+}
+
+// TestSSHService_SetDefaultBackend_NoRegistry pins the guard: without a
+// registry there is nothing to record a default in, so the call must
+// refuse rather than silently no-op.
+func TestSSHService_SetDefaultBackend_NoRegistry(t *testing.T) {
+	svc := NewSSHService(nil)
+
+	if err := svc.SetDefaultBackend("software"); !errors.Is(err, ErrSSHUnavailable) {
+		t.Fatalf("SetDefaultBackend() error = %v, want %v", err, ErrSSHUnavailable)
+	}
+}
+
+// TestSSHService_SetDefaultBackend_DelegatesToRegistry pins that the call
+// actually reaches the registry with the SSH capability and the given
+// backend ID, not just that it returns success.
+func TestSSHService_SetDefaultBackend_DelegatesToRegistry(t *testing.T) {
+	svc := NewSSHService(nil)
+	registry := newMockFullRegistry()
+	svc.SetRegistry(registry)
+
+	if err := svc.SetDefaultBackend("software"); err != nil {
+		t.Fatalf("SetDefaultBackend() error = %v, want nil", err)
+	}
+	if got := registry.defaults[backendregistry.CapSSH]; got != "software" {
+		t.Fatalf("registry default for CapSSH = %q, want %q", got, "software")
 	}
 }

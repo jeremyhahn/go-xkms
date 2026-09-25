@@ -4,7 +4,7 @@
 
 ## Exported surface
 
-### Config — `pkg/config/config.go`
+### Config — `pkg/config/config.go:ClusterConfig`
 
 ```go
 type ClusterConfig struct {
@@ -65,10 +65,10 @@ type RaftACMEEnrollmentConfig struct {
 ### `pkg/daemon` — the shared, build-tag-dispatched node builder
 
 ```go
-// !raft build (node_standalone.go)
+// !raft build (pkg/daemon/node_standalone.go)
 func NewNode(ctx context.Context, opts *Options) (*Result, error) // always standalone; ErrClusterRequiresRaftBuild if opts.Cluster.Enabled
 
-// raft build (node_cluster.go)
+// raft build (pkg/daemon/node_cluster.go)
 func NewNode(ctx context.Context, opts *Options) (*Result, error) // standalone if !opts.Cluster.Enabled, else qrdbnode.NewClusteredNode
 ```
 
@@ -77,11 +77,99 @@ func NewNode(ctx context.Context, opts *Options) (*Result, error) // standalone 
 ```go
 func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig       // qrdb_node.go
 func (s *Server) initEmbeddedQRDBNode() error                      // qrdb_node.go
-func (s *Server) newQRDBNode(qcfg, serverOpts, nodeOpts) (*qrdbnode.Node, error) // build-tag specific
+func (s *Server) newQRDBNode(qcfg, serverOpts, nodeOpts) (*qrdbnode.Node, error) // build-tag specific: qrdb_node_standalone.go / qrdb_node_cluster.go
 func (s *Server) waitForClusterLeader() error                      // qrdb_node.go
 func (s *Server) resolveRaftMTLS(ctx, members) (*qrdbnode.RaftMTLSConfig, *clusterenroll.Advertiser, error) // raft build only, qrdb_node_cluster.go
 func (s *Server) registerQRDBControlPlane(gs *grpc.Server)         // qrdb_control_plane.go
 ```
+
+### `pkg/xkms` — the servicer surface backing the REST cluster routes (`pkg/xkms/servicer_cluster.go`)
+
+`XKMSService` wires an optional `cluster ClusterClient` (nil on a standalone
+node) plus `clusterShardID`/`clusterNodeID`, set once at composition time by
+`SetClusterClient(c ClusterClient, shardID, nodeID uint64)`
+(`pkg/xkms/service.go`). `pkg/server/server.go` calls it with a live
+`*clusterClientAdapter` (`pkg/server/cluster_adapter.go`, bridging the
+embedded go-qrdb node's `*qrdbsdk.ClusterClient`) only when
+`s.qrdbClient != nil && s.config.Cluster.Enabled`; otherwise it passes `nil`.
+
+```go
+type ClusterClient interface {
+    ClusterReader          // Members, Leader
+    ClusterEndpointResolver // LeaderEndpoint
+    ClusterMutator          // AddReplica, RemoveReplica
+}
+```
+
+Exported methods, all on `*XKMSService` — read-only by design; see
+architecture.md's "Two distinct surfaces over the same Raft shard" for why there is
+deliberately no `ClusterAddReplica`/`ClusterRemoveReplica`:
+
+| Method | Standalone behavior | Clustered behavior |
+|---|---|---|
+| `Clustered() bool` | `false` | `true` |
+| `ClusterStatus(ctx) (*ClusterStatus, error)` | returns `{ShardID, NodeID}` with `Clustered: false`, `HasLeader: false`, no error | queries `Leader`; returns `*ClusterStatusError` on failure |
+| `ClusterMembers(ctx) ([]ClusterMember, error)` | returns `nil, nil` (empty) | queries `Members`; returns `*ClusterMembersError` on failure |
+| `ClusterLeaderEndpoint(ctx, protocol) (string, error)` | returns `"", nil` | resolves the leader's advertised address for `protocol`; returns `*ClusterLeaderEndpointError` on failure |
+
+`ClusterStatus` and `ClusterMembers` are the only two servicer methods in the
+codebase that intentionally *degrade* rather than fail closed on a missing
+optional subsystem — every other subsystem servicer method (custodian,
+shares, tenants, …) returns `xkms.ErrNotConfigured` when its backing client
+is nil. This asymmetry is deliberate (see architecture.md's "Standalone
+degradation, not capability gating, for reads") and is exercised directly by
+`pkg/xkms/servicer_cluster_test.go` (`TestClusterStatus_Standalone`,
+`TestClusterMembers_Standalone`).
+
+The `ClusterMutator` half of the `ClusterClient` interface (`AddReplica`,
+`RemoveReplica`) still exists and `pkg/server/cluster_adapter.go` still
+implements it — that plumbing is what lets `clusterClientAdapter` satisfy the
+qrdb SDK's `*qrdbsdk.ClusterClient` shape — but no `XKMSService` method ever
+calls it. Nothing in the REST, gRPC, or QUIC transports reaches it either.
+
+#### Types (`pkg/xkms/servicer_cluster.go`)
+
+```go
+type ClusterMember struct {
+    ReplicaID    uint64
+    Address      string
+    APIEndpoints map[string]string // nil when the replica advertises nothing
+    IsLeader     bool
+}
+
+type ClusterStatus struct {
+    ShardID   uint64
+    NodeID    uint64
+    LeaderID  uint64
+    HasLeader bool
+    Clustered bool
+}
+```
+
+### `pkg/api/rest` — the REST handler surface (`pkg/api/rest/handlers_cluster.go`)
+
+```go
+type ClusterHandlers struct{ /* unexported */ }
+func NewClusterHandlers(svc *xkms.XKMSService) *ClusterHandlers
+func (h *ClusterHandlers) StatusHandler(w http.ResponseWriter, r *http.Request)
+func (h *ClusterHandlers) MembersHandler(w http.ResponseWriter, r *http.Request)
+```
+
+`ClusterHandlers` is constructed unconditionally in `NewServer`
+(`pkg/api/rest/server.go`), unlike the other optional handler groups
+(`custodianHandlers`, `tenantHandlers`, …), because `StatusHandler` and
+`MembersHandler` must work on a standalone node. There is no
+`AddMemberHandler`/`RemoveMemberHandler` and no `POST`/`DELETE` route
+registered in `pkg/api/rest/routes.go` — a handler that could only ever
+answer "not implemented" would be a stub, so none is registered; see api.md
+for the wire contract.
+
+`handleClusterError` (`pkg/api/rest/handlers_cluster.go`) maps
+`errors.Is(err, xkms.ErrNotConfigured)` to a typed `rest.ErrClusterNotConfigured`
+(503 — the construction-order case where no `XKMSService` was wired at all,
+not the standalone-node case, which never errors) and logs anything else
+before returning a generic 500 (`slog.Default().Error`) — the same pattern
+`handleCustodianError` uses.
 
 ### Not-leader translation — `pkg/xkms/errors.go`
 
@@ -93,6 +181,29 @@ type ErrNotLeader struct {
 }
 func AsNotLeader(err error) (*ErrNotLeader, bool)
 ```
+
+## RBAC vocabulary (`pkg/auth/permissions.go`)
+
+The two REST cluster routes mirror go-qrdb's own `AdminService` vocabulary
+exactly (`pkg/permission/constants.go` in go-qrdb: `AdminStatus`,
+`AdminPeers`), declared as `auth.ResourceAdmin` ("admin") combined with
+`auth.ActionStatus` ("status") and `auth.ActionPeers` ("peers"):
+
+| Route | Method | Permission |
+|---|---|---|
+| `/api/v1/cluster/status` | GET | `admin:status` |
+| `/api/v1/cluster/members` | GET | `admin:peers` |
+
+This is the same grant qrdb's own control-plane gRPC surface enforces
+internally (`pkg/server/qrdb_control_plane.go`), so a caller's RBAC role
+never has to diverge between the two surfaces — see architecture.md's Trust
+boundaries for why only the REST surface currently *enforces* it as xkms
+RBAC. `pkg/auth/permissions.go` deliberately carries no
+`ActionAddMember`/`ActionRemoveMember`: go-qrdb's
+`AdminAddMember`/`AdminRemoveMember` permissions are enforced only by the
+qrdb control plane itself (`xkmsctl cluster add`/`remove`), never by xkms's
+REST layer, so xkms defines no xkms-side vocabulary for a route that does
+not exist.
 
 ## Invariants
 
@@ -117,6 +228,9 @@ func AsNotLeader(err error) (*ErrNotLeader, bool)
   surfaces the typed not-leader error instead.
 - **`waitForClusterLeader` gates readiness only when `Cluster.Enabled`.**
   Standalone nodes never wait on a leader election.
+- **Cluster status/membership reads never gate on `Clustered()`.** They are
+  the sole servicer methods that degrade to a defined empty/standalone
+  result instead of `xkms.ErrNotConfigured` — see "Exported surface" above.
 
 ## Error semantics
 
@@ -131,24 +245,24 @@ func AsNotLeader(err error) (*ErrNotLeader, bool)
 | no leader elected within 30s of boot | `*QRDBNodeError{Stage: "await cluster leader", ...}` (`pkg/server/qrdb_node.go`) | 250ms poll interval |
 | write reaches a follower | `xkms.ErrNotLeader` / `AsNotLeader` (`pkg/xkms/errors.go`) | translated per transport, see api.md |
 | membership mutation on a standalone node | HTTP 409 Conflict / gRPC `FailedPrecondition` (per the control-plane RPC, transport-native — not an xkms typed error) | no Raft group to reconfigure |
+| REST cluster route with no `XKMSService` wired | `rest.ErrClusterNotConfigured` (503) (`pkg/api/rest/handlers_cluster.go`) | construction-order bug, not the standalone-node case (which never errors) |
+| `ClusterStatus`/`ClusterMembers` underlying query fails on a clustered node | `*xkms.ClusterStatusError` / `*xkms.ClusterMembersError` (`pkg/xkms/errors.go`), each carrying `ShardID` and implementing `Unwrap() error` | mapped to HTTP 500 by `handleClusterError`, logged server-side |
 
-## Configuration
+## Configuration (`pkg/config/config.go:ClusterConfig`)
 
-See architecture.md for the config struct and engineering.md's Exported
-surface above for every field and its yaml tag. `Config.Validate` additions
-specific to clustering (`pkg/config/config.go`, ~line 1579):
-
-```go
-if c.Cluster.Enabled {
-	// ShardID defaults to 1 if zero.
-	// storage.backend must equal "qrdb" (case-insensitive).
-	// NodeID must be non-zero.
-	// RaftAddress must be non-empty.
-	// Peers must parse and be non-empty.
-	// If !Join, Peers must include this node's own NodeID.
-	// RaftTLS must be all-or-nothing (IsComplete()).
-}
-```
+| Field | YAML Key | Env Var | Type | Description |
+|-------|----------|---------|------|-------------|
+| Enabled | `enabled` | `XKMS_CLUSTER_ENABLED` | bool | Turns on Raft clustering. Requires `Storage.Backend == "qrdb"`. |
+| NodeID | `node_id` | `XKMS_CLUSTER_NODE_ID` | uint64 | This node's unique Raft replica ID within the shard. Must be non-zero and unique across the cluster. |
+| ShardID | `shard_id` | `XKMS_CLUSTER_SHARD_ID` | uint64 | The Raft shard (group) identifier. Defaults to 1. |
+| DeploymentID | `deployment_id` | (config only) | uint64 | Isolates clusters that share a network. Optional; defaults to 0. |
+| RaftAddress | `raft_address` | `XKMS_CLUSTER_RAFT_ADDRESS` | string | This node's advertised address for Raft peer communication. |
+| ListenAddress | `listen_address` | `XKMS_CLUSTER_LISTEN_ADDRESS` | string | The address to bind for Raft communication. Defaults to `RaftAddress`. |
+| AdvertiseHost | `advertise_host` | (config only) | string | Host/IP clients use to reach this node's xkms APIs. Defaults to the host portion of `raft_address`. |
+| Peers | `peers` | `XKMS_CLUSTER_PEERS` | string | Comma-separated `nodeID=address` list of initial members. |
+| Join | `join` | `XKMS_CLUSTER_JOIN` | bool | `false` bootstraps a new cluster; `true` joins an existing one. |
+| RaftTLS.{CACertFile,CertFile,KeyFile} | `raft_tls.*` | `XKMS_CLUSTER_RAFT_TLS_*` | string | Raft peer mTLS material; all three or none (`ErrClusterRaftTLSIncomplete` on a partial set). |
+| RaftEnrollment.* | `raft_enrollment.*` | (config only, mostly) | — | Auto-provisioned Raft mTLS — see user.md. |
 
 Environment variables follow the `XKMS_<PATH>` rule (nesting joined by
 underscores). Confirmed in real deployment fixtures
@@ -161,6 +275,20 @@ underscores). Confirmed in real deployment fixtures
 config-file-only in the fixtures examined (no environment variable observed
 in use), though the general `XKMS_<PATH>` rule would still resolve them if
 set.
+
+### Validation (`pkg/config`, `Config.Validate`, ~line 1579)
+
+```go
+if c.Cluster.Enabled {
+	// ShardID defaults to 1 if zero.
+	// storage.backend must equal "qrdb" (case-insensitive).
+	// NodeID must be non-zero.
+	// RaftAddress must be non-empty.
+	// Peers must parse and be non-empty.
+	// If !Join, Peers must include this node's own NodeID.
+	// RaftTLS must be all-or-nothing (IsComplete()).
+}
+```
 
 Raft mTLS provisioning precedence, highest first (`Server.resolveRaftMTLS`,
 `pkg/server/qrdb_node_cluster.go`):
@@ -179,7 +307,8 @@ Raft mTLS provisioning precedence, highest first (`Server.resolveRaftMTLS`,
    [`../trust-bootstrap/`](../trust-bootstrap/architecture.md)).
 
 Cluster CA key custody, at steady state (`raft_enrollment.ca_key_strategy`,
-doc comment on `RaftEnrollmentConfig.CAKeyStrategy`, `pkg/config/config.go`):
+doc comment on `RaftEnrollmentConfig.CAKeyStrategy`, `pkg/config/config.go`;
+full detail in [`ca-key-custody.md`](ca-key-custody.md)):
 
 | Value | Custody model |
 |---|---|
@@ -215,7 +344,16 @@ the seal strategies above rather than the barrier.
   `cluster_ca_strategy_test.go`, `qrdb_node_cluster_test.go`,
   `qrdb_node_cluster_hw_test.go`, `qrdb_node_cluster_acme_test.go`,
   `node_seal_test.go`, `node_seal_simulator_test.go`,
-  `tenant_node_barrier_test.go`; `pkg/daemon/node_standalone_test.go`.
+  `tenant_node_barrier_test.go`; `pkg/daemon/node_standalone_test.go`,
+  `node_cluster_test.go`; `pkg/xkms/servicer_cluster_test.go`
+  (`ClusterStatus`/`ClusterMembers`, both the standalone-degradation and
+  clustered paths, plus underlying-error mapping to the typed errors above);
+  `pkg/api/rest/handlers_cluster_test.go` (handler success/error per route,
+  standalone vs. clustered; RBAC denial (`TestClusterRoutes_RBACDenied`) and
+  the positive RBAC control (`TestClusterRoutes_RBACRequiredPermission`)
+  over the two GET routes only; and the `/auth/me` `capabilities.cluster`
+  flag (`TestCapabilityFlags_Cluster`)); `cmd/xkmsctl/cluster_test.go`,
+  `rebalance_test.go` (the qrdb-control-plane CLI path — see cli.md).
 - **CI build-tag matrix** — the `build-raft` job (`.github/workflows/ci.yml`)
   builds and tests the `raft`-tagged binary across the codec tag matrix, so
   the clustered path is exercised on every change even though it is not the
@@ -223,8 +361,11 @@ the seal strategies above rather than the barrier.
 - **Integration** (`test/integration/cluster/`) — `cluster_test.go`,
   `cluster_cas_test.go`, `cluster_crypto_test.go`, `cluster_crypto_ops_test.go`,
   `cluster_resilience_test.go` (leader failover, node restart/rejoin),
-  `standalone_test.go`; driven by `docker-compose.yml` (3 nodes) and
-  `Dockerfile.xkmsd` (builds with `-tags "raft pkcs8 codec_cbor codec_json codec_msgpack"`).
+  `standalone_test.go`, `cluster_rest_api_test.go` (the 3-node cluster and
+  standalone harnesses, proving the REST surface's status/members agree
+  with go-qrdb's own `/peers` admin-plane view); driven by
+  `docker-compose.yml` (3 nodes) and `Dockerfile.xkmsd` (builds with
+  `-tags "raft pkcs8 codec_cbor codec_json codec_msgpack"`).
 - **Makefile target** — `integration-test-cluster`: "Run 3-node Raft cluster +
   standalone-server integration tests (crypto gen/sign/verify replication,
   public-key consistency, delete replication, leader failover, node

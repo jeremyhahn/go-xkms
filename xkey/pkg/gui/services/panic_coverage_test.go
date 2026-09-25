@@ -48,6 +48,18 @@ type allPanicTPM struct{}
 func (m *allPanicTPM) ActivateCredential(_, _ []byte) ([]byte, error) {
 	panic("allPanicTPM: ActivateCredential")
 }
+func (m *allPanicTPM) AnswerCredentialChallenge(_ *xkms.ActivationKey, _ *xkms.CredentialChallenge) ([]byte, error) {
+	panic("allPanicTPM: AnswerCredentialChallenge")
+}
+func (m *allPanicTPM) ClearForReprovision() (bool, error) {
+	panic("allPanicTPM: ClearForReprovision")
+}
+func (m *allPanicTPM) CreateActivationKey() (*xkms.ActivationKey, error) {
+	panic("allPanicTPM: CreateActivationKey")
+}
+func (m *allPanicTPM) State() (*xkms.ProvisioningState, error) {
+	panic("allPanicTPM: State")
+}
 func (m *allPanicTPM) AKProfile() (xkms.AKProfile, error) {
 	panic("allPanicTPM: AKProfile")
 }

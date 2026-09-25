@@ -1,13 +1,17 @@
 # CA Admin GUI
 
-The admin GUI provides certificate authority management through both a desktop application (`cactl`) and a web interface hosted by the ACME server at `/ui/admin/`.
+> **Correction (go-xkms#942):** there is no `cactl` binary in this
+> repository, and this package (`pkg/acme/gui/admin`) has no confirmed
+> `cmd/` entry point — see the correction in [`../README.md`](../README.md).
+> The desktop content below describes what this package would do if
+> wired up; treat it as unverified against a running binary.
+
+The admin GUI provides certificate authority management through a desktop application and (a separately implemented) web interface — see the correction above.
 
 ## Desktop Mode
 
-```bash
-# Launch admin desktop GUI (no subcommand = GUI mode)
-./bin/cactl
-```
+Not currently reachable from any binary in this repository — see the
+correction above.
 
 ### Window Defaults
 
@@ -16,27 +20,16 @@ The admin GUI provides certificate authority management through both a desktop a
 | Title | Trusted CA Admin |
 | Size | 1280 x 800 |
 | Min Size | 1024 x 700 |
-| Linux Program Name | `cactl` |
 
 ### Connection Defaults
 
-| Property | Value |
-|----------|-------|
-| Transport | `unix` |
-| Address | `/run/trusted-ca-grpc.sock` |
-| Timeout | 30 seconds |
-
-The admin desktop app connects to the CA server via an `AdapterFactory` that supports all protocols: Unix socket, REST, gRPC, QUIC, and MCP. Configure via the Connection Settings view or CLI flags.
+Unverified — see the correction above.
 
 ## Web Mode
 
-The ACME server embeds the admin SPA and serves it at `/ui/admin/`. Access it in any browser:
-
-```
-https://your-ca-server:8443/ui/admin/
-```
-
-See [Web Mode](web-mode.md) for details.
+The web admin UI that is actually wired today is `xkmsd`'s own
+`/admin-ui` (`pkg/acme/web/packages/admin`, `cmd/xkmsd/admin.go:73`), not
+`/ui/admin/`. See the correction at the top of this page.
 
 ## Navigation Views
 

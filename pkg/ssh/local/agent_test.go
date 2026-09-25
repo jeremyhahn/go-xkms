@@ -20,7 +20,6 @@ import (
 	"net"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"golang.org/x/crypto/ssh"
 	sshagent "golang.org/x/crypto/ssh/agent"
@@ -129,6 +128,9 @@ func TestDialAgent_EmptyPath(t *testing.T) {
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("expected *AgentUnavailableError, got %T: %v", err, err)
 	}
+	if !errors.Is(err, local.ErrNoAgentSocket) {
+		t.Fatalf("expected err to wrap ErrNoAgentSocket, got %v", err)
+	}
 }
 
 // TestDialAgent_BadPath covers the dial-failure AgentUnavailableError
@@ -158,9 +160,11 @@ func TestDialAgent_ProtocolFailure(t *testing.T) {
 		}
 		defer conn.Close()
 		// Garbage instead of a valid agent-protocol response — the
-		// client's Signers() request will fail to parse it.
+		// client's Signers() request will fail to parse it. Closing
+		// immediately after Write is safe: data already queued in the
+		// kernel send buffer is still delivered to the peer after close,
+		// so no readiness wait is needed here.
 		_, _ = conn.Write([]byte{0xff, 0xff, 0xff, 0xff})
-		time.Sleep(10 * time.Millisecond)
 	}()
 
 	_, err = local.DialAgent(sock)

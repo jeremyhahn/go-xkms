@@ -119,7 +119,7 @@ accepts the same flags. The daemon flags are local rather than persistent, so
 they are not available on `policy` or `profile`. `policy` takes
 `list`/`set`/`get`/`delete` per relying party; `profile` takes
 `set`/`show`. `status` takes `--socket`. See
-[../../fido2/daemon-configuration.md](../../fido2/daemon-configuration.md).
+[../../virtual-authenticator/cli.md](../../virtual-authenticator/cli.md).
 (`fido2.md` in this directory describes a different thing — `xkmsctl fido2`,
 which drives *external* FIDO2 hardware keys.)
 
@@ -234,6 +234,6 @@ the phone does that. See
 - [xkey auth](auth.md) -- server authentication in detail
 - [xkey share](share.md) -- key share management
 - [Browser Extension](extension.md)
-- [FIDO2 Daemon Overview](../../fido2/overview.md)
-- [FIDO2 Daemon Configuration](../../fido2/daemon-configuration.md)
+- [FIDO2 Daemon Overview](../../fido2/architecture.md)
+- [FIDO2 Daemon Configuration](../../virtual-authenticator/cli.md)
 - [QR Pairing](../../device/cli.md#device-relay-and-qr-pairing)

@@ -403,7 +403,6 @@ func mapPasswordUnlockError(err error) error {
 // opposed to an unrecognised error that merely fell through to the default.
 func isKnownInternalPasswordError(err error) bool {
 	return errors.Is(err, staticpw.ErrNilStore) ||
-		errors.Is(err, staticpw.ErrNilEncrypter) ||
 		errors.Is(err, staticpw.ErrNilBarrierRegistry)
 }
 
@@ -464,8 +463,6 @@ func mapPasswordError(err error) error {
 	// Configuration/nil errors
 	case errors.Is(err, staticpw.ErrNilStore):
 		return status.Error(codes.Internal, "password store not initialized")
-	case errors.Is(err, staticpw.ErrNilEncrypter):
-		return status.Error(codes.Internal, "encrypter not configured")
 	case errors.Is(err, staticpw.ErrNilBarrierRegistry):
 		return status.Error(codes.Internal, "barrier registry not configured")
 

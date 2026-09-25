@@ -30,15 +30,20 @@ import (
 // SDK client (sdk/go/transport/mcp) reads a tool failure's classification
 // from exactly this envelope, and never from the tool result's text.
 //
-// The three sdkssh.JSONRPCCode* rows are SSH-specific (sdk/go/client/ssh/
-// mcp_status.go): mapSSHError (pkg/api/mcp/errors_ssh.go) is the only
-// producer of these particular *KeyOpError codes, and they exist precisely
-// so a not-found, a duplicate, and a host-key mismatch reach the wire on
-// their own distinct wire.Code instead of sharing ErrCodeInvalidParams the
-// way the xkms.* method family's coarser eight-code vocabulary still does
-// (go-xkms#792). wire.CodeFailedPrecondition is the closest go-qrdb code
-// for Mismatch: it renders codes.FailedPrecondition, and
-// sdk/go/client/ssh/grpc_status.go's GRPCCodeForError already uses that
+// The three sdkssh.JSONRPCCode* rows are defined in sdk/go/client/ssh/
+// mcp_status.go. JSONRPCCodeNotFound is shared by every not-found producer
+// in pkg/api/mcp, not only the SSH sub-system: mapSSHError (errors_ssh.go),
+// mapKeyOpError's keyOpSentinelCodes (errors_keyops.go, for
+// xkms.ErrKeyNotFound/ErrBackendNotFound), and mapUserError
+// (handlers_user.go, for a *qrdbsdk.UserNotFoundError) all stamp it rather
+// than each minting a separate not-found code (go-xkms#814). Duplicate and
+// Mismatch remain SSH-specific: mapSSHError is still their only producer,
+// so a duplicate and a host-key mismatch reach the wire on their own
+// distinct wire.Code instead of sharing ErrCodeInvalidParams the way the
+// xkms.* method family's coarser eight-code vocabulary still does for
+// everything but NotFound (go-xkms#792). wire.CodeFailedPrecondition is the
+// closest go-qrdb code for Mismatch: it renders codes.FailedPrecondition,
+// and sdk/go/client/ssh/grpc_status.go's GRPCCodeForError already uses that
 // same gRPC code for the identical condition, so MCP and gRPC agree.
 //
 // A map rather than a switch, so an xkms code added without a row here is a

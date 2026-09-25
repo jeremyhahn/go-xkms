@@ -74,15 +74,33 @@ const (
 // Printer handles formatted output
 type Printer struct {
 	format OutputFormat
-	writer io.Writer
+	writer *outputWriter
 }
 
 // NewPrinter creates a new Printer
 func NewPrinter(format string, writer io.Writer) *Printer {
 	return &Printer{
 		format: OutputFormat(format),
-		writer: writer,
+		writer: newOutputWriter(writer),
 	}
+}
+
+// Err returns the first output-write error recorded across every call made
+// through this Printer, if any.
+func (p *Printer) Err() error {
+	return p.writer.Err()
+}
+
+// printf writes a formatted line, recording rather than returning a write
+// failure. See outputWriter.
+func (p *Printer) printf(format string, a ...any) {
+	p.writer.printf(format, a...)
+}
+
+// println writes a, terminated by a newline, recording rather than
+// returning a write failure. See outputWriter.
+func (p *Printer) println(a ...any) {
+	p.writer.println(a...)
 }
 
 // PrintBackendList prints a list of backends
@@ -93,11 +111,11 @@ func (p *Printer) PrintBackendList(backends []string) error {
 			"backends": backends,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, "Available Backends:")
+		p.writer.println("Available Backends:")
 		for _, b := range backends {
-			_, _ = fmt.Fprintf(p.writer, "  - %s\n", b)
+			p.writer.printf("  - %s\n", b)
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -118,14 +136,14 @@ func (p *Printer) PrintBackendInfo(backendName string, caps client.Capabilities)
 			},
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(p.writer, "Backend: %s\n", backendName)
-		_, _ = fmt.Fprintln(p.writer, "Capabilities:")
-		_, _ = fmt.Fprintf(p.writer, "  Keys:            %t\n", caps.Keys)
-		_, _ = fmt.Fprintf(p.writer, "  Hardware Backed: %t\n", caps.HardwareBacked)
-		_, _ = fmt.Fprintf(p.writer, "  Signing:         %t\n", caps.Signing)
-		_, _ = fmt.Fprintf(p.writer, "  Decryption:      %t\n", caps.Decryption)
-		_, _ = fmt.Fprintf(p.writer, "  Key Rotation:    %t\n", caps.KeyRotation)
-		return nil
+		p.writer.printf("Backend: %s\n", backendName)
+		p.writer.println("Capabilities:")
+		p.writer.printf("  Keys:            %t\n", caps.Keys)
+		p.writer.printf("  Hardware Backed: %t\n", caps.HardwareBacked)
+		p.writer.printf("  Signing:         %t\n", caps.Signing)
+		p.writer.printf("  Decryption:      %t\n", caps.Decryption)
+		p.writer.printf("  Key Rotation:    %t\n", caps.KeyRotation)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -149,26 +167,26 @@ func (p *Printer) PrintKeyList(keys []*client.KeyAttributes) error {
 		})
 	case OutputFormatTable:
 		if len(keys) == 0 {
-			_, _ = fmt.Fprintln(p.writer, "No keys found")
-			return nil
+			p.writer.println("No keys found")
+			return p.writer.Err()
 		}
-		_, _ = fmt.Fprintf(p.writer, "%-30s %-15s %-15s %-10s\n", "CN", "TYPE", "ALGORITHM", "STORE")
-		_, _ = fmt.Fprintln(p.writer, strings.Repeat("-", 72))
+		p.writer.printf("%-30s %-15s %-15s %-10s\n", "CN", "TYPE", "ALGORITHM", "STORE")
+		p.writer.println(strings.Repeat("-", 72))
 		for _, key := range keys {
-			_, _ = fmt.Fprintf(p.writer, "%-30s %-15s %-15s %-10s\n",
+			p.writer.printf("%-30s %-15s %-15s %-10s\n",
 				key.CN, key.KeyType, key.KeyAlgorithm, key.StoreType)
 		}
-		return nil
+		return p.writer.Err()
 	case OutputFormatText:
 		if len(keys) == 0 {
-			_, _ = fmt.Fprintln(p.writer, "No keys found")
-			return nil
+			p.writer.println("No keys found")
+			return p.writer.Err()
 		}
-		_, _ = fmt.Fprintln(p.writer, "Keys:")
+		p.writer.println("Keys:")
 		for _, key := range keys {
-			_, _ = fmt.Fprintf(p.writer, "  - %s (%s, %s)\n", key.CN, key.KeyAlgorithm, key.KeyType)
+			p.writer.printf("  - %s (%s, %s)\n", key.CN, key.KeyAlgorithm, key.KeyType)
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -196,22 +214,22 @@ func (p *Printer) PrintKeyInfo(key *client.KeyAttributes) error {
 		}
 		return p.printJSON(info)
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(p.writer, "Key Information:\n")
-		_, _ = fmt.Fprintf(p.writer, "  CN:        %s\n", key.CN)
-		_, _ = fmt.Fprintf(p.writer, "  Type:      %s\n", key.KeyType)
-		_, _ = fmt.Fprintf(p.writer, "  Algorithm: %s\n", key.KeyAlgorithm)
-		_, _ = fmt.Fprintf(p.writer, "  Store:     %s\n", key.StoreType)
-		_, _ = fmt.Fprintf(p.writer, "  Hash:      %s\n", key.Hash)
+		p.writer.printf("Key Information:\n")
+		p.writer.printf("  CN:        %s\n", key.CN)
+		p.writer.printf("  Type:      %s\n", key.KeyType)
+		p.writer.printf("  Algorithm: %s\n", key.KeyAlgorithm)
+		p.writer.printf("  Store:     %s\n", key.StoreType)
+		p.writer.printf("  Hash:      %s\n", key.Hash)
 		if key.Partition != "" {
-			_, _ = fmt.Fprintf(p.writer, "  Partition: %s\n", key.Partition)
+			p.writer.printf("  Partition: %s\n", key.Partition)
 		}
 		if key.RSAAttributes != nil {
-			_, _ = fmt.Fprintf(p.writer, "  RSA Size:  %d bits\n", key.RSAAttributes.KeySize)
+			p.writer.printf("  RSA Size:  %d bits\n", key.RSAAttributes.KeySize)
 		}
 		if key.ECCAttributes != nil {
-			_, _ = fmt.Fprintf(p.writer, "  ECC Curve: %s\n", key.ECCAttributes.Curve)
+			p.writer.printf("  ECC Curve: %s\n", key.ECCAttributes.Curve)
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -226,8 +244,8 @@ func (p *Printer) PrintSuccess(message string) error {
 			"message": message,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, message)
-		return nil
+		p.writer.println(message)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -242,8 +260,8 @@ func (p *Printer) PrintError(err error) error {
 			"error":  err.Error(),
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(p.writer, "Error: %v\n", err)
-		return nil
+		p.writer.printf("Error: %v\n", err)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -257,8 +275,8 @@ func (p *Printer) PrintSignature(signature string) error {
 			"signature": signature,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, signature)
-		return nil
+		p.writer.println(signature)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -272,8 +290,8 @@ func (p *Printer) PrintDecryptedData(plaintext string) error {
 			"plaintext": plaintext,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, plaintext)
-		return nil
+		p.writer.println(plaintext)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -290,11 +308,11 @@ func (p *Printer) PrintEncryptedData(data *client.EncryptedData) error {
 			"algorithm":  data.Algorithm,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(p.writer, "Ciphertext: %s\n", base64.StdEncoding.EncodeToString(data.Ciphertext))
-		_, _ = fmt.Fprintf(p.writer, "Nonce:      %s\n", base64.StdEncoding.EncodeToString(data.Nonce))
-		_, _ = fmt.Fprintf(p.writer, "Tag:        %s\n", base64.StdEncoding.EncodeToString(data.Tag))
-		_, _ = fmt.Fprintf(p.writer, "Algorithm:  %s\n", data.Algorithm)
-		return nil
+		p.writer.printf("Ciphertext: %s\n", base64.StdEncoding.EncodeToString(data.Ciphertext))
+		p.writer.printf("Nonce:      %s\n", base64.StdEncoding.EncodeToString(data.Nonce))
+		p.writer.printf("Tag:        %s\n", base64.StdEncoding.EncodeToString(data.Tag))
+		p.writer.printf("Algorithm:  %s\n", data.Algorithm)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -319,8 +337,8 @@ func (p *Printer) PrintCertificate(cert *x509.Certificate) error {
 			Bytes: cert.Raw,
 		}
 		pemBytes := pem.EncodeToMemory(pemBlock)
-		_, _ = fmt.Fprint(p.writer, string(pemBytes))
-		return nil
+		p.writer.print(string(pemBytes))
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -335,25 +353,25 @@ func (p *Printer) PrintCertList(certIDs []string) error {
 		})
 	case OutputFormatTable:
 		if len(certIDs) == 0 {
-			_, _ = fmt.Fprintln(p.writer, "No certificates found")
-			return nil
+			p.writer.println("No certificates found")
+			return p.writer.Err()
 		}
-		_, _ = fmt.Fprintf(p.writer, "%-50s\n", "CERTIFICATE ID")
-		_, _ = fmt.Fprintln(p.writer, strings.Repeat("-", 50))
+		p.writer.printf("%-50s\n", "CERTIFICATE ID")
+		p.writer.println(strings.Repeat("-", 50))
 		for _, id := range certIDs {
-			_, _ = fmt.Fprintf(p.writer, "%-50s\n", id)
+			p.writer.printf("%-50s\n", id)
 		}
-		return nil
+		return p.writer.Err()
 	case OutputFormatText:
 		if len(certIDs) == 0 {
-			_, _ = fmt.Fprintln(p.writer, "No certificates found")
-			return nil
+			p.writer.println("No certificates found")
+			return p.writer.Err()
 		}
-		_, _ = fmt.Fprintln(p.writer, "Certificates:")
+		p.writer.println("Certificates:")
 		for _, id := range certIDs {
-			_, _ = fmt.Fprintf(p.writer, "  - %s\n", id)
+			p.writer.printf("  - %s\n", id)
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -369,11 +387,11 @@ func (p *Printer) PrintCertExists(keyID string, exists bool) error {
 		})
 	case OutputFormatTable, OutputFormatText:
 		if exists {
-			_, _ = fmt.Fprintf(p.writer, "Certificate exists for key: %s\n", keyID)
+			p.writer.printf("Certificate exists for key: %s\n", keyID)
 		} else {
-			_, _ = fmt.Fprintf(p.writer, "Certificate does not exist for key: %s\n", keyID)
+			p.writer.printf("Certificate does not exist for key: %s\n", keyID)
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -399,16 +417,16 @@ func (p *Printer) PrintCertChain(chain []*x509.Certificate) error {
 	case OutputFormatTable, OutputFormatText:
 		for i, cert := range chain {
 			if i > 0 {
-				_, _ = fmt.Fprintln(p.writer)
+				p.writer.println()
 			}
 			pemBlock := &pem.Block{
 				Type:  "CERTIFICATE",
 				Bytes: cert.Raw,
 			}
 			pemBytes := pem.EncodeToMemory(pemBlock)
-			_, _ = fmt.Fprint(p.writer, string(pemBytes))
+			p.writer.print(string(pemBytes))
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -443,36 +461,36 @@ func (p *Printer) PrintTLSCertificate(cert *x509.Certificate, chain []*x509.Cert
 		}
 		return p.printJSON(result)
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, "TLS Certificate:")
-		_, _ = fmt.Fprintf(p.writer, "  Subject: %s\n", cert.Subject.String())
-		_, _ = fmt.Fprintf(p.writer, "  Issuer: %s\n", cert.Issuer.String())
-		_, _ = fmt.Fprintf(p.writer, "  Valid From: %s\n", cert.NotBefore.String())
-		_, _ = fmt.Fprintf(p.writer, "  Valid Until: %s\n", cert.NotAfter.String())
+		p.writer.println("TLS Certificate:")
+		p.writer.printf("  Subject: %s\n", cert.Subject.String())
+		p.writer.printf("  Issuer: %s\n", cert.Issuer.String())
+		p.writer.printf("  Valid From: %s\n", cert.NotBefore.String())
+		p.writer.printf("  Valid Until: %s\n", cert.NotAfter.String())
 		if len(chain) > 0 {
-			_, _ = fmt.Fprintf(p.writer, "  Chain Length: %d\n", len(chain))
+			p.writer.printf("  Chain Length: %d\n", len(chain))
 		}
-		_, _ = fmt.Fprintln(p.writer, "\nCertificate PEM:")
+		p.writer.println("\nCertificate PEM:")
 		pemBlock := &pem.Block{
 			Type:  "CERTIFICATE",
 			Bytes: cert.Raw,
 		}
 		pemBytes := pem.EncodeToMemory(pemBlock)
-		_, _ = fmt.Fprint(p.writer, string(pemBytes))
+		p.writer.print(string(pemBytes))
 
 		// Print chain if present
 		if len(chain) > 0 {
-			_, _ = fmt.Fprintln(p.writer, "\nCertificate Chain:")
+			p.writer.println("\nCertificate Chain:")
 			for i, chainCert := range chain {
-				_, _ = fmt.Fprintf(p.writer, "\nChain Certificate #%d:\n", i+1)
+				p.writer.printf("\nChain Certificate #%d:\n", i+1)
 				pemBlock := &pem.Block{
 					Type:  "CERTIFICATE",
 					Bytes: chainCert.Raw,
 				}
 				pemBytes := pem.EncodeToMemory(pemBlock)
-				_, _ = fmt.Fprint(p.writer, string(pemBytes))
+				p.writer.print(string(pemBytes))
 			}
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -496,19 +514,19 @@ func (p *Printer) PrintImportParameters(params *client.ImportParameters) error {
 		return p.printJSON(data)
 
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(p.writer, "Import Parameters:\n")
-		_, _ = fmt.Fprintf(p.writer, "  Algorithm:    %s\n", params.Algorithm)
-		_, _ = fmt.Fprintf(p.writer, "  Key Spec:     %s\n", params.KeySpec)
+		p.writer.printf("Import Parameters:\n")
+		p.writer.printf("  Algorithm:    %s\n", params.Algorithm)
+		p.writer.printf("  Key Spec:     %s\n", params.KeySpec)
 		if params.ExpiresAt != nil {
-			_, _ = fmt.Fprintf(p.writer, "  Expires At:   %s\n", params.ExpiresAt.String())
+			p.writer.printf("  Expires At:   %s\n", params.ExpiresAt.String())
 		}
 		if params.ImportToken != nil {
-			_, _ = fmt.Fprintf(p.writer, "  Import Token: %d bytes\n", len(params.ImportToken))
+			p.writer.printf("  Import Token: %d bytes\n", len(params.ImportToken))
 		}
 		if params.WrappingPublicKey != nil {
-			_, _ = fmt.Fprintf(p.writer, "  Wrapping Key: %T\n", params.WrappingPublicKey)
+			p.writer.printf("  Wrapping Key: %T\n", params.WrappingPublicKey)
 		}
-		return nil
+		return p.writer.Err()
 
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
@@ -523,8 +541,8 @@ func (p *Printer) PrintEncryptedAsym(ciphertext string) error {
 			"ciphertext": ciphertext,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, ciphertext)
-		return nil
+		p.writer.println(ciphertext)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -538,8 +556,8 @@ func (p *Printer) PrintMessage(message string) error {
 			"message": message,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, message)
-		return nil
+		p.writer.println(message)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -552,11 +570,13 @@ func (p *Printer) PrintMessage(message string) error {
 func (p *Printer) PrintWarning(message string) error {
 	switch p.format {
 	case OutputFormatJSON:
-		_, _ = fmt.Fprintln(os.Stderr, "WARNING: "+message)
-		return nil
+		if _, err := fmt.Fprintln(os.Stderr, "WARNING: "+message); err != nil {
+			return err
+		}
+		return p.writer.Err()
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, "WARNING: "+message)
-		return nil
+		p.writer.println("WARNING: " + message)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -569,10 +589,10 @@ func (p *Printer) PrintPrompt(message string) error {
 	switch p.format {
 	case OutputFormatJSON:
 		// Skip prompts in JSON mode - they're not structured data
-		return nil
+		return p.writer.Err()
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, message)
-		return nil
+		p.writer.println(message)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -597,27 +617,27 @@ func (p *Printer) PrintFIDO2Devices(devices []fido2Device) error {
 			"devices": deviceList,
 		})
 	case OutputFormatTable:
-		_, _ = fmt.Fprintf(p.writer, "%-20s %-10s %-10s %-25s %-25s\n",
+		p.writer.printf("%-20s %-10s %-10s %-25s %-25s\n",
 			"PATH", "VENDOR", "PRODUCT", "MANUFACTURER", "NAME")
-		_, _ = fmt.Fprintln(p.writer, strings.Repeat("-", 92))
+		p.writer.println(strings.Repeat("-", 92))
 		for _, dev := range devices {
-			_, _ = fmt.Fprintf(p.writer, "%-20s 0x%04X     0x%04X     %-25s %-25s\n",
+			p.writer.printf("%-20s 0x%04X     0x%04X     %-25s %-25s\n",
 				dev.Path, dev.VendorID, dev.ProductID,
 				truncateString(dev.Manufacturer, 25),
 				truncateString(dev.Product, 25))
 		}
-		return nil
+		return p.writer.Err()
 	case OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, "FIDO2 Devices:")
+		p.writer.println("FIDO2 Devices:")
 		for _, dev := range devices {
-			_, _ = fmt.Fprintf(p.writer, "  - %s\n", dev.Path)
-			_, _ = fmt.Fprintf(p.writer, "    Product:      %s\n", dev.Product)
-			_, _ = fmt.Fprintf(p.writer, "    Manufacturer: %s\n", dev.Manufacturer)
-			_, _ = fmt.Fprintf(p.writer, "    Vendor ID:    0x%04X\n", dev.VendorID)
-			_, _ = fmt.Fprintf(p.writer, "    Product ID:   0x%04X\n", dev.ProductID)
-			_, _ = fmt.Fprintf(p.writer, "    Transport:    %s\n", dev.Transport)
+			p.writer.printf("  - %s\n", dev.Path)
+			p.writer.printf("    Product:      %s\n", dev.Product)
+			p.writer.printf("    Manufacturer: %s\n", dev.Manufacturer)
+			p.writer.printf("    Vendor ID:    0x%04X\n", dev.VendorID)
+			p.writer.printf("    Product ID:   0x%04X\n", dev.ProductID)
+			p.writer.printf("    Transport:    %s\n", dev.Transport)
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -637,17 +657,17 @@ func (p *Printer) PrintFIDO2DeviceInfo(dev fido2Device) error {
 			"transport":     dev.Transport,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, "FIDO2 Device Information:")
-		_, _ = fmt.Fprintf(p.writer, "  Path:          %s\n", dev.Path)
-		_, _ = fmt.Fprintf(p.writer, "  Product:       %s\n", dev.Product)
-		_, _ = fmt.Fprintf(p.writer, "  Manufacturer:  %s\n", dev.Manufacturer)
-		_, _ = fmt.Fprintf(p.writer, "  Vendor ID:     0x%04X\n", dev.VendorID)
-		_, _ = fmt.Fprintf(p.writer, "  Product ID:    0x%04X\n", dev.ProductID)
+		p.writer.println("FIDO2 Device Information:")
+		p.writer.printf("  Path:          %s\n", dev.Path)
+		p.writer.printf("  Product:       %s\n", dev.Product)
+		p.writer.printf("  Manufacturer:  %s\n", dev.Manufacturer)
+		p.writer.printf("  Vendor ID:     0x%04X\n", dev.VendorID)
+		p.writer.printf("  Product ID:    0x%04X\n", dev.ProductID)
 		if dev.SerialNumber != "" {
-			_, _ = fmt.Fprintf(p.writer, "  Serial Number: %s\n", dev.SerialNumber)
+			p.writer.printf("  Serial Number: %s\n", dev.SerialNumber)
 		}
-		_, _ = fmt.Fprintf(p.writer, "  Transport:     %s\n", dev.Transport)
-		return nil
+		p.writer.printf("  Transport:     %s\n", dev.Transport)
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -668,17 +688,17 @@ func (p *Printer) PrintFIDO2Registration(result *fido2EnrollmentResult) error {
 			"created":       result.Created.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(p.writer, "FIDO2 Credential Registration Successful!")
-		_, _ = fmt.Fprintln(p.writer, "")
-		_, _ = fmt.Fprintln(p.writer, "Credential Information:")
-		_, _ = fmt.Fprintf(p.writer, "  User:          %s (%s)\n", result.User.Name, result.User.DisplayName)
-		_, _ = fmt.Fprintf(p.writer, "  Relying Party: %s\n", result.RelyingParty.ID)
-		_, _ = fmt.Fprintf(p.writer, "  Created:       %s\n", result.Created.Format("2006-01-02 15:04:05"))
-		_, _ = fmt.Fprintln(p.writer, "")
-		_, _ = fmt.Fprintln(p.writer, "Store these values securely for authentication:")
-		_, _ = fmt.Fprintf(p.writer, "  Credential ID: %s\n", base64.StdEncoding.EncodeToString(result.CredentialID))
-		_, _ = fmt.Fprintf(p.writer, "  Salt:          %s\n", base64.StdEncoding.EncodeToString(result.Salt))
-		return nil
+		p.writer.println("FIDO2 Credential Registration Successful!")
+		p.writer.println("")
+		p.writer.println("Credential Information:")
+		p.writer.printf("  User:          %s (%s)\n", result.User.Name, result.User.DisplayName)
+		p.writer.printf("  Relying Party: %s\n", result.RelyingParty.ID)
+		p.writer.printf("  Created:       %s\n", result.Created.Format("2006-01-02 15:04:05"))
+		p.writer.println("")
+		p.writer.println("Store these values securely for authentication:")
+		p.writer.printf("  Credential ID: %s\n", base64.StdEncoding.EncodeToString(result.CredentialID))
+		p.writer.printf("  Salt:          %s\n", base64.StdEncoding.EncodeToString(result.Salt))
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -704,5 +724,8 @@ func (p *Printer) PrintJSON(data interface{}) error {
 func (p *Printer) printJSON(data interface{}) error {
 	encoder := json.NewEncoder(p.writer)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(data)
+	if err := encoder.Encode(data); err != nil {
+		return err
+	}
+	return p.writer.Err()
 }

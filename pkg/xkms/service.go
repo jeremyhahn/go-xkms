@@ -19,6 +19,7 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -318,6 +320,17 @@ func (s *XKMSService) SetClusterClient(c ClusterClient, shardID, nodeID uint64) 
 	s.cluster = c
 	s.clusterShardID = shardID
 	s.clusterNodeID = nodeID
+}
+
+// Clustered reports whether this node runs as part of a Raft cluster
+// (go-qrdb's NewClusteredNode with clustering enabled) rather than the
+// standalone single-node engine. Transports use it to decide whether cluster
+// membership mutation is possible at all (ClusterAddReplica/
+// ClusterRemoveReplica fail closed on a standalone node) and whether to
+// advertise the capability to callers; ClusterStatus and ClusterMembers
+// themselves stay callable either way, degrading to the standalone view.
+func (s *XKMSService) Clustered() bool {
+	return s.cluster != nil
 }
 
 // SetTenantService injects go-qrdb's TenantService so the tenant servicer
@@ -827,6 +840,29 @@ func getBackendForKID(kid string) (Backend, *types.KeyAttributes, error) {
 	}
 
 	return b, attrs, nil
+}
+
+// loadStoredKeyAttrs resolves cn's PERSISTED key attributes from b's own
+// record, rather than the ones ParseKeyIDToAttributes reconstructs from a kid
+// string alone.
+//
+// The kid format "backend:type:algo:keyname" cannot encode Exportable -- or
+// any other field the identifier does not carry -- so a caller that only
+// parsed the kid always got the zero value for those fields back. That is
+// why ExportKey by kid could never succeed even for a key created with
+// Exportable: true, and why RotateKey by kid silently downgraded a rotated
+// key to Exportable: false regardless of what the original key had (#925).
+//
+// It reuses findKeyAttrs (servicer_helpers.go), the servicer's CN lookup
+// over ListKeys, and translates its miss to backend.ErrKeyNotFound, the
+// not-found sentinel every other Simplified API function in this file
+// surfaces for an unknown kid.
+func loadStoredKeyAttrs(ctx context.Context, b Backend, cn string) (*types.KeyAttributes, error) {
+	attrs, err := findKeyAttrs(ctx, b, cn)
+	if errors.Is(err, ErrKeyNotFound) {
+		return nil, backend.ErrKeyNotFound
+	}
+	return attrs, err
 }
 
 // Simplified API - applications use these functions directly
@@ -1503,7 +1539,16 @@ func RotateKey(ctx context.Context, kid string) (crypto.PrivateKey, error) {
 		return nil, err
 	}
 
-	return b.RotateKey(ctx, attrs)
+	// RotateKey's contract is "replace with a newly generated key that has
+	// the same attributes" -- attrs reconstructed from kid alone never has
+	// the real Exportable (or Hash), so honouring that contract requires the
+	// stored record, not the parse (#925).
+	storedAttrs, err := loadStoredKeyAttrs(ctx, b, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
+
+	return b.RotateKey(ctx, storedAttrs)
 }
 
 // ========================================================================
@@ -1517,6 +1562,13 @@ type SignOptions struct {
 
 	// PSSOptions for RSA-PSS signatures (optional)
 	PSSOptions *rsa.PSSOptions
+
+	// BlobCN, when set, persists the produced digest and signature through
+	// the backend's SignerStore, keyed by the signing key's CN and this blob
+	// CN. A later Verify call against the same key with the same
+	// VerifyOpts.BlobCN and VerifyOpts.IntegrityCheck set confirms the
+	// digest presented for verification against this persisted record.
+	BlobCN string
 }
 
 // Sign signs data using the specified key.
@@ -1536,29 +1588,46 @@ func Sign(ctx context.Context, kid string, data []byte, opts *SignOptions) ([]by
 		return nil, &ErrCryptoOperation{Operation: "signer", Err: err}
 	}
 
-	// Ed25519 uses pure signing (no prehashing) by default
-	// The signer expects the raw message and crypto.Hash(0) as SignerOpts
-	if attrs.KeyAlgorithm == x509.Ed25519 {
-		return signer.Sign(nil, data, crypto.Hash(0))
-	}
-
 	if opts == nil {
-		opts = &SignOptions{Hash: crypto.SHA256}
-	}
-	if opts.Hash == 0 {
-		opts.Hash = crypto.SHA256
+		opts = &SignOptions{}
 	}
 
-	hasher := opts.Hash.New()
-	hasher.Write(data)
-	digest := hasher.Sum(nil)
+	var digest, signature []byte
 
-	var signerOpts crypto.SignerOpts = opts.Hash
-	if opts.PSSOptions != nil {
-		signerOpts = opts.PSSOptions
+	// Ed25519 uses pure signing (no prehashing) by default. The signer
+	// expects the raw message and crypto.Hash(0) as SignerOpts; the digest
+	// persisted for BlobCN is the raw message itself in this case, matching
+	// how signing.SignerOpts.GetDigest treats a zero Hash.
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		digest = data
+		signature, err = signer.Sign(nil, data, crypto.Hash(0))
+	} else {
+		if opts.Hash == 0 {
+			opts.Hash = crypto.SHA256
+		}
+
+		hasher := opts.Hash.New()
+		hasher.Write(data)
+		digest = hasher.Sum(nil)
+
+		var signerOpts crypto.SignerOpts = opts.Hash
+		if opts.PSSOptions != nil {
+			signerOpts = opts.PSSOptions
+		}
+
+		signature, err = signer.Sign(nil, digest, signerOpts)
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	return signer.Sign(nil, digest, signerOpts)
+	if opts.BlobCN != "" {
+		if saveErr := b.SignerStore().SaveSignature(&store.SignerOpts{KeyAttributes: attrs, BlobCN: opts.BlobCN}, signature, digest); saveErr != nil {
+			return nil, saveErr
+		}
+	}
+
+	return signature, nil
 }
 
 // Verify verifies a signature against data using the specified key.
@@ -1585,16 +1654,32 @@ func Verify(ctx context.Context, kid string, data, signature []byte, opts *types
 		return ErrKeySigningNotSupported
 	}
 
-	// Ed25519 uses pure verification (no prehashing) by default
-	// Verify against the raw message, not a hash
-	if attrs.KeyAlgorithm == x509.Ed25519 {
-		verifier := types.NewVerifier(&types.VerifyOpts{Hash: crypto.Hash(0)})
-		return verifier.Verify(pubKey, data, signature)
-	}
-
 	if opts == nil {
 		opts = &types.VerifyOpts{Hash: crypto.SHA256}
 	}
+	if opts.IntegrityCheck {
+		// The store's Checksum keys its lookup by KeyAttributes.CN; the
+		// caller names the key through kid, not through opts, so attrs
+		// resolved from kid fills this in when the caller left it unset.
+		if opts.KeyAttributes == nil {
+			opts.KeyAttributes = attrs
+		}
+		if opts.ChecksumProvider == nil {
+			opts.ChecksumProvider = b.SignerStore()
+		}
+	}
+
+	// Ed25519 uses pure verification (no prehashing) by default. Verify
+	// against the raw message, not a hash. A local copy carries BlobCN,
+	// IntegrityCheck and ChecksumProvider through without mutating the
+	// caller's opts.
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		edOpts := *opts
+		edOpts.Hash = crypto.Hash(0)
+		verifier := types.NewVerifier(&edOpts)
+		return verifier.Verify(pubKey, data, signature)
+	}
+
 	if opts.Hash == 0 {
 		opts.Hash = crypto.SHA256
 	}
@@ -1852,7 +1937,16 @@ func ExportKey(ctx context.Context, kid string, algorithm backend.WrappingAlgori
 		return nil, &ErrBackendUnsupported{Sentinel: ErrImportExportNotSupported}
 	}
 
-	return importExportBackend.ExportKey(ctx, attrs, algorithm)
+	// attrs is reconstructed purely from the kid string, so its Exportable is
+	// always the zero value; the backend's ExportKey refuses on exactly that
+	// field. Load the stored record so a key generated with Exportable: true
+	// exports (#925).
+	storedAttrs, err := loadStoredKeyAttrs(ctx, b, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
+
+	return importExportBackend.ExportKey(ctx, storedAttrs, algorithm)
 }
 
 // ========================================================================
@@ -1875,6 +1969,15 @@ func CopyKey(ctx context.Context, sourceKID string, destBackend string, destAttr
 	}
 
 	sourceB, sourceAttrs, err := getBackendForKID(sourceKID)
+	if err != nil {
+		return &ErrCopyKeyBackend{Role: "source", Err: err}
+	}
+
+	// sourceAttrs is reconstructed purely from sourceKID, so its Exportable is
+	// always the zero value; ExportKeyTo below refuses on exactly that field.
+	// Load the source backend's own record so a key generated with
+	// Exportable: true copies (#925).
+	sourceAttrs, err = loadStoredKeyAttrs(ctx, sourceB, sourceAttrs.CN)
 	if err != nil {
 		return &ErrCopyKeyBackend{Role: "source", Err: err}
 	}

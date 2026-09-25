@@ -232,6 +232,13 @@ func TestBridge_SyncCredentials_PartialFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCDPCredentialFailed))
 	assert.Contains(t, err.Error(), "1 of 3")
+
+	// The original protocol-level cause must still be reachable through both
+	// wrapping layers (SentinelCauseError -> WrappedError -> the per-credential
+	// SentinelCauseError -> DetailError), so an operator can tell a protocol
+	// refusal apart from a transport or encoding failure.
+	assert.True(t, errors.Is(err, ErrCDPProtocolError),
+		"the per-credential protocol error must survive SyncCredentials' wrapping")
 }
 
 // --- Close tests ---

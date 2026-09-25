@@ -278,8 +278,12 @@ func (s *mockKeystoreServer) BarrierGenerateRecoveryKeys(_ context.Context, _ *p
 	return &pb.BarrierRecoveryKeysResponse{Threshold: 2, TotalShares: 2, ShareCount: 2}, nil
 }
 
-func (s *mockKeystoreServer) BarrierEnableEncryption(_ context.Context, _ *pb.BarrierEnableEncryptionRequest) (*pb.BarrierEnableEncryptionResponse, error) {
-	return nil, nil
+func (s *mockKeystoreServer) BarrierEnableEncryption(_ context.Context, req *pb.BarrierEnableEncryptionRequest) (*pb.BarrierEnableEncryptionResponse, error) {
+	scope := "system"
+	if req.GetTenantId() != "" {
+		scope = "tenant"
+	}
+	return &pb.BarrierEnableEncryptionResponse{Status: "started", Scope: scope}, nil
 }
 
 func (s *mockKeystoreServer) BarrierRecoverWithKeys(_ context.Context, _ *pb.BarrierRecoverWithKeysRequest) (*emptypb.Empty, error) {

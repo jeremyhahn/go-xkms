@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -238,6 +239,28 @@ func TestGetCertificate_NotFound(t *testing.T) {
 	service := &mockService{
 		getCertificateFunc: func(ctx context.Context, serial string) (*CertificateInfo, error) {
 			return nil, ErrCertificateNotFound
+		},
+	}
+	handlers := NewHandlers(service, slog.Default())
+
+	req := httptest.NewRequest("GET", "/admin/certificates/nonexistent", nil)
+	req = mux.SetURLVars(req, map[string]string{"serial": "nonexistent"})
+	w := httptest.NewRecorder()
+
+	handlers.GetCertificate(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestGetCertificate_NotFound_Wrapped is go-xkms#894's regression case: the
+// handler compares the service error with errors.Is, so a service that
+// wraps ErrCertificateNotFound with call-site context (fmt.Errorf's %w)
+// must still map to 404, not fall through to the 500 branch a bare ==
+// comparison would take.
+func TestGetCertificate_NotFound_Wrapped(t *testing.T) {
+	service := &mockService{
+		getCertificateFunc: func(ctx context.Context, serial string) (*CertificateInfo, error) {
+			return nil, fmt.Errorf("lookup serial %s: %w", serial, ErrCertificateNotFound)
 		},
 	}
 	handlers := NewHandlers(service, slog.Default())
@@ -787,4 +810,51 @@ func TestWriteProblem(t *testing.T) {
 	assert.Equal(t, "Bad Request", problem.Title)
 	assert.Equal(t, "Invalid input", problem.Detail)
 	assert.Equal(t, http.StatusBadRequest, problem.Status)
+}
+
+// failingResponseWriter is an http.ResponseWriter whose Write always fails,
+// simulating a client that disconnects mid-response so json.Encoder.Encode
+// cannot finish writing the body.
+type failingResponseWriter struct {
+	header http.Header
+}
+
+func (w *failingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *failingResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("simulated write failure")
+}
+
+func (w *failingResponseWriter) WriteHeader(int) {}
+
+// TestWriteJSON_LogsEncodeFailure verifies that a failure to write the
+// response body — which can no longer be reported to the client because
+// headers are already sent — is logged rather than silently dropped.
+func TestWriteJSON_LogsEncodeFailure(t *testing.T) {
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer slog.SetDefault(prev)
+
+	writeJSON(&failingResponseWriter{}, http.StatusOK, map[string]string{"key": "value"})
+
+	assert.Contains(t, logBuf.String(), "failed to write JSON response")
+}
+
+// TestWriteProblem_LogsEncodeFailure is TestWriteJSON_LogsEncodeFailure for
+// the RFC 7807 problem-detail encoder.
+func TestWriteProblem_LogsEncodeFailure(t *testing.T) {
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer slog.SetDefault(prev)
+
+	writeProblem(&failingResponseWriter{}, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Invalid input")
+
+	assert.Contains(t, logBuf.String(), "failed to write problem detail response")
 }

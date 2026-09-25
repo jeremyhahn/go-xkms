@@ -9,7 +9,13 @@ own control-plane gRPC service directly — the same service
 `pkg/server/qrdb_control_plane.go` registers onto xkmsd's Unix socket and
 gRPC listener — over the Unix socket (default) or `--transport grpc` /
 `grpc://host:port` / `grpcs://host:port` (with `--tls-cert`/`--tls-key`/
-`--tls-ca`). There is no REST form of any verb on this page.
+`--tls-ca`). There is no REST form of any verb on this page: the REST
+`/api/v1/cluster/status`/`/members` routes (api.md) exist for the web
+console, not for this CLI, and `cluster add`/`remove` has no REST
+counterpart at all — see architecture.md's "Two distinct surfaces over the
+same Raft shard". The target follows the standard `--server`/`--transport`
+conventions; every scheme other than the Unix socket or `grpc(s)://` is
+rejected with a typed `QRDBControlUnsupportedTransportError`.
 
 ## `xkmsctl cluster status`
 
@@ -26,6 +32,26 @@ Shows the shard's current leader (if any) and member count. A standalone
 (non-clustered) server answers uniformly: it reports itself as its own
 leader.
 
+Table output:
+
+```
+Shard:   1
+Leader:  replica 1 (10.0.0.1:63001)
+Members: 3
+```
+
+JSON output:
+
+```json
+{
+  "shard_id": 1,
+  "leader_id": 1,
+  "has_leader": true,
+  "member_count": 3,
+  "members": [ { "replica_id": 1, "address": "10.0.0.1:63001", "is_leader": true, "api_endpoints": {"rest": "10.0.0.1:8443"} } ]
+}
+```
+
 ## `xkmsctl cluster members`
 
 | Flag | Type | Default | Purpose |
@@ -40,6 +66,15 @@ xkmsctl cluster members --shard 1 --output json
 Lists every replica with its Raft address, leader status, and advertised
 client-facing API endpoints (the addresses a redirected client would dial,
 per protocol). A standalone server returns an empty member list.
+
+Table output:
+
+```
+REPLICA ID   RAFT ADDRESS              LEADER   API ENDPOINTS
+------------------------------------------------------------------------
+1            10.0.0.1:63001            true     rest=10.0.0.1:8443
+2            10.0.0.2:63001            false    rest=10.0.0.2:8443
+```
 
 ## `xkmsctl cluster add`
 
@@ -125,13 +160,24 @@ xkmsctl rebalance report
 Cluster-wide load distribution: imbalance score, hotspots, and a per-node
 breakdown of shard/key/byte/leader counts.
 
-## Exit codes
+## Exit codes and errors
 
 `0` on success. A failed connection to the control plane (wrong
 `--transport`, no server running, or a transport the control plane does not
 serve — anything other than the Unix socket or gRPC) fails with a typed
 `*QRDBControlUnsupportedTransportError` or `*QRDBControlConnectError`
 before any verb-specific logic runs.
+
+| Condition | Error |
+|---|---|
+| Unsupported `--server`/`--transport` combination | `QRDBControlUnsupportedTransportError` |
+| Transport construction/connect failure | `QRDBControlConnectError` |
+| No control-plane client factory configured (test-only) | `QRDBControlClientMissingError` |
+| `status`/`members` query failure | `ErrClusterLeaderFailed` / `ErrClusterMembersFailed` |
+| `add`/`remove` failure | `ErrClusterAddReplicaFailed` / `ErrClusterRemoveReplicaFailed` |
+
+Every failure wraps the underlying cause via `*WrappedError{Sentinel, Err}`,
+so `errors.Is` against the sentinel above still matches.
 
 ## Parity coverage
 

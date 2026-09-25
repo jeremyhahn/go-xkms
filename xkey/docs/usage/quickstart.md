@@ -204,7 +204,7 @@ Follow the prompts to touch your security key or approve in the xkey terminal.
 xkmsctl --auth fido2 admin status
 ```
 
-> **Deep dive**: [WebAuthn Documentation](webauthn.md) | [FIDO2 CLI Reference](cli/fido2.md) | [xKey FIDO2](../fido2/README.md)
+> **Deep dive**: [WebAuthn Documentation](webauthn.md) | [FIDO2 CLI Reference](cli/fido2.md) | [xKey FIDO2](../fido2/architecture.md)
 
 ---
 
@@ -252,7 +252,7 @@ The global `--backend` flag selects which backend the *server* should use
 > **Note**: this is separate from the FIDO2 daemon's key backend.
 > `xkey fido2 --backend` is a local flag that shadows the global one and accepts
 > only `software`, `tpm2` or `phone`. The FIDO2 authenticator has no
-> xkmsd-backed key mode — see [FIDO2 Daemon Configuration](../fido2/daemon-configuration.md).
+> xkmsd-backed key mode — see [FIDO2 Daemon Configuration](../virtual-authenticator/cli.md).
 
 > **Deep dive**: [xKey Overview](../README.md) | [xKey Phone Backend](../phone/README.md)
 

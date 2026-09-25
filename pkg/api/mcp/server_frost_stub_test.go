@@ -42,8 +42,16 @@ func TestServer_RouteFrostMethods_StubBehavior(t *testing.T) {
 	// When built without frost tag, FROST methods return an error
 	assert.True(t, handled)
 	assert.Nil(t, result)
-	assert.Error(t, frostErr)
+	require.Error(t, frostErr)
 	assert.Contains(t, frostErr.Error(), "FROST support not compiled")
+
+	// go-xkms#930: the stub's refusal must reach dispatch as a *KeyOpError
+	// carrying ErrCodeMethodNotFound (matching pkg/api/grpc/service_frost_stub.go's
+	// codes.Unimplemented), not a bare error that module_mcp.go can only
+	// report as wire.CodeInternal.
+	var keyErr *KeyOpError
+	require.ErrorAs(t, frostErr, &keyErr)
+	assert.Equal(t, ErrCodeMethodNotFound, keyErr.Code)
 }
 
 // TestServer_HandleRequest_FrostMethodAsNotification tests FROST method as notification (no ID)
@@ -70,6 +78,33 @@ func TestServer_HandleRequest_FrostMethodAsNotification(t *testing.T) {
 	resp := invokeRequest(server, ctx, req)
 	// FROST methods that fail return an error response even for notifications
 	require.NotNil(t, resp)
-	assert.NotNil(t, resp.Error)
-	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
+	require.NotNil(t, resp.Error)
+	// go-xkms#930: "not compiled in" is Method not found, not Internal.
+	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
+}
+
+// TestServer_HandleRequest_FrostMethodWithError tests FROST method that returns error
+func TestServer_HandleRequest_FrostMethodWithError(t *testing.T) {
+	svc := setupTestXKMS(t)
+	defer cleanupXKMS()
+
+	server, err := NewServer(&Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Without the frost build tag, every frost.* method is the stub, which
+	// reports that FROST is not compiled in as ErrCodeMethodNotFound
+	// (go-xkms#930), matching pkg/api/grpc/service_frost_stub.go's
+	// codes.Unimplemented.
+	req := &JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "frost.generateNonces",
+		ID:      1,
+	}
+
+	resp := invokeRequest(server, ctx, req)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
 }

@@ -17,6 +17,7 @@ import (
 	"log"
 
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -40,6 +41,11 @@ func (c *compositeBackend) KeyProvider() types.KeyProvider {
 // through the Backend interface.
 func (c *compositeBackend) CertStorage() certstore.CertificateStorageAdapter {
 	return c.certStorage
+}
+
+// SignerStore returns the backend's persisted signature/checksum store.
+func (c *compositeBackend) SignerStore() store.SignerStorer {
+	return c.signerStore
 }
 
 // Close releases all resources held by the xkms.

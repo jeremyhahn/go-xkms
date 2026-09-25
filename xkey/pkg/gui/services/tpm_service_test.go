@@ -243,6 +243,18 @@ func (m *mockTPM) DictionaryAttackLockoutReset(_ []byte) error {
 func (m *mockTPM) ActivateCredential(_, _ []byte) ([]byte, error) {
 	panic("mockTPM: ActivateCredential not expected")
 }
+func (m *mockTPM) AnswerCredentialChallenge(_ *xkms.ActivationKey, _ *xkms.CredentialChallenge) ([]byte, error) {
+	panic("mockTPM: AnswerCredentialChallenge not expected")
+}
+func (m *mockTPM) ClearForReprovision() (bool, error) {
+	panic("mockTPM: ClearForReprovision not expected")
+}
+func (m *mockTPM) CreateActivationKey() (*xkms.ActivationKey, error) {
+	panic("mockTPM: CreateActivationKey not expected")
+}
+func (m *mockTPM) State() (*xkms.ProvisioningState, error) {
+	panic("mockTPM: State not expected")
+}
 func (m *mockTPM) AKProfile() (xkms.AKProfile, error) {
 	panic("mockTPM: AKProfile not expected")
 }

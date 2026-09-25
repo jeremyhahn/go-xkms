@@ -32,6 +32,19 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
+// Request-validation sentinels for the SSH handlers. Each is wrapped in
+// *SSHBadBodyError so classifySSHError maps it to 400 alongside every
+// other malformed-body condition.
+var (
+	// ErrSSHMissingDigest indicates handleSign was called with no digest
+	// in the request body.
+	ErrSSHMissingDigest = errors.New("digest is required")
+
+	// ErrSSHMissingPublicKey indicates handleVerifyKnownHost was called
+	// with no public_key in the request body.
+	ErrSSHMissingPublicKey = errors.New("public_key is required")
+)
+
 // SSHHandlers exposes xkmsd's SSH key, known-hosts, authorized-keys,
 // and signer endpoints. The handlers delegate to the embedded SDK
 // Client so the REST and embedded transports share a single
@@ -207,7 +220,7 @@ func (h *SSHHandlers) handleSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.Digest) == 0 {
-		writeSSHError(w, &SSHBadBodyError{Err: errors.New("digest is required")})
+		writeSSHError(w, &SSHBadBodyError{Err: ErrSSHMissingDigest})
 		return
 	}
 
@@ -313,7 +326,7 @@ func (h *SSHHandlers) handleVerifyKnownHost(w http.ResponseWriter, r *http.Reque
 	}
 	host := chi.URLParam(r, "host")
 	if req.PublicKey == "" {
-		writeSSHError(w, &SSHBadBodyError{Err: errors.New("public_key is required")})
+		writeSSHError(w, &SSHBadBodyError{Err: ErrSSHMissingPublicKey})
 		return
 	}
 	pub, _, _, _, perr := gossh.ParseAuthorizedKey([]byte(req.PublicKey))

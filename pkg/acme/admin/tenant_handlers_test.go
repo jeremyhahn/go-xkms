@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -428,6 +429,31 @@ func TestGetTenant_NotFound(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v1/tenants/nonexistent", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
 	req = addUserToRequest(req, createPlatformAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
+	w := httptest.NewRecorder()
+
+	handlers.GetTenant(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
+	}
+}
+
+// TestGetTenant_NotFound_Wrapped is go-xkms#894's regression case: the
+// handler compares the service error with errors.Is, so a service that
+// wraps ErrTenantNotFound (e.g. with call-site context via fmt.Errorf's
+// %w) must still classify as 404, not fall through to the 500 branch a
+// bare == comparison would take.
+func TestGetTenant_NotFound_Wrapped(t *testing.T) {
+	service := &mockTenantService{
+		getTenantFunc: func(ctx context.Context, tenantID string) (*TenantInfo, error) {
+			return nil, fmt.Errorf("lookup tenant %s: %w", tenantID, ErrTenantNotFound)
+		},
+	}
+	handlers := NewTenantHandlers(service, slog.Default())
+
+	req := httptest.NewRequest("GET", "/api/v1/tenants/nonexistent", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
 	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 

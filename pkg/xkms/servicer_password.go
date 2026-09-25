@@ -351,10 +351,8 @@ func (s *XKMSService) PasswordStoreUnlock(ctx context.Context, req *transport.Pa
 }
 
 // verifyPasswordStoreUserPIN verifies userPIN against the configured PIN
-// backend. It is the same verification path staticpw.SessionStore.Unlock uses
-// for its own session unlock (PINBackend.VerifyUserPIN), so a password store
-// session is opened by exactly one credential check no matter which store
-// implementation is wired.
+// backend (PINBackend.VerifyUserPIN), so a password store session is opened
+// by exactly one credential check.
 //
 // A deployment with no PIN backend (pin.enabled=false) or with no user PIN set
 // has no credential to verify, which is an explicit, reported state

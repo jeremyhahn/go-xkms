@@ -15,6 +15,7 @@ package qrdb
 
 import (
 	"context"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -111,8 +112,13 @@ func (m *ShutdownManager) Shutdown(ctx context.Context) error {
 	if m.adminClient != nil {
 		drainCtx, drainCancel := context.WithTimeout(ctx, m.cfg.DrainTimeout)
 		defer drainCancel()
-		// Best effort drain; proceed even on error.
-		_ = m.adminClient.Drain(drainCtx)
+		// Best effort drain; proceed even on error, but the failure is
+		// still reported rather than silently discarded.
+		if err := m.adminClient.Drain(drainCtx); err != nil {
+			slog.Warn("qrdb shutdown: drain failed; proceeding with shutdown anyway",
+				slog.Uint64("nodeID", m.nodeID),
+				slog.String("error", err.Error()))
+		}
 	}
 
 	// Phase 2: Wait for in-flight requests to complete.

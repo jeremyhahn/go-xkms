@@ -14,6 +14,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -21,9 +22,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -463,6 +466,41 @@ func TestARIGetRenewalInfo(t *testing.T) {
 		_, err := client.GetRenewalInfo(context.Background(), "YWJj.MTIz")
 		if err == nil {
 			t.Error("expected error for server error response")
+		}
+	})
+
+	t.Run("server error with unreadable body", func(t *testing.T) {
+		// Declaring a larger Content-Length than actually written causes
+		// io.ReadAll(resp.Body) to fail with an unexpected EOF once the
+		// server closes the connection, without any permission tricks.
+		handler := func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/directory" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"renewalInfo": r.Host + "/renewalInfo",
+				})
+				return
+			}
+			w.Header().Set("Content-Length", "1000")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("short"))
+		}
+
+		server := httptest.NewServer(http.HandlerFunc(handler))
+		defer server.Close()
+
+		client := createTestARIClient(t, server.URL+"/directory", server.URL+"/renewalInfo")
+		var logBuf bytes.Buffer
+		client.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+
+		_, err := client.GetRenewalInfo(context.Background(), "YWJj.MTIz")
+		if err == nil {
+			t.Fatal("expected error for server error response")
+		}
+		// The failure to read the diagnostic body is itself reported, not
+		// silently dropped.
+		if !strings.Contains(logBuf.String(), "bodyReadError") {
+			t.Errorf("expected bodyReadError to be logged, got: %s", logBuf.String())
 		}
 	})
 }

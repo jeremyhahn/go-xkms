@@ -138,17 +138,16 @@ func VerifyCertify(
 		opts = &VerifyCertifyOptions{}
 	}
 	if len(certifyInfo) == 0 || len(signature) == 0 {
-		return nil, fmt.Errorf("%w: certifyInfo and signature are both required",
-			ErrCertifyMalformed)
+		return nil, &errs.Detail{Err: ErrCertifyMalformed, Detail: "certifyInfo and signature are both required"}
 	}
 
 	attester, err := tpm2.Unmarshal[tpm2.TPMTPublic](attesterPub)
 	if err != nil {
-		return nil, fmt.Errorf("%w: attesting public area: %v", ErrCertifyMalformed, err)
+		return nil, &errs.Joined{Lead: ErrCertifyMalformed, Detail: "attesting public area", Cause: err}
 	}
 	subject, err := tpm2.Unmarshal[tpm2.TPMTPublic](subjectPub)
 	if err != nil {
-		return nil, fmt.Errorf("%w: subject public area: %v", ErrCertifyMalformed, err)
+		return nil, &errs.Joined{Lead: ErrCertifyMalformed, Detail: "subject public area", Cause: err}
 	}
 
 	// The attesting key must be one the TPM will not sign external data with.
@@ -157,14 +156,13 @@ func VerifyCertify(
 			return nil, ErrCertifyAttesterUnrestricted
 		}
 		if !attester.ObjectAttributes.SignEncrypt {
-			return nil, fmt.Errorf("%w: attesting key cannot sign",
-				ErrCertifyAttesterUnrestricted)
+			return nil, &errs.Detail{Err: ErrCertifyAttesterUnrestricted, Detail: "attesting key cannot sign"}
 		}
 	}
 
 	sig, err := tpm2.Unmarshal[tpm2.TPMTSignature](signature)
 	if err != nil {
-		return nil, fmt.Errorf("%w: signature: %v", ErrCertifyMalformed, err)
+		return nil, &errs.Joined{Lead: ErrCertifyMalformed, Detail: "signature", Cause: err}
 	}
 
 	attesterKey, err := verifyCertifySignature(attester, certifyInfo, sig)
@@ -178,18 +176,18 @@ func VerifyCertify(
 	// it is re-checked below so the failure names the reason.
 	attest, err := tpm2.Unmarshal[tpm2.TPMSAttest](certifyInfo)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCertifyNotTPMGenerated, err)
+		return nil, &errs.Joined{Lead: ErrCertifyNotTPMGenerated, Cause: err}
 	}
 	if attest.Magic != tpm2.TPMGeneratedValue {
 		return nil, ErrCertifyNotTPMGenerated
 	}
 	if attest.Type != tpm2.TPMSTAttestCertify {
-		return nil, fmt.Errorf("%w: type is 0x%04x", ErrCertifyWrongType, attest.Type)
+		return nil, &errs.Detail{Err: ErrCertifyWrongType, Detail: fmt.Sprintf("type is 0x%04x", attest.Type)}
 	}
 
 	info, err := attest.Attested.Certify()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCertifyWrongType, err)
+		return nil, &errs.Joined{Lead: ErrCertifyWrongType, Cause: err}
 	}
 
 	// The binding. ObjectName recomputes the Name from the public area the
@@ -197,8 +195,7 @@ func VerifyCertify(
 	// so an attacker cannot substitute a different key without changing it.
 	expectedName, err := tpm2.ObjectName(subject)
 	if err != nil {
-		return nil, fmt.Errorf("%w: could not compute the subject name: %v",
-			ErrCertifyMalformed, err)
+		return nil, &errs.Joined{Lead: ErrCertifyMalformed, Detail: "could not compute the subject name", Cause: err}
 	}
 	if subtle.ConstantTimeCompare(info.Name.Buffer, expectedName.Buffer) != 1 {
 		return nil, ErrCertifyNameMismatch
@@ -238,7 +235,7 @@ func VerifyCertifyRaw(
 ) (*CertifyVerification, error) {
 	attester, err := tpm2.Unmarshal[tpm2.TPMTPublic](attesterPub)
 	if err != nil {
-		return nil, fmt.Errorf("%w: attesting public area: %v", ErrCertifyMalformed, err)
+		return nil, &errs.Joined{Lead: ErrCertifyMalformed, Detail: "attesting public area", Cause: err}
 	}
 
 	sig, err := signatureFromScheme(attester, rawSignature)
@@ -256,20 +253,20 @@ func signatureFromScheme(
 	raw []byte,
 ) (*tpm2.TPMTSignature, error) {
 	if len(raw) == 0 {
-		return nil, fmt.Errorf("%w: the certification carries no signature", ErrCertifyMalformed)
+		return nil, &errs.Detail{Err: ErrCertifyMalformed, Detail: "the certification carries no signature"}
 	}
 
 	switch attester.Type {
 	case tpm2.TPMAlgRSA:
 		detail, err := attester.Parameters.RSADetail()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, err)
+			return nil, &errs.Joined{Lead: ErrCertifyMalformed, Cause: err}
 		}
 		switch detail.Scheme.Scheme {
 		case tpm2.TPMAlgRSASSA:
 			scheme, schemeErr := detail.Scheme.Details.RSASSA()
 			if schemeErr != nil {
-				return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, schemeErr)
+				return nil, &errs.Joined{Lead: ErrCertifyMalformed, Cause: schemeErr}
 			}
 			return &tpm2.TPMTSignature{
 				SigAlg: tpm2.TPMAlgRSASSA,
@@ -282,7 +279,7 @@ func signatureFromScheme(
 		case tpm2.TPMAlgRSAPSS:
 			scheme, schemeErr := detail.Scheme.Details.RSAPSS()
 			if schemeErr != nil {
-				return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, schemeErr)
+				return nil, &errs.Joined{Lead: ErrCertifyMalformed, Cause: schemeErr}
 			}
 			return &tpm2.TPMTSignature{
 				SigAlg: tpm2.TPMAlgRSAPSS,
@@ -293,24 +290,21 @@ func signatureFromScheme(
 					}),
 			}, nil
 		default:
-			return nil, fmt.Errorf("%w: unsupported RSA scheme 0x%04x",
-				ErrCertifyMalformed, detail.Scheme.Scheme)
+			return nil, &errs.Detail{Err: ErrCertifyMalformed, Detail: fmt.Sprintf("unsupported RSA scheme 0x%04x", detail.Scheme.Scheme)}
 		}
 
 	case tpm2.TPMAlgECC:
 		detail, err := attester.Parameters.ECCDetail()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, err)
+			return nil, &errs.Joined{Lead: ErrCertifyMalformed, Cause: err}
 		}
 		scheme, err := detail.Scheme.Details.ECDSA()
 		if err != nil {
-			return nil, fmt.Errorf("%w: attesting key declares no ECDSA scheme: %v",
-				ErrCertifyMalformed, err)
+			return nil, &errs.Joined{Lead: ErrCertifyMalformed, Detail: "attesting key declares no ECDSA scheme", Cause: err}
 		}
 		// A raw ECDSA signature from a TPM is r||s, each the curve's field size.
 		if len(raw)%2 != 0 {
-			return nil, fmt.Errorf("%w: ECDSA signature is %d bytes, not an r||s pair",
-				ErrCertifyMalformed, len(raw))
+			return nil, &errs.Detail{Err: ErrCertifyMalformed, Detail: fmt.Sprintf("ECDSA signature is %d bytes, not an r||s pair", len(raw))}
 		}
 		half := len(raw) / 2
 		return &tpm2.TPMTSignature{
@@ -324,8 +318,7 @@ func signatureFromScheme(
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("%w: attesting key type 0x%04x cannot sign",
-			ErrCertifyMalformed, attester.Type)
+		return nil, &errs.Detail{Err: ErrCertifyMalformed, Detail: fmt.Sprintf("attesting key type 0x%04x cannot sign", attester.Type)}
 	}
 }
 
@@ -343,11 +336,11 @@ func verifyCertifySignature(
 	case tpm2.TPMAlgRSASSA:
 		rsassa, err := sig.Signature.RSASSA()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, err)
+			return nil, &errs.Joined{Lead: ErrCertifyMalformed, Cause: err}
 		}
 		hash, err := rsassa.Hash.Hash()
 		if err != nil {
-			return nil, fmt.Errorf("%w: unknown hash: %v", ErrCertifyMalformed, err)
+			return nil, &errs.Joined{Lead: ErrCertifyMalformed, Detail: "unknown hash", Cause: err}
 		}
 		pub, err := rsaPublicFromArea(attester)
 		if err != nil {
@@ -362,11 +355,11 @@ func verifyCertifySignature(
 	case tpm2.TPMAlgRSAPSS:
 		rsapss, err := sig.Signature.RSAPSS()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, err)
+			return nil, &errs.Joined{Lead: ErrCertifyMalformed, Cause: err}
 		}
 		hash, err := rsapss.Hash.Hash()
 		if err != nil {
-			return nil, fmt.Errorf("%w: unknown hash: %v", ErrCertifyMalformed, err)
+			return nil, &errs.Joined{Lead: ErrCertifyMalformed, Detail: "unknown hash", Cause: err}
 		}
 		pub, err := rsaPublicFromArea(attester)
 		if err != nil {
@@ -381,11 +374,11 @@ func verifyCertifySignature(
 	case tpm2.TPMAlgECDSA:
 		ecsig, err := sig.Signature.ECDSA()
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, err)
+			return nil, &errs.Joined{Lead: ErrCertifyMalformed, Cause: err}
 		}
 		hash, err := ecsig.Hash.Hash()
 		if err != nil {
-			return nil, fmt.Errorf("%w: unknown hash: %v", ErrCertifyMalformed, err)
+			return nil, &errs.Joined{Lead: ErrCertifyMalformed, Detail: "unknown hash", Cause: err}
 		}
 		pub, err := ecdsaPublicFromArea(attester)
 		if err != nil {
@@ -400,8 +393,7 @@ func verifyCertifySignature(
 		return pub, nil
 
 	default:
-		return nil, fmt.Errorf("%w: unsupported signature algorithm 0x%04x",
-			ErrCertifyMalformed, sig.SigAlg)
+		return nil, &errs.Detail{Err: ErrCertifyMalformed, Detail: fmt.Sprintf("unsupported signature algorithm 0x%04x", sig.SigAlg)}
 	}
 }
 
@@ -419,11 +411,11 @@ func digestOf(hash crypto.Hash, data []byte) []byte {
 func rsaPublicFromArea(pub *tpm2.TPMTPublic) (*rsa.PublicKey, error) {
 	detail, err := pub.Parameters.RSADetail()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, err)
+		return nil, &errs.Joined{Lead: ErrCertifyMalformed, Cause: err}
 	}
 	unique, err := pub.Unique.RSA()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, err)
+		return nil, &errs.Joined{Lead: ErrCertifyMalformed, Cause: err}
 	}
 	exponent := int(detail.Exponent)
 	if exponent == 0 {

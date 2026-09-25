@@ -19,7 +19,19 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// testSecretForCeremony builds a *secure.Secret from a plaintext PIN for
+// tests that need a non-nil CeremonyOptions.PIN.
+func testSecretForCeremony(t *testing.T, plaintext string) *secure.Secret {
+	t.Helper()
+	s, err := secure.NewSecret([]byte(plaintext))
+	if err != nil {
+		t.Fatalf("secure.NewSecret: %v", err)
+	}
+	return s
+}
 
 // fakeHIDDevice is a HID device double. Only the descriptive accessors the
 // enumeration path reads are exercised; no CTAP2 transport round trip is
@@ -176,6 +188,85 @@ func TestHardwareAdapter_GetAssertion_NilRequest(t *testing.T) {
 	if !errors.Is(err, ErrNilRequest) {
 		t.Errorf("error = %v, want %v", err, ErrNilRequest)
 	}
+}
+
+// TestNewHardwareAdapter_UsesSuppliedConfig proves a non-nil config is
+// applied rather than silently replaced with fido2.DefaultConfig — the
+// device-attached path exercises the "cfg = *config" branch, distinct from
+// the nil-config default used by every other constructor test in this file.
+func TestNewHardwareAdapter_UsesSuppliedConfig(t *testing.T) {
+	device := &fakeHIDDevice{path: "/dev/hidraw-test"}
+	cfg := fido2.DefaultConfig
+	cfg.RelyingPartyID = "hardware-adapter-test.example"
+
+	adapter, err := NewHardwareAdapter(&cfg, &fakeEnumerator{devices: []fido2.HIDDevice{device}})
+	if err != nil {
+		t.Fatalf("NewHardwareAdapter() error: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	if !adapter.Available() {
+		t.Error("Available() should be true once the handle is open")
+	}
+}
+
+// TestNewHardwareAdapter_NilEnumeratorUsesPlatformDefault proves a nil
+// enumerator falls back to fido2.NewDefaultEnumerator() rather than leaving
+// the adapter with no way to discover a device. This host carries no FIDO2
+// authenticator, so discovery must fail closed with ErrAuthenticatorNotFound
+// exactly as the fakeEnumerator-driven "no authenticator" case does — the
+// point of the test is that the platform enumerator was actually reached
+// (a read-only /sys/class/hidraw walk), not that it finds anything.
+func TestNewHardwareAdapter_NilEnumeratorUsesPlatformDefault(t *testing.T) {
+	adapter, err := NewHardwareAdapter(nil, nil)
+	if adapter != nil {
+		defer func() { _ = adapter.Close() }()
+		t.Fatal("NewHardwareAdapter(nil, nil) should not find a device on a host with no authenticator attached")
+	}
+	if !errors.Is(err, ErrAuthenticatorNotFound) {
+		t.Errorf("error = %v, want %v", err, ErrAuthenticatorNotFound)
+	}
+}
+
+// TestHardwareCeremonyFailure_MissingPINIsClassifiedAsPINRequired proves the
+// no-PIN/ErrPINRequired combination is named as ErrPINRequired rather than
+// folded into the generic CTAP failure.
+func TestHardwareCeremonyFailure_MissingPINIsClassifiedAsPINRequired(t *testing.T) {
+	err := hardwareCeremonyFailure(nil, fido2.ErrPINRequired)
+	if !errors.Is(err, ErrPINRequired) {
+		t.Errorf("error = %v, want to wrap %v", err, ErrPINRequired)
+	}
+	if !errors.Is(err, fido2.ErrPINRequired) {
+		t.Error("the raw CTAP cause must still be in the chain")
+	}
+}
+
+// TestHardwareCeremonyFailure_OtherCasesAreGenericCTAPFailures proves every
+// other combination — a PIN supplied and refused, or no PIN and an unrelated
+// CTAP error — is reported as a plain operation failure rather than sending
+// the caller back to resupply a PIN.
+func TestHardwareCeremonyFailure_OtherCasesAreGenericCTAPFailures(t *testing.T) {
+	t.Run("PIN supplied and refused", func(t *testing.T) {
+		pin := testSecretForCeremony(t, "123456")
+		err := hardwareCeremonyFailure(pin, fido2.ErrPINRequired)
+		if !errors.Is(err, ErrCTAPOperationFailed) {
+			t.Errorf("error = %v, want to wrap %v", err, ErrCTAPOperationFailed)
+		}
+		if errors.Is(err, ErrPINRequired) {
+			t.Error("a PIN that was actually supplied must not be reported as missing")
+		}
+	})
+
+	t.Run("no PIN, unrelated CTAP error", func(t *testing.T) {
+		unrelated := errors.New("CTAP2_ERR_OPERATION_DENIED")
+		err := hardwareCeremonyFailure(nil, unrelated)
+		if !errors.Is(err, ErrCTAPOperationFailed) {
+			t.Errorf("error = %v, want to wrap %v", err, ErrCTAPOperationFailed)
+		}
+		if !errors.Is(err, unrelated) {
+			t.Error("the raw CTAP cause must still be in the chain")
+		}
+	})
 }
 
 // TestHardwareAdapter_Available_NoHandler proves the zero-value adapter (no

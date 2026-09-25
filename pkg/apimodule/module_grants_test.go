@@ -15,6 +15,7 @@ package apimodule
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	qrdbv1 "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
@@ -69,20 +71,47 @@ func grpcAndMCPPermissionPairs(t *testing.T) map[string]struct{} {
 		}
 	}
 
-	services := pb.File_pkg_api_grpc_proto_xkmsv1_xkms_proto.Services()
-	for i := 0; i < services.Len(); i++ {
-		methods := services.Get(i).Methods()
-		for j := 0; j < methods.Len(); j++ {
-			opts, ok := methods.Get(j).Options().(*descriptorpb.MethodOptions)
-			if !ok || !proto.HasExtension(opts, qrdbv1.E_Permission) {
-				continue
-			}
-			perm, ok := proto.GetExtension(opts, qrdbv1.E_Permission).(string)
-			require.True(t, ok, "permission option is not a string")
-			set[perm] = struct{}{}
+	addServicePermissions(t, set, pb.File_pkg_api_grpc_proto_xkmsv1_xkms_proto.Services())
+
+	// xkmsd also serves go-qrdb's admin surface on its control plane
+	// (pkg/server/qrdb_control_plane.go), and the REST cluster routes gate on
+	// exactly its admin:status and admin:peers pairs. qrdb declares those on
+	// qrdb.v1.QRDBService, which also carries the KV surface xkms does not
+	// expose, so only its admin:* pairs are added.
+	qrdbService := qrdbv1.File_pkg_api_grpc_proto_qrdbv1_qrdb_proto.Services().ByName("QRDBService")
+	require.NotNil(t, qrdbService, "qrdb.v1.QRDBService descriptor not found")
+	qrdbPairs := map[string]struct{}{}
+	addMethodPermissions(t, qrdbPairs, qrdbService.Methods())
+	for pair := range qrdbPairs {
+		if strings.HasPrefix(pair, "admin:") {
+			set[pair] = struct{}{}
 		}
 	}
 	return set
+}
+
+// addServicePermissions adds the permission option of every method of every
+// service in services to set.
+func addServicePermissions(t *testing.T, set map[string]struct{}, services protoreflect.ServiceDescriptors) {
+	t.Helper()
+	for i := 0; i < services.Len(); i++ {
+		addMethodPermissions(t, set, services.Get(i).Methods())
+	}
+}
+
+// addMethodPermissions adds the qrdb.v1.permission option of each method in
+// methods to set; methods without the option are skipped.
+func addMethodPermissions(t *testing.T, set map[string]struct{}, methods protoreflect.MethodDescriptors) {
+	t.Helper()
+	for j := 0; j < methods.Len(); j++ {
+		opts, ok := methods.Get(j).Options().(*descriptorpb.MethodOptions)
+		if !ok || !proto.HasExtension(opts, qrdbv1.E_Permission) {
+			continue
+		}
+		perm, ok := proto.GetExtension(opts, qrdbv1.E_Permission).(string)
+		require.True(t, ok, "permission option is not a string")
+		set[perm] = struct{}{}
+	}
 }
 
 // TestRESTPermissionsAreCrossTransportVocabulary proves the REST route table

@@ -238,3 +238,33 @@ func TestResolveNodeSeal_TPM2EmptyStoragePathFailsClosed(t *testing.T) {
 	_, statErr = os.Stat(filepath.Join(wd, "tpm2-keys"))
 	assert.True(t, os.IsNotExist(statErr), "resolving the node seal must never create tpm2-keys under the working directory")
 }
+
+// TestResolveNodeSeal_TPM2NoBackendConfigFailsClosed is the regression test
+// for the nil-pointer panic this batch found: barrier.strategy: tpm2 selects
+// the node-seal flip independently of backends.tpm2 (the separate
+// crypto-operation TPM2 backend), so an operator can configure the flip
+// without a backends.tpm2 section. ResolveNodeSeal used to dereference
+// cfg.Backends.TPM2 unconditionally once storage.path resolved, crashing the
+// whole daemon on this exact config instead of failing one deployment
+// closed with a typed error.
+func TestResolveNodeSeal_TPM2NoBackendConfigFailsClosed(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{
+		Storage: config.StorageConfig{
+			Backend: "qrdb",
+			Path:    t.TempDir(),
+			QRDB:    config.QRDBConfig{Transport: "embedded"},
+		},
+		Barrier: config.BarrierConfig{
+			Enabled:  true,
+			Strategy: "tpm2",
+		},
+		// Backends.TPM2 deliberately left nil.
+	})
+
+	sealErr := s.resolveNodeSeal()
+	require.Error(t, sealErr)
+	assert.False(t, s.nodeSealEnabled)
+
+	var nodeErr *NodeSealError
+	require.True(t, errors.As(sealErr, &nodeErr), "error must unwrap to *NodeSealError, got %v", sealErr)
+}
