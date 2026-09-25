@@ -32,6 +32,7 @@ const (
 	CategoryBackends CommandCategory = "backends"
 	CategorySealing  CommandCategory = "sealing"
 	CategoryCA       CommandCategory = "ca"
+	CategoryPolicy   CommandCategory = "policy"
 )
 
 // CommandDefinition defines a CLI command with its arguments and expected behavior
@@ -100,7 +101,7 @@ type ArgDefinition struct {
 
 // AllCommands returns all CLI commands for testing
 func AllCommands() []CommandDefinition {
-	return append(append(append(append(append(append(append(append(
+	return append(append(append(append(append(append(append(append(append(
 		BackendCommands(),
 		KeyCommands()...),
 		CertCommands()...),
@@ -109,6 +110,7 @@ func AllCommands() []CommandDefinition {
 		FIDO2Commands()...),
 		SealingCommands()...),
 		CACommands()...),
+		PolicyCommands()...),
 		VersionCommands()...)
 }
 
@@ -587,6 +589,100 @@ func SealingCommands() []CommandDefinition {
 			RequiresBackend:        false, // Optional - checks default if not specified
 			RequiresServer:         true,
 			ExpectedOutputContains: []string{"can_seal"},
+		},
+	}
+}
+
+// PolicyCommands returns PCR policy management commands.
+//
+// These manage TPM 2.0 PCR-bank sealed-secret authorization policies
+// (pkg/seal/policy) through xkmsctl's `policy` verb group, which go-xkms#691
+// wired onto every network transport's servicer (previously REST-only, and
+// even there behind a mismatched route parameter -- see
+// pkg/api/rest/routes.go). Every command but policy-create depends on the
+// "it-policy-test" policy that command creates, so they carry
+// RequiresSetup like the sealing workflow's unseal/can-seal above.
+func PolicyCommands() []CommandDefinition {
+	return []CommandDefinition{
+		{
+			Name:           "policy-create",
+			Category:       CategoryPolicy,
+			Command:        []string{"policy", "create"},
+			Description:    "Create a new PCR policy from current PCR values",
+			RequiresServer: true,
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "bank", Value: "sha256", Description: "PCR bank algorithm"},
+				{Flag: "pcrs", Value: "0,7", Description: "Comma-separated PCR indices"},
+			},
+			ExpectedOutputContains: []string{"it-policy-test"},
+		},
+		{
+			Name:           "policy-list",
+			Category:       CategoryPolicy,
+			Command:        []string{"policy", "list"},
+			Description:    "List all PCR policies",
+			RequiresServer: true,
+			RequiresSetup:  true,
+		},
+		{
+			Name:           "policy-get",
+			Category:       CategoryPolicy,
+			Command:        []string{"policy", "get"},
+			Description:    "Show a PCR policy",
+			RequiresServer: true,
+			RequiresSetup:  true,
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+			},
+			ExpectedOutputContains: []string{"it-policy-test"},
+		},
+		{
+			Name:           "policy-verify",
+			Category:       CategoryPolicy,
+			Command:        []string{"policy", "verify"},
+			Description:    "Verify a PCR policy against current PCR values",
+			RequiresServer: true,
+			RequiresSetup:  true,
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+			},
+		},
+		{
+			Name:           "policy-refresh",
+			Category:       CategoryPolicy,
+			Command:        []string{"policy", "refresh"},
+			Description:    "Refresh a PCR policy with current PCR values",
+			RequiresServer: true,
+			RequiresSetup:  true,
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+			},
+			ExpectedOutputContains: []string{"it-policy-test"},
+		},
+		{
+			Name:           "policy-export",
+			Category:       CategoryPolicy,
+			Command:        []string{"policy", "export"},
+			Description:    "Export a PCR policy",
+			RequiresServer: true,
+			RequiresSetup:  true,
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+			},
+		},
+		{
+			Name:           "policy-delete",
+			Category:       CategoryPolicy,
+			Command:        []string{"policy", "delete"},
+			Description:    "Delete a PCR policy",
+			RequiresServer: true,
+			RequiresSetup:  true,
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+			},
 		},
 	}
 }

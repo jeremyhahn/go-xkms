@@ -95,6 +95,33 @@ func newCatchAllMCPServer(t *testing.T) (string, func()) {
 		case "sealStore.status":
 			d, _ := json.Marshal(map[string]interface{}{"available": true, "sealer_id": "tpm2", "secret_count": 1, "secret_names": []string{"db-password"}})
 			return jsonrpcResponse{Result: d}
+		case "policy.create":
+			d, _ := json.Marshal(map[string]interface{}{
+				"name": "boot", "bank": "sha256", "pcrs": []int{0, 7}, "values": map[string]string{"0": "aa"}, "created_at": "2026-01-01T00:00:00Z",
+			})
+			return jsonrpcResponse{Result: d}
+		case "policy.get":
+			d, _ := json.Marshal(map[string]interface{}{
+				"name": "boot", "bank": "sha256", "pcrs": []int{0, 7}, "values": map[string]string{"0": "aa"}, "created_at": "2026-01-01T00:00:00Z",
+			})
+			return jsonrpcResponse{Result: d}
+		case "policy.list":
+			d, _ := json.Marshal(map[string]interface{}{
+				"policies": []map[string]interface{}{{"name": "boot", "bank": "sha256", "pcrs": []int{0, 7}}}, "total": 1,
+			})
+			return jsonrpcResponse{Result: d}
+		case "policy.delete":
+			d, _ := json.Marshal(map[string]string{"name": "boot"})
+			return jsonrpcResponse{Result: d}
+		case "policy.refresh":
+			d, _ := json.Marshal(map[string]interface{}{"name": "boot", "bank": "sha256", "pcrs": []int{0, 7}})
+			return jsonrpcResponse{Result: d}
+		case "policy.verify":
+			d, _ := json.Marshal(map[string]interface{}{"name": "boot", "valid": true})
+			return jsonrpcResponse{Result: d}
+		case "policy.export":
+			d, _ := json.Marshal(map[string]string{"data": `{"name":"boot"}`})
+			return jsonrpcResponse{Result: d}
 		case "bootstrap.showKeys":
 			d, _ := json.Marshal(map[string]string{"noise_public_key": "aa"})
 			return jsonrpcResponse{Result: d}
@@ -1142,6 +1169,41 @@ func TestSealStore_RoundTrip(t *testing.T) {
 	require.NoError(t, tr.SealStoreDelete(ctx, &transport.SealStoreDeleteRequest{Name: "db-password"}))
 }
 
+func TestPolicy_RoundTrip(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	ctx := context.Background()
+
+	createResp, err := tr.PolicyCreate(ctx, &transport.PolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []int{0, 7}})
+	require.NoError(t, err)
+	assert.Equal(t, "boot", createResp.Name)
+
+	getResp, err := tr.PolicyGet(ctx, &transport.PolicyGetRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, "boot", getResp.Name)
+
+	listResp, err := tr.PolicyList(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, listResp.Total)
+
+	verifyResp, err := tr.PolicyVerify(ctx, &transport.PolicyVerifyRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.True(t, verifyResp.Valid)
+
+	exportResp, err := tr.PolicyExport(ctx, &transport.PolicyExportRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, `{"name":"boot"}`, exportResp.Data)
+
+	refreshResp, err := tr.PolicyRefresh(ctx, &transport.PolicyRefreshRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, "boot", refreshResp.Name)
+
+	require.NoError(t, tr.PolicyDelete(ctx, &transport.PolicyDeleteRequest{Name: "boot"}))
+}
+
 func TestSealStorePut_NotConnected(t *testing.T) {
 	err := (&Transport{}).SealStorePut(context.Background(), &transport.SealStorePutRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
@@ -1300,40 +1362,41 @@ func TestListUserCredentials_NotConnected(t *testing.T) {
 }
 
 // --- Policy (not supported) ---
+// --- Policy ---
 
-func TestPolicyCreate_NotSupported(t *testing.T) {
+func TestPolicyCreate_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyCreate(context.Background(), &transport.PolicyCreateRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyGet_NotSupported(t *testing.T) {
+func TestPolicyGet_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyGet(context.Background(), &transport.PolicyGetRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyList_NotSupported(t *testing.T) {
+func TestPolicyList_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyList(context.Background())
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyDelete_NotSupported(t *testing.T) {
+func TestPolicyDelete_NotConnected(t *testing.T) {
 	err := (&Transport{}).PolicyDelete(context.Background(), &transport.PolicyDeleteRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyRefresh_NotSupported(t *testing.T) {
+func TestPolicyRefresh_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyRefresh(context.Background(), &transport.PolicyRefreshRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyVerify_NotSupported(t *testing.T) {
+func TestPolicyVerify_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyVerify(context.Background(), &transport.PolicyVerifyRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyExport_NotSupported(t *testing.T) {
+func TestPolicyExport_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyExport(context.Background(), &transport.PolicyExportRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
 // --- Init Ceremony ---

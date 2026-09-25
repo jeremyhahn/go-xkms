@@ -303,6 +303,19 @@ var methodPermissions = map[string]permission{
 	"sealStore.reseal": {auth.ResourceKeys, auth.ActionWrite},
 	"sealStore.status": {auth.ResourceKeys, auth.ActionRead},
 
+	// PCR policy management (go-xkms#691) -- pkg/auth.ResourcePolicy, a
+	// resource family go-qrdb's canonical registry does not declare
+	// upstream; xkms owns it and scopes it in
+	// pkg/apimodule/module_scopes.go. Mirrors the gRPC PolicyCreate/Get/...
+	// RPCs' (qrdb.v1.permission) options one-for-one.
+	"policy.create":  {auth.ResourcePolicy, auth.ActionCreate},
+	"policy.get":     {auth.ResourcePolicy, auth.ActionGet},
+	"policy.list":    {auth.ResourcePolicy, auth.ActionList},
+	"policy.delete":  {auth.ResourcePolicy, auth.ActionDelete},
+	"policy.refresh": {auth.ResourcePolicy, auth.ActionRefresh},
+	"policy.verify":  {auth.ResourcePolicy, auth.ActionVerify},
+	"policy.export":  {auth.ResourcePolicy, auth.ActionExport},
+
 	// SSH keys.
 	"ssh.keys.generate": {auth.ResourceSSH, auth.ActionWrite},
 	"ssh.keys.import":   {auth.ResourceSSH, auth.ActionWrite},

@@ -328,4 +328,4 @@ Production deployments should require `verifiedBootState == "verified"` and `dev
 - [Phone Backend Configuration](configuration.md)
 - [Bidirectional Attestation](../../xkey/phone-backend.md)
 - [TPM2 Attestation](../tpm2.md)
-- [Key Attestation Guide](../../attestation/README.md)
+- [Key Attestation Guide](../../../../docs/attestation-verifier/user.md)

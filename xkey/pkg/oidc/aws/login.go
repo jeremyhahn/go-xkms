@@ -192,24 +192,23 @@ func handleLoginCallback(w http.ResponseWriter, r *http.Request, codeChan chan<-
 	query := r.URL.Query()
 
 	if errParam := query.Get("error"); errParam != "" {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte("<html><body><h1>AWS Authentication Failed</h1></body></html>"))
+		// A page that cannot reach the browser (it hung up) changes nothing
+		// about the login's outcome, so the write error is not acted on.
+		_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Failed"})
 		errChan <- &DetailError{Err: ErrAuthorizationFailed, Detail: ": " + errParam + ": " + query.Get("error_description")}
 		return
 	}
 
 	code := query.Get("code")
 	if code == "" {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte("<html><body><h1>AWS Authentication Failed</h1><p>No authorization code received</p></body></html>"))
+		_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Failed", Message: "No authorization code received"})
 		errChan <- ErrNoAuthorizationCode
 		return
 	}
 
 	state.Store(query.Get("state"))
 
-	w.Header().Set("Content-Type", "text/html")
-	_, _ = w.Write([]byte("<html><body><h1>AWS Authentication Successful</h1><p>You may close this window.</p></body></html>"))
+	_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Successful", Message: "You may close this window."})
 
 	codeChan <- code
 }

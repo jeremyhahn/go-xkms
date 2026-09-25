@@ -61,14 +61,16 @@ var wireExpectationForClass = map[apierrors.Class]wireExpectation{
 }
 
 // TestClassification_MatchesSharedTables walks every sentinel in
-// apierrors.ImportExportSentinelClasses, PIVSentinelClasses and
-// BarrierSentinelClasses and asserts this package's mapImportExportError /
-// mapPIVError / mapBarrierError renders the gRPC status code
-// wireExpectationForClass names for that sentinel's Class. It is the gRPC
-// half of the cross-transport parity pinned by go-xkms#912; see this file's
-// wireExpectationForClass doc comment and
-// pkg/api/mcp/apierrors_parity_test.go's TestClassification_MatchesSharedTables
-// for the MCP half.
+// apierrors.ImportExportSentinelClasses, PIVSentinelClasses,
+// BarrierSentinelClasses, SealStoreSentinelClasses, PINSentinelClasses,
+// CustodianSentinelClasses and PolicySentinelClasses and asserts this
+// package's mapImportExportError / mapPIVError / mapBarrierError /
+// mapSealStoreError / mapPINError / mapCustodianError / mapPolicyError
+// renders the gRPC status code wireExpectationForClass names for that
+// sentinel's Class. It is the gRPC half of the cross-transport parity
+// pinned by go-xkms#912; see this file's wireExpectationForClass doc
+// comment and pkg/api/mcp/apierrors_parity_test.go's
+// TestClassification_MatchesSharedTables for the MCP half.
 func TestClassification_MatchesSharedTables(t *testing.T) {
 	t.Run("import/export", func(t *testing.T) {
 		for _, entry := range apierrors.ImportExportSentinelClasses {
@@ -131,6 +133,17 @@ func TestClassification_MatchesSharedTables(t *testing.T) {
 			require.True(t, ok, "no wire expectation for class %v", entry.Class)
 			t.Run(want.name, func(t *testing.T) {
 				err := mapCustodianError(entry.Sentinel, "op")
+				assert.Equal(t, want.grpcCode, status.Code(err))
+			})
+		}
+	})
+
+	t.Run("policy", func(t *testing.T) {
+		for _, entry := range apierrors.PolicySentinelClasses {
+			want, ok := wireExpectationForClass[entry.Class]
+			require.True(t, ok, "no wire expectation for class %v", entry.Class)
+			t.Run(want.name, func(t *testing.T) {
+				err := mapPolicyError(entry.Sentinel)
 				assert.Equal(t, want.grpcCode, status.Code(err))
 			})
 		}

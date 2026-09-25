@@ -59,12 +59,15 @@ var wireExpectationForClass = map[apierrors.Class]wireExpectation{
 }
 
 // TestClassification_MatchesSharedTables walks every sentinel in
-// apierrors.ImportExportSentinelClasses, PIVSentinelClasses and
-// BarrierSentinelClasses and asserts this package's mapImportExportError /
-// mapPIVError / mapBarrierError renders the JSON-RPC code
-// wireExpectationForClass names for that sentinel's Class. It is the MCP
-// half of the cross-transport parity pinned by go-xkms#912; see
-// pkg/api/grpc/apierrors_parity_test.go for the gRPC half.
+// apierrors.ImportExportSentinelClasses, PIVSentinelClasses,
+// BarrierSentinelClasses, SealStoreSentinelClasses, PINSentinelClasses,
+// CustodianSentinelClasses and PolicySentinelClasses and asserts this
+// package's mapImportExportError / mapPIVError / mapBarrierError /
+// mapSealStoreError / mapPINError / mapCustodianError / mapPolicyError
+// renders the JSON-RPC code wireExpectationForClass names for that
+// sentinel's Class. It is the MCP half of the cross-transport parity
+// pinned by go-xkms#912; see pkg/api/grpc/apierrors_parity_test.go for the
+// gRPC half.
 func TestClassification_MatchesSharedTables(t *testing.T) {
 	t.Run("import/export", func(t *testing.T) {
 		for _, entry := range apierrors.ImportExportSentinelClasses {
@@ -137,6 +140,19 @@ func TestClassification_MatchesSharedTables(t *testing.T) {
 			require.True(t, ok, "no wire expectation for class %v", entry.Class)
 			t.Run(want.name, func(t *testing.T) {
 				err := mapCustodianError(entry.Sentinel, "op")
+				var keyErr *KeyOpError
+				require.ErrorAs(t, err, &keyErr)
+				assert.Equal(t, want.mcpCode, keyErr.Code)
+			})
+		}
+	})
+
+	t.Run("policy", func(t *testing.T) {
+		for _, entry := range apierrors.PolicySentinelClasses {
+			want, ok := wireExpectationForClass[entry.Class]
+			require.True(t, ok, "no wire expectation for class %v", entry.Class)
+			t.Run(want.name, func(t *testing.T) {
+				err := mapPolicyError(entry.Sentinel, "op")
 				var keyErr *KeyOpError
 				require.ErrorAs(t, err, &keyErr)
 				assert.Equal(t, want.mcpCode, keyErr.Code)

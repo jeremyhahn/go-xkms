@@ -87,6 +87,24 @@ func (s *oidcCLITokenStore) Clear() (existed bool, err error)
   this is what makes "no migration" safe: a leftover pre-#4 file (or an
   empty `{}`) reads as "log in again," never a crash.
 
+- **A callback page never renders request input as markup.** Every page a
+  local callback listener shows the browser (the CLI's
+  `handleOIDCCallback`, the GUI's `OIDCService.Login` handler, and
+  `xkey/pkg/oidc/aws`'s `handleLoginCallback`) is written by
+  `oidc.WriteCallbackPage` (`xkey/pkg/oidc/callback.go`), which renders an
+  `oidc.CallbackPage{Title, Message}` through `html/template`. The provider's
+  `error` and `error_description` parameters are attacker-controlled (anyone
+  who can steer the browser to the loopback URL while a login is pending
+  sets them), so they reach the page only as escaped text; only the CLI
+  shows them, the GUI and AWS pages show a fixed message. Every page carries
+  `Content-Type: text/html; charset=utf-8`, `X-Content-Type-Options:
+  nosniff`, `Content-Security-Policy: default-src 'none'; style-src
+  'unsafe-inline'` (`oidc.CallbackPageContentSecurityPolicy`) and
+  `Referrer-Policy: no-referrer`, so the page loads and runs nothing and the
+  callback URL, which carries the authorization code, is never sent on as a
+  Referer. A page that cannot be written (the browser hung up) is a
+  `*oidc.CallbackPageError`; it does not change the login's outcome.
+
 ### AWS credentials file
 
 `AWSCredentialsHandler.Handle` (the `aws-credentials` output mode, shared by
@@ -182,6 +200,9 @@ the files below.
 |---|---|
 | `oidc_test.go` | Sealed round-trip through the explicit-file path (`TestStoreAndLoadToken`), not-found and empty-store handling, JSON marshal/unmarshal parity through the protected fields, file permissions |
 | `oidc_cmds_test.go` | `login`/`token`/`refresh`/`logout` end-to-end against the explicit-file path, including refresh token rotation and provider-scoped manual-endpoint refresh |
+| `oidc_test.go` (`TestHandleOIDCCallback_EscapesReflectedError`) | A `<script>` / `"><img onerror>` error redirect reaches the page escaped, with the four security headers set |
+| `xkey/pkg/oidc/callback_test.go` (`TestWriteCallbackPage_*`) | `WriteCallbackPage` escaping, headers, the title-only page, and the typed write failure |
+| `xkey/pkg/oidc/aws/login_test.go`, `pkg/gui/services/oidc_callback_test.go` (`*Inert*`) | The same injection against the AWS handler and against the GUI's real callback listener |
 | `oidc_barrier_test.go` | The barrier decision itself: no-barrier warning + plain-file fallback, barrier-encrypted round-trip across two independent `openOIDCTokenStore` calls (proving a fresh process can unseal and read), wrong-password and no-password typed refusals, `--token-store` bypassing barrier auto-detection, and `TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick` — which invalidates the barrier password on the test's `cobra.Command` immediately after the store is opened, then proves three successful refresh ticks still complete, so any hypothetical re-resolution inside the loop would have failed |
 
 The AWS credentials writer is covered in `pkg/oidc/handlers`:
