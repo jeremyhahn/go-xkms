@@ -218,10 +218,7 @@ func TestBLEPeripheral_AcceptConnection_RefusesASecondCallerWhileOneIsActive(t *
 	// the mutex, and succeeding means nobody does yet, so it must be
 	// released immediately rather than mistaken for the first call's hold.
 	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if !p.acceptMu.TryLock() {
-			break
-		}
+	for p.acceptMu.TryLock() {
 		p.acceptMu.Unlock()
 		if time.Now().After(deadline) {
 			t.Fatal("the first AcceptConnection never acquired acceptMu")
