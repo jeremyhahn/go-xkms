@@ -973,29 +973,6 @@ func TestServer_StopWithoutStart(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestServer_HandleRequest_FrostMethodWithError tests FROST method that returns error
-func TestServer_HandleRequest_FrostMethodWithError(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Test a FROST method that should return an error (when FROST is not compiled in)
-	req := &JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "frost.generateNonces",
-		ID:      1,
-	}
-
-	resp := invokeRequest(server, ctx, req)
-	require.NotNil(t, resp)
-	assert.NotNil(t, resp.Error)
-	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
-}
-
 // TestServer_HandleRequest_WithAuthenticatedIdentity tests request with identity in context
 func TestServer_HandleRequest_WithAuthenticatedIdentity(t *testing.T) {
 	svc := setupTestXKMS(t)

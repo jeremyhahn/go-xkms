@@ -1,6 +1,6 @@
 # Key Management — API
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## How the six transports are shaped
 
@@ -244,7 +244,8 @@ shared type set.
 | malformed request | 400 | `InvalidArgument` | JSON-RPC `-32602` |
 | unauthenticated | 401 | `Unauthenticated` | error object |
 | RBAC denial | 403 | `PermissionDenied` | error object |
-| `ErrKeyNotFound` | 404 | `NotFound` | error object |
+| `ErrKeyNotFound` | 404 | `NotFound` | JSON-RPC `-32001` (`sdkssh.JSONRPCCodeNotFound`) |
+| `ErrBackendNotFound` | 404 | `NotFound` | JSON-RPC `-32001` (`sdkssh.JSONRPCCodeNotFound`) |
 | `ErrKeyAlreadyExists` | 409 | `AlreadyExists` | error object |
 | unknown method | 404 | `Unimplemented` | JSON-RPC `-32601` |
 | backend failure | 500 | `Internal` | error object |
@@ -253,6 +254,22 @@ shared type set.
 
 The mapping is implemented once per transport in `errors_keyops.go`
 (`pkg/api/rest`, `pkg/api/grpc`, `pkg/api/mcp`, `pkg/xkms`).
+
+**MCP's not-found code (go-xkms#814)**: `pkg/api/mcp`'s own JSON-RPC
+vocabulary (the eight `ErrCode*` constants in `types.go`) has no dedicated
+NotFound member. Rather than mint a ninth, `errors_keyops.go`'s
+`keyOpSentinelCodes` and `handlers_user.go`'s `mapUserError` reuse
+`sdkssh.JSONRPCCodeNotFound` (`-32001`, `sdk/go/client/ssh/mcp_status.go`) —
+the code this package's SSH sub-system already defined in the reserved
+`-32000..-32099` range for the identical outcome (`errors_ssh.go`'s
+`mapSSHError`). It covers `xkms.ErrKeyNotFound`, `xkms.ErrBackendNotFound`,
+and a `*qrdbsdk.UserNotFoundError` surfaced by `user.get`,
+`user.listCredentials`, or any other `user.*` method that resolves a
+username — matching go-qrdb's own gRPC/QUIC/MCP-wire classification of that
+type ("lower layers win"). `pkg/apimodule/module_mcp_errors.go`'s
+`keyOpCodeToWire` already carried the `sdkssh.JSONRPCCodeNotFound →
+wire.CodeNotFound` row (added for SSH); no new row was needed once the
+key/backend/user paths started producing that code too.
 
 ### The real MCP tool surface carries go-qrdb's wire classification (#791)
 
@@ -288,6 +305,7 @@ leaking its text to the caller.
 | `ErrCodeUnauthorized` (-32002) | `CodeUnauthenticated` (-32001) |
 | `ErrCodeForbidden` (-32003) | `CodePermissionDenied` (-32003) |
 | `ErrCodeServiceUnavailable` (-32004) | `CodeUnavailable` (-32006) |
+| `sdkssh.JSONRPCCodeNotFound` (-32001; `sdk/go/client/ssh/mcp_status.go`, reused outside the SSH sub-system since go-xkms#814 — see "Status and error mapping" above) | `CodeNotFound` (-32004) |
 
 **Closed (#797)**: xkms's own SDK client for this surface
 (`pkg/api/transport/mcp.Transport`) now reads `structuredContent` instead of
@@ -305,22 +323,29 @@ carried, are both deleted; there is no text fallback left.
 |---|---|
 | `CodeUnauthenticated` (-32001) | `ErrCodeUnauthorized` (-32002) |
 | `CodePermissionDenied` (-32003) | `ErrCodeForbidden` (-32003) |
-| `CodeNotFound` (-32004) | `ErrCodeInvalidParams` (-32602) |
+| `CodeNotFound` (-32004) | `sdkssh.JSONRPCCodeNotFound` (-32001) |
 | `CodeUnavailable` (-32006) | `ErrCodeServiceUnavailable` (-32004) |
 | `CodeInvalidArgument` (-32012) | `ErrCodeInvalidParams` (-32602) |
 | `CodeUnimplemented` (-32014) | `ErrCodeMethodNotFound` (-32601) |
 | `CodeInternal` (-32603) | `ErrCodeInternalError` (-32603) |
 | any other code (`CodeDeadlineExceeded`, `CodeResourceExhausted`, `CodeFailedPrecondition`, `CodeCanceled`, `CodeAlreadyExists`, `CodeAborted`, `CodeOutOfRange`, `CodeDataLoss`, `CodeUnknown`, or a number this build predates) | `ErrCodeInternalError` (-32603), same floor `mapKeyOpError` uses server-side |
 
-`wire.CodeNotFound` joins `CodeInvalidArgument` in `ErrCodeInvalidParams`
-because xkms's JSON-RPC vocabulary has no dedicated NotFound member (see the
-table above); the classification a caller observes for a "not found" failure
-does not move even though the mechanism producing it changed. Note that no
-current server code path actually emits `wire.CodeNotFound` — every
-not-found sentinel in `errors_keyops.go`'s `keyOpSentinelCodes` renders as
-`ErrCodeInternalError` today — so this row is the client's readiness for a
-code the server does not yet send, not a currently reachable classification;
-closing that server-side gap is tracked separately.
+**Closed (#814)**: `wire.CodeNotFound` used to join `CodeInvalidArgument` in
+`ErrCodeInvalidParams` here, and no server code path actually produced it —
+every not-found sentinel in `errors_keyops.go`'s `keyOpSentinelCodes` (and
+every `user.*` failure, which had no classification at all; see below)
+rendered as `ErrCodeInternalError`, so a missing key, backend, or user was
+indistinguishable from a genuine server fault. `wire.CodeNotFound` now
+classifies onto `sdkssh.JSONRPCCodeNotFound` instead: `xkms.ErrKeyNotFound`
+and `xkms.ErrBackendNotFound` (`errors_keyops.go`'s `keyOpSentinelCodes`) and
+a `*qrdbsdk.UserNotFoundError` (`handlers_user.go`'s `mapUserError`) all
+produce it server-side, and this table's row renders it back for the SDK
+client. `user.*` param-decode failures also stopped bypassing classification
+in the same change: `handlers_user.go`'s `unmarshalUserParams` (a second,
+non-`*KeyOpError`-producing decode helper) was deleted in favor of the
+shared `decodeParams` (`utils.go`) every other handler already used, so a
+malformed `user.*` request now reports `ErrCodeInvalidParams` like every
+other method instead of `ErrCodeInternalError`.
 
 A failing tool result whose `structuredContent` carries no envelope is not
 degraded into a keyword guess. Per the project's no-backward-compatibility

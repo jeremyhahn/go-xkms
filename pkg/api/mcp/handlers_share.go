@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -38,8 +37,8 @@ type GetShareCollectionStatusParams struct {
 // handleSubmitShare handles the xkms.submitShare method.
 func (s *Server) handleSubmitShare(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.SubmitShareRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.GroupID == "" {
@@ -107,8 +106,8 @@ func (s *Server) handleDeleteShare(ctx context.Context, req *JSONRPCRequest) (in
 // method.
 func (s *Server) handleGetShareCollectionStatus(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetShareCollectionStatusParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.GroupID == "" {
@@ -127,8 +126,8 @@ func (s *Server) handleGetShareCollectionStatus(ctx context.Context, req *JSONRP
 // share.
 func shareCoordinates(req *JSONRPCRequest) (*ShareCoordinatesParams, error) {
 	var params ShareCoordinatesParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.ServerURL == "" {

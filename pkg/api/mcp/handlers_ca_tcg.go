@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
@@ -29,7 +28,7 @@ func (s *Server) handleIssueEKCertificate(ctx context.Context, req *JSONRPCReque
 	}
 
 	var params transport.IssueEKCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -45,7 +44,7 @@ func (s *Server) handleIssueAKCertificate(ctx context.Context, req *JSONRPCReque
 	}
 
 	var params transport.IssueAKCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -61,7 +60,7 @@ func (s *Server) handleSignTCGCSR(ctx context.Context, req *JSONRPCRequest) (int
 	}
 
 	var params transport.SignTCGCSRRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -77,7 +76,7 @@ func (s *Server) handleEnrollDevice(ctx context.Context, req *JSONRPCRequest) (i
 	}
 
 	var params transport.EnrollDeviceRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 

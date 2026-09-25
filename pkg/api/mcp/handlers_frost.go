@@ -18,7 +18,6 @@ package mcp
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -194,8 +193,8 @@ type FrostVerifyResult struct {
 // handleFrostGenerateKey handles the frost.generateKey method
 func (s *Server) handleFrostGenerateKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostGenerateKeyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.Threshold < 2 {
@@ -308,8 +307,8 @@ func (s *Server) handleFrostGenerateKey(ctx context.Context, req *JSONRPCRequest
 // handleFrostImportKey handles the frost.importKey method
 func (s *Server) handleFrostImportKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostImportKeyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	pkg := params.Package
@@ -422,8 +421,8 @@ func (s *Server) handleFrostListKeys(ctx context.Context, req *JSONRPCRequest) (
 // handleFrostGetKey handles the frost.getKey method
 func (s *Server) handleFrostGetKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostGetKeyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
@@ -482,8 +481,8 @@ func (s *Server) handleFrostGetKey(ctx context.Context, req *JSONRPCRequest) (in
 // handleFrostDeleteKey handles the frost.deleteKey method
 func (s *Server) handleFrostDeleteKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostDeleteKeyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
@@ -514,8 +513,8 @@ func (s *Server) handleFrostDeleteKey(ctx context.Context, req *JSONRPCRequest) 
 // handleFrostGenerateNonces handles the frost.generateNonces method
 func (s *Server) handleFrostGenerateNonces(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostGenerateNoncesParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
@@ -545,8 +544,8 @@ func (s *Server) handleFrostGenerateNonces(ctx context.Context, req *JSONRPCRequ
 // handleFrostSignRound handles the frost.signRound method
 func (s *Server) handleFrostSignRound(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostSignRoundParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
@@ -644,8 +643,8 @@ func (s *Server) handleFrostSignRound(ctx context.Context, req *JSONRPCRequest) 
 // handleFrostAggregate handles the frost.aggregate method
 func (s *Server) handleFrostAggregate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostAggregateParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
@@ -716,8 +715,8 @@ func (s *Server) handleFrostAggregate(ctx context.Context, req *JSONRPCRequest) 
 // handleFrostVerify handles the frost.verify method
 func (s *Server) handleFrostVerify(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params FrostVerifyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.KeyID == "" {
