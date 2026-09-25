@@ -239,8 +239,10 @@ func (c *Client) CrossSign(ctx context.Context, csr []byte, certDER []byte) (*x5
 		slog.String("type", authzType),
 		slog.String("value", authzID))
 
-	// Create an order with the cross-signer for the same identifiers
-	order, err := c.client.AuthorizeOrder(ctx, []acme.AuthzID{
+	// Create an order with the cross-signer for the same identifiers.
+	// authorizeOrder registers the account on first use, so this request is
+	// signed with the server-issued KID rather than a bare JWK.
+	order, err := c.authorizeOrder(ctx, []acme.AuthzID{
 		{
 			Type:  authzType,
 			Value: authzID,
@@ -463,8 +465,10 @@ func (c *Client) CrossSignWithChallenge(
 		return nil, caerrors.MalformedError("failed to extract authorization from certificate: %v", err)
 	}
 
-	// Create an order with the cross-signer
-	order, err := c.client.AuthorizeOrder(ctx, []acme.AuthzID{
+	// Create an order with the cross-signer. authorizeOrder registers the
+	// account on first use, so this request is signed with the
+	// server-issued KID rather than a bare JWK.
+	order, err := c.authorizeOrder(ctx, []acme.AuthzID{
 		{
 			Type:  authzType,
 			Value: authzID,

@@ -71,6 +71,7 @@ var (
 type Client struct {
 	accountEmail       string
 	accountSigner      crypto.Signer
+	accountRegistered  bool
 	client             *acme.Client
 	config             *Config
 	httpClient         *http.Client
@@ -384,6 +385,49 @@ func extractAccountIDFromURI(uri string) (uint64, error) {
 	return id, nil
 }
 
+// authorizeOrder is the single place every order-creating call path
+// (RequestCertificate, EnrollDevice, DeviceAttest,
+// RequestEndorsementKeyCertificate, CrossSign, CrossSignWithChallenge,
+// CreateOrderWithReplaces) goes through to create an ACME order. It
+// registers the account on first use before delegating to the underlying
+// client, so the request is signed with the server-issued KID rather than
+// a bare JWK — RFC 8555 requires the KID on every authenticated request
+// after registration, and a JWK-only JWS is rejected once an account
+// exists. Consolidating the registration call here means it is never
+// duplicated at, or omitted from, an individual call site.
+func (c *Client) authorizeOrder(ctx context.Context, ids []acme.AuthzID) (*acme.Order, error) {
+	if err := c.ensureAccountRegistered(); err != nil {
+		return nil, err
+	}
+	return c.client.AuthorizeOrder(ctx, ids)
+}
+
+// ensureAccountRegistered registers the ACME account the first time it is
+// needed by this Client instance. RegisterAccount is idempotent server-side
+// (RFC 8555 §7.3.1: a newAccount request for an already-known key returns
+// the existing account, which RegisterAccount treats as success), so a
+// concurrent caller racing this check-then-act at most performs the
+// registration request twice, both of which succeed. A failure is not
+// cached, so the next order attempt retries it rather than failing forever
+// on a transient error.
+func (c *Client) ensureAccountRegistered() error {
+	c.mutex.RLock()
+	registered := c.accountRegistered
+	c.mutex.RUnlock()
+	if registered {
+		return nil
+	}
+
+	if _, err := c.RegisterAccount(); err != nil {
+		return err
+	}
+
+	c.mutex.Lock()
+	c.accountRegistered = true
+	c.mutex.Unlock()
+	return nil
+}
+
 // RegisterAccount registers a new account with the ACME server
 func (c *Client) RegisterAccount() (*acme.Account, error) {
 	defer c.mutex.RUnlock()
@@ -393,8 +437,12 @@ func (c *Client) RegisterAccount() (*acme.Account, error) {
 		slog.String("email", c.accountEmail),
 		slog.String("directory_url", c.config.DirectoryURL))
 
-	account := &acme.Account{
-		Contact: []string{fmt.Sprintf("%s%s", mailTo, c.accountEmail)},
+	account := &acme.Account{}
+	// Contact is optional per RFC 8555 §7.3; omit it rather than send a
+	// bare "mailto:" when no account email was configured (e.g. the
+	// ephemeral accounts pkg/trust/clusterca generates per enrollment).
+	if c.accountEmail != "" {
+		account.Contact = []string{fmt.Sprintf("%s%s", mailTo, c.accountEmail)}
 	}
 
 	newAccount, err := c.client.Register(context.Background(), account, acme.AcceptTOS)
@@ -785,7 +833,7 @@ func (c *Client) RequestCertificate(ctx context.Context, req *CertificateRequest
 	}
 
 	// Create an order for the certificate
-	order, err := c.client.AuthorizeOrder(ctx, []acme.AuthzID{
+	order, err := c.authorizeOrder(ctx, []acme.AuthzID{
 		{
 			Type:  req.AuthzType,
 			Value: req.AuthzValue,

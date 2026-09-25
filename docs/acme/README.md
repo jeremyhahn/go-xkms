@@ -121,10 +121,9 @@ cfg := &client.Config{
 }
 acmeClient, err := client.New(cfg)
 
-// Register account
-account, err := acmeClient.Register(ctx, &client.RegisterRequest{
-    Contact: []string{"mailto:admin@example.com"},
-})
+// RequestCertificate registers the account on its first call for this
+// client — there is no separate registration step. See docs/acme/client.md
+// for the full account-registration and certificate-request API.
 
 // Request certificate
 cert, err := acmeClient.RequestCertificate(ctx, &client.CertificateRequest{

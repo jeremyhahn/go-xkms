@@ -66,7 +66,14 @@
   device-attest-01 challenges. `pkg/acme/gui/client/api` exposes the same
   three managers as `/api/v1/accounts`, `/api/v1/certificates` and
   `/api/v1/device/{enroll,attest}` for the desktop GUI and
-  `trusted-acme-client serve`.
+  `trusted-acme-client serve`. None of these managers register the ACME
+  account themselves: `Client.authorizeOrder` (`pkg/acme/client/client.go`)
+  is the one place every order-creating call —
+  `RequestCertificate`/`RenewCertificate` (through `RequestCertificate`),
+  `EnrollDevice`, `DeviceAttest`, and `RequestEndorsementKeyCertificate` —
+  registers the account on first use before authorizing an order, so a
+  `CertificateManager`/`DeviceManager` call never needs, and never performs,
+  a separate registration step.
 - `cmd/acme-client` — the `trusted-acme-client` binary
   (`account`, `cert`, `device`, `service`, `serve`, `version` groups).
 
