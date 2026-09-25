@@ -285,7 +285,7 @@ func TestHandleLoginCallback_DeliversCodeAndState(t *testing.T) {
 	assert.Equal(t, "xyz", state.Load(),
 		"the state parameter must be captured so CSRF can be checked")
 	assert.Contains(t, recorder.Body.String(), "AWS Authentication Successful")
-	assert.Equal(t, "text/html", recorder.Header().Get("Content-Type"))
+	assert.Equal(t, "text/html; charset=utf-8", recorder.Header().Get("Content-Type"))
 }
 
 func TestHandleLoginCallback_ReportsProviderError(t *testing.T) {
@@ -311,6 +311,41 @@ func TestHandleLoginCallback_ReportsProviderError(t *testing.T) {
 
 	assert.Contains(t, recorder.Body.String(), "AWS Authentication Failed")
 	assert.Empty(t, codeChan, "an error response must not also deliver a code")
+}
+
+// TestHandleLoginCallback_ErrorPageIsInertUnderInjection proves a hostile
+// error redirect reaches the browser as none of its markup, on a page
+// served with the loopback security headers (#1013).
+func TestHandleLoginCallback_ErrorPageIsInertUnderInjection(t *testing.T) {
+	codeChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+	var state atomic.Value
+	query := url.Values{
+		"error":             {"<script>alert(1)</script>"},
+		"error_description": {`"><img src=x onerror=alert(1)>`},
+	}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/oauth/callback?"+query.Encode(), nil)
+
+	handleLoginCallback(recorder, req, codeChan, errChan, &state)
+
+	body := recorder.Body.String()
+	assert.Contains(t, body, "<h1>AWS Authentication Failed</h1>")
+	assert.NotContains(t, body, "<script>")
+	assert.NotContains(t, body, "<img")
+	assert.NotContains(t, body, "alert(1)")
+	assert.Equal(t, "text/html; charset=utf-8", recorder.Header().Get("Content-Type"))
+	assert.Equal(t, "nosniff", recorder.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, "default-src 'none'; style-src 'unsafe-inline'", recorder.Header().Get("Content-Security-Policy"))
+	assert.Equal(t, "no-referrer", recorder.Header().Get("Referrer-Policy"))
+
+	select {
+	case err := <-errChan:
+		assert.ErrorIs(t, err, ErrAuthorizationFailed)
+	default:
+		t.Fatal("no error delivered")
+	}
 }
 
 func TestHandleLoginCallback_RejectsMissingCode(t *testing.T) {

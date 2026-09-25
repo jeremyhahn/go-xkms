@@ -1394,8 +1394,9 @@ func handleOIDCCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- 
 
 	if errParam := query.Get("error"); errParam != "" {
 		errDesc := query.Get("error_description")
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = fmt.Fprintf(w, "<html><body><h1>Authentication Failed</h1><p>%s: %s</p></body></html>", errParam, errDesc)
+		// A page that cannot reach the browser (it hung up) changes nothing
+		// about the login's outcome, so the write error is not acted on.
+		_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: errParam + ": " + errDesc})
 
 		errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, errDesc)}
 		return
@@ -1403,16 +1404,14 @@ func handleOIDCCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- 
 
 	code := query.Get("code")
 	if code == "" {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte("<html><body><h1>Authentication Failed</h1><p>No authorization code received</p></body></html>"))
+		_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: "No authorization code received"})
 		errChan <- ErrOIDCNoAuthCode
 		return
 	}
 
 	state.Store(query.Get("state"))
 
-	w.Header().Set("Content-Type", "text/html")
-	_, _ = w.Write([]byte("<html><body><h1>Authentication Successful</h1><p>You may close this window.</p></body></html>"))
+	_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Successful", Message: "You may close this window."})
 
 	codeChan <- code
 }
