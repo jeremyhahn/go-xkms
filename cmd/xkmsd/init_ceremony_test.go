@@ -429,6 +429,43 @@ func TestPrintCeremonyOutcome_MofNMentionsClaim(t *testing.T) {
 	}
 }
 
+// TestPrintCeremonyOutcome_ListsEnrolledFactors proves the "Login factors:"
+// summary line (printEnrolledFactors, invoked via printCeremonyOutcome's
+// defer) actually lists every factor the ceremony enrolled -- the branch
+// TestPrintCeremonyOutcome_SingleAdmin and
+// TestPrintCeremonyOutcome_MofNMentionsClaim never reach, since both leave
+// env.enrolledFactors empty.
+func TestPrintCeremonyOutcome_ListsEnrolledFactors(t *testing.T) {
+	originalStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = originalStderr })
+
+	env := &ceremonyEnv{
+		dataDir: "/var/lib/xkms",
+		enrolledFactors: []qrdbsdk.AdminEnrollmentResult{
+			{Factor: "passkey"},
+			{Factor: "totp"},
+		},
+	}
+	result := &initialize.InitResult{State: initialize.StateOperational}
+	printCeremonyOutcome(env, result)
+	_ = w.Close()
+	os.Stderr = originalStderr
+
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+	out := string(got)
+	if !strings.Contains(out, "Login factors: passkey, totp") {
+		t.Errorf("expected output to list enrolled factors \"passkey, totp\"; got:\n%s", out)
+	}
+}
+
 // =============================================================================
 // preflightAdminFactors
 // =============================================================================
