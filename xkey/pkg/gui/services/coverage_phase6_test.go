@@ -1564,6 +1564,11 @@ func TestP6B_SetupWizard_ApplySOProvisioning_InvalidMode(t *testing.T) {
 
 func TestP6B_SetupWizard_ApplySOProvisioning_NilPINService(t *testing.T) {
 	svc := &SetupWizardService{}
+	// ApplySOProvisioning reaches step 7 (policy HMAC write) even though the
+	// missing PIN service fails an earlier step; svc.configDir must be set or
+	// config.PolicyHMACPath resolves the HMAC file relative to the working
+	// directory instead of into this temp dir.
+	svc.SetConfigDir(t.TempDir())
 
 	result, err := svc.ApplySOProvisioning(&SetupChoices{
 		Mode:  "standalone",
@@ -1585,6 +1590,10 @@ func TestP6B_SetupWizard_ApplySOProvisioning_PINSetupError(t *testing.T) {
 
 	svc := &SetupWizardService{}
 	svc.SetPINService(pinSvc)
+	// See the comment in TestP6B_SetupWizard_ApplySOProvisioning_NilPINService:
+	// the SO PIN setup failure does not stop the wizard before step 7's HMAC
+	// write, so svc.configDir must be redirected to a temp dir.
+	svc.SetConfigDir(t.TempDir())
 
 	result, err := svc.ApplySOProvisioning(&SetupChoices{
 		Mode:  "standalone",
