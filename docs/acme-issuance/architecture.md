@@ -64,7 +64,7 @@ Rejected alternatives:
 | Issuance | `pkg/acme/server/handlers.OrderFinalizeHandler` calls `s.ca` (`pkg/ca`) directly; `pkg/acme/issuance` is not on this path — see Data flow below |
 | Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
 | Identifier policy, CAA | `pkg/acme/policy`, `pkg/acme/server/caa.go` — both wired, see Trust boundaries |
-| Rate limits | `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go` — wired only into the standalone `TrustedCA` (per-client-ID only), not into xkmsd; see Trust boundaries |
+| Rate limits | `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` — wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`), keyed per client (JWS KID or IP); `tenant_rate_limiter.go` exists but is wired into neither; see Trust boundaries |
 | Circuit breakers, degradation cache | `pkg/acme/server/circuitbreaker` (breakers, `Manager`, the HTTP middleware, and the `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators), `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` (the shared challenge-verifier wrapping helper), `pkg/acme/server/degradation` (the cache `GET /acme/directory` and `GET /acme/ca-bundle` fall back to) — wired into both xkmsd and the standalone `TrustedCA`; see Trust boundaries |
 | Certificate Transparency | `pkg/acme/ct` |
 | Admin plane | `pkg/acme/admin` |
@@ -158,9 +158,7 @@ through ACME against an existing node's directory.
   tenant KMS signer (`Params.KMSService`, wrapped automatically by
   `NewRestService` when both it and `Params.Breakers` are set), and the
   CA/keystore-backed certificate storage `GET /acme/ca-bundle` reads from.
-  `cmd/xkmsd/acme.go` (go-xkms#735, folding what had been the previously-
-  unwired `pkg/acme/server/circuit_breaker.go` duplicate into this package
-  and deleting that file) and the standalone `TrustedCA`
+  `cmd/xkmsd/acme.go` and the standalone `TrustedCA`
   (`pkg/acme/client/trustedca.go`, go-xkms#820) both build their breaker
   `Manager` and wrap their challenge verifiers through the same
   `server.WrapChallengeVerifiers` helper (`pkg/acme/server/resilience.go`),
