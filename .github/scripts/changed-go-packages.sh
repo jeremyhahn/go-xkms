@@ -84,6 +84,41 @@ if command -v go >/dev/null 2>&1; then
 fi
 
 packages="$(printf '%s\n' $result | sort -u | tr '\n' ' ')"
+
+# Drop packages with no Go files under the tags the test step builds with
+# (GO_TEST_TAGS, set by the workflow to the step's -tags value). The cloud
+# and HSM backends (awskms, azurekv, gcpkms, vault, ...) are gated entirely
+# behind their own build tags; handing one to `go test` without its tag is
+# a "[setup failed]: build constraints exclude all Go files" error, not a
+# skip. Those packages run with their tags in the full tier. Like the
+# expansion above, this fails open: if `go list` is unavailable or reports
+# nothing, the set is left as it was.
+if [ -n "$packages" ] && command -v go >/dev/null 2>&1; then
+	listed="$(go list -e -tags "${GO_TEST_TAGS:-}" -f '{{.ImportPath}} {{len .GoFiles}} {{len .CgoFiles}} {{len .TestGoFiles}} {{len .XTestGoFiles}}' $packages 2>/dev/null || true)"
+	if [ -n "$listed" ]; then
+		kept=""
+		dropped=""
+		while IFS=' ' read -r p gofiles cgofiles tests xtests; do
+			[ -n "$p" ] || continue
+			case "$p" in
+			github.com/jeremyhahn/go-xkms) rel="." ;;
+			github.com/jeremyhahn/go-xkms/*) rel="./${p#github.com/jeremyhahn/go-xkms/}" ;;
+			*) continue ;;
+			esac
+			if [ "$((gofiles + cgofiles + tests + xtests))" -eq 0 ]; then
+				dropped="$dropped $rel"
+			else
+				kept="$kept $rel"
+			fi
+		done <<LISTED
+$listed
+LISTED
+		if [ -n "$dropped" ]; then
+			echo "changed-go-packages: no Go files under tags '${GO_TEST_TAGS:-}' (tested by the full tier):${dropped}" >&2
+		fi
+		packages="$(printf '%s\n' $kept | sort -u | tr '\n' ' ')"
+	fi
+fi
 # Trim trailing whitespace so a caller comparing against "" for "nothing to
 # do" is not defeated by a lone space.
 packages="$(printf '%s' "$packages" | sed 's/[[:space:]]*$//')"
