@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -219,8 +220,9 @@ func TestFC3_OIDCService_Login_StateMismatch(t *testing.T) {
 		resultChan <- loginResult{result: r, err: e}
 	}()
 
-	// Wait for server to start, then send callback with wrong state.
-	time.Sleep(300 * time.Millisecond)
+	// Send callback with wrong state; the retry loop below already handles
+	// the callback listener not being ready yet (http.Get fails until the
+	// listener is bound), so no separate readiness wait is needed here.
 	callbackURL := "http://localhost:18990/callback?code=mock-code&state=WRONG_STATE"
 	for i := 0; i < 50; i++ {
 		resp, err := http.Get(callbackURL)
@@ -596,8 +598,12 @@ func TestFC3_OIDCService_Login_SuccessWithExecAndAutoRefresh(t *testing.T) {
 		t.Fatal("Login did not complete within timeout")
 	}
 
-	// Allow goroutines to start auto-refresh.
-	time.Sleep(200 * time.Millisecond)
+	// Wait for the post-login goroutine to register auto-refresh instead of
+	// sleeping a fixed duration: Login starts it asynchronously (L761-765).
+	require.Eventually(t, func() bool {
+		status, statusErr := svc.GetRefreshStatus("full-login")
+		return statusErr == nil && status.Running
+	}, 5*time.Second, 10*time.Millisecond, "auto-refresh was never registered")
 	_ = svc.StopAllRefresh()
 }
 
@@ -749,8 +755,14 @@ func TestFC3_OIDCService_RefreshLoop_TickerWithExecScript(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for at least one tick.
-	time.Sleep(2 * time.Second)
+	// Wait for at least one ticker.C fire instead of a fixed sleep: the
+	// AutoRefresh interval itself (1s, no clock seam) is the behavior under
+	// test, so polling the tick count is more deterministic than betting a
+	// fixed sleep is long enough under a loaded scheduler.
+	require.Eventually(t, func() bool {
+		status := proc.status.Load()
+		return status != nil && status.RefreshCount > 0
+	}, 10*time.Second, 20*time.Millisecond, "refreshLoop did not tick")
 	cancel()
 
 	select {
@@ -1175,10 +1187,13 @@ func TestFC3_OIDCService_Login_ListenerPortConflict(t *testing.T) {
 	svc.SetTokenStore(oidc.NewMemoryTokenStore())
 	svc.SetBrowserOpen(func(u string) error { return nil })
 
-	// Occupy the port first.
-	blocker := &http.Server{Addr: ":18994", Handler: http.NewServeMux()}
-	go func() { _ = blocker.ListenAndServe() }()
-	time.Sleep(100 * time.Millisecond)
+	// Occupy the port first. net.Listen binds synchronously, so the port is
+	// held before this call returns -- no readiness wait is needed for
+	// Login's later net.Listen on the same port to observe it in use.
+	blockerListener, err := net.Listen("tcp", ":18994")
+	require.NoError(t, err)
+	blocker := &http.Server{Handler: http.NewServeMux()}
+	go func() { _ = blocker.Serve(blockerListener) }()
 	defer blocker.Close()
 
 	entry := &OIDCProviderEntry{

@@ -337,7 +337,7 @@ Common error conditions:
 
 ## See Also
 
-- [PIV Architecture](../../piv/README.md)
+- [PIV Architecture](../../piv/architecture.md)
 - [PKCS#11 Module](../../pkcs11/module/README.md)
 - [Backends](../../backends/README.md)
 - [Configuration Reference](../../configuration/README.md)

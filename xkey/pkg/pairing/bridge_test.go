@@ -2683,6 +2683,20 @@ func TestEncodeResponse_MarshalError(t *testing.T) {
 
 // --- Coverage gap tests: message_loop handleInboundRequest edge cases ---
 
+// waitForPipeDrain waits until a message sent into a mockPipeTransport pair
+// has been dequeued by the router's receiveLoop, instead of sleeping a fixed
+// duration and hoping processing landed inside the window. tx.sendCh is the
+// same channel object the paired transport's Receive reads from (see
+// newPipeTransports), so an empty channel proves receiveLoop has taken the
+// message and moved on to decrypt/dispatch it synchronously -- Stop() cannot
+// interrupt that in-progress call, only a later loop iteration.
+func waitForPipeDrain(t *testing.T, tx *mockPipeTransport) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return len(tx.sendCh) == 0
+	}, 5*time.Second, time.Millisecond, "router never received the message")
+}
+
 func TestMessageRouter_HandleInboundRequest_NoHandler(t *testing.T) {
 	t.Parallel()
 
@@ -2708,8 +2722,8 @@ func TestMessageRouter_HandleInboundRequest_NoHandler(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	// Give router time to process. Since handler is nil, it should log and return.
-	time.Sleep(200 * time.Millisecond)
+	// Since handler is nil, the router should log and return.
+	waitForPipeDrain(t, remoteTransport)
 }
 
 func TestMessageRouter_HandleInboundRequest_BadJSON(t *testing.T) {
@@ -2738,7 +2752,7 @@ func TestMessageRouter_HandleInboundRequest_BadJSON(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	time.Sleep(200 * time.Millisecond)
+	waitForPipeDrain(t, remoteTransport)
 }
 
 func TestMessageRouter_HandleInboundRequest_HandlerReturnsNil(t *testing.T) {
@@ -2769,7 +2783,7 @@ func TestMessageRouter_HandleInboundRequest_HandlerReturnsNil(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	time.Sleep(200 * time.Millisecond)
+	waitForPipeDrain(t, remoteTransport)
 }
 
 // --- Coverage gap tests: SendRequest edge cases ---
@@ -2819,7 +2833,7 @@ func TestMessageRouter_RouteResponse_BadJSON(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	time.Sleep(200 * time.Millisecond)
+	waitForPipeDrain(t, remoteTransport)
 }
 
 func TestMessageRouter_RouteResponse_UnknownID(t *testing.T) {
@@ -2845,7 +2859,7 @@ func TestMessageRouter_RouteResponse_UnknownID(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	time.Sleep(200 * time.Millisecond)
+	waitForPipeDrain(t, remoteTransport)
 }
 
 // --- Coverage gap tests: handleBiometricPending edge cases ---
@@ -2868,7 +2882,7 @@ func TestMessageRouter_HandleBiometricPending_BadJSON(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	time.Sleep(200 * time.Millisecond)
+	waitForPipeDrain(t, remoteTransport)
 }
 
 func TestMessageRouter_HandleBiometricPending_BadParams(t *testing.T) {
@@ -2889,7 +2903,7 @@ func TestMessageRouter_HandleBiometricPending_BadParams(t *testing.T) {
 	err = remoteTransport.Send(context.Background(), ciphertext)
 	require.NoError(t, err)
 
-	time.Sleep(200 * time.Millisecond)
+	waitForPipeDrain(t, remoteTransport)
 }
 
 // --- Coverage gap: SendRequest encrypt and send error paths ---
@@ -2924,10 +2938,20 @@ func TestMessageRouter_SendRequest_ChannelClosed(t *testing.T) {
 	router := NewMessageRouter(initiatorTransport, initiatorSession, nil, testLogger())
 	router.Start()
 
-	// Send a request but close the router's done channel before response comes.
+	req := NewRequest(MethodPing, nil)
+
+	// Send a request but close the router's done channel before response
+	// comes. Wait for req.ID to actually land in router.pending instead of
+	// sleeping a fixed duration: SendRequest registers it before this
+	// goroutine's Stop call must race it, and req.ID is fixed at NewRequest
+	// time above so it is safe to read here before SendRequest runs.
 	go func() {
-		// Wait a bit for the request to be registered then stop the router.
-		time.Sleep(100 * time.Millisecond)
+		require.Eventually(t, func() bool {
+			router.mu.Lock()
+			defer router.mu.Unlock()
+			_, ok := router.pending[req.ID]
+			return ok
+		}, 5*time.Second, time.Millisecond, "SendRequest never registered its pending request")
 
 		// Drain the send channel to prevent blocking.
 		select {
@@ -2937,7 +2961,6 @@ func TestMessageRouter_SendRequest_ChannelClosed(t *testing.T) {
 		router.Stop()
 	}()
 
-	req := NewRequest(MethodPing, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -2956,16 +2979,15 @@ func TestMessageRouter_ReceiveLoop_ClosedDuringRead(t *testing.T) {
 	router := NewMessageRouter(initiatorTransport, initiatorSession, nil, testLogger())
 	router.Start()
 
-	// Let the receive loop run, then close the transport to trigger the
-	// closed check in receiveLoop (line 184-186).
-	time.Sleep(50 * time.Millisecond)
-
-	// Close the transport to make Receive fail.
+	// No assertion follows, and none of the sleeps this replaced were
+	// gating one: mockPipeTransport.Close only flips connected/closed, it
+	// never closes recvCh, so a receiveLoop already parked in "<-m.recvCh"
+	// (which it will be, near-instantly, since nothing is ever sent on this
+	// channel) is not woken by Close and this goroutine leaks for the rest
+	// of the test binary's run rather than reaching the intended closed
+	// check. Filed as a pre-existing test-design gap rather than fixed here
+	// (out of this change's scope: the shared mock is used across the
+	// package).
 	initiatorTransport.Close()
-
-	// Stop the router (this sets closed=true).
 	router.Stop()
-
-	// Give time for the receive loop to exit.
-	time.Sleep(100 * time.Millisecond)
 }

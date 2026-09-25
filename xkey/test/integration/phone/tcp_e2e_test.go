@@ -421,9 +421,9 @@ func TestTCPE2E_ClientDisconnectReconnect(t *testing.T) {
 	require.Nil(t, resp.Error)
 	client1.close()
 
-	// Short delay for the server to detect the disconnection.
-	time.Sleep(50 * time.Millisecond)
-
+	// No wait needed: the server's MaxConnections default is well above 1
+	// (see NewTCPPhoneServer), so the second connection below does not
+	// depend on the server having noticed the first one's disconnect.
 	// Second connection with fresh Noise session.
 	client2 := newTCPE2EClient(t, srv.Addr())
 	defer client2.close()

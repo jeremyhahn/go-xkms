@@ -113,11 +113,17 @@ func (d *transitDouble) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// LIST /transit/keys arrives as GET with ?list=true (see the Vault Go
-	// client's Logical.ListWithContext), on the bare "keys" collection path
-	// rather than a per-key path, so it must be recognized before the
-	// len(parts) < 3 check below rejects it as too short.
-	if len(parts) == 2 && parts[1] == "keys" && r.Method == http.MethodGet && r.URL.Query().Get("list") == "true" {
+	// LIST /v1/transit/keys has no name segment, unlike every other keys
+	// operation this double serves -- it must be routed before the
+	// len(parts) < 3 guard below, which every named operation relies on.
+	//
+	// The vault/api client's Logical.list rewrites the wire method to GET
+	// with ?list=true (see logical.go's comment: "Set this for broader
+	// compatibility") rather than sending the literal LIST verb its own
+	// ListWithContext constructs, so the method to match here is GET, not
+	// LIST, with the list=true query parameter (rather than the path shape
+	// alone) disambiguating this from an ordinary single-key read.
+	if parts[1] == "keys" && len(parts) == 2 && r.Method == http.MethodGet && r.URL.Query().Get("list") == "true" {
 		d.listKeys(w)
 		return
 	}

@@ -64,8 +64,8 @@ Rejected alternatives:
 | Issuance | `pkg/acme/server/handlers.OrderFinalizeHandler` calls `s.ca` (`pkg/ca`) directly; `pkg/acme/issuance` is not on this path — see Data flow below |
 | Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
 | Identifier policy, CAA | `pkg/acme/policy`, `pkg/acme/server/caa.go` — both wired, see Trust boundaries |
-| Rate limits | `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go` — wired only into the standalone `TrustedCA` (per-client-ID only), not into xkmsd; see Trust boundaries |
-| Circuit breakers, degradation cache | `pkg/acme/server/circuitbreaker` (breakers, `Manager`, the HTTP middleware, and the `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators), `pkg/acme/server/degradation` (the cache `GET /acme/directory` and `GET /acme/ca-bundle` fall back to) — wired into xkmsd, not the standalone `TrustedCA`; see Trust boundaries |
+| Rate limits | `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` — wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`), keyed per client (JWS KID or IP); `tenant_rate_limiter.go` exists but is wired into neither; see Trust boundaries |
+| Circuit breakers, degradation cache | `pkg/acme/server/circuitbreaker` (breakers, `Manager`, the HTTP middleware, and the `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators), `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` (the shared challenge-verifier wrapping helper), `pkg/acme/server/degradation` (the cache `GET /acme/directory` and `GET /acme/ca-bundle` fall back to) — wired into both xkmsd and the standalone `TrustedCA`; see Trust boundaries |
 | Certificate Transparency | `pkg/acme/ct` |
 | Admin plane | `pkg/acme/admin` |
 | Multi-transport adapters | `pkg/acme/api/{rest,grpc,quic,mcp}` + `pkg/acme/api/adapter.go` |
@@ -146,24 +146,34 @@ through ACME against an existing node's directory.
   `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
   mounted on the whole ACME surface by both ACME server compositions
   (xkmsd's `cmd/xkmsd/acme.go`, the standalone `TrustedCA`), keying each
-  client by JWS KID or IP; the tenant rate limiter
-  (`tenant_rate_limiter.go`) exists but is not wired into either
-  composition — see [`engineering.md`](engineering.md) §Rate limiting.
+  client by JWS KID or IP. The per-tenant overall quota and the RFC 8555
+  Section 6.6 per-category limits (`tenant_rate_limiter.go`,
+  `rate_limiter.go`) are wired into both compositions, keyed exclusively on
+  a tenant `handlers.RestService.TenantAuthMiddleware` resolves from a fully
+  verified JWS `kid` — never from a client-asserted header, host, or path —
+  see [`engineering.md`](engineering.md) §Rate limiting and §Tenant
+  admission control (go-xkms#886).
 - **Circuit breakers guard individual outbound dependencies, not order
-  creation, and run only on xkmsd today.** `pkg/acme/server/circuitbreaker`
-  wraps five dependencies, each with its own breaker, wired by
-  `cmd/xkmsd/acme.go` (go-xkms#735, folding what had been the previously-
-  unwired `pkg/acme/server/circuit_breaker.go` duplicate into this package
-  and deleting that file): the `http-01` and `dns-01` challenge verifiers
-  (wrapped where `cmd/xkmsd` builds the challenge map), CT log submission
+  creation, and now run on both ACME server compositions.**
+  `pkg/acme/server/circuitbreaker` wraps five dependencies, each with its own
+  breaker: the `http-01` and `dns-01` challenge verifiers, CT log submission
   (`circuitbreaker.WrapLogSubmitter`, available wherever a CT submitter is
   constructed — see "What this feature deliberately does not do"), the
   tenant KMS signer (`Params.KMSService`, wrapped automatically by
   `NewRestService` when both it and `Params.Breakers` are set), and the
   CA/keystore-backed certificate storage `GET /acme/ca-bundle` reads from.
-  The standalone `TrustedCA` (`pkg/acme/client/trustedca.go`) does not yet
-  set `Params.Breakers`, so none of this runs on that path — it mounts
-  `GET /health` but always reports healthy with no breakers listed.
+  `cmd/xkmsd/acme.go` and the standalone `TrustedCA`
+  (`pkg/acme/client/trustedca.go`, go-xkms#820) both build their breaker
+  `Manager` and wrap their challenge verifiers through the same
+  `server.WrapChallengeVerifiers` helper (`pkg/acme/server/resilience.go`),
+  so a breaker named `http01` or `dns01` means the same thing in either
+  composition's `/health` output; `xkmsd`'s `buildChallengeMap` calls it
+  after selecting verifiers from `acme.challenges`, `TrustedCA.Serve` calls
+  it on the map a caller supplied through `WithChallengeMap`. `TrustedCA`
+  reuses `pkg/config`'s `ACMEResilienceConfig` directly as
+  `TCAACMEConfig.Resilience` rather than a parallel type, so the same
+  `storage`/`kms`/`http01`/`dns01` breaker sections and defaults apply to
+  both compositions' configuration.
   An open breaker fails only the call it guards — a challenge validation
   attempt returns an `incorrectResponse` problem instead of hanging on a dead
   verifier target, a KMS-backed finalize fails instead of blocking — it does

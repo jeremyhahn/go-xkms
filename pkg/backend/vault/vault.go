@@ -207,7 +207,15 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 		return nil, &errs.Wrapped{Msg: "failed to create key in vault", Err: err}
 	}
 
-	// Store metadata
+	// Store metadata. exportable is unconditionally false, mirroring the
+	// hardcoded exportable:false this method wrote to Vault itself above
+	// (H8): an asymmetric private key is never exportable in either form
+	// through this backend, so ListKeys must report that truthfully rather
+	// than leaving Exportable at the KeyAttributes zero value by coincidence
+	// (go-xkms#932). sensitive carries the caller's own policy the same way
+	// every other backend's metadata record does, so the service layer's
+	// plaintext-release check (pkg/xkms servicer_key.go) sees what the
+	// caller actually asked for once the key is looked up again by CN.
 	metadata := map[string]interface{}{
 		"cn":            attrs.CN,
 		"key_algorithm": int(attrs.KeyAlgorithm),
@@ -215,6 +223,8 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 		"hash":          uint(attrs.Hash),
 		"store_type":    backend.STORE_VAULT,
 		"vault_name":    keyName,
+		"exportable":    false,
+		"sensitive":     attrs.Sensitive,
 	}
 
 	if attrs.RSAAttributes != nil {
@@ -386,14 +396,47 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 			CN: cn,
 		}
 
+		// StoreType must round-trip too: attrs.Validate (called by, among
+		// others, ExportKeyMaterial) requires it, and every metadata record
+		// this backend writes (GenerateKey, GenerateSymmetricKey, ImportKey)
+		// carries "store_type" for exactly this reason.
+		if storeType, ok := metadata["store_type"].(string); ok && storeType != "" {
+			attrs.StoreType = types.StoreType(storeType)
+		}
+
 		if keyAlgFloat, ok := metadata["key_algorithm"].(float64); ok {
 			attrs.KeyAlgorithm = x509.PublicKeyAlgorithm(int(keyAlgFloat))
+		}
+		// SymmetricAlgorithm distinguishes a Transit symmetric key from an
+		// asymmetric one (types.KeyAttributes.IsSymmetric checks exactly
+		// this field), which ExportKeyMaterial's IsSymmetric guard and the
+		// Exportable/Sensitive semantics above both depend on: a symmetric
+		// key's metadata (GenerateSymmetricKey, ImportKey) always carries
+		// "symmetric_algorithm"; an asymmetric key's never does.
+		if symAlg, ok := metadata["symmetric_algorithm"].(string); ok && symAlg != "" {
+			attrs.SymmetricAlgorithm = types.SymmetricAlgorithm(symAlg)
 		}
 		if hashFloat, ok := metadata["hash"].(float64); ok {
 			attrs.Hash = crypto.Hash(uint(hashFloat))
 		}
 		if keyTypeFloat, ok := metadata["key_type"].(float64); ok {
 			attrs.KeyType = types.KeyType(uint8(keyTypeFloat))
+		}
+		// Exportable and Sensitive round-trip from the same metadata record
+		// GenerateKey, GenerateSymmetricKey and ImportKey each write
+		// (go-xkms#932): a symmetric key's exportable reflects the caller's
+		// own Exportable policy (genuinely enforced by ExportKeyMaterial
+		// against Vault Transit's own exportable flag), while an asymmetric
+		// key's is unconditionally false (H8). A metadata record written
+		// before this field existed has no "exportable" key at all, and the
+		// comma-ok default of false is the correct reading for it: it
+		// predates any caller ever being able to ask for Exportable=true
+		// through this backend.
+		if exportable, ok := metadata["exportable"].(bool); ok {
+			attrs.Exportable = exportable
+		}
+		if sensitive, ok := metadata["sensitive"].(bool); ok {
+			attrs.Sensitive = sensitive
 		}
 
 		result = append(result, attrs)

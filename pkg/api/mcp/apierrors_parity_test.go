@@ -55,6 +55,7 @@ var wireExpectationForClass = map[apierrors.Class]wireExpectation{
 	apierrors.ClassUnauthenticated:    {"unauthenticated", ErrCodeInvalidParams},
 	apierrors.ClassDataLoss:           {"data loss", ErrCodeInternalError},
 	apierrors.ClassDeadlineExceeded:   {"deadline exceeded", ErrCodeInternalError},
+	apierrors.ClassResourceExhausted:  {"resource exhausted", ErrCodeInternalError},
 }
 
 // TestClassification_MatchesSharedTables walks every sentinel in
@@ -110,6 +111,32 @@ func TestClassification_MatchesSharedTables(t *testing.T) {
 			require.True(t, ok, "no wire expectation for class %v", entry.Class)
 			t.Run(want.name, func(t *testing.T) {
 				err := mapSealStoreError(entry.Sentinel)
+				var keyErr *KeyOpError
+				require.ErrorAs(t, err, &keyErr)
+				assert.Equal(t, want.mcpCode, keyErr.Code)
+			})
+		}
+	})
+
+	t.Run("pin", func(t *testing.T) {
+		for _, entry := range apierrors.PINSentinelClasses {
+			want, ok := wireExpectationForClass[entry.Class]
+			require.True(t, ok, "no wire expectation for class %v", entry.Class)
+			t.Run(want.name, func(t *testing.T) {
+				err := mapPINError(entry.Sentinel, "op")
+				var keyErr *KeyOpError
+				require.ErrorAs(t, err, &keyErr)
+				assert.Equal(t, want.mcpCode, keyErr.Code)
+			})
+		}
+	})
+
+	t.Run("custodian", func(t *testing.T) {
+		for _, entry := range apierrors.CustodianSentinelClasses {
+			want, ok := wireExpectationForClass[entry.Class]
+			require.True(t, ok, "no wire expectation for class %v", entry.Class)
+			t.Run(want.name, func(t *testing.T) {
+				err := mapCustodianError(entry.Sentinel, "op")
 				var keyErr *KeyOpError
 				require.ErrorAs(t, err, &keyErr)
 				assert.Equal(t, want.mcpCode, keyErr.Code)

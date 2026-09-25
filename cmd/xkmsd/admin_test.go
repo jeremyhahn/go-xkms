@@ -77,7 +77,7 @@ func TestAdminModule_ReachableOnUnifiedListener(t *testing.T) {
 // never dispatched to an ACME RFC 8555 handler or the admin surface.
 func TestAdminModule_AbsentFromACMEListener(t *testing.T) {
 	svc := &stubRestService{}
-	acmeRouter := buildACMERouter(svc, "/acme", nil)
+	acmeRouter := buildACMERouter(svc, "/acme", nil, nil)
 	ts := httptest.NewServer(acmeRouter)
 	t.Cleanup(ts.Close)
 
