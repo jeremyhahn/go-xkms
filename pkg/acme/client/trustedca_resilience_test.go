@@ -77,12 +77,8 @@ func TestTrustedCA_Serve_HealthReportsRealBreakers(t *testing.T) {
 	mockCA := newMockCA()
 	mockCA.On("CABundleFiltered", mock.Anything, mock.Anything).Return([]byte("mock-bundle"), nil).Maybe()
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{Enabled: false},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
 
 	noopHTTP01 := acmecommon.ChallengeVerifierFunc(func(
 		*net.Resolver, acmecommon.CertificateAuthority, string, string, string, string) error {
@@ -148,21 +144,14 @@ func TestTrustedCA_Serve_StorageBreakerOpen_DegradesDirectory(t *testing.T) {
 	mockCA.On("CABundleFiltered", mock.Anything, mock.Anything).
 		Return(nil, errors.New("ca-bundle storage unavailable")).Maybe()
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-			Resilience: config.ACMEResilienceConfig{
-				// MaxFailures 1 so the single failing call below trips the
-				// breaker deterministically, and a long reset timeout so the
-				// breaker stays open for the rest of the test instead of
-				// racing a half-open probe.
-				Storage: config.ACMECircuitBreakerConfig{
-					MaxFailures:         1,
-					ResetTimeoutSeconds: 3600,
-				},
-			},
-		},
-		Admin: AdminConfig{Enabled: false},
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
+	// MaxFailures 1 so the single failing call below trips the breaker
+	// deterministically, and a long reset timeout so the breaker stays open
+	// for the rest of the test instead of racing a half-open probe.
+	cfg.ACME.Resilience.Storage = config.ACMECircuitBreakerConfig{
+		MaxFailures:         1,
+		ResetTimeoutSeconds: 3600,
 	}
 
 	tca, err := New(
