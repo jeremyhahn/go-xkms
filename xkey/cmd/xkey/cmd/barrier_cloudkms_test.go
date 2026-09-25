@@ -143,3 +143,21 @@ func TestPersistBarrierCloudKMSConfig_AWSKMSInvalid(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, config.ErrBarrierCloudKMSConfigInvalid))
 }
+
+// --- normalizeAmbientSecret ---
+
+func TestNormalizeAmbientSecret_Nil(t *testing.T) {
+	require.Nil(t, normalizeAmbientSecret(nil))
+}
+
+func TestNormalizeAmbientSecret_EmptyRawBecomesNil(t *testing.T) {
+	sv := &xkms.SecretValue{}
+	require.Nil(t, normalizeAmbientSecret(sv),
+		"a zero-value SecretValue left by config.Load's field-presence default must read as unconfigured")
+}
+
+func TestNormalizeAmbientSecret_ConfiguredValuePassesThrough(t *testing.T) {
+	sv := &xkms.SecretValue{Raw: "credential://db-password"}
+	got := normalizeAmbientSecret(sv)
+	require.Same(t, sv, got)
+}
