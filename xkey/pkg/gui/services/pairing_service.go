@@ -174,7 +174,9 @@ func (s *PairingService) IsPaired() bool {
 	if s.verifier == nil {
 		return false
 	}
-	_ = s.verifier.Reload()
+	if err := s.verifier.Reload(); err != nil {
+		s.log.Warn("failed to reload pairing verifier state", "error", err)
+	}
 	return s.verifier.IsPaired()
 }
 

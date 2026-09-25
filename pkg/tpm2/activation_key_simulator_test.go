@@ -40,6 +40,19 @@ func TestCreateActivationKey_TransportError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrActivationKeyCreate)
 }
 
+// TestCreateActivationKey_TemplateBuildFault proves CreateActivationKey
+// surfaces ErrActivationKeyCreate, not a bare capability-query error, when
+// the device capability lookup KeyTemplate depends on fails before
+// TPM2_CreatePrimary is ever issued.
+func TestCreateActivationKey_TemplateBuildFault(t *testing.T) {
+	h := newSimHarness(t, nil)
+	h.TPM.transport = &createFaultyTransport{inner: h.TPM.transport, failCC: tpm2.TPMCCGetCapability}
+
+	_, err := h.TPM.CreateActivationKey()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrActivationKeyCreate)
+}
+
 // TestCreateActivationKey_AnswerCredentialChallenge_RoundTrip proves the
 // full software-verifier / real-device round trip: a challenge built by
 // NewCredentialChallenge against a CreateActivationKey object's Name is

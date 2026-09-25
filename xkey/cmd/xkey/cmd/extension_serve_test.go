@@ -1156,13 +1156,20 @@ func TestProbeTPMSealer_SimulatorMode_SkipsDeviceStat(t *testing.T) {
 	// The device path does not exist on disk; if the stat-skip logic were
 	// broken, probeTPMSealer would short-circuit here with a "tpm device
 	// ... not found" debug message instead of attempting to open the TPM.
+	//
+	// The assertion below matches that exact message, not a bare "not
+	// found": under -tags tpm_simulator, opening the TPM proceeds far
+	// enough to log unrelated messages that also contain "not found" (e.g.
+	// "persistent EK not found, checking NV RAM for manufacturer
+	// certificate"), which is the success path this test wants, not the
+	// regression it guards against.
 	sealer, closer := probeTPMSealer(logger, t.TempDir(), "/nonexistent-tpm-device-for-test", true)
 	if closer != nil {
 		defer closer.Close()
 	}
 	_ = sealer
 
-	if strings.Contains(buf.String(), "not found") {
+	if strings.Contains(buf.String(), "tpm device") && strings.Contains(buf.String(), "not found") {
 		t.Fatalf("expected device stat to be skipped in simulator mode, got: %s", buf.String())
 	}
 }

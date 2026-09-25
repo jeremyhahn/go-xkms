@@ -33,10 +33,12 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/go-webauthn/webauthn/metadata"
 	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -54,9 +56,14 @@ func simulatorTPM2AttestingBackend(t *testing.T) (*TPM2AttestingBackend, *x509.C
 
 	sim, err := xkms.OpenSimulator()
 	require.NoError(t, err, "TPM simulator must be available; build with -tags tpm_simulator")
+	// Release the process-global simulator on every exit path, including a
+	// failed require below; otherwise the next simulator test blocks on the
+	// simulator lock until the test binary times out.
+	t.Cleanup(func() { assert.NoError(t, sim.Close(), "closing the TPM simulator") })
 
 	storageFactory, err := xkms.NewTPMStorageFactory(logger, t.TempDir())
 	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, storageFactory.Close(), "closing the storage factory") })
 
 	certStore := store.NewMemoryCertStore(logger)
 
@@ -72,6 +79,9 @@ func simulatorTPM2AttestingBackend(t *testing.T) (*TPM2AttestingBackend, *x509.C
 		CertStore: certStore,
 		Transport: sim.Transport(),
 	})
+	if tpm != nil {
+		t.Cleanup(func() { assert.NoError(t, tpm.Close(), "closing the TPM") })
+	}
 	if err == xkms.ErrTPMNotInitialized {
 		require.NotNil(t, tpm)
 		require.NoError(t, tpm.Provision(nil), "provisioning the simulator must succeed")
@@ -79,11 +89,11 @@ func simulatorTPM2AttestingBackend(t *testing.T) (*TPM2AttestingBackend, *x509.C
 		require.NoError(t, err)
 	}
 
-	t.Cleanup(func() {
-		_ = tpm.Close()
-		_ = sim.Close()
-		_ = storageFactory.Close()
-	})
+	// Provision is TCG-only (EK + Shared SRK); xkms's own TPM2 backend
+	// resolves its storage parent exclusively off the Platform SRK, so it
+	// must be enrolled before NewTPM2BackendWithTPM is constructed below.
+	require.NoError(t, tpm2test.EnrollPlatformSRK(tpm, &config),
+		"simulator must enroll the Platform SRK xkms's own backend uses")
 
 	iakPub, err := tpm.IAK()
 	require.NoError(t, err, "provisioning must leave a usable IAK behind")

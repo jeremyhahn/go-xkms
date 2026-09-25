@@ -265,17 +265,10 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
-
-	if !b.Capabilities().Export {
-		return nil, backend.ErrExportNotSupported
-	}
-
-	// This line is unreachable due to the check above, but included for completeness
-	// Check if key is marked as exportable
-	if !attrs.Exportable {
-		return nil, backend.ErrKeyNotExportable
-	}
-
+	// Capabilities().Export is unconditionally false for this backend, so
+	// there is no attrs.Exportable branch to check here: GCP KMS never
+	// releases key material -- imported or generated -- outside the
+	// service boundary, matching the awskms and vault ExportKey contracts.
 	return nil, backend.ErrExportNotSupported
 }
 

@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -105,16 +106,16 @@ func (h *InteractiveHandler) RequestUserPresence(ctx context.Context, req *UserP
 	select {
 	case <-timeoutCtx.Done():
 		if timeoutCtx.Err() == context.DeadlineExceeded {
-			_, _ = fmt.Fprintf(h.writer, "\n   Timeout - user presence not confirmed\n")
+			h.printf("\n   Timeout - user presence not confirmed\n")
 			return nil, ErrUserPresenceTimeout
 		}
 		return nil, timeoutCtx.Err()
 	case input := <-resultCh:
 		if input == "y" || input == "Y" || input == "yes" || input == "YES" {
-			_, _ = fmt.Fprintf(h.writer, "   User presence confirmed\n")
+			h.printf("   User presence confirmed\n")
 			return &UserPresenceResult{Approved: true}, nil
 		}
-		_, _ = fmt.Fprintf(h.writer, "   User presence denied (expected 'y')\n")
+		h.printf("   User presence denied (expected 'y')\n")
 		return nil, ErrUserPresenceDenied
 	}
 }
@@ -130,14 +131,14 @@ func (h *InteractiveHandler) displayPresencePrompt(req *UserPresenceRequest) {
 		rpDisplay = req.RPName
 	}
 
-	_, _ = fmt.Fprintf(h.writer, "\nUser presence required for %s\n", operation)
+	h.printf("\nUser presence required for %s\n", operation)
 	if rpDisplay != "" {
-		_, _ = fmt.Fprintf(h.writer, "   Relying Party: %s\n", rpDisplay)
+		h.printf("   Relying Party: %s\n", rpDisplay)
 	}
 	if req.UserName != "" {
-		_, _ = fmt.Fprintf(h.writer, "   User: %s\n", req.UserName)
+		h.printf("   User: %s\n", req.UserName)
 	}
-	_, _ = fmt.Fprintf(h.writer, "\n   Type 'y' and press ENTER to approve, or Ctrl+C to cancel: ")
+	h.printf("\n   Type 'y' and press ENTER to approve, or Ctrl+C to cancel: ")
 	h.syncOutput()
 }
 
@@ -173,7 +174,7 @@ func (h *InteractiveHandler) RequestUserVerification(ctx context.Context, req *U
 		}
 	}
 
-	_, _ = fmt.Fprintf(h.writer, "   User verified\n")
+	h.printf("   User verified\n")
 	return &UserVerificationResult{Verified: true}, nil
 }
 
@@ -188,12 +189,12 @@ func (h *InteractiveHandler) displayVerificationPrompt(req *UserVerificationRequ
 		rpDisplay = req.RPName
 	}
 
-	_, _ = fmt.Fprintf(h.writer, "\nUser verification required for %s\n", operation)
+	h.printf("\nUser verification required for %s\n", operation)
 	if rpDisplay != "" {
-		_, _ = fmt.Fprintf(h.writer, "   Relying Party: %s\n", rpDisplay)
+		h.printf("   Relying Party: %s\n", rpDisplay)
 	}
 	if req.UserName != "" {
-		_, _ = fmt.Fprintf(h.writer, "   User: %s\n", req.UserName)
+		h.printf("   User: %s\n", req.UserName)
 	}
 	h.syncOutput()
 }
@@ -237,7 +238,7 @@ func drainPinReadResult(ch <-chan pinReadResult) {
 // a protected buffer. The caller owns the returned Buffer and must Destroy
 // it.
 func (h *InteractiveHandler) readPIN(ctx context.Context) (*secure.Buffer, error) {
-	_, _ = fmt.Fprintf(h.writer, "\n   Enter PIN: ")
+	h.printf("\n   Enter PIN: ")
 	h.syncOutput()
 
 	pinCh := make(chan pinReadResult, 1)
@@ -266,17 +267,17 @@ func (h *InteractiveHandler) readPIN(ctx context.Context) (*secure.Buffer, error
 	case <-ctx.Done():
 		go drainPinReadResult(pinCh)
 		if ctx.Err() == context.DeadlineExceeded {
-			_, _ = fmt.Fprintf(h.writer, "\n   Timeout - verification failed\n")
+			h.printf("\n   Timeout - verification failed\n")
 			return nil, ErrUserPresenceTimeout
 		}
 		return nil, ctx.Err()
 	case result := <-pinCh:
-		_, _ = fmt.Fprintf(h.writer, "\n") // New line after hidden input
+		h.printf("\n") // New line after hidden input
 		if result.err != nil {
 			return nil, ErrUserVerificationDenied
 		}
 		if result.pin == nil {
-			_, _ = fmt.Fprintf(h.writer, "   Verification failed - empty PIN\n")
+			h.printf("   Verification failed - empty PIN\n")
 			return nil, ErrUserVerificationDenied
 		}
 		return result.pin, nil
@@ -285,7 +286,7 @@ func (h *InteractiveHandler) readPIN(ctx context.Context) (*secure.Buffer, error
 
 // waitForConfirmation waits for the user to type 'y' and press ENTER.
 func (h *InteractiveHandler) waitForConfirmation(ctx context.Context) error {
-	_, _ = fmt.Fprintf(h.writer, "\n   Type 'y' and press ENTER to verify: ")
+	h.printf("\n   Type 'y' and press ENTER to verify: ")
 	h.syncOutput()
 
 	resultCh := make(chan string, 1)
@@ -301,7 +302,7 @@ func (h *InteractiveHandler) waitForConfirmation(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		if ctx.Err() == context.DeadlineExceeded {
-			_, _ = fmt.Fprintf(h.writer, "\n   Timeout - verification failed\n")
+			h.printf("\n   Timeout - verification failed\n")
 			return ErrUserPresenceTimeout
 		}
 		return ctx.Err()
@@ -309,7 +310,7 @@ func (h *InteractiveHandler) waitForConfirmation(ctx context.Context) error {
 		if input == "y" || input == "Y" || input == "yes" || input == "YES" {
 			return nil
 		}
-		_, _ = fmt.Fprintf(h.writer, "   Verification denied (expected 'y')\n")
+		h.printf("   Verification denied (expected 'y')\n")
 		return ErrUserVerificationDenied
 	}
 }
@@ -332,8 +333,12 @@ func (h *InteractiveHandler) drainPendingInput() {
 				break
 			}
 		}
-		// Restore blocking mode
-		_ = setNonBlocking(fd, false)
+		// Restore blocking mode. A failure here is worth knowing about: every
+		// prompt after this one reads from the same fd, and a stdin left
+		// non-blocking would turn its scanner reads into spurious EOFs.
+		if err := setNonBlocking(fd, false); err != nil {
+			slog.Debug("authenticator: failed to restore blocking mode on stdin", "error", err)
+		}
 	}
 }
 
@@ -361,7 +366,20 @@ func (h *InteractiveHandler) Close() error {
 // syncOutput ensures all output is flushed to the terminal immediately.
 func (h *InteractiveHandler) syncOutput() {
 	if f, ok := h.writer.(*os.File); ok {
-		_ = f.Sync()
+		if err := f.Sync(); err != nil {
+			slog.Debug("authenticator: interactive prompt sync failed", "error", err)
+		}
+	}
+}
+
+// printf writes a formatted prompt to h.writer, logging rather than silently
+// dropping any write failure. A failed write here does not change the
+// underlying presence/verification decision -- the scan loop on h.reader
+// still runs -- but a broken terminal is worth knowing about rather than
+// losing without a trace.
+func (h *InteractiveHandler) printf(format string, args ...any) {
+	if _, err := fmt.Fprintf(h.writer, format, args...); err != nil {
+		slog.Debug("authenticator: interactive prompt write failed", "error", err)
 	}
 }
 

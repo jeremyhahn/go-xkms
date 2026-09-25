@@ -534,9 +534,13 @@ jobs:
         working-directory: web/desktop
         run: go test -race -v ./...
 
+      # -tags tpm_simulator: pkg/pairing/bridge_enrollment_simulator_test.go
+      # proves BridgeConfig.TPM against the in-process go-tpm-tools simulator
+      # (#985). Without the tag the file is excluded from the build entirely,
+      # so the compile-time proof it carries goes dark, not just unrun.
       - name: xkey lifecycle tests
         working-directory: xkey
-        run: go test -race -v ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
+        run: go test -race -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
 
       # pkg/authenticator holds the FIDO2 ClientPIN command handling, including
       # the ChangePIN buffer-aliasing regression test. `go vet -tags ble ./...`
@@ -555,9 +559,13 @@ jobs:
       # checked -- and under GODEBUG=fips140=only the thing being refused is a
       # standard-library PANIC, so the untested direction is a process kill on
       # a user-driven path.
+      # -tags tpm_simulator: pkg/authenticator/keybackend's TPM attestation
+      # tests exercise TPM2_Certify and go-webauthn's own "tpm" format
+      # verifier against the in-process simulator (#985). Without the tag
+      # those files are excluded from the build entirely.
       - name: xkey authenticator and oath tests
         working-directory: xkey
-        run: go test -race -v -tags codec_json ./pkg/authenticator/... ./pkg/oath/...
+        run: go test -race -v -tags "codec_json tpm_simulator" ./pkg/authenticator/... ./pkg/oath/...
 
       # Every other xkey unit package (#147). Before this step CI executed
       # 2,483 of the module's 13,725 test functions: the 41 packages below had
@@ -648,7 +656,7 @@ jobs:
               GOPROXY=off \
             "$@"
           }
-          as_xkey_ci go test -race -tags codec_json -count=1 \
+          as_xkey_ci go test -race -tags "codec_json tpm_simulator" -count=1 \
             ./cmd/e2eprobe ./cmd/xkey \
             ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
             ./pkg/ca ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
@@ -666,7 +674,11 @@ jobs:
           # user (#332): cmd/xkey/cmd 1,761 tests in 35 s, pkg/gui/services
           # 6,521 tests in 130 s, nothing environment-dependent on a host with
           # no BLE adapter and no user session.
-          as_xkey_ci go test -race -tags "ble codec_json" -count=1 \
+          #
+          # -tags tpm_simulator: cmd/xkey/cmd/barrier_auto_unseal_test.go
+          # drives the auto-unseal path against the in-process simulator
+          # (#985); no host TPM or swtpm is touched.
+          as_xkey_ci go test -race -tags "ble codec_json tpm_simulator" -count=1 \
             ./cmd/xkey/cmd ./pkg/gui/services
 
       # Compile-check EVERY ble-tagged package, tests included.
@@ -836,6 +848,9 @@ jobs:
         id: pkgs
         env:
           MERGE_BASE: ${{ needs.changes.outputs.merge_base }}
+          # Must match the -tags of "Unit tests for changed packages" below,
+          # so packages gated behind other tags are left out of the set.
+          GO_TEST_TAGS: codec_cbor codec_json codec_msgpack tpm_simulator frost
         run: .github/scripts/changed-go-packages.sh
 
       # Same tag set as test-go's TEST_TAGS (Makefile), minus the hardware

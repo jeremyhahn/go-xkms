@@ -42,9 +42,14 @@ var _ storage.CompareAndDeleter = (*Backend)(nil)
 //   - PlaintextLen sizes the region exactly. An upper bound would not do: the
 //     locked region cannot grow, and a destination one byte short pushes the
 //     decryption onto the heap.
-//   - NewMemoryEnclaveSized maps locked pages that stay WRITABLE, which is what
-//     makes filling them possible; enclaves built from existing material are
-//     frozen read-only and could not be decrypted into.
+//   - The region is admitted through enclave.ProcessAllocator, the one
+//     locked-memory budget the process shares, so a request past that budget
+//     is refused as ErrGuardEnclaveFailed (wrapping enclave.ErrBudgetExhausted)
+//     before any locked memory is requested, rather than competing with every
+//     other library for the same RLIMIT_MEMLOCK ceiling.
+//   - NewSized maps locked pages that stay WRITABLE, which is what makes
+//     filling them possible; enclaves built from existing material are frozen
+//     read-only and could not be decrypted into.
 //   - compareInEnclave does the fill and the compare inside one borrow, and
 //     Destroy is deferred, so the pages are wiped and returned on every path.
 func unsealAndCompare(
@@ -70,7 +75,11 @@ func unsealAndCompare(
 		return len(expected) == 0, nil
 	}
 
-	enc, err := enclave.NewMemoryEnclaveSized(n)
+	alloc, err := enclave.ProcessAllocator()
+	if err != nil {
+		return false, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: err}
+	}
+	enc, err := alloc.NewSized(n)
 	if err != nil {
 		return false, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: err}
 	}
@@ -94,7 +103,7 @@ func unsealAndCompare(
 // element address against the borrowed buffer's is what tells them apart.
 //
 // It goes through WithBytes rather than Open/EqualTo because WithBytes surfaces
-// ErrEnclaveDestroyed. NewMemoryEnclaveSized documents that it can return a
+// ErrEnclaveDestroyed. Allocator.NewSized documents that it can return a
 // successful but already-destroyed enclave when WipeAll races publication, and
 // an unreadable enclave must be an ERROR: deleted=false is a load-bearing claim
 // that the guard was evaluated and lost, and a caller acts on it by giving up a

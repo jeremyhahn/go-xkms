@@ -1926,3 +1926,20 @@ func (m *mockTransportCov) Close() error {
 
 // Ensure mockTransportCov implements transport.TPM
 var _ transport.TPM = (*mockTransportCov)(nil)
+
+// TestChangeAuth_WrongCurrentAuth proves ChangeAuth refuses to recreate a
+// persistent primary key when the caller's claimed current auth does not
+// match the key's actual UserAuth, rather than reaching TPM2_CreatePrimary
+// with the wrong sensitive data. createKey provisions the SRK with a known,
+// non-empty password ("srk-pass"), so a different value is guaranteed wrong.
+func TestChangeAuth_WrongCurrentAuth(t *testing.T) {
+	_, tpm := createSim(false, false)
+	defer func() { _ = tpm.Close() }()
+
+	srkAttrs := createKey(tpm, false).Parent
+	tpmImpl := tpm.(*TPM2)
+
+	err := tpmImpl.ChangeAuth(srkAttrs.TPMAttributes.Handle, []byte("not-srk-pass"), []byte("new-pass"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthFailed)
+}

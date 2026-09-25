@@ -346,6 +346,25 @@ func TestDevIDTemplateSpec_RefusesUnbuildableSuites(t *testing.T) {
 	})
 }
 
+// TestMustDevIDTemplate_PanicsOnInvalidSpec proves mustDevIDTemplate converts
+// a spec.Template() error into a panic naming the underlying cause, mirroring
+// mustKeyTemplate: it exists only for the package's own built-in template
+// variables, so a failure is a defect to be caught the first time the
+// package loads rather than at the first key creation.
+func TestMustDevIDTemplate_PanicsOnInvalidSpec(t *testing.T) {
+	invalid := DevIDTemplateSpec{
+		Kind:      DevIDKeySigning,
+		Algorithm: x509.RSA,
+		NameAlg:   tpm2.TPMAlgSHA1,
+	}
+	_, wantErr := invalid.Template()
+	require.Error(t, wantErr)
+
+	assert.PanicsWithValue(t,
+		"tpm: invalid built-in IDevID/IAK template: "+wantErr.Error(),
+		func() { mustDevIDTemplate(invalid) })
+}
+
 // TestAssertDevIDTemplateConformant_RefusesEveryDeparture is the guard's
 // mutation suite: one case per field the specification fixes, each starting
 // from the template the creation path builds and breaking exactly one thing.

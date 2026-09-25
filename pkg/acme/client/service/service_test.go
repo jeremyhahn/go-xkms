@@ -33,6 +33,7 @@ func TestNewService(t *testing.T) {
 	assert.NotNil(t, svc.Accounts())
 	assert.NotNil(t, svc.Certificates())
 	assert.NotNil(t, svc.Deployer())
+	assert.NotNil(t, svc.Devices())
 	assert.NotNil(t, svc.Config())
 	assert.Equal(t, cfg, svc.Config())
 }
@@ -82,6 +83,28 @@ func TestService_Certificates(t *testing.T) {
 	certs := svc.Certificates().List("")
 	assert.Len(t, certs, 1)
 	assert.Contains(t, certs, "web")
+}
+
+// TestService_Devices verifies the Devices accessor returns a device manager
+// wired to the service's configured device specs.
+func TestService_Devices(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Accounts["test-ca"] = validAccountConfig()
+	cfg.Devices["node-1"] = &DeviceSpec{
+		Account:    "test-ca",
+		CommonName: "node-1.cluster.example.com",
+		Identifier: "10.0.0.1",
+	}
+
+	svc, err := NewService(cfg, testLogger())
+	require.NoError(t, err)
+
+	dm := svc.Devices()
+	require.NotNil(t, dm)
+
+	devices := dm.List("")
+	assert.Len(t, devices, 1)
+	assert.Contains(t, devices, "node-1")
 }
 
 // TestService_StartStopRenewal verifies the renewal lifecycle methods.

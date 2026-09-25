@@ -1,0 +1,30 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package services
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestSSHRemoteUnavailableError_Error(t *testing.T) {
+	err := &SSHRemoteUnavailableError{Backend: "softhsm"}
+	assert.Equal(t, `ssh_service: remote backend "softhsm" selected but no connection is available`, err.Error())
+}
+
+func TestSSHRemoteUnavailableError_Error_EmptyBackend(t *testing.T) {
+	err := &SSHRemoteUnavailableError{}
+	assert.Equal(t, `ssh_service: remote backend "" selected but no connection is available`, err.Error())
+}

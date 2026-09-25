@@ -37,7 +37,6 @@ type MockKMSClient struct {
 	EncryptFunc                       func(ctx context.Context, req *kmspb.EncryptRequest, opts ...interface{}) (*kmspb.EncryptResponse, error)
 	DecryptFunc                       func(ctx context.Context, req *kmspb.DecryptRequest, opts ...interface{}) (*kmspb.DecryptResponse, error)
 	CreateImportJobFunc               func(ctx context.Context, req *kmspb.CreateImportJobRequest, opts ...interface{}) (*kmspb.ImportJob, error)
-	GetImportJobFunc                  func(ctx context.Context, req *kmspb.GetImportJobRequest, opts ...interface{}) (*kmspb.ImportJob, error)
 	ImportCryptoKeyVersionFunc        func(ctx context.Context, req *kmspb.ImportCryptoKeyVersionRequest, opts ...interface{}) (*kmspb.CryptoKeyVersion, error)
 	CloseFunc                         func() error
 
@@ -288,39 +287,6 @@ uvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ12AgMBAAE=
 	}
 
 	return importJob, nil
-}
-
-// GetImportJob mocks retrieving an import job from GCP KMS.
-func (m *MockKMSClient) GetImportJob(ctx context.Context, req *kmspb.GetImportJobRequest, opts ...interface{}) (*kmspb.ImportJob, error) {
-	if m.GetImportJobFunc != nil {
-		return m.GetImportJobFunc(ctx, req, opts...)
-	}
-
-	// Return a mock import job
-	rsaWrappingKeyPEM := `-----BEGIN PUBLIC KEY-----
-MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA1234567890abcdefghij
-klmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijk
-lmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijkl
-mnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijklm
-nopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijklmn
-opqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijklmno
-pqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijklmnop
-qrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijklmnopq
-rstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijklmnopqr
-stuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijklmnopqrs
-tuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijklmnopqrst
-uvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ12AgMBAAE=
------END PUBLIC KEY-----`
-
-	return &kmspb.ImportJob{
-		Name:            req.Name,
-		ImportMethod:    kmspb.ImportJob_RSA_OAEP_3072_SHA256_AES_256,
-		ProtectionLevel: kmspb.ProtectionLevel_HSM,
-		State:           kmspb.ImportJob_ACTIVE,
-		PublicKey: &kmspb.ImportJob_WrappingPublicKey{
-			Pem: rsaWrappingKeyPEM,
-		},
-	}, nil
 }
 
 // ImportCryptoKeyVersion mocks importing a crypto key version into GCP KMS.

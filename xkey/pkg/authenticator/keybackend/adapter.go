@@ -150,7 +150,13 @@ func (a *BackendAdapter) GenerateCredentialKey(algorithm int, credentialID []byt
 
 	// Refresh slot model occupancy after successful key generation.
 	if a.slotModel != nil {
-		_ = a.slotModel.Refresh()
+		if refreshErr := a.slotModel.Refresh(); refreshErr != nil {
+			a.logger.Error("FIDO2 adapter: slot model refresh failed after key generation",
+				"backend", a.backendType,
+				"store_type", attrs.StoreType,
+				"cn", attrs.CN,
+				"error", refreshErr)
+		}
 	}
 
 	// Extract public key from the generated private key.

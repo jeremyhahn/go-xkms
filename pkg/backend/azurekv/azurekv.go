@@ -36,7 +36,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -44,7 +43,16 @@ import (
 )
 
 // KeyVaultClient defines the interface for Azure Key Vault operations.
-// This interface allows for mocking in tests.
+// This interface allows for mocking in tests. It lists exactly the
+// operations Backend calls; WrapKey, UnwrapKey and NewListKeyPropertiesPager
+// were removed (go-xkms#705) because no Backend method ever called them --
+// Backend.WrapKey/UnwrapKey perform the BYOK RSA wrapping ceremony locally
+// (see azurekv_importexport.go) rather than through Azure Key Vault's own
+// wrap/unwrap key operations, and ListKeys is reconstructed from local
+// metadata rather than Key Vault's paginated key listing. An unused
+// interface method can only be covered by a test that calls it directly
+// with no Backend behavior to assert, which is coverage padding, not a
+// real test.
 type KeyVaultClient interface {
 	CreateKey(ctx context.Context, name string, params azkeys.CreateKeyParameters, options *azkeys.CreateKeyOptions) (azkeys.CreateKeyResponse, error)
 	GetKey(ctx context.Context, name, version string, options *azkeys.GetKeyOptions) (azkeys.GetKeyResponse, error)
@@ -52,11 +60,8 @@ type KeyVaultClient interface {
 	Sign(ctx context.Context, keyName, keyVersion string, params azkeys.SignParameters, options *azkeys.SignOptions) (azkeys.SignResponse, error)
 	Verify(ctx context.Context, keyName, keyVersion string, params azkeys.VerifyParameters, options *azkeys.VerifyOptions) (azkeys.VerifyResponse, error)
 	Decrypt(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.DecryptOptions) (azkeys.DecryptResponse, error)
-	WrapKey(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.WrapKeyOptions) (azkeys.WrapKeyResponse, error)
-	UnwrapKey(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.UnwrapKeyOptions) (azkeys.UnwrapKeyResponse, error)
 	ImportKey(ctx context.Context, name string, params azkeys.ImportKeyParameters, options *azkeys.ImportKeyOptions) (azkeys.ImportKeyResponse, error)
 	GetPublicKey(ctx context.Context, name, version string) ([]byte, error)
-	NewListKeyPropertiesPager(options *azkeys.ListKeyPropertiesOptions) *runtime.Pager[azkeys.ListKeyPropertiesResponse]
 	RotateKey(ctx context.Context, name string, options *azkeys.RotateKeyOptions) (azkeys.RotateKeyResponse, error)
 	Close() error
 }
@@ -90,14 +95,6 @@ func (r *realKeyVaultClient) Decrypt(ctx context.Context, keyName, keyVersion st
 	return r.Client.Decrypt(ctx, keyName, keyVersion, params, options)
 }
 
-func (r *realKeyVaultClient) WrapKey(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.WrapKeyOptions) (azkeys.WrapKeyResponse, error) {
-	return r.Client.WrapKey(ctx, keyName, keyVersion, params, options)
-}
-
-func (r *realKeyVaultClient) UnwrapKey(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.UnwrapKeyOptions) (azkeys.UnwrapKeyResponse, error) {
-	return r.Client.UnwrapKey(ctx, keyName, keyVersion, params, options)
-}
-
 func (r *realKeyVaultClient) ImportKey(ctx context.Context, name string, params azkeys.ImportKeyParameters, options *azkeys.ImportKeyOptions) (azkeys.ImportKeyResponse, error) {
 	return r.Client.ImportKey(ctx, name, params, options)
 }
@@ -127,10 +124,6 @@ func (r *realKeyVaultClient) GetPublicKey(ctx context.Context, name, version str
 	}
 
 	return derBytes, nil
-}
-
-func (r *realKeyVaultClient) NewListKeyPropertiesPager(options *azkeys.ListKeyPropertiesOptions) *runtime.Pager[azkeys.ListKeyPropertiesResponse] {
-	return r.Client.NewListKeyPropertiesPager(options)
 }
 
 func (r *realKeyVaultClient) RotateKey(ctx context.Context, name string, options *azkeys.RotateKeyOptions) (azkeys.RotateKeyResponse, error) {

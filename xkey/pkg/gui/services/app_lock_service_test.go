@@ -1235,3 +1235,48 @@ func TestAppLockService_HandleUnlock_EmptyPIN(t *testing.T) {
 	assert.Contains(t, result.Error, "PIN required")
 	assert.False(t, barrier.unsealCalled)
 }
+
+// ---------------------------------------------------------------------------
+// autoLockNow
+// ---------------------------------------------------------------------------
+
+// autoLockNow is the body the inactivity timer runs; these tests call it
+// directly rather than waiting on a real timer, so they stay instantaneous.
+
+func TestAppLockService_AutoLockNow_LocksSuccessfully(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: false}
+	svc := NewAppLockService(NewPINService(), barrier)
+	svc.SetContext(context.Background())
+	require.False(t, svc.IsLocked())
+
+	svc.autoLockNow(5)
+
+	assert.True(t, svc.IsLocked())
+	assert.True(t, barrier.sealCalled)
+}
+
+func TestAppLockService_AutoLockNow_AlreadyLockedIsNotReported(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: false}
+	svc := NewAppLockService(NewPINService(), barrier)
+	svc.SetContext(context.Background())
+
+	require.NoError(t, svc.Lock())
+	require.True(t, svc.IsLocked())
+
+	// Races with a manual lock: must not panic and must remain locked.
+	svc.autoLockNow(5)
+	assert.True(t, svc.IsLocked())
+}
+
+func TestAppLockService_AutoLockNow_SealFailureStillLocksApp(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: false, sealErr: errors.New("tpm busy")}
+	svc := NewAppLockService(NewPINService(), barrier)
+	svc.SetContext(context.Background())
+	require.False(t, svc.IsLocked())
+
+	svc.autoLockNow(5)
+
+	// The app lock itself always succeeds; only the barrier seal failed.
+	assert.True(t, svc.IsLocked())
+	assert.True(t, barrier.sealCalled)
+}

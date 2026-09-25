@@ -337,14 +337,16 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 		fmt.Printf("warning: failed to create alias %s for key %s: %v\n", aliasName, keyID, err)
 	}
 
-	// Store metadata
+	// Store metadata. key_type is serialized through its String() form (not
+	// the raw uint8) so ListKeys can read it back with types.ParseKeyType,
+	// the same convention GenerateSymmetricKey uses (go-xkms#705).
 	metadata := map[string]interface{}{
 		"key_id":    keyID,
 		"alias":     aliasName,
 		"key_spec":  keySpec,
 		"key_usage": keyUsage,
 		"cn":        attrs.CN,
-		"key_type":  attrs.KeyType,
+		"key_type":  attrs.KeyType.String(),
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -709,18 +711,14 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 			CN: cn,
 		}
 
-		// Extract key type (could be string or number depending on how it was stored)
-		if keyTypeVal, ok := metadata["key_type"]; ok {
-			switch v := keyTypeVal.(type) {
-			case string:
-				// Handle string representation - we'll need to parse it
-				// For now, just skip since we can't easily convert string back to uint8
-			case float64:
-				// JSON unmarshals numbers as float64
-				attrs.KeyType = types.KeyType(uint8(v))
-			case uint8:
-				attrs.KeyType = types.KeyType(v)
-			}
+		// Extract key type. Both CreateKey and GenerateSymmetricKey persist
+		// key_type through KeyType.String() (see the CreateKey comment
+		// above), so ParseKeyType is the single read-back path; an
+		// unrecognized or missing value leaves KeyType at its zero value,
+		// matching the azurekv and gcpkms ListKeys implementations
+		// (go-xkms#705).
+		if keyTypeStr, ok := metadata["key_type"].(string); ok {
+			attrs.KeyType = types.ParseKeyType(keyTypeStr)
 		}
 
 		// Extract key algorithm from key_spec
@@ -1194,23 +1192,16 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 // AWS KMS does not allow exporting key material from the HSM for security reasons.
 // This ensures that keys remain protected within the AWS hardware security modules.
 //
+// Capabilities().Export is unconditionally false for this backend, so there
+// is no attrs.Exportable branch to check here: unlike azurekv and gcpkms
+// (which genuinely support export for a key marked exportable), AWS KMS
+// refuses every export unconditionally, matching vault's ExportKey.
+//
 // Returns ErrExportNotSupported to indicate this operation is not available.
 func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
-
-	// Check if backend supports export (it doesn't)
-	if !b.Capabilities().Export {
-		return nil, backend.ErrExportNotSupported
-	}
-
-	// This line is unreachable due to the check above, but included for completeness
-	// Check if key is marked as exportable
-	if !attrs.Exportable {
-		return nil, backend.ErrKeyNotExportable
-	}
-
 	return nil, backend.ErrExportNotSupported
 }
 

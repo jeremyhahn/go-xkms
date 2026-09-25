@@ -212,3 +212,38 @@ func TestKeyProtection_TPM2CorruptBlob(t *testing.T) {
 	var corrupt *ErrSealBlobCorrupt
 	require.ErrorAs(t, err, &corrupt)
 }
+
+// TestPasswordFromSecret_NilSecretYieldsNoAuthentication verifies the
+// documented contract: a nil *secure.Secret (KeyProtection.Passphrase never
+// configured) resolves to a usable, passwordless Password rather than an
+// error, mirroring types.NewPasswordFromString("")'s "empty is not a
+// failure" behaviour.
+func TestPasswordFromSecret_NilSecretYieldsNoAuthentication(t *testing.T) {
+	pw, err := passwordFromSecret(nil)
+	require.NoError(t, err)
+	require.NotNil(t, pw)
+	assert.Empty(t, pw.Bytes())
+}
+
+// TestPasswordFromSecret_OpensSealedPlaintext verifies the non-nil path
+// decrypts the Secret's enclave and carries its exact plaintext into the
+// returned Password.
+func TestPasswordFromSecret_OpensSealedPlaintext(t *testing.T) {
+	sec := mustSecret(t, "s3cr3t-passphrase")
+	pw, err := passwordFromSecret(sec)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("s3cr3t-passphrase"), pw.Bytes())
+}
+
+// TestPasswordFromSecret_DestroyedSecretFails verifies that a Secret whose
+// enclave has already been released propagates the real Open() failure
+// instead of masking it as "no authentication" — silently downgrading a
+// destroyed secret to passwordless auth would be a security regression, not
+// a convenience.
+func TestPasswordFromSecret_DestroyedSecretFails(t *testing.T) {
+	sec := mustSecret(t, "will-be-destroyed")
+	sec.Destroy()
+
+	_, err := passwordFromSecret(sec)
+	require.Error(t, err)
+}

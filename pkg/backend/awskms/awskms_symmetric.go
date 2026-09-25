@@ -136,7 +136,10 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		fmt.Printf("warning: failed to create alias %s for key %s: %v\n", aliasName, keyID, err)
 	}
 
-	// Store metadata mapping CN -> KMS key information
+	// Store metadata mapping CN -> KMS key information. key_type uses
+	// KeyType.String() (not the Go string() conversion of the underlying
+	// uint8, which produced an unprintable rune) so ListKeys can parse it
+	// back with types.ParseKeyType (go-xkms#705).
 	metadata := map[string]interface{}{
 		"key_id":    keyID,
 		"alias":     aliasName,
@@ -144,7 +147,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		"key_usage": string(awstypes.KeyUsageTypeEncryptDecrypt),
 		"algorithm": string(attrs.SymmetricAlgorithm),
 		"cn":        attrs.CN,
-		"key_type":  string(attrs.KeyType),
+		"key_type":  attrs.KeyType.String(),
 	}
 
 	metadataBytes, err := json.Marshal(metadata)

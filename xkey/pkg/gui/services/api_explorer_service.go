@@ -313,7 +313,11 @@ func (s *APIExplorerService) Execute(req *ExplorerRequest) (*ExplorerResponse, e
 		s.recordHistory(req, explorerResp)
 		return explorerResp, nil
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			s.log.Debug("failed to close API explorer response body", "error", closeErr)
+		}
+	}()
 
 	// Read the response body with a size limit.
 	limitedReader := io.LimitReader(resp.Body, maxResponseBodySize+1)

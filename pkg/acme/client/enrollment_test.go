@@ -41,6 +41,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/acme"
 
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 )
@@ -7205,4 +7206,85 @@ func TestEnrollmentConfig_Validate_KeepsListenHost(t *testing.T) {
 	if got := ec.listenAddr(); got != "10.0.0.5:8080" {
 		t.Fatalf("listenAddr() = %q", got)
 	}
+}
+
+// newRegistrationFailureServer builds an httptest ACME server whose
+// /new-account endpoint always fails with a non-retriable 400, so any
+// caller that reaches it gets a real registration error rather than
+// hanging in x/crypto/acme's retry backoff.
+func newRegistrationFailureServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Replay-Nonce", "test-nonce")
+
+		switch r.URL.Path {
+		case "/directory":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"newNonce":   server.URL + "/new-nonce",
+				"newAccount": server.URL + "/new-account",
+				"newOrder":   server.URL + "/new-order",
+			})
+		case "/new-nonce":
+			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"type":   "urn:ietf:params:acme:error:malformed",
+				"detail": "registration rejected for test",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return server
+}
+
+// TestEnrollDevice_RegistrationFailure_Propagates proves a real account
+// registration failure is returned to the caller as a typed error instead
+// of being downgraded to a warning and letting AuthorizeOrder proceed
+// without a KID (go-xkms#988). Before the fix, EnrollDevice logged the
+// RegisterAccount error at Warn and continued; this asserts the opposite.
+func TestEnrollDevice_RegistrationFailure_Propagates(t *testing.T) {
+	server := newRegistrationFailureServer(t)
+	defer server.Close()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	client := &Client{
+		client: &acme.Client{
+			DirectoryURL: server.URL + "/directory",
+			Key:          key,
+			HTTPClient:   server.Client(),
+		},
+		config:        &Config{DirectoryURL: server.URL + "/directory", Timeout: 5 * time.Second},
+		httpClient:    server.Client(),
+		logger:        slog.Default(),
+		accountSigner: key,
+	}
+
+	config := &EnrollmentConfig{
+		Challenge: string(ChallengeTypeEnroll01),
+		IPAddress: "192.168.1.1",
+		TPMModule: &mockTPMModule{},
+		Port:      "0",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := client.EnrollDevice(ctx, config)
+	require.Error(t, err)
+	assert.Nil(t, result)
+
+	var caErr *caerrors.TrustedCAError
+	require.ErrorAs(t, err, &caErr)
+	assert.Contains(t, err.Error(), "failed to register account")
+
+	// The account must not be marked registered after a failed attempt, so
+	// a later retry is not silently skipped.
+	assert.False(t, client.accountRegistered)
 }

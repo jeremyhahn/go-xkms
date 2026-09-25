@@ -14,6 +14,7 @@
 package secretservice
 
 import (
+	"errors"
 	"log/slog"
 	"strconv"
 	"time"
@@ -88,7 +89,10 @@ func (d *Daemon) completePrompt(info *PromptInfo, dismissed bool, result []dbus.
 		d.logger.Warn("failed to emit Prompt Completed signal",
 			slog.String("path", string(info.Path)), slog.String("error", err.Error()))
 	}
-	_ = d.conn.Export(nil, info.Path, PromptInterface)
+	if err := d.conn.Export(nil, info.Path, PromptInterface); err != nil {
+		d.logger.Warn("failed to unexport Prompt object",
+			slog.String("path", string(info.Path)), slog.String("error", err.Error()))
+	}
 }
 
 // Prompt drives the prompted operation to completion and emits Completed.
@@ -190,9 +194,19 @@ func (d *Daemon) resolveUnlockPrompt(info *PromptInfo) *dbus.Error {
 
 	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceUnlock, true, nil,
 		map[string]any{"object_count": len(info.Objects)}); auditErr != nil {
-		_ = d.barrier.Seal()
+		// The unlock could not be proven to have been audited, so it is
+		// unwound. A failure to re-seal here is a security-relevant event in
+		// its own right -- the barrier may still be open with no audit
+		// record -- and is folded into the returned D-Bus error rather than
+		// dropped, alongside a Warn log for operators not watching the
+		// D-Bus reply.
+		var sealErr error
+		if sealErr = d.barrier.Seal(); sealErr != nil {
+			d.logger.Warn("failed to re-seal barrier after unauditable unlock",
+				slog.String("error", sealErr.Error()))
+		}
 		d.completePrompt(info, true, nil)
-		return dbus.MakeFailedError(auditErr)
+		return dbus.MakeFailedError(errors.Join(auditErr, sealErr))
 	}
 
 	if expErr := d.exportExistingCollections(); expErr != nil {

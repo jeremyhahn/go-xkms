@@ -1119,6 +1119,14 @@ func TestCreateOrderWithReplacesInternal_Success91(t *testing.T) {
 			})
 		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", server.URL+"/account/1")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "valid",
+				"contact": []string{"mailto:test@example.com"},
+				"orders":  server.URL + "/account/1/orders",
+			})
 		case "/new-order":
 			w.Header().Set("Location", server.URL+"/order/1")
 			w.WriteHeader(http.StatusCreated)

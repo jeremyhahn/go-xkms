@@ -147,7 +147,9 @@ func Launch(ctx context.Context, o Options) (*Instance, error) {
 		if shutdownErr := srv.Shutdown(); shutdownErr != nil {
 			logger.Error("loopback engine shutdown after failed start", "error", shutdownErr)
 		}
-		_ = ln.Close()
+		if closeErr := ln.Close(); closeErr != nil {
+			logger.Error("loopback REST listener close after failed start", "error", closeErr)
+		}
 		return nil, &LaunchError{Reason: "start engine", Err: err}
 	}
 
