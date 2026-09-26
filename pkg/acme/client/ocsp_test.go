@@ -21,12 +21,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"errors"
+	"io"
 	"log/slog"
 	"math/big"
 	"net/http"
 	"testing"
 	"time"
 
+	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"golang.org/x/crypto/ocsp"
 )
 
@@ -258,6 +261,69 @@ func TestGetOCSP_Errors(t *testing.T) {
 			t.Errorf("expected ErrOCSPNoResponder, got %v", err)
 		}
 	})
+
+	// "malformed issuer public key info" covers the ocsp.CreateRequest
+	// failure branch: a corrupted RawSubjectPublicKeyInfo cannot be
+	// ASN.1-unmarshalled while hashing the issuer's key into the request,
+	// which is the one way CreateRequest can fail once the hash algorithm is
+	// fixed to SHA-256 (always available, always supported).
+	t.Run("malformed issuer public key info", func(t *testing.T) {
+		cert := createTestCert(t)
+		issuer := createTestCert(t)
+		issuer.RawSubjectPublicKeyInfo = []byte("not valid ASN.1")
+
+		_, err := GetOCSP(ctx, cert, issuer, "http://ocsp.example.com", nil)
+		if err == nil {
+			t.Fatal("expected an error for a malformed issuer public key info")
+		}
+		var caErr *caerrors.TrustedCAError
+		if !errors.As(err, &caErr) {
+			t.Fatalf("expected a *caerrors.TrustedCAError, got %T: %v", err, err)
+		}
+	})
+
+	// "invalid OCSP responder URL" covers the http.NewRequestWithContext
+	// failure branch.
+	t.Run("invalid OCSP responder URL", func(t *testing.T) {
+		cert := createTestCert(t)
+		issuer := createTestCert(t)
+
+		_, err := GetOCSP(ctx, cert, issuer, "://not-a-valid-url", nil)
+		if err == nil {
+			t.Fatal("expected an error for an invalid responder URL")
+		}
+	})
+
+	// "response body read failure" covers the io.ReadAll failure branch: a
+	// 200 response whose body errors mid-read must surface that error rather
+	// than being mistaken for a truncated-but-otherwise-valid response.
+	t.Run("response body read failure", func(t *testing.T) {
+		cert := createTestCert(t)
+		issuer := createTestCert(t)
+
+		httpClient := &http.Client{Transport: errBodyRoundTripper{}}
+		_, err := GetOCSP(ctx, cert, issuer, "http://ocsp.example.com", httpClient)
+		if err == nil {
+			t.Fatal("expected an error when the response body fails to read")
+		}
+		var caErr *caerrors.TrustedCAError
+		if !errors.As(err, &caErr) {
+			t.Fatalf("expected a *caerrors.TrustedCAError, got %T: %v", err, err)
+		}
+	})
+}
+
+// errBodyRoundTripper returns a 200 response whose body always fails to
+// read (via the errReader helper in errors_test.go), driving GetOCSP's
+// io.ReadAll error path without a real network round-trip.
+type errBodyRoundTripper struct{}
+
+func (errBodyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(errReader{}),
+		Header:     make(http.Header),
+	}, nil
 }
 
 func TestHasMustStaple(t *testing.T) {

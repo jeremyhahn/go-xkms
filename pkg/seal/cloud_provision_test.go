@@ -214,6 +214,25 @@ func TestEnsureSealKey_NotSymmetricProvider(t *testing.T) {
 	assert.True(t, errors.As(err, &notAvail))
 }
 
+// TestErrSealBackendUnavailable_Error covers both of Error's branches: a
+// Purpose-qualified message (what EnsureSealKey/BuildCloudKMSStrategy
+// actually construct) and the unqualified fallback for a caller that leaves
+// Purpose empty.
+func TestErrSealBackendUnavailable_Error(t *testing.T) {
+	withPurpose := &ErrSealBackendUnavailable{Strategy: "aws-kms", Purpose: "sealing"}
+	assert.Equal(t, `backend "aws-kms" not available for sealing`, withPurpose.Error())
+
+	withoutPurpose := &ErrSealBackendUnavailable{Strategy: "aws-kms"}
+	assert.Equal(t, `backend "aws-kms" not available`, withoutPurpose.Error())
+}
+
+// TestErrNotCloudSealStrategy_Error covers ErrNotCloudSealStrategy.Error's
+// message formatting.
+func TestErrNotCloudSealStrategy_Error(t *testing.T) {
+	err := &ErrNotCloudSealStrategy{Strategy: "tpm2"}
+	assert.Equal(t, `seal: "tpm2" is not a cloud KMS strategy`, err.Error())
+}
+
 func TestEnsureSealKey_LoginCalledBeforeKeyResolution(t *testing.T) {
 	prov := &cloudProvisionProvider{}
 	keyAttrs := SealKeyAttributes(types.StorePKCS11)

@@ -239,3 +239,89 @@ func TestWrapKMSService_HalfOpenProbeClosesOnSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, StateClosed, cb.State())
 }
+
+// TestWrapKMSService_RemainingMethodsDelegateThroughBreaker exercises every
+// breakerKMSService method beyond CreateSigningKey/GetSigningKey, both
+// delegating successfully in the closed state and failing fast while the
+// breaker is open, so each method's own ExecuteContext wiring -- not just the
+// pattern shared with GetSigningKey -- is under test.
+func TestWrapKMSService_RemainingMethodsDelegateThroughBreaker(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(svc kms.KMSService) error
+	}{
+		{
+			name: "CreateSigningKey",
+			call: func(svc kms.KMSService) error {
+				_, err := svc.CreateSigningKey(context.Background(), "tenant-a", kms.KeyPurposeTenantIntermediateCA, "ECDSA-P256")
+				return err
+			},
+		},
+		{
+			name: "ListSigningKeys",
+			call: func(svc kms.KMSService) error {
+				_, err := svc.ListSigningKeys(context.Background(), "tenant-a")
+				return err
+			},
+		},
+		{
+			name: "DeleteSigningKey",
+			call: func(svc kms.KMSService) error {
+				return svc.DeleteSigningKey(context.Background(), "tenant-a", "key-1")
+			},
+		},
+		{
+			name: "EnableSigningKey",
+			call: func(svc kms.KMSService) error {
+				return svc.EnableSigningKey(context.Background(), "tenant-a", "key-1")
+			},
+		},
+		{
+			name: "DisableSigningKey",
+			call: func(svc kms.KMSService) error {
+				return svc.DisableSigningKey(context.Background(), "tenant-a", "key-1")
+			},
+		},
+		{
+			name: "StoreCertificate",
+			call: func(svc kms.KMSService) error {
+				return svc.StoreCertificate(context.Background(), "tenant-a", kms.KeyPurposeTenantIntermediateCA, []byte("der"))
+			},
+		},
+		{
+			name: "GetCertificate",
+			call: func(svc kms.KMSService) error {
+				_, err := svc.GetCertificate(context.Background(), "tenant-a", kms.KeyPurposeTenantIntermediateCA)
+				return err
+			},
+		},
+		{
+			name: "DeleteCertificate",
+			call: func(svc kms.KMSService) error {
+				return svc.DeleteCertificate(context.Background(), "tenant-a", kms.KeyPurposeTenantIntermediateCA)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+"/closed delegates and succeeds", func(t *testing.T) {
+			cb := decoratorTestBreaker("kms-" + tt.name + "-closed")
+			svc := WrapKMSService(cb, &fakeKMSService{})
+
+			err := tt.call(svc)
+
+			require.NoError(t, err)
+			assert.Equal(t, StateClosed, cb.State())
+		})
+
+		t.Run(tt.name+"/open fails fast without reaching inner", func(t *testing.T) {
+			cb := New(&Config{Name: "kms-" + tt.name + "-open", MaxFailures: 1, ResetTimeout: time.Hour})
+			cb.Trip()
+			svc := WrapKMSService(cb, &fakeKMSService{err: errDependencyFailed})
+
+			err := tt.call(svc)
+
+			require.ErrorIs(t, err, ErrCircuitOpen)
+		})
+	}
+}

@@ -14,12 +14,14 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
@@ -515,9 +517,10 @@ type mockXKMSTPM struct {
 	iakAttrsError error
 
 	// IDevID configuration
-	idevidAttrs *xkmssdk.KeyAttributes
-	idevidCSR   *xkmssdk.TCG_CSR_IDEVID
-	idevidError error
+	idevidAttrs            *xkmssdk.KeyAttributes
+	idevidCSR              *xkmssdk.TCG_CSR_IDEVID
+	idevidError            error
+	receivedQualifyingData []byte // captures what CreateIDevID was called with
 
 	// ActivateCredential configuration
 	activateSecret []byte
@@ -614,6 +617,7 @@ func (m *mockXKMSTPM) CreateIAK(ekAttrs *xkmssdk.KeyAttributes, qualifyingData [
 }
 
 func (m *mockXKMSTPM) CreateIDevID(akAttrs *xkmssdk.KeyAttributes, ekCert *x509.Certificate, qualifyingData []byte) (*xkmssdk.KeyAttributes, *xkmssdk.TCG_CSR_IDEVID, error) {
+	m.receivedQualifyingData = qualifyingData
 	if m.idevidError != nil {
 		return nil, nil, m.idevidError
 	}
@@ -1498,6 +1502,46 @@ func TestXKMSTPMAdapter_CreateIDevID(t *testing.T) {
 		assert.Equal(t, []byte("idevid-public"), result.IDevIDPublic)
 		assert.Equal(t, []byte("certify-info"), result.CertifyInfo)
 		assert.Equal(t, []byte("signature"), result.Signature)
+	})
+
+	// TestXKMSTPMAdapter_CreateIDevID/hashes oversized qualifying data covers
+	// tpm.go's SHA-256 fallback: ACME HTTP-01 keyAuth (~66 bytes) is longer
+	// than the TPM's TPM2B_DATA MAX_DIGEST_BUFFER (maxTPMQualifyingData), so
+	// CreateIDevID must hash it down to 32 bytes before calling into the TPM
+	// rather than passing the oversized buffer through and letting
+	// TPM2_Certify reject it.
+	t.Run("hashes oversized qualifying data before calling the TPM", func(t *testing.T) {
+		ecKey := newTestECDSAKey(t)
+		ekCert := newTestCertificateFromPublicKey(t, &ecKey.PublicKey)
+
+		iakAttrs := &xkmssdk.KeyAttributes{
+			CN:           "iak-key",
+			KeyAlgorithm: x509.ECDSA,
+			TPMAttributes: &xkmssdk.TPMAttributes{
+				PublicKeyBytes: []byte("iak-public"),
+			},
+		}
+
+		mockTPM := &mockXKMSTPM{
+			ekCert:   ekCert,
+			iakAttrs: iakAttrs,
+			idevidAttrs: &xkmssdk.KeyAttributes{
+				TPMAttributes: &xkmssdk.TPMAttributes{},
+			},
+			idevidCSR: &xkmssdk.TCG_CSR_IDEVID{},
+		}
+		adapter := NewXKMSTPMAdapter(mockTPM)
+
+		oversized := bytes.Repeat([]byte("a"), maxTPMQualifyingData+1)
+		result, err := adapter.CreateIDevID(oversized)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		wantHash := sha256.Sum256(oversized)
+		assert.Equal(t, wantHash[:], mockTPM.receivedQualifyingData,
+			"expected the TPM to receive the SHA-256 hash, not the raw oversized buffer")
+		// The caller-facing result still reports the original, unhashed input.
+		assert.Equal(t, oversized, result.QualifyingData)
 	})
 
 	t.Run("returns error when IAK not available", func(t *testing.T) {

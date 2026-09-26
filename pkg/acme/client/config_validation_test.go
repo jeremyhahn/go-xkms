@@ -52,6 +52,20 @@ func TestValidateConfig_InvalidCA(t *testing.T) {
 	assert.Contains(t, err.Error(), "ca.default_key_algorithm")
 }
 
+// TestValidateConfig_InvalidAudit covers the config.Audit.Validate() error
+// path in TrustedCAConfig.Validate: a non-empty LogPath skips
+// resolveAuditLogPath's DataDir requirement entirely, so an otherwise-invalid
+// Audit field (an unsupported Format) is what surfaces here.
+func TestValidateConfig_InvalidAudit(t *testing.T) {
+	cfg := validConfig()
+	cfg.Audit.Enabled = true
+	cfg.Audit.LogPath = "/var/log/xkms/audit.log"
+	cfg.Audit.Format = "xml"
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "audit")
+}
+
 func TestValidateConfig_InvalidAdmin(t *testing.T) {
 	cfg := validConfig()
 	cfg.Admin.Enabled = true
