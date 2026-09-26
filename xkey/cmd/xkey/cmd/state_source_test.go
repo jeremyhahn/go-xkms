@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -129,6 +130,15 @@ func stateTestCmd(t *testing.T, socketPath, selection string) *cobra.Command {
 	cmd := &cobra.Command{Use: "state-test"}
 	cmd.Flags().String("socket", socketPath, "")
 	cmd.Flags().String("source", selection, "")
+
+	// resolvedSocketPath reads --socket through the package's shared viper
+	// instance (bound to RootCmd's persistent flag in production, see
+	// root.go), not from an arbitrary *cobra.Command, so a test that wants
+	// askDaemon to see socketPath must set it there too.
+	previous := viper.GetString("ipc.socket")
+	viper.Set("ipc.socket", socketPath)
+	t.Cleanup(func() { viper.Set("ipc.socket", previous) })
+
 	return cmd
 }
 
@@ -194,14 +204,29 @@ func TestStateSourceSelection_RejectsUnknownAndOutOfSetValues(t *testing.T) {
 
 // --- socket resolution ---
 
-func TestStateSocketPath_PrefersFlagThenAutoDetect(t *testing.T) {
+func TestResolvedSocketPath_PrefersFlagThenAutoDetect(t *testing.T) {
+	t.Setenv("XKEY_IPC_SOCKET", "")
+	t.Setenv("XKEY_HOME", "")
+
 	cmd := stateTestCmd(t, "/tmp/explicit.sock", sourceAuto)
-	assert.Equal(t, "/tmp/explicit.sock", stateSocketPath(cmd))
+	assert.Equal(t, "/tmp/explicit.sock", resolvedSocketPath(cmd))
 
 	runtimeDir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
-	assert.Equal(t, filepath.Join(runtimeDir, "xkey", "xkey.sock"),
-		stateSocketPath(stateTestCmd(t, "", sourceAuto)))
+	cmd = stateTestCmd(t, "", sourceAuto)
+	assert.Equal(t, filepath.Join(runtimeDir, "xkey", "xkey.sock"), resolvedSocketPath(cmd))
+}
+
+func TestResolvedSocketPath_NilCommandFallsBackToViperThenDefault(t *testing.T) {
+	t.Setenv("XKEY_IPC_SOCKET", "")
+	t.Setenv("XKEY_HOME", "")
+
+	// A nil *cobra.Command (buildFIDO2Config has none to give) must not
+	// panic, and must still fall through to the viper/env/default chain.
+	stateTestCmd(t, "", sourceAuto)
+	path := resolvedSocketPath(nil)
+	assert.NotEmpty(t, path)
+	assert.True(t, filepath.IsAbs(path))
 }
 
 // --- askDaemon routing ---

@@ -59,7 +59,6 @@ func init() {
 	RootCmd.AddCommand(touchCmd)
 
 	touchCmd.Flags().String("password", "", "Name of password to type")
-	touchCmd.Flags().String("socket", "", "IPC socket path (default: auto-detect)")
 }
 
 // runTouch executes the touch command. It connects to the daemon via IPC and
@@ -67,11 +66,7 @@ func init() {
 func runTouch(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	passwordName, _ := cmd.Flags().GetString("password")
-	socketPath, _ := cmd.Flags().GetString("socket")
-
-	if socketPath == "" {
-		socketPath = ipc.DefaultSocketPath()
-	}
+	socketPath := resolvedSocketPath(cmd)
 
 	client := ipc.NewClient(socketPath)
 	defer func() {

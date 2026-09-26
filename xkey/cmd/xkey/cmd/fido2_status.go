@@ -74,8 +74,6 @@ func init() {
 	fido2Cmd.AddCommand(fido2StartCmd)
 	fido2Cmd.AddCommand(fido2StatusCmd)
 
-	fido2StatusCmd.Flags().String("socket", "", "IPC socket path (default: auto-detect)")
-
 	// Inherit the daemon's flags so `fido2 start` accepts everything bare
 	// `fido2` does. Without this, moving an existing invocation to the named
 	// verb would break on unknown flags.
@@ -89,10 +87,7 @@ func init() {
 // runFIDO2Status queries the daemon over IPC.
 func runFIDO2Status(cmd *cobra.Command, _ []string) (err error) {
 	out := cmd.OutOrStdout()
-	socketPath, _ := cmd.Flags().GetString("socket")
-	if socketPath == "" {
-		socketPath = ipc.DefaultSocketPath()
-	}
+	socketPath := resolvedSocketPath(cmd)
 
 	client := ipc.NewClient(socketPath)
 	defer func() {

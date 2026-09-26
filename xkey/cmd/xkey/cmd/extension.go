@@ -26,7 +26,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
@@ -39,6 +38,13 @@ var (
 	ErrExtensionHostFailed       = errors.New("extension: host failed")
 	ErrExtensionUnpairFailed     = errors.New("extension: unpair failed")
 	ErrExtensionPairStatusFailed = errors.New("extension: pair status failed")
+
+	// ErrExtensionProfileDirChromeOnly indicates --profile-dir was combined
+	// with a browser argument other than "chrome". Firefox does not resolve
+	// native messaging manifests relative to a profile directory the way
+	// Chrome resolves them relative to --user-data-dir, so there is no
+	// equivalent path to write for it.
+	ErrExtensionProfileDirChromeOnly = errors.New("extension: --profile-dir requires the \"chrome\" browser argument")
 )
 
 // allBrowsers is the ordered list of browser families supported for manifest operations.
@@ -70,6 +76,15 @@ the manifest is installed to Chrome's default directory.
 Use --allowed-origin to override the default Chrome extension origin. This is
 useful when loading an unpacked extension with a different extension ID.
 
+Use --profile-dir to pair one Chrome profile with this xkey instance, rather
+than installing into Chrome's shared default manifest directory. This is how
+two agents running their own xkey instance as the same OS user each pair with
+their own Chrome profile: the manifest written for --profile-dir launches a
+small generated script (under this instance's home) that pins the native
+messaging host to this instance's socket and data, no matter which profile or
+environment starts it. --profile-dir requires the "chrome" argument
+explicitly; Firefox has no equivalent per-profile manifest location.
+
 Arguments:
   chrome    Install manifest for all Chromium-based browsers (Chrome, Brave, Chromium, Edge)
   firefox   Install manifest for Mozilla Firefox only
@@ -86,7 +101,10 @@ Examples:
   xkey extension install firefox
 
   # Install with a custom Chrome extension origin
-  xkey extension install chrome --allowed-origin "chrome-extension://your_extension_id/"`,
+  xkey extension install chrome --allowed-origin "chrome-extension://your_extension_id/"
+
+  # Pair one Chrome profile with this xkey instance
+  xkey extension install chrome --profile-dir ~/agents/agent-a/chrome-profile`,
 	RunE: runExtensionInstall,
 }
 
@@ -102,6 +120,9 @@ host process. The xkey binary and configuration are not affected.
 For Chrome, manifests are removed from all Chromium-based browser directories
 (Chrome, Brave, Chromium, Edge).
 
+Use --profile-dir with the same path given to 'extension install
+--profile-dir' to remove that profile's manifest specifically.
+
 Arguments:
   chrome    Uninstall manifests for all Chromium-based browsers
   firefox   Uninstall manifest for Mozilla Firefox only
@@ -112,7 +133,10 @@ Examples:
   xkey extension uninstall
 
   # Uninstall for all Chromium-based browsers
-  xkey extension uninstall chrome`,
+  xkey extension uninstall chrome
+
+  # Uninstall a profile-scoped manifest
+  xkey extension uninstall chrome --profile-dir ~/agents/agent-a/chrome-profile`,
 	RunE: runExtensionUninstall,
 }
 
@@ -177,9 +201,12 @@ func init() {
 	extensionCmd.AddCommand(extensionHostCmd)
 	extensionCmd.AddCommand(extensionUnpairCmd)
 	extensionCmd.AddCommand(extensionPairStatusCmd)
-	extensionHostCmd.Flags().String("socket", "", "IPC socket path (default: auto-detect)")
 	extensionHostCmd.Flags().Bool("no-pairing", false, "Disable extension pairing verification (development only)")
 	extensionInstallCmd.Flags().String("allowed-origin", "", "Override Chrome extension allowed origin (e.g., chrome-extension://your_id/)")
+	extensionInstallCmd.Flags().String("profile-dir", "",
+		"Chrome profile's user-data directory to pair with this xkey instance (requires the \"chrome\" argument)")
+	extensionUninstallCmd.Flags().String("profile-dir", "",
+		"Chrome profile's user-data directory whose manifest to remove (requires the \"chrome\" argument)")
 }
 
 // parseBrowser resolves a browser argument string into one or more Browser
@@ -206,8 +233,23 @@ func browserArg(args []string) string {
 	return "all"
 }
 
+// requireChromeOnlyProfileDir rejects --profile-dir combined with any
+// resolved browser set other than exactly Chrome: Firefox does not resolve
+// native messaging manifests relative to a profile directory, so there is no
+// per-profile path to write for it, and installing into the shared Chrome
+// default alongside a Firefox pass would silently ignore the flag for one of
+// the two.
+func requireChromeOnlyProfileDir(browsers []nativemsg.Browser) error {
+	if len(browsers) == 1 && browsers[0] == nativemsg.BrowserChrome {
+		return nil
+	}
+	return ErrExtensionProfileDirChromeOnly
+}
+
 // runExtensionInstall resolves the xkey binary path and installs native
-// messaging manifests for the requested browser(s).
+// messaging manifests for the requested browser(s). With --profile-dir, it
+// instead installs one manifest scoped to that Chrome profile, pointing at a
+// launcher pinned to this instance (see nativemsg.InstallProfileManifest).
 func runExtensionInstall(cmd *cobra.Command, args []string) error {
 	browsers, err := parseBrowser(browserArg(args))
 	if err != nil {
@@ -225,6 +267,24 @@ func runExtensionInstall(cmd *cobra.Command, args []string) error {
 		nativemsg.ChromeAllowedOriginOverride = origin
 	}
 
+	if profileDir, _ := cmd.Flags().GetString("profile-dir"); profileDir != "" {
+		if err := requireChromeOnlyProfileDir(browsers); err != nil {
+			return err
+		}
+
+		home, homeErr := xhome.Resolve()
+		if homeErr != nil {
+			return &SentinelCauseError{Sentinel: ErrExtensionInstallFailed, Cause: homeErr}
+		}
+
+		manifestPath, installErr := nativemsg.InstallProfileManifest(home, binaryPath, profileDir)
+		if installErr != nil {
+			return &SentinelCauseError{Sentinel: ErrExtensionInstallFailed, Cause: installErr}
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Installed native messaging manifest for chrome profile at %s\n", manifestPath)
+		return nil
+	}
+
 	for _, browser := range browsers {
 		if installErr := nativemsg.InstallManifest(browser, binaryPath); installErr != nil {
 			return &DetailError{Err: ErrExtensionInstallFailed, Detail: fmt.Sprintf(": %s: %v", browser, installErr)}
@@ -236,11 +296,29 @@ func runExtensionInstall(cmd *cobra.Command, args []string) error {
 }
 
 // runExtensionUninstall removes native messaging manifests for the requested
-// browser(s). Missing manifests are reported but do not cause a failure.
+// browser(s). Missing manifests are reported but do not cause a failure. With
+// --profile-dir, it instead removes the one manifest scoped to that Chrome
+// profile.
 func runExtensionUninstall(cmd *cobra.Command, args []string) error {
 	browsers, err := parseBrowser(browserArg(args))
 	if err != nil {
 		return err
+	}
+
+	if profileDir, _ := cmd.Flags().GetString("profile-dir"); profileDir != "" {
+		if err := requireChromeOnlyProfileDir(browsers); err != nil {
+			return err
+		}
+
+		if uninstallErr := nativemsg.UninstallProfileManifest(profileDir); uninstallErr != nil {
+			if errors.Is(uninstallErr, nativemsg.ErrManifestNotFound) {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No manifest found for chrome profile %s (already removed)\n", profileDir)
+				return nil
+			}
+			return &SentinelCauseError{Sentinel: ErrExtensionUninstallFailed, Cause: uninstallErr}
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Uninstalled native messaging manifest for chrome profile %s\n", profileDir)
+		return nil
 	}
 
 	for _, browser := range browsers {
@@ -283,10 +361,7 @@ func runExtensionStatus(cmd *cobra.Command, args []string) error {
 // command via the manifest. Stdout is the native messaging pipe, so all
 // logging is directed to stderr AND a log file for diagnostic visibility.
 func runExtensionHost(cmd *cobra.Command, args []string) (err error) {
-	socketPath, _ := cmd.Flags().GetString("socket")
-	if socketPath == "" {
-		socketPath = ipc.DefaultSocketPath()
-	}
+	socketPath := resolvedSocketPath(cmd)
 
 	noPairing, _ := cmd.Flags().GetBool("no-pairing")
 

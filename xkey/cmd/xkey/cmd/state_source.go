@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
@@ -135,11 +136,27 @@ func writeSource(out io.Writer, src stateSource) {
 	_, _ = fmt.Fprintf(out, "Source: %s\n", src)
 }
 
-// stateSocketPath returns the IPC socket a command should use: the --socket
-// flag when given, otherwise the same auto-detected path `xkey fido2 status`
-// uses.
-func stateSocketPath(cmd *cobra.Command) string {
-	if path := strings.TrimSpace(commandFlagString(cmd, "socket")); path != "" {
+// resolvedSocketPath returns the IPC socket path every command connects to:
+//
+//  1. cmd's own --socket flag, local or inherited from RootCmd's persistent
+//     declaration (root.go) — whichever value cobra parsed for this command.
+//  2. XKEY_IPC_SOCKET, via viper's binding of the same flag (see root.go),
+//     for the case where nothing set the flag.
+//  3. ipc.DefaultSocketPath's instance-derived default.
+//
+// cmd may be nil, in which case only the last two strategies apply.
+//
+// This is the single resolution function for the whole CLI. --socket used to
+// be redeclared per-command with its own copy of this fallback (fido2,
+// extension serve, extension host, touch, unlock, password type, and every
+// live-state command); a command that forgot the fallback, or spelled it
+// differently, could silently talk to the wrong xkey instance. Every command
+// now calls this instead of reading the flag itself.
+func resolvedSocketPath(cmd *cobra.Command) string {
+	if path := strings.TrimSpace(commandFlagString(cmd, socketFlagName)); path != "" {
+		return path
+	}
+	if path := strings.TrimSpace(viper.GetString("ipc.socket")); path != "" {
 		return path
 	}
 	return ipc.DefaultSocketPath()
@@ -183,7 +200,7 @@ func askDaemon[T any](
 	selection string,
 	ask func(*ipc.Client) (T, error),
 ) (result T, socketPath string, answered bool, reason string, err error) {
-	socketPath = stateSocketPath(cmd)
+	socketPath = resolvedSocketPath(cmd)
 
 	if selection == sourceDisk {
 		return result, socketPath, false, reasonExplicit, nil
@@ -223,10 +240,10 @@ func askDaemon[T any](
 	return result, socketPath, false, reason, nil
 }
 
-// addStateSourceFlags declares the --socket and --source flags shared by
-// every command that reports live device state.
+// addStateSourceFlags declares the --source flag shared by every command
+// that reports live device state. --socket is a persistent flag on RootCmd
+// (root.go) and is inherited automatically; it must not be redeclared here.
 func addStateSourceFlags(cmd *cobra.Command, allowed map[string]bool) {
-	cmd.Flags().String("socket", "", "IPC socket path of the running daemon (default: auto-detect)")
 	cmd.Flags().String("source", sourceAuto,
 		"Where to read state from: "+sortedSelectors(allowed))
 }

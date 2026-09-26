@@ -1,6 +1,6 @@
 # Agent Automation — API
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 Transport shapes:
 [`../../../docs/key-management/api.md`](../../../docs/key-management/api.md).
@@ -19,7 +19,7 @@ the PIN was verified, and a ceremony with no PIN carries no UV.
 
 | Property | Value |
 |---|---|
-| Path | `$XDG_RUNTIME_DIR/xkey/xkey.sock` (override with `--socket`) |
+| Path | `--socket` / `XKEY_IPC_SOCKET` if set; else `<XKEY_HOME>/run/xkey.sock` when `XKEY_HOME` is set (a hashed runtime-dir path if that would exceed the `sun_path` limit); else `$XDG_RUNTIME_DIR/xkey/xkey.sock` (`xkey/pkg/ipc/socket.go` `DefaultSocketPath`) |
 | Transport | Unix domain socket |
 | Access control | **filesystem permissions only** |
 | Clients | `xkey unlock`, `xkey touch`, `xkey fido2 status`, `xkey auth`, the browser extension's native-messaging host, `go-xkms/sdk/go` |
@@ -28,6 +28,10 @@ the PIN was verified, and a ceremony with no PIN carries no UV.
 There is no authentication on the socket itself. Anything that can open it while
 the authenticator is unlocked can use the credential. That is the security model,
 and it is why the socket lives in a per-user runtime directory.
+
+Several instances can run side by side under one UID, one per `XKEY_HOME`. Each
+derives its own socket, and every command resolves the socket the same way, so
+an agent whose environment names instance A never reaches instance B.
 
 ## The presence handler seam
 

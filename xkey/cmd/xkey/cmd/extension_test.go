@@ -182,10 +182,19 @@ func TestExtensionHostCmd_Structure(t *testing.T) {
 	assert.True(t, extensionHostCmd.Hidden, "host command should be hidden from user help")
 }
 
+// TestExtensionHostCmd_SocketFlag confirms the host command can still see
+// --socket after the flag moved to a persistent declaration on RootCmd
+// (root.go): extensionHostCmd no longer declares its own copy, but it
+// inherits RootCmd's through the extension -> RootCmd parent chain.
 func TestExtensionHostCmd_SocketFlag(t *testing.T) {
-	flag := extensionHostCmd.Flags().Lookup("socket")
-	require.NotNil(t, flag, "host command should have --socket flag")
+	flag := extensionHostCmd.InheritedFlags().Lookup(socketFlagName)
+	require.NotNil(t, flag, "host command should inherit --socket from RootCmd")
 	assert.Equal(t, "", flag.DefValue)
+
+	// It must not be redeclared locally: that would silently shadow the
+	// persistent flag and its viper/env binding (see resolvedSocketPath).
+	assert.Nil(t, extensionHostCmd.LocalFlags().Lookup(socketFlagName),
+		"host command must not redeclare --socket locally")
 }
 
 // --- Error sentinel tests ---

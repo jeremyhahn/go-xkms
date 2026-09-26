@@ -131,7 +131,6 @@ Examples:
 func init() {
 	extensionCmd.AddCommand(extensionServeCmd)
 
-	extensionServeCmd.Flags().String("socket", "", "IPC Unix socket path (default: auto-detect)")
 	extensionServeCmd.Flags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	extensionServeCmd.Flags().String("log-file", "", "Log file path (default: stderr)")
 	extensionServeCmd.Flags().String("barrier-password", "", "Barrier password")
@@ -512,10 +511,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		appLockSvc:  appLockSvc,
 	}
 
-	socketPath, _ := cmd.Flags().GetString("socket")
-	if socketPath == "" {
-		socketPath = ipc.DefaultSocketPath()
-	}
+	socketPath := resolvedSocketPath(cmd)
 
 	server, err := ipc.NewServer(socketPath, handler, logger)
 	if err != nil {
