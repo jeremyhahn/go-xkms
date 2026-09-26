@@ -763,10 +763,7 @@ func runPasswordType(cmd *cobra.Command, args []string) (err error) {
 		return ErrPasswordMissingTypeArg
 	}
 
-	socketPath, _ := cmd.Flags().GetString("socket")
-	if socketPath == "" {
-		socketPath = ipc.DefaultSocketPath()
-	}
+	socketPath := resolvedSocketPath(cmd)
 
 	client := ipc.NewClient(socketPath)
 	defer func() {
@@ -1093,9 +1090,6 @@ func init() {
 	// password remove flags.
 	passwordRemoveCmd.Flags().String("store", "", "Path to password store (default: ~/.xkey/data/staticpw)")
 	passwordRemoveCmd.Flags().Bool("force", false, "Skip confirmation prompt")
-
-	// password type flags.
-	passwordTypeCmd.Flags().String("socket", "", "IPC socket path (default: auto-detect)")
 
 	// password unlock flags.
 	passwordUnlockCmd.Flags().String("pin", "", "User PIN for unlocking the store")

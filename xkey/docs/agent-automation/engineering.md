@@ -1,6 +1,6 @@
 # Agent Automation — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 ## Exported surface
 
@@ -18,7 +18,7 @@ the presence handler an authenticator is constructed with.
 | `--timeout` | `30s` | how long a presence request waits |
 | `--notify` | `dialog` | `dialog`, `passive`, `log`, `none` |
 | `--notify-command` | `""` | custom notification command |
-| `--socket` | `$XDG_RUNTIME_DIR/xkey/xkey.sock` | IPC socket path |
+| `--socket` | see resolution below | IPC socket path; the daemon listens where its clients resolve |
 | `--cdp` | `false` | Chrome DevTools virtual-authenticator bridge |
 | `--cdp-host` | `localhost` | DevTools host |
 | `--cdp-port` | `9222` | DevTools port |
@@ -296,3 +296,33 @@ The relying party's audit trail records the login regardless — an automated
 login is not distinguishable there, and deliberately so. If you need to tell
 agent logins apart, do it by account, not by hoping the ceremony looks
 different.
+
+## Socket resolution and instances (#1033)
+
+`--socket` is one persistent root flag, bound to `XKEY_IPC_SOCKET` through viper
+(`xkey/cmd/xkey/cmd/root.go`). Every command resolves it through
+`resolvedSocketPath` (`state_source.go`): first the flag, then the env var, then
+`ipc.DefaultSocketPath()`. `DefaultSocketPath` (`xkey/pkg/ipc/socket.go`) checks,
+in order:
+
+1. `XKEY_IPC_SOCKET`.
+2. `<XKEY_HOME>/run/xkey.sock` when `XKEY_HOME` is set. If that path would exceed
+   90 bytes (under the 104/108-byte `sun_path` limits), it uses a runtime-dir path
+   keyed by a 12-hex SHA-256 of the absolute home.
+3. `$XDG_RUNTIME_DIR/xkey/xkey.sock`, or `/tmp/xkey-$UID/xkey.sock`.
+
+`extension install chrome --profile-dir <dir>` writes the manifest into
+`<dir>/NativeMessagingHosts/`. Its `path` points at a generated launcher,
+`<XKEY_HOME>/run/extension-host-launcher.sh` (mode 0700), which exports
+`XKEY_HOME` and execs `xkey extension host`. Chrome can't pass arguments to a
+native host, so the launcher is what pins a profile to its instance
+(`xkey/pkg/nativemsg/manifest.go` `GenerateLauncherScript`,
+`InstallProfileManifest`). `--profile-dir` is Chrome-only
+(`ErrExtensionProfileDirChromeOnly`).
+
+The acceptance tests are `instance_isolation_test.go` (two daemons under one
+UID, where a client naming B never sees A's credential),
+`extension_profile_dir_test.go` and `xkey/pkg/nativemsg/profile_manifest_test.go`.
+
+`xkey/pkg/pkcs11/ipc_transport.go` still has its own default
+(`~/.xkey/run/xkey.sock`), which is a known divergence tracked separately.

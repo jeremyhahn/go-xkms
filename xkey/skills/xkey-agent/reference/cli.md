@@ -10,6 +10,7 @@ Generated from the xkey cobra command tree by `make skill-reference`; do not edi
 | `--config` | string |  | config file path (default: ~/.config/xkey/xkey.yaml) |
 | `--log-file` | string |  | log output file path (default: stderr) |
 | `--log-level` | string | info | log level (debug, info, warn, error) |
+| `--socket` | string |  | IPC socket path of the xkey instance to talk to (default: derived from XKEY_HOME, or $XDG_RUNTIME_DIR/xkey/xkey.sock) |
 | `--xkmsd-url` | string |  | xkmsd server URL (unix:// or grpc://) - enables server mode for all commands |
 
 ## xkey agent
@@ -324,7 +325,6 @@ Usage: `xkey barrier status [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | bool | false | output status as JSON |
-| `--socket` | string |  | IPC socket path of the running daemon (default: auto-detect) |
 | `--source` | string | auto | Where to read state from: auto, daemon, disk |
 
 ## xkey barrier unseal
@@ -820,6 +820,7 @@ Usage: `xkey extension install [chrome|firefox|all] [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--allowed-origin` | string |  | Override Chrome extension allowed origin (e.g., chrome-extension://your_id/) |
+| `--profile-dir` | string |  | Chrome profile's user-data directory to pair with this xkey instance (requires the "chrome" argument) |
 
 ## xkey extension pair-status
 
@@ -845,7 +846,6 @@ Usage: `xkey extension serve [flags]`
 | `--no-pairing` | bool | false | Disable extension identity verification (testing only) |
 | `--pin-state` | string |  | PIN state directory path |
 | `--so-pin-stdin` | bool | false | Read the SO PIN from standard input |
-| `--socket` | string |  | IPC Unix socket path (default: auto-detect) |
 | `--tpm-device` | string |  | TPM device path for the tpm2 barrier strategy (default: $TPM_DEVICE_PATH or /dev/tpmrm0) |
 | `--tpm-simulator` | bool | false | Use the in-process TPM simulator instead of a hardware device (requires a simulator build) |
 
@@ -859,7 +859,11 @@ Usage: `xkey extension status`
 
 Uninstall native messaging manifest
 
-Usage: `xkey extension uninstall [chrome|firefox|all]`
+Usage: `xkey extension uninstall [chrome|firefox|all] [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--profile-dir` | string |  | Chrome profile's user-data directory whose manifest to remove (requires the "chrome" argument) |
 
 ## xkey extension unpair
 
@@ -895,7 +899,6 @@ Aliases: fido
 | `--require-touch` | bool | true | Require touch even after PIN verification (like hardware YubiKey) |
 | `--serial` | string |  | Device serial number (auto-generated if empty) |
 | `--set-pin` | string |  | Establish the initial PIN when the store has none (requires --pin; refused if a PIN is already set) |
-| `--socket` | string |  | IPC socket path (default: $XDG_RUNTIME_DIR/xkey/xkey.sock) |
 | `--storage` | string | memory | Storage type: memory, file, or barrier |
 | `--storage-path` | string |  | Path for file storage and the authenticator profile (default: ~/.xkey/data/fido2, see --data-dir/XKEY_DATA_DIR) |
 | `--timeout` | duration | 30s | Timeout for user presence requests |
@@ -906,21 +909,13 @@ Aliases: fido
 
 Change this device's Security Officer PIN (requires the current one)
 
-Usage: `xkey fido2 change-so-pin [flags]`
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--socket` | string |  | FIDO2 daemon IPC socket path used for the liveness check (default: auto-detect) |
+Usage: `xkey fido2 change-so-pin`
 
 ## xkey fido2 init-token
 
 Initialize this device's token by establishing its Security Officer PIN
 
-Usage: `xkey fido2 init-token [flags]`
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--socket` | string |  | FIDO2 daemon IPC socket path used for the liveness check (default: auto-detect) |
+Usage: `xkey fido2 init-token`
 
 ## xkey fido2 policy
 
@@ -1004,7 +999,6 @@ Usage: `xkey fido2 provision-attestation [flags]`
 |---|---|---|---|
 | `--profile` | string |  | CA certificate profile to issue the attestation certificate under (default: the CA's own default) |
 | `--rotate` | bool | false | Replace an existing attestation identity (invalidates every statement issued under the old key) |
-| `--socket` | string |  | FIDO2 daemon IPC socket path used for the liveness check (default: auto-detect) |
 | `--tls-ca` | string |  | CA bundle used to verify TLS transports to xkmsd |
 | `--validity-days` | int | 0 | Certificate validity in days (default: the CA's own default) |
 
@@ -1034,7 +1028,6 @@ Usage: `xkey fido2 start [flags]`
 | `--require-touch` | bool | true | Require touch even after PIN verification (like hardware YubiKey) |
 | `--serial` | string |  | Device serial number (auto-generated if empty) |
 | `--set-pin` | string |  | Establish the initial PIN when the store has none (requires --pin; refused if a PIN is already set) |
-| `--socket` | string |  | IPC socket path (default: $XDG_RUNTIME_DIR/xkey/xkey.sock) |
 | `--storage` | string | memory | Storage type: memory, file, or barrier |
 | `--storage-path` | string |  | Path for file storage and the authenticator profile (default: ~/.xkey/data/fido2, see --data-dir/XKEY_DATA_DIR) |
 | `--timeout` | duration | 30s | Timeout for user presence requests |
@@ -1045,11 +1038,7 @@ Usage: `xkey fido2 start [flags]`
 
 Report whether the FIDO2 virtual device daemon is running
 
-Usage: `xkey fido2 status [flags]`
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--socket` | string |  | IPC socket path (default: auto-detect) |
+Usage: `xkey fido2 status`
 
 ## xkey luks2
 
@@ -1507,7 +1496,6 @@ Aliases: ls
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--show-passwords` | bool | false | Show password values (requires --source disk) |
-| `--socket` | string |  | IPC socket path of the running daemon (default: auto-detect) |
 | `--source` | string | auto | Where to read state from: auto, daemon, disk |
 | `--store` | string |  | Path to password store (default: ~/.xkey/data/staticpw) |
 
@@ -1538,7 +1526,6 @@ Usage: `xkey password status [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--socket` | string |  | IPC socket path of the running daemon (default: auto-detect) |
 | `--source` | string | auto | Where to read state from: auto, daemon, disk, xkmsd |
 | `--store` | string |  | Path to password store (default: ~/.xkey/data/staticpw) |
 
@@ -1546,13 +1533,9 @@ Usage: `xkey password status [flags]`
 
 Type a password via virtual keyboard
 
-Usage: `xkey password type [name] [flags]`
+Usage: `xkey password type [name]`
 
 Aliases: emit
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--socket` | string |  | IPC socket path (default: auto-detect) |
 
 ## xkey password unlock
 
@@ -1617,7 +1600,6 @@ Usage: `xkey pin status [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | bool | false | output status as JSON |
-| `--socket` | string |  | IPC socket path of the running daemon (default: auto-detect) |
 | `--source` | string | auto | Where to read state from: auto, daemon, disk |
 
 ## xkey pin verify
@@ -2383,7 +2365,6 @@ Usage: `xkey touch [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--password` | string |  | Name of password to type |
-| `--socket` | string |  | IPC socket path (default: auto-detect) |
 
 ## xkey tpm
 
@@ -2757,7 +2738,6 @@ Usage: `xkey unlock [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--pin-stdin` | bool | false | Read the PIN from standard input |
-| `--socket` | string |  | IPC socket path (default: auto-detect) |
 
 ## xkey usb
 

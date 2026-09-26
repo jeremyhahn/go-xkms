@@ -9,11 +9,63 @@ xKey is a hardware-backed identity and credential vault. It is a virtual FIDO2 s
 
 Mechanics that apply everywhere:
 
-- Home is `~/.xkey`. `XKEY_HOME` overrides it. Data lives in `<home>/data`, which `XKEY_DATA_DIR` overrides (as does `--data-dir` on `barrier` and `pin`). The config file is `~/.config/xkey/xkey.yaml` unless you pass `--config`. You can set any config key as an `XKEY_`-prefixed environment variable.
-- Every command accepts these global flags: `--xkmsd-url` (unix://, grpc://, grpcs://, https://, quic://, or `XKMSD_URL`), `--backend software|tpm2|pkcs11`, `--log-level` and `--log-file`. `XKMSD_TOKEN` supplies a bearer token and `XKMSD_TLS_CA` the CA bundle for TLS transports.
+- Home is `~/.xkey`. `XKEY_HOME` overrides it, and is what makes an xKey instance yours: every path — data, config, barrier, and the IPC socket a bare command connects to — resolves relative to it. Data lives in `<home>/data`, which `XKEY_DATA_DIR` overrides (as does `--data-dir` on `barrier` and `pin`). The config file is `~/.config/xkey/xkey.yaml` unless you pass `--config`. You can set any config key as an `XKEY_`-prefixed environment variable.
+- Every command accepts these global flags: `--xkmsd-url` (unix://, grpc://, grpcs://, https://, quic://, or `XKMSD_URL`), `--backend software|tpm2|pkcs11`, `--log-level`, `--log-file`, and `--socket` (or `XKEY_IPC_SOCKET`) to name the IPC socket explicitly instead of deriving it from `XKEY_HOME`. `XKMSD_TOKEN` supplies a bearer token and `XKMSD_TLS_CA` the CA bundle for TLS transports.
 - `ps` shows argv to every process on the host. Keep secrets off it with `--barrier-password-file`, `XKEY_BARRIER_PASSWORD`, `--pin-stdin`/`XKEY_PIN`, `--so-pin-stdin`/`XKEY_SO_PIN`, or piped stdin. Flags such as `--password`, `--pin`, `--secret` and `--value` put the value on argv. Use `--file` variants where they exist.
 - Daemons (`fido2`, `extension serve`, `agent start`, `device listen`, `usb device start`) run in the foreground. Start them in the background and check them with their `status` verb.
 - `/dev/uhid`, LUKS, USB-image and TPM-clear operations need root. Run them with `sudo`.
+
+## Running as one of several instances on this host
+
+Every agent gets its own xKey instance. Instances sharing a host and a UID are
+distinguished only by `XKEY_HOME` — set it to a private directory before
+running any xKey command, and nothing else changes: barrier, PINs, password
+and OATH stores, PIV, and the IPC socket a bare command connects to all
+resolve relative to it.
+
+```bash
+export XKEY_HOME=~/agents/agent-a/.xkey
+xkey barrier init --strategy tpm2
+xkey fido2 start --storage barrier --barrier-password-file <file> &
+```
+
+The IPC socket defaults to `<XKEY_HOME>/run/xkey.sock` (or, only when that path
+would not fit a Unix domain socket, a runtime-directory path keyed by a hash
+of `XKEY_HOME` — you will not need to know which case you are in). `--socket
+<path>` or `XKEY_IPC_SOCKET` always overrides the derived default, including
+over `XKEY_HOME`, so an explicit value follows you even if `XKEY_HOME` is
+wrong or unset.
+
+**Verify you are talking to your own instance**, not another agent's, before
+trusting a command's output:
+
+```bash
+echo "$XKEY_HOME"                    # the instance your environment names
+xkey fido2 status                    # prints "Socket:  <path>" it actually used
+xkey pin status --json | jq -r .source_location   # ditto for pin/password/barrier status
+```
+
+Compare the printed socket or `source_location` against `<XKEY_HOME>/run/xkey.sock`
+(or your own explicit `--socket`). A mismatch means the command reached a
+different instance's daemon, not yours — most often because `XKEY_HOME` was
+unset or pointed somewhere unexpected in the calling shell.
+
+**Pairing a browser profile with your instance.** `xkey extension install
+chrome --profile-dir <chrome-user-data-dir>` installs a native-messaging
+manifest scoped to one Chrome profile instead of the OS-wide default every
+profile on the host shares. Use the same directory you start Chrome with
+(`chrome --user-data-dir=<dir>`): Chrome resolves native-messaging manifests
+relative to it, so a distinct `--user-data-dir` gets a manifest no other
+profile sees. The manifest launches a small generated script under your
+instance's home (`<XKEY_HOME>/run/extension-host-launcher.sh`) that pins the
+native messaging host it starts to your instance, regardless of which user or
+environment Chrome itself runs under — this is what lets two agents sharing a
+UID each pair their own Chrome profile with their own xKey instance.
+`xkey extension uninstall chrome --profile-dir <dir>` removes it.
+`--profile-dir` requires the `chrome` argument explicitly: Firefox has no
+per-profile manifest location to install into. Installing without
+`--profile-dir` keeps working exactly as before, for the common case of one
+xKey instance per host.
 
 ## Get started: config, unseal, unlock
 

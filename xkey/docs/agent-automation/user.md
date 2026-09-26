@@ -1,6 +1,6 @@
 # Agent Automation — User Guide
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 ## The problem this solves
 
@@ -268,6 +268,20 @@ is a different trade from either recipe here: it changes what the
 *credential* means (a machine identity, not a claim of human presence),
 where the two recipes above only change how a *test* gets past a browser
 dialog that is not answerable over CDP.
+
+## One xkey per agent on a shared host
+
+Give each agent its own home, and every command follows it:
+
+```bash
+export XKEY_HOME=$HOME/agents/builder/.xkey   # this agent's instance
+xkey fido2 &                                   # listens on $XKEY_HOME/run/xkey.sock
+xkey fido2 status                              # the Socket: line names the socket you reached
+xkey extension install chrome --profile-dir "$HOME/agents/builder/chrome"
+```
+
+The last command pairs that Chrome profile with this instance only. To target an
+instance explicitly, pass `--socket` or set `XKEY_IPC_SOCKET`.
 
 ## Troubleshooting
 

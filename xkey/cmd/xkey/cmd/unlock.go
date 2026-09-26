@@ -101,7 +101,6 @@ func init() {
 	RootCmd.AddCommand(unlockCmd)
 
 	addPINFlags(unlockCmd)
-	unlockCmd.Flags().String("socket", "", "IPC socket path (default: auto-detect)")
 }
 
 // resolveUnlockPIN resolves the PIN through the shared CLI resolver and
@@ -134,10 +133,7 @@ func runUnlock(cmd *cobra.Command, _ []string) (err error) {
 		return err
 	}
 
-	socketPath, _ := cmd.Flags().GetString("socket")
-	if socketPath == "" {
-		socketPath = ipc.DefaultSocketPath()
-	}
+	socketPath := resolvedSocketPath(cmd)
 
 	client := ipc.NewClient(socketPath)
 	defer func() {

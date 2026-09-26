@@ -59,6 +59,10 @@ var (
 	// at the expected path.
 	ErrManifestNotFound = errors.New("nativemsg: manifest not found")
 
+	// ErrLauncherNilHome indicates GenerateLauncherScript was called without
+	// an xKey instance home to pin the launcher to.
+	ErrLauncherNilHome = errors.New("nativemsg: launcher script requires an xkey instance home")
+
 	// ErrIPCConnection indicates the IPC connection to the native messaging
 	// host could not be established.
 	ErrIPCConnection = errors.New("nativemsg: IPC connection failed")

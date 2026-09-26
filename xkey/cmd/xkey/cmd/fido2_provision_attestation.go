@@ -181,8 +181,6 @@ func init() {
 		"CA certificate profile to issue the attestation certificate under (default: the CA's own default)")
 	fido2ProvisionAttestationCmd.Flags().Int("validity-days", 0,
 		"Certificate validity in days (default: the CA's own default)")
-	fido2ProvisionAttestationCmd.Flags().String("socket", "",
-		"FIDO2 daemon IPC socket path used for the liveness check (default: auto-detect)")
 	fido2ProvisionAttestationCmd.Flags().String(tlsCAFlagName, "",
 		"CA bundle used to verify TLS transports to xkmsd")
 }
@@ -210,10 +208,7 @@ func runFIDO2ProvisionAttestation(cmd *cobra.Command, _ []string) (err error) {
 	if err != nil {
 		return err
 	}
-	socketPath, err := cmd.Flags().GetString("socket")
-	if err != nil {
-		return err
-	}
+	socketPath := resolvedSocketPath(cmd)
 
 	cfg := buildFIDO2Config()
 

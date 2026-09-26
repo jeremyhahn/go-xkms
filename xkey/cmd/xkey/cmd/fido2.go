@@ -399,8 +399,6 @@ func init() {
 	// Password and IPC configuration flags
 	fido2Cmd.Flags().String("password-store", "",
 		"Path to static password store (default: ~/.xkey/data/staticpw, the same store `xkey password` uses)")
-	fido2Cmd.Flags().String("socket", "",
-		"IPC socket path (default: $XDG_RUNTIME_DIR/xkey/xkey.sock)")
 	fido2Cmd.Flags().String("default-password", "",
 		"Password name to type on bare touch")
 	fido2Cmd.Flags().String("notify-command", "",
@@ -435,7 +433,6 @@ func init() {
 	_ = viper.BindPFlag("fido2.attestation", fido2Cmd.Flags().Lookup("attestation"))
 	_ = viper.BindPFlag("fido2.phone_device", fido2Cmd.Flags().Lookup("phone-device"))
 	_ = viper.BindPFlag("fido2.password_store", fido2Cmd.Flags().Lookup("password-store"))
-	_ = viper.BindPFlag("fido2.socket", fido2Cmd.Flags().Lookup("socket"))
 	_ = viper.BindPFlag("fido2.default_password", fido2Cmd.Flags().Lookup("default-password"))
 	_ = viper.BindPFlag("fido2.notify_command", fido2Cmd.Flags().Lookup("notify-command"))
 	_ = viper.BindPFlag("fido2.notify", fido2Cmd.Flags().Lookup("notify"))
@@ -552,14 +549,20 @@ func buildFIDO2Config() *FIDO2Config {
 		AttestationFormat:   viper.GetString("fido2.attestation"),
 		PhoneDevice:         viper.GetString("fido2.phone_device"),
 		PasswordStorePath:   viper.GetString("fido2.password_store"),
-		SocketPath:          viper.GetString("fido2.socket"),
-		DefaultPassword:     viper.GetString("fido2.default_password"),
-		NotifyCommand:       viper.GetString("fido2.notify_command"),
-		NotifyType:          viper.GetString("fido2.notify"),
-		UnifiedPIN:          viper.GetBool("fido2.unified_pin"),
-		CDPEnabled:          viper.GetBool("fido2.cdp"),
-		CDPHost:             viper.GetString("fido2.cdp_host"),
-		CDPPort:             viper.GetInt("fido2.cdp_port"),
+		// buildFIDO2Config takes no *cobra.Command (dozens of call sites,
+		// including every fido2 policy/attestation test, predate one), so
+		// this reads back through viper rather than a specific command's
+		// flags. That is still correct: root.go's --socket is bound to the
+		// same viper key, and cobra parses it into that flag object on every
+		// invocation regardless of which subcommand runs.
+		SocketPath:      resolvedSocketPath(nil),
+		DefaultPassword: viper.GetString("fido2.default_password"),
+		NotifyCommand:   viper.GetString("fido2.notify_command"),
+		NotifyType:      viper.GetString("fido2.notify"),
+		UnifiedPIN:      viper.GetBool("fido2.unified_pin"),
+		CDPEnabled:      viper.GetBool("fido2.cdp"),
+		CDPHost:         viper.GetString("fido2.cdp_host"),
+		CDPPort:         viper.GetInt("fido2.cdp_port"),
 	}
 
 	return cfg
@@ -943,11 +946,11 @@ func (d *fido2Device) initSupplementarySubsystems(ctx context.Context) {
 		}
 	}
 
-	// Start IPC server
+	// Start IPC server. d.cfg.SocketPath is always resolved (never empty):
+	// buildFIDO2Config sets it from resolvedSocketPath, the same function
+	// every client command uses, so the daemon listens on exactly the socket
+	// its clients will default to.
 	socketPath := d.cfg.SocketPath
-	if socketPath == "" {
-		socketPath = ipc.DefaultSocketPath()
-	}
 
 	ipcSrv, err := ipc.NewServer(socketPath, d, d.logger)
 	if err != nil {

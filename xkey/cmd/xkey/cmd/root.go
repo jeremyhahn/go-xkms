@@ -60,12 +60,22 @@ var (
 	// xkmsBackend holds the xkmsd backend name.
 	xkmsBackend string
 
+	// ipcSocketPath holds the IPC socket path specified via --socket. It is
+	// the one place any command declares this flag; see resolvedSocketPath
+	// in socket.go for the fallback chain every command shares.
+	ipcSocketPath string
+
 	// loadedConfig holds the unified config loaded during initialization.
 	loadedConfig *xkeyconfig.Config
 
 	// resolvedHome holds the resolved xKey home directory.
 	resolvedHome *xhome.Home
 )
+
+// socketFlagName is the name of the shared --socket persistent flag declared
+// below. resolvedSocketPath (state_source.go) is the only place that reads
+// it back; no other file may declare a flag by this name.
+const socketFlagName = "socket"
 
 // luksExemptCommands is the set of command names that bypass the LUKS
 // volume check. These commands manage LUKS volumes themselves, or run
@@ -218,6 +228,15 @@ func init() {
 	RootCmd.PersistentFlags().StringVar(&xkmsBackend, "backend", "",
 		"xkmsd backend to use (software, tpm2, pkcs11)")
 
+	// IPC socket flag - the single declaration every command shares. It used
+	// to be redeclared per-command (fido2, extension serve, extension host,
+	// touch, unlock, password type, and every live-state command), which let
+	// a client and the daemon it meant to reach drift onto different
+	// defaults. resolvedSocketPath (state_source.go) is the one place that
+	// reads it back.
+	RootCmd.PersistentFlags().StringVar(&ipcSocketPath, socketFlagName, "",
+		"IPC socket path of the xkey instance to talk to (default: derived from XKEY_HOME, or $XDG_RUNTIME_DIR/xkey/xkey.sock)")
+
 	// Bind flags to viper for backward compatibility with code that still
 	// reads from the global viper instance. This will be phased out as
 	// subcommands migrate to GetConfig().
@@ -225,6 +244,16 @@ func init() {
 	_ = viper.BindPFlag("log.file", RootCmd.PersistentFlags().Lookup("log-file"))
 	_ = viper.BindPFlag("xkmsd_url", RootCmd.PersistentFlags().Lookup("xkmsd-url"))
 	_ = viper.BindPFlag("backend", RootCmd.PersistentFlags().Lookup("backend"))
+	_ = viper.BindPFlag("ipc.socket", RootCmd.PersistentFlags().Lookup(socketFlagName))
+	// XKEY_IPC_SOCKET is bound explicitly, rather than through the global
+	// AutomaticEnv+SetEnvPrefix convention pkg/config uses for its own viper
+	// instance: that convention maps every "ipc.socket"-shaped key to
+	// XKEY_IPC_SOCKET automatically, but turning it on for this package's
+	// shared viper instance would also start reading XKEY_LOG_LEVEL,
+	// XKEY_XKMSD_URL and XKEY_BACKEND, which those flags do not opt into
+	// today. BindEnv extends the existing BindPFlag convention to exactly
+	// one key without changing behavior for the others.
+	_ = viper.BindEnv("ipc.socket", "XKEY_IPC_SOCKET")
 
 	// Set defaults
 	viper.SetDefault("backend", "software")

@@ -148,10 +148,6 @@ func init() {
 	fido2Cmd.AddCommand(fido2InitTokenCmd)
 	fido2Cmd.AddCommand(fido2ChangeSOPINCmd)
 
-	for _, cmd := range []*cobra.Command{fido2InitTokenCmd, fido2ChangeSOPINCmd} {
-		cmd.Flags().String("socket", "",
-			"FIDO2 daemon IPC socket path used for the liveness check (default: auto-detect)")
-	}
 }
 
 // runFIDO2InitToken establishes the device's Security Officer PIN.
@@ -270,10 +266,7 @@ func runFIDO2ChangeSOPIN(cmd *cobra.Command, _ []string) (err error) {
 // openTokenDevice settles the refusals that need no operator input and opens the
 // device's storage.
 func openTokenDevice(cmd *cobra.Command) (authenticator.StatefulCredentialStorage, error) {
-	socketPath, err := cmd.Flags().GetString("socket")
-	if err != nil {
-		return nil, err
-	}
+	socketPath := resolvedSocketPath(cmd)
 
 	cfg := buildFIDO2Config()
 
