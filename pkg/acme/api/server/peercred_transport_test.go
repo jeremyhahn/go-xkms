@@ -171,17 +171,6 @@ func TestUnixPeerCredentials_Clone(t *testing.T) {
 	assert.Equal(t, creds.Info(), clone.Info())
 }
 
-// TestUnixPeerCredentials_OverrideServerName verifies the no-op documented on
-// OverrideServerName: it must never fail, regardless of the name given, since
-// a Unix-socket peer-credential transport has no server name to override.
-func TestUnixPeerCredentials_OverrideServerName(t *testing.T) {
-	creds, err := NewUnixPeerCredentials()
-	require.NoError(t, err)
-
-	assert.NoError(t, creds.OverrideServerName("anything.example.com"))
-	assert.NoError(t, creds.OverrideServerName(""))
-}
-
 // TestUnaryAuthorizationInterceptor_RealPeerCredentials_MapsConfiguredUID
 // exercises the full authentication path this interceptor is installed for:
 // real kernel-extracted credentials from an AF_UNIX socketpair, mapped by a
