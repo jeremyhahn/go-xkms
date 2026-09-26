@@ -15,9 +15,11 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/correlation"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -230,6 +232,50 @@ func TestCorrelationContextOperations(t *testing.T) {
 			t.Errorf("Expected 'test-id', got '%s'", id)
 		}
 	})
+}
+
+// setHeaderErrorStream is a grpc.ServerStream double whose SetHeader always
+// fails, so correlationStreamInterceptor's error-logging branch (the
+// response metadata could not be set) can be exercised directly rather than
+// left permanently unreachable behind mockServerStream's SetHeader, which
+// always succeeds.
+type setHeaderErrorStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *setHeaderErrorStream) Context() context.Context { return s.ctx }
+
+func (s *setHeaderErrorStream) SetHeader(metadata.MD) error {
+	return errors.New("transport closed")
+}
+
+// TestCorrelationStreamInterceptor_SetHeaderFailureIsNotFatal proves a
+// stream whose SetHeader fails (for example a transport that already closed)
+// still reaches the handler with a correlated context: the interceptor logs
+// the failure to publish the response metadata rather than aborting the RPC
+// over it, since the incoming correlation ID has already been established
+// for downstream logging regardless of whether the client ever sees it
+// echoed back.
+func TestCorrelationStreamInterceptor_SetHeaderFailureIsNotFatal(t *testing.T) {
+	srv := &Server{logger: discardLogger()}
+	stream := &setHeaderErrorStream{ctx: context.Background()}
+
+	handlerCalled := false
+	handler := func(_ interface{}, ss grpc.ServerStream) error {
+		handlerCalled = true
+		if correlation.GetCorrelationID(ss.Context()) == "" {
+			t.Error("handler observed no correlation ID despite the SetHeader failure")
+		}
+		return nil
+	}
+
+	if err := srv.correlationStreamInterceptor(nil, stream, &grpc.StreamServerInfo{}, handler); err != nil {
+		t.Fatalf("correlationStreamInterceptor returned an error despite a successful handler: %v", err)
+	}
+	if !handlerCalled {
+		t.Fatal("handler was not invoked after a SetHeader failure")
+	}
 }
 
 func TestCorrelationMetadataKeys(t *testing.T) {
