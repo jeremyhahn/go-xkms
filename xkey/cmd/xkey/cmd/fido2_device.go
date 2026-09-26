@@ -140,8 +140,12 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 		slog.String("device_address", connectedAddress),
 	)
 
-	// Optionally wire xkmsd bridge for bidirectional key sharing.
-	bridged, err := connectXKMSdBridge(backend, logger)
+	// Optionally wire xkmsd bridge for bidirectional key sharing. cfg.Cmd
+	// (set by runFIDO2) carries this command's --barrier-password flags
+	// through to buildListenBridgeConfig so the bridge's OATH/PIV/sync
+	// collaborators open the same stores "xkey device listen" does
+	// (go-xkms#1041).
+	bridged, err := connectXKMSdBridge(backend, cfg.Cmd, logger)
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err, backend.Close())
 	}

@@ -220,6 +220,15 @@ type FIDO2Config struct {
 	// Phone backend configuration
 	PhoneDevice string // Specific phone name or address to use
 
+	// Cmd is the "xkey fido2" command invocation. It is used only by the
+	// phone backend (createFIDO2PhoneKeyBackend, fido2_device.go) to hand
+	// buildListenBridgeConfig the same --barrier-password/
+	// --barrier-password-file flags "xkey device listen" reads, so the
+	// xkmsd bridge's OATH/PIV/sync collaborators open the same stores
+	// (go-xkms#1041). Set by runFIDO2; nil for every other backend and for
+	// callers that only use FIDO2Config for validation or storage setup.
+	Cmd *cobra.Command
+
 	// Password and IPC configuration
 	PasswordStorePath string
 	SocketPath        string
@@ -451,6 +460,10 @@ func runFIDO2(cmd *cobra.Command, args []string) error {
 
 	// Build configuration from Viper (merges flags, env vars, config file)
 	cfg := buildFIDO2Config()
+	// Only the phone backend reads this (createFIDO2PhoneKeyBackend), to wire
+	// the xkmsd bridge's OATH/PIV/sync collaborators from this command's own
+	// barrier flags (go-xkms#1041); every other backend ignores it.
+	cfg.Cmd = cmd
 
 	// Resolve the file-storage default (issue #929) before validating: an
 	// unset --storage-path must resolve through the shared xkey data

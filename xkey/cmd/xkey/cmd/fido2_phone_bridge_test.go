@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -815,7 +816,27 @@ func TestConnectXKMSdBridge_Disabled(t *testing.T) {
 	backend := newTestPhoneBackend(t, mockTransport)
 	logger := newTestLogger()
 
-	result, err := connectXKMSdBridge(backend, logger)
+	result, err := connectXKMSdBridge(backend, &cobra.Command{}, logger)
+
+	assert.Nil(t, result, "should return nil when xkmsd is disabled")
+	assert.NoError(t, err, "should return nil error when xkmsd is disabled")
+}
+
+// TestConnectXKMSdBridge_DisabledIgnoresNilCmd proves the disabled path never
+// reaches buildListenBridgeConfig's cmd.Flags() lookups: cfg.Enabled is
+// checked, and connectXKMSdBridge returns, before cmd is dereferenced at all.
+// A nil cmd here would panic if that ordering ever regressed.
+func TestConnectXKMSdBridge_DisabledIgnoresNilCmd(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(func() { viper.Reset() })
+
+	viper.Set("xkmsd.enabled", false)
+
+	mockTransport := &mockCloserTransport{}
+	backend := newTestPhoneBackend(t, mockTransport)
+	logger := newTestLogger()
+
+	result, err := connectXKMSdBridge(backend, nil, logger)
 
 	assert.Nil(t, result, "should return nil when xkmsd is disabled")
 	assert.NoError(t, err, "should return nil error when xkmsd is disabled")

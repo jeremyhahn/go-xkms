@@ -497,11 +497,17 @@ func resolveListenEnroller(
 }
 
 // listenBridgeCollaborators holds the long-lived Bridge collaborators
-// connectListenBridge opens so the phone's remote.oath* and remote.sync*
+// buildListenBridgeConfig opens so the phone's remote.oath* and remote.sync*
 // methods reach real xkey data instead of reporting the feature
 // unconfigured. Unlike the PIV storage provider (opened fresh per request by
 // the bridge itself), these are opened once, for the life of the daemon, and
 // must be closed at shutdown.
+//
+// Shared, not "listen"-specific despite the name: connectXKMSdBridge
+// (fido2_phone_bridge.go) opens the same collaborators for "xkey fido2"'s
+// phone bridge (go-xkms#1041), following resolveListenEnroller's own
+// precedent of staying "Listen"-named once shared rather than renaming for
+// every new caller.
 type listenBridgeCollaborators struct {
 	oathStore   oath.Store
 	syncSources *backupSources
@@ -549,17 +555,26 @@ func listenPIVStorageProvider(logger *slog.Logger) pairing.PIVStorageProvider {
 	}
 }
 
-// buildListenBridgeConfig assembles the BridgeConfig connectListenBridge
-// hands to pairing.NewBridge, opening every collaborator that config needs.
-// Split out from connectListenBridge so the wiring can be exercised without
-// an xkmsd connection: it takes no transport.Client and dials nothing.
+// buildListenBridgeConfig assembles the BridgeConfig a caller hands to
+// pairing.NewBridge, opening every collaborator that config needs. Split out
+// from connectListenBridge so the wiring can be exercised without an xkmsd
+// connection: it takes no transport.Client and dials nothing.
+//
+// connectListenBridge ("xkey device listen") and connectXKMSdBridge
+// ("xkey fido2"'s phone bridge, fido2_phone_bridge.go) both call this
+// unchanged (go-xkms#1041): a phone reaches the identical OATH store, PIV
+// certificate storage, and sync service through either command's bridge, not
+// a second, differently-wired implementation that only forwards ping,
+// attestation, and TPM enrollment. cmd is whichever cobra.Command the caller
+// is running under; its --barrier-password/--barrier-password-file flags
+// (registered by addDeviceBarrierFlags on "xkey device listen", and directly
+// on fido2Cmd) are read the same way regardless of which command owns them.
 //
 // The OATH store and sync service are opened through the exact constructors
 // "xkey oath" (openOATHStore, oath.go) and "xkey device sync"
 // (openSyncService, device_sync.go) already use, reading cmd's
-// --barrier-password/--barrier-password-file flags (registered by
-// addDeviceBarrierFlags on this same command) the same way those commands
-// do. The PIV certificate storage provider builds on the exact
+// --barrier-password/--barrier-password-file flags the same way those
+// commands do. The PIV certificate storage provider builds on the exact
 // createPIVStorage construction "xkey piv" uses. A collaborator that fails to
 // open is logged and left nil rather than aborting the daemon: the bridge
 // already treats a nil collaborator as "feature unconfigured" for exactly
@@ -567,8 +582,9 @@ func listenPIVStorageProvider(logger *slog.Logger) pairing.PIVStorageProvider {
 // still pair, sync its trust store, and serve PIV and every other method.
 //
 // The returned collaborators must be closed at shutdown by the caller
-// (listenBridgeCollaborators.Close); connectListenBridge does this via
-// defer, matching every other resource runDeviceListen owns.
+// (listenBridgeCollaborators.Close); connectListenBridge and
+// connectXKMSdBridge both do this via defer, matching every other resource
+// their respective commands own.
 func buildListenBridgeConfig(
 	cmd *cobra.Command,
 	logger *slog.Logger,

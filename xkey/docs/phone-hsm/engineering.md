@@ -79,6 +79,19 @@ library, ...) is logged and left `nil` rather than aborting the daemon: the
 host still pairs and serves every other method, with only that one method
 family reporting itself unconfigured.
 
+`cmd/xkey/cmd/fido2_phone_bridge.go`'s `connectXKMSdBridge` — the bridge
+`xkey fido2` builds when it pairs the FIDO2 phone backend to xkmsd — calls
+this exact same `buildListenBridgeConfig`, passing the `fido2` command's own
+`--barrier-password`/`--barrier-password-file` flags through (go-xkms#1041).
+Before that change it built its own `pairing.BridgeConfig` with nothing but
+the TPM enroller wired, so a phone paired through `xkey fido2` got
+`ErrorCodeFeatureUnavailable` for `remote.oath*`, `remote.pivListSlots`/
+`pivGetCert`, and `remote.sync*` even when a phone paired through
+`xkey device listen` reached them fine. There is exactly one place either
+command wires these collaborators now, and exactly one place
+(`listenBridgeCollaborators.Close`, called from both `connectListenBridge`'s
+and `connectXKMSdBridge`'s shutdown paths) that releases them.
+
 **`remote.createBackup`/`restoreBackup`/`listBackups` are unimplemented**
 (go-xkms#690) pending an owner decision `bridge_backup.go` documents in
 detail: `backup.Service` encrypts every archive with a caller-supplied
