@@ -321,6 +321,11 @@ var rpcErrorMap = map[int]error{
 	ErrorCodeSyncRemoteUnavail:   ErrSyncRemoteUnavailable,
 	ErrorCodeSyncNoData:          ErrSyncNoData,
 	ErrorCodeSyncVersionMismatch: ErrSyncVersionMismatch,
+	// A collaborator (OATH store, PIV storage, sync service, backup
+	// service...) was not wired into the peer's bridge. One generic sentinel
+	// on decode: the code alone cannot say which feature, only that it is
+	// unavailable there.
+	ErrorCodeFeatureUnavailable: ErrFeatureNotConfigured,
 }
 
 // MapRPCError maps JSON-RPC error codes to package errors.

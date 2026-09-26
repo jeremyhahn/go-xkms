@@ -25,6 +25,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
+	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
 )
 
 // DefaultBridgeRequestTimeout is the default timeout for individual xkmsd requests.
@@ -66,6 +68,28 @@ type BridgeConfig struct {
 	// Optional: leave nil on a host with no TPM, and those handlers report the
 	// feature as unconfigured rather than failing.
 	TPM TPMEnroller
+
+	// OATHStore persists credentials added via remote.oathAdd and answers
+	// remote.oathGenerate. Optional: leave nil to report the OATH methods as
+	// unconfigured (ErrOATHNotConfigured) rather than faking success.
+	OATHStore oath.Store
+
+	// PIVStorage resolves PIV certificate storage for a named backend
+	// (software, tpm2, pkcs11) so the bridge can serve remote.pivListSlots
+	// and remote.pivGetCert. remote.pivSign does not need it: a PIV slot's
+	// private key is addressed by KeyID == slot in the same key backend the
+	// generic key handlers already reach through Client, so signing is
+	// served by Client.Sign like any other key. Optional: leave nil to
+	// report the certificate-storage methods as unconfigured
+	// (ErrPIVNotConfigured).
+	PIVStorage PIVStorageProvider
+
+	// SyncService applies and computes trust store, OATH, and password sync
+	// deltas for the remote.sync* methods. Optional: leave nil to report
+	// sync as unconfigured (ErrSyncNotConfigured); remote.syncStatus still
+	// answers without it, reporting an empty status rather than an error,
+	// since "nothing has been synced yet" is a valid status.
+	SyncService *xkeysync.Service
 }
 
 // DefaultBridgeConfig returns a BridgeConfig with sensible defaults.
@@ -99,6 +123,20 @@ type Bridge struct {
 	// tells the phone the feature is unavailable rather than that we failed.
 	tpm TPMEnroller
 
+	// oathStore persists credentials added via remote.oathAdd and answers
+	// remote.oathGenerate. Optional: nil reports ErrOATHNotConfigured.
+	oathStore oath.Store
+
+	// pivStorage resolves PIV certificate storage by backend name for
+	// remote.pivListSlots and remote.pivGetCert. Optional: nil reports
+	// ErrPIVNotConfigured.
+	pivStorage PIVStorageProvider
+
+	// syncService applies and computes sync deltas for the remote.sync*
+	// methods. Optional: nil reports ErrSyncNotConfigured, except
+	// remote.syncStatus which reports an empty status instead.
+	syncService *xkeysync.Service
+
 	// Pre-computed lookup sets for O(1) access control checks.
 	allowedSet map[string]struct{}
 	deniedSet  map[string]struct{}
@@ -128,6 +166,9 @@ func NewBridge(client transport.Client, config *BridgeConfig) (*Bridge, error) {
 		auditLogger: config.AuditLogger,
 		tpm:         config.TPM,
 		tpmOpenErr:  config.TPMOpenErr,
+		oathStore:   config.OATHStore,
+		pivStorage:  config.PIVStorage,
+		syncService: config.SyncService,
 	}
 
 	// Build O(1) access control lookup sets.
@@ -948,6 +989,8 @@ func mapErrorToRPC(err error) (int, string) {
 		return ErrorCodeInvalidPublicKey, "invalid public key data"
 	case errors.Is(err, ErrKeyNotFound):
 		return ErrorCodeKeyNotFound, "key not found"
+	case errors.Is(err, ErrKeyExists):
+		return ErrorCodeKeyExists, "key already exists"
 	case errors.Is(err, ErrInvalidFormat):
 		return ErrorCodeInvalidFormat, "invalid format requested"
 	case errors.Is(err, ErrBackupFailed):
@@ -980,6 +1023,14 @@ func mapErrorToRPC(err error) (int, string) {
 		return ErrorCodeSyncNoData, "phone: no data available for sync"
 	case errors.Is(err, ErrSyncVersionMismatch):
 		return ErrorCodeSyncVersionMismatch, "phone: sync version mismatch"
+	case errors.Is(err, ErrOATHNotConfigured):
+		return ErrorCodeFeatureUnavailable, "phone: no OATH credential store is configured on this host"
+	case errors.Is(err, ErrPIVNotConfigured):
+		return ErrorCodeFeatureUnavailable, "phone: no PIV certificate storage is configured for this backend"
+	case errors.Is(err, ErrSyncNotConfigured):
+		return ErrorCodeFeatureUnavailable, "phone: sync is not configured on this host"
+	case errors.Is(err, ErrBackupNotConfigured):
+		return ErrorCodeFeatureUnavailable, "phone: backup is not configured on this host"
 	}
 
 	// Fall through to a generic internal error for unrecognized errors.

@@ -266,6 +266,31 @@ var (
 
 	// ErrSyncVersionMismatch indicates a sync protocol version mismatch.
 	ErrSyncVersionMismatch = errors.New("pairing: sync version mismatch")
+
+	// ErrOATHNotConfigured is returned when a remote.oath* method is invoked
+	// but no OATH credential store has been wired into the bridge. The
+	// feature is unavailable on this host, which is distinct from the
+	// request having failed.
+	ErrOATHNotConfigured = errors.New("pairing: no OATH credential store is configured on this host")
+
+	// ErrPIVNotConfigured is returned when a remote.piv* method needs PIV
+	// certificate storage that has not been wired into the bridge for the
+	// requested backend.
+	ErrPIVNotConfigured = errors.New("pairing: no PIV certificate storage is configured for this backend")
+
+	// ErrSyncNotConfigured is returned when a remote.sync* method needs a
+	// sync data source (trust store, OATH, or passwords) that has not been
+	// wired into the bridge.
+	ErrSyncNotConfigured = errors.New("pairing: sync is not configured on this host")
+
+	// ErrBackupNotConfigured is returned when a remote.*Backup* method needs
+	// the backup service, which has not been wired into the bridge.
+	ErrBackupNotConfigured = errors.New("pairing: backup is not configured on this host")
+
+	// ErrFeatureNotConfigured is the generic client-side counterpart of
+	// ErrorCodeFeatureUnavailable: the peer understood the method but its
+	// collaborator was not wired in on that host.
+	ErrFeatureNotConfigured = errors.New("pairing: feature not configured on peer")
 )
 
 // DetailError appends detail text directly after a wrapped error while

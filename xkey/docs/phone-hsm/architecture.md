@@ -1,6 +1,6 @@
 # Phone as HSM — Architecture
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 ## The problem
 
@@ -41,6 +41,14 @@ Above the session sits a JSON-RPC protocol split by concern
 | device enrollment | `protocol_device_enrollment.go` | — |
 | IDevID | `protocol_idevid.go` | — |
 | local / remote modes | `protocol_local.go`, `protocol_remote.go` | — |
+
+The PIV, OATH, and sync bridges delegate to real xkey services
+(`xkey/pkg/oath`, `xkey/pkg/sync`, and PIV certificate storage) that the CLI
+wires into `BridgeConfig` per host; the backup bridge does not yet, pending
+an open key-sourcing and persistence decision. See
+[`engineering.md`](engineering.md) §"Bridge collaborators are optional, and
+say so honestly" for the wiring contract and what each unconfigured method
+reports.
 
 Transports: USB AOA (`go-xkms/pkg/api/transport/usb`), TCP relay
 (`tcp_transport.go`), and BLE. `fragmentation.go` exists because none of these
