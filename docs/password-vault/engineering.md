@@ -1,6 +1,6 @@
 # Password Vault — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/staticpw`
 
@@ -10,15 +10,18 @@
 type AccessMode string
 
 const (
-	// Every plaintext read requires the user PIN.
+	// Defined, but no store implementation exists (access.go:16-28).
 	AccessPINPerOperation AccessMode = "pin_per_operation"
-	// Unlock once; reads work until the store is locked.
+	// The only mode actually implemented.
 	AccessSessionBased AccessMode = "session_based"
 )
-
-type PINAccessStore struct{ … }   // access.go:37
-type SessionStore   struct{ … }   // access.go:134
 ```
+
+`session_based` is implemented by `TenantPasswordStoreManager.UnlockTenant`/
+`LockTenant` (`tenant_store_manager.go:162`, `:143`), which hold a per-tenant
+`atomic.Bool` session lock rather than a store decorator. There is no
+`PINAccessStore` or `SessionStore` type in this package — both were removed
+(go-xkms#864); `pkg/staticpw` has no store that itself gates on a PIN.
 
 ### Scoping (`scope.go`, `scoped_store.go`)
 
@@ -32,8 +35,9 @@ Scoped, team-scoped and tenant-scoped stores compose over the base store:
 
 ### Stores
 
-`store.go` (base), `encrypted_store.go` (at-rest, over the barrier),
-`dao_store.go` (persistence through go-qrdb). Entries: `entity.go`,
+`store.go` (`BackendStore`, the sole concrete `Store` — encryption at rest is
+a property of the `storage.Backend` it wraps, not a decorator in this
+package), `dao_store.go` (persistence through go-qrdb). Entries: `entity.go`,
 `team_entity.go`, `types.go`. Support: `generator.go`, `expiry.go`,
 `validation.go`, `migration.go`, `errors.go`.
 
@@ -58,10 +62,11 @@ type PasswordService interface {
 
 - **Plaintext is opt-in.** `PasswordGet` returns the plaintext only when the
   request asks for it (`--decrypt`); listing and metadata never do.
-- **The access mode gates every plaintext read.** Under
-  `pin_per_operation` the PIN is required on the call itself; under
-  `session_based` a prior unlock is required. There is no third path and no
-  bypass.
+- **The access mode gates every plaintext read.** Under `session_based`
+  (the only implemented mode) a prior `UnlockTenant` is required; there is no
+  bypass. `pin_per_operation` is a defined `AccessMode` value with no store
+  behind it (`access.go:16-28`) — it cannot become the active mode through
+  the servicer that owns this vocabulary.
 - **A locked store answers metadata, not secrets.** `PasswordStoreStatus` works
   while locked; that is what makes it useful.
 - **Scope is enforced, not advisory.** `own | shared | all` determines what a
@@ -70,11 +75,14 @@ type PasswordService interface {
   invalidates the credential.
 - **Generation has one implementation.** `generator.go`. A second generator at a
   call site is a defect.
-- **Encryption is the barrier's.** `encrypted_store.go` delegates; it does not
-  implement a cipher.
-- **Concurrency.** Stores are safe for concurrent use. The session in
-  `SessionStore` is shared state — unlocking is process-wide, not per-caller,
-  and that is exactly why `session_based` has the blast radius it does.
+- **Encryption is the barrier's.** `BackendStore` implements no cipher; it
+  writes plain JSON to whatever `storage.Backend` it is given. A tenant
+  store's encryption comes from wrapping the tenant barrier as that backend
+  (`seal.NewBarrierBackend`, `tenant_store_manager.go:176`).
+- **Concurrency.** Stores are safe for concurrent use. The session lock held
+  by `TenantPasswordStoreManager` is per-tenant, not per-caller — unlocking a
+  tenant is visible to every caller scoped to that tenant, and that is
+  exactly why `session_based` has the blast radius it does.
 
 ## Error semantics
 
@@ -82,8 +90,8 @@ type PasswordService interface {
 
 | Condition | Meaning |
 |---|---|
-| store locked | a plaintext read was attempted without an unlock |
-| PIN required | `pin_per_operation` mode, and no PIN on the call |
+| store locked | any operation was attempted against a tenant store before `UnlockTenant` |
+| PIN required | `PasswordStoreUnlock` called with no `user_pin` |
 | PIN invalid | wrong PIN |
 | entry not found | wrong ID, or out of the caller's scope |
 | validation failure | malformed entry — `validation.go` |
@@ -111,8 +119,10 @@ desktop-local store.
 
 ## Persistence
 
-Through `dao_store.go` to go-qrdb, encrypted by `encrypted_store.go` under the
-barrier. Tenant scoping is `tenant_dao_factory.go` +
+Through `dao_store.go` to go-qrdb, or through `store.go`'s `BackendStore`
+directly to a `storage.Backend`; encrypted whenever that backend is a tenant
+barrier (`seal.NewBarrierBackend`, wired by `tenant_store_manager.go:176`),
+not by a store-level decorator. Tenant scoping is `tenant_dao_factory.go` +
 `tenant_store_manager.go`; team scoping is the `team_*` files.
 
 `migration.go` handles entry-layout changes. Passwords are long-lived data —
@@ -121,9 +131,12 @@ reversible in a way that key material does not.
 
 ## Test strategy
 
-- **Unit** — one suite per file in `pkg/staticpw`, with `access` (both modes),
-  `scope`, `team_*`, `expiry`, `generator`, `validation` and `migration` each
-  covered independently.
+- **Unit** — one suite per file in `pkg/staticpw`, with `scope`, `team_*`,
+  `tenant_store_manager` (session lock, both locked/unlocked paths),
+  `expiry`, `generator`, `validation` and `migration` each covered
+  independently. There is no dedicated `access` suite: `access.go` declares
+  the `AccessMode` type and its two constants, and carries no logic of its
+  own to test.
 - **Transport** — `pkg/api/rest/password_handlers_test.go`;
   `pkg/api/mcp/handlers_password_test.go`, `handlers_password_unlock_test.go`.
 - **Cross-module** — xkey's autofill and extension suites exercise the same
