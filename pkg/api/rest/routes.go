@@ -277,8 +277,11 @@ func Routes() []RouteSpec {
 	// pkg/api/grpc/service_custodian_share_tenant.go's. The permission gate
 	// runs before the handler, so it answers 403 regardless of which
 	// tenantID was named; a caller holding the grant still gets the
-	// handlers' cross-tenant 404, which never distinguishes "belongs to
-	// another tenant" from "does not exist". ---
+	// cross-tenant 404 from XKMSService's tenant binding
+	// (pkg/xkms/tenant_binding.go), which never distinguishes "belongs to
+	// another tenant" from "does not exist". Entitlements and quotas are plan
+	// management and carry their own qrdb permissions
+	// (tenants:set_entitlements, tenants:set_quotas), never tenants:update. ---
 	hasTenants := func(s *Server) bool { return s.tenantHandlers != nil }
 	permIf("POST", "/tenants/", auth.ResourceTenants, auth.ActionCreate, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.CreateTenantHandler })
 	permIf("GET", "/tenants/", auth.ResourceTenants, auth.ActionList, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.ListTenantsHandler })
@@ -287,8 +290,8 @@ func Routes() []RouteSpec {
 	permIf("GET", "/tenants/{tenantID}/barrier/status", auth.ResourceTenantBarrier, auth.ActionStatus, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierStatusHandler })
 	permIf("POST", "/tenants/{tenantID}/barrier/init", auth.ResourceTenantBarrier, auth.ActionInit, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierInitHandler })
 	permIf("POST", "/tenants/{tenantID}/barrier/unseal", auth.ResourceTenantBarrier, auth.ActionUnseal, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.TenantBarrierUnsealHandler })
-	permIf("PUT", "/tenants/{tenantID}/entitlements", auth.ResourceTenants, auth.ActionUpdate, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantEntitlementsHandler })
-	permIf("PUT", "/tenants/{tenantID}/quotas", auth.ResourceTenants, auth.ActionUpdate, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantQuotasHandler })
+	permIf("PUT", "/tenants/{tenantID}/entitlements", auth.ResourceTenants, auth.ActionSetEntitlements, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantEntitlementsHandler })
+	permIf("PUT", "/tenants/{tenantID}/quotas", auth.ResourceTenants, auth.ActionSetQuotas, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantQuotasHandler })
 
 	// --- Passwords. The passwords:* pairs of pkg/api/grpc/service_password.go
 	// and the MCP password.* methods. POST /passwords/access-mode has no

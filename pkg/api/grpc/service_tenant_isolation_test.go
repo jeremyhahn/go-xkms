@@ -17,10 +17,14 @@ import (
 	"context"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -118,4 +122,57 @@ func TestUpdateTenantEntitlementsAndQuotas_ServicerRouted(t *testing.T) {
 	require.NotNil(t, quotaResp.Tenant.Quotas)
 	assert.Equal(t, int64(9), quotaResp.Tenant.Quotas.MaxDatabases)
 	assert.Equal(t, int64(250), quotaResp.Tenant.Quotas.MaxKeys)
+}
+
+// TestTenantRPCs_CrossTenantBinding pins go-xkms#1112 and #1113 on gRPC: a
+// tenant-scoped caller naming another tenant gets the NotFound a nonexistent
+// tenant gets (same code, same message), may not change even its own
+// tenant's plan, and sees only its own tenant in ListTenants. The RBAC gate is
+// disabled here (nil authorizer) so the test isolates XKMSService's binding.
+func TestTenantRPCs_CrossTenantBinding(t *testing.T) {
+	// The barrier RPCs guard on the package-level registry before delegating;
+	// setupBarrierRegistry composes the servicer's TenantService over it.
+	old := GetBarrierRegistry()
+	SetBarrierRegistry(setupBarrierRegistry(t))
+	t.Cleanup(func() { SetBarrierRegistry(old) })
+	xkmsSvc, err := xkms.Get()
+	require.NoError(t, err)
+	grpcSvc := NewService(nil, nil, xkmsSvc)
+	system := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "so", TenantID: qrdbsdk.SystemTenantID})
+	tenantA := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "admin-a", TenantID: "tenant-a"})
+
+	for _, id := range []string{"tenant-a", "tenant-b"} {
+		_, err := grpcSvc.CreateTenant(system, &pb.CreateTenantRequest{Id: id, Name: id, IsolationType: "prefix"})
+		require.NoError(t, err)
+	}
+
+	_, missing := grpcSvc.GetTenant(system, &pb.GetTenantRequest{TenantId: "no-such-tenant"})
+	require.Equal(t, codes.NotFound, status.Code(missing))
+
+	refusals := map[string]error{}
+	_, refusals["get"] = grpcSvc.GetTenant(tenantA, &pb.GetTenantRequest{TenantId: "tenant-b"})
+	_, refusals["delete"] = grpcSvc.DeleteTenant(tenantA, &pb.DeleteTenantRequest{TenantId: "tenant-b"})
+	_, refusals["barrier-status"] = grpcSvc.TenantBarrierStatus(tenantA, &pb.TenantBarrierStatusRequest{TenantId: "tenant-b"})
+	_, refusals["barrier-init"] = grpcSvc.TenantBarrierInit(tenantA, &pb.TenantBarrierInitRequest{TenantId: "tenant-b", Secret: "correct horse battery staple"})
+	_, refusals["barrier-unseal"] = grpcSvc.TenantBarrierUnseal(tenantA, &pb.TenantBarrierUnsealRequest{TenantId: "tenant-b", Secret: "correct horse battery staple"})
+	_, refusals["own-entitlements"] = grpcSvc.UpdateTenantEntitlements(tenantA, &pb.UpdateTenantEntitlementsRequest{
+		TenantId: "tenant-a", Entitlements: &pb.TenantEntitlements{AllowDedicatedRaft: true},
+	})
+	_, refusals["own-quotas"] = grpcSvc.UpdateTenantQuotas(tenantA, &pb.UpdateTenantQuotasRequest{
+		TenantId: "tenant-a", Quotas: &pb.TenantQuotas{MaxKeys: 1_000_000},
+	})
+	for op, err := range refusals {
+		assert.Equal(t, codes.NotFound, status.Code(err), op)
+	}
+	// The message is the one a genuine miss carries, operation prefix aside.
+	assert.Equal(t, status.Convert(missing).Message(), status.Convert(refusals["get"]).Message())
+
+	listResp, err := grpcSvc.ListTenants(tenantA, &pb.ListTenantsRequest{})
+	require.NoError(t, err)
+	require.Len(t, listResp.Tenants, 1)
+	assert.Equal(t, "tenant-a", listResp.Tenants[0].Id)
+
+	getResp, err := grpcSvc.GetTenant(tenantA, &pb.GetTenantRequest{TenantId: "tenant-a"})
+	require.NoError(t, err)
+	assert.Equal(t, "tenant-a", getResp.Tenant.Id)
 }

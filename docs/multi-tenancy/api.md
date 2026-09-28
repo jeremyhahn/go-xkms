@@ -1,6 +1,6 @@
 # Multi-Tenancy — API
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -10,7 +10,9 @@ the `hasTenants` predicate. Each demands the permission gRPC enforces for the
 same RPC (the **Permission** column): tenant metadata is `tenants:*`, and the
 per-tenant barrier lifecycle is its own `tenant_barrier:*` family, distinct
 from the system barrier's `seal:*`. An authenticated session alone reaches none
-of them. Admin and Owner hold every one of them by default.
+of them. Admin and Owner hold every one of them by default, except
+`tenants:set_quotas`, which no qrdb built-in role grants (see the plan-change
+note below).
 
 ## Capability matrix
 
@@ -23,21 +25,34 @@ of them. Admin and Owner hold every one of them by default.
 | Tenant barrier status | `GET /api/v1/tenants/{tenantID}/barrier/status` | `TenantBarrierStatus` | same as REST | `xkms.tenantBarrierStatus` | `TenantBarrierStatus` | `tenant_barrier:status` |
 | Tenant barrier init | `POST /api/v1/tenants/{tenantID}/barrier/init` | `TenantBarrierInit` | same as REST | `xkms.tenantBarrierInit` | `TenantBarrierInit` | `tenant_barrier:init` |
 | Tenant barrier unseal | `POST /api/v1/tenants/{tenantID}/barrier/unseal` | `TenantBarrierUnseal` | same as REST | `xkms.tenantBarrierUnseal` | `TenantBarrierUnseal` | `tenant_barrier:unseal` |
-| Update entitlements | `PUT /api/v1/tenants/{tenantID}/entitlements` | `UpdateTenantEntitlements` | same as REST | `xkms.updateTenantEntitlements` | `UpdateTenantEntitlements` | `tenants:update` |
-| Update quotas | `PUT /api/v1/tenants/{tenantID}/quotas` | `UpdateTenantQuotas` | same as REST | `xkms.updateTenantQuotas` | `UpdateTenantQuotas` | `tenants:update` |
+| Update entitlements | `PUT /api/v1/tenants/{tenantID}/entitlements` | `UpdateTenantEntitlements` | same as REST | `xkms.updateTenantEntitlements` | `UpdateTenantEntitlements` | `tenants:set_entitlements` |
+| Update quotas | `PUT /api/v1/tenants/{tenantID}/quotas` | `UpdateTenantQuotas` | same as REST | `xkms.updateTenantQuotas` | `UpdateTenantQuotas` | `tenants:set_quotas` |
 
-**MCP now carries the full tenant administration surface** (go-xkms#773).
-Tenant metadata CRUD carries the `tenants:*` RBAC permission and the
-per-tenant barrier lifecycle carries `tenant_barrier:*` (mirroring gRPC's
-`s.authorize` calls) when RBAC is enabled. `GetTenant`, `DeleteTenant`, and
-the three `TenantBarrier*` methods additionally reproduce REST's
-cross-tenant anti-enumeration behaviour in the handler itself (see "Status
-and error mapping" below): a tenant-scoped caller naming another tenant gets
-the identical refusal a nonexistent tenant ID would. `CreateTenant`,
-`ListTenants` (filtered to the caller's own tenant when tenant-scoped, exactly
-as REST's `ListTenantsHandler` filters), `UpdateTenantEntitlements`, and
-`UpdateTenantQuotas` apply no cross-tenant restriction of their own, matching
-REST.
+**MCP carries the full tenant administration surface** (go-xkms#773), with
+the same permissions as gRPC and REST (`pkg/api/mcp/authz.go:232-240`).
+
+**The tenant a request names is bound to the caller in `XKMSService`, once,
+for every transport** (go-xkms#1112; `pkg/xkms/tenant_binding.go`). The RBAC
+gate binds the caller's *own* tenant as its target
+(`pkg/auth/authorize.go:61`), so the self-scoped `tenants:*` /
+`tenant_barrier:*` grants a Tenant Admin holds pass for any tenant ID; the
+service binding is what confines them. `GetTenant`, `DeleteTenant`, and the
+three `TenantBarrier*` methods refuse a tenant-scoped caller naming another
+tenant with the answer a nonexistent tenant gets (see "Status and error
+mapping"); `ListTenants` returns only the caller's own tenant
+(`pkg/xkms/servicer_tenant.go:127`). No handler carries a check of its own.
+`CreateTenant` is not bound: a new tenant cannot yet belong to anyone.
+
+**Plan changes are platform-only** (go-xkms#1113). `UpdateTenantEntitlements`
+and `UpdateTenantQuotas` require qrdb's dedicated `tenants:set_entitlements` /
+`tenants:set_quotas` on every transport — never `tenants:update` — and the
+service admits only a platform (system-tenant) identity
+(`pkg/xkms/servicer_tenant.go:313,340`): a Tenant Admin is refused with the
+not-found answer even for its own tenant. The service check is load-bearing,
+not belt-and-braces: both permissions are self-scoped in qrdb and qrdb's
+built-in Admin role grants `tenants:set_entitlements`. No built-in role
+grants `tenants:set_quotas`, so changing quotas needs a custom role granting
+it to a system-tenant identity.
 
 ## Tenancy is enforced by middleware, not by these routes
 
@@ -144,23 +159,28 @@ Tenant barrier status is the same `BarrierStatus` shape as the system barrier.
 | isolation mode not entitled | 403 | `PermissionDenied` | JSON-RPC internal error |
 | quota exceeded | 429 | `ResourceExhausted` | JSON-RPC internal error |
 | operation needs an unsealed tenant barrier | 409 | `FailedPrecondition` | JSON-RPC internal error |
-| tenant not found — **including cross-tenant access** | 404 | `NotFound` | JSON-RPC internal error carrying `seal.ErrTenantNotFound` |
+| tenant not found — **including cross-tenant access** | 404 | `NotFound` | `JSONRPCCodeNotFound` |
+| tenant-scoped caller changes a plan, even its own | 404 | `NotFound` | `JSONRPCCodeNotFound` |
 | tenancy not configured | route absent (404) | `Unimplemented` | JSON-RPC internal error |
 
 Cross-tenant access is deliberately **not distinguishable from not-found** on
 any transport. A permission-denied answer would confirm that the tenant
-exists, making tenant IDs enumerable. JSON-RPC has no dedicated not-found
-code (see [`../key-management/api.md`](../key-management/api.md)), so MCP's
-`GetTenant`/`DeleteTenant`/`TenantBarrierStatus`/`TenantBarrierInit`/
-`TenantBarrierUnseal` handlers return the internal-error code carrying the
-identical `seal.ErrTenantNotFound` message a genuine miss produces — the same
-"same answer either way" property REST's 404 and gRPC's `NotFound` give,
-translated onto JSON-RPC's coarser vocabulary.
+exists, making tenant IDs enumerable. The service's refusal,
+`*xkms.TenantBindingError` (`pkg/xkms/tenant_binding.go:34`), unwraps to and
+renders exactly as `qrdbsdk.ErrTenantMissing` — the error go-qrdb's
+TenantService returns for an unknown tenant — so status *and* body match a
+genuine miss: REST `pkg/api/rest/errors.go:130`, gRPC
+`pkg/api/grpc/service_custodian_share_tenant.go:86`, MCP
+`pkg/api/mcp/errors_custodian_tenant.go:57`. Before go-xkms#1112 the REST and
+MCP handler checks answered `seal.ErrTenantNotFound` ("qrdb/seal: tenant not
+found") while a genuine miss answered "tenant: not found", and gRPC answered
+a genuine miss with `Internal`; both differences were enumeration oracles
+and are gone.
 
 The permission gate does not reopen that oracle. It decides before any tenant
 lookup, from the caller's grant alone, so a caller without the permission gets
 the same `403` for every `{tenantID}`, and a caller with it still gets the
-handler's identical `404` for another tenant's ID and for one that does not
+service's identical `404` for another tenant's ID and for one that does not
 exist.
 
 ## Pagination

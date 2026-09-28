@@ -78,6 +78,12 @@ var tenantErrorToGRPC = map[error]codes.Code{
 	xkms.ErrTenantPassphraseRequired: codes.InvalidArgument,
 	xkms.ErrTenantSharesRequired:     codes.InvalidArgument,
 	xkms.ErrTenantStrategyConflict:   codes.FailedPrecondition,
+
+	// The composed go-qrdb TenantService reports an unknown tenant with its
+	// own sentinel, and XKMSService's tenant binding refuses a foreign tenant
+	// with an error that unwraps to it (xkms.TenantBindingError); both are
+	// NotFound so a foreign tenant reads exactly like a missing one.
+	qrdbsdk.ErrTenantMissing: codes.NotFound,
 }
 
 // Package-level service references, set via their respective setter functions.
@@ -696,7 +702,9 @@ func (s *Service) tenantSealedStatus(tenantID string) string {
 }
 
 // GetTenant retrieves a tenant by ID, delegating to the XKMSService servicer so
-// the isolation metadata surfaces alongside the live sealed state.
+// the isolation metadata surfaces alongside the live sealed state. The
+// servicer owns the tenant binding: a tenant-scoped caller naming another
+// tenant gets NotFound, exactly as for a nonexistent tenant.
 func (s *Service) GetTenant(ctx context.Context, req *pb.GetTenantRequest) (*pb.GetTenantResponse, error) {
 	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionRead, "get"); err != nil {
 		return nil, err
@@ -707,81 +715,56 @@ func (s *Service) GetTenant(ctx context.Context, req *pb.GetTenantRequest) (*pb.
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
-	if svc := s.xkmsService; svc != nil {
-		getResp, err := svc.GetTenant(ctx, tenantID)
-		if err != nil {
-			return nil, mapTenantError(err, "get tenant")
-		}
-		return &pb.GetTenantResponse{
-			Tenant: &pb.TenantInfo{
-				Id:            getResp.Tenant.ID,
-				Name:          getResp.Tenant.Name,
-				Status:        s.tenantSealedStatus(tenantID),
-				IsolationType: string(getResp.Tenant.IsolationType),
-			},
-		}, nil
+	svc := s.xkmsService
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
-
-	// Legacy path: no XKMS service wired.
-	if barrierRegistry == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
-	}
-	tb, err := barrierRegistry.Tenant(tenantID)
+	getResp, err := svc.GetTenant(ctx, tenantID)
 	if err != nil {
 		return nil, mapTenantError(err, "get tenant")
 	}
 	return &pb.GetTenantResponse{
 		Tenant: &pb.TenantInfo{
-			Id:     tb.TenantID(),
-			Status: sealedStatusString(tb.IsSealed()),
+			Id:            getResp.Tenant.ID,
+			Name:          getResp.Tenant.Name,
+			Status:        s.tenantSealedStatus(tenantID),
+			IsolationType: string(getResp.Tenant.IsolationType),
 		},
 	}, nil
 }
 
-// ListTenants returns all tenants, delegating to the XKMSService servicer.
+// ListTenants returns the tenants the caller may see, delegating to the
+// XKMSService servicer, which confines a tenant-scoped caller to its own
+// tenant.
 func (s *Service) ListTenants(ctx context.Context, _ *pb.ListTenantsRequest) (*pb.ListTenantsResponse, error) {
 	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionList, "list"); err != nil {
 		return nil, err
 	}
 
-	if svc := s.xkmsService; svc != nil {
-		listResp, err := svc.ListTenants(ctx)
-		if err != nil {
-			return nil, mapTenantError(err, "list tenants")
-		}
-		tenants := make([]*pb.TenantInfo, 0, len(listResp.Tenants))
-		for i := range listResp.Tenants {
-			t := &listResp.Tenants[i]
-			tenants = append(tenants, &pb.TenantInfo{
-				Id:            t.ID,
-				Name:          t.Name,
-				Status:        s.tenantSealedStatus(t.ID),
-				IsolationType: string(t.IsolationType),
-			})
-		}
-		return &pb.ListTenantsResponse{Tenants: tenants}, nil
+	svc := s.xkmsService
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
-
-	// Legacy path: no XKMS service wired.
-	if barrierRegistry == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
+	listResp, err := svc.ListTenants(ctx)
+	if err != nil {
+		return nil, mapTenantError(err, "list tenants")
 	}
-	ids := barrierRegistry.ListTenants()
-	tenants := make([]*pb.TenantInfo, 0, len(ids))
-	for _, id := range ids {
-		tb, err := barrierRegistry.Tenant(id)
-		if err != nil {
-			continue
-		}
+	tenants := make([]*pb.TenantInfo, 0, len(listResp.Tenants))
+	for i := range listResp.Tenants {
+		t := &listResp.Tenants[i]
 		tenants = append(tenants, &pb.TenantInfo{
-			Id:     id,
-			Status: sealedStatusString(tb.IsSealed()),
+			Id:            t.ID,
+			Name:          t.Name,
+			Status:        s.tenantSealedStatus(t.ID),
+			IsolationType: string(t.IsolationType),
 		})
 	}
 	return &pb.ListTenantsResponse{Tenants: tenants}, nil
 }
 
-// DeleteTenant deletes a tenant, delegating to the XKMSService servicer.
+// DeleteTenant deletes a tenant, delegating to the XKMSService servicer. The
+// servicer owns the tenant binding: a tenant-scoped caller naming another
+// tenant gets NotFound, exactly as for a nonexistent tenant.
 func (s *Service) DeleteTenant(ctx context.Context, req *pb.DeleteTenantRequest) (*emptypb.Empty, error) {
 	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionDelete, "delete"); err != nil {
 		return nil, err
@@ -792,18 +775,11 @@ func (s *Service) DeleteTenant(ctx context.Context, req *pb.DeleteTenantRequest)
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
-	if svc := s.xkmsService; svc != nil {
-		if err := svc.DeleteTenant(ctx, tenantID); err != nil {
-			return nil, mapTenantError(err, "delete tenant")
-		}
-		return &emptypb.Empty{}, nil
+	svc := s.xkmsService
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
-
-	// Legacy path: no XKMS service wired.
-	if barrierRegistry == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
-	}
-	if err := barrierRegistry.UnregisterTenant(tenantID); err != nil {
+	if err := svc.DeleteTenant(ctx, tenantID); err != nil {
 		return nil, mapTenantError(err, "delete tenant")
 	}
 	return &emptypb.Empty{}, nil
@@ -913,9 +889,11 @@ func (s *Service) TenantBarrierStatus(ctx context.Context, req *pb.TenantBarrier
 }
 
 // UpdateTenantEntitlements updates a tenant's feature entitlements, delegating
-// to the XKMSService servicer.
+// to the XKMSService servicer. It requires tenants:set_entitlements, and the
+// servicer admits only a cross-tenant identity (a tenant-scoped caller gets
+// NotFound, even for its own tenant).
 func (s *Service) UpdateTenantEntitlements(ctx context.Context, req *pb.UpdateTenantEntitlementsRequest) (*pb.UpdateTenantEntitlementsResponse, error) {
-	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionUpdate, "update-entitlements"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionSetEntitlements, "update-entitlements"); err != nil {
 		return nil, err
 	}
 	tenantID := req.GetTenantId()
@@ -937,9 +915,11 @@ func (s *Service) UpdateTenantEntitlements(ctx context.Context, req *pb.UpdateTe
 }
 
 // UpdateTenantQuotas updates a tenant's resource quotas, delegating to the
-// XKMSService servicer.
+// XKMSService servicer. It requires tenants:set_quotas, and the servicer
+// admits only a cross-tenant identity (a tenant-scoped caller gets NotFound,
+// even for its own tenant).
 func (s *Service) UpdateTenantQuotas(ctx context.Context, req *pb.UpdateTenantQuotasRequest) (*pb.UpdateTenantQuotasResponse, error) {
-	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionUpdate, "update-quotas"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionSetQuotas, "update-quotas"); err != nil {
 		return nil, err
 	}
 	tenantID := req.GetTenantId()

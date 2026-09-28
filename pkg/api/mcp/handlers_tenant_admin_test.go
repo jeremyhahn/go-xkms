@@ -14,8 +14,9 @@
 // handlers_tenant_admin_test.go covers the MCP tenant administration
 // methods: dispatch registration, the not-configured path taken when no
 // go-qrdb TenantService is composed, the success path against a fake
-// ServiceTenantServicer, and the cross-tenant anti-enumeration refusal that
-// mirrors REST's isCrossTenantAccess.
+// ServiceTenantServicer, and the mapping of XKMSService's cross-tenant
+// refusal (xkms.TenantBindingError) onto the same not-found a genuine miss
+// produces.
 package mcp
 
 import (
@@ -30,7 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // fakeTenantServicer is a partial qrdbsdk.ServiceTenantServicer. Embedding
@@ -44,6 +45,7 @@ type fakeTenantServicer struct {
 
 	initTenantID   string
 	unsealTenantID string
+	planTenantID   string
 }
 
 func newFakeTenantServicer() *fakeTenantServicer {
@@ -65,7 +67,9 @@ func (f *fakeTenantServicer) GetTenant(_ context.Context, id string) (*qrdbsdk.S
 	}
 	info, ok := f.tenants[id]
 	if !ok {
-		return nil, seal.ErrTenantNotFound
+		// go-qrdb's TenantService reports an unknown tenant with this
+		// sentinel, unwrapped.
+		return nil, qrdbsdk.ErrTenantMissing
 	}
 	return info, nil
 }
@@ -86,7 +90,7 @@ func (f *fakeTenantServicer) DeleteTenant(_ context.Context, id string) error {
 		return f.err
 	}
 	if _, ok := f.tenants[id]; !ok {
-		return seal.ErrTenantNotFound
+		return qrdbsdk.ErrTenantMissing
 	}
 	delete(f.tenants, id)
 	return nil
@@ -119,6 +123,7 @@ func (f *fakeTenantServicer) UpdateEntitlements(_ context.Context, id string, en
 	if f.err != nil {
 		return nil, f.err
 	}
+	f.planTenantID = id
 	return &qrdbsdk.ServiceTenantInfo{ID: id, Entitlements: ents}, nil
 }
 
@@ -126,6 +131,7 @@ func (f *fakeTenantServicer) UpdateQuotas(_ context.Context, id string, q *qrdbs
 	if f.err != nil {
 		return nil, f.err
 	}
+	f.planTenantID = id
 	return &qrdbsdk.ServiceTenantInfo{ID: id, Quotas: q}, nil
 }
 
@@ -241,7 +247,7 @@ func TestHandleGetTenant_NotFound(t *testing.T) {
 		tenantAdminRequest(t, "xkms.getTenant", TenantIDParams{TenantID: "missing"}))
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, seal.ErrTenantNotFound))
+	assert.True(t, errors.Is(err, qrdbsdk.ErrTenantMissing))
 }
 
 // TestHandleGetTenant_CrossTenantDenied proves a tenant-scoped caller naming
@@ -257,7 +263,7 @@ func TestHandleGetTenant_CrossTenantDenied(t *testing.T) {
 		tenantAdminRequest(t, "xkms.getTenant", TenantIDParams{TenantID: "other-tenant"}))
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, seal.ErrTenantNotFound),
+	assert.True(t, errors.Is(err, qrdbsdk.ErrTenantMissing),
 		"cross-tenant access must report the same refusal a genuine miss would")
 }
 
@@ -339,7 +345,7 @@ func TestHandleDeleteTenant_CrossTenantDenied(t *testing.T) {
 		tenantAdminRequest(t, "xkms.deleteTenant", TenantIDParams{TenantID: "other-tenant"}))
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, seal.ErrTenantNotFound))
+	assert.True(t, errors.Is(err, qrdbsdk.ErrTenantMissing))
 	_, stillThere := fake.tenants["other-tenant"]
 	assert.True(t, stillThere, "a denied cross-tenant delete must never reach the service layer")
 }
@@ -371,7 +377,7 @@ func TestHandleTenantBarrierInit_CrossTenantDenied(t *testing.T) {
 		}))
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, seal.ErrTenantNotFound))
+	assert.True(t, errors.Is(err, qrdbsdk.ErrTenantMissing))
 	assert.Empty(t, fake.initTenantID, "a denied cross-tenant init must never reach the service layer")
 }
 
@@ -412,7 +418,7 @@ func TestHandleTenantBarrierUnseal_CrossTenantDenied(t *testing.T) {
 		}))
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, seal.ErrTenantNotFound))
+	assert.True(t, errors.Is(err, qrdbsdk.ErrTenantMissing))
 	assert.Empty(t, fake.unsealTenantID, "a denied cross-tenant unseal must never reach the service layer")
 }
 
@@ -437,7 +443,7 @@ func TestHandleTenantBarrierStatus_CrossTenantDenied(t *testing.T) {
 		tenantAdminRequest(t, "xkms.tenantBarrierStatus", TenantIDParams{TenantID: "other-tenant"}))
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, seal.ErrTenantNotFound))
+	assert.True(t, errors.Is(err, qrdbsdk.ErrTenantMissing))
 }
 
 func TestHandleUpdateTenantEntitlements_Success(t *testing.T) {
@@ -488,25 +494,51 @@ func TestHandleUpdateTenantQuotas_RequiresTenantID(t *testing.T) {
 	assert.Contains(t, err.Error(), "tenant_id")
 }
 
-// TestTenantAdminAccessDenied covers tenantAdminAccessDenied's own decision
-// table directly, independent of any handler.
-func TestTenantAdminAccessDenied(t *testing.T) {
-	tests := []struct {
-		name     string
-		identity *auth.Identity
-		tenantID string
-		want     bool
-	}{
-		{"nil identity may address any tenant", nil, "tenant-a", false},
-		{"system tenant identity may address any tenant", &auth.Identity{TenantID: qrdbsdk.SystemTenantID}, "tenant-a", false},
-		{"same tenant is allowed", &auth.Identity{TenantID: "tenant-a"}, "tenant-a", false},
-		{"different tenant is denied", &auth.Identity{TenantID: "tenant-a"}, "tenant-b", true},
-		{"empty target tenant is never cross-tenant", &auth.Identity{TenantID: "tenant-a"}, "", false},
-	}
+// TestHandleGetTenant_CrossTenantRefusalMatchesGenuineMiss proves the MCP
+// rendering of XKMSService's tenant binding refusal is byte-for-byte the
+// answer a nonexistent tenant gets: same JSON-RPC code, same message. A
+// tenant-scoped probe therefore cannot tell another tenant's ID from an
+// unused one.
+func TestHandleGetTenant_CrossTenantRefusalMatchesGenuineMiss(t *testing.T) {
+	fake := newFakeTenantServicer()
+	fake.tenants["other-tenant"] = &qrdbsdk.ServiceTenantInfo{ID: "other-tenant", Name: "Other"}
+	server := newTenantAdminServer(t, fake)
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, tenantAdminAccessDenied(tc.identity, tc.tenantID))
-		})
-	}
+	_, refused := server.handleGetTenant(scopedCtx("tenant-a"),
+		tenantAdminRequest(t, "xkms.getTenant", TenantIDParams{TenantID: "other-tenant"}))
+	_, missing := server.handleGetTenant(systemCtx(),
+		tenantAdminRequest(t, "xkms.getTenant", TenantIDParams{TenantID: "no-such-tenant"}))
+
+	var refusedErr, missingErr *KeyOpError
+	require.ErrorAs(t, refused, &refusedErr)
+	require.ErrorAs(t, missing, &missingErr)
+	assert.Equal(t, sdkssh.JSONRPCCodeNotFound, refusedErr.Code)
+	assert.Equal(t, missingErr.Code, refusedErr.Code)
+	assert.Equal(t, missingErr.Error(), refusedErr.Error())
+}
+
+// TestHandleUpdateTenantPlan_TenantScopedRefused proves a tenant-scoped
+// caller cannot change even its OWN tenant's entitlements or quotas: plan
+// management is platform-only, and the refusal is the not-found answer, never
+// reaching the tenant service.
+func TestHandleUpdateTenantPlan_TenantScopedRefused(t *testing.T) {
+	fake := newFakeTenantServicer()
+	server := newTenantAdminServer(t, fake)
+
+	_, err := server.handleUpdateTenantEntitlements(scopedCtx("tenant-a"),
+		tenantAdminRequest(t, "xkms.updateTenantEntitlements", transport.UpdateTenantEntitlementsRequest{
+			TenantID: "tenant-a", Entitlements: transport.TenantEntitlements{AllowDedicatedRaft: true},
+		}))
+	var keyOpErr *KeyOpError
+	require.ErrorAs(t, err, &keyOpErr)
+	assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyOpErr.Code)
+
+	_, err = server.handleUpdateTenantQuotas(scopedCtx("tenant-a"),
+		tenantAdminRequest(t, "xkms.updateTenantQuotas", transport.UpdateTenantQuotasRequest{
+			TenantID: "tenant-a", Quotas: transport.TenantQuotas{MaxKeys: 1_000_000},
+		}))
+	require.ErrorAs(t, err, &keyOpErr)
+	assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyOpErr.Code)
+
+	assert.Empty(t, fake.planTenantID, "a refused plan change must never reach the tenant service")
 }

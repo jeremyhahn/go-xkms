@@ -20,19 +20,62 @@ client. `Authorize` returns `nil` (allowed) whenever `!Enabled()`;
 `rbac.Authorize` after normalizing an empty `identity.TenantID` to
 `qrdbsdk.SystemTenantID`.
 
-### `pkg/auth/rolemembership.go` — role membership
+`Authorize` binds the **caller's own tenant** as the request's target tenant
+(`pkg/auth/authorize.go:61`). It therefore cannot tell whether a tenant ID
+*named in the request* belongs to the caller: a Tenant Admin holding the
+self-scoped `tenants:*` / `tenant_barrier:*` grants passes the gate for a
+request naming any tenant. Confining that is the job of the service-layer
+tenant binding below, not of the transports.
+
+### `pkg/xkms/tenant_binding.go` — the tenant binding
 
 ```go
+type TenantBindingError struct {
+	Op             string
+	CallerTenantID string
+	TargetTenantID string // "" is the system scope
+}
+func (e *TenantBindingError) Error() string // qrdbsdk.ErrTenantMissing's message, verbatim
+func (e *TenantBindingError) Unwrap() error // qrdbsdk.ErrTenantMissing
+```
+
+`bindTenantTarget(ctx, op, target)` (`pkg/xkms/tenant_binding.go:67`) admits
+a cross-tenant identity (`auth.IsCrossTenant`: no identity, an empty tenant,
+or the reserved system tenant) for any target, and a tenant-scoped identity
+only when `target` is its own tenant; an empty target is the system scope and
+is refused to a tenant-scoped caller. `requirePlatformScope(ctx, op, target)`
+(`:80`) admits only a cross-tenant identity. Both refuse with a
+`*TenantBindingError` (`:34`), which is exactly what the composed go-qrdb
+TenantService returns for an unknown tenant: same sentinel, same message
+(`:46`, `:52`). Every transport already answers that sentinel with its
+not-found status, so a foreign tenant ID is indistinguishable from an unused
+one. The fields exist for server-side diagnostics (`errors.As`) and are never
+rendered.
+
+The binding is applied once, in `XKMSService`, and no transport repeats it:
+
+| Method | Check | Site |
+|---|---|---|
+| `GetTenant` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:94` |
+| `ListTenants` | filters to the caller's tenant (`visibleToCaller`) | `pkg/xkms/servicer_tenant.go:127` |
+| `DeleteTenant` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:144` |
+| `TenantBarrierInit` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:191` |
+| `TenantBarrierUnseal` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:246` |
+| `TenantBarrierStatus` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:283` |
+| `UpdateTenantEntitlements` | `requirePlatformScope` | `pkg/xkms/servicer_tenant.go:313` |
+| `UpdateTenantQuotas` | `requirePlatformScope` | `pkg/xkms/servicer_tenant.go:340` |
+| `BarrierEnableEncryption` | `bindTenantTarget` (empty `TenantID` = system barrier) | `pkg/xkms/servicer_barrier.go:310` |
+| `SignCSR` | `bindTenantTarget` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:178` |
+### `pkg/auth/rolemembership.go` — role membership
+
 var ErrRoleClientRequired error
 
 type RoleResolutionError struct {
 	TenantID string
 	Role     string
 	Err      error
-}
 
 func HoldsSystemRole(ctx context.Context, roles qrdbtransport.RoleClient, identity *Identity, roleName string) (bool, error)
-```
 
 `HoldsSystemRole` (`pkg/auth/rolemembership.go:71`) reports whether the
 identity holds the named qrdb system role of **its own** tenant. It resolves
@@ -67,7 +110,8 @@ The full resource and action list, verbatim from the constants (this file is
 
 **Actions:** `sign`, `verify`, `encrypt`, `decrypt`, `create`, `rotate`,
 `delete`, `list`, `get`, `import`, `export`, `wrap`, `unwrap`, `derive`,
-`generate`, `revoke`, `read`, `read:cross`, `update`, `write`, `use`, `disable`, `status`,
+`generate`, `revoke`, `read`, `read:cross`, `update`, `set_entitlements`, `set_quotas`,
+`write`, `use`, `disable`, `status`,
 `capabilities`, `bootstrap`, `seal`, `unseal`, `rekey`, `rotate_root_key`,
 `generate_recovery`, `recover_with_keys`, `initialize_shamir`,
 `unseal-share`, `enable_encryption`, `init`, `claim_cert`,
@@ -226,6 +270,21 @@ specific permission before assuming a non-Admin role holds it.
   serves certificates when no `UserStore` is configured — a `UserStore`
   configuration never falls back to certificate fields at all, whether the
   refusal is disablement, policy exclusion, or an unbound certificate.
+- **A tenant ID taken from a request is bound in `XKMSService`, never in a
+  transport.** The RBAC gate cannot do it (see `Authorize` above); a
+  transport-level copy is a second owner that drifts. A new service method
+  that targets a caller-supplied tenant calls `bindTenantTarget` (or
+  `requirePlatformScope`) and gets a row in the table above.
+- **Plan management is platform-only.** Entitlements and quotas are gated on
+  qrdb's dedicated `tenants:set_entitlements` / `tenants:set_quotas`
+  (`pkg/auth/permissions.go:154-155`), never `tenants:update`, on every
+  transport: `pkg/api/rest/routes.go:293-294`, `pkg/api/mcp/authz.go:239-240`,
+  `pkg/api/grpc/service_custodian_share_tenant.go:896,922`, and the
+  `qrdb.v1.permission` options at `pkg/api/grpc/proto/xkmsv1/xkms.proto:647,654`.
+  Because both permissions are self-scoped in qrdb and qrdb's built-in Admin
+  role grants `tenants:set_entitlements`, the RBAC gate alone would still
+  let a Tenant Admin change its own plan; `requirePlatformScope` is what
+  refuses it.
 - **No authorization decision compares `Identity.Roles` against a role
   name.** Identities carry role identifiers, so a name comparison never
   matches a real grant and does match an unverified token claim
@@ -266,6 +325,7 @@ specific permission before assuming a non-Admin role holds it.
 | `*AuthMethodNotPermittedError{Username, TenantID, Method, Permitted}` | `pkg/auth/errors.go:58` | the certificate resolved to an active account whose permitted-method policy excludes `mtls`; mirrors qrdb's `auth/middleware` error of the same name |
 | `ErrCertNotBound` | `pkg/auth/errors.go:48` | mTLS authenticator with a `UserStore`: the client certificate's SPKI thumbprint is bound to no user. The request is unauthenticated (REST 401), and the gate never runs |
 | `*UserLookupError{Err}` | `pkg/auth/errors.go:85` | mTLS authenticator with a `UserStore`: the store failed for any reason other than a definite not-found. It fails closed, and `Err` carries the store's error |
+| `*xkms.TenantBindingError` | `pkg/xkms/tenant_binding.go:34` | a tenant-scoped caller named another tenant (or the system scope), or asked for a plan change; unwraps to `qrdbsdk.ErrTenantMissing` and renders as not-found on every transport |
 | qrdb's `PermissionDeniedError` | returned by `rbac.Authorize` | grant missing, or tenant scope gate rejects the request |
 | `ErrAuthorizerRequired` | `pkg/api/rest/errors.go` | `rest.NewServer` refuses to construct when `EnableRBAC` is true but no usable authorizer was supplied — fails closed at construction, never falls back to allow-all |
 | `*ErrUnknownRole{Role}` | `pkg/xkms/errors.go` | `CreateUser`'s role name does not match any existing qrdb role, wrapped in `*ErrUserOperation{Operation: "resolve role"}` |
@@ -389,6 +449,21 @@ re-exported verbatim so a downstream consumer needs a single import.
   and `pkg/xkms/servicer_audit_tenant_test.go`. The audit tests decide
   `audit:read:cross` from qrdb's real built-in grant table
   (`qrdbsdk.HasPermissionRoleGrant`) and apply its `ScopeCross` rule.
+- **Tenant binding** — `pkg/xkms/tenant_binding_test.go` drives the service
+  layer against go-qrdb's real TenantService over an in-memory barrier:
+  tenant A → B refused as not-found for get, delete, barrier init / unseal /
+  status and both plan changes; the refusal equals a genuine miss; A → A
+  allowed except plan changes; the system identity reaches every tenant;
+  `ListTenants` is filtered; `BarrierEnableEncryption` and `SignCSR` bind
+  their targets. Transport mapping to not-found is pinned per transport:
+  `pkg/api/rest/handlers_tenant_test.go`
+  (`TestTenantHandlers_CrossTenantRefusalMatchesGenuineMiss`,
+  `TestTenantHandlers_PlanChangeRefusedForTenantScope`),
+  `pkg/api/grpc/service_tenant_isolation_test.go`
+  (`TestTenantRPCs_CrossTenantBinding`), and
+  `pkg/api/mcp/handlers_tenant_admin_test.go`
+  (`TestHandleGetTenant_CrossTenantRefusalMatchesGenuineMiss`,
+  `TestHandleUpdateTenantPlan_TenantScopedRefused`).
 - **Role identifiers, against a real node** — `testutil.NewFirstBootNode`
   (`pkg/testutil/firstbootnode.go:50`) boots an in-memory qrdb node and runs
   qrdb's own first-boot. `ProvisionTenant` (`:95`) adds a tenant with its

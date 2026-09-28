@@ -17,9 +17,7 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
 // tenantAdminSuccess is the uniform success envelope for a tenant mutation
@@ -41,31 +39,6 @@ func tenantIDParam(req *JSONRPCRequest) (string, error) {
 		return "", &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "tenant_id is required"}}
 	}
 	return params.TenantID, nil
-}
-
-// tenantAdminAccessDenied reports whether identity is a tenant-scoped
-// identity naming a tenant other than tenantID. It mirrors REST's
-// isCrossTenantAccess (pkg/api/rest/handlers_tenant.go): a nil identity or
-// one scoped to the reserved system tenant (auth.IsCrossTenant) may address
-// every tenant; a genuinely tenant-scoped identity may only address its own.
-func tenantAdminAccessDenied(identity *auth.Identity, tenantID string) bool {
-	if auth.IsCrossTenant(identity) || tenantID == "" {
-		return false
-	}
-	return identity.TenantID != tenantID
-}
-
-// refuseCrossTenantAdmin returns the anti-enumeration refusal REST issues
-// (seal.ErrTenantNotFound) when the caller is tenant-scoped to a tenant other
-// than tenantID, and nil otherwise. Reporting the identical error a genuine
-// miss produces -- rather than a distinct "forbidden" -- keeps a cross-tenant
-// probe indistinguishable from a nonexistent tenant ID, exactly as REST's
-// GetTenantHandler/DeleteTenantHandler/TenantBarrier*Handler comment records.
-func refuseCrossTenantAdmin(ctx context.Context, tid string) error {
-	if tenantAdminAccessDenied(auth.GetIdentity(ctx), tid) {
-		return mapTenantError(seal.ErrTenantNotFound, "tenant admin")
-	}
-	return nil
 }
 
 // handleCreateTenant handles the xkms.createTenant method: provisions a
@@ -95,14 +68,11 @@ func (s *Server) handleCreateTenant(ctx context.Context, req *JSONRPCRequest) (i
 
 // handleGetTenant handles the xkms.getTenant method: retrieves a single
 // tenant's metadata by ID. A tenant-scoped caller naming another tenant
-// receives the same refusal a nonexistent tenant ID would, matching REST's
-// GetTenantHandler anti-enumeration behavior.
+// receives the same not-found refusal a nonexistent tenant ID would; the
+// binding is XKMSService's (pkg/xkms/tenant_binding.go).
 func (s *Server) handleGetTenant(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	tid, err := tenantIDParam(req)
 	if err != nil {
-		return nil, err
-	}
-	if err := refuseCrossTenantAdmin(ctx, tid); err != nil {
 		return nil, err
 	}
 
@@ -116,37 +86,23 @@ func (s *Server) handleGetTenant(ctx context.Context, req *JSONRPCRequest) (inte
 
 // handleListTenants handles the xkms.listTenants method: returns every
 // tenant a system-scoped caller may see, or only the caller's own tenant for
-// a tenant-scoped identity, matching REST's ListTenantsHandler filter. Takes
-// no params.
+// a tenant-scoped identity (XKMSService.ListTenants applies the filter).
+// Takes no params.
 func (s *Server) handleListTenants(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
 	resp, err := s.xkmsService.ListTenants(ctx)
 	if err != nil {
 		return nil, mapTenantError(err, "list tenants")
 	}
 
-	identity := auth.GetIdentity(ctx)
-	if identity != nil && !auth.IsCrossTenant(identity) {
-		filtered := make([]transport.TenantInfo, 0, len(resp.Tenants))
-		for _, t := range resp.Tenants {
-			if t.ID == identity.TenantID {
-				filtered = append(filtered, t)
-			}
-		}
-		resp.Tenants = filtered
-	}
-
 	return resp, nil
 }
 
 // handleDeleteTenant handles the xkms.deleteTenant method: removes a tenant.
-// A tenant-scoped caller naming another tenant receives the same refusal a
-// nonexistent tenant ID would, matching REST's DeleteTenantHandler.
+// A tenant-scoped caller naming another tenant receives the same not-found
+// refusal a nonexistent tenant ID would (XKMSService's tenant binding).
 func (s *Server) handleDeleteTenant(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	tid, err := tenantIDParam(req)
 	if err != nil {
-		return nil, err
-	}
-	if err := refuseCrossTenantAdmin(ctx, tid); err != nil {
 		return nil, err
 	}
 
@@ -161,8 +117,8 @@ func (s *Server) handleDeleteTenant(ctx context.Context, req *JSONRPCRequest) (i
 // initializes a tenant's own barrier (Phase 2 of the two-phase model) with
 // the tenant admin's own caller-supplied credentials -- the server never
 // generates a tenant secret. A tenant-scoped caller naming another tenant
-// receives the same refusal a nonexistent tenant ID would, matching REST's
-// TenantBarrierInitHandler. On success it reports the resulting barrier
+// receives the same not-found refusal a nonexistent tenant ID would
+// (XKMSService's tenant binding). On success it reports the resulting barrier
 // status, exactly as the REST handler does.
 func (s *Server) handleTenantBarrierInit(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.TenantBarrierInitRequest
@@ -171,9 +127,6 @@ func (s *Server) handleTenantBarrierInit(ctx context.Context, req *JSONRPCReques
 	}
 	if params.TenantID == "" {
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "tenant_id is required"}}
-	}
-	if err := refuseCrossTenantAdmin(ctx, params.TenantID); err != nil {
-		return nil, err
 	}
 
 	if err := s.xkmsService.TenantBarrierInit(ctx, &params); err != nil {
@@ -190,8 +143,8 @@ func (s *Server) handleTenantBarrierInit(ctx context.Context, req *JSONRPCReques
 
 // handleTenantBarrierUnseal handles the xkms.tenantBarrierUnseal method:
 // unseals a tenant's own barrier using caller-supplied recovery material.
-// A tenant-scoped caller naming another tenant receives the same refusal a
-// nonexistent tenant ID would, matching REST's TenantBarrierUnsealHandler.
+// A tenant-scoped caller naming another tenant receives the same not-found
+// refusal a nonexistent tenant ID would (XKMSService's tenant binding).
 // On success it reports the resulting barrier status, exactly as the REST
 // handler does.
 func (s *Server) handleTenantBarrierUnseal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
@@ -201,9 +154,6 @@ func (s *Server) handleTenantBarrierUnseal(ctx context.Context, req *JSONRPCRequ
 	}
 	if params.TenantID == "" {
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "tenant_id is required"}}
-	}
-	if err := refuseCrossTenantAdmin(ctx, params.TenantID); err != nil {
-		return nil, err
 	}
 
 	if err := s.xkmsService.TenantBarrierUnseal(ctx, &params); err != nil {
@@ -221,14 +171,11 @@ func (s *Server) handleTenantBarrierUnseal(ctx context.Context, req *JSONRPCRequ
 // handleTenantBarrierStatus handles the xkms.tenantBarrierStatus method:
 // reports a tenant's own barrier status (sealed/initialized, active
 // strategy, hardware-backing, Shamir quorum). A tenant-scoped caller naming
-// another tenant receives the same refusal a nonexistent tenant ID would,
-// matching REST's TenantBarrierStatusHandler.
+// another tenant receives the same not-found refusal a nonexistent tenant ID
+// would (XKMSService's tenant binding).
 func (s *Server) handleTenantBarrierStatus(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	tid, err := tenantIDParam(req)
 	if err != nil {
-		return nil, err
-	}
-	if err := refuseCrossTenantAdmin(ctx, tid); err != nil {
 		return nil, err
 	}
 
@@ -242,10 +189,9 @@ func (s *Server) handleTenantBarrierStatus(ctx context.Context, req *JSONRPCRequ
 
 // handleUpdateTenantEntitlements handles the xkms.updateTenantEntitlements
 // method: updates which isolation tiers and dedicated-storage features a
-// tenant's plan permits. REST's UpdateTenantEntitlementsHandler applies no
-// cross-tenant restriction of its own -- entitlement management is a
-// platform-admin operation gated by RBAC alone -- and neither does this
-// handler.
+// tenant's plan permits. The method requires tenants:set_entitlements
+// (authz.go), and XKMSService admits only a cross-tenant identity: a
+// tenant-scoped caller is refused with not-found, even for its own tenant.
 func (s *Server) handleUpdateTenantEntitlements(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.UpdateTenantEntitlementsRequest
 	if err := decodeParams(req, &params); err != nil {
@@ -264,10 +210,10 @@ func (s *Server) handleUpdateTenantEntitlements(ctx context.Context, req *JSONRP
 }
 
 // handleUpdateTenantQuotas handles the xkms.updateTenantQuotas method:
-// updates a tenant's resource quotas. REST's UpdateTenantQuotasHandler
-// applies no cross-tenant restriction of its own -- quota management is a
-// platform-admin operation gated by RBAC alone -- and neither does this
-// handler.
+// updates a tenant's resource quotas. The method requires
+// tenants:set_quotas (authz.go), and XKMSService admits only a cross-tenant
+// identity: a tenant-scoped caller is refused with not-found, even for its
+// own tenant.
 func (s *Server) handleUpdateTenantQuotas(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.UpdateTenantQuotasRequest
 	if err := decodeParams(req, &params); err != nil {

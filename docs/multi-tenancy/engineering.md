@@ -1,6 +1,6 @@
 # Multi-Tenancy — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `sdk/go/transport`
 
@@ -63,6 +63,27 @@ a code change.
   error)` and rejects a `BarrierRegistry` configured without a `TenantService`
   composed on the `XKMSService`, so a misconfigured deployment fails server
   startup instead of exposing routes that 500 under load.
+- **A tenant ID named in a request is bound to the caller in
+  `XKMSService`, never in a transport** (go-xkms#1112). The RBAC gate binds
+  the caller's own tenant as its target (`pkg/auth/authorize.go:61`), so it
+  cannot tell whether a *requested* tenant is the caller's.
+  `bindTenantTarget` (`pkg/xkms/tenant_binding.go:67`) admits a cross-tenant
+  identity (`auth.IsCrossTenant`) for any target and a tenant-scoped one only
+  for its own tenant; it guards `GetTenant`, `DeleteTenant`,
+  `TenantBarrierInit`, `TenantBarrierUnseal`, `TenantBarrierStatus`
+  (`pkg/xkms/servicer_tenant.go:94,144,191,246,283`),
+  `BarrierEnableEncryption` (`pkg/xkms/servicer_barrier.go:310`; an empty
+  `TenantID` is the system barrier and is refused to a tenant) and the SPIFFE
+  tenant of `SignCSR` (`pkg/xkms/servicer_ca.go:178`). `ListTenants` filters
+  to the caller's tenant (`pkg/xkms/servicer_tenant.go:127`). The gRPC
+  tenant RPCs no longer carry a barrier-registry fallback that bypassed the
+  servicer; with no `XKMSService` they answer `Unavailable`.
+- **Plan changes are platform-only** (go-xkms#1113).
+  `requirePlatformScope` (`pkg/xkms/tenant_binding.go:80`) refuses every
+  tenant-scoped caller, including one naming its own tenant
+  (`pkg/xkms/servicer_tenant.go:313,340`); the transports gate on
+  `tenants:set_entitlements` / `tenants:set_quotas`
+  (`pkg/auth/permissions.go:147-148`), never `tenants:update`.
 - **Isolation mode is fixed at creation.** There is no in-place upgrade from
   `prefix` to `barrier`; that is a data migration.
 - **A requested mode outside the tenant's entitlements is refused**, not
@@ -112,7 +133,8 @@ a code change.
 | isolation mode not entitled | the operator has not granted it |
 | quota exceeded | the tenant is at its limit for that resource |
 | tenant barrier sealed | not an error — a state, like the system barrier |
-| cross-tenant access | resolved as not-found, not as forbidden |
+| cross-tenant access | resolved as not-found, not as forbidden: `*xkms.TenantBindingError` (`pkg/xkms/tenant_binding.go:34`) unwraps to and renders as `qrdbsdk.ErrTenantMissing`, the error a genuine miss returns |
+| tenant-scoped plan change | the same not-found refusal, even for the caller's own tenant |
 
 **Fail closed:** an unentitled mode, an exceeded quota, or a sealed tenant
 barrier all refuse. Cross-tenant access surfaces as not-found rather than
@@ -140,8 +162,17 @@ resolution is `pkg/xkms/backend_tenant.go`.
 - **Middleware** — `pkg/api/rest/middleware_tenant_test.go`,
   `middleware_tenant_dao_test.go`; `pkg/api/grpc/interceptor_tenant_test.go`,
   `interceptor_tenant_stream_test.go`; `pkg/api/{grpc,unix,mcp}/tenant*_test.go`.
-- **Handlers** — `pkg/api/rest/handlers_tenant_test.go`,
-  `handlers_tenant_helpers_test.go`.
+- **Tenant binding** — `pkg/xkms/tenant_binding_test.go` (service layer,
+  against go-qrdb's real TenantService over an in-memory barrier: A → B
+  refused as not-found for every tenant operation, refusal equals a genuine
+  miss, A → A allowed except plan changes, system identity reaches every
+  tenant, `ListTenants` filtered, enable-encryption and CSR targets bound).
+  Per-transport not-found mapping:
+  `pkg/api/rest/handlers_tenant_test.go`,
+  `pkg/api/grpc/service_tenant_isolation_test.go`
+  (`TestTenantRPCs_CrossTenantBinding`),
+  `pkg/api/mcp/handlers_tenant_admin_test.go`.
+- **Handlers** — `pkg/api/rest/handlers_tenant_test.go`.
 - **Scoped operations** — `pkg/api/rest/handlers_keyops_tenant_test.go`,
   `pkg/api/mcp/handlers_keyops_tenant_test.go`,
   `pkg/api/transport/{grpc,unix}/*_tenant_test.go`.

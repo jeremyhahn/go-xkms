@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	transport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -78,6 +79,9 @@ var caErrorStatusMap = map[error]int{
 	xkms.ErrInvalidEncodingPEM:   http.StatusBadRequest,
 	ca.ErrCRLNotFound:            http.StatusNotFound,
 	ca.ErrNotInitialized:         http.StatusServiceUnavailable,
+	// SignCSR's SPIFFE tenant is caller-supplied; the service's tenant
+	// binding refuses a foreign one as not-found (xkms.TenantBindingError).
+	qrdbsdk.ErrTenantMissing: http.StatusNotFound,
 }
 
 // CAHandlers provides HTTP handlers for the CA operations API.
