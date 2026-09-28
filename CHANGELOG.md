@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0-alpha] - 2026-09-27
+
+### Added
+
+- **A public-releasability gate: `make check-public-literals` fails on lab addresses, fleet host names or owner paths in the tree, and CI's lint job runs it** (#1030). The patterns are written in exactly one place, the header of `scripts/check-public-literals.sh`, the only file allowed to contain them apart from the agent-instruction files. The existing occurrences are scrubbed. Docs and fixtures now use RFC 5737 addresses, `example.com` hosts and repository-relative or `$HOME` paths. The ACME integration compose file mounts its sibling repositories by relative path, as it already did for its other siblings. Verified by `test/scripts/check-public-literals.test.sh` (a planted literal fails the gate, and a clean tree passes).
+- **Several xkey instances can run side by side under one UID, one per agent, each with its own socket and its own paired Chrome profile** (#1033). The IPC socket now derives from `XKEY_HOME` when it is set (`<XKEY_HOME>/run/xkey.sock`, or a hashed runtime-dir path when that would exceed the `sun_path` limit). `--socket` is now one persistent root flag bound to `XKEY_IPC_SOCKET` and honoured by every command, replacing the per-command copies on `fido2`, `extension serve` and `extension host`. The `fido2` daemon listens exactly where its clients resolve. The `fido2.socket` config key is removed: use `--socket` or `XKEY_IPC_SOCKET`. `xkey extension install|uninstall chrome --profile-dir <dir>` writes a per-profile native-messaging manifest whose launcher pins `XKEY_HOME`. Files: `xkey/pkg/ipc/socket.go`, `xkey/cmd/xkey/cmd/{root,state_source,extension,fido2}.go` and the commands that took `--socket`, `xkey/pkg/nativemsg/manifest.go`; `SKILL.md` documents running as one of several instances. Verified by `instance_isolation_test.go` (two daemons under one UID; a client naming B never sees A's credential), `extension_profile_dir_test.go` and `profile_manifest_test.go`.
+- **`xkey provision --agent <name>` sets up a complete xkey instance for an agent in one unattended step** (#1033). In one command it:
+  - generates the agent's SSH service key;
+  - initializes the barrier;
+  - sets the host PIN service's SO and user PINs;
+  - initializes the FIDO2 token (with persistent storage);
+  - generates the four primary PIV slots;
+  - records the display name in the instance's own `config.yaml`;
+  - optionally pairs a Chrome profile (`--chrome-profile-dir`).
+
+  The target home must be named with `--home` or `XKEY_HOME`, never the operator's default home, and an initialized home is refused without `--force`. The command takes three distinct secrets through xkey's existing inputs: the user PIN (`--pin-stdin`/`XKEY_PIN`), the SO PIN (`--so-pin-stdin`/`XKEY_SO_PIN`) and the barrier password (`--barrier-password[-file]`/`XKEY_BARRIER_PASSWORD`). A missing one is refused by name, and no secret stands in for another. It prints human-readable output or `--json` with no secrets. Verified by `provision_test.go`, including a four-way check that the SO PIN verifies only as SO and the user PIN only as user.
+
+### Fixed
+
+- **The phone bridge's OATH, PIV and sync methods now do real work, instead of reporting success and doing nothing** (#690). Of the 13 `remote.*` bridge handlers that were placeholders:
+  - `remote.oathAdd`/`oathGenerate` now use the configured `oath.Store` and generator;
+  - `remote.pivListSlots`/`pivGetCert` use the per-backend `xkms.PIVCertificateStorage`;
+  - `remote.pivSign` signs with the slot's key through the ordinary key backend;
+  - the five `remote.sync*` methods use `sync.Service`: union-merge for the trust store, last-modified-wins for OATH and passwords.
+
+  `xkey device listen` wires these to the same stores `xkey oath`, `xkey piv` and `xkey device sync` use (`buildListenBridgeConfig`). A handler without its service now answers `ErrorCodeFeatureUnavailable` (-32035). The three `remote.*Backup` methods now return that error too, instead of a fake success, until the backup key source is decided. The server now maps `ErrKeyExists` to its RPC code; before, it fell through to Internal. Files: `xkey/pkg/pairing/bridge_{oath,piv,sync,backup}.go`, `bridge.go`, `errors.go`, `protocol.go`, `xkey/cmd/xkey/cmd/device_listen.go`; `oath.GenerateCredentialID` and `sync.Checksum` are exported. Verified by per-method round trips through `Bridge.HandleRequest`, and by `device_listen_collaborators_test.go`, where an OATH add and a trust-store sync through the listen-built bridge persist to the real on-disk stores.
+- **`xkey fido2` with the phone backend now serves the same OATH, PIV and sync bridge methods as `xkey device listen`** (#1041). `connectXKMSdBridge` (`xkey/cmd/xkey/cmd/fido2_phone_bridge.go`) used to build its own `pairing.BridgeConfig` with only TPM enrollment wired, so a phone paired through it got `ErrorCodeFeatureUnavailable` for those methods. It now calls the same `buildListenBridgeConfig` as `device listen`, and closes the collaborators on shutdown. Verified by `fido2_phone_bridge_collaborators_test.go`.
+- **The PKCS#11 module now reaches the running xkey through the same socket resolution as every xkey command** (#1038). `xkey/pkg/pkcs11/ipc_transport.go` hard-coded `~/.xkey/run/xkey.sock`, so with `XKEY_HOME` unset it looked somewhere other than where the daemon listened, and it couldn't be pointed at one of several instances. It now uses `ipc.DefaultSocketPath()`: `XKEY_IPC_SOCKET`, then `<XKEY_HOME>/run/xkey.sock`, then the XDG default. Verified by `ipc_transport_test.go`.
+- **Fixed a data race between the standalone TrustedCA's `Serve` and `Shutdown` on the tenant rate limiter** (#706). `Serve` assigned `tca.tenantRateLimiter` without holding `tca.mu`. `Shutdown`, which a caller may invoke while `Serve`'s setup is still running, reads and clears it under that lock. The limiter is now built locally and published under `tca.mu`, matching `restService` and `acmeServer` in the same function (`pkg/acme/client/trustedca.go`). Found by a new `-race` test that drives a real HTTPS request through the tenant-auth and rate-limit middleware.
+
 ## [0.31.0-alpha] - 2026-09-25
 
 ### Security
