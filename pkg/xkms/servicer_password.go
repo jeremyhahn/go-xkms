@@ -56,16 +56,6 @@ var (
 	// credential to check, so the unlock fails closed instead of proceeding
 	// without one.
 	ErrPasswordStoreUserPINNotProvisioned = errors.New("keystore: password store unlock requires a provisioned user PIN: enable PIN management (pin.enabled=true) and set the user PIN before unlocking")
-
-	// ErrPasswordDecryptNotSupported is returned when a caller requests an
-	// on-demand decrypted read. The stores reachable through this servicer
-	// (staticpw.BackendStore and staticpw.ScopedStore) are barrier backed:
-	// confidentiality is provided by the barrier at the storage layer and Get
-	// already returns the entry exactly as it was stored. Neither store
-	// implements a field-level decryption entry point, so the request is
-	// refused rather than answered with the stored value while the flag is
-	// quietly dropped.
-	ErrPasswordDecryptNotSupported = errors.New("keystore: password store does not support on-demand decryption: entries are returned as stored; do not set decrypt or user_pin on a get request")
 )
 
 // resolvePasswordStore returns the appropriate password store for the request
@@ -195,11 +185,9 @@ func (s *XKMSService) PasswordAdd(ctx context.Context, req *transport.PasswordAd
 
 // PasswordGet retrieves a password entry from the store.
 //
-// The request's Decrypt and UserPIN fields select an on-demand decrypted read,
-// which the stores reachable here cannot perform (see
-// ErrPasswordDecryptNotSupported). Either field being set is therefore an
-// error: honouring the request is impossible, and answering it with the stored
-// value would silently drop a security-relevant field of the request.
+// Entries are returned exactly as stored: confidentiality at rest is
+// provided by the tenant barrier at the storage layer, not by a
+// per-request decryption step, so Get has nothing further to decrypt.
 func (s *XKMSService) PasswordGet(ctx context.Context, req *transport.PasswordGetRequest) (*transport.PasswordGetResponse, error) {
 	store, err := s.resolvePasswordStore(ctx)
 	if err != nil {
@@ -207,9 +195,6 @@ func (s *XKMSService) PasswordGet(ctx context.Context, req *transport.PasswordGe
 	}
 	if req == nil {
 		return nil, ErrNilRequest
-	}
-	if req.Decrypt || req.UserPIN != "" {
-		return nil, ErrPasswordDecryptNotSupported
 	}
 
 	pw, err := store.Get(req.ID)

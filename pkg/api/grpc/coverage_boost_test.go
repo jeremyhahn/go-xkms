@@ -196,38 +196,13 @@ func TestPasswordGet_WithPasswordStore(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Decrypt is deliberately not set: this test asserts the plain get
-	// round-trip. PasswordGet returns entries as stored and rejects a request
-	// that sets decrypt or user_pin (see TestPasswordGet_DecryptIsRejected),
-	// so passing Decrypt here would assert a behaviour that no longer exists.
+	// PasswordGet returns entries exactly as stored: confidentiality at rest
+	// is provided by the tenant barrier, not by a per-request decryption
+	// step, so there is nothing beyond the plain get round-trip to assert.
 	getResp, err := service.PasswordGet(ctx, &pb.PasswordGetRequest{Id: addResp.Id})
 	require.NoError(t, err)
 	assert.Equal(t, "Get Test", getResp.Entry.Name)
 	assert.Equal(t, "test", getResp.Entry.Username)
-}
-
-// TestPasswordGet_DecryptIsRejected pins the capability boundary that replaced
-// the old behaviour of silently ignoring decrypt/user_pin. Dropping a
-// security-relevant field without telling the caller let a client believe it
-// had requested on-demand decryption when it had not, so both fields must now
-// be reported as unsupported rather than ignored.
-func TestPasswordGet_DecryptIsRejected(t *testing.T) {
-	service := setupTestWithPasswordStore(t)
-	defer xkms.Reset()
-
-	ctx := context.Background()
-
-	addResp, err := service.PasswordAdd(ctx, &pb.PasswordAddRequest{
-		Name: "Reject Test", Username: "test", Password: "pass123",
-	})
-	require.NoError(t, err)
-
-	// The gRPC PasswordGetRequest carries no user_pin field, so decrypt is the
-	// only way to reach the boundary over this transport.
-	_, err = service.PasswordGet(ctx, &pb.PasswordGetRequest{Id: addResp.Id, Decrypt: true})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-	assert.ErrorContains(t, err, "does not support on-demand decryption")
 }
 
 func TestPasswordList_WithPasswordStore(t *testing.T) {

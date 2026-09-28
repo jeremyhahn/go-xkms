@@ -3161,8 +3161,9 @@ message PasswordAddResponse {
 
 // PasswordGetRequest requests retrieval of a password entry.
 message PasswordGetRequest {
+  reserved 2;
+  reserved "decrypt";
   string id = 1;
-  bool decrypt = 2;
 }
 
 // PasswordGetResponse contains the password entry.

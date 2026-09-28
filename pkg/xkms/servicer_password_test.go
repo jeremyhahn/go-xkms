@@ -1418,48 +1418,12 @@ func TestPasswordStoreUnlock_NilRequest(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilRequest)
 }
 
-// --- PasswordGet decrypt request handling ---
+// --- PasswordGet session state handling ---
 
-// Decrypt is not implementable against a barrier-backed store, so it is
-// reported instead of being silently dropped while ciphertext is returned.
-func TestPasswordGet_DecryptRequestedFailsClosed(t *testing.T) {
-	svc := setupServiceWithPasswordStore(t)
-	ctx := context.Background()
-
-	addResp, err := svc.PasswordAdd(ctx, &transport.PasswordAddRequest{
-		Name: "Decrypt Me", Username: "user", Password: "pass",
-	})
-	require.NoError(t, err)
-
-	_, err = svc.PasswordGet(ctx, &transport.PasswordGetRequest{
-		ID:      addResp.ID,
-		Decrypt: true,
-	})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrPasswordDecryptNotSupported)
-}
-
-// A user PIN on a get request only means "decrypt this for me", so it is
-// refused for the same reason.
-func TestPasswordGet_UserPINRequestedFailsClosed(t *testing.T) {
-	svc := setupServiceWithPasswordStore(t)
-	ctx := context.Background()
-
-	addResp, err := svc.PasswordAdd(ctx, &transport.PasswordAddRequest{
-		Name: "PIN Me", Username: "user", Password: "pass",
-	})
-	require.NoError(t, err)
-
-	_, err = svc.PasswordGet(ctx, &transport.PasswordGetRequest{
-		ID:      addResp.ID,
-		UserPIN: testPasswordStoreUserPIN,
-	})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrPasswordDecryptNotSupported)
-}
-
-// A plain get (no decrypt, no PIN) still returns the entry as stored.
-func TestPasswordGet_WithoutDecryptReturnsEntry(t *testing.T) {
+// On an unlocked session, Get returns the entry exactly as stored:
+// confidentiality at rest is provided by the tenant barrier, not by a
+// per-request decryption step.
+func TestPasswordGet_UnlockedSessionReturnsEntry(t *testing.T) {
 	svc := setupServiceWithPasswordStore(t)
 	ctx := context.Background()
 
@@ -1472,4 +1436,16 @@ func TestPasswordGet_WithoutDecryptReturnsEntry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "pass", getResp.Password)
 	assert.False(t, getResp.Encrypted)
+}
+
+// On a locked tenant session, Get fails with the same typed
+// staticpw.ErrStoreLocked as every other password operation --
+// resolvePasswordStore is shared, so Get has no special case.
+func TestPasswordGet_LockedSessionReturnsErrStoreLocked(t *testing.T) {
+	svc, _ := setupServiceWithPasswordManager(t)
+	ctx := contextWithTenant("tenant-1")
+
+	_, err := svc.PasswordGet(ctx, &transport.PasswordGetRequest{ID: "does-not-matter"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, staticpw.ErrStoreLocked)
 }

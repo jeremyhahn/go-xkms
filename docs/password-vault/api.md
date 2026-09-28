@@ -1,6 +1,6 @@
 # Password Vault — API
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -49,22 +49,32 @@ matching the servicer verbatim (`PasswordAdd`, `PasswordGet`, ...). The tenth,
 `PasswordStoreSetAccessMode`, still returns `ErrNotSupported` — access-mode
 changes are scoped separately (go-xkms#691).
 
-## The plaintext boundary is in the request
+## `PasswordGet` returns entries exactly as stored
 
-`PasswordGet` returns the plaintext **only when the request asks for it**. That
-is a field on the request, not a separate endpoint, and it is what the CLI's
-`--decrypt` sets. `PasswordList` never returns plaintext under any parameter.
+There is no per-request decryption step and no plaintext/metadata split:
+`PasswordGet` returns the password field the same way on every call
+(`pkg/xkms/servicer_password.go:168`). Confidentiality at rest is provided by
+the tenant barrier at the storage layer, and every store reachable through
+this servicer -- `staticpw.BackendStore`, `staticpw.ScopedStore`,
+`staticpw.DAOStore` -- returns the entry as stored; none implements a
+field-level decryption entry point. `PasswordList` never returns plaintext
+under any parameter, matching `PasswordGet`.
 
-A client that wants metadata should not ask for plaintext — the read is
-audited either way, and the audit record is more useful when the two are
-distinguishable.
+An earlier revision of this API accepted `decrypt` and `user_pin` fields on
+the request and silently dropped them. They were removed (go-xkms#1061)
+rather than kept as accepted-but-ignored fields, since a client could not
+tell "the server did what I asked" from "the server ignored a
+security-relevant field."
 
-## Access mode gates every plaintext read
+## Access mode
 
-| Mode | What a `PasswordGet` with plaintext requires |
-|---|---|
-| `pin_per_operation` | the user PIN **on that request** |
-| `session_based` | a prior successful `PasswordStoreUnlock` |
+`PasswordStoreSetAccessMode` accepts `pin_per_operation` and `session_based`,
+but only `session_based` is reachable today: the strategy is fixed at
+composition time by which store is wired at startup, and
+`XKMSService.PasswordStoreSetAccessMode` only succeeds when the requested
+mode already matches the store's active mode
+(`pkg/xkms/servicer_password.go:452`-`474`). There is no store implementation
+of `pin_per_operation` (`pkg/staticpw/access.go:17`-`26`).
 
 `PasswordStoreStatus` reports which mode is in force and whether the store is
 unlocked, and **works while locked** — a client should call it before assuming
@@ -91,12 +101,18 @@ it passes; an expired entry is a signal to rotate.
 |---|---|---|---|
 | success | 200 | `OK` | `result` |
 | caller lacks the route's `passwords:*` permission | 403 | `PermissionDenied` | error object |
-| store locked, plaintext requested | 423 | `FailedPrecondition` | error object |
-| PIN required (`pin_per_operation`) | 401 | `Unauthenticated` | error object |
-| PIN invalid | 401 | `Unauthenticated` | error object |
+| store locked (any operation) | 423 | `FailedPrecondition` | error object |
+| unlock: user PIN required, none sent | 400 | `InvalidArgument` | error object |
+| unlock: user PIN not provisioned | 412 | `FailedPrecondition` | error object |
+| unlock: user PIN verification failed | 401 | `PermissionDenied` | error object |
 | entry not found **or out of scope** | 404 | `NotFound` | error object |
 | validation failure | 400 | `InvalidArgument` | JSON-RPC `-32602` |
 | vault not configured | route absent (404) | `Unimplemented` | error object |
+
+The three PIN rows apply to `PasswordStoreUnlock` only
+(`pkg/api/rest/password_handlers.go:769`-`784`,
+`pkg/api/grpc/service_password.go:437`-`450`); `PasswordGet` has no PIN
+parameter to validate.
 
 Out-of-scope entries return **404, not 403**, so entry existence is not
 enumerable across scopes and tenants. The `403` above is the permission gate,
@@ -110,8 +126,11 @@ what humans put in it; results are returned filtered rather than paged.
 
 ## Versioning and deprecation
 
-`/api/v1/passwords/*`, gRPC package `xkmsv1`. Nothing deprecated.
+`/api/v1/passwords/*`, gRPC package `xkmsv1`. This is a pre-release API: a
+capability that cannot work is removed outright rather than deprecated. The
+gRPC `PasswordGetRequest.decrypt` field (`2`) was removed this way in
+go-xkms#1061; its number and name are `reserved` in the proto
+(`pkg/api/grpc/proto/xkmsv1/xkms.proto:3163`-`3166`) and must not be reused.
 
-Two contracts callers rely on: plaintext being opt-in per request, and
-out-of-scope reporting as not-found. Both are security properties rather than
-conveniences.
+One contract callers rely on: out-of-scope entries reporting as not-found.
+That is a security property rather than a convenience.

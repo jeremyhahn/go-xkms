@@ -513,10 +513,7 @@ func TestPasswordGet_WithParams(t *testing.T) {
 		req  *transport.PasswordGetRequest
 	}{
 		{"minimal", &transport.PasswordGetRequest{ID: "pw-1"}},
-		{"decrypt", &transport.PasswordGetRequest{ID: "pw-1", Decrypt: true}},
-		{"user_pin", &transport.PasswordGetRequest{ID: "pw-1", UserPIN: "1234"}},
 		{"tenant", &transport.PasswordGetRequest{ID: "pw-1", TenantID: "t1"}},
-		{"all", &transport.PasswordGetRequest{ID: "pw-1", Decrypt: true, UserPIN: "1234", TenantID: "t1"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
