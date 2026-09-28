@@ -339,6 +339,54 @@ func sendStateMessage(t *testing.T, sockPath string, msg *Message) *Response {
 	return &resp
 }
 
+// TestClient_StateMethods_NilResultIsProtocolError covers the defensive
+// check each State* accessor runs after a successful, error-free state
+// query: a handler that reports success but leaves its own subject unset --
+// a well-behaved daemon should never do this, but the wire format does not
+// prevent it -- must surface as ErrProtocolError, not a nil-pointer panic on
+// the field the caller then dereferences.
+func TestClient_StateMethods_NilResultIsProtocolError(t *testing.T) {
+	t.Run("pin", func(t *testing.T) {
+		sockPath := startStateServer(t, &mockStateHandler{mockHandler: mockHandler{statusResp: OKResponse(ActionDaemonReady)}})
+		client := NewClient(sockPath)
+		defer func() { _ = client.Close() }()
+
+		_, err := client.StatePIN()
+		require.ErrorIs(t, err, ErrProtocolError)
+		assert.Contains(t, err.Error(), "no pin result")
+	})
+
+	t.Run("barrier", func(t *testing.T) {
+		sockPath := startStateServer(t, &mockStateHandler{mockHandler: mockHandler{statusResp: OKResponse(ActionDaemonReady)}})
+		client := NewClient(sockPath)
+		defer func() { _ = client.Close() }()
+
+		_, err := client.StateBarrier()
+		require.ErrorIs(t, err, ErrProtocolError)
+		assert.Contains(t, err.Error(), "no barrier result")
+	})
+
+	t.Run("password store", func(t *testing.T) {
+		sockPath := startStateServer(t, &mockStateHandler{mockHandler: mockHandler{statusResp: OKResponse(ActionDaemonReady)}})
+		client := NewClient(sockPath)
+		defer func() { _ = client.Close() }()
+
+		_, err := client.StatePasswordStore()
+		require.ErrorIs(t, err, ErrProtocolError)
+		assert.Contains(t, err.Error(), "no password_store result")
+	})
+
+	t.Run("password list", func(t *testing.T) {
+		sockPath := startStateServer(t, &mockStateHandler{mockHandler: mockHandler{statusResp: OKResponse(ActionDaemonReady)}})
+		client := NewClient(sockPath)
+		defer func() { _ = client.Close() }()
+
+		_, err := client.StatePasswordList()
+		require.ErrorIs(t, err, ErrProtocolError)
+		assert.Contains(t, err.Error(), "no password_list result")
+	})
+}
+
 func TestStateResult_OmitsUnsetSubjectsOnTheWire(t *testing.T) {
 	encoded, err := json.Marshal(&StateResult{Barrier: &BarrierStatusResult{Sealed: true}})
 	require.NoError(t, err)

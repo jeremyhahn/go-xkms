@@ -14,8 +14,10 @@
 package ipc
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,6 +102,25 @@ func TestEnsureSocketDir_RefusesExistingWideDirectoryWithoutRepairingIt(t *testi
 
 func TestEnsureSocketDir_RefusesForeignOwnedDirectory(t *testing.T) {
 	assert.ErrorIs(t, ensureSocketDir(privateDir(t), foreignUIDs()), ErrSocketDirInsecure)
+}
+
+func TestEnsureSocketDir_MkdirFailureUnderARegularFileIsReported(t *testing.T) {
+	// blocker is a regular file standing where a parent directory needs to
+	// be created; every path below it -- at any depth -- resolves to
+	// ENOTDIR, not ENOENT, so Mkdir's own failure (not fs.ErrExist) must be
+	// reported as ErrSocketCreateFailed rather than swallowed or mistaken
+	// for the "someone else already created it" race.
+	base := t.TempDir()
+	blocker := filepath.Join(base, "blocker")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+
+	dir := filepath.Join(blocker, "child", "grandchild")
+	err := ensureSocketDir(dir, trustedUIDs())
+	require.ErrorIs(t, err, ErrSocketCreateFailed)
+
+	_, statErr := os.Lstat(dir)
+	assert.True(t, os.IsNotExist(statErr) || errors.Is(statErr, syscall.ENOTDIR),
+		"grandchild must not exist: %v", statErr)
 }
 
 func TestEnsureSocketDir_RefusesSymlinkedDirectory(t *testing.T) {
