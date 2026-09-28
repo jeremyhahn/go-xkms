@@ -1,6 +1,6 @@
 # FROST Threshold Signing — User Guide
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## What this is for
 
@@ -121,6 +121,22 @@ xkmsctl frost list --format json
 xkmsctl frost info treasury-key --show-public-key    # group public key, this participant's ID
 xkmsctl frost delete treasury-key                    # prompts unless --force
 ```
+
+## How your secret share is protected at rest
+
+`xkmsctl frost keygen`/`import` never write a participant's secret share to
+disk in the clear. Under `--key-dir/frost/secrets`, xkmsctl runs a real
+software key-storage backend (the same one `xkmsd` uses for local software
+keys) and provisions a dedicated Ed25519 wrapping key on it the first time
+it runs; every secret share is then sealed under that key (AES-256-GCM,
+derived via HKDF) before it touches disk, and the public components under
+`--key-dir/frost/public` — group public key, verification shares, and each
+key's sealed secret-share envelope — never carry the share in recoverable
+form on their own. This is the same protection `xkmsd` applies when
+`backends.frost.secret_backend` names `tpm2`, `pkcs11`, or a cloud KMS: the
+mechanism differs by backend (TPM PCR-bound sealing, HSM/KMS envelope
+encryption, or the software HKDF+AES-GCM path this CLI uses), but every
+`secret_backend` protects the share the same way — none stores it verbatim.
 
 ## Things that will surprise you
 
