@@ -87,6 +87,10 @@ var ErrNoCredentials = errors.New("authenticator: no credentials")
 // ErrUnsupportedExtension indicates the requested extension is not supported.
 var ErrUnsupportedExtension = errors.New("authenticator: unsupported extension")
 
+// ErrUnsupportedOption indicates the request combines an option with a
+// feature that does not support it (CTAP2_ERR_UNSUPPORTED_OPTION).
+var ErrUnsupportedOption = errors.New("authenticator: unsupported option")
+
 // ErrUserPresenceRequired indicates user presence verification is required but not satisfied.
 var ErrUserPresenceRequired = errors.New("authenticator: user presence required")
 

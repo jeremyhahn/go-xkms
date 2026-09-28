@@ -1,6 +1,6 @@
 # FIDO2 Daemon and GUI Device Host — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `fido2` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `fido2` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 This file has two halves. The first documents the exported surface this
 folder actually owns: the daemon and GUI process composition. The second is a
@@ -151,10 +151,14 @@ security behavior that has no other home in the five-file docs.
 
 ### PIN protocol v1 and v2
 
-Both are implementations of the `PINProtocol` interface (`pin_protocol.go:35`);
-`pin_protocol_v1.go` and `pin_protocol_v2.go` are the two concrete types, and
-`authenticatorGetInfo` advertises `pinUvAuthProtocols: [2, 1]` — the client
-picks per request.
+The CTAP path implements both in `cmd_clientpin.go`: `agreeSharedSecret`
+(`cmd_clientpin.go:1060`) performs ECDH against the key `getKeyAgreement`
+handed out and applies the protocol's kdf, returning a `pinSharedSecret`
+(`cmd_clientpin.go:1034`); `verifyPinAuth` (`:1152`), `encryptData` (`:1279`)
+and `decryptData` (`:1323`) are the protocol's `verify`, `encrypt` and
+`decrypt`. `deriveSharedSecret` (`:1135`) is the clientPin wrapper that also
+records the session's active protocol and keys. `authenticatorGetInfo`
+advertises `pinUvAuthProtocols: [2, 1]` — the client picks per request.
 
 | | Protocol 1 (CTAP 2.0) | Protocol 2 (FIDO 2.1, preferred) |
 |---|---|---|
@@ -198,12 +202,48 @@ sees a result.
 
 ### hmac-secret extension
 
-`ext_hmac_secret.go` implements the derived-key extension: the platform sends
-an ECDH public key, an encrypted salt and a `saltAuth` HMAC;
-`ProcessHMACSecretExtension` verifies `saltAuth`, decrypts the salt, and
-computes `HMAC-SHA-256(credentialHMACKey, salt)` as the derived output,
-returned encrypted under the same shared secret. The credential's HMAC key
-never leaves the authenticator — only derived outputs are returned.
+`processHMACSecret` (`ext_hmac_secret.go:122`) implements the getAssertion
+processing of CTAP 2.1 §12.5. It is the only hmac-secret code path; it runs
+from `processAssertionExtensions` (`cmd_getassertion.go:1132`), which
+`buildSignedAssertion` (`cmd_getassertion.go:982`) calls **before** it spends a
+`signCount` value, so a refused input does not advance the counter.
+
+The input is an integer-keyed map (`parseHMACSecretInput`,
+`ext_hmac_secret.go:196`): `1` keyAgreement (the platform's COSE_Key), `2`
+saltEnc, `3` saltAuth, `4` pinUvAuthProtocol (optional, default 1). The
+WebAuthn client input — plaintext `salt1`/`salt2` — is never an authenticator
+input and is refused.
+
+| Step | Behavior | Refusal (CTAP status) |
+|---|---|---|
+| User presence | The assertion must set UP; `up=false` is refused, as §12.5 requires ("If "up" is set to false, authenticator returns CTAP2_ERR_UNSUPPORTED_OPTION") | `ErrHMACSecretUserPresenceRequired` (`UNSUPPORTED_OPTION`) |
+| Parse | integer keys, byte-string saltEnc/saltAuth, protocol 1 or 2 | `ErrHMACSecretInvalidInput` (`INVALID_PARAMETER`) |
+| decapsulate | `agreeSharedSecret` against the current `getKeyAgreement` key — the same ECDH and kdf the clientPin subcommands use, without touching the clientPin session's state | `ErrHMACSecretInvalidInput` (`INVALID_PARAMETER`) |
+| verify | `saltAuth == authenticate(shared secret, saltEnc)`, constant time | `ErrHMACSecretSaltAuthMismatch` (`PIN_AUTH_INVALID`) |
+| decrypt | `decryptData` must yield exactly 32 or 64 bytes | `ErrHMACSecretInvalidSalt` (`INVALID_PARAMETER`) |
+| CredRandom | `CredRandomWithUV` if the assertion's UV bit is set, else `CredRandomWithoutUV`; a credential with no hmac-secret key gets no output (§12.5: the extension is ignored) | — |
+| Output | `HMAC-SHA-256(CredRandom, salt1)`, followed by `HMAC-SHA-256(CredRandom, salt2)` when a second salt was sent, encrypted under the shared secret with the protocol's `encrypt` (`encryptData`) | — |
+
+**CredRandom derivation.** A credential stores one 32-byte random secret,
+`StoredCredential.HMACSecretKey`, generated at makeCredential
+(`cmd_makecredential.go:414`). `deriveCredRandom` (`ext_hmac_secret.go:180`)
+derives the two CredRandom values from it with HKDF-Expand-SHA-256 under the
+distinct info labels `xkey hmac-secret CredRandomWithUV` and
+`xkey hmac-secret CredRandomWithoutUV` (`ext_hmac_secret.go:42`). The two are
+independent pseudorandom keys, so a secret obtained without UV reveals nothing
+about the one released only with UV. Storing two secrets instead would widen
+the credential record and every storage backend for no security gain.
+
+The credential secret, CredRandom, the shared secret, the salts and the
+plaintext outputs are wiped after use; only the encrypted output leaves the
+authenticator. The refusal sentinels unwrap to the status sentinel they map to
+(`hmacSecretError`, `ext_hmac_secret.go:50`), so `errors.Is` matches both.
+
+Tests (`ext_hmac_secret_test.go`) drive the authenticator with the repository's
+own client, `pkg/fido2` (`DeriveSecret`, `PINUVAuthSession`), over an in-memory
+CTAPHID loopback: protocols 1 and 2, with and without UV, one and two salts,
+output stability, every refusal above, and that a refusal leaves `signCount`
+unchanged.
 
 ### credProtect enforcement and the no-oracle guarantee
 
