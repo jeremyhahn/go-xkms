@@ -75,9 +75,23 @@ type IdentityConfig struct {
 	Locality           string `json:"locality"`
 }
 
-// GUIConfigData mirrors the GUI configuration fields so the services
-// package does not import the gui package (avoiding import cycles).
-// The gui.App is responsible for creating this from gui.GUIConfig.
+// GUIConfigData mirrors the GUI-editable subset of gui.GUIConfig so the
+// services package does not import the gui package (avoiding import
+// cycles). The gui.App is responsible for creating this from gui.GUIConfig
+// (see configToData) and for merging it back (see applyDataToConfig).
+//
+// Deliberately excluded fields -- gui.GUIConfig fields with no mapping here
+// because they are not editable from the GUI. applyDataToConfig merges a
+// GUIConfigData onto a copy of the existing gui.GUIConfig, so any field
+// missing from this struct is always preserved unchanged rather than
+// wiped by an unrelated settings save (go-xkms#1122):
+//
+//   - ServerSPKIPin: the hex SHA-256 SPKI pin for certificate pinning. Set
+//     only via CLI flag/env (gui.server_spki_pin) or by editing gui.json
+//     directly; there is no Settings UI control for it.
+//   - FIDO2FirmwareVersion: the CTAP2 firmware version reported in
+//     GetInfo. Set once at startup from the build-time version string
+//     (gui.FirmwareVersion / ParseFirmwareVersion); not user-configurable.
 type GUIConfigData struct {
 	AutoTray                  bool                 `json:"auto_tray"`
 	Theme                     string               `json:"theme"`
