@@ -1,6 +1,6 @@
 # Static Passwords — User Guide
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Store a password
 
@@ -74,6 +74,18 @@ xkey password lock --xkmsd-url https://xkms.example.com
 # See the session's access mode and lock state
 xkey password status --source xkmsd --xkmsd-url https://xkms.example.com
 ```
+
+## Back up the vault from the GUI
+
+**Passwords → Backup** writes either plain JSON or, with **Encrypt**
+checked, an encrypted `.enc` file under a password you choose. The password
+is stretched with Argon2id (64 MiB, random salt), so a stolen backup file
+resists offline guessing. **Restore** needs the same password and the same
+AES size you chose when backing up.
+
+Encrypted backups made before go-xkms#1202 are refused ("not a salted
+password backup"): they used an unsalted hash of the password. Restore is
+not possible from them in this release; make a fresh backup.
 
 ## At-rest protection
 

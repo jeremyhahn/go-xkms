@@ -201,7 +201,7 @@ Usage: `xkey backup contents <file> [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--key` | string |  | Hex-encoded decryption key |
-| `--password` | string |  | Decryption password |
+| `--password-stdin` | bool | false | Read the backup password from standard input |
 
 ## xkey backup create
 
@@ -215,7 +215,7 @@ Usage: `xkey backup create [flags]`
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--oath-store` | string |  | OATH credential store file, bypassing the barrier (default: the barrier-encrypted store when a barrier is initialized, otherwise {xkey-home}/data/oath.json) |
 | `--output`, `-o` | string |  | Output file path (default: ~/.xkey/backups/backup-{timestamp}.xkb) |
-| `--password` | string |  | Encryption password (if not set, a random key is generated) |
+| `--password-stdin` | bool | false | Read the backup password from standard input |
 | `--password-store` | string |  | Static password store directory (default: {xkey-home}/data/staticpw) |
 | `--trust-store` | string |  | Trust store directory (default: {xkey-home}/data/trust) |
 
@@ -232,7 +232,7 @@ Usage: `xkey backup from-device [flags]`
 | `--device` | string |  | Paired device name to restore from |
 | `--key` | string |  | Hex-encoded decryption key |
 | `--oath-store` | string |  | OATH credential store file, bypassing the barrier (default: the barrier-encrypted store when a barrier is initialized, otherwise {xkey-home}/data/oath.json) |
-| `--password` | string |  | Decryption password |
+| `--password-stdin` | bool | false | Read the backup password from standard input |
 | `--password-store` | string |  | Static password store directory (default: {xkey-home}/data/staticpw) |
 | `--timeout` | duration | 1m0s | Operation timeout |
 | `--trust-store` | string |  | Trust store directory (default: {xkey-home}/data/trust) |
@@ -255,7 +255,7 @@ Usage: `xkey backup restore <file> [flags]`
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--key` | string |  | Hex-encoded decryption key |
 | `--oath-store` | string |  | OATH credential store file, bypassing the barrier (default: the barrier-encrypted store when a barrier is initialized, otherwise {xkey-home}/data/oath.json) |
-| `--password` | string |  | Decryption password |
+| `--password-stdin` | bool | false | Read the backup password from standard input |
 | `--password-store` | string |  | Static password store directory (default: {xkey-home}/data/staticpw) |
 | `--trust-store` | string |  | Trust store directory (default: {xkey-home}/data/trust) |
 
@@ -271,7 +271,7 @@ Usage: `xkey backup to-device [flags]`
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--device` | string |  | Paired device name to send backup to |
 | `--oath-store` | string |  | OATH credential store file, bypassing the barrier (default: the barrier-encrypted store when a barrier is initialized, otherwise {xkey-home}/data/oath.json) |
-| `--password` | string |  | Encryption password (if not set, a random key is generated) |
+| `--password-stdin` | bool | false | Read the backup password from standard input |
 | `--password-store` | string |  | Static password store directory (default: {xkey-home}/data/staticpw) |
 | `--timeout` | duration | 1m0s | Operation timeout |
 | `--trust-store` | string |  | Trust store directory (default: {xkey-home}/data/trust) |
