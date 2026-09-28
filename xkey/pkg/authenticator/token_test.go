@@ -343,7 +343,7 @@ func TestSOPINRetryAccountingIsEnforced(t *testing.T) {
 	t.Run("consecutive failures decrement the counter", func(t *testing.T) {
 		auth, _ := initializedToken(t)
 
-		for i := 1; i <= SOPINMaxConsecutiveFailures; i++ {
+		for i := 1; i <= PINMaxConsecutiveFailures; i++ {
 			auth.keyManager.Lock()
 			require.Error(t, auth.UnlockSO(context.Background(), tokenTestWrongPIN))
 			require.Equal(t, DefaultSOPINMaxRetries-i, auth.state.SOPINManager.Retries())
@@ -354,7 +354,7 @@ func TestSOPINRetryAccountingIsEnforced(t *testing.T) {
 		auth, config := initializedToken(t)
 
 		var last error
-		for i := 0; i < SOPINMaxConsecutiveFailures; i++ {
+		for i := 0; i < PINMaxConsecutiveFailures; i++ {
 			auth.keyManager.Lock()
 			last = auth.UnlockSO(context.Background(), tokenTestWrongPIN)
 		}
@@ -635,7 +635,7 @@ func TestSOPINStateSurvivesPersistence(t *testing.T) {
 
 	t.Run("the per-power-cycle counter is not carried across a load", func(t *testing.T) {
 		auth, _ := initializedToken(t)
-		auth.state.SOPINManager.consecutiveFailures.Store(SOPINMaxConsecutiveFailures)
+		auth.state.SOPINManager.consecutiveFailures.failures.Store(PINMaxConsecutiveFailures)
 		require.True(t, auth.state.SOPINManager.IsAuthBlocked())
 		require.NoError(t, auth.saveState())
 

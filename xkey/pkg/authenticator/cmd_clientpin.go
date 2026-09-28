@@ -222,6 +222,19 @@ type pinProtocolState struct {
 // This is embedded in Authenticator and protected by the same mutex.
 type authenticatorPINState struct {
 	protocol *pinProtocolState
+
+	// mismatches counts consecutive user PIN mismatches since the last
+	// correct PIN or power-up (CTAP 2.1 §6.5.5.5). It lives here rather than
+	// in protocol so regenerating the key agreement does not clear it, and
+	// clearPINState (authenticatorReset) does.
+	mismatches pinMismatchGuard
+}
+
+// userPINRefusals are the user PIN's failed-attempt errors.
+var userPINRefusals = pinRefusals{
+	blocked:     ErrPINBlocked,
+	authBlocked: ErrPINAuthBlocked,
+	invalid:     ErrPINInvalid,
 }
 
 // handleClientPIN implements the CTAP2 authenticatorClientPIN command (0x06).
@@ -290,13 +303,19 @@ func (a *Authenticator) handleClientPIN(data []byte) ([]byte, error) {
 }
 
 // handleGetRetries returns the current PIN retry count.
+//
+// powerCycleState (CTAP 2.1 §6.5.5.2) reports whether the consecutive-mismatch
+// block is in force, so a platform can tell "power-cycle the authenticator"
+// from "attempts remain".
 func (a *Authenticator) handleGetRetries() ([]byte, error) {
 	a.mu.RLock()
 	retries := a.state.PINRetries()
+	powerCycle := a.pinState.mismatches.authBlocked()
 	a.mu.RUnlock()
 
 	response := map[int]interface{}{
-		clientPINResponseKeyPinRetries: uint8(retries),
+		clientPINResponseKeyPinRetries:      uint8(retries),
+		clientPINResponseKeyPowerCycleState: powerCycle,
 	}
 
 	data, err := encodeCBOR(response)
@@ -933,24 +952,38 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 // that status promises the platform that a power cycle will resume attempts,
 // and a storage fault is not fixed by one.
 //
+// A mismatch also regenerates the authenticator's keyAgreement key, so the
+// platform must run key agreement again before its next attempt, and counts
+// toward the consecutive-mismatch block: after PINMaxConsecutiveFailures
+// mismatches in a row every further attempt is refused with ErrPINAuthBlocked,
+// without spending a retry, until the authenticator restarts (its power
+// cycle). A correct PIN clears the count. The Security Officer PIN applies the
+// same rule through the same pinMismatchGuard.
+//
 // Returns ErrStorageError if the decremented (or, on success, reset) retry
 // counter could not be persisted, ErrPINBlocked if the retry budget is now
-// exhausted, and ErrPINInvalid if candidateHash does not match.
+// exhausted, ErrPINAuthBlocked if the consecutive-mismatch limit is reached,
+// and ErrPINInvalid if candidateHash does not match.
 //
 // The caller must hold a.mu for writing.
 func (a *Authenticator) verifyPinHashAndConsumeRetryLocked(candidateHash []byte) error {
+	if a.pinState.mismatches.authBlocked() {
+		return ErrPINAuthBlocked
+	}
+
 	a.state.DecrementPINRetries()
 	if err := a.storage.SaveState(a.state); err != nil {
 		return errors.Join(ErrStorageError, err)
 	}
 
 	if !a.verifyPINHashLocked(candidateHash) {
-		if a.state.PINRetries() <= 0 {
-			return ErrPINBlocked
+		if err := a.regenerateKeyAgreementLocked(); err != nil {
+			return err
 		}
-		return ErrPINInvalid
+		return a.pinState.mismatches.recordMismatch(a.state.PINRetries() <= 0, userPINRefusals)
 	}
 
+	a.pinState.mismatches.reset()
 	a.state.SetPINRetries(a.config.PINMaxRetries)
 	if err := a.storage.SaveState(a.state); err != nil {
 		return errors.Join(ErrStorageError, err)
@@ -964,30 +997,9 @@ func (a *Authenticator) initPINProtocol() error {
 		return nil
 	}
 
-	// Generate ECDH key pair using P-256.
-	privateKey, err := ecdh.P256().GenerateKey(rand.Reader)
+	privateKey, coseKey, err := newKeyAgreementKey()
 	if err != nil {
-		return ErrKeyGenerationFailed
-	}
-
-	// Encode public key in COSE format.
-	publicKey := privateKey.PublicKey()
-	publicKeyBytes := publicKey.Bytes()
-
-	// P-256 uncompressed point format: 04 || X || Y.
-	if len(publicKeyBytes) != 65 || publicKeyBytes[0] != 0x04 {
-		return ErrKeyGenerationFailed
-	}
-
-	xBytes := publicKeyBytes[1:33]
-	yBytes := publicKeyBytes[33:65]
-
-	coseKey := map[int]interface{}{
-		coseKeyLabelKty: COSEKeyTypeEC2,
-		coseKeyLabelAlg: COSEAlgECDHESHKDF256,
-		coseKeyLabelCrv: COSECurveP256,
-		coseKeyLabelX:   xBytes,
-		coseKeyLabelY:   yBytes,
+		return err
 	}
 
 	a.pinState.protocol = &pinProtocolState{
@@ -995,6 +1007,57 @@ func (a *Authenticator) initPINProtocol() error {
 		publicKeyCOSE: coseKey,
 	}
 
+	return nil
+}
+
+// newKeyAgreementKey generates a P-256 ECDH key pair for the PIN/UV auth
+// protocol and returns it with its public key encoded as a COSE_Key map.
+func newKeyAgreementKey() (*ecdh.PrivateKey, map[int]interface{}, error) {
+	privateKey, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, ErrKeyGenerationFailed
+	}
+
+	// P-256 uncompressed point format: 04 || X || Y.
+	publicKeyBytes := privateKey.PublicKey().Bytes()
+	if len(publicKeyBytes) != 65 || publicKeyBytes[0] != 0x04 {
+		return nil, nil, ErrKeyGenerationFailed
+	}
+
+	coseKey := map[int]interface{}{
+		coseKeyLabelKty: COSEKeyTypeEC2,
+		coseKeyLabelAlg: COSEAlgECDHESHKDF256,
+		coseKeyLabelCrv: COSECurveP256,
+		coseKeyLabelX:   publicKeyBytes[1:33],
+		coseKeyLabelY:   publicKeyBytes[33:65],
+	}
+	return privateKey, coseKey, nil
+}
+
+// regenerateKeyAgreementLocked replaces the authenticator's keyAgreement key
+// pair after a PIN mismatch, the PIN/UV auth protocol's regenerate() that
+// CTAP 2.1 §6.5.5.5 requires, and discards every secret derived from the old
+// key. The pinUvAuthToken is not derived from the key agreement and is left
+// alone: a wrong guess must not revoke the token a legitimate holder already
+// minted.
+//
+// The caller must hold a.mu for writing.
+func (a *Authenticator) regenerateKeyAgreementLocked() error {
+	privateKey, coseKey, err := newKeyAgreementKey()
+	if err != nil {
+		return err
+	}
+
+	p := a.pinState.protocol
+	if p == nil {
+		a.pinState.protocol = &pinProtocolState{privateKey: privateKey, publicKeyCOSE: coseKey}
+		return nil
+	}
+	p.privateKey = privateKey
+	p.publicKeyCOSE = coseKey
+	p.sharedSecret = nil
+	p.hmacKey = nil
+	p.aesKey = nil
 	return nil
 }
 

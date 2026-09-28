@@ -17,6 +17,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,25 +65,29 @@ type pendingPairing struct {
 
 // PairingVerifier manages extension identity verification and pairing ceremonies.
 // It supports multiple simultaneously paired browser extensions, keyed by origin.
+//
+// The pairing-code and identity-verification failure counters and their
+// lockouts are durable (see pairingLimits): they live in a 0600 file beside
+// the pairing state, so relaunching the native host does not reset them.
 type PairingVerifier struct {
-	statePath        string
-	states           map[string]*PairingState // keyed by extension origin
-	mu               sync.RWMutex
-	pending          *pendingPairing
-	pairingFailures  atomic.Int32
-	pairingLockUntil atomic.Int64 // Unix timestamp
-	verifyFailures   atomic.Int32
-	verifyLockUntil  atomic.Int64 // Unix timestamp
-	auditLog         atomic.Pointer[audit.Logger]
+	statePath  string
+	limitsPath string
+	states     map[string]*PairingState // keyed by extension origin
+	mu         sync.RWMutex
+	pending    *pendingPairing
+	limitsMu   sync.Mutex
+	auditLog   atomic.Pointer[audit.Logger]
 }
 
 // NewPairingVerifier creates a PairingVerifier that stores state at the given path.
 // If a pairing state file exists, it loads the existing state. Supports automatic
-// migration from the legacy single-extension format.
+// migration from the legacy single-extension format. The rate-limit state is
+// kept beside it (limitsPathFor).
 func NewPairingVerifier(statePath string) (*PairingVerifier, error) {
 	v := &PairingVerifier{
-		statePath: statePath,
-		states:    make(map[string]*PairingState),
+		statePath:  statePath,
+		limitsPath: limitsPathFor(statePath),
+		states:     make(map[string]*PairingState),
 	}
 	if err := v.load(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, &WrappedError{Msg: "nativemsg: failed to load pairing state", Err: err}
@@ -130,14 +135,12 @@ func (v *PairingVerifier) GetStates() map[string]*PairingState {
 //
 // signData = SHA-256(ephemeralPubKey || origin || identitySignContext)
 func (v *PairingVerifier) VerifyIdentity(identityKey, signature, ephemeralPubKey []byte, origin string) error {
-	// Check lockout.
-	if lockUntil := v.verifyLockUntil.Load(); lockUntil > 0 {
-		if time.Now().Unix() < lockUntil {
-			return ErrIdentityLocked
-		}
-		// Lockout expired, reset.
-		v.verifyFailures.Store(0)
-		v.verifyLockUntil.Store(0)
+	locked, err := v.lockedOut(verifyLimit)
+	if err != nil {
+		return err
+	}
+	if locked {
+		return ErrIdentityLocked
 	}
 
 	v.mu.RLock()
@@ -185,23 +188,24 @@ func (v *PairingVerifier) VerifyIdentity(identityKey, signature, ephemeralPubKey
 	}
 
 	// Success - reset failure counter.
-	v.verifyFailures.Store(0)
+	if err := v.resetLimit(verifyLimit); err != nil {
+		return err
+	}
 	return v.logPairingEvent(audit.OpPairingIdentityOK, true, nil, map[string]any{"origin": origin})
 }
 
 // StartPairing initiates a pairing ceremony by generating a 6-digit code.
 // Returns the code to be displayed in the GUI.
 func (v *PairingVerifier) StartPairing(identityKey []byte, origin string) (string, error) {
-	// Check lockout.
-	if lockUntil := v.pairingLockUntil.Load(); lockUntil > 0 {
-		if time.Now().Unix() < lockUntil {
-			if auditErr := v.logPairingEvent(audit.OpPairingStarted, false, ErrPairingLocked, map[string]any{"origin": origin}); auditErr != nil {
-				return "", auditErr
-			}
-			return "", ErrPairingLocked
+	locked, err := v.lockedOut(pairingLimit)
+	if err != nil {
+		return "", err
+	}
+	if locked {
+		if auditErr := v.logPairingEvent(audit.OpPairingStarted, false, ErrPairingLocked, map[string]any{"origin": origin}); auditErr != nil {
+			return "", auditErr
 		}
-		v.pairingFailures.Store(0)
-		v.pairingLockUntil.Store(0)
+		return "", ErrPairingLocked
 	}
 
 	code, err := generatePairingCode()
@@ -231,13 +235,12 @@ func (v *PairingVerifier) StartPairing(identityKey []byte, origin string) (strin
 // The origin is used as the map key; pairing the same origin again updates the
 // existing entry (re-pair).
 func (v *PairingVerifier) CompletePairing(identityKey []byte, origin, code string) error {
-	// Check lockout.
-	if lockUntil := v.pairingLockUntil.Load(); lockUntil > 0 {
-		if time.Now().Unix() < lockUntil {
-			return ErrPairingLocked
-		}
-		v.pairingFailures.Store(0)
-		v.pairingLockUntil.Store(0)
+	locked, err := v.lockedOut(pairingLimit)
+	if err != nil {
+		return err
+	}
+	if locked {
+		return ErrPairingLocked
 	}
 
 	v.mu.Lock()
@@ -253,8 +256,9 @@ func (v *PairingVerifier) CompletePairing(identityKey []byte, origin, code strin
 		return ErrPairingExpired
 	}
 
-	// Verify code.
-	if v.pending.code != code {
+	// Verify code, in constant time so response timing reveals nothing about
+	// how many leading digits a guess got right.
+	if subtle.ConstantTimeCompare([]byte(v.pending.code), []byte(code)) != 1 {
 		if auditErr := v.recordPairingFailure(); auditErr != nil {
 			return auditErr
 		}
@@ -290,7 +294,9 @@ func (v *PairingVerifier) CompletePairing(identityKey []byte, origin, code strin
 		PairedAt:    time.Now(),
 	}
 	v.pending = nil
-	v.pairingFailures.Store(0)
+	if err := v.resetLimit(pairingLimit); err != nil {
+		return err
+	}
 	if auditErr := v.logPairingEvent(audit.OpPairingCompleted, true, nil, map[string]any{"origin": origin}); auditErr != nil {
 		return auditErr
 	}
@@ -371,28 +377,31 @@ var supportedBrowsers = []string{
 	"firefox-bin",
 }
 
-// recordPairingFailure increments failure counter and sets lockout if
-// threshold reached. Callers must propagate a non-nil return: rate-limit
-// lockout is a SeveritySecurity event and a failed write must fail the
-// caller.
+// recordPairingFailure durably increments the pairing failure counter and
+// sets the lockout if the threshold is reached. Callers must propagate a
+// non-nil return: a failure that cannot be persisted must not be retried for
+// free, and rate-limit lockout is a SeveritySecurity event whose failed audit
+// write must fail the caller.
 func (v *PairingVerifier) recordPairingFailure() error {
-	failures := v.pairingFailures.Add(1)
-	if failures >= int32(maxPairingFailures) {
-		v.pairingLockUntil.Store(time.Now().Add(pairingLockoutDuration).Unix())
-		return v.logPairingEvent(audit.OpPairingRateLimited, false, nil, map[string]any{"lockout_type": "pairing"})
-	}
-	return nil
+	return v.recordRateLimitedFailure(pairingLimit, maxPairingFailures, pairingLockoutDuration, "pairing")
 }
 
-// recordVerifyFailure increments failure counter and sets lockout if
-// threshold reached. Callers must propagate a non-nil return: rate-limit
-// lockout is a SeveritySecurity event and a failed write must fail the
-// caller.
+// recordVerifyFailure durably increments the identity-verification failure
+// counter and sets the lockout if the threshold is reached. Callers must
+// propagate a non-nil return, as for recordPairingFailure.
 func (v *PairingVerifier) recordVerifyFailure() error {
-	failures := v.verifyFailures.Add(1)
-	if failures >= int32(maxVerifyFailures) {
-		v.verifyLockUntil.Store(time.Now().Add(verifyLockoutDuration).Unix())
-		return v.logPairingEvent(audit.OpPairingRateLimited, false, nil, map[string]any{"lockout_type": "verify"})
+	return v.recordRateLimitedFailure(verifyLimit, maxVerifyFailures, verifyLockoutDuration, "verify")
+}
+
+// recordRateLimitedFailure records one failure against sel and audits the
+// lockout it starts, if any.
+func (v *PairingVerifier) recordRateLimitedFailure(sel limitSelector, maxFailures int32, lockout time.Duration, lockoutType string) error {
+	started, err := v.recordLimitFailure(sel, maxFailures, lockout)
+	if err != nil {
+		return err
+	}
+	if started {
+		return v.logPairingEvent(audit.OpPairingRateLimited, false, nil, map[string]any{"lockout_type": lockoutType})
 	}
 	return nil
 }
@@ -465,29 +474,11 @@ func (v *PairingVerifier) loadLocked() error {
 // saveLocked writes the pairing state to disk atomically (caller must hold mu).
 // Writes to a temp file first, then renames for crash-safety.
 func (v *PairingVerifier) saveLocked() error {
-	dir := filepath.Dir(v.statePath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return &WrappedError{Msg: "nativemsg: failed to create pairing directory", Err: err}
-	}
 	data, err := json.MarshalIndent(v.states, "", "  ")
 	if err != nil {
 		return &WrappedError{Msg: "nativemsg: failed to marshal pairing state", Err: err}
 	}
-
-	tmpPath := v.statePath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return &WrappedError{Msg: "nativemsg: failed to write pairing temp file", Err: err}
-	}
-	if err := os.Rename(tmpPath, v.statePath); err != nil {
-		// Clean up the temp file on rename failure; a failed removal is
-		// joined in rather than dropped so a leaked temp file is visible.
-		cause := err
-		if removeErr := os.Remove(tmpPath); removeErr != nil {
-			cause = errors.Join(cause, removeErr)
-		}
-		return &WrappedError{Msg: "nativemsg: failed to rename pairing temp file", Err: cause}
-	}
-	return nil
+	return writeFileAtomic(v.statePath, data)
 }
 
 // save writes the pairing state to disk atomically.

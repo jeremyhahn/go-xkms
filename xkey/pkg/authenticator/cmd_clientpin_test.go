@@ -1663,8 +1663,9 @@ func TestHandleGetPINToken_RetryDecrementLogic(t *testing.T) {
 	err = initKeyAgreement(t, auth)
 	require.NoError(t, err)
 
-	// Perform 3 failed attempts and verify decrement each time.
-	for i := 0; i < 3; i++ {
+	// Perform 2 failed attempts (one short of the consecutive-mismatch block)
+	// and verify decrement each time.
+	for i := 0; i < PINMaxConsecutiveFailures-1; i++ {
 		expectedRetries := 5 - i
 
 		// Verify current retry count.
@@ -1703,8 +1704,8 @@ func TestHandleGetPINToken_RetryDecrementLogic(t *testing.T) {
 			"Iteration %d: expected %d retries after attempt", i, expectedRetries-1)
 	}
 
-	// Verify we have 2 retries remaining.
-	require.Equal(t, 2, auth.PINRetries())
+	// Verify we have 3 retries remaining.
+	require.Equal(t, 3, auth.PINRetries())
 
 	// Now succeed with correct PIN.
 	auth.mu.Lock()
@@ -1893,8 +1894,9 @@ func TestHandleGetPINToken_RetriesResetOnSuccess(t *testing.T) {
 	err = initKeyAgreement(t, auth)
 	require.NoError(t, err)
 
-	// Fail a few times first.
-	for i := 0; i < 3; i++ {
+	// Fail a few times first, stopping one short of the consecutive-mismatch
+	// block so the correct PIN below is still accepted.
+	for i := 0; i < PINMaxConsecutiveFailures-1; i++ {
 		auth.mu.Lock()
 		platformCOSE, sharedSecret, err := auth.generatePlatformKeyAgreement()
 		auth.mu.Unlock()
@@ -1917,7 +1919,7 @@ func TestHandleGetPINToken_RetriesResetOnSuccess(t *testing.T) {
 	}
 
 	// Verify retries have been decremented.
-	require.Equal(t, 5, auth.PINRetries(), "Should have 5 retries after 3 failures")
+	require.Equal(t, 6, auth.PINRetries(), "Should have 6 retries after 2 failures")
 
 	// Now succeed.
 	auth.mu.Lock()

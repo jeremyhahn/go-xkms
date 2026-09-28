@@ -206,16 +206,22 @@ func TestPINRetryConsumption_AllPINPathsFailClosedOnStorageFailure(t *testing.T)
 // TestPINRetryConsumption_PersistsEveryAttemptAcrossReload proves every
 // failed attempt is durable, not just the last one held in memory: a fresh
 // Authenticator over the same storage (simulating a process restart) must
-// see the full count of attempts spent before the restart.
+// see the full count of attempts spent before the restart, while the
+// consecutive-mismatch block the third attempt triggered is per-power-cycle
+// and does not survive it.
 func TestPINRetryConsumption_PersistsEveryAttemptAcrossReload(t *testing.T) {
 	auth, _, config := newRetryPersistenceTestAuthenticator(t, DefaultPINMaxRetries)
 	defer func() { _ = auth.Close() }()
 
-	const failedAttempts = 3
+	const failedAttempts = PINMaxConsecutiveFailures
 	for i := 0; i < failedAttempts; i++ {
 		resp, err := sendGetPINTokenAttempt(t, auth, "wrong")
 		require.Error(t, err)
-		require.Equal(t, byte(StatusPINInvalid), resp[0])
+		want := byte(StatusPINInvalid)
+		if i == failedAttempts-1 {
+			want = StatusPINAuthBlocked
+		}
+		require.Equal(t, want, resp[0], "attempt %d", i+1)
 	}
 
 	reloaded, err := NewAuthenticator(config)
@@ -224,6 +230,11 @@ func TestPINRetryConsumption_PersistsEveryAttemptAcrossReload(t *testing.T) {
 
 	require.Equal(t, config.PINMaxRetries-failedAttempts, reloaded.PINRetries(),
 		"a reload must reflect every attempt spent before the restart")
+
+	require.NoError(t, initKeyAgreement(t, reloaded))
+	resp, err := sendGetPINTokenAttempt(t, reloaded, "1234")
+	require.NoError(t, err, "a restart is the power cycle that lifts the consecutive-mismatch block")
+	require.Equal(t, byte(StatusOK), resp[0])
 }
 
 // TestPINRetryConsumption_CorrectPINResetsDurably proves a successful PIN

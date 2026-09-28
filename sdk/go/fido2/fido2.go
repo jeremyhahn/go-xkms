@@ -83,6 +83,14 @@ var (
 	DefaultEnrollmentConfig          = pkgfido2.DefaultEnrollmentConfig
 	DefaultAuthenticationConfig      = pkgfido2.DefaultAuthenticationConfig
 	ParseWebAuthnRegistrationOptions = pkgfido2.ParseWebAuthnRegistrationOptions
+	ValidateRPID                     = pkgfido2.ValidateRPID
+)
+
+// Re-exported relying party ID / origin binding error sentinels.
+var (
+	ErrOriginRequired     = pkgfido2.ErrOriginRequired
+	ErrInvalidOrigin      = pkgfido2.ErrInvalidOrigin
+	ErrRPIDOriginMismatch = pkgfido2.ErrRPIDOriginMismatch
 )
 
 // Re-exported registration-options parsing error sentinels.
