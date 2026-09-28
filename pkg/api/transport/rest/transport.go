@@ -2707,8 +2707,27 @@ func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string
 // TenantService methods.
 
 // CreateTenant creates a new tenant.
+//
+// The trailing slash matters: pkg/api/rest/routes.go registers every
+// collection-root route in this file's resource families with one
+// (permIf("POST", "/tenants/", ...), matching "/custodian/groups/",
+// "/shares/", "/passwords/"), to distinguish the collection from
+// "/tenants/{tenantID}". Omitting it here used to still reach the handler
+// because nothing else on the unified listener claimed the bare
+// "/api/v1/tenants" path, so chi's slash redirect silently bridged the
+// gap. It stopped working the moment something else registered that exact
+// literal path too (the ACME admin plane's own, unrelated
+// "/api/v1/tenants" tenant surface, pkg/apimodule/admin_module.go +
+// cmd/xkmsd/admin.go's adminAPIPrefixes): that registration is an exact,
+// non-redirecting match, so it now answers first, and this client
+// silently unmarshals that handler's differently-shaped response body
+// into transport.CreateTenantResponse — every field comes back its zero
+// value, with no error, because the JSON simply has no "tenant" key at
+// its top level. See transport_tenant_test.go's
+// TestCreateTenant_CollectionRootRequiresTrailingSlash for the regression
+// coverage.
 func (t *Transport) CreateTenant(ctx context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
-	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/tenants", req)
+	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/tenants/", req)
 	if err != nil {
 		return nil, err
 	}
@@ -2738,8 +2757,11 @@ func (t *Transport) GetTenant(ctx context.Context, tenantID string) (*transport.
 }
 
 // ListTenants returns all tenants.
+//
+// See CreateTenant's doc comment: the trailing slash is required for the
+// same reason.
 func (t *Transport) ListTenants(ctx context.Context) (*transport.ListTenantsResponse, error) {
-	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/tenants", nil)
+	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/tenants/", nil)
 	if err != nil {
 		return nil, err
 	}

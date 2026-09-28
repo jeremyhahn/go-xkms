@@ -4352,6 +4352,15 @@ integration-test-bootstrap:
 		$(call compose,bootstrap) run --build --rm test
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
+.PHONY: integration-test-acmeadmin
+## integration-test-acmeadmin: Run ACME admin plane CLI integration tests (xkmsctl acme/xkmsctl tenant against a real xkmsd, REST only)
+integration-test-acmeadmin: stage-gomodauth
+	@echo "$(CYAN)$(BOLD)→ Running ACME admin plane integration tests...$(RESET)"
+	@cd test/integration/acmeadmin && $(call compose,acmeadmin) down -v >/dev/null 2>&1 || true
+	@cd test/integration/acmeadmin && trap '$(call compose,acmeadmin) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,acmeadmin) run --build --rm test
+	@echo "$(GREEN)✓ ACME admin plane integration tests complete$(RESET)"
+
 .PHONY: integration-test-cluster
 ## integration-test-cluster: Run 3-node Raft cluster + standalone-server integration tests (crypto gen/sign/verify replication, public-key consistency, delete replication, leader failover, node restart/rejoin catch-up, standalone lifecycle)
 integration-test-cluster:

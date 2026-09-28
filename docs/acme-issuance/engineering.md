@@ -896,7 +896,10 @@ storage. Changing the storage layout requires a data migration step.
 - **RFC conformance** — `test/integration/rfc8555`.
 - **Integration** — `test/integration/acme-server`, `acme-client`,
   `acme-admin`, `acme-multiprotocol`, `acme-tpm`, `acmeclient`, `acmeserver`,
-  `challenges`. Compose file: `test/integration/acme-docker-compose.integration.yml`.
+  `challenges`. The ACME admin plane's CLI coverage is
+  `test/integration/acmeadmin` (`xkmsctl acme`/`xkmsctl tenant` against a
+  real `xkmsd`), with its own compose file:
+  `test/integration/acmeadmin/docker-compose.yml`.
 - **TCG / attestation** — `test/integration/acme-tpm` plus
   `pkg/acme/server/handlers/audit_tcg_test.go`,
   `compliance_attestation_test.go`.
