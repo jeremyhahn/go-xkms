@@ -89,7 +89,10 @@ func init() {
 func runPivImport(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
-	cfg := buildPIVConfig()
+	cfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Parse slot argument
 	slot, err := validatePIVSlot(args[0])

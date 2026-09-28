@@ -20,33 +20,33 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // isolateCertPIV points the cert commands' PIV plumbing at a fresh software
-// (file-backed) PIV store under t.TempDir() and restores the previous Viper
-// state afterward. Real xkmsd's own cert-request success path resolves its
-// signing key through exactly this software/file PIV backend when no
-// hardware token is present, so this is not a stand-in for production
-// wiring -- it is production wiring, pointed at a scratch directory.
+// (file-backed) PIV store under t.TempDir() and restores the previous
+// loadedConfig afterward. Real xkmsd's own cert-request success path
+// resolves its signing key through exactly this software/file PIV backend
+// when no hardware token is present, so this is not a stand-in for
+// production wiring -- it is production wiring, pointed at a scratch
+// directory. The cert commands are not children of PIVCmd, so they carry
+// none of its flags; buildPIVConfig resolves entirely from loadedConfig.PIV
+// here, the same injection xkmsd_client_test.go and listen_config_test.go
+// use (go-xkms#871).
 func isolateCertPIV(t *testing.T) {
 	t.Helper()
 
-	previousBackend := viper.GetString(viperKeyPIVBackend)
-	previousStorage := viper.GetString(viperKeyPIVStorage)
-	previousPath := viper.GetString(viperKeyPIVStoragePath)
+	previous := loadedConfig
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.PIV.Backend = string(PIVBackendSoftware)
+	cfg.PIV.Storage = string(PIVStorageTypeFile)
+	cfg.PIV.StoragePath = t.TempDir()
+	loadedConfig = cfg
 
-	viper.Set(viperKeyPIVBackend, string(PIVBackendSoftware))
-	viper.Set(viperKeyPIVStorage, string(PIVStorageTypeFile))
-	viper.Set(viperKeyPIVStoragePath, t.TempDir())
-
-	t.Cleanup(func() {
-		viper.Set(viperKeyPIVBackend, previousBackend)
-		viper.Set(viperKeyPIVStorage, previousStorage)
-		viper.Set(viperKeyPIVStoragePath, previousPath)
-	})
+	t.Cleanup(func() { loadedConfig = previous })
 }
 
 // newPIVGenerateCmd creates a detached cobra.Command carrying the exact

@@ -1625,8 +1625,8 @@ Inherited by subcommands:
 | `--backend` | string | software | Key backend: software, tpm2, or pkcs11 |
 | `--piv-storage` | string |  | Certificate storage type override: file, tpm2, or pkcs11 (default: matches backend) |
 | `--pkcs11-library` | string | /usr/lib/softhsm/libsofthsm2.so | PKCS#11 library path |
-| `--pkcs11-pin` | string |  | PKCS#11 user PIN |
-| `--pkcs11-so-pin` | string |  | PKCS#11 Security Officer PIN (required for key generation) |
+| `--pkcs11-pin-stdin` | bool | false | Read the PKCS#11 PIN from standard input |
+| `--pkcs11-so-pin-stdin` | bool | false | Read the PKCS#11 Security Officer PIN from standard input |
 | `--pkcs11-token` | string |  | PKCS#11 token label |
 | `--storage-path` | string |  | Path for file storage (default: ~/.xkey/data/piv, see XKEY_DATA_DIR) |
 | `--tpm-device` | string | /dev/tpmrm0 | TPM device path for tpm2 backend/storage |
