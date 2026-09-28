@@ -28,13 +28,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
 
-const (
-	// defaultIPCTimeout is the default timeout for IPC operations.
-	defaultIPCTimeout = 10 * time.Second
-
-	// envSocketPath is the environment variable for the IPC socket path.
-	envSocketPath = "XKEY_IPC_SOCKET"
-)
+// defaultIPCTimeout is the default timeout for IPC operations.
+const defaultIPCTimeout = 10 * time.Second
 
 // IPCTransport implements xkms.PKCS11Transport by communicating with
 // a running xkey instance over a Unix domain socket. If xkey is not
@@ -48,17 +43,14 @@ type IPCTransport struct {
 var _ xkms.PKCS11Transport = (*IPCTransport)(nil)
 
 // NewIPCTransport creates a new IPC transport. The socketPath can be
-// empty, in which case XKEY_IPC_SOCKET env var is checked, then the
-// default runtime path (~/.xkey/run/xkey.sock) is used.
+// empty, in which case ipc.DefaultSocketPath resolves it: the
+// XKEY_IPC_SOCKET env var, then the XKEY_HOME-derived instance socket,
+// then the XDG runtime default. This is the same resolution the xkey CLI
+// uses, so the module and the CLI always agree on which instance an
+// unqualified caller talks to.
 func NewIPCTransport(socketPath string) *IPCTransport {
 	if socketPath == "" {
-		socketPath = os.Getenv(envSocketPath)
-	}
-	if socketPath == "" {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			socketPath = home + "/.xkey/run/xkey.sock"
-		}
+		socketPath = ipc.DefaultSocketPath()
 	}
 	return &IPCTransport{
 		socketPath: socketPath,

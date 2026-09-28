@@ -1923,6 +1923,24 @@ Verify current PCR values against policy
 
 Usage: `xkey policy verify <name>`
 
+## xkey provision
+
+Provision a fresh xkey instance for one agent
+
+Usage: `xkey provision [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--agent` | string |  | the agent's display name (required) |
+| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--chrome-profile-dir` | string |  | also pair a Chrome profile with this instance (see 'xkey extension install chrome --profile-dir') |
+| `--force` | bool | false | provision a home that is already initialized |
+| `--home` | string |  | xkey home to provision (default: XKEY_HOME; one of the two is required) |
+| `--json` | bool | false | print the report as JSON |
+| `--pin-stdin` | bool | false | Read the PIN from standard input |
+| `--so-pin-stdin` | bool | false | Read the SO PIN from standard input |
+
 ## xkey secret-service
 
 Run the freedesktop Secret Service daemon (org.freedesktop.secrets)

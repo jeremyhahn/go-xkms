@@ -1,6 +1,6 @@
 # Agent Automation — CLI
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
 
 Binary: `xkey`. This feature is a set of flags and two verbs rather than a
 command group of its own.
@@ -170,6 +170,75 @@ Lifecycle management for a long-running xkey agent instance
 ```
 xkey agent --help
 ```
+
+## `xkey provision`
+
+Runs the whole first-time setup for one agent's instance — barrier init, the
+host PIN service, the FIDO2 authenticator's Security Officer PIN, all four
+primary PIV slots (9a, 9c, 9d, 9e), and an SSH key — in one non-interactive
+call (`xkey/cmd/xkey/cmd/provision.go`). It calls the same service-layer
+functions `barrier init`, `pin set-so`/`set-user`, `fido2 init-token`, `piv
+generate` and `ssh keys generate` each already call; there is no separate
+implementation of any of those ceremonies.
+
+| Flag | Type | Default | Notes |
+|---|---|---|---|
+| `--home` | string | `""` | target xkey home; `XKEY_HOME` is used if this is empty; one of the two is required |
+| `--agent` | string | `""` | the agent's display name (required) |
+| `--force` | bool | `false` | provision a home that is already initialized |
+| `--pin-stdin` | bool | `false` | read the user PIN from standard input |
+| `--so-pin-stdin` | bool | `false` | read the SO PIN from standard input |
+| `--barrier-password` | string | `""` | the barrier password |
+| `--barrier-password-file` | string | `""` | read the barrier password from a file (first line) |
+| `--chrome-profile-dir` | string | `""` | also pair a Chrome profile with this instance |
+| `--json` | bool | `false` | print the report as JSON |
+
+```
+export XKEY_SO_PIN="$SO_PIN"
+export XKEY_BARRIER_PASSWORD="$BARRIER_PASSWORD"
+printf '%s' "$USER_PIN" | xkey provision --home ~/agents/agent-a/.xkey \
+    --agent agent-a --pin-stdin
+```
+
+There is no `--pin` or `--so-pin` value flag, for the same reason as
+everywhere else in this feature: `XKEY_PIN` and `XKEY_SO_PIN` are the
+environment fallbacks. Neither `--home` nor an inherited `XKEY_HOME` falls
+back to xkey's own default home resolution (`~/.xkey`) — provisioning into
+the operator's own default home by accident is exactly the failure this
+command exists to prevent on a host running one xkey instance per agent.
+
+This command takes three separate secrets, each through the exact input
+xkey already uses for it elsewhere:
+
+| Secret | Source (in precedence order) | Becomes |
+|---|---|---|
+| User PIN | `--pin-stdin`, then `XKEY_PIN` (`resolvePINInput`) | the host PIN service's User PIN |
+| SO PIN | `--so-pin-stdin`, then `XKEY_SO_PIN` (`resolveSOPINInput`) | both the host PIN service's SO PIN and the FIDO2 authenticator's own, separate Security Officer PIN |
+| Barrier password | `--barrier-password`, `--barrier-password-file`, `XKEY_BARRIER_PASSWORD`, then an interactive prompt (`resolveBarrierPassword`) | the barrier's password |
+
+Making the SO PIN equal the user PIN would erase the SO/user separation the
+host PIN service exists to enforce (the SO can reset or unblock the user;
+the user cannot reset the SO), so `xkey provision` never does that: all
+three secrets are required, and a missing one refuses with its own typed
+error (`ErrProvisionUserPINRequired`, `ErrProvisionSOPINRequired`,
+`ErrProvisionBarrierPasswordRequired`) naming which one — never a fallback
+to one of the other two. Standard input is one stream, so only one of the
+three flags above may read from it in a single invocation; supply the other
+two via file or environment variable.
+
+`--force` provisions an already-initialized home instead of refusing. It
+completes every step that still can run (PIN, FIDO2, PIV) and reports SSH key
+generation as skipped rather than failing the whole command: the local SSH
+store refuses every operation once a barrier root key exists
+(`ErrSSHStoreBarrierEncrypted`, see
+[`../ssh/engineering.md`](../ssh/engineering.md)), and the CLI has no
+barrier-unlock flow of its own, so an SSH key can only be generated on a
+fresh home, before its own barrier step runs.
+
+The report (human-readable, or `--json`) names the `XKEY_HOME` export line,
+the resolved IPC socket path, the FIDO2 AAGUID and token state, the PIV slots
+that were set up, and the SSH public key and fingerprint. It never prints a
+secret.
 
 ## A complete CI setup
 

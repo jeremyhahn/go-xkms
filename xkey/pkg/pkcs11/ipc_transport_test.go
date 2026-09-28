@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -29,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // mockIPCServer spins up a Unix socket that mimics the xkey IPC server.
@@ -99,17 +99,47 @@ func TestNewIPCTransport_ExplicitPath(t *testing.T) {
 }
 
 func TestNewIPCTransport_EnvVar(t *testing.T) {
-	t.Setenv(envSocketPath, "/tmp/env-test.sock")
+	t.Setenv(ipc.EnvSocketPath, "/tmp/env-test.sock")
 	tr := NewIPCTransport("")
 	assert.Equal(t, "/tmp/env-test.sock", tr.SocketPath())
 }
 
+// TestNewIPCTransport_DefaultPath verifies that NewIPCTransport resolves
+// the default socket path exactly as ipc.DefaultSocketPath does, for both
+// an XKEY_HOME-scoped instance and the bare XDG default. This is the same
+// resolver the xkey CLI uses (see resolvedSocketPath in
+// cmd/xkey/cmd/state_source.go), so the module and the CLI must agree.
 func TestNewIPCTransport_DefaultPath(t *testing.T) {
-	t.Setenv(envSocketPath, "")
-	tr := NewIPCTransport("")
-	home, _ := os.UserHomeDir()
-	expected := home + "/.xkey/run/xkey.sock"
-	assert.Equal(t, expected, tr.SocketPath())
+	t.Run("XKEY_HOME set resolves the same path as the CLI", func(t *testing.T) {
+		t.Setenv(ipc.EnvSocketPath, "")
+
+		home1 := filepath.Join(t.TempDir(), "a")
+		t.Setenv(xhome.EnvHome, home1)
+		want1 := ipc.DefaultSocketPath()
+		assert.Equal(t, want1, NewIPCTransport("").SocketPath())
+
+		// A different XKEY_HOME must resolve to a different socket, proving
+		// the module actually threads XKEY_HOME through rather than
+		// returning a fixed value that happens to match once.
+		home2 := filepath.Join(t.TempDir(), "b")
+		t.Setenv(xhome.EnvHome, home2)
+		want2 := ipc.DefaultSocketPath()
+		assert.Equal(t, want2, NewIPCTransport("").SocketPath())
+
+		assert.NotEqual(t, want1, want2)
+	})
+
+	t.Run("neither variable set uses the XDG default", func(t *testing.T) {
+		t.Setenv(ipc.EnvSocketPath, "")
+		t.Setenv(xhome.EnvHome, "")
+		runtimeDir := t.TempDir()
+		t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+
+		tr := NewIPCTransport("")
+
+		assert.Equal(t, ipc.DefaultSocketPath(), tr.SocketPath())
+		assert.Equal(t, filepath.Join(runtimeDir, "xkey", "xkey.sock"), tr.SocketPath())
+	})
 }
 
 func TestIPCTransport_Connect_SocketNotFound(t *testing.T) {

@@ -1,6 +1,6 @@
 # Agent Automation — User Guide
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
 
 ## The problem this solves
 
@@ -282,6 +282,63 @@ xkey extension install chrome --profile-dir "$HOME/agents/builder/chrome"
 
 The last command pairs that Chrome profile with this instance only. To target an
 instance explicitly, pass `--socket` or set `XKEY_IPC_SOCKET`.
+
+## Provision an agent instance
+
+Setting up a new agent's instance by hand means running `barrier init`, the
+PIN service, `fido2 init-token`, `piv generate` for each slot and `ssh keys
+generate` separately. `xkey provision --agent <name>` runs all of it in one
+non-interactive call:
+
+```bash
+export XKEY_SO_PIN="$SO_PIN"
+export XKEY_BARRIER_PASSWORD="$BARRIER_PASSWORD"
+printf '%s' "$USER_PIN" | xkey provision --home "$HOME/agents/builder/.xkey" \
+    --agent builder --pin-stdin
+```
+
+A target home is required, explicitly: `--home`, or an inherited
+`XKEY_HOME`. There is no fallback to xkey's default home (`~/.xkey`) —
+provisioning into your own default home by accident is exactly the mistake
+this command exists to prevent.
+
+It takes three separate secrets, each through the input xkey already uses
+for it elsewhere — never one standing in for another:
+
+- **User PIN** (`--pin-stdin`/`XKEY_PIN`) becomes the host PIN service's
+  User PIN.
+- **SO PIN** (`--so-pin-stdin`/`XKEY_SO_PIN`) becomes both the host PIN
+  service's SO PIN and the FIDO2 authenticator's own, separate Security
+  Officer PIN.
+- **Barrier password** (`--barrier-password`/`--barrier-password-file`/
+  `XKEY_BARRIER_PASSWORD`) initializes the barrier.
+
+Making the SO PIN equal the user PIN would erase the separation the host PIN
+service exists to enforce — the SO can reset or unblock the user, but the
+user cannot reset the SO — so this command requires all three and refuses by
+name if one is missing, rather than reusing another. Standard input is one
+stream, so only one of the three flags above can read from it in a single
+call; give the other two as a file or an environment variable.
+
+Running it again against an already-provisioned home refuses unless you add
+`--force`, in which case it does whatever is still needed (PIN, FIDO2, PIV)
+and reports the SSH step as skipped, since the SSH store can no longer be
+reached once a barrier exists.
+
+Add `--chrome-profile-dir <dir>` to also pair a Chrome profile in the same
+call, and `--json` for scripting:
+
+```bash
+export XKEY_SO_PIN="$SO_PIN"
+export XKEY_BARRIER_PASSWORD="$BARRIER_PASSWORD"
+printf '%s' "$USER_PIN" | xkey provision --home "$HOME/agents/builder/.xkey" \
+    --agent builder --pin-stdin \
+    --chrome-profile-dir "$HOME/agents/builder/chrome" --json
+```
+
+The report — human-readable or JSON — names the `XKEY_HOME` export line, the
+socket path, the FIDO2 AAGUID and token state, the PIV slots that were set
+up, and the SSH public key and fingerprint. It never prints a secret.
 
 ## Troubleshooting
 

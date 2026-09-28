@@ -67,6 +67,49 @@ per-profile manifest location to install into. Installing without
 `--profile-dir` keeps working exactly as before, for the common case of one
 xKey instance per host.
 
+## Provision an agent instance
+
+`xkey provision --agent <name>` runs the whole first-time setup above —
+barrier init, the host PIN service, the FIDO2 authenticator's Security
+Officer PIN, all four primary PIV slots, and an SSH key — in one
+non-interactive call, against one target home:
+
+```bash
+export XKEY_SO_PIN="$SO_PIN"
+export XKEY_BARRIER_PASSWORD="$BARRIER_PASSWORD"
+printf '%s' "$USER_PIN" | xkey provision --home ~/agents/agent-a/.xkey \
+    --agent agent-a --pin-stdin
+```
+
+A target home is required, explicitly: `--home`, or an inherited
+`XKEY_HOME`. There is no fallback to xKey's own default home resolution —
+provisioning into your own default `~/.xkey` by accident is exactly what
+this refuses to do.
+
+It takes three separate secrets, each through the input xKey already uses
+for it elsewhere — never one standing in for another: the user PIN
+(`--pin-stdin`/`XKEY_PIN`) becomes the host PIN service's User PIN; the SO
+PIN (`--so-pin-stdin`/`XKEY_SO_PIN`) becomes both the host PIN service's SO
+PIN and the FIDO2 authenticator's own, separate Security Officer PIN; the
+barrier password (`--barrier-password`/`--barrier-password-file`/
+`XKEY_BARRIER_PASSWORD`) initializes the barrier. Making the SO PIN equal
+the user PIN would erase the separation the host PIN service exists to
+enforce (the SO can reset or unblock the user; the user cannot reset the
+SO), so all three are required and a missing one refuses by name. Standard
+input is one stream, so only one of the three may read from it — supply the
+other two via file or environment variable.
+
+Re-running against an already-provisioned home refuses unless you pass
+`--force`, in which case it completes whatever it still can (PIN, FIDO2,
+PIV) and reports the SSH step as skipped, since the SSH store refuses every
+operation once a barrier exists and the CLI has no barrier-unlock flow of
+its own.
+
+Add `--chrome-profile-dir <dir>` to also pair a Chrome profile with this
+instance in the same call, and `--json` for a machine-readable report. The
+report names the socket, the FIDO2 AAGUID and token state, the PIV slots
+that were set up, and the SSH public key and fingerprint — never a secret.
+
 ## Get started: config, unseal, unlock
 
 ```bash

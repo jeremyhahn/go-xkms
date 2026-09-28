@@ -17,7 +17,8 @@
   `ExportPIVCertificate`, `GeneratePIVCSR`; plus no-op `Connect`/`Close`.
 - `IPCTransport` — Unix-socket `xkms.PKCS11Transport` implementation.
   `NewIPCTransport(socketPath string) *IPCTransport` (empty path falls
-  back to `XKEY_IPC_SOCKET`, then `~/.xkey/run/xkey.sock`).
+  back to `ipc.DefaultSocketPath()`: `XKEY_IPC_SOCKET`, then the
+  `XKEY_HOME`-derived instance socket, then the XDG runtime default).
   `SocketPath() string`. Implements `Connect`, `Sign`, `ListPIVSlots`,
   `GetPIVCertificate`; every other operation returns `ErrIPCNotImplemented`
   (`ipc_transport.go`).
