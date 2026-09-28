@@ -138,11 +138,12 @@ func (r *realKeyVaultClient) Close() error {
 // Backend implements the types.KeyProvider interface for Azure Key Vault.
 // It provides secure key management operations using Azure Key Vault.
 type Backend struct {
-	config   *Config
-	client   KeyVaultClient
-	metadata map[string][]byte // In-memory metadata storage keyed by CN
-	tracker  types.AEADSafetyTracker
-	mu       sync.RWMutex
+	config        *Config
+	client        KeyVaultClient
+	secretsClient SecretsClient     // lazily initialized by initSecretsClient; see azurekv_symmetric.go
+	metadata      map[string][]byte // In-memory metadata storage keyed by CN
+	tracker       types.AEADSafetyTracker
+	mu            sync.RWMutex
 }
 
 // NewBackend creates a new Azure Key Vault backend instance.
@@ -187,6 +188,23 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 		tracker:  tracker,
 	}
 
+	return b, nil
+}
+
+// NewBackendWithClients creates a new Azure Key Vault backend with both a
+// custom key-vault client and a custom secrets client injected. Symmetric
+// key operations (GenerateSymmetricKey/GetSymmetricKey in
+// azurekv_symmetric.go) go through the secrets client rather than client,
+// because standard-tier Key Vault has no oct (symmetric) key type through
+// the Keys API; every other operation goes through client, exactly as with
+// NewBackendWithClient. This is primarily used for testing with mock/fake
+// clients.
+func NewBackendWithClients(config *Config, client KeyVaultClient, secretsClient SecretsClient) (*Backend, error) {
+	b, err := NewBackendWithClient(config, client)
+	if err != nil {
+		return nil, err
+	}
+	b.secretsClient = secretsClient
 	return b, nil
 }
 
@@ -393,6 +411,10 @@ func (b *Backend) Close() error {
 		}
 		b.client = nil
 	}
+	// SecretsClient has no Close method -- *azsecrets.Client requires none --
+	// so only the reference is dropped, which is what makes initSecretsClient
+	// re-create a real client if this Backend is reused after Close.
+	b.secretsClient = nil
 
 	return nil
 }
