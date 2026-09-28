@@ -154,8 +154,8 @@ Concrete implementations: `BackendStorage` (`storage_backend.go`, over any
 
 #### Exported error sentinels
 
-164 sentinels across the package; the table below groups them by defining
-file with representative names. `errorToStatus` (below) is the map from
+The table below groups the package's sentinels by defining file with
+representative names. `errorToStatus` (below) is the map from
 sentinel to CTAP2 status byte for every one of them.
 
 | File | Count | Representative sentinels |
@@ -170,10 +170,10 @@ sentinel to CTAP2 status byte for every one of them.
 | `cmd_clientpin.go` | 6 | ClientPIN subcommand errors (e.g. `ErrPINNotSet`, `ErrUnsupportedPINProtocol`) |
 | `cmd_config.go` | 7 | `authenticatorConfig` subcommand errors |
 | `cmd_credmgmt.go` | 6 | `ErrCredMgmtNotEnabled`, `ErrNoEnumerationInProgress` and related |
-| `cmd_getassertion.go` | 10 | GetAssertion request-validation errors |
+| `cmd_getassertion.go` | 8 | GetAssertion request-validation errors |
 | `cmd_makecredential.go` | 10 | MakeCredential request-validation errors |
 | `cmd_largeblobs.go` | 10 | `ErrLargeBlobs*` family |
-| `ext_hmac_secret.go` | 14 | `hmac-secret` extension errors |
+| `ext_hmac_secret.go` | 4 | `ErrHMACSecretUserPresenceRequired`, `ErrHMACSecretInvalidInput`, `ErrHMACSecretSaltAuthMismatch`, `ErrHMACSecretInvalidSalt` |
 | `ext_deviceconfig.go` | 3 | `deviceConfig` extension errors |
 | `pin_protocol.go` / `pin_protocol_v1.go` | 8 | PIN protocol negotiation errors |
 | `key_wrapper.go` | 7 | key-wrap/unwrap errors |
@@ -196,10 +196,10 @@ sentinel to CTAP2 status byte for every one of them.
 | `StatusPINBlocked` | `ErrPINBlocked`, `ErrSOPINBlocked` |
 | `StatusPINNotSet` | `ErrPINNotSet`, `ErrSOPINNotSet` |
 | `StatusPINPolicyViolation` | `ErrPINPolicyViolation`, `ErrSOPINPolicyViolation` |
-| `StatusPINAuthInvalid` / `StatusPINAuthBlocked` | `ErrPINAuthInvalid` / `ErrSOPINAuthBlocked` |
+| `StatusPINAuthInvalid` / `StatusPINAuthBlocked` | `ErrPINAuthInvalid` (wrapped by `ErrHMACSecretSaltAuthMismatch`) / `ErrSOPINAuthBlocked` |
 | `StatusNotAllowed` | `ErrSOPINAlreadySet`, `ErrKeyManagerAlreadyInitialized`, `ErrTokenUninitialized`, `ErrTokenInitWindowClosed` |
 | `StatusOperationDenied` | `ErrOperationDenied`, `ErrRPBlocked`, `ErrAttestationUnavailable`, `ErrEnterpriseAttestationNotEntitled`, `ErrUserPresenceDenied` |
-| `StatusUnsupportedOption` | `ErrAttestationOverrideUnsupported` |
+| `StatusUnsupportedOption` | `ErrAttestationOverrideUnsupported`, `ErrUnsupportedOption` (wrapped by `ErrHMACSecretUserPresenceRequired`) |
 | `StatusIntegrityFailure` | `ErrPolicyTamperLocked`, `ErrPolicyTampered`, `ErrLargeBlobsChecksumInvalid` |
 | `StatusNoCredentials` | `ErrCredentialNotFound`, `ErrNoCredentials`, `ErrNoEnumerationInProgress` |
 | `StatusUserActionTimeout` / `StatusKeepaliveCancel` | `ErrUserPresenceTimeout` / `context.Canceled` |

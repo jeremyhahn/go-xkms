@@ -1062,6 +1062,8 @@ func errorToStatus(err error) byte {
 		return StatusCredentialExcluded
 	case errors.Is(err, ErrUnsupportedExtension):
 		return StatusUnsupportedExtension
+	case errors.Is(err, ErrUnsupportedOption):
+		return StatusUnsupportedOption
 	case errors.Is(err, ErrPolicyTampered):
 		return StatusIntegrityFailure
 	case errors.Is(err, ErrStorageClosed):

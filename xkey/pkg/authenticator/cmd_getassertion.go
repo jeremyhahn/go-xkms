@@ -18,8 +18,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -55,13 +53,6 @@ const (
 
 // Client data hash size as specified by WebAuthn.
 const getAssertionClientDataHashSize = 32
-
-// hmac-secret salt sizes.
-const (
-	hmacSecretSaltSize       = 32
-	hmacSecretOutputSingleSz = 32
-	hmacSecretOutputDoubleSz = 64
-)
 
 // debugGetAssertion enables debug logging for GetAssertion flow.
 // Set VFIDO2_DEBUG=1 environment variable to enable.
@@ -100,14 +91,8 @@ var (
 	// ErrGetAssertionInvalidOptions indicates the options parameter is invalid.
 	ErrGetAssertionInvalidOptions = errors.New("authenticator: getAssertion invalid options format")
 
-	// ErrGetAssertionHMACSecretInvalidSalt indicates the hmac-secret salt is invalid.
-	ErrGetAssertionHMACSecretInvalidSalt = errors.New("authenticator: getAssertion hmac-secret invalid salt")
-
 	// ErrGetAssertionHMACSecretDisabled indicates the hmac-secret extension is not enabled.
 	ErrGetAssertionHMACSecretDisabled = errors.New("authenticator: getAssertion hmac-secret extension disabled")
-
-	// ErrGetAssertionNoHMACSecretKey indicates the credential has no hmac-secret key.
-	ErrGetAssertionNoHMACSecretKey = errors.New("authenticator: getAssertion credential missing hmac-secret key")
 )
 
 // GetAssertionRequest represents a CTAP2 authenticatorGetAssertion request.
@@ -1002,21 +987,14 @@ func (a *Authenticator) buildSignedAssertion(
 	includeUser bool,
 	totalCredentials int,
 ) (*GetAssertionResponse, error) {
-	// Increment and persist signCount only after all gating has passed.
-	credential.SignCount++
-	debugLog("incremented signCount to %d", credential.SignCount)
-	if err := a.storage.Store(credential); err != nil {
-		debugLog("storage.Store failed: %v", err)
-		return nil, ErrStorageError
-	}
-	debugLog("credential stored with signCount=%d", credential.SignCount)
-
-	// Process extensions and build extension data
+	// Process extensions before touching signCount: an extension input that
+	// is refused (a bad hmac-secret saltAuth, say) fails the assertion, and a
+	// failed assertion must not spend a signCount value.
 	var extensionOutputs map[string]interface{}
 	if len(extensions) > 0 {
 		debugLog("processing %d extensions", len(extensions))
 		var err error
-		extensionOutputs, err = a.processAssertionExtensions(credential, extensions)
+		extensionOutputs, err = a.processAssertionExtensions(credential, extensions, flags)
 		if err != nil {
 			debugLog("processAssertionExtensions failed: %v", err)
 			return nil, err
@@ -1026,6 +1004,15 @@ func (a *Authenticator) buildSignedAssertion(
 			debugLog("ED flag set, flags now: 0x%02x", byte(flags))
 		}
 	}
+
+	// Increment and persist signCount only after all gating has passed.
+	credential.SignCount++
+	debugLog("incremented signCount to %d", credential.SignCount)
+	if err := a.storage.Store(credential); err != nil {
+		debugLog("storage.Store failed: %v", err)
+		return nil, ErrStorageError
+	}
+	debugLog("credential stored with signCount=%d", credential.SignCount)
 
 	// Build authenticator data
 	debugLog("building authenticator data with RPID=%s, flags=0x%02x, signCount=%d",
@@ -1140,87 +1127,30 @@ func (a *Authenticator) buildSignedAssertion(
 }
 
 // processAssertionExtensions processes extension inputs and returns outputs.
+// flags are the UP/UV flags the assertion reports, which the hmac-secret
+// extension depends on (CTAP 2.1 §12.5).
 func (a *Authenticator) processAssertionExtensions(
 	credential *StoredCredential,
 	extensions map[string]interface{},
+	flags AuthDataFlags,
 ) (map[string]interface{}, error) {
 	outputs := make(map[string]interface{})
 
-	// Process hmac-secret extension
 	if hmacSecretInput, ok := extensions["hmac-secret"]; ok {
 		if !a.config.EnableHMACSecret {
 			return nil, ErrGetAssertionHMACSecretDisabled
 		}
 
-		output, err := a.processHMACSecretExtension(credential, hmacSecretInput)
+		output, err := a.processHMACSecret(credential, hmacSecretInput, flags)
 		if err != nil {
 			return nil, err
 		}
-		outputs["hmac-secret"] = output
+		if output != nil {
+			outputs["hmac-secret"] = output
+		}
 	}
 
 	return outputs, nil
-}
-
-// processHMACSecretExtension processes the hmac-secret extension input.
-func (a *Authenticator) processHMACSecretExtension(
-	credential *StoredCredential,
-	input interface{},
-) ([]byte, error) {
-	// Validate credential has HMAC secret key
-	if len(credential.HMACSecretKey) != HMACSecretKeySize {
-		return nil, ErrGetAssertionNoHMACSecretKey
-	}
-
-	// Parse the input
-	var salt1, salt2 []byte
-
-	switch v := input.(type) {
-	case map[interface{}]interface{}:
-		if s1, ok := v["salt1"]; ok {
-			salt1, _ = s1.([]byte)
-		}
-		if s2, ok := v["salt2"]; ok {
-			salt2, _ = s2.([]byte)
-		}
-
-	case map[string]interface{}:
-		if s1, ok := v["salt1"]; ok {
-			salt1, _ = s1.([]byte)
-		}
-		if s2, ok := v["salt2"]; ok {
-			salt2, _ = s2.([]byte)
-		}
-
-	default:
-		return nil, ErrGetAssertionHMACSecretInvalidSalt
-	}
-
-	// Validate salt1 (required)
-	if len(salt1) != hmacSecretSaltSize {
-		return nil, ErrGetAssertionHMACSecretInvalidSalt
-	}
-
-	// Compute HMAC-SHA256 for salt1
-	output1 := computeAssertionHMACSHA256(credential.HMACSecretKey, salt1)
-
-	// If salt2 provided, compute and concatenate
-	if len(salt2) > 0 {
-		if len(salt2) != hmacSecretSaltSize {
-			return nil, ErrGetAssertionHMACSecretInvalidSalt
-		}
-		output2 := computeAssertionHMACSHA256(credential.HMACSecretKey, salt2)
-		return append(output1, output2...), nil
-	}
-
-	return output1, nil
-}
-
-// computeAssertionHMACSHA256 computes HMAC-SHA256(key, data).
-func computeAssertionHMACSHA256(key, data []byte) []byte {
-	h := hmac.New(sha256.New, key)
-	h.Write(data)
-	return h.Sum(nil)
 }
 
 // parseAssertionPrivateKey parses a PKCS#8 encoded private key.

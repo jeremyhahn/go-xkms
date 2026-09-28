@@ -1027,10 +1027,37 @@ func hkdfDerive(ikm []byte, info string) ([]byte, error) {
 	return out, nil
 }
 
-// deriveSharedSecret derives the shared secret using ECDH with the platform's public key.
-// For protocol 1, the raw ECDH output is hashed with SHA-256 to produce a single shared secret.
-// For protocol 2, the raw ECDH output is fed into HKDF-SHA-256 to derive separate hmacKey and aesKey.
-func (a *Authenticator) deriveSharedSecret(platformKeyAgreement []byte, protocol uint8) ([]byte, error) {
+// pinSharedSecret is the output of a PIN/UV auth protocol's kdf(Z) (CTAP 2.1
+// §6.5.6 protocol one, §6.5.7 protocol two): the key authenticate()/verify()
+// use and the key encrypt()/decrypt() use. Protocol one derives a single key
+// and uses it for both roles; protocol two derives two independent keys.
+type pinSharedSecret struct {
+	// protocol is the PIN/UV auth protocol the keys were derived for.
+	protocol uint8
+
+	// hmacKey keys authenticate() and verify().
+	hmacKey []byte
+
+	// aesKey keys encrypt() and decrypt().
+	aesKey []byte
+}
+
+// wipe zeroes both keys.
+func (s *pinSharedSecret) wipe() {
+	enclave.Wipe(s.hmacKey)
+	enclave.Wipe(s.aesKey)
+}
+
+// agreeSharedSecret is the authenticator side of a PIN/UV auth protocol's
+// decapsulate(): ECDH between the authenticator's current key agreement key
+// (the one getKeyAgreement handed out) and the platform's COSE_Key, followed by
+// the protocol's kdf(Z). Protocol one's kdf is SHA-256(Z); protocol two's is
+// HKDF-SHA-256 over Z with the "CTAP2 HMAC key" and "CTAP2 AES key" infos.
+//
+// It reads pinState but never modifies it, so a caller that only needs a
+// request-scoped secret -- the hmac-secret extension -- cannot disturb the
+// clientPin session. The caller must hold a.mu.
+func (a *Authenticator) agreeSharedSecret(platformKeyAgreement []byte, protocol uint8) (*pinSharedSecret, error) {
 	if a.pinState.protocol == nil || a.pinState.protocol.privateKey == nil {
 		return nil, ErrMissingKeyAgreement
 	}
@@ -1077,14 +1104,13 @@ func (a *Authenticator) deriveSharedSecret(platformKeyAgreement []byte, protocol
 	if err != nil {
 		return nil, ErrKeyAgreementFailed
 	}
-
-	a.pinState.protocol.activeProtocol = protocol
+	defer enclave.Wipe(rawSharedSecret)
 
 	if protocol == PINProtocol2 {
 		// V2 kdf(Z): The raw ECDH x-coordinate is used directly as IKM for
 		// HKDF-SHA-256 to derive separate hmacKey and aesKey. Unlike V1,
 		// SHA-256 is NOT applied before HKDF.
-		// Reference: CTAP2.1 §6.5.6, python-fido2 reference implementation.
+		// Reference: CTAP2.1 §6.5.7, python-fido2 reference implementation.
 		hmacKey, err := hkdfDerive(rawSharedSecret, "CTAP2 HMAC key")
 		if err != nil {
 			return nil, err
@@ -1093,16 +1119,31 @@ func (a *Authenticator) deriveSharedSecret(platformKeyAgreement []byte, protocol
 		if err != nil {
 			return nil, err
 		}
-		a.pinState.protocol.hmacKey = hmacKey
-		a.pinState.protocol.aesKey = aesKey
-		// Return hmacKey as the "sharedSecret" for backward compatibility with
-		// callers that use it for authentication verification.
-		return hmacKey, nil
+		return &pinSharedSecret{protocol: PINProtocol2, hmacKey: hmacKey, aesKey: aesKey}, nil
 	}
 
-	// V1 kdf(Z): SHA-256 of the raw ECDH x-coordinate.
+	// V1 kdf(Z): SHA-256 of the raw ECDH x-coordinate, one key for both roles.
 	hash := sha256.Sum256(rawSharedSecret)
-	return hash[:], nil
+	return &pinSharedSecret{protocol: PINProtocol1, hmacKey: hash[:], aesKey: hash[:]}, nil
+}
+
+// deriveSharedSecret establishes the clientPin session's shared secret with
+// the platform's public key and records it in pinState: the active protocol
+// and, for protocol 2, the separate hmacKey and aesKey. It returns the key
+// authenticate()/verify() use -- SHA-256(Z) for protocol 1, the HKDF hmacKey
+// for protocol 2.
+func (a *Authenticator) deriveSharedSecret(platformKeyAgreement []byte, protocol uint8) ([]byte, error) {
+	secret, err := a.agreeSharedSecret(platformKeyAgreement, protocol)
+	if err != nil {
+		return nil, err
+	}
+
+	a.pinState.protocol.activeProtocol = protocol
+	if protocol == PINProtocol2 {
+		a.pinState.protocol.hmacKey = secret.hmacKey
+		a.pinState.protocol.aesKey = secret.aesKey
+	}
+	return secret.hmacKey, nil
 }
 
 // verifyPinAuth verifies the pinUvAuthParam using HMAC-SHA-256.
@@ -1135,34 +1176,18 @@ func (a *Authenticator) verifyPinAuth(key []byte, protocol uint8, data, authPara
 // The decrypted buffer is then handed to extractPaddedPIN, which applies
 // the padding and length policy from CTAP 2.1 §6.5.5.5 step 5.
 func (a *Authenticator) decryptPIN(key []byte, protocol uint8, encryptedPIN []byte) ([]byte, error) {
-	var iv []byte
-	var ciphertext []byte
-
+	want := EncryptedPINMinLength // V1: zero IV, exactly the 64-byte padded PIN.
 	if protocol == PINProtocol2 {
-		// V2: exactly a 16-byte IV followed by 64 bytes of ciphertext.
-		if len(encryptedPIN) != AESBlockSize+EncryptedPINMinLength {
-			return nil, ErrInvalidParameter
-		}
-		iv = encryptedPIN[:AESBlockSize]
-		ciphertext = encryptedPIN[AESBlockSize:]
-	} else {
-		// V1: zero IV, ciphertext is exactly the 64-byte padded PIN.
-		if len(encryptedPIN) != EncryptedPINMinLength {
-			return nil, ErrInvalidParameter
-		}
-		iv = make([]byte, AESBlockSize)
-		ciphertext = encryptedPIN
+		want = AESBlockSize + EncryptedPINMinLength // V2: 16-byte IV + 64 bytes.
+	}
+	if len(encryptedPIN) != want {
+		return nil, ErrInvalidParameter
 	}
 
-	block, err := aes.NewCipher(key)
+	decrypted, err := decryptData(key, protocol, encryptedPIN)
 	if err != nil {
-		return nil, ErrDecryptionFailed
+		return nil, err
 	}
-
-	mode := cipher.NewCBCDecrypter(block, iv)
-
-	decrypted := make([]byte, len(ciphertext))
-	mode.CryptBlocks(decrypted, ciphertext)
 
 	return extractPaddedPIN(decrypted, a.config.PINMinLength)
 }
@@ -1237,36 +1262,15 @@ func validatePINLength(pin []byte, minLength int) error {
 // length per protocol, so trailing bytes past that length are malformed
 // input, not a length this authenticator should silently accept.
 func (a *Authenticator) decryptBlock(key []byte, protocol uint8, encrypted []byte) ([]byte, error) {
-	var iv []byte
-	var ciphertext []byte
-
+	want := PINHashSize // V1: exactly 16 bytes, zero IV.
 	if protocol == PINProtocol2 {
-		// V2: exactly a 16-byte IV followed by 16-byte ciphertext.
-		if len(encrypted) != AESBlockSize+PINHashSize {
-			return nil, ErrDecryptionFailed
-		}
-		iv = encrypted[:AESBlockSize]
-		ciphertext = encrypted[AESBlockSize : AESBlockSize+PINHashSize]
-	} else {
-		// V1: exactly 16 bytes, zero IV.
-		if len(encrypted) != PINHashSize {
-			return nil, ErrDecryptionFailed
-		}
-		iv = make([]byte, AESBlockSize)
-		ciphertext = encrypted
+		want = AESBlockSize + PINHashSize // V2: 16-byte IV + 16-byte ciphertext.
 	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
+	if len(encrypted) != want {
 		return nil, ErrDecryptionFailed
 	}
 
-	mode := cipher.NewCBCDecrypter(block, iv)
-
-	decrypted := make([]byte, len(ciphertext))
-	mode.CryptBlocks(decrypted, ciphertext)
-
-	return decrypted, nil
+	return decryptData(key, protocol, encrypted)
 }
 
 // encryptData encrypts data using AES-256-CBC per CTAP2 §6.5.5/§6.5.6.
@@ -1306,6 +1310,38 @@ func (a *Authenticator) encryptData(key []byte, protocol uint8, plaintext []byte
 	}
 
 	return ciphertext, nil
+}
+
+// decryptData is a PIN/UV auth protocol's decrypt(key, demCiphertext)
+// (CTAP 2.1 §6.5.6, §6.5.7): AES-256-CBC with no padding. Protocol 1 uses an
+// all-zero IV; protocol 2 reads the IV from the first 16 bytes of ciphertext.
+//
+// The ciphertext body must be a non-empty whole number of AES blocks, checked
+// before CryptBlocks runs because CryptBlocks panics on any other length. A
+// caller whose field has a fixed size per protocol checks that exact size
+// first; this check is the floor that keeps every caller panic-free.
+func decryptData(key []byte, protocol uint8, ciphertext []byte) ([]byte, error) {
+	iv := make([]byte, AESBlockSize)
+	body := ciphertext
+	if protocol == PINProtocol2 {
+		if len(ciphertext) < AESBlockSize {
+			return nil, ErrDecryptionFailed
+		}
+		copy(iv, ciphertext[:AESBlockSize])
+		body = ciphertext[AESBlockSize:]
+	}
+	if len(body) == 0 || len(body)%AESBlockSize != 0 {
+		return nil, ErrDecryptionFailed
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, ErrDecryptionFailed
+	}
+
+	plaintext := make([]byte, len(body))
+	cipher.NewCBCDecrypter(block, iv).CryptBlocks(plaintext, body)
+	return plaintext, nil
 }
 
 // decodeClientPINRequest decodes a CBOR-encoded ClientPIN request.
