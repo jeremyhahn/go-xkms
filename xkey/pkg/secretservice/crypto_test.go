@@ -15,6 +15,8 @@ package secretservice
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"testing"
 )
 
@@ -167,6 +169,57 @@ func TestSessionCrypto_DecryptInvalidCiphertext(t *testing.T) {
 	_, err = crypto.Decrypt(iv, []byte("odd length"))
 	if err != ErrDecryptionFailed {
 		t.Errorf("Decrypt(odd length) error = %v, want ErrDecryptionFailed", err)
+	}
+}
+
+// TestMustParseBigInt_PanicsOnInvalidHex covers the guard that protects the
+// package-level DH prime constant: a malformed literal must fail loudly at
+// init time rather than silently produce a wrong prime.
+func TestMustParseBigInt_PanicsOnInvalidHex(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("mustParseBigInt(invalid hex) did not panic")
+		}
+	}()
+	mustParseBigInt("not-a-hex-string")
+}
+
+// TestSessionCrypto_EncryptDecrypt_InvalidKeySize covers the aes.NewCipher
+// guard in both Encrypt and Decrypt: a SessionCrypto built from a key of the
+// wrong length (this package only ever derives 16-byte AES-128 keys, but a
+// caller could hand NewSessionCryptoFromKey anything) must fail cleanly
+// rather than let aes.NewCipher's error surface unwrapped.
+func TestSessionCrypto_EncryptDecrypt_InvalidKeySize(t *testing.T) {
+	crypto := NewSessionCryptoFromKey([]byte("too-short"))
+
+	if _, _, err := crypto.Encrypt([]byte("data")); err != ErrEncryptionFailed {
+		t.Errorf("Encrypt() with a bad key size error = %v, want ErrEncryptionFailed", err)
+	}
+
+	if _, err := crypto.Decrypt(make([]byte, aes.BlockSize), make([]byte, aes.BlockSize)); err != ErrDecryptionFailed {
+		t.Errorf("Decrypt() with a bad key size error = %v, want ErrDecryptionFailed", err)
+	}
+}
+
+// TestSessionCrypto_DecryptInvalidPadding covers Decrypt's pkcs7Unpad guard.
+// The ciphertext block is built by encrypting a plaintext block whose last
+// byte is 0 -- an invalid PKCS#7 padding length -- directly with the same
+// key and a zero IV, so the invalid padding is deterministic rather than
+// relying on a chance decryption outcome.
+func TestSessionCrypto_DecryptInvalidPadding(t *testing.T) {
+	crypto := NewSessionCryptoFromKey(bytes.Repeat([]byte{0x42}, 16))
+
+	block, err := aes.NewCipher(crypto.AESKey)
+	if err != nil {
+		t.Fatalf("aes.NewCipher() error = %v", err)
+	}
+	iv := make([]byte, aes.BlockSize)
+	plaintext := make([]byte, aes.BlockSize) // last byte 0x00: not a valid pad length
+	ciphertext := make([]byte, aes.BlockSize)
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, plaintext)
+
+	if _, err := crypto.Decrypt(iv, ciphertext); err != ErrDecryptionFailed {
+		t.Errorf("Decrypt() with invalid padding error = %v, want ErrDecryptionFailed", err)
 	}
 }
 

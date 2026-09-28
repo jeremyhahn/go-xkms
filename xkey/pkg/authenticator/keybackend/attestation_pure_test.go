@@ -14,14 +14,18 @@
 package keybackend
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
 	"errors"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCoseAlgorithmForKey covers every curve the attestation path accepts
@@ -141,5 +145,78 @@ func TestEncodeCOSERSAKey(t *testing.T) {
 	e, ok := decoded[-2].([]byte)
 	if !ok || len(e) == 0 {
 		t.Error("expected a non-empty public exponent (e)")
+	}
+}
+
+// TestVerifyAttestationSignature covers all three outcomes of the
+// self-verification PackedAttestationStatement performs before it will hand
+// back a signature: a leaf key type it cannot check, a signature that does
+// not verify, and one that does. Only the last of the three is reachable
+// through PackedAttestationStatement itself, because that path already
+// requires the leaf and signer to carry the same (necessarily ECDSA) public
+// key, so the other two are exercised directly here.
+func TestVerifyAttestationSignature(t *testing.T) {
+	t.Run("rejects a leaf key it cannot verify against", func(t *testing.T) {
+		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatalf("rsa.GenerateKey() error = %v", err)
+		}
+		leaf := &x509.Certificate{PublicKey: &rsaKey.PublicKey}
+
+		err = verifyAttestationSignature(leaf, crypto.SHA256, []byte("data"), []byte("sig"))
+		require.ErrorIs(t, err, ErrUnsupportedAttestationKey)
+	})
+
+	t.Run("rejects a signature that does not verify", func(t *testing.T) {
+		priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("ecdsa.GenerateKey() error = %v", err)
+		}
+		leaf := &x509.Certificate{PublicKey: &priv.PublicKey}
+
+		err = verifyAttestationSignature(leaf, crypto.SHA256, []byte("data"), []byte("not-a-valid-signature"))
+		require.ErrorIs(t, err, ErrAttestationSignatureInvalid)
+	})
+
+	t.Run("accepts a genuine signature", func(t *testing.T) {
+		priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("ecdsa.GenerateKey() error = %v", err)
+		}
+		leaf := &x509.Certificate{PublicKey: &priv.PublicKey}
+
+		data := []byte("attested-data")
+		digest := sha256.Sum256(data)
+		sig, err := ecdsa.SignASN1(rand.Reader, priv, digest[:])
+		if err != nil {
+			t.Fatalf("ecdsa.SignASN1() error = %v", err)
+		}
+
+		require.NoError(t, verifyAttestationSignature(leaf, crypto.SHA256, data, sig))
+	})
+}
+
+// TestPublicKeysEqual covers the two outcomes an Equal-implementing key can
+// produce and the refusal of a key type that implements no Equal method at
+// all -- crypto.PublicKey carries no such constraint, so a caller can hand
+// back anything.
+func TestPublicKeysEqual(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey() error = %v", err)
+	}
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey() error = %v", err)
+	}
+
+	if !publicKeysEqual(&priv.PublicKey, &priv.PublicKey) {
+		t.Error("publicKeysEqual() = false, want true for the same key")
+	}
+	if publicKeysEqual(&priv.PublicKey, &other.PublicKey) {
+		t.Error("publicKeysEqual() = true, want false for different keys")
+	}
+	if publicKeysEqual("not-a-key", &priv.PublicKey) {
+		t.Error("publicKeysEqual() = true, want false for a type with no Equal method")
 	}
 }

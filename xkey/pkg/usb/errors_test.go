@@ -132,6 +132,29 @@ func TestSentinelErrors_AreDistinct(t *testing.T) {
 	}
 }
 
+// TestDetailError covers the Error and Unwrap methods this package uses to
+// append operation-specific detail after a sentinel error while keeping
+// errors.Is/errors.As matching the sentinel through Unwrap.
+func TestDetailError(t *testing.T) {
+	err := &DetailError{Err: ErrInvalidSize, Detail: ": size must be positive, got -1"}
+
+	assert.Equal(t, "usb: invalid size: size must be positive, got -1", err.Error())
+	assert.Equal(t, ErrInvalidSize, err.Unwrap())
+	assert.True(t, errors.Is(err, ErrInvalidSize))
+}
+
+// TestSentinelCauseError covers the Error and Unwrap methods this package
+// uses to attach an underlying OS/library cause to a package sentinel so
+// errors.Is matches both.
+func TestSentinelCauseError(t *testing.T) {
+	cause := errors.New("exit status 1")
+	err := &SentinelCauseError{Sentinel: ErrPartitionFailed, Cause: cause}
+
+	assert.Equal(t, "usb: partitioning failed: exit status 1", err.Error())
+	assert.True(t, errors.Is(err, ErrPartitionFailed))
+	assert.True(t, errors.Is(err, cause))
+}
+
 func TestUSBError_WrapsErrDeviceNotFound(t *testing.T) {
 	err := &USBError{
 		Operation: "validate",
