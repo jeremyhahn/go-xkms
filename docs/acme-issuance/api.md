@@ -183,6 +183,13 @@ and is not documented as if it were; it follows the repo's normal
 authenticated-API conventions. The SDK surface is `sdk/go/acme/client/admin`;
 the CLI surface is `xkmsctl acme` ([`cli.md`](cli.md#xkmsctl-acme-admin)).
 
+Authorization is qrdb RBAC, resolved per route by `PermissionGate`. On
+xkmsd's unified mTLS listener the caller is the qrdb user its client
+certificate is bound to (SPKI thumbprint), with that user's roles; a
+certificate bound to no user, or a user holding no role that carries the
+route's permission, is answered `403` (`cmd/xkmsd/admin.go:159-167`; see
+[`engineering.md`](engineering.md#invariants)).
+
 ### Admin API response contract
 
 Every admin operation — tenants, tenant CA hierarchy, EAB, roles, users,

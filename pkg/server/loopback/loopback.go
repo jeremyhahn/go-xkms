@@ -170,11 +170,17 @@ func (i *Instance) Close(_ context.Context) error {
 
 // desktopConfig copies cfg and forces the loopback, REST-only posture: only
 // the REST protocol on 127.0.0.1 at the chosen port, no other transports.
+// Setting Protocols.REST makes config.Config.NetworkServing report true, so
+// this also sets LoopbackDesktop: it is the one signal that tells
+// config.Config.Validate this REST listener never leaves 127.0.0.1 and so
+// does not need the storage.backend "qrdb" + tls.enabled shape a real
+// network deployment does.
 func desktopConfig(src *config.Config, port int) *config.Config {
 	cfg := *src // shallow copy is sufficient; we only overwrite value fields below
 	cfg.Server.Host = "127.0.0.1"
 	cfg.Server.RESTPort = port
 	cfg.Protocols = config.ProtocolsConfig{REST: true}
+	cfg.LoopbackDesktop = true
 	return &cfg
 }
 

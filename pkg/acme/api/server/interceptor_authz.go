@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	adminv1 "github.com/jeremyhahn/go-xkms/api/proto/admin/v1"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -38,42 +39,55 @@ type Permission struct {
 // MethodPermissions maps every gRPC AdminService method to the qrdb grant its
 // caller must hold. A dispatchable method missing from this table is denied,
 // not admitted — see UnaryAuthorizationInterceptor.
+//
+// Keyed by the generated adminv1.AdminService_*_FullMethodName constants
+// (api/proto/admin/v1/admin_grpc.pb.go), never by hand-written string
+// literals: the real FullMethod a gRPC call carries is
+// "/trustedca.admin.v1.AdminService/...", not "/admin.v1.AdminService/...",
+// and a literal that drifted from the generated value would silently deny
+// every call to the method it named (go-xkms#743).
 var MethodPermissions = map[string]Permission{
 	// Tenant lifecycle.
-	"/admin.v1.AdminService/CreateTenant": {auth.ResourceTenants, auth.ActionCreate},
-	"/admin.v1.AdminService/UpdateTenant": {auth.ResourceTenants, auth.ActionUpdate},
-	"/admin.v1.AdminService/DeleteTenant": {auth.ResourceTenants, auth.ActionDelete},
-	"/admin.v1.AdminService/GetTenant":    {auth.ResourceTenants, auth.ActionRead},
-	"/admin.v1.AdminService/ListTenants":  {auth.ResourceTenants, auth.ActionList},
+	adminv1.AdminService_CreateTenant_FullMethodName: {auth.ResourceTenants, auth.ActionCreate},
+	adminv1.AdminService_UpdateTenant_FullMethodName: {auth.ResourceTenants, auth.ActionUpdate},
+	adminv1.AdminService_DeleteTenant_FullMethodName: {auth.ResourceTenants, auth.ActionDelete},
+	adminv1.AdminService_GetTenant_FullMethodName:    {auth.ResourceTenants, auth.ActionRead},
+	adminv1.AdminService_ListTenants_FullMethodName:  {auth.ResourceTenants, auth.ActionList},
 
 	// External Account Bindings.
-	"/admin.v1.AdminService/CreateEAB": {auth.ResourceACMEEAB, auth.ActionCreate},
-	"/admin.v1.AdminService/DeleteEAB": {auth.ResourceACMEEAB, auth.ActionDelete},
-	"/admin.v1.AdminService/GetEAB":    {auth.ResourceACMEEAB, auth.ActionRead},
-	"/admin.v1.AdminService/ListEABs":  {auth.ResourceACMEEAB, auth.ActionList},
+	adminv1.AdminService_CreateEAB_FullMethodName: {auth.ResourceACMEEAB, auth.ActionCreate},
+	adminv1.AdminService_DeleteEAB_FullMethodName: {auth.ResourceACMEEAB, auth.ActionDelete},
+	adminv1.AdminService_GetEAB_FullMethodName:    {auth.ResourceACMEEAB, auth.ActionRead},
+	adminv1.AdminService_ListEABs_FullMethodName:  {auth.ResourceACMEEAB, auth.ActionList},
 
 	// Role management.
-	"/admin.v1.AdminService/CreateTenantRole": {auth.ResourceRoles, auth.ActionCreate},
-	"/admin.v1.AdminService/UpdateTenantRole": {auth.ResourceRoles, auth.ActionUpdate},
-	"/admin.v1.AdminService/DeleteTenantRole": {auth.ResourceRoles, auth.ActionDelete},
-	"/admin.v1.AdminService/GetTenantRole":    {auth.ResourceRoles, auth.ActionRead},
-	"/admin.v1.AdminService/ListTenantRoles":  {auth.ResourceRoles, auth.ActionList},
+	adminv1.AdminService_CreateTenantRole_FullMethodName: {auth.ResourceRoles, auth.ActionCreate},
+	adminv1.AdminService_UpdateTenantRole_FullMethodName: {auth.ResourceRoles, auth.ActionUpdate},
+	adminv1.AdminService_DeleteTenantRole_FullMethodName: {auth.ResourceRoles, auth.ActionDelete},
+	adminv1.AdminService_GetTenantRole_FullMethodName:    {auth.ResourceRoles, auth.ActionRead},
+	adminv1.AdminService_ListTenantRoles_FullMethodName:  {auth.ResourceRoles, auth.ActionList},
 
 	// User management.
-	"/admin.v1.AdminService/CreateTenantUser": {auth.ResourceUsers, auth.ActionCreate},
-	"/admin.v1.AdminService/UpdateTenantUser": {auth.ResourceUsers, auth.ActionUpdate},
-	"/admin.v1.AdminService/DeleteTenantUser": {auth.ResourceUsers, auth.ActionDelete},
-	"/admin.v1.AdminService/GetTenantUser":    {auth.ResourceUsers, auth.ActionRead},
-	"/admin.v1.AdminService/ListTenantUsers":  {auth.ResourceUsers, auth.ActionList},
+	adminv1.AdminService_CreateTenantUser_FullMethodName: {auth.ResourceUsers, auth.ActionCreate},
+	adminv1.AdminService_UpdateTenantUser_FullMethodName: {auth.ResourceUsers, auth.ActionUpdate},
+	adminv1.AdminService_DeleteTenantUser_FullMethodName: {auth.ResourceUsers, auth.ActionDelete},
+	adminv1.AdminService_GetTenantUser_FullMethodName:    {auth.ResourceUsers, auth.ActionRead},
+	adminv1.AdminService_ListTenantUsers_FullMethodName:  {auth.ResourceUsers, auth.ActionList},
 
 	// Certificates.
-	"/admin.v1.AdminService/RevokeCertificate": {auth.ResourceCerts, auth.ActionRevoke},
-	"/admin.v1.AdminService/GetCertificate":    {auth.ResourceCerts, auth.ActionRead},
-	"/admin.v1.AdminService/ListCertificates":  {auth.ResourceCerts, auth.ActionList},
+	adminv1.AdminService_RevokeCertificate_FullMethodName: {auth.ResourceCerts, auth.ActionRevoke},
+	adminv1.AdminService_GetCertificate_FullMethodName:    {auth.ResourceCerts, auth.ActionRead},
+	adminv1.AdminService_ListCertificates_FullMethodName:  {auth.ResourceCerts, auth.ActionList},
+
+	// ACME accounts. Mirrors the REST admin routes (pkg/acme/admin/handlers.go)
+	// and the MCP method table (MCPMethodPermissions) exactly.
+	adminv1.AdminService_ListAccounts_FullMethodName:   {auth.ResourceACMEAccounts, auth.ActionList},
+	adminv1.AdminService_GetAccount_FullMethodName:     {auth.ResourceACMEAccounts, auth.ActionRead},
+	adminv1.AdminService_DisableAccount_FullMethodName: {auth.ResourceACMEAccounts, auth.ActionDisable},
 
 	// Server status.
-	"/admin.v1.AdminService/GetStatus": {auth.ResourceAdmin, auth.ActionStatus},
-	"/admin.v1.AdminService/GetStats":  {auth.ResourceAdmin, auth.ActionStatus},
+	adminv1.AdminService_GetStatus_FullMethodName: {auth.ResourceAdmin, auth.ActionStatus},
+	adminv1.AdminService_GetStats_FullMethodName:  {auth.ResourceAdmin, auth.ActionStatus},
 }
 
 // UnaryAuthorizationInterceptor returns a gRPC unary server interceptor that

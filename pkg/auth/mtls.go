@@ -45,8 +45,13 @@ type MTLSUser struct {
 	Email string
 	// DisplayName is a human-readable name.
 	DisplayName string
-	// Role is the user's authorization role.
-	Role string
+	// Roles are the identifiers of every role assigned to the user, exactly as
+	// the identity store records them. For the qrdb store these are qrdb role
+	// IDs — the only form go-qrdb's authorizer resolves (it looks roles up by
+	// ID, never by name) — so they are carried verbatim and never projected to
+	// names, and none is dropped: the authorizer grants the union of all of
+	// them.
+	Roles []string
 	// TenantID is the tenant scope for this user.
 	TenantID string
 	// Enabled indicates whether the user account is active.
@@ -228,8 +233,8 @@ func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certif
 				Metadata: a.certMetadataMap(cert),
 			}
 
-			if user.Role != "" {
-				identity.Roles = []string{user.Role}
+			if len(user.Roles) > 0 {
+				identity.Roles = append([]string(nil), user.Roles...)
 			}
 			identity.Metadata["display_name"] = user.DisplayName
 			if user.Email != "" {

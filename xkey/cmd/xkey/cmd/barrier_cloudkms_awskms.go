@@ -32,10 +32,13 @@ func init() {
 // the operator's persisted xkey configuration (Barrier.CloudKMS.AWSKMS),
 // resolving any explicit *xkms.SecretValue credential reference and falling
 // back to the AWS SDK's ambient credential chain when none is configured.
-// The seal key itself needs no configured identifier: sdk/go.BuildCloudKMSStrategy
-// resolves (or creates on first use) the symmetric wrapping key under the
-// fixed CN xkmsd uses too, so a barrier initialized by either unseals under
-// the other (go-xkms#757).
+// When AWSKMSConfig.KeyID is unset, the seal key needs no configured
+// identifier: sdk/go.BuildCloudKMSStrategy resolves (or creates on first
+// use) the symmetric wrapping key under the fixed CN xkmsd uses too, so a
+// barrier initialized by either unseals under the other (go-xkms#757). An
+// operator-supplied KeyID (go-xkms#842) is forwarded to the backend instead,
+// so BuildCloudKMSStrategy resolves that existing CMK rather than creating
+// one.
 func buildAWSKMSBarrierStrategy(ctx context.Context, dataDir string) (xkms.SealingStrategy, io.Closer, error) {
 	awsCfg := GetConfig().Barrier.CloudKMS.AWSKMS
 	if awsCfg != nil {
@@ -71,6 +74,7 @@ func buildAWSKMSBarrierStrategy(ctx context.Context, dataDir string) (xkms.Seali
 		SecretAccessKey: string(secretAccessKey),
 		SessionToken:    string(sessionToken),
 		Endpoint:        awsCfg.Endpoint,
+		KeyID:           awsCfg.KeyID,
 		KeyStorage:      metaStorage,
 		CertStorage:     metaStorage,
 	})

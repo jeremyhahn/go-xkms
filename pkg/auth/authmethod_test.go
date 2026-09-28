@@ -117,10 +117,8 @@ func newPolicyAuthenticator(t *testing.T, policy []string) (*MTLSAuthenticator, 
 		Lifecycle:   string(qrdbsdk.LifecycleActive),
 		AuthMethods: policy,
 	}
-	roles := newFakeQRDBRoleClient()
-	roles.byID["role-1"] = &qrdbtransport.Role{ID: "role-1", Name: "operator"}
 
-	authn := NewMTLSAuthenticator(&MTLSConfig{UserStore: NewQRDBUserStore(users, roles)})
+	authn := NewMTLSAuthenticator(&MTLSConfig{UserStore: NewQRDBUserStore(users)})
 	return authn, clientCert.Cert
 }
 
@@ -175,7 +173,7 @@ func TestMTLSAuthenticator_AuthMethodPolicy_Admits(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "alice", identity.Subject)
 			assert.Equal(t, "tenant-a", identity.TenantID)
-			assert.Equal(t, []string{"operator"}, identity.Roles)
+			assert.Equal(t, []string{"role-1"}, identity.Roles)
 			assert.Equal(t, qrdbsdk.MethodMTLS, identity.Metadata["auth_method"])
 		})
 	}

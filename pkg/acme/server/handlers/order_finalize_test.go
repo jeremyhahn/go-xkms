@@ -1488,7 +1488,7 @@ func TestSendFinalizeResponse_Success(t *testing.T) {
 	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
 	require.NoError(t, err)
 
-	serialNumber := uint64(54321)
+	serialNumber := "d431" // hex encoding of decimal 54321
 	certPEM := []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----")
 
 	w := httptest.NewRecorder()
@@ -1501,7 +1501,47 @@ func TestSendFinalizeResponse_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, common.StatusValid, orderResp.Status)
-	assert.Contains(t, orderResp.Certificate, fmt.Sprintf("/acme/cert/%d", serialNumber))
+	assert.Contains(t, orderResp.Certificate, fmt.Sprintf("/acme/cert/%s", serialNumber))
+}
+
+// TestSendFinalizeResponse_FullSerialNotTruncated verifies that a serial
+// number too large to fit in a uint64 (128 bits, matching pkg/ca's serial
+// generator) survives sendFinalizeResponse intact: neither the certificate
+// URL nor the stored ACMECertificate record truncates it. This is the
+// regression test for go-xkms#744.
+func TestSendFinalizeResponse_FullSerialNotTruncated(t *testing.T) {
+	service, _, cleanup := setupTestServiceWithMockCA(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	order := createTestOrderSimple(t, service, account.ID)
+	order.Status = common.StatusProcessing
+
+	ctx := context.Background()
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+
+	// 128 bits of hex digits: far larger than math.MaxUint64.
+	serialNumber := "ffeeddccbbaa99887766554433221100"
+	certPEM := []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----")
+
+	w := httptest.NewRecorder()
+	service.sendFinalizeResponse(ctx, orderDAO, order, account, time.Now(), serialNumber, certPEM, w)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var orderResp entities.ACMEOrder
+	err = json.NewDecoder(w.Body).Decode(&orderResp)
+	require.NoError(t, err)
+	assert.Contains(t, orderResp.Certificate, "/acme/cert/"+serialNumber)
+
+	certDAO, err := service.storageFactory.CertificateDAO()
+	require.NoError(t, err)
+	stored, err := certDAO.Get(ctx, entities.StringToEntityID(serialNumber))
+	require.NoError(t, err)
+	assert.Equal(t, serialNumber, stored.Serial)
 }
 
 func TestOrderFinalizeHandler_MalformedJWS(t *testing.T) {
@@ -1643,8 +1683,19 @@ func TestOrderFinalizeHandler_LargeSerialNumber(t *testing.T) {
 	resp := httptest.NewRecorder()
 	service.OrderFinalizeHandler(resp, req)
 
-	// Should succeed - large serial numbers are handled by taking modulo
+	// Should succeed, and the certificate URL must carry the serial's full
+	// precision (hex-encoded), not a value truncated to fit a uint64
+	// (go-xkms#744): the low 64 bits of this serial alone would collide
+	// with other certificates the mock CA could plausibly issue.
 	require.Equal(t, http.StatusOK, resp.Code)
+
+	expectedSerial := new(big.Int)
+	_, ok := expectedSerial.SetString("18446744073709551616999999999999999", 10)
+	require.True(t, ok)
+
+	var orderResp entities.ACMEOrder
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&orderResp))
+	assert.Contains(t, orderResp.Certificate, "/acme/cert/"+expectedSerial.Text(16))
 }
 
 func TestOrderFinalizeHandler_PermanentIdentifierEKCertificate(t *testing.T) {
@@ -2036,6 +2087,17 @@ func (m *MockCertificateDAO) Save(ctx context.Context, cert *entities.ACMECertif
 	return m.GenericDAO.Save(ctx, cert)
 }
 
+// SaveIfAbsent must also fail when failSave is set: storage.SaveCertificateNoCollision
+// (go-xkms#744 follow-up) tries SaveIfAbsent before ever calling Save, so a
+// mock that only overrode Save would let a real SaveIfAbsent succeed and
+// mask the injected failure.
+func (m *MockCertificateDAO) SaveIfAbsent(ctx context.Context, cert *entities.ACMECertificate) (bool, error) {
+	if m.failSave {
+		return false, caerrors.StorageFailureError("mock certificate save failure")
+	}
+	return m.GenericDAO.SaveIfAbsent(ctx, cert)
+}
+
 func TestSendFinalizeResponse_CertDAOCreationFailure(t *testing.T) {
 	service, _, cleanup := setupTestServiceWithMockCA(t)
 	defer cleanup()
@@ -2056,7 +2118,7 @@ func TestSendFinalizeResponse_CertDAOCreationFailure(t *testing.T) {
 	}
 	service.storageFactory = mockFactory
 
-	serialNumber := uint64(12345)
+	serialNumber := "3039" // hex encoding of decimal 12345
 	certPEM := []byte("test-cert-pem")
 
 	w := httptest.NewRecorder()
@@ -2085,7 +2147,7 @@ func TestSendFinalizeResponse_CertSaveFailure(t *testing.T) {
 	}
 	service.storageFactory = mockFactory
 
-	serialNumber := uint64(12345)
+	serialNumber := "3039" // hex encoding of decimal 12345
 	certPEM := []byte("test-cert-pem")
 
 	w := httptest.NewRecorder()
@@ -2134,7 +2196,7 @@ func TestSendFinalizeResponse_OrderSaveFailure(t *testing.T) {
 		dao.saveFailOnCall = 1
 	}
 
-	serialNumber := uint64(12345)
+	serialNumber := "3039" // hex encoding of decimal 12345
 	certPEM := []byte("test-cert-pem")
 
 	w := httptest.NewRecorder()

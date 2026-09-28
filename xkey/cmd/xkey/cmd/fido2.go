@@ -355,9 +355,14 @@ Examples:
   # Run with custom notification command
   sudo xkey fido2 --notify-command "notify-send xKey '%o for %r'"
 
-Configuration can also be set via environment variables (XKEY_FIDO2_*) or
-config file. Command-line flags take precedence over environment variables,
-which take precedence over config file values.`,
+Only --storage, --storage-path, --name and --attestation can also be set via
+the xkey config file's fido2: section or the environment variables
+XKEY_FIDO2_STORAGE, XKEY_FIDO2_STORAGE_PATH, XKEY_FIDO2_DEVICE_NAME and
+XKEY_FIDO2_ATTESTATION -- the settings pkg/config.FIDO2Config declares.
+Command-line flags take precedence, then the environment, then the config
+file. Every other flag on this command (backend, tpm-device, pin, PKCS#11
+and phone settings, notifications, CDP, ...) is CLI-only: it has no
+environment variable or config file source.`,
 	RunE: runFIDO2,
 }
 
@@ -535,14 +540,30 @@ func runFIDO2(cmd *cobra.Command, args []string) error {
 }
 
 // buildFIDO2Config creates a FIDO2Config from Viper configuration.
+//
+// Every key pkg/config's FIDO2Config declares (storage, storage_path,
+// device_name, attestation) is honoured here, not only attestation: the
+// unified xkey config file is read by its own viper instance, so a value set
+// there -- or an XKEY_FIDO2_* environment variable, which that instance also
+// merges (pkg/config/load.go registers every leaf for both) -- never reached
+// this command's viper on its own. Installing each as this viper's default
+// gives the config/environment source its intended precedence: an explicit
+// flag still wins, because viper only falls back to a default for a flag the
+// user did not set (go-xkms#871).
 func buildFIDO2Config() *FIDO2Config {
-	// The unified xkey config file is read by its own viper instance, so a
-	// value set there never reached this command's viper and `fido2.attestation`
-	// had no effect at all. Installing it as the viper default gives the file
-	// its intended precedence: an explicit --attestation flag still wins,
-	// because viper only falls back to defaults for flags the user did not set.
-	if xcfg, err := xkeyconfig.Load(); err == nil && xcfg.FIDO2.Attestation != "" {
-		viper.SetDefault("fido2.attestation", xcfg.FIDO2.Attestation)
+	if xcfg, err := xkeyconfig.Load(); err == nil {
+		if xcfg.FIDO2.Storage != "" {
+			viper.SetDefault("fido2.storage", xcfg.FIDO2.Storage)
+		}
+		if xcfg.FIDO2.StoragePath != "" {
+			viper.SetDefault("fido2.storage_path", xcfg.FIDO2.StoragePath)
+		}
+		if xcfg.FIDO2.DeviceName != "" {
+			viper.SetDefault("fido2.name", xcfg.FIDO2.DeviceName)
+		}
+		if xcfg.FIDO2.Attestation != "" {
+			viper.SetDefault("fido2.attestation", xcfg.FIDO2.Attestation)
+		}
 	}
 
 	cfg := &FIDO2Config{

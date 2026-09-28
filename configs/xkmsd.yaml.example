@@ -158,6 +158,10 @@ backends:
   #   access_key: ""
   #   secret_key: ""
   #   endpoint: ""
+  #   # key_id: an existing CMK's key ID, key ARN, alias, or alias ARN to
+  #   # seal under instead of provisioning a new one. Leave unset to let
+  #   # xkmsd create and persist a CMK on first use.
+  #   key_id: ""
 
   # GCP KMS backend
   # gcpkms:
