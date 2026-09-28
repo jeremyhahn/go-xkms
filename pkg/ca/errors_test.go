@@ -53,6 +53,7 @@ func TestErrors_AreDistinct(t *testing.T) {
 		ErrCRLNotFound,
 		ErrCRLGenerationFailed,
 		ErrAlreadyRevoked,
+		ErrRevocationRecordCorrupt,
 
 		// Chain errors
 		ErrInvalidCertificateChain,
@@ -151,6 +152,7 @@ func TestErrors_WorkWithErrorsIs(t *testing.T) {
 		{name: "ErrCRLNotFound", err: ErrCRLNotFound, target: ErrCRLNotFound},
 		{name: "ErrCRLGenerationFailed", err: ErrCRLGenerationFailed, target: ErrCRLGenerationFailed},
 		{name: "ErrAlreadyRevoked", err: ErrAlreadyRevoked, target: ErrAlreadyRevoked},
+		{name: "ErrRevocationRecordCorrupt", err: ErrRevocationRecordCorrupt, target: ErrRevocationRecordCorrupt},
 
 		// Chain errors
 		{name: "ErrInvalidCertificateChain", err: ErrInvalidCertificateChain, target: ErrInvalidCertificateChain},
@@ -264,6 +266,7 @@ func TestErrors_HaveProperFormat(t *testing.T) {
 		ErrCRLNotFound,
 		ErrCRLGenerationFailed,
 		ErrAlreadyRevoked,
+		ErrRevocationRecordCorrupt,
 		ErrInvalidCertificateChain,
 		ErrRootNotFound,
 		ErrIntermediateNotFound,
@@ -336,6 +339,7 @@ func TestErrors_Messages_NotEmpty(t *testing.T) {
 		ErrCRLNotFound,
 		ErrCRLGenerationFailed,
 		ErrAlreadyRevoked,
+		ErrRevocationRecordCorrupt,
 		ErrInvalidCertificateChain,
 		ErrRootNotFound,
 		ErrIntermediateNotFound,
@@ -450,6 +454,7 @@ func TestErrors_AreNotNil(t *testing.T) {
 		{"ErrCRLNotFound", ErrCRLNotFound},
 		{"ErrCRLGenerationFailed", ErrCRLGenerationFailed},
 		{"ErrAlreadyRevoked", ErrAlreadyRevoked},
+		{"ErrRevocationRecordCorrupt", ErrRevocationRecordCorrupt},
 		{"ErrInvalidCertificateChain", ErrInvalidCertificateChain},
 		{"ErrRootNotFound", ErrRootNotFound},
 		{"ErrIntermediateNotFound", ErrIntermediateNotFound},

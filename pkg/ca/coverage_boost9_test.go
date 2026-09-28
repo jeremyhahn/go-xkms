@@ -1003,8 +1003,9 @@ func TestCASigner_AlgorithmMismatch_B9(t *testing.T) {
 // ca_extensions.go — loadPersistedRevocations: invalid serial string path
 // =============================================================================
 
-// TestLoadPersistedRevocations_InvalidSerial_B9 exercises the "invalid serial"
-// warn-and-skip branch in loadPersistedRevocations.
+// TestLoadPersistedRevocations_InvalidSerial_B9 proves a record whose serial
+// cannot be parsed fails the load with ErrRevocationRecordCorrupt naming the
+// key, rather than being skipped (which would silently un-revoke it).
 func TestLoadPersistedRevocations_InvalidSerial_B9(t *testing.T) {
 	t.Parallel()
 	backend := storage.NewMemory()
@@ -1018,7 +1019,7 @@ func TestLoadPersistedRevocations_InvalidSerial_B9(t *testing.T) {
 	require.NoError(t, backend.Put(context.Background(), key, badJSON))
 
 	err := ca.loadPersistedRevocations(context.Background())
-	require.NoError(t, err)
-	// The bad record must be skipped; in-memory map must remain empty.
+	require.ErrorIs(t, err, ErrRevocationRecordCorrupt)
+	assert.Contains(t, err.Error(), key)
 	assert.Empty(t, ca.revocations)
 }

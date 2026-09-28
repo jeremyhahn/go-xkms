@@ -109,7 +109,7 @@ func (ca *CA) getCRLBlob(ctx context.Context, ski []byte) (*persistedCRL, error)
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, ErrCRLNotFound
 		}
-		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("get crl: %v", err)}
+		return nil, &errs.Joined{Lead: ErrStorageError, Detail: "get crl", Cause: err}
 	}
 
 	var rec persistedCRL
@@ -125,20 +125,30 @@ func (ca *CA) getCRLBlob(ctx context.Context, ski []byte) (*persistedCRL, error)
 // time, so it strictly increases even when refresh-on-revoke regenerates a
 // CRL more than once inside the same clock tick (or under an injected test
 // clock that does not advance between calls).
-func (ca *CA) nextCRLNumber(ctx context.Context, ski []byte) *big.Int {
+//
+// Only a definite "no artifact yet" (ErrCRLNotFound) starts the sequence at
+// 1. A store fault or an unreadable previous number fails with
+// ErrStorageError: restarting at 1 would publish a CRL whose number goes
+// backwards, which relying parties that track CRL numbers reject or, worse,
+// treat as older than the CRL it replaces.
+func (ca *CA) nextCRLNumber(ctx context.Context, ski []byte) (*big.Int, error) {
 	prev, err := ca.getCRLBlob(ctx, ski)
-	if err != nil || prev.Number == "" {
-		return big.NewInt(1)
+	if err != nil {
+		if errors.Is(err, ErrCRLNotFound) {
+			return big.NewInt(1), nil
+		}
+		return nil, err
 	}
 	n, ok := new(big.Int).SetString(prev.Number, 10)
-	if !ok {
-		return big.NewInt(1)
+	if !ok || n.Sign() < 0 {
+		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("persisted crl %s has invalid number %q", crlKey(ski), prev.Number)}
 	}
-	return n.Add(n, big.NewInt(1))
+	return n.Add(n, big.NewInt(1)), nil
 }
 
-// generateAndPersistCRL builds a fresh CRL from the current revocation set,
-// signs it, persists the DER as the replicated artifact, warms certStore's
+// generateAndPersistCRL builds a fresh CRL from the full revocation set in
+// the replicated revocation store (merged into the in-memory map first, so
+// revocations recorded by other cluster instances are included), signs it, persists the DER as the replicated artifact, warms certStore's
 // in-memory cache, and returns the DER. It is the shared implementation
 // behind GenerateCRL (the explicit, always-regenerate force-refresh verb),
 // CRL (regenerates only when the persisted artifact is missing or stale),
@@ -160,6 +170,16 @@ func (ca *CA) generateAndPersistCRL(ctx context.Context) ([]byte, error) {
 		return nil, &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
+	// Merge the store's full revocation list into the in-memory map before
+	// building. The persisted CRL artifact is shared by every instance, so
+	// a CRL built from this instance's map alone would drop revocations
+	// recorded elsewhere in the cluster and overwrite the artifact without
+	// them. A listing error or corrupt record aborts generation: an
+	// incomplete CRL must never be published.
+	if err := ca.loadPersistedRevocations(ctx); err != nil {
+		return nil, &errs.Joined{Lead: ErrCRLGenerationFailed, Cause: err}
+	}
+
 	// Build revoked certificates list.
 	ca.revocationsMutex.RLock()
 	revokedEntries := make([]x509.RevocationListEntry, 0, len(ca.revocations))
@@ -178,7 +198,10 @@ func (ca *CA) generateAndPersistCRL(ctx context.Context) ([]byte, error) {
 		crlValidityDays = issuingIdentity.GetCRLValidityDays()
 	}
 
-	number := ca.nextCRLNumber(ctx, issuingCert.SubjectKeyId)
+	number, err := ca.nextCRLNumber(ctx, issuingCert.SubjectKeyId)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrCRLGenerationFailed, Cause: err}
+	}
 	generatedAt := ca.now()
 	template := &x509.RevocationList{
 		Number:                    number,

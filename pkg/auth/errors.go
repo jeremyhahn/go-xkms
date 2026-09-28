@@ -40,6 +40,12 @@ var (
 	// ErrUnauthenticated is returned by the Authorizer when no identity is
 	// present on the request context — authentication must run first.
 	ErrUnauthenticated = errors.New("authentication required")
+
+	// ErrCertNotBound is returned by the mTLS authenticator when a UserStore
+	// is configured and the client certificate's SPKI thumbprint is bound to
+	// no user. Once an identity plane is present, only a bound certificate
+	// authenticates.
+	ErrCertNotBound = errors.New("client certificate is not bound to a user")
 )
 
 // AuthMethodNotPermittedError is returned when a certificate resolves to an
@@ -68,4 +74,25 @@ func (e *AuthMethodNotPermittedError) Error() string {
 	return "auth: authentication method " + e.Method +
 		" is not permitted for " + e.Username + " in tenant " + e.TenantID +
 		" (permitted: " + strings.Join(e.Permitted, ", ") + ")"
+}
+
+// UserLookupError is returned by the mTLS authenticator when the configured
+// UserStore fails to resolve a client certificate for any reason other than a
+// definite not-found: the store is sealed, unreachable, or otherwise
+// unavailable. Authentication fails closed, because an account the store
+// would have refused (disabled or unbound) must not authenticate while the
+// store cannot say so.
+type UserLookupError struct {
+	// Err is the store's error.
+	Err error
+}
+
+// Error returns a human-readable description.
+func (e *UserLookupError) Error() string {
+	return "mtls user lookup failed: " + e.Err.Error()
+}
+
+// Unwrap returns the store's error.
+func (e *UserLookupError) Unwrap() error {
+	return e.Err
 }

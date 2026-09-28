@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -42,7 +43,7 @@ type mockIPCServer struct {
 
 func newMockIPCServer(t *testing.T, handler func(*ipc.Message) *ipc.Response) (*mockIPCServer, string) {
 	t.Helper()
-	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	sockPath := filepath.Join(privateTempDir(t), "test.sock")
 
 	listener, err := net.Listen("unix", sockPath)
 	require.NoError(t, err)
@@ -399,7 +400,7 @@ func TestIPCTransport_NotImplemented_Methods(t *testing.T) {
 }
 
 func TestIPCTransport_SendMessage_MalformedResponse(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "bad-server.sock")
+	sockPath := filepath.Join(privateTempDir(t), "bad-server.sock")
 	listener, err := net.Listen("unix", sockPath)
 	require.NoError(t, err)
 	defer listener.Close()
@@ -430,4 +431,14 @@ func TestIPCTransport_SendMessage_MalformedResponse(t *testing.T) {
 	assert.Nil(t, resp)
 	assert.Error(t, signErr)
 	assert.True(t, errors.Is(signErr, ErrSigningFailed))
+}
+
+// privateTempDir returns a fresh temporary directory with mode 0700. The IPC
+// client refuses a socket directory with group or other permission bits
+// (ipc.Dial), and t.TempDir creates its directory 0777 &^ umask.
+func privateTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
+	return dir
 }

@@ -1,6 +1,6 @@
 # Static Passwords — CLI
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 Every flag below is read from `cmd/xkey/cmd/password.go`/`touch.go`'s
 `init()` and matches `xkey password <verb> --help`/`xkey touch --help`
@@ -82,7 +82,7 @@ the virtual USB keyboard.
 
 ```bash
 xkey password type "DatabaseProd"
-xkey password type "DatabaseProd" --socket /tmp/xkey.sock
+xkey password type "DatabaseProd" --socket "$XDG_RUNTIME_DIR/xkey/xkey.sock"
 ```
 
 ## `xkey password unlock`
@@ -150,7 +150,7 @@ the virtual keyboard. Communicates with the running `xkey` daemon over IPC.
 ```bash
 xkey touch                                  # approve pending request, or type the default password
 xkey touch --password "DatabaseProd"        # type a specific named password
-xkey touch --socket /tmp/xkey.sock
+xkey touch --socket "$XDG_RUNTIME_DIR/xkey/xkey.sock"
 ```
 
 ## `xkey fido2` password/touch flags

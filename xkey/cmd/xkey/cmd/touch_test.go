@@ -192,7 +192,7 @@ func TestRunTouch_DaemonNotRunning(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("password", "", "")
 	cmd.Flags().String("socket", "", "")
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", filepath.Join(t.TempDir(), "no-daemon.sock")))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", filepath.Join(privateTempDir(t), "no-daemon.sock")))
 
 	err := runTouch(cmd, nil)
 	require.ErrorIs(t, err, ErrTouchDaemonNotRunning)
@@ -202,7 +202,7 @@ func TestRunTouch_DaemonNotRunning_NamedPassword(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("password", "", "")
 	cmd.Flags().String("socket", "", "")
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", filepath.Join(t.TempDir(), "no-daemon.sock")))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", filepath.Join(privateTempDir(t), "no-daemon.sock")))
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "password", "DatabaseProd"))
 
 	err := runTouch(cmd, nil)

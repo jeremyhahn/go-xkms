@@ -376,15 +376,22 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		// Convert Vault key name back to CN
 		cn := b.desanitizeKeyName(keyName)
 
-		// Load metadata
+		// Load metadata. Only a genuine storage.ErrNotFound falls back to
+		// basic attributes built from the Transit key name alone (a key
+		// created before this backend persisted metadata, or a benign race
+		// with a concurrent delete); any other failure must not be silently
+		// papered over the same way, since that would return an incomplete
+		// list with nothing to say so (go-xkms#1119).
 		metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, cn)
 		if err != nil {
-			// If metadata doesn't exist, create basic attributes
-			attrs := &types.KeyAttributes{
-				CN: cn,
+			if errors.Is(err, storage.ErrNotFound) {
+				attrs := &types.KeyAttributes{
+					CN: cn,
+				}
+				result = append(result, attrs)
+				continue
 			}
-			result = append(result, attrs)
-			continue
+			return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", cn, err)}
 		}
 
 		var metadata map[string]interface{}

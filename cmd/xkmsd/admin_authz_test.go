@@ -291,8 +291,7 @@ func TestAdminPlane_FirstBootAdminAuthorizedOnEveryRoute(t *testing.T) {
 
 // TestAdminPlane_IdentityWithoutRoleRefusedOnEveryRoute proves the gate still
 // fails closed: an authenticated identity holding no role -- a real user with
-// no role assignment, and a certificate bound to no user at all -- is refused
-// on every admin route.
+// no role assignment -- is refused on every admin route.
 func TestAdminPlane_IdentityWithoutRoleRefusedOnEveryRoute(t *testing.T) {
 	f := newAdminAuthzFixture(t)
 
@@ -303,23 +302,35 @@ func TestAdminPlane_IdentityWithoutRoleRefusedOnEveryRoute(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Empty(t, roleless.RoleIDs, "fixture: the user must hold no role")
+	cert := bindClientCert(t, f.client, roleless)
 
-	cases := map[string]*x509.Certificate{
-		"user without a role": bindClientCert(t, f.client, roleless),
-		"unbound certificate": newClientCert(t, "nobody-1069"),
+	for _, route := range f.routes {
+		status := serveAdminRoute(t, f.router, route, cert)
+		decisions := f.log.take()
+
+		assert.Equal(t, http.StatusForbidden, status, "%s", route)
+		require.Len(t, decisions, 1, "%s: want exactly one gate decision", route)
+		assert.False(t, decisions[0].granted, "%s: gate granted %s to an identity holding no role",
+			route, decisions[0].permission)
 	}
-	for name, cert := range cases {
-		t.Run(name, func(t *testing.T) {
-			for _, route := range f.routes {
-				status := serveAdminRoute(t, f.router, route, cert)
-				decisions := f.log.take()
+}
 
-				assert.Equal(t, http.StatusForbidden, status, "%s", route)
-				require.Len(t, decisions, 1, "%s: want exactly one gate decision", route)
-				assert.False(t, decisions[0].granted, "%s: gate granted %s to an identity holding no role",
-					route, decisions[0].permission)
-			}
-		})
+// TestAdminPlane_UnboundCertificateRefusedAtAuthentication proves a client
+// certificate bound to no user never becomes an identity on the admin plane:
+// the embedded qrdb reports its typed not-found, the mTLS authenticator
+// refuses with ErrCertNotBound, and the request is answered 401 before the
+// permission gate runs. A certificate-derived identity would carry the
+// caller-chosen CN and OU as its Subject and TenantID (go-xkms#1096).
+func TestAdminPlane_UnboundCertificateRefusedAtAuthentication(t *testing.T) {
+	f := newAdminAuthzFixture(t)
+	cert := newClientCert(t, "nobody-1096")
+
+	for _, route := range f.routes {
+		status := serveAdminRoute(t, f.router, route, cert)
+		decisions := f.log.take()
+
+		assert.Equal(t, http.StatusUnauthorized, status, "%s", route)
+		assert.Empty(t, decisions, "%s: an unbound certificate must not reach the gate", route)
 	}
 }
 

@@ -194,10 +194,17 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
-	// Check if metadata exists
+	// Check if metadata exists. Only a genuine storage.ErrNotFound is
+	// reported as ErrKeyNotFound; any other failure from the metadata store
+	// must not be conflated with "no key yet" (go-xkms#1119) -- callers such
+	// as seal.EnsureSealKey rely on that distinction to decide whether
+	// generating a replacement key is safe.
 	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		}
+		return nil, &errs.Joined{Lead: ErrMetadataStorage, Detail: fmt.Sprintf("failed to read key metadata for %s", attrs.CN), Cause: err}
 	}
 
 	// Extract key ID from metadata
