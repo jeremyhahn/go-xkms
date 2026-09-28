@@ -15,17 +15,24 @@ package service
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/big"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/client"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -56,9 +63,11 @@ func (d *deviceTPM) Close() error {
 //
 // A device whose TPM configuration selects the in-process simulator (or
 // leaves TPM nil, which defaults to xkmssdk.DefaultTPMConfig — also
-// simulator-backed) is provisioned on first use: its EK, SSRK and IAK are
-// created if absent, and a throwaway Endorsement Key certificate is minted
-// if none is configured or already present. This is development and testing
+// simulator-backed) is provisioned on first use: its EK, SSRK, IAK and
+// Platform SRK are created if absent, a throwaway Endorsement Key certificate
+// is minted if none is configured or already present, and a throwaway IAK
+// certificate is minted into an in-memory certificate store so the
+// device-attest-01 statement has an x5c. This is development and testing
 // tooling only. Real hardware is never auto-provisioned: an unprovisioned
 // physical TPM is refused with ErrDeviceTPMNotProvisioned naming the
 // operator action, exactly as pkg/backend/tpm2.NewBackend refuses it.
@@ -72,12 +81,16 @@ func openDeviceTPM(name string, spec *DeviceSpec, logger *slog.Logger) (client.T
 		return nil, ErrDeviceTPMOpenFailed{Name: name, Err: err}
 	}
 
-	tpm, err := xkmssdk.NewTPM2(&xkmssdk.TPMParams{
+	params := &xkmssdk.TPMParams{
 		Config:    tpmCfg,
 		Backend:   factory.KeyBackend(),
 		BlobStore: factory.BlobStore(),
 		Logger:    logger,
-	})
+	}
+	if simulator {
+		params.CertStore = store.NewMemoryCertStore(logger)
+	}
+	tpm, err := xkmssdk.NewTPM2(params)
 	if err != nil {
 		if errors.Is(err, xkmssdk.ErrTPMNotInitialized) && simulator && tpm != nil {
 			if perr := provisionSimulatorIdentity(name, tpm, tpmCfg); perr != nil {
@@ -97,26 +110,32 @@ func openDeviceTPM(name string, spec *DeviceSpec, logger *slog.Logger) (client.T
 	}
 
 	module := &deviceTPM{
-		XKMSTPMAdapter: client.NewXKMSTPMAdapter(tpm),
+		XKMSTPMAdapter: client.NewXKMSTPMAdapter(tpm, factory.KeyBackend()),
 		factory:        factory,
 	}
 
 	if err := ensureEKCertificate(name, module, dev, simulator); err != nil {
 		return nil, errors.Join(err, module.Close())
 	}
+	if simulator {
+		if err := provisionSimulatorIAKCertificate(name, tpm); err != nil {
+			return nil, errors.Join(err, module.Close())
+		}
+	}
 
 	return module, nil
 }
 
-// provisionSimulatorIdentity creates the EK, SSRK and IAK the in-process TPM
-// simulator needs for enrollment and attestation. It never runs against real
+// provisionSimulatorIdentity creates the EK, SSRK, IAK and Platform SRK the
+// in-process TPM simulator needs for enrollment and attestation. It never runs against real
 // hardware (openDeviceTPM gates it on simulator == true) and never performs
 // the destructive TPM2_Clear a first-boot ceremony (TrustedPlatformModule.
-// Provision) does — it only creates the three keys, mirroring
-// pkg/backend/tpm2.NewBackend's own simulator provisioning.
+// Provision) does — it only creates the four keys, mirroring
+// pkg/backend/tpm2.NewBackend's own simulator provisioning. The Platform SRK
+// is the parent of the device-attest-01 certificate key.
 func provisionSimulatorIdentity(name string, tpm xkmssdk.TrustedPlatformModule, cfg *xkmssdk.TPMConfig) error {
-	if cfg.EK == nil || cfg.SSRK == nil {
-		return ErrDeviceTPMConfigIncomplete{Name: name, Reason: "ek and ssrk configuration are required to provision the simulator"}
+	if cfg.EK == nil || cfg.SSRK == nil || cfg.PlatformSRK == nil {
+		return ErrDeviceTPMConfigIncomplete{Name: name, Reason: "ek, ssrk and platform-srk configuration are required to provision the simulator"}
 	}
 
 	ekAttrs, err := xkmssdk.EKAttributesFromConfig(*cfg.EK, nil, nil)
@@ -157,6 +176,78 @@ func provisionSimulatorIdentity(name string, tpm xkmssdk.TrustedPlatformModule, 
 		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
 	}
 
+	psrkAttrs, err := pkgtpm2.PlatformSRKAttributesFromConfig(cfg)
+	if err != nil {
+		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
+	}
+	psrkAttrs.Parent = ekAttrs
+	if err := tpm.CreateSRK(psrkAttrs); err != nil {
+		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
+	}
+
+	return nil
+}
+
+// provisionSimulatorIAKCertificate installs a throwaway IAK certificate on
+// the simulator, in the WebAuthn Level 2 section 8.3.1 shape a "tpm"
+// attestation statement's x5c[0] must have: an empty subject, a
+// subjectAltName naming the TPM's manufacturer, model and version,
+// tcg-kp-AIKCertificate, and not a CA. It is signed by an unrelated one-off
+// key, as the simulator's EK certificate is (selfSignedSimulatorEKCert), and
+// stands in for the certificate an attestation CA issues a real device. It is
+// development and testing tooling only -- see openDeviceTPM's simulator gate.
+func provisionSimulatorIAKCertificate(name string, tpm xkmssdk.TrustedPlatformModule) error {
+	iak, err := tpm.IAK()
+	if err != nil {
+		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
+	}
+	props, err := tpm.FixedProperties()
+	if err != nil {
+		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
+	}
+	san, err := ca.BuildSubjectAltName(pkix.Name{}, nil, nil, nil, nil, nil, []pkix.Name{{
+		ExtraNames: []pkix.AttributeTypeAndValue{
+			{Type: ca.OIDTCGAttributeTPMManufacturer, Value: props.ManufacturerCode},
+			{Type: ca.OIDTCGAttributeTPMModel, Value: "xkms-simulator"},
+			{Type: ca.OIDTCGAttributeTPMVersion, Value: fmt.Sprintf("id:%04X%04X", props.FwMajor, props.FwMinor)},
+		},
+	}})
+	if err != nil {
+		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
+	}
+
+	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
+	}
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * 365 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{ca.OIDTCGKpAIKCertificate},
+		BasicConstraintsValid: true,
+		ExtraExtensions:       []pkix.Extension{san},
+	}
+	issuer := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "xkms-simulator-aik-ca"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, issuer, iak, signer)
+	if err != nil {
+		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
+	}
+	if err := tpm.ProvisionIAKCert(cert); err != nil {
+		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
+	}
 	return nil
 }
 

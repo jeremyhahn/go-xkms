@@ -26,6 +26,7 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"io"
+	"log/slog"
 	"math/big"
 	"testing"
 	"time"
@@ -119,7 +120,6 @@ type simpleTPM struct {
 	ekAttrs  *KeyAttributes
 	iakAttrs *KeyAttributes
 	idevid   *IDevIDCSR
-	quote    *TPMQuote
 	closeErr error
 }
 
@@ -180,15 +180,8 @@ func (s *simpleTPM) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
-func (s *simpleTPM) Quote(nonce []byte, pcrs []int) (*TPMQuote, error) {
-	if s.quote != nil {
-		return s.quote, nil
-	}
-	return &TPMQuote{
-		Quote:     []byte("simple-quote"),
-		Signature: []byte("simple-sig"),
-		Nonce:     nonce,
-	}, nil
+func (s *simpleTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	return newTestAttestedKey(keyAuth)
 }
 
 func (s *simpleTPM) Close() error {
@@ -273,15 +266,6 @@ func TestSimpleTPM_ProvisionEKCert(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestSimpleTPM_Quote tests quote generation
-func TestSimpleTPM_Quote(t *testing.T) {
-	tpm := &simpleTPM{}
-	quote, err := tpm.Quote([]byte("nonce"), []int{0, 1, 7})
-	require.NoError(t, err)
-	assert.NotNil(t, quote)
-	assert.Equal(t, []byte("nonce"), quote.Nonce)
-}
-
 // TestSimpleTPM_Close tests closing the TPM
 func TestSimpleTPM_Close(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
@@ -344,7 +328,7 @@ func TestTPMModule_Interface(t *testing.T) {
 	assert.NoError(t, err)
 	err = mock.ProvisionEKCert(nil)
 	assert.NoError(t, err)
-	_, err = mock.Quote(nil, nil)
+	_, err = mock.CreateAttestedKey("device", "key-auth")
 	assert.NoError(t, err)
 	err = mock.Close()
 	assert.NoError(t, err)
@@ -386,12 +370,9 @@ func TestMockTPM_AllMethods(t *testing.T) {
 		activateCredentialFunc: func(credBlob, secret []byte) ([]byte, error) {
 			return []byte("activated-secret"), nil
 		},
-		quoteFunc: func(nonce []byte, pcrs []int) (*TPMQuote, error) {
-			return &TPMQuote{
-				Quote:     []byte("tpm-quote"),
-				Signature: []byte("quote-sig"),
-				Nonce:     nonce,
-			}, nil
+		attestFunc: func(name, keyAuth string) (*AttestedKey, error) {
+			assert.Equal(t, "device", name)
+			return newTestAttestedKey(keyAuth)
 		},
 	}
 
@@ -424,40 +405,13 @@ func TestMockTPM_AllMethods(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("activated-secret"), activated)
 
-	// Test Quote
-	quote, err := mock.Quote([]byte("nonce"), []int{0, 7})
+	// Test CreateAttestedKey
+	attested, err := mock.CreateAttestedKey("device", "key-auth")
 	assert.NoError(t, err)
-	assert.Equal(t, []byte("nonce"), quote.Nonce)
+	assert.NotNil(t, attested.Signer)
 
 	// Suppress unused variable warning
 	_ = iakCert
-}
-
-// TestMockTPM_QuoteFields tests TPMQuote structure with all fields
-func TestMockTPM_QuoteFields(t *testing.T) {
-	mock := &mockTPM{
-		quoteFunc: func(nonce []byte, pcrs []int) (*TPMQuote, error) {
-			return &TPMQuote{
-				Quote:              []byte("quote-data"),
-				Signature:          []byte("signature"),
-				PCRValues:          map[int][]byte{0: []byte("pcr0"), 7: []byte("pcr7")},
-				Nonce:              nonce,
-				PCRDigest:          []byte("pcr-digest"),
-				SignatureAlgorithm: x509.SHA256WithRSAPSS,
-			}, nil
-		},
-	}
-
-	quote, err := mock.Quote([]byte("nonce"), []int{0, 7})
-	require.NoError(t, err)
-	assert.Equal(t, []byte("quote-data"), quote.Quote)
-	assert.Equal(t, []byte("signature"), quote.Signature)
-	assert.Equal(t, []byte("nonce"), quote.Nonce)
-	assert.Len(t, quote.PCRValues, 2)
-	assert.Equal(t, []byte("pcr0"), quote.PCRValues[0])
-	assert.Equal(t, []byte("pcr7"), quote.PCRValues[7])
-	assert.Equal(t, []byte("pcr-digest"), quote.PCRDigest)
-	assert.Equal(t, x509.SHA256WithRSAPSS, quote.SignatureAlgorithm)
 }
 
 // TestIDevIDCSR_StructFields tests IDevIDCSR struct field population
@@ -536,6 +490,9 @@ type mockXKMSTPM struct {
 	// Quote configuration
 	quote      xkmssdk.Quote
 	quoteError error
+
+	// Platform SRK configuration
+	platformSRKError error
 
 	// Config
 	config *xkmssdk.TPMConfig
@@ -1088,7 +1045,7 @@ func (m *mockXKMSTPM) DictionaryAttackLockoutReset(lockoutAuth []byte) error {
 }
 
 func (m *mockXKMSTPM) PlatformSRKAttributes() (*xkmssdk.KeyAttributes, error) {
-	return nil, nil
+	return nil, m.platformSRKError
 }
 
 // Helper functions for creating test data
@@ -1148,7 +1105,7 @@ func newTestCertificateFromPublicKey(t *testing.T, pub crypto.PublicKey) *x509.C
 
 func TestNewXKMSTPMAdapter(t *testing.T) {
 	mockTPM := &mockXKMSTPM{}
-	adapter := NewXKMSTPMAdapter(mockTPM)
+	adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 	assert.NotNil(t, adapter)
 	assert.NotNil(t, adapter.tpm)
@@ -1163,7 +1120,7 @@ func TestXKMSTPMAdapter_EK(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			ekPublicKey: &ecKey.PublicKey,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result := adapter.EK()
 
@@ -1178,7 +1135,7 @@ func TestXKMSTPMAdapter_EK(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			ekPublicKey: &rsaKey.PublicKey,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result := adapter.EK()
 
@@ -1192,7 +1149,7 @@ func TestXKMSTPMAdapter_EK(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			ekPublicKey: nil,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result := adapter.EK()
 		assert.Nil(t, result)
@@ -1206,7 +1163,7 @@ func TestXKMSTPMAdapter_EK(t *testing.T) {
 			ekPublicKey: &ecKey.PublicKey,
 			ekError:     errors.New("tpm communication failure"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result := adapter.EK()
 		assert.Nil(t, result)
@@ -1220,7 +1177,7 @@ func TestXKMSTPMAdapter_EKCertificate(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			ekCert: cert,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.EKCertificate()
 
@@ -1235,7 +1192,7 @@ func TestXKMSTPMAdapter_EKCertificate(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			ekCert: cert,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		// First call
 		result1, err := adapter.EKCertificate()
@@ -1258,7 +1215,7 @@ func TestXKMSTPMAdapter_EKCertificate(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			ekCertError: errors.New("certificate not found in NVRAM"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.EKCertificate()
 
@@ -1292,7 +1249,7 @@ func TestXKMSTPMAdapter_EKAttributes(t *testing.T) {
 			ekAttrs:     attrs,
 			ekPublicKey: &ecKey.PublicKey,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.EKAttributes()
 
@@ -1326,7 +1283,7 @@ func TestXKMSTPMAdapter_EKAttributes(t *testing.T) {
 			ekAttrs:     attrs,
 			ekPublicKey: &rsaKey.PublicKey,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.EKAttributes()
 
@@ -1346,7 +1303,7 @@ func TestXKMSTPMAdapter_EKAttributes(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			ekAttrs: attrs,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		// First call
 		result1, err := adapter.EKAttributes()
@@ -1369,7 +1326,7 @@ func TestXKMSTPMAdapter_EKAttributes(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			ekAttrsError: errors.New("EK not provisioned"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.EKAttributes()
 
@@ -1404,7 +1361,7 @@ func TestXKMSTPMAdapter_IAKAttributes(t *testing.T) {
 			iakAttrs:     attrs,
 			iakPublicKey: &ecKey.PublicKey,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.IAKAttributes()
 
@@ -1425,7 +1382,7 @@ func TestXKMSTPMAdapter_IAKAttributes(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			iakAttrs: attrs,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result1, _ := adapter.IAKAttributes()
 
@@ -1439,7 +1396,7 @@ func TestXKMSTPMAdapter_IAKAttributes(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			iakAttrsError: errors.New("IAK not created"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.IAKAttributes()
 
@@ -1487,7 +1444,7 @@ func TestXKMSTPMAdapter_CreateIDevID(t *testing.T) {
 				Signature: []byte("csr-signature"),
 			},
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		qualifyingData := []byte("test-nonce-12345")
 		result, err := adapter.CreateIDevID(qualifyingData)
@@ -1530,7 +1487,7 @@ func TestXKMSTPMAdapter_CreateIDevID(t *testing.T) {
 			},
 			idevidCSR: &xkmssdk.TCG_CSR_IDEVID{},
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		oversized := bytes.Repeat([]byte("a"), maxTPMQualifyingData+1)
 		result, err := adapter.CreateIDevID(oversized)
@@ -1548,7 +1505,7 @@ func TestXKMSTPMAdapter_CreateIDevID(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			iakAttrsError: errors.New("IAK not found"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.CreateIDevID([]byte("nonce"))
 
@@ -1568,7 +1525,7 @@ func TestXKMSTPMAdapter_CreateIDevID(t *testing.T) {
 			iakAttrs:    iakAttrs,
 			ekCertError: errors.New("EK cert not in NVRAM"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.CreateIDevID([]byte("nonce"))
 
@@ -1592,7 +1549,7 @@ func TestXKMSTPMAdapter_CreateIDevID(t *testing.T) {
 			iakAttrs:    iakAttrs,
 			idevidError: errors.New("TPM operation failed"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.CreateIDevID([]byte("nonce"))
 
@@ -1626,7 +1583,7 @@ func TestXKMSTPMAdapter_CreateIDevID(t *testing.T) {
 			idevidAttrs: idevidAttrs,
 			idevidCSR:   &xkmssdk.TCG_CSR_IDEVID{},
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		// Pre-populate cache
 		_, _ = adapter.IAKAttributes()
@@ -1646,7 +1603,7 @@ func TestXKMSTPMAdapter_ActivateCredential(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			activateSecret: expectedSecret,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		credentialBlob := []byte("credential-blob")
 		encryptedSecret := []byte("encrypted-secret")
@@ -1661,7 +1618,7 @@ func TestXKMSTPMAdapter_ActivateCredential(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			activateError: errors.New("TPM2_ActivateCredential failed: authorization error"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.ActivateCredential([]byte("blob"), []byte("secret"))
 
@@ -1677,7 +1634,7 @@ func TestXKMSTPMAdapter_ActivateCredential(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			activateSecret: []byte("secret"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		result, err := adapter.ActivateCredential([]byte{}, []byte("secret"))
 
@@ -1694,7 +1651,7 @@ func TestXKMSTPMAdapter_ProvisionEKCert(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			parsedEKCert: cert,
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		err := adapter.ProvisionEKCert(cert.Raw)
 
@@ -1709,7 +1666,7 @@ func TestXKMSTPMAdapter_ProvisionEKCert(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			provisionError: errors.New("NVRAM write failed"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		err := adapter.ProvisionEKCert([]byte("cert-der"))
 
@@ -1722,7 +1679,7 @@ func TestXKMSTPMAdapter_ProvisionEKCert(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			parseError: errors.New("invalid certificate format"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		err := adapter.ProvisionEKCert([]byte("invalid-cert"))
 
@@ -1731,122 +1688,10 @@ func TestXKMSTPMAdapter_ProvisionEKCert(t *testing.T) {
 	})
 }
 
-func TestXKMSTPMAdapter_Quote(t *testing.T) {
-	t.Run("generates quote successfully", func(t *testing.T) {
-		expectedQuote := xkmssdk.Quote{
-			Quoted:    []byte("quoted-attestation-data"),
-			Signature: []byte("quote-signature"),
-			Nonce:     []byte("nonce-value"),
-			PCRs:      []byte("pcr-digest-bytes"),
-		}
-		config := &xkmssdk.TPMConfig{
-			IAK: &xkmssdk.IAKConfig{
-				SignatureAlgorithm: "ECDSA-SHA256",
-			},
-		}
-		mockTPM := &mockXKMSTPM{
-			quote:  expectedQuote,
-			config: config,
-		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
-
-		nonce := []byte("fresh-nonce")
-		pcrSelection := []int{0, 1, 7}
-
-		result, err := adapter.Quote(nonce, pcrSelection)
-
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Equal(t, expectedQuote.Quoted, result.Quote)
-		assert.Equal(t, expectedQuote.Signature, result.Signature)
-		assert.Equal(t, nonce, result.Nonce)
-		assert.Equal(t, expectedQuote.PCRs, result.PCRDigest)
-		assert.NotNil(t, result.PCRValues)
-		assert.Equal(t, x509.ECDSAWithSHA256, result.SignatureAlgorithm)
-	})
-
-	t.Run("returns error on quote failure", func(t *testing.T) {
-		mockTPM := &mockXKMSTPM{
-			quoteError: errors.New("TPM2_Quote failed: key not loaded"),
-		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
-
-		result, err := adapter.Quote([]byte("nonce"), []int{0})
-
-		require.Error(t, err)
-		assert.Nil(t, result)
-		var caErr *caerrors.TrustedCAError
-		require.ErrorAs(t, err, &caErr)
-		assert.Equal(t, caerrors.BadAttestationStatement, caErr.Type)
-		assert.Contains(t, err.Error(), "key not loaded")
-	})
-
-	t.Run("returns error for negative PCR index", func(t *testing.T) {
-		mockTPM := &mockXKMSTPM{}
-		adapter := NewXKMSTPMAdapter(mockTPM)
-
-		result, err := adapter.Quote([]byte("nonce"), []int{-1})
-
-		require.Error(t, err)
-		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "invalid PCR index")
-	})
-
-	t.Run("handles empty PCR selection", func(t *testing.T) {
-		mockTPM := &mockXKMSTPM{
-			quote: xkmssdk.Quote{
-				Quoted:    []byte("quoted"),
-				Signature: []byte("sig"),
-			},
-		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
-
-		result, err := adapter.Quote([]byte("nonce"), []int{})
-
-		require.NoError(t, err)
-		assert.NotNil(t, result)
-	})
-
-	t.Run("handles nil config", func(t *testing.T) {
-		mockTPM := &mockXKMSTPM{
-			quote: xkmssdk.Quote{
-				Quoted:    []byte("quoted"),
-				Signature: []byte("sig"),
-			},
-			config: nil,
-		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
-
-		result, err := adapter.Quote([]byte("nonce"), []int{0})
-
-		require.NoError(t, err)
-		assert.NotNil(t, result)
-		assert.Equal(t, x509.UnknownSignatureAlgorithm, result.SignatureAlgorithm)
-	})
-
-	t.Run("handles nil IAK config", func(t *testing.T) {
-		mockTPM := &mockXKMSTPM{
-			quote: xkmssdk.Quote{
-				Quoted:    []byte("quoted"),
-				Signature: []byte("sig"),
-			},
-			config: &xkmssdk.TPMConfig{
-				IAK: nil,
-			},
-		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
-
-		result, err := adapter.Quote([]byte("nonce"), []int{0})
-
-		require.NoError(t, err)
-		assert.NotNil(t, result)
-	})
-}
-
 func TestXKMSTPMAdapter_Close(t *testing.T) {
 	t.Run("closes successfully", func(t *testing.T) {
 		mockTPM := &mockXKMSTPM{}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		err := adapter.Close()
 
@@ -1857,7 +1702,7 @@ func TestXKMSTPMAdapter_Close(t *testing.T) {
 		mockTPM := &mockXKMSTPM{
 			closeError: errors.New("failed to close TPM handle"),
 		}
-		adapter := NewXKMSTPMAdapter(mockTPM)
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
 
 		err := adapter.Close()
 
@@ -2123,7 +1968,7 @@ func TestSignatureAlgorithmFromCOSE_AllAlgorithms(t *testing.T) {
 func TestXKMSTPMAdapter_EdgeCases(t *testing.T) {
 	t.Run("NewXKMSTPMAdapter with nil", func(t *testing.T) {
 		// Should not panic
-		adapter := NewXKMSTPMAdapter(nil)
+		adapter := NewXKMSTPMAdapter(nil, nil)
 		require.NotNil(t, adapter)
 		require.Nil(t, adapter.tpm)
 	})
@@ -2188,26 +2033,6 @@ func TestIDevIDCSR_Structure(t *testing.T) {
 	})
 }
 
-func TestTPMQuote_Structure(t *testing.T) {
-	t.Run("create TPMQuote with all fields", func(t *testing.T) {
-		quote := &TPMQuote{
-			Quote:              []byte("quote-data"),
-			Signature:          []byte("signature-data"),
-			PCRValues:          map[int][]byte{0: []byte("pcr0"), 1: []byte("pcr1")},
-			Nonce:              []byte("nonce"),
-			SignatureAlgorithm: x509.ECDSAWithSHA256,
-			PCRDigest:          []byte("pcr-digest"),
-		}
-
-		require.NotEmpty(t, quote.Quote)
-		require.NotEmpty(t, quote.Signature)
-		require.Len(t, quote.PCRValues, 2)
-		require.NotEmpty(t, quote.Nonce)
-		require.Equal(t, x509.ECDSAWithSHA256, quote.SignatureAlgorithm)
-		require.NotEmpty(t, quote.PCRDigest)
-	})
-}
-
 // testTPMManufacturer is the TCG manufacturer code swtpm reports ("IBM"),
 // returned by every TPM test double.
 const testTPMManufacturer = "id:49424D00"
@@ -2216,7 +2041,7 @@ func TestXKMSTPMAdapter_TPMManufacturer(t *testing.T) {
 	t.Run("returns the code the TPM reports", func(t *testing.T) {
 		adapter := NewXKMSTPMAdapter(&mockXKMSTPM{
 			fixedProps: &xkmssdk.PropertiesFixed{Manufacturer: "Infineon", ManufacturerCode: "id:49465800"},
-		})
+		}, nil)
 
 		code, err := adapter.TPMManufacturer()
 
@@ -2225,7 +2050,7 @@ func TestXKMSTPMAdapter_TPMManufacturer(t *testing.T) {
 	})
 
 	t.Run("fails when the fixed properties cannot be read", func(t *testing.T) {
-		adapter := NewXKMSTPMAdapter(&mockXKMSTPM{fixedPropsError: errors.New("tpm unavailable")})
+		adapter := NewXKMSTPMAdapter(&mockXKMSTPM{fixedPropsError: errors.New("tpm unavailable")}, nil)
 
 		code, err := adapter.TPMManufacturer()
 
@@ -2238,7 +2063,7 @@ func TestXKMSTPMAdapter_TPMManufacturer(t *testing.T) {
 	t.Run("fails when the TPM reports no code", func(t *testing.T) {
 		adapter := NewXKMSTPMAdapter(&mockXKMSTPM{
 			fixedProps: &xkmssdk.PropertiesFixed{Manufacturer: "Infineon"},
-		})
+		}, nil)
 
 		code, err := adapter.TPMManufacturer()
 
@@ -2247,4 +2072,39 @@ func TestXKMSTPMAdapter_TPMManufacturer(t *testing.T) {
 		require.ErrorAs(t, err, &caErr)
 		assert.Equal(t, caerrors.NotFound, caErr.Type)
 	})
+}
+
+// TestXKMSTPMAdapter_CreateAttestedKeyRefusals covers what the adapter refuses
+// before the TPM is asked for anything. Its success path runs against the
+// simulator in tpm_simulator_test.go.
+func TestXKMSTPMAdapter_CreateAttestedKeyRefusals(t *testing.T) {
+	keys := xkmssdk.NewFileBackend(slog.New(slog.NewTextHandler(io.Discard, nil)), newMemoryStorage(t))
+
+	t.Run("no name", func(t *testing.T) {
+		attested, err := NewXKMSTPMAdapter(&mockXKMSTPM{}, keys).CreateAttestedKey("", "key-auth")
+		assert.ErrorIs(t, err, ErrAttestedKeyNameRequired)
+		assert.Nil(t, attested)
+	})
+
+	t.Run("no key store", func(t *testing.T) {
+		attested, err := NewXKMSTPMAdapter(&mockXKMSTPM{}, nil).CreateAttestedKey("device", "key-auth")
+		assert.ErrorIs(t, err, ErrKeyBackendNotConfigured)
+		assert.Nil(t, attested)
+	})
+
+	t.Run("no Platform SRK", func(t *testing.T) {
+		missing := errors.New("platform SRK not enrolled")
+		attested, err := NewXKMSTPMAdapter(&mockXKMSTPM{platformSRKError: missing}, keys).CreateAttestedKey("device", "key-auth")
+		assert.ErrorIs(t, err, ErrAttestedKeyFailed)
+		assert.ErrorIs(t, err, missing)
+		assert.Nil(t, attested)
+	})
+}
+
+// newMemoryStorage is an in-memory store for TPM key blobs.
+func newMemoryStorage(t *testing.T) xkmssdk.StorageBackend {
+	t.Helper()
+	backend, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	return backend
 }

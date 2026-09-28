@@ -293,13 +293,13 @@ once, to the externally visible base.
 
 The challenge verifies the evidence; finalization binds it to the CSR. Both
 formats (`tpm`, `dice`) bind through the CSR, so `Verify` returns
-`ErrKeyBindingRequired` for both (`deviceattest01.go:274`) and a server holds
+`ErrKeyBindingRequired` for both (`deviceattest01.go:233`) and a server holds
 the `VerifiedAttestation` between the two requests
 (`pkg/acme/challenges/device-attest-01/binding.go`).
 
 **`tpm` at the challenge** — `verifyTPMEvidence` (`tpm.go:65`) applies WebAuthn
 Level 2 §8.3, after `VerifyAttestation` has anchored every `x5c` entry through
-`AttestationVerifier.VerifyAKCertificateChain` (`deviceattest01.go:352`; an
+`AttestationVerifier.VerifyAKCertificateChain` (`deviceattest01.go:318`; an
 entry that is not a byte string refuses the chain rather than being dropped):
 
 | Check | Where |
@@ -337,6 +337,19 @@ supplies no `SubjectSPKI` and no challenge is checked exactly as before.
 critical and holds only a `directoryName`, which `crypto/x509` reports in
 `UnhandledCriticalExtensions`; `checkAIKCertificate` reads it, so the
 `AttestationVerifier` must treat it as handled when it verifies the chain.
+
+**The client side.** `deviceattest01.Setup` (`setup.go:115`) has the IAK
+certify the certificate key with `pkg/tpm2`'s `CertifyKey` over
+`TPMExtraData(alg, keyAuthorization)`. `alg` is the IAK's own signature
+algorithm (`coseAlgorithms`, `setup.go:84`), and `x5c` is `IAKCertificate()`.
+In `pkg/acme/client`, `TPMModule.CreateAttestedKey` (`tpm.go:192`) is the one
+entry point. The adapter (`tpm.go:477`) keeps the certificate key under the
+Platform SRK, named by the common name, and reuses it on later attestations.
+`DeviceAttest` signs the finalize CSR with that key and names the order's
+permanent identifier in the RFC 4043 otherName (`deviceAttestCSR`,
+`enrollment.go:887`). The account key never signs this CSR. PCR state is not
+part of the statement, so the device spec's `pcr-selection` does not reach the
+evidence.
 
 ## Circuit breakers and degradation
 
@@ -869,6 +882,16 @@ storage. Changing the storage layout requires a data migration step.
   statements; `pkg/attestation/invariants_tpm_test.go` and
   `pkg/tpm2/certify_verify_certificate_test.go` cover the gate and the
   certificate-attester verifier.
+- **device-attest-01 client** — `pkg/acme/challenges/device-attest-01/setup_simulator_test.go`
+  and `pkg/acme/client/tpm_simulator_test.go` (build tag `tpm_simulator`)
+  provision the simulator as a device (IAK, Platform SRK, IAK certificate) and
+  hand the client's response to `VerifyAttestation` unchanged. The response is
+  accepted for RSA-PSS and ECDSA IAKs, and `BindCSRKey` accepts the CSR signed
+  by the certified key. The verifier refuses a software key, another
+  Platform-SRK key, the account key, and the certification presented under
+  another AIK's certificate. `setup_test.go`, `enrollment_test.go` and
+  `tpm_test.go` cover `Setup`'s, `deviceAttestCSR`'s and `CreateAttestedKey`'s
+  refusals.
 - **Cross-repo** — `pkg/acme/server/handlers/cluster_issuer_test.go` covers the
   Raft enrollment path.
 
