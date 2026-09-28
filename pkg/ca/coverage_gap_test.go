@@ -373,13 +373,15 @@ func TestListRevocationBlobs_EmptyStores(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — putRevocationBlob: revocationStore is the sole
+// ca_extensions.go — putRevocationBlobIfAbsent: revocationStore is the sole
 // persistence medium, whether or not an objectStore is also configured
 // =============================================================================
 
 func TestPutRevocationBlob_PersistsThroughRevocationStore(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	require.NoError(t, ca.putRevocationBlob(context.Background(), big.NewInt(88888), []byte(`{"serial":"88888"}`)))
+	stored, err := ca.putRevocationBlobIfAbsent(context.Background(), big.NewInt(88888), []byte(`{"serial":"88888"}`))
+	require.NoError(t, err)
+	assert.True(t, stored)
 	got, err := ca.revocationStore.Get(context.Background(), revocationKey(big.NewInt(88888))+".json")
 	require.NoError(t, err)
 	assert.Equal(t, []byte(`{"serial":"88888"}`), got)

@@ -39,12 +39,14 @@ import (
 var errRevocationFault = errors.New("revocation_cluster_test: store unavailable")
 
 // revocationFaultStore wraps a storage.Backend and fails Get for keys the
-// failGet predicate selects, and every Scan when failScan is set. All other
+// failGet predicate selects, every Scan when failScan is set, and
+// PutIfAbsent for keys the failPutIfAbsent predicate selects. All other
 // calls delegate unchanged.
 type revocationFaultStore struct {
 	storage.Backend
-	failGet  func(key string) bool
-	failScan bool
+	failGet         func(key string) bool
+	failScan        bool
+	failPutIfAbsent func(key string) bool
 }
 
 func (f *revocationFaultStore) Get(ctx context.Context, key string) ([]byte, error) {
@@ -59,6 +61,13 @@ func (f *revocationFaultStore) Scan(ctx context.Context, prefix string, fn func(
 		return errRevocationFault
 	}
 	return f.Backend.Scan(ctx, prefix, fn)
+}
+
+func (f *revocationFaultStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if f.failPutIfAbsent != nil && f.failPutIfAbsent(key) {
+		return false, errRevocationFault
+	}
+	return f.Backend.PutIfAbsent(ctx, key, value)
 }
 
 // failKeysWithPrefix returns a failGet predicate selecting keys under prefix.

@@ -375,6 +375,28 @@ config exists for it.
 | `revocations/<serial-decimal>.json` | `persistedRevocation{Serial, Reason, RevokedAt, DeletedKeys}` | `recordRevocation` (`Revoke`, `RevokeCert`) |
 | `crl/<issuer-ski-hex>` | `persistedCRL{DER, Number, ThisUpdate, NextUpdate}` | `generateAndPersistCRL` (`GenerateCRL`, `CRL`, and the refresh-on-revoke hook in `recordRevocation`) |
 
+`recordRevocation` (`pkg/ca/ca_extensions.go:745`) persists before it
+caches (go-xkms#1131): it checks for a duplicate via `lookupRevocation` --
+the map, then the store, failing closed on a store read fault -- then
+writes the record with `putRevocationBlobIfAbsent`
+(`pkg/ca/ca_extensions.go:830`), and only caches the in-memory entry
+(`cacheRevocation`) once that write actually lands. A store write failure
+returns a typed `*errs.Joined` wrapping `ErrStorageError` and the
+underlying cause, and leaves the map untouched, so a caller can retry
+once the store recovers rather than have the retry rejected as a
+duplicate of a write that never persisted. The write uses `PutIfAbsent`,
+`storage.Backend`'s unconditional create-if-absent primitive (not the
+optional `CompareAndSwapper`/`CompareAndDeleter` capabilities) --
+replicated backends (every `go-qrdb`-backed `Backend` this package runs
+against) make it a linearizable cross-node compare-and-swap keyed on "no
+record exists yet" (`pkg/storage/qrdb/backend_putifabsent.go:53`), so two
+nodes racing to revoke the same serial can both attempt the write but
+only one succeeds; the loser observes `stored=false` and returns
+`ErrAlreadyRevoked` wrapped in `*errs.Detail` naming the winner's
+original reason and time (`alreadyRevokedError`,
+`pkg/ca/ca_extensions.go:814`), read back through the same
+`lookupRevocation` path, instead of silently overwriting it.
+
 The CRL key is the issuing certificate's Subject Key Identifier, hex-encoded
 — not its CN — because `crypto/x509.CreateRevocationList` requires the
 issuer to have one, `x509.CreateCertificate` always populates it for a CA
@@ -478,7 +500,13 @@ up.
   in-memory revocation store — a revocation on A enforced by B's
   `IsRevoked`, `Verify`, `VerifyPeerCertificate` and CRL — plus store-fault
   and corrupt-record injection proving `IsRevoked`, OCSP, CRL listing, CRL
-  numbering, `Load` and `VerifyPeerCertificate` each fail closed), and
+  numbering, `Load` and `VerifyPeerCertificate` each fail closed),
+  `revocation_race_1131_test.go` (#1131, reusing that harness: a failed
+  `PutIfAbsent` leaves the in-memory map untouched and a retry after the
+  store recovers persists; two `*CA` instances racing to revoke the same
+  serial leave the loser with `ErrAlreadyRevoked` and the winner's reason
+  and time still on record; a store read fault during the duplicate check
+  fails closed before any write is attempted), and
   `revoke_delete_keys_test.go` (`RevokeCert(DeleteKeys)`: server-generated
   key + certificate deleted and subsequently not found, CSR-signed no-op,
   injected keystore/revocation-store failure propagation, and the
