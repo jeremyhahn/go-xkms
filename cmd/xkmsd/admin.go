@@ -150,14 +150,21 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 	handlers := admin.NewHandlers(adminSvc, logger)
 	tenantHandlers := admin.NewTenantHandlers(adminSvc, logger)
 
-	authHandler := admin.NewMTLSAuthHandler(auth.NewMTLSAuthenticator(&auth.MTLSConfig{}))
-
+	// The client certificate is resolved to its qrdb user through the same
+	// SPKI-thumbprint store the crypto plane's mTLS authenticator uses, so the
+	// identity reaching the gate carries the user's tenant and qrdb role IDs.
+	// Without the store the authenticator can only read certificate fields: no
+	// roles, no tenant, and qrdb's authorizer denies every route — even for
+	// the first-boot administrator (go-xkms#1069).
+	mtlsConfig := &auth.MTLSConfig{}
 	var authorizer *auth.Authorizer
 	if qrdbClient != nil {
+		mtlsConfig.UserStore = auth.NewQRDBUserStore(qrdbClient.Users())
 		authorizer = auth.NewAuthorizer(qrdbClient.RBAC())
 	} else {
 		authorizer = auth.NewAuthorizer(nil)
 	}
+	authHandler := admin.NewMTLSAuthHandler(auth.NewMTLSAuthenticator(mtlsConfig))
 	gate := admin.NewPermissionGate(authorizer, logger)
 
 	router := mux.NewRouter()

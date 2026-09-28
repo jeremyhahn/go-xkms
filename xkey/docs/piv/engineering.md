@@ -1,6 +1,6 @@
 # PIV Certificate Management — Engineering
 
-> **Status: NORMATIVE** · Feature: `piv` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `piv` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Exported surface — `cmd/xkey/cmd` (piv group)
 
@@ -31,8 +31,10 @@ Sentinel errors (`cmd/xkey/cmd/piv.go`): `ErrPIVInvalidBackend`,
 
 Functions: `validatePIVSlot(slot string) (xkms.PIVSlot, error)`,
 `defaultPIVStorageTypeForBackend(backend PIVBackendType) PIVStorageType`
-(software→file, tpm2→tpm2, pkcs11→pkcs11), `buildPIVConfig() *PIVConfig`
-(reads bound Viper flags), `createPIVStorage(cfg *PIVConfig, logger
+(software→file, tpm2→tpm2, pkcs11→pkcs11), `buildPIVConfig(cmd
+*cobra.Command) (*PIVConfig, error)` (flag, then the unified xkey config,
+then the backend-matched default -- see Configuration below; `cmd` may be
+nil), `createPIVStorage(cfg *PIVConfig, logger
 *slog.Logger) (xkms.PIVCertificateStorage, error)`,
 `ensurePIVInitialized(pivCfg *PIVConfig, logger *slog.Logger) error`
 (idempotent SDK manager init + store registration; also wires the PKCS#11
@@ -62,10 +64,11 @@ default `never`), `--force`/`-f`, `--output-format` (`self-signed`,
 `piv_tpm2.go` (build tag `tpm2`) / `piv_tpm2_stub.go` (`!tpm2`):
 `createTPM2PIVStorage`.
 
-`auth_piv.go`: `buildAuthPIVConfig(cmd *cobra.Command) *PIVConfig` — builds a
-`PIVConfig` for `xkey auth login --piv` from that command's own `--backend`
-flag plus the same Viper-bound storage settings the `piv` group uses;
-errors `ErrAuthPIVSignerCreationFailed`, `ErrAuthPIVLoginFailed`,
+`auth_piv.go`: `buildAuthPIVConfig(cmd *cobra.Command) (*PIVConfig, error)` —
+builds a `PIVConfig` for `xkey auth login --piv` from that command's own
+`--backend` flag plus the same unified-config-resolved storage settings the
+`piv` group uses (see Configuration below); errors
+`ErrAuthPIVSignerCreationFailed`, `ErrAuthPIVLoginFailed`,
 `ErrAuthPIVClientCreationFailed`.
 
 ## Exported surface — SDK types this feature consumes
@@ -116,28 +119,48 @@ error)`.
 
 ## Configuration
 
-**There is no config-file or environment-variable surface for `piv`
-settings**, despite the legacy `piv/README.md`'s claim of a `PIV_BACKEND`
-family of environment variables. `PIVCmd`'s persistent flags are bound with
-`viper.BindPFlag` only (`piv.backend`, `piv.storage`, `piv.storage_path`,
-`piv.tpm_device`, `piv.pkcs11_library`, `piv.pkcs11_token`,
-`piv.pkcs11_pin`, `piv.pkcs11_so_pin`), and the package-level `viper`
-singleton these flags are bound on is never pointed at a config file
-(`ReadInConfig`) and never has `AutomaticEnv` enabled anywhere in
-`cmd/xkey/cmd`. `buildPIVConfig`'s `viper.GetString` calls therefore only
-ever return the CLI flag's current value — set `--backend`,
-`--piv-storage`, etc. on the command line.
+**Fixed in go-xkms#871.** Before it, `PIVCmd`'s persistent flags were bound
+with `viper.BindPFlag` only, and the package-level `viper` singleton they
+were bound on was never pointed at a config file and never had `AutomaticEnv`
+enabled anywhere in `cmd/xkey/cmd` -- so `buildPIVConfig`'s `viper.GetString`
+calls only ever returned the CLI flag's current value, despite `piv.backend`
+etc. looking like config keys.
 
-| Flag | Default |
-|---|---|
-| `--backend` | `software` |
-| `--piv-storage` | (matches backend) |
-| `--storage-path` | empty: resolved by `resolvePIVStoragePath` (`xkey/cmd/xkey/cmd/piv.go`) to `<xkey-home>/data/piv` |
-| `--tpm-device` | `/dev/tpmrm0` |
-| `--pkcs11-library` | `/usr/lib/softhsm/libsofthsm2.so` |
-| `--pkcs11-token` | (none) |
-| `--pkcs11-pin` | (none) |
-| `--pkcs11-so-pin` | (none) |
+`buildPIVConfig` (`cmd/xkey/cmd/piv.go:603-639`) now resolves six of the
+eight settings through `xkeyconfig.PIVConfig` (`pkg/config/config.go:93-107`):
+an explicit flag wins, then the loaded config's `piv.<field>` value -- which
+itself already merges the matching `XKEY_PIV_*` environment variable and the
+config file's `piv:` section via `pkg/config/load.go`'s
+`registerConfigKeys` -- then the backend-matched default. `pivConfigString`
+and `pivStorageOverride` (`piv.go:527-594`) implement the precedence, mirroring
+`resolveXKMSdURL` (`xkmsd_client.go:181-192`).
+
+| Flag | Default | Also settable via |
+|---|---|---|
+| `--backend` | `software` | `piv.backend` / `XKEY_PIV_BACKEND` |
+| `--piv-storage` | (matches backend) | `piv.storage` / `XKEY_PIV_STORAGE` |
+| `--storage-path` | empty: resolved by `resolvePIVStoragePath` (`xkey/cmd/xkey/cmd/piv.go`) to `<xkey-home>/data/piv` | `piv.storage_path` / `XKEY_PIV_STORAGE_PATH` |
+| `--tpm-device` | `/dev/tpmrm0` | `piv.tpm_device` / `XKEY_PIV_TPM_DEVICE` |
+| `--pkcs11-library` | `/usr/lib/softhsm/libsofthsm2.so` | `piv.pkcs11_library` / `XKEY_PIV_PKCS11_LIBRARY` |
+| `--pkcs11-token` | (none) | `piv.pkcs11_token` / `XKEY_PIV_PKCS11_TOKEN` |
+| `--pkcs11-pin-stdin` | `false` | `XKEY_PIV_PKCS11_PIN` only (never a config key) |
+| `--pkcs11-so-pin-stdin` | `false` | `XKEY_PIV_PKCS11_SO_PIN` only (never a config key) |
+
+The PKCS#11 PIN and Security Officer PIN deliberately have no config-file or
+generic-environment surface: they resolve exclusively through
+`resolvePIVPKCS11Secret` (`piv.go:519-533`), which is `pivPKCS11PINSource`/
+`pivPKCS11SOPINSource` (`piv.go:57-69`) resolved by `pinSource.resolve`
+(`pin_input.go`) when `cmd` declares `--pkcs11-pin-stdin`, or the bare
+environment variable otherwise. There is no `--pkcs11-pin` value flag, for
+the same reason `pin_input.go` gives for having no `--pin` value flag
+(go-xkms#272): a value on the command line is visible to every other process
+on the host via `ps`. `PIVCmd` and its descendants (`list`, `show`, `store`,
+`delete`, `export`, `status`, `import`, `generate`, `csr`) declare the stdin
+flags as persistent flags; `cert request`/`show`/`export`, `device listen`,
+`provision` and `auth login --piv` are sibling command trees that call
+`buildPIVConfig`/`buildAuthPIVConfig` too but declare none of `piv`'s flags,
+so on those commands every setting resolves from the config/environment only,
+and the PKCS#11 PIN resolves from its environment variable only.
 
 ## Tests
 

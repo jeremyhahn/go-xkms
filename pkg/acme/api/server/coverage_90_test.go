@@ -511,7 +511,6 @@ func TestCov90_ConvertAdminCertToProto_WithTimes(t *testing.T) {
 	now := time.Now()
 
 	cert := &admin.CertificateInfo{
-		ID:           1,
 		SerialNumber: "123456",
 		Subject:      "CN=test",
 		Issuer:       "CN=issuer",
@@ -891,7 +890,6 @@ func TestCov90_GRPC_ListCertificates_Success(t *testing.T) {
 	mockAdmin := &mockAdminService{
 		certificates: []*admin.CertificateInfo{
 			{
-				ID:           1,
 				SerialNumber: "123456",
 				Subject:      "CN=test",
 				NotBefore:    now,
@@ -918,7 +916,6 @@ func TestCov90_GRPC_GetCertificate_Success(t *testing.T) {
 	now := time.Now()
 	mockAdmin := &mockAdminService{
 		certificate: &admin.CertificateInfo{
-			ID:           1,
 			SerialNumber: "123456",
 			Subject:      "CN=test",
 			NotBefore:    now,

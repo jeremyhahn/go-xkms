@@ -58,6 +58,7 @@ func reproCA793Config(dataDir string) *config.Config {
 			QUICPort: 18443,
 			MCPPort:  13000,
 		},
+		Protocols: config.ProtocolsConfig{Unix: true},
 		Unix: config.UnixConfig{
 			Enabled:    true,
 			SocketPath: filepath.Join(dataDir, "xkms.sock"),

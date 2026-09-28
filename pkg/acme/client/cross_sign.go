@@ -25,6 +25,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 )
 
 var (
@@ -284,13 +285,14 @@ func (c *Client) CrossSign(ctx context.Context, csr []byte, certDER []byte) (*x5
 			Bytes: certChain[0],
 		})
 		certEntity := &entities.ACMECertificate{
+			Serial:    crossSignedCert.SerialNumber.Text(16),
 			CertURL:   certURL,
 			PEM:       string(certPEM),
 			IssuedAt:  time.Now(),
 			Status:    "valid",
 			ExpiresAt: crossSignedCert.NotAfter,
 		}
-		if err := c.certificateStorage.Save(ctx, certEntity); err != nil {
+		if err := storage.SaveCertificateNoCollision(ctx, c.certificateStorage, certEntity); err != nil {
 			c.logger.Warn("failed to save cross-signed certificate to storage",
 				slog.String("error", err.Error()))
 		}
@@ -558,13 +560,14 @@ func (c *Client) CrossSignWithChallenge(
 			Bytes: certChain[0],
 		})
 		certEntity := &entities.ACMECertificate{
+			Serial:    crossSignedCert.SerialNumber.Text(16),
 			CertURL:   certURL,
 			PEM:       string(certPEM),
 			IssuedAt:  time.Now(),
 			Status:    "valid",
 			ExpiresAt: crossSignedCert.NotAfter,
 		}
-		if err := c.certificateStorage.Save(ctx, certEntity); err != nil {
+		if err := storage.SaveCertificateNoCollision(ctx, c.certificateStorage, certEntity); err != nil {
 			c.logger.Warn("failed to save cross-signed certificate to storage",
 				slog.String("error", err.Error()))
 		}

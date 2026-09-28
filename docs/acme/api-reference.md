@@ -549,7 +549,7 @@ Content-Type: application/json
     "https://acme.example.com/acme/authz/11111"
   ],
   "finalize": "https://acme.example.com/acme/order/67890/finalize",
-  "certificate": "https://acme.example.com/acme/cert/98765"
+  "certificate": "https://acme.example.com/acme/cert/18f4d2"
 }
 ```
 
@@ -573,10 +573,17 @@ Downloads the issued certificate.
 
 **RFC Reference:** Section 7.4.2
 
+`{id}` is the certificate's X.509 serial number, encoded as a full-precision
+lowercase hexadecimal string (an optional `0x` prefix is accepted on input
+and stripped). It is never truncated - serial numbers can be up to 20 octets
+(RFC 5280 Section 4.1.2.2), well beyond what fits in 64 bits - so two
+certificates cannot collide at this URL because their serials happen to
+share low-order bits.
+
 **Request:**
 
 ```http
-POST /acme/cert/98765 HTTP/1.1
+POST /acme/cert/18f4d2 HTTP/1.1
 Host: acme.example.com
 Content-Type: application/jose+json
 Accept: application/pem-certificate-chain
@@ -593,7 +600,7 @@ Accept: application/pem-certificate-chain
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/pem-certificate-chain
-Link: <https://acme.example.com/acme/cert/98765/1>;rel="alternate"
+Link: <https://acme.example.com/acme/cert/18f4d2/1>;rel="alternate"
 
 -----BEGIN CERTIFICATE-----
 MIIDXTCCAkWgAwIBAgIJAJC1HiIAZAiUMA0GCSqGSIb3Qw0LKoZIhvcNAQEF

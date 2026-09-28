@@ -33,7 +33,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // Device listen command errors.
@@ -126,15 +125,6 @@ func init() {
 	deviceListenCmd.Flags().Bool("tpm-enrollment", false, "Serve TCG-CSR-IDEVID device enrollment from this host's TPM")
 	deviceListenCmd.Flags().String("tpm-pcr-bank", "", "PCR bank for the platform policy digest (default: SHA-256); set only if this TPM's SHA-256 bank is not allocated")
 	addDeviceBarrierFlags(deviceListenCmd)
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("device.listen.device", deviceListenCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.listen.name", deviceListenCmd.Flags().Lookup("name"))
-	_ = viper.BindPFlag("device.listen.timeout", deviceListenCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("device.listen.attestation-mode", deviceListenCmd.Flags().Lookup("attestation-mode"))
-	_ = viper.BindPFlag("device.listen.tpm-device", deviceListenCmd.Flags().Lookup("tpm-device"))
-	_ = viper.BindPFlag("device.listen.tpm-enrollment", deviceListenCmd.Flags().Lookup("tpm-enrollment"))
-	_ = viper.BindPFlag("device.listen.tpm-pcr-bank", deviceListenCmd.Flags().Lookup("tpm-pcr-bank"))
 }
 
 // runDeviceListen executes the phone listen command.
@@ -535,20 +525,26 @@ func (c *listenBridgeCollaborators) Close() {
 // listenPIVStorageProvider returns a pairing.PIVStorageProvider that builds
 // PIV certificate storage for a named backend using the exact same
 // createPIVStorage construction "xkey piv" uses (piv.go), over the same
-// viper-bound configuration (--backend, --piv-storage, --storage-path,
-// --tpm-device, --pkcs11-*): a certificate stored via "xkey piv store" is the
-// certificate the phone sees through remote.pivGetCert/pivListSlots. Storage
-// is opened fresh per request and closed by the bridge afterward
-// (bridge_piv.go), matching how "xkey piv" itself opens storage once per
-// invocation rather than holding a long-lived session.
-func listenPIVStorageProvider(logger *slog.Logger) pairing.PIVStorageProvider {
+// flag/config-resolved configuration (--backend, --piv-storage,
+// --storage-path, --tpm-device, --pkcs11-*): a certificate stored via
+// "xkey piv store" is the certificate the phone sees through
+// remote.pivGetCert/pivListSlots. Storage is opened fresh per request and
+// closed by the bridge afterward (bridge_piv.go), matching how "xkey piv"
+// itself opens storage once per invocation rather than holding a long-lived
+// session. cmd is "xkey device listen"'s own command, which declares none of
+// PIVCmd's flags, so this resolves through the unified config only unless a
+// future flag is added here too.
+func listenPIVStorageProvider(cmd *cobra.Command, logger *slog.Logger) pairing.PIVStorageProvider {
 	return func(backend string) (xkms.PIVCertificateStorage, error) {
-		cfg := buildPIVConfig()
+		cfg, err := buildPIVConfig(cmd)
+		if err != nil {
+			return nil, err
+		}
 		cfg.Backend = PIVBackendType(backend)
 		// Re-derive the storage type for the requested backend unless the
 		// operator pinned one explicitly, matching buildPIVConfig's own
 		// precedence (an explicit --piv-storage/config override always wins).
-		if viper.GetString(viperKeyPIVStorage) == "" {
+		if pivStorageOverride(cmd) == "" {
 			cfg.StorageType = defaultPIVStorageTypeForBackend(cfg.Backend)
 		}
 		return createPIVStorage(cfg, logger)
@@ -617,7 +613,7 @@ func buildListenBridgeConfig(
 		TPM:             enroller,
 		TPMOpenErr:      enrollerErr,
 		OATHStore:       collaborators.oathStore,
-		PIVStorage:      listenPIVStorageProvider(logger),
+		PIVStorage:      listenPIVStorageProvider(cmd, logger),
 		SyncService:     syncService,
 	}
 

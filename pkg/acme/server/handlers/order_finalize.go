@@ -22,7 +22,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -446,7 +445,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var serialNumber uint64
+	var serialNumber string
 	var pem []byte
 
 	// Parse the CSR as a standard x509 certificate request
@@ -800,24 +799,18 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Use the lower 64 bits of the serial number for storage
-	// X.509 serial numbers can be up to 20 bytes, but we store as uint64
-	// If the serial number is too large, extract only the lower 64 bits
+	// The certificate's full serial number - never truncated - is its
+	// identity for ACME purposes: the ID stored on the ACMECertificate
+	// record and the "id" path segment of its certificate URL. X.509 serial
+	// numbers can be up to 20 octets (RFC 5280 Section 4.1.2.2), well beyond
+	// uint64, so the canonical lowercase-hex encoding used elsewhere in this
+	// codebase for certificate serials is used here too (see
+	// pkg/xkms.servicer_ca.go and pkg/api/grpc/service_ca.go).
 	if cert.SerialNumber == nil {
 		s.failOrder(ctx, orderDAO, order, account, start, w, common.ServerInternal("Certificate serial number is nil"))
 		return
 	}
-	if cert.SerialNumber.IsUint64() {
-		serialNumber = cert.SerialNumber.Uint64()
-	} else {
-		// Use modulo to get lower 64 bits without panicking
-		var maxUint64 big.Int
-		maxUint64.SetUint64(^uint64(0))
-		maxUint64.Add(&maxUint64, big.NewInt(1))
-		var temp big.Int
-		temp.Mod(cert.SerialNumber, &maxUint64)
-		serialNumber = temp.Uint64()
-	}
+	serialNumber = cert.SerialNumber.Text(16)
 
 	// Verify the certificate as a final sanity check before delivering to
 	// the client. We pass nil for the signer since we don't have access
@@ -891,14 +884,14 @@ func (s *RestService) sendFinalizeResponse(
 	order *entities.ACMEOrder,
 	account *entities.ACMEAccount,
 	start time.Time,
-	serialNumber uint64,
+	serialNumber string,
 	pem []byte,
 	w http.ResponseWriter) {
 
-	certURL := fmt.Sprintf("%s/acme/cert/%d", s.baseRESTURI, serialNumber)
+	certURL := fmt.Sprintf("%s/acme/cert/%s", s.baseRESTURI, serialNumber)
 
 	certificate := &entities.ACMECertificate{
-		ID:        serialNumber,
+		Serial:    serialNumber,
 		CertURL:   certURL,
 		PEM:       string(pem),
 		IssuedAt:  time.Now(),
@@ -910,7 +903,13 @@ func (s *RestService) sendFinalizeResponse(
 		writeError(w, common.ServerInternal("Failed to create certificate DAO"))
 		return
 	}
-	if err := certDAO.Save(ctx, certificate); err != nil {
+	if err := storage.SaveCertificateNoCollision(ctx, certDAO, certificate); err != nil {
+		var collisionErr *storage.CertificateSerialCollisionError
+		if errors.As(err, &collisionErr) {
+			s.logger.Error("Certificate storage row collision on issuance",
+				"wanted_serial", collisionErr.Wanted,
+				"existing_serial", collisionErr.Existing)
+		}
 		writeError(w, common.ServerInternal("Failed to save certificate"))
 		return
 	}
@@ -1301,14 +1300,14 @@ func (s *RestService) finalizeTCGCSR(
 	r *http.Request,
 	account *entities.ACMEAccount,
 	order *entities.ACMEOrder,
-) (uint64, []byte, error) {
+) (string, []byte, error) {
 	var pem []byte
 	ctx := r.Context()
 
 	// Unmarshal the TCG-CSR-IDEVID
 	tcgCSR, err := xkmssdk.UnmarshalIDevIDCSR(csrDER)
 	if err != nil {
-		return 0, nil, common.MalformedError("Failed to parse TCG-CSR-IDEVID", nil)
+		return "", nil, common.MalformedError("Failed to parse TCG-CSR-IDEVID", nil)
 	}
 
 	// Get the CA's issuing certificate to populate the subject fields
@@ -1317,7 +1316,7 @@ func (s *RestService) finalizeTCGCSR(
 	if err != nil || caCert == nil {
 		caCert, err = s.ca.TrustedRoot()
 		if err != nil {
-			return 0, nil, common.ServerInternal("Failed to get CA certificate")
+			return "", nil, common.ServerInternal("Failed to get CA certificate")
 		}
 	}
 
@@ -1380,7 +1379,7 @@ func (s *RestService) finalizeTCGCSR(
 		// Parse EK certificate for hook context (same as post-issuance hooks)
 		ekcert, ekErr := x509.ParseCertificate(tcgCSR.CsrContents.EkCert)
 		if ekErr != nil {
-			return 0, nil, common.ServerInternal("Failed to parse EK certificate for pre-issuance hook")
+			return "", nil, common.ServerInternal("Failed to parse EK certificate for pre-issuance hook")
 		}
 
 		// Build TCG enrollment data for hook context
@@ -1420,7 +1419,7 @@ func (s *RestService) finalizeTCGCSR(
 				"order_id", order.ID,
 				"account_id", account.ID,
 				"product_serial", string(tcgCSR.CsrContents.ProdSerial))
-			return 0, nil, common.Unauthorized(fmt.Sprintf("Pre-issuance check failed: %v", err))
+			return "", nil, common.Unauthorized(fmt.Sprintf("Pre-issuance check failed: %v", err))
 		}
 	}
 
@@ -1440,7 +1439,7 @@ func (s *RestService) finalizeTCGCSR(
 		}
 		extraExts, hookErr := s.preSignHooks.Execute(preSignCtx)
 		if hookErr != nil {
-			return 0, nil, common.ServerInternal(fmt.Sprintf("Pre-sign hook failed: %v", hookErr))
+			return "", nil, common.ServerInternal(fmt.Sprintf("Pre-sign hook failed: %v", hookErr))
 		}
 		tcgCSRRequest.ExtraExtensions = append(tcgCSRRequest.ExtraExtensions, extraExts...)
 	}
@@ -1455,7 +1454,7 @@ func (s *RestService) finalizeTCGCSR(
 	if issuerErr != nil {
 		s.logger.Error("Failed to resolve cluster CA issuer for enroll-01 issuance",
 			"cluster_ca_cn", s.clusterCACN, "error", issuerErr.Error())
-		return 0, nil, common.ServerInternal("Failed to resolve cluster CA issuer")
+		return "", nil, common.ServerInternal("Failed to resolve cluster CA issuer")
 	}
 	if clusterSigner != nil {
 		tcgCSRRequest.Signer = clusterSigner
@@ -1470,12 +1469,12 @@ func (s *RestService) finalizeTCGCSR(
 			"account_id", account.ID,
 			"permanent_identifier", idevidCN,
 			"error", err.Error())
-		return 0, nil, common.ServerInternal("Failed to sign TCG-CSR-IDEVID")
+		return "", nil, common.ServerInternal("Failed to sign TCG-CSR-IDEVID")
 	}
 
 	idevidCert, err := x509.ParseCertificate(idevidDER)
 	if err != nil {
-		return 0, nil, common.ServerInternal("Failed to parse certificate")
+		return "", nil, common.ServerInternal("Failed to parse certificate")
 	}
 
 	// The IAK certificate's subject is the CA's business: SignTCGCSRIDevID
@@ -1496,7 +1495,7 @@ func (s *RestService) finalizeTCGCSR(
 	// Parse EK certificate for hook context
 	ekcert, err := x509.ParseCertificate(tcgCSR.CsrContents.EkCert)
 	if err != nil {
-		return 0, nil, common.ServerInternal("Failed to parse EK certificate")
+		return "", nil, common.ServerInternal("Failed to parse EK certificate")
 	}
 
 	// enroll-01 binds a device identity to a TPM, so the trail records both the
@@ -1505,7 +1504,7 @@ func (s *RestService) finalizeTCGCSR(
 	if auditErr := s.recordAudit(audit.EventTPMEnrollment, audit.LogTPMEnrollment(auditCtx, s.auditLog,
 		auditAccountID(account.ID), idevidCN,
 		ekcert.Subject.CommonName, idevidCert.Subject.CommonName)); auditErr != nil {
-		return 0, nil, common.ServerInternal("Failed to record audit event")
+		return "", nil, common.ServerInternal("Failed to record audit event")
 	}
 	if auditErr := s.recordAudit(audit.EventCertificateIssued, audit.LogCertificateIssued(auditCtx, s.auditLog,
 		auditAccountID(account.ID),
@@ -1513,7 +1512,7 @@ func (s *RestService) finalizeTCGCSR(
 		idevidCert.Subject.CommonName,
 		auditValidityDays(idevidCert),
 		idevidCert.SerialNumber.String())); auditErr != nil {
-		return 0, nil, common.ServerInternal("Failed to record audit event")
+		return "", nil, common.ServerInternal("Failed to record audit event")
 	}
 
 	// Execute order finalization hooks if registered
@@ -1548,7 +1547,7 @@ func (s *RestService) finalizeTCGCSR(
 			"eventlog_size", len(tcgCSR.CsrContents.BootEvntLog))
 
 		if err := s.params.OrderFinalizeHooks.Execute(hookCtx); err != nil {
-			return 0, nil, common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err))
+			return "", nil, common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err))
 		}
 	} else {
 		s.logger.Warn("No order finalization hooks registered for TCG CSR")
@@ -1564,22 +1563,12 @@ func (s *RestService) finalizeTCGCSR(
 	//
 	// See OrderFinalizeHookRegistry and TCGEnrollmentData for available hook context.
 
-	// Safely convert serial number to uint64
-	var serialNumber uint64
+	// The IDevID certificate's full serial number, never truncated - see the
+	// identical treatment in OrderFinalizeHandler above.
 	if idevidCert.SerialNumber == nil {
-		return 0, nil, common.ServerInternal("Certificate serial number is nil")
+		return "", nil, common.ServerInternal("Certificate serial number is nil")
 	}
-	if idevidCert.SerialNumber.IsUint64() {
-		serialNumber = idevidCert.SerialNumber.Uint64()
-	} else {
-		// Use modulo to get lower 64 bits without panicking
-		var maxUint64 big.Int
-		maxUint64.SetUint64(^uint64(0))
-		maxUint64.Add(&maxUint64, big.NewInt(1))
-		var temp big.Int
-		temp.Mod(idevidCert.SerialNumber, &maxUint64)
-		serialNumber = temp.Uint64()
-	}
+	serialNumber := idevidCert.SerialNumber.Text(16)
 
 	return serialNumber, pem, nil
 }
