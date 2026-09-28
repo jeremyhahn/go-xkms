@@ -270,6 +270,31 @@ once, to the externally visible base.
   `EndorseEABValidator.BoundTPMManufacturer`). Before this the handler passed
   none, and every enroll-01 of an endorsed TPM failed with a bare
   `Failed to sign TCG-CSR-IDEVID`; that failure now logs the CA's error.
+- **A certificate's identity is its full serial number, hex-encoded, never
+  truncated.** `entities.ACMECertificate.Serial` holds the complete X.509
+  serial number (up to 20 octets per RFC 5280 Section 4.1.2.2) as a lowercase
+  hex string; it is what the "id" segment of the `/acme/cert/{id}` URL
+  carries and what certificate fetch, revocation, and admin lookups key on.
+  The DAO's own numeric row key (`NumericID`) is an FNV-1a hash of Serial,
+  kept only to satisfy the generic DAO's `uint64` entity-ID contract - it is
+  never a certificate's public identity. Before go-xkms#744, the ID was the
+  serial's low 64 bits, so two certificates whose 128-bit serials happened to
+  share those bits collided in storage.
+- **A 64-bit hash still leaves a residual collision risk, and it is
+  handled, not assumed away.** `CertificateHandler` and `RevokeCertHandler`
+  compare the fetched row's `Serial` against the requested serial and treat
+  a mismatch as not-found - a hash collision can only ever produce a 404,
+  never the wrong certificate. `storage.SaveCertificateNoCollision` (used
+  by both `OrderFinalizeHandler` and the ACME client's local certificate
+  cache) refuses to let a save silently overwrite a different certificate
+  at the same row, returning `*storage.CertificateSerialCollisionError`;
+  it uses `GenericDAO.SaveIfAbsent` atomically when the backing KVStore
+  supports it (see pkg/storage/kvadapter), and falls back to a
+  Get-then-Save sequence otherwise - a fallback that is NOT atomic against
+  a second, concurrent writer racing to the same row, because sdk/go does
+  not re-export a sentinel this package could use to positively confirm
+  "no atomic support" versus some other `SaveIfAbsent` failure without
+  reaching past the SDK boundary into `go-qrdb/pkg/dao` directly.
 - **Revocation requires byte-equality with the stored certificate.** The
   submitted certificate's serial number is looked up, but because the returned
   record's identities must authorize the revocation and the submitted bytes are
