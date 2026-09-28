@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"os"
 	"path/filepath"
 	"testing"

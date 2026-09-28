@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"io"
 	"log/slog"
 	"math"
