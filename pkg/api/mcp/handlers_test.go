@@ -3593,7 +3593,32 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 	// half, which is what makes a key wrapped under an RSA KEK work; this
 	// transport now gets that behaviour instead of its own refusal, matching
 	// REST and gRPC.
+	t.Run("refuses the PKCS#1 v1.5 fallback unless legacy wrap is enabled", func(t *testing.T) {
+		previous := types.AllowLegacyKeyWrap()
+		types.SetAllowLegacyKeyWrap(false)
+		t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
+		paramsJSON, _ := json.Marshal(EncryptParams{
+			KeyID:     "test-rsa-not-sym",
+			Backend:   "software",
+			Plaintext: []byte("secret data"),
+		})
+		_, err := server.handleEncrypt(context.Background(), &JSONRPCRequest{
+			JSONRPC: "2.0",
+			Method:  "xkms.encrypt",
+			Params:  paramsJSON,
+			ID:      1,
+		})
+		require.Error(t, err)
+	})
+
 	t.Run("falls back to asymmetric encryption for an RSA key", func(t *testing.T) {
+		// PKCS#1 v1.5 encryption is legacy and refused by default
+		// (go-xkms#1205); this case opts in to exercise the fallback.
+		previous := types.AllowLegacyKeyWrap()
+		types.SetAllowLegacyKeyWrap(true)
+		t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
 		params := EncryptParams{
 			KeyID:     "test-rsa-not-sym",
 			Backend:   "software",
