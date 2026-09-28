@@ -181,11 +181,12 @@ func TestNewQRDBUserStore(t *testing.T) {
 func TestQRDBUserStore_GetByCertFingerprint_Success(t *testing.T) {
 	users := newFakeQRDBUserClient()
 	users.byThumbprint["thumb-1"] = &qrdbtransport.User{
-		Username:  "alice",
-		Email:     "alice@example.com",
-		TenantID:  "tenant-a",
-		RoleIDs:   []string{"role-1"},
-		Lifecycle: string(qrdbsdk.LifecycleActive),
+		Username:    "alice",
+		Email:       "alice@example.com",
+		TenantID:    "tenant-a",
+		RoleIDs:     []string{"role-1"},
+		Lifecycle:   string(qrdbsdk.LifecycleActive),
+		AuthMethods: []string{"mtls", "webauthn"},
 	}
 	roles := newFakeQRDBRoleClient()
 	roles.byID["role-1"] = &qrdbtransport.Role{ID: "role-1", Name: "admin"}
@@ -198,6 +199,7 @@ func TestQRDBUserStore_GetByCertFingerprint_Success(t *testing.T) {
 	assert.Equal(t, "admin", u.Role)
 	assert.Equal(t, "tenant-a", u.TenantID)
 	assert.True(t, u.Enabled)
+	assert.Equal(t, []string{"mtls", "webauthn"}, u.AuthMethods, "the permitted-method policy must be projected")
 }
 
 func TestQRDBUserStore_GetByCertFingerprint_UserNotFound(t *testing.T) {

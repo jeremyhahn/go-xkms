@@ -1,6 +1,6 @@
 # RBAC — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface
 
@@ -150,6 +150,20 @@ specific permission before assuming a non-Admin role holds it.
 - **A route/RPC/tool's resource and action must be `pkg/auth` constants,
   never string literals**, on the two transports without an in-process
   table to check against (gRPC, QUIC) — enforced by `internal/authzscan`.
+- **The mTLS authenticator enforces qrdb's permitted-method policy.** A
+  certificate that resolves to an active account is refused when the
+  account's `AuthMethods` (qrdb `User.AuthMethods`) is non-empty and does not
+  name `mtls` (`qrdbsdk.MethodMTLS`). `QRDBUserStore` projects the policy onto
+  `MTLSUser.AuthMethods` (`pkg/auth/qrdb_userstore.go:69`);
+  `MTLSAuthenticator.buildIdentity` checks it after the enabled check
+  (`pkg/auth/mtls.go:221`) via `checkAuthMethod`
+  (`pkg/auth/authmethod.go:34`), which applies go-qrdb's
+  `auth/middleware` `checkAuthMethod` contract unchanged: an **empty policy
+  states no restriction**, the method name is normalized with
+  `qrdbsdk.NormalizeAuthMethods` and compared against the stored entries,
+  and a name that does not survive normalization is refused. A refused
+  account is never admitted through the certificate-field fallback that
+  serves unbound certificates.
 - **Role reassignment after user creation does not exist.** `roleNameToID`
   runs once, at `CreateUser`; there is no update path.
 
@@ -158,6 +172,7 @@ specific permission before assuming a non-Admin role holds it.
 | Error | Where | Meaning |
 |---|---|---|
 | `ErrUnauthenticated` | `pkg/auth/errors.go` | `Authorize` called with a nil identity while enabled |
+| `*AuthMethodNotPermittedError{Username, TenantID, Method, Permitted}` | `pkg/auth/errors.go:52` | the certificate resolved to an active account whose permitted-method policy excludes `mtls`; mirrors qrdb's `auth/middleware` error of the same name |
 | qrdb's `PermissionDeniedError` | returned by `rbac.Authorize` | grant missing, or tenant scope gate rejects the request |
 | `ErrAuthorizerRequired` | `pkg/api/rest/errors.go` | `rest.NewServer` refuses to construct when `EnableRBAC` is true but no usable authorizer was supplied — fails closed at construction, never falls back to allow-all |
 | `*ErrUnknownRole{Role}` | `pkg/xkms/errors.go` | `CreateUser`'s role name does not match any existing qrdb role, wrapped in `*ErrUserOperation{Operation: "resolve role"}` |
@@ -251,7 +266,9 @@ re-exported verbatim so a downstream consumer needs a single import.
 
 ## Test strategy
 
-- **Unit** — `pkg/auth` (authorizer, permissions); `pkg/apimodule/module_scopes_test.go`
+- **Unit** — `pkg/auth` (authorizer, permissions; `authmethod_test.go`
+  pins the permitted-method policy, including the empty-policy case, through
+  the production `QRDBUserStore` and `MTLSAuthenticator`); `pkg/apimodule/module_scopes_test.go`
   (`TestEveryModulePermissionDeclaresItsScope`, `TestModuleDeclaresOnlyItsOwnScopes`,
   `TestModuleScopeDeclarationsAreAllContributed`, `TestUndeclaredPermissionHasNoScope`).
 - **Vocabulary consistency** — `internal/authzscan` builds a checked-in

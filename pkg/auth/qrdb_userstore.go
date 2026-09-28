@@ -26,8 +26,9 @@ var _ UserStore = (*QRDBUserStore)(nil)
 // QRDBUserStore resolves mTLS identities against the qrdb-hosted user store —
 // the single source of identity for the stack. It satisfies UserStore for the
 // MTLSAuthenticator: given a client certificate's SPKI thumbprint, it resolves
-// the bound qrdb user via the server-side secondary index and maps the user's
-// first role id to its role name.
+// the bound qrdb user via the server-side secondary index, maps the user's
+// first role id to its role name, and carries the user's permitted-method
+// policy so the authenticator can enforce it.
 type QRDBUserStore struct {
 	users qrdbtransport.UserClient
 	roles qrdbtransport.RoleClient
@@ -64,6 +65,7 @@ func (s *QRDBUserStore) GetByCertFingerprint(ctx context.Context, fingerprint st
 		Role:     role,
 		TenantID: u.TenantID,
 		// Lifecycle is qrdb's only account state; only active authenticates.
-		Enabled: u.Lifecycle == string(qrdbsdk.LifecycleActive),
+		Enabled:     u.Lifecycle == string(qrdbsdk.LifecycleActive),
+		AuthMethods: u.AuthMethods,
 	}, nil
 }

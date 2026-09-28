@@ -13,7 +13,10 @@
 
 package auth
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 var (
 	// ErrNoAuthenticators is returned when a composite authenticator is created with no authenticators.
@@ -38,3 +41,31 @@ var (
 	// present on the request context — authentication must run first.
 	ErrUnauthenticated = errors.New("authentication required")
 )
+
+// AuthMethodNotPermittedError is returned when a certificate resolves to an
+// account in good standing whose permitted-authentication-method policy does
+// not include the method that authenticated the request.
+//
+// It mirrors go-qrdb's auth/middleware AuthMethodNotPermittedError field for
+// field so an operator reads the same refusal on the xkms planes as on qrdb's
+// own: which method was refused against which permitted set.
+type AuthMethodNotPermittedError struct {
+	// Username is the account the certificate resolved to.
+	Username string
+
+	// TenantID is the account's tenant.
+	TenantID string
+
+	// Method is the authenticator that succeeded (e.g. "mtls").
+	Method string
+
+	// Permitted is the account's policy, in the order qrdb stores it.
+	Permitted []string
+}
+
+// Error names the refused method and the permitted set.
+func (e *AuthMethodNotPermittedError) Error() string {
+	return "auth: authentication method " + e.Method +
+		" is not permitted for " + e.Username + " in tenant " + e.TenantID +
+		" (permitted: " + strings.Join(e.Permitted, ", ") + ")"
+}
