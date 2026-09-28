@@ -158,3 +158,36 @@ acme:
     # network alias, not a loopback address, so this stays off; kept explicit
     # rather than relying on the zero value.
     allow_loopback_identifier: false
+  # Rate limiting stays ON (RateLimit.IsEnabled defaults true; there is no
+  # "disabled" value here) but the RFC 8555 Section 6.6 defaults are sized
+  # for a real deployment's traffic, not one test binary that registers a
+  # fresh ACME account per test case from a single client IP:
+  # DefaultACMENewAccountRateLimitMaxRequests is 10 per hour
+  # (pkg/config/acme.go), so this suite hit 429s well before finishing. Every
+  # value below is still a genuine, enforced cap -- just one this lane can
+  # actually run under -- never "no limit".
+  rate_limit:
+    max_requests: 1000
+    interval: 1s
+    new_account:
+      max_requests: 1000
+      interval: 1m
+    new_order:
+      max_requests: 1000
+      interval: 1m
+  # policy.blocklist.use_defaults seeds RFC 2606/6761 reserved names
+  # (example.com, example.net, test, local, ...) into the blocklist; every
+  # DNS identifier this suite's fixtures use is a subdomain of example.com
+  # (test/integration/challenges/enroll01 and endorse01, by convention, per
+  # RFC 2606 itself -- a real deployment blocks exactly these names because
+  # nobody should be issued a cert for them, which is precisely why a test
+  # fixture that intentionally uses them must opt out explicitly rather than
+  # pick a non-reserved domain that would look like it could receive a real
+  # certificate). This is the one documented lever for that
+  # (pkg/config/acme_policy.go's ACMEBlocklistConfig.UseDefaults); there is
+  # no separate allowlist to punch a single-domain hole in it instead. Every
+  # other policy check (RequirePublicSuffix, RejectReservedIPs,
+  # AllowWildcards) stays on.
+  policy:
+    blocklist:
+      use_defaults: false

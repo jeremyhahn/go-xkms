@@ -462,19 +462,45 @@ func (s *SwtpmConnection) generateEKCertificate() ([]byte, error) {
 		return nil, caerrors.InternalServerError("failed to generate serial number: %v", err)
 	}
 
+	subject := pkix.Name{
+		CommonName:   s.deviceID,
+		Organization: []string{"swtpm-test"},
+	}
+
+	// TCG EK Credential Profile subjectAltName directoryName: tcg-at-
+	// tpmManufacturer/tpmModel/tpmVersion (2.23.133.2.{1,2,3}). Without the
+	// manufacturer attribute pkg/ca/tcg_devid_name.go's TCGTPMManufacturer
+	// refuses the certificate outright (ErrTCGEKManufacturerUnknown) before
+	// chain verification is even reached. Read from swtpm itself via
+	// TPM2_GetCapability (FixedProperties) rather than hardcoding, the same
+	// pattern pkg/tpm2/tpm2test.ProvisionIAKCertificate already uses for the
+	// IAK certificate this same test binary provisions.
+	props, err := s.tpmModule.FixedProperties()
+	if err != nil {
+		return nil, caerrors.TPMErr("failed to read TPM fixed properties: %v", err)
+	}
+	san, err := ca.BuildSubjectAltName(subject, nil, nil, nil, nil, nil, []pkix.Name{{
+		ExtraNames: []pkix.AttributeTypeAndValue{
+			{Type: ca.OIDTCGAttributeTPMManufacturer, Value: props.ManufacturerCode},
+			{Type: ca.OIDTCGAttributeTPMModel, Value: props.Model},
+			{Type: ca.OIDTCGAttributeTPMVersion, Value: fmt.Sprintf("id:%04X%04X", props.FwMajor, props.FwMinor)},
+		},
+	}})
+	if err != nil {
+		return nil, caerrors.MalformedError("failed to build EK certificate subject alt name: %v", err)
+	}
+
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName:   s.deviceID,
-			Organization: []string{"swtpm-test"},
-		},
-		NotBefore: time.Now(),
-		NotAfter:  time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:  x509.KeyUsageKeyEncipherment | x509.KeyUsageDataEncipherment,
+		Subject:      subject,
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDataEncipherment,
 		// tcg-kp-EKCertificate: see the function doc comment above.
 		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{ca.OIDTCGKpEKCertificate},
 		BasicConstraintsValid: true,
 		IsCA:                  false,
+		ExtraExtensions:       []pkix.Extension{san},
 	}
 
 	issuerKey, issuerCert := swtpmTestEKIssuer()
