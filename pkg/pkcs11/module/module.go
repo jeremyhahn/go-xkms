@@ -286,6 +286,40 @@ func (m *Module) logStorageError(operation string, err error) {
 	m.lastStorageError.Store(storageFailure{Operation: operation, Err: err})
 }
 
+// tokenAttemptLedger is the AttemptLedger for one slot's token: its durable
+// failed-attempt counters in the module's store. Every failure is recorded
+// through LastStorageError, because the Cryptoki call it fails reports only
+// CKR_DEVICE_ERROR.
+type tokenAttemptLedger struct {
+	module *Module
+	slotID SlotID
+}
+
+var _ AttemptLedger = (*tokenAttemptLedger)(nil)
+
+// Spend charges one attempt to the token's durable counter.
+func (l *tokenAttemptLedger) Spend(userType UserType, limit uint32) (uint32, bool, error) {
+	count, admitted, err := l.module.storage.SpendFailedAttempt(l.slotID, userType, limit)
+	if err != nil {
+		return 0, false, l.module.recordStorageError("spend PIN attempt", err)
+	}
+	return count, admitted, nil
+}
+
+// Refund settles a correct PIN's attempt in the token's durable counter.
+func (l *tokenAttemptLedger) Refund(userType UserType, spent uint32) (uint32, error) {
+	count, err := l.module.storage.RefundFailedAttempt(l.slotID, userType, spent)
+	if err != nil {
+		return 0, l.module.recordStorageError("refund PIN attempt", err)
+	}
+	return count, nil
+}
+
+// Reset clears the token's durable counter.
+func (l *tokenAttemptLedger) Reset(userType UserType) error {
+	return l.module.recordStorageError("reset PIN attempts", l.module.storage.ResetFailedAttempt(l.slotID, userType))
+}
+
 // recordStorageError records a persistence failure the way logStorageError does
 // and also returns it, for the callers that must fail the Cryptoki call they are
 // serving rather than continue past the failure.
@@ -518,27 +552,13 @@ func (m *Module) Initialize(config *Config) CK_RV {
 	m.sessionHandles = sessionHandles
 	for _, slotID := range slotIDs {
 		sm := NewSessionManagerWithTable(uint64(slotID), 0, sessionHandles)
-		// Every change to a lockout counter is reconciled with the store, so the
-		// budget an attacker has spent survives C_Finalize and a restart — and so
-		// that several remote-mode clients sharing one token count their failures
-		// against one authoritative counter. The slot is captured per iteration
-		// because the callbacks outlive it.
-		slot := slotID
-		sm.SetAttemptPersistence(
-			func(userType UserType) (uint32, bool) {
-				value, persisted, err := m.storage.IncrementFailedAttempt(slot, userType)
-				if err != nil {
-					m.logStorageError("persist PIN lockout increment", err)
-					return 0, false
-				}
-				return value, persisted
-			},
-			func(userType UserType) {
-				if err := m.storage.ResetFailedAttempt(slot, userType); err != nil {
-					m.logStorageError("persist PIN lockout reset", err)
-				}
-			},
-		)
+		// A module with a store charges every PIN verification to the token's
+		// durable counter before deriving, so the budget holds across
+		// C_Finalize, a restart, and every other process that opens the same
+		// token (#1144). A store-less module keeps the budget in memory.
+		if m.storage.Durable() {
+			sm.SetAttemptLedger(&tokenAttemptLedger{module: m, slotID: slotID})
+		}
 		m.sessionManagers[slotID] = sm
 	}
 
@@ -1470,8 +1490,11 @@ func (m *Module) InitToken(slotID SlotID, soPin []byte, label string) CK_RV {
 		}
 		sm.SetSOPIN(soHash)
 		sm.SetUserPIN(nil)
-		sm.ResetPINAttempts(CKU_SO)
-		sm.ResetPINAttempts(CKU_USER)
+		// C_InitToken fails if the budget reset did not reach the store, for
+		// the same reason it fails below when the token record did not.
+		if err := errors.Join(sm.ResetPINAttempts(CKU_SO), sm.ResetPINAttempts(CKU_USER)); err != nil {
+			return CKR_DEVICE_ERROR
+		}
 	}
 
 	// C_InitToken fails if its result did not reach the store.
@@ -1551,8 +1574,12 @@ func (m *Module) InitPIN(sessionHandle SessionHandle, pin []byte) CK_RV {
 		// Establishing a PIN clears the failed-attempt budget, exactly as
 		// C_InitToken and C_SetPIN do. A counter carried over from before the
 		// PIN existed would apply to a secret no one has yet had the chance to
-		// get wrong, and the SO has no other call to clear it with.
-		sm.ResetPINAttempts(CKU_USER)
+		// get wrong, and the SO has no other call to clear it with. A reset
+		// that did not reach the store would leave the new PIN locked for
+		// every process sharing the token, so it fails the call.
+		if err := sm.ResetPINAttempts(CKU_USER); err != nil {
+			return CKR_DEVICE_ERROR
+		}
 	}
 
 	// Persist token state. A PIN that is live in memory but was never written
@@ -1633,7 +1660,9 @@ func (m *Module) SetPIN(sessionHandle SessionHandle, oldPin, newPin []byte) CK_R
 			return CKR_DEVICE_ERROR
 		}
 		sm.SetSOPIN(soHash)
-		sm.ResetPINAttempts(CKU_SO)
+		if err := sm.ResetPINAttempts(CKU_SO); err != nil {
+			return CKR_DEVICE_ERROR
+		}
 	default:
 		if err := sm.VerifyPINForChange(CKU_USER, oldPin); err != nil {
 			return FromError(err)
@@ -1656,7 +1685,9 @@ func (m *Module) SetPIN(sessionHandle SessionHandle, oldPin, newPin []byte) CK_R
 			return CKR_DEVICE_ERROR
 		}
 		sm.SetUserPIN(userHash)
-		sm.ResetPINAttempts(CKU_USER)
+		if err := sm.ResetPINAttempts(CKU_USER); err != nil {
+			return CKR_DEVICE_ERROR
+		}
 	}
 
 	// Persist token state. As with C_InitPIN, a PIN change that was applied in

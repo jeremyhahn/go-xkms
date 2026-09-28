@@ -2779,7 +2779,9 @@ func TestSessionManager_PINLockout_ResetOnSuccess(t *testing.T) {
 		t.Fatal("expected PIN to be locked before ResetPINAttempts")
 	}
 
-	manager2.ResetPINAttempts(CKU_USER)
+	if err := manager2.ResetPINAttempts(CKU_USER); err != nil {
+		t.Fatalf("ResetPINAttempts: %v", err)
+	}
 
 	if failed, locked := manager2.PINAttemptStatus(CKU_USER); failed != 0 || locked {
 		t.Errorf("expected (0, false) after ResetPINAttempts, got (%d, %v)", failed, locked)

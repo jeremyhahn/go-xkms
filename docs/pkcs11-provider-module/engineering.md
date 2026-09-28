@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Build
 
@@ -100,6 +100,9 @@ naming a backend is this, not a configuration typo.
 - **Session and object handles are per-process.** They are not portable across
   processes even in remote mode, where the *state* is shared but the handles are
   not.
+- **The PIN budget is shared by every process on the token.** An attempt is
+  charged to the durable counter before its PIN is checked, and a store
+  failure refuses the login; see [PIN lockout](#pin-lockout).
 - **Concurrency.** Cryptoki permits concurrent sessions; the module serialises
   where the backend requires it and relies on CAS for shared state.
 - **A named curve is never substituted.** Where a template carries
@@ -145,6 +148,51 @@ process, whose own FIPS posture governs it.
 
 Handles are ephemeral; state is durable. A restart re-derives handles from state.
 
+## PIN lockout
+
+The PIN budget belongs to the token, not to the process: every process that
+opens the same token shares one counter per PIN (`MaxPINAttempts`,
+`pkg/pkcs11/module/session.go:1205`) under the dedicated keys
+`pkcs11/counters/token/<slot>/failed_{user,so}` (`storage.go:220`).
+
+- **An attempt is spent before it is checked** (#1144).
+  `finishPINVerification` (`session.go:1169`) charges the attempt through the
+  `AttemptLedger` (`session.go:733`) and runs the Argon2id derivation only if
+  the ledger admits it. A wrong PIN leaves the attempt spent; a correct one is
+  refunded. The ledger's answer is the only thing that admits a derivation,
+  so a process whose cached count is stale cannot verify a PIN, or clear a
+  lock, once the shared counter is exhausted.
+- **The spend is a guarded write.** `ModuleStorage.SpendFailedAttempt`
+  (`storage.go:270`) increments only while the counter is below the limit, and
+  writes nothing once it is not. It runs through `updateViaCAS`
+  (`storage.go:333`): `PutIfAbsent` creates the key, and `CompareAndSwap`
+  retries against the value the failed swap observed. Remote tokens reach the
+  server's compare-and-swap through `PKCS11StateCAS` (`storage_remote.go:136`,
+  `pkg/pkcs11state/store.go:93`), so the guard holds across hosts.
+- **A refund never erases someone else's failure.**
+  `RefundFailedAttempt` (`storage.go:283`) applies `refundedCount`
+  (`session.go:1352`). If nothing touched the counter since the spend, it resets
+  to zero, because a success ends the run of consecutive failures. If later
+  attempts were charged, only this attempt's own charge is returned. If the
+  counter was reset underneath, nothing is returned.
+- **The ledger fails closed.** An error from the spend or the refund answers
+  `CKR_DEVICE_ERROR` and grants nothing. The cause is recorded through
+  `LastStorageError` by `tokenAttemptLedger` (`module.go:293`). `C_InitToken`, `C_InitPIN` and
+  `C_SetPIN` answer `CKR_DEVICE_ERROR` when the counter reset they perform does
+  not reach the store (`ResetPINAttempts`, `session.go:1367`).
+- **The in-memory counters are a cache.** With a store configured they only
+  feed the `CKF_*_PIN_*` flags in `CK_TOKEN_INFO` (`PINAttemptStatus`,
+  `session.go:1452`). Those flags show the last value this process saw. A
+  module with no store (`ModuleStorage.Durable` false) keeps the budget in
+  memory, with the same spend-first rule.
+- **Limits.** A correct PIN that succeeds while other processes are mid-guess
+  can reset their in-flight charges. That is the normal "a success resets the
+  budget" rule, applied during a race. The file engine's compare-and-swap is
+  atomic only within one process (`pkg/storage/engine.go:68`). Two processes
+  on one *file* token therefore always see each other's attempts, but a
+  read-modify-write that interleaves within one swap can still lose an update.
+  Remote tokens have no such window.
+
 ## v3.2 status
 
 Four surfaces ship the API and answer `CKR_FUNCTION_NOT_SUPPORTED`:
@@ -163,7 +211,11 @@ not-supported answer, so the behaviour is deliberate. Compliance detail:
   `exports_random_test.go`, `offline_test.go`; and the large
   `pkg/pkcs11/module` suite, including per-v3.2-surface tests
   (`module_kem_test.go`, `module_authwrap_*_test.go`,
-  `module_verifysig_*_test.go`, `module_async_test.go`).
+  `module_verifysig_*_test.go`, `module_async_test.go`). The cross-process
+  lockout is pinned by `session_pin_ledger_test.go`. Two `Module` values over
+  one backend stand in for two processes. The tests cover the shared budget,
+  a stale instance, concurrent guessing (counted by derivations), a reset on
+  success, and a store fault. Each runs for both the user PIN and the SO PIN.
 - **Integration** — `test/integration/pkcs11`, driving real consumers.
 - **Compatibility** — the two-call convention and mechanism-parameter
   marshalling are the fragile CGO seams and have dedicated suites.

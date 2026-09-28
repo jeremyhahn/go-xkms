@@ -113,6 +113,11 @@ func NewModuleStorage(backend storage.Backend) *ModuleStorage {
 	}
 }
 
+// Durable reports whether the storage has a backend to persist to.
+func (s *ModuleStorage) Durable() bool {
+	return s.backend != nil
+}
+
 // SetTimeout overrides the per-operation storage timeout.
 func (s *ModuleStorage) SetTimeout(timeout time.Duration) {
 	if timeout > 0 {
@@ -193,11 +198,11 @@ func (s *ModuleStorage) SaveTokenState(slotID SlotID, token *Token, failedUserPI
 // starve the other. That is what turned CI's Race Detector job red on
 // TestModuleStorage_FailedAttemptCounter_ConcurrentAccumulates: exhaustion
 // returned an error, the caller stopped incrementing, and the total came in low.
-// Exhausting the budget is a real security fault and not merely a test failure —
-// the caller (module.go SetAttemptPersistence) reports persisted=false, so a
-// failed PIN attempt does not advance the DURABLE lockout budget shared by every
-// client on that token, and contention is exactly what an attacker hammering
-// PINs from several clients produces.
+// Exhaustion returns ErrAttemptCounterContention and the PIN verification it
+// was charging fails closed with CKR_DEVICE_ERROR, so an exhausted budget
+// denies service rather than granting a guess; but contention is exactly what
+// an attacker hammering PINs from several clients produces, so the bound must
+// stay well clear of what legitimate concurrency reaches.
 const attemptCASRetryBudget = 1024
 
 // ErrCorruptAttemptCounter is returned when a persisted failed-attempt counter
@@ -237,135 +242,181 @@ func parseAttemptCounter(data []byte) (uint32, error) {
 	return uint32(v), nil
 }
 
-// IncrementFailedAttempt atomically adds one to the durable failed-attempt
-// counter for (slotID, userType) and returns the new stored value.
+// ErrAttemptCounterContention is returned when a failed-attempt counter's
+// compare-and-swap loop exhausts attemptCASRetryBudget. The outcome of the
+// attempt is then unknown, and the caller fails closed.
+var ErrAttemptCounterContention = errors.New("pkcs11: failed-attempt counter contention")
+
+// ErrNoAttemptStore is returned by the failed-attempt ledger operations of a
+// ModuleStorage that has no backend. A store-less module keeps its budget in
+// memory and never installs a durable ledger, so reaching one is a wiring
+// fault, answered as an error rather than as an empty budget.
+var ErrNoAttemptStore = errors.New("pkcs11: no durable failed-attempt store")
+
+// ErrNoAttemptCounter is returned for a user type that has no failed-attempt
+// counter: only CKU_USER and CKU_SO PINs are budgeted.
+var ErrNoAttemptCounter = errors.New("pkcs11: user type has no failed-attempt counter")
+
+// counterUpdate computes a counter's next value from its current one. write is
+// false when the counter is to be left as it is.
+type counterUpdate func(current uint32) (next uint32, write bool)
+
+// SpendFailedAttempt atomically charges one attempt against the durable
+// failed-attempt counter for (slotID, userType), if fewer than limit are
+// already charged. It is the durable half of AttemptLedger.Spend: count is the
+// counter's value afterwards and admitted reports whether the attempt was
+// charged. Nothing is written when the budget is exhausted, so a locked token
+// is not rewritten on every refused guess.
+func (s *ModuleStorage) SpendFailedAttempt(slotID SlotID, userType UserType, limit uint32) (count uint32, admitted bool, err error) {
+	return s.updateFailedAttempt(slotID, userType, func(current uint32) (uint32, bool) {
+		if current >= limit {
+			return current, false
+		}
+		return current + 1, true
+	})
+}
+
+// RefundFailedAttempt settles, in the durable counter for (slotID, userType),
+// an attempt whose PIN was correct. spent is the count SpendFailedAttempt
+// returned for it; refundedCount decides the new value. It returns the
+// counter's value afterwards.
+func (s *ModuleStorage) RefundFailedAttempt(slotID SlotID, userType UserType, spent uint32) (uint32, error) {
+	count, _, err := s.updateFailedAttempt(slotID, userType, func(current uint32) (uint32, bool) {
+		next := refundedCount(current, spent)
+		return next, next != current
+	})
+	return count, err
+}
+
+// updateFailedAttempt applies update to the durable counter for
+// (slotID, userType) atomically, and returns the counter's value afterwards and
+// whether update wrote it.
 //
-// On a compare-and-swap-capable backend (the remote/clustered case) it uses a
-// CAS retry loop so concurrent increments from several clients sharing one token
-// accumulate rather than clobber each other; on a single-writer local backend it
-// is a mutex-guarded read-modify-write. The returned value is authoritative — the
-// caller writes it back into its optimistic in-memory counter. persisted is false
-// when no durable backend is configured, telling the caller to advance its own
-// in-memory counter instead.
-func (s *ModuleStorage) IncrementFailedAttempt(slotID SlotID, userType UserType) (value uint32, persisted bool, err error) {
+// On a compare-and-swap-capable backend (every backend the module opens:
+// memory, file, and remote) it is a CAS retry loop, so concurrent updates from
+// several module instances sharing one token serialize rather than clobber each
+// other. A backend without compare-and-swap gets a read-modify-write under the
+// storage mutex, which is linearizable for this process only.
+func (s *ModuleStorage) updateFailedAttempt(slotID SlotID, userType UserType, update counterUpdate) (uint32, bool, error) {
 	if s.backend == nil {
-		return 0, false, nil
+		return 0, false, ErrNoAttemptStore
 	}
 	key, ok := failedAttemptKey(slotID, userType)
 	if !ok {
-		return 0, false, nil
+		return 0, false, ErrNoAttemptCounter
 	}
 
 	if cas, ok := s.backend.(storage.CompareAndSwapper); ok {
-		v, err := s.incrementViaCAS(cas, key)
-		return v, err == nil, err
+		return s.updateViaCAS(cas, key, update)
 	}
 
-	// Single-writer local backend: the storage mutex makes read-modify-write
-	// linearizable for this process, exactly as it does for PutIfAbsent.
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v, err := s.incrementLocked(key)
-	return v, err == nil, err
+	return s.updateLocked(key, update)
 }
 
-// incrementViaCAS performs the compare-and-swap retry loop for a counter key.
+// updateViaCAS performs the compare-and-swap retry loop for a counter key.
 //
-// storage.CompareAndSwapper.CompareAndSwap no longer creates: a nil expected
-// is compared like any other value and an absent key always refuses (#186),
-// so this loop never passes one. Whenever the counter is (or becomes) absent
-// -- the first attempt found no key, or a concurrent writer's refusal reports
-// current=nil, which happens if a reset raced this call -- it is created with
-// PutIfAbsent, the explicit verb for "create only if absent," instead of
-// asking CompareAndSwap to do double duty. PutIfAbsent losing its race is not
-// an error: it means a concurrent creator won, so the real bytes are re-read
-// and the loop falls through to the ordinary compare-and-swap retry below.
+// storage.CompareAndSwapper.CompareAndSwap does not create: a nil expected is
+// compared like any other value and an absent key always refuses (#186), so
+// this loop never passes one. Whenever the counter is (or becomes) absent --
+// the first read found no key, or a concurrent writer's refusal reports
+// current=nil -- it is created with PutIfAbsent, the explicit verb for "create
+// only if absent." PutIfAbsent losing its race is not an error: a concurrent
+// creator won, so the real bytes are re-read and the loop falls through to the
+// ordinary compare-and-swap below.
 //
-// Once a real value is in hand, every retry after the first recomputes
-// against the value the failed CompareAndSwap itself observed, which the
-// CompareAndSwapper contract returns for exactly this purpose ("when swapped
-// is false, current holds the value that was actually present ... so a caller
-// doing a read-modify-write can recompute against it and retry"). Re-reading
-// out of band instead, as this loop used to for every retry, put an
-// unsynchronized Get between the observation and the swap and so lost far
-// more races than the CAS alone does.
-func (s *ModuleStorage) incrementViaCAS(cas storage.CompareAndSwapper, key string) (uint32, error) {
+// Every retry recomputes against the value the failed CompareAndSwap itself
+// observed, which the CompareAndSwapper contract returns for exactly this
+// purpose, rather than re-reading out of band and widening the window between
+// the observation and the swap.
+func (s *ModuleStorage) updateViaCAS(cas storage.CompareAndSwapper, key string, update counterUpdate) (uint32, bool, error) {
 	ctx, cancel := s.opContext()
 	defer cancel()
 
 	expected, getErr := s.backend.Get(ctx, key)
 	if getErr != nil && !errors.Is(getErr, storage.ErrNotFound) {
-		return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: getErr}
+		return 0, false, &errs.Wrapped{Msg: "failed to read lockout counter", Err: getErr}
 	}
-	// getErr == nil leaves expected as the bytes Get returned; ErrNotFound
-	// leaves it nil, handled by the create branch below.
 
 	for attempt := 0; attempt < attemptCASRetryBudget; attempt++ {
 		if expected == nil {
-			stored, piaErr := s.backend.PutIfAbsent(ctx, key, []byte("1"))
+			next, write := update(0)
+			if !write {
+				return 0, false, nil
+			}
+			stored, piaErr := s.backend.PutIfAbsent(ctx, key, formatAttemptCounter(next))
 			if piaErr != nil {
-				return 0, &errs.Wrapped{Msg: "failed to create lockout counter", Err: piaErr}
+				return 0, false, &errs.Wrapped{Msg: "failed to create lockout counter", Err: piaErr}
 			}
 			if stored {
-				return 1, nil
+				return next, true, nil
 			}
-			// Lost the create race. Re-read the real bytes a concurrent writer
-			// left and fall through to the compare-and-swap branch below on
-			// this same iteration.
+			// Lost the create race. Re-read the bytes the concurrent writer
+			// left and fall through to the compare-and-swap on this iteration.
 			var reGetErr error
 			expected, reGetErr = s.backend.Get(ctx, key)
 			if reGetErr != nil {
 				if errors.Is(reGetErr, storage.ErrNotFound) {
-					// Raced a concurrent delete/reset too: try creating again.
+					// Raced a concurrent delete too: try creating again.
 					runtime.Gosched()
 					continue
 				}
-				return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: reGetErr}
+				return 0, false, &errs.Wrapped{Msg: "failed to read lockout counter", Err: reGetErr}
 			}
 		}
 
-		curVal, parseErr := parseAttemptCounter(expected)
+		current, parseErr := parseAttemptCounter(expected)
 		if parseErr != nil {
-			return 0, parseErr
+			return 0, false, parseErr
 		}
-		next := curVal + 1
-		nextBytes := []byte(strconv.FormatUint(uint64(next), 10))
+		next, write := update(current)
+		if !write {
+			return current, false, nil
+		}
 
-		swapped, current, casErr := cas.CompareAndSwap(ctx, key, expected, nextBytes)
+		swapped, observed, casErr := cas.CompareAndSwap(ctx, key, expected, formatAttemptCounter(next))
 		if casErr != nil {
-			return 0, &errs.Wrapped{Msg: "failed to update lockout counter", Err: casErr}
+			return 0, false, &errs.Wrapped{Msg: "failed to update lockout counter", Err: casErr}
 		}
 		if swapped {
-			return next, nil
+			return next, true, nil
 		}
-		// A concurrent writer moved the counter, or removed it entirely (nil):
-		// the next iteration's create branch handles that case rather than
-		// this loop ever calling CompareAndSwap with a nil expected. Yield so
-		// the winner is not simply re-elected by the runtime.
-		expected = current
+		// A concurrent writer moved the counter, or removed it (nil, handled by
+		// the create branch). Yield so the winner is not simply re-elected.
+		expected = observed
 		runtime.Gosched()
 	}
-	return 0, &errs.Wrapped{Msg: "lockout counter contention", Err: ErrCorruptAttemptCounter}
+	return 0, false, &errs.Wrapped{Msg: "lockout counter " + key, Err: ErrAttemptCounterContention}
 }
 
-// incrementLocked performs read-modify-write for a counter key under s.mu.
-func (s *ModuleStorage) incrementLocked(key string) (uint32, error) {
+// updateLocked performs read-modify-write for a counter key under s.mu.
+func (s *ModuleStorage) updateLocked(key string, update counterUpdate) (uint32, bool, error) {
 	ctx, cancel := s.opContext()
 	defer cancel()
 
 	data, err := s.backend.Get(ctx, key)
 	if err != nil && !errors.Is(err, storage.ErrNotFound) {
-		return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: err}
+		return 0, false, &errs.Wrapped{Msg: "failed to read lockout counter", Err: err}
 	}
-	curVal, parseErr := parseAttemptCounter(data)
+	current, parseErr := parseAttemptCounter(data)
 	if parseErr != nil {
-		return 0, parseErr
+		return 0, false, parseErr
 	}
-	next := curVal + 1
-	if err := s.backend.Put(ctx, key, []byte(strconv.FormatUint(uint64(next), 10))); err != nil {
-		return 0, &errs.Wrapped{Msg: "failed to update lockout counter", Err: err}
+	next, write := update(current)
+	if !write {
+		return current, false, nil
 	}
-	return next, nil
+	if err := s.backend.Put(ctx, key, formatAttemptCounter(next)); err != nil {
+		return 0, false, &errs.Wrapped{Msg: "failed to update lockout counter", Err: err}
+	}
+	return next, true, nil
+}
+
+// formatAttemptCounter encodes a counter value the way parseAttemptCounter
+// decodes it.
+func formatAttemptCounter(v uint32) []byte {
+	return []byte(strconv.FormatUint(uint64(v), 10))
 }
 
 // ResetFailedAttempt clears the durable failed-attempt counter for
@@ -374,17 +425,17 @@ func (s *ModuleStorage) incrementLocked(key string) (uint32, error) {
 // accumulation-sensitive and is written as a plain set to zero.
 func (s *ModuleStorage) ResetFailedAttempt(slotID SlotID, userType UserType) error {
 	if s.backend == nil {
-		return nil
+		return ErrNoAttemptStore
 	}
 	key, ok := failedAttemptKey(slotID, userType)
 	if !ok {
-		return nil
+		return ErrNoAttemptCounter
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ctx, cancel := s.opContext()
 	defer cancel()
-	if err := s.backend.Put(ctx, key, []byte("0")); err != nil {
+	if err := s.backend.Put(ctx, key, formatAttemptCounter(0)); err != nil {
 		return &errs.Wrapped{Msg: "failed to reset lockout counter", Err: err}
 	}
 	return nil

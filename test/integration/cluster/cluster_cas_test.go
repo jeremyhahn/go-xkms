@@ -69,7 +69,7 @@ type casGetResponse struct {
 // creates (#186): Expected is compared as an ordinary value, nil included, and
 // an absent key always refuses. Seeding the counter's first value uses the
 // dedicated put-if-absent endpoint instead (putIfAbsentRequest/Response
-// below), the same split ModuleStorage.incrementViaCAS and remoteBackend use
+// below), the same split ModuleStorage.updateViaCAS and remoteBackend use
 // in-process.
 type casRequest struct {
 	TenantID string `json:"tenant_id,omitempty"`
@@ -211,7 +211,7 @@ func formatDecimal(v uint64) []byte {
 //
 // A swap does not create (#186), so an absent counter is created explicitly
 // with putIfAbsentCounter -- the same PutIfAbsent-then-CompareAndSwap split
-// ModuleStorage.incrementViaCAS uses in-process. Losing the create race is not
+// ModuleStorage.updateViaCAS uses in-process. Losing the create race is not
 // an error: it means a concurrent writer created the counter first, so the
 // loop re-reads its real bytes and falls into the ordinary CAS retry.
 func incrementOnce(ctx context.Context, baseURL string) error {
