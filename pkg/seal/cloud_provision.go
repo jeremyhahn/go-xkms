@@ -220,6 +220,38 @@ func EnsureSealKey(
 	return nil
 }
 
+// EnsurePrivateSealKey guarantees the private key identified by keyAttrs
+// exists on provider, generating it on first use and reusing it thereafter.
+// It is the asymmetric counterpart to EnsureSealKey, for backends (software,
+// PKCS#8) whose Sealer implementation seals by loading an existing private
+// key through GetKey and deriving an AES-256-GCM key from it (HKDF), rather
+// than by encrypting under a dedicated symmetric key: those backends have no
+// types.SymmetricKeyProvider seal path for EnsureSealKey to provision, so
+// callers needing a wrapping key on them (e.g. pkg/keyprovider/frost) use
+// this instead.
+//
+// The check-and-skip is the same shape as EnsureSealKey's: GetKey reuses an
+// existing key, and only a genuine not-found triggers GenerateKey -- so the
+// operation is idempotent and a key generated on first use is found and
+// reused on every later call, across restarts.
+func EnsurePrivateSealKey(
+	ctx context.Context,
+	provider types.KeyProvider,
+	keyAttrs *types.KeyAttributes,
+) error {
+	if _, err := provider.GetKey(ctx, keyAttrs); err == nil {
+		return nil
+	} else if !errors.Is(err, backend.ErrKeyNotFound) {
+		return err
+	}
+
+	if _, err := provider.GenerateKey(ctx, keyAttrs); err != nil &&
+		!errors.Is(err, backend.ErrKeyAlreadyExists) {
+		return err
+	}
+	return nil
+}
+
 // BuildCloudKMSStrategy is the ONE composition path xkmsd and xkey both call
 // to turn an already-constructed, already-configured cloud KMS backend
 // (types.KeyProvider) into a seal.CloudKMSStrategy: it provisions the named
