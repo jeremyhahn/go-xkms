@@ -363,17 +363,28 @@ func TestInitializeAuthorization_RBACEnabledWithQRDBClient(t *testing.T) {
 }
 
 // TestNew_EscrowInitFailureAbortsCleanly proves New's escrow-init failure
-// branch: an invalid escrow configuration (enabled with zero agents) aborts
-// server construction with a typed *ErrServiceInit wrapping the escrow
-// registry's own validation error, after tearing down the backends already
-// opened -- rather than starting a daemon with a half-initialized escrow
-// registry.
+// branch: an escrow configuration that is well-formed enough to pass
+// config.Validate (a non-empty type and endpoint) but names an agent type
+// this build does not register aborts server construction with a typed
+// *ErrServiceInit wrapping the escrow registry's own construction error,
+// after tearing down the backends already opened -- rather than starting a
+// daemon with a half-initialized escrow registry.
+//
+// "enabled with zero agents" -- the misconfiguration this test used before
+// go-xkms#666 -- is now refused by config.Validate itself (escrow.Config.
+// Validate's ErrNoAgentsConfigured), before New() ever reaches
+// initializeEscrow; that Validate-level rejection cannot be observed as an
+// *ErrServiceInit{Service: "escrow"} any more, since New() never gets that
+// far.
 func TestNew_EscrowInitFailureAbortsCleanly(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Escrow = &escrowpkg.Config{Enabled: true}
+	cfg.Escrow = &escrowpkg.Config{
+		Enabled: true,
+		Agents:  []escrowpkg.AgentConfig{{Type: "not-a-real-agent-type", Endpoint: "https://escrow.example.com"}},
+	}
 
 	server, err := New(cfg)
 	require.Error(t, err)

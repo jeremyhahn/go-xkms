@@ -65,6 +65,23 @@ type Config struct {
 	// Trust configures the ordered strategy-chain trust resolver. When
 	// nil, trust resolution falls back to the OS system trust store.
 	Trust *resolver.Config `yaml:"trust,omitempty"`
+
+	// LoopbackDesktop marks this Config as backing the in-process loopback
+	// desktop engine (pkg/server/loopback), not a network-facing deployment.
+	// desktopConfig forces Protocols.REST on so the SPA can reach the engine
+	// over 127.0.0.1, which makes NetworkServing report true; Validate uses
+	// this field to skip, for that one launch shape only, the storage.backend
+	// "qrdb" and tls.enabled requirements NetworkServing's doc comment
+	// describes as exempt for local IPC. No other check is affected: a
+	// loopback config still needs a valid port, a configured backend, and
+	// everything else Validate enforces.
+	//
+	// It is a pure embedder signal, never a deployment setting: yaml:"-"
+	// keeps it unreachable from any config file, environment variable, or
+	// flag, so only trusted Go code in this process can set it. Today that is
+	// exactly one call site, desktopConfig, which builds the copy handed to
+	// server.New and never round-trips it through YAML.
+	LoopbackDesktop bool `yaml:"-"`
 }
 
 // CryptoConfig carries process-wide cryptographic policy.
@@ -346,9 +363,14 @@ type ServerConfig struct {
 // capability plane through the registered ServiceModule (pkg/apimodule).
 // It therefore requires storage.backend "qrdb" and explicit TLS material
 // (qrdb's transports are TLS-only and the xkms CA is not yet composed when
-// the node starts). QUIC is served as HTTP/3 on the REST port (advertised
-// via Alt-Svc); the Unix socket and the loopback desktop engine are local
-// IPC, not network serving.
+// the node starts) -- see Validate. QUIC is served as HTTP/3 on the REST
+// port (advertised via Alt-Svc); the Unix socket is local IPC and never sets
+// a protocol this method looks at, so it never makes NetworkServing true.
+//
+// The loopback desktop engine (pkg/server/loopback) is also local IPC, but
+// it does so by forcing Protocols.REST on for a 127.0.0.1 listener, so this
+// method reports true for it same as a real network deployment; Validate is
+// what carves it back out, via Config.LoopbackDesktop.
 func (c *Config) NetworkServing() bool {
 	return c.Protocols.REST || c.Protocols.GRPC || c.Protocols.QUIC || c.Protocols.MCP
 }
@@ -1419,8 +1441,11 @@ func (c *Config) Validate() error {
 	// node's certificate (the CA composes after — and stores into — the
 	// node), so explicit TLS material is required. Fail closed at
 	// validation rather than at node construction. Local IPC (the Unix
-	// socket and the loopback desktop engine) is exempt.
-	if c.NetworkServing() {
+	// socket and the loopback desktop engine) is exempt: the Unix socket
+	// never sets a NetworkServing protocol, and the loopback desktop engine
+	// opts out explicitly via LoopbackDesktop, which only trusted embedder
+	// code (pkg/server/loopback) can set.
+	if c.NetworkServing() && !c.LoopbackDesktop {
 		if c.Storage.Backend != "qrdb" {
 			return &errs.Message{Msg: fmt.Sprintf("network protocols require storage.backend \"qrdb\" (the embedded qrdb node is the unified API server); got %q — local-only deployments disable rest/grpc/quic/mcp and use the unix socket", c.Storage.Backend)}
 		}
@@ -1626,7 +1651,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Backends.TPM2 != nil && c.Backends.TPM2.Enabled {
 		hasEnabledBackend = true
-		if c.Backends.TPM2.DevicePath == "" {
+		// UseSimulator selects the in-process/TCP TPM simulator instead of a
+		// hardware device (TPM2Config's own doc comment), so it needs no
+		// device_path; device_path is required only for the real hardware
+		// path this check otherwise guards.
+		if c.Backends.TPM2.DevicePath == "" && !c.Backends.TPM2.UseSimulator {
 			return &errs.Message{Msg: "TPM2 device_path is required when enabled"}
 		}
 	}
