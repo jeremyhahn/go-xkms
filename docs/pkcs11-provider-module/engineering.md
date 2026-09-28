@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114)
 
 ## Build
 
@@ -97,6 +97,13 @@ naming a backend is this, not a configuration typo.
   which would guard nothing across the hosts sharing one token. An absent key
   or a different value is a refusal (`deleted=false`, no error); an error means
   the outcome is unknown, and a caller must not read it as a refusal.
+- **Remote state is namespaced by the authenticated tenant.** The service
+  derives the tenant (`pkcs11StateScope`, `pkg/xkms/servicer_pkcs11state.go:79`).
+  A request's `tenant_id` may be empty or the caller's own tenant. Anything else
+  fails with `ErrPKCS11StateTenantMismatch`. Token labels must not contain `/`
+  (`ErrPKCS11StateTokenSeparator`). Never add a transport path that passes a
+  request tenant to `pkcs11state.Store`. The store has no isolation of its own
+  (`pkg/pkcs11state/store.go:14-24`).
 - **Session and object handles are per-process.** They are not portable across
   processes even in remote mode, where the *state* is shared but the handles are
   not.
@@ -164,6 +171,14 @@ not-supported answer, so the behaviour is deliberate. Compliance detail:
   `pkg/pkcs11/module` suite, including per-v3.2-surface tests
   (`module_kem_test.go`, `module_authwrap_*_test.go`,
   `module_verifysig_*_test.go`, `module_async_test.go`).
+- **Tenant isolation of remote state** —
+  `pkg/xkms/servicer_pkcs11state_tenant_test.go` drives all seven operations
+  through one table and checks four things. A foreign or `system` tenant is
+  refused. The caller's own tenant, stated or omitted, is accepted. A `/` in the
+  token is refused. Two tenants using the same token and key stay isolated.
+  Transport tests: `pkg/api/rest/pkcs11state_tenant_handler_test.go` (400) and
+  `pkg/api/grpc/service_pkcs11state_tenant_test.go` (`InvalidArgument`, which
+  also covers Unix).
 - **Integration** — `test/integration/pkcs11`, driving real consumers.
 - **Compatibility** — the two-call convention and mechanism-parameter
   marshalling are the fragile CGO seams and have dedicated suites.

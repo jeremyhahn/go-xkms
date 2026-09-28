@@ -829,6 +829,10 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		s.mu.Lock()
 		s.xkmsService = svc
 		s.mu.Unlock()
+		// The service shares the transports' Authorizer for the decisions
+		// made below the route gate (QueryAudit's audit:read:cross check).
+		// A nil Authorizer means RBAC is disabled, as it does there.
+		svc.SetAuthorizer(s.rbacAuthorizer)
 		if s.barrier != nil {
 			svc.SetBarrier(s.barrier)
 		}
@@ -1837,9 +1841,13 @@ func (s *Server) initializePasswordStore() error {
 }
 
 // initializePKCS11StateStore builds the store that persists a remote-mode
-// PKCS#11 module's token and object state in the embedded qrdb node. It uses the
-// same createStorage seam every other server subsystem does, so the records
-// inherit the node's durability and, per tenant, its barrier encryption.
+// PKCS#11 module's token and object state. It uses the same createStorage seam
+// every other server subsystem does, so the records inherit the configured
+// storage backend's durability and at-rest protection. It is ONE store shared
+// by every tenant: it is not behind any tenant's barrier, and records are
+// separated only by the pkcs11state/<tenant>/<token>/ key prefix, whose tenant
+// segment the service derives from the authenticated identity
+// (XKMSService.pkcs11StateScope), never from the request.
 func (s *Server) initializePKCS11StateStore() error {
 	backend, err := s.createStorage("pkcs11state")
 	if err != nil {

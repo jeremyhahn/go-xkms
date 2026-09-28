@@ -1,6 +1,6 @@
 # RBAC — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115)
 
 ## Exported surface
 
@@ -32,13 +32,32 @@ The full resource and action list, verbatim from the constants (this file is
 
 **Actions:** `sign`, `verify`, `encrypt`, `decrypt`, `create`, `rotate`,
 `delete`, `list`, `get`, `import`, `export`, `wrap`, `unwrap`, `derive`,
-`generate`, `revoke`, `read`, `update`, `write`, `use`, `disable`, `status`,
+`generate`, `revoke`, `read`, `read:cross`, `update`, `write`, `use`, `disable`, `status`,
 `capabilities`, `bootstrap`, `seal`, `unseal`, `rekey`, `rotate_root_key`,
 `generate_recovery`, `recover_with_keys`, `initialize_shamir`,
 `unseal-share`, `enable_encryption`, `init`, `claim_cert`,
 `claim_share_begin`, `claim_share_complete`, `sign_csr`,
 `enroll_custodian`, `revoke_custodian`, `submit`, `strategy`, `lock`,
 `unlock`.
+
+`read:cross` (`auth.ActionReadCross`, `pkg/auth/permissions.go:148`) is used
+only as `audit:read:cross`, qrdb's `AuditReadCross`. The qrdb SDK does not
+re-export that constant, so xkms restates the string.
+`TestActionReadCross_MatchesQRDBAuditReadCross` (`pkg/auth/permissions_test.go`)
+fails the build if qrdb's registry stops knowing it. qrdb declares it
+`ScopeCross`. Admin holds it and Auditor does not.
+
+### `pkg/xkms` — the service's Authorizer
+
+```go
+func (s *XKMSService) SetAuthorizer(a *auth.Authorizer)
+```
+
+(`pkg/xkms/service.go:324`.) The server passes it the transports' own
+Authorizer (`pkg/server/server.go:835`). The service uses it for one decision
+the route gate cannot make: whether a system-tenant caller of `QueryAudit`
+holds `audit:read:cross`. A nil Authorizer is RBAC-disabled, as everywhere
+else. The service clamps tenant identities whatever the Authorizer says.
 
 A permission is a `resource:action` pair. A transport must never declare its
 own resource or action string literal — `internal/authzscan` enforces this
@@ -150,6 +169,12 @@ specific permission before assuming a non-Admin role holds it.
 - **A route/RPC/tool's resource and action must be `pkg/auth` constants,
   never string literals**, on the two transports without an in-process
   table to check against (gRPC, QUIC) — enforced by `internal/authzscan`.
+- **A tenant named in a request is never the target tenant.** The gate
+  resolves a self-scope permission against the caller's own tenant, so a
+  handler that forwards a request tenant to a store or query escapes it. The
+  service derives the tenant from the identity, as `pkcs11StateScope` and
+  `auditTenantFilter` do. A transport must not do this itself, and must not
+  forward a request tenant unexamined.
 - **Role reassignment after user creation does not exist.** `roleNameToID`
   runs once, at `CreateUser`; there is no update path.
 
@@ -259,6 +284,10 @@ re-exported verbatim so a downstream consumer needs a single import.
   gate per call site rather than per table), rejecting a raw string literal
   or an unrecognized `pkg/auth` constant name; `pkg/api/grpc/authz_golden_test.go`
   is the golden test built on it.
+- **Request-tenant confinement** — `pkg/xkms/servicer_pkcs11state_tenant_test.go`
+  and `pkg/xkms/servicer_audit_tenant_test.go`. The audit tests decide
+  `audit:read:cross` from qrdb's real built-in grant table
+  (`qrdbsdk.HasPermissionRoleGrant`) and apply its `ScopeCross` rule.
 - **Makefile targets** — `test-auth`, `coverage-auth`.
 
 ## Observability

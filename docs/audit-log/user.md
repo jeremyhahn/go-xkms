@@ -1,6 +1,6 @@
 # Audit Log — User Guide
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115)
 
 ## If the audit backend degrades
 
@@ -64,7 +64,7 @@ xkmsctl audit query --actor alice --from 2026-08-18T00:00:00Z
 # one kind of thing
 xkmsctl audit query --resource keys --action sign
 
-# one tenant
+# one tenant (platform operators only; see below)
 xkmsctl audit query --tenant acme --outcome deny
 
 # a window
@@ -78,6 +78,15 @@ Timestamps are RFC 3339. A useful shell form:
 xkmsctl audit query --outcome deny \
     --from "$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)"
 ```
+
+### Whose events you see
+
+A tenant admin or auditor sees only their own tenant's events. `--tenant` with
+another tenant's ID, or no `--tenant` at all, still returns only your own
+tenant's events, and you get no error. Only a platform (system-tenant) identity
+holding `audit:read:cross` sees every tenant, or picks one with `--tenant`. The
+built-in Admin role has that permission and Auditor does not. A system-tenant
+Auditor therefore sees only the `system` tenant's events.
 
 ## Paging
 

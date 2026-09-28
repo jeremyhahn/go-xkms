@@ -1,6 +1,6 @@
 # Audit Log — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-23 (#804)
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115)
 
 ## Exported surface — `pkg/audit`
 
@@ -56,6 +56,15 @@ type AuditService interface {
   predecessor; rewriting history breaks the chain and is detectable. Do not add
   an update or delete path.
 - **`Timestamp` is the event time**, set at the operation, not at write time.
+- **A query's tenant comes from the identity.** `QueryAudit` replaces
+  `AuditFilter.TenantID` with `auditTenantFilter`'s answer
+  (`pkg/xkms/servicer_audit.go:53,119`): the caller's own tenant for a tenant
+  identity; the requested filter for a system-tenant identity the Authorizer
+  admits for `audit:read:cross`; `system` otherwise. The service reaches the
+  Authorizer through `XKMSService.SetAuthorizer` (`pkg/xkms/service.go:324`),
+  which the server wires with the transports' Authorizer
+  (`pkg/server/server.go:835`). Never let a transport pass a caller-chosen
+  tenant to the audit client directly.
 - **Concurrency.** Loggers are safe for concurrent use; both backends serialise
   their writes internally.
 
@@ -209,6 +218,14 @@ records after N days would be worse than one that grows.
   chain integrity), `qrdb_test.go`, `severity_test.go` (write-failure policy:
   a failing sink fails a `SeveritySecurity` write and does not fail a
   `SeverityInformational` one, which instead increments the metric).
+- **Tenant confinement** — `pkg/xkms/servicer_audit_tenant_test.go` covers
+  tenant callers with empty, foreign and system filters; a system Admin with
+  `audit:read:cross`; a system Auditor without it; an Authorizer failure; no
+  identity; and RBAC disabled. It decides from qrdb's real built-in grant table
+  through the SDK. There is one transport test per surface:
+  `pkg/api/rest/handlers_audit_tenant_test.go`,
+  `pkg/api/grpc/service_audit_tenant_test.go` and
+  `pkg/api/mcp/handlers_audit_tenant_test.go`.
 - **Transport** — `pkg/api/rest/handlers_audit_test.go`,
   `handlers_transport_audit_test.go`; `pkg/api/grpc/service_transport_audit_test.go`,
   `service_authz_test.go` (`TestAuthz_AuthorizeAuditWriteFailureFailsRequest`).

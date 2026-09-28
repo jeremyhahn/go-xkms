@@ -1,6 +1,6 @@
 # RBAC — User Guide
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115)
 
 ## What RBAC controls
 
@@ -104,6 +104,15 @@ it.
 | `xkmsctl user register ... --role readonly` fails | `readonly` is not a real role — the help text is wrong (see cli.md) | use one of `so`, `admin`, `operator`, `user`, `auditor`, `custodian` |
 | new user isn't `admin` even though you passed `--role admin` on the very first registration | irrelevant — the first user is always `admin` regardless of the flag | nothing to fix |
 | an `operator`/`user`/`auditor`/`custodian` can't reach SSH/PIV/password-vault/seal operations | those built-in roles are not automatically extended to xkms's own hardware surfaces | grant `admin`, or build a custom role via the SDK |
+
+## Tenant admins stay in their tenant
+
+A tenant's Admin manages keys, users and audit for that tenant only. Naming
+another tenant in a request does not widen that. PKCS#11 token-state calls that
+name another tenant are refused. An audit query that names another tenant, or
+none, returns only your own tenant's events. Reading every tenant's audit
+events takes a platform (system-tenant) identity whose role holds
+`audit:read:cross`. The built-in Admin role has it and Auditor does not.
 
 ## Where to go next
 

@@ -16,9 +16,11 @@ package xkms
 import (
 	"context"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // maxAuditPageSize caps a single audit page. An unbounded query against a
@@ -39,7 +41,8 @@ type AuditServicer interface {
 }
 
 // QueryAudit returns one page of audit events from the embedded qrdb node's
-// tamper-evident chain.
+// tamper-evident chain, confined to the tenants the caller may read (see
+// auditTenantFilter).
 func (s *XKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
 	if s.audit == nil {
 		return nil, ErrNotConfigured
@@ -47,6 +50,7 @@ func (s *XKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFil
 	if filter == nil {
 		return nil, ErrNilRequest
 	}
+	tenantID := s.auditTenantFilter(ctx, filter.TenantID)
 
 	limit := filter.Limit
 	if limit <= 0 {
@@ -63,7 +67,7 @@ func (s *XKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFil
 		Resource: filter.Resource,
 		Action:   filter.Action,
 		Outcome:  filter.Outcome,
-		TenantID: filter.TenantID,
+		TenantID: tenantID,
 		Limit:    limit,
 		Cursor:   filter.Cursor,
 	})
@@ -92,4 +96,33 @@ func (s *XKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFil
 	}
 
 	return &transport.AuditPage{Events: events, Next: page.Next, Total: page.Total}, nil
+}
+
+// auditTenantFilter returns the tenant filter a caller's audit query runs
+// under. The transports gate the query on audit:read, which is self-scope, so
+// the requested tenant cannot be trusted as the target:
+//
+//   - A tenant-scoped caller always reads its own tenant. A foreign tenant is
+//     replaced, and an empty one — which the audit chain reads as "every
+//     tenant" — is narrowed, to the caller's tenant.
+//   - A platform-scoped caller (auth.IsCrossTenant) reads the requested filter
+//     as given, empty meaning every tenant, only when the Authorizer admits
+//     audit:read:cross. qrdb declares that permission ScopeCross, so no
+//     tenant identity could hold it anyway.
+//   - A platform-scoped caller without it reads the system tenant only.
+//
+// Any Authorizer error is a refusal of the cross-tenant grant, as it is at
+// every transport gate; the query then runs narrowed rather than failing, so
+// the error is resolved to the smaller view, never to the larger one. The
+// clamp targets qrdbsdk.SystemTenantID, not "", because "" is the audit
+// chain's match-everything filter.
+func (s *XKMSService) auditTenantFilter(ctx context.Context, requested string) string {
+	identity := auth.GetIdentity(ctx)
+	if !auth.IsCrossTenant(identity) {
+		return identity.TenantID
+	}
+	if err := s.authorizer.Authorize(ctx, identity, auth.ResourceAudit, auth.ActionReadCross); err != nil {
+		return qrdbsdk.SystemTenantID
+	}
+	return requested
 }

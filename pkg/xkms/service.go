@@ -28,6 +28,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
@@ -121,6 +122,14 @@ type XKMSService struct {
 	// Logger seam instead, so an API caller can never write to the chain.
 	audit             qrdbtransport.AuditClient
 	credentialService *credentialspkg.Service
+
+	// authorizer is the process's single qrdb-backed Authorizer, the same one
+	// every transport gates on. The service consults it only where a decision
+	// depends on more than the transport's route permission: QueryAudit asks it
+	// whether a system-tenant caller holds audit:read:cross. Nil (or disabled)
+	// means RBAC is off, and the service then honours the configured
+	// allow-all intent exactly as the transports do.
+	authorizer *auth.Authorizer
 
 	// escrow holds the configured external key-escrow agents (pkg/escrow).
 	// Nil when escrow is not configured, in which case every EscrowServicer
@@ -307,6 +316,13 @@ func (s *XKMSService) SetUserAuthFactorClient(c qrdbtransport.UserAuthFactorClie
 // xkms API; events are emitted through pkg/audit's Logger seam.
 func (s *XKMSService) SetAuditClient(c qrdbtransport.AuditClient) {
 	s.audit = c
+}
+
+// SetAuthorizer wires the process's qrdb-backed Authorizer into the service
+// for the decisions that are made below the transport gate (see QueryAudit).
+// Pass the same Authorizer the transports use; nil means RBAC is disabled.
+func (s *XKMSService) SetAuthorizer(a *auth.Authorizer) {
+	s.authorizer = a
 }
 
 // SetClusterClient wires the embedded qrdb node's cluster client into the
