@@ -75,6 +75,11 @@ type RouteSpec struct {
 	Resource string
 	Action   string
 
+	// MaxBodyBytes bounds the request body; zero selects
+	// DefaultMaxBodyBytes. Only routes that carry caller data set it
+	// (BulkMaxBodyBytes); both mounts enforce it via BodyLimitMiddleware.
+	MaxBodyBytes int64
+
 	// Enabled reports whether the route's backing subsystem is configured
 	// on s; nil means always enabled. The legacy server skips disabled
 	// routes; the module registers the full surface and answers 501 for
@@ -108,6 +113,11 @@ func Routes() []RouteSpec {
 	session := func(method, pattern string, enabled func(*Server) bool, h func(s *Server) http.HandlerFunc) {
 		specs = append(specs, RouteSpec{Method: method, Pattern: "/api/v1" + pattern, Group: GroupAPIv1, Auth: RouteAuthSession, Enabled: enabled, Handler: h})
 	}
+	// permBulk appends a permission-gated /api/v1 data-plane route whose
+	// body carries caller data and so gets BulkMaxBodyBytes.
+	permBulk := func(method, pattern, resource, action string, h func(s *Server) http.HandlerFunc) {
+		specs = append(specs, RouteSpec{Method: method, Pattern: "/api/v1" + pattern, Group: GroupAPIv1, Auth: RouteAuthPermission, Resource: resource, Action: action, MaxBodyBytes: BulkMaxBodyBytes, Handler: h})
+	}
 	// permIf appends a permission-gated /api/v1 route with an enable guard.
 	permIf := func(method, pattern, resource, action string, enabled func(*Server) bool, h func(s *Server) http.HandlerFunc) {
 		specs = append(specs, RouteSpec{Method: method, Pattern: "/api/v1" + pattern, Group: GroupAPIv1, Auth: RouteAuthPermission, Resource: resource, Action: action, Enabled: enabled, Handler: h})
@@ -122,11 +132,11 @@ func Routes() []RouteSpec {
 	perm("GET", "/keys", auth.ResourceKeys, auth.ActionList, func(s *Server) http.HandlerFunc { return s.handlers.ListKeysHandler })
 	perm("GET", "/keys/{id}", auth.ResourceKeys, auth.ActionGet, func(s *Server) http.HandlerFunc { return s.handlers.GetKeyHandler })
 	perm("DELETE", "/keys/{id}", auth.ResourceKeys, auth.ActionDelete, func(s *Server) http.HandlerFunc { return s.handlers.DeleteKeyHandler })
-	perm("POST", "/keys/{id}/sign", auth.ResourceKeys, auth.ActionSign, func(s *Server) http.HandlerFunc { return s.handlers.SignHandler })
-	perm("POST", "/keys/{id}/verify", auth.ResourceKeys, auth.ActionVerify, func(s *Server) http.HandlerFunc { return s.handlers.VerifyHandler })
+	permBulk("POST", "/keys/{id}/sign", auth.ResourceKeys, auth.ActionSign, func(s *Server) http.HandlerFunc { return s.handlers.SignHandler })
+	permBulk("POST", "/keys/{id}/verify", auth.ResourceKeys, auth.ActionVerify, func(s *Server) http.HandlerFunc { return s.handlers.VerifyHandler })
 	perm("POST", "/keys/{id}/rotate", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.RotateKeyHandler })
-	perm("POST", "/keys/{id}/encrypt", auth.ResourceKeys, auth.ActionEncrypt, func(s *Server) http.HandlerFunc { return s.handlers.EncryptHandler })
-	perm("POST", "/keys/{id}/decrypt", auth.ResourceKeys, auth.ActionDecrypt, func(s *Server) http.HandlerFunc { return s.handlers.DecryptHandler })
+	permBulk("POST", "/keys/{id}/encrypt", auth.ResourceKeys, auth.ActionEncrypt, func(s *Server) http.HandlerFunc { return s.handlers.EncryptHandler })
+	permBulk("POST", "/keys/{id}/decrypt", auth.ResourceKeys, auth.ActionDecrypt, func(s *Server) http.HandlerFunc { return s.handlers.DecryptHandler })
 	perm("POST", "/keys/{id}/encrypt-asym", auth.ResourceKeys, auth.ActionEncrypt, func(s *Server) http.HandlerFunc { return s.handlers.EncryptAsymHandler })
 	perm("POST", "/keys/import-params", auth.ResourceKeys, auth.ActionImport, func(s *Server) http.HandlerFunc { return s.handlers.GetImportParametersHandler })
 	perm("POST", "/keys/wrap", auth.ResourceKeys, auth.ActionEncrypt, func(s *Server) http.HandlerFunc { return s.handlers.WrapKeyHandler })
@@ -154,8 +164,8 @@ func Routes() []RouteSpec {
 	perm("GET", "/tls/{id}", auth.ResourceCerts, auth.ActionRead, func(s *Server) http.HandlerFunc { return s.handlers.GetTLSCertificateHandler })
 
 	// --- Sealing (hardware-backed data protection) ---
-	perm("POST", "/seal", auth.ResourceKeys, auth.ActionEncrypt, func(s *Server) http.HandlerFunc { return s.handlers.SealHandler })
-	perm("POST", "/unseal", auth.ResourceKeys, auth.ActionDecrypt, func(s *Server) http.HandlerFunc { return s.handlers.UnsealHandler })
+	permBulk("POST", "/seal", auth.ResourceKeys, auth.ActionEncrypt, func(s *Server) http.HandlerFunc { return s.handlers.SealHandler })
+	permBulk("POST", "/unseal", auth.ResourceKeys, auth.ActionDecrypt, func(s *Server) http.HandlerFunc { return s.handlers.UnsealHandler })
 	perm("GET", "/seal/capability", auth.ResourceKeys, auth.ActionGet, func(s *Server) http.HandlerFunc { return s.handlers.CanSealHandler })
 
 	// --- FROST threshold signatures. Threshold key material carries the

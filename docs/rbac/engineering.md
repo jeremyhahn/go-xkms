@@ -396,7 +396,7 @@ constructs `pkg/server` directly with a non-`qrdb` backend and
 
 | Transport | Gate | Notes |
 |---|---|---|
-| REST | `RBACMiddleware.RequirePermission(resource, action)` (`pkg/api/rest/rbac_middleware.go`), applied per `RouteSpec` in `pkg/api/rest/routes.go` where `Auth == RouteAuthPermission` | table-driven; a route's `Enabled` guard can also remove it entirely when its subsystem is unconfigured |
+| REST | `RBACMiddleware.RequirePermission(resource, action)` (`pkg/api/rest/rbac_middleware.go`), applied per `RouteSpec` in `pkg/api/rest/routes.go` where `Auth == RouteAuthPermission`, ahead of the route's body bound (`pkg/api/rest/server.go:724`), so a denied caller gets 403 before its body is read | table-driven; a route's `Enabled` guard can also remove it entirely when its subsystem is unconfigured |
 | gRPC | `Service.authorize(ctx, resource, action, resourceID)` (`pkg/api/grpc/service.go`) | emits an `audit.Event` (`Outcome: OutcomeAllow`/`OutcomeDeny`) on every call — see Observability |
 | QUIC | Same as REST — HTTP/3 on the unified REST listener, no separate package | |
 | MCP | `Server.authorizeMethod` / the `methodPermissions` table (`pkg/api/mcp/authz.go`) | fails closed at `NewServer` if RBAC is enabled without a usable authorizer |

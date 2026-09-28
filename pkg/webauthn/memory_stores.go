@@ -163,12 +163,35 @@ func WithClock(now Clock) MemorySessionStoreOption {
 	}
 }
 
+// WithMaxSessions caps how many unfinished ceremonies the store holds at
+// once. A value below 1 keeps DefaultMaxSessions.
+func WithMaxSessions(n int) MemorySessionStoreOption {
+	return func(s *MemorySessionStore) {
+		if n > 0 {
+			s.maxSessions = n
+		}
+	}
+}
+
+// DefaultMaxSessions is the number of unfinished ceremonies a
+// MemorySessionStore holds before it refuses new ones. A ceremony session is
+// a few hundred bytes, so the cap bounds the store to a few MiB however many
+// ceremonies unauthenticated callers begin and abandon.
+const DefaultMaxSessions = 10_000
+
 // MemorySessionStore is an in-memory implementation of SessionStore.
-// This is intended for development and testing only.
+//
+// Sessions leave the store when a ceremony claims them (Take), when they are
+// deleted, or when a sweep (Cleanup, run periodically by SweepSessions)
+// removes them after their TTL. The store holds at most maxSessions: at the
+// cap, Save first sweeps expired sessions itself — so a store whose owner
+// runs no sweeper still recovers — and refuses with *SessionLimitError only
+// when every held session is still live.
 type MemorySessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]*sessionEntry
-	ttl      time.Duration
+	mu          sync.RWMutex
+	sessions    map[string]*sessionEntry
+	ttl         time.Duration
+	maxSessions int
 	// now is the store's time source. Never nil once built by a constructor;
 	// the accessor below keeps a bare struct literal usable too.
 	now Clock
@@ -196,9 +219,10 @@ func NewMemorySessionStore(opts ...MemorySessionStoreOption) *MemorySessionStore
 // The options are a test seam and are empty in production; see WithClock.
 func NewMemorySessionStoreWithTTL(ttl time.Duration, opts ...MemorySessionStoreOption) *MemorySessionStore {
 	store := &MemorySessionStore{
-		sessions: make(map[string]*sessionEntry),
-		ttl:      ttl,
-		now:      time.Now,
+		sessions:    make(map[string]*sessionEntry),
+		ttl:         ttl,
+		maxSessions: DefaultMaxSessions,
+		now:         time.Now,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -208,10 +232,19 @@ func NewMemorySessionStoreWithTTL(ttl time.Duration, opts ...MemorySessionStoreO
 	return store
 }
 
-// Save stores session data and returns a session ID.
+// Save stores session data and returns a session ID. It fails with
+// *SessionLimitError when the store holds its maximum number of live
+// sessions.
 func (s *MemorySessionStore) Save(ctx context.Context, data *webauthn.SessionData) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if limit := s.limit(); len(s.sessions) >= limit {
+		s.removeExpiredLocked()
+		if len(s.sessions) >= limit {
+			return "", &SessionLimitError{Limit: limit}
+		}
+	}
 
 	// Generate random session ID
 	idBytes := make([]byte, 16)
@@ -293,11 +326,23 @@ func (s *MemorySessionStore) Clear() {
 	s.sessions = make(map[string]*sessionEntry)
 }
 
-// Cleanup removes expired sessions.
+// Cleanup removes expired sessions and returns how many it removed.
 func (s *MemorySessionStore) Cleanup() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.removeExpiredLocked()
+}
 
+// limit returns the session cap, defaulting for a bare struct literal.
+func (s *MemorySessionStore) limit() int {
+	if s.maxSessions <= 0 {
+		return DefaultMaxSessions
+	}
+	return s.maxSessions
+}
+
+// removeExpiredLocked removes expired sessions; s.mu must be write-locked.
+func (s *MemorySessionStore) removeExpiredLocked() int {
 	now := s.clock()
 	removed := 0
 	for id, entry := range s.sessions {

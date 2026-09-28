@@ -99,3 +99,40 @@ func TestBeginRegistration_ExplicitOpenAllowsUnknownUser(t *testing.T) {
 	assert.NotEmpty(t, resp.SessionId)
 	assert.Contains(t, resp.OptionsJson, "publicKey")
 }
+
+// TestBeginRegistration_SessionStoreFullReturnsResourceExhausted pins the
+// gRPC answer when the relying party holds its maximum number of unfinished
+// ceremonies: ResourceExhausted, not Internal.
+func TestBeginRegistration_SessionStoreFullReturnsResourceExhausted(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"mem": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "mem",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+
+	open := true
+	rp, err := webauthn.NewService(webauthn.ServiceParams{
+		Config: &webauthn.Config{
+			RPID:                    "example.com",
+			RPDisplayName:           "Example",
+			RPOrigins:               []string{"https://example.com"},
+			AllowPublicRegistration: &open,
+		},
+		UserStore:       webauthn.NewMemoryUserStore(),
+		SessionStore:    webauthn.NewMemorySessionStore(webauthn.WithMaxSessions(1)),
+		CredentialStore: webauthn.NewMemoryCredentialStore(),
+	})
+	require.NoError(t, err)
+	svc.SetWebAuthn(rp)
+	grpcSvc := NewService(nil, nil, svc)
+
+	_, err = grpcSvc.BeginRegistration(context.Background(), &pb.BeginRegistrationRequest{Email: "a@example.com"})
+	require.NoError(t, err)
+	_, err = grpcSvc.BeginRegistration(context.Background(), &pb.BeginRegistrationRequest{Email: "b@example.com"})
+	st, ok := status.FromError(err)
+	require.True(t, ok, "want a gRPC status error, got %T: %v", err, err)
+	assert.Equal(t, codes.ResourceExhausted, st.Code())
+}

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -425,7 +426,7 @@ func TestClientID_FallbackUsesProxyHeaders(t *testing.T) {
 	defer func() { TrustedProxies = oldTrustedProxies }()
 
 	// Set up trusted proxies for these tests
-	TrustedProxies = []string{"10.0.0.1"}
+	TrustedProxies = mustTrustedProxies(t, "10.0.0.1")
 
 	t.Run("FallbackToXForwardedFor", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewBufferString("invalid-jws"))
@@ -474,7 +475,7 @@ func TestClientIP(t *testing.T) {
 	defer func() { TrustedProxies = oldTrustedProxies }()
 
 	// Set up trusted proxies for these tests - include common test IPs
-	TrustedProxies = []string{"10.0.0.1", "::1"}
+	TrustedProxies = mustTrustedProxies(t, "10.0.0.1", "::1")
 
 	t.Run("FallbackToRemoteAddr", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -509,9 +510,10 @@ func TestClientIP(t *testing.T) {
 
 		clientIP := ClientIP(req)
 
-		// Should return the first IP (original client)
-		if clientIP != "203.0.113.50" {
-			t.Errorf("Expected client IP to be 203.0.113.50, got %s", clientIP)
+		// Only the hop the trusted proxy appended (the rightmost) is
+		// believed; entries to its left were supplied by the client.
+		if clientIP != "150.172.238.178" {
+			t.Errorf("Expected client IP to be 150.172.238.178, got %s", clientIP)
 		}
 	})
 
@@ -522,8 +524,8 @@ func TestClientIP(t *testing.T) {
 
 		clientIP := ClientIP(req)
 
-		if clientIP != "203.0.113.50" {
-			t.Errorf("Expected client IP to be 203.0.113.50, got %s", clientIP)
+		if clientIP != "70.41.3.18" {
+			t.Errorf("Expected client IP to be 70.41.3.18, got %s", clientIP)
 		}
 	})
 
@@ -600,8 +602,8 @@ func TestClientIP(t *testing.T) {
 
 		clientIP := ClientIP(req)
 
-		if clientIP != "2001:db8::1" {
-			t.Errorf("Expected IPv6 address 2001:db8::1, got %s", clientIP)
+		if clientIP != "2001:db8::2" {
+			t.Errorf("Expected IPv6 address 2001:db8::2, got %s", clientIP)
 		}
 	})
 
@@ -1295,4 +1297,14 @@ func TestNilConfigRateLimiters(t *testing.T) {
 		wrapped.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
+}
+
+// mustTrustedProxies parses a trusted-proxy list for a test.
+func mustTrustedProxies(t *testing.T, entries ...string) *ratelimit.TrustedProxies {
+	t.Helper()
+	proxies, err := ratelimit.ParseTrustedProxies(entries)
+	if err != nil {
+		t.Fatalf("ParseTrustedProxies(%v): %v", entries, err)
+	}
+	return proxies
 }

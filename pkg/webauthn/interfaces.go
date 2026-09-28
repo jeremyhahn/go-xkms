@@ -42,6 +42,13 @@ type UserStore interface {
 	Delete(ctx context.Context, userID []byte) error
 }
 
+// SessionCleaner is implemented by session stores that keep expired
+// sessions until they are swept. SweepSessions drives it.
+type SessionCleaner interface {
+	// Cleanup removes expired sessions and returns how many it removed.
+	Cleanup() int
+}
+
 // SessionStore manages temporary WebAuthn session data during registration
 // and authentication ceremonies. Sessions are typically short-lived (60-120 seconds).
 type SessionStore interface {

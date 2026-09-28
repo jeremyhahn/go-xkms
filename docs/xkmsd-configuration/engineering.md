@@ -10,6 +10,7 @@
 | `Defaults() *Config` | The defaults layer. The only place an infrastructure literal may live. |
 | `DefaultServerHost` | `""` — every interface, dual-stack. See architecture.md for why not `0.0.0.0`. |
 | `ServerConfig.Host` | The bind host shared by every network listener and handed to the embedded qrdb node. |
+| `ServerConfig.TrustedProxies` (`yaml:"trusted_proxies"`, `pkg/config/config.go:366`) | Reverse proxies (IP or CIDR) whose `X-Forwarded-For` / `X-Real-IP` the REST rate limiters believe. Empty trusts none. `Validate` parses it with `ratelimit.ParseTrustedProxies` (`config.go:1489`) and fails with `*errs.Wrapped` around `*ratelimit.InvalidTrustedProxyError`; `pkg/server` parses it again into `rest.Config.TrustedProxies` (`pkg/server/server.go:2892`). Resolution rules: `pkg/ratelimit/clientip.go:102`. |
 
 Unexported but load-bearing, all in `pkg/config/load.go`:
 

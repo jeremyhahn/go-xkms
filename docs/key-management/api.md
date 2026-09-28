@@ -1,6 +1,6 @@
 # Key Management — API
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## How the six transports are shaped
 
@@ -38,6 +38,27 @@ REST authorization is data: every route carries a `RouteSpec` with a
 from the `pkg/auth` vocabulary. The same table drives the legacy in-process
 server and the unified-API-server `ServiceModule` in `pkg/apimodule`, so a
 route exists on both paths with the same permission by construction.
+
+The same table bounds every request body. `BodyLimitMiddleware`
+(`pkg/api/rest/middleware_bodylimit.go:67`) is installed on each route on both
+mounts — `registerRoutes` (`pkg/api/rest/server.go:724,759`) and `BindRoute`
+(`pkg/api/rest/module_support.go:43`) — with the route's
+`RouteSpec.MaxBodyBytes` (`routes.go:81`): 1 MiB (`DefaultMaxBodyBytes`,
+`middleware_bodylimit.go:29`) unless the route carries caller data. Sign,
+verify, encrypt, decrypt, seal and unseal take `BulkMaxBodyBytes`, 4 MiB
+(`:35`, `routes.go:118`), in line with the gRPC transports' 4 MiB receive
+limit. A body over the bound is answered 413 with a `RequestTooLargeError`
+naming the bound, whether the client declared its length or streamed it: a
+streamed overflow replaces the handler's own error response
+(`middleware_bodylimit.go:113`). The listener also sets `ReadHeaderTimeout`,
+10 s by default (`server.go:336,638`).
+
+The REST rate limiters (`ratelimit.Middleware`, `pkg/ratelimit/ratelimit.go:244`)
+key on `TrustedProxies.ClientIP` (`pkg/ratelimit/clientip.go:102`): the
+transport peer's IP without its port, or — only when that peer is listed in
+`server.trusted_proxies` — the right-most untrusted `X-Forwarded-For` hop.
+The limiter tracks at most `DefaultMaxClients` (100,000, `ratelimit.go:52`)
+clients; while full it refuses new clients until idle ones are cleaned up.
 
 ## Capability matrix
 
@@ -244,6 +265,7 @@ shared type set.
 | malformed request | 400 | `InvalidArgument` | JSON-RPC `-32602` |
 | unauthenticated | 401 | `Unauthenticated` | error object |
 | RBAC denial | 403 | `PermissionDenied` | error object |
+| request body over the route's bound | 413 | — (gRPC message limit) | — |
 | `ErrKeyNotFound` | 404 | `NotFound` | JSON-RPC `-32001` (`sdkssh.JSONRPCCodeNotFound`) |
 | `ErrBackendNotFound` | 404 | `NotFound` | JSON-RPC `-32001` (`sdkssh.JSONRPCCodeNotFound`) |
 | `ErrKeyAlreadyExists` | 409 | `AlreadyExists` | error object |

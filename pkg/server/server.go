@@ -2688,6 +2688,10 @@ func (s *Server) Start() error {
 		go s.startREST()
 	}
 
+	// Sweep abandoned WebAuthn ceremony sessions for the life of the
+	// server; Shutdown stops the sweeper (s.ctx) and waits for it (s.wg).
+	s.startWebAuthnSessionSweeper()
+
 	// Start Noise bootstrap server if enabled
 	if s.config.Protocols.Noise {
 		s.wg.Add(1)
@@ -2712,6 +2716,23 @@ func (s *Server) Start() error {
 	s.logger.Info("All servers started successfully")
 
 	return nil
+}
+
+// startWebAuthnSessionSweeper runs the WebAuthn service's session sweeper
+// on a goroutine owned by the server lifecycle: it stops when Shutdown
+// cancels s.ctx, and Shutdown's s.wg.Wait joins it. The server is the single
+// owner of the sweeper because it owns the one WebAuthn service shared by
+// the REST browser ceremony and the SDK ceremony. A no-op when WebAuthn is
+// not enabled.
+func (s *Server) startWebAuthnSessionSweeper() {
+	if s.webauthnService == nil {
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.webauthnService.SweepSessions(s.ctx, webauthn.DefaultSessionSweepInterval)
+	}()
 }
 
 // startUnix starts the Unix domain socket server (IPC, HTTP or gRPC based on configuration)
@@ -2894,6 +2915,14 @@ func (s *Server) buildRESTConfig() (*rest.Config, error) {
 			MaxAgeSeconds:    s.config.CORS.MaxAgeSeconds,
 		}
 	}
+
+	// Rate-limit identity: forwarding headers are believed only from the
+	// configured reverse proxies (server.trusted_proxies; none by default).
+	trustedProxies, err := ratelimit.ParseTrustedProxies(s.config.Server.TrustedProxies)
+	if err != nil {
+		return nil, &ErrServiceInit{Service: "rest trusted proxies", Err: err}
+	}
+	restConfig.TrustedProxies = trustedProxies
 
 	// Session-token plane: the issuer behind the login flows plus a
 	// dedicated, stricter per-client limiter on the login/refresh/ceremony

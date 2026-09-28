@@ -28,63 +28,6 @@ import (
 )
 
 // =============================================================================
-// extractIPFromRemoteAddr Tests (71.4% -> 100%)
-// =============================================================================
-
-// TestExtractIPFromRemoteAddr_IPv6WithoutPort covers the "[::1]" case
-// where there is no port separator "]:".
-func TestExtractIPFromRemoteAddr_IPv6WithoutPort(t *testing.T) {
-	tests := []struct {
-		name       string
-		remoteAddr string
-		expected   string
-	}{
-		{
-			name:       "ipv6 with port",
-			remoteAddr: "[::1]:8080",
-			expected:   "::1",
-		},
-		{
-			name:       "ipv6 without port",
-			remoteAddr: "[::1]",
-			expected:   "::1",
-		},
-		{
-			name:       "ipv6 full address with port",
-			remoteAddr: "[2001:db8::1]:443",
-			expected:   "2001:db8::1",
-		},
-		{
-			name:       "ipv6 full address without port",
-			remoteAddr: "[2001:db8::1]",
-			expected:   "2001:db8::1",
-		},
-		{
-			name:       "ipv4 with port",
-			remoteAddr: "192.168.1.1:8080",
-			expected:   "192.168.1.1",
-		},
-		{
-			name:       "ipv4 without port",
-			remoteAddr: "192.168.1.1",
-			expected:   "192.168.1.1",
-		},
-		{
-			name:       "bare hostname",
-			remoteAddr: "localhost",
-			expected:   "localhost",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractIPFromRemoteAddr(tt.remoteAddr)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// =============================================================================
 // getMaxInterval Tests (66.7% -> 100%)
 // =============================================================================
 

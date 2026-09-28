@@ -103,6 +103,10 @@ xkmsctl user get alice
 | 401 with no detail | intentional — the server does not tell clients why | read the server log; it has the real reason |
 | 429 | login rate limiter | back off |
 | server log warns "the authenticator may be cloned" and the audit log has `auth.webauthn.clone_warning` | the credential's signature counter did not advance — a restored backup, or a copied key | the login was allowed; investigate the credential, and delete it if you cannot account for the copy |
+| 429 for every user behind one load balancer | the limiter sees the balancer as the client | list the balancer in `server.trusted_proxies` |
+| 503 `session_limit` on begin | too many ceremonies were begun and not finished | retry shortly; abandoned sessions expire within about three minutes |
+| 413 | request body over 1 MiB | a ceremony body is a few KiB; check the client |
+| worked, then failed after restoring a backup of the key | the signature counter went backwards | this is the clone check firing; investigate rather than bypass |
 
 The uniform, detail-free 401 is deliberate: distinguishable failures would let
 anyone enumerate users and probe which authenticator each holds. When you are

@@ -21,13 +21,13 @@ import (
 	"math"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 )
 
 // RateLimitConfig contains rate limiting configuration per RFC 8555 Section 6.6.
@@ -459,87 +459,17 @@ func FailedValidationRateLimiter(config *RateLimit) func(next http.Handler) http
 	return limiter.MiddlewareFunc(ClientID)
 }
 
-// TrustedProxies contains IP addresses/CIDRs that are trusted to set proxy headers.
-// This should be configured based on your infrastructure (e.g., load balancer IPs).
-// An empty list means no proxies are trusted (secure default).
-var TrustedProxies []string
+// TrustedProxies is the set of proxies trusted to name the client in the
+// X-Forwarded-For / X-Real-IP headers. Nil (the default) trusts none, so
+// proxy headers are ignored and only the transport peer address is used.
+var TrustedProxies *ratelimit.TrustedProxies
 
-// ClientIP extracts the client's IP address from the request.
-// It only trusts proxy headers (X-Forwarded-For, X-Real-IP) if the request
-// comes from a trusted proxy. This prevents IP spoofing attacks.
-//
-// SECURITY NOTE: By default, TrustedProxies is empty, meaning proxy headers
-// are ignored and only the direct connection IP (RemoteAddr) is used.
-// Configure TrustedProxies to include your load balancer/proxy IPs if needed.
-//
-// Header priority (when from trusted proxy):
-//  1. X-Forwarded-For (standard proxy header, uses first IP in chain)
-//  2. X-Real-IP (nginx proxy header)
-//  3. RemoteAddr (direct connection)
-//
-// Parameters:
-//   - r: HTTP request
-//
-// Returns:
-//   - string: Client IP address
+// ClientIP extracts the client's IP address from the request. Proxy headers
+// are honoured only from TrustedProxies; the resolution rules are those of
+// the shared ratelimit.TrustedProxies.ClientIP, which the REST login limiter
+// uses too.
 func ClientIP(r *http.Request) string {
-	remoteIP := extractIPFromRemoteAddr(r.RemoteAddr)
-
-	// Only trust proxy headers if request is from a trusted proxy
-	if isTrustedProxy(remoteIP) {
-		// Check X-Forwarded-For header first (standard proxy header)
-		// Format: "client, proxy1, proxy2" - first IP is the original client
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// Take the first IP in the chain (original client)
-			if idx := strings.Index(xff, ","); idx != -1 {
-				return strings.TrimSpace(xff[:idx])
-			}
-			return strings.TrimSpace(xff)
-		}
-
-		// Check X-Real-IP header (commonly used by nginx)
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
-		}
-	}
-
-	// Use direct connection IP (RemoteAddr)
-	return remoteIP
-}
-
-// extractIPFromRemoteAddr extracts the IP address from a RemoteAddr string.
-// RemoteAddr can be "IP:port" or just "IP" for Unix sockets.
-func extractIPFromRemoteAddr(remoteAddr string) string {
-	// Handle IPv6 addresses like "[::1]:8080"
-	if strings.HasPrefix(remoteAddr, "[") {
-		if idx := strings.LastIndex(remoteAddr, "]:"); idx != -1 {
-			return remoteAddr[1:idx]
-		}
-		// No port, just "[::1]"
-		return strings.Trim(remoteAddr, "[]")
-	}
-
-	// Handle IPv4 addresses like "192.168.1.1:8080"
-	if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
-		return remoteAddr[:idx]
-	}
-
-	return remoteAddr
-}
-
-// isTrustedProxy checks if an IP address is in the list of trusted proxies.
-func isTrustedProxy(ip string) bool {
-	if len(TrustedProxies) == 0 {
-		return false
-	}
-
-	for _, trusted := range TrustedProxies {
-		// Simple exact match (could be extended to support CIDR ranges)
-		if ip == trusted {
-			return true
-		}
-	}
-	return false
+	return TrustedProxies.ClientIP(r)
 }
 
 // verifiedAccountContextKey is the context key under which

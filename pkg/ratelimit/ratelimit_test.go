@@ -174,7 +174,7 @@ func TestMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	middleware := Middleware(limiter)
+	middleware := Middleware(limiter, nil)
 	wrappedHandler := middleware(handler)
 
 	// First 2 requests should succeed
@@ -199,49 +199,6 @@ func TestMiddleware(t *testing.T) {
 
 	if rr.Code != http.StatusTooManyRequests {
 		t.Errorf("Expected status 429, got %d", rr.Code)
-	}
-}
-
-func TestGetClientIP(t *testing.T) {
-	tests := []struct {
-		name       string
-		headers    map[string]string
-		remoteAddr string
-		expected   string
-	}{
-		{
-			name:       "X-Forwarded-For",
-			headers:    map[string]string{"X-Forwarded-For": "203.0.113.1, 198.51.100.1"},
-			remoteAddr: "192.168.1.1:1234",
-			expected:   "203.0.113.1",
-		},
-		{
-			name:       "X-Real-IP",
-			headers:    map[string]string{"X-Real-IP": "203.0.113.1"},
-			remoteAddr: "192.168.1.1:1234",
-			expected:   "203.0.113.1",
-		},
-		{
-			name:       "RemoteAddr fallback",
-			headers:    map[string]string{},
-			remoteAddr: "192.168.1.1:1234",
-			expected:   "192.168.1.1:1234",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/test", nil)
-			req.RemoteAddr = tt.remoteAddr
-			for k, v := range tt.headers {
-				req.Header.Set(k, v)
-			}
-
-			ip := getClientIP(req)
-			if ip != tt.expected {
-				t.Errorf("Expected %s, got %s", tt.expected, ip)
-			}
-		})
 	}
 }
 
@@ -570,16 +527,5 @@ func TestStreamServerInterceptor(t *testing.T) {
 	}
 	if st.Code() != codes.ResourceExhausted {
 		t.Errorf("Expected ResourceExhausted, got %v", st.Code())
-	}
-}
-
-func TestGetClientIP_SingleXForwardedFor(t *testing.T) {
-	req := httptest.NewRequest("GET", "/test", nil)
-	req.Header.Set("X-Forwarded-For", "203.0.113.1")
-	req.RemoteAddr = "192.168.1.1:1234"
-
-	ip := getClientIP(req)
-	if ip != "203.0.113.1" {
-		t.Errorf("Expected '203.0.113.1', got '%s'", ip)
 	}
 }
