@@ -32,7 +32,7 @@ func TestQueryAudit_RoundTrip(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 			return
 		}
-		assert.Equal(t, "/api/v1/audit", r.URL.Path)
+		assert.Equal(t, "/api/v1/audit/", r.URL.Path)
 		capturedQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(transport.AuditPage{
