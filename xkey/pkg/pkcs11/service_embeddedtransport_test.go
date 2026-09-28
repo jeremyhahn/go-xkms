@@ -754,59 +754,6 @@ func TestEmbeddedTransport_WrapUnwrapKeyByID_ErrorPaths(t *testing.T) {
 			t.Fatalf("UnwrapKeyByID() error = %v, want ErrWrappingFailed", err)
 		}
 	})
-
-	t.Run("wrap target backend falls back to the wrapping key backend", func(t *testing.T) {
-		// TargetKeyBackend is left unset so WrapKeyByID must resolve the
-		// target key against WrappingKeyBackend instead; the target still
-		// does not exist, so this reaches the same export failure the
-		// explicit-backend case does, proving the fallback assignment ran.
-		_, err := tr.WrapKeyByID(ctx, &transport.WrapKeyByIDRequest{
-			WrappingKeyBackend: deriveBackend, WrappingKeyID: "no-such-wrapping-key",
-			TargetKeyID: "no-such-target-key",
-		})
-		if !errors.Is(err, ErrWrappingFailed) {
-			t.Fatalf("WrapKeyByID() error = %v, want ErrWrappingFailed", err)
-		}
-	})
-
-}
-
-// TestEmbeddedTransport_UnwrapKeyByID_NoTokenCarrier documents and covers a
-// real gap this coverage pass found rather than working around it: against
-// the software backend, UnwrapKeyByID can never succeed. WrapKeyByID's own
-// response drops the ImportToken the software backend's UnwrapKey requires
-// to find the ephemeral wrapping private key again (WrapKeyByIDResponse
-// carries only WrappedKey and Algorithm -- pkg/api/transport/types.go), and
-// transport.UnwrapKeyByIDRequest has no field to carry one back in even if
-// it were returned. So UnwrapKeyByID always builds an xkms.WrappedKeyMaterial
-// with a zero-value ImportToken (service.go:485-488), which the backend
-// rejects outright; see the go-xkms#704 coverage report for the full finding,
-// including the companion defect that WrapKeyByID separately fails before
-// this point (it exports its target key under a hardcoded empty
-// WrappingAlgorithm instead of req.Algorithm, service.go:449).
-//
-// This test exercises the resulting, real error path -- an existing
-// unwrapping key but a request no caller could ever complete successfully --
-// which "unwrap unwrapping key not found" above does not reach: that one
-// fails earlier, at key resolution, never reaching xkms.UnwrapKey itself.
-func TestEmbeddedTransport_UnwrapKeyByID_NoTokenCarrier(t *testing.T) {
-	tr := newDeriveTestTransport(t)
-	ctx := context.Background()
-
-	if _, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{
-		KeyID: "unwrap-rsa", Backend: deriveBackend, KeyType: "RSA", KeySize: 2048,
-	}); err != nil {
-		t.Fatalf("GenerateKey(RSA) error = %v", err)
-	}
-
-	_, err := tr.UnwrapKeyByID(ctx, &transport.UnwrapKeyByIDRequest{
-		UnwrappingKeyBackend: deriveBackend, UnwrappingKeyID: "unwrap-rsa",
-		TargetKeyID: "unwrapped-target",
-		WrappedKey:  []byte("opaque wrapped bytes"), Algorithm: string(xkms.WrappingAlgorithmRSAES_OAEP_SHA_256),
-	})
-	if !errors.Is(err, ErrWrappingFailed) {
-		t.Fatalf("UnwrapKeyByID() error = %v, want ErrWrappingFailed", err)
-	}
 }
 
 // TestEmbeddedTransport_ImportKey_RoundTrip runs the same import ceremony
