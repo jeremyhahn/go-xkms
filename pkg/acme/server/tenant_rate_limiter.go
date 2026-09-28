@@ -547,27 +547,27 @@ func TenantRateLimiterFromHeader(headerName string) TenantKeyFunc {
 
 // NewTenantAccountRateLimiter creates a tenant-aware rate limiter for account creation.
 func NewTenantAccountRateLimiter(config *TenantRateLimiterConfig, tenantKeyFn TenantKeyFunc) *TenantRateLimiter {
-	return NewTenantRateLimiter(config, tenantKeyFn, ClientIP, "new-account")
+	return NewTenantRateLimiter(config, tenantKeyFn, rateLimitClientIPKey, "new-account")
 }
 
 // NewTenantOrderRateLimiter creates a tenant-aware rate limiter for order creation.
 func NewTenantOrderRateLimiter(config *TenantRateLimiterConfig, tenantKeyFn TenantKeyFunc) *TenantRateLimiter {
-	return NewTenantRateLimiter(config, tenantKeyFn, ClientID, "new-order")
+	return NewTenantRateLimiter(config, tenantKeyFn, rateLimitClientIDKey, "new-order")
 }
 
 // NewTenantCertificateRateLimiter creates a tenant-aware rate limiter for certificate operations.
 func NewTenantCertificateRateLimiter(config *TenantRateLimiterConfig, tenantKeyFn TenantKeyFunc) *TenantRateLimiter {
-	return NewTenantRateLimiter(config, tenantKeyFn, ClientID, "certificate")
+	return NewTenantRateLimiter(config, tenantKeyFn, rateLimitClientIDKey, "certificate")
 }
 
 // NewTenantOverallRateLimiter creates a tenant-aware rate limiter for all requests.
 func NewTenantOverallRateLimiter(config *TenantRateLimiterConfig, tenantKeyFn TenantKeyFunc) *TenantRateLimiter {
-	return NewTenantRateLimiter(config, tenantKeyFn, ClientIP, "overall")
+	return NewTenantRateLimiter(config, tenantKeyFn, rateLimitClientIPKey, "overall")
 }
 
 // NewTenantFailedValidationRateLimiter creates a tenant-aware rate limiter for failed validations.
 func NewTenantFailedValidationRateLimiter(config *TenantRateLimiterConfig, tenantKeyFn TenantKeyFunc) *TenantRateLimiter {
-	return NewTenantRateLimiter(config, tenantKeyFn, ClientID, "failed-validation")
+	return NewTenantRateLimiter(config, tenantKeyFn, rateLimitClientIDKey, "failed-validation")
 }
 
 // TenantContextKey is the context key type for tenant ID.

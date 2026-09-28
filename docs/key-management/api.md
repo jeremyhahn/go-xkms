@@ -53,11 +53,15 @@ streamed overflow replaces the handler's own error response
 (`middleware_bodylimit.go:113`). The listener also sets `ReadHeaderTimeout`,
 10 s by default (`server.go:336,638`).
 
-The REST rate limiters (`ratelimit.Middleware`, `pkg/ratelimit/ratelimit.go:244`)
+The REST rate limiters (`ratelimit.Middleware`, `pkg/ratelimit/ratelimit.go:246`)
 key on `TrustedProxies.ClientIP` (`pkg/ratelimit/clientip.go:102`): the
 transport peer's IP without its port, or — only when that peer is listed in
 `server.trusted_proxies` — the right-most untrusted `X-Forwarded-For` hop.
-The limiter tracks at most `DefaultMaxClients` (100,000, `ratelimit.go:52`)
+The resolved address is then folded through `ratelimit.RateLimitKey`
+(`clientip.go:171`, go-xkms#1179) before it becomes the bucket key: unchanged
+for IPv4, masked to its `/64` for IPv6, so a client cannot evade the limiter
+by rotating through addresses an ISP delegates it within one `/64`. The
+limiter tracks at most `DefaultMaxClients` (100,000, `ratelimit.go:52`)
 clients; while full it refuses new clients until idle ones are cleaned up.
 
 ## Capability matrix

@@ -146,3 +146,40 @@ func remoteHost(addr string) string {
 	}
 	return strings.Trim(addr, "[]")
 }
+
+// ipv6RateLimitPrefixBits is the prefix length RateLimitKey masks an IPv6
+// client address to. Residential and mobile ISPs commonly delegate a /64 (or
+// shorter) to a single subscriber, so keying a bucket on the full address
+// lets that subscriber evade a limiter by cycling through addresses within
+// their own delegation; /64 is the smallest block IPv6 SLAAC assumes, so it
+// is the coarsest prefix that still cannot span two unrelated subscribers.
+const ipv6RateLimitPrefixBits = 64
+
+// RateLimitKey folds a client address returned by ClientIP into the identity
+// a rate limiter should bucket on. IPv4 addresses are returned unchanged: one
+// bucket per address. IPv6 addresses are masked to their /64
+// (ipv6RateLimitPrefixBits) so a client cannot escape a limiter by rotating
+// through addresses an ISP delegates it within the same /64. A value that is
+// not a valid IP address — a JWS key ID standing in for the client, or the
+// raw RemoteAddr from a listener with no notion of ports — is returned
+// unchanged, so callers can pass any ClientIP/ClientID result through this
+// function unconditionally.
+//
+// RateLimitKey is for rate-limit bucketing only. Audit records keep the
+// address ClientIP resolved at full precision; nothing here should feed an
+// audit trail.
+func RateLimitKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	prefix, err := addr.Prefix(ipv6RateLimitPrefixBits)
+	if err != nil {
+		return addr.String()
+	}
+	return prefix.String()
+}

@@ -242,6 +242,43 @@ func TestLimiter_MaxClientsRefusesNewClients(t *testing.T) {
 	}
 }
 
+func TestRateLimitKey(t *testing.T) {
+	tests := []struct {
+		name string
+		ip   string
+		want string
+	}{
+		{name: "ipv4 keys on the exact address", ip: "203.0.113.9", want: "203.0.113.9"},
+		{name: "another ipv4 keys on its own exact address", ip: "203.0.113.10", want: "203.0.113.10"},
+		{name: "ipv6 keys on its /64", ip: "2001:db8:1::1", want: "2001:db8:1::/64"},
+		{name: "a different address in the same /64 shares the key", ip: "2001:db8:1::ffff", want: "2001:db8:1::/64"},
+		{name: "a different /64 gets a different key", ip: "2001:db8:2::1", want: "2001:db8:2::/64"},
+		{name: "ipv4-mapped ipv6 keys as ipv4", ip: "::ffff:203.0.113.9", want: "203.0.113.9"},
+		{name: "a non-IP value (e.g. a JWS KID) passes through unchanged", ip: "https://acme.example/acct/1", want: "https://acme.example/acct/1"},
+		{name: "empty string passes through unchanged", ip: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RateLimitKey(tt.ip); got != tt.want {
+				t.Errorf("RateLimitKey(%q) = %q, want %q", tt.ip, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRateLimitKey_IPv6AddressesInSameSlash64ShareABucket(t *testing.T) {
+	a := RateLimitKey("2001:db8:abcd:1::1")
+	b := RateLimitKey("2001:db8:abcd:1::2")
+	if a != b {
+		t.Fatalf("two addresses in the same /64 must share a rate-limit key: %q != %q", a, b)
+	}
+
+	c := RateLimitKey("2001:db8:abcd:2::1")
+	if a == c {
+		t.Fatalf("addresses in different /64s must not share a rate-limit key: both resolved to %q", a)
+	}
+}
+
 func TestCapacityError_Message(t *testing.T) {
 	if got := (&CapacityError{Limit: 7}).Error(); !strings.Contains(got, "7") {
 		t.Fatalf("CapacityError message %q does not name the limit", got)

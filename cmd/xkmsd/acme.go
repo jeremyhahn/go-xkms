@@ -47,6 +47,7 @@ import (
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 )
@@ -97,6 +98,11 @@ var (
 	// ErrACMECAAValidator is returned when the CAA validator cannot be
 	// constructed from the supplied configuration.
 	ErrACMECAAValidator = errors.New("acme: failed to create CAA validator")
+
+	// ErrACMETrustedProxies is returned when server.trusted_proxies cannot be
+	// parsed. Config.Validate rejects a malformed list before xkmsd starts,
+	// so this only fires if that invariant is ever broken.
+	ErrACMETrustedProxies = errors.New("acme: failed to parse trusted proxies")
 )
 
 // acmeServer holds the runtime state of the embedded ACME HTTPS server so it
@@ -146,6 +152,21 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		slog.String("https_addr", acmeCfg.HTTPSAddr),
 		slog.String("external_url", acmeCfg.ExternalURL),
 		slog.String("keystore_backend", acmeCfg.KeystoreBackend))
+
+	// Client identity: forwarding headers are believed only from the
+	// configured reverse proxies (server.trusted_proxies; none by default).
+	// This is the one config key for the whole process — pkg/server wires the
+	// same list into the REST rate limiters — and the parsed value here feeds
+	// both the ACME rate limiter's own client-IP resolution
+	// (acmeserver.TrustedProxies, consulted by acmeserver.ClientIP) and the
+	// ACME audit trail's source-IP attribution (audit.SetTrustedProxies), so
+	// a forwarding header is trusted, or not, identically for both purposes.
+	trustedProxies, err := ratelimit.ParseTrustedProxies(cfg.Server.TrustedProxies)
+	if err != nil {
+		return nil, &acmeInitError{Stage: "parse trusted proxies", Sentinel: ErrACMETrustedProxies, Err: err}
+	}
+	acmeserver.TrustedProxies = trustedProxies
+	audit.SetTrustedProxies(trustedProxies)
 
 	// Resolve data directory for ACME state. Defaults to "<storage.path>/acme".
 	dataDir := acmeCfg.DataDir

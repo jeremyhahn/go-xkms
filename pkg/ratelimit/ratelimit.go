@@ -239,12 +239,14 @@ func (l *Limiter) Stats() map[string]interface{} {
 
 // Middleware returns an HTTP middleware that enforces rate limiting, keyed by
 // the client IP address that proxies resolves for each request (see
-// TrustedProxies.ClientIP). A nil proxies trusts no forwarding header, so the
-// key is the transport peer's IP address without its port.
+// TrustedProxies.ClientIP), folded through RateLimitKey so an IPv6 client
+// buckets on its /64 rather than its full address. A nil proxies trusts no
+// forwarding header, so the key is the transport peer's IP address without
+// its port.
 func Middleware(limiter *Limiter, proxies *TrustedProxies) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !limiter.Allow(proxies.ClientIP(r)) {
+			if !limiter.Allow(RateLimitKey(proxies.ClientIP(r))) {
 				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 				return
 			}
