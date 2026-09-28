@@ -18,6 +18,7 @@ package vault
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -151,4 +152,37 @@ func TestListKeys_AsymmetricKeyIsAlwaysReportedNonExportable(t *testing.T) {
 
 	_, err = b.ExportKey(ctx, ka, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.Error(t, err, "ExportKey has no Vault-native equivalent and must refuse")
+}
+
+// TestListKeys_MetadataGetError proves that a storage.GetKey failure that is
+// NOT storage.ErrNotFound while reconstructing a listed key's attributes
+// surfaces as an error from ListKeys instead of silently falling back to a
+// bare {CN: cn} entry the same way a genuine not-found does (go-xkms#1119).
+// Papering over a real metadata-store outage this way would return an
+// incomplete, misleading list with nothing to say so.
+func TestListKeys_MetadataGetError(t *testing.T) {
+	config := getTestVaultConfig(t)
+	b, err := NewBackend(config)
+	require.NoError(t, err)
+	defer func() { _ = b.Close() }()
+	ctx := context.Background()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "listkeys-metadata-get-error",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_VAULT,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	_, err = b.GenerateSymmetricKey(ctx, attrs)
+	require.NoError(t, err)
+
+	// Swap in a failing metadata store AFTER the key's Transit entry and
+	// metadata record both already exist: config is the same *Config
+	// pointer NewBackend stored on b, so this mutation is visible to
+	// ListKeys' b.config.KeyStorage without rebuilding the backend.
+	config.KeyStorage = &failingStorage{Backend: config.KeyStorage, err: errors.New("disk i/o error")}
+
+	_, err = b.ListKeys(ctx)
+	require.Error(t, err, "ListKeys() with a failing per-key metadata read must return an error, not a partial list")
+	assert.True(t, errors.Is(err, ErrKeyRetrievalFailed), "expected errors.Is(err, ErrKeyRetrievalFailed), got %v", err)
 }
