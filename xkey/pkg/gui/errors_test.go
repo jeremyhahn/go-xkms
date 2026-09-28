@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateTheme_ValidThemes(t *testing.T) {
@@ -83,6 +84,30 @@ func TestErrorSentinels_NotNil(t *testing.T) {
 			assert.NotEmpty(t, err.Error())
 		})
 	}
+}
+
+func TestDetailError(t *testing.T) {
+	base := ErrConfigLoad
+	err := &DetailError{Err: base, Detail: ": permission denied"}
+
+	assert.Equal(t, "gui: failed to load configuration: permission denied", err.Error())
+	assert.True(t, errors.Is(err, base), "Unwrap must let errors.Is match the wrapped sentinel")
+	assert.Equal(t, base, err.Unwrap())
+}
+
+func TestSentinelCauseError(t *testing.T) {
+	sentinel := ErrDataDirInit
+	cause := errors.New("disk full")
+	err := &SentinelCauseError{Sentinel: sentinel, Cause: cause}
+
+	assert.Equal(t, "gui: data directory initialization failed: disk full", err.Error())
+	assert.True(t, errors.Is(err, sentinel), "errors.Is must match the sentinel")
+	assert.True(t, errors.Is(err, cause), "errors.Is must match the cause")
+
+	unwrapped := err.Unwrap()
+	require.Len(t, unwrapped, 2)
+	assert.Equal(t, sentinel, unwrapped[0])
+	assert.Equal(t, cause, unwrapped[1])
 }
 
 func TestErrorSentinels_AreDistinct(t *testing.T) {
