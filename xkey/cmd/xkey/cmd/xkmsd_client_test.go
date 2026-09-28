@@ -227,6 +227,109 @@ func TestCommandFlagString_UnsetFlagIsEmpty(t *testing.T) {
 	assert.Equal(t, "", commandFlagString(cmd, tlsCAFlagName))
 }
 
+func TestCommandFlagBool_NilCommand(t *testing.T) {
+	value, err := commandFlagBool(nil, "force")
+	require.NoError(t, err)
+	assert.False(t, value)
+}
+
+func TestCommandFlagBool_UndeclaredFlag(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	value, err := commandFlagBool(cmd, "force")
+	require.NoError(t, err)
+	assert.False(t, value)
+}
+
+func TestCommandFlagBool_ReturnsFlagValue(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	cmd.Flags().Bool("force", false, "")
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "force", "true"))
+
+	value, err := commandFlagBool(cmd, "force")
+	require.NoError(t, err)
+	assert.True(t, value)
+}
+
+func TestCommandFlagBool_PersistentFlagOnParent(t *testing.T) {
+	parent := &cobra.Command{Use: "parent"}
+	parent.PersistentFlags().Bool("force", false, "")
+	require.NoError(t, setFlagForTest(t, parent.PersistentFlags(), "force", "true"))
+
+	value, err := commandFlagBool(parent, "force")
+	require.NoError(t, err)
+	assert.True(t, value)
+}
+
+func TestCommandFlagBool_WrongFlagTypeReturnsTypedError(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	cmd.Flags().String("force", "", "")
+
+	_, err := commandFlagBool(cmd, "force")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrCommandFlagInvalid), "want ErrCommandFlagInvalid, got %v", err)
+}
+
+func TestCommandFlagDuration_NilCommand(t *testing.T) {
+	value, err := commandFlagDuration(nil, "timeout")
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(0), value)
+}
+
+func TestCommandFlagDuration_UndeclaredFlag(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	value, err := commandFlagDuration(cmd, "timeout")
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(0), value)
+}
+
+func TestCommandFlagDuration_ReturnsFlagValue(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	cmd.Flags().Duration("timeout", 30*time.Second, "")
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "timeout", "90s"))
+
+	value, err := commandFlagDuration(cmd, "timeout")
+	require.NoError(t, err)
+	assert.Equal(t, 90*time.Second, value)
+}
+
+func TestCommandFlagDuration_WrongFlagTypeReturnsTypedError(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	cmd.Flags().String("timeout", "", "")
+
+	_, err := commandFlagDuration(cmd, "timeout")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrCommandFlagInvalid), "want ErrCommandFlagInvalid, got %v", err)
+}
+
+func TestCommandFlagChanged_NilCommand(t *testing.T) {
+	assert.False(t, commandFlagChanged(nil, "timeout"))
+}
+
+func TestCommandFlagChanged_UndeclaredFlag(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	assert.False(t, commandFlagChanged(cmd, "timeout"))
+}
+
+func TestCommandFlagChanged_FalseUntilSet(t *testing.T) {
+	cmd := &cobra.Command{Use: "probe"}
+	cmd.Flags().Duration("timeout", 30*time.Second, "")
+
+	assert.False(t, commandFlagChanged(cmd, "timeout"))
+
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "timeout", "90s"))
+	assert.True(t, commandFlagChanged(cmd, "timeout"))
+}
+
+func TestCommandFlagChanged_PersistentFlagOnParent(t *testing.T) {
+	parent := &cobra.Command{Use: "parent"}
+	parent.PersistentFlags().Bool("trust-new-devices", false, "")
+
+	assert.False(t, commandFlagChanged(parent, "trust-new-devices"))
+
+	require.NoError(t, setFlagForTest(t, parent.PersistentFlags(), "trust-new-devices", "true"))
+	assert.True(t, commandFlagChanged(parent, "trust-new-devices"))
+}
+
 // --- scheme dispatch ---
 
 func TestXKMSdEndpoint_Client_SchemeDispatch(t *testing.T) {
