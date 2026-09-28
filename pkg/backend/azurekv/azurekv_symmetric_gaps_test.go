@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -87,16 +88,16 @@ func TestGetSymmetricKey_NilAttributes(t *testing.T) {
 
 // TestGetSymmetricKey_CorruptMetadata proves a metadata record that is not
 // valid JSON is reported as an unmarshal failure rather than a silent zero
-// value. This exercises the in-memory metadata path directly (b.metadata),
-// which does not require contacting Azure.
+// value. This exercises the persisted metadata path directly
+// (Config.KeyStorage), which does not require contacting Azure.
 func TestGetSymmetricKey_CorruptMetadata(t *testing.T) {
 	b, _ := testBackend(t)
 	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{CN: "get-symmetric-corrupt-metadata", StoreType: backend.STORE_AZUREKV}
-	b.mu.Lock()
-	b.metadata[attrs.CN] = []byte("not json")
-	b.mu.Unlock()
+	if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.CN, []byte("not json")); err != nil {
+		t.Fatalf("storage.SaveKey() error = %v", err)
+	}
 
 	if _, err := b.GetSymmetricKey(context.Background(), attrs); err == nil {
 		t.Error("GetSymmetricKey() expected an unmarshal error for corrupt metadata, got nil")

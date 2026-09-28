@@ -29,6 +29,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -88,9 +89,9 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
-	b.mu.Lock()
-	b.metadata[attrs.CN] = metadataBytes
-	b.mu.Unlock()
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to store metadata", Err: err}
+	}
 
 	// Initialize AEAD tracking options for this key
 	keyID := attrs.ID()
@@ -124,11 +125,8 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	}
 
 	// Check if metadata exists
-	b.mu.RLock()
-	metadataBytes, exists := b.metadata[attrs.CN]
-	b.mu.RUnlock()
-
-	if !exists {
+	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
+	if err != nil {
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
