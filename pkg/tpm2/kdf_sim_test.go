@@ -64,7 +64,7 @@ func kdfSimParams(salt, info []byte, length int) *kdf.KDFParams {
 // empty string — produces a well-formed 32-byte key that only this comparison
 // rejects.
 func TestDeriveFromSymmetricKeyMatchesTheHKDFOracle(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	instance := tpm.(*TPM2)
@@ -103,7 +103,7 @@ func TestDeriveFromSymmetricKeyMatchesTheHKDFOracle(t *testing.T) {
 // two sealed keys, identical salt and info, each matching the oracle computed
 // over its own material.
 func TestDeriveFromSymmetricKeySeparatesSealedKeys(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	instance := tpm.(*TPM2)
@@ -137,7 +137,7 @@ func TestDeriveFromSymmetricKeySeparatesSealedKeys(t *testing.T) {
 
 // TestDeriveFromSymmetricKeyRejectsBadInput covers the refusals.
 func TestDeriveFromSymmetricKeyRejectsBadInput(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	instance := tpm.(*TPM2)

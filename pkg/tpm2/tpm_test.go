@@ -66,13 +66,13 @@ func setup() {
 
 func TestOpenAndCloseTPM(t *testing.T) {
 
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	_ = tpm.Close()
 
-	_, tpm = createSim(false, false)
+	_, tpm = createSim(false)
 	_ = tpm.Close()
 
-	_, tpm = createSim(false, false)
+	_, tpm = createSim(false)
 	defer func() { _ = tpm.Close() }()
 }
 
@@ -158,7 +158,7 @@ func createKey(
 }
 
 // Creates a connection a simulated TPM (without creating a CA)
-func createSim(encrypt, entropy bool) (*slog.Logger, TrustedPlatformModule) {
+func createSim(entropy bool) (*slog.Logger, TrustedPlatformModule) {
 
 	logger := slog.Default()
 
@@ -184,11 +184,10 @@ func createSim(encrypt, entropy bool) (*slog.Logger, TrustedPlatformModule) {
 	fileBackend := storageFactory.KeyBackend()
 
 	config := &Config{
-		EncryptSession: encrypt,
-		UseEntropy:     entropy,
-		Device:         "/dev/tpmrm0",
-		UseSimulator:   true,
-		Hash:           "SHA-256",
+		UseEntropy:   entropy,
+		Device:       "/dev/tpmrm0",
+		UseSimulator: true,
+		Hash:         "SHA-256",
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
@@ -292,7 +291,7 @@ func createSim(encrypt, entropy bool) (*slog.Logger, TrustedPlatformModule) {
 
 func TestInfo(t *testing.T) {
 
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	props, err := tpm.FixedProperties()
@@ -318,7 +317,7 @@ func TestInfo(t *testing.T) {
 func TestNewTPM2_ConfigDefaultsApplied(t *testing.T) {
 	// Test that defaults are applied to config
 	// Use createSim which properly handles the simulator singleton
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	config := tpm.Config()
@@ -332,7 +331,7 @@ func TestNewTPM2_ConfigDefaultsApplied(t *testing.T) {
 
 func TestNewTPM2_WithExistingTransport(t *testing.T) {
 	// Test with existing transport
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Create a new TPM2 using the existing transport
@@ -361,19 +360,11 @@ func TestNewTPM2_WithExistingTransport(t *testing.T) {
 
 func TestNewTPM2_WithEntropyConfig(t *testing.T) {
 	// Test with entropy enabled
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// TPM should use itself as random source
 	assert.True(t, tpm.Config().UseEntropy)
-}
-
-func TestNewTPM2_WithEncryptedSessions(t *testing.T) {
-	// Test with encrypted sessions
-	_, tpm := createSim(true, false)
-	defer func() { _ = tpm.Close() }()
-
-	assert.True(t, tpm.Config().EncryptSession)
 }
 
 // ===========================================
@@ -381,7 +372,7 @@ func TestNewTPM2_WithEncryptedSessions(t *testing.T) {
 // ===========================================
 
 func TestSign_NonSignerOptsType(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Test with non-SignerOpts type
@@ -392,7 +383,7 @@ func TestSign_NonSignerOptsType(t *testing.T) {
 }
 
 func TestSign_WithNilOptsParam(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	digest := sha256.Sum256([]byte("test data"))
@@ -403,7 +394,7 @@ func TestSign_WithNilOptsParam(t *testing.T) {
 }
 
 func TestSign_RSAKeyCreationAndSigning(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Create an RSA key
@@ -442,7 +433,7 @@ func TestSign_RSAKeyCreationAndSigning(t *testing.T) {
 }
 
 func TestSign_ECDSAKeyCreationAndSigning(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Create an ECDSA key
@@ -486,7 +477,7 @@ func TestSign_ECDSAKeyCreationAndSigning(t *testing.T) {
 // SHA256 is the standard hash algorithm used with RSA keys in TPM2.
 
 func TestSign_WithInvalidHashFuncMD5(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Create an RSA key
@@ -522,7 +513,7 @@ func TestSign_WithInvalidHashFuncMD5(t *testing.T) {
 }
 
 func TestSign_WithCustomKeyBackend(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Create an RSA key
@@ -571,7 +562,7 @@ func TestSign_WithCustomKeyBackend(t *testing.T) {
 // ===========================================
 
 func TestSignValidate_NilTPMAttrsError(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	keyAttrs := &types.KeyAttributes{
@@ -586,7 +577,7 @@ func TestSignValidate_NilTPMAttrsError(t *testing.T) {
 }
 
 func TestSignValidate_ZeroPublicTypeError(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	keyAttrs := &types.KeyAttributes{
@@ -605,7 +596,7 @@ func TestSignValidate_ZeroPublicTypeError(t *testing.T) {
 }
 
 func TestSignValidate_ZeroHashAlgError(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	keyAttrs := &types.KeyAttributes{
@@ -629,7 +620,7 @@ func TestSignValidate_ZeroHashAlgError(t *testing.T) {
 // ===========================================
 
 func TestEKCertificate_ZeroCertHandleWithMockStore(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -653,7 +644,7 @@ func TestEKCertificate_ZeroCertHandleWithMockStore(t *testing.T) {
 }
 
 func TestEKCertificate_CertStoreWithMock(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -692,7 +683,7 @@ func TestEKCertificate_CertStoreWithMock(t *testing.T) {
 }
 
 func TestEKCertificate_FallbackOnNVRAMReadError(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// The default simulator setup should have EK cert handle set
@@ -714,7 +705,7 @@ func TestEKCertificate_FallbackOnNVRAMReadError(t *testing.T) {
 // ===========================================
 
 func TestHash_NilKeyAttrsError(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	_, _, err := tpm.Hash(nil, []byte("test data"))
@@ -722,7 +713,7 @@ func TestHash_NilKeyAttrsError(t *testing.T) {
 }
 
 func TestHash_NilTPMAttrsError(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	keyAttrs := &types.KeyAttributes{
@@ -735,7 +726,7 @@ func TestHash_NilTPMAttrsError(t *testing.T) {
 }
 
 func TestHash_SmallDataDirectPath(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	keyAttrs := &types.KeyAttributes{
@@ -755,7 +746,7 @@ func TestHash_SmallDataDirectPath(t *testing.T) {
 }
 
 func TestHashSequence_LargeDataSequencePath(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	keyAttrs := &types.KeyAttributes{
@@ -779,7 +770,7 @@ func TestHashSequence_LargeDataSequencePath(t *testing.T) {
 }
 
 func TestHashSequence_VeryLargeDataMultipleUpdates(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	keyAttrs := &types.KeyAttributes{
@@ -803,7 +794,7 @@ func TestHashSequence_VeryLargeDataMultipleUpdates(t *testing.T) {
 }
 
 func TestHashSequence_WithHierarchyAuthPath(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	keyAttrs := &types.KeyAttributes{
@@ -828,7 +819,7 @@ func TestHashSequence_WithHierarchyAuthPath(t *testing.T) {
 }
 
 func TestHashSequence_WithParentHierarchyAuthPath(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	parentAttrs := &types.KeyAttributes{
@@ -861,7 +852,7 @@ func TestHashSequence_WithParentHierarchyAuthPath(t *testing.T) {
 // ===========================================
 
 func TestOpen_SimulatorReopenPath(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Close and reopen
@@ -877,7 +868,7 @@ func TestOpen_SimulatorReopenPath(t *testing.T) {
 // ===========================================
 
 func TestTPM2_AlgIDMethod(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	algID := tpm.AlgID()
@@ -885,7 +876,7 @@ func TestTPM2_AlgIDMethod(t *testing.T) {
 }
 
 func TestTPM2_DeviceMethod(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	device := tpm.Device()
@@ -893,7 +884,7 @@ func TestTPM2_DeviceMethod(t *testing.T) {
 }
 
 func TestTPM2_TransportMethod(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	trans := tpm.Transport()
@@ -901,7 +892,7 @@ func TestTPM2_TransportMethod(t *testing.T) {
 }
 
 func TestTPM2_PlatformPolicyDigestMethod(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	digest, pdErr := tpm.PlatformPolicyDigest()
@@ -910,7 +901,7 @@ func TestTPM2_PlatformPolicyDigestMethod(t *testing.T) {
 }
 
 func TestFlush_WithInvalidHandle(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Flushing an invalid handle should not panic
@@ -918,7 +909,7 @@ func TestFlush_WithInvalidHandle(t *testing.T) {
 }
 
 func TestReadHandle_ValidEKHandle(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	ekAttrs, err := tpm.EKAttributes()
@@ -931,7 +922,7 @@ func TestReadHandle_ValidEKHandle(t *testing.T) {
 }
 
 func TestReadHandle_WithInvalidHandle(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	_, _, err := tpm.ReadHandle(tpm2.TPMHandle(0xDEADBEEF))
@@ -939,7 +930,7 @@ func TestReadHandle_WithInvalidHandle(t *testing.T) {
 }
 
 func TestTPM2_ConfigMethod(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	config := tpm.Config()
@@ -948,7 +939,7 @@ func TestTPM2_ConfigMethod(t *testing.T) {
 }
 
 func TestParsePublicKey_RSAType(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	ekAttrs, err := tpm.EKAttributes()
@@ -967,7 +958,7 @@ func TestParsePublicKey_RSAType(t *testing.T) {
 }
 
 func TestGetActiveTransientHandles_Internal(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -995,7 +986,7 @@ func TestSetHierarchyAuth_NilTransportError(t *testing.T) {
 // ===========================================
 
 func TestShareSecret_MinimumShares(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Test with minimum shares
@@ -1006,7 +997,7 @@ func TestShareSecret_MinimumShares(t *testing.T) {
 }
 
 func TestShareSecret_InsufficientShares(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Test with less than 2 shares
@@ -1016,7 +1007,7 @@ func TestShareSecret_InsufficientShares(t *testing.T) {
 }
 
 func TestSecretFromShares_EmptySharesError(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Test with empty shares
@@ -1025,7 +1016,7 @@ func TestSecretFromShares_EmptySharesError(t *testing.T) {
 }
 
 func TestSecretFromShares_InvalidJSONError(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Test with invalid JSON
@@ -1034,7 +1025,7 @@ func TestSecretFromShares_InvalidJSONError(t *testing.T) {
 }
 
 func TestShareAndRecoverSecret_FullRecovery(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	secret := "my-super-secret"
@@ -1059,7 +1050,7 @@ func TestShareAndRecoverSecret_FullRecovery(t *testing.T) {
 
 // TestEKCertificate_FromStore tests EK certificate retrieval from store
 func TestEKCertificate_FromStore(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Try to get EK certificate
@@ -1075,7 +1066,7 @@ func TestEKCertificate_FromStore(t *testing.T) {
 
 // TestEKCertificate_WithCertHandle tests EK certificate retrieval from NVRAM
 func TestEKCertificate_WithCertHandle(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Impl := tpm.(*TPM2)
@@ -1093,7 +1084,7 @@ func TestEKCertificate_WithCertHandle(t *testing.T) {
 
 // TestParsePublicKey_RSA tests parsing RSA public key from TPM public area
 func TestParsePublicKey_RSA(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Get EK public to use for testing
@@ -1111,7 +1102,7 @@ func TestParsePublicKey_RSA(t *testing.T) {
 
 // TestParsePublicKey_Invalid tests parsing with invalid data
 func TestParsePublicKey_Invalid(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Try to parse invalid data
@@ -1158,7 +1149,7 @@ func TestOpenDeviceTransport_SocketPath(t *testing.T) {
 
 // TestFlush tests the Flush method
 func TestFlush(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Try to flush a non-existent handle - should not panic
@@ -1167,7 +1158,7 @@ func TestFlush(t *testing.T) {
 
 // TestReadHandle_CovTPM tests the ReadHandle method
 func TestReadHandle_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Impl := tpm.(*TPM2)
@@ -1181,7 +1172,7 @@ func TestReadHandle_CovTPM(t *testing.T) {
 
 // TestReadHandle_InvalidHandle tests ReadHandle with invalid handle
 func TestReadHandle_InvalidHandle(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	_, _, err := tpm.ReadHandle(tpm2.TPMHandle(0x81FFFFFF))
@@ -1190,7 +1181,7 @@ func TestReadHandle_InvalidHandle(t *testing.T) {
 
 // TestConfig tests the Config method
 func TestConfig(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	config := tpm.Config()
@@ -1201,7 +1192,7 @@ func TestConfig(t *testing.T) {
 
 // TestRandom_CovTPM tests the Random method
 func TestRandom_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	randomBytes, err := tpm.Random()
@@ -1212,7 +1203,7 @@ func TestRandom_CovTPM(t *testing.T) {
 
 // TestRandomBytes_CovTPM tests the RandomBytes method
 func TestRandomBytes_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tests := []struct {
@@ -1236,7 +1227,7 @@ func TestRandomBytes_CovTPM(t *testing.T) {
 
 // TestEventLog tests the EventLog method
 func TestEventLog(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Event log is typically not available in simulator
@@ -1251,7 +1242,7 @@ func TestEventLog(t *testing.T) {
 
 // TestIsPlatformPCRExtended_CovTPM tests the IsPlatformPCRExtended method
 func TestIsPlatformPCRExtended_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	extended, err := tpm.IsPlatformPCRExtended()
@@ -1262,7 +1253,7 @@ func TestIsPlatformPCRExtended_CovTPM(t *testing.T) {
 
 // TestClose tests the Close method
 func TestClose(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 
 	err := tpm.Close()
 	assert.NoError(t, err)
@@ -1275,7 +1266,7 @@ func TestClose(t *testing.T) {
 
 // TestPlatformQuote_CovTPM tests the PlatformQuote method
 func TestPlatformQuote_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	iakAttrs, err := tpm.IAKAttributes()
@@ -1292,7 +1283,7 @@ func TestPlatformQuote_CovTPM(t *testing.T) {
 
 // TestQuote_CovTPM tests the Quote method with various PCR selections
 func TestQuote_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tests := []struct {
@@ -1318,7 +1309,7 @@ func TestQuote_CovTPM(t *testing.T) {
 
 // TestMakeCredential_CovTPM tests the MakeCredential method
 func TestMakeCredential_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	iakAttrs, err := tpm.IAKAttributes()
@@ -1334,7 +1325,7 @@ func TestMakeCredential_CovTPM(t *testing.T) {
 
 // TestActivateCredential_CovTPM tests the ActivateCredential method
 func TestActivateCredential_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	iakAttrs, err := tpm.IAKAttributes()
@@ -1375,7 +1366,7 @@ func TestActivateCredential_CovTPM(t *testing.T) {
 
 // TestProvision tests the Provision method
 func TestProvision(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Try to provision - may already be provisioned
@@ -1386,7 +1377,7 @@ func TestProvision(t *testing.T) {
 
 // TestSetHierarchyAuth_CovTPM tests the SetHierarchyAuth method
 func TestSetHierarchyAuth_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// This is a sensitive operation - just test that it doesn't panic
@@ -1398,7 +1389,7 @@ func TestSetHierarchyAuth_CovTPM(t *testing.T) {
 
 // TestShareSecret_CovTPM tests ShareSecret and SecretFromShares
 func TestShareSecret_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	secret := []byte("my-super-secret-key-material")
@@ -1416,7 +1407,7 @@ func TestShareSecret_CovTPM(t *testing.T) {
 
 // TestDevice_CovTPM tests the Device method
 func TestDevice_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	device := tpm.Device()
@@ -1426,7 +1417,7 @@ func TestDevice_CovTPM(t *testing.T) {
 
 // TestTransport_CovTPM tests the Transport method
 func TestTransport_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	transport := tpm.Transport()
@@ -1435,7 +1426,7 @@ func TestTransport_CovTPM(t *testing.T) {
 
 // TestAlgID_CovTPM tests the AlgID method
 func TestAlgID_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	algID := tpm.AlgID()
@@ -1444,7 +1435,7 @@ func TestAlgID_CovTPM(t *testing.T) {
 
 // TestEK_CovTPM tests the EK method
 func TestEK_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// EK() panics if not initialized - get EKAttributes first to initialize
@@ -1458,7 +1449,7 @@ func TestEK_CovTPM(t *testing.T) {
 
 // TestEKRSA_CovTPM tests the EKRSA method
 func TestEKRSA_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Initialize EK attributes first
@@ -1474,7 +1465,7 @@ func TestEKRSA_CovTPM(t *testing.T) {
 // TestEKECC_CovTPM tests the EKECC method
 // Default config uses RSA EK, so EKECC will panic - we test panic behavior
 func TestEKECC_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Initialize EK attributes first
@@ -1494,7 +1485,7 @@ func TestEKECC_CovTPM(t *testing.T) {
 
 // TestGoldenMeasurements_CovTPM tests the GoldenMeasurements method
 func TestGoldenMeasurements_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	measurements, gmErr := tpm.GoldenMeasurements()
@@ -1505,7 +1496,7 @@ func TestGoldenMeasurements_CovTPM(t *testing.T) {
 
 // TestPlatformPolicyDigest_CovTPM tests the PlatformPolicyDigest method
 func TestPlatformPolicyDigest_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	digest, pdErr := tpm.PlatformPolicyDigest()
@@ -1516,7 +1507,7 @@ func TestPlatformPolicyDigest_CovTPM(t *testing.T) {
 
 // TestPlatformPolicyDigestHash_CovTPM tests the PlatformPolicyDigestHash method
 func TestPlatformPolicyDigestHash_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	hash, err := tpm.PlatformPolicyDigestHash()
@@ -1527,7 +1518,7 @@ func TestPlatformPolicyDigestHash_CovTPM(t *testing.T) {
 
 // TestRandomHex_CovTPM tests the RandomHex method
 func TestRandomHex_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	hexBytes, err := tpm.RandomHex(32)
@@ -1537,7 +1528,7 @@ func TestRandomHex_CovTPM(t *testing.T) {
 
 // TestRandomSource_CovTPM tests the RandomSource method
 func TestRandomSource_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	source := tpm.RandomSource()
@@ -1552,7 +1543,7 @@ func TestRandomSource_CovTPM(t *testing.T) {
 
 // TestRead_CovTPM tests the Read method (io.Reader interface)
 func TestRead_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	buf := make([]byte, 32)
@@ -1933,7 +1924,7 @@ var _ transport.TPM = (*mockTransportCov)(nil)
 // with the wrong sensitive data. createKey provisions the SRK with a known,
 // non-empty password ("srk-pass"), so a different value is guaranteed wrong.
 func TestChangeAuth_WrongCurrentAuth(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	srkAttrs := createKey(tpm, false).Parent

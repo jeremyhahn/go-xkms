@@ -155,7 +155,13 @@ func (tpm *TPM2) CertifyKey(
 	// is refused, and the Certify branch of the key policy, satisfied as the
 	// Privacy Administrator, is what authorizes it (section 7.3.6.2). The IAK
 	// signs at the USER role either way, under its authValue.
-	targetAuth := tpm2.PasswordAuth(targetAuthValue)
+	iakSession, closeIAKSession, err := tpm.objectAuthSession(iakAuth, encryptNone)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeIAKSession, "Certify signer")
+
+	var targetAuth tpm2.Session
 	if kind, isDevID := devidKeyKindOf(keyAttrs.KeyType); isDevID {
 		targetPublic, err := targetPubResp.OutPublic.Contents()
 		if err != nil {
@@ -177,6 +183,13 @@ func (tpm *TPM2) CertifyKey(
 			}
 		}()
 		targetAuth = adminSession
+	} else {
+		targetSession, closeTargetSession, err := tpm.objectAuthSession(targetAuthValue, encryptNone)
+		if err != nil {
+			return nil, err
+		}
+		defer tpm.closeSession(closeTargetSession, "Certify object")
+		targetAuth = targetSession
 	}
 	certify := tpm2.Certify{
 		ObjectHandle: tpm2.AuthHandle{
@@ -187,7 +200,7 @@ func (tpm *TPM2) CertifyKey(
 		SignHandle: tpm2.AuthHandle{
 			Handle: tpm.iakAttrs.TPMAttributes.Handle,
 			Name:   tpm.iakAttrs.TPMAttributes.Name,
-			Auth:   tpm2.PasswordAuth(iakAuth),
+			Auth:   iakSession,
 		},
 		QualifyingData: tpm2.TPM2BData{
 			Buffer: nonce,
@@ -577,29 +590,26 @@ func (tpm *TPM2) activateCredential(
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	session, closer, err := tpm2.PolicySession(tpm.transport, tpm2.TPMAlgSHA256, 16)
+	session, closer, err := tpm2.PolicySession(tpm.transport, tpm2.TPMAlgSHA256, sessionNonceSize)
 	if err != nil {
 		tpm.logger.Error("failed to create policy session", slog.String("error", err.Error()))
 		return nil, err
 	}
-	defer func() {
-		if closeErr := closer(); closeErr != nil {
-			tpm.logger.Error("failed to close policy session", slog.String("error", closeErr.Error()))
-		}
-	}()
+	defer tpm.closeSession(closer, "ActivateCredential EK policy")
 
-	_, err = tpm2.PolicySecret{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHEndorsement,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		NonceTPM:      session.NonceTPM(),
-		PolicySession: session.Handle(),
-	}.Execute(tpm.transport)
+	err = tpm.policySecret(tpm2.TPMRHEndorsement, hierarchyAuth, session)
 	if err != nil {
 		tpm.logger.Error("PolicySecret failed", slog.String("error", err.Error()))
 		return nil, err
 	}
+
+	// The recovered credential is the secret the challenge proves possession
+	// of, so it leaves the TPM encrypted under a salted session.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeEncSession, "ActivateCredential encryption")
 
 	activateCredentialsResponse, err := tpm2.ActivateCredential{
 		ActivateHandle: tpm2.AuthHandle{
@@ -618,7 +628,7 @@ func (tpm *TPM2) activateCredential(
 		Secret: tpm2.TPM2BEncryptedSecret{
 			Buffer: encryptedSecret,
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
 	if err != nil {
 		tpm.logger.Error("ActivateCredential failed", slog.String("error", err.Error()))
 		return nil, ErrInvalidActivationCredential
@@ -674,12 +684,18 @@ func (tpm *TPM2) Quote(pcrs []uint, nonce []byte) (Quote, error) {
 		},
 	}
 
+	akSession, closeAKSession, err := tpm.objectAuthSession(akAuth, encryptNone)
+	if err != nil {
+		return Quote{}, err
+	}
+	defer tpm.closeSession(closeAKSession, "Quote")
+
 	// Create the quote
 	q, err := tpm2.Quote{
 		SignHandle: tpm2.AuthHandle{
 			Handle: tpm.iakAttrs.TPMAttributes.Handle,
 			Name:   tpm.iakAttrs.TPMAttributes.Name,
-			Auth:   tpm2.PasswordAuth(akAuth),
+			Auth:   akSession,
 		},
 		QualifyingData: tpm2.TPM2BData{
 			Buffer: nonce,

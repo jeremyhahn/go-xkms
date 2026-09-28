@@ -22,100 +22,272 @@ var (
 	// ErrPlatformPolicyDigestCompute is returned when the platform policy digest
 	// computation fails.
 	ErrPlatformPolicyDigestCompute = errors.New("tpm2: failed to compute platform policy digest")
+
+	// ErrSaltKey is returned when no key could be resolved or created to salt
+	// an authorization session against.
+	ErrSaltKey = errors.New("tpm2: failed to resolve the session salt key")
+
+	// ErrSaltedSession is returned when a salted HMAC session could not be
+	// started.
+	ErrSaltedSession = errors.New("tpm2: failed to start salted session")
 )
 
-// Creates an unsalted, unauthenticated HMAC session with the TPM. If
-// session encryption is enabled in the platform configuration file,
-// the TPM <-> CPU bus is encrypted using AES-128 CFB.
-func (tpm *TPM2) HMAC(auth []byte) tpm2.Session {
-	if tpm.config.EncryptSession {
-		tpm.logger.Debug("tpm: creating unauthenticated, unsalted, encrypted HMAC session")
-		return tpm2.HMAC(
-			tpm2.TPMAlgSHA256,
-			16,
-			tpm2.Auth(auth),
-			// AESEncryption uses the session to encrypt the first parameter sent to/from
-			// the TPM.
-			// Note that only commands whose first command/response parameter is a 2B can
-			// support session encryption.
-			// EncryptIn specifies a decrypt session.
-			// EncryptOut specifies an encrypt session.
-			// EncryptInOut specifies a decrypt+encrypt session
-			tpm2.AESEncryption(
-				128,
-				tpm2.EncryptInOut))
-	}
-	tpm.logger.Debug("tpm: creating unauthenticated, unsalted, UNencrypted HMAC session")
+// sessionNonceSize is the nonceCaller size of every session this package
+// starts.
+const sessionNonceSize = 16
 
-	return tpm2.HMAC(
-		tpm2.TPMAlgSHA256,
-		16,
-		tpm2.Password(auth))
+// sessionAESKeyBits is the AES key size used for session parameter
+// encryption (AES-128-CFB, the size every TPM 2.0 implements).
+const sessionAESKeyBits = 128
+
+// paramEncryption names the parameter a session encrypts on the TPM bus.
+// The TPM can only encrypt a command's or response's first parameter, and
+// only when that parameter is a TPM2B; setting the decrypt or encrypt
+// attribute on a session for a command that has no such parameter is refused
+// with TPM_RC_ATTRIBUTES (TCG TPM 2.0 Part 1, section 21). Each secret-bearing
+// command therefore names the one direction its secret travels in.
+type paramEncryption uint8
+
+const (
+	// encryptNone carries no parameter encryption: the command's parameters
+	// hold no secret.
+	encryptNone paramEncryption = iota
+
+	// encryptIn encrypts the command's first parameter on its way into the
+	// TPM (the session's decrypt attribute): TPM2B_SENSITIVE_CREATE,
+	// TPM2B_AUTH, TPM2B_MAX_NV_BUFFER and the like.
+	encryptIn
+
+	// encryptOut encrypts the response's first parameter on its way out of
+	// the TPM (the session's encrypt attribute): unsealed data, NV contents,
+	// decrypted plaintext, shared secrets and activated credentials.
+	encryptOut
+)
+
+// paramEncryptionOptions maps each encrypting direction to the go-tpm
+// session option that sets the matching session attribute.
+var paramEncryptionOptions = map[paramEncryption]tpm2.AuthOption{
+	encryptIn:  tpm2.AESEncryption(sessionAESKeyBits, tpm2.EncryptIn),
+	encryptOut: tpm2.AESEncryption(sessionAESKeyBits, tpm2.EncryptOut),
 }
 
-// Creates an authenticated, unsalted HMAC session with the TPM. If session
-// encryption is enabled in the platform configuration file, the TPM <-> CPU
-// bus is encrypted using AES-128 CFB.
-func (tpm *TPM2) HMACSession(auth []byte) (s tpm2.Session, close func() error, err error) {
-	if tpm.config.EncryptSession {
-		tpm.logger.Debug("tpm: creating encrypted HMAC session")
-		if tpm.debugSecrets {
-			tpm.logger.Debug("tpm: HMAC session auth", slog.String("auth", string(auth)))
+// noopCloser is the closer handed back with a session that needs no flush.
+func noopCloser() error { return nil }
+
+// saltKey returns the loaded key a session is salted against, together with
+// a release function the caller runs once the session has started.
+//
+// The salt is what keeps a bus observer out: the session key is derived from
+// a random salt encrypted to this key (TCG TPM 2.0 Part 1, section 19.6.13),
+// so the captured traffic of a salted session neither reveals the parameters
+// it encrypts nor lets the auth value behind its HMAC be brute forced offline.
+//
+// The persistent Endorsement Key is used whenever it is resident. It is only
+// read here -- TPM2_ReadPublic -- and never modified. Before it exists (between
+// TPM2_Clear and CreateEK during provisioning, or on a TPM whose EK was never
+// persisted) an ephemeral ECC P-256 storage key is created in the NULL
+// hierarchy from go-tpm's TCG SRK template. The NULL hierarchy needs no
+// authorization, so creating it discloses nothing; release flushes it. The
+// salt key is only needed by TPM2_StartAuthSession, so releasing it
+// immediately afterwards does not affect the session.
+func (tpm *TPM2) saltKey() (tpm2.TPMHandle, tpm2.TPMTPublic, func() error, error) {
+	if tpm.config.EK != nil && tpm.config.EK.Handle != 0 {
+		ekHandle := tpm2.TPMHandle(tpm.config.EK.Handle)
+		_, ekPub, err := tpm.ReadHandle(ekHandle)
+		if err == nil {
+			return ekHandle, ekPub, noopCloser, nil
 		}
-		return tpm2.HMACSession(
-			tpm.transport,
-			tpm2.TPMAlgSHA256,
-			16,
-			tpm2.Auth(auth),
-			tpm2.AESEncryption(
-				128,
-				tpm2.EncryptInOut))
+		if !isAbsentHandle(err) {
+			return 0, tpm2.TPMTPublic{}, noopCloser, &errs.Joined{Lead: ErrSaltKey, Detail: "read EK public", Cause: err}
+		}
 	}
-	tpm.logger.Debug("tpm: creating UNencrypted HMAC session")
-	if tpm.debugSecrets {
-		tpm.logger.Debug("tpm: HMAC session auth", slog.String("auth", string(auth)))
+
+	primary, err := tpm2.CreatePrimary{
+		PrimaryHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHNull,
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		InPublic: tpm2.New2B(tpm2.ECCSRKTemplate),
+	}.Execute(tpm.transport)
+	if err != nil {
+		return 0, tpm2.TPMTPublic{}, noopCloser, &errs.Joined{Lead: ErrSaltKey, Detail: "create NULL hierarchy salt key", Cause: err}
 	}
-	return tpm2.HMACSession(
-		tpm.transport,
-		tpm2.TPMAlgSHA256,
-		16,
-		tpm2.Auth(auth))
+	release := func() error {
+		_, err := tpm2.FlushContext{FlushHandle: primary.ObjectHandle}.Execute(tpm.transport)
+		return err
+	}
+	pub, err := primary.OutPublic.Contents()
+	if err != nil {
+		if releaseErr := release(); releaseErr != nil {
+			tpm.logger.Error("tpm: failed to flush NULL hierarchy salt key", slog.String("error", releaseErr.Error()))
+		}
+		return 0, tpm2.TPMTPublic{}, noopCloser, &errs.Joined{Lead: ErrSaltKey, Detail: "NULL hierarchy salt key public", Cause: err}
+	}
+	return primary.ObjectHandle, *pub, release, nil
 }
 
-// Creates an authenticated, salted HMAC session with the TPM. If session
-// encryption is enabled in the platform configuration file, the TPM <-> CPU
-// bus is encrypted using AES-128 CFB.
+// isAbsentHandle reports whether err is the TPM's answer to reading an
+// unpopulated persistent handle: TPM_RC_HANDLE, or TPM_RC_VALUE on TPMs that
+// report a handle outside the populated range that way.
+func isAbsentHandle(err error) bool {
+	return errors.Is(err, tpmRCHandle) || errors.Is(err, tpm2.TPMRC(0x184))
+}
+
+// startHMACSession starts a reusable HMAC session salted against the loaded
+// key at saltHandle, encrypting the parameter dir names. opts carry the auth
+// value and binding. The session's closer flushes it.
+func (tpm *TPM2) startHMACSession(
+	saltHandle tpm2.TPMHandle,
+	saltPub tpm2.TPMTPublic,
+	dir paramEncryption,
+	opts ...tpm2.AuthOption) (tpm2.Session, func() error, error) {
+
+	sessionOpts := append([]tpm2.AuthOption{tpm2.Salted(saltHandle, saltPub)}, opts...)
+	if encryption, ok := paramEncryptionOptions[dir]; ok {
+		sessionOpts = append(sessionOpts, encryption)
+	}
+	session, closer, err := tpm2.HMACSession(
+		tpm.transport, tpm2.TPMAlgSHA256, sessionNonceSize, sessionOpts...)
+	if err != nil {
+		return nil, noopCloser, &errs.Joined{Lead: ErrSaltedSession, Cause: err}
+	}
+	return session, closer, nil
+}
+
+// saltedSession starts a reusable HMAC session salted against saltKey,
+// encrypting the parameter dir names. opts carry the auth value and binding.
+// The session's closer flushes it.
+func (tpm *TPM2) saltedSession(
+	dir paramEncryption,
+	opts ...tpm2.AuthOption) (tpm2.Session, func() error, error) {
+
+	saltHandle, saltPub, release, err := tpm.saltKey()
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	session, closer, err := tpm.startHMACSession(saltHandle, saltPub, dir, opts...)
+	tpm.closeSession(release, "salt key")
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	return session, closer, nil
+}
+
+// encryptionSession starts a salted session that authorizes nothing and
+// exists only to encrypt one parameter of the command it is attached to, as
+// an extra session after the command's authorization sessions. It carries
+// the secret of a command whose authorization is a policy or password
+// session and so cannot encrypt it -- a policy session answering the PCR
+// branch does not know the authValue the TPM mixes into an authorization
+// session's encryption key (TCG TPM 2.0 Part 1, section 21.1).
+func (tpm *TPM2) encryptionSession(dir paramEncryption) (tpm2.Session, func() error, error) {
+	return tpm.saltedSession(dir)
+}
+
+// objectAuthSession returns the authorization for an object or NV index whose
+// authValue is auth, encrypting the parameter dir names.
+//
+// An auth value never crosses the bus: a non-empty auth is proven through a
+// salted HMAC session, whose HMAC key the salt keeps out of reach of an
+// offline brute force. An empty auth with nothing to encrypt has no secret to
+// protect and is answered with a zero-round-trip empty password session.
+func (tpm *TPM2) objectAuthSession(auth []byte, dir paramEncryption) (tpm2.Session, func() error, error) {
+	if len(auth) == 0 && dir == encryptNone {
+		return tpm2.PasswordAuth(nil), noopCloser, nil
+	}
+	return tpm.saltedSession(dir, tpm2.Auth(auth))
+}
+
+// hierarchyAuthSession returns the authorization for a hierarchy whose
+// authorization value is auth, encrypting the parameter dir names.
+//
+// A non-empty hierarchy auth -- the SO PIN -- is proven through a salted HMAC
+// session bound to the hierarchy. The binding matters for the commands that
+// change the hierarchy's own authorization (TPM2_HierarchyChangeAuth,
+// TPM2_Clear): the TPM computes their response HMAC with the new value, and a
+// bound session authorizing its bind entity leaves the authValue out of the
+// HMAC key altogether (TCG TPM 2.0 Part 1, section 19.6.5), so the response
+// verifies under the session key alone.
+func (tpm *TPM2) hierarchyAuthSession(
+	hierarchy tpm2.TPMHandle,
+	auth []byte,
+	dir paramEncryption) (tpm2.Session, func() error, error) {
+
+	if len(auth) == 0 && dir == encryptNone {
+		return tpm2.PasswordAuth(nil), noopCloser, nil
+	}
+	return tpm.saltedSession(dir,
+		tpm2.Auth(auth),
+		tpm2.Bound(hierarchy, tpm2.HandleName(hierarchy), auth))
+}
+
+// withHierarchyAuth runs execute with an authorization handle for hierarchy
+// whose session proves auth and encrypts the parameter dir names (see
+// hierarchyAuthSession). The session is flushed once execute returns.
+func (tpm *TPM2) withHierarchyAuth(
+	hierarchy tpm2.TPMHandle,
+	auth []byte,
+	dir paramEncryption,
+	execute func(tpm2.AuthHandle) error) error {
+
+	session, closer, err := tpm.hierarchyAuthSession(hierarchy, auth, dir)
+	if err != nil {
+		return err
+	}
+	defer tpm.closeSession(closer, "hierarchy authorization")
+	return execute(tpm2.AuthHandle{
+		Handle: hierarchy,
+		Auth:   session,
+	})
+}
+
+// policySecret executes TPM2_PolicySecret in policySession, proving knowledge
+// of the hierarchy's authorization value through hierarchyAuthSession.
+func (tpm *TPM2) policySecret(
+	hierarchy tpm2.TPMHandle,
+	auth []byte,
+	policySession tpm2.Session) error {
+
+	return tpm.withHierarchyAuth(hierarchy, auth, encryptNone, func(authHandle tpm2.AuthHandle) error {
+		_, err := tpm2.PolicySecret{
+			AuthHandle:    authHandle,
+			NonceTPM:      policySession.NonceTPM(),
+			PolicySession: policySession.Handle(),
+		}.Execute(tpm.transport)
+		return err
+	})
+}
+
+// closeSession runs a session closer, logging rather than returning its
+// failure: it is called on paths that already carry the command's result.
+func (tpm *TPM2) closeSession(closer func() error, what string) {
+	if err := closer(); err != nil {
+		tpm.logger.Error("tpm: failed to close session",
+			slog.String("session", what),
+			slog.String("error", err.Error()))
+	}
+}
+
+// HMACSession starts a reusable HMAC session carrying auth, salted against
+// the Endorsement Key (see saltKey), so neither the auth value nor anything
+// derived from it can be recovered from the TPM bus. The caller must invoke
+// the returned closer to flush the session.
+func (tpm *TPM2) HMACSession(auth []byte) (s tpm2.Session, close func() error, err error) {
+	return tpm.saltedSession(encryptNone, tpm2.Auth(auth))
+}
+
+// HMACSaltedSession starts a reusable HMAC session carrying auth, salted
+// against the loaded key at handle whose public area is pub. The key must be
+// a loaded RSA or ECC decryption key. The caller must invoke the returned
+// closer to flush the session.
 func (tpm *TPM2) HMACSaltedSession(
 	handle tpm2.TPMHandle,
 	pub tpm2.TPMTPublic,
 	auth []byte) (s tpm2.Session, close func() error, err error) {
 
-	if tpm.config.EncryptSession {
-		tpm.logger.Debug("tpm: creating salted, encrypted HMAC session with primary key",
-			slog.String("handle", fmt.Sprintf("0x%x", handle)))
-		if tpm.debugSecrets {
-			tpm.logger.Debug("tpm: HMAC session auth", slog.String("auth", string(auth)))
-		}
-		return tpm2.HMACSession(
-			tpm.transport,
-			tpm2.TPMAlgSHA256,
-			16,
-			tpm2.Auth(auth),
-			tpm2.AESEncryption(
-				128,
-				tpm2.EncryptInOut),
-			tpm2.Salted(handle, pub))
-	}
-	tpm.logger.Debug("tpm: creating salted, UNencrypted HMAC session with key",
-		slog.String("handle", fmt.Sprintf("0x%x", handle)))
-	if tpm.debugSecrets {
-		tpm.logger.Debug("tpm: HMAC session auth", slog.String("auth", string(auth)))
-	}
-	return tpm2.HMACSession(
-		tpm.transport,
-		tpm2.TPMAlgSHA256,
-		16,
-		[]tpm2.AuthOption{tpm2.Auth(auth)}...)
+	tpm.logger.Debug("tpm: creating salted HMAC session",
+		slog.String("salt_handle", fmt.Sprintf("0x%x", handle)))
+	return tpm.startHMACSession(handle, pub, encryptNone, tpm2.Auth(auth))
 }
 
 // PlatformPolicySession creates a PolicyOR session supporting both PCR-based
@@ -210,15 +382,28 @@ func (tpm *TPM2) platformPolicySession(
 	}
 
 	// Create the real policy session.
-	// When using the password branch (PolicyAuthValue), the auth value must
-	// be bound to the session so that the HMAC computation includes it.
-	// Per TPM 2.0 Part 1, Section 19.6: HMAC key = sessionKey || authValue.
+	//
+	// The password branch (PolicyAuthValue) makes the session HMAC key
+	// sessionKey || authValue (TPM 2.0 Part 1, Section 19.6), so the auth
+	// value is handed to the session -- and the session is salted. Unsalted,
+	// the session key is empty and the HMAC key is the auth value alone: a
+	// single captured command lets an observer brute force the PIN offline.
+	// The PCR branch proves no secret and needs no salt.
 	var sessionOpts []tpm2.AuthOption
+	releaseSaltKey := noopCloser
 	if !usePCRBranch && len(auth) > 0 {
-		sessionOpts = append(sessionOpts, tpm2.Auth(auth))
+		saltHandle, saltPub, release, saltErr := tpm.saltKey()
+		if saltErr != nil {
+			return nil, nil, &errs.Joined{Lead: ErrPlatformPolicySession, Cause: saltErr}
+		}
+		releaseSaltKey = release
+		sessionOpts = append(sessionOpts,
+			tpm2.Auth(auth),
+			tpm2.Salted(saltHandle, saltPub))
 	}
 	session, closer, err := tpm2.PolicySession(
-		tpm.transport, hashAlgID, 16, sessionOpts...)
+		tpm.transport, hashAlgID, sessionNonceSize, sessionOpts...)
+	tpm.closeSession(releaseSaltKey, "salt key")
 	if err != nil {
 		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -290,7 +475,10 @@ func (tpm *TPM2) platformPolicySession(
 	return session, closer, nil
 }
 
-// Creates a one-time use TPM nonce session
+// NonceSession returns a policy session that has executed TPM2_PolicySecret
+// against the Endorsement hierarchy, proving hierarchyAuth through a salted
+// HMAC session (see hierarchyAuthSession). The caller must invoke the returned
+// closer to flush the policy session.
 func (tpm *TPM2) NonceSession(hierarchyAuth types.Password) (tpm2.Session, func() error, error) {
 
 	var auth []byte
@@ -299,26 +487,15 @@ func (tpm *TPM2) NonceSession(hierarchyAuth types.Password) (tpm2.Session, func(
 	}
 
 	session, closer, err := tpm2.PolicySession(
-		tpm.transport, tpm2.TPMAlgSHA256, 16)
+		tpm.transport, tpm2.TPMAlgSHA256, sessionNonceSize)
 	if err != nil {
 		tpm.logger.Error("failed to create nonce policy session", slog.String("error", err.Error()))
 		return nil, nil, err
 	}
 
-	_, err = tpm2.PolicySecret{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHEndorsement,
-			Auth:   tpm2.PasswordAuth(auth),
-		},
-		NonceTPM:      session.NonceTPM(),
-		PolicySession: session.Handle(),
-	}.Execute(tpm.transport)
-	if err != nil {
+	if err := tpm.policySecret(tpm2.TPMRHEndorsement, auth, session); err != nil {
 		tpm.logger.Error("failed to execute PolicySecret", slog.String("error", err.Error()))
-		// Clean up session before returning error
-		if closeErr := closer(); closeErr != nil {
-			tpm.logger.Error("Failed to close session after PolicySecret error", slog.String("error", closeErr.Error()))
-		}
+		tpm.closeSession(closer, "nonce policy")
 		return nil, nil, err
 	}
 
@@ -333,13 +510,16 @@ func (tpm *TPM2) NonceSession(hierarchyAuth types.Password) (tpm2.Session, func(
 //     (password branch of PolicyOR for auto-unseal-capable keys)
 //   - Password == nil AND PlatformPolicy = true: PlatformPolicySession(nil)
 //     (PCR branch of PolicyOR for automatic unlock)
-//   - Password != nil AND PlatformPolicy = false: PasswordAuth(password)
-//     (default password-only, no auto-unseal)
+//   - Password != nil AND PlatformPolicy = false: salted HMAC session
+//     proving the password (default password-only, no auto-unseal)
 //   - Neither: empty password auth
 //
-// When PlatformPolicy is false and encryption is enabled, a salted HMAC
-// session is created using the parent key. This function returns a session
-// closer function that needs to be called to close the session when complete.
+// Every session that proves a non-empty auth value is salted (see saltKey),
+// so the value never crosses the TPM bus and cannot be brute forced from a
+// capture. The session only authorizes: a command whose parameters carry a
+// secret attaches an encryptionSession for it. This function returns a
+// session closer function that needs to be called to close the session when
+// complete.
 func (tpm *TPM2) CreateSession(
 	keyAttrs *types.KeyAttributes) (tpm2.Session, func() error, error) {
 
@@ -352,8 +532,6 @@ func (tpm *TPM2) CreateSession(
 	if keyAttrs.Parent == nil {
 		return tpm.CreateKeySession(keyAttrs)
 	}
-
-	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
 
 	if keyAttrs.Parent.PlatformPolicy {
 
@@ -407,32 +585,12 @@ func (tpm *TPM2) CreateSession(
 		return session, closer, nil
 	}
 
-	// No PlatformPolicy: extract password for standard auth
+	// No PlatformPolicy: the parent's auth value, proven through a salted
+	// HMAC session when it has one.
 	if keyAttrs.Parent.Password != nil {
 		parentAuth = keyAttrs.Parent.Password.Bytes()
 	}
-
-	_, parentPub, err := tpm.ReadHandle(parentHandle)
-	if err != nil {
-		return session, closer, err
-	}
-
-	if tpm.config.EncryptSession {
-
-		// Create salted (encrypted) session using parent key
-		session, closer, err = tpm.HMACSaltedSession(
-			parentHandle,
-			parentPub,
-			parentAuth)
-		if err != nil {
-			tpm.logger.Error("failed to create salted session", slog.String("error", err.Error()))
-			return session, closer, err
-		}
-		return session, closer, nil
-	}
-
-	session = tpm2.PasswordAuth(parentAuth)
-	return session, closer, nil
+	return tpm.objectAuthSession(parentAuth, encryptNone)
 }
 
 // devidKeySession answers the USER-role authorization for an IDevID or IAK.
@@ -447,8 +605,6 @@ func (tpm *TPM2) devidKeySession(
 	kind DevIDKeyKind,
 	keyAttrs *types.KeyAttributes) (tpm2.Session, func() error, error) {
 
-	noopCloser := func() error { return nil }
-
 	var keyAuth []byte
 	if keyAttrs.Password != nil {
 		if _, err := keyAttrs.Password.String(); err != nil {
@@ -456,13 +612,10 @@ func (tpm *TPM2) devidKeySession(
 		}
 		keyAuth = keyAttrs.Password.Bytes()
 	}
-	if len(keyAuth) > 0 {
-		return tpm2.PasswordAuth(keyAuth), noopCloser, nil
-	}
-	if keyAttrs.PlatformPolicy {
+	if len(keyAuth) == 0 && keyAttrs.PlatformPolicy {
 		return tpm.devidPlatformDelegatedSession(kind, keyAttrs)
 	}
-	return tpm2.PasswordAuth(nil), noopCloser, nil
+	return tpm.objectAuthSession(keyAuth, encryptNone)
 }
 
 // loadPlatformPolicyPin returns the platform policy pin recorded beside the
@@ -529,9 +682,12 @@ func (tpm *TPM2) loadPlatformPolicyPin(
 //     (password branch of PolicyOR for auto-unseal-capable keys)
 //   - Password == nil AND PlatformPolicy = true: PlatformPolicySession(nil)
 //     (PCR branch of PolicyOR for automatic unlock)
-//   - Password != nil AND PlatformPolicy = false: PasswordAuth(password)
-//     (default password-only, no auto-unseal)
+//   - Password != nil AND PlatformPolicy = false: salted HMAC session
+//     proving the password (default password-only, no auto-unseal)
 //   - Neither: empty password auth
+//
+// As with CreateSession, the session only authorizes and every non-empty
+// auth value is proven through a salted session.
 //
 // The key's platform policy pin, when it has one, is resolved from the
 // platform backend. Callers holding a different backend -- the seal and unseal
@@ -562,8 +718,7 @@ func (tpm *TPM2) createKeySession(
 
 	// Callers register their closer in a defer before inspecting the error,
 	// so every return path -- including the failures -- has to hand back a
-	// callable closer.
-	noopCloser := func() error { return nil }
+	// callable closer (noopCloser).
 
 	// An IDevID or IAK carries the TCG IDevID/IAK Key Policy as its
 	// authPolicy, not the platform policy, so a platform-policy session
@@ -617,6 +772,7 @@ func (tpm *TPM2) createKeySession(
 		}
 	} else {
 
+		var keyAuth []byte
 		if keyAttrs.Password != nil {
 			// Check if password is valid (error passwords return error from String())
 			_, err = keyAttrs.Password.String()
@@ -628,10 +784,11 @@ func (tpm *TPM2) createKeySession(
 				// unseal path skips the transient-object flushes below it.
 				return nil, noopCloser, err
 			}
-			keyAuth := keyAttrs.Password.Bytes()
-			session = tpm2.PasswordAuth(keyAuth)
-		} else {
-			session = tpm2.PasswordAuth(nil)
+			keyAuth = keyAttrs.Password.Bytes()
+		}
+		session, closer, err = tpm.objectAuthSession(keyAuth, encryptNone)
+		if err != nil {
+			return nil, noopCloser, err
 		}
 	}
 
@@ -649,17 +806,10 @@ func (tpm *TPM2) createKeySession(
 // When session is nil, the ParentHandle authorization session is built by
 // TPM2.CreateSession using the exact same selection logic used at key
 // creation time (see CreateSession's doc comment): a PolicyOR session when
-// the parent uses PlatformPolicy, a salted/encrypted HMAC session when
-// tpm.config.EncryptSession is enabled, or a zero-round-trip PasswordAuth
-// pseudo-session otherwise. Building an ad hoc, always-real HMAC session
-// here (independent of that selection logic, as this function used to do
-// via TPM2.HMAC) unconditionally issues a TPM2_StartAuthSession command
-// even when EncryptSession is disabled and the parent has no policy --
-// unlike key creation, which in that configuration never talks to the TPM
-// for the auth session at all. On TPM/kernel combinations where
-// TPM2_StartAuthSession is unusable through the resource manager device,
-// that asymmetry made key generation succeed while every subsequent
-// LoadKeyPair call (delete, sign, ECDH, attestation, unseal) failed.
+// the parent uses PlatformPolicy, a salted HMAC session when the parent has
+// an auth value, or a zero-round-trip empty PasswordAuth otherwise. Load and
+// creation therefore issue the same session commands, so a TPM that can
+// create a key under a parent can also load it.
 func (tpm *TPM2) LoadKeyPair(
 	keyAttrs *types.KeyAttributes,
 	session *tpm2.Session,

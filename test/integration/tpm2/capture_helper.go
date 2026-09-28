@@ -49,7 +49,7 @@ type TPM2TestSetup struct {
 }
 
 // NewTPM2TestSetup creates a complete TPM test environment with packet capture
-func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
+func NewTPM2TestSetup(t *testing.T) *TPM2TestSetup {
 	// Create temporary directory
 	tmpDir, err := os.MkdirTemp("", "tpm2-capture-test-*")
 	require.NoError(t, err, "Failed to create temp directory")
@@ -125,7 +125,6 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 	tpmConfig := &tpm2ks.Config{
 		Device:          "", // Not using device, using custom transport
 		UseSimulator:    false,
-		EncryptSession:  encryptSession,
 		Hash:            "SHA-256",
 		PlatformPCR:     16,
 		PlatformPCRBank: "sha256",

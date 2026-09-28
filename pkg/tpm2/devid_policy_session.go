@@ -63,14 +63,7 @@ func (tpm *TPM2) DevIDAdminSession(
 
 	role := fmt.Sprintf("ADMIN 0x%08x", uint32(command))
 	return tpm.devidPolicySession(kind, nameAlg, role, func(session tpm2.Session) error {
-		_, err := tpm2.PolicySecret{
-			AuthHandle: tpm2.AuthHandle{
-				Handle: tpm2.TPMRHEndorsement,
-				Auth:   tpm2.PasswordAuth(endorsementAuth),
-			},
-			NonceTPM:      session.NonceTPM(),
-			PolicySession: session.Handle(),
-		}.Execute(tpm.transport)
+		err := tpm.policySecret(tpm2.TPMRHEndorsement, endorsementAuth, session)
 		if err != nil {
 			return devidPolicyStepError("PolicySecret(endorsement)", err)
 		}

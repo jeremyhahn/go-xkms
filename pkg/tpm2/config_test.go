@@ -1115,7 +1115,6 @@ func TestConfigStructTags_Extended(t *testing.T) {
 	config := Config{
 		CommandAddress:               "localhost:2321",
 		Device:                       "/dev/tpmrm0",
-		EncryptSession:               true,
 		UseSimulator:                 false,
 		Hash:                         "SHA-256",
 		PlatformPCR:                  16,
@@ -1131,7 +1130,6 @@ func TestConfigStructTags_Extended(t *testing.T) {
 
 	assert.Equal(t, "localhost:2321", config.CommandAddress)
 	assert.Equal(t, "/dev/tpmrm0", config.Device)
-	assert.True(t, config.EncryptSession)
 	assert.False(t, config.UseSimulator)
 	assert.Equal(t, "SHA-256", config.Hash)
 	assert.Equal(t, uint(16), config.PlatformPCR)

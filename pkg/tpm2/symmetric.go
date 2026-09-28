@@ -143,6 +143,14 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 		),
 	}
 
+	// The key material is encrypted on its way into the TPM by a salted
+	// session.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptIn)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeEncSession, "symmetric key creation encryption")
+
 	// Create the sealed object with the key material
 	createResp, err := tpm2.Create{
 		ParentHandle: &tpm2.NamedHandle{
@@ -159,7 +167,7 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 				),
 			},
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
 
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to create symmetric key", Err: err}
@@ -586,14 +594,20 @@ func (e *tpm2AESEncrypter) loadKeyMaterial() ([]byte, error) {
 	// here would otherwise leave a leaked transient handle unreported.
 	defer e.tpm.Flush(loadResp.ObjectHandle)
 
-	// Unseal the key material using TPM2_Unseal
+	// Unseal the key material using TPM2_Unseal. The key material leaves
+	// the TPM encrypted under a salted session.
+	encSession, closeEncSession, err := e.tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return nil, err
+	}
+	defer e.tpm.closeSession(closeEncSession, "symmetric key unseal encryption")
 	unsealResp, err := tpm2.Unseal{
 		ItemHandle: tpm2.AuthHandle{
 			Handle: loadResp.ObjectHandle,
 			Name:   loadResp.Name,
 			Auth:   tpm2.PasswordAuth(nil), // No password protection for now
 		},
-	}.Execute(e.tpm.transport)
+	}.Execute(e.tpm.transport, encSession)
 
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to unseal key material", Err: err}

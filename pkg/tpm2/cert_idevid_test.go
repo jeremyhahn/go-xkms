@@ -127,7 +127,7 @@ func certForTPMKey(t *testing.T, attrs *types.KeyAttributes, cn string) *x509.Ce
 
 // TestProvisionIDevIDCert_NotConfigured tests error when IDevID not configured
 func TestProvisionIDevIDCert_NotConfigured(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Get internal TPM2 to modify config
@@ -143,7 +143,7 @@ func TestProvisionIDevIDCert_NotConfigured(t *testing.T) {
 
 // TestIDevIDCertificate_NotConfigured tests error when IDevID not configured
 func TestIDevIDCertificate_NotConfigured(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Impl := tpm.(*TPM2)
@@ -157,7 +157,7 @@ func TestIDevIDCertificate_NotConfigured(t *testing.T) {
 
 // TestDeleteIDevIDCertificate_NotConfigured tests error when IDevID not configured
 func TestDeleteIDevIDCertificate_NotConfigured(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Impl := tpm.(*TPM2)
@@ -171,7 +171,7 @@ func TestDeleteIDevIDCertificate_NotConfigured(t *testing.T) {
 
 // TestProvisionIAKCert_NotConfigured tests error when IAK not configured
 func TestProvisionIAKCert_NotConfigured(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Impl := tpm.(*TPM2)
@@ -186,7 +186,7 @@ func TestProvisionIAKCert_NotConfigured(t *testing.T) {
 
 // TestIAKCertificate_NotConfigured tests error when IAK not configured
 func TestIAKCertificate_NotConfigured(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Impl := tpm.(*TPM2)
@@ -200,7 +200,7 @@ func TestIAKCertificate_NotConfigured(t *testing.T) {
 
 // TestDeleteIAKCertificate_NotConfigured tests error when IAK not configured
 func TestDeleteIAKCertificate_NotConfigured(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Impl := tpm.(*TPM2)
@@ -214,7 +214,7 @@ func TestDeleteIAKCertificate_NotConfigured(t *testing.T) {
 
 // TestWriteCertToStore_NotConfigured tests error when cert store is nil
 func TestWriteCertToStore_NotConfigured(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Impl := tpm.(*TPM2)
@@ -322,7 +322,7 @@ func TestProvisionIDevIDCert_PublicKeyMismatch(t *testing.T) {
 
 // TestProvisionIAKCert_PublicKeyMismatch tests public key validation
 func TestProvisionIAKCert_PublicKeyMismatch(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)

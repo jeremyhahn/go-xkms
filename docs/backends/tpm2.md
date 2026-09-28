@@ -171,11 +171,10 @@ required; rotating the key is what grants it agility.
 
 ```go
 config := &tpm2.Config{
-    CN:             "my-xkms",
-    DevicePath:     "/dev/tpmrm0",  // or /dev/tpm0
-    SRKHandle:      0x81000001,
-    Hierarchy:      "owner",
-    EncryptSession: true,
+    CN:         "my-xkms",
+    DevicePath: "/dev/tpmrm0",  // or /dev/tpm0
+    SRKHandle:  0x81000001,
+    Hierarchy:  "owner",
 }
 ```
 
@@ -191,43 +190,29 @@ config := &tpm2.Config{
 }
 ```
 
-### Session Encryption (Recommended)
+### Session Encryption (Always On)
 
-Session encryption protects sensitive data in transit between the CPU and TPM:
+Session encryption is not configurable. Every secret that crosses the bus
+between the CPU and the TPM is protected unconditionally; the former
+`EncryptSession` field — which defaulted to `false` — was removed (#1147).
 
-```go
-config := &tpm2.Config{
-    CN:             "my-xkms",
-    DevicePath:     "/dev/tpmrm0",
-    SRKHandle:      0x81000001,
-    EncryptSession: true,  // RECOMMENDED: Enable encryption (default)
-}
-```
+- **Salted sessions.** Every session that carries a secret is salted against
+  the persistent EK, which is only read, never modified. Before an EK exists
+  (between `TPM2_Clear` and EK creation) an ephemeral NULL-hierarchy ECC P-256
+  key is used and flushed immediately (`saltKey`, `pkg/tpm2/session.go:93`).
+- **No password sessions for secrets.** A non-empty auth value — the SO PIN as
+  hierarchy authorization, the USER PIN as the Platform SRK's auth value, key
+  passwords — is proven through a salted HMAC session and never sent
+  (`objectAuthSession` `session.go:194`, `hierarchyAuthSession`
+  `session.go:211`). The `PolicyAuthValue` (PIN) branch of the platform policy
+  is salted too (`platformPolicySession`, `session.go:345`).
+- **Parameter encryption.** AES-128-CFB on the secret parameter, in the
+  direction it travels: sensitive areas and new auth values into the TPM,
+  unsealed data, NV contents, decrypted plaintext, ECDH shared secrets and
+  random bytes out of it (`paramEncryption`, `session.go:49`).
 
-**Why Enable Session Encryption:**
-
-- **Security**: Protects against man-in-the-middle attacks and bus snooping
-- **Compliance**: Required for FIPS 140-2/3, Common Criteria EAL4+
-- **Minimal Overhead**: <5ms additional latency per operation
-- **Transparent**: Automatically applied to all TPM operations
-
-**When to Disable (Debugging Only):**
-
-```go
-config.EncryptSession = false  // Only for debugging/troubleshooting
-```
-
-- Local development and testing
-- TPM command troubleshooting
-- Performance benchmarking
-- **NEVER disable in production**
-
-**Technical Details:**
-
-- Uses AES-128 in CFB mode for symmetric encryption
-- Encrypts EncryptIn direction (CPU → TPM parameters)
-- Applied to HMAC sessions created via HMAC(), HMACSession(), HMACSaltedSession()
-- Session keys derived from TPM-generated random values
+The full command inventory is in
+[`../tpm2/engineering.md`](../tpm2/engineering.md) §"Bus protection".
 
 ### Platform PCR Policy
 
@@ -250,12 +235,6 @@ certStorage, _ := file.New("/var/lib/xkms/certs")
 // Create TPM xkms with secure defaults
 config := tpm2.DefaultConfig()
 config.CN = "application-srk"
-// EncryptSession is true by default for security
-
-// Verify encryption is enabled (production requirement)
-if !config.EncryptSession {
-    log.Fatal("Session encryption must be enabled in production")
-}
 
 ks, err := tpm2.NewTPM2KeyStore(config, backend, keyStorage, certStorage)
 if err != nil {
@@ -271,65 +250,6 @@ err = ks.Initialize(soPIN, userPIN)
 if err != nil && !errors.Is(err, xkms.ErrAlreadyInitialized) {
     log.Fatal(err)
 }
-```
-
-### Session Encryption Examples
-
-**Production Configuration (Encrypted - Recommended):**
-
-```go
-// Secure configuration for production use
-config := &tpm2.Config{
-    CN:             "production-xkms",
-    DevicePath:     "/dev/tpmrm0",
-    SRKHandle:      0x81000001,
-    Hierarchy:      "owner",
-    EncryptSession: true,  // REQUIRED for production
-    Debug:          false,
-}
-
-ks, err := tpm2.NewTPM2KeyStore(config, backend, keyStorage, certStorage)
-if err != nil {
-    log.Fatal(err)
-}
-defer ks.Close()
-
-// All TPM operations automatically use encrypted sessions
-// No code changes needed - encryption is transparent
-```
-
-**Development Configuration (Debugging):**
-
-```go
-// ONLY for local development/debugging - NOT for production
-config := &tpm2.Config{
-    CN:             "dev-xkms",
-    DevicePath:     "/dev/tpmrm0",
-    SRKHandle:      0x81000001,
-    Hierarchy:      "owner",
-    EncryptSession: false,  // Disabled for debugging only
-    Debug:          true,   // Enable verbose logging
-}
-
-log.Println("WARNING: Session encryption DISABLED - for development only")
-```
-
-**Monitoring Session Status:**
-
-```go
-// Check if encryption is enabled at runtime
-if ks.config.EncryptSession {
-    log.Println("✓ Session encryption enabled (secure)")
-} else {
-    log.Println("✗ Session encryption disabled (insecure)")
-}
-
-// Log session configuration
-log.Printf("TPM Configuration:")
-log.Printf("  Device: %s", config.DevicePath)
-log.Printf("  SRK Handle: %#x", config.SRKHandle)
-log.Printf("  Encrypt Sessions: %v", config.EncryptSession)
-log.Printf("  Platform Policy: %v", config.PlatformPolicy)
 ```
 
 ### Generate RSA Key
@@ -585,80 +505,15 @@ Note: Coverage is intentionally lower (~36%) because many methods require actual
 
 ## Security Considerations
 
-### Session Encryption (Critical Security Feature)
+### Session Encryption
 
-**Threat Model:**
-
-Session encryption protects against the following attack vectors:
-
-1. **Bus Snooping**: Attackers with physical access monitoring TPM bus traffic
-2. **Man-in-the-Middle**: Intercepting TPM commands on compromised systems
-3. **Side-Channel Analysis**: Observing unencrypted parameters during transmission
-4. **Compliance Violations**: Meeting regulatory requirements for data protection
-
-**How It Works:**
-
-```
-Without Encryption (Not Recommended):
-CPU → [TPM Command + Plaintext Parameters] → TPM
-      ↑ Vulnerable to bus snooping and interception
-
-With Encryption (Recommended):
-CPU → [TPM Command + AES-128 Encrypted Parameters] → TPM
-      ↑ Protected against eavesdropping and tampering
-```
-
-**Security Benefits:**
-
-- **Confidentiality**: All sensitive parameters (keys, PINs, data) encrypted in transit
-- **Integrity**: HMAC authentication prevents tampering with encrypted data
-- **Compliance**: Meets FIPS 140-2/3 and Common Criteria requirements
-- **Defense-in-Depth**: Additional security layer beyond TPM hardware isolation
-
-**Performance vs. Security Tradeoff:**
-
-| Configuration | Security Level | Latency Overhead | Use Case |
-|--------------|----------------|------------------|----------|
-| EncryptSession: true | High | +2-5ms per operation | **Production (RECOMMENDED)** |
-| EncryptSession: false | Medium | None | **Debugging only** |
-
-**Compliance Requirements:**
-
-- **FIPS 140-2/3**: Required for cryptographic module validation
-- **Common Criteria EAL4+**: Required for high assurance environments
-- **PCI-DSS**: Strongly recommended for payment card data protection
-- **HIPAA**: Strongly recommended for health information protection
-- **NIST SP 800-171**: Required for protecting CUI (Controlled Unclassified Information)
-
-**Production Configuration (Secure by Default):**
-
-```go
-config := tpm2.DefaultConfig()
-// EncryptSession is already true by default
-config.CN = "production-xkms"
-config.DevicePath = "/dev/tpmrm0"
-
-// Verify encryption is enabled
-if !config.EncryptSession {
-    log.Fatal("Session encryption MUST be enabled in production")
-}
-```
-
-**When NOT to Use Encryption:**
-
-Session encryption should ONLY be disabled for:
-
-- Debugging TPM command issues with low-level tools
-- Performance benchmarking (to measure pure TPM overhead)
-- Development environments with no sensitive data
-- Testing TPM compatibility issues
-
-**NEVER disable encryption in:**
-
-- Production environments
-- Systems handling sensitive data
-- Compliance-regulated deployments
-- Multi-tenant or shared systems
+The TPM bus (LPC, SPI or I²C) is outside the security boundary: an observer
+with a probe sees every command and response. Without protection the SO PIN,
+the USER PIN and sealed secrets such as the auto-unsealed PKCS#11 PIN would
+cross it in plaintext, and an unsalted `PolicyAuthValue` session would let a
+single captured command be brute forced offline for the PIN. See
+[Session Encryption (Always On)](#session-encryption-always-on); it is not
+configurable.
 
 ### Key Protection
 - Private keys are sealed in TPM blobs using encryption
@@ -678,7 +533,7 @@ Session encryption should ONLY be disabled for:
 - Secure boot and firmware integrity verification
 
 ### Best Practices
-1. **CRITICAL**: Enable session encryption: `config.EncryptSession = true` (default)
+1. Session encryption is always on; there is nothing to enable
 2. Use `/dev/tpmrm0` (resource manager) instead of `/dev/tpm0`
 3. Use strong PINs for SO and user authorization
 4. Store TPM blobs in secure backend with proper permissions
@@ -736,106 +591,61 @@ Error: tpm2: failed to open TPM: connection refused
 
 ### Session Encryption Issues
 
-**TPM Doesn't Support Encryption:**
+**Salt key unavailable:**
 
 ```
-Error: tpm2: failed to create encrypted session: unsupported
+Error: tpm2: failed to resolve the session salt key
 ```
+
+**Cause**: reading the EK at its configured handle failed for a reason other
+than the handle being empty — typically a transport fault. An absent EK is not
+an error: an ephemeral NULL-hierarchy salt key is used instead.
 
 **Solutions:**
-- Verify TPM firmware version supports AES-128 encryption
-- Check TPM capabilities: `tpm2_getcap properties-fixed`
-- Some older TPM 2.0 chips may not support session encryption
-- For old hardware, disable temporarily: `config.EncryptSession = false`
-- Consider TPM firmware update if encryption is required
+- Check the device path and resource manager
+- Verify `ek.handle` names the EK, not some other object
 
 **Session Creation Failures:**
 
 ```
-Error: tpm2: failed to create HMAC session: resource exhausted
+Error: tpm2: failed to start salted session: ...
 ```
 
-**Cause**: TPM has limited session slots (typically 3 active sessions)
+**Cause**: `TPM2_StartAuthSession` was refused; the TPM's response code is in
+the chain. `TPM_RC_SESSION_MEMORY` means the TPM's session slots are full.
 
 **Solutions:**
 - Ensure all session closers are called: `defer closer()`
 - Check for session leaks in application code
-- Restart TPM or system to clear stuck sessions
-- Use PasswordAuth for simple operations instead of HMAC sessions
-
-**Performance Concerns:**
-
-```
-Question: Is encryption slowing down my TPM operations?
-```
-
-**Analysis:**
-- Typical overhead: 2-5ms per operation (minimal)
-- Total TPM operation time: 10-100ms
-- Encryption adds <5% to total latency
-- Modern TPMs have hardware AES acceleration
-
-**Benchmarking:**
-
-```go
-// Benchmark with encryption (recommended)
-config.EncryptSession = true
-start := time.Now()
-_, err := ks.GenerateKey(attrs)
-withEncryption := time.Since(start)
-
-// Benchmark without encryption (testing only)
-config.EncryptSession = false
-start = time.Now()
-_, err = ks.GenerateKey(attrs)
-withoutEncryption := time.Since(start)
-
-overhead := withEncryption - withoutEncryption
-// Typical result: 2-5ms additional latency
-```
-
-**Recommendation**: Keep encryption enabled unless profiling shows it's a bottleneck (rare)
 
 ## Performance Considerations
 
 ### Session Encryption Overhead
 
-Session encryption adds minimal overhead to TPM operations:
-
-| Operation | Without Encryption | With Encryption | Overhead |
-|-----------|-------------------|-----------------|----------|
-| Session Creation | 1-2ms | 3-7ms | +2-5ms |
-| Key Generation (RSA 2048) | 180-200ms | 185-205ms | +2-5ms |
-| Signing Operation | 10-15ms | 12-17ms | +1-2ms |
-| Key Loading | 5-10ms | 7-12ms | +1-2ms |
-
-**Key Takeaways:**
-- Encryption overhead is <5% of total operation time
-- Most time spent in TPM hardware operations, not encryption
-- Modern TPMs have hardware AES acceleration
-- Security benefits far outweigh minimal performance cost
+Each secret-bearing command starts a salted session: one `TPM2_ReadPublic` of
+the EK, one `TPM2_StartAuthSession` (the TPM decrypts the salt with the EK)
+and one `TPM2_FlushContext`. Commands that carry no secret and are authorized
+by an empty auth value start no session.
 
 ### Key Generation
 - TPM key generation is slower than software (100-1000ms)
 - RSA 2048: ~200ms, RSA 3072: ~400ms
 - ECDSA P-256: ~100ms, P-521: ~200ms
-- Session encryption adds ~2-5ms to generation time
 
 ### Signing Operations
 - TPM signing is slower than software (10-50ms per signature)
-- Encryption adds ~1-2ms per signing operation
+- A key with a password is authorized through a salted session, adding one
+  session start per signature
 - Use caching/batching for high-throughput applications
 - Consider software keys for non-critical operations
 
 ### Optimization Tips
-1. Keep session encryption enabled - overhead is minimal
-2. Generate keys during initialization, not on-demand
-3. Cache loaded key handles when possible
-4. Use concurrent operations where appropriate
-5. Prefer P-256 over P-521 for ECDSA
-6. Consider hybrid approach: TPM for critical keys, software for high-volume
-7. Use PasswordAuth for simple operations to avoid session management overhead
-8. Close sessions promptly with `defer closer()` to prevent resource exhaustion
+1. Generate keys during initialization, not on-demand
+2. Cache loaded key handles when possible
+3. Use concurrent operations where appropriate
+4. Prefer P-256 over P-521 for ECDSA
+5. Consider hybrid approach: TPM for critical keys, software for high-volume
+6. Close sessions promptly with `defer closer()` to prevent resource exhaustion
 
 ## NV RAM Certificate Storage
 

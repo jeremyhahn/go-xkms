@@ -76,6 +76,13 @@ func (tpm *TPM2) CreateSecretKey(
 		}
 	}()
 
+	// The sensitive area carries the key's authValue; see CreateRSA.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptIn)
+	if err != nil {
+		return err
+	}
+	defer tpm.closeSession(closeEncSession, "secret key creation encryption")
+
 	response, err := tpm2.Create{
 		ParentHandle: tpm2.AuthHandle{
 			Handle: srkHandle,
@@ -90,7 +97,7 @@ func (tpm *TPM2) CreateSecretKey(
 				},
 			},
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
 	if err != nil {
 		return err
 	}

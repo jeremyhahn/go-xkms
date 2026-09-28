@@ -18,7 +18,7 @@ import (
 // rather than leaving a half-created key silently reported as success.
 func TestCreateECDSA_EveryCommandFailurePropagates(t *testing.T) {
 	sweepEachCommandFailure(t, func(t *testing.T) (transport.TPM, func(transport.TPM) error) {
-		tpm, srkAttrs, backend := deleteKeyRegressionFixture(t, false)
+		tpm, srkAttrs, backend := deleteKeyRegressionFixture(t)
 		tpmImpl := tpm.(*TPM2)
 
 		return tpmImpl.transport, func(tr transport.TPM) error {
@@ -35,12 +35,14 @@ func TestCreateECDSA_EveryCommandFailurePropagates(t *testing.T) {
 			return err
 		}
 	},
-		// The final command is the deferred tpm.Flush of the new key's
-		// transient handle (ecdsa.go): it fires unconditionally, including
-		// on the success path, and its own contract (tpm.Flush, mirroring
-		// flushSilent) is to log a flush failure rather than fail the
-		// caller's already-completed key creation.
-		7)
+		// The final three commands are CreateECDSA's deferred cleanups, all
+		// of which fire unconditionally, including on the success path, and
+		// log a failure rather than fail the caller's already-completed key
+		// creation: the tpm.Flush of the new key's transient handle
+		// (ecdsa.go, mirroring flushSilent), the FlushContext of the salted
+		// session that encrypted the key's sensitive area, and the
+		// FlushContext of the parent's salted authorization session.
+		10, 11, 12)
 }
 
 // TestCreateRSA_EveryCommandFailurePropagates sweeps CreateRSA's command
@@ -48,7 +50,7 @@ func TestCreateECDSA_EveryCommandFailurePropagates(t *testing.T) {
 // for the RSA key path.
 func TestCreateRSA_EveryCommandFailurePropagates(t *testing.T) {
 	sweepEachCommandFailure(t, func(t *testing.T) (transport.TPM, func(transport.TPM) error) {
-		tpm, srkAttrs, backend := deleteKeyRegressionFixture(t, false)
+		tpm, srkAttrs, backend := deleteKeyRegressionFixture(t)
 		tpmImpl := tpm.(*TPM2)
 
 		return tpmImpl.transport, func(tr transport.TPM) error {
@@ -66,6 +68,6 @@ func TestCreateRSA_EveryCommandFailurePropagates(t *testing.T) {
 		}
 	},
 		// See the matching comment in TestCreateECDSA_EveryCommandFailurePropagates:
-		// the final command is the deferred best-effort transient-handle flush.
-		7)
+		// the final three commands are the deferred best-effort flushes.
+		10, 11, 12)
 }

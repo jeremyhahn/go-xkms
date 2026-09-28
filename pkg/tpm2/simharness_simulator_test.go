@@ -111,10 +111,9 @@ func newSimHarnessWithHTTPClient(t *testing.T, mutate func(*Config), httpClient 
 // so behaviour observed here matches the rest of the package's simulator tests.
 func newSimConfig() *Config {
 	return &Config{
-		EncryptSession: false,
-		UseEntropy:     false,
-		UseSimulator:   false, // Transport is supplied explicitly.
-		Hash:           "SHA-256",
+		UseEntropy:   false,
+		UseSimulator: false, // Transport is supplied explicitly.
+		Hash:         "SHA-256",
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,

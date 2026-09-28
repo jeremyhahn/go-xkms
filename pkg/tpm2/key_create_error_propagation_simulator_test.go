@@ -107,17 +107,22 @@ func TestCreateEK_EveryCommandFailurePropagates(t *testing.T) {
 			return h.TPM.CreateEK(ekAttrs)
 		}
 	},
-		// After TPM2_CreatePrimary and TPM2_EvictControl (commands 1-2),
-		// CreateEK reads its own new public area back through
-		// tpm.ParsePublicKey (tpm.go), which issues TPM2_LoadExternal (3,
-		// required: its failure aborts ParsePublicKey and CreateEK with
-		// it), TPM2_ReadPublic (4, likewise required), then flushes the
-		// externally-loaded object it created (5) in its own deferred,
-		// best-effort tpm.Flush. CreateEK's own trailing tpm.Flush of the
-		// EK's transient handle (6) is deferred the same way and is the
-		// last command of all. Both flushes log their failure rather than
-		// return it, matching tpm.Flush's contract everywhere else.
-		5, 6)
+		// No EK is resident yet, so CreateEK's hierarchy session is salted
+		// against an ephemeral NULL-hierarchy key: TPM2_ReadPublic of the
+		// absent EK handle (1), TPM2_CreatePrimary of the salt key (2),
+		// TPM2_StartAuthSession (3) and the salt key's flush (4). Then
+		// TPM2_CreatePrimary (5), the session's flush (6) and
+		// TPM2_EvictControl (7). CreateEK reads its own new public area back
+		// through tpm.ParsePublicKey (tpm.go), which issues
+		// TPM2_LoadExternal (8, required: its failure aborts ParsePublicKey
+		// and CreateEK with it), TPM2_ReadPublic (9, likewise required),
+		// then flushes the externally-loaded object it created (10) in its
+		// own deferred, best-effort tpm.Flush. CreateEK's own trailing
+		// tpm.Flush of the EK's transient handle (11) is deferred the same
+		// way and is the last command of all. Both flushes log their failure
+		// rather than return it, matching tpm.Flush's contract everywhere
+		// else.
+		10, 11)
 }
 
 // TestCreateSRK_EveryCommandFailurePropagates sweeps CreateSRK's command
@@ -142,7 +147,7 @@ func TestCreateSRK_EveryCommandFailurePropagates(t *testing.T) {
 		// trailing tpm.ParsePublicKey readback (tpm.go), for the object
 		// TPM2_LoadExternal placed there; like every other tpm.Flush call,
 		// its failure is logged rather than returned.
-		6)
+		11)
 }
 
 // TestCreateIAK_EveryCommandFailurePropagates sweeps CreateIAK's command
@@ -178,7 +183,7 @@ func TestCreateIAK_EveryCommandFailurePropagates(t *testing.T) {
 		// TPM2_CreatePrimary succeeds, so it fires on every return path from
 		// that point on, but a defer always runs last, after
 		// TPM2_EvictControl and TPM2_CertifyCreation have already sent.
-		4)
+		9)
 }
 
 // TestCreateIDevID_EveryCommandFailurePropagates sweeps CreateIDevID's
@@ -229,5 +234,5 @@ func TestCreateIDevID_EveryCommandFailurePropagates(t *testing.T) {
 		// TPM2_CreatePrimary succeeds; like every other tpm.Flush call in
 		// this package it logs a failure instead of returning it, and a
 		// defer always runs after every other command the function issues.
-		28)
+		33)
 }

@@ -81,7 +81,6 @@ var (
 	ErrInvalidPCRBankType   = errors.New("tpm2: invalid PCR bank")
 
 	DefaultConfig = Config{
-		EncryptSession:               false,
 		UseEntropy:                   false,
 		Device:                       "/dev/tpmrm0",
 		UseSimulator:                 true,
@@ -170,9 +169,8 @@ type Config struct {
 	// configuration.
 	//
 	// Empty, the default, uses the Table 2 required string alone.
-	DeviceString   string    `yaml:"device-string,omitempty" json:"device_string" mapstructure:"device-string"`
-	EncryptSession bool      `yaml:"encrypt-sessions" json:"encrypt_sessions" mapstructure:"encrypt-sessions"`
-	EK             *EKConfig `yaml:"ek" json:"ek" mapstructure:"ek"`
+	DeviceString string    `yaml:"device-string,omitempty" json:"device_string" mapstructure:"device-string"`
+	EK           *EKConfig `yaml:"ek" json:"ek" mapstructure:"ek"`
 	// FileIntegrity is DEPRECATED. Use Linux IMA (PCR 10) instead by adding 10 to GoldenPCRs.
 	// This custom file integrity monitoring computes a hash of specified directories
 	// and includes it in the golden measurements. Linux IMA provides the same functionality

@@ -3728,7 +3728,6 @@ func mergeTPMConfig(defaults, file xkmssdk.TPMConfig) xkmssdk.TPMConfig {
 	if file.Hash != "" {
 		cfg.Hash = file.Hash
 	}
-	cfg.EncryptSession = file.EncryptSession
 	cfg.UseSimulator = file.UseSimulator
 	cfg.UseEntropy = file.UseEntropy
 
