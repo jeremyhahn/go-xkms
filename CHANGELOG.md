@@ -10668,7 +10668,7 @@ Not removed despite matching the survey: `pkg/pivcert/pkcs11.NewFromSession` has
 ## [0.8.0-alpha] - 2026-08-20
 
 **MINOR, not PATCH**: this carries a breaking API change, and pre-1.0 that is
-what MINOR means ([release-versioning.md](https://198.51.100.91:3001) §1).
+what MINOR means (the company release-versioning convention §1).
 `make release-alpha` only increments PATCH, so this was tagged by hand.
 
 **`agent.Session.Stop` now takes a context and returns a `ShutdownReport`.**

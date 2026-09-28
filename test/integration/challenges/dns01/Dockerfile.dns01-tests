@@ -23,9 +23,9 @@ COPY go-qrdb/ /workspace/go-qrdb/
 WORKDIR /workspace/go-trusted-ca
 
 # Update go.mod replace directives for Docker build context paths
-RUN sed -i 's|/home/jhahn/sources/go-xkms|/workspace/go-xkms|g' go.mod && \
-    sed -i 's|/home/jhahn/sources/go-quicraft|/workspace/go-quicraft|g' go.mod && \
-    sed -i 's|/home/jhahn/sources/go-qrdb|/workspace/go-qrdb|g' go.mod
+RUN sed -i 's|'"$HOME"'/sources/go-xkms|/workspace/go-xkms|g' go.mod && \
+    sed -i 's|'"$HOME"'/sources/go-quicraft|/workspace/go-quicraft|g' go.mod && \
+    sed -i 's|'"$HOME"'/sources/go-qrdb|/workspace/go-qrdb|g' go.mod
 
 # Download dependencies (go-objstore, go-codec are upstream)
 RUN rm -f go.sum

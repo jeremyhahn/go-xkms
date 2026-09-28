@@ -1,7 +1,7 @@
 # Release engineering — engineering
 
 **Status:** implemented.
-**Last verified:** 2026-09-25.
+**Last verified:** 2026-09-27.
 
 ## Surface
 
@@ -30,6 +30,23 @@ SHA-256 is left alone, one with a different digest is replaced, one that is
 absent is added. It reads `RELEASE_API`, `RELEASE_REPO`, `RELEASE_TAG` and
 `RELEASE_TOKEN` from the environment, and `DRY_RUN=1` makes `upload` print its
 decisions without changing anything.
+
+`scripts/check-public-literals.sh` (go-xkms#1030) is the public-release
+readiness gate: it fails with `file:line` output if any file in the tree
+carries a lab-network address, a fleet host name, or an owner workstation
+path. The exact literals are declared once, in the script's own `PATTERN`
+and its header comment — not repeated here, so there is exactly one place to
+keep them current as the fleet changes. It scans with `grep -rIniE`, so
+binary files are skipped automatically (`-I`), and excludes `.git` (file or
+directory, so it works from an ordinary checkout or a worktree), `.claude/`,
+`CLAUDE.md`, `AGENTS.md` and its own source — those are agent-instruction
+files the owner publishes on a separate schedule, not part of the scrub. The
+one known fleet name in the omega family is matched as a literal, not a
+wildcard: the bare word alone is ordinary English (a public gTLD, and an
+unrelated xkey SSH test fixture value), so widening the match would flag
+both as false positives. `make check-public-literals` runs it against the
+repository root; it takes an optional `ROOT` argument so its own test can
+point it at a scratch tree instead.
 
 `scripts/retry.sh` (go-xkms#1026) is a generic bounded-attempt/linear-backoff
 wrapper — `retry.sh [--attempts N] [--backoff SECONDS] -- CMD [ARG...]`,
@@ -289,8 +306,19 @@ architecture.md.
 
 `make test-scripts` (also reached by `make test`) runs
 `test/scripts/release-alpha.test.sh`, `test/scripts/release-tag.test.sh`,
-`test/scripts/release-assets.test.sh`, `test/scripts/changelog-assemble.test.sh`
-and `test/scripts/retry.test.sh`.
+`test/scripts/release-assets.test.sh`, `test/scripts/changelog-assemble.test.sh`,
+`test/scripts/retry.test.sh` and `test/scripts/check-public-literals.test.sh`.
+
+`check-public-literals.test.sh` runs the gate against synthetic scratch trees
+under `mktemp -d` only — never against this repository's own tree, so it
+cannot go red because something else in the tree changed. It asserts: a clean
+tree (generic private-range test data, an `example.com` address, a `$HOME`
+placeholder) passes; each of the five literal categories is caught with its
+own `file:line`; a bare fixture-style string built from the same word is not
+mistaken for the one known fleet name in that family; and `CLAUDE.md`,
+`AGENTS.md` and `.claude/` are excluded at any depth. The planted literals
+are themselves assembled from split fragments rather than written out whole,
+so this test's own source does not trip the gate it exercises.
 `release-assets.test.sh` stands up a local HTTP stub of the two Gitea endpoints the asset
 script uses and asserts the whole decision table: `expected` is the matrix,
 `verify` names exactly the missing assets, `verify-complete` additionally

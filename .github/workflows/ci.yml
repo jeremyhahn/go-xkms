@@ -997,6 +997,13 @@ jobs:
       - name: Check xkey agent skill reference
         run: make -C xkey check-skill-reference
 
+      # Public-release readiness gate (go-xkms#1030): no lab addresses,
+      # fleet host names or owner workstation paths in tracked files. See
+      # scripts/check-public-literals.sh for the pattern list and the
+      # CLAUDE.md/AGENTS.md/.claude allowlist.
+      - name: Check for internal literals (public-release readiness)
+        run: make check-public-literals
+
       # go-qrdb's pkg/secure/analyzer enforces the raw-memguard-import,
       # ssh.ParsePrivateKey and sensitive-field rules, but only where its own
       # make target runs -- and nothing in go-qrdb reaches into this

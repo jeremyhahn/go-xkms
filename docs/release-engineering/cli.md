@@ -1,7 +1,7 @@
 # Release engineering — CLI
 
 **Status:** implemented.
-**Last verified:** 2026-09-21.
+**Last verified:** 2026-09-27.
 
 Cutting a release is two commands, run at different times by possibly
 different people: `make release-alpha` PREPARES a pull request and stops;
@@ -38,7 +38,7 @@ the pins, bumps `VERSION`, commits, and pushes **the branch only** — never
 
 ```
 release-alpha: pushed release/0.10.0-alpha to dev at a1b2c3d...
-release-alpha: open a pull request: http://git.example.internal/jeremyhahn/go-xkms/compare/main...release/0.10.0-alpha
+release-alpha: open a pull request: http://gitea.example.com:3001/jeremyhahn/go-xkms/compare/main...release/0.10.0-alpha
 release-alpha: once that pull request is reviewed and merged, run: make release-tag VERSION=0.10.0-alpha
 ```
 
@@ -117,6 +117,29 @@ Run the unit tests for the pure functions and the fetch/checkout/tag flow:
 ```sh
 make test-scripts
 ```
+
+## `make check-public-literals`
+
+The public-release readiness gate (go-xkms#1030): fails with `file:line`
+output if any file in the tree carries a lab-network address, a fleet host
+name, or an owner workstation path — none of which may reach a published
+tree. Runs in CI as part of the `lint` job, and can be run locally:
+
+```sh
+make check-public-literals
+```
+
+```
+check-public-literals.sh: internal literal(s) found (go-xkms#1030):
+docs/example.md:12:reach the CA at 192.0.2.50:3001
+```
+
+(That example uses `192.0.2.0/24`, RFC 5737 TEST-NET-1 -- not the real lab
+subnet, so this documentation does not itself trip the gate it documents.)
+
+A clean tree prints nothing and exits 0. See
+[engineering.md](engineering.md#surface) for the pattern list and the
+`CLAUDE.md`/`AGENTS.md`/`.claude/` allowlist.
 
 ## Refusals you should expect
 

@@ -82,7 +82,7 @@ go test -tags=local -v ./test/integration/ -run TestPhase1_IssueCertificate
 make integration-test
 
 # Or manually with docker-compose
-cd /home/jhahn/sources/go-trusted-ca/test/integration
+cd $HOME/sources/go-trusted-ca/test/integration
 docker-compose -f docker-compose.integration.yml up --build --abort-on-container-exit
 
 # View logs after failure

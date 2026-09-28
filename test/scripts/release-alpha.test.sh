@@ -219,11 +219,11 @@ eq "major outranks minor and patch together" "major" "$(bump_level v0.9.4-alpha 
 
 section "remote_repo_path"
 eq "an ssh:// remote" "jeremyhahn/go-xkms" \
-	"$(remote_repo_path 'ssh://git@git.example.internal:2222/jeremyhahn/go-xkms.git')"
+	"$(remote_repo_path 'ssh://git@192.0.2.50:2222/jeremyhahn/go-xkms.git')"
 eq "an http remote" "jeremyhahn/go-xkms" \
-	"$(remote_repo_path 'http://git.example.internal/jeremyhahn/go-xkms.git')"
+	"$(remote_repo_path 'http://192.0.2.50:3001/jeremyhahn/go-xkms.git')"
 eq "an scp-like remote" "jeremyhahn/go-xkms" \
-	"$(remote_repo_path 'git@198.51.100.50:jeremyhahn/go-xkms.git')"
+	"$(remote_repo_path 'git@192.0.2.50:jeremyhahn/go-xkms.git')"
 eq "an unrecognized shape yields nothing, not a guess" "" \
 	"$(remote_repo_path '/media/local4tb/git/go-xkms.git')"
 eq "the empty string yields nothing" "" "$(remote_repo_path '')"

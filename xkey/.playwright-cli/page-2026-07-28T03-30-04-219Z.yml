@@ -146,10 +146,10 @@
                     - generic [ref=e313]: Disconnected
                 - generic [ref=e314]:
                   - generic [ref=e315]: Volume Path
-                  - generic [ref=e316]: /home/jhahn/.xkey.luks
+                  - generic [ref=e316]: $HOME/.xkey.luks
                 - generic [ref=e317]:
                   - generic [ref=e318]: Mount Point
-                  - generic [ref=e319]: /home/jhahn/.xkey
+                  - generic [ref=e319]: $HOME/.xkey
             - generic [ref=e321]:
               - heading "Actions" [level=2] [ref=e322]
               - generic [ref=e324]:
