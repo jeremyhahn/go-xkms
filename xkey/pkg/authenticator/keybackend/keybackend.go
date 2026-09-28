@@ -41,6 +41,11 @@ type FIDO2KeyCapabilities struct {
 	// internally (e.g., phone backend prompts for biometrics). When true, the
 	// authenticator should skip local user presence requests since they happen
 	// as part of the key operation (GenerateCredentialKey, Sign).
+	//
+	// For a backend that aggregates others (CompositeBackend) it is true only
+	// when every member collects presence; whether a given credential's
+	// operation collects it comes from FIDO2KeyBackend.HandlesUserPresenceFor
+	// (#1162).
 	HandlesUserPresence bool
 
 	// HandlesUserVerification indicates if the backend performs user verification
@@ -52,6 +57,11 @@ type FIDO2KeyCapabilities struct {
 	// It is NOT a standalone user verification method: the authenticator
 	// cannot ask the backend to verify a user on demand, so it never mints a
 	// pinUvAuthToken on the strength of this capability (#1145).
+	//
+	// For a backend that aggregates others (CompositeBackend) it is true only
+	// when every member verifies, so it never over-claims; the UV flag on a
+	// given credential comes from FIDO2KeyBackend.HandlesUserVerificationFor
+	// (#1162).
 	HandlesUserVerification bool
 }
 
@@ -107,6 +117,21 @@ type FIDO2KeyBackend interface {
 
 	// Capabilities returns what this backend supports.
 	Capabilities() FIDO2KeyCapabilities
+
+	// HandlesUserVerificationFor reports whether the backend identified by
+	// backendID -- the KeyHandle.BackendID of the credential key an operation
+	// uses -- verifies the user inside that operation. It is the per-credential
+	// form of FIDO2KeyCapabilities.HandlesUserVerification, and the only basis
+	// on which the authenticator may set the UV flag without a pinUvAuthParam
+	// (#1162). An empty or unknown backendID reports false.
+	HandlesUserVerificationFor(backendID xkms.BackendType) bool
+
+	// HandlesUserPresenceFor reports whether the backend identified by
+	// backendID collects user presence inside the key operation on that
+	// credential, which is the only basis on which the authenticator may skip
+	// its own presence check (#1162). An empty or unknown backendID reports
+	// false.
+	HandlesUserPresenceFor(backendID xkms.BackendType) bool
 
 	// GenerateCredentialKey creates a new key pair for a credential.
 	// Returns the key handle, COSE-encoded public key, and any error.

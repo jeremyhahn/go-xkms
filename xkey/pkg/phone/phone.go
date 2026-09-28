@@ -434,6 +434,19 @@ func (b *PhoneKeyBackend) Type() xkms.BackendType {
 	return BackendTypePhone
 }
 
+// HandlesUserVerificationFor reports whether backendID names this backend: every
+// phone key operation is gated by the phone's biometric, so a credential this
+// backend owns is verified whenever it is used.
+func (b *PhoneKeyBackend) HandlesUserVerificationFor(backendID xkms.BackendType) bool {
+	return backendID == b.Type() && b.Capabilities().HandlesUserVerification
+}
+
+// HandlesUserPresenceFor reports whether backendID names this backend: the
+// phone's biometric prompt on every key operation is also the presence check.
+func (b *PhoneKeyBackend) HandlesUserPresenceFor(backendID xkms.BackendType) bool {
+	return backendID == b.Type() && b.Capabilities().HandlesUserPresence
+}
+
 // Capabilities returns the backend capabilities.
 func (b *PhoneKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilities {
 	return keybackend.FIDO2KeyCapabilities{

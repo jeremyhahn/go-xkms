@@ -16,6 +16,8 @@ package authenticator
 import (
 	"fmt"
 	"log/slog"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // GetInfo response map keys as defined in CTAP2 specification.
@@ -322,11 +324,41 @@ func (a *Authenticator) supportsPinUvAuthToken() bool {
 }
 
 // backendHandlesUserVerification reports whether the key backend verifies the
-// user inside its own key operations (for example a phone biometric gating
-// Sign), which is what lets makeCredential and getAssertion set the UV flag
-// without a pinUvAuthParam.
+// user inside every one of its key operations (for example a phone biometric
+// gating Sign). For a composite it is true only when every member verifies
+// (#1162), so it is a lower bound for any credential: getInfo advertises from
+// it, and makeCredential uses it before it knows which member will create the
+// key. The UV flag on a response comes from backendHandlesUserVerificationFor.
 func (a *Authenticator) backendHandlesUserVerification() bool {
 	return a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification
+}
+
+// backendHandlesUserVerificationFor reports whether the backend that owns a
+// credential key -- identified by the credential's BackendID -- verified the
+// user inside the key operation. makeCredential and getAssertion set the UV
+// flag from it when no pinUvAuthParam was given, so a software or TPM
+// credential in a composite that also holds a phone never claims the phone's
+// verification (#1162).
+func (a *Authenticator) backendHandlesUserVerificationFor(backendID xkms.BackendType) bool {
+	return a.keyBackend != nil && a.keyBackend.HandlesUserVerificationFor(backendID)
+}
+
+// backendHandlesUserPresence reports whether the key backend collects user
+// presence inside every one of its key operations. For a composite it is true
+// only when every member does (#1162). makeCredential uses it to decide
+// whether to skip its own presence check, because that check runs before the
+// key exists and so before the creating member is known.
+func (a *Authenticator) backendHandlesUserPresence() bool {
+	return a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserPresence
+}
+
+// backendHandlesUserPresenceFor reports whether the backend that owns a
+// credential key collects user presence inside the key operation.
+// getAssertion skips its own presence check only when it does, so a software
+// or TPM credential in a composite that also holds a phone still gets a local
+// presence check (#1162).
+func (a *Authenticator) backendHandlesUserPresenceFor(backendID xkms.BackendType) bool {
+	return a.keyBackend != nil && a.keyBackend.HandlesUserPresenceFor(backendID)
 }
 
 // getRemainingDiscoverableCredentials returns the number of remaining
