@@ -13,25 +13,34 @@
 
 //go:build integration
 
-package cactl
+package multiprotocol
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/api"
-	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
-	"github.com/jeremyhahn/go-xkms/test/integration/acme-multiprotocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestCactlAccountOperations tests account operations via all protocols.
-func TestCactlAccountOperations(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// defaultTimeout bounds each adapter call this package's tests make.
+const defaultTimeout = 30 * time.Second
+
+// testTenantPrefix marks tenants these tests create, for identification in
+// server-side logs.
+const testTenantPrefix = "integration-test-"
+
+// TestAccountOperationsMultiProtocol tests account operations via every
+// configured protocol adapter. Moved from test/integration/cactl
+// (go-xkms#949): this exercises pkg/acme/api's AdminAdapter directly, not
+// the xkmsctl/cactl CLI, so it belongs beside this package's other
+// adapter-level coverage (tenant_test.go, role_test.go) rather than the
+// CLI-driven test/integration/acmeadmin.
+func TestAccountOperationsMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -55,7 +64,6 @@ func TestCactlAccountOperations(t *testing.T) {
 	})
 }
 
-// testListAccounts tests basic account listing.
 func testListAccounts(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
@@ -75,12 +83,10 @@ func testListAccounts(t *testing.T, adapter api.AdminAdapter, protocol api.Proto
 	}
 }
 
-// testListAccountsWithPagination tests account listing with pagination.
 func testListAccountsWithPagination(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// First page
 	req1 := &admin.ListAccountsRequest{
 		Page:    1,
 		PerPage: 5,
@@ -89,7 +95,6 @@ func testListAccountsWithPagination(t *testing.T, adapter api.AdminAdapter, prot
 	require.NoError(t, err, "ListAccounts page 1 should succeed via %s", protocol)
 	assert.NotNil(t, accounts1)
 
-	// If there are more pages, get the second page
 	if pagination1 != nil && pagination1.Total > 5 {
 		req2 := &admin.ListAccountsRequest{
 			Page:    2,
@@ -101,12 +106,10 @@ func testListAccountsWithPagination(t *testing.T, adapter api.AdminAdapter, prot
 	}
 }
 
-// testListAccountsWithStatusFilter tests account listing with status filter.
 func testListAccountsWithStatusFilter(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// Test valid status
 	reqValid := &admin.ListAccountsRequest{
 		Page:    1,
 		PerPage: 10,
@@ -118,7 +121,6 @@ func testListAccountsWithStatusFilter(t *testing.T, adapter api.AdminAdapter, pr
 		assert.Equal(t, "valid", acc.Status, "All returned accounts should have status=valid via %s", protocol)
 	}
 
-	// Test deactivated status
 	reqDeactivated := &admin.ListAccountsRequest{
 		Page:    1,
 		PerPage: 10,
@@ -131,110 +133,17 @@ func testListAccountsWithStatusFilter(t *testing.T, adapter api.AdminAdapter, pr
 	}
 }
 
-// testGetNonexistentAccount tests getting a non-existent account.
 func testGetNonexistentAccount(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// Use a very high account ID that should not exist
 	_, err := adapter.GetAccount(ctx, 9999999999)
 	assert.Error(t, err, "GetAccount for nonexistent ID should fail via %s", protocol)
 }
 
-// TestCactlAccountCLI tests account CLI commands.
-func TestCactlAccountCLI(t *testing.T) {
-	cfg := newCactlConfig()
-
-	// Find binary
-	if err := findCactlBinary(cfg); err != nil {
-		t.Fatalf("cactl binary not found: %v", err)
-	}
-
-	t.Run("AccountListJSON", func(t *testing.T) {
-		output, err := runCactl(cfg, "account", "list", "-o", "json")
-		if err != nil {
-			if cactlErr, ok := err.(*CactlError); ok {
-				if strings.Contains(cactlErr.Stderr, "not yet implemented") {
-					t.Fatal("AccountAdapter not yet implemented for REST protocol")
-				}
-			}
-			t.Fatalf("cactl command failed: %v", err)
-		}
-		assert.NotEmpty(t, output, "account list should return output")
-		// Should be valid JSON array
-		assert.True(t, output[0] == '[' || output[0] == 'n', "Output should be JSON array or null")
-	})
-
-	t.Run("AccountListWithPagination", func(t *testing.T) {
-		output, err := runCactl(cfg, "account", "list", "--page", "1", "--per-page", "5", "-o", "json")
-		if err != nil {
-			if cactlErr, ok := err.(*CactlError); ok {
-				if strings.Contains(cactlErr.Stderr, "not yet implemented") {
-					t.Fatal("AccountAdapter not yet implemented for REST protocol")
-				}
-			}
-			t.Fatalf("cactl command failed: %v", err)
-		}
-		assert.NotEmpty(t, output, "account list with pagination should return output")
-	})
-
-	t.Run("AccountListWithStatus", func(t *testing.T) {
-		output, err := runCactl(cfg, "account", "list", "--status", "valid", "-o", "json")
-		if err != nil {
-			if cactlErr, ok := err.(*CactlError); ok {
-				if strings.Contains(cactlErr.Stderr, "not yet implemented") {
-					t.Fatal("AccountAdapter not yet implemented for REST protocol")
-				}
-			}
-			t.Fatalf("cactl command failed: %v", err)
-		}
-		assert.NotEmpty(t, output, "account list with status filter should return output")
-	})
-
-	t.Run("AccountGetInvalidID", func(t *testing.T) {
-		cactlErr := requireCactlFail(t, cfg, "account", "get", "not-a-number")
-		assert.Contains(t, cactlErr.Stderr+cactlErr.Stdout, "invalid",
-			"should report invalid account ID")
-	})
-
-	t.Run("AccountGetNonexistent", func(t *testing.T) {
-		cactlErr := requireCactlFail(t, cfg, "account", "get", "9999999999")
-		assert.True(t, len(cactlErr.Stderr) > 0 || len(cactlErr.Stdout) > 0,
-			"should have error output for nonexistent account")
-	})
-
-	t.Run("AccountDisableInvalidID", func(t *testing.T) {
-		cactlErr := requireCactlFail(t, cfg, "account", "disable", "not-a-number")
-		assert.Contains(t, cactlErr.Stderr+cactlErr.Stdout, "invalid",
-			"should report invalid account ID")
-	})
-}
-
-// findCactlBinary locates the cactl binary for testing.
-func findCactlBinary(cfg *cactlConfig) error {
-	possiblePaths := []string{
-		cfg.Binary,
-		"./cactl",
-		"../../../cmd/cactl/cactl",
-		"/usr/local/bin/cactl",
-		"/workspace/go-xkms/bin/cactl",
-	}
-
-	for _, p := range possiblePaths {
-		testCfg := &cactlConfig{Binary: p, Timeout: 5 * time.Second}
-		_, err := runCactl(testCfg, "version")
-		if err == nil {
-			cfg.Binary = p
-			return nil
-		}
-	}
-
-	return caerrors.NotFoundError("cactl binary not found")
-}
-
-// TestCactlAccountErrorHandling tests account error scenarios.
-func TestCactlAccountErrorHandling(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestAccountErrorHandlingMultiProtocol tests account error scenarios.
+func TestAccountErrorHandlingMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -250,9 +159,9 @@ func TestCactlAccountErrorHandling(t *testing.T) {
 	})
 }
 
-// TestCactlAccountBoundaryConditions tests account boundary conditions.
-func TestCactlAccountBoundaryConditions(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestAccountBoundaryConditionsMultiProtocol tests account boundary conditions.
+func TestAccountBoundaryConditionsMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -262,13 +171,11 @@ func TestCactlAccountBoundaryConditions(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 			defer cancel()
 
-			// Server should handle zero per-page gracefully (use default)
 			req := &admin.ListAccountsRequest{
 				Page:    1,
 				PerPage: 0,
 			}
 			accounts, _, err := adapter.ListAccounts(ctx, req)
-			// Should either succeed with defaults or return an error
 			if err == nil {
 				assert.NotNil(t, accounts)
 			}
@@ -284,7 +191,6 @@ func TestCactlAccountBoundaryConditions(t *testing.T) {
 			}
 			accounts, _, err := adapter.ListAccounts(ctx, req)
 			require.NoError(t, err, "ListAccounts with high page should succeed via %s", protocol)
-			// Should return empty list for high page number
 			assert.NotNil(t, accounts)
 		})
 
@@ -292,7 +198,6 @@ func TestCactlAccountBoundaryConditions(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 			defer cancel()
 
-			// Account ID 0 is typically invalid
 			_, err := adapter.GetAccount(ctx, 0)
 			assert.Error(t, err, "GetAccount with ID 0 should fail via %s", protocol)
 		})

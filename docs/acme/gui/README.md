@@ -1,17 +1,22 @@
 # GUI System
 
+> **The admin UI xkmsd actually serves is `/admin-ui`**, a separate
+> implementation (`pkg/acme/web/packages/admin`) mounted by
+> `cmd/xkmsd/admin.go:73` / `finalizeAdminModule`
+> (`cmd/xkmsd/admin.go:130`) — see [REST Protocol](../protocols/rest.md).
+>
 > **Correction (go-xkms#942):** this page describes `pkg/acme/gui/{admin,client,guard,webui}`
-> and a `cactl` binary. **There is no `cactl` in this repository, and
+> and a `cactl` binary. There is no `cactl` in this repository, and
 > `pkg/acme/gui/admin`/`pkg/acme/api/server` (which would mount its web
-> build at `/ui/admin/`) have no current `cmd/` entry point** — grepping
+> build at `/ui/admin/`) have no current `cmd/` entry point — grepping
 > the tree turns up no caller of `server.NewMultiProtocolServer`
-> (`pkg/acme/api/server/server.go:164`) outside its own package. The web
-> admin UI that **is** wired today is a separate implementation,
-> `pkg/acme/web/packages/admin`, served by `xkmsd` itself at `/admin-ui`
-> (`cmd/xkmsd/admin.go:73`, `finalizeAdminModule`). Whether these are two
-> generations of the same feature or a genuine duplication is unresolved;
-> see go-xkms#942's handback for follow-up. Only the *client* GUI below
-> (`trusted-acme-client`, `cmd/acme-client/gui.go`) is confirmed wired.
+> (`pkg/acme/api/server/server.go:164`) outside its own package. Per the
+> go-xkms#696 ruling, this is a half-built feature to be wired, not
+> deleted: `pkg/acme/gui/admin` is the **desktop host** (Wails) for the
+> same admin SPA `/admin-ui` also serves in web mode, and which binary
+> hosts it is tracked in go-xkms#743 / go-xkms#746. Until one exists, only
+> the *client* GUI below (`trusted-acme-client`, `cmd/acme-client/gui.go`)
+> is confirmed wired.
 
 go-xkms provides a dual-mode GUI for both the ACME client and the CA admin interface. A single Svelte 4 frontend bundle runs identically in two environments:
 
