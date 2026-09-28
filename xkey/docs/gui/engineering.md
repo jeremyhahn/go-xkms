@@ -1,6 +1,6 @@
 # xKey Desktop GUI — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Exported surface — `*App` itself
 
@@ -98,6 +98,23 @@ beyond the type name.)
   (`ipc_state.go`) are deliberately read-only and return no secret material,
   because that socket's only access control is filesystem permission (see
   [architecture.md](architecture.md)).
+- **A GUI settings save can never silently wipe a `GUIConfig` field the
+  frontend does not edit.** `services.GUIConfigData` (`services/app_service.go:81`)
+  is a DTO carrying only the GUI-editable subset of `GUIConfig`
+  (`config.go:52`); `configToData` (`app.go:235`) builds it from the loaded
+  config at startup, and the `AppService.ConfigUpdater` callback wired in
+  `NewApp` (`app.go:2401`) persists edits by calling `applyDataToConfig`
+  (`app.go:281`), which merges the DTO onto a **copy of the existing**
+  `GUIConfig` rather than rebuilding one from scratch. Any `GUIConfig` field
+  the DTO does not carry — currently `ServerSPKIPin` and
+  `FIDO2FirmwareVersion`, neither of which has a Settings UI control — is
+  therefore always preserved from the pre-existing config instead of being
+  zeroed. `TestConfigDataRoundTrip` (`config_data_roundtrip_test.go`) walks
+  every exported `GUIConfig` field via reflection and fails if a new field
+  is added without either an entry in `configToData`/`applyDataToConfig` or
+  a documented reason in `unmappedGUIConfigDataFields`. This is the fix for
+  go-xkms#1122, where the predecessor `dataToConfig` rebuilt `GUIConfig`
+  from the DTO alone and silently zeroed both fields on every save.
 
 ## Errors — `xkey/pkg/gui/errors.go`
 
