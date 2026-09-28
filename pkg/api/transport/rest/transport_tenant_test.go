@@ -338,3 +338,138 @@ func TestTransport_TenantBarrierUnseal_NotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent tenant")
 	}
 }
+
+// TestCreateTenant_CollectionRootRequiresTrailingSlash and
+// TestListTenants_CollectionRootRequiresTrailingSlash reproduce the
+// production route collision CreateTenant/ListTenants's doc comments
+// describe: pkg/api/rest/routes.go registers the tenant collection root at
+// "/api/v1/tenants/" (with a trailing slash, permIf("POST", "/tenants/",
+// ...) / permIf("GET", "/tenants/", ...)), consistently with every other
+// collection-root route in that file ("/custodian/groups/", "/shares/",
+// "/passwords/"). On xkmsd's real unified listener with the ACME admin
+// plane enabled, something else registers the exact, no-trailing-slash
+// "/api/v1/tenants" (cmd/xkmsd/admin.go's adminAPIPrefixes,
+// pkg/apimodule/admin_module.go), and that exact match answers instead of
+// this client's request ever reaching the tenant handler's redirect target
+// — silently, because both handlers return 200 with a JSON body, just
+// shaped differently.
+//
+// newTenantTestTransport's own server (above) cannot reproduce this: it
+// mounts the tenant routes with chi's Route("/api/v1/tenants", ...)
+// sub-router helper, whose "/" pattern matches the collection root with or
+// without a trailing slash, unlike routes.go's flat, literal
+// permIf-registered pattern. These two tests build a server that mirrors
+// production instead: an exact, non-redirecting decoy handler at the bare
+// "/api/v1/tenants" path (standing in for the admin module) alongside the
+// real tenant handler at "/api/v1/tenants/" (standing in for routes.go),
+// and assert the client reaches the real one.
+func TestCreateTenant_CollectionRootRequiresTrailingSlash(t *testing.T) {
+	r := chi.NewRouter()
+
+	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	// Decoy: an unrelated handler claiming the exact, slash-less collection
+	// path, the way the ACME admin plane's own "/api/v1/tenants" does in
+	// production. If CreateTenant ever regresses to the no-slash request
+	// path, this is what would answer, and the test fails on the response
+	// shape, not a connection error.
+	r.Post("/api/v1/tenants", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":     "decoy-should-not-be-reached",
+			"name":   "decoy",
+			"status": "active",
+		})
+	})
+
+	r.Post("/api/v1/tenants/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tenant": map[string]any{
+				"id":   "real-tenant",
+				"name": "Real Tenant",
+			},
+		})
+	})
+
+	server := httptest.NewServer(r)
+	t.Cleanup(server.Close)
+
+	tr, err := NewWithConfig(&transport.Config{Address: server.URL, TLSEnabled: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	resp, err := tr.CreateTenant(context.Background(), &transport.CreateTenantRequest{
+		ID:   "real-tenant",
+		Name: "Real Tenant",
+	})
+	if err != nil {
+		t.Fatalf("CreateTenant failed: %v", err)
+	}
+	if resp.Tenant.ID != "real-tenant" {
+		t.Fatalf("CreateTenant reached the decoy collection-root handler instead of the real one: got ID %q", resp.Tenant.ID)
+	}
+	if resp.Tenant.Name != "Real Tenant" {
+		t.Fatalf("CreateTenant reached the decoy collection-root handler instead of the real one: got Name %q", resp.Tenant.Name)
+	}
+}
+
+func TestListTenants_CollectionRootRequiresTrailingSlash(t *testing.T) {
+	r := chi.NewRouter()
+
+	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	// Decoy: see TestCreateTenant_CollectionRootRequiresTrailingSlash.
+	r.Get("/api/v1/tenants", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []map[string]any{{"id": "decoy-should-not-be-reached"}},
+			"total": 1,
+		})
+	})
+
+	r.Get("/api/v1/tenants/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tenants": []map[string]any{{"id": "real-tenant"}},
+			"pagination": map[string]any{
+				"page": 1, "page_size": 1, "total": 1, "has_more": false,
+			},
+		})
+	})
+
+	server := httptest.NewServer(r)
+	t.Cleanup(server.Close)
+
+	tr, err := NewWithConfig(&transport.Config{Address: server.URL, TLSEnabled: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	resp, err := tr.ListTenants(context.Background())
+	if err != nil {
+		t.Fatalf("ListTenants failed: %v", err)
+	}
+	if len(resp.Tenants) != 1 || resp.Tenants[0].ID != "real-tenant" {
+		t.Fatalf("ListTenants reached the decoy collection-root handler instead of the real one: got %+v", resp.Tenants)
+	}
+}

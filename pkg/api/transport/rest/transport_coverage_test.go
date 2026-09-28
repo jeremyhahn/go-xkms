@@ -233,9 +233,9 @@ func newFullMockServer(t *testing.T) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]interface{}{"failed_attempts": 0, "max_attempts": 10})
 
 		// --- Passwords ---
-		case path == "/api/v1/passwords" && r.Method == http.MethodPost:
+		case path == "/api/v1/passwords/" && r.Method == http.MethodPost:
 			json.NewEncoder(w).Encode(map[string]string{"id": "pw-id", "name": "test"})
-		case path == "/api/v1/passwords" && r.Method == http.MethodGet:
+		case path == "/api/v1/passwords/" && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode(map[string]interface{}{"passwords": []interface{}{}})
 		case path == "/api/v1/passwords/unlock",
 			path == "/api/v1/passwords/lock",
@@ -285,15 +285,15 @@ func newFullMockServer(t *testing.T) *httptest.Server {
 			json.NewEncoder(w).Encode(map[string]string{"strategy": "manual"})
 
 		// --- Custodian Groups ---
-		case path == "/api/v1/custodian/groups" && r.Method == http.MethodPost:
+		case path == "/api/v1/custodian/groups/" && r.Method == http.MethodPost:
 			json.NewEncoder(w).Encode(map[string]string{"group_id": "g1"})
-		case path == "/api/v1/custodian/groups" && r.Method == http.MethodGet:
+		case path == "/api/v1/custodian/groups/" && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode(map[string]interface{}{"groups": []interface{}{}})
 
 		// --- Shares ---
 		case path == "/api/v1/shares/submit":
 			json.NewEncoder(w).Encode(map[string]string{"result": "ok"})
-		case path == "/api/v1/shares" && r.Method == http.MethodGet:
+		case path == "/api/v1/shares/" && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode(map[string]interface{}{"shares": []interface{}{}})
 
 		// --- Tenants ---

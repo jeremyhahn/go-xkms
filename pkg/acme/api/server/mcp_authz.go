@@ -92,5 +92,5 @@ func (s *MultiProtocolServer) authorizeMCPMethod(ctx context.Context, method str
 		return admin.ErrOperationUnmapped
 	}
 
-	return s.gate.Authorize(ctx, perm.Resource, perm.Action)
+	return s.gate.Authorize(ctx, perm.Resource, perm.Action, slog.String("method", method))
 }

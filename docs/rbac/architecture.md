@@ -1,6 +1,6 @@
 # RBAC — Architecture
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## The problem
 
@@ -45,6 +45,7 @@ request → authenticator → auth.WithIdentity(ctx, id)
 | Piece | Where | Owner |
 |---|---|---|
 | `auth.Authorizer` — the only authorization seam | `pkg/auth/authorize.go` | go-xkms |
+| `auth.HoldsSystemRole` — the only role-membership check, for the one decision that is membership rather than a permission | `pkg/auth/rolemembership.go:71` | go-xkms (resolves through qrdb's `ResolveSystemRoleID`) |
 | Resource / action identifiers | `pkg/auth/permissions.go` — "the ONLY authorization vocabulary in the xkms process" (doc comment) | go-xkms (mirrors qrdb's canonical strings; registers no parallel vocabulary) |
 | Role definitions, grants, permission registry, scope declarations | go-qrdb's identity plane (`pkg/permission`, `pkg/role` in go-qrdb) | **go-qrdb** |
 | The 5 self-scoped permission exceptions xkms alone owns | `pkg/apimodule/module_scopes.go` | go-xkms |
@@ -80,6 +81,44 @@ request with an identity carrying qrdb roles
     → qrdbClient.RBAC().Authorize(...) — resolves grants, checks tenancy scope
   → allow (nil) or PermissionDeniedError / ErrUnauthenticated
 ```
+
+## Identities carry role identifiers, never role names
+
+Every authenticated identity carries qrdb role **identifiers** in `Roles`:
+go-qrdb's middleware sets `Identity.Roles = user.RoleIDs`, and xkms's mTLS
+authenticator copies the same slice (go-xkms#1069). A role *name* such as
+`"admin"` or `"so"` therefore never appears on a store-resolved identity. It
+appears only where an authenticator copied an unverified claim — an OIDC or
+JWT `roles`/`groups` claim for a subject with no qrdb user record.
+
+So no authorization decision compares `Roles` against a role name. Three
+places once did (go-xkms#1074), each with a different effect:
+
+| Former check | What it gated | Store-resolved identity | Name-bearing identity |
+|---|---|---|---|
+| `pkg/xkms/servicer_password.go` shared-password override (`admin`, `so`) | a non-owner updating or deleting a shared vault entry | never matched: tenant Admin and SO were refused (fail-closed) | matched: override granted (fail-open) wherever the transport admitted the caller — in practice, deployments with RBAC disabled |
+| `pkg/xkms/servicer_ca.go` `SignCSR` (`admin`, `user`, `operator`) | CSR signing over REST and MCP, after the transport's `certs:generate` | never matched: every authenticated caller was refused (fail-closed) | only restrictive, so never granted anything |
+| `pkg/api/tenantgate/tenantgate.go` Security Officer exemption (`so`) | skipping the tenant-registered and tenant-sealed gate on REST, gRPC and MCP | never matched | matched: the gate was skipped (fail-open); RBAC still applied afterwards |
+
+Each was replaced by the model the operation already declared:
+
+- **CSR signing** is a `certs:generate` operation, enforced by every
+  transport before dispatch (`pkg/api/rest/routes.go:237`,
+  `pkg/api/mcp/authz.go:170`, `pkg/api/grpc/service_ca.go:136`). The
+  servicer no longer makes a second decision (`pkg/xkms/servicer_ca.go:139`).
+- **The shared-password override** is genuinely role membership: Admin and
+  Operator hold the same `passwords:*` grants, so no permission separates
+  the vault administrator from any other writer. It resolves membership with
+  `auth.HoldsSystemRole` against the identity's own tenant
+  (`pkg/xkms/servicer_password.go:113`, `:144`).
+- **The tenant gate** has no role exemption. Cross-tenant scope is qrdb's
+  system-tenant rule alone, through `auth.IsCrossTenant`
+  (`pkg/api/tenantgate/tenantgate.go:107`). The system tenant's Security
+  Officer is cross-tenant already; a tenant-local officer is confined to its
+  tenant, as qrdb's authorizer confines it.
+
+`Identity.HasRole` belongs to go-qrdb and cannot be removed here. The
+`forbidigo` rule in `.golangci.yml:115` fails the build on any call to it.
 
 ## Trust boundaries
 

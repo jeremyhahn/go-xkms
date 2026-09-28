@@ -39,6 +39,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -136,13 +137,30 @@ func (r *realKeyVaultClient) Close() error {
 }
 
 // Backend implements the types.KeyProvider interface for Azure Key Vault.
-// It provides secure key management operations using Azure Key Vault.
+// It provides secure key management operations using Azure Key Vault. Key
+// metadata (the CN -> Azure Key Vault key/secret descriptor) is persisted
+// through Config.KeyStorage, never cached in process memory: a process that
+// lost that record on restart would report a key that genuinely exists in
+// the vault as not found, and pkg/seal.EnsureSealKey would generate a NEW
+// seal key rather than reusing the one already wrapping existing data
+// (go-xkms#1098, mirroring the awskms fix from go-xkms#839).
+// storage.Backend implementations are required to be thread-safe (see
+// pkg/storage.Backend), so no additional locking wraps metadata reads/writes
+// here.
 type Backend struct {
-	config   *Config
-	client   KeyVaultClient
-	metadata map[string][]byte // In-memory metadata storage keyed by CN
-	tracker  types.AEADSafetyTracker
-	mu       sync.RWMutex
+	config        *Config
+	client        KeyVaultClient
+	secretsClient SecretsClient // lazily initialized by initSecretsClient; see azurekv_symmetric.go
+	// importTokens holds the transient RSA wrapping-key material generated
+	// by GetImportParameters for the GetImportParameters -> WrapKey ->
+	// ImportKey ceremony. It is deliberately never written through
+	// Config.KeyStorage: it is private key material, not key metadata, and
+	// the ceremony is expected to complete within one process's uptime --
+	// unlike the CN -> key descriptor records above, nothing relies on it
+	// surviving a restart.
+	importTokens map[string][]byte
+	tracker      types.AEADSafetyTracker
+	mu           sync.RWMutex // guards client/secretsClient initialization and importTokens
 }
 
 // NewBackend creates a new Azure Key Vault backend instance.
@@ -159,9 +177,9 @@ func NewBackend(config *Config) (*Backend, error) {
 	}
 
 	b := &Backend{
-		config:   config,
-		metadata: make(map[string][]byte),
-		tracker:  tracker,
+		config:       config,
+		importTokens: make(map[string][]byte),
+		tracker:      tracker,
 	}
 
 	return b, nil
@@ -181,12 +199,29 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 	}
 
 	b := &Backend{
-		config:   config,
-		client:   client,
-		metadata: make(map[string][]byte),
-		tracker:  tracker,
+		config:       config,
+		client:       client,
+		importTokens: make(map[string][]byte),
+		tracker:      tracker,
 	}
 
+	return b, nil
+}
+
+// NewBackendWithClients creates a new Azure Key Vault backend with both a
+// custom key-vault client and a custom secrets client injected. Symmetric
+// key operations (GenerateSymmetricKey/GetSymmetricKey in
+// azurekv_symmetric.go) go through the secrets client rather than client,
+// because standard-tier Key Vault has no oct (symmetric) key type through
+// the Keys API; every other operation goes through client, exactly as with
+// NewBackendWithClient. This is primarily used for testing with mock/fake
+// clients.
+func NewBackendWithClients(config *Config, client KeyVaultClient, secretsClient SecretsClient) (*Backend, error) {
+	b, err := NewBackendWithClient(config, client)
+	if err != nil {
+		return nil, err
+	}
+	b.secretsClient = secretsClient
 	return b, nil
 }
 
@@ -301,13 +336,10 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 		return nil, err
 	}
 
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	// For metadata/blob extensions, return stored metadata
 	if extension == backend.FSEXT_PRIVATE_BLOB || extension == backend.FSEXT_PUBLIC_BLOB {
-		data, ok := b.metadata[attrs.CN]
-		if !ok {
+		data, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
+		if err != nil {
 			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
 		return data, nil
@@ -337,18 +369,21 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 		return err
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	// Check if metadata already exists
 	if !overwrite {
-		if _, exists := b.metadata[attrs.CN]; exists {
+		exists, err := storage.KeyExists(ctx, b.config.KeyStorage, attrs.CN)
+		if err != nil {
+			return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
+		}
+		if exists {
 			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
 	}
 
 	// Store metadata
-	b.metadata[attrs.CN] = data
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, data); err != nil {
+		return &errs.Wrapped{Msg: "failed to store metadata", Err: err}
+	}
 
 	return nil
 }
@@ -365,10 +400,12 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 		return err
 	}
 
-	b.mu.Lock()
-	// Remove metadata
-	delete(b.metadata, attrs.CN)
-	b.mu.Unlock()
+	// Remove metadata. A missing entry is not an error here (Delete is
+	// idempotent): storage.DeleteKey's ErrNotFound is swallowed exactly
+	// like the Key Vault client's DeleteKey error below.
+	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return &errs.Wrapped{Msg: "failed to remove key metadata", Err: err}
+	}
 
 	// Delete key from Azure Key Vault
 	_, err := b.client.DeleteKey(ctx, attrs.CN, nil)
@@ -381,18 +418,26 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 	return nil
 }
 
-// Close releases any resources held by the backend.
+// Close releases any resources held by the backend. Config.KeyStorage's
+// lifecycle belongs to the caller that constructed it (it may be shared, or
+// outlive this backend across a restart), so Close never touches it -- only
+// the Azure client handles and the transient importTokens map are released
+// here.
 func (b *Backend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.metadata = make(map[string][]byte)
+	b.importTokens = make(map[string][]byte)
 	if b.client != nil {
 		if err := b.client.Close(); err != nil {
 			return err
 		}
 		b.client = nil
 	}
+	// SecretsClient has no Close method -- *azsecrets.Client requires none --
+	// so only the reference is dropped, which is what makes initSecretsClient
+	// re-create a real client if this Backend is reused after Close.
+	b.secretsClient = nil
 
 	return nil
 }
@@ -456,9 +501,9 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 		return string(keyID), &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
-	b.mu.Lock()
-	b.metadata[attrs.CN] = metadataBytes
-	b.mu.Unlock()
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+		return string(keyID), &errs.Wrapped{Msg: "failed to store metadata", Err: err}
+	}
 
 	return string(keyID), nil
 }
@@ -735,9 +780,9 @@ func (b *Backend) CreateSecretKey(attrs *types.KeyAttributes, keySize int) (stri
 		return string(keyID), &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
-	b.mu.Lock()
-	b.metadata[attrs.CN] = metadataBytes
-	b.mu.Unlock()
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+		return string(keyID), &errs.Wrapped{Msg: "failed to store metadata", Err: err}
+	}
 
 	return string(keyID), nil
 }
@@ -782,10 +827,10 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	}
 
 	// Check if metadata exists
-	b.mu.RLock()
-	_, exists := b.metadata[attrs.CN]
-	b.mu.RUnlock()
-
+	exists, err := storage.KeyExists(ctx, b.config.KeyStorage, attrs.CN)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
+	}
 	if !exists {
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
@@ -796,7 +841,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	// RBAC/authorization denial) must not be conflated with "no key yet":
 	// getOrGenerateCAKey relies on that distinction to decide whether
 	// generating a replacement key is safe.
-	_, err := b.client.GetKey(ctx, attrs.CN, "", nil)
+	_, err = b.client.GetKey(ctx, attrs.CN, "", nil)
 	if err != nil {
 		var respErr *azcore.ResponseError
 		if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
@@ -859,18 +904,21 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 
 	var allKeys []*types.KeyAttributes
 
-	// List all keys from metadata
+	// List all key CNs from persisted metadata.
 	// We rely on metadata since Azure Key Vault ListKeys requires pagination
-	// and metadata provides the key type information we need
-	b.mu.RLock()
-	metadataCopy := make(map[string][]byte, len(b.metadata))
-	for k, v := range b.metadata {
-		metadataCopy[k] = v
+	// and metadata provides the key type information we need.
+	cns, err := storage.ListKeys(ctx, b.config.KeyStorage)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
-	b.mu.RUnlock()
 
-	// Reconstruct KeyAttributes from metadata
-	for cn, metadataBytes := range metadataCopy {
+	// Reconstruct KeyAttributes from each key's metadata.
+	for _, cn := range cns {
+		metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, cn)
+		if err != nil {
+			continue // Skip a CN whose metadata disappeared between List and Get
+		}
+
 		var metadata map[string]interface{}
 		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
 			continue // Skip invalid metadata

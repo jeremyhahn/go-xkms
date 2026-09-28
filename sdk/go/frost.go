@@ -101,7 +101,32 @@ var (
 	// requested for a threshold-2+ key, which needs the round-based
 	// distributed signing API instead.
 	ErrFrostThresholdSigningNotSupported = frost.ErrThresholdSigningNotSupported
+
+	// FrostSymmetricSecretSealKeyAttributes builds the KeyAttributes for the
+	// AES-256-GCM wrapping key a types.SymmetricKeyProvider secret backend
+	// (PKCS#11, cloud KMS) seals/unseals every FROST secret share with.
+	// Provision it with EnsureSealKey before use.
+	FrostSymmetricSecretSealKeyAttributes = frost.SymmetricSecretSealKeyAttributes
+
+	// FrostAsymmetricSecretSealKeyAttributes builds the KeyAttributes for
+	// the Ed25519 private key the software and PKCS#8 secret backends'
+	// Sealer derives an AES-256-GCM wrapping key from (HKDF). Provision it
+	// with EnsurePrivateSealKey before use.
+	FrostAsymmetricSecretSealKeyAttributes = frost.AsymmetricSecretSealKeyAttributes
+
+	// FrostTPM2SecretSealKeyAttributes builds the wrapping-key template for
+	// a TPM2 secret backend (Parent = the Platform SRK attributes, no CN --
+	// FrostBackend fills one in per FROST key). TPM2 needs no provisioning
+	// step.
+	FrostTPM2SecretSealKeyAttributes = frost.TPM2SecretSealKeyAttributes
 )
+
+// FrostSecretSealKeyCN is the fixed common name of the wrapping key a FROST
+// secret backend that seals via a reusable key provisions to seal/unseal
+// every participant's secret share. Distinct from SealKeyCN, the barrier's
+// own wrapping key, so a backend serving both roles never shares one key
+// between them.
+const FrostSecretSealKeyCN = frost.SecretSealKeyCN
 
 // FROST ciphersuite constants re-exported from pkg/types. These are surfaced
 // here (rather than the always-compiled types.go) because they are only needed

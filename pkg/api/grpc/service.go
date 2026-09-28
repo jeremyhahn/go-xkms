@@ -80,9 +80,19 @@ func getBackendDescription(bt types.BackendType) string {
 
 // Typed errors for authorization operations.
 var (
-	// ErrAccessDenied is returned when the authorizer denies access to the
-	// requested resource without supplying a specific reason.
+	// ErrAccessDenied is the fixed, generic message authorize returns to the
+	// client on a permission denial. The specific reason (a missing grant, a
+	// tenant-scope rejection, or an RBAC backend detail) is not the caller's
+	// to see; authorize records it in the audit event's Details["reason"]
+	// instead, matching pkg/api/rest/rbac_middleware.go's RBACMiddleware
+	// (go-xkms#1103).
 	ErrAccessDenied = errors.New("grpc: access denied")
+
+	// ErrAuthenticationRequired is the fixed, generic message authorize
+	// returns to the client when it is invoked without an identity on the
+	// context, matching pkg/api/rest/rbac_middleware.go's "Authentication
+	// required" wording (go-xkms#1103).
+	ErrAuthenticationRequired = errors.New("grpc: authentication required")
 )
 
 // Service implements the KeystoreService gRPC interface
@@ -181,8 +191,10 @@ func callerTenantID(ctx context.Context) string {
 // authorize performs an authorization check for the given resource, action,
 // and resource ID. It extracts the caller's identity from the context,
 // delegates the decision to the qrdb-backed Authorizer, and logs the audit
-// event. Returns nil if the action is allowed, or a gRPC status error on
-// deny (PermissionDenied) or missing identity (Unauthenticated).
+// event, recording the denial reason (if any) in the event's Details rather
+// than the client-facing error. Returns nil if the action is allowed, or a
+// gRPC status error carrying a fixed, generic message on deny
+// (PermissionDenied) or missing identity (Unauthenticated) -- go-xkms#1103.
 func (s *Service) authorize(ctx context.Context, resource, action, resourceID string) error {
 	identity := auth.GetIdentity(ctx)
 
@@ -212,6 +224,13 @@ func (s *Service) authorize(ctx context.Context, resource, action, resourceID st
 	if role != "" {
 		auditEvent.Details["role"] = role
 	}
+	if err != nil {
+		// The denial reason stays in the audit trail, never the client
+		// response: it can carry RBAC/backend detail (barrier state,
+		// user-store failures, why a certificate was rejected) that is not
+		// the caller's to see (go-xkms#1103).
+		auditEvent.Details["reason"] = err.Error()
+	}
 	// authorize is a SeveritySecurity action (docs/audit-log/engineering.md):
 	// a failed audit write fails the request rather than let an
 	// authorization decision proceed unaudited.
@@ -221,13 +240,9 @@ func (s *Service) authorize(ctx context.Context, resource, action, resourceID st
 
 	if err != nil {
 		if errors.Is(err, auth.ErrUnauthenticated) {
-			return status.Error(codes.Unauthenticated, err.Error())
+			return status.Error(codes.Unauthenticated, ErrAuthenticationRequired.Error())
 		}
-		reason := err.Error()
-		if reason == "" {
-			reason = ErrAccessDenied.Error()
-		}
-		return status.Error(codes.PermissionDenied, reason)
+		return status.Error(codes.PermissionDenied, ErrAccessDenied.Error())
 	}
 
 	return nil

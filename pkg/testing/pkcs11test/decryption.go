@@ -32,6 +32,7 @@ import (
 func (s *Suite) RunDecryptionTests(t *testing.T) {
 	t.Run("C_DecryptInit", s.testDecryptInit)
 	t.Run("C_Decrypt", s.testDecrypt)
+	t.Run("C_Decrypt_RSA_OAEP", s.testDecryptRSAOAEP)
 	t.Run("C_DecryptUpdate_C_DecryptFinal", s.testDecryptMultiPart)
 }
 
@@ -322,6 +323,114 @@ func (s *Suite) testDecrypt(t *testing.T) {
 		_, rv = m.Decrypt(sh, ciphertext)
 		requireRV(t, module.CKR_OPERATION_NOT_INITIALIZED, rv,
 			"Decrypt after FinishOperation should return CKR_OPERATION_NOT_INITIALIZED")
+	})
+}
+
+// testDecryptRSAOAEP verifies CKM_RSA_PKCS_OAEP decryption per PKCS#11 v3.0
+// Section 5.9.
+//
+// Unlike the CKM_AES_GCM cases in testDecrypt, OAEP encrypts under the public
+// half of an RSA key pair and decrypts under the private half, so the fixture
+// is generateRSAKeyPair rather than generateSecretKey. This is also the
+// regression test for the CryptoMockClient bug where Decrypt always ran
+// AES-GCM against getOrCreateSymKey regardless of the request's Padding: an
+// OAEP decrypt against that backend silently created an unrelated AES key
+// and failed, and neither this package nor cmd/pkcs11-module exercised the
+// path that would have caught it.
+func (s *Suite) testDecryptRSAOAEP(t *testing.T) {
+
+	t.Run("round_trip_recovers_the_plaintext", func(t *testing.T) {
+		m, cleanup := s.createInitializedModule(t)
+		defer cleanup()
+
+		sh := openAuthenticatedRWSession(t, m)
+		pubKey, privKey := generateRSAKeyPair(t, m, sh)
+		plaintext := []byte("RSA-OAEP conformance test plaintext")
+
+		mech := module.NewMechanismWithTypedParams(module.CKM_RSA_PKCS_OAEP, module.NewRSAOAEPParams(module.CKM_SHA256))
+		rv := m.EncryptInit(sh, mech, pubKey)
+		requireRV(t, module.CKR_OK, rv, "EncryptInit (RSA-OAEP) should succeed")
+
+		ciphertext, rv := m.Encrypt(sh, plaintext)
+		requireRV(t, module.CKR_OK, rv, "Encrypt (RSA-OAEP) should succeed")
+		if bytes.Equal(ciphertext, plaintext) {
+			t.Fatal("Encrypt (RSA-OAEP) returned the plaintext unchanged")
+		}
+
+		rv = m.DecryptInit(sh, mech, privKey)
+		requireRV(t, module.CKR_OK, rv, "DecryptInit (RSA-OAEP) should succeed")
+
+		recovered, rv := m.Decrypt(sh, ciphertext)
+		requireRV(t, module.CKR_OK, rv, "Decrypt (RSA-OAEP) should succeed")
+		if !bytes.Equal(recovered, plaintext) {
+			t.Fatalf("Decrypt (RSA-OAEP) did not recover the plaintext\n got %q\nwant %q", recovered, plaintext)
+		}
+	})
+
+	// RFC 8017 §7.1.1 binds the OAEP label into the padding the decrypting
+	// side reconstructs. Encrypting under one label and decrypting under
+	// another must fail exactly as though the ciphertext were corrupt, or a
+	// caller that mismatched a label recovers a decryption failure that looks
+	// like ciphertext corruption instead of the parameter mistake it is.
+	t.Run("wrong_label_fails_with_CKR_ENCRYPTED_DATA_INVALID", func(t *testing.T) {
+		m, cleanup := s.createInitializedModule(t)
+		defer cleanup()
+
+		sh := openAuthenticatedRWSession(t, m)
+		pubKey, privKey := generateRSAKeyPair(t, m, sh)
+		plaintext := []byte("label-bound OAEP plaintext")
+
+		encMech := module.NewMechanismWithTypedParams(module.CKM_RSA_PKCS_OAEP,
+			module.NewRSAOAEPParamsWithLabel(module.CKM_SHA256, []byte("encrypt-label")))
+		rv := m.EncryptInit(sh, encMech, pubKey)
+		requireRV(t, module.CKR_OK, rv, "EncryptInit (RSA-OAEP, labeled) should succeed")
+
+		ciphertext, rv := m.Encrypt(sh, plaintext)
+		requireRV(t, module.CKR_OK, rv, "Encrypt (RSA-OAEP, labeled) should succeed")
+
+		decMech := module.NewMechanismWithTypedParams(module.CKM_RSA_PKCS_OAEP,
+			module.NewRSAOAEPParamsWithLabel(module.CKM_SHA256, []byte("decrypt-label")))
+		rv = m.DecryptInit(sh, decMech, privKey)
+		requireRV(t, module.CKR_OK, rv, "DecryptInit (RSA-OAEP, labeled) should succeed")
+
+		result, rv := m.Decrypt(sh, ciphertext)
+		requireRV(t, module.CKR_ENCRYPTED_DATA_INVALID, rv,
+			"Decrypt under a mismatched OAEP label should return CKR_ENCRYPTED_DATA_INVALID")
+		if len(result) != 0 {
+			t.Fatalf("Decrypt returned %d bytes under a mismatched OAEP label alongside %s", len(result), rv)
+		}
+	})
+
+	// PKCS#11 v3.2 §5.10.2 lists CKR_ENCRYPTED_DATA_INVALID as the code for a
+	// ciphertext C_Decrypt has determined is invalid, mirroring the AES-GCM
+	// tampered-ciphertext case in testDecrypt.
+	t.Run("tampered_ciphertext_fails_with_CKR_ENCRYPTED_DATA_INVALID", func(t *testing.T) {
+		m, cleanup := s.createInitializedModule(t)
+		defer cleanup()
+
+		sh := openAuthenticatedRWSession(t, m)
+		pubKey, privKey := generateRSAKeyPair(t, m, sh)
+		plaintext := []byte("tamper-resistant OAEP plaintext")
+
+		mech := module.NewMechanismWithTypedParams(module.CKM_RSA_PKCS_OAEP, module.NewRSAOAEPParams(module.CKM_SHA256))
+		rv := m.EncryptInit(sh, mech, pubKey)
+		requireRV(t, module.CKR_OK, rv, "EncryptInit (RSA-OAEP) should succeed")
+
+		ciphertext, rv := m.Encrypt(sh, plaintext)
+		requireRV(t, module.CKR_OK, rv, "Encrypt (RSA-OAEP) should succeed")
+
+		tampered := append([]byte(nil), ciphertext...)
+		tampered[0] ^= 0x01
+
+		rv = m.DecryptInit(sh, mech, privKey)
+		requireRV(t, module.CKR_OK, rv, "DecryptInit (RSA-OAEP) should succeed")
+
+		result, rv := m.Decrypt(sh, tampered)
+		requireRV(t, module.CKR_ENCRYPTED_DATA_INVALID, rv,
+			"Decrypt of a tampered RSA-OAEP ciphertext should return CKR_ENCRYPTED_DATA_INVALID")
+		if len(result) != 0 {
+			t.Fatalf("Decrypt returned %d bytes of unauthenticated plaintext alongside %s", len(result), rv)
+		}
 	})
 }
 

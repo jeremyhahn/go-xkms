@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -307,9 +308,12 @@ func TestImportKey_RSA(t *testing.T) {
 		t.Error("ImportKey() did not create key in mock vault")
 	}
 
+	hasMetadata, err := storage.KeyExists(context.Background(), b.config.KeyStorage, attrs.CN)
+	if err != nil {
+		t.Fatalf("storage.KeyExists() error = %v", err)
+	}
 	b.mu.RLock()
-	_, hasMetadata := b.metadata[attrs.CN]
-	_, hasImportToken := b.metadata["import-token-"+attrs.CN]
+	_, hasImportToken := b.importTokens["import-token-"+attrs.CN]
 	b.mu.RUnlock()
 	if !hasMetadata {
 		t.Error("ImportKey() did not store metadata")

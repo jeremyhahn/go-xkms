@@ -32,7 +32,6 @@ import (
 // Behavior (see tenantgate.Access):
 //   - Cross-tenant-scoped identity (nil, empty TenantID, or the reserved
 //     system tenant): passes through (system-level or bootstrap access)
-//   - SO role: passes through with cross-tenant access
 //   - No barrier registry configured: passes through
 //   - Tenant not found in registry: returns ErrCodeForbidden
 //   - Tenant barrier is sealed: returns ErrCodeServiceUnavailable

@@ -26,9 +26,30 @@ type Config struct {
 	// This storage does not need to be encrypted or hardware-backed.
 	PublicStorage storage.Backend
 
-	// SecretBackend stores the secret key share.
-	// This should be a secure backend (TPM2, PKCS#11, Cloud KMS, Vault, etc.)
-	SecretBackend types.KeyProvider
+	// SecretBackend seals and unseals each participant's secret key share
+	// using its own native sealing mechanism (see types.Sealer): TPM2
+	// PCR-bound seal under the Platform SRK, PKCS#11/cloud KMS envelope
+	// encryption, or software/PKCS#8 HKDF-derived AES-GCM. It must also
+	// implement types.KeyProvider (Type/Capabilities are used by the
+	// FrostBackend wrapping this Config), which is why the field is typed
+	// types.SealingKeyProvider rather than the bare types.Sealer.
+	SecretBackend types.SealingKeyProvider
+
+	// SecretSealKeyAttributes identifies the wrapping key SecretBackend
+	// seals/unseals a secret share with.
+	//
+	//   - nil: SecretBackend needs no KeyAttributes at all (only a bare
+	//     types.Sealer in tests exercises this).
+	//   - CN set: a single reusable wrapping key shared by every FROST key
+	//     in this store (the PKCS#11/cloud KMS symmetric KEK, or the
+	//     software/PKCS#8 private key sealing derives from). Build it with
+	//     SymmetricSecretSealKeyAttributes / AsymmetricSecretSealKeyAttributes,
+	//     provisioned once via seal.EnsureSealKey / seal.EnsurePrivateSealKey.
+	//   - CN empty (only Parent set): a template, produced by
+	//     TPM2SecretSealKeyAttributes. KeyStore fills in a per-FROST-key CN
+	//     at seal/unseal time so each key gets its own TPM-sealed object
+	//     identity instead of every key's Seal overwriting one shared slot.
+	SecretSealKeyAttributes *types.KeyAttributes
 
 	// DKG is the key generator implementation.
 	// If nil, TrustedDealer is used by default.
@@ -72,6 +93,9 @@ func (c *Config) Validate() error {
 
 	if c.SecretBackend == nil {
 		return &ConfigError{Field: "SecretBackend", Message: "required"}
+	}
+	if !c.SecretBackend.CanSeal() {
+		return &ConfigError{Field: "SecretBackend", Message: "must support sealing (CanSeal returned false)"}
 	}
 
 	// Set defaults

@@ -1,0 +1,90 @@
+# Dockerfile.xkmsd — builds xkmsd for the acmeadmin integration compose
+# stack (test/integration/acmeadmin/docker-compose.yml).
+#
+# Purpose-built rather than the root Dockerfile: this lane's xkmsd.yaml sets
+# storage.backend: qrdb, and the ACME admin plane's account/certificate/EAB/
+# tenant-EAB DAOs each resolve a serialization codec at storage-open time
+# (go-qrdb's dao package) — omitted, every such call fails at runtime with
+# `codec "json" is not supported in this build; rebuild with the
+# appropriate build tag`, which is exactly the 500 this lane hit before this
+# file existed. The root Dockerfile's `go build` carries no codec_* tag
+# (right for the lanes that build against it, which never start a live
+# server exercising these DAOs); test/integration/cluster/Dockerfile.xkmsd
+# hits the identical requirement for the same reason (also
+# storage.backend: qrdb) and solves it the same way — a dedicated
+# Dockerfile builds xkmsd with the codec tags, matching this file.
+#
+# Build context is the repo root; in-house modules resolve from Gitea tags
+# via the gomodauth build secret.
+
+FROM golang:1.27.0-bookworm AS builder
+
+ENV GOTOOLCHAIN=auto
+
+# Build dependencies for CGO (PKCS#11 support pulled in transitively).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libusb-1.0-0-dev \
+    libicu-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy module manifests for cache-efficient dependency download.
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+COPY xkey/go.mod xkey/go.sum ./xkey/
+
+# In-house modules resolve from Gitea tags (dependency-resolution.md §6) — no
+# build-time workspace and no sibling contexts. The fetch token arrives as a
+# BuildKit secret, NOT a build arg or an ENV: a build arg is recorded in image
+# metadata, while a secret is mounted on tmpfs for this RUN alone and never
+# becomes a layer. It is sourced rather than exported so the value never
+# appears in a command line either. The mount is optional by design: with no
+# secret supplied these modules resolve from the public proxy once tags are
+# mirrored, so the same Dockerfile builds on both hosts.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
+
+# Copy the full source tree.
+COPY . .
+
+# pkcs8 matches this lane's software keystore type; codec_cbor/json/msgpack
+# are what the qrdb-backed ACME DAOs require (see header comment above).
+RUN CGO_ENABLED=1 go build -buildvcs=false \
+    -tags "pkcs8 codec_cbor codec_json codec_msgpack" \
+    -ldflags "-w -s" \
+    -o /out/xkmsd \
+    ./cmd/xkmsd/
+
+RUN test -f /out/xkmsd || (echo "ERROR: Server binary not built" && exit 1)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Runtime image: Debian bookworm slim for glibc compatibility with the CGO
+# binary. We do not use Alpine because the CGO binary links against glibc.
+# ──────────────────────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    wget \
+    openssl \
+    libusb-1.0-0 \
+    libicu72 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /out/xkmsd /app/xkmsd
+
+RUN mkdir -p /data/storage /data/keys /etc/xkms/certs
+
+EXPOSE 8443
+EXPOSE 8444
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=20 --start-period=15s \
+    CMD wget --quiet --tries=1 --spider --no-check-certificate https://localhost:8443/health || exit 1
+
+ENTRYPOINT ["/app/xkmsd"]

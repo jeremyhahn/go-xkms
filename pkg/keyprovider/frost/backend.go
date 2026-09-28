@@ -78,7 +78,7 @@ func NewBackend(config *Config) (*FrostBackend, error) {
 	}
 
 	// Create keystore
-	keystore := NewKeyStore(config.PublicStorage, config.SecretBackend)
+	keystore := NewKeyStore(config.PublicStorage, config.SecretBackend, config.SecretSealKeyAttributes)
 
 	// Create nonce tracker
 	nonceStorage := config.GetNonceStorage()

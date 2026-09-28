@@ -26,10 +26,13 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -786,71 +789,61 @@ func TestParseSerialHex_Empty(t *testing.T) {
 }
 
 // ========================================================================
-// SignCSR RBAC Tests
+// SignCSR authorization
+//
+// SignCSR's permission, certs:generate, is enforced by the transports before
+// dispatch (pkg/api/mcp authz_roleid_test.go drives it on a seeded node). The
+// servicer itself must not make a second, role-based decision.
 // ========================================================================
 
-func TestSignCSR_RBAC_AdminRole(t *testing.T) {
-	signedCert := createSelfSignedCert(t)
-	caCert := createSelfSignedCert(t)
+// signableCA returns a mock CA that signs every CSR.
+func signableCA(t *testing.T) *mockCA {
+	t.Helper()
+	return &mockCA{signCSRCert: createSelfSignedCert(t), cert: createSelfSignedCert(t)}
+}
 
-	ca := &mockCA{
-		signCSRCert: signedCert,
-		cert:        caCert,
-	}
-	svc := setupServiceWithCA(t, ca)
-
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject: "admin-user",
-		Roles:   []string{"admin"},
-	})
-
-	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
+// testCSRRequest is a CSR request the mock CA accepts.
+func testCSRRequest() *transport.SignCSRRequest {
+	return &transport.SignCSRRequest{
 		CSRPEM:  []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
 		Profile: "server",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.NotEmpty(t, resp.CertificatePEM)
-}
-
-func TestSignCSR_RBAC_UserRole(t *testing.T) {
-	signedCert := createSelfSignedCert(t)
-	caCert := createSelfSignedCert(t)
-
-	ca := &mockCA{
-		signCSRCert: signedCert,
-		cert:        caCert,
 	}
-	svc := setupServiceWithCA(t, ca)
+}
+
+// TestSignCSR_SeededAdminRoleIDSigns is the #1074 regression: an identity
+// carrying the Admin role by ID -- what every store-resolved identity carries
+// -- was refused ErrCSRSigningDenied because the servicer compared role
+// names. It must be signed.
+func TestSignCSR_SeededAdminRoleIDSigns(t *testing.T) {
+	svc := setupServiceWithCA(t, signableCA(t))
+	n, err := testutil.NewFirstBootNode(t)
+	require.NoError(t, err)
+	adminID, err := n.RoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
+	require.NoError(t, err)
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject: "regular-user",
-		Roles:   []string{"user"},
+		Subject:  "admin-user",
+		TenantID: qrdbsdk.SystemTenantID,
+		Roles:    []string{adminID},
 	})
-
-	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
-		CSRPEM: []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
-	})
+	resp, err := svc.SignCSR(ctx, testCSRRequest())
 	require.NoError(t, err)
-	require.NotNil(t, resp)
 	assert.NotEmpty(t, resp.CertificatePEM)
 }
 
-func TestSignCSR_RBAC_DeniedRole(t *testing.T) {
-	ca := &mockCA{}
-	svc := setupServiceWithCA(t, ca)
+// TestSignCSR_RoleNamesAreNotConsulted proves the servicer grants and refuses
+// nothing on the strength of role strings: neither a role name that used to
+// be admitted nor one that used to be refused changes the outcome, because
+// the decision already happened at the transport.
+func TestSignCSR_RoleNamesAreNotConsulted(t *testing.T) {
+	svc := setupServiceWithCA(t, signableCA(t))
 
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject: "viewer-user",
-		Roles:   []string{"viewer"},
-	})
-
-	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
-		CSRPEM: []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
-	})
-	assert.Nil(t, resp)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrCSRSigningDenied)
+	for _, roles := range [][]string{{"admin"}, {"viewer"}, nil} {
+		ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "caller", Roles: roles})
+		resp, err := svc.SignCSR(ctx, testCSRRequest())
+		require.NoError(t, err, "roles %v", roles)
+		assert.NotEmpty(t, resp.CertificatePEM)
+	}
 }
 
 func TestSignCSR_RBAC_LocalCallAllowed(t *testing.T) {
