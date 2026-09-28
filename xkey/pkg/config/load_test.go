@@ -201,6 +201,13 @@ fido2:
   device_name: TestKey
   always_uv: true
   resident_key: true
+piv:
+  backend: pkcs11
+  storage: pkcs11
+  storage_path: /var/lib/xkey/piv
+  tpm_device: /dev/piv-tpm
+  pkcs11_library: /usr/lib/softhsm/libsofthsm2.so
+  pkcs11_token: piv-token
 oath:
   algorithm: sha256
   digits: 8
@@ -286,6 +293,14 @@ device:
 	assert.Equal(t, "TestKey", cfg.FIDO2.DeviceName)
 	assert.True(t, cfg.FIDO2.AlwaysUV)
 	assert.True(t, cfg.FIDO2.ResidentKey)
+
+	// PIV
+	assert.Equal(t, "pkcs11", cfg.PIV.Backend)
+	assert.Equal(t, "pkcs11", cfg.PIV.Storage)
+	assert.Equal(t, "/var/lib/xkey/piv", cfg.PIV.StoragePath)
+	assert.Equal(t, "/dev/piv-tpm", cfg.PIV.TPMDevice)
+	assert.Equal(t, "/usr/lib/softhsm/libsofthsm2.so", cfg.PIV.PKCS11Library)
+	assert.Equal(t, "piv-token", cfg.PIV.PKCS11Token)
 
 	// OATH
 	assert.Equal(t, "sha256", cfg.OATH.Algorithm)
@@ -514,6 +529,53 @@ func TestLoadFromPath_EnvOverride_CompositeLeafIsRejected(t *testing.T) {
 			assert.ErrorIs(t, err, ErrConfigLoadFailed)
 		})
 	}
+}
+
+// TestLoadFromPath_PIVEnvOverride proves the piv.* leaves registered by
+// registerConfigKeys are reachable through XKEY_PIV_* the same way every
+// other section is: the environment wins over the file, and a key the file
+// does not name is still settable from an unconfigured default (go-xkms#871).
+func TestLoadFromPath_PIVEnvOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("piv:\n  backend: software\n  storage_path: /file/path\n"), 0600))
+
+	t.Setenv("XKEY_PIV_BACKEND", "tpm2")
+	t.Setenv("XKEY_PIV_TPM_DEVICE", "/dev/env-piv-tpm")
+
+	cfg, err := LoadFromPath(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "tpm2", cfg.PIV.Backend, "environment must win over the file")
+	assert.Equal(t, "/file/path", cfg.PIV.StoragePath, "a file key the environment does not name keeps its file value")
+	assert.Equal(t, "/dev/env-piv-tpm", cfg.PIV.TPMDevice, "environment must win over the default in an absent key")
+}
+
+// TestLoadFromPath_PIVInvalidBackendIsRejected proves piv.backend goes
+// through Validate whether it came from a file or the environment.
+func TestLoadFromPath_PIVInvalidBackendIsRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("piv:\n  backend: quantum\n"), 0600))
+
+	cfg, err := LoadFromPath(cfgPath)
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrConfigInvalid)
+	assert.Contains(t, err.Error(), "piv.backend")
+}
+
+// TestLoadFromPath_PIVInvalidStorageIsRejected mirrors
+// TestLoadFromPath_PIVInvalidBackendIsRejected for piv.storage.
+func TestLoadFromPath_PIVInvalidStorageIsRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("piv:\n  storage: floppy\n"), 0600))
+
+	cfg, err := LoadFromPath(cfgPath)
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrConfigInvalid)
+	assert.Contains(t, err.Error(), "piv.storage")
 }
 
 func TestIsConfigNotFoundError_WithOsErrNotExist(t *testing.T) {

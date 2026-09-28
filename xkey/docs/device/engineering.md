@@ -167,6 +167,20 @@ under the xkey home directory (`xkey/pkg/xhome`); see
 `xkeyconfig.DeviceConfig` above: `devices.yaml` holds paired-device records
 (`DevicesConfig`), not settings.
 
+**`device listen` and `device sync`/`sync-push`/`sync-pull`/`sync-status`
+never bound their flags to viper at all**, despite appearing to
+(`device_listen.go`, `device_sync.go` pre-go-xkms#871): `runDeviceListen` and
+`runDeviceSyncMode`/`runDeviceSyncStatus` always read their flags directly
+via `cmd.Flags().GetString`/`GetBool`/`GetDuration`, so the
+`viper.BindPFlag("device.listen.*", ...)` and
+`viper.BindPFlag("device.sync*.*", ...)` calls that used to sit in each
+command's `init()` were dead code -- bound but never read back through
+`viper.Get*` anywhere -- and were deleted rather than wired up: `sync`'s
+`--trust-store`/`--oath`/`--passwords`/`--all`/`--dry-run` select what one
+invocation does and have no sensible config-file meaning, and `listen`'s
+settings had no config/environment claim to make true in the first place (its
+`--help` never mentioned one). Both remain CLI-flag-only, now honestly.
+
 ## Tests
 
 - `cmd/xkey/cmd/device_test.go`, `device_record_roundtrip_test.go` — the

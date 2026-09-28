@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — CLI
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 Every flag below is verified against `xkey <group> <verb> --help` built from
 this checkout. See [architecture.md](architecture.md) for the auto-unseal
@@ -22,6 +22,7 @@ First-time setup: generates a root key and seals it.
 | `--strategy string` | auto-detect (tpm2 if available, else software) | `software`, `tpm2`, `pkcs11`, `aws_kms`, `gcp_kms`, `azure_kv`, or `vault` |
 | `--aws-region string` | none | AWS region for `--strategy aws_kms` |
 | `--aws-endpoint string` | AWS default | Custom AWS KMS endpoint (testing only) |
+| `--aws-key-id string` | none | Existing AWS KMS key ID, ARN, alias, or alias ARN to seal under instead of provisioning a CMK (go-xkms#842) |
 | `--gcp-project-id string` | none | GCP project ID for `--strategy gcp_kms` |
 | `--gcp-location string` | none | GCP KMS location (e.g. `us-east1`) |
 | `--gcp-key-ring string` | none | GCP KMS key ring ID |
@@ -31,12 +32,18 @@ First-time setup: generates a root key and seals it.
 | `--vault-address string` | none | HashiCorp Vault server address for `--strategy vault` |
 | `--vault-mount-path string` | `transit` | Vault Transit engine mount path |
 
-The four cloud KMS strategies need no PIN, HSM slot, or pre-provisioned key
-identifier: the seal key is resolved (or created on first use) automatically
-under a fixed name, the same one `xkmsd` uses, through the ONE composition
-path both share (`sdk/go.BuildCloudKMSStrategy`, go-xkms#757). Only the
-connection settings above are asked for. A credential is never a flag or any
-other literal: leave the credential fields unset for ambient credentials —
+The four cloud KMS strategies need no PIN or HSM slot, and no pre-provisioned
+key identifier is required: left unset, the seal key is resolved (or created
+on first use) automatically under a fixed name, the same one `xkmsd` uses,
+through the ONE composition path both share (`sdk/go.BuildCloudKMSStrategy`,
+go-xkms#757). `aws_kms` is the one strategy that also accepts an
+operator-supplied identifier (`--aws-key-id`, go-xkms#842): set it to seal
+under an existing CMK instead. A malformed value is rejected with a typed
+error when the strategy is built; a well-formed one that names no key AWS
+KMS actually has fails the same way, rather than silently provisioning an
+unrelated CMK in its place. Otherwise, only the connection settings above are
+asked for. A credential is never a flag or any other literal: leave the
+credential fields unset for ambient credentials —
 the AWS SDK default chain, GCP Application Default Credentials, Azure
 `DefaultAzureCredential`, or Vault's `VAULT_TOKEN` environment variable,
 depending on the strategy — or set an explicit `*SecretValue` reference by

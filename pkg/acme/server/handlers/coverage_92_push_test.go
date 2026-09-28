@@ -792,7 +792,7 @@ func TestCov92_RevokeCertHandler_CNAlreadyInDNSNames(t *testing.T) {
 	require.NoError(t, err)
 
 	acmeCert := &entities.ACMECertificate{
-		ID:        serialNumber.Uint64(),
+		Serial:    serialNumber.Text(16),
 		PEM:       string(encodeCertificatePEM(certDER)),
 		Status:    common.StatusValid,
 		IssuedAt:  time.Now(),

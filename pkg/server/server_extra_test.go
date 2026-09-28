@@ -280,19 +280,25 @@ func TestQRDBTransportOptions_WithAddressAndTLS(t *testing.T) {
 // Tests — initializeQRDBStorage default/invalid transport
 // ============================================================================
 
+// config.Validate already rejects an unrecognized storage.qrdb.transport (the
+// "invalid qrdb transport" check), so this cannot reach New() with "ftp" any
+// more -- see TestNew_QRDBStorageFailure_WrapsAsErrServiceInit for that
+// Validate-level rejection. This exercises initializeQRDBStorage's own
+// default-branch error directly, using newMinimalServer to construct the
+// server without going through New()/Validate.
 func TestInitializeQRDBStorage_InvalidTransport(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Storage.Backend = "qrdb"
-	cfg.Storage.QRDB = config.QRDBConfig{
-		Transport: "ftp", // unsupported transport
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Backend: "qrdb",
+			QRDB:    config.QRDBConfig{Transport: "ftp"}, // unsupported transport
+		},
 	}
+	s := newMinimalServer(t, cfg)
 
-	_, err := New(cfg)
+	err := s.initializeQRDBStorage()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "qrdb storage")
+	var backendErr *ErrUnsupportedStorageBackend
+	require.True(t, errors.As(err, &backendErr), "error must unwrap to *ErrUnsupportedStorageBackend, got %T", err)
 }
 
 // ============================================================================

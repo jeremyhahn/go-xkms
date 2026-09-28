@@ -317,7 +317,8 @@ message ListTenantUsersResponse {
 // Certificate messages
 
 message CertificateInfo {
-  uint64 id = 1;
+  reserved 1;
+  reserved "id";
   string serial_number = 2;
   string subject = 3;
   string issuer = 4;

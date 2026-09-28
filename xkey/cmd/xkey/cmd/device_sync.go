@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -152,34 +151,6 @@ func init() {
 	deviceSyncPullCmd.Flags().Bool("dry-run", false, "Show what would be pulled without applying")
 	deviceSyncPullCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
 	addBarrierPasswordFlags(deviceSyncPullCmd)
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("device.sync.trust_store", deviceSyncCmd.Flags().Lookup("trust-store"))
-	_ = viper.BindPFlag("device.sync.oath", deviceSyncCmd.Flags().Lookup("oath"))
-	_ = viper.BindPFlag("device.sync.passwords", deviceSyncCmd.Flags().Lookup("passwords"))
-	_ = viper.BindPFlag("device.sync.all", deviceSyncCmd.Flags().Lookup("all"))
-	_ = viper.BindPFlag("device.sync.device", deviceSyncCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.sync.dry_run", deviceSyncCmd.Flags().Lookup("dry-run"))
-	_ = viper.BindPFlag("device.sync.timeout", deviceSyncCmd.Flags().Lookup("timeout"))
-
-	_ = viper.BindPFlag("device.sync_status.device", deviceSyncStatusCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.sync_status.timeout", deviceSyncStatusCmd.Flags().Lookup("timeout"))
-
-	_ = viper.BindPFlag("device.sync_push.trust_store", deviceSyncPushCmd.Flags().Lookup("trust-store"))
-	_ = viper.BindPFlag("device.sync_push.oath", deviceSyncPushCmd.Flags().Lookup("oath"))
-	_ = viper.BindPFlag("device.sync_push.passwords", deviceSyncPushCmd.Flags().Lookup("passwords"))
-	_ = viper.BindPFlag("device.sync_push.all", deviceSyncPushCmd.Flags().Lookup("all"))
-	_ = viper.BindPFlag("device.sync_push.device", deviceSyncPushCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.sync_push.dry_run", deviceSyncPushCmd.Flags().Lookup("dry-run"))
-	_ = viper.BindPFlag("device.sync_push.timeout", deviceSyncPushCmd.Flags().Lookup("timeout"))
-
-	_ = viper.BindPFlag("device.sync_pull.trust_store", deviceSyncPullCmd.Flags().Lookup("trust-store"))
-	_ = viper.BindPFlag("device.sync_pull.oath", deviceSyncPullCmd.Flags().Lookup("oath"))
-	_ = viper.BindPFlag("device.sync_pull.passwords", deviceSyncPullCmd.Flags().Lookup("passwords"))
-	_ = viper.BindPFlag("device.sync_pull.all", deviceSyncPullCmd.Flags().Lookup("all"))
-	_ = viper.BindPFlag("device.sync_pull.device", deviceSyncPullCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.sync_pull.dry_run", deviceSyncPullCmd.Flags().Lookup("dry-run"))
-	_ = viper.BindPFlag("device.sync_pull.timeout", deviceSyncPullCmd.Flags().Lookup("timeout"))
 }
 
 // syncScope holds the resolved set of stores to sync.

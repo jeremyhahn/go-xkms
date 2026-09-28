@@ -59,6 +59,46 @@ func TestBarrierAWSKMSConfig_Validate_Errors(t *testing.T) {
 	}
 }
 
+// TestBarrierAWSKMSConfig_KeyIDRoundTrip proves an operator-configured
+// KeyID (go-xkms#842) survives Save/Load intact, the same as every other
+// aws_kms connection setting, so unseal and headless serve read back the
+// same CMK the operator named at "barrier init" without repeating the flag.
+func TestBarrierAWSKMSConfig_KeyIDRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetConfigDir(tmpDir)
+	t.Cleanup(ResetConfigDir)
+
+	cfg := DefaultConfig()
+	cfg.Barrier.CloudKMS.AWSKMS.Region = "us-east-1"
+	cfg.Barrier.CloudKMS.AWSKMS.KeyID = "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save() = %v, want nil", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want nil", err)
+	}
+	if got := loaded.Barrier.CloudKMS.AWSKMS.KeyID; got != cfg.Barrier.CloudKMS.AWSKMS.KeyID {
+		t.Fatalf("KeyID = %q, want %q", got, cfg.Barrier.CloudKMS.AWSKMS.KeyID)
+	}
+}
+
+// TestBarrierAWSKMSConfig_Validate_KeyIDNotCheckedHere proves Validate does
+// not itself reject an operator-supplied KeyID of any shape: format
+// validation happens where the backend is actually constructed
+// (awskms.Config.Validate, via sdk/go.NewAWSKMSBackend), the single
+// authority both xkmsd and xkey build the backend through -- duplicating
+// that check here would be a second, driftable copy of the same AWS format
+// rules.
+func TestBarrierAWSKMSConfig_Validate_KeyIDNotCheckedHere(t *testing.T) {
+	cfg := &BarrierAWSKMSConfig{Region: "us-east-1", KeyID: "not a real AWS key identifier"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil (KeyID format is validated at backend construction, not here)", err)
+	}
+}
+
 func TestBarrierGCPKMSConfig_Validate(t *testing.T) {
 	valid := &BarrierGCPKMSConfig{ProjectID: "p", LocationID: "us-east1", KeyRingID: "ring"}
 	if err := valid.Validate(); err != nil {

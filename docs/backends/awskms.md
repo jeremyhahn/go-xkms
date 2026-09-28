@@ -212,6 +212,10 @@ type Config struct {
     // Custom endpoint (optional, for testing)
     Endpoint string
 
+    // Existing AWS KMS key ID, ARN, alias, or alias ARN to use instead of
+    // provisioning one (optional)
+    KeyID string
+
     // Existing KMS client (optional)
     Client KMSClient
 }
@@ -247,6 +251,25 @@ type Config struct {
 - Used for testing with the Floci emulator
 - Example: `"http://localhost:4566"` for the Floci emulator
 - Not needed for production AWS KMS
+
+**KeyID** (optional)
+- Identifies an existing AWS KMS customer master key (CMK) to use instead of
+  letting the backend provision one on first use
+- Accepts a key ID (`"1234abcd-12ab-34cd-56ef-1234567890ab"`), a key ARN
+  (`"arn:aws:kms:us-east-1:123456789012:key/1234abcd-..."`), an alias name
+  (`"alias/my-key"`), or an alias ARN
+  (`"arn:aws:kms:us-east-1:123456789012:alias/my-key"`)
+- Format is validated by `Config.Validate` (a malformed value returns
+  `ErrInvalidKeyID`); existence is checked against the live AWS KMS API the
+  first time the key is resolved (`DescribeKey`)
+- When set, the barrier's seal-key provisioning (`pkg/seal.EnsureSealKey`)
+  never calls `CreateKey`: it resolves this key and reuses it. A configured
+  key that does not exist in AWS fails closed with a typed
+  `seal.ErrOperatorSealKeyNotFound` rather than silently creating a
+  different CMK
+- `xkmsd` sets this from `backends.awskms.key_id` in the server config;
+  `xkey` sets it from `barrier.cloud_kms.aws_kms.key_id` (or the
+  `xkey barrier init --aws-key-id` flag)
 
 **Client** (optional)
 - Pre-initialized AWS KMS client

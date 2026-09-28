@@ -57,9 +57,19 @@ func TestDesktopConfig_ForcesLoopbackRESTOnly(t *testing.T) {
 		cfg.Protocols.MCP || cfg.Protocols.Noise {
 		t.Errorf("only REST may be enabled, got %+v", cfg.Protocols)
 	}
+	// LoopbackDesktop must be set: it is the signal config.Config.Validate
+	// reads to skip the storage.backend "qrdb" + tls.enabled requirement
+	// NetworkServing otherwise imposes now that Protocols.REST is true
+	// (go-xkms#666).
+	if !cfg.LoopbackDesktop {
+		t.Error("LoopbackDesktop must be set so Validate exempts this launch shape")
+	}
 	// Source must be untouched.
 	if src.Server.Host != "0.0.0.0" || !src.Protocols.GRPC {
 		t.Error("desktopConfig mutated the source config")
+	}
+	if src.LoopbackDesktop {
+		t.Error("desktopConfig must not set LoopbackDesktop on the source config")
 	}
 }
 

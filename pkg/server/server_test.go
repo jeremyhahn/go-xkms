@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -498,8 +499,9 @@ func TestServer_StartAndShutdown(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	// Disable all protocols to make test fast
-	cfg.Protocols.Unix = false
+	// Disable every network protocol to make the test fast; Unix stays
+	// enabled (createMinimalConfig's default) since config.Validate requires
+	// at least one protocol.
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -510,7 +512,7 @@ func TestServer_StartAndShutdown(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
-	// Start server (no-op since no protocols enabled)
+	// Start server (only the lightweight Unix socket listener starts)
 	err = server.Start()
 	assert.NoError(t, err)
 
@@ -524,7 +526,6 @@ func TestServer_ShutdownWithMetrics(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -981,7 +982,6 @@ func TestServer_WaitForShutdown(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 
@@ -1286,7 +1286,10 @@ func TestServer_InitializeAuthentication_MTLS_Success(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
 	cfg.Auth.Type = "mtls"
+	certFile, keyFile, _ := createTestTLSFiles(t)
 	cfg.TLS.Enabled = true
+	cfg.TLS.CertFile = certFile
+	cfg.TLS.KeyFile = keyFile
 
 	server, err := New(cfg)
 	require.NoError(t, err)
@@ -1525,12 +1528,14 @@ func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
 			RESTPort: 18080,
 		},
 		Protocols: config.ProtocolsConfig{
-			Unix: false,
+			Unix: true,
 			REST: false,
 			GRPC: false,
 		},
 		Unix: config.UnixConfig{
-			Enabled: false,
+			Enabled:    true,
+			SocketPath: filepath.Join(tempDir, "xkms.sock"),
+			Protocol:   "grpc",
 		},
 		Logging: config.LoggingConfig{
 			Level:  "info",
@@ -1585,13 +1590,12 @@ func TestServer_Shutdown_ContextCancellation(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 
 	server, err := New(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
-	// Start the server (no protocols enabled, so quick)
+	// Start the server (only the lightweight Unix socket listener starts)
 	err = server.Start()
 	require.NoError(t, err)
 
@@ -1671,7 +1675,6 @@ func TestServer_Start_MetricsInitialization(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Metrics.Enabled = true
 	cfg.Metrics.Port = 19400
 	cfg.Metrics.Path = "/metrics"
@@ -2120,7 +2123,6 @@ func TestServer_Shutdown_WithAllServers(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -2172,7 +2174,6 @@ func TestServer_Start_MarksHealthStarted(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -2393,26 +2394,22 @@ func TestServer_StartUnix_GRPCProtocol(t *testing.T) {
 }
 
 // Test Unix server with unknown protocol
-
+//
+// config.Validate rejects an unrecognized unix.protocol, so this cannot
+// reach here through New(); it constructs the server directly with
+// newMinimalServer and calls Start(), the seam
+// TestServer_StartUnix_UnknownProtocolVariant and TestStartUnix_UnknownProtocol
+// use for the same reason. Shutdown is not called: startUnix returns
+// immediately on the unrecognized protocol (nothing to drain), and
+// newMinimalServer does not populate shutdownCh the way New() does.
 func TestServer_StartUnix_UnknownProtocol(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = true
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
 	cfg.Unix.Protocol = "unknown_protocol"
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
+	server := newMinimalServer(t, cfg)
 
 	// Start server
-	err = server.Start()
+	err := server.Start()
 	assert.NoError(t, err)
 
 	// Give the server time to attempt start
@@ -2422,10 +2419,6 @@ func TestServer_StartUnix_UnknownProtocol(t *testing.T) {
 	assert.Nil(t, server.UnixGRPCServer())
 	assert.Nil(t, server.UnixGRPCServer())
 	assert.Nil(t, server.UnixGRPCServer())
-
-	// Shutdown
-	err = server.Shutdown()
-	assert.NoError(t, err)
 }
 
 // Test Unix server with empty socket path (uses default)
@@ -2523,7 +2516,6 @@ func TestServer_Shutdown_ClosesKeystores(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 
@@ -2579,7 +2571,6 @@ func TestServer_Start_MetricsEnabledMultipleTimes(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -2611,7 +2602,6 @@ func TestServer_Start_NilHealthChecker(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -2671,7 +2661,6 @@ func TestServer_Shutdown_CallsXKMSShutdown(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 
@@ -2694,7 +2683,6 @@ func TestServer_StartMetrics_Success(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -2734,12 +2722,14 @@ func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
 			RESTPort: 18080,
 		},
 		Protocols: config.ProtocolsConfig{
-			Unix: false,
+			Unix: true,
 			REST: false,
 			GRPC: false,
 		},
 		Unix: config.UnixConfig{
-			Enabled: false,
+			Enabled:    true,
+			SocketPath: filepath.Join(tempDir, "xkms.sock"),
+			Protocol:   "grpc",
 		},
 		Logging: config.LoggingConfig{
 			Level:  "info",
@@ -2839,21 +2829,27 @@ func TestServer_Shutdown_WithUnixServers(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// Test server with empty default (uses first available)
+// Test server with empty default (uses first available).
+//
+// config.Validate requires default_backend to be set, so an empty Default
+// cannot reach here through New(); this exercises initializeKeyStore
+// directly instead, the same seam
+// TestInitializeKeyStore_DefaultBackendFallback and
+// TestInitializeKeyStore_DefaultBackendIsDeterministic use.
 func TestServer_EmptyDefault(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
+	t.Cleanup(func() { xkms.Reset() })
 
-	cfg := createMinimalConfig(t)
-	cfg.Default = "" // Empty default
+	s := newMinimalServer(t, &config.Config{
+		Storage: config.StorageConfig{Backend: "memory"},
+		// Default is empty → code falls back to the one available backend.
+	})
+	s.keyProviders = map[string]types.KeyProvider{"software": &nonSealerProvider{}}
+	s.backends = map[string]xkms.Backend{}
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
+	require.NoError(t, s.initializeKeyStore())
 
 	// Should have keystores
-	assert.NotEmpty(t, server.backends)
+	assert.NotEmpty(t, s.backends)
 }
 
 // ============================================================================

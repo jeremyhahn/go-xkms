@@ -252,7 +252,7 @@ func TestBuildCloudKMSStrategy_AWSKMSBackend_RestartReusesPersistedKey(t *testin
 // reused without ever calling CreateKey, and that Encrypt/Decrypt address
 // the configured ID -- not the seal key's CN.
 func TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyIsReused(t *testing.T) {
-	const operatorKeyID = "arn:aws:kms:us-east-1:123456789012:key/operator-cmk"
+	const operatorKeyID = "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
 
 	keyStorage, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
@@ -310,6 +310,50 @@ func TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyIsReused(t *te
 	unsealed, err := strategy.UnsealRootKey(ctx, sealed, Credentials{})
 	require.NoError(t, err)
 	require.Equal(t, rootKey, unsealed)
+}
+
+// TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyNotFound
+// proves that when the operator configures a CMK (Config.KeyID) that AWS KMS
+// reports does not exist, BuildCloudKMSStrategy fails closed with a typed
+// ErrOperatorSealKeyNotFound rather than silently provisioning a different,
+// unrequested CMK in its place (go-xkms#842).
+func TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyNotFound(t *testing.T) {
+	const operatorKeyID = "arn:aws:kms:us-east-1:123456789012:key/deadbeef-1234-5678-90ab-1234567890ab"
+
+	keyStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+	certStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+
+	createKeyCalls := 0
+	mock := &awskms.MockKMSClient{
+		DescribeKeyFunc: func(_ context.Context, _ *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+			return nil, &kmstypes.NotFoundException{Message: aws.String("key does not exist")}
+		},
+		CreateKeyFunc: func(_ context.Context, _ *kms.CreateKeyInput, _ ...func(*kms.Options)) (*kms.CreateKeyOutput, error) {
+			createKeyCalls++
+			return nil, errors.New("mock: CreateKey must not be called for a missing operator-configured CMK")
+		},
+	}
+
+	backend, err := awskms.NewBackendWithClient(&awskms.Config{
+		Region:      "us-east-1",
+		KeyID:       operatorKeyID,
+		KeyStorage:  keyStorage,
+		CertStorage: certStorage,
+	}, mock)
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+
+	ctx := context.Background()
+	_, err = BuildCloudKMSStrategy(ctx, StrategyAWSKMS, types.StoreAWSKMS, backend)
+	require.Error(t, err)
+	assert.Equal(t, 0, createKeyCalls, "a missing operator-configured CMK must never trigger CreateKey")
+
+	var notFound *ErrOperatorSealKeyNotFound
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, string(StrategyAWSKMS), notFound.Strategy)
+	assert.Equal(t, operatorKeyID, notFound.KeyID)
 }
 
 // TestBuildCloudKMSStrategy_AWSKMSBackend_MissingCredentials proves that a

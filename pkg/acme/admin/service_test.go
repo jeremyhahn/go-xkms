@@ -811,7 +811,8 @@ func createTestACMECertificate(t *testing.T, id uint64, cn string, status string
 	})
 
 	return &entities.ACMECertificate{
-		ID:        id,
+		NumericID: id,
+		Serial:    serialNumber.Text(16),
 		PEM:       string(certPEM),
 		Status:    status,
 		IssuedAt:  time.Now(),

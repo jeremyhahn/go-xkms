@@ -244,7 +244,10 @@ func init() {
 func runPivGenerate(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
-	pivCfg := buildPIVConfig()
+	pivCfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Parse slot argument
 	slot, err := parsePIVSlot(args[0])
