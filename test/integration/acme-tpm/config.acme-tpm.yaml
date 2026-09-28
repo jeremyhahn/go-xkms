@@ -1,0 +1,132 @@
+# xkmsd configuration for the acme-tpm integration lane (make integration-test-acme-tpm).
+#
+# Boots xkmsd with its embedded ACME server (cmd/xkmsd/acme.go) enabled and
+# the enroll-01/endorse-01 TPM-attestation challenges turned on, so the
+# device-attest-01, enroll-01 and permanent-identifier end-to-end tests under
+# test/integration/acme-tpm have a real server to dial at ACME_SERVER_URL.
+#
+# Modeled on configs/xkmsd-integration.yaml (the proven-working compose
+# xkms-server fixture) for the boot skeleton, and on
+# test/integration/acme-server/playwright/start-server.sh for the acme:
+# section, updated for the current pkg/config/acme.go validation rules
+# (caa_identities is now required whenever acme.enabled is true).
+#
+# The main REST/gRPC/QUIC/MCP surfaces are left off: this lane only needs the
+# dedicated ACME HTTPS listener, so protocols.rest is the sole additional
+# listener kept on (xkmsd's own compliance/backend bootstrap runs regardless
+# of which protocol listeners are enabled).
+server:
+  host: "0.0.0.0"
+  rest_port: 9000
+  grpc_port: 9001
+  quic_port: 9002
+  mcp_port: 9003
+
+protocols:
+  unix: false
+  rest: true
+  grpc: false
+  quic: false
+  mcp: false
+
+logging:
+  level: "debug"
+  format: "json"
+
+tls:
+  enabled: true
+  server_cn: "acme-server"
+
+auth:
+  enabled: true
+  type: "composite"
+
+# See configs/xkmsd-integration.yaml's barrier comment: a "passphrase"
+# strategy over the qrdb storage backend auto-unseals without a
+# config-sourced secret (go-xkms#653 tracks the known compliance gap this
+# documents rather than papers over).
+barrier:
+  enabled: true
+  strategy: "passphrase"
+
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: false
+
+health:
+  enabled: true
+  path: "/health"
+
+storage:
+  backend: "qrdb"
+  path: "/data/storage"
+
+rng:
+  mode: "software"
+  fallback_mode: "software"
+
+default_backend: "software"
+
+backends:
+  software:
+    enabled: true
+    path: "/data/keys"
+
+# Certificate Authority configuration. ACME issues through this same CA
+# (cmd/xkmsd/acme.go: "ACME issues certificates through the same TrustedCA
+# that backs the xkmsd REST/gRPC/QUIC surfaces"), so it must be present and
+# TCG-capable even though this lane never enables the REST CA surface itself.
+ca:
+  identity:
+    - subject:
+        cn: "ACME TPM Integration Test Root CA"
+        organization: "go-xkms Integration Tests"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key-type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: "/data/ca"
+
+# ACME (RFC 8555) server. The TLS cert/key are generated at container start by
+# `go run ./test/integration/acme-tpm/certgen` (see docker-compose.yml) since
+# ACMEConfig.TLS requires pre-existing PEM files and xkmsd does not generate
+# them itself for this dedicated listener.
+acme:
+  enabled: true
+  https_addr: ":8443"
+  external_url: "https://acme-server:8443"
+  directory_path: "/acme"
+  # RFC 8555 Section 9.7.6 / CAA (RFC 8659): the issuer identity this CA is
+  # known by. Not meaningful for the permanent-identifier orders this lane
+  # issues, but pkg/config/acme.go's Validate requires a non-empty list
+  # whenever acme.enabled is true.
+  caa_identities:
+    - "acme-server"
+  keystore_backend: "software"
+  data_dir: "/data/acme"
+  tls:
+    cert_file: "/data/acme-tls/acme.crt"
+    key_file: "/data/acme-tls/acme.key"
+  challenges:
+    enroll01: true
+    endorse01: true
+  enrollment:
+    # The challenge client hostname the test runner registers as its
+    # permanent-identifier (CHALLENGE_CLIENT_HOSTNAME) is a docker-compose
+    # network alias, not a loopback address, so this stays off; kept explicit
+    # rather than relying on the zero value.
+    allow_loopback_identifier: false

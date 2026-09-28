@@ -1,0 +1,78 @@
+# Docker Compose stack for the ACME challenge-framework integration lane
+# (make integration-test-challenges).
+#
+# test/integration/challenges/enroll01 and .../endorse01 (build tag
+# `integration`) verify challenge availability/structure against a running
+# ACME server -- no TPM involved (see each package's doc comment: "testing
+# ... without requiring a physical TPM"). dns01 and http01 are NOT part of
+# this lane: they are full multi-service E2E stacks of their own
+# (docker-compose.dns01.yml / docker-compose.http01.yml) that still build
+# against the pre-merge go-trusted-ca sibling checkout and need that
+# migration finished before they can be wired up the same way (see
+# go-xkms's docs/README.md migration notes); tracked separately from #1125.
+#
+# The acme-server service and its config are the acme-tpm lane's, reused
+# as-is rather than duplicated: this suite needs nothing acme-tpm's
+# config.acme-tpm.yaml doesn't already provide (enroll-01/endorse-01 enabled,
+# a working CA, a working ACME listener).
+services:
+  acme-server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      secrets:
+        - gomodauth
+    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
+    volumes:
+      - ../acme-tpm/config.acme-tpm.yaml:/etc/xkms/xkmsd.yaml
+      - acme-data:/data
+    environment:
+      - KEYSTORE_LOG_LEVEL=debug
+      - KEYSTORE_DATA_DIR=/data
+    command: >
+      sh -c "
+      set -e &&
+      go run ./test/integration/acme-tpm/certgen -cn acme-server -cert /data/acme-tls/acme.crt -key /data/acme-tls/acme.key &&
+      exec /app/xkmsd -config /etc/xkms/xkmsd.yaml
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-sfk", "https://localhost:8443/acme/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 10s
+    networks:
+      - challenges-network
+
+  test:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      secrets:
+        - gomodauth
+    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
+    depends_on:
+      acme-server:
+        condition: service_healthy
+    environment:
+      - CGO_ENABLED=1
+      - ACME_SERVER_URL=https://acme-server:8443
+    working_dir: /workspace
+    command: >
+      go test -v -tags=integration
+      ./test/integration/challenges/enroll01/... ./test/integration/challenges/endorse01/...
+      -timeout 10m
+    networks:
+      - challenges-network
+
+networks:
+  challenges-network:
+    driver: bridge
+
+volumes:
+  acme-data:
+    driver: local
+
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env

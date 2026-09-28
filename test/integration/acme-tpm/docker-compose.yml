@@ -1,0 +1,120 @@
+# Docker Compose stack for the acme-tpm integration lane
+# (make integration-test-acme-tpm).
+#
+# test/integration/acme-tpm (build tags `integration tpm2`) exercises the
+# device-attest-01, enroll-01 and permanent-identifier ACME end-to-end flows:
+# the test runner acts as the TPM-backed device (dialing swtpm directly, and
+# serving its own enroll-01 challenge-response HTTP endpoint), and dials a
+# real ACME server over the network for the account/order/challenge/finalize
+# protocol exchange.
+#
+# Three services, all built from images/Dockerfiles this repository already
+# builds elsewhere:
+#   - tpm-simulator: the same test/docker/swtpm image the top-level
+#     docker-compose.yml and test/integration/api/docker-compose.yml use.
+#   - acme-server: xkmsd (root Dockerfile, already builds /app/xkmsd) with
+#     its embedded ACME server turned on via config.acme-tpm.yaml.
+#   - test: the same image as acme-server (root Dockerfile bakes the full
+#     source tree and pre-built xkmsd into one image), running `go test`
+#     against the baked-in source instead of a runtime bind mount --
+#     test/integration/tpm2/Dockerfile's comment explains why a runtime bind
+#     mount is unreliable on the Gitea Actions runner.
+services:
+  tpm-simulator:
+    build:
+      context: ../../../test/docker/swtpm
+      dockerfile: Dockerfile
+    image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-latest}
+    expose:
+      - "2321" # TPM command port
+      - "2322" # TPM control port
+    volumes:
+      - swtpm-data:/var/lib/swtpm/tpmstate
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - acme-tpm-network
+
+  acme-server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      secrets:
+        - gomodauth
+    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
+    volumes:
+      - ./config.acme-tpm.yaml:/etc/xkms/xkmsd.yaml
+      - acme-data:/data
+    environment:
+      - KEYSTORE_LOG_LEVEL=debug
+      - KEYSTORE_DATA_DIR=/data
+    # Generates the ACME listener's throwaway self-signed TLS cert (see
+    # certgen/main.go for why this runs stdlib-only `go run` rather than
+    # shelling out to openssl, which the runtime image does not carry) and
+    # then execs the daemon xkmsd already builds at image build time.
+    command: >
+      sh -c "
+      set -e &&
+      go run ./test/integration/acme-tpm/certgen -cn acme-server -cert /data/acme-tls/acme.crt -key /data/acme-tls/acme.key &&
+      exec /app/xkmsd -config /etc/xkms/xkmsd.yaml
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-sfk", "https://localhost:8443/acme/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 10s
+    networks:
+      - acme-tpm-network
+
+  test:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      secrets:
+        - gomodauth
+    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
+    depends_on:
+      tpm-simulator:
+        condition: service_healthy
+      acme-server:
+        condition: service_healthy
+    environment:
+      - CGO_ENABLED=1
+      - ACME_SERVER_URL=https://acme-server:8443
+      - ACME_TPM_HOST=tpm-simulator
+      - TPM_SOCKET_HOST=tpm-simulator
+      - TPM_SOCKET_PORT=2321
+      # The test runner serves its own enroll-01/endorse-01/device-attest-01
+      # challenge-response HTTP endpoint (test/integration/acme-tpm's
+      # startChallengeServer et al.), which the acme-server container must be
+      # able to reach back by this hostname:port. The compose network already
+      # resolves the service name "test", named explicitly here so the value
+      # matches pkg/acme/server/handlers/challenge.go's 8080 default for
+      # enrollment-type challenges rather than the test helpers' bare 8888
+      # fallback (which nothing server-side would ever dial).
+      - CHALLENGE_CLIENT_HOSTNAME=test
+      - CHALLENGE_CLIENT_PORT=8080
+    working_dir: /workspace
+    command: >
+      go test -v -tags='integration,tpm2,codec_cbor,codec_json,codec_msgpack,gms_pure_go'
+      ./test/integration/acme-tpm/... -timeout 20m
+    networks:
+      - acme-tpm-network
+
+networks:
+  acme-tpm-network:
+    driver: bridge
+
+volumes:
+  swtpm-data:
+    driver: local
+  acme-data:
+    driver: local
+
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env
