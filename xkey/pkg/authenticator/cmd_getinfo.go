@@ -167,11 +167,10 @@ func (a *Authenticator) handleGetInfo() ([]byte, error) {
 func (a *Authenticator) getVersions() []string {
 	versions := []string{"FIDO_2_0"}
 
-	// Add FIDO 2.1 if we support its features AND have a functional user
-	// verification method. CTAP2.1 requires PIN or built-in UV; advertising
-	// FIDO_2_1 without either causes Chrome to reject the authenticator with
-	// "may require a newer or different kind of device".
-	if a.config.EnableCredentialManagement && a.hasUserVerification() {
+	// Add FIDO 2.1 if we support its features AND can mint a pinUvAuthToken.
+	// Advertising FIDO_2_1 without a token path causes Chrome to reject the
+	// authenticator with "may require a newer or different kind of device".
+	if a.supportsPinUvAuthToken() {
 		versions = append(versions, "FIDO_2_1_PRE", "FIDO_2_1")
 	}
 
@@ -219,10 +218,15 @@ func (a *Authenticator) getOptions() map[string]bool {
 	}
 
 	// uv - Built-in user verification (e.g. biometrics).
-	// When the key backend handles user verification (e.g., phone biometrics),
-	// report uv=true so browsers know UV is available.
-	// When using PIN-based verification only, uv=false (differs from default of absent).
-	if a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification {
+	// CTAP 2.1 §6.4: uv=true alongside pinUvAuthToken=true promises
+	// getPinUvAuthTokenUsingUvWithPermissions, which this authenticator
+	// refuses (#1145) because no key backend can verify a user on demand. A
+	// backend that verifies inside its own key operation (the phone's biometric
+	// gating Sign) is the CTAP 2.0 form of built-in UV, so uv=true is
+	// advertised for it only when no pinUvAuthToken surface is advertised.
+	// Otherwise PIN-based verification reports uv=false (differs from the
+	// default of absent).
+	if a.backendHandlesUserVerification() && !a.supportsPinUvAuthToken() {
 		options["uv"] = true
 	} else if a.config.EnablePIN {
 		options["uv"] = false
@@ -237,26 +241,26 @@ func (a *Authenticator) getOptions() map[string]bool {
 	}
 
 	// credMgmt - Credential management support (FIDO 2.1)
-	// Only advertise when credential management is enabled AND user verification
-	// is available. Without UV, credMgmt operations cannot be authenticated.
-	if a.config.EnableCredentialManagement && a.hasUserVerification() {
+	// Only advertise when credential management is enabled AND a
+	// pinUvAuthToken can be minted. Without one, credMgmt operations cannot be
+	// authenticated.
+	if a.supportsPinUvAuthToken() {
 		options["credMgmt"] = true
 	}
 
 	// pinUvAuthToken - Authenticator supports getPinUvAuthTokenUsingPinWithPermissions.
 	// CTAP2.1 spec requires this option when FIDO_2_1 is advertised. Chrome
 	// validates this strictly and rejects the authenticator if FIDO_2_1 is
-	// present but pinUvAuthToken is absent. Only advertise when we have a
-	// functional UV method to back it up.
-	if a.config.EnableCredentialManagement && a.hasUserVerification() {
+	// present but pinUvAuthToken is absent. Only advertise when the PIN path
+	// can back it up.
+	if a.supportsPinUvAuthToken() {
 		options["pinUvAuthToken"] = true
 	}
 
 	// makeCredUvNotRqd - UV not required for makeCredential.
 	// Only include when true (false is the default).
 	// When neither biometrics nor PIN is set, UV genuinely cannot be performed.
-	uvAvailable := (a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification) ||
-		(a.config.EnablePIN && a.isPINSetLocked())
+	uvAvailable := a.backendHandlesUserVerification() || (a.config.EnablePIN && a.isPINSetLocked())
 	if !uvAvailable {
 		options["makeCredUvNotRqd"] = true
 	}
@@ -306,17 +310,23 @@ func (a *Authenticator) getAlgorithms() []publicKeyCredentialParameters {
 	return algorithms
 }
 
-// hasUserVerification returns true if the authenticator has a functional
-// user verification method available (PIN support or built-in UV via key backend).
-// CTAP2.1 features (FIDO_2_1, pinUvAuthToken, credMgmt) require UV to function.
-func (a *Authenticator) hasUserVerification() bool {
-	if a.config.EnablePIN {
-		return true
-	}
-	if a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification {
-		return true
-	}
-	return false
+// supportsPinUvAuthToken reports whether the authenticator advertises the
+// CTAP 2.1 pinUvAuthToken surface: FIDO_2_1, credMgmt and the pinUvAuthToken
+// option. Every token comes from getPinUvAuthTokenUsingPinWithPermissions, so
+// the surface needs the PIN. A key backend that handles user verification
+// does not count (#1145): it verifies the user inside its own key operation
+// and cannot perform the standalone verification that minting a token
+// requires.
+func (a *Authenticator) supportsPinUvAuthToken() bool {
+	return a.config.EnableCredentialManagement && a.config.EnablePIN
+}
+
+// backendHandlesUserVerification reports whether the key backend verifies the
+// user inside its own key operations (for example a phone biometric gating
+// Sign), which is what lets makeCredential and getAssertion set the UV flag
+// without a pinUvAuthParam.
+func (a *Authenticator) backendHandlesUserVerification() bool {
+	return a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification
 }
 
 // getRemainingDiscoverableCredentials returns the number of remaining

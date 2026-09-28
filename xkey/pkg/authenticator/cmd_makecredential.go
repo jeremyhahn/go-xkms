@@ -960,7 +960,7 @@ func (a *Authenticator) userVerificationSatisfied(req *MakeCredentialRequest) bo
 	// Check if the key backend handles user verification (e.g., phone biometric).
 	// When the backend performs biometric verification during key operations,
 	// that satisfies the UV requirement without needing platform-level PIN/UV.
-	if a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification {
+	if a.backendHandlesUserVerification() {
 		return true
 	}
 

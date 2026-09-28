@@ -44,9 +44,14 @@ type FIDO2KeyCapabilities struct {
 	HandlesUserPresence bool
 
 	// HandlesUserVerification indicates if the backend performs user verification
-	// (e.g., biometric authentication on phone). When true and the backend's
-	// operation succeeds, the UV flag should be set in the authenticator response
-	// even without a pinUvAuthParam from the platform.
+	// inside its own key operations (e.g., a phone biometric gating
+	// GenerateCredentialKey and Sign). When true and the backend's operation
+	// succeeds, the UV flag should be set in the authenticator response even
+	// without a pinUvAuthParam from the platform.
+	//
+	// It is NOT a standalone user verification method: the authenticator
+	// cannot ask the backend to verify a user on demand, so it never mints a
+	// pinUvAuthToken on the strength of this capability (#1145).
 	HandlesUserVerification bool
 }
 

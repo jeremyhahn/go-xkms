@@ -22,6 +22,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"fmt"
 	"io"
 	"testing"
 
@@ -2955,119 +2956,94 @@ func createTestAuthenticatorWithUV(t *testing.T, handlesUV bool) *Authenticator 
 	return auth
 }
 
-// TestGetPinUvAuthTokenUsingUvWithPermissions_Success tests successful UV token generation.
-func TestGetPinUvAuthTokenUsingUvWithPermissions_Success(t *testing.T) {
-	auth := createTestAuthenticatorWithUV(t, true)
-	defer func() { _ = auth.Close() }()
+// TestGetPinUvAuthTokenUsingUvWithPermissions_RefusedWithUVBackend is the
+// #1145 regression. A key backend that verifies the user inside its own key
+// operations (the phone's biometric gating Sign) used to be taken as an
+// implicit successful user verification, so any local client could mint a
+// token carrying credential-management, authenticatorConfig and largeBlob
+// permissions without a human being verified at all. A fully well-formed
+// request must now be refused, mint nothing, and leave the UV retry counter
+// alone (the old handler reset it on its "success").
+func TestGetPinUvAuthTokenUsingUvWithPermissions_RefusedWithUVBackend(t *testing.T) {
+	for _, protocol := range []uint8{PINProtocol1, PINProtocol2} {
+		t.Run(fmt.Sprintf("protocol %d", protocol), func(t *testing.T) {
+			auth := createTestAuthenticatorWithUV(t, true)
+			defer func() { _ = auth.Close() }()
 
-	// Initialize PIN protocol by requesting key agreement first.
-	kaReq := map[int]interface{}{
-		clientPINKeySubCommand: ClientPINSubCmdGetKeyAgreement,
+			require.NoError(t, initKeyAgreement(t, auth))
+
+			auth.mu.Lock()
+			var platformCOSE []byte
+			var err error
+			if protocol == PINProtocol2 {
+				platformCOSE, _, _, err = auth.generatePlatformKeyAgreementV2()
+			} else {
+				platformCOSE, _, err = auth.generatePlatformKeyAgreement()
+			}
+			auth.state.SetUVRetries(1)
+			auth.mu.Unlock()
+			require.NoError(t, err)
+
+			var platformCOSEMap map[int]interface{}
+			require.NoError(t, cbor.Unmarshal(platformCOSE, &platformCOSEMap))
+
+			req := map[int]interface{}{
+				clientPINKeyPinUvAuthProtocol: protocol,
+				clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+				clientPINKeyKeyAgreement:      platformCOSEMap,
+				clientPINKeyPermissions: PINPermissionCredentialMgmt |
+					PINPermissionAuthenticatorCfg | PINPermissionLargeBlobWrite,
+				clientPINKeyPermissionsRPID: "example.com",
+			}
+			reqBytes, err := cbor.Marshal(req)
+			require.NoError(t, err)
+
+			resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+			require.ErrorIs(t, err, ErrInvalidSubcommand)
+			require.Equal(t, []byte{byte(StatusInvalidSubcommand)}, resp,
+				"the wire answer is CTAP2_ERR_INVALID_SUBCOMMAND with no token")
+
+			require.Nil(t, auth.GetPinUvAuthToken(), "no pinUvAuthToken may be minted without user verification")
+			auth.mu.RLock()
+			perms := auth.pinState.protocol.tokenPermissions
+			rpID := auth.pinState.protocol.tokenRPID
+			verified := auth.pinState.protocol.tokenUserVerified
+			auth.mu.RUnlock()
+			require.Zero(t, perms)
+			require.Empty(t, rpID)
+			require.False(t, verified)
+			require.Equal(t, 1, auth.state.UVRetries(), "the refusal must not reset UV retries")
+		})
 	}
-	kaReqBytes, err := cbor.Marshal(kaReq)
-	require.NoError(t, err)
-
-	_, err = auth.ProcessCBOR(CmdClientPIN, kaReqBytes)
-	require.NoError(t, err)
-
-	// Generate platform key agreement (V1).
-	auth.mu.Lock()
-	platformCOSE, _, err := auth.generatePlatformKeyAgreement()
-	auth.mu.Unlock()
-	require.NoError(t, err)
-
-	// Unmarshal platform COSE key for embedding in the request map.
-	var platformCOSEMap map[int]interface{}
-	err = cbor.Unmarshal(platformCOSE, &platformCOSEMap)
-	require.NoError(t, err)
-
-	// Build UV with permissions request.
-	req := map[int]interface{}{
-		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyKeyAgreement:      platformCOSEMap,
-		clientPINKeyPermissions:       PINPermissionMakeCredential | PINPermissionGetAssertion,
-		clientPINKeyPermissionsRPID:   "example.com",
-	}
-
-	reqBytes, err := cbor.Marshal(req)
-	require.NoError(t, err)
-
-	resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
-	require.NoError(t, err)
-	require.Equal(t, byte(StatusOK), resp[0])
-
-	// Decode response and verify token is present.
-	var respMap map[int]interface{}
-	err = cbor.Unmarshal(resp[1:], &respMap)
-	require.NoError(t, err)
-
-	encToken, ok := respMap[clientPINResponseKeyPinUvAuthToken]
-	require.True(t, ok, "response must contain pinUvAuthToken")
-	require.NotEmpty(t, encToken)
-
-	// Verify token permissions were set.
-	auth.mu.RLock()
-	tokenPerms := auth.pinState.protocol.tokenPermissions
-	tokenRPID := auth.pinState.protocol.tokenRPID
-	token := auth.pinState.protocol.pinUvAuthToken
-	auth.mu.RUnlock()
-
-	require.Equal(t, uint8(PINPermissionMakeCredential|PINPermissionGetAssertion), tokenPerms)
-	require.Equal(t, "example.com", tokenRPID)
-	require.Len(t, token, PINTokenSize)
 }
 
-// TestGetPinUvAuthTokenUsingUvWithPermissions_V2 tests UV token generation with protocol 2.
-func TestGetPinUvAuthTokenUsingUvWithPermissions_V2(t *testing.T) {
+// TestGetPinUvAuthTokenUsingUvWithPermissions_RefusalKeepsPINToken proves the
+// refusal has no side effect on a token legitimately minted through the PIN
+// path: it is neither replaced nor discarded.
+func TestGetPinUvAuthTokenUsingUvWithPermissions_RefusalKeepsPINToken(t *testing.T) {
 	auth := createTestAuthenticatorWithUV(t, true)
 	defer func() { _ = auth.Close() }()
 
-	// Initialize PIN protocol.
-	kaReq := map[int]interface{}{
-		clientPINKeySubCommand: ClientPINSubCmdGetKeyAgreement,
-	}
-	kaReqBytes, err := cbor.Marshal(kaReq)
-	require.NoError(t, err)
-	_, err = auth.ProcessCBOR(CmdClientPIN, kaReqBytes)
-	require.NoError(t, err)
-
-	// Generate V2 platform key agreement.
-	auth.mu.Lock()
-	platformCOSE, _, _, err := auth.generatePlatformKeyAgreementV2()
-	auth.mu.Unlock()
-	require.NoError(t, err)
-
-	var platformCOSEMap map[int]interface{}
-	err = cbor.Unmarshal(platformCOSE, &platformCOSEMap)
-	require.NoError(t, err)
+	require.NoError(t, initKeyAgreement(t, auth))
+	token := installOutstandingToken(t, auth)
+	want := append([]byte(nil), token...)
 
 	req := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: PINProtocol2,
 		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyKeyAgreement:      platformCOSEMap,
-		clientPINKeyPermissions:       PINPermissionGetAssertion,
+		clientPINKeyPermissions:       PINPermissionCredentialMgmt,
 	}
-
 	reqBytes, err := cbor.Marshal(req)
 	require.NoError(t, err)
 
-	resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
-	require.NoError(t, err)
-	require.Equal(t, byte(StatusOK), resp[0])
+	_, err = auth.ProcessCBOR(CmdClientPIN, reqBytes)
+	require.ErrorIs(t, err, ErrInvalidSubcommand)
 
-	var respMap map[int]interface{}
-	err = cbor.Unmarshal(resp[1:], &respMap)
-	require.NoError(t, err)
-
-	encToken, ok := respMap[clientPINResponseKeyPinUvAuthToken]
-	require.True(t, ok, "response must contain pinUvAuthToken")
-
-	// V2 encrypted token includes 16-byte IV prefix.
-	tokenBytes, ok := encToken.([]byte)
-	require.True(t, ok)
-	require.Equal(t, AESBlockSize+PINTokenSize, len(tokenBytes),
-		"V2 encrypted token should be IV (16) + token (32)")
+	require.Equal(t, want, auth.GetPinUvAuthToken())
+	auth.mu.RLock()
+	perms := auth.pinState.protocol.tokenPermissions
+	auth.mu.RUnlock()
+	require.Equal(t, uint8(PINPermissionMakeCredential), perms)
 }
 
 // TestGetPinUvAuthTokenUsingUvWithPermissions_NoUVBackend tests error when backend
@@ -3108,188 +3084,8 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_NilBackend(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidSubcommand)
 }
 
-// TestGetPinUvAuthTokenUsingUvWithPermissions_ZeroPermissions tests error when
-// permissions are zero.
-func TestGetPinUvAuthTokenUsingUvWithPermissions_ZeroPermissions(t *testing.T) {
-	auth := createTestAuthenticatorWithUV(t, true)
-	defer func() { _ = auth.Close() }()
-
-	req := map[int]interface{}{
-		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyPermissions:       uint8(0),
-	}
-
-	reqBytes, err := cbor.Marshal(req)
-	require.NoError(t, err)
-
-	_, err = auth.ProcessCBOR(CmdClientPIN, reqBytes)
-	require.ErrorIs(t, err, ErrInvalidParameter)
-}
-
-// TestGetPinUvAuthTokenUsingUvWithPermissions_MissingKeyAgreement tests error when
-// platform key agreement is not provided.
-func TestGetPinUvAuthTokenUsingUvWithPermissions_MissingKeyAgreement(t *testing.T) {
-	auth := createTestAuthenticatorWithUV(t, true)
-	defer func() { _ = auth.Close() }()
-
-	req := map[int]interface{}{
-		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyPermissions:       PINPermissionGetAssertion,
-	}
-
-	reqBytes, err := cbor.Marshal(req)
-	require.NoError(t, err)
-
-	_, err = auth.ProcessCBOR(CmdClientPIN, reqBytes)
-	require.ErrorIs(t, err, ErrMissingKeyAgreement)
-}
-
-// TestGetPinUvAuthTokenUsingUvWithPermissions_UVBlocked tests error when UV retries
-// are exhausted.
-func TestGetPinUvAuthTokenUsingUvWithPermissions_UVBlocked(t *testing.T) {
-	auth := createTestAuthenticatorWithUV(t, true)
-	defer func() { _ = auth.Close() }()
-
-	// Exhaust UV retries.
-	auth.state.SetUVRetries(0)
-
-	// Initialize PIN protocol.
-	kaReq := map[int]interface{}{
-		clientPINKeySubCommand: ClientPINSubCmdGetKeyAgreement,
-	}
-	kaReqBytes, err := cbor.Marshal(kaReq)
-	require.NoError(t, err)
-	_, err = auth.ProcessCBOR(CmdClientPIN, kaReqBytes)
-	require.NoError(t, err)
-
-	// Generate platform key agreement.
-	auth.mu.Lock()
-	platformCOSE, _, err := auth.generatePlatformKeyAgreement()
-	auth.mu.Unlock()
-	require.NoError(t, err)
-
-	var platformCOSEMap map[int]interface{}
-	err = cbor.Unmarshal(platformCOSE, &platformCOSEMap)
-	require.NoError(t, err)
-
-	req := map[int]interface{}{
-		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyKeyAgreement:      platformCOSEMap,
-		clientPINKeyPermissions:       PINPermissionGetAssertion,
-	}
-
-	reqBytes, err := cbor.Marshal(req)
-	require.NoError(t, err)
-
-	_, err = auth.ProcessCBOR(CmdClientPIN, reqBytes)
-	require.ErrorIs(t, err, ErrUVBlocked)
-}
-
-// TestGetPinUvAuthTokenUsingUvWithPermissions_ResetsUVRetries verifies that UV retries
-// are reset to the default value on successful token generation.
-func TestGetPinUvAuthTokenUsingUvWithPermissions_ResetsUVRetries(t *testing.T) {
-	auth := createTestAuthenticatorWithUV(t, true)
-	defer func() { _ = auth.Close() }()
-
-	// Set UV retries to a low value (but non-zero).
-	auth.state.SetUVRetries(1)
-
-	// Initialize PIN protocol.
-	kaReq := map[int]interface{}{
-		clientPINKeySubCommand: ClientPINSubCmdGetKeyAgreement,
-	}
-	kaReqBytes, err := cbor.Marshal(kaReq)
-	require.NoError(t, err)
-	_, err = auth.ProcessCBOR(CmdClientPIN, kaReqBytes)
-	require.NoError(t, err)
-
-	auth.mu.Lock()
-	platformCOSE, _, err := auth.generatePlatformKeyAgreement()
-	auth.mu.Unlock()
-	require.NoError(t, err)
-
-	var platformCOSEMap map[int]interface{}
-	err = cbor.Unmarshal(platformCOSE, &platformCOSEMap)
-	require.NoError(t, err)
-
-	req := map[int]interface{}{
-		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyKeyAgreement:      platformCOSEMap,
-		clientPINKeyPermissions:       PINPermissionGetAssertion,
-	}
-
-	reqBytes, err := cbor.Marshal(req)
-	require.NoError(t, err)
-
-	_, err = auth.ProcessCBOR(CmdClientPIN, reqBytes)
-	require.NoError(t, err)
-
-	// Verify UV retries were reset.
-	require.Equal(t, DefaultUVRetries, auth.state.UVRetries())
-}
-
-// TestGetPinUvAuthTokenUsingUvWithPermissions_TokenIsRandom verifies that each
-// call generates a unique token.
-func TestGetPinUvAuthTokenUsingUvWithPermissions_TokenIsRandom(t *testing.T) {
-	auth := createTestAuthenticatorWithUV(t, true)
-	defer func() { _ = auth.Close() }()
-
-	// Helper to get a token.
-	getToken := func() []byte {
-		// Re-initialize protocol keys for a fresh ECDH.
-		kaReq := map[int]interface{}{
-			clientPINKeySubCommand: ClientPINSubCmdGetKeyAgreement,
-		}
-		kaReqBytes, err := cbor.Marshal(kaReq)
-		require.NoError(t, err)
-
-		// Force new key agreement by regenerating.
-		auth.mu.Lock()
-		auth.pinState.protocol = nil
-		auth.mu.Unlock()
-
-		_, err = auth.ProcessCBOR(CmdClientPIN, kaReqBytes)
-		require.NoError(t, err)
-
-		auth.mu.Lock()
-		platformCOSE, _, err := auth.generatePlatformKeyAgreement()
-		auth.mu.Unlock()
-		require.NoError(t, err)
-
-		var platformCOSEMap map[int]interface{}
-		err = cbor.Unmarshal(platformCOSE, &platformCOSEMap)
-		require.NoError(t, err)
-
-		req := map[int]interface{}{
-			clientPINKeyPinUvAuthProtocol: PINProtocol1,
-			clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-			clientPINKeyKeyAgreement:      platformCOSEMap,
-			clientPINKeyPermissions:       PINPermissionGetAssertion,
-		}
-		reqBytes, err := cbor.Marshal(req)
-		require.NoError(t, err)
-
-		_, err = auth.ProcessCBOR(CmdClientPIN, reqBytes)
-		require.NoError(t, err)
-
-		auth.mu.RLock()
-		token := make([]byte, len(auth.pinState.protocol.pinUvAuthToken))
-		copy(token, auth.pinState.protocol.pinUvAuthToken)
-		auth.mu.RUnlock()
-		return token
-	}
-
-	token1 := getToken()
-	token2 := getToken()
-	require.NotEqual(t, token1, token2, "tokens from separate calls must be different")
-}
-
 // TestGetPinUvAuthTokenUsingUvWithPermissions_UnsupportedProtocol tests that an
-// unsupported PIN protocol version is rejected before reaching the UV handler.
+// unsupported PIN protocol version is rejected before the subcommand dispatch.
 func TestGetPinUvAuthTokenUsingUvWithPermissions_UnsupportedProtocol(t *testing.T) {
 	auth := createTestAuthenticatorWithUV(t, true)
 	defer func() { _ = auth.Close() }()
