@@ -72,7 +72,7 @@ func setDistinctFieldValue(t *testing.T, fv reflect.Value, name string, seed int
 		default:
 			t.Fatalf("round-trip test does not know how to fill GUIConfig field %q of slice type %s; extend setDistinctFieldValue", name, fv.Type())
 		}
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if fv.Type() == reflect.TypeOf((*xkms.AutoFillPolicy)(nil)) {
 			fv.Set(reflect.ValueOf(&xkms.AutoFillPolicy{
 				FillMode:              autofill.FillModeAutoFill,
