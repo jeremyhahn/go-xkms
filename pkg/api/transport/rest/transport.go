@@ -2076,7 +2076,7 @@ func (t *Transport) PasswordAdd(ctx context.Context, req *transport.PasswordAddR
 		return nil, ErrNotConnected
 	}
 
-	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/passwords", req)
+	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/passwords/", req)
 	if err != nil {
 		return nil, err
 	}
@@ -2115,7 +2115,7 @@ func (t *Transport) PasswordList(ctx context.Context, req *transport.PasswordLis
 		return nil, ErrNotConnected
 	}
 
-	path := "/api/v1/passwords"
+	path := "/api/v1/passwords/"
 	params := url.Values{}
 	if req != nil {
 		if req.FolderPath != "" {
@@ -2482,7 +2482,7 @@ func (t *Transport) PolicyExport(ctx context.Context, req *transport.PolicyExpor
 
 // CreateCustodianGroup creates a new custodian group.
 func (t *Transport) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/custodian/groups", req)
+	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/custodian/groups/", req)
 	if err != nil {
 		return nil, err
 	}
@@ -2513,7 +2513,7 @@ func (t *Transport) GetCustodianGroup(ctx context.Context, groupID string) (*tra
 
 // ListCustodianGroups returns all custodian groups.
 func (t *Transport) ListCustodianGroups(ctx context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/custodian/groups", nil)
+	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/custodian/groups/", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2590,7 +2590,7 @@ func (t *Transport) SubmitShare(ctx context.Context, req *transport.SubmitShareR
 
 // ListShares returns all stored shares.
 func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesResponse, error) {
-	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/shares", nil)
+	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/shares/", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2670,7 +2670,7 @@ func (t *Transport) QueryAudit(ctx context.Context, filter *transport.AuditFilte
 		q.Set("cursor", filter.Cursor)
 	}
 
-	path := "/api/v1/audit"
+	path := "/api/v1/audit/"
 	if encoded := q.Encode(); encoded != "" {
 		path = path + "?" + encoded
 	}
