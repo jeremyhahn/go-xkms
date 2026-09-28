@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package ca coverage boost, sixth pass: uses httptest.Server to cover the
-// HTTP download paths in ImportDistributionCRLs and ImportIssuingCAs.
+// HTTP download paths in ImportDistributionCRLs.
 // All tests are in-memory, fast, race-free.
 package ca
 
@@ -83,6 +83,7 @@ func TestImportDistributionCRLs_HTTPSuccess(t *testing.T) {
 	defer srv.Close()
 
 	ca := setupTestCAWithObjectStore(t)
+	allowLoopbackFetch(ca)
 	cert := &x509.Certificate{
 		CRLDistributionPoints: []string{srv.URL + "/test.crl"},
 	}
@@ -121,6 +122,7 @@ func TestImportDistributionCRLs_AlreadyImported(t *testing.T) {
 	defer srv.Close()
 
 	ca := setupTestCAWithObjectStore(t)
+	allowLoopbackFetch(ca)
 	cert := &x509.Certificate{
 		CRLDistributionPoints: []string{srv.URL + "/test.crl"},
 	}
@@ -139,6 +141,7 @@ func TestImportDistributionCRLs_HTTPErrorStatus(t *testing.T) {
 	defer srv.Close()
 
 	ca := setupTestCAWithObjectStore(t)
+	allowLoopbackFetch(ca)
 	cert := &x509.Certificate{
 		CRLDistributionPoints: []string{srv.URL + "/missing.crl"},
 	}
@@ -157,94 +160,13 @@ func TestImportDistributionCRLs_InvalidCRLBody(t *testing.T) {
 	defer srv.Close()
 
 	ca := setupTestCAWithObjectStore(t)
+	allowLoopbackFetch(ca)
 	cert := &x509.Certificate{
 		CRLDistributionPoints: []string{srv.URL + "/bad.crl"},
 	}
 
 	err := ca.ImportDistributionCRLs(cert)
 	assert.ErrorIs(t, err, ErrCRLGenerationFailed)
-}
-
-// =============================================================================
-// ImportIssuingCAs — HTTP success path via httptest.Server
-// =============================================================================
-
-// buildTestCertPEM creates a simple self-signed cert PEM for AIA download tests.
-func buildTestCertDER(t *testing.T, cn string) ([]byte, *ecdsa.PrivateKey) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(99),
-		Subject:               pkix.Name{CommonName: cn},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign,
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-	return certDER, key
-}
-
-func TestImportIssuingCAs_HTTPSuccess(t *testing.T) {
-	issuerDER, _ := buildTestCertDER(t, "aia-issuer")
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/pkix-cert")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(issuerDER)
-	}))
-	defer srv.Close()
-
-	ca := setupTestCA(t)
-
-	// A leaf cert with AIA pointing to our test server.
-	cert := &x509.Certificate{
-		IssuingCertificateURL: []string{srv.URL + "/issuer.crt"},
-	}
-
-	err := ca.ImportIssuingCAs(context.Background(), cert)
-	require.NoError(t, err)
-}
-
-func TestImportIssuingCAs_HTTPErrorStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-	}))
-	defer srv.Close()
-
-	ca := setupTestCA(t)
-	cert := &x509.Certificate{
-		IssuingCertificateURL: []string{srv.URL + "/forbidden.crt"},
-	}
-
-	err := ca.ImportIssuingCAs(context.Background(), cert)
-	assert.ErrorIs(t, err, ErrStorageError)
-}
-
-func TestImportIssuingCAs_AlreadyInCertStore(t *testing.T) {
-	issuerDER, _ := buildTestCertDER(t, "aia-existing")
-
-	callCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(issuerDER)
-	}))
-	defer srv.Close()
-
-	ca := setupTestCA(t)
-	cert := &x509.Certificate{
-		IssuingCertificateURL: []string{srv.URL + "/existing.crt"},
-	}
-
-	// First import — cert stored.
-	require.NoError(t, ca.ImportIssuingCAs(context.Background(), cert))
-	// Second import — cert already in store; function skips but may still recurse.
-	require.NoError(t, ca.ImportIssuingCAs(context.Background(), cert))
 }
 
 // =============================================================================

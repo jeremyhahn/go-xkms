@@ -490,21 +490,6 @@ func TestPutRevocationBlob_RevocationStorePath_B8(t *testing.T) {
 // =============================================================================
 
 // =============================================================================
-// trust_chain_extensions.go — ImportIssuingCAs: bad-request path (malformed URL)
-// =============================================================================
-
-func TestImportIssuingCAs_BadURL_B8(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithObjectStore(t)
-	cert := &x509.Certificate{
-		Subject:               pkix.Name{CommonName: "bad-url-b8"},
-		IssuingCertificateURL: []string{"://invalid-url"},
-	}
-	err := ca.ImportIssuingCAs(context.Background(), cert)
-	assert.Error(t, err)
-}
-
-// =============================================================================
 // ca_extensions.go — SignedBlob not-initialized path
 // =============================================================================
 

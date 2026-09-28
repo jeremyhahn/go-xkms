@@ -424,6 +424,36 @@ func TestFindPCRValue(t *testing.T) {
 		assert.False(t, found)
 		assert.Nil(t, value)
 	})
+
+	t.Run("prefers the SHA-256 bank", func(t *testing.T) {
+		sha256Value := bytes.Repeat([]byte{0x22}, 32)
+		pcrData, err := xkmssdk.EncodePCRs([]xkmssdk.PCRBank{
+			{Algorithm: "SHA1", PCRs: []xkmssdk.PCR{{ID: 7, Value: bytes.Repeat([]byte{0x11}, 20)}}},
+			{Algorithm: "SHA256", PCRs: []xkmssdk.PCR{{ID: 7, Value: sha256Value}}},
+		})
+		require.NoError(t, err)
+
+		value, found := findPCRValue(pcrData, 7)
+		assert.True(t, found)
+		assert.Equal(t, sha256Value, value)
+	})
+
+	t.Run("refuses attacker PCR data no TPM produces", func(t *testing.T) {
+		pcrData, err := xkmssdk.EncodePCRs([]xkmssdk.PCRBank{
+			{Algorithm: "SHA256", PCRs: []xkmssdk.PCR{{ID: 7, Value: make([]byte, 4096)}}},
+		})
+		require.NoError(t, err)
+
+		value, found := findPCRValue(pcrData, 7)
+		assert.False(t, found)
+		assert.Nil(t, value)
+	})
+
+	t.Run("refuses oversized PCR data before decoding", func(t *testing.T) {
+		value, found := findPCRValue(make([]byte, 1<<20), 0)
+		assert.False(t, found)
+		assert.Nil(t, value)
+	})
 }
 
 // =============================================================================

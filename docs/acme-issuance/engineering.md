@@ -102,6 +102,17 @@ once, to the externally visible base.
 
 ## Invariants
 
+- **Attestation PCR data is decoded under bounds.** The compliance hooks
+  decode the PCR banks inside a request's `ProdCaData`
+  (`pkg/acme/server/handlers/compliance_attestation.go:187`, `:764`) through
+  `DecodePCRs`, which refuses input over 64 KiB and banks no TPM reports
+  before either hook reads a value (see
+  [`../tpm2/engineering.md`](../tpm2/engineering.md)). The event-log hook
+  turns a refused decode into an `EventLogError`. The PCR hook treats it as
+  "PCR not present", which fails only under `PCRPolicy.StrictMode`; a
+  non-strict policy skips PCRs it cannot find, refused or absent alike
+  (`compliance_attestation.go:151-161`).
+
 - **The admin plane resolves every mTLS caller to its qrdb user before the
   permission gate runs.** xkmsd builds the admin plane's authenticator with
   the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:159-167`), so the
@@ -917,7 +928,9 @@ storage. Changing the storage layout requires a data migration step.
   `test/integration/acmeadmin/docker-compose.yml`.
 - **TCG / attestation** — `test/integration/acme-tpm` plus
   `pkg/acme/server/handlers/audit_tcg_test.go`,
-  `compliance_attestation_test.go`.
+  `compliance_attestation_test.go` (including `findPCRValue` refusing PCR
+  data no TPM produces and oversized PCR data, and preferring the SHA-256
+  bank).
 - **device-attest-01 `tpm` binding** —
   `pkg/acme/challenges/device-attest-01/tpm_simulator_test.go` (build tag
   `tpm_simulator`) produces real TPM2_Certify and TPM2_Quote output with the

@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/tpm2`
 
@@ -232,6 +232,15 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   self-certification (`TPM2_CertifyCreation`) is authorized by the IAK's own
   authValue, not the EK's (#467).
 
+- **`DecodePCRs` treats its input as adversarial.** `Quote.PCRs` and the
+  TCG-CSR `ProdCaData` carry PCR banks encoded by `EncodePCRs` with
+  `encoding/gob`, and verifiers decode what a remote attester sent.
+  `encoding/gob` is not hardened against adversarial input, so `DecodePCRs`
+  (`pkg/tpm2/encoding.go:74`) refuses more than 64 KiB before decoding and
+  validates the result against what `ReadPCRs` can produce
+  (`encoding.go:50-66`, sharing `maxPCRIndex` with `ReadPCRs`). The gob
+  encoding itself is unchanged: it is the wire format producers already emit.
+
 ## Error semantics
 
 Typed errors throughout; `pkg/attestation/errors.go` holds the verification
@@ -247,6 +256,8 @@ vocabulary. The categories that need distinguishing:
 | EK chain does not verify | the manufacturer root is not trusted |
 | AK certification invalid | the AK is not bound to that EK |
 | quote signature or nonce invalid | the evidence is not fresh or not from that AK |
+| `ErrPCRDataTooLarge` | encoded PCR banks over 64 KiB, refused by `DecodePCRs` before gob decodes them (`pkg/tpm2/encoding.go:74`) |
+| `ErrInvalidPCRData` | decoded PCR banks no TPM reports: more than 8 banks, more than 24 PCRs in a bank, an index outside 0..23, or a value longer than 64 bytes (`validatePCRBanks`, `pkg/tpm2/encoding.go:91`) |
 | `ErrECCPublicArea` | the ECC public area does not yield a valid public key: bad parameters, an unknown curve, or a point that is not on the curve. On the `TPM2_Certify` path it is wrapped as `ErrCertifyMalformed`; the underlying `ecpoint.ErrInvalidPoint` stays reachable through `errors.Is` |
 | `ErrAdminWithPolicyNoAuthPolicy` | the template about to be created from sets `adminWithPolicy` while naming no `authPolicy`, so the object's ADMIN role would be unauthorizable by anything. Raised by `assertAdminAuthorizable` before `TPM2_CreatePrimary`; nothing is created |
 | `ErrDevIDTemplateNonConformant` | the IDevID or IAK template about to be created from departs from TCG Templates H-0 through H-4 in an attribute, its `authPolicy`, its `unique` string, its scheme, its symmetric definition, its exponent, its KDF or its curve. Raised by `assertDevIDTemplateConformant` before `TPM2_CreatePrimary`; nothing is created |

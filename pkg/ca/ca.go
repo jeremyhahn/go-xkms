@@ -78,6 +78,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -296,6 +297,13 @@ type CA struct {
 	// regenerate-on-read behavior deterministic instead of sleeping out a
 	// real validity window.
 	clock Clock
+
+	// fetchClient downloads the PKI objects certificate extensions point at
+	// (AIA caIssuers certificates, CRL distribution points). nil in
+	// production, which uses the address-filtered pkiFetchClient (see
+	// pki_fetch.go); tests inject a client that may reach an httptest
+	// server on loopback.
+	fetchClient *http.Client
 
 	// auditLogger records CA lifecycle events (see Params.AuditLogger and
 	// pkg/ca/audit.go). nil disables audit logging for this CA instance.

@@ -63,6 +63,14 @@ and the `…WithXSigner` variants.
 
 **`CAChainImporter`** — `ImportDistributionCRLs(cert)`,
 `ImportIssuingCAs(ctx, cert)`. This is the AIA walk.
+Both methods fetch through `fetchPKIObject` (`pkg/ca/pki_fetch.go:153`)
+under fixed limits: http and https only, public unicast destinations only
+(checked at dial time, after DNS resolution), at most 3 redirects, a
+30-second timeout, and a body cap of 64 KiB for a certificate or 32 MiB for
+a CRL (`pki_fetch.go:38-52`). `ImportIssuingCAs` also requires each fetched
+issuer to verify the child's signature and stops a walk that repeats a
+certificate or climbs more than 5 issuers (`trust_chain_extensions.go:278-328`).
+None of the limits is configurable.
 
 **`CACrossSigner`** — `ImportXSignedCertificate(issuerCN, cert)`,
 `XSignedCertificate(issuerCN, attrs)`, `XSignedRootCertificate(issuerCN, cert)`,
@@ -268,6 +276,11 @@ a persisted record that cannot be decoded (#1116, see the invariant above).
 `ErrKeyRetrievalFailed` is `getOrGenerateCAKey`'s fail-closed error for a
 backend `GetKey` failure that is not a genuine not-found result (#801, see
 the invariant above).
+The chain importer's refusals are `ErrPKIFetchRefused` (scheme, destination
+address or redirect count), `ErrPKIFetchTooLarge` (body over the cap),
+`ErrAIAIssuerSignatureInvalid`, `ErrAIALoop` and `ErrAIADepthExceeded`
+(`pkg/ca/errors.go:183-205`). A download that fails for any other reason,
+including a non-200 status, stays `ErrStorageError`.
 
 Transport mapping is in `pkg/api/rest/handlers_ca.go` /
 `handlers_ca_bundle.go` / `handlers_ca_tcg.go`, `pkg/api/grpc/service_ca_bundle.go`,
@@ -525,6 +538,17 @@ up.
   `ErrCertificateNotFound`, and a corrupt persisted root certificate fails
   `Load` with a distinct error that does not satisfy
   `errors.Is(_, ErrCertificateNotFound)`.
+  Chain import: `aia_import_test.go` serves real generated chains from an
+  httptest repository — a full walk at the depth limit imports every issuer;
+  one issuer deeper is refused after exactly five fetches; a
+  self-referencing AIA URL is refused as a loop; a certificate that did not
+  sign the child is refused and not stored; a loopback repository is
+  refused by the production client without receiving a request; an
+  oversized or unparseable response is refused. `pki_fetch_test.go` covers
+  the address classifier, the scheme filter, the body cap at and over the
+  limit, a hostname resolving to loopback, the metadata address, redirect
+  loops and redirects to a non-http scheme, and the CRL importer's
+  private-address, oversized and `ldap://` refusals.
 - **End to end** — `pkg/ca/issuance_e2e_test.go`,
   `pkg/api/rest/init_ceremony_e2e_test.go`.
 - **Integration** — `test/integration/certstore`, `test/integration/acme-tpm`,

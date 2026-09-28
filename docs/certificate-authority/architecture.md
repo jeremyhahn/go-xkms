@@ -228,6 +228,21 @@ enforces.
   (`ErrTCGEKCertUntrusted`) rather than falling back to residency-only proof
   -- there is no permissive default a device can rely on by supplying its own
   EK certificate.
+- **AIA and CRL distribution point URLs are attacker-directed.** Whoever
+  issued a certificate chose them, so `ImportIssuingCAs` and
+  `ImportDistributionCRLs` fetch through one bounded path, `fetchPKIObject`
+  (`pkg/ca/pki_fetch.go:153`). It fetches only http and https URLs
+  (`checkFetchURL`, `pki_fetch.go:127`). Its client dials only public
+  unicast addresses; the check runs in the dialer's `Control` hook after
+  DNS resolution, so a rebinding hostname or a redirect cannot reach
+  loopback, private, link-local (including cloud metadata) or CGNAT
+  addresses (`pki_fetch.go:64-120`). Bodies are capped at 64 KiB for a
+  certificate and 32 MiB for a CRL. The AIA walk also verifies that each
+  fetched certificate signed the certificate that named it
+  (`trust_chain_extensions.go:314`), ends on a repeated certificate
+  (`:310`), and refuses a walk more than five issuers deep (`:295`), so an
+  AIA URL can neither plant an unrelated certificate in the store nor loop
+  forever.
 - **Multi-keystore CAs** (`pkg/ca/multi_keystore*.go`) let one CA identity hold
   parallel keys of different algorithms in different backends. Each is a
   distinct trust root even though they share a name — `CABundleFiltered(storeType, keyAlgorithm)`
