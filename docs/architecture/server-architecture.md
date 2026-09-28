@@ -300,7 +300,14 @@ advertises it via `Alt-Svc`), so the xkms QUIC client works against the
 REST port unchanged. TLS material: operator `cert_file`/`key_file` if
 configured, otherwise a persisted node-local bootstrap certificate serves
 from first boot and is replaced in-place by the CA-issued certificate once
-the CA composes (`pkg/server/unified_tls.go`). Local IPC is exempt: the
+the CA composes (`pkg/server/unified_tls.go`). The client-CA pool the
+unified server verifies mTLS clients against upgrades the same way: once the
+CA composes, `upgradeUnifiedTLSCert` (`pkg/server/unified_tls.go:157`)
+installs the union of the operator-configured `tls.ca_file`/`tls.client_cas`
+(resolved through `loadClientCAsUnion`, the same helper `buildTLSConfig`
+uses at startup) and the CA's own bundle, via
+`unifiedClientCAPool` (`pkg/server/unified_tls.go:196`) — an mTLS client
+anchored by either stays accepted after the upgrade (go-xkms#794). Local IPC is exempt: the
 Unix socket serves in-process for non-qrdb storage (with qrdb storage the
 node's own UDS serves it), and the desktop loopback engine serves a
 pre-bound injected listener. The embedded web UI registers on the unified

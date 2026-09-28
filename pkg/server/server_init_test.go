@@ -55,6 +55,8 @@ type mockTrustedCA struct {
 	tlsCert     tls.Certificate
 	tlsCertErr  error
 	caCert      *x509.Certificate
+	caBundlePEM []byte
+	caBundleErr error
 }
 
 func (m *mockTrustedCA) IsInitialized() bool { return m.initialized }
@@ -89,7 +91,7 @@ func (m *mockTrustedCA) IssueCertificateWithProfile(_ context.Context, _ *ca.Cer
 	return nil, nil
 }
 func (m *mockTrustedCA) CACertificate() (*x509.Certificate, error) { return m.caCert, nil }
-func (m *mockTrustedCA) CABundle() ([]byte, error)                 { return nil, nil }
+func (m *mockTrustedCA) CABundle() ([]byte, error)                 { return m.caBundlePEM, m.caBundleErr }
 func (m *mockTrustedCA) Verify(_ *x509.Certificate, _ ...crypto.Signer) ([][]*x509.Certificate, error) {
 	return nil, nil
 }
