@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0-alpha] - 2026-09-28
+
+### Security
+
+- **device-attest-01's `tpm` format now binds the attested key to the CSR key, and verifies the evidence as the WebAuthn TPM2_Certify it is instead of as a quote** (#789). Before this change, any genuine device's attestation authorized a certificate for any key. The verifier called `VerifyQuote` and then looked for the key authorization anywhere in `certInfo` with `bytes.Contains`, never parsed the `TPMS_ATTEST`, and never read `pubArea`. `verifyTPMEvidence` now applies WebAuthn Level 2 §8.3, with no change to the wire format:
+  - `certInfo` must carry `TPM_GENERATED_VALUE` and be `TPM_ST_ATTEST_CERTIFY`, and its attested Name must be Name(`pubArea`).
+  - `extraData` must equal `TPMExtraData(alg, keyAuthorization)`, which is `alg`'s hash of the key authorization.
+  - `sig` must verify under `x5c[0]` with `alg`.
+  - `x5c[0]` must meet §8.3.1: version 3, an empty subject, a TCG SAN, not a CA, and EKU `tcg-kp-AIKCertificate`.
+
+  Every `x5c` entry must be a certificate before the chain is anchored. `bindsThroughTheCSR` now covers `tpm`, so `Verify` refuses it with `ErrKeyBindingRequired`. `BindCSRKey` gains a TPM arm that checks the CSR self-signature, re-verifies the recorded certification, and requires `pubArea`'s key to equal the CSR's key. There is still one binding gate. `attestation.Evidence` gains `AttesterCertificate` and `CertifySignatureAlgorithm`. The TPM2 profile reads its challenge from the certification's `extraData` and compares the certified key with `SubjectSPKI` when that is set. `pkg/tpm2.VerifyCertifyByCertificate` verifies a certification whose attester is an X.509 AIK. `AttestationVerifier.VerifyQuote` and `ErrQuoteVerificationFailed` are removed, and `ErrTPMAttestationInvalid` and `ErrAIKCertificateInvalid` are added.
+  - Files: `pkg/acme/challenges/device-attest-01/{tpm,binding,deviceattest01}.go`, `pkg/attestation/invariants.go`, `pkg/tpm2/certify_verify.go`.
+  - Verified by `tpm_simulator_test.go`. It uses real TPM2_Certify and TPM2_Quote output from the in-process simulator and accepts the device's own key. It refuses a software key, a quote, another `pubArea`, the challenge outside `extraData`, a wrong `extraData`, a second AIK's signature, and an unanchored `x5c`.
+  - Also verified by `pkg/attestation/invariants_tpm_test.go` and `pkg/tpm2/certify_verify_certificate_test.go`.
+  - The challenge is not yet wired into xkmsd (#737/#828), so no deployment changes behaviour.
+  - The client half (`Setup`, `pkg/acme/client` `setupAttestChallenge`) still emits quote evidence, which this verifier refuses.
+
+### Fixed
+
+- **The unified API server's client-CA pool now keeps the operator's configured `tls.ca_file`/`tls.client_cas` after the embedded CA composes, instead of silently dropping them** (#794 triage). `upgradeUnifiedTLSCert` used to replace `tls.Config`'s client-CA pool outright with the CA bundle (`ca.CATrustPools.CABundleCertPool()`), so an mTLS client anchored only by an operator-configured client CA stopped being accepted the moment the CA composed, even though `tls.client_cas` still named that CA. It now installs the union of the configured client CAs -- resolved through the same `loadClientCAsUnion` helper `buildTLSConfig` uses at startup, via the new `unifiedClientCAPool` -- and the CA's bundle, so both continue to verify. A re-read `tls.client_cas` failure surfaces as the existing typed `*ErrCertParse`/`*ErrFileRead` rather than being swallowed; a CA-bundle fetch failure degrades only the pool (typed `*ErrTLSCertOp`, logged) while the certificate upgrade still proceeds. Files: `pkg/server/unified_tls.go`. Verified by `pkg/server/unified_client_ca_pool_test.go` and `pkg/server/unified_tls_test.go`.
+- **The Platform SRK's shape now agrees between the simulator first-boot backend autodetect and the operator enrollment ceremony** (#997). `pkg/backend/tpm2/config.go`'s `ToTPMConfig` hardcoded `PlatformPolicy: false` into the `PlatformSRKConfig` it built, so a Platform SRK created by `provisionSimulatorEKSRK`'s first-boot recipe carried no PCR-policy `AuthPolicy` in its template at all -- disagreeing with the always-`PlatformPolicy: true` PSRK `pkg/tpm2`'s enrollment path (`PlatformKeyStore.Initialize`/`EnrollPlatformSRK`, and `DefaultConfig`) has created since #677 settled the design (`authValue` = user PIN, `authPolicy` = platform PCR policy). `pkg/server/platform_store.go`'s `buildTPM2PlatformSealer` papered over the mismatch by forcing the `KeyAttributes` it returned to `PlatformPolicy: true` regardless of what the TPM object actually was, so a Platform SRK backend-probed on a fresh simulator authorized through the wrong compound-policy branch and every `Seal`/`Unseal` against it failed.
+  - `ToTPMConfig` now always sets `PlatformSRK.PlatformPolicy: true`, matching `pkg/tpm2.DefaultConfig`; there is no plain-password shape for the Platform SRK to fall back to.
+  - `buildTPM2PlatformSealer` no longer overrides `PlatformSRKAttributes()`'s resolved `PlatformPolicy` -- it already derives correctly from configuration (`pkg/tpm2/key.go`'s `PlatformSRKAttributesFromConfig`), and forcing it masked exactly this kind of shape mismatch instead of surfacing it.
+  - `CreateSRK` needed no change: it already derives the AuthPolicy baked into a Platform SRK's template from the live platform PCR at creation time (`capturePlatformPolicyPin`), independent of whether `CreatePlatformPolicy` has run -- both the simulator autodetect path and the enrollment path already relied on this and never called `CreatePlatformPolicy` first, so making both agree on `PlatformPolicy: true` is sufficient for them to derive identical `AuthPolicy` digests from the same PCR state.
+  - Verified with a new `pkg/backend/tpm2` test that provisions a Platform SRK through each path independently and asserts their persisted `AuthPolicy` digests match, a PIN-branch round trip proving key operations under an enrolled Platform SRK still work, and a `pkg/server` fresh-probe Seal/Unseal round trip through `buildTPM2PlatformSealer` -- the path this bug actually broke and that no existing test exercised end to end.
+
 ## [0.32.0-alpha] - 2026-09-27
 
 ### Added
