@@ -26,9 +26,11 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -86,10 +88,20 @@ func TestStartACMEServer_Success(t *testing.T) {
 	}
 
 	addr := as.listener.Addr().String()
+	// Trust exactly the listener's own self-signed certificate, and verify
+	// it against the name it was issued for.
+	certPEM, err := os.ReadFile(cfg.ACME.TLS.CertFile)
+	if err != nil {
+		t.Fatalf("read ACME cert: %v", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certPEM) {
+		t.Fatal("ACME cert PEM did not parse")
+	}
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test client against our own throwaway cert
+			TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "acme.example.com", MinVersion: tls.VersionTLS12},
 		},
 	}
 

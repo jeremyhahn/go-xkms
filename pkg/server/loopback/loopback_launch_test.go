@@ -277,14 +277,20 @@ func TestLaunch_TLSEnabled_UsesHTTPSScheme(t *testing.T) {
 		t.Fatalf("BaseURL = %q, want https://127.0.0.1:<port>", inst.BaseURL)
 	}
 
+	// Trust exactly the loopback listener's own self-signed certificate,
+	// which carries a 127.0.0.1 IP SAN, so the handshake is fully verified.
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read loopback cert: %v", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certPEM) {
+		t.Fatal("loopback cert PEM did not parse")
+	}
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
-			// The test's own throwaway self-signed cert has no system trust
-			// anchor; this dials it directly rather than verifying it against
-			// one, exactly as the desktop shell's loopback client is expected
-			// to pin the reported certificate instead.
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 		},
 	}
 	url := inst.BaseURL + "/api/v1/backends"
