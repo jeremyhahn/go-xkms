@@ -18,6 +18,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
@@ -286,8 +287,11 @@ func TestPhoneSymmetricKey_Raw_NotSupported(t *testing.T) {
 	}
 
 	_, err := key.Raw()
-	if err != ErrExportNotSupported {
+	if !errors.Is(err, ErrExportNotSupported) {
 		t.Errorf("expected ErrExportNotSupported, got %v", err)
+	}
+	if !errors.Is(err, backend.ErrNotSupported) {
+		t.Errorf("a sealed key must also report backend.ErrNotSupported, got %v", err)
 	}
 }
 

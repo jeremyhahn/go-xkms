@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — API
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Transport shapes are described once in
 [`../key-management/api.md`](../key-management/api.md) §"How the six
@@ -34,6 +34,15 @@ Request (`pkg/api/rest/types.go:159-181`, `EncryptRequest`):
 
 `tag_size` is the AEAD tag length in bytes (0 selects the cipher's
 full-length tag; AES-GCM admits 12-16 bytes per NIST SP 800-38D §5.2.1.2).
+
+`nonce` may be used once per key per server process. A second encryption
+under the same key and nonce is refused, including a nonce the server
+generated for an earlier response and a nonce used by an AES-GCM wrap under
+that key. The error wraps `aead.ErrNonceReuse` and today surfaces through the
+catch-all status (HTTP 500). Leave `nonce` empty unless a protocol requires
+it. See [`architecture.md`](architecture.md) §"Caller-supplied nonces"
+for the limits: the record does not survive a restart and is not shared
+between cluster nodes.
 
 Response (`EncryptResponse`, `types.go:182-189`):
 

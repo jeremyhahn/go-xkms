@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — User Guide
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Generate a symmetric key
 
@@ -56,6 +56,15 @@ Rotation generates a fresh key under the same key ID and resets that key's
 nonce-reuse history and byte counter. The AEAD safety tracker's state is
 **in-memory only** (see below) — after a server restart, tracking for every
 key (rotated or not) starts over regardless of rotation.
+
+## Supplying your own nonce
+
+Leave the nonce empty and let the server generate it. If a protocol requires
+you to choose it, use each nonce once per key: the server refuses a second
+encryption under the same key and nonce, including a nonce it generated for
+someone else's ciphertext. That record is kept in the server's memory. It is
+lost when `xkmsd` restarts and is not shared between cluster nodes, so the
+guarantee does not span restarts yet.
 
 ## Operational note: AEAD safety tracking does not survive a restart
 

@@ -22,7 +22,7 @@ import (
 )
 
 // DefaultKeyNonceGuardLimit bounds the process-wide guard returned by
-// SharedGCMNonceGuard. It is deliberately the same bound the PKCS#11 module's
+// SharedAEADNonceGuard. It is deliberately the same bound the PKCS#11 module's
 // own C_Encrypt tracker uses, so one AES-GCM vocabulary covers every path.
 const DefaultKeyNonceGuardLimit = 1 << 20
 
@@ -61,7 +61,7 @@ type KeyNonceGuard struct {
 //
 // The salt is read from the supplied entropy source. Callers that have no
 // reason to prefer another source should pass crypto/rand.Reader, which is
-// what SharedGCMNonceGuard does.
+// what SharedAEADNonceGuard does.
 func NewKeyNonceGuard(entropy io.Reader, limit int) (*KeyNonceGuard, error) {
 	salt := make([]byte, sha256.Size)
 	if _, err := io.ReadFull(entropy, salt); err != nil {
@@ -138,26 +138,36 @@ func (g *KeyNonceGuard) entry(keyMaterial, nonce []byte) ([]byte, error) {
 	return append(mac.Sum(nil), nonce...), nil
 }
 
-// sharedGCMNonceGuard builds the process-wide guard once, on first use.
+// sharedAEADNonceGuard builds the process-wide guard once, on first use.
 //
-// It is package state on purpose. Every AES-GCM path that accepts a
-// caller-supplied IV must consult the SAME guard or the guard proves nothing:
+// It is package state on purpose. Every AEAD path that accepts a
+// caller-supplied nonce must consult the SAME guard or the guard proves nothing:
 // a tracker owned by one manager instance cannot see the IV a second instance
 // -- or a code path that performs GCM in process without going through any
 // manager at all -- just consumed under the same key. This package is the
 // lowest common dependency of those paths, which is what makes it the one
 // place they can all reach without depending on each other.
-var sharedGCMNonceGuard = sync.OnceValues(func() (*KeyNonceGuard, error) {
+var sharedAEADNonceGuard = sync.OnceValues(func() (*KeyNonceGuard, error) {
 	return NewKeyNonceGuard(rand.Reader, DefaultKeyNonceGuardLimit)
 })
 
-// SharedGCMNonceGuard returns the process-wide AES-GCM (key, nonce) guard.
+// SharedAEADNonceGuard returns the process-wide AEAD (key, nonce) guard.
+//
+// It serves AES-GCM and ChaCha20-Poly1305 alike. Neither construction survives
+// a repeated (key, nonce) pair -- both are a stream cipher with a polynomial
+// MAC keyed from the same key and nonce -- and nothing in the guard depends on
+// which one is in use: the identity names the key and the entry carries the
+// nonce verbatim, whatever its length.
+//
+// The guard is process memory. Its salt is drawn at first use and its entries
+// die with the process, so it catches a repeat within one process lifetime and
+// nothing across a restart or between two processes.
 //
 // The error is the one from reading the guard's salt out of the system RNG.
 // It is returned rather than panicked on so that a caller can refuse the
 // operation with its own error vocabulary; a caller must not proceed with the
 // encryption when it is non-nil, because without the guard the reuse SP
 // 800-38D section 8.2 forbids would go unnoticed.
-func SharedGCMNonceGuard() (*KeyNonceGuard, error) {
-	return sharedGCMNonceGuard()
+func SharedAEADNonceGuard() (*KeyNonceGuard, error) {
+	return sharedAEADNonceGuard()
 }

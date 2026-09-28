@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — Architecture
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## The problem
 
@@ -90,6 +90,55 @@ absent" for what this means operationally.
 NonceSize: 12` — the 350GB figure is this project's own choice of headroom
 under the NIST SP 800-38D AES-GCM safety bound, not a value SP 800-38D itself
 names.
+
+## Caller-supplied nonces: one process-wide claim-then-seal guard
+
+The provider tracker above does not stop nonce reuse on the RPC path. Its
+`CheckNonce` and `RecordNonce` are separate steps around the seal, so two
+concurrent callers with one nonce both pass. It only tracks keys whose options
+were registered by `GenerateSymmetricKey` in the current process
+(`pkg/backend/aead_tracker.go:59-83`). And it is per backend instance and keyed
+by key id, so one key reached under two names is two keys to it.
+
+`XKMSService.Encrypt` therefore claims every AEAD nonce itself, in the same
+guard the AES-GCM wrap uses (`pkg/xkms/servicer_crypto.go:645-677`):
+
+- **Caller-supplied nonce, empty `Mode` (AES-GCM or ChaCha20-Poly1305):**
+  claimed before the seal (`:650-655`). A failed claim returns an
+  `*ErrKeyOperation` wrapping `aead.ErrNonceReuse` or
+  `aead.ErrNonceTrackerFull`, and no ciphertext is produced.
+- **Provider-generated nonce:** claimed after the seal (`:673-677`), so an
+  encrypt-only principal cannot copy a victim's nonce off its ciphertext and
+  encrypt chosen plaintext under it. A repeat withholds the ciphertext. A full
+  guard does not refuse this path (`pkg/xkms/aead_nonce_guard.go:127-160`): a
+  generated nonce is fresh by construction, and once the guard is full every
+  caller-supplied nonce is refused on every path, so the unrecorded nonce
+  cannot be replayed through the service.
+- **CBC/ECB:** not claimed. They take an IV, not an AEAD nonce.
+
+The claim is `claimAEADNonce` (`aead_nonce_guard.go:103-125`), shared with
+`wrapAESGCM` (`servicer_wrapkey.go:519`, `:551`), over
+`aead.SharedAEADNonceGuard` (`pkg/crypto/aead/key_nonce_guard.go:141-173`).
+`KeyNonceGuard.Use` checks and records under one lock
+(`key_nonce_guard.go:89`, `nonce_tracker.go:133-156`). The key identity is
+`aeadKeyIdentity` (`aead_nonce_guard.go:67-81`): the key's material where the
+backend releases it (software symmetric, Azure Key Vault), so aliases collide;
+otherwise `sealedKeyGuardDomain + attrs.ID()` for keys whose `Raw` reports
+`backend.ErrNotSupported` (PKCS#11, TPM 2.0, AWS/GCP KMS, Vault, paired phone).
+Any other failure to resolve the key refuses the request.
+
+The PKCS#11 module claims a `C_EncryptInit` caller IV in its own process under
+`remoteKeyGuardDomain + backend + key id`
+(`pkg/pkcs11/module/crypto.go:1948`, `:1987`) before sending the request. The
+two identities are domain-separated and never collide, so a module call
+succeeds exactly once per IV. The module's claim stops a repeat in that
+process, and the service's claim stops a repeat across module processes and
+direct REST/gRPC/MCP callers.
+
+**Limit: the guard is per-process memory.** Its salt is drawn at first use and
+its entries die with the process. A restart forgets every claim, and a second
+`xkmsd` node in a cluster never sees another node's claims. A persistent,
+cluster-wide guard is awaiting an owner ruling on go-xkms issue #1201.
 
 ## GCM nonce modes and FIPS
 
