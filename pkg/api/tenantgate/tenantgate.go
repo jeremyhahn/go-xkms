@@ -60,9 +60,13 @@ type ErrTenantNotFound struct {
 	Err      error
 }
 
-// Error implements the error interface.
+// Error implements the error interface. It names only the caller's own
+// tenant: Err, the registry lookup failure, is server-side detail for
+// logging and errors.Is/As (Unwrap), never for a client-facing message --
+// the MCP transport reports this error's text to the caller as-is
+// (go-xkms#1118).
 func (e *ErrTenantNotFound) Error() string {
-	return "tenantgate: tenant not found: " + e.TenantID + ": " + e.Err.Error()
+	return "tenantgate: tenant not found: " + e.TenantID
 }
 
 // Unwrap exposes the underlying registry lookup error for errors.Is/As.

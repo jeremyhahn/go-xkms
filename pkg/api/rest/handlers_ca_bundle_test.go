@@ -312,7 +312,8 @@ func TestGetCABundleHandler_BundlerError(t *testing.T) {
 	ctx.GetCABundleHandler(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "bundler error")
+	assert.Contains(t, w.Body.String(), ErrInternalError.Error())
+	assert.NotContains(t, w.Body.String(), "bundler error")
 }
 
 // TestGetCABundleHandler_Success tests successful bundle retrieval

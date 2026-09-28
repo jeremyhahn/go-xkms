@@ -115,8 +115,12 @@ func TestAccess_TenantNotFound(t *testing.T) {
 	var notFound *ErrTenantNotFound
 	require.ErrorAs(t, err, &notFound)
 	assert.Equal(t, "nonexistent-tenant", notFound.TenantID)
-	assert.NotEmpty(t, notFound.Error())
-	require.Error(t, errors.Unwrap(err))
+	assert.Equal(t, "tenantgate: tenant not found: nonexistent-tenant", notFound.Error())
+	// The registry lookup failure stays reachable for logging and
+	// errors.Is/As, but never enters the client-facing text (go-xkms#1118).
+	cause := errors.Unwrap(err)
+	require.Error(t, cause)
+	assert.NotContains(t, notFound.Error(), cause.Error())
 }
 
 func TestAccess_TenantSealed(t *testing.T) {

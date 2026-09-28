@@ -66,7 +66,7 @@ func (h *PKCS11StateHandlers) decode(w http.ResponseWriter, r *http.Request, dst
 
 func (h *PKCS11StateHandlers) respond(w http.ResponseWriter, resp interface{}, err error) {
 	if err != nil {
-		pkcs11StateWriteError(w, err.Error(), http.StatusInternalServerError)
+		pkcs11StateWriteError(w, clientErrorText(w, err, http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, resp, http.StatusOK)

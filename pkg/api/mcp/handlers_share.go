@@ -73,7 +73,7 @@ func mapShareError(err error, operation string) error {
 	}
 	for _, entry := range shareSentinelCodes {
 		if errors.Is(err, entry.sentinel) {
-			return &KeyOpError{Code: entry.code, Err: &errs.Wrapped{Msg: operation, Err: err}}
+			return classified(entry.code, &errs.Wrapped{Msg: operation, Err: err})
 		}
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}

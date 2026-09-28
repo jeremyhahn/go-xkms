@@ -114,8 +114,10 @@ func TestWriteErrorWithMessage(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.Error != "test error" {
-		t.Errorf("Expected error 'test error', got %s", resp.Error)
+	// A 500 withholds the error's text; the caller-chosen message stands
+	// (go-xkms#1118).
+	if resp.Error != ErrInternalError.Error() {
+		t.Errorf("Expected error %q, got %s", ErrInternalError.Error(), resp.Error)
 	}
 
 	if resp.Message != message {

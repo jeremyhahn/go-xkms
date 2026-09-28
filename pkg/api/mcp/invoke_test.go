@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"errors"
 )
 
 // invokeRequest drives req through Server.InvokeMethod -- the package's
@@ -25,19 +24,17 @@ import (
 // against the pre-network-removal wire envelope keep their existing
 // assertions (resp.Error.Code, resp.Result, ...) while actually exercising
 // InvokeMethod's tenant-scoping, authorization, and dispatch, exactly as the
-// module backend does.
+// module backend does. The error code and message are ClientError's, the
+// same rendering pkg/apimodule's tool handler puts on the wire, so a test
+// sees only what a real client sees (go-xkms#1118).
 func invokeRequest(s *Server, ctx context.Context, req *JSONRPCRequest) *JSONRPCResponse {
 	result, err := s.InvokeMethod(ctx, req.Method, req.Params)
 	if err != nil {
-		code := ErrCodeInternalError
-		var keyOpErr *KeyOpError
-		if errors.As(err, &keyOpErr) {
-			code = keyOpErr.Code
-		}
+		code, message := ClientError(err)
 		return &JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &JSONRPCError{Code: code, Message: err.Error()},
+			Error:   &JSONRPCError{Code: code, Message: message},
 		}
 	}
 	return &JSONRPCResponse{JSONRPC: "2.0", Result: result, ID: req.ID}

@@ -80,7 +80,7 @@ type BarrierGenerateRootTokenParams struct {
 // saw the generic "xkms: internal error" placeholder with no detail at all,
 // rather than this message.
 func errBarrierNotConfigured() error {
-	return &KeyOpError{Code: ErrCodeInternalError, Err: ErrBarrierNotConfigured}
+	return classified(ErrCodeInternalError, ErrBarrierNotConfigured)
 }
 
 // barrierValidationError classifies a request-field validation failure this

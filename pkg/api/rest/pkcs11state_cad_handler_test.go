@@ -87,7 +87,10 @@ func TestPKCS11StateCADHandler_RejectsBadInput(t *testing.T) {
 	require.NoError(t, err)
 	rec = postPKCS11StateCAD(t, h, missingToken)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.Contains(t, rec.Body.String(), xkms.ErrPKCS11StateTokenRequired.Error())
+	// A 500 body carries the fixed internal message, never the service
+	// error's text (go-xkms#1118).
+	assert.Contains(t, rec.Body.String(), ErrInternalError.Error())
+	assert.NotContains(t, rec.Body.String(), xkms.ErrPKCS11StateTokenRequired.Error())
 
 	unwired := NewPKCS11StateHandlers(nil)
 	rec = postPKCS11StateCAD(t, unwired, missingToken)
@@ -112,5 +115,6 @@ func TestPKCS11StateCADHandler_UnsupportedBackendIsAnError(t *testing.T) {
 	require.NoError(t, err)
 	rec := postPKCS11StateCAD(t, h, body)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.Contains(t, rec.Body.String(), pkcs11state.ErrCompareAndDeleteUnsupported.Error())
+	assert.Contains(t, rec.Body.String(), ErrInternalError.Error())
+	assert.NotContains(t, rec.Body.String(), pkcs11state.ErrCompareAndDeleteUnsupported.Error())
 }
