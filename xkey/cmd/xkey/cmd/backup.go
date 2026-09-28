@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"io"
 	"log/slog"
 	"math"
@@ -1403,7 +1404,7 @@ func resolveSealingKey(cmd *cobra.Command, sentinel error) (*backup.Key, error) 
 // password, whose key can only be derived once the envelope's KDF record has
 // been read, or a raw key. Exactly one is set.
 type backupCredential struct {
-	password []byte
+	password *secure.Buffer
 	key      *backup.Key
 }
 
@@ -1416,7 +1417,13 @@ func resolveBackupCredential(cmd *cobra.Command) (*backupCredential, error) {
 		return nil, err
 	}
 	if len(password) > 0 {
-		return &backupCredential{password: password}, nil
+		// NewBufferFromBytes adopts password into protected memory and
+		// wipes the source slice.
+		protected, err := secure.NewBufferFromBytes(password)
+		if err != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrBackupDecryptFailed, Cause: err}
+		}
+		return &backupCredential{password: protected}, nil
 	}
 
 	keyHex, err := cmd.Flags().GetString("key")
@@ -1445,7 +1452,7 @@ func (c *backupCredential) keyFor(encrypted *backup.EncryptedBackup) (*backup.Ke
 	if c.key != nil {
 		return c.key, nil
 	}
-	key, err := encrypted.PasswordKey(c.password)
+	key, err := encrypted.PasswordKey(c.password.Bytes())
 	if err != nil {
 		return nil, classifyBackupDecryptError(err)
 	}
@@ -1455,7 +1462,7 @@ func (c *backupCredential) keyFor(encrypted *backup.EncryptedBackup) (*backup.Ke
 
 // wipe zeroes the password and key the credential holds.
 func (c *backupCredential) wipe() {
-	enclave.Wipe(c.password)
+	c.password.Destroy()
 	c.key.Wipe()
 }
 

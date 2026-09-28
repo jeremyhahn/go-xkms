@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"os"
 	"path/filepath"
 	"testing"
@@ -526,7 +527,9 @@ func TestResolveBackupCredential_PasswordTakesPrecedence(t *testing.T) {
 
 	credential, err := resolveBackupCredential(cmd)
 	require.NoError(t, err)
-	assert.Equal(t, []byte("wins"), credential.password)
+	t.Cleanup(credential.wipe)
+	require.NotNil(t, credential.password)
+	assert.Equal(t, []byte("wins"), credential.password.Bytes())
 	assert.Nil(t, credential.key)
 }
 
@@ -552,7 +555,10 @@ func TestResolveBackupCredential_InvalidInput(t *testing.T) {
 }
 
 func TestBackupCredentialKeyFor_Refusals(t *testing.T) {
-	password := &backupCredential{password: []byte("pw")}
+	pw, err := secure.NewBufferFromBytes([]byte("pw"))
+	require.NoError(t, err)
+	password := &backupCredential{password: pw}
+	t.Cleanup(password.wipe)
 
 	t.Run("legacy unsalted file", func(t *testing.T) {
 		_, err := password.keyFor(&backup.EncryptedBackup{Magic: backup.BackupMagic, Version: 1})
