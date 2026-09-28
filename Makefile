@@ -1510,10 +1510,10 @@ coverage-pkcs11-tagged:
 
 .PHONY: coverage-packages
 ## coverage-packages: Merge every per-package coverage lane (main unit lane,
-## tpm2 simulator, pkcs11-tagged) into one profile (issue #703). Requires
+## tpm2 simulator, pkcs11-tagged, GODEBUG=fips140=on for pkg/crypto/fips) into one profile (issue #703). Requires
 ## $(COVERAGE_FILE) to already exist -- run `make coverage` (or `test-go`)
 ## first; this target only runs the lanes `test-go` cannot reach itself.
-coverage-packages: coverage-tpm2-simulator coverage-pkcs11-tagged
+coverage-packages: coverage-tpm2-simulator coverage-pkcs11-tagged coverage-fips
 	@if [ ! -f "$(COVERAGE_FILE)" ]; then \
 		echo "$(RED)✗ $(COVERAGE_FILE) not found -- run 'make coverage' first$(RESET)"; \
 		exit 1; \
@@ -1523,6 +1523,7 @@ coverage-packages: coverage-tpm2-simulator coverage-pkcs11-tagged
 	@tail -n +2 $(COVERAGE_FILE) >> $(COVERAGE_DIR)/all-packages.out
 	@tail -n +2 $(COVERAGE_DIR)/tpm2-simulator.out >> $(COVERAGE_DIR)/all-packages.out
 	@tail -n +2 $(COVERAGE_DIR)/pkcs11-tagged.out >> $(COVERAGE_DIR)/all-packages.out
+	@tail -n +2 $(COVERAGE_DIR)/fips.out >> $(COVERAGE_DIR)/all-packages.out
 	@echo "$(GREEN)✓ Merged coverage profile: $(COVERAGE_DIR)/all-packages.out$(RESET)"
 
 .PHONY: test-importexport
