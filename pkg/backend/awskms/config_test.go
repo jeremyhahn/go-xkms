@@ -148,6 +148,24 @@ func TestConfigValidate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "missing key storage",
+			config: &Config{
+				Region:      "us-east-1",
+				CertStorage: storage.New(),
+			},
+			wantErr: true,
+			errType: ErrInvalidConfig,
+		},
+		{
+			name: "missing cert storage",
+			config: &Config{
+				Region:     "us-east-1",
+				KeyStorage: storage.New(),
+			},
+			wantErr: true,
+			errType: ErrInvalidConfig,
+		},
 	}
 
 	for _, tt := range tests {
@@ -259,6 +277,25 @@ func TestConfigString(t *testing.T) {
 				"Debug: true",
 			},
 			dontWant: []string{},
+		},
+		{
+			// An access key of 4 characters or fewer takes the "mask
+			// entirely" branch rather than the "mask all but the last 4"
+			// branch, since there is nothing left to reveal.
+			name: "config with short access key",
+			config: &Config{
+				Region:      "us-east-1",
+				AccessKeyID: "abcd",
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
+			},
+			wantSubstrings: []string{
+				"us-east-1",
+				"AccessKeyID: ****,",
+			},
+			dontWant: []string{
+				"abcd",
+			},
 		},
 	}
 

@@ -1205,6 +1205,19 @@ C18ScRb4Z6poMBgJtYlVtd9ly63URv57ZW0Ncs1LiZB7WATb3svu+1c7HQ==
 			pemData: "",
 			wantErr: true,
 		},
+		{
+			// A syntactically well-formed PEM block wrapping bytes that are
+			// not a valid PKIX public key: pem.Decode succeeds, but
+			// x509.ParsePKIXPublicKey must fail. This is the "malformed
+			// response" case a corrupted or truncated GetPublicKey reply
+			// would produce, distinct from "invalid PEM" above which never
+			// reaches x509.ParsePKIXPublicKey at all.
+			name: "well-formed PEM with invalid PKIX bytes",
+			pemData: `-----BEGIN PUBLIC KEY-----
+bm90IGEgdmFsaWQgcGtpeCBrZXk=
+-----END PUBLIC KEY-----`,
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1227,6 +1240,24 @@ C18ScRb4Z6poMBgJtYlVtd9ly63URv57ZW0Ncs1LiZB7WATb3svu+1c7HQ==
 				t.Error("parsePublicKey() returned nil key")
 			}
 		})
+	}
+}
+
+// TestExtractVersionID_EmptyName proves extractVersionID returns "" for an
+// empty resource name (the "" branch of splitKeyName's len(parts) == 0
+// guard) rather than panicking on an out-of-range slice index -- the
+// malformed-input case a partially-populated or corrupted resource name
+// from the KMS wire response would produce.
+func TestExtractVersionID_EmptyName(t *testing.T) {
+	if got := extractVersionID(""); got != "" {
+		t.Errorf("extractVersionID(\"\") = %q, want \"\"", got)
+	}
+}
+
+func TestExtractVersionID_WellFormedName(t *testing.T) {
+	name := "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/7"
+	if got := extractVersionID(name); got != "7" {
+		t.Errorf("extractVersionID(%q) = %q, want %q", name, got, "7")
 	}
 }
 
