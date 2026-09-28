@@ -17,9 +17,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1298,4 +1300,59 @@ func TestTCPPairingServer_TrackConnInitializesNilMap(t *testing.T) {
 	if _, ok := s.conns[conn]; !ok {
 		t.Fatal("trackConn did not register the connection in the lazily-initialized map")
 	}
+}
+
+// errInjectedTransientAccept is a stand-in for a transient Accept() failure
+// that is not the listener-closed-during-shutdown case acceptLoop already
+// special-cases.
+var errInjectedTransientAccept = errors.New("injected transient accept error")
+
+// flakyOnceListener fails its first Accept call with errInjectedTransientAccept,
+// then delegates every later call to the wrapped listener.
+type flakyOnceListener struct {
+	net.Listener
+	failed atomic.Bool
+}
+
+func (l *flakyOnceListener) Accept() (net.Conn, error) {
+	if !l.failed.Swap(true) {
+		return nil, errInjectedTransientAccept
+	}
+	return l.Listener.Accept()
+}
+
+// TestAcceptLoop_TransientErrorContinuesAccepting proves acceptLoop logs and
+// retries a transient (non-shutdown) Accept error instead of exiting the
+// loop: a listener that errors once, then a real client that completes a
+// full handshake afterward, shows the loop kept serving.
+func TestAcceptLoop_TransientErrorContinuesAccepting(t *testing.T) {
+	real, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	defer real.Close()
+
+	srv, err := NewTCPPairingServer(&TCPPairingConfig{Logger: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatalf("NewTCPPairingServer: %v", err)
+	}
+	srv.listener = &flakyOnceListener{Listener: real}
+
+	srv.wg.Add(1)
+	go srv.acceptLoop()
+	defer func() {
+		srv.closed.Store(true)
+		real.Close()
+		srv.wg.Wait()
+	}()
+
+	conn, err := net.DialTimeout("tcp", real.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial after injected transient accept error: %v", err)
+	}
+	defer conn.Close()
+
+	// Completing a full Noise handshake proves handleConnection actually ran
+	// for this connection, not just that the TCP-level accept succeeded.
+	clientHandshake(t, conn)
 }

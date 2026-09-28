@@ -24,6 +24,7 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"errors"
+	"io"
 	"log/slog"
 	"math/big"
 	"testing"
@@ -650,6 +651,85 @@ func (p *stubProvider) DeleteKey(_ context.Context, _ *xkms.KeyAttributes) error
 	return p.err
 }
 
+func (p *stubProvider) GetKey(_ context.Context, _ *xkms.KeyAttributes) (crypto.PrivateKey, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
+	return p.generated, nil
+}
+
 func (p *stubProvider) Capabilities() xkms.Capabilities {
 	return xkms.Capabilities{}
+}
+
+// failingSigner is a crypto.Signer whose Sign call always fails, used to
+// reach BackendAdapter.Sign's post-Signer() error path -- distinct from a
+// failure to obtain a Signer at all, which TestBackendAdapter_ProviderFailures
+// already covers.
+type failingSigner struct{ public crypto.PublicKey }
+
+func (s *failingSigner) Public() crypto.PublicKey { return s.public }
+
+func (s *failingSigner) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
+	return nil, errors.New("signer refused")
+}
+
+// TestBackendAdapter_SignFailure covers the branch where the provider hands
+// back a Signer that itself refuses to sign, distinct from failing to produce
+// a Signer at all.
+func TestBackendAdapter_SignFailure(t *testing.T) {
+	t.Parallel()
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	adapter := NewBackendAdapter(&stubProvider{generated: &failingSigner{public: &priv.PublicKey}}, xkms.BackendTypeSoftware)
+	adapter.SetLogger(slog.New(slog.DiscardHandler))
+
+	handle := &adapterKeyHandle{credentialID: []byte("credential"), algorithm: COSEAlgES256}
+	_, err = adapter.Sign(handle, COSEAlgES256, []byte("data"))
+	assert.ErrorIs(t, err, ErrSigningFailed)
+}
+
+// TestBackendAdapter_DeleteKeyUnsupportedAlgorithm covers DeleteKey's
+// propagation of lookupCredentialAttrs' failure, the one DeleteKey branch none
+// of the other adapter tests reach.
+func TestBackendAdapter_DeleteKeyUnsupportedAlgorithm(t *testing.T) {
+	t.Parallel()
+
+	adapter := newSoftwareBackendAdapter(t)
+	handle := &adapterKeyHandle{credentialID: []byte("credential"), algorithm: -999}
+
+	err := adapter.DeleteKey(handle)
+
+	assert.ErrorIs(t, err, ErrUnsupportedAlgorithm)
+}
+
+// TestBackendAdapter_ExportPrivateKey_ProviderFailures covers ExportPrivateKey
+// against the provider itself, rather than against lookupCredentialAttrs: a
+// provider that cannot produce the key material at all, and one that produces
+// key material x509 cannot marshal as PKCS#8 -- the hardware-bound case
+// ExportNotSupported exists for.
+func TestBackendAdapter_ExportPrivateKey_ProviderFailures(t *testing.T) {
+	t.Parallel()
+
+	handle := &adapterKeyHandle{credentialID: []byte("credential"), algorithm: COSEAlgES256}
+
+	t.Run("provider cannot produce the key", func(t *testing.T) {
+		adapter := NewBackendAdapter(&stubProvider{err: errProvider}, xkms.BackendTypeSoftware)
+		adapter.SetLogger(slog.New(slog.DiscardHandler))
+
+		_, err := adapter.ExportPrivateKey(handle)
+		assert.ErrorIs(t, err, ErrKeyNotFound)
+	})
+
+	t.Run("key material is not PKCS#8-marshalable", func(t *testing.T) {
+		// A hardware-bound signer never hands back raw key material x509 can
+		// marshal, which is exactly what makes it non-exportable.
+		adapter := NewBackendAdapter(&stubProvider{generated: "opaque-hardware-handle"}, xkms.BackendTypeSoftware)
+		adapter.SetLogger(slog.New(slog.DiscardHandler))
+
+		_, err := adapter.ExportPrivateKey(handle)
+		assert.ErrorIs(t, err, ErrExportNotSupported)
+	})
 }

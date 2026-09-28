@@ -199,6 +199,22 @@ func TestCollection_Properties(t *testing.T) {
 	})
 }
 
+// TestCollection_Properties_DefaultFolderLabel covers label()'s other branch:
+// TestCollection_Properties above always addresses a named folder, so the
+// root folder's alias name was never exercised.
+func TestCollection_Properties_DefaultFolderLabel(t *testing.T) {
+	store := newMemoryStore()
+	d := newBusDaemon(t, store).Daemon
+	collectionPath, err := d.exportCollection("")
+	require.NoError(t, err)
+
+	c := &collectionObject{daemon: d, path: collectionPath, folder: ""}
+
+	v, dbusErr := c.Get(CollectionInterface, "Label")
+	require.Nil(t, dbusErr)
+	assert.Equal(t, DefaultCollection, v.Value())
+}
+
 // testCredentials returns the credentials matching newTestBarrier's
 // passphrase, for tests that need to re-unseal after sealing mid-test.
 func testCredentials(t *testing.T) xkms.SealCredentials {
