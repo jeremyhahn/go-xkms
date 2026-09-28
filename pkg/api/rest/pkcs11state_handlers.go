@@ -20,6 +20,7 @@ import (
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // pkcs11StateServicer is the slice of the XKMSService the PKCS#11 remote-state
@@ -66,7 +67,16 @@ func (h *PKCS11StateHandlers) decode(w http.ResponseWriter, r *http.Request, dst
 
 func (h *PKCS11StateHandlers) respond(w http.ResponseWriter, resp interface{}, err error) {
 	if err != nil {
-		pkcs11StateWriteError(w, clientErrorText(w, err, http.StatusInternalServerError), http.StatusInternalServerError)
+		// A request fault (missing/malformed token, or a tenant other than the
+		// caller's own) is a client-facing validation message and is returned
+		// as-is at 400. Everything else is a server fault: clientErrorText
+		// withholds its detail behind ErrInternalError's fixed text at 500 and
+		// logs the real error server-side (go-xkms#1118).
+		code := http.StatusInternalServerError
+		if xkms.IsPKCS11StateRequestError(err) {
+			code = http.StatusBadRequest
+		}
+		pkcs11StateWriteError(w, clientErrorText(w, err, code), code)
 		return
 	}
 	writeJSON(w, resp, http.StatusOK)

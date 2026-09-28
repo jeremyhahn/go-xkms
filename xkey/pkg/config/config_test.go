@@ -16,6 +16,7 @@ package config
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,11 +65,47 @@ func TestDefaultConfigFieldValues(t *testing.T) {
 	assert.Equal(t, "/dev/tpmrm0", cfg.PIV.TPMDevice)
 	assert.Equal(t, "/usr/lib/softhsm/libsofthsm2.so", cfg.PIV.PKCS11Library)
 	assert.Equal(t, "/dev/tpmrm0", cfg.TPM.Device)
-	assert.True(t, cfg.TPM.EncryptSessions)
 	assert.Equal(t, 30, cfg.GUI.ClipboardTimeout)
 	assert.True(t, cfg.GUI.Notifications)
 	assert.True(t, cfg.GUI.AutoTray)
 	assert.True(t, cfg.GUI.FIDO2AuthEnabled)
+	assert.False(t, cfg.Device.TrustNewDevices)
+	assert.Equal(t, 30*time.Second, cfg.Device.ScanTimeout)
+}
+
+// TestValidate_ZeroDeviceScanTimeout proves a zero device.scan_timeout is
+// rejected: a silently-zeroed scan bound would make `device pair` and
+// `device scan` fail every BLE operation instantly instead of waiting.
+func TestValidate_ZeroDeviceScanTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Device.ScanTimeout = 0
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid))
+	assert.Contains(t, err.Error(), "device.scan_timeout")
+}
+
+// TestValidate_NegativeDeviceScanTimeout proves a negative
+// device.scan_timeout is rejected the same way a zero one is.
+func TestValidate_NegativeDeviceScanTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Device.ScanTimeout = -5 * time.Second
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid))
+	assert.Contains(t, err.Error(), "device.scan_timeout")
+}
+
+// TestValidate_DeviceTrustNewDevicesTrue proves that turning on
+// trust_new_devices is, by itself, a valid configuration -- Validate rejects
+// malformed values, not this deliberately permissive one.
+func TestValidate_DeviceTrustNewDevicesTrue(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Device.TrustNewDevices = true
+
+	assert.NoError(t, cfg.Validate())
 }
 
 func TestValidate_ValidConfig(t *testing.T) {
@@ -295,7 +332,6 @@ func TestConfigYAMLRoundtrip(t *testing.T) {
 	assert.Equal(t, original.FIDO2.ConformanceMode, restored.FIDO2.ConformanceMode)
 	assert.Equal(t, original.FIDO2.Extensions, restored.FIDO2.Extensions)
 	assert.Equal(t, original.TPM.Device, restored.TPM.Device)
-	assert.Equal(t, original.TPM.EncryptSessions, restored.TPM.EncryptSessions)
 	assert.Equal(t, original.TPM.PlatformPCRBank, restored.TPM.PlatformPCRBank)
 	assert.Equal(t, original.TPM.SRKHandle, restored.TPM.SRKHandle)
 	assert.Equal(t, original.Log.Level, restored.Log.Level)

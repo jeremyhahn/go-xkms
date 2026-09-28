@@ -1267,6 +1267,12 @@ var (
 	ErrWebAuthnPINRequired = errors.New("webauthn: this authenticator requires a PIN; supply it with --" +
 		pinFlagStdin + " (preferred), the " + pinEnvVar + " environment variable, or --" + pinFlagValue)
 
+	// ErrWebAuthnOriginRequired indicates a WebAuthn ceremony verb could not
+	// determine the origin to bind into the ceremony: no --origin was given
+	// and --server is not an http(s) URL to derive one from.
+	ErrWebAuthnOriginRequired = errors.New("webauthn: the origin cannot be derived from --server; supply it with --" +
+		originFlag + " (for example https://kms.example.com)")
+
 	// ErrChangeSOPINFailed is the sentinel error "failed to change SO PIN".
 	ErrChangeSOPINFailed = errors.New("failed to change SO PIN")
 

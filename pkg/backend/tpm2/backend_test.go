@@ -198,7 +198,6 @@ func (m *mockTPM) EventLog() ([]byte, error)                          { return n
 func (m *mockTPM) FixedProperties() (*pkgtpm2.PropertiesFixed, error) { return nil, nil }
 func (m *mockTPM) Flush(handle tpm2.TPMHandle)                        {}
 func (m *mockTPM) GoldenMeasurements() ([]byte, error)                { return nil, nil }
-func (m *mockTPM) HMAC(auth []byte) tpm2.Session                      { return nil }
 func (m *mockTPM) HMACSaltedSession(handle tpm2.TPMHandle, pub tpm2.TPMTPublic, auth []byte) (tpm2.Session, func() error, error) {
 	return nil, func() error { return nil }, nil
 }
@@ -482,7 +481,7 @@ func TestConfig_Validate_DefaultValues(t *testing.T) {
 }
 
 func TestConfig_ToTPMConfig(t *testing.T) {
-	config := &Config{Device: "/dev/tpmrm0", KeyDir: "/tmp/tpm-keys", UseSimulator: true, EncryptSession: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPolicy: true, PlatformPCR: 7, PlatformPCRBank: "SHA256"}
+	config := &Config{Device: "/dev/tpmrm0", KeyDir: "/tmp/tpm-keys", UseSimulator: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPolicy: true, PlatformPCR: 7, PlatformPCRBank: "SHA256"}
 	tpmConfig := config.ToTPMConfig()
 	if tpmConfig == nil {
 		t.Fatal("ToTPMConfig returned nil")
@@ -1601,7 +1600,6 @@ func TestConfig_ToTPMConfig_AllFields(t *testing.T) {
 	config := &Config{
 		Device:          "/dev/tpmrm0",
 		UseSimulator:    true,
-		EncryptSession:  true,
 		SRKHandle:       0x81000002,
 		EKHandle:        0x81010002,
 		Hash:            "SHA-384",
@@ -1615,9 +1613,6 @@ func TestConfig_ToTPMConfig_AllFields(t *testing.T) {
 	}
 	if tpmConfig.UseSimulator != config.UseSimulator {
 		t.Errorf("UseSimulator: got %v, want %v", tpmConfig.UseSimulator, config.UseSimulator)
-	}
-	if tpmConfig.EncryptSession != config.EncryptSession {
-		t.Errorf("EncryptSession: got %v, want %v", tpmConfig.EncryptSession, config.EncryptSession)
 	}
 	if tpmConfig.Hash != config.Hash {
 		t.Errorf("Hash: got %s, want %s", tpmConfig.Hash, config.Hash)
@@ -1807,7 +1802,6 @@ func TestNewBackend_ConfigToTPMConfigConversion(t *testing.T) {
 	config := &Config{
 		Device:          "/dev/tpmrm0",
 		UseSimulator:    true,
-		EncryptSession:  true,
 		SRKHandle:       0x81000002,
 		EKHandle:        0x81010002,
 		Hash:            "SHA-384",
@@ -1825,9 +1819,6 @@ func TestNewBackend_ConfigToTPMConfigConversion(t *testing.T) {
 	}
 	if tpmConfig.UseSimulator != config.UseSimulator {
 		t.Errorf("UseSimulator mismatch: got %v, want %v", tpmConfig.UseSimulator, config.UseSimulator)
-	}
-	if tpmConfig.EncryptSession != config.EncryptSession {
-		t.Errorf("EncryptSession mismatch: got %v, want %v", tpmConfig.EncryptSession, config.EncryptSession)
 	}
 	if tpmConfig.Hash != config.Hash {
 		t.Errorf("Hash mismatch: got %s, want %s", tpmConfig.Hash, config.Hash)

@@ -1,6 +1,6 @@
 # Audit Log — CLI
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115)
 
 Binary: `xkmsctl`, group `audit` (`cmd/xkmsctl/audit.go`). One verb. Global
 flags: [`../key-management/cli.md`](../key-management/cli.md).
@@ -13,7 +13,7 @@ flags: [`../key-management/cli.md`](../key-management/cli.md).
 | `--resource` | string | `""` | filter by resource type — `keys`, `certs`, `users`, … |
 | `--action` | string | `""` | filter by action |
 | `--outcome` | string | `""` | `allow` or `deny` |
-| `--tenant` | string | `""` | filter by tenant ID |
+| `--tenant` | string | `""` | filter by tenant ID; honoured only for a system-tenant caller holding `audit:read:cross`, otherwise the server uses your own tenant (see [api.md](api.md) §"Tenant scoping") |
 | `--from` | string | `""` | events at or after this RFC 3339 timestamp |
 | `--to` | string | `""` | events at or before this RFC 3339 timestamp |
 | `--limit` | int | `0` | events per page; `0` uses the server default |

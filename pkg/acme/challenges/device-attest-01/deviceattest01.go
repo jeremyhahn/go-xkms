@@ -45,9 +45,8 @@ import (
 //
 // TPM Requirements:
 // - TPM 2.0 compliant hardware or software TPM
-// - Attestation Key (AK) provisioned and certified
-// - Support for TPM2_Quote operation
-// - Platform Configuration Registers (PCRs) for integrity measurement
+// - Initial Attestation Key (IAK) provisioned, with its certificate
+// - Support for TPM2_Certify
 //
 // Server-side verification of the "tpm" format is the WebAuthn Level 2
 // section 8.3 procedure, with the key authorization in place of
@@ -88,8 +87,8 @@ const (
 	// evidence extensions.
 	//
 	// It differs from FormatTPM in what carries the freshness. A TPM signs a
-	// quote over qualifying data; a DICE device has no clock and no quote, so
-	// the challenge is echoed in the leaf's DiceTcbInfo.vendorInfo and the
+	// TPM2_Certify over qualifying data; a DICE device has no clock and signs
+	// no attestation structure, so the challenge is echoed in the leaf's DiceTcbInfo.vendorInfo and the
 	// certificate signature is what authenticates it.
 	FormatDICE AttestationFormat = "dice"
 )
@@ -181,47 +180,6 @@ type AttestationVerifier interface {
 	// the configured roots. For the "tpm" format the leaf is the AIK
 	// certificate whose key signed certInfo.
 	VerifyAKCertificateChain(certs [][]byte) error
-}
-
-// KeyAttributes represents TPM key attributes
-type KeyAttributes interface {
-	// GetKeyAlgorithm returns the key algorithm
-	GetKeyAlgorithm() x509.PublicKeyAlgorithm
-
-	// GetTPMAttributes returns TPM-specific attributes
-	GetTPMAttributes() TPMAttributes
-}
-
-// TPMAttributes represents TPM-specific key attributes
-type TPMAttributes interface {
-	// GetPublicKeyBytes returns the public key in DER/PEM format
-	GetPublicKeyBytes() []byte
-
-	// GetBPublic returns the TPM2B_PUBLIC structure
-	GetBPublic() TPM2BPublic
-}
-
-// TPM2BPublic represents a TPM2B_PUBLIC structure
-type TPM2BPublic interface {
-	// Bytes returns the binary encoding of the public area
-	Bytes() []byte
-}
-
-// Quote represents a TPM2_Quote response
-type Quote interface {
-	// GetSignature returns the quote signature
-	GetSignature() []byte
-
-	// GetQuoted returns the TPMS_ATTEST structure
-	GetQuoted() []byte
-}
-
-// TrustedPlatformModule defines the TPM interface for device attestation
-type TrustedPlatformModule interface {
-	// Quote performs TPM2_Quote with specified PCRs and qualifying data
-	// Parameters: pcrIndices, qualifyingData
-	// Returns: Quote object, error
-	Quote(pcrIndices []uint, qualifyingData []byte) (Quote, error)
 }
 
 // Verify performs device-attest-01 challenge verification, in the shape an
@@ -359,9 +317,9 @@ func VerifyAttestation(
 	}
 
 	// Verify the format-specific evidence. What proves freshness differs by
-	// format -- a TPM quote over qualifying data, a DICE nonce echoed in a
+	// format -- a TPM2_Certify over qualifying data, a DICE nonce echoed in a
 	// certificate extension -- so the step that checks it is dispatched rather
-	// than assumed to be a quote.
+	// than assumed to be one of them.
 	verifyEvidence, supported := evidenceVerifiers[format]
 	if !supported {
 		return nil, ErrInvalidAttestationFormat
@@ -402,7 +360,7 @@ var evidenceVerifiers = map[AttestationFormat]evidenceVerifier{
 
 // verifyDICEEvidence checks that the DICE leaf echoed this challenge.
 //
-// There is no quote to verify: a DICE device does not sign a separate
+// There is no certification to verify: a DICE device does not sign a separate
 // attestation structure. The evidence is the certificate chain itself, already
 // anchored by the caller, and the freshness is the nonce the device placed in
 // the eat_nonce claim of the leaf's tcg-dice-UCCS-evidence extension -- the
@@ -474,115 +432,6 @@ func DICENonce(keyAuth string) []byte {
 	return sum[:]
 }
 
-// Setup generates an attestation statement for the device-attest-01 challenge.
-//
-// It builds TPM 2.0 evidence and supports FormatTPM alone. FormatDICE has no
-// counterpart here by design: a DICE device mints its own alias certificate
-// carrying the challenge, so the evidence arrives already formed and there is
-// nothing for this host to construct.
-//
-// This function performs the following steps:
-// 1. Determines COSE algorithm identifier from key algorithm
-// 2. Performs TPM2_Quote with challenge token as qualifying data
-// 3. Constructs attestation object in WebAuthn TPM format
-// 4. Encodes attestation object to CBOR
-// 5. Wraps CBOR in JSON payload for ACME submission
-//
-// Parameters:
-//   - keyAuth: Key authorization used as qualifying data for TPM2_Quote
-//   - akAttrs: Attestation Key attributes (algorithm, certificates, public key)
-//   - format: Attestation format (currently only "tpm" is supported)
-//   - tpm: Trusted Platform Module for quote generation
-//
-// Returns:
-//   - JSON payload containing CBOR-encoded attestation statement
-//   - error if quote generation or encoding fails
-//
-// The function currently supports:
-// - RSA keys with RSASSA-PKCS1-v1_5 (AlgRS256 = -257)
-// - ECDSA keys with P-256 curve (AlgES256 = -7)
-// - Ed25519 keys (AlgEdDSA = -8)
-//
-// COSE Algorithm Identifiers (per RFC 8152):
-// - AlgRS256 = -257 (RSASSA-PKCS1-v1_5 using SHA-256)
-// - AlgES256 = -7 (ECDSA using P-256 and SHA-256)
-// - AlgEdDSA = -8 (EdDSA)
-func Setup(
-	keyAuth string,
-	akAttrs KeyAttributes,
-	format AttestationFormat,
-	tpm TrustedPlatformModule) ([]byte, error) {
-
-	// Map key algorithm to COSE algorithm identifier
-	var alg int64
-	switch akAttrs.GetKeyAlgorithm() {
-	case x509.RSA:
-		alg = int64(-257) // AlgRS256
-	case x509.ECDSA:
-		alg = int64(-7) // AlgES256
-	case x509.Ed25519:
-		alg = int64(-8) // AlgEdDSA
-	default:
-		return nil, ErrInvalidKeyAlgorithm
-	}
-
-	var certBytes, sig, certifyInfo, pubArea []byte
-	var err error
-
-	switch format {
-
-	case FormatTPM:
-		// Perform TPM2_Quote with PCR 14 (often used for boot integrity)
-		// Use keyAuth as qualifying data to bind quote to this challenge
-		quote, err := tpm.Quote([]uint{14}, []byte(keyAuth))
-		if err != nil {
-			return nil, err
-		}
-
-		tpmAttrs := akAttrs.GetTPMAttributes()
-		certBytes = tpmAttrs.GetPublicKeyBytes()
-		sig = quote.GetSignature()
-		certifyInfo = quote.GetQuoted()
-		pubArea = tpmAttrs.GetBPublic().Bytes()
-
-	default:
-		return nil, ErrInvalidAttestationFormat
-	}
-
-	// Construct WebAuthn-compatible attestation object
-	obj := &AttestationObject{
-		Format: format.String(),
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      alg,
-			X5c:      []interface{}{certBytes},
-			Sig:      sig,
-			CertInfo: certifyInfo,
-			PubArea:  pubArea,
-		},
-	}
-
-	// Encode attestation object to CBOR (per WebAuthn spec)
-	b, err := cbor.Marshal(obj)
-	if err != nil {
-		return nil, err
-	}
-
-	// Wrap in JSON payload for ACME protocol
-	req := struct {
-		AttStmt []byte `json:"attStmt"`
-	}{
-		b,
-	}
-
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	return payload, nil
-}
-
 // ParseAttestationObject decodes a CBOR-encoded attestation object
 //
 // Parameters:
@@ -602,9 +451,9 @@ func ParseAttestationObject(data []byte) (*AttestationObject, error) {
 // ValidateAttestationFormat reports whether the server can verify the given
 // attestation format.
 //
-// It answers for the verification path only. Setup builds evidence with a
-// local TPM and supports FormatTPM alone: DICE evidence is minted by the
-// device itself, so there is nothing for this host to construct.
+// It answers for the verification path only. Setup builds FormatTPM evidence
+// with a local TPM: DICE evidence is minted by the device itself, so there is
+// nothing for this host to construct.
 //
 // Parameters:
 //   - format: Attestation format to validate
@@ -614,71 +463,6 @@ func ParseAttestationObject(data []byte) (*AttestationObject, error) {
 func ValidateAttestationFormat(format AttestationFormat) bool {
 	_, supported := evidenceVerifiers[format]
 	return supported
-}
-
-// SetupWithPCRs generates an attestation statement with specific PCR selection
-//
-// Parameters:
-//   - keyAuth: Key authorization used as qualifying data
-//   - akAttrs: Attestation Key attributes
-//   - format: Attestation format
-//   - tpm: Trusted Platform Module
-//   - pcrs: PCR indices to include in quote
-//
-// Returns:
-//   - JSON payload containing CBOR-encoded attestation statement
-//   - error if setup fails
-func SetupWithPCRs(
-	keyAuth string,
-	akAttrs KeyAttributes,
-	format AttestationFormat,
-	tpm TrustedPlatformModule,
-	pcrs []uint) ([]byte, error) {
-
-	// Map key algorithm to COSE algorithm identifier
-	var alg int64
-	switch akAttrs.GetKeyAlgorithm() {
-	case x509.RSA:
-		alg = int64(-257)
-	case x509.ECDSA:
-		alg = int64(-7)
-	case x509.Ed25519:
-		alg = int64(-8)
-	default:
-		return nil, ErrInvalidKeyAlgorithm
-	}
-
-	if format != FormatTPM {
-		return nil, ErrInvalidAttestationFormat
-	}
-
-	// Perform TPM2_Quote with specified PCRs
-	quote, err := tpm.Quote(pcrs, []byte(keyAuth))
-	if err != nil {
-		return nil, caerrors.TPMErr("device-attest-01: quote failed: %v", err)
-	}
-
-	tpmAttrs := akAttrs.GetTPMAttributes()
-
-	obj := &AttestationObject{
-		Format: format.String(),
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      alg,
-			X5c:      []interface{}{tpmAttrs.GetPublicKeyBytes()},
-			Sig:      quote.GetSignature(),
-			CertInfo: quote.GetQuoted(),
-			PubArea:  tpmAttrs.GetBPublic().Bytes(),
-		},
-	}
-
-	b, err := cbor.Marshal(obj)
-	if err != nil {
-		return nil, err
-	}
-
-	req := AttestationRequest{AttStmt: b}
-	return json.Marshal(req)
 }
 
 // EncodeAttestationForSubmission encodes an attestation object for ACME submission

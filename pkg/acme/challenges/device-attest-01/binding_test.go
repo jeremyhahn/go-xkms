@@ -42,6 +42,13 @@ func serveAttestation(t *testing.T, object *AttestationObject) (string, string) 
 	require.NoError(t, err)
 	payload, err := json.Marshal(AttestationRequest{AttStmt: encoded})
 	require.NoError(t, err)
+	return servePayload(t, payload)
+}
+
+// servePayload answers the challenge endpoint with a device's response as it
+// was sent, and returns the host and port to verify against.
+func servePayload(t *testing.T, payload []byte) (string, string) {
+	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -1,6 +1,6 @@
 # RBAC — Architecture
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115)
 
 ## The problem
 
@@ -82,6 +82,33 @@ request with an identity carrying qrdb roles
   → allow (nil) or PermissionDeniedError / ErrUnauthenticated
 ```
 
+## A self-scope gate does not bound a request's tenant
+
+`Authorizer.Authorize` binds the caller's **own** tenant as the target tenant
+(`pkg/auth/authorize.go:61`). A self-scope grant such as `audit:read` or
+`keys:get` therefore answers one question: may this identity do this in its own
+tenant? It cannot tell whether a tenant ID in the request body names some other
+tenant. A tenant Admin holds self-scope `keys:*` and `audit:read`, so any
+handler that took a tenant from the request was a cross-tenant hole the gate
+could not see.
+
+The rule is to take the tenant from the identity, in the service layer, once
+for every transport:
+
+- **Key operations** reject a request `tenant_id` at the transport
+  (`tenantForRequest` in `pkg/api/rest/handlers_keyops.go:54` and
+  `pkg/api/mcp/handlers.go:1393`). gRPC has no such field.
+- **PKCS#11 remote state** accepts a `tenant_id` only when it names the
+  caller's own tenant, because the module states its configured tenant
+  (`pkcs11StateScope`, `pkg/xkms/servicer_pkcs11state.go:79`). See
+  [`../pkcs11-provider-module/architecture.md`](../pkcs11-provider-module/architecture.md).
+- **Audit queries** clamp the filter to the caller's tenant. Only a
+  system-tenant identity the Authorizer admits for `audit:read:cross` reads
+  across tenants (`auditTenantFilter`, `pkg/xkms/servicer_audit.go:119`). That
+  is the one place the service consults the Authorizer itself: a `ScopeCross`
+  permission is the question "may this identity reach other tenants?", and the
+  answer changes what the service does rather than whether the call proceeds.
+  See [`../audit-log/api.md`](../audit-log/api.md) §"Tenant scoping".
 ## Identities carry role identifiers, never role names
 
 Every authenticated identity carries qrdb role **identifiers** in `Roles`:

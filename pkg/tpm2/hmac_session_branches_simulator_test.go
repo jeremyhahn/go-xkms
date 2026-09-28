@@ -10,42 +10,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHMACSession_EncryptedBranch_VerifiesCorrectAuth proves HMACSession's
-// session-bus-encrypted branch (tpm.config.EncryptSession == true) produces
-// a session that VerifyAuth can actually use to authenticate against the
-// TPM, not just a session object that constructs without error. Every other
-// VerifyAuth/HMACSession simulator test in this package runs with session
-// encryption disabled; this is the one path that proves the AES-CFB bus
-// encryption wrapping does not itself break the auth handshake.
-func TestHMACSession_EncryptedBranch_VerifiesCorrectAuth(t *testing.T) {
-	_, tpm := createSim(true, false) // encrypt=true
+// TestHMACSession_Salted_VerifiesCorrectAuth proves the salted HMAC session
+// HMACSession starts is one VerifyAuth can actually authenticate with, not
+// just a session object that constructs without error, and that a wrong auth
+// is still refused through it.
+func TestHMACSession_Salted_VerifiesCorrectAuth(t *testing.T) {
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	srkAttrs := createKey(tpm, false).Parent
 	tpmImpl := tpm.(*TPM2)
 
 	require.NoError(t, tpmImpl.VerifyAuth(srkAttrs.TPMAttributes.Handle, []byte("srk-pass")),
-		"the correct SRK auth must verify over an encrypted HMAC session")
+		"the correct SRK auth must verify over a salted HMAC session")
 	require.Error(t, tpmImpl.VerifyAuth(srkAttrs.TPMAttributes.Handle, []byte("wrong-pin")),
-		"an incorrect SRK auth must still be rejected over an encrypted HMAC session")
+		"an incorrect SRK auth must still be rejected over a salted HMAC session")
 }
 
-// TestHMACSaltedSession_UnencryptedBranch_ProducesUsableSession proves
-// HMACSaltedSession's own tpm.config.EncryptSession==false branch produces a
-// session that genuinely authorizes the parent key it was salted against.
-// CreateSession never reaches this branch itself (it only calls
-// HMACSaltedSession when EncryptSession is already true), but
-// HMACSaltedSession is exported on the TrustedPlatformModule interface and
-// must honor its own config check correctly for any caller that reaches it
-// directly.
-func TestHMACSaltedSession_UnencryptedBranch_ProducesUsableSession(t *testing.T) {
-	_, tpm := createSim(false, false) // encrypt=false
+// TestHMACSaltedSession_ProducesUsableSession proves HMACSaltedSession,
+// salted against the key the caller names, produces a session that genuinely
+// authorizes that key. It is exported on the TrustedPlatformModule interface,
+// so it must work for any caller that reaches it directly.
+func TestHMACSaltedSession_ProducesUsableSession(t *testing.T) {
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	srkAttrs := createKey(tpm, false).Parent
 	tpmImpl := tpm.(*TPM2)
 
-	_, srkPub, err := tpmImpl.SSRKPublic()
+	srkName, srkPub, err := tpmImpl.ReadHandle(srkAttrs.TPMAttributes.Handle)
 	require.NoError(t, err)
 
 	session, closer, err := tpmImpl.HMACSaltedSession(
@@ -57,9 +50,6 @@ func TestHMACSaltedSession_UnencryptedBranch_ProducesUsableSession(t *testing.T)
 			_ = closer()
 		}
 	}()
-
-	srkName, _, err := tpmImpl.ReadHandle(srkAttrs.TPMAttributes.Handle)
-	require.NoError(t, err)
 
 	// A minimal, valid HMAC key template: TPM2_Create rejects KeyedHashTemplate
 	// on its own (TPM_RC_ATTRIBUTES -- it sets neither Sign/Decrypt nor
@@ -96,5 +86,5 @@ func TestHMACSaltedSession_UnencryptedBranch_ProducesUsableSession(t *testing.T)
 		},
 		InPublic: tpm2.New2B(hmacKeyTemplate),
 	}.Execute(tpmImpl.transport)
-	require.NoError(t, err, "an unencrypted salted session must still authorize a real command under its parent")
+	require.NoError(t, err, "a salted session must authorize a real command under the key it was salted against")
 }

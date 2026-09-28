@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2"
 )
 
 // Client is a headless WebAuthn client that performs registration and
@@ -57,7 +58,10 @@ func NewClient(config *Config) (*Client, error) {
 
 	origin := config.Origin
 	if origin == "" {
-		origin = deriveOrigin(config.ServerURL)
+		origin = OriginFromURL(config.ServerURL)
+	}
+	if origin == "" {
+		return nil, fido2.ErrOriginRequired
 	}
 
 	return &Client{
@@ -171,11 +175,12 @@ func (c *Client) Available(ctx context.Context) bool {
 	return true
 }
 
-// deriveOrigin derives the WebAuthn origin from a server URL: the scheme
+// OriginFromURL derives the WebAuthn origin from a server URL: the scheme
 // and authority with no path, which is what a browser would report. An
-// unparsable or scheme-less URL yields an empty string, letting the caller
-// fall back to the WebAuthn same-origin default "https://<rpId>".
-func deriveOrigin(serverURL string) string {
+// unparsable or scheme-less URL yields an empty string, which every
+// ceremony refuses (fido2.ErrOriginRequired); the origin is never derived
+// from the server-supplied rpId.
+func OriginFromURL(serverURL string) string {
 	parsed, err := url.Parse(strings.TrimSpace(serverURL))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return ""

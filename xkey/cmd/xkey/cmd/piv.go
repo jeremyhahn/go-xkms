@@ -26,7 +26,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 // PIV configuration constants.
@@ -529,24 +528,13 @@ func pivConfigString(cmd *cobra.Command, flagName, cfgValue string) string {
 }
 
 // commandFlagChangedString returns the flag's value only when it was
-// explicitly set on the command line (flag.Changed), checking both
-// cmd.Flags() and cmd.PersistentFlags() the way commandFlagString
-// (xkmsd_client.go) does. cmd may be nil.
+// explicitly set on the command line (see commandFlagChanged), and "" otherwise.
+// cmd may be nil.
 func commandFlagChangedString(cmd *cobra.Command, name string) string {
-	if cmd == nil {
+	if !commandFlagChanged(cmd, name) {
 		return ""
 	}
-	for _, flags := range []*pflag.FlagSet{cmd.Flags(), cmd.PersistentFlags()} {
-		flag := flags.Lookup(name)
-		if flag == nil {
-			continue
-		}
-		if flag.Changed {
-			return flag.Value.String()
-		}
-		return ""
-	}
-	return ""
+	return commandFlagString(cmd, name)
 }
 
 // resolvePIVPKCS11Secret resolves source (the PKCS#11 PIN or Security

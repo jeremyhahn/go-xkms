@@ -181,7 +181,7 @@ func TestWebAuthnRegistration_BeginsCeremonyByEmailNotUsername(t *testing.T) {
 				cl,
 				func() (webauthnclient.AuthenticatorAdapter, error) { return newDeviceLessAdapter(t), nil },
 				NewPrinter("text", io.Discard),
-				username, email, "Admin", string(RoleAdmin), "",
+				username, email, "Admin", string(RoleAdmin), "https://kms.example.com",
 				nil,
 			)
 
@@ -238,7 +238,7 @@ func TestWebAuthnRegistration_BeginRegistrationFailureIsWrapped(t *testing.T) {
 		cl,
 		func() (webauthnclient.AuthenticatorAdapter, error) { return newDeviceLessAdapter(t), nil },
 		NewPrinter("text", io.Discard),
-		"admin", email, "Admin", string(RoleAdmin), "",
+		"admin", email, "Admin", string(RoleAdmin), "https://kms.example.com",
 		nil,
 	)
 

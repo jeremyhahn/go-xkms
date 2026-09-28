@@ -20,7 +20,7 @@ func TestReadPCRs_TPM(t *testing.T) {
 	// 	return
 	// }
 
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	pcrs := []uint{0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11,
@@ -68,7 +68,7 @@ func TestReadPCRs_TPM(t *testing.T) {
 
 // TestParseEventLogSimulator tests event log parsing with mock data
 func TestParseEventLogSimulator(t *testing.T) {
-	logger, tpm := createSim(false, false)
+	logger, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	eventLog, err := tpm.EventLog()
@@ -85,7 +85,7 @@ func TestParseEventLogSimulator(t *testing.T) {
 
 func TestQuote(t *testing.T) {
 
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	nonce := []byte("nonce")
@@ -119,7 +119,7 @@ func TestQuote(t *testing.T) {
 
 func TestReadPCRs_SIM(t *testing.T) {
 
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	pcrs := []uint{0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11,
@@ -144,7 +144,7 @@ func TestReadPCRs_SIM(t *testing.T) {
 
 func TestMakeActivateCredentialWithGeneratedSecret(t *testing.T) {
 
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	iakAttrs, err := tpm.IAKAttributes()
@@ -170,7 +170,7 @@ func TestMakeActivateCredentialWithGeneratedSecret(t *testing.T) {
 
 func TestMakeActivateCredential(t *testing.T) {
 
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	iakAttrs, err := tpm.IAKAttributes()

@@ -41,9 +41,9 @@ import (
 //     parent's) to TPM2_Load's ParentHandle, producing TPM_RC_BAD_AUTH. This
 //     is reproducible on any TPM, including the simulator, and is what the
 //     tests below exercise directly.
-//  2. Session-shape asymmetry: CreateSession falls back to a zero-round-trip
-//     PasswordAuth pseudo-session when EncryptSession is disabled and the
-//     parent has no PlatformPolicy, while the old LoadKeyPair unconditionally
+//  2. Session-shape asymmetry: CreateSession answers a parent with no auth
+//     value and no PlatformPolicy with a zero-round-trip empty PasswordAuth
+//     pseudo-session, while the old LoadKeyPair unconditionally
 //     built a real TPM2.HMAC session requiring a live TPM2_StartAuthSession
 //     round trip. On the reporter's real host TPM this made key generation
 //     (via CreateSession) succeed while every subsequent LoadKeyPair call
@@ -60,10 +60,10 @@ import (
 // ("key-pass"), matching the shape createKey already establishes elsewhere
 // in this package. It also returns a KeyBackend so tests can independently
 // verify blobs are actually removed from storage after DeleteKey.
-func deleteKeyRegressionFixture(t *testing.T, encrypt bool) (tpm TrustedPlatformModule, srkAttrs *types.KeyAttributes, backend store.KeyBackend) {
+func deleteKeyRegressionFixture(t *testing.T) (tpm TrustedPlatformModule, srkAttrs *types.KeyAttributes, backend store.KeyBackend) {
 	t.Helper()
 
-	_, tpm = createSim(encrypt, false)
+	_, tpm = createSim(false)
 	t.Cleanup(func() { _ = tpm.Close() })
 
 	// createKey provisions a fresh SRK (Password "srk-pass") under the EK
@@ -103,7 +103,7 @@ func freshListKeysStyleAttrs(cn string, algo x509.PublicKeyAlgorithm, srkAttrs *
 // with TPM_RC_BAD_AUTH whenever the two differed -- leaving the slot
 // permanently occupied exactly as reported.
 func TestDeleteKey_ECDSA_UsesParentAuthNotChildAuth_Simulator(t *testing.T) {
-	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t, false)
+	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t)
 
 	const cn = "piv-9a-ecdsa-repro"
 	genAttrs := &types.KeyAttributes{
@@ -133,7 +133,7 @@ func TestDeleteKey_ECDSA_UsesParentAuthNotChildAuth_Simulator(t *testing.T) {
 // DeleteKey/LoadKeyPair code path (pkg/tpm2/key.go branches on
 // x509.RSA/x509.ECDSA to the same LoadKeyPair call).
 func TestDeleteKey_RSA_UsesParentAuthNotChildAuth_Simulator(t *testing.T) {
-	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t, false)
+	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t)
 
 	const cn = "piv-9c-rsa-repro"
 	genAttrs := &types.KeyAttributes{
@@ -159,43 +159,13 @@ func TestDeleteKey_RSA_UsesParentAuthNotChildAuth_Simulator(t *testing.T) {
 	require.Error(t, getErr, "private blob must be removed after DeleteKey")
 }
 
-// TestDeleteKey_ECDSA_EncryptSessionEnabled_Simulator proves the fix also
-// holds when tpm.config.EncryptSession is enabled, i.e. CreateSession's
-// salted/encrypted HMAC branch (HMACSaltedSession) rather than its
-// zero-round-trip PasswordAuth branch. This is the configuration xkey ships
-// by default (EncryptSessions: true).
-func TestDeleteKey_ECDSA_EncryptSessionEnabled_Simulator(t *testing.T) {
-	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t, true)
-
-	const cn = "piv-9d-ecdsa-encrypted-repro"
-	genAttrs := &types.KeyAttributes{
-		CN:            cn,
-		KeyAlgorithm:  x509.ECDSA,
-		KeyType:       types.KeyTypeSigning,
-		StoreType:     types.StoreTPM2,
-		Parent:        srkAttrs,
-		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
-	}
-
-	tpmImpl := tpm.(*TPM2)
-	_, err := tpmImpl.CreateECDSA(genAttrs, backend, true)
-	require.NoError(t, err)
-
-	fresh := freshListKeysStyleAttrs(cn, x509.ECDSA, srkAttrs)
-	err = tpmImpl.DeleteKey(fresh, backend)
-	require.NoError(t, err)
-
-	_, getErr := backend.Get(fresh, store.FSEXT_PRIVATE_BLOB)
-	require.Error(t, getErr, "private blob must be removed after DeleteKey")
-}
-
 // TestLoadKeyPair_NilParent_ReturnsTypedError_Simulator is the error-handling
 // counterpart: LoadKeyPair used to dereference keyAttrs.Parent.TPMAttributes
 // unconditionally, so a nil Parent (e.g. a caller-assembled KeyAttributes
 // that forgot to set one) paniced instead of failing gracefully. It must now
 // return the typed store.ErrInvalidParentAttributes sentinel.
 func TestLoadKeyPair_NilParent_ReturnsTypedError_Simulator(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 	tpmImpl := tpm.(*TPM2)
 
@@ -214,7 +184,7 @@ func TestLoadKeyPair_NilParent_ReturnsTypedError_Simulator(t *testing.T) {
 // TestLoadKeyPairFromBlobs_NilParent_ReturnsTypedError_Simulator mirrors the
 // above for LoadKeyPairFromBlobs, which had the identical defect.
 func TestLoadKeyPairFromBlobs_NilParent_ReturnsTypedError_Simulator(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 	tpmImpl := tpm.(*TPM2)
 

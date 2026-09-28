@@ -92,7 +92,7 @@ func handleMockConn(conn net.Conn) {
 }
 
 func TestHost_Handshake_Success(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
 	_, cleanup := startMockIPCServer(t, socketPath)
@@ -133,7 +133,7 @@ func TestHost_Handshake_Success(t *testing.T) {
 }
 
 func TestHost_Handshake_InvalidFirstMessage(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
 	hostStdin := &bytes.Buffer{}
@@ -155,7 +155,7 @@ func TestHost_Handshake_InvalidFirstMessage(t *testing.T) {
 }
 
 func TestHost_Handshake_MissingPubKey(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
 	hostStdin := &bytes.Buffer{}
@@ -173,7 +173,7 @@ func TestHost_Handshake_MissingPubKey(t *testing.T) {
 }
 
 func TestHost_Handshake_InvalidBase64PubKey(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
 	hostStdin := &bytes.Buffer{}
@@ -193,7 +193,7 @@ func TestHost_Handshake_InvalidBase64PubKey(t *testing.T) {
 }
 
 func TestHost_Handshake_InvalidPubKeySize(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
 	hostStdin := &bytes.Buffer{}
@@ -215,7 +215,7 @@ func TestHost_Handshake_InvalidPubKeySize(t *testing.T) {
 }
 
 func TestHost_EncryptedRelay_EndToEnd(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
 	_, cleanup := startMockIPCServer(t, socketPath)
@@ -298,7 +298,7 @@ func TestHost_EncryptedRelay_EndToEnd(t *testing.T) {
 }
 
 func TestHost_StdinEOF_CleanlyShutsDown(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
 	_, cleanup := startMockIPCServer(t, socketPath)
@@ -343,7 +343,7 @@ func TestHost_StdinEOF_CleanlyShutsDown(t *testing.T) {
 }
 
 func TestHost_ContextCancellation_StopsHost(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
 	_, cleanup := startMockIPCServer(t, socketPath)
@@ -391,7 +391,7 @@ func TestHost_ContextCancellation_StopsHost(t *testing.T) {
 }
 
 func TestHost_Handshake_EmptyStdin(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
 	// Empty stdin.
@@ -414,7 +414,7 @@ func TestHost_NewHost_DefaultIO(t *testing.T) {
 }
 
 func TestHost_IPCConnectionFailure(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	// Use a socket path where no server is listening.
 	socketPath := filepath.Join(tmpDir, "nonexistent.sock")
 
@@ -554,7 +554,7 @@ func startMockIPCServerWithPairing(t *testing.T, socketPath string) (net.Listene
 }
 
 func TestHost_Pairing_FullCeremony(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
 
@@ -637,7 +637,7 @@ func TestHost_Pairing_FullCeremony(t *testing.T) {
 }
 
 func TestHost_Pairing_InvalidCode(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
 
@@ -710,7 +710,7 @@ func TestHost_Pairing_InvalidCode(t *testing.T) {
 }
 
 func TestHost_Pairing_IdentityMismatchTriggersRepairing(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
 
@@ -808,7 +808,7 @@ func TestHost_Pairing_IdentityMismatchTriggersRepairing(t *testing.T) {
 }
 
 func TestHost_Pairing_BadSignatureRejectsNotRepairs(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
 
@@ -869,7 +869,7 @@ func TestHost_Pairing_BadSignatureRejectsNotRepairs(t *testing.T) {
 }
 
 func TestHost_Pairing_ExtensionDisconnectsDuringPairing(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
 
@@ -943,7 +943,7 @@ func TestHost_Pairing_ExtensionDisconnectsDuringPairing(t *testing.T) {
 }
 
 func TestHost_RelayLoop_RevokedPairing(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	socketPath := filepath.Join(tmpDir, "test.sock")
 	statePath := filepath.Join(tmpDir, "pairing.json")
 
@@ -1037,7 +1037,7 @@ func TestHost_RelayLoop_RevokedPairing(t *testing.T) {
 }
 
 func TestHost_PairingCodeNotifyFailure(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := privateTempDir(t)
 	statePath := filepath.Join(tmpDir, "pairing.json")
 
 	// Use a socket path where NO server is listening. This causes
@@ -1100,4 +1100,14 @@ func TestHost_PairingCodeNotifyFailure(t *testing.T) {
 
 	// Verify the extension is NOT paired.
 	assert.False(t, pairing.IsPaired())
+}
+
+// privateTempDir returns a fresh temporary directory with mode 0700. The IPC
+// client refuses a socket directory with group or other permission bits
+// (ipc.Dial), and t.TempDir creates its directory 0777 &^ umask.
+func privateTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
+	return dir
 }

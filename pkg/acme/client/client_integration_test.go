@@ -580,6 +580,10 @@ type integrationTPM struct {
 	ekKey    *rsa.PrivateKey
 	ekCert   *x509.Certificate
 	iakAttrs *KeyAttributes
+
+	// attested is the certificate key CreateAttestedKey answered with, kept
+	// so a test can compare it with the key the CSR names.
+	attested *AttestedKey
 }
 
 func newIntegrationTPM(t *testing.T) *integrationTPM {
@@ -656,15 +660,13 @@ func (m *integrationTPM) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
-func (m *integrationTPM) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	return &TPMQuote{
-		Quote:              []byte("mock-quote-data"),
-		Signature:          []byte("mock-signature"),
-		Nonce:              nonce,
-		PCRValues:          map[int][]byte{0: make([]byte, 32), 1: make([]byte, 32), 7: make([]byte, 32)},
-		SignatureAlgorithm: x509.SHA256WithRSA,
-		PCRDigest:          make([]byte, 32),
-	}, nil
+func (m *integrationTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	attested, err := newTestAttestedKey(keyAuth)
+	if err != nil {
+		return nil, err
+	}
+	m.attested = attested
+	return attested, nil
 }
 
 func (m *integrationTPM) Close() error {
@@ -746,27 +748,36 @@ func TestClient_DeviceAttest_FullFlow(t *testing.T) {
 
 	// Configure attestation
 	config := &EnrollmentConfig{
-		Challenge: "device-attest-01",
-		IPAddress: "192.168.1.1",
-		Port:      "19991",
-		TPMModule: tpm,
-		Timeout:   10 * time.Second,
+		Challenge:  "device-attest-01",
+		IPAddress:  "192.168.1.1",
+		Port:       "19991",
+		TPMModule:  tpm,
+		CommonName: "device",
+		Timeout:    10 * time.Second,
 	}
-
-	pcrSelection := []int{0, 1, 7}
 
 	// Run attestation
-	cert, err := client.DeviceAttest(ctx, config, pcrSelection)
-
-	if err != nil {
-		assert.NotContains(t, err.Error(), "invalid enrollment config")
-		t.Logf("Attestation completed with error (expected in mock): %v", err)
-	} else {
-		assert.NotNil(t, cert)
-	}
+	cert, err := client.DeviceAttest(ctx, config)
+	require.NoError(t, err)
+	assert.NotNil(t, cert)
 
 	// Verify requests were made
 	assert.Contains(t, server.requestLog, "GET /directory")
+
+	// The CSR is for the attested key and nothing else: the server binds the
+	// certification in the challenge response to the key the CSR names.
+	server.mu.RLock()
+	csrs := server.finalizeCSRs
+	server.mu.RUnlock()
+	require.Len(t, csrs, 1)
+	csr, err := x509.ParseCertificateRequest(csrs[0])
+	require.NoError(t, err)
+	require.NotNil(t, tpm.attested)
+	attestedSPKI, err := x509.MarshalPKIXPublicKey(tpm.attested.Signer.Public())
+	require.NoError(t, err)
+	assert.Equal(t, attestedSPKI, csr.RawSubjectPublicKeyInfo)
+	assert.Equal(t, "192.168.1.1", permanentIdentifierOf(t, csr), "the CSR must name the order's permanent identifier")
+	assert.NotEqual(t, client.accountSigner.Public(), tpm.attested.Signer.Public(), "the CSR must not be signed with the account key")
 }
 
 // TestClient_RequestEndorsementKeyCertificate_FullFlow tests EK cert request

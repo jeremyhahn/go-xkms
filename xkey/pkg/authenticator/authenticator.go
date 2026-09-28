@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -560,52 +561,90 @@ func (a *Authenticator) ProcessCBORWithContext(ctx context.Context, cmd byte, da
 	a.cmdCtx.Store(&cmdCtxHolder{ctx: ctx})
 	defer a.cmdCtx.Store(nil)
 
-	var response []byte
-	var err error
-
-	switch cmd {
-	case CmdGetInfo:
-		response, err = a.handleGetInfo()
-
-	case CmdMakeCredential:
-		response, err = a.HandleMakeCredential(data)
-
-	case CmdGetAssertion:
-		response, err = a.handleGetAssertion(data)
-
-	case CmdGetNextAssertion:
-		response, err = a.handleGetNextAssertion()
-
-	case CmdClientPIN:
-		response, err = a.handleClientPIN(data)
-
-	case CmdReset:
-		response, err = a.handleReset()
-
-	case CmdCredentialManagement:
-		response, err = a.handleCredentialManagement(data)
-
-	case CmdSelection:
-		response, err = a.handleSelection()
-
-	case CmdBioEnrollment:
-		response, err = a.handleBioEnrollment(data)
-
-	case CmdLargeBlobs:
-		response, err = a.handleLargeBlobs(data)
-
-	case CmdConfig:
-		response, err = a.handleConfig(data)
-
-	default:
-		return a.errorResponse(StatusInvalidCommand), ErrInvalidCommand
-	}
-
+	response, err := a.dispatchCommand(cmd, data)
 	if err != nil {
 		return a.errorResponseFromError(err), err
 	}
 
 	return response, nil
+}
+
+// dispatchCommand routes a decoded CTAP2 command to its handler. The actual
+// recover boundary is factored into recoverCommandPanic so it can be
+// exercised directly by tests without relying on a handler happening to have
+// a live bug to panic on.
+func (a *Authenticator) dispatchCommand(cmd byte, data []byte) ([]byte, error) {
+	return a.recoverCommandPanic(cmd, func() ([]byte, error) {
+		switch cmd {
+		case CmdGetInfo:
+			return a.handleGetInfo()
+
+		case CmdMakeCredential:
+			return a.HandleMakeCredential(data)
+
+		case CmdGetAssertion:
+			return a.handleGetAssertion(data)
+
+		case CmdGetNextAssertion:
+			return a.handleGetNextAssertion()
+
+		case CmdClientPIN:
+			return a.handleClientPIN(data)
+
+		case CmdReset:
+			return a.handleReset()
+
+		case CmdCredentialManagement:
+			return a.handleCredentialManagement(data)
+
+		case CmdSelection:
+			return a.handleSelection()
+
+		case CmdBioEnrollment:
+			return a.handleBioEnrollment(data)
+
+		case CmdLargeBlobs:
+			return a.handleLargeBlobs(data)
+
+		case CmdConfig:
+			return a.handleConfig(data)
+
+		default:
+			return nil, ErrInvalidCommand
+		}
+	})
+}
+
+// recoverCommandPanic is the single recover boundary for the whole CTAP/uhid
+// path: every handler dispatchCommand can reach runs on external, adversarial
+// input (CBOR built by a platform, forwarded over a USB/BLE/NFC transport)
+// with no other recover between this call and the transport's read loop, so
+// a handler bug that panics -- a slice bounds panic like the one decryptPIN
+// hit on a truncated newPinEnc before it validated the length (go-xkms#1149)
+// -- would otherwise crash the whole daemon rather than fail the one
+// command. A recovered panic is reported as ErrCommandPanicked, which
+// errorToStatus's default case maps to CTAP2_ERR_OTHER, and logged with the
+// command byte and a stack trace so the fault is diagnosable without a core
+// dump.
+//
+// fn is called synchronously and its result returned unchanged when it does
+// not panic; factoring the recover out of dispatchCommand's switch lets it be
+// exercised with an arbitrary fn, including one that panics on purpose, from
+// a test.
+func (a *Authenticator) recoverCommandPanic(cmd byte, fn func() ([]byte, error)) (response []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("[CTAP2] recovered panic in command dispatch",
+				"command", fmt.Sprintf("0x%02x", cmd),
+				"panic", r,
+				"stack", string(debug.Stack()),
+			)
+			response = nil
+			err = ErrCommandPanicked
+		}
+	}()
+
+	return fn()
 }
 
 // tamperExemptCommands are the CTAP commands that remain answerable while the
@@ -968,6 +1007,8 @@ func errorToStatus(err error) byte {
 		return StatusPINInvalid
 	case errors.Is(err, ErrPINBlocked):
 		return StatusPINBlocked
+	case errors.Is(err, ErrPINAuthBlocked):
+		return StatusPINAuthBlocked
 	case errors.Is(err, ErrPINAuthInvalid):
 		return StatusPINAuthInvalid
 	case errors.Is(err, ErrPINNotSet):
@@ -1023,6 +1064,8 @@ func errorToStatus(err error) byte {
 		return StatusCredentialExcluded
 	case errors.Is(err, ErrUnsupportedExtension):
 		return StatusUnsupportedExtension
+	case errors.Is(err, ErrUnsupportedOption):
+		return StatusUnsupportedOption
 	case errors.Is(err, ErrPolicyTampered):
 		return StatusIntegrityFailure
 	case errors.Is(err, ErrStorageClosed):

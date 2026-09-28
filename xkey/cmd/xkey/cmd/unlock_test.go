@@ -59,7 +59,7 @@ func (h *unlockTestHandler) HandleUnlock(string) (*ipc.UnlockResult, error) {
 func serveUnlockDaemon(t *testing.T, handler ipc.Handler) string {
 	t.Helper()
 
-	sockPath := filepath.Join(t.TempDir(), "xkey.sock")
+	sockPath := filepath.Join(privateTempDir(t), "xkey.sock")
 	srv, err := ipc.NewServer(sockPath, handler, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
@@ -182,7 +182,7 @@ func TestRunUnlock_DaemonWithoutAppLockReportsWhatItDid(t *testing.T) {
 
 // TestRunUnlock_DaemonNotRunning covers the no-daemon case.
 func TestRunUnlock_DaemonNotRunning(t *testing.T) {
-	cmd, _ := newUnlockTestCmd(t, filepath.Join(t.TempDir(), "absent.sock"), "1234")
+	cmd, _ := newUnlockTestCmd(t, filepath.Join(privateTempDir(t), "absent.sock"), "1234")
 	err := runUnlock(cmd, nil)
 
 	require.Error(t, err)
@@ -193,7 +193,7 @@ func TestRunUnlock_DaemonNotRunning(t *testing.T) {
 func TestRunUnlock_MissingPIN(t *testing.T) {
 	t.Setenv("XKEY_PIN", "")
 
-	cmd, _ := newUnlockTestCmd(t, filepath.Join(t.TempDir(), "absent.sock"), "")
+	cmd, _ := newUnlockTestCmd(t, filepath.Join(privateTempDir(t), "absent.sock"), "")
 	err := runUnlock(cmd, nil)
 
 	require.Error(t, err)
@@ -331,7 +331,7 @@ func TestUnlockCmd_PINValueFlagRemoved(t *testing.T) {
 		RootCmd.SetOut(nil)
 		RootCmd.SetErr(nil)
 	})
-	RootCmd.SetArgs([]string{"unlock", "--pin", "1234", "--socket", filepath.Join(t.TempDir(), "absent.sock")})
+	RootCmd.SetArgs([]string{"unlock", "--pin", "1234", "--socket", filepath.Join(privateTempDir(t), "absent.sock")})
 
 	err := RootCmd.Execute()
 	require.Error(t, err)

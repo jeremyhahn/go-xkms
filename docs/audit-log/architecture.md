@@ -1,6 +1,6 @@
 # Audit Log — Architecture
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115)
 
 ## The problem
 
@@ -101,8 +101,14 @@ unbounded.
 - **`Details` is free-form and therefore dangerous.** It is a
   `map[string]string` that ends up in durable, queryable, exportable storage.
   Never put key material, PINs, passphrases, share bytes or tokens in it.
-- **Query is permission-gated** (`audit:read`) and tenant-filterable. An
-  audit log readable by everyone is an information-disclosure surface.
+- **Query is permission-gated** (`audit:read`) and **tenant-confined in the
+  service layer**. A tenant caller always reads its own tenant, whatever filter
+  it sends. Only a system-tenant caller holding `audit:read:cross` reads across
+  tenants (`pkg/xkms/servicer_audit.go:119`). The transports stay thin: the
+  route gate cannot bound the tenant because `audit:read` is self-scope, so the
+  service makes that decision once, for REST, gRPC/Unix, QUIC and MCP alike. An
+  audit log readable by everyone, or by every tenant admin, is an
+  information-disclosure surface.
 - **`NoOpLogger` is a deliberate, visible choice.** A deployment running with
   audit disabled should know it.
 

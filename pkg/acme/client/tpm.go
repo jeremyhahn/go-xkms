@@ -14,7 +14,9 @@
 package client
 
 import (
+	"context"
 	"crypto"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
@@ -22,7 +24,9 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // maxTPMQualifyingData is the largest qualifyingData buffer the TPM will
@@ -55,9 +59,18 @@ var (
 	// key authorization issues
 	ErrCredentialActivation = errors.New("acme-client: credential activation failed")
 
-	// ErrQuoteGeneration indicates that generating a TPM quote failed,
-	// possibly due to invalid PCR selection or attestation key issues
-	ErrQuoteGeneration = errors.New("acme-client: quote generation failed")
+	// ErrAttestedKeyNameRequired indicates a device-attest-01 certificate key
+	// was requested without a name. The key is the device's key for that
+	// name, so without one there is no key to create or certify.
+	ErrAttestedKeyNameRequired = errors.New("acme-client: the device-attest-01 certificate key needs a name")
+
+	// ErrKeyBackendNotConfigured indicates a TPM key was to be created or
+	// loaded by an adapter given no store for TPM key blobs.
+	ErrKeyBackendNotConfigured = errors.New("acme-client: no TPM key store configured")
+
+	// ErrAttestedKeyFailed indicates the device-attest-01 certificate key
+	// could not be created, loaded or certified.
+	ErrAttestedKeyFailed = errors.New("acme-client: device-attest-01 certificate key attestation failed")
 
 	// ErrIDevIDCreation indicates that creating an IDevID failed
 	ErrIDevIDCreation = errors.New("acme-client: IDevID creation failed")
@@ -162,19 +175,21 @@ type TPMModule interface {
 	//   - Error if provisioning fails, nil on success
 	ProvisionEKCert(certDER []byte) error
 
-	// Quote generates a TPM quote over the specified PCR values.
-	// A quote provides cryptographic proof of the TPM's platform state
-	// by signing PCR values with an attestation key.
+	// CreateAttestedKey answers a device-attest-01 challenge for the
+	// certificate key called name: a signing key in the TPM under the
+	// Platform SRK, created on first use and reused after. The IAK certifies
+	// it with TPM2_Certify over the key authorization, and the returned
+	// Signer is the key the CSR must be signed with.
 	//
 	// Parameters:
-	//   - nonce: Freshness nonce to prevent replay attacks
-	//   - pcrSelection: List of PCR indices to include in the quote
+	//   - name: The certificate key's name
+	//   - keyAuth: The ACME key authorization the challenge answers
 	//
 	// Returns:
-	//   - TPMQuote containing the quote, signature, and PCR values
-	//   - ErrQuoteGeneration if quote generation fails
-	//   - Any other error that occurred during quote generation
-	Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error)
+	//   - AttestedKey holding the challenge response and the key's Signer
+	//   - ErrAttestedKeyNameRequired if name is empty
+	//   - Any other error that occurred creating or certifying the key
+	CreateAttestedKey(name, keyAuth string) (*AttestedKey, error)
 
 	// Close releases TPM resources
 	Close() error
@@ -246,27 +261,18 @@ type IDevIDCSR struct {
 	Signature []byte
 }
 
-// TPMQuote represents a TPM quote attestation. A quote provides
-// cryptographic proof of the platform's state by signing PCR values
-// with an attestation key.
-type TPMQuote struct {
-	// Quote is the TPM2B_ATTEST structure containing the quoted information
-	Quote []byte
+// AttestedKey is a device-attest-01 certificate key and the challenge
+// response that attests it.
+type AttestedKey struct {
+	// Statement is the challenge response the ACME server fetches: the JSON
+	// device-attest-01 request whose attStmt is a WebAuthn "tpm" attestation
+	// object certifying the key.
+	Statement []byte
 
-	// Signature is the signature over the quote using the attestation key
-	Signature []byte
-
-	// PCRValues maps PCR indices to their current values
-	PCRValues map[int][]byte
-
-	// Nonce is the freshness nonce included in the quote to prevent replay attacks
-	Nonce []byte
-
-	// SignatureAlgorithm is the algorithm used to sign the quote
-	SignatureAlgorithm x509.SignatureAlgorithm
-
-	// PCRDigest is the digest of the selected PCRs
-	PCRDigest []byte
+	// Signer is the attested key. The CSR at finalization must be signed by
+	// it: the server refuses a CSR for any key other than the one the
+	// statement certifies.
+	Signer crypto.Signer
 }
 
 // XKMSTPMAdapter adapts go-xkms's TrustedPlatformModule to our TPMModule interface.
@@ -274,6 +280,9 @@ type TPMQuote struct {
 // TPM2 implementation, ensuring all algorithms are configurable via go-xkms's types.
 type XKMSTPMAdapter struct {
 	tpm xkmssdk.TrustedPlatformModule
+
+	// keys stores the blobs of the TPM keys this adapter creates.
+	keys xkmssdk.TPMKeyBackend
 
 	// Cached attributes to avoid repeated lookups
 	ekAttrs     *xkmssdk.KeyAttributes
@@ -283,10 +292,13 @@ type XKMSTPMAdapter struct {
 }
 
 // NewXKMSTPMAdapter creates a new adapter wrapping a go-xkms TPM module.
-// The TPM module should already be initialized and provisioned.
-func NewXKMSTPMAdapter(tpm xkmssdk.TrustedPlatformModule) *XKMSTPMAdapter {
+// The TPM module should already be initialized and provisioned. keys stores
+// the blobs of the keys the adapter creates under the Platform SRK -- the
+// device-attest-01 certificate key -- and is where they are found again.
+func NewXKMSTPMAdapter(tpm xkmssdk.TrustedPlatformModule, keys xkmssdk.TPMKeyBackend) *XKMSTPMAdapter {
 	return &XKMSTPMAdapter{
-		tpm: tpm,
+		tpm:  tpm,
+		keys: keys,
 	}
 }
 
@@ -455,47 +467,63 @@ func (a *XKMSTPMAdapter) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
-// Quote generates a TPM quote
-func (a *XKMSTPMAdapter) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	// Convert int slice to uint slice for go-xkms
-	pcrs := make([]uint, len(pcrSelection))
-	for i, p := range pcrSelection {
-		if p < 0 {
-			return nil, caerrors.MalformedError("invalid PCR index: %d", p)
-		}
-		pcrs[i] = uint(p)
+// CreateAttestedKey creates or loads the certificate key called name under
+// the Platform SRK and has the IAK certify it for keyAuth.
+//
+// The key is a P-256 ECDSA signing key whose blobs live in the adapter's key
+// store under name. The first attestation for a name creates it; later ones
+// certify the same key again, so a device renewing its certificate keeps the
+// key it already uses.
+func (a *XKMSTPMAdapter) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	if name == "" {
+		return nil, ErrAttestedKeyNameRequired
+	}
+	if a.keys == nil {
+		return nil, ErrKeyBackendNotConfigured
 	}
 
-	quote, err := a.tpm.Quote(pcrs, nonce)
+	backend, err := xkmssdk.NewTPM2BackendWithTPM(&xkmssdk.TPM2BackendExternalConfig{
+		TPM:        a.tpm,
+		KeyBackend: a.keys,
+	})
 	if err != nil {
-		return nil, caerrors.BadAttestationStatementError("quote generation failed: %v", err)
+		return nil, &errs.Joined{Lead: ErrAttestedKeyFailed, Detail: "the Platform SRK is unavailable", Cause: err}
 	}
 
-	// Convert go-xkms Quote to our TPMQuote
-	result := &TPMQuote{
-		Quote:     quote.Quoted,
-		Signature: quote.Signature,
-		Nonce:     nonce,
-		PCRValues: make(map[int][]byte),
+	attrs := attestedKeyAttributes(name)
+	ctx := context.Background()
+	key, err := backend.GetKey(ctx, attrs)
+	if errors.Is(err, xkmssdk.ErrBackendKeyNotFound) {
+		key, err = backend.GenerateKey(ctx, attrs)
+	}
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrAttestedKeyFailed, Detail: name, Cause: err}
+	}
+	signer, ok := key.(crypto.Signer)
+	if !ok {
+		return nil, &errs.Detail{Err: ErrAttestedKeyFailed, Detail: name + " is not a signing key"}
 	}
 
-	// Store raw PCR data - the PCRs field in go-xkms is raw bytes
-	// representing the TPM2B_DIGEST_LIST structure
-	if len(quote.PCRs) > 0 {
-		// Store the raw PCR digest for verification
-		result.PCRDigest = quote.PCRs
+	statement, err := deviceattest01.Setup(keyAuth, a.tpm, attrs, a.keys)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrAttestedKeyFailed, Detail: name, Cause: err}
 	}
+	return &AttestedKey{Statement: statement, Signer: signer}, nil
+}
 
-	// Set signature algorithm from config if available
-	config := a.tpm.Config()
-	if config != nil && config.IAK != nil {
-		sigAlgo, err := xkmssdk.ParseSignatureAlgorithm(config.IAK.SignatureAlgorithm)
-		if err == nil {
-			result.SignatureAlgorithm = sigAlgo
-		}
+// attestedKeyAttributes describes the device-attest-01 certificate key called
+// name. Its parent is left for the TPM2 backend to set: the Platform SRK.
+func attestedKeyAttributes(name string) *xkmssdk.KeyAttributes {
+	return &xkmssdk.KeyAttributes{
+		CN:                 name,
+		KeyAlgorithm:       x509.ECDSA,
+		KeyType:            xkmssdk.KeyTypeTLS,
+		StoreType:          xkmssdk.StoreTPM2,
+		Hash:               crypto.SHA256,
+		SignatureAlgorithm: x509.ECDSAWithSHA256,
+		ECCAttributes:      &xkmssdk.ECCAttributes{Curve: elliptic.P256()},
+		TPMAttributes:      &xkmssdk.TPMAttributes{Hierarchy: xkmssdk.TPMRHOwner},
 	}
-
-	return result, nil
 }
 
 // Close releases TPM resources

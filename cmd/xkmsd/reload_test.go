@@ -16,6 +16,7 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -92,6 +93,101 @@ func TestReloadConfiguration_RefusesInsecureConfig(t *testing.T) {
 	}
 	if len(insecureErr.Gaps) == 0 {
 		t.Error("refusal must name the compliance gaps that caused it")
+	}
+}
+
+// writeCompliantReloadConfig writes a configuration file that satisfies both
+// config.Config.Validate (called by config.Load) and config.ComplianceGaps
+// (reloadConfiguration's secure-by-default gate): barrier, TLS, mTLS
+// authentication, and a CA are all present. Network protocols stay off
+// (only the Unix socket is enabled) so Validate's storage.backend=="qrdb"
+// + tls.enabled coupling (NetworkServing-gated) never engages and a plain
+// file storage backend suffices -- and so nothing here binds a port, fixed
+// or otherwise.
+func writeCompliantReloadConfig(t *testing.T, host string) string {
+	t.Helper()
+	dir := t.TempDir()
+	content := fmt.Sprintf(`
+server:
+  host: "%s"
+
+protocols:
+  unix: true
+
+unix:
+  enabled: true
+  socket_path: "%s"
+  protocol: "grpc"
+
+logging:
+  level: "info"
+  format: "json"
+
+tls:
+  enabled: true
+
+auth:
+  enabled: true
+  type: "mtls"
+
+storage:
+  backend: "file"
+  path: "%s"
+
+default_backend: "software"
+
+backends:
+  software:
+    enabled: true
+    path: "%s"
+
+barrier:
+  enabled: true
+  strategy: "none"
+
+ca:
+  identity:
+    - subject:
+        cn: "reload test CA"
+        organization: "go-xkms"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          key-type: "CA"
+      keystore-type: "software"
+      is-root: true
+  selected-ca: 0
+  default-validity-days: 365
+`, host, filepath.Join(dir, "xkms.sock"), filepath.Join(dir, "storage"), filepath.Join(dir, "software"))
+
+	path := filepath.Join(dir, "xkmsd.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
+// TestReloadConfiguration_Success proves the full success path: a compliant
+// configuration resolves through the same flag/env/file layers as startup,
+// clears the secure-by-default gate, and is actually applied via
+// srv.Reload -- reusing newEmbeddedQRDBServer (admin_qrdb_test.go) for the
+// live *server.Server rather than hand-rolling a second server fixture.
+func TestReloadConfiguration_Success(t *testing.T) {
+	srv, _ := newEmbeddedQRDBServer(t)
+	path := writeCompliantReloadConfig(t, "127.0.0.1")
+
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	err := reloadConfiguration(srv, path, registerServerFlags(flag.NewFlagSet("xkmsd", flag.ContinueOnError)), flag.NewFlagSet("xkmsd", flag.ContinueOnError), logger)
+	if err != nil {
+		t.Fatalf("reloadConfiguration: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Configuration reloaded") {
+		t.Errorf("expected a \"Configuration reloaded\" log line, got:\n%s", buf.String())
 	}
 }
 

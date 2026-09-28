@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Architecture
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114)
 
 ## The problem
 
@@ -106,6 +106,19 @@ consumer  →  libxkms_pkcs11.so  (XKMS_PKCS11_MODE=local)
 - **The module must never build its own sealer.** `offline.go` records the rule
   and the reason: it consumes go-qrdb's barrier. A local sealer would be a
   second, unreviewed barrier implementation.
+- **Remote state is confined to the caller's tenant by the server, not by
+  the request.** xkmsd keeps every tenant's token state in one shared store,
+  built over the ordinary `createStorage` seam (`pkg/server/server.go:1851`).
+  It is not behind a tenant barrier. Records are keyed
+  `pkcs11state/<tenant>/<token>/<key>` (`pkg/pkcs11state/store.go:62`), and
+  the service fills the tenant segment from the authenticated identity
+  (`XKMSService.pkcs11StateScope`, `pkg/xkms/servicer_pkcs11state.go:79`,
+  reusing `scopedTenantIDFromContext`). A request's `tenant_id` is only a
+  statement of that tenant. A value naming any other tenant is refused with
+  `ErrPKCS11StateTenantMismatch`, and so is a token label containing `/`, which
+  could otherwise alias another token's keys (`ErrPKCS11StateTokenSeparator`).
+  Keys may contain `/`, because they are the last segment. The check runs once,
+  in the service, for REST, QUIC, gRPC and Unix.
 - **`XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT` exists and defaults off.** Turning it
   on sends token operations over an unauthenticated channel.
 - **PINs come from the environment in this module** (`XKMS_PKCS11_SO_PIN`,
@@ -115,6 +128,36 @@ consumer  →  libxkms_pkcs11.so  (XKMS_PKCS11_MODE=local)
 - **`CKR_FUNCTION_NOT_SUPPORTED` is a deliberate, distinguishable answer.**
   `crypto.go:3327` documents the intent: the caller can tell "this token will
   never do that" from "that failed".
+
+### Rejected: taking the tenant from the request body
+
+Earlier servers used the body's `tenant_id` as the key prefix, so any caller
+holding `keys:get` or `keys:write` could read, overwrite, swap or delete another
+tenant's token records and lockout counters. The route permission is
+self-scope and is always resolved against the caller's own tenant, so it could
+not catch this.
+
+We also considered accepting only an empty `tenant_id`, the rule the key-op
+transports apply (`tenantForRequest`). It was rejected because the module sends
+its configured `tenant_id` on every call (`pkg/pkcs11/module/module.go:722`).
+Refusing a correct statement of the caller's own tenant would break every
+module that sets one.
+
+A mismatch is answered as an invalid argument, not as not-found. Not-found
+would be wrong for writes. On a read it would make a misconfigured module see
+an empty namespace and initialise a fresh token over it. The check compares the
+supplied value only with the caller's own identity, so the refusal reveals
+nothing about the other tenant.
+
+### Open question: a tenant-barrier-backed store
+
+The store is shared and encrypted only as far as the configured storage
+backend is. A tenant's barrier does not protect its records, so sealing a
+tenant does not make its PKCS#11 token state unreadable to the server. Moving
+the store behind each tenant's barrier would add that property. It would also
+make remote-mode token state unavailable while that tenant is sealed, and it
+needs a per-tenant store resolver like the password vault's
+(`resolvePasswordStore`). This is recorded, not decided.
 
 ## Known state: v3.2 is partially implemented
 

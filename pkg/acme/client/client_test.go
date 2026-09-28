@@ -9873,66 +9873,6 @@ func TestStartEndorseServer_HTTPHandlers(t *testing.T) {
 	})
 }
 
-// TestStartAttestServer_HTTPHandlers tests the attest server HTTP handlers
-func TestStartAttestServer_HTTPHandlers(t *testing.T) {
-	token := "valid-attest-token-12345"
-
-	quote := &TPMQuote{
-		Quote:              []byte("test-quote"),
-		Signature:          []byte("test-signature"),
-		PCRValues:          map[int][]byte{0: make([]byte, 32)},
-		SignatureAlgorithm: x509.SHA256WithRSA,
-	}
-
-	t.Run("quote_endpoint_valid_token", func(t *testing.T) {
-		mux := http.NewServeMux()
-		quotePath := "/.well-known/acme-quote/"
-
-		mux.HandleFunc(quotePath, func(w http.ResponseWriter, r *http.Request) {
-			if !strings.HasSuffix(r.URL.Path, token) {
-				http.NotFound(w, r)
-				return
-			}
-
-			response := map[string]interface{}{
-				"quote":     base64.RawURLEncoding.EncodeToString(quote.Quote),
-				"signature": base64.RawURLEncoding.EncodeToString(quote.Signature),
-				"pcr_values": map[string]string{
-					"0": base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
-				},
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(response)
-		})
-
-		req := httptest.NewRequest(http.MethodGet, quotePath+token, nil)
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-	})
-
-	t.Run("quote_endpoint_invalid_token", func(t *testing.T) {
-		mux := http.NewServeMux()
-		quotePath := "/.well-known/acme-quote/"
-
-		mux.HandleFunc(quotePath, func(w http.ResponseWriter, r *http.Request) {
-			if !strings.HasSuffix(r.URL.Path, token) {
-				http.NotFound(w, r)
-				return
-			}
-		})
-
-		req := httptest.NewRequest(http.MethodGet, quotePath+"wrong-token", nil)
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
-}
-
 // TestAccountStorageSaveFailure tests that account storage save failure is handled gracefully
 func TestAccountStorageSaveFailure(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -10338,11 +10278,10 @@ type MockTPM struct {
 	ekAttrs            *KeyAttributes
 	iakAttrs           *KeyAttributes
 	idevidCSR          *IDevIDCSR
-	quote              *TPMQuote
 	activateCredErr    error
 	provisionEKCertErr error
 	createIDevIDErr    error
-	quoteErr           error
+	attestErr          error
 	ekCertErr          error
 	ekAttrsErr         error
 	iakAttrsErr        error
@@ -10393,11 +10332,11 @@ func (m *MockTPM) ProvisionEKCert(certDER []byte) error {
 	return m.provisionEKCertErr
 }
 
-func (m *MockTPM) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	if m.quoteErr != nil {
-		return nil, m.quoteErr
+func (m *MockTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	if m.attestErr != nil {
+		return nil, m.attestErr
 	}
-	return m.quote, nil
+	return newTestAttestedKey(keyAuth)
 }
 
 func (m *MockTPM) Close() error {
@@ -11723,7 +11662,7 @@ func TestDeviceAttest_DirectCall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	cert, err := client.DeviceAttest(ctx, config, []int{0})
+	cert, err := client.DeviceAttest(ctx, config)
 
 	assert.Error(t, err)
 	assert.Nil(t, cert)
@@ -11869,69 +11808,6 @@ func TestSetupEndorseChallenge_TPMError(t *testing.T) {
 	err := client.setupEndorseChallenge(config, "keyauth", "token")
 
 	assert.Error(t, err)
-}
-
-// Test setupAttestChallenge
-func TestSetupAttestChallenge_DirectCall(t *testing.T) {
-	client := createTestClient(t)
-
-	// Create mock TPM with quote function
-	mockTPM := &mockTPM{
-		quoteFunc: func(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-			return &TPMQuote{
-				Quote:              []byte("quote"),
-				Signature:          []byte("sig"),
-				SignatureAlgorithm: x509.SHA256WithRSA,
-				PCRValues:          map[int][]byte{0: []byte("pcr0")},
-			}, nil
-		},
-		iakAttributesFunc: func() (*KeyAttributes, error) {
-			return &KeyAttributes{
-				SignatureAlgorithm: x509.SHA256WithRSA,
-				TPMPublicBytes:     []byte("iak-pub"),
-			}, nil
-		},
-		ekCertFunc: func() (*x509.Certificate, error) {
-			cert, _ := createTestCertificate()
-			return cert, nil
-		},
-	}
-
-	config := &EnrollmentConfig{
-		TPMModule: mockTPM,
-	}
-
-	// Call setupAttestChallenge
-	attestStmt, err := client.setupAttestChallenge(config, "keyauth", []int{0, 1})
-
-	assert.NoError(t, err)
-	assert.NotNil(t, attestStmt)
-
-	// Verify it's valid JSON
-	var result map[string]interface{}
-	err = json.Unmarshal(attestStmt, &result)
-	assert.NoError(t, err)
-	assert.Equal(t, "tpm", result["fmt"])
-}
-
-// Test setupAttestChallenge with TPM error
-func TestSetupAttestChallenge_QuoteError(t *testing.T) {
-	client := createTestClient(t)
-
-	mockTPM := &mockTPM{
-		quoteFunc: func([]byte, []int) (*TPMQuote, error) {
-			return nil, errors.New("quote failed")
-		},
-	}
-
-	config := &EnrollmentConfig{
-		TPMModule: mockTPM,
-	}
-
-	attestStmt, err := client.setupAttestChallenge(config, "keyauth", []int{0})
-
-	assert.Error(t, err)
-	assert.Nil(t, attestStmt)
 }
 
 // Test with wrong token on enroll server

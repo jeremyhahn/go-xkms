@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	libtpm2 "github.com/google/go-tpm/tpm2"
@@ -103,6 +104,13 @@ type TPMSealResult struct {
 // driving go-tpm directly. Every operation opens a fresh transport, performs
 // its commands, and closes. This keeps the sealer stateless and safe to
 // reuse across goroutines.
+//
+// The passphrase never crosses the TPM bus in plaintext. The sealer owns its
+// transport, not a pkg/tpm2 TPM2, so it hands that transport to pkg/tpm2's
+// transport-level session layer -- CommandEncryptionSession for TPM2_Create,
+// ResponseEncryptionSession for TPM2_Unseal -- which attaches a salted,
+// parameter-encrypting session to the command. The session code lives once,
+// in pkg/tpm2; this package only chooses the direction.
 type TPMSealer struct {
 	logger *slog.Logger
 	opener TPMOpener
@@ -227,6 +235,15 @@ func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []in
 		return nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("read parent public: %v", err)}
 	}
 
+	// The passphrase travels in TPM2_Create's first parameter, the sensitive
+	// area. The parent's empty password authorization cannot encrypt it, so
+	// a salted session of its own encrypts it on the way in.
+	encSession, closeEncSession, err := pkgtpm2.CommandEncryptionSession(tpm)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrTPMSealFailed, Detail: "encryption session", Cause: err}
+	}
+	defer h.closeSession(closeEncSession, "seal encryption")
+
 	createRsp, err := (libtpm2.Create{
 		ParentHandle: libtpm2.AuthHandle{
 			Handle: libtpm2.TPMHandle(parent),
@@ -235,7 +252,7 @@ func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []in
 		},
 		InSensitive: sensitive,
 		InPublic:    pub,
-	}).Execute(tpm)
+	}).Execute(tpm, encSession)
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -323,7 +340,7 @@ func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]b
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrTPMUnsealFailed, Detail: fmt.Sprintf("policy session: %v", err)}
 	}
-	defer h.closePolicySession(policyCloser)
+	defer h.closeSession(policyCloser, "unseal policy")
 
 	if _, err := (libtpm2.PolicyPCR{
 		PolicySession: policySession.Handle(),
@@ -332,13 +349,22 @@ func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]b
 		return nil, &errs.Detail{Err: ErrTPMUnsealFailed, Detail: fmt.Sprintf("policy pcr: %v", err)}
 	}
 
+	// The passphrase leaves the TPM in TPM2_Unseal's first response
+	// parameter. The unsalted PCR policy session proves no secret and cannot
+	// encrypt it, so a salted session of its own encrypts it on the way out.
+	encSession, closeEncSession, err := pkgtpm2.ResponseEncryptionSession(tpm)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrTPMUnsealFailed, Detail: "encryption session", Cause: err}
+	}
+	defer h.closeSession(closeEncSession, "unseal encryption")
+
 	unsealRsp, err := (libtpm2.Unseal{
 		ItemHandle: libtpm2.AuthHandle{
 			Handle: loadRsp.ObjectHandle,
 			Name:   loadRsp.Name,
 			Auth:   policySession,
 		},
-	}).Execute(tpm)
+	}).Execute(tpm, encSession)
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrTPMUnsealFailed, Detail: fmt.Sprintf("unseal: %v", err)}
 	}
@@ -535,13 +561,13 @@ func (h *TPMSealer) closeTPM(c io.Closer) {
 	}
 }
 
-// closePolicySession runs cleanup (the closer libtpm2.PolicySession
-// returns) and logs a failure at debug level, on the same terms as
-// closeTPM: the session has already served its purpose by the time the
-// deferred call runs.
-func (h *TPMSealer) closePolicySession(cleanup func() error) {
+// closeSession runs cleanup (the closer a session constructor returns) and
+// logs a failure at debug level, on the same terms as closeTPM: the session
+// has already served its purpose by the time the deferred call runs.
+func (h *TPMSealer) closeSession(cleanup func() error, what string) {
 	if err := cleanup(); err != nil {
-		h.logger.Debug("luks: tpm policy session cleanup failed",
+		h.logger.Debug("luks: tpm session cleanup failed",
+			slog.String("session", what),
 			slog.String("error", err.Error()))
 	}
 }

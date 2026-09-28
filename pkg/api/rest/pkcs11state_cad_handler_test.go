@@ -86,11 +86,13 @@ func TestPKCS11StateCADHandler_RejectsBadInput(t *testing.T) {
 	missingToken, err := json.Marshal(transport.PKCS11StateCADRequest{Key: "pkcs11/markers/claim"})
 	require.NoError(t, err)
 	rec = postPKCS11StateCAD(t, h, missingToken)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	// A 500 body carries the fixed internal message, never the service
-	// error's text (go-xkms#1118).
-	assert.Contains(t, rec.Body.String(), ErrInternalError.Error())
-	assert.NotContains(t, rec.Body.String(), xkms.ErrPKCS11StateTokenRequired.Error())
+	// A missing token is a fault in the request itself: it is reported at 400
+	// with its own client-facing text, not withheld behind the internal-error
+	// message (go-xkms#1118 withholds server faults, not 4xx validation
+	// messages; go-xkms#1114/#1115 classify a missing token as a request
+	// fault via IsPKCS11StateRequestError).
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a missing token is a fault in the request")
+	assert.Contains(t, rec.Body.String(), xkms.ErrPKCS11StateTokenRequired.Error())
 
 	unwired := NewPKCS11StateHandlers(nil)
 	rec = postPKCS11StateCAD(t, unwired, missingToken)

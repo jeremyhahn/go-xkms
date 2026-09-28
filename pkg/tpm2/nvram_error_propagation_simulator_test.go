@@ -36,7 +36,11 @@ func TestNVWrite_EveryCommandFailurePropagates(t *testing.T) {
 			}
 			return h.TPM.NVWrite(keyAttrs)
 		}
-	})
+	},
+		// The last command is the deferred FlushContext of the salted
+		// session that authorized and encrypted the writes: the secret is
+		// already written, so its failure is logged, not returned.
+		10)
 }
 
 // TestNVRead_EveryCommandFailurePropagates sweeps NVRead's command sequence
@@ -67,11 +71,13 @@ func TestNVRead_EveryCommandFailurePropagates(t *testing.T) {
 			return err
 		}
 	},
-		// Command 9 is the deferred platform-policy session's FlushContext:
-		// NVRead has already read and returned the data by the time it
-		// runs, so its failure is logged (see the defer in NVRead) and must
-		// not turn a successful read into an error.
-		9)
+		// Commands 11 and 12 are the deferred FlushContexts of the salted
+		// session that encrypted the data on its way out and of the
+		// platform-policy session: NVRead has already read and returned the
+		// data by the time they run, so their failures are logged (see the
+		// defers in NVRead) and must not turn a successful read into an
+		// error.
+		11, 12)
 }
 
 // TestNVDefineCounter_EveryCommandFailurePropagates sweeps NVDefineCounter's
@@ -95,7 +101,11 @@ func TestNVDefineCounter_EveryCommandFailurePropagates(t *testing.T) {
 			}
 			return h.TPM.NVDefineCounter(keyAttrs)
 		}
-	})
+	},
+		// The last command is the deferred FlushContext of the salted
+		// session that authorized TPM2_NV_DefineSpace; the index is already
+		// defined, so its failure is logged, not returned.
+		5)
 }
 
 // TestNVDefineExtend_EveryCommandFailurePropagates sweeps NVDefineExtend's
@@ -119,7 +129,11 @@ func TestNVDefineExtend_EveryCommandFailurePropagates(t *testing.T) {
 			}
 			return h.TPM.NVDefineExtend(keyAttrs)
 		}
-	})
+	},
+		// The last command is the deferred FlushContext of the salted
+		// session that authorized TPM2_NV_DefineSpace; the index is already
+		// defined, so its failure is logged, not returned.
+		5)
 }
 
 // TestNVIncrement_EveryCommandFailurePropagates sweeps NVIncrement's command

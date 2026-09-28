@@ -112,6 +112,15 @@ func (tpm *TPM2) CreateRSA(
 		}
 	}()
 
+	// The sensitive area carries the new key's authValue, so it is
+	// encrypted on its way into the TPM by a salted session of its own: the
+	// parent's authorization may be a policy session, which cannot carry it.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptIn)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeEncSession, "key creation encryption")
+
 	response, err := tpm2.CreateLoaded{
 		ParentHandle: tpm2.AuthHandle{
 			Handle: srkHandle,
@@ -126,7 +135,7 @@ func (tpm *TPM2) CreateRSA(
 				},
 			},
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
 	if err != nil {
 		if errors.Is(err, ErrCommandNotSupported) {
 			// Perform create and load using logacy command sequence
@@ -144,7 +153,7 @@ func (tpm *TPM2) CreateRSA(
 						},
 					},
 				},
-			}.Execute(tpm.transport)
+			}.Execute(tpm.transport, encSession)
 			if err != nil {
 				return nil, err
 			}
@@ -286,8 +295,15 @@ func (tpm *TPM2) CreateRSA(
 // 	return response.Message.Buffer, nil
 // }
 
-// Performs RSA decryption
+// Performs RSA decryption. The recovered plaintext leaves the TPM encrypted
+// under a salted session.
 func (tpm *TPM2) RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []byte) ([]byte, error) {
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeEncSession, "RSADecrypt encryption")
+
 	response, err := tpm2.RSADecrypt{
 		KeyHandle: tpm2.NamedHandle{
 			Handle: handle,
@@ -303,7 +319,7 @@ func (tpm *TPM2) RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []b
 				},
 			),
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
 	if err != nil {
 		tpm.logger.Error("RSA decrypt failed", slog.String("error", err.Error()))
 		return nil, err

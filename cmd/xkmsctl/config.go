@@ -84,9 +84,6 @@ type Config struct {
 	// TPM2UseSimulator enables use of the TPM simulator instead of hardware
 	TPM2UseSimulator bool
 
-	// TPM2EncryptSession enables encrypted sessions for CPU<->TPM communication
-	TPM2EncryptSession bool
-
 	// TPM2SRKHandle is the persistent handle for the Storage Root Key
 	TPM2SRKHandle uint32
 

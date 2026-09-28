@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"testing"
@@ -29,10 +30,28 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
 
+	deviceattest01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/device-attest-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
 
 var errNotFound = errors.New("not found")
+
+// newTestAttestedKey stands in for a TPM's attested key in tests of the ACME
+// flow around device-attest-01 rather than of the attestation: a software
+// P-256 key, and a challenge response whose attStmt is the key authorization
+// it answers, so a test can see which challenge it was made for. The
+// statement a real TPM produces is exercised in tpm_simulator_test.go.
+func newTestAttestedKey(keyAuth string) (*AttestedKey, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	statement, err := json.Marshal(deviceattest01.AttestationRequest{AttStmt: []byte(keyAuth)})
+	if err != nil {
+		return nil, err
+	}
+	return &AttestedKey{Statement: statement, Signer: key}, nil
+}
 
 // mockStorage implements GenericDAO[*entities.ACMEAccount] for testing
 type mockStorage struct {

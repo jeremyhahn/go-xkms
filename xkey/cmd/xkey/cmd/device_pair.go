@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -75,17 +74,16 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(devicePairCmd)
 
-	// Pairing flags
+	// Pairing flags. --device and --force are per-invocation choices with no
+	// config-file meaning and are read directly off the flag; --timeout is
+	// shared with `device scan` and resolves through resolveDeviceScanTimeout
+	// (device.go), so device.scan_timeout applies here too (go-xkms#1071).
 	devicePairCmd.Flags().String("device", "", "Specific device name or address to pair")
-	devicePairCmd.Flags().Duration("timeout", defaultDeviceScanTimeout, "Scan timeout duration")
+	devicePairCmd.Flags().Duration("timeout", defaultDeviceScanTimeout,
+		"Scan timeout duration (default: device.scan_timeout, 30s)")
 	devicePairCmd.Flags().Bool("force", false, "Force re-pairing even if already paired")
 	addSOPINFlags(devicePairCmd)
 	addDeviceBarrierFlags(devicePairCmd)
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("device.pair.device", devicePairCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.pair.timeout", devicePairCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("device.pair.force", devicePairCmd.Flags().Lookup("force"))
 }
 
 // pairingTransport is what runDevicePair needs from a transport: discovery,
@@ -150,9 +148,18 @@ var pairSeams = pairingSeams{
 func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 	logger := slog.Default()
 
-	deviceFilter, _ := cmd.Flags().GetString("device")
-	scanTimeout, _ := cmd.Flags().GetDuration("timeout")
-	force, _ := cmd.Flags().GetBool("force")
+	deviceFilter, err := cmd.Flags().GetString("device")
+	if err != nil {
+		return &DetailError{Err: ErrCommandFlagInvalid, Detail: ": device: " + err.Error()}
+	}
+	scanTimeout, err := resolveDeviceScanTimeout(cmd)
+	if err != nil {
+		return err
+	}
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return &DetailError{Err: ErrCommandFlagInvalid, Detail: ": force: " + err.Error()}
+	}
 
 	// The barrier is opened, if one is initialized, before anything else
 	// including the scan: pairing generates a new Noise static private key

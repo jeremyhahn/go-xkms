@@ -14,44 +14,20 @@
 package authenticator
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/ecdsa"
-	"crypto/elliptic"
+	"crypto/hkdf"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
-	"errors"
-	"io"
-	"math/big"
+	"slices"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/jeremyhahn/go-enclave"
-	"golang.org/x/crypto/hkdf"
 )
 
-// hmac-secret extension constants.
-const (
-	// HMACSecretSaltSize is the size of each salt in bytes.
-	HMACSecretSaltSize = 32
+// HMACSecretSaltSize is the size of one hmac-secret salt, and of one output,
+// in bytes (CTAP 2.1 §12.5).
+const HMACSecretSaltSize = 32
 
-	// HMACSecretOutputSize is the size of each HMAC output in bytes.
-	HMACSecretOutputSize = 32
-
-	// HMACSecretEncryptedSingleSaltSize is the encrypted size of a single salt.
-	// Single salt (32 bytes) with AES-CBC padding becomes 48 bytes.
-	HMACSecretEncryptedSingleSaltSize = 48
-
-	// HMACSecretEncryptedDoubleSaltSize is the encrypted size of two salts.
-	// Double salt (64 bytes) with AES-CBC padding becomes 80 bytes.
-	HMACSecretEncryptedDoubleSaltSize = 80
-
-	// hmacSecretAuthTagSize is the size of the saltAuth HMAC tag (16 bytes).
-	hmacSecretAuthTagSize = 16
-)
-
-// hmac-secret extension input CBOR map keys.
+// hmac-secret getAssertion extension input CBOR map keys (CTAP 2.1 §12.5).
 const (
 	hmacSecretKeyAgreement      = 0x01
 	hmacSecretSaltEnc           = 0x02
@@ -59,786 +35,236 @@ const (
 	hmacSecretPinUvAuthProtocol = 0x04
 )
 
-// hmac-secret extension errors.
-var (
-	// ErrHMACSecretMissingKeyAgreement indicates the keyAgreement field is missing.
-	ErrHMACSecretMissingKeyAgreement = errors.New("authenticator: hmac-secret missing keyAgreement")
-
-	// ErrHMACSecretMissingSaltEnc indicates the saltEnc field is missing.
-	ErrHMACSecretMissingSaltEnc = errors.New("authenticator: hmac-secret missing saltEnc")
-
-	// ErrHMACSecretMissingSaltAuth indicates the saltAuth field is missing.
-	ErrHMACSecretMissingSaltAuth = errors.New("authenticator: hmac-secret missing saltAuth")
-
-	// ErrHMACSecretMissingProtocol indicates the pinUvAuthProtocol field is missing.
-	ErrHMACSecretMissingProtocol = errors.New("authenticator: hmac-secret missing pinUvAuthProtocol")
-
-	// ErrHMACSecretInvalidKeyAgreement indicates the keyAgreement key is invalid.
-	ErrHMACSecretInvalidKeyAgreement = errors.New("authenticator: hmac-secret invalid keyAgreement")
-
-	// ErrHMACSecretInvalidSaltEnc indicates the saltEnc has invalid length.
-	ErrHMACSecretInvalidSaltEnc = errors.New("authenticator: hmac-secret invalid saltEnc length")
-
-	// ErrHMACSecretInvalidSaltAuth indicates the saltAuth has invalid length.
-	ErrHMACSecretInvalidSaltAuth = errors.New("authenticator: hmac-secret invalid saltAuth length")
-
-	// ErrHMACSecretSaltAuthMismatch indicates saltAuth verification failed.
-	ErrHMACSecretSaltAuthMismatch = errors.New("authenticator: hmac-secret saltAuth verification failed")
-
-	// ErrHMACSecretProtocolMismatch indicates protocol version mismatch.
-	ErrHMACSecretProtocolMismatch = errors.New("authenticator: hmac-secret protocol version mismatch")
-
-	// ErrHMACSecretDecryptionFailed indicates salt decryption failed.
-	ErrHMACSecretDecryptionFailed = errors.New("authenticator: hmac-secret salt decryption failed")
-
-	// ErrHMACSecretEncryptionFailed indicates output encryption failed.
-	ErrHMACSecretEncryptionFailed = errors.New("authenticator: hmac-secret output encryption failed")
-
-	// ErrHMACSecretMissingCredentialKey indicates credential has no hmac-secret key.
-	ErrHMACSecretMissingCredentialKey = errors.New("authenticator: hmac-secret missing credential key")
-
-	// ErrHMACSecretInvalidInput indicates the extension input format is invalid.
-	ErrHMACSecretInvalidInput = errors.New("authenticator: hmac-secret invalid input format")
-
-	// ErrHMACSecretKeyDerivationFailed indicates ECDH key derivation failed.
-	ErrHMACSecretKeyDerivationFailed = errors.New("authenticator: hmac-secret key derivation failed")
+// HKDF info labels that derive the two per-credential CredRandom values from
+// the credential's stored hmac-secret key (StoredCredential.HMACSecretKey).
+// Distinct labels make the two outputs independent: knowing one reveals
+// nothing about the other or about the stored key.
+const (
+	credRandomWithUVInfo    = "xkey hmac-secret CredRandomWithUV"
+	credRandomWithoutUVInfo = "xkey hmac-secret CredRandomWithoutUV"
 )
 
-// HMACSecretInput represents the parsed hmac-secret extension input during GetAssertion.
-// The extension input is a CBOR map containing cryptographic parameters for secure
-// salt exchange using the PIN protocol.
+// hmacSecretError is an hmac-secret refusal. It unwraps to the sentinel that
+// errorToStatus maps to the CTAP status CTAP 2.1 §12.5 prescribes, so
+// errors.Is matches both the specific refusal and its wire status.
+type hmacSecretError struct {
+	msg    string
+	status error
+}
+
+// Error implements the error interface.
+func (e *hmacSecretError) Error() string { return e.msg }
+
+// Unwrap returns the status sentinel the refusal maps to.
+func (e *hmacSecretError) Unwrap() error { return e.status }
+
+// hmac-secret extension errors.
+var (
+	// ErrHMACSecretUserPresenceRequired reports an hmac-secret request whose
+	// assertion does not collect user presence. CTAP 2.1 §12.5: "If "up" is
+	// set to false, authenticator returns CTAP2_ERR_UNSUPPORTED_OPTION."
+	ErrHMACSecretUserPresenceRequired error = &hmacSecretError{
+		msg:    "authenticator: hmac-secret requires user presence",
+		status: ErrUnsupportedOption,
+	}
+
+	// ErrHMACSecretInvalidInput reports a malformed extension input: not an
+	// integer-keyed map, a missing or mistyped field, an unsupported
+	// pinUvAuthProtocol, or a keyAgreement key the authenticator cannot
+	// complete ECDH with. Plaintext "salt1"/"salt2" inputs land here.
+	ErrHMACSecretInvalidInput error = &hmacSecretError{
+		msg:    "authenticator: hmac-secret invalid extension input",
+		status: ErrInvalidParameter,
+	}
+
+	// ErrHMACSecretSaltAuthMismatch reports that saltAuth is not
+	// authenticate(shared secret, saltEnc) (CTAP 2.1 §12.5).
+	ErrHMACSecretSaltAuthMismatch error = &hmacSecretError{
+		msg:    "authenticator: hmac-secret saltAuth verification failed",
+		status: ErrPINAuthInvalid,
+	}
+
+	// ErrHMACSecretInvalidSalt reports that saltEnc did not decrypt to exactly
+	// 32 or 64 bytes (CTAP 2.1 §12.5).
+	ErrHMACSecretInvalidSalt error = &hmacSecretError{
+		msg:    "authenticator: hmac-secret salts must decrypt to 32 or 64 bytes",
+		status: ErrInvalidParameter,
+	}
+)
+
+// hmacSecretInput is a parsed hmac-secret getAssertion extension input.
+type hmacSecretInput struct {
+	// keyAgreement is the platform's COSE_Key, CBOR-encoded.
+	keyAgreement []byte
+
+	// saltEnc is encrypt(shared secret, salt1 [|| salt2]).
+	saltEnc []byte
+
+	// saltAuth is authenticate(shared secret, saltEnc).
+	saltAuth []byte
+
+	// protocol is the PIN/UV auth protocol the shared secret was agreed
+	// under; 1 when the platform omits it.
+	protocol uint8
+}
+
+// processHMACSecret performs the hmac-secret getAssertion processing of
+// CTAP 2.1 §12.5 for one credential and returns the extension output: the
+// HMAC-SHA-256 of each salt under the credential's CredRandom, encrypted under
+// the shared secret. Neither the salts nor the outputs cross the wire in
+// plaintext.
 //
-// Reference: FIDO CTAP2 specification, section 11.5.1
-type HMACSecretInput struct {
-	// KeyAgreement is the platform's COSE-encoded public key for ECDH key agreement.
-	// This must be an EC2 key on the P-256 curve.
-	KeyAgreement []byte
+// flags are the UP/UV flags this assertion reports. User presence must have
+// been collected; whether user verification was performed selects
+// CredRandomWithUV or CredRandomWithoutUV. A credential that has no
+// hmac-secret key yields (nil, nil): CTAP 2.1 §12.5 says the authenticator
+// then ignores the extension.
+func (a *Authenticator) processHMACSecret(credential *StoredCredential, raw interface{}, flags AuthDataFlags) ([]byte, error) {
+	if !flags.Has(FlagUP) {
+		return nil, ErrHMACSecretUserPresenceRequired
+	}
 
-	// SaltEnc contains the encrypted salt(s).
-	// For single salt: 48 bytes (32 bytes salt + AES-CBC padding)
-	// For double salt: 80 bytes (64 bytes salts + AES-CBC padding)
-	SaltEnc []byte
+	input, err := parseHMACSecretInput(raw)
+	if err != nil {
+		return nil, err
+	}
 
-	// SaltAuth is the HMAC-SHA-256(sharedSecret, saltEnc)[0:16] authentication tag.
-	SaltAuth []byte
-
-	// PinUvAuthProtocol specifies which PIN protocol version to use (1 or 2).
-	PinUvAuthProtocol int
-}
-
-// HMACSecretOutput represents the hmac-secret extension output for GetAssertion response.
-// The output contains the encrypted HMAC result(s) computed using the credential's
-// per-credential HMAC secret key.
-type HMACSecretOutput struct {
-	// Output contains the encrypted HMAC output(s).
-	// For single salt: 48 bytes (32 bytes output + AES-CBC padding)
-	// For double salt: 80 bytes (64 bytes outputs + AES-CBC padding)
-	Output []byte
-}
-
-// ParseHMACSecretInput parses the hmac-secret extension input from a CBOR map.
-// The input can be either a map[interface{}]interface{} or map[int]interface{}
-// as decoded from CBOR.
-func ParseHMACSecretInput(data interface{}) (*HMACSecretInput, error) {
-	if data == nil {
+	// decapsulate(): ECDH with the key agreement key getKeyAgreement handed
+	// out, then the protocol's kdf. pinState is guarded by a.mu.
+	a.mu.RLock()
+	secret, err := a.agreeSharedSecret(input.keyAgreement, input.protocol)
+	a.mu.RUnlock()
+	if err != nil {
 		return nil, ErrHMACSecretInvalidInput
 	}
+	defer secret.wipe()
 
-	// Handle different map types from CBOR decoding
-	switch m := data.(type) {
-	case map[interface{}]interface{}:
-		return parseHMACSecretFromInterfaceMap(m)
-	case map[int]interface{}:
-		return parseHMACSecretFromIntMap(m)
-	case map[string]interface{}:
-		// String-keyed maps are not valid for CTAP2 hmac-secret extension
-		return nil, ErrHMACSecretInvalidInput
-	default:
-		return nil, ErrHMACSecretInvalidInput
+	if !a.verifyPinAuth(secret.hmacKey, secret.protocol, input.saltEnc, input.saltAuth) {
+		return nil, ErrHMACSecretSaltAuthMismatch
 	}
-}
 
-// parseHMACSecretFromInterfaceMap parses hmac-secret input from map[interface{}]interface{}.
-func parseHMACSecretFromInterfaceMap(m map[interface{}]interface{}) (*HMACSecretInput, error) {
-	input := &HMACSecretInput{}
-
-	// Extract keyAgreement (0x01)
-	keyAgreementRaw, ok := m[hmacSecretKeyAgreement]
-	if !ok {
-		// Try uint8 key
-		keyAgreementRaw, ok = m[uint8(hmacSecretKeyAgreement)]
-		if !ok {
-			return nil, ErrHMACSecretMissingKeyAgreement
-		}
+	salts, err := decryptData(secret.aesKey, secret.protocol, input.saltEnc)
+	if err != nil {
+		return nil, ErrHMACSecretInvalidSalt
 	}
-	keyAgreementBytes, err := extractCOSEKeyBytes(keyAgreementRaw)
+	defer enclave.Wipe(salts)
+	if len(salts) != HMACSecretSaltSize && len(salts) != 2*HMACSecretSaltSize {
+		return nil, ErrHMACSecretInvalidSalt
+	}
+
+	if len(credential.HMACSecretKey) != HMACSecretKeySize {
+		return nil, nil
+	}
+	credRandom, err := deriveCredRandom(credential.HMACSecretKey, flags.Has(FlagUV))
 	if err != nil {
 		return nil, err
 	}
-	input.KeyAgreement = keyAgreementBytes
+	defer enclave.Wipe(credRandom)
 
-	// Extract saltEnc (0x02)
-	saltEncRaw, ok := m[hmacSecretSaltEnc]
-	if !ok {
-		saltEncRaw, ok = m[uint8(hmacSecretSaltEnc)]
-		if !ok {
-			return nil, ErrHMACSecretMissingSaltEnc
-		}
-	}
-	saltEnc, ok := saltEncRaw.([]byte)
-	if !ok {
-		return nil, ErrHMACSecretInvalidSaltEnc
-	}
-	// Validate saltEnc size: V1 sizes or V2 sizes (V2 has 16-byte IV prefix)
-	if len(saltEnc) != HMACSecretEncryptedSingleSaltSize && len(saltEnc) != HMACSecretEncryptedDoubleSaltSize &&
-		len(saltEnc) != HMACSecretEncryptedSingleSaltSize+aes.BlockSize && len(saltEnc) != HMACSecretEncryptedDoubleSaltSize+aes.BlockSize {
-		return nil, ErrHMACSecretInvalidSaltEnc
-	}
-	input.SaltEnc = saltEnc
-
-	// Extract saltAuth (0x03)
-	saltAuthRaw, ok := m[hmacSecretSaltAuth]
-	if !ok {
-		saltAuthRaw, ok = m[uint8(hmacSecretSaltAuth)]
-		if !ok {
-			return nil, ErrHMACSecretMissingSaltAuth
-		}
-	}
-	saltAuth, ok := saltAuthRaw.([]byte)
-	if !ok {
-		return nil, ErrHMACSecretInvalidSaltAuth
-	}
-	// Accept V1 (16 bytes) or V2 (32 bytes) saltAuth sizes
-	if len(saltAuth) != hmacSecretAuthTagSize && len(saltAuth) != PINAuthSizeV2 {
-		return nil, ErrHMACSecretInvalidSaltAuth
-	}
-	input.SaltAuth = saltAuth
-
-	// Extract pinUvAuthProtocol (0x04)
-	protocolRaw, ok := m[hmacSecretPinUvAuthProtocol]
-	if !ok {
-		protocolRaw, ok = m[uint8(hmacSecretPinUvAuthProtocol)]
-		if !ok {
-			return nil, ErrHMACSecretMissingProtocol
-		}
-	}
-	protocol, err := toInt(protocolRaw)
-	if err != nil {
-		return nil, ErrHMACSecretMissingProtocol
-	}
-	input.PinUvAuthProtocol = protocol
-
-	return input, nil
-}
-
-// parseHMACSecretFromIntMap parses hmac-secret input from map[int]interface{}.
-func parseHMACSecretFromIntMap(m map[int]interface{}) (*HMACSecretInput, error) {
-	input := &HMACSecretInput{}
-
-	// Extract keyAgreement (0x01)
-	keyAgreementRaw, ok := m[hmacSecretKeyAgreement]
-	if !ok {
-		return nil, ErrHMACSecretMissingKeyAgreement
-	}
-	keyAgreementBytes, err := extractCOSEKeyBytes(keyAgreementRaw)
-	if err != nil {
-		return nil, err
-	}
-	input.KeyAgreement = keyAgreementBytes
-
-	// Extract saltEnc (0x02)
-	saltEncRaw, ok := m[hmacSecretSaltEnc]
-	if !ok {
-		return nil, ErrHMACSecretMissingSaltEnc
-	}
-	saltEnc, ok := saltEncRaw.([]byte)
-	if !ok {
-		return nil, ErrHMACSecretInvalidSaltEnc
-	}
-	// Validate saltEnc size: V1 sizes or V2 sizes (V2 has 16-byte IV prefix)
-	if len(saltEnc) != HMACSecretEncryptedSingleSaltSize && len(saltEnc) != HMACSecretEncryptedDoubleSaltSize &&
-		len(saltEnc) != HMACSecretEncryptedSingleSaltSize+aes.BlockSize && len(saltEnc) != HMACSecretEncryptedDoubleSaltSize+aes.BlockSize {
-		return nil, ErrHMACSecretInvalidSaltEnc
-	}
-	input.SaltEnc = saltEnc
-
-	// Extract saltAuth (0x03)
-	saltAuthRaw, ok := m[hmacSecretSaltAuth]
-	if !ok {
-		return nil, ErrHMACSecretMissingSaltAuth
-	}
-	saltAuth, ok := saltAuthRaw.([]byte)
-	if !ok {
-		return nil, ErrHMACSecretInvalidSaltAuth
-	}
-	// Accept V1 (16 bytes) or V2 (32 bytes) saltAuth sizes
-	if len(saltAuth) != hmacSecretAuthTagSize && len(saltAuth) != PINAuthSizeV2 {
-		return nil, ErrHMACSecretInvalidSaltAuth
-	}
-	input.SaltAuth = saltAuth
-
-	// Extract pinUvAuthProtocol (0x04)
-	protocolRaw, ok := m[hmacSecretPinUvAuthProtocol]
-	if !ok {
-		return nil, ErrHMACSecretMissingProtocol
-	}
-	protocol, err := toInt(protocolRaw)
-	if err != nil {
-		return nil, ErrHMACSecretMissingProtocol
-	}
-	input.PinUvAuthProtocol = protocol
-
-	return input, nil
-}
-
-// extractCOSEKeyBytes extracts COSE key bytes from various input formats.
-// The keyAgreement can be provided as raw bytes or as a CBOR-encoded COSE key map.
-func extractCOSEKeyBytes(raw interface{}) ([]byte, error) {
-	switch v := raw.(type) {
-	case []byte:
-		// Already raw bytes (CBOR-encoded COSE key)
-		return v, nil
-	case map[interface{}]interface{}:
-		// COSE key as decoded CBOR map - re-encode to bytes
-		return cbor.Marshal(v)
-	case map[int]interface{}:
-		// COSE key as decoded CBOR map with int keys - re-encode to bytes
-		return cbor.Marshal(v)
-	default:
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-}
-
-// ProcessHMACSecretExtension processes the hmac-secret extension during GetAssertion.
-// This method performs the complete cryptographic protocol:
-// 1. Establishes shared secret via ECDH with platform's public key
-// 2. Verifies saltAuth using HMAC-SHA-256
-// 3. Decrypts the encrypted salt(s) using AES-256-CBC
-// 4. Computes HMAC-SHA-256 output(s) using credential's HMAC secret key
-// 5. Encrypts the output(s) using the shared secret
-//
-// Reference: FIDO CTAP2 specification, section 11.5.1
-func (a *Authenticator) ProcessHMACSecretExtension(
-	input *HMACSecretInput,
-	credentialHMACKey []byte,
-) (*HMACSecretOutput, error) {
-	if input == nil {
-		return nil, ErrHMACSecretInvalidInput
-	}
-
-	if len(credentialHMACKey) != HMACSecretKeySize {
-		return nil, ErrHMACSecretMissingCredentialKey
-	}
-
-	// Verify protocol version is supported
-	if input.PinUvAuthProtocol != PINProtocolVersion1 && input.PinUvAuthProtocol != PINProtocolVersion2 {
-		return nil, ErrHMACSecretProtocolMismatch
-	}
-
-	// Decode platform's COSE public key and perform ECDH
-	sharedSecret, err := deriveHMACSecretSharedSecret(input.KeyAgreement, input.PinUvAuthProtocol)
-	if err != nil {
-		return nil, err
-	}
-	defer enclave.Wipe(sharedSecret)
-
-	// Verify saltAuth: HMAC-SHA-256(sharedSecret, saltEnc) with protocol-aware truncation
-	if err := verifySaltAuth(sharedSecret, input.PinUvAuthProtocol, input.SaltEnc, input.SaltAuth); err != nil {
-		return nil, err
-	}
-
-	// Decrypt saltEnc to get salt(s)
-	salts, err := decryptSalts(sharedSecret, input.PinUvAuthProtocol, input.SaltEnc)
-	if err != nil {
-		return nil, err
-	}
-
-	// Compute HMAC output(s) using credential's HMAC secret key
-	outputs := computeHMACOutputs(credentialHMACKey, salts)
-
-	// Encrypt the output(s) using the shared secret
-	encryptedOutput, err := encryptHMACOutputs(sharedSecret, input.PinUvAuthProtocol, outputs)
-	if err != nil {
-		return nil, err
-	}
-
-	return &HMACSecretOutput{
-		Output: encryptedOutput,
-	}, nil
-}
-
-// deriveHMACSecretSharedSecret performs ECDH key agreement and derives the shared secret.
-// For PIN Protocol V1: SharedSecret = SHA-256(ECDH x-coordinate)
-// For PIN Protocol V2: SharedSecret = HKDF-SHA-256(ECDH x-coordinate, salt, "CTAP2 HMAC key")
-func deriveHMACSecretSharedSecret(platformCOSEKey []byte, protocol int) ([]byte, error) {
-	// Decode the platform's COSE public key
-	platformPubKey, err := decodeCOSEKeyAgreementKey(platformCOSEKey)
-	if err != nil {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-
-	// Generate ephemeral key pair for ECDH
-	// Note: In a real implementation, the authenticator would maintain a session key pair
-	// For hmac-secret, we need to use the existing PIN protocol's key agreement
-	// This implementation creates an ephemeral key for standalone extension processing
-	ephemeralPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, ErrHMACSecretKeyDerivationFailed
-	}
-
-	// Perform ECDH: compute shared point
-	x, _ := elliptic.P256().ScalarMult(platformPubKey.X, platformPubKey.Y, ephemeralPrivKey.D.Bytes()) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
-
-	// Derive shared secret based on protocol version
-	xBytes := padCoordinate(x.Bytes(), ecdhP256CoordSize)
-
-	switch protocol {
-	case PINProtocolVersion1:
-		// PIN Protocol V1: SHA-256(x-coordinate)
-		hash := sha256.Sum256(xBytes)
-		return hash[:], nil
-
-	case PINProtocolVersion2:
-		// PIN Protocol V2: HKDF-SHA-256 derivation
-		salt := make([]byte, 32)
-		hmacKeyReader := hkdf.New(sha256.New, xBytes, salt, []byte("CTAP2 HMAC key"))
-		hmacKey := make([]byte, 32)
-		if _, err := io.ReadFull(hmacKeyReader, hmacKey); err != nil {
-			return nil, ErrHMACSecretKeyDerivationFailed
-		}
-		return hmacKey, nil
-
-	default:
-		return nil, ErrHMACSecretProtocolMismatch
-	}
-}
-
-// ProcessHMACSecretWithSharedSecret processes the hmac-secret extension using
-// a pre-established shared secret from the PIN protocol. This is the preferred
-// method when the authenticator has already established a session with the platform.
-func (a *Authenticator) ProcessHMACSecretWithSharedSecret(
-	input *HMACSecretInput,
-	credentialHMACKey []byte,
-	sharedSecret []byte,
-) (*HMACSecretOutput, error) {
-	if input == nil {
-		return nil, ErrHMACSecretInvalidInput
-	}
-
-	if len(credentialHMACKey) != HMACSecretKeySize {
-		return nil, ErrHMACSecretMissingCredentialKey
-	}
-
-	if len(sharedSecret) != 32 {
-		return nil, ErrSharedSecretNotEstablished
-	}
-
-	// Verify saltAuth: HMAC-SHA-256(sharedSecret, saltEnc) with protocol-aware truncation
-	if err := verifySaltAuth(sharedSecret, input.PinUvAuthProtocol, input.SaltEnc, input.SaltAuth); err != nil {
-		return nil, err
-	}
-
-	// Decrypt saltEnc to get salt(s)
-	salts, err := decryptSalts(sharedSecret, input.PinUvAuthProtocol, input.SaltEnc)
-	if err != nil {
-		return nil, err
-	}
-
-	// Compute HMAC output(s) using credential's HMAC secret key
-	outputs := computeHMACOutputs(credentialHMACKey, salts)
-
-	// Encrypt the output(s) using the shared secret
-	encryptedOutput, err := encryptHMACOutputs(sharedSecret, input.PinUvAuthProtocol, outputs)
-	if err != nil {
-		return nil, err
-	}
-
-	return &HMACSecretOutput{
-		Output: encryptedOutput,
-	}, nil
-}
-
-// decodeCOSEKeyAgreementKey decodes a COSE-encoded EC2 public key for key agreement.
-func decodeCOSEKeyAgreementKey(data []byte) (*ecdsa.PublicKey, error) {
-	if len(data) == 0 {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-
-	var coseKey map[int]interface{}
-	if err := cbor.Unmarshal(data, &coseKey); err != nil {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-
-	// Verify key type is EC2
-	ktyRaw, ok := coseKey[coseKeyLabelKty]
-	if !ok {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-	kty, err := toInt(ktyRaw)
-	if err != nil || kty != COSEKeyTypeEC2 {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-
-	// Verify curve is P-256
-	crvRaw, ok := coseKey[coseKeyLabelCrv]
-	if !ok {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-	crv, err := toInt(crvRaw)
-	if err != nil || crv != COSECurveP256 {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-
-	// Extract x coordinate
-	xRaw, ok := coseKey[coseKeyLabelX]
-	if !ok {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-	xBytes, ok := xRaw.([]byte)
-	if !ok || len(xBytes) == 0 {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-
-	// Extract y coordinate
-	yRaw, ok := coseKey[coseKeyLabelY]
-	if !ok {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-	yBytes, ok := yRaw.([]byte)
-	if !ok || len(yBytes) == 0 {
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-
-	// Construct public key
-	x := new(big.Int).SetBytes(xBytes)
-	y := new(big.Int).SetBytes(yBytes)
-
-	pubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     x, //nolint:staticcheck // raw COSE coordinates; the point is validated on-curve immediately below, and no key is used before that check.
-		Y:     y, //nolint:staticcheck // raw COSE coordinates; the point is validated on-curve immediately below, and no key is used before that check.
-	}
-
-	// Verify point is on curve
-	if !elliptic.P256().IsOnCurve(x, y) { //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
-		return nil, ErrHMACSecretInvalidKeyAgreement
-	}
-
-	return pubKey, nil
-}
-
-// verifySaltAuth verifies the saltAuth HMAC tag with protocol-aware truncation.
-// V1: saltAuth = HMAC-SHA-256(sharedSecret, saltEnc)[0:16]
-// V2: saltAuth = HMAC-SHA-256(sharedSecret, saltEnc) (full 32 bytes)
-func verifySaltAuth(sharedSecret []byte, protocol int, saltEnc, saltAuth []byte) error {
-	// Compute expected saltAuth
-	mac := hmac.New(sha256.New, sharedSecret)
-	mac.Write(saltEnc)
-	var expected []byte
-	if protocol == PINProtocolVersion2 {
-		expected = mac.Sum(nil) // Full 32 bytes for V2
-	} else {
-		expected = mac.Sum(nil)[:hmacSecretAuthTagSize] // 16 bytes for V1
-	}
-
-	// Constant-time comparison
-	if subtle.ConstantTimeCompare(saltAuth, expected) != 1 {
-		return ErrHMACSecretSaltAuthMismatch
-	}
-
-	return nil
-}
-
-// decryptSalts decrypts the encrypted salt(s) using AES-256-CBC.
-// V1: Uses zero IV.
-// V2: IV is extracted from the first 16 bytes of saltEnc.
-// Returns either 1 salt (32 bytes) or 2 salts (64 bytes).
-func decryptSalts(sharedSecret []byte, protocol int, saltEnc []byte) ([]byte, error) {
-	// Create AES cipher with shared secret as key
-	block, err := aes.NewCipher(sharedSecret)
-	if err != nil {
-		return nil, ErrHMACSecretDecryptionFailed
-	}
-
-	// Extract IV and encrypted data based on protocol version
-	var iv []byte
-	var encrypted []byte
-	if protocol == PINProtocolVersion2 {
-		if len(saltEnc) < aes.BlockSize {
-			return nil, ErrHMACSecretDecryptionFailed
-		}
-		iv = saltEnc[:aes.BlockSize]
-		encrypted = saltEnc[aes.BlockSize:]
-	} else {
-		iv = make([]byte, aes.BlockSize) // zero IV for V1
-		encrypted = saltEnc
-	}
-
-	// Validate encrypted data length is a valid CBC ciphertext size
-	if len(encrypted) != HMACSecretEncryptedSingleSaltSize && len(encrypted) != HMACSecretEncryptedDoubleSaltSize {
-		return nil, ErrHMACSecretInvalidSaltEnc
-	}
-
-	mode := cipher.NewCBCDecrypter(block, iv)
-
-	// Decrypt
-	plaintext := make([]byte, len(encrypted))
-	mode.CryptBlocks(plaintext, encrypted)
-
-	// Remove PKCS7 padding
-	unpadded, err := pkcs7Unpad(plaintext)
-	if err != nil {
-		return nil, ErrHMACSecretDecryptionFailed
-	}
-
-	// Validate salt length
-	if len(unpadded) != HMACSecretSaltSize && len(unpadded) != HMACSecretSaltSize*2 {
-		return nil, ErrHMACSecretInvalidSaltEnc
-	}
-
-	return unpadded, nil
-}
-
-// computeHMACOutputs computes HMAC-SHA-256 output(s) using the credential's HMAC secret key.
-// output1 = HMAC-SHA-256(credentialHMACKey, salt1)
-// output2 = HMAC-SHA-256(credentialHMACKey, salt2) if salt2 is provided
-func computeHMACOutputs(credentialHMACKey, salts []byte) []byte {
-	numSalts := len(salts) / HMACSecretSaltSize
-	outputs := make([]byte, numSalts*HMACSecretOutputSize)
-
-	for i := 0; i < numSalts; i++ {
-		salt := salts[i*HMACSecretSaltSize : (i+1)*HMACSecretSaltSize]
-		mac := hmac.New(sha256.New, credentialHMACKey)
+	outputs := make([]byte, 0, len(salts))
+	for salt := range slices.Chunk(salts, HMACSecretSaltSize) {
+		mac := hmac.New(sha256.New, credRandom)
 		mac.Write(salt)
-		output := mac.Sum(nil)
-		copy(outputs[i*HMACSecretOutputSize:], output)
+		outputs = mac.Sum(outputs)
 	}
+	defer enclave.Wipe(outputs)
 
-	return outputs
+	return a.encryptData(secret.aesKey, secret.protocol, outputs)
 }
 
-// encryptHMACOutputs encrypts the HMAC output(s) using AES-256-CBC.
-// V1: Uses zero IV.
-// V2: Generates random IV and prepends it to ciphertext.
-func encryptHMACOutputs(sharedSecret []byte, protocol int, outputs []byte) ([]byte, error) {
-	// Apply PKCS7 padding
-	padded := pkcs7Pad(outputs, aes.BlockSize)
-
-	// Create AES cipher with shared secret as key
-	block, err := aes.NewCipher(sharedSecret)
+// deriveCredRandom derives CredRandomWithUV (uv true) or CredRandomWithoutUV
+// (uv false) from the credential's stored hmac-secret key with
+// HKDF-Expand-SHA-256 under distinct info labels. The stored key is 32
+// uniformly random bytes, so it serves directly as the HKDF pseudorandom key
+// (RFC 5869 §3.3).
+func deriveCredRandom(hmacSecretKey []byte, uv bool) ([]byte, error) {
+	info := credRandomWithoutUVInfo
+	if uv {
+		info = credRandomWithUVInfo
+	}
+	credRandom, err := hkdf.Expand(sha256.New, hmacSecretKey, info, HMACSecretSaltSize)
 	if err != nil {
-		return nil, ErrHMACSecretEncryptionFailed
+		return nil, ErrCryptoError
 	}
-
-	// Generate IV based on protocol version
-	var iv []byte
-	if protocol == PINProtocolVersion2 {
-		iv = make([]byte, aes.BlockSize)
-		if _, err := rand.Read(iv); err != nil {
-			return nil, ErrHMACSecretEncryptionFailed
-		}
-	} else {
-		iv = make([]byte, aes.BlockSize) // zero IV for V1
-	}
-
-	mode := cipher.NewCBCEncrypter(block, iv)
-
-	// Encrypt
-	ciphertext := make([]byte, len(padded))
-	mode.CryptBlocks(ciphertext, padded)
-
-	// V2: prepend IV to ciphertext
-	if protocol == PINProtocolVersion2 {
-		return append(iv, ciphertext...), nil
-	}
-	return ciphertext, nil
+	return credRandom, nil
 }
 
-// EncodeHMACSecretOutput encodes the hmac-secret output for inclusion in authData extensions.
-// The output is just the encrypted bytes, not a CBOR structure.
-func EncodeHMACSecretOutput(output *HMACSecretOutput) ([]byte, error) {
-	if output == nil {
+// parseHMACSecretInput parses the hmac-secret getAssertion extension input,
+// an integer-keyed CBOR map (CTAP 2.1 §12.5): keyAgreement (1, a COSE_Key
+// map), saltEnc (2), saltAuth (3) and the optional pinUvAuthProtocol (4),
+// which defaults to 1.
+func parseHMACSecretInput(raw interface{}) (*hmacSecretInput, error) {
+	fields, err := hmacSecretFields(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	keyAgreement, err := hmacSecretKeyAgreementBytes(fields[hmacSecretKeyAgreement])
+	if err != nil {
+		return nil, err
+	}
+
+	saltEnc, ok := fields[hmacSecretSaltEnc].([]byte)
+	if !ok {
 		return nil, ErrHMACSecretInvalidInput
 	}
-	// The hmac-secret extension output in authData is just the encrypted output bytes
-	return output.Output, nil
-}
-
-// HMACSecretPlatformHelper provides helper functions for the platform side of the
-// hmac-secret protocol. This is useful for testing and for client implementations.
-type HMACSecretPlatformHelper struct {
-	privateKey   *ecdsa.PrivateKey
-	publicKey    *ecdsa.PublicKey
-	sharedSecret []byte
-}
-
-// NewHMACSecretPlatformHelper creates a new platform helper with a fresh ECDH key pair.
-func NewHMACSecretPlatformHelper() (*HMACSecretPlatformHelper, error) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, ErrKeyGenerationFailed
+	saltAuth, ok := fields[hmacSecretSaltAuth].([]byte)
+	if !ok {
+		return nil, ErrHMACSecretInvalidInput
 	}
 
-	return &HMACSecretPlatformHelper{
-		privateKey: privateKey,
-		publicKey:  &privateKey.PublicKey,
-	}, nil
-}
-
-// GetCOSEPublicKey returns the platform's public key in COSE format for the hmac-secret input.
-func (h *HMACSecretPlatformHelper) GetCOSEPublicKey() ([]byte, error) {
-	if h.publicKey == nil {
-		return nil, ErrInvalidPublicKey
-	}
-
-	coseKey := map[int]interface{}{
-		coseKeyLabelKty: COSEKeyTypeEC2,
-		coseKeyLabelAlg: COSEAlgECDHESHKDF256,
-		coseKeyLabelCrv: COSECurveP256,
-		coseKeyLabelX:   padCoordinate(h.publicKey.X.Bytes(), ecdhP256CoordSize), //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
-		coseKeyLabelY:   padCoordinate(h.publicKey.Y.Bytes(), ecdhP256CoordSize), //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
-	}
-
-	return cbor.Marshal(coseKey)
-}
-
-// EstablishSharedSecret establishes the shared secret with the authenticator's public key.
-func (h *HMACSecretPlatformHelper) EstablishSharedSecret(authenticatorCOSEKey []byte) error {
-	authPubKey, err := decodeCOSEKeyAgreementKey(authenticatorCOSEKey)
-	if err != nil {
-		return err
-	}
-
-	// Perform ECDH
-	x, _ := elliptic.P256().ScalarMult(authPubKey.X, authPubKey.Y, h.privateKey.D.Bytes()) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
-	xBytes := padCoordinate(x.Bytes(), ecdhP256CoordSize)
-
-	// Derive shared secret (PIN Protocol V1 style)
-	hash := sha256.Sum256(xBytes)
-	h.sharedSecret = hash[:]
-
-	return nil
-}
-
-// EncryptSalts encrypts the salt(s) for the hmac-secret input.
-func (h *HMACSecretPlatformHelper) EncryptSalts(salt1, salt2 []byte) ([]byte, error) {
-	if h.sharedSecret == nil {
-		return nil, ErrSharedSecretNotEstablished
-	}
-
-	if len(salt1) != HMACSecretSaltSize {
-		return nil, ErrGetAssertionHMACSecretInvalidSalt
-	}
-
-	var salts []byte
-	if salt2 != nil {
-		if len(salt2) != HMACSecretSaltSize {
-			return nil, ErrGetAssertionHMACSecretInvalidSalt
+	protocol := uint8(PINProtocol1)
+	if rawProtocol, present := fields[hmacSecretPinUvAuthProtocol]; present {
+		version, err := toInt(rawProtocol)
+		if err != nil || (version != PINProtocol1 && version != PINProtocol2) {
+			return nil, ErrHMACSecretInvalidInput
 		}
-		salts = make([]byte, HMACSecretSaltSize*2)
-		copy(salts[:HMACSecretSaltSize], salt1)
-		copy(salts[HMACSecretSaltSize:], salt2)
-	} else {
-		salts = make([]byte, HMACSecretSaltSize)
-		copy(salts, salt1)
+		protocol = uint8(version)
 	}
 
-	// Encrypt using AES-256-CBC with zero IV
-	padded := pkcs7Pad(salts, aes.BlockSize)
-
-	block, err := aes.NewCipher(h.sharedSecret)
-	if err != nil {
-		return nil, ErrPINEncryptionFailed
-	}
-
-	iv := make([]byte, aes.BlockSize)
-	mode := cipher.NewCBCEncrypter(block, iv)
-
-	ciphertext := make([]byte, len(padded))
-	mode.CryptBlocks(ciphertext, padded)
-
-	return ciphertext, nil
-}
-
-// ComputeSaltAuth computes the saltAuth HMAC tag for the hmac-secret input.
-func (h *HMACSecretPlatformHelper) ComputeSaltAuth(saltEnc []byte) ([]byte, error) {
-	if h.sharedSecret == nil {
-		return nil, ErrSharedSecretNotEstablished
-	}
-
-	mac := hmac.New(sha256.New, h.sharedSecret)
-	mac.Write(saltEnc)
-	return mac.Sum(nil)[:hmacSecretAuthTagSize], nil
-}
-
-// DecryptOutput decrypts the authenticator's hmac-secret output.
-func (h *HMACSecretPlatformHelper) DecryptOutput(encryptedOutput []byte) ([]byte, error) {
-	if h.sharedSecret == nil {
-		return nil, ErrSharedSecretNotEstablished
-	}
-
-	if len(encryptedOutput) != HMACSecretEncryptedSingleSaltSize &&
-		len(encryptedOutput) != HMACSecretEncryptedDoubleSaltSize {
-		return nil, ErrHMACSecretDecryptionFailed
-	}
-
-	// Decrypt using AES-256-CBC with zero IV
-	block, err := aes.NewCipher(h.sharedSecret)
-	if err != nil {
-		return nil, ErrHMACSecretDecryptionFailed
-	}
-
-	iv := make([]byte, aes.BlockSize)
-	mode := cipher.NewCBCDecrypter(block, iv)
-
-	plaintext := make([]byte, len(encryptedOutput))
-	mode.CryptBlocks(plaintext, encryptedOutput)
-
-	// Remove PKCS7 padding
-	unpadded, err := pkcs7Unpad(plaintext)
-	if err != nil {
-		return nil, ErrHMACSecretDecryptionFailed
-	}
-
-	return unpadded, nil
-}
-
-// SharedSecret returns the established shared secret for testing purposes.
-func (h *HMACSecretPlatformHelper) SharedSecret() []byte {
-	return h.sharedSecret
-}
-
-// Reset clears all sensitive data.
-func (h *HMACSecretPlatformHelper) Reset() {
-	enclave.Wipe(h.sharedSecret)
-	h.sharedSecret = nil
-	h.privateKey = nil
-	h.publicKey = nil
-}
-
-// BuildHMACSecretInput creates a complete hmac-secret extension input for GetAssertion.
-// This is a helper function for platforms/clients to construct the extension input.
-func BuildHMACSecretInput(
-	keyAgreement []byte,
-	saltEnc []byte,
-	saltAuth []byte,
-	protocol int,
-) (map[int]interface{}, error) {
-	if len(keyAgreement) == 0 {
-		return nil, ErrHMACSecretMissingKeyAgreement
-	}
-	if len(saltEnc) == 0 {
-		return nil, ErrHMACSecretMissingSaltEnc
-	}
-	// Accept V1 (16 bytes) or V2 (32 bytes) saltAuth sizes
-	if len(saltAuth) != hmacSecretAuthTagSize && len(saltAuth) != PINAuthSizeV2 {
-		return nil, ErrHMACSecretInvalidSaltAuth
-	}
-
-	return map[int]interface{}{
-		hmacSecretKeyAgreement:      keyAgreement,
-		hmacSecretSaltEnc:           saltEnc,
-		hmacSecretSaltAuth:          saltAuth,
-		hmacSecretPinUvAuthProtocol: protocol,
+	return &hmacSecretInput{
+		keyAgreement: keyAgreement,
+		saltEnc:      saltEnc,
+		saltAuth:     saltAuth,
+		protocol:     protocol,
 	}, nil
+}
+
+// hmacSecretFields normalizes the extension input map to integer keys. A
+// CBOR-decoded map arrives as map[interface{}]interface{}; an in-process Go
+// caller may pass map[int]interface{}. Any non-integer key -- such as the
+// plaintext "salt1" and "salt2" of the WebAuthn client input, which is never
+// the authenticator input -- rejects the whole input.
+func hmacSecretFields(raw interface{}) (map[int]interface{}, error) {
+	switch m := raw.(type) {
+	case map[int]interface{}:
+		return m, nil
+	case map[interface{}]interface{}:
+		fields := make(map[int]interface{}, len(m))
+		for key, value := range m {
+			label, err := toInt(key)
+			if err != nil {
+				return nil, ErrHMACSecretInvalidInput
+			}
+			fields[label] = value
+		}
+		return fields, nil
+	default:
+		return nil, ErrHMACSecretInvalidInput
+	}
+}
+
+// hmacSecretKeyAgreementBytes CBOR-encodes the keyAgreement COSE_Key map so
+// agreeSharedSecret decodes it exactly as it decodes a clientPin keyAgreement.
+func hmacSecretKeyAgreementBytes(raw interface{}) ([]byte, error) {
+	switch raw.(type) {
+	case map[interface{}]interface{}, map[int]interface{}:
+		encoded, err := cbor.Marshal(raw)
+		if err != nil {
+			return nil, ErrHMACSecretInvalidInput
+		}
+		return encoded, nil
+	default:
+		return nil, ErrHMACSecretInvalidInput
+	}
 }

@@ -465,6 +465,7 @@ func NewServer(cfg *Config) (*Server, error) {
 				UserStore:       webauthnUserStore,
 				SessionStore:    sessionStore,
 				CredentialStore: credentialStore,
+				AuditLogger:     server.auditor,
 			})
 			if err != nil {
 				return nil, &errs.Wrapped{Msg: "failed to create webauthn service", Err: err}

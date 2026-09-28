@@ -364,15 +364,17 @@ than serving an unauthorized surface that operators believe is protected.
 
 ### Certificate-Only Identity (No UserStore)
 
-Without a `UserStore` — or when the certificate's SPKI thumbprint is not bound
-to any user — the authenticator produces a certificate-only identity. It carries
-the certificate's fields in `Identity.Metadata` (including
-`organizational_unit`) and takes its tenant from the first OU, but **it carries
-no roles**. There is no OU-to-role convention in the code.
+Only without a `UserStore` (no qrdb identity plane hosted) does the
+authenticator produce a certificate-only identity. It carries the certificate's
+fields in `Identity.Metadata` (including `organizational_unit`) and takes its
+tenant from the first OU, but **it carries no roles**. There is no OU-to-role
+convention in the code.
 
-With RBAC enabled such an identity holds no grants and is denied by every
-transport gate. Bind the certificate to a user (see
-[Certificate Binding](#certificate-binding)) so a role is resolved.
+With a `UserStore` configured, a certificate bound to no user is refused
+(`ErrCertNotBound`), and a store that cannot answer fails closed
+(`*UserLookupError`). Neither case produces a certificate-only identity. Bind
+the certificate to a user (see [Certificate Binding](#certificate-binding)).
+See [`../rbac/engineering.md`](../rbac/engineering.md), which is normative.
 
 ### Authentication Flow
 

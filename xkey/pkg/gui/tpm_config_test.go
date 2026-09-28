@@ -41,7 +41,6 @@ func TestLoadTPMConfig_NoFile(t *testing.T) {
 	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
 	assert.Equal(t, xkms.DefaultTPMConfig.Hash, cfg.Hash)
 	assert.Equal(t, xkms.DefaultTPMConfig.UseSimulator, cfg.UseSimulator)
-	assert.Equal(t, xkms.DefaultTPMConfig.EncryptSession, cfg.EncryptSession)
 	assert.NotNil(t, cfg.EK)
 	assert.Equal(t, xkms.DefaultTPMConfig.EK.Handle, cfg.EK.Handle)
 }
@@ -59,7 +58,6 @@ func TestLoadTPMConfig_WithFile(t *testing.T) {
 tpm:
   device: /dev/tpm0
   hash: SHA-384
-  encrypt-sessions: true
   entropy: true
   platform-pcr: 14
   platform-pcr-bank: SHA-384
@@ -83,7 +81,6 @@ tpm:
 
 	assert.Equal(t, "/dev/tpm0", cfg.Device)
 	assert.Equal(t, "SHA-384", cfg.Hash)
-	assert.True(t, cfg.EncryptSession)
 	assert.True(t, cfg.UseEntropy)
 	assert.Equal(t, uint(14), cfg.PlatformPCR)
 	assert.Equal(t, "SHA-384", cfg.PlatformPCRBank)
@@ -221,13 +218,11 @@ func TestMergeTPMConfig(t *testing.T) {
 
 	t.Run("bool fields always apply from file", func(t *testing.T) {
 		file := xkms.TPMConfig{
-			EncryptSession: true,
-			UseSimulator:   true,
-			UseEntropy:     true,
+			UseSimulator: true,
+			UseEntropy:   true,
 		}
 		merged := mergeTPMConfig(defaults, file)
 
-		assert.True(t, merged.EncryptSession)
 		assert.True(t, merged.UseSimulator)
 		assert.True(t, merged.UseEntropy)
 	})
@@ -288,18 +283,15 @@ func TestMergeTPMConfig(t *testing.T) {
 // the file config can override true defaults to false.
 func TestMergeTPMConfig_BoolFalseOverridesTrue(t *testing.T) {
 	defaults := xkms.TPMConfig{
-		EncryptSession: true,
-		UseSimulator:   true,
-		UseEntropy:     true,
+		UseSimulator: true,
+		UseEntropy:   true,
 	}
 	file := xkms.TPMConfig{
-		EncryptSession: false,
-		UseSimulator:   false,
-		UseEntropy:     false,
+		UseSimulator: false,
+		UseEntropy:   false,
 	}
 	merged := mergeTPMConfig(defaults, file)
 
-	assert.False(t, merged.EncryptSession)
 	assert.False(t, merged.UseSimulator)
 	assert.False(t, merged.UseEntropy)
 }

@@ -375,7 +375,7 @@ func TestSign_Ed25519_B10(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — putRevocationBlob: revocationStore is the sole
+// ca_extensions.go — putRevocationBlobIfAbsent: revocationStore is the sole
 // persistence medium (the objectStore fallback was deleted)
 // =============================================================================
 
@@ -389,10 +389,12 @@ func TestPutRevocationBlob_ObjectStoreIgnored_B10(t *testing.T) {
 	ca.revocationStore = storage.NewMemory()
 
 	payload := []byte(`{"serial":"77777","reason":0,"revoked_at":"2024-01-01T00:00:00Z"}`)
-	require.NoError(t, ca.putRevocationBlob(context.Background(), big.NewInt(77777), payload))
+	stored, err := ca.putRevocationBlobIfAbsent(context.Background(), big.NewInt(77777), payload)
+	require.NoError(t, err)
+	assert.True(t, stored)
 
 	// Persisted through revocationStore, not objectStore.
-	_, err := ca.objectStore.Get(revocationKey(big.NewInt(77777)) + ".json")
+	_, err = ca.objectStore.Get(revocationKey(big.NewInt(77777)) + ".json")
 	assert.Error(t, err, "objectStore must not receive the revocation blob")
 	got, err := ca.revocationStore.Get(context.Background(), revocationKey(big.NewInt(77777))+".json")
 	require.NoError(t, err)

@@ -174,6 +174,13 @@ func TestBackendAdapter_TypeAndCapabilities(t *testing.T) {
 	// TestAttestingBackend/claims_attestation_support.
 	assert.False(t, caps.SupportsAttestation, "the adapter never claims attestation support")
 	assert.False(t, caps.HardwareBacked, "the software provider is not hardware backed")
+	assert.False(t, caps.HandlesUserVerification, "no key provider verifies the user")
+	assert.False(t, adapter.HandlesUserVerificationFor(xkms.BackendTypeSoftware),
+		"a software credential never carries a backend UV claim (#1162)")
+	assert.False(t, adapter.HandlesUserVerificationFor("phone"))
+	assert.False(t, caps.HandlesUserPresence, "no key provider collects presence")
+	assert.False(t, adapter.HandlesUserPresenceFor(xkms.BackendTypeSoftware),
+		"a software credential always gets the local presence check (#1162)")
 }
 
 func TestBackendAdapter_RejectsInvalidRequests(t *testing.T) {

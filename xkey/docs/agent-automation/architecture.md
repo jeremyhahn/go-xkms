@@ -1,6 +1,6 @@
 # Agent Automation — Architecture
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## The problem
 
@@ -134,7 +134,12 @@ auto-grant at construction and drives ceremonies in-process.
   that requires verification will refuse it, as it should.
 - **The blast radius is the machine.** Anything that can reach the IPC socket
   while the authenticator is unlocked can use the credential. Filesystem
-  permissions on `$XDG_RUNTIME_DIR/xkey/xkey.sock` are the access control.
+  permissions on the socket's per-user `0700` directory are the access
+  control, and both ends enforce them: the server refuses a directory that is
+  a symlink, someone else's, or wider than `0700`, and the client additionally
+  refuses a listener whose kernel-reported uid is not the user's, root's, or
+  the `sudo` user's (`xkey/pkg/ipc/socketdir.go:51`, `xkey/pkg/ipc/peercred.go:26`;
+  #1117). There is no shared `/tmp` fallback path.
 - **There is no PIN value flag to put a PIN in the process list.** It existed
   through v0.9.x and was removed (go-xkms#272): `--pin-stdin` is the only
   form now, alongside `XKEY_PIN`.

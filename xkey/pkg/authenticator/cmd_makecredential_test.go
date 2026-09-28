@@ -1236,7 +1236,7 @@ func TestUserVerificationSatisfied(t *testing.T) {
 		req := &MakeCredentialRequest{
 			Options: map[string]bool{},
 		}
-		result := auth.userVerificationSatisfied(req)
+		result := auth.userVerificationSatisfied(req, false)
 		require.False(t, result)
 	})
 
@@ -1244,7 +1244,7 @@ func TestUserVerificationSatisfied(t *testing.T) {
 		req := &MakeCredentialRequest{
 			Options: map[string]bool{"uv": false},
 		}
-		result := auth.userVerificationSatisfied(req)
+		result := auth.userVerificationSatisfied(req, false)
 		require.False(t, result)
 	})
 
@@ -1255,7 +1255,7 @@ func TestUserVerificationSatisfied(t *testing.T) {
 			PINUVAuthParam:    []byte{1, 2, 3},
 			PINUVAuthProtocol: 1,
 		}
-		result := auth.userVerificationSatisfied(req)
+		result := auth.userVerificationSatisfied(req, false)
 		require.True(t, result)
 	})
 
@@ -1263,8 +1263,13 @@ func TestUserVerificationSatisfied(t *testing.T) {
 		req := &MakeCredentialRequest{
 			Options: map[string]bool{"uv": true},
 		}
-		result := auth.userVerificationSatisfied(req)
+		result := auth.userVerificationSatisfied(req, false)
 		require.False(t, result) // UV requires pinUvAuthParam; uv option alone is insufficient
+	})
+
+	t.Run("backend verified without pinUvAuthParam", func(t *testing.T) {
+		req := &MakeCredentialRequest{Options: map[string]bool{}}
+		require.True(t, auth.userVerificationSatisfied(req, true))
 	})
 }
 
@@ -1765,6 +1770,14 @@ func (m *mockAttestingKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilities
 	}
 }
 
+func (m *mockAttestingKeyBackend) HandlesUserVerificationFor(xkms.BackendType) bool {
+	return false
+}
+
+func (m *mockAttestingKeyBackend) HandlesUserPresenceFor(xkms.BackendType) bool {
+	return false
+}
+
 func (m *mockAttestingKeyBackend) GenerateCredentialKey(algorithm int, credentialID []byte) (keybackend.KeyHandle, []byte, error) {
 	return &mockKeyHandle{credID: credentialID, alg: algorithm}, []byte("mock-public-key-cose"), nil
 }
@@ -1845,6 +1858,14 @@ func (m *mockNonAttestingKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilit
 		SupportsAttestation: false,
 		HardwareBacked:      false,
 	}
+}
+
+func (m *mockNonAttestingKeyBackend) HandlesUserVerificationFor(xkms.BackendType) bool {
+	return false
+}
+
+func (m *mockNonAttestingKeyBackend) HandlesUserPresenceFor(xkms.BackendType) bool {
+	return false
 }
 
 func (m *mockNonAttestingKeyBackend) GenerateCredentialKey(algorithm int, credentialID []byte) (keybackend.KeyHandle, []byte, error) {
@@ -2636,6 +2657,14 @@ func (b *failingKeyGenBackend) Capabilities() keybackend.FIDO2KeyCapabilities {
 		SupportsExport:      true,
 		SupportsImport:      true,
 	}
+}
+
+func (b *failingKeyGenBackend) HandlesUserVerificationFor(xkms.BackendType) bool {
+	return false
+}
+
+func (b *failingKeyGenBackend) HandlesUserPresenceFor(xkms.BackendType) bool {
+	return false
 }
 
 func (b *failingKeyGenBackend) GenerateCredentialKey(_ int, _ []byte) (keybackend.KeyHandle, []byte, error) {

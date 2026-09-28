@@ -365,7 +365,7 @@ func TestPairingVerifier_PairingLockout_ExpiresAfterDuration(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPairingLocked)
 
 	// Simulate lockout expiry by setting lockUntil to the past.
-	v.pairingLockUntil.Store(time.Now().Add(-1 * time.Second).Unix())
+	expireLockout(t, v, pairingLimit)
 
 	// Should be able to start pairing again.
 	code, err := v.StartPairing(pubKey, testOrigin)
@@ -425,7 +425,7 @@ func TestPairingVerifier_VerifyLockout_ExpiresAfterDuration(t *testing.T) {
 	assert.ErrorIs(t, err, ErrIdentityLocked)
 
 	// Simulate lockout expiry.
-	v.verifyLockUntil.Store(time.Now().Add(-1 * time.Second).Unix())
+	expireLockout(t, v, verifyLimit)
 
 	// Should be able to verify again with correct credentials.
 	sig := signEphemeral(t, privKey, ephemeralKey, testOrigin)
@@ -527,13 +527,13 @@ func TestPairingVerifier_VerifyIdentity_SuccessResetsCounter(t *testing.T) {
 		verifyErr := v.VerifyIdentity(pubKey, badSig, ephemeralKey, testOrigin)
 		assert.ErrorIs(t, verifyErr, ErrIdentitySignature)
 	}
-	assert.Equal(t, int32(maxVerifyFailures-1), v.verifyFailures.Load())
+	assert.Equal(t, int32(maxVerifyFailures-1), limitFailures(t, v, verifyLimit))
 
 	// A successful verify should reset the counter.
 	sig := signEphemeral(t, privKey, ephemeralKey, testOrigin)
 	err = v.VerifyIdentity(pubKey, sig, ephemeralKey, testOrigin)
 	require.NoError(t, err)
-	assert.Equal(t, int32(0), v.verifyFailures.Load())
+	assert.Equal(t, int32(0), limitFailures(t, v, verifyLimit))
 }
 
 func TestPairingVerifier_VerifyParentProcess(t *testing.T) {
