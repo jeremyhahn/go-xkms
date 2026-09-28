@@ -51,7 +51,7 @@ Examples:
   xkey touch --password "DatabaseProd"
 
   # Custom socket path
-  xkey touch --socket /tmp/xkey.sock`,
+  xkey touch --socket "$XDG_RUNTIME_DIR/xkey/xkey.sock"`,
 	RunE: runTouch,
 }
 

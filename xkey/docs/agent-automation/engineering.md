@@ -1,6 +1,6 @@
 # Agent Automation — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Exported surface
 
@@ -439,7 +439,40 @@ in order:
 2. `<XKEY_HOME>/run/xkey.sock` when `XKEY_HOME` is set. If that path would exceed
    90 bytes (under the 104/108-byte `sun_path` limits), it uses a runtime-dir path
    keyed by a 12-hex SHA-256 of the absolute home.
-3. `$XDG_RUNTIME_DIR/xkey/xkey.sock`, or `/tmp/xkey-$UID/xkey.sock`.
+3. `<runtime dir>/xkey/xkey.sock`. `runtimeDirFor` (`socket.go:136`) picks
+   `$XDG_RUNTIME_DIR`; on macOS `$TMPDIR` (launchd's per-user `0700` directory),
+   then `~/Library/Caches`; elsewhere `~/.xkey/run`. Under `sudo` the home is the
+   invoking user's (`effectiveHomeDir`, `socket.go:162`), so `sudo xkey fido2` and
+   that user's clients resolve the same socket. With no home at all it returns
+   `""`, which `NewServer` and `Dial` refuse with `ErrSocketPathUnresolved`. There
+   is no `/tmp` fallback: a shared directory lets another local user create the
+   directory first and receive the PIN (#1117).
+
+The socket directory is checked on both ends (`xkey/pkg/ipc/socketdir.go`):
+
+- `NewServer` (`server.go:487`) calls `ensureSocketDir` (`socketdir.go:93`),
+  which creates each missing component with `Mkdir(0700)` and re-validates it
+  immediately, so losing a creation race to another user is refused rather than
+  trusted. An existing directory is validated, never chmoded or chowned. Only a
+  component it created is handed to the `sudo` user.
+- `validateSocketDir` (`socketdir.go:51`) `Lstat`s the directory: not a symlink,
+  a directory, owned by a `trustedUIDs` member, `Perm() == 0700`.
+- A stale socket is unlinked only through `reclaimSocket` (`socketdir.go:140`):
+  directory valid, file is a socket, owned by a trusted uid. A regular file at the
+  socket path is never deleted. The GUI takes over a live socket
+  (`xkey/pkg/gui/app.go:3330-3337`) only on `ErrSocketInUse` and only through
+  `ipc.ReclaimSocket`.
+- `ipc.Dial` (`client.go:273`) validates the directory, connects, then reads the
+  listener's uid with `peerUID` — `peercred_linux.go` (`SO_PEERCRED`),
+  `peercred_xucred.go` (`LOCAL_PEERCRED`, macOS and FreeBSD), and
+  `peercred_other.go`, which returns `ErrPeerCredentialsUnsupported` everywhere
+  else. The server does not check its clients' uids; the `0700` directory and
+  `0600` socket are its access control.
+
+Tests simulate "another user" without chown by passing a trusted-uid set that
+excludes the test's own uid (`socketdir_test.go` `foreignUIDs`, the
+`Client.trusted` field). `t.TempDir()` is `0777 &^ umask`, so tests that bind a
+socket in it chmod it to `0700` first (`privateDir` / `privateTempDir`).
 
 `extension install chrome --profile-dir <dir>` writes the manifest into
 `<dir>/NativeMessagingHosts/`. Its `path` points at a generated launcher,
