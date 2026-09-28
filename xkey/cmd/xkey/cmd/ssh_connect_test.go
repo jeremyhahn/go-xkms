@@ -120,8 +120,8 @@ func TestBuildLocalSSHArgs(t *testing.T) {
 func TestResolveSSHConnect_FlagsOnly(t *testing.T) {
 	withCLIHome(t)
 	cmd := newSSHConnectCmd(t)
-	_ = cmd.Flags().Set("port", "2222")
-	_ = cmd.Flags().Set("user", "deploy")
+	_ = setFlagForTest(t, cmd.Flags(), "port", "2222")
+	_ = setFlagForTest(t, cmd.Flags(), "user", "deploy")
 
 	r, err := resolveSSHConnect(cmd, []string{"server.example.com"})
 	if err != nil {
@@ -135,7 +135,7 @@ func TestResolveSSHConnect_FlagsOnly(t *testing.T) {
 func TestResolveSSHConnect_LocalFlagAndAlias(t *testing.T) {
 	withCLIHome(t)
 	cmd := newSSHConnectCmd(t)
-	_ = cmd.Flags().Set("ssh-config-alias", "bastion")
+	_ = setFlagForTest(t, cmd.Flags(), "ssh-config-alias", "bastion")
 
 	r, err := resolveSSHConnect(cmd, nil)
 	if err != nil {

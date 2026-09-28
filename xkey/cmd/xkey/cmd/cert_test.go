@@ -421,7 +421,7 @@ func TestRunCertRequest_MissingServer(t *testing.T) {
 
 func TestRunCertRequest_EmptyServer(t *testing.T) {
 	cmd := newCertRequestCmd(t)
-	require.NoError(t, cmd.Flags().Set("server", ""))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", ""))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -430,7 +430,7 @@ func TestRunCertRequest_EmptyServer(t *testing.T) {
 
 func TestRunCertRequest_MissingCN(t *testing.T) {
 	cmd := newCertRequestCmd(t)
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -439,8 +439,8 @@ func TestRunCertRequest_MissingCN(t *testing.T) {
 
 func TestRunCertRequest_EmptyCN(t *testing.T) {
 	cmd := newCertRequestCmd(t)
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-	require.NoError(t, cmd.Flags().Set("cn", ""))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", ""))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -449,9 +449,9 @@ func TestRunCertRequest_EmptyCN(t *testing.T) {
 
 func TestRunCertRequest_InvalidSlot(t *testing.T) {
 	cmd := newCertRequestCmd(t)
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-	require.NoError(t, cmd.Flags().Set("cn", "test-user"))
-	require.NoError(t, cmd.Flags().Set("slot", "invalid"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", "test-user"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", "invalid"))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -460,9 +460,9 @@ func TestRunCertRequest_InvalidSlot(t *testing.T) {
 
 func TestRunCertRequest_InvalidSlotNumeric(t *testing.T) {
 	cmd := newCertRequestCmd(t)
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-	require.NoError(t, cmd.Flags().Set("cn", "test-user"))
-	require.NoError(t, cmd.Flags().Set("slot", "99"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", "test-user"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", "99"))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -473,7 +473,7 @@ func TestRunCertRequest_InvalidSlotNumeric(t *testing.T) {
 
 func TestRunCertShow_InvalidSlot(t *testing.T) {
 	cmd := newCertShowCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", "invalid"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", "invalid"))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -482,7 +482,7 @@ func TestRunCertShow_InvalidSlot(t *testing.T) {
 
 func TestRunCertShow_InvalidSlotEmpty(t *testing.T) {
 	cmd := newCertShowCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", ""))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", ""))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -491,7 +491,7 @@ func TestRunCertShow_InvalidSlotEmpty(t *testing.T) {
 
 func TestRunCertShow_InvalidSlotNumeric(t *testing.T) {
 	cmd := newCertShowCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", "00"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", "00"))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -512,7 +512,7 @@ func TestRunCertExport_MissingFile(t *testing.T) {
 
 func TestRunCertExport_EmptyFile(t *testing.T) {
 	cmd := newCertExportCmd(t)
-	require.NoError(t, cmd.Flags().Set("file", ""))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "file", ""))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -520,8 +520,8 @@ func TestRunCertExport_EmptyFile(t *testing.T) {
 
 func TestRunCertExport_InvalidSlot(t *testing.T) {
 	cmd := newCertExportCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", "zz"))
-	require.NoError(t, cmd.Flags().Set("file", "/tmp/test-cert.pem"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", "zz"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "file", "/tmp/test-cert.pem"))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -530,8 +530,8 @@ func TestRunCertExport_InvalidSlot(t *testing.T) {
 
 func TestRunCertExport_InvalidSlotSpecialChars(t *testing.T) {
 	cmd := newCertExportCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", "!@"))
-	require.NoError(t, cmd.Flags().Set("file", "/tmp/test-cert.pem"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", "!@"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "file", "/tmp/test-cert.pem"))
 
 	err := cmd.RunE(cmd, nil)
 	assert.Error(t, err)
@@ -552,8 +552,8 @@ func TestRunCertRequest_ServerValidatedBeforeCN(t *testing.T) {
 
 func TestRunCertRequest_CNValidatedBeforeSlot(t *testing.T) {
 	cmd := newCertRequestCmd(t)
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-	require.NoError(t, cmd.Flags().Set("slot", "invalid"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", "invalid"))
 	// cn not set - cn should fail before slot validation
 
 	err := cmd.RunE(cmd, nil)
@@ -564,7 +564,7 @@ func TestRunCertRequest_CNValidatedBeforeSlot(t *testing.T) {
 
 func TestRunCertExport_SlotValidatedBeforeFile(t *testing.T) {
 	cmd := newCertExportCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", "invalid"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", "invalid"))
 	// file not set - slot should fail before file check
 
 	err := cmd.RunE(cmd, nil)

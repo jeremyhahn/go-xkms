@@ -22,6 +22,7 @@ import (
 // invocation passes count as changed.
 func runRPPolicySetArgs(t *testing.T, args ...string) {
 	t.Helper()
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 
 	_ = captureRPPolicyStdout(t, func() {

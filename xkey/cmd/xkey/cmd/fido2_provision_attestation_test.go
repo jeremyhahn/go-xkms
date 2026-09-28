@@ -453,6 +453,7 @@ func runProvisionAttestation(t *testing.T, extraArgs ...string) (string, error) 
 func runProvisionAttestationAs(t *testing.T, soPIN, socketPath string, extraArgs ...string) (string, error) {
 	t.Helper()
 
+	resetCommandFlagsForTest(t, RootCmd)
 	resetProvisionAttestationFlags()
 
 	restoreStdin := setPINStdin(strings.NewReader(soPIN + "\n"))

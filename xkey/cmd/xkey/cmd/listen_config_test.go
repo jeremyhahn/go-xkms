@@ -77,7 +77,7 @@ func TestListenerAddresses_FlagOverridesConfiguration(t *testing.T) {
 	withListenerConfig(t, "10.0.0.5:9443", "10.0.0.5:8444")
 
 	cmd := flagCmd("listen")
-	require.NoError(t, cmd.Flags().Set("listen", "[::1]:9443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "listen", "[::1]:9443"))
 	assert.Equal(t, "[::1]:9443", agentListenAddress(cmd))
 	assert.Equal(t, "[::1]:9443", relayListenAddress(cmd))
 

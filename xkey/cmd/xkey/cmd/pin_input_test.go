@@ -62,7 +62,7 @@ func TestResolvePINInputPrecedence(t *testing.T) {
 		stubStdin(t, []byte("from-stdin\n"), nil)
 
 		cmd := newPINCommand(t)
-		require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), pinFlagStdin, "true"))
 
 		pin, err := resolvePINInput(cmd)
 		require.NoError(t, err)
@@ -82,7 +82,7 @@ func TestResolvePINInputPrecedence(t *testing.T) {
 		stubStdin(t, []byte("123456\r\n"), nil)
 
 		cmd := newPINCommand(t)
-		require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), pinFlagStdin, "true"))
 
 		pin, err := resolvePINInput(cmd)
 		require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestResolvePINInputErrors(t *testing.T) {
 		stubStdin(t, []byte("\n"), nil)
 
 		cmd := newPINCommand(t)
-		require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), pinFlagStdin, "true"))
 
 		pin, err := resolvePINInput(cmd)
 		require.Error(t, err)
@@ -122,7 +122,7 @@ func TestResolvePINInputErrors(t *testing.T) {
 		stubStdin(t, nil, readErr)
 
 		cmd := newPINCommand(t)
-		require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), pinFlagStdin, "true"))
 
 		_, err := resolvePINInput(cmd)
 		require.Error(t, err)
@@ -164,7 +164,7 @@ func TestResolveUnlockPINAppliesItsOwnPolicy(t *testing.T) {
 		stubStdin(t, nil, errors.New("read: broken pipe"))
 
 		cmd := newPINCommand(t)
-		require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), pinFlagStdin, "true"))
 
 		_, err := resolveUnlockPIN(cmd)
 		require.Error(t, err)

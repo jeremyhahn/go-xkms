@@ -32,6 +32,7 @@ import (
 )
 
 func TestFIDO2Cmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	// Test via root command to properly route output
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
@@ -62,6 +63,7 @@ func TestFIDO2Cmd_Help(t *testing.T) {
 }
 
 func TestFIDO2Cmd_HelpNewFlags(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)

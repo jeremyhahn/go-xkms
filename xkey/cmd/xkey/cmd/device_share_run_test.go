@@ -50,7 +50,7 @@ func TestRunDeviceShare_DeviceNotFound(t *testing.T) {
 	require.NoError(t, saveDevicesConfig(&DevicesConfig{Devices: []PairedDevice{brokenNoiseKeyDevice("A")}}))
 
 	cmd := deviceShareTestCmd()
-	require.NoError(t, cmd.Flags().Set("device", "Nonexistent"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "device", "Nonexistent"))
 	err := runDeviceShare(cmd, []string{"software", "my-key"})
 	require.ErrorIs(t, err, ErrDeviceNotFound)
 }
@@ -66,7 +66,7 @@ func TestRunDeviceImport_DeviceNotFound(t *testing.T) {
 	require.NoError(t, saveDevicesConfig(&DevicesConfig{Devices: []PairedDevice{brokenNoiseKeyDevice("A")}}))
 
 	cmd := deviceImportTestCmd()
-	require.NoError(t, cmd.Flags().Set("device", "Nonexistent"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "device", "Nonexistent"))
 	err := runDeviceImport(cmd, []string{"my-key"})
 	require.ErrorIs(t, err, ErrDeviceNotFound)
 }

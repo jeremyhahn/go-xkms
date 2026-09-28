@@ -96,7 +96,7 @@ func TestOpenDeviceBarrier_WrongPasswordRefuses(t *testing.T) {
 	initDeviceBarrier(t, "correct-horse-battery-staple")
 
 	cmd := deviceBarrierCommand(t)
-	require.NoError(t, cmd.Flags().Set("barrier-password", "not-the-password"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", "not-the-password"))
 
 	_, _, err := openDeviceBarrier(cmd)
 
@@ -109,7 +109,7 @@ func TestOpenDeviceBarrier_CorrectPasswordFlagSucceeds(t *testing.T) {
 	initDeviceBarrier(t, "correct-horse-battery-staple")
 
 	cmd := deviceBarrierCommand(t)
-	require.NoError(t, cmd.Flags().Set("barrier-password", "correct-horse-battery-staple"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", "correct-horse-battery-staple"))
 
 	barrier, closeBarrier, err := openDeviceBarrier(cmd)
 	require.NoError(t, err)
@@ -212,7 +212,7 @@ func TestRunDeviceAttestDevice_RefusesWithWrongBarrierPassword(t *testing.T) {
 	initDeviceBarrier(t, "correct-horse-battery-staple")
 
 	cmd := attestDeviceCommand(t)
-	require.NoError(t, cmd.Flags().Set("barrier-password", "wrong"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", "wrong"))
 
 	err := runDeviceAttestDevice(cmd, nil)
 
@@ -240,7 +240,7 @@ func TestRunDeviceListen_RefusesWithWrongBarrierPassword(t *testing.T) {
 	initDeviceBarrier(t, "correct-horse-battery-staple")
 
 	cmd := listenCommand(t)
-	require.NoError(t, cmd.Flags().Set("barrier-password", "wrong"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", "wrong"))
 
 	err := runDeviceListen(cmd, nil)
 

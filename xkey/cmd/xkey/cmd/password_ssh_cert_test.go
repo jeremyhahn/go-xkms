@@ -104,7 +104,7 @@ func TestRunPasswordList_MasksSecretsByDefault(t *testing.T) {
 func TestRunPasswordList_ShowPasswordsRevealsSecret(t *testing.T) {
 	cmd, buf, store := passwordTestCmd(t)
 	addTestPassword(t, store, samplePassword("DatabaseProd"))
-	require.NoError(t, cmd.Flags().Set("show-passwords", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "show-passwords", "true"))
 
 	require.NoError(t, runPasswordList(cmd, nil))
 	assert.Contains(t, buf.String(), "Password:   s3cr3t-value")
@@ -140,13 +140,13 @@ func TestRunPasswordRemove_RequiresName(t *testing.T) {
 func TestRunPasswordRemove_ForceDeletes(t *testing.T) {
 	cmd, buf, store := passwordTestCmd(t)
 	addTestPassword(t, store, samplePassword("DatabaseProd"))
-	require.NoError(t, cmd.Flags().Set("force", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "force", "true"))
 
 	require.NoError(t, runPasswordRemove(cmd, []string{"DatabaseProd"}))
 	assert.Contains(t, buf.String(), "Removed: DatabaseProd")
 
 	listCmd, listBuf, _ := passwordTestCmd(t)
-	require.NoError(t, listCmd.Flags().Set("store", store))
+	require.NoError(t, setFlagForTest(t, listCmd.Flags(), "store", store))
 	require.NoError(t, runPasswordList(listCmd, nil))
 	assert.Contains(t, listBuf.String(), "No passwords found.")
 }
@@ -162,7 +162,7 @@ func TestRunPasswordRemove_DeclinedConfirmationKeepsPassword(t *testing.T) {
 	assert.Contains(t, out, "Skipped DatabaseProd")
 
 	listCmd, listBuf, _ := passwordTestCmd(t)
-	require.NoError(t, listCmd.Flags().Set("store", store))
+	require.NoError(t, setFlagForTest(t, listCmd.Flags(), "store", store))
 	require.NoError(t, runPasswordList(listCmd, nil))
 	assert.Contains(t, listBuf.String(), "DatabaseProd")
 }
@@ -176,7 +176,7 @@ func TestRunPasswordRemove_ConfirmedDeletion(t *testing.T) {
 	assert.Contains(t, buf.String(), "Removed: DatabaseProd")
 
 	listCmd, listBuf, _ := passwordTestCmd(t)
-	require.NoError(t, listCmd.Flags().Set("store", store))
+	require.NoError(t, setFlagForTest(t, listCmd.Flags(), "store", store))
 	require.NoError(t, runPasswordList(listCmd, nil))
 	assert.Contains(t, listBuf.String(), "No passwords found.")
 }
@@ -184,7 +184,7 @@ func TestRunPasswordRemove_ConfirmedDeletion(t *testing.T) {
 func TestRunPasswordRemove_UnknownNameIsSkippedNotFatal(t *testing.T) {
 	cmd, buf, store := passwordTestCmd(t)
 	addTestPassword(t, store, samplePassword("DatabaseProd"))
-	require.NoError(t, cmd.Flags().Set("force", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "force", "true"))
 
 	require.NoError(t, runPasswordRemove(cmd, []string{"absent", "DatabaseProd"}))
 	assert.Contains(t, buf.String(), "Removed: DatabaseProd")
@@ -240,7 +240,7 @@ func TestRunSSHProfileAdd_RequiresNameAndTarget(t *testing.T) {
 	assert.Contains(t, err.Error(), "--name and (--host or --ssh-config-alias) are required")
 	assert.True(t, errors.Is(err, ErrSSHProfileAddRequired))
 
-	require.NoError(t, cmd.Flags().Set("name", "bastion"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "bastion"))
 	err = runSSHProfileAdd(cmd, nil)
 	require.Error(t, err, "a profile with no host and no ssh-config alias points nowhere")
 }
@@ -249,12 +249,12 @@ func TestSSHProfiles_AddListGetMoveRemove(t *testing.T) {
 	withCLIHome(t)
 
 	add, addBuf := newSSHProfileTestCmd(t)
-	require.NoError(t, add.Flags().Set("name", "bastion"))
-	require.NoError(t, add.Flags().Set("host", "bastion.example.com"))
-	require.NoError(t, add.Flags().Set("user", "alice"))
-	require.NoError(t, add.Flags().Set("port", "2222"))
-	require.NoError(t, add.Flags().Set("key", "laptop"))
-	require.NoError(t, add.Flags().Set("notes", "jump host"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "name", "bastion"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "host", "bastion.example.com"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "user", "alice"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "port", "2222"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "key", "laptop"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "notes", "jump host"))
 	require.NoError(t, runSSHProfileAdd(add, nil))
 	assert.Contains(t, addBuf.String(), `Added SSH profile "bastion" (bastion.example.com)`)
 
@@ -274,12 +274,12 @@ func TestSSHProfiles_AddListGetMoveRemove(t *testing.T) {
 	assert.Contains(t, getOut, "Notes: jump host")
 
 	move, moveBuf := newSSHProfileTestCmd(t)
-	require.NoError(t, move.Flags().Set("folder", "prod"))
+	require.NoError(t, setFlagForTest(t, move.Flags(), "folder", "prod"))
 	require.NoError(t, runSSHProfileMove(move, []string{"bastion"}))
 	assert.Contains(t, moveBuf.String(), `Moved "bastion" to "prod"`)
 
 	byFolder, byFolderBuf := newSSHProfileTestCmd(t)
-	require.NoError(t, byFolder.Flags().Set("folder", "prod"))
+	require.NoError(t, setFlagForTest(t, byFolder.Flags(), "folder", "prod"))
 	require.NoError(t, runSSHProfileList(byFolder, nil))
 	assert.Contains(t, byFolderBuf.String(), "bastion")
 
@@ -296,9 +296,9 @@ func TestRunSSHProfileAdd_LocalIdentityImpliesLocalKeySource(t *testing.T) {
 	withCLIHome(t)
 
 	add, _ := newSSHProfileTestCmd(t)
-	require.NoError(t, add.Flags().Set("name", "legacy"))
-	require.NoError(t, add.Flags().Set("host", "legacy.example.com"))
-	require.NoError(t, add.Flags().Set("identity", "~/.ssh/id_ed25519"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "name", "legacy"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "host", "legacy.example.com"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "identity", "~/.ssh/id_ed25519"))
 	require.NoError(t, runSSHProfileAdd(add, nil))
 
 	store, err := xkeyProfileStore()
@@ -320,8 +320,8 @@ func TestRunSSHProfileAdd_SSHConfigAliasWithoutHostIsRejectedByTheStore(t *testi
 	withCLIHome(t)
 
 	add, _ := newSSHProfileTestCmd(t)
-	require.NoError(t, add.Flags().Set("name", "legacy"))
-	require.NoError(t, add.Flags().Set("ssh-config-alias", "legacy-host"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "name", "legacy"))
+	require.NoError(t, setFlagForTest(t, add.Flags(), "ssh-config-alias", "legacy-host"))
 
 	err := runSSHProfileAdd(add, nil)
 	require.Error(t, err)
@@ -383,7 +383,7 @@ func TestRunCertShow_MissingCertificate(t *testing.T) {
 	withFilePIVStorage(t)
 
 	cmd, _ := certTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", string(xkms.PIVSlotAuthentication)))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", string(xkms.PIVSlotAuthentication)))
 
 	err := runCertShow(cmd, nil)
 	require.Error(t, err)
@@ -399,7 +399,7 @@ func TestRunCertShow_RendersStoredCertificate(t *testing.T) {
 	require.NoError(t, storage.Close())
 
 	cmd, buf := certTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", string(xkms.PIVSlotAuthentication)))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", string(xkms.PIVSlotAuthentication)))
 	require.NoError(t, runCertShow(cmd, nil))
 
 	out := buf.String()
@@ -417,7 +417,7 @@ func TestRunCertShow_RejectsInvalidSlot(t *testing.T) {
 	withFilePIVStorage(t)
 
 	cmd, _ := certTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", "zz"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", "zz"))
 	assert.Error(t, runCertShow(cmd, nil))
 }
 
@@ -425,7 +425,7 @@ func TestRunCertExport_RequiresFile(t *testing.T) {
 	withFilePIVStorage(t)
 
 	cmd, _ := certTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", string(xkms.PIVSlotAuthentication)))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", string(xkms.PIVSlotAuthentication)))
 	assert.ErrorIs(t, runCertExport(cmd, nil), ErrCertFileRequired)
 }
 
@@ -439,8 +439,8 @@ func TestRunCertExport_WritesPrivatePEM(t *testing.T) {
 
 	target := filepath.Join(t.TempDir(), "client.pem")
 	cmd, buf := certTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", string(xkms.PIVSlotAuthentication)))
-	require.NoError(t, cmd.Flags().Set("file", target))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", string(xkms.PIVSlotAuthentication)))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "file", target))
 
 	require.NoError(t, runCertExport(cmd, nil))
 	assert.Contains(t, buf.String(), "Certificate exported from slot")
@@ -465,8 +465,8 @@ func TestRunCertExport_MissingCertificate(t *testing.T) {
 	withFilePIVStorage(t)
 
 	cmd, _ := certTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", string(xkms.PIVSlotAuthentication)))
-	require.NoError(t, cmd.Flags().Set("file", filepath.Join(t.TempDir(), "out.pem")))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", string(xkms.PIVSlotAuthentication)))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "file", filepath.Join(t.TempDir(), "out.pem")))
 
 	err := runCertExport(cmd, nil)
 	require.Error(t, err)
@@ -485,8 +485,8 @@ func TestRunCertExport_ReportsUnwritableTarget(t *testing.T) {
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
 
 	cmd, _ := certTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("slot", string(xkms.PIVSlotAuthentication)))
-	require.NoError(t, cmd.Flags().Set("file", filepath.Join(blocker, "out.pem")))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", string(xkms.PIVSlotAuthentication)))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "file", filepath.Join(blocker, "out.pem")))
 
 	err = runCertExport(cmd, nil)
 	require.Error(t, err)
@@ -497,9 +497,9 @@ func TestRunCertRequest_RejectsMissingSPKIPin(t *testing.T) {
 	withFilePIVStorage(t)
 
 	cmd, _ := certTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("server", "https://ca.example.com"))
-	require.NoError(t, cmd.Flags().Set("cn", "alice"))
-	require.NoError(t, cmd.Flags().Set("slot", string(xkms.PIVSlotAuthentication)))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://ca.example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", "alice"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "slot", string(xkms.PIVSlotAuthentication)))
 
 	err := runCertRequest(cmd, nil)
 	require.Error(t, err)

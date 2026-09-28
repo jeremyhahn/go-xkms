@@ -28,7 +28,7 @@ import (
 // this never touches os.Stdin.
 func TestSecretServiceUnlockFunc_FlagPassword(t *testing.T) {
 	cmd := newSecretServicePasswordTestCmd()
-	require.NoError(t, cmd.Flags().Set("barrier-password", "unlock-me"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", "unlock-me"))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 
@@ -41,7 +41,7 @@ func TestSecretServiceUnlockFunc_FlagPassword(t *testing.T) {
 
 func TestSecretServiceUnlockFunc_FileReadFailurePropagates(t *testing.T) {
 	cmd := newSecretServicePasswordTestCmd()
-	require.NoError(t, cmd.Flags().Set("barrier-password-file", filepath.Join(t.TempDir(), "missing.txt")))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password-file", filepath.Join(t.TempDir(), "missing.txt")))
 
 	unlock := secretServiceUnlockFunc(cmd)
 	_, err := unlock(context.Background())

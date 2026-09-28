@@ -101,7 +101,7 @@ func TestRunSharePolicySet_CreatesTheXKeyHome(t *testing.T) {
 	t.Cleanup(func() { resolvedHome = previous })
 
 	set, _ := sharePolicyCmd(t)
-	require.NoError(t, set.Flags().Set("allow", "true"))
+	require.NoError(t, setFlagForTest(t, set.Flags(), "allow", "true"))
 	require.NoError(t, runSharePolicySet(set, []string{"tpm2", "key-abc"}))
 
 	info, err := os.Stat(filepath.Join(home, ".xkey"))
@@ -123,7 +123,7 @@ func TestRunSharePolicySet_FailsWhenXKeyHomeUnwritable(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(xkeyHome, 0700) })
 
 	set, _ := sharePolicyCmd(t)
-	require.NoError(t, set.Flags().Set("allow", "true"))
+	require.NoError(t, setFlagForTest(t, set.Flags(), "allow", "true"))
 
 	err := runSharePolicySet(set, []string{"tpm2", "key-abc"})
 	require.Error(t, err)
@@ -140,9 +140,9 @@ func TestSharePolicy_SetListRemove(t *testing.T) {
 	assert.Contains(t, listBuf.String(), "No sharing policies configured.")
 
 	set, setBuf := sharePolicyCmd(t)
-	require.NoError(t, set.Flags().Set("allow", "true"))
-	require.NoError(t, set.Flags().Set("share-public", "true"))
-	require.NoError(t, set.Flags().Set("devices", "phone-1,phone-2"))
+	require.NoError(t, setFlagForTest(t, set.Flags(), "allow", "true"))
+	require.NoError(t, setFlagForTest(t, set.Flags(), "share-public", "true"))
+	require.NoError(t, setFlagForTest(t, set.Flags(), "devices", "phone-1,phone-2"))
 	require.NoError(t, runSharePolicySet(set, []string{"tpm2", "key-abc"}))
 
 	setOut := setBuf.String()
@@ -174,7 +174,7 @@ func TestSharePolicy_SetWithoutDevicesAllowsAnyPairedDevice(t *testing.T) {
 	withSharePolicyHome(t)
 
 	set, setBuf := sharePolicyCmd(t)
-	require.NoError(t, set.Flags().Set("allow", "true"))
+	require.NoError(t, setFlagForTest(t, set.Flags(), "allow", "true"))
 	require.NoError(t, runSharePolicySet(set, []string{"software", "key-xyz"}))
 	assert.Contains(t, setBuf.String(), "Allowed Devices:   (any paired device)")
 

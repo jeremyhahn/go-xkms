@@ -77,7 +77,7 @@ func TestServeEnterprisePolicy_SealedAndVerifiedIsHonouredPermissively(t *testin
 	cfg := relaxedExtensionConfig()
 	configDir := sealServePolicy(t, cfg, testSOPIN)
 	cmd := newTestServeCmd()
-	require.NoError(t, cmd.Flags().Set(soPINFlagStdin, "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), soPINFlagStdin, "true"))
 	stubStdin(t, []byte(testSOPIN+"\n"), nil)
 
 	pol, err := serveEnterprisePolicy(cmd, cfg, configDir, discardLogger())
@@ -122,7 +122,7 @@ func TestServeEnterprisePolicy_EmptyStdinIsReported(t *testing.T) {
 	cfg := relaxedExtensionConfig()
 	configDir := sealServePolicy(t, cfg, testSOPIN)
 	cmd := newTestServeCmd()
-	require.NoError(t, cmd.Flags().Set(soPINFlagStdin, "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), soPINFlagStdin, "true"))
 	stubStdin(t, []byte(""), nil)
 
 	pol, err := serveEnterprisePolicy(cmd, cfg, configDir, discardLogger())

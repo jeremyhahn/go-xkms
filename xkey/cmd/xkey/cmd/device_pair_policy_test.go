@@ -139,7 +139,7 @@ func TestResolvePairingPolicy_SealedWithoutPINIsNotConsulted(t *testing.T) {
 func TestResolvePairingPolicy_SealedAndVerifiedIsHonouredOpen(t *testing.T) {
 	cfg := lockedOpenConfig()
 	cmd := newPairingPolicyFixture(t, cfg, testSOPIN)
-	require.NoError(t, cmd.Flags().Set(soPINFlagStdin, "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), soPINFlagStdin, "true"))
 	stubStdin(t, []byte(testSOPIN+"\n"), nil)
 
 	policy, err := resolvePairingPolicy(cmd, cfg, discardLogger())
@@ -157,7 +157,7 @@ func TestResolvePairingPolicy_SealedAndVerifiedIsHonouredOpen(t *testing.T) {
 func TestResolvePairingPolicy_SealedTamperedPermissivelyIsRefused(t *testing.T) {
 	sealed := xkeyconfig.DefaultConfig()
 	cmd := newPairingPolicyFixture(t, sealed, testSOPIN)
-	require.NoError(t, cmd.Flags().Set(soPINFlagStdin, "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), soPINFlagStdin, "true"))
 	stubStdin(t, []byte(testSOPIN+"\n"), nil)
 
 	tampered := lockedOpenConfig()
@@ -186,7 +186,7 @@ func TestResolvePairingPolicy_SealedWithWrongPINIsRefused(t *testing.T) {
 func TestResolvePairingPolicy_EmptyStdinIsReported(t *testing.T) {
 	cfg := lockedOpenConfig()
 	cmd := newPairingPolicyFixture(t, cfg, testSOPIN)
-	require.NoError(t, cmd.Flags().Set(soPINFlagStdin, "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), soPINFlagStdin, "true"))
 	stubStdin(t, []byte(""), nil)
 
 	policy, err := resolvePairingPolicy(cmd, cfg, discardLogger())

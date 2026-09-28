@@ -59,7 +59,7 @@ func newTestServeCmd() *cobra.Command {
 
 func TestResolveBarrierPassword_Flag(t *testing.T) {
 	cmd := newTestServeCmd()
-	if err := cmd.Flags().Set("barrier-password", "test-flag-pw"); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "barrier-password", "test-flag-pw"); err != nil {
 		t.Fatal(err)
 	}
 	// Clear env to avoid interference.
@@ -94,7 +94,7 @@ func TestResolveBarrierPassword_File(t *testing.T) {
 	}
 
 	cmd := newTestServeCmd()
-	if err := cmd.Flags().Set("barrier-password-file", tmpFile); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "barrier-password-file", tmpFile); err != nil {
 		t.Fatal(err)
 	}
 	// Clear env to avoid interference.
@@ -111,7 +111,7 @@ func TestResolveBarrierPassword_File(t *testing.T) {
 
 func TestResolveBarrierPassword_FileNotExist(t *testing.T) {
 	cmd := newTestServeCmd()
-	if err := cmd.Flags().Set("barrier-password-file", "/nonexistent/path/file.txt"); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "barrier-password-file", "/nonexistent/path/file.txt"); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("XKEY_BARRIER_PASSWORD", "")
@@ -132,10 +132,10 @@ func TestResolveBarrierPassword_Priority_FlagOverFile(t *testing.T) {
 	}
 
 	cmd := newTestServeCmd()
-	if err := cmd.Flags().Set("barrier-password", "flag-pw"); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "barrier-password", "flag-pw"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Flags().Set("barrier-password-file", tmpFile); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "barrier-password-file", tmpFile); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("XKEY_BARRIER_PASSWORD", "env-pw")
@@ -156,7 +156,7 @@ func TestResolveBarrierPassword_Priority_FileOverEnv(t *testing.T) {
 	}
 
 	cmd := newTestServeCmd()
-	if err := cmd.Flags().Set("barrier-password-file", tmpFile); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "barrier-password-file", tmpFile); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("XKEY_BARRIER_PASSWORD", "env-pw")
@@ -187,7 +187,7 @@ func TestResolveBarrierPassword_FileTrimsWhitespace(t *testing.T) {
 	}
 
 	cmd := newTestServeCmd()
-	if err := cmd.Flags().Set("barrier-password-file", tmpFile); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "barrier-password-file", tmpFile); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("XKEY_BARRIER_PASSWORD", "")
@@ -291,10 +291,10 @@ func TestCreateServeLogger_Stderr(t *testing.T) {
 func TestCreateServeLogger_File(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "test.log")
 	cmd := newTestServeCmd()
-	if err := cmd.Flags().Set("log-file", logPath); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "log-file", logPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Flags().Set("log-level", "debug"); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "log-level", "debug"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -324,7 +324,7 @@ func TestCreateServeLogger_File(t *testing.T) {
 
 func TestCreateServeLogger_BadPath(t *testing.T) {
 	cmd := newTestServeCmd()
-	if err := cmd.Flags().Set("log-file", "/nonexistent-dir/test.log"); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "log-file", "/nonexistent-dir/test.log"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -883,10 +883,10 @@ func TestNewTestServeCmd_HasNewFlags(t *testing.T) {
 	}
 
 	// Verify flags can be set.
-	if err := cmd.Flags().Set("no-auth", "true"); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "no-auth", "true"); err != nil {
 		t.Fatalf("failed to set --no-auth: %v", err)
 	}
-	if err := cmd.Flags().Set("no-pairing", "true"); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "no-pairing", "true"); err != nil {
 		t.Fatalf("failed to set --no-pairing: %v", err)
 	}
 

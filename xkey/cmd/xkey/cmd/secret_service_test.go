@@ -35,7 +35,7 @@ func newSecretServicePasswordTestCmd() *cobra.Command {
 
 func TestResolveSecretServicePassword_Flag(t *testing.T) {
 	c := newSecretServicePasswordTestCmd()
-	require.NoError(t, c.Flags().Set("barrier-password", "flag-password"))
+	require.NoError(t, setFlagForTest(t, c.Flags(), "barrier-password", "flag-password"))
 
 	password, err := resolveSecretServicePassword(c)
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestResolveSecretServicePassword_File(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("file-password\n"), 0600))
 
 	c := newSecretServicePasswordTestCmd()
-	require.NoError(t, c.Flags().Set("barrier-password-file", path))
+	require.NoError(t, setFlagForTest(t, c.Flags(), "barrier-password-file", path))
 
 	password, err := resolveSecretServicePassword(c)
 	require.NoError(t, err)
@@ -57,7 +57,7 @@ func TestResolveSecretServicePassword_File(t *testing.T) {
 
 func TestResolveSecretServicePassword_FileMissing(t *testing.T) {
 	c := newSecretServicePasswordTestCmd()
-	require.NoError(t, c.Flags().Set("barrier-password-file", filepath.Join(t.TempDir(), "nonexistent")))
+	require.NoError(t, setFlagForTest(t, c.Flags(), "barrier-password-file", filepath.Join(t.TempDir(), "nonexistent")))
 
 	_, err := resolveSecretServicePassword(c)
 	require.Error(t, err)
@@ -86,7 +86,7 @@ func TestResolveSecretServicePassword_FlagTakesPrecedenceOverEnv(t *testing.T) {
 	t.Setenv("XKEY_BARRIER_PASSWORD", "env-password")
 
 	c := newSecretServicePasswordTestCmd()
-	require.NoError(t, c.Flags().Set("barrier-password", "flag-password"))
+	require.NoError(t, setFlagForTest(t, c.Flags(), "barrier-password", "flag-password"))
 
 	password, err := resolveSecretServicePassword(c)
 	require.NoError(t, err)

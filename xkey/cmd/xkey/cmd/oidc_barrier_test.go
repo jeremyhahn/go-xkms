@@ -107,7 +107,7 @@ func TestOpenOIDCTokenStore_BarrierInitialized_WritesCiphertextNotPlaintext(t *t
 	dataDir := initTestOATHBarrier(t, home, password)
 
 	saveCmd, _ := newDetachedOIDCCmd(t, oidcTokenCmd)
-	require.NoError(t, saveCmd.Flags().Set("barrier-password", password))
+	require.NoError(t, setFlagForTest(t, saveCmd.Flags(), "barrier-password", password))
 
 	tok := mustOIDCStoredToken(t, "", "https://example.okta.com", "client",
 		"secret-access-token", "secret-refresh-token", "", time.Now().Add(time.Hour), nil)
@@ -124,7 +124,7 @@ func TestOpenOIDCTokenStore_BarrierInitialized_WritesCiphertextNotPlaintext(t *t
 	// A second, independent CLI invocation (its own BarrierService, exactly
 	// like a separate process) must unseal and read the token back.
 	loadCmd, _ := newDetachedOIDCCmd(t, oidcTokenCmd)
-	require.NoError(t, loadCmd.Flags().Set("barrier-password", password))
+	require.NoError(t, setFlagForTest(t, loadCmd.Flags(), "barrier-password", password))
 
 	loaded, err := loadToken(loadCmd, defaultOIDCTokenStorePath)
 	require.NoError(t, err)
@@ -139,7 +139,7 @@ func TestOpenOIDCTokenStore_BarrierWrongPassword_TypedRefusal(t *testing.T) {
 	initTestOATHBarrier(t, home, "correct-password")
 
 	cmd, _ := newDetachedOIDCCmd(t, oidcTokenCmd)
-	require.NoError(t, cmd.Flags().Set("barrier-password", "wrong-password"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", "wrong-password"))
 
 	_, err := loadToken(cmd, defaultOIDCTokenStorePath)
 	require.Error(t, err)
@@ -170,7 +170,7 @@ func TestOpenOIDCTokenStore_ExplicitTokenStoreFlagBypassesBarrier(t *testing.T) 
 
 	store := filepath.Join(t.TempDir(), "tokens.json")
 	cmd, _ := newDetachedOIDCCmd(t, oidcTokenCmd)
-	require.NoError(t, cmd.Flags().Set("token-store", store))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "token-store", store))
 
 	tok := mustOIDCStoredToken(t, "", "https://explicit.example.com", "client",
 		"explicit-access", "", "", time.Now().Add(time.Hour), nil)
@@ -218,7 +218,7 @@ func TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick(t *testing.T
 	defer server.Close()
 
 	cmd, _ := newDetachedOIDCCmd(t, oidcTokenCmd)
-	require.NoError(t, cmd.Flags().Set("barrier-password", password))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", password))
 
 	store, err := openOIDCTokenStore(cmd, defaultOIDCTokenStorePath)
 	require.NoError(t, err)
@@ -230,7 +230,7 @@ func TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick(t *testing.T
 
 	// store is already open; any later resolveBarrierPassword call would see
 	// this wrong password instead of the one that unsealed the barrier above.
-	require.NoError(t, cmd.Flags().Set("barrier-password", "now-the-wrong-password"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", "now-the-wrong-password"))
 
 	var buf bytes.Buffer
 	stop := make(chan struct{})

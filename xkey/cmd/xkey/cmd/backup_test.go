@@ -575,8 +575,8 @@ func TestBackupRestore_FileNotFound(t *testing.T) {
 	var buf bytes.Buffer
 	backupRestoreCmd.SetOut(&buf)
 
-	require.NoError(t, backupRestoreCmd.Flags().Set("password", "test"))
-	require.NoError(t, backupRestoreCmd.Flags().Set("key", ""))
+	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "password", "test"))
+	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "key", ""))
 
 	err := runBackupRestore(backupRestoreCmd, []string{"/nonexistent/backup.xkb"})
 	assert.Error(t, err)
@@ -592,8 +592,8 @@ func TestBackupRestore_NoKey(t *testing.T) {
 	var buf bytes.Buffer
 	backupRestoreCmd.SetOut(&buf)
 
-	require.NoError(t, backupRestoreCmd.Flags().Set("password", ""))
-	require.NoError(t, backupRestoreCmd.Flags().Set("key", ""))
+	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "password", ""))
+	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "key", ""))
 
 	err = runBackupRestore(backupRestoreCmd, []string{backupFile})
 	assert.Error(t, err)
@@ -689,8 +689,8 @@ func TestBackupRestore_InvalidJSON(t *testing.T) {
 	var buf bytes.Buffer
 	backupRestoreCmd.SetOut(&buf)
 
-	require.NoError(t, backupRestoreCmd.Flags().Set("password", "test"))
-	require.NoError(t, backupRestoreCmd.Flags().Set("key", ""))
+	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "password", "test"))
+	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "key", ""))
 
 	err = runBackupRestore(backupRestoreCmd, []string{backupFile})
 	assert.Error(t, err)
@@ -701,8 +701,8 @@ func TestBackupContents_FileNotFound(t *testing.T) {
 	var buf bytes.Buffer
 	backupContentsCmd.SetOut(&buf)
 
-	require.NoError(t, backupContentsCmd.Flags().Set("password", "test"))
-	require.NoError(t, backupContentsCmd.Flags().Set("key", ""))
+	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "password", "test"))
+	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "key", ""))
 
 	err := runBackupContents(backupContentsCmd, []string{"/nonexistent/backup.xkb"})
 	assert.Error(t, err)
@@ -718,8 +718,8 @@ func TestBackupContents_NoKey(t *testing.T) {
 	var buf bytes.Buffer
 	backupContentsCmd.SetOut(&buf)
 
-	require.NoError(t, backupContentsCmd.Flags().Set("password", ""))
-	require.NoError(t, backupContentsCmd.Flags().Set("key", ""))
+	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "password", ""))
+	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "key", ""))
 
 	err = runBackupContents(backupContentsCmd, []string{backupFile})
 	assert.Error(t, err)
@@ -801,8 +801,8 @@ func TestBackupContents_InvalidJSON(t *testing.T) {
 	var buf bytes.Buffer
 	backupContentsCmd.SetOut(&buf)
 
-	require.NoError(t, backupContentsCmd.Flags().Set("password", "test"))
-	require.NoError(t, backupContentsCmd.Flags().Set("key", ""))
+	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "password", "test"))
+	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "key", ""))
 
 	err = runBackupContents(backupContentsCmd, []string{backupFile})
 	assert.Error(t, err)

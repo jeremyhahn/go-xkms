@@ -122,6 +122,7 @@ func seedPolicy(t *testing.T, store pcrpolicy.PolicyStore, name string) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 
 	buf := new(bytes.Buffer)
@@ -146,6 +147,7 @@ func TestPolicyCmd_Help(t *testing.T) {
 }
 
 func TestPolicyCmd_HelpContainsExamples(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 
 	buf := new(bytes.Buffer)
@@ -249,6 +251,7 @@ func TestPolicyErrors_AreDistinct(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyCreate_MissingName(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -267,6 +270,7 @@ func TestPolicyCreate_MissingName(t *testing.T) {
 }
 
 func TestPolicyCreate_MissingPCRs(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -282,6 +286,7 @@ func TestPolicyCreate_MissingPCRs(t *testing.T) {
 }
 
 func TestPolicyCreate_InvalidBank(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -301,6 +306,7 @@ func TestPolicyCreate_InvalidBank(t *testing.T) {
 }
 
 func TestPolicyCreate_InvalidPCRIndex(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -326,6 +332,7 @@ func TestPolicyCreate_InvalidPCRIndex(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyList_EmptyStore(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -346,6 +353,7 @@ func TestPolicyList_EmptyStore(t *testing.T) {
 }
 
 func TestPolicyList_WithPolicies(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 
@@ -375,6 +383,7 @@ func TestPolicyList_WithPolicies(t *testing.T) {
 }
 
 func TestPolicyList_AutoUnsealTag(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 	ctx := context.Background()
@@ -403,6 +412,7 @@ func TestPolicyList_AutoUnsealTag(t *testing.T) {
 }
 
 func TestPolicyList_Paginated(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 
@@ -427,6 +437,7 @@ func TestPolicyList_Paginated(t *testing.T) {
 }
 
 func TestPolicyList_PaginatedEmpty(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -451,6 +462,7 @@ func TestPolicyList_PaginatedEmpty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyGet_Existing(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 
@@ -479,6 +491,7 @@ func TestPolicyGet_Existing(t *testing.T) {
 }
 
 func TestPolicyGet_AutoUnsealTag(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 	ctx := context.Background()
@@ -506,6 +519,7 @@ func TestPolicyGet_AutoUnsealTag(t *testing.T) {
 }
 
 func TestPolicyGet_NotFound(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -521,6 +535,7 @@ func TestPolicyGet_NotFound(t *testing.T) {
 }
 
 func TestPolicyGet_MissingName(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -543,6 +558,7 @@ func TestPolicyGet_MissingName(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyDelete_Existing(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 
@@ -571,6 +587,7 @@ func TestPolicyDelete_Existing(t *testing.T) {
 }
 
 func TestPolicyDelete_NotFound(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -586,6 +603,7 @@ func TestPolicyDelete_NotFound(t *testing.T) {
 }
 
 func TestPolicyDelete_MissingName(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -601,6 +619,7 @@ func TestPolicyDelete_MissingName(t *testing.T) {
 }
 
 func TestPolicyDelete_AutoUnsealProtection(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 	ctx := context.Background()
@@ -629,6 +648,7 @@ func TestPolicyDelete_AutoUnsealProtection(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicySetAutoUnseal_Success(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 
@@ -660,6 +680,7 @@ func TestPolicySetAutoUnseal_Success(t *testing.T) {
 }
 
 func TestPolicySetAutoUnseal_NotFound(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -675,6 +696,7 @@ func TestPolicySetAutoUnseal_NotFound(t *testing.T) {
 }
 
 func TestPolicySetAutoUnseal_MissingName(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -690,6 +712,7 @@ func TestPolicySetAutoUnseal_MissingName(t *testing.T) {
 }
 
 func TestPolicySetAutoUnseal_Replaces(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 	ctx := context.Background()
@@ -737,6 +760,7 @@ func TestPolicySetAutoUnseal_Replaces(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyClearAutoUnseal_Success(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 	ctx := context.Background()
@@ -772,6 +796,7 @@ func TestPolicyClearAutoUnseal_Success(t *testing.T) {
 }
 
 func TestPolicyClearAutoUnseal_NoneSet(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -792,6 +817,7 @@ func TestPolicyClearAutoUnseal_NoneSet(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyRefresh_NotFound(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -807,6 +833,7 @@ func TestPolicyRefresh_NotFound(t *testing.T) {
 }
 
 func TestPolicyRefresh_MissingName(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -826,6 +853,7 @@ func TestPolicyRefresh_MissingName(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyVerify_NotFound(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -841,6 +869,7 @@ func TestPolicyVerify_NotFound(t *testing.T) {
 }
 
 func TestPolicyVerify_MissingName(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -860,6 +889,7 @@ func TestPolicyVerify_MissingName(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyExport_Existing(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 
@@ -892,6 +922,7 @@ func TestPolicyExport_Existing(t *testing.T) {
 }
 
 func TestPolicyExport_ValidJSON(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 
@@ -921,6 +952,7 @@ func TestPolicyExport_ValidJSON(t *testing.T) {
 }
 
 func TestPolicyExport_NotFound(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -936,6 +968,7 @@ func TestPolicyExport_NotFound(t *testing.T) {
 }
 
 func TestPolicyExport_MissingName(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	_ = newTestPolicyStore(t)
 
@@ -1241,6 +1274,7 @@ func TestOpenPolicyStore_UnresolvableHomeIsError(t *testing.T) {
 // that is not a device node at all, so the failure is a plain ENOENT open
 // error and no real TPM is ever touched.
 func TestPolicyCreate_NoTPMFailsWithCreateError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	newTestPolicyStore(t)
 
@@ -1257,6 +1291,7 @@ func TestPolicyCreate_NoTPMFailsWithCreateError(t *testing.T) {
 }
 
 func TestPolicyRefresh_StoreOpenFailurePropagates(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 
 	sentinel := errors.New("boom: store unavailable")
@@ -1275,6 +1310,7 @@ func TestPolicyRefresh_StoreOpenFailurePropagates(t *testing.T) {
 }
 
 func TestPolicyVerify_StoreOpenFailurePropagates(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 
 	sentinel := errors.New("boom: store unavailable")
@@ -1300,6 +1336,7 @@ func TestPolicyVerify_StoreOpenFailurePropagates(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyRefresh_FoundButNoTPMFailsWithRefreshError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 	seedPolicy(t, store, "boot-policy")
@@ -1316,6 +1353,7 @@ func TestPolicyRefresh_FoundButNoTPMFailsWithRefreshError(t *testing.T) {
 }
 
 func TestPolicyVerify_FoundButNoTPMFailsWithVerifyError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPolicyFlags()
 	store := newTestPolicyStore(t)
 	seedPolicy(t, store, "boot-policy")

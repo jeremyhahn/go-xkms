@@ -92,10 +92,10 @@ func TestRunCertRequest_Success(t *testing.T) {
 
 	cmd := newCertRequestCmd(t)
 	cmd.SetContext(context.Background())
-	require.NoError(t, cmd.Flags().Set("server", baseURL))
-	require.NoError(t, cmd.Flags().Set("cn", "requester@example.com"))
-	require.NoError(t, cmd.Flags().Set("spki-pin", pin))
-	require.NoError(t, cmd.Flags().Set("profile", "client"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", baseURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", "requester@example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "spki-pin", pin))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "profile", "client"))
 
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -123,9 +123,9 @@ func TestRunCertRequest_WrongSPKIPinFailsClosed(t *testing.T) {
 
 	cmd := newCertRequestCmd(t)
 	cmd.SetContext(context.Background())
-	require.NoError(t, cmd.Flags().Set("server", baseURL))
-	require.NoError(t, cmd.Flags().Set("cn", "wrongpin@example.com"))
-	require.NoError(t, cmd.Flags().Set("spki-pin", "0000000000000000000000000000000000000000000000000000000000000000"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", baseURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", "wrongpin@example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "spki-pin", "0000000000000000000000000000000000000000000000000000000000000000"))
 
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)

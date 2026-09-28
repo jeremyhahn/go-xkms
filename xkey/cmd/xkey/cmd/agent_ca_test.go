@@ -442,11 +442,11 @@ func TestAgentCertProfile(t *testing.T) {
 		t.Errorf("agentCertProfile default = %q, want %q", got, agentCertProfileDefault)
 	}
 
-	if err := agentStartCmd.Flags().Set("cert-profile", "idevid"); err != nil {
+	if err := setFlagForTest(t, agentStartCmd.Flags(), "cert-profile", "idevid"); err != nil {
 		t.Fatalf("set cert-profile: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := agentStartCmd.Flags().Set("cert-profile", agentCertProfileDefault); err != nil {
+		if err := setFlagForTest(t, agentStartCmd.Flags(), "cert-profile", agentCertProfileDefault); err != nil {
 			t.Errorf("restore cert-profile: %v", err)
 		}
 	})

@@ -22,6 +22,7 @@ import (
 )
 
 func TestOATHCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -76,6 +77,7 @@ func TestOATHCmd_SubcommandRegistration(t *testing.T) {
 // at the function level.
 
 func TestOATHGenerateCmd_NoArgs(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	storePath := filepath.Join(os.TempDir(), "oath-test-generate-empty.json")
 	defer os.Remove(storePath)
 
@@ -91,6 +93,7 @@ func TestOATHGenerateCmd_NoArgs(t *testing.T) {
 }
 
 func TestOATHRemoveCmd_NoArgs(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	storePath := filepath.Join(os.TempDir(), "oath-test-remove-empty.json")
 	defer os.Remove(storePath)
 

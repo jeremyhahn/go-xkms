@@ -101,9 +101,9 @@ func TestRunAuthRegister_CarriesPINToTheAuthenticator(t *testing.T) {
 		installAuthDoubles(t, newPINRegisterClient(), ceremony, nil)
 
 		cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
-		require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-		require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
-		require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), pinFlagStdin, "true"))
 
 		require.NoError(t, runAuthRegister(cmd, nil))
 		assert.Equal(t, "123456", pinString(t, ceremony.pin), "the PIN must reach the authenticator")
@@ -117,8 +117,8 @@ func TestRunAuthRegister_CarriesPINToTheAuthenticator(t *testing.T) {
 		installAuthDoubles(t, newPINRegisterClient(), ceremony, nil)
 
 		cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
-		require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-		require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
 
 		require.NoError(t, runAuthRegister(cmd, nil))
 		assert.Equal(t, "654321", pinString(t, ceremony.pin))
@@ -134,8 +134,8 @@ func TestRunAuthRegister_CarriesPINToTheAuthenticator(t *testing.T) {
 		installAuthDoubles(t, newPINRegisterClient(), ceremony, nil)
 
 		cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
-		require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-		require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
 
 		require.NoError(t, runAuthRegister(cmd, nil))
 		assert.Nil(t, ceremony.pin)
@@ -155,9 +155,9 @@ func TestRunAuthRegister_RejectsEmptyStdinPINBeforeTheNetwork(t *testing.T) {
 	installAuthDoubles(t, client, ceremony, nil)
 
 	cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
-	require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), pinFlagStdin, "true"))
 
 	err := runAuthRegister(cmd, nil)
 	require.Error(t, err)
@@ -181,9 +181,9 @@ func TestRunAuthLogin_CarriesPINToTheAuthenticator(t *testing.T) {
 		installAuthDoubles(t, newPINLoginClient(), ceremony, nil)
 
 		cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-		require.NoError(t, cmd.Flags().Set("server", serverURL))
-		require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
-		require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), pinFlagStdin, "true"))
 
 		require.NoError(t, runAuthLogin(cmd, nil))
 		assert.Equal(t, "123456", pinString(t, ceremony.pin), "the PIN must reach the authenticator")
@@ -198,8 +198,8 @@ func TestRunAuthLogin_CarriesPINToTheAuthenticator(t *testing.T) {
 		installAuthDoubles(t, newPINLoginClient(), ceremony, nil)
 
 		cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-		require.NoError(t, cmd.Flags().Set("server", serverURL))
-		require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
 
 		require.NoError(t, runAuthLogin(cmd, nil))
 		assert.Nil(t, ceremony.pin)
@@ -222,9 +222,9 @@ func TestRunAuthLogin_RejectsEmptyStdinPINBeforeTheNetwork(t *testing.T) {
 	installAuthDoubles(t, client, ceremony, nil)
 
 	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", serverURL))
-	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
-	require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), pinFlagStdin, "true"))
 
 	err := runAuthLogin(cmd, nil)
 	require.Error(t, err)

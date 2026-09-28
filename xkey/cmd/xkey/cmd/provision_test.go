@@ -101,6 +101,7 @@ type provisionSecrets struct {
 func runProvisionCmd(t *testing.T, secrets provisionSecrets, args ...string) (string, error) {
 	t.Helper()
 
+	resetCommandFlagsForTest(t, RootCmd)
 	resetProvisionFlags()
 
 	previousReader := stdinReader

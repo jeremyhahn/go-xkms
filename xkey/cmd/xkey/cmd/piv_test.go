@@ -159,8 +159,8 @@ func TestPIVConfig_Validate(t *testing.T) {
 
 // TestBuildPIVConfig tests config building from Viper.
 func TestBuildPIVConfig(t *testing.T) {
+	resetViperForTest(t)
 	viper.Set(viperKeyPIVBackend, "software")
-	t.Cleanup(func() { viper.Reset() })
 
 	cfg := buildPIVConfig()
 	if cfg == nil {
@@ -171,6 +171,37 @@ func TestBuildPIVConfig(t *testing.T) {
 	if cfg.Backend == "" {
 		t.Error("buildPIVConfig() returned empty backend")
 	}
+}
+
+// TestResetViperForTest_PreservesBoundDefaults is a regression test for
+// go-xkms#1047. viper.Reset() discards every BindPFlag/BindEnv registration
+// process-wide, not just the keys a test set; since each command registers
+// its bindings once in init(), a later test in the same binary that reads a
+// bound key (piv.backend here) would see an empty value instead of the
+// flag's default. resetViperForTest must scope cleanup to the keys the test
+// actually touched and leave the binding usable by whatever runs next.
+func TestResetViperForTest_PreservesBoundDefaults(t *testing.T) {
+	t.Run("TestBuildPIVConfig-style set and reset", func(t *testing.T) {
+		resetViperForTest(t)
+		viper.Set(viperKeyPIVBackend, "software")
+
+		cfg := buildPIVConfig()
+		if cfg.Backend != PIVBackendSoftware {
+			t.Fatalf("buildPIVConfig().Backend = %q, want %q", cfg.Backend, PIVBackendSoftware)
+		}
+	})
+
+	t.Run("piv.backend still reflects its flag binding afterward", func(t *testing.T) {
+		if got := viper.GetString(viperKeyPIVBackend); got != defaultPIVBackend {
+			t.Fatalf("viper.GetString(%q) = %q after a prior test's cleanup, want %q (the --backend flag's bound default)",
+				viperKeyPIVBackend, got, defaultPIVBackend)
+		}
+
+		cfg := buildPIVConfig()
+		if cfg.Backend == "" {
+			t.Fatal("buildPIVConfig() returned an empty backend; the piv.backend BindPFlag registration was lost")
+		}
+	})
 }
 
 // TestBuildPIVConfig_StorageDefaults tests storage type defaults based on backend.
@@ -707,6 +738,7 @@ func TestFormatExtKeyUsage(t *testing.T) {
 
 // TestPIVCmd_Help tests help output for the PIV command.
 func TestPIVCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -743,6 +775,7 @@ func TestPIVCmd_Help(t *testing.T) {
 
 // TestPIVListCmd_Help tests help output for the PIV list command.
 func TestPIVListCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -2176,6 +2209,7 @@ func TestPIVGenerateErrors(t *testing.T) {
 
 // TestPIVGenerateCmd_Help tests help output for the PIV generate command.
 func TestPIVGenerateCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -2260,6 +2294,7 @@ func TestPIVCSRErrors(t *testing.T) {
 
 // TestPIVCSRCmd_Help tests help output for the PIV csr command.
 func TestPIVCSRCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -2348,6 +2383,7 @@ func TestPIVImportErrors(t *testing.T) {
 
 // TestPIVImportCmd_Help tests help output for the PIV import command.
 func TestPIVImportCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)

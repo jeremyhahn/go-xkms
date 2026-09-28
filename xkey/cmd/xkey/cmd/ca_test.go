@@ -468,7 +468,7 @@ func TestRunCAIssue_MissingProfile(t *testing.T) {
 
 func TestRunCAIssue_MissingCommonName(t *testing.T) {
 	cmd := newCAIssueCmd(t)
-	require.NoError(t, cmd.Flags().Set("profile", "server"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "profile", "server"))
 
 	err := runCAIssue(cmd, nil)
 	assert.Error(t, err)
@@ -477,9 +477,9 @@ func TestRunCAIssue_MissingCommonName(t *testing.T) {
 
 func TestRunCAIssue_InvalidSAN(t *testing.T) {
 	cmd := newCAIssueCmd(t)
-	require.NoError(t, cmd.Flags().Set("profile", "server"))
-	require.NoError(t, cmd.Flags().Set("cn", "example.com"))
-	require.NoError(t, cmd.Flags().Set("san", "INVALID:bad"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "profile", "server"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", "example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "san", "INVALID:bad"))
 
 	err := runCAIssue(cmd, nil)
 	assert.Error(t, err)
@@ -490,8 +490,8 @@ func TestRunCAIssue_NoServerConfigured(t *testing.T) {
 	isolateXKMSdEndpoint(t)
 
 	cmd := newCAIssueCmd(t)
-	require.NoError(t, cmd.Flags().Set("profile", "server"))
-	require.NoError(t, cmd.Flags().Set("cn", "example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "profile", "server"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", "example.com"))
 
 	err := runCAIssue(cmd, nil)
 	assert.Error(t, err)
@@ -509,7 +509,7 @@ func TestRunCASignCSR_MissingCSRPath(t *testing.T) {
 
 func TestRunCASignCSR_NonexistentCSRFile(t *testing.T) {
 	cmd := newCASignCSRCmd(t)
-	require.NoError(t, cmd.Flags().Set("csr", "/nonexistent/path/request.csr"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "csr", "/nonexistent/path/request.csr"))
 
 	err := runCASignCSR(cmd, nil)
 	assert.Error(t, err)
@@ -524,7 +524,7 @@ func TestRunCASignCSR_NoServerConfigured(t *testing.T) {
 	require.NoError(t, os.WriteFile(csrFile, []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----\n"), 0600))
 
 	cmd := newCASignCSRCmd(t)
-	require.NoError(t, cmd.Flags().Set("csr", csrFile))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "csr", csrFile))
 
 	err := runCASignCSR(cmd, nil)
 	assert.Error(t, err)
@@ -545,7 +545,7 @@ func TestRunCARevoke_NoServerConfigured(t *testing.T) {
 
 func TestRunCARevoke_InvalidReason(t *testing.T) {
 	cmd := newCARevokeCmd(t)
-	require.NoError(t, cmd.Flags().Set("reason", "bogus-reason"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "reason", "bogus-reason"))
 
 	err := runCARevoke(cmd, []string{"ABC123"})
 	assert.Error(t, err)

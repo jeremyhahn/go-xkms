@@ -94,7 +94,7 @@ func newUnlockTestCmd(t *testing.T, socketPath, pin string) (*cobra.Command, *by
 	cmd := &cobra.Command{Use: "unlock", RunE: runUnlock}
 	cmd.Flags().Bool("pin-stdin", false, "")
 	cmd.Flags().String("socket", "", "")
-	_ = cmd.Flags().Set("socket", socketPath)
+	_ = setFlagForTest(t, cmd.Flags(), "socket", socketPath)
 
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -323,6 +323,7 @@ func TestRunUnlock_BlockedReportsZeroAttemptsRemaining(t *testing.T) {
 // a value flag visible to every other process on the host via 'ps'
 // (go-xkms#272). Only "--pin-stdin" and XKEY_PIN remain.
 func TestUnlockCmd_PINValueFlagRemoved(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := &bytes.Buffer{}
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)

@@ -38,7 +38,7 @@ func TestResolveSyncScope_NoFlagsIsAnError(t *testing.T) {
 
 func TestResolveSyncScope_All(t *testing.T) {
 	cmd := syncScopeTestCmd()
-	require.NoError(t, cmd.Flags().Set("all", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "all", "true"))
 
 	scope, err := resolveSyncScope(cmd)
 	require.NoError(t, err)
@@ -47,8 +47,8 @@ func TestResolveSyncScope_All(t *testing.T) {
 
 func TestResolveSyncScope_IndividualFlagsOverrideAll(t *testing.T) {
 	cmd := syncScopeTestCmd()
-	require.NoError(t, cmd.Flags().Set("all", "true"))
-	require.NoError(t, cmd.Flags().Set("oath", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "all", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "oath", "true"))
 
 	scope, err := resolveSyncScope(cmd)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestResolveSyncScope_IndividualFlagsOverrideAll(t *testing.T) {
 
 func TestResolveSyncScope_SinglePasswords(t *testing.T) {
 	cmd := syncScopeTestCmd()
-	require.NoError(t, cmd.Flags().Set("passwords", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "passwords", "true"))
 
 	scope, err := resolveSyncScope(cmd)
 	require.NoError(t, err)

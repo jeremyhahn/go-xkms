@@ -28,6 +28,7 @@ import (
 
 // TestLUKS2Cmd_Help verifies luks2 command help output contains expected information.
 func TestLUKS2Cmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -56,6 +57,7 @@ func TestLUKS2Cmd_Help(t *testing.T) {
 
 // TestSealCmd_Help verifies seal command help output contains expected information.
 func TestSealCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -82,6 +84,7 @@ func TestSealCmd_Help(t *testing.T) {
 
 // TestUnsealCmd_Help verifies unseal command help output contains expected information.
 func TestUnsealCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -108,6 +111,7 @@ func TestUnsealCmd_Help(t *testing.T) {
 
 // TestLockCmd_Help verifies lock command help output contains expected information.
 func TestLockCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -134,6 +138,7 @@ func TestLockCmd_Help(t *testing.T) {
 
 // TestMigrateCmd_Help verifies migrate command help output contains expected information.
 func TestMigrateCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -161,6 +166,7 @@ func TestMigrateCmd_Help(t *testing.T) {
 
 // TestWipeCmd_Help verifies wipe command help output contains expected information.
 func TestWipeCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -1152,6 +1158,7 @@ func TestWipeCmd_CommandMetadata(t *testing.T) {
 
 // TestSealCmd_HelpContainsExamples verifies help contains usage examples.
 func TestSealCmd_HelpContainsExamples(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -1168,6 +1175,7 @@ func TestSealCmd_HelpContainsExamples(t *testing.T) {
 
 // TestUnsealCmd_HelpContainsExamples verifies help contains usage examples.
 func TestUnsealCmd_HelpContainsExamples(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -1183,6 +1191,7 @@ func TestUnsealCmd_HelpContainsExamples(t *testing.T) {
 
 // TestLockCmd_HelpContainsExamples verifies help contains usage examples.
 func TestLockCmd_HelpContainsExamples(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -1198,6 +1207,7 @@ func TestLockCmd_HelpContainsExamples(t *testing.T) {
 
 // TestMigrateCmd_HelpContainsExamples verifies help contains usage examples.
 func TestMigrateCmd_HelpContainsExamples(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -1213,6 +1223,7 @@ func TestMigrateCmd_HelpContainsExamples(t *testing.T) {
 
 // TestWipeCmd_HelpContainsExamples verifies help contains usage examples.
 func TestWipeCmd_HelpContainsExamples(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -1430,6 +1441,7 @@ func TestErrorChaining(t *testing.T) {
 
 // TestSealCmd_RequiresRoot verifies seal command requires root privileges.
 func TestSealCmd_RequiresRoot(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	// Running as non-root user should return ErrPermissionDenied
 	// This test is meaningful when run as non-root user
 	buf := new(bytes.Buffer)
@@ -1446,6 +1458,7 @@ func TestSealCmd_RequiresRoot(t *testing.T) {
 
 // TestUnsealCmd_RequiresRoot verifies unseal command requires root privileges.
 func TestUnsealCmd_RequiresRoot(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	// Running as non-root user should return ErrPermissionDenied
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
@@ -1461,6 +1474,7 @@ func TestUnsealCmd_RequiresRoot(t *testing.T) {
 
 // TestLockCmd_RequiresRoot verifies lock command requires root privileges.
 func TestLockCmd_RequiresRoot(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	// Running as non-root user should return ErrPermissionDenied
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
@@ -1476,6 +1490,7 @@ func TestLockCmd_RequiresRoot(t *testing.T) {
 
 // TestMigrateCmd_RequiresRoot verifies migrate command requires root privileges.
 func TestMigrateCmd_RequiresRoot(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	// Running as non-root user should return ErrPermissionDenied
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
@@ -1491,6 +1506,7 @@ func TestMigrateCmd_RequiresRoot(t *testing.T) {
 
 // TestWipeCmd_RequiresRoot verifies wipe command requires root privileges.
 func TestWipeCmd_RequiresRoot(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	// Running as non-root user should return ErrPermissionDenied
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)

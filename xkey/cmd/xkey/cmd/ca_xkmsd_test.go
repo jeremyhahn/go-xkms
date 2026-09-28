@@ -90,11 +90,11 @@ func TestRunCAIssue_Success(t *testing.T) {
 	xkmsdURL = address
 
 	cmd := newCAIssueCmd(t)
-	require.NoError(t, cmd.Flags().Set("profile", "server"))
-	require.NoError(t, cmd.Flags().Set("cn", "issue.example.com"))
-	require.NoError(t, cmd.Flags().Set("san", "DNS:issue.example.com,IP:127.0.0.1"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "profile", "server"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", "issue.example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "san", "DNS:issue.example.com,IP:127.0.0.1"))
 	outputPath := filepath.Join(t.TempDir(), "issued.pem")
-	require.NoError(t, cmd.Flags().Set("output", outputPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "output", outputPath))
 
 	require.NoError(t, runCAIssue(cmd, nil))
 
@@ -115,8 +115,8 @@ func TestRunCAIssue_ServerRejectsUnknownProfile(t *testing.T) {
 	xkmsdURL = address
 
 	cmd := newCAIssueCmd(t)
-	require.NoError(t, cmd.Flags().Set("profile", "not-a-real-profile"))
-	require.NoError(t, cmd.Flags().Set("cn", "issue.example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "profile", "not-a-real-profile"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", "issue.example.com"))
 
 	err := runCAIssue(cmd, nil)
 	require.Error(t, err)
@@ -134,9 +134,9 @@ func TestRunCASignCSR_Success(t *testing.T) {
 	outputPath := filepath.Join(t.TempDir(), "signed.pem")
 
 	cmd := newCASignCSRCmd(t)
-	require.NoError(t, cmd.Flags().Set("csr", csrPath))
-	require.NoError(t, cmd.Flags().Set("profile", "server"))
-	require.NoError(t, cmd.Flags().Set("output", outputPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "csr", csrPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "profile", "server"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "output", outputPath))
 
 	require.NoError(t, runCASignCSR(cmd, nil))
 
@@ -158,7 +158,7 @@ func TestRunCASignCSR_ServerRejectsMalformedCSR(t *testing.T) {
 	require.NoError(t, os.WriteFile(badCSR, []byte("-----BEGIN CERTIFICATE REQUEST-----\nnot-a-real-csr\n-----END CERTIFICATE REQUEST-----\n"), 0600))
 
 	cmd := newCASignCSRCmd(t)
-	require.NoError(t, cmd.Flags().Set("csr", badCSR))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "csr", badCSR))
 
 	err := runCASignCSR(cmd, nil)
 	require.Error(t, err)
@@ -174,10 +174,10 @@ func issueTestCertSerial(t *testing.T, cn string) string {
 	t.Helper()
 
 	cmd := newCAIssueCmd(t)
-	require.NoError(t, cmd.Flags().Set("profile", "server"))
-	require.NoError(t, cmd.Flags().Set("cn", cn))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "profile", "server"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "cn", cn))
 	outputPath := filepath.Join(t.TempDir(), cn+".pem")
-	require.NoError(t, cmd.Flags().Set("output", outputPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "output", outputPath))
 	require.NoError(t, runCAIssue(cmd, nil))
 
 	data, err := os.ReadFile(outputPath)
@@ -197,7 +197,7 @@ func TestRunCARevoke_Success(t *testing.T) {
 	serial := issueTestCertSerial(t, "revoke-me.example.com")
 
 	cmd := newCARevokeCmd(t)
-	require.NoError(t, cmd.Flags().Set("reason", "key-compromise"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "reason", "key-compromise"))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 
@@ -275,7 +275,7 @@ func TestRunCACRL_Success(t *testing.T) {
 
 	outputPath := filepath.Join(t.TempDir(), "crl.pem")
 	cmd := newCAOutputCmd(t)
-	require.NoError(t, cmd.Flags().Set("output", outputPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "output", outputPath))
 
 	require.NoError(t, runCACRL(cmd, nil))
 
@@ -308,7 +308,7 @@ func TestRunCABundle_Success(t *testing.T) {
 
 	outputPath := filepath.Join(t.TempDir(), "bundle.pem")
 	cmd := newCAOutputCmd(t)
-	require.NoError(t, cmd.Flags().Set("output", outputPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "output", outputPath))
 
 	require.NoError(t, runCABundle(cmd, nil))
 

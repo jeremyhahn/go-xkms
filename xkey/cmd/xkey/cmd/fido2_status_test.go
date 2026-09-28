@@ -32,7 +32,7 @@ func fido2StatusTestCmd() *cobra.Command {
 // so this never touches a real daemon.
 func TestRunFIDO2Status_DaemonNotRunning(t *testing.T) {
 	cmd := fido2StatusTestCmd()
-	require.NoError(t, cmd.Flags().Set("socket", filepath.Join(t.TempDir(), "no-daemon.sock")))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", filepath.Join(t.TempDir(), "no-daemon.sock")))
 
 	err := runFIDO2Status(cmd, nil)
 	require.ErrorIs(t, err, ErrFIDO2StatusDaemonNotRunning)

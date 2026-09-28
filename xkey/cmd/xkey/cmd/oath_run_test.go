@@ -45,7 +45,7 @@ func newOATHCmd(t *testing.T, template *cobra.Command, storePath string) (*cobra
 			DefValue: f.DefValue,
 		})
 	})
-	require.NoError(t, cmd.Flags().Set("store", storePath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "store", storePath))
 
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -108,9 +108,9 @@ var sixDigits = regexp.MustCompile(`\b\d{6}\b`)
 func TestRunOATHAdd_FromIndividualFlags(t *testing.T) {
 	store := oathStorePath(t)
 	cmd, buf := newOATHCmd(t, oathAddCmd, store)
-	require.NoError(t, cmd.Flags().Set("name", "GitHub"))
-	require.NoError(t, cmd.Flags().Set("issuer", "GitHub Inc"))
-	require.NoError(t, cmd.Flags().Set("secret", "jbswy3dpehpk3pxp"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "GitHub"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "issuer", "GitHub Inc"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "jbswy3dpehpk3pxp"))
 
 	require.NoError(t, runOATHAdd(cmd, nil))
 	assert.Contains(t, buf.String(), "Added OATH credential: GitHub")
@@ -130,7 +130,7 @@ func TestRunOATHAdd_FromIndividualFlags(t *testing.T) {
 func TestRunOATHAdd_FromURI(t *testing.T) {
 	store := oathStorePath(t)
 	cmd, buf := newOATHCmd(t, oathAddCmd, store)
-	require.NoError(t, cmd.Flags().Set("uri",
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "uri",
 		"otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example&digits=8&period=60"))
 
 	require.NoError(t, runOATHAdd(cmd, nil))
@@ -151,9 +151,9 @@ func TestRunOATHAdd_FromURI(t *testing.T) {
 func TestRunOATHAdd_URINameOverride(t *testing.T) {
 	store := oathStorePath(t)
 	cmd, _ := newOATHCmd(t, oathAddCmd, store)
-	require.NoError(t, cmd.Flags().Set("uri",
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "uri",
 		"otpauth://totp/Example:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"))
-	require.NoError(t, cmd.Flags().Set("name", "Renamed"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Renamed"))
 
 	require.NoError(t, runOATHAdd(cmd, nil))
 
@@ -169,7 +169,7 @@ func TestRunOATHAdd_URINameOverride(t *testing.T) {
 
 func TestRunOATHAdd_RejectsInvalidURI(t *testing.T) {
 	cmd, _ := newOATHCmd(t, oathAddCmd, oathStorePath(t))
-	require.NoError(t, cmd.Flags().Set("uri", "https://example.com/not-otpauth"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "uri", "https://example.com/not-otpauth"))
 
 	err := runOATHAdd(cmd, nil)
 	require.Error(t, err)
@@ -180,15 +180,15 @@ func TestRunOATHAdd_RequiresNameAndSecret(t *testing.T) {
 	cmd, _ := newOATHCmd(t, oathAddCmd, oathStorePath(t))
 	assert.ErrorIs(t, runOATHAdd(cmd, nil), ErrOATHMissingName)
 
-	require.NoError(t, cmd.Flags().Set("name", "GitHub"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "GitHub"))
 	assert.ErrorIs(t, runOATHAdd(cmd, nil), ErrOATHMissingSecret)
 }
 
 func TestRunOATHAdd_RejectsInvalidCredential(t *testing.T) {
 	cmd, _ := newOATHCmd(t, oathAddCmd, oathStorePath(t))
-	require.NoError(t, cmd.Flags().Set("name", "Bad"))
-	require.NoError(t, cmd.Flags().Set("secret", "JBSWY3DPEHPK3PXP"))
-	require.NoError(t, cmd.Flags().Set("digits", "9"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Bad"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "digits", "9"))
 
 	err := runOATHAdd(cmd, nil)
 	require.Error(t, err)
@@ -237,8 +237,8 @@ func TestRunOATHList_SecretsAndURIsOnDemand(t *testing.T) {
 	addTestCredential(t, store, totpCredential("GitHub"))
 
 	cmd, buf := newOATHCmd(t, oathListCmd, store)
-	require.NoError(t, cmd.Flags().Set("secrets", "true"))
-	require.NoError(t, cmd.Flags().Set("uri", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secrets", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "uri", "true"))
 
 	require.NoError(t, runOATHList(cmd, nil))
 	out := buf.String()
@@ -277,7 +277,7 @@ func TestRunOATHGenerate_UnknownCredentialIsReportedNotFatal(t *testing.T) {
 
 func TestRunOATHGenerate_AllEmptyStore(t *testing.T) {
 	cmd, buf := newOATHCmd(t, oathGenerateCmd, oathStorePath(t))
-	require.NoError(t, cmd.Flags().Set("all", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "all", "true"))
 
 	require.NoError(t, runOATHGenerate(cmd, nil))
 	assert.Contains(t, buf.String(), "No OATH credentials found.")
@@ -290,7 +290,7 @@ func TestRunOATHGenerate_AllAlignsNames(t *testing.T) {
 	addTestCredential(t, store, long)
 
 	cmd, buf := newOATHCmd(t, oathGenerateCmd, store)
-	require.NoError(t, cmd.Flags().Set("all", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "all", "true"))
 	require.NoError(t, runOATHGenerate(cmd, nil))
 
 	out := buf.String()
@@ -339,7 +339,7 @@ func TestRunOATHRemove_ForceSkipsConfirmation(t *testing.T) {
 	addTestCredential(t, store, totpCredential("GitHub"))
 
 	cmd, buf := newOATHCmd(t, oathRemoveCmd, store)
-	require.NoError(t, cmd.Flags().Set("force", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "force", "true"))
 	require.NoError(t, runOATHRemove(cmd, []string{"github"}))
 	assert.Contains(t, buf.String(), "Removed: GitHub")
 
@@ -388,7 +388,7 @@ func TestRunOATHRemove_UnknownCredentialIsSkipped(t *testing.T) {
 	addTestCredential(t, store, totpCredential("GitHub"))
 
 	cmd, buf := newOATHCmd(t, oathRemoveCmd, store)
-	require.NoError(t, cmd.Flags().Set("force", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "force", "true"))
 	require.NoError(t, runOATHRemove(cmd, []string{"missing", "github"}))
 	assert.Contains(t, buf.String(), "Removed: GitHub")
 }
@@ -397,7 +397,7 @@ func TestRunOATHRemove_UnknownCredentialIsSkipped(t *testing.T) {
 
 func TestRunOATHScan_ListDisplays(t *testing.T) {
 	cmd, buf := newOATHCmd(t, oathScanCmd, oathStorePath(t))
-	require.NoError(t, cmd.Flags().Set("list-displays", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "list-displays", "true"))
 
 	require.NoError(t, runOATHScan(cmd, nil))
 	out := buf.String()

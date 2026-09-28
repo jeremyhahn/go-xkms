@@ -166,7 +166,7 @@ func TestTrustFetch_PinnedHappyPath(t *testing.T) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	fcmd.SetOut(out)
 	fcmd.SetErr(errOut)
-	require.NoError(t, fcmd.Flags().Set("spki-pin", pin))
+	require.NoError(t, setFlagForTest(t, fcmd.Flags(), "spki-pin", pin))
 
 	err := runTrustFetch(fcmd, []string{srv.URL + xkms.TrustFetcherDefaultBundlePath})
 	require.NoError(t, err, "stderr=%s", errOut.String())
@@ -209,7 +209,7 @@ func TestTrustFetch_RequiresPin_BlankIsRejected(t *testing.T) {
 	fcmd := newFetchTestCmd()
 	fcmd.SetOut(&bytes.Buffer{})
 	fcmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, fcmd.Flags().Set("spki-pin", "   "))
+	require.NoError(t, setFlagForTest(t, fcmd.Flags(), "spki-pin", "   "))
 
 	err := runTrustFetch(fcmd, []string{"https://example.test" + xkms.TrustFetcherDefaultBundlePath})
 	require.Error(t, err)
@@ -222,8 +222,8 @@ func TestTrustFetch_BadPurpose(t *testing.T) {
 	fcmd := newFetchTestCmd()
 	fcmd.SetOut(&bytes.Buffer{})
 	fcmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, fcmd.Flags().Set("spki-pin", strings.Repeat("a", 64)))
-	require.NoError(t, fcmd.Flags().Set("purpose", "not-a-real-purpose"))
+	require.NoError(t, setFlagForTest(t, fcmd.Flags(), "spki-pin", strings.Repeat("a", 64)))
+	require.NoError(t, setFlagForTest(t, fcmd.Flags(), "purpose", "not-a-real-purpose"))
 
 	err := runTrustFetch(fcmd, []string{"https://example.test" + xkms.TrustFetcherDefaultBundlePath})
 	require.Error(t, err)
@@ -245,7 +245,7 @@ func TestTrustImportPlatform_HappyPath(t *testing.T) {
 	fcmd := newImportPlatformTestCmd()
 	fcmd.SetOut(&bytes.Buffer{})
 	fcmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, fcmd.Flags().Set("spki-pin", pin))
+	require.NoError(t, setFlagForTest(t, fcmd.Flags(), "spki-pin", pin))
 
 	err := runTrustImportPlatform(fcmd, []string{hostPort})
 	require.NoError(t, err)
@@ -262,7 +262,7 @@ func TestTrustImportPlatform_StripsScheme(t *testing.T) {
 	fcmd := newImportPlatformTestCmd()
 	fcmd.SetOut(&bytes.Buffer{})
 	fcmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, fcmd.Flags().Set("spki-pin", pin))
+	require.NoError(t, setFlagForTest(t, fcmd.Flags(), "spki-pin", pin))
 
 	err := runTrustImportPlatform(fcmd, []string{"https://" + hostPort + "/"})
 	require.NoError(t, err)
@@ -301,7 +301,7 @@ func TestTrustFetch_ServerErrorWraps(t *testing.T) {
 	fcmd := newFetchTestCmd()
 	fcmd.SetOut(&bytes.Buffer{})
 	fcmd.SetErr(&bytes.Buffer{})
-	require.NoError(t, fcmd.Flags().Set("spki-pin", pin))
+	require.NoError(t, setFlagForTest(t, fcmd.Flags(), "spki-pin", pin))
 
 	err = runTrustFetch(fcmd, []string{srv.URL + xkms.TrustFetcherDefaultBundlePath})
 	require.Error(t, err)

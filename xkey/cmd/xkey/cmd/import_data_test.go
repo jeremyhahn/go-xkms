@@ -207,6 +207,7 @@ func TestRemoveTempMount_StillMounted(t *testing.T) {
 
 // TestImportDataCmd_Help verifies import-data command help output.
 func TestImportDataCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -281,6 +282,7 @@ func TestImportDataCmd_UsageString(t *testing.T) {
 
 // TestImportDataCmd_RequiresRoot verifies import-data command requires root privileges.
 func TestImportDataCmd_RequiresRoot(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	if os.Geteuid() == 0 {
 		t.Log("running as root; skipping root-requirement assertion")
 		return

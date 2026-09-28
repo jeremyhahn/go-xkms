@@ -40,10 +40,10 @@ func TestBackupLifecycle_BarrierBackedOATHStore(t *testing.T) {
 	// Add the OATH credential the same way an operator would: through the
 	// barrier-backed CLI store, not by writing the fixture file directly.
 	addCmd, _ := newDetachedOATHCmd(t, oathAddCmd)
-	require.NoError(t, addCmd.Flags().Set("name", "BarrierOATH"))
-	require.NoError(t, addCmd.Flags().Set("secret", "JBSWY3DPEHPK3PXP"))
-	require.NoError(t, addCmd.Flags().Set("issuer", "Example"))
-	require.NoError(t, addCmd.Flags().Set("barrier-password", barrierPassword))
+	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "name", "BarrierOATH"))
+	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
+	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "issuer", "Example"))
+	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "barrier-password", barrierPassword))
 	require.NoError(t, runOATHAdd(addCmd, nil))
 
 	// Trust store and password store are not barrier-aware yet (only OATH

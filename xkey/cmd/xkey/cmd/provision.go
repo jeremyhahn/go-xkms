@@ -648,16 +648,6 @@ func provisionPIV(cmd *cobra.Command, agent string) ([]AgentProvisionPIVSlot, er
 	logger := slog.Default()
 	pivCfg := buildPIVConfig()
 
-	// buildPIVConfig reads the backend through viper's BindPFlag-established
-	// default; nothing about this command changes it. An empty result here
-	// only happens if something reset viper's global state out from under
-	// that binding (viper.Reset(), elsewhere in the same test process) --
-	// applying "piv generate"'s own documented default keeps provisioning
-	// correct regardless of what ran earlier in this process.
-	if pivCfg.Backend == "" {
-		pivCfg.Backend = defaultPIVBackend
-	}
-
 	if err := ensurePIVInitialized(pivCfg, logger); err != nil {
 		return nil, err
 	}

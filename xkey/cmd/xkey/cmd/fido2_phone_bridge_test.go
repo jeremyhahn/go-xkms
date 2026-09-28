@@ -723,8 +723,7 @@ func newTestPhoneBackend(t *testing.T, tr pairing.Transport) *phone.PhoneKeyBack
 }
 
 func TestLoadXKMSdBridgeConfig_Defaults(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(func() { viper.Reset() })
+	resetViperForTest(t)
 
 	// Load config with no viper values set.
 	cfg := loadXKMSdBridgeConfig()
@@ -750,8 +749,7 @@ func TestLoadXKMSdBridgeConfig_Defaults(t *testing.T) {
 }
 
 func TestLoadXKMSdBridgeConfig_FromViper(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(func() { viper.Reset() })
+	resetViperForTest(t)
 
 	viper.Set("xkmsd.enabled", true)
 	viper.Set("xkmsd.protocol", "unix")
@@ -807,8 +805,7 @@ func TestPhoneBackendWithBridge_Close_NilClient(t *testing.T) {
 }
 
 func TestConnectXKMSdBridge_Disabled(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(func() { viper.Reset() })
+	resetViperForTest(t)
 
 	viper.Set("xkmsd.enabled", false)
 

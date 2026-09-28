@@ -56,7 +56,7 @@ func sshTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 func setSSHFlags(t *testing.T, cmd *cobra.Command, values map[string]string) {
 	t.Helper()
 	for k, v := range values {
-		require.NoError(t, cmd.Flags().Set(k, v), "set --%s", k)
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), k, v), "set --%s", k)
 	}
 }
 

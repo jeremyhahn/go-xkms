@@ -227,8 +227,8 @@ func TestRunPasswordList_DaemonListsEntriesTheStoreDirectoryCannotSee(t *testing
 
 	cmd, buf, _ := passwordTestCmd(t)
 	cmd.SetOut(buf)
-	require.NoError(t, cmd.Flags().Set("socket", socketPath))
-	require.NoError(t, cmd.Flags().Set("source", sourceAuto))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", socketPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "source", sourceAuto))
 
 	require.NoError(t, runPasswordList(cmd, nil))
 
@@ -248,9 +248,9 @@ func TestRunPasswordList_ShowPasswordsIsRefusedOverIPC(t *testing.T) {
 	})
 
 	cmd, _, _ := passwordTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("socket", socketPath))
-	require.NoError(t, cmd.Flags().Set("source", sourceAuto))
-	require.NoError(t, cmd.Flags().Set("show-passwords", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", socketPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "source", sourceAuto))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "show-passwords", "true"))
 
 	require.ErrorIs(t, runPasswordList(cmd, nil), ErrPasswordValuesNotOverIPC)
 }
@@ -258,8 +258,8 @@ func TestRunPasswordList_ShowPasswordsIsRefusedOverIPC(t *testing.T) {
 func TestRunPasswordList_NoDaemonReportsStoreDirectoryAndSaysSo(t *testing.T) {
 	cmd, buf, store := passwordTestCmd(t)
 	cmd.SetOut(buf)
-	require.NoError(t, cmd.Flags().Set("socket", noDaemonSocket(t)))
-	require.NoError(t, cmd.Flags().Set("source", sourceAuto))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", noDaemonSocket(t)))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "source", sourceAuto))
 
 	require.NoError(t, runPasswordList(cmd, nil))
 
@@ -284,8 +284,8 @@ func TestRunPasswordStatus_SucceedsWithoutAnXKMSdURL(t *testing.T) {
 
 	cmd, buf, _ := passwordTestCmd(t)
 	cmd.SetOut(buf)
-	require.NoError(t, cmd.Flags().Set("socket", socketPath))
-	require.NoError(t, cmd.Flags().Set("source", sourceAuto))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", socketPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "source", sourceAuto))
 
 	require.NoError(t, runPasswordStatus(cmd, nil))
 
@@ -305,15 +305,15 @@ func TestRunPasswordStatus_AgreesWithListAboutReachability(t *testing.T) {
 
 	listCmd, listBuf, store := passwordTestCmd(t)
 	listCmd.SetOut(listBuf)
-	require.NoError(t, listCmd.Flags().Set("socket", socketPath))
-	require.NoError(t, listCmd.Flags().Set("source", sourceAuto))
+	require.NoError(t, setFlagForTest(t, listCmd.Flags(), "socket", socketPath))
+	require.NoError(t, setFlagForTest(t, listCmd.Flags(), "source", sourceAuto))
 	require.NoError(t, runPasswordList(listCmd, nil))
 
 	statusCmd, statusBuf, _ := passwordTestCmd(t)
 	statusCmd.SetOut(statusBuf)
-	require.NoError(t, statusCmd.Flags().Set("store", store))
-	require.NoError(t, statusCmd.Flags().Set("socket", socketPath))
-	require.NoError(t, statusCmd.Flags().Set("source", sourceAuto))
+	require.NoError(t, setFlagForTest(t, statusCmd.Flags(), "store", store))
+	require.NoError(t, setFlagForTest(t, statusCmd.Flags(), "socket", socketPath))
+	require.NoError(t, setFlagForTest(t, statusCmd.Flags(), "source", sourceAuto))
 	require.NoError(t, runPasswordStatus(statusCmd, nil))
 
 	expected := "Source: data directory (" + store + ") — no daemon running"
@@ -335,8 +335,8 @@ func TestRunPasswordStatus_ReportsALockedStoreRatherThanFailing(t *testing.T) {
 
 	cmd, buf, _ := passwordTestCmd(t)
 	cmd.SetOut(buf)
-	require.NoError(t, cmd.Flags().Set("socket", socketPath))
-	require.NoError(t, cmd.Flags().Set("source", sourceAuto))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", socketPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "source", sourceAuto))
 
 	require.NoError(t, runPasswordStatus(cmd, nil))
 	assert.Contains(t, buf.String(), "Locked:          Yes")
@@ -344,7 +344,7 @@ func TestRunPasswordStatus_ReportsALockedStoreRatherThanFailing(t *testing.T) {
 
 func TestRunPasswordStatus_RejectsUnknownSource(t *testing.T) {
 	cmd, _, _ := passwordTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("source", "elsewhere"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "source", "elsewhere"))
 
 	require.ErrorIs(t, runPasswordStatus(cmd, nil), ErrStateInvalidSource)
 }

@@ -93,9 +93,9 @@ func TestRunOATHAdd_NoBarrier_WarnsAndUsesFileStore(t *testing.T) {
 	logBuf := captureDefaultLog(t)
 
 	cmd, out := newDetachedOATHCmd(t, oathAddCmd)
-	require.NoError(t, cmd.Flags().Set("name", "Slack"))
-	require.NoError(t, cmd.Flags().Set("secret", "JBSWY3DPEHPK3PXP"))
-	require.NoError(t, cmd.Flags().Set("issuer", "Slack"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Slack"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "issuer", "Slack"))
 
 	require.NoError(t, runOATHAdd(cmd, nil))
 	assert.Contains(t, out.String(), "Added OATH credential: Slack")
@@ -124,10 +124,10 @@ func TestRunOATHAdd_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T
 	dataDir := initTestOATHBarrier(t, home, password)
 
 	addCmd, addOut := newDetachedOATHCmd(t, oathAddCmd)
-	require.NoError(t, addCmd.Flags().Set("name", "GitHub"))
-	require.NoError(t, addCmd.Flags().Set("secret", "JBSWY3DPEHPK3PXP"))
-	require.NoError(t, addCmd.Flags().Set("issuer", "GitHub"))
-	require.NoError(t, addCmd.Flags().Set("barrier-password", password))
+	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "name", "GitHub"))
+	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
+	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "issuer", "GitHub"))
+	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "barrier-password", password))
 
 	require.NoError(t, runOATHAdd(addCmd, nil))
 	assert.Contains(t, addOut.String(), "Added OATH credential: GitHub")
@@ -145,8 +145,8 @@ func TestRunOATHAdd_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T
 	// A second, independent CLI invocation (its own BarrierService, exactly
 	// like a separate process) must unseal and read the credential back.
 	listCmd, listOut := newDetachedOATHCmd(t, oathListCmd)
-	require.NoError(t, listCmd.Flags().Set("secrets", "true"))
-	require.NoError(t, listCmd.Flags().Set("barrier-password", password))
+	require.NoError(t, setFlagForTest(t, listCmd.Flags(), "secrets", "true"))
+	require.NoError(t, setFlagForTest(t, listCmd.Flags(), "barrier-password", password))
 
 	require.NoError(t, runOATHList(listCmd, nil))
 	assert.Contains(t, listOut.String(), "Name:      GitHub")
@@ -159,9 +159,9 @@ func TestRunOATHAdd_BarrierWrongPassword_TypedRefusal(t *testing.T) {
 	initTestOATHBarrier(t, home, "correct-password")
 
 	cmd, _ := newDetachedOATHCmd(t, oathAddCmd)
-	require.NoError(t, cmd.Flags().Set("name", "GitHub"))
-	require.NoError(t, cmd.Flags().Set("secret", "JBSWY3DPEHPK3PXP"))
-	require.NoError(t, cmd.Flags().Set("barrier-password", "wrong-password"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "GitHub"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", "wrong-password"))
 
 	err := runOATHAdd(cmd, nil)
 	require.Error(t, err)
@@ -183,8 +183,8 @@ func TestRunOATHAdd_BarrierNoPasswordSupplied_TypedRefusal(t *testing.T) {
 	// XKEY_BARRIER_PASSWORD, and no terminal to prompt on: resolveBarrierPassword
 	// has nothing left to try.
 	cmd, _ := newDetachedOATHCmd(t, oathAddCmd)
-	require.NoError(t, cmd.Flags().Set("name", "GitHub"))
-	require.NoError(t, cmd.Flags().Set("secret", "JBSWY3DPEHPK3PXP"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "GitHub"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
 
 	err := runOATHAdd(cmd, nil)
 	require.Error(t, err)
@@ -198,8 +198,8 @@ func TestRunOATHAdd_ExplicitStoreFlagBypassesBarrier(t *testing.T) {
 
 	store := oathStorePath(t)
 	cmd, out := newOATHCmd(t, oathAddCmd, store)
-	require.NoError(t, cmd.Flags().Set("name", "Explicit"))
-	require.NoError(t, cmd.Flags().Set("secret", "JBSWY3DPEHPK3PXP"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Explicit"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
 
 	// No --barrier-password is supplied; this must still succeed because an
 	// explicit --store bypasses barrier auto-detection entirely.

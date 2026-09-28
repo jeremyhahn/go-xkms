@@ -261,7 +261,7 @@ func TestRunAuthRegister_MissingServerEmptyString(t *testing.T) {
 	cmd.Flags().String("spki-pin", "", "")
 	cmd.Flags().String("setup-token", "", "")
 
-	require.NoError(t, cmd.Flags().Set("server", ""))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", ""))
 
 	err := runAuthRegister(cmd, nil)
 	assert.Error(t, err)
@@ -276,7 +276,7 @@ func TestRunAuthRegister_WithServerFlag_ClientCreationFails(t *testing.T) {
 
 	// Use a valid URL but the SDK client will fail to connect (no real server).
 	// The function should pass the server flag validation and attempt SDK creation.
-	require.NoError(t, cmd.Flags().Set("server", "https://nonexistent.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://nonexistent.example.com:8443"))
 
 	err := runAuthRegister(cmd, nil)
 	assert.Error(t, err)
@@ -290,9 +290,9 @@ func TestRunAuthRegister_FlagsParsedCorrectly(t *testing.T) {
 	cmd.Flags().String("spki-pin", "", "")
 	cmd.Flags().String("setup-token", "", "")
 
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-	require.NoError(t, cmd.Flags().Set("spki-pin", "abc123def456"))
-	require.NoError(t, cmd.Flags().Set("setup-token", "enrollment-token-xyz"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "spki-pin", "abc123def456"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "setup-token", "enrollment-token-xyz"))
 
 	// Verify flags were set correctly
 	serverURL, err := cmd.Flags().GetString("server")
@@ -323,7 +323,7 @@ func TestRunAuthLogin_MissingServerEmptyString(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("server", "", "")
 
-	require.NoError(t, cmd.Flags().Set("server", ""))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", ""))
 
 	err := runAuthLogin(cmd, nil)
 	assert.Error(t, err)
@@ -338,7 +338,7 @@ func TestRunAuthLogin_WithServer_RegistryOpenSucceeds(t *testing.T) {
 	// real command declares; a hand-rolled flag set silently goes stale the
 	// next time one is added.
 	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "https://nonexistent.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://nonexistent.example.com:8443"))
 
 	err := runAuthLogin(cmd, nil)
 	assert.Error(t, err)
@@ -361,7 +361,7 @@ func TestRunAuthToken_MissingServerEmptyString(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("server", "", "")
 
-	require.NoError(t, cmd.Flags().Set("server", ""))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", ""))
 
 	err := runAuthToken(cmd, nil)
 	assert.Error(t, err)
@@ -376,7 +376,7 @@ func TestRunAuthToken_TokenNotFound(t *testing.T) {
 	cmd.Flags().String("server", "", "")
 	cmd.Flags().String("email", "alice@example.com", "")
 
-	require.NoError(t, cmd.Flags().Set("server", "https://nonexistent.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://nonexistent.example.com:8443"))
 
 	err := runAuthToken(cmd, nil)
 	assert.Error(t, err)
@@ -477,7 +477,7 @@ func TestRunAuthStatus_WithServerFilter(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().String("server", "", "")
-	require.NoError(t, cmd.Flags().Set("server", "https://server-a.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://server-a.example.com:8443"))
 
 	// Capture output
 	oldStdout := os.Stdout
@@ -836,7 +836,7 @@ func TestRunAuthToken_LoadsStoredToken(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().String("server", "", "")
-	require.NoError(t, cmd.Flags().Set("server", "https://stored.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://stored.example.com:8443"))
 
 	// Capture stdout
 	oldStdout := os.Stdout
@@ -880,7 +880,7 @@ func TestRunAuthToken_ExpiredTokenPrintsWarning(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().String("server", "", "")
-	require.NoError(t, cmd.Flags().Set("server", "https://expired.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://expired.example.com:8443"))
 
 	// Capture stdout and stderr
 	oldStdout := os.Stdout
@@ -942,7 +942,7 @@ func TestRunAuthRegister_ExistingServer_PrintsMessage(t *testing.T) {
 	cmd.Flags().String("spki-pin", "", "")
 	cmd.Flags().String("setup-token", "", "")
 
-	require.NoError(t, cmd.Flags().Set("server", "https://existing.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://existing.example.com:8443"))
 
 	// This will fail at SDK connect, but we verify it gets past the server flag check
 	err = runAuthRegister(cmd, nil)
@@ -957,7 +957,7 @@ func TestRunAuthLogin_ServerNotRegistered(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 
 	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "https://unregistered.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://unregistered.example.com:8443"))
 
 	err := runAuthLogin(cmd, nil)
 	assert.Error(t, err)
@@ -1250,8 +1250,8 @@ func TestRunAuthRegister_EmailRequired(t *testing.T) {
 	installAuthDoubles(t, client, &fakeCeremony{}, nil)
 
 	cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-	require.NoError(t, cmd.Flags().Set("email", ""))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", ""))
 
 	err := runAuthRegister(cmd, nil)
 	require.Error(t, err)
@@ -1270,8 +1270,8 @@ func TestRunAuthLogin_EmailRequired(t *testing.T) {
 	installAuthDoubles(t, client, &fakeCeremony{}, nil)
 
 	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", serverURL))
-	require.NoError(t, cmd.Flags().Set("email", ""))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", ""))
 
 	err := runAuthLogin(cmd, nil)
 	require.Error(t, err)
@@ -1303,9 +1303,9 @@ func TestRunAuthRegister_CompletesCeremony(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newAuthRegisterCmd(t, &out)
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
-	require.NoError(t, cmd.Flags().Set("display-name", "Alice Example"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "display-name", "Alice Example"))
 
 	require.NoError(t, runAuthRegister(cmd, nil))
 
@@ -1354,7 +1354,7 @@ func TestRunAuthRegister_StoresIssuedToken(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newAuthRegisterCmd(t, &out)
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
 
 	require.NoError(t, runAuthRegister(cmd, nil))
 
@@ -1391,7 +1391,7 @@ func TestRunAuthRegister_ExistingServerStillEnrolls(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newAuthRegisterCmd(t, &out)
-	require.NoError(t, cmd.Flags().Set("server", "https://existing.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://existing.example.com:8443"))
 
 	require.NoError(t, runAuthRegister(cmd, nil))
 
@@ -1412,7 +1412,7 @@ func TestRunAuthRegister_NoAuthenticator(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newAuthRegisterCmd(t, &out)
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
 
 	err := runAuthRegister(cmd, nil)
 	require.Error(t, err)
@@ -1429,7 +1429,7 @@ func TestRunAuthRegister_BeginRejected(t *testing.T) {
 	installAuthDoubles(t, client, &fakeCeremony{}, nil)
 
 	cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
 
 	err := runAuthRegister(cmd, nil)
 	require.Error(t, err)
@@ -1449,7 +1449,7 @@ func TestRunAuthRegister_ServerRejectsAttestation(t *testing.T) {
 	installAuthDoubles(t, client, &fakeCeremony{registerJSON: []byte("{}")}, nil)
 
 	cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
 
 	err := runAuthRegister(cmd, nil)
 	require.Error(t, err)
@@ -1466,7 +1466,7 @@ func TestRunAuthRegister_ConnectFails(t *testing.T) {
 	installAuthDoubles(t, client, &fakeCeremony{}, nil)
 
 	cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "https://xkms.example.com:8443"))
 
 	err := runAuthRegister(cmd, nil)
 	require.Error(t, err)
@@ -1527,8 +1527,8 @@ func TestRunAuthLogin_ObtainsAndStoresToken(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newAuthLoginCmd(t, &out)
-	require.NoError(t, cmd.Flags().Set("server", serverURL))
-	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
 
 	require.NoError(t, runAuthLogin(cmd, nil))
 
@@ -1582,7 +1582,7 @@ func TestRunAuthLogin_ServerRejectsAssertion(t *testing.T) {
 	installAuthDoubles(t, client, &fakeCeremony{assertJSON: []byte("{}")}, nil)
 
 	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", serverURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
 
 	err := runAuthLogin(cmd, nil)
 	require.Error(t, err)
@@ -1605,7 +1605,7 @@ func TestRunAuthLogin_NoTokenIssued(t *testing.T) {
 	installAuthDoubles(t, client, &fakeCeremony{assertJSON: []byte("{}")}, nil)
 
 	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", serverURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
 
 	err := runAuthLogin(cmd, nil)
 	require.Error(t, err)
@@ -1630,7 +1630,7 @@ func TestRunAuthLogin_AuthenticatorFails(t *testing.T) {
 	installAuthDoubles(t, client, ceremony, nil)
 
 	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", serverURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
 
 	err := runAuthLogin(cmd, nil)
 	require.Error(t, err)
@@ -1650,7 +1650,7 @@ func TestRunAuthLogin_BeginRejected(t *testing.T) {
 	installAuthDoubles(t, client, &fakeCeremony{}, nil)
 
 	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", serverURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
 
 	err := runAuthLogin(cmd, nil)
 	require.Error(t, err)
@@ -1670,7 +1670,7 @@ func TestRunAuthLogin_ConnectFails(t *testing.T) {
 	installAuthDoubles(t, client, &fakeCeremony{}, nil)
 
 	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", serverURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
 
 	err := runAuthLogin(cmd, nil)
 	require.Error(t, err)
@@ -1684,7 +1684,7 @@ func TestRunAuthLogin_ConnectFails(t *testing.T) {
 func TestResolveAuthLoginKey_Email(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("email", "", "")
-	require.NoError(t, cmd.Flags().Set("email", "  alice@example.com  "))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "  alice@example.com  "))
 
 	key, err := resolveAuthLoginKey(cmd)
 	require.NoError(t, err)
@@ -1700,7 +1700,7 @@ func TestResolveAuthLoginKey_UsernameFlagNotRecognized(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("email", "", "")
 	cmd.Flags().String("username", "", "")
-	require.NoError(t, cmd.Flags().Set("username", "alice@example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "username", "alice@example.com"))
 
 	_, err := resolveAuthLoginKey(cmd)
 	require.Error(t, err)
@@ -1795,7 +1795,7 @@ func TestResolveAuthLoginKey_RefusesANonEmailKey(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
 			cmd.Flags().String("email", "", "")
-			require.NoError(t, cmd.Flags().Set("email", tc.value))
+			require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", tc.value))
 
 			_, err := resolveAuthLoginKey(cmd)
 			require.Error(t, err, "a value that cannot address a principal must be refused")

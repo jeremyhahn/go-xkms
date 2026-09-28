@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -168,11 +169,48 @@ func generateRichTestCert(t *testing.T) *x509.Certificate {
 	return cert
 }
 
-// resetViperForTest resets viper state and registers cleanup.
+// resetViperForTest scopes viper mutations to the keys a test actually
+// changes, restoring each to its pre-test value (or clearing it if the test
+// introduced a brand-new key) once the test completes.
+//
+// It deliberately never calls viper.Reset: that call also discards the
+// process-wide BindPFlag/BindEnv registrations every command performs once
+// in its init(), so any later test in the same binary that reads a bound
+// key (for example piv.backend or ipc.socket) would see an empty value
+// instead of the flag's default (go-xkms#1047).
 func resetViperForTest(t *testing.T) {
 	t.Helper()
-	viper.Reset()
-	t.Cleanup(func() { viper.Reset() })
+	before := snapshotViperKeys()
+	t.Cleanup(func() {
+		after := snapshotViperKeys()
+		for key, want := range before {
+			if got, ok := after[key]; !ok || !reflect.DeepEqual(got, want) {
+				viper.Set(key, want)
+			}
+		}
+		for key := range after {
+			if _, ok := before[key]; !ok {
+				// The test introduced this key. Viper has no Unset, but a
+				// nil override is skipped by Viper's lookup chain (Set
+				// treats it as "no override present"), so this falls back
+				// through bound pflags/env vars/defaults exactly as if the
+				// key had never been set.
+				viper.Set(key, nil)
+			}
+		}
+	})
+}
+
+// snapshotViperKeys captures the fully resolved value of every key Viper
+// currently knows about (from overrides, bound pflags, bound env vars, and
+// defaults), keyed by its canonical dotted name.
+func snapshotViperKeys() map[string]any {
+	keys := viper.AllKeys()
+	snap := make(map[string]any, len(keys))
+	for _, key := range keys {
+		snap[key] = viper.Get(key)
+	}
+	return snap
 }
 
 // setupTrustStoreDir creates a temp dir with a trust store containing the
@@ -441,7 +479,7 @@ func TestRunTrustAdd_WithPurposeFlag(t *testing.T) {
 	require.NoError(t, os.WriteFile(pemFile, pemData, 0o600))
 
 	cmd := newTrustAddCmd(t)
-	require.NoError(t, cmd.Flags().Set("purpose", "tpm-manufacturer"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "purpose", "tpm-manufacturer"))
 
 	err := runTrustAdd(cmd, []string{pemFile})
 	assert.NoError(t, err)
@@ -468,7 +506,7 @@ func TestRunTrustAdd_WithSourceFlag(t *testing.T) {
 	require.NoError(t, os.WriteFile(pemFile, pemData, 0o600))
 
 	cmd := newTrustAddCmd(t)
-	require.NoError(t, cmd.Flags().Set("source", "url:https://example.com/ca.pem"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "source", "url:https://example.com/ca.pem"))
 
 	err := runTrustAdd(cmd, []string{pemFile})
 	assert.NoError(t, err)
@@ -495,8 +533,8 @@ func TestRunTrustAdd_WithPurposeAndSourceFlags(t *testing.T) {
 	require.NoError(t, os.WriteFile(pemFile, pemData, 0o600))
 
 	cmd := newTrustAddCmd(t)
-	require.NoError(t, cmd.Flags().Set("purpose", "android-hardware"))
-	require.NoError(t, cmd.Flags().Set("source", "manual"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "purpose", "android-hardware"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "source", "manual"))
 
 	err := runTrustAdd(cmd, []string{pemFile})
 	assert.NoError(t, err)
@@ -523,7 +561,7 @@ func TestRunTrustAdd_InvalidPurposeFlag(t *testing.T) {
 	require.NoError(t, os.WriteFile(pemFile, pemData, 0o600))
 
 	cmd := newTrustAddCmd(t)
-	require.NoError(t, cmd.Flags().Set("purpose", "invalid-purpose"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "purpose", "invalid-purpose"))
 
 	err := runTrustAdd(cmd, []string{pemFile})
 	assert.Error(t, err)
@@ -544,7 +582,7 @@ func TestRunTrustAdd_WithPurposeMultipleCerts(t *testing.T) {
 	require.NoError(t, os.WriteFile(pemFile, combined, 0o600))
 
 	cmd := newTrustAddCmd(t)
-	require.NoError(t, cmd.Flags().Set("purpose", "user-ca"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "purpose", "user-ca"))
 
 	err := runTrustAdd(cmd, []string{pemFile})
 	assert.NoError(t, err)
@@ -889,7 +927,7 @@ func TestRunTrustClassify_ValidReclassification(t *testing.T) {
 	dir := setupTrustStoreDir(t, cert)
 
 	cmd := newTrustClassifyCmd(t)
-	require.NoError(t, cmd.Flags().Set("purpose", "tpm-manufacturer"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "purpose", "tpm-manufacturer"))
 
 	err := runTrustClassify(cmd, []string{fp})
 	assert.NoError(t, err)
@@ -912,7 +950,7 @@ func TestRunTrustClassify_InvalidPurpose(t *testing.T) {
 	setupTrustStoreDir(t, cert)
 
 	cmd := newTrustClassifyCmd(t)
-	require.NoError(t, cmd.Flags().Set("purpose", "not-a-purpose"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "purpose", "not-a-purpose"))
 
 	err := runTrustClassify(cmd, []string{fp})
 	assert.Error(t, err)
@@ -943,7 +981,7 @@ func TestRunTrustClassify_NonexistentFingerprint(t *testing.T) {
 	fakeFP := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 	cmd := newTrustClassifyCmd(t)
-	require.NoError(t, cmd.Flags().Set("purpose", "general"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "purpose", "general"))
 
 	err := runTrustClassify(cmd, []string{fakeFP})
 	assert.Error(t, err)
@@ -958,7 +996,7 @@ func TestRunTrustClassify_InvalidStorePath(t *testing.T) {
 	viper.Set("trust.store_path", filepath.Join(tmpFile, "subdir"))
 
 	cmd := newTrustClassifyCmd(t)
-	require.NoError(t, cmd.Flags().Set("purpose", "general"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "purpose", "general"))
 
 	err := runTrustClassify(cmd, []string{"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
 	assert.Error(t, err)
@@ -973,7 +1011,7 @@ func TestRunTrustClassify_WhitespaceHandling(t *testing.T) {
 	dir := setupTrustStoreDir(t, cert)
 
 	cmd := newTrustClassifyCmd(t)
-	require.NoError(t, cmd.Flags().Set("purpose", "user-ca"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "purpose", "user-ca"))
 
 	err := runTrustClassify(cmd, []string{"  " + fp + "  "})
 	assert.NoError(t, err)
@@ -1006,7 +1044,7 @@ func TestRunTrustClassify_AllPurposes(t *testing.T) {
 			dir := setupTrustStoreDir(t, cert)
 
 			cmd := newTrustClassifyCmd(t)
-			require.NoError(t, cmd.Flags().Set("purpose", purposeStr))
+			require.NoError(t, setFlagForTest(t, cmd.Flags(), "purpose", purposeStr))
 
 			err := runTrustClassify(cmd, []string{fp})
 			assert.NoError(t, err)
@@ -1036,7 +1074,7 @@ func TestRunTrustBootstrap_InvalidMethodFlag(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("method", nil, "bootstrap methods")
 	cmd.Flags().Duration("timeout", 5*time.Second, "timeout")
-	require.NoError(t, cmd.Flags().Set("method", "invalid_method"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "method", "invalid_method"))
 
 	err := runTrustBootstrap(cmd, nil)
 	assert.Error(t, err)
@@ -1069,7 +1107,7 @@ func TestRunTrustBootstrap_TimeoutFlagDefault(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("method", nil, "bootstrap methods")
 	cmd.Flags().Duration("timeout", 1*time.Second, "timeout")
-	require.NoError(t, cmd.Flags().Set("method", "direct"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "method", "direct"))
 
 	// With direct method but no server URL, the bootstrap should fail.
 	err := runTrustBootstrap(cmd, nil)
@@ -1087,7 +1125,7 @@ func TestRunTrustBootstrap_TimeoutFlagNotRegistered(t *testing.T) {
 	// path where GetDuration returns an error and falls back to 60s.
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("method", nil, "bootstrap methods")
-	require.NoError(t, cmd.Flags().Set("method", "direct"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "method", "direct"))
 
 	err := runTrustBootstrap(cmd, nil)
 	assert.Error(t, err)
@@ -1107,7 +1145,7 @@ func TestRunTrustBootstrap_WithAllMethodConfigs(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("method", nil, "bootstrap methods")
 	cmd.Flags().Duration("timeout", 2*time.Second, "timeout")
-	require.NoError(t, cmd.Flags().Set("method", "direct"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "method", "direct"))
 
 	// trust.bootstrap.server_url is unset, so this fails with
 	// ErrServerURLRequired (wrapped in ErrTrustBootstrapFailed) before any
@@ -1218,7 +1256,7 @@ func TestBuildBootstrapConfig_MethodFromFlag(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("method", nil, "bootstrap methods")
-	require.NoError(t, cmd.Flags().Set("method", "dane,noise"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "method", "dane,noise"))
 
 	cfg, err := buildBootstrapConfig(cmd)
 	require.NoError(t, err)
@@ -1253,7 +1291,7 @@ func TestBuildBootstrapConfig_FlagOverridesViper(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("method", nil, "bootstrap methods")
-	require.NoError(t, cmd.Flags().Set("method", "dane"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "method", "dane"))
 
 	cfg, err := buildBootstrapConfig(cmd)
 	require.NoError(t, err)
@@ -1267,7 +1305,7 @@ func TestBuildBootstrapConfig_InvalidMethodFromFlag(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("method", nil, "bootstrap methods")
-	require.NoError(t, cmd.Flags().Set("method", "invalid"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "method", "invalid"))
 
 	_, err := buildBootstrapConfig(cmd)
 	assert.Error(t, err)
@@ -1442,7 +1480,7 @@ func TestBuildBootstrapConfig_AllSections(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringSlice("method", nil, "bootstrap methods")
-	require.NoError(t, cmd.Flags().Set("method", "dane,noise,spki,direct"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "method", "dane,noise,spki,direct"))
 
 	cfg, err := buildBootstrapConfig(cmd)
 	require.NoError(t, err)
@@ -1774,12 +1812,12 @@ func TestRunTrustAdd_ReportsSkippedWithPurposeFlag(t *testing.T) {
 	require.NoError(t, os.WriteFile(pemFile, pemData, 0o600))
 
 	first := newTrustAddCmd(t)
-	require.NoError(t, first.Flags().Set("purpose", "user-ca"))
+	require.NoError(t, setFlagForTest(t, first.Flags(), "purpose", "user-ca"))
 	first.SetOut(&bytes.Buffer{})
 	require.NoError(t, runTrustAdd(first, []string{pemFile}))
 
 	second := newTrustAddCmd(t)
-	require.NoError(t, second.Flags().Set("purpose", "user-ca"))
+	require.NoError(t, setFlagForTest(t, second.Flags(), "purpose", "user-ca"))
 	secondOut := &bytes.Buffer{}
 	second.SetOut(secondOut)
 	require.NoError(t, runTrustAdd(second, []string{pemFile}))

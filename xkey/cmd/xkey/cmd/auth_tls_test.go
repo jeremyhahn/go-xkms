@@ -504,8 +504,8 @@ func TestRunAuthRegister_ReusesTheRecordedSPKIPin(t *testing.T) {
 	// The second registration passes no pin. It must still connect.
 	var out bytes.Buffer
 	cmd := newAuthRegisterCmd(t, &out)
-	require.NoError(t, cmd.Flags().Set("server", fixture.server.URL))
-	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", fixture.server.URL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
 
 	err = runAuthRegister(cmd, nil)
 
@@ -540,9 +540,9 @@ func TestRunAuthRegister_ExplicitPinOverridesTheRecordedOne(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newAuthRegisterCmd(t, &out)
-	require.NoError(t, cmd.Flags().Set("server", fixture.server.URL))
-	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
-	require.NoError(t, cmd.Flags().Set("spki-pin", pin))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", fixture.server.URL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "spki-pin", pin))
 
 	err = runAuthRegister(cmd, nil)
 	require.Error(t, err)
@@ -571,8 +571,8 @@ func TestRunAuthRegister_StaleRecordedPinStillRejects(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newAuthRegisterCmd(t, &out)
-	require.NoError(t, cmd.Flags().Set("server", fixture.server.URL))
-	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", fixture.server.URL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
 
 	err = runAuthRegister(cmd, nil)
 	require.Error(t, err)

@@ -201,7 +201,7 @@ func TestGetTrustNewDevices(t *testing.T) {
 
 	assert.False(t, GetTrustNewDevices(cmd))
 
-	require.NoError(t, cmd.Flags().Set("trust-new-devices", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "trust-new-devices", "true"))
 	assert.True(t, GetTrustNewDevices(cmd))
 
 	// A command without the flag must report the safe default rather than

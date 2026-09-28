@@ -213,6 +213,7 @@ func withFailingClientFactory(t *testing.T, err error) {
 // --- Help and Registration Tests ---
 
 func TestSealStoreCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 
 	buf := new(bytes.Buffer)
@@ -351,6 +352,7 @@ func TestSealStoreError_Unwrap(t *testing.T) {
 // --- Put Subcommand Tests ---
 
 func TestSealStoreCmd_PutWithValue(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
@@ -384,6 +386,7 @@ func TestSealStoreCmd_PutWithValue(t *testing.T) {
 }
 
 func TestSealStoreCmd_PutWithFile(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
@@ -415,6 +418,7 @@ func TestSealStoreCmd_PutWithFile(t *testing.T) {
 }
 
 func TestSealStoreCmd_PutMissingSource(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
@@ -431,6 +435,7 @@ func TestSealStoreCmd_PutMissingSource(t *testing.T) {
 }
 
 func TestSealStoreCmd_PutMutuallyExclusive(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
@@ -451,6 +456,7 @@ func TestSealStoreCmd_PutMutuallyExclusive(t *testing.T) {
 }
 
 func TestSealStoreCmd_PutFileNotFound(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
@@ -473,6 +479,7 @@ func TestSealStoreCmd_PutFileNotFound(t *testing.T) {
 }
 
 func TestSealStoreCmd_PutServerError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.putErr = errors.New("server unavailable")
@@ -495,6 +502,7 @@ func TestSealStoreCmd_PutServerError(t *testing.T) {
 // --- Get Subcommand Tests ---
 
 func TestSealStoreCmd_GetToStdout(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.secrets["my-secret"] = []byte("retrieved-value")
@@ -516,6 +524,7 @@ func TestSealStoreCmd_GetToStdout(t *testing.T) {
 }
 
 func TestSealStoreCmd_GetToFile(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.secrets["cert-data"] = []byte("PEM-CERTIFICATE-DATA")
@@ -544,6 +553,7 @@ func TestSealStoreCmd_GetToFile(t *testing.T) {
 }
 
 func TestSealStoreCmd_GetNotFound(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
@@ -563,6 +573,7 @@ func TestSealStoreCmd_GetNotFound(t *testing.T) {
 }
 
 func TestSealStoreCmd_GetServerError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.secrets["exists"] = []byte("data")
@@ -584,6 +595,7 @@ func TestSealStoreCmd_GetServerError(t *testing.T) {
 }
 
 func TestSealStoreCmd_GetOutputWriteError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.secrets["my-secret"] = []byte("data")
@@ -610,6 +622,7 @@ func TestSealStoreCmd_GetOutputWriteError(t *testing.T) {
 // --- Delete Subcommand Tests ---
 
 func TestSealStoreCmd_Delete(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.secrets["to-delete"] = []byte("data")
@@ -636,6 +649,7 @@ func TestSealStoreCmd_Delete(t *testing.T) {
 }
 
 func TestSealStoreCmd_DeleteServerError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.delErr = errors.New("permission denied")
@@ -658,6 +672,7 @@ func TestSealStoreCmd_DeleteServerError(t *testing.T) {
 // --- List Subcommand Tests ---
 
 func TestSealStoreCmd_ListWithSecrets(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.secrets["secret-a"] = []byte("a")
@@ -687,6 +702,7 @@ func TestSealStoreCmd_ListWithSecrets(t *testing.T) {
 }
 
 func TestSealStoreCmd_ListEmpty(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
@@ -708,6 +724,7 @@ func TestSealStoreCmd_ListEmpty(t *testing.T) {
 }
 
 func TestSealStoreCmd_ListServerError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.listErr = errors.New("connection refused")
@@ -730,6 +747,7 @@ func TestSealStoreCmd_ListServerError(t *testing.T) {
 // --- Reseal Subcommand Tests ---
 
 func TestSealStoreCmd_ResealSingle(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.secrets["my-secret"] = []byte("data")
@@ -756,6 +774,7 @@ func TestSealStoreCmd_ResealSingle(t *testing.T) {
 }
 
 func TestSealStoreCmd_ResealAll(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.secrets["secret-1"] = []byte("a")
@@ -783,6 +802,7 @@ func TestSealStoreCmd_ResealAll(t *testing.T) {
 }
 
 func TestSealStoreCmd_ResealMissingName(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
@@ -799,6 +819,7 @@ func TestSealStoreCmd_ResealMissingName(t *testing.T) {
 }
 
 func TestSealStoreCmd_ResealAllEmpty(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
@@ -815,6 +836,7 @@ func TestSealStoreCmd_ResealAllEmpty(t *testing.T) {
 }
 
 func TestSealStoreCmd_ResealServerError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.secrets["my-secret"] = []byte("data")
@@ -836,6 +858,7 @@ func TestSealStoreCmd_ResealServerError(t *testing.T) {
 }
 
 func TestSealStoreCmd_ResealAllListError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.listErr = errors.New("list failed")
@@ -858,6 +881,7 @@ func TestSealStoreCmd_ResealAllListError(t *testing.T) {
 // --- Status Subcommand Tests ---
 
 func TestSealStoreCmd_Status(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.secrets["secret-a"] = []byte("a")
@@ -890,6 +914,7 @@ func TestSealStoreCmd_Status(t *testing.T) {
 }
 
 func TestSealStoreCmd_StatusServerError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	mock.statusErr = errors.New("server down")
@@ -910,6 +935,7 @@ func TestSealStoreCmd_StatusServerError(t *testing.T) {
 }
 
 func TestSealStoreCmd_StatusEmpty(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
@@ -933,6 +959,7 @@ func TestSealStoreCmd_StatusEmpty(t *testing.T) {
 // --- Connection Error Tests ---
 
 func TestSealStoreCmd_ConnectError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	withFailingClientFactory(t, errors.New("no server"))
 
@@ -951,6 +978,7 @@ func TestSealStoreCmd_ConnectError(t *testing.T) {
 }
 
 func TestSealStoreCmd_ConnectErrorOnPut(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	withFailingClientFactory(t, errors.New("no server"))
 
@@ -971,6 +999,7 @@ func TestSealStoreCmd_ConnectErrorOnPut(t *testing.T) {
 // --- PutAndGet Roundtrip Test ---
 
 func TestSealStoreCmd_PutAndGetRoundtrip(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetSealStoreFlags()
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)

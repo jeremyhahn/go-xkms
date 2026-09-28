@@ -253,9 +253,9 @@ func TestRunDeviceEnroll_IssuesAndPersistsCertificate(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newDeviceEnrollCmd(t, &out)
-	require.NoError(t, cmd.Flags().Set("server", "master.example.com:9443"))
-	require.NoError(t, cmd.Flags().Set("name", "workstation-1"))
-	require.NoError(t, cmd.Flags().Set("validity-days", "90"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "master.example.com:9443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "workstation-1"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "validity-days", "90"))
 
 	require.NoError(t, runDeviceEnroll(cmd, nil))
 
@@ -324,7 +324,7 @@ func TestRunDeviceEnroll_DefaultsNameToHostname(t *testing.T) {
 	installDeviceEnrollDoubles(t, ca, nil, nil)
 
 	cmd := newDeviceEnrollCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "master.example.com:9443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "master.example.com:9443"))
 
 	require.NoError(t, runDeviceEnroll(cmd, nil))
 
@@ -352,7 +352,7 @@ func TestRunDeviceEnroll_MissingServer(t *testing.T) {
 // is rejected before any key material is generated.
 func TestRunDeviceEnroll_InvalidServer(t *testing.T) {
 	cmd := newDeviceEnrollCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "master.example.com"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "master.example.com"))
 
 	err := runDeviceEnroll(cmd, nil)
 	require.Error(t, err)
@@ -367,8 +367,8 @@ func TestRunDeviceEnroll_CodeFailsClosed(t *testing.T) {
 	installDeviceEnrollDoubles(t, newTestCA(t), nil, nil)
 
 	cmd := newDeviceEnrollCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "master.example.com:9443"))
-	require.NoError(t, cmd.Flags().Set("code", "ABCD1234"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "master.example.com:9443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "code", "ABCD1234"))
 
 	err := runDeviceEnroll(cmd, nil)
 	require.Error(t, err)
@@ -386,7 +386,7 @@ func TestRunDeviceEnroll_NoCertificateAuthority(t *testing.T) {
 	installDeviceEnrollDoubles(t, nil, ErrAgentCAUnavailable, nil)
 
 	cmd := newDeviceEnrollCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "master.example.com:9443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "master.example.com:9443"))
 
 	err := runDeviceEnroll(cmd, nil)
 	require.Error(t, err)
@@ -405,7 +405,7 @@ func TestRunDeviceEnroll_SignFailure(t *testing.T) {
 	installDeviceEnrollDoubles(t, ca, nil, nil)
 
 	cmd := newDeviceEnrollCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "master.example.com:9443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "master.example.com:9443"))
 
 	err := runDeviceEnroll(cmd, nil)
 	require.Error(t, err)
@@ -422,7 +422,7 @@ func TestRunDeviceEnroll_CACertificateFailure(t *testing.T) {
 	installDeviceEnrollDoubles(t, ca, nil, nil)
 
 	cmd := newDeviceEnrollCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "master.example.com:9443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "master.example.com:9443"))
 
 	err := runDeviceEnroll(cmd, nil)
 	require.Error(t, err)
@@ -439,7 +439,7 @@ func TestRunDeviceEnroll_UnusableTrustAnchor(t *testing.T) {
 	installDeviceEnrollDoubles(t, ca, nil, nil)
 
 	cmd := newDeviceEnrollCmd(t, &bytes.Buffer{})
-	require.NoError(t, cmd.Flags().Set("server", "master.example.com:9443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "master.example.com:9443"))
 
 	err := runDeviceEnroll(cmd, nil)
 	require.Error(t, err)
@@ -456,7 +456,7 @@ func TestRunDeviceEnroll_MasterRejects(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newDeviceEnrollCmd(t, &out)
-	require.NoError(t, cmd.Flags().Set("server", "master.example.com:9443"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", "master.example.com:9443"))
 
 	err := runDeviceEnroll(cmd, nil)
 	require.Error(t, err)

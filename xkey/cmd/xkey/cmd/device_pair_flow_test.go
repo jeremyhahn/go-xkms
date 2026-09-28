@@ -160,7 +160,7 @@ func pairCommand(t *testing.T) *cobra.Command {
 	cmd.Flags().Duration("timeout", 5*time.Second, "")
 	cmd.Flags().Bool("force", false, "")
 	addSOPINFlags(cmd)
-	require.NoError(t, cmd.Flags().Set("device", "Test Pixel"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "device", "Test Pixel"))
 	return cmd
 }
 

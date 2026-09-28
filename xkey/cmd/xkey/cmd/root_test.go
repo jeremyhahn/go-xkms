@@ -20,6 +20,7 @@ import (
 )
 
 func TestRootCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)

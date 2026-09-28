@@ -143,12 +143,12 @@ func setBackupFlags(t *testing.T, cmd *cobra.Command, values map[string]string) 
 		flag := cmd.Flags().Lookup(name)
 		require.NotNil(t, flag, "flag %q must exist", name)
 		previous[name] = flag.Value.String()
-		require.NoError(t, cmd.Flags().Set(name, value))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), name, value))
 	}
 
 	t.Cleanup(func() {
 		for name, value := range previous {
-			_ = cmd.Flags().Set(name, value)
+			_ = setFlagForTest(t, cmd.Flags(), name, value)
 		}
 	})
 }

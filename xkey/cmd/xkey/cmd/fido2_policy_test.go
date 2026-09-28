@@ -117,6 +117,7 @@ func newRPPolicyTestDir(t *testing.T, prefix string) string {
 // --- RPPolicyCmd structure tests ---
 
 func TestRPPolicyCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 
 	buf := new(bytes.Buffer)
@@ -212,6 +213,7 @@ func TestRPPolicyErrors_AreDistinct(t *testing.T) {
 // --- List subcommand tests ---
 
 func TestRPPolicyList_Empty(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	setFIDO2ViperMemory()
 	defer resetFIDO2Viper()
@@ -230,6 +232,7 @@ func TestRPPolicyList_Empty(t *testing.T) {
 }
 
 func TestRPPolicyList_WithPolicies(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	storePath := newRPPolicyTestDir(t, "rp-policy-list-*")
 	setFIDO2ViperFile(storePath)
@@ -276,6 +279,7 @@ func TestRPPolicyList_WithPolicies(t *testing.T) {
 // --- Set subcommand tests ---
 
 func TestRPPolicySet_Success(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	storePath := newRPPolicyTestDir(t, "rp-policy-set-*")
 	setFIDO2ViperFile(storePath)
@@ -311,6 +315,7 @@ func TestRPPolicySet_Success(t *testing.T) {
 }
 
 func TestRPPolicySet_MissingRPID(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	setFIDO2ViperMemory()
 	defer resetFIDO2Viper()
@@ -323,6 +328,7 @@ func TestRPPolicySet_MissingRPID(t *testing.T) {
 }
 
 func TestRPPolicySet_InvalidUV(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	setFIDO2ViperMemory()
 	defer resetFIDO2Viper()
@@ -343,6 +349,7 @@ func TestRPPolicySet_InvalidUV(t *testing.T) {
 }
 
 func TestRPPolicySet_InvalidUP(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	setFIDO2ViperMemory()
 	defer resetFIDO2Viper()
@@ -359,6 +366,7 @@ func TestRPPolicySet_InvalidUP(t *testing.T) {
 }
 
 func TestRPPolicySet_ValidUPTrue(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	storePath := newRPPolicyTestDir(t, "rp-policy-set-up-true-*")
 	setFIDO2ViperFile(storePath)
@@ -397,6 +405,7 @@ func TestRPPolicySet_ValidUPTrue(t *testing.T) {
 }
 
 func TestRPPolicySet_ValidUPFalse(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	storePath := newRPPolicyTestDir(t, "rp-policy-set-up-false-*")
 	setFIDO2ViperFile(storePath)
@@ -434,6 +443,7 @@ func TestRPPolicySet_ValidUPFalse(t *testing.T) {
 }
 
 func TestRPPolicySet_BlockedRP(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	storePath := newRPPolicyTestDir(t, "rp-policy-set-blocked-*")
 	setFIDO2ViperFile(storePath)
@@ -470,6 +480,7 @@ func TestRPPolicySet_BlockedRP(t *testing.T) {
 // --- Get subcommand tests ---
 
 func TestRPPolicyGet_Success(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	storePath := newRPPolicyTestDir(t, "rp-policy-get-*")
 	setFIDO2ViperFile(storePath)
@@ -515,6 +526,7 @@ func TestRPPolicyGet_Success(t *testing.T) {
 }
 
 func TestRPPolicyGet_MissingRPID(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	setFIDO2ViperMemory()
 	defer resetFIDO2Viper()
@@ -527,6 +539,7 @@ func TestRPPolicyGet_MissingRPID(t *testing.T) {
 }
 
 func TestRPPolicyGet_NotFound(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	setFIDO2ViperMemory()
 	defer resetFIDO2Viper()
@@ -544,6 +557,7 @@ func TestRPPolicyGet_NotFound(t *testing.T) {
 // --- Delete subcommand tests ---
 
 func TestRPPolicyDelete_Success(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	storePath := newRPPolicyTestDir(t, "rp-policy-delete-*")
 	setFIDO2ViperFile(storePath)
@@ -586,6 +600,7 @@ func TestRPPolicyDelete_Success(t *testing.T) {
 }
 
 func TestRPPolicyDelete_MissingRPID(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	setFIDO2ViperMemory()
 	defer resetFIDO2Viper()
@@ -598,6 +613,7 @@ func TestRPPolicyDelete_MissingRPID(t *testing.T) {
 }
 
 func TestRPPolicyDelete_NotFound(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	setFIDO2ViperMemory()
 	defer resetFIDO2Viper()
@@ -633,6 +649,7 @@ func newFIDO2ProfileTestDir(t *testing.T) string {
 // not depend on output plumbing left behind by other tests in the package.
 func runFIDO2ProfileCommand(t *testing.T, args ...string) string {
 	t.Helper()
+	resetCommandFlagsForTest(t, RootCmd)
 
 	resetFIDO2PolicyFlags()
 
@@ -775,6 +792,7 @@ func TestFIDO2ProfileSet_ClearsTransports(t *testing.T) {
 // TestFIDO2ProfileSet_NoSettings verifies the command fails closed rather
 // than writing an empty profile when no setting is named.
 func TestFIDO2ProfileSet_NoSettings(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	newFIDO2ProfileTestDir(t)
 	resetFIDO2PolicyFlags()
 
@@ -797,6 +815,7 @@ func TestFIDO2ProfileSet_NoSettings(t *testing.T) {
 }
 
 func TestFIDO2ProfileSet_InvalidTransport(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	newFIDO2ProfileTestDir(t)
 	resetFIDO2PolicyFlags()
 
@@ -1033,6 +1052,7 @@ func TestCreateFIDO2RPPolicyStore_InvalidType(t *testing.T) {
 // --- Attestation override tests ---
 
 func TestRPPolicySet_ValidAttestationOverride(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	storePath := newRPPolicyTestDir(t, "rp-policy-attest-*")
 	setFIDO2ViperFile(storePath)
@@ -1071,6 +1091,7 @@ func TestRPPolicySet_ValidAttestationOverride(t *testing.T) {
 }
 
 func TestRPPolicySet_InvalidAttestationOverride(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetFIDO2PolicyFlags()
 	setFIDO2ViperMemory()
 	defer resetFIDO2Viper()

@@ -33,6 +33,7 @@ import (
 )
 
 func TestOIDCCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -108,6 +109,7 @@ func TestOIDCProvidersCmd_SubcommandRegistration(t *testing.T) {
 // at the function level for input validation tests.
 
 func TestOIDCLoginCmd_MissingIssuer(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
@@ -476,7 +478,7 @@ func oidcExplicitStoreCmd(t *testing.T, storePath string) *cobra.Command {
 	t.Helper()
 	cmd := &cobra.Command{Use: "oidc-test"}
 	cmd.Flags().String("token-store", "", "")
-	if err := cmd.Flags().Set("token-store", storePath); err != nil {
+	if err := setFlagForTest(t, cmd.Flags(), "token-store", storePath); err != nil {
 		t.Fatalf("failed to set --token-store: %v", err)
 	}
 	return cmd

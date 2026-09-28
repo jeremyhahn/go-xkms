@@ -171,7 +171,7 @@ func TestResolveXKMSdEndpoint_TLSCAFlagBeatsEnvAndConfig(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "probe"}
 	cmd.Flags().String(tlsCAFlagName, "", "")
-	require.NoError(t, cmd.Flags().Set(tlsCAFlagName, "/etc/flag-ca.pem"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), tlsCAFlagName, "/etc/flag-ca.pem"))
 
 	endpoint, err := resolveXKMSdEndpoint(cmd)
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func TestCommandFlagString_UndeclaredFlag(t *testing.T) {
 func TestCommandFlagString_PersistentFlagOnParent(t *testing.T) {
 	parent := &cobra.Command{Use: "parent"}
 	parent.PersistentFlags().String(tlsCAFlagName, "", "")
-	require.NoError(t, parent.PersistentFlags().Set(tlsCAFlagName, "/etc/persistent-ca.pem"))
+	require.NoError(t, setFlagForTest(t, parent.PersistentFlags(), tlsCAFlagName, "/etc/persistent-ca.pem"))
 
 	assert.Equal(t, "/etc/persistent-ca.pem", commandFlagString(parent, tlsCAFlagName))
 }

@@ -342,8 +342,8 @@ func TestPhoneStatusCmd_FiltersByDeviceFlag(t *testing.T) {
 	}
 	require.NoError(t, saveDevicesConfig(cfg))
 
-	require.NoError(t, deviceStatusCmd.Flags().Set("device", "Home Phone"))
-	t.Cleanup(func() { _ = deviceStatusCmd.Flags().Set("device", "") })
+	require.NoError(t, setFlagForTest(t, deviceStatusCmd.Flags(), "device", "Home Phone"))
+	t.Cleanup(func() { _ = setFlagForTest(t, deviceStatusCmd.Flags(), "device", "") })
 
 	var buf bytes.Buffer
 	deviceStatusCmd.SetOut(&buf)
@@ -370,8 +370,8 @@ func TestPhoneUnpairCmd_ForceRemovesDevice(t *testing.T) {
 	}
 	require.NoError(t, saveDevicesConfig(cfg))
 
-	require.NoError(t, deviceUnpairCmd.Flags().Set("force", "true"))
-	t.Cleanup(func() { _ = deviceUnpairCmd.Flags().Set("force", "false") })
+	require.NoError(t, setFlagForTest(t, deviceUnpairCmd.Flags(), "force", "true"))
+	t.Cleanup(func() { _ = setFlagForTest(t, deviceUnpairCmd.Flags(), "force", "false") })
 
 	var buf bytes.Buffer
 	deviceUnpairCmd.SetOut(&buf)

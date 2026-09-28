@@ -75,10 +75,10 @@ func TestResolveOIDCCallback_ConfigurationThenFlags(t *testing.T) {
 	assert.Equal(t, oidc.Callback{Host: "10.0.0.5", Port: 9090}, mustResolve(t, callbackTestCmd()))
 
 	cmd := callbackTestCmd()
-	require.NoError(t, cmd.Flags().Set("callback-host", "::1"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "callback-host", "::1"))
 	assert.Equal(t, oidc.Callback{Host: "::1", Port: 9090}, mustResolve(t, cmd), "the host flag overrides the section, the port keeps the section")
 
-	require.NoError(t, cmd.Flags().Set("callback-port", "9191"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "callback-port", "9191"))
 	assert.Equal(t, oidc.Callback{Host: "::1", Port: 9191}, mustResolve(t, cmd))
 }
 
@@ -89,7 +89,7 @@ func TestResolveOIDCCallback_RejectsAPortOutsideTheRange(t *testing.T) {
 	withLoadedConfig(t, nil)
 	for _, value := range []string{"0", "-1", "65536"} {
 		cmd := callbackTestCmd()
-		require.NoError(t, cmd.Flags().Set("callback-port", value))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "callback-port", value))
 		callback, err := resolveOIDCCallback(cmd)
 		require.Error(t, err, "port %s", value)
 		var portErr *OIDCCallbackPortError
@@ -100,8 +100,8 @@ func TestResolveOIDCCallback_RejectsAPortOutsideTheRange(t *testing.T) {
 	}
 	for _, value := range []string{"1", "65535"} {
 		cmd := callbackTestCmd()
-		require.NoError(t, cmd.Flags().Set("callback-port", value))
-		require.NoError(t, cmd.Flags().Set("callback-port", value))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "callback-port", value))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "callback-port", value))
 		callback := mustResolve(t, cmd)
 		assert.Equal(t, value, strconv.Itoa(callback.Port))
 	}
@@ -199,7 +199,7 @@ func TestRunOIDCLogin_BindsTheConfiguredCallbackHostAndPort(t *testing.T) {
 	withLoadedConfig(t, nil)
 	port := occupyLoopbackPort(t)
 	cmd, _ := oidcLoginTestCmd(t, fakeIssuer(t).URL)
-	require.NoError(t, cmd.Flags().Set("callback-port", strconv.Itoa(port)))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "callback-port", strconv.Itoa(port)))
 
 	err := loginError(t, func() error { return runOIDCLogin(cmd, nil) })
 	require.Error(t, err)
@@ -216,7 +216,7 @@ func TestRunOIDCLogin_ExplicitRedirectURLKeepsItsPort(t *testing.T) {
 	withLoadedConfig(t, cfg)
 	port := occupyLoopbackPort(t)
 	cmd, _ := oidcLoginTestCmd(t, fakeIssuer(t).URL)
-	require.NoError(t, cmd.Flags().Set("redirect-url", "http://localhost:"+strconv.Itoa(port)+"/callback"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "redirect-url", "http://localhost:"+strconv.Itoa(port)+"/callback"))
 
 	err := loginError(t, func() error { return runOIDCLogin(cmd, nil) })
 	require.Error(t, err)
@@ -290,7 +290,7 @@ func TestRunOIDCLogin_GeneratedRedirectReachesTheListener(t *testing.T) {
 func TestRunOIDCLogin_RejectsAnInvalidCallbackPortFlag(t *testing.T) {
 	withLoadedConfig(t, nil)
 	cmd, _ := oidcLoginTestCmd(t, "http://127.0.0.1:1")
-	require.NoError(t, cmd.Flags().Set("callback-port", "0"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "callback-port", "0"))
 
 	err := runOIDCLogin(cmd, nil)
 	var portErr *OIDCCallbackPortError
@@ -305,15 +305,15 @@ func TestRunOIDCLogin_RejectsAnUnservableRedirectURL(t *testing.T) {
 	withLoadedConfig(t, nil)
 	for _, redirect := range []string{"ftp://localhost/callback", "https://localhost:8443/callback"} {
 		cmd, _ := oidcLoginTestCmd(t, fakeIssuer(t).URL)
-		require.NoError(t, cmd.Flags().Set("redirect-url", redirect))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "redirect-url", redirect))
 		err := runOIDCLogin(cmd, nil)
 		var redirectErr *oidc.RedirectURLError
 		require.True(t, errors.As(err, &redirectErr), "%s: got %T: %v", redirect, err, err)
 	}
 
 	cmd, out := oidcLoginTestCmd(t, fakeIssuer(t).URL)
-	require.NoError(t, cmd.Flags().Set("callback-host", "10.0.0.5"))
-	require.NoError(t, cmd.Flags().Set("redirect-url", "http://localhost:8085/callback"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "callback-host", "10.0.0.5"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "redirect-url", "http://localhost:8085/callback"))
 	err := runOIDCLogin(cmd, nil)
 	var hostErr *oidc.CallbackHostError
 	require.True(t, errors.As(err, &hostErr), "got %T: %v", err, err)

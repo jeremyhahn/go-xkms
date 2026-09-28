@@ -175,6 +175,7 @@ func withFailingPasswordClientFactory(t *testing.T, err error) {
 // --- Existing Tests ---
 
 func TestPasswordCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 
 	buf := new(bytes.Buffer)
@@ -234,6 +235,7 @@ func TestPasswordCmd_SubcommandRegistration(t *testing.T) {
 }
 
 func TestPasswordCmd_AddMissingName(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 
 	storePath, err := os.MkdirTemp("", "pw-test-add-missing-name-*")
@@ -254,6 +256,7 @@ func TestPasswordCmd_AddMissingName(t *testing.T) {
 }
 
 func TestPasswordCmd_AddMissingSource(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 
 	storePath, err := os.MkdirTemp("", "pw-test-add-missing-source-*")
@@ -274,6 +277,7 @@ func TestPasswordCmd_AddMissingSource(t *testing.T) {
 }
 
 func TestPasswordCmd_AddMutuallyExclusive(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 
 	storePath, err := os.MkdirTemp("", "pw-test-add-mutex-*")
@@ -300,6 +304,7 @@ func TestPasswordCmd_AddMutuallyExclusive(t *testing.T) {
 }
 
 func TestPasswordCmd_GetMissingArg(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 
 	storePath, err := os.MkdirTemp("", "pw-test-get-missing-*")
@@ -320,6 +325,7 @@ func TestPasswordCmd_GetMissingArg(t *testing.T) {
 }
 
 func TestPasswordCmd_RemoveMissingArg(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 
 	storePath, err := os.MkdirTemp("", "pw-test-remove-missing-*")
@@ -374,6 +380,7 @@ func TestPasswordErrors(t *testing.T) {
 }
 
 func TestPasswordCmd_AddAndList(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 
 	storePath, err := os.MkdirTemp("", "pw-test-add-list-*")
@@ -432,6 +439,7 @@ func TestPasswordCmd_AddAndList(t *testing.T) {
 }
 
 func TestPasswordCmd_AddGenerated(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 
 	storePath, err := os.MkdirTemp("", "pw-test-add-gen-*")
@@ -491,6 +499,7 @@ func TestPasswordCmd_AddGenerated(t *testing.T) {
 // --- Add with metadata flags tests ---
 
 func TestPasswordCmd_AddWithMetadata(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 
 	storePath, err := os.MkdirTemp("", "pw-test-add-meta-*")
@@ -551,6 +560,7 @@ func TestPasswordCmd_AddWithMetadata(t *testing.T) {
 }
 
 func TestPasswordCmd_AddWithoutMetadata(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 
 	storePath, err := os.MkdirTemp("", "pw-test-add-nometa-*")
@@ -600,6 +610,7 @@ func TestPasswordCmd_AddWithoutMetadata(t *testing.T) {
 // --- Unlock Subcommand Tests ---
 
 func TestPasswordCmd_Unlock(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	withMockPasswordClient(t, mock)
@@ -633,6 +644,7 @@ func TestPasswordCmd_Unlock(t *testing.T) {
 }
 
 func TestPasswordCmd_UnlockMissingPIN(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	withMockPasswordClient(t, mock)
@@ -653,6 +665,7 @@ func TestPasswordCmd_UnlockMissingPIN(t *testing.T) {
 }
 
 func TestPasswordCmd_UnlockServerError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	mock.unlockErr = errors.New("invalid PIN")
@@ -673,6 +686,7 @@ func TestPasswordCmd_UnlockServerError(t *testing.T) {
 }
 
 func TestPasswordCmd_UnlockConnectError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	withFailingPasswordClientFactory(t, errors.New("no server"))
 
@@ -693,6 +707,7 @@ func TestPasswordCmd_UnlockConnectError(t *testing.T) {
 // --- Lock Subcommand Tests ---
 
 func TestPasswordCmd_Lock(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	mock.isLocked = false
@@ -723,6 +738,7 @@ func TestPasswordCmd_Lock(t *testing.T) {
 }
 
 func TestPasswordCmd_LockServerError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	mock.lockErr = errors.New("lock failed")
@@ -743,6 +759,7 @@ func TestPasswordCmd_LockServerError(t *testing.T) {
 }
 
 func TestPasswordCmd_LockConnectError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	withFailingPasswordClientFactory(t, errors.New("no server"))
 
@@ -763,6 +780,7 @@ func TestPasswordCmd_LockConnectError(t *testing.T) {
 // --- Status Subcommand Tests ---
 
 func TestPasswordCmd_Status(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	mock.accessMode = AccessModeSessionBased
@@ -804,6 +822,7 @@ func TestPasswordCmd_Status(t *testing.T) {
 }
 
 func TestPasswordCmd_StatusLocked(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	mock.accessMode = AccessModePINPerOperation
@@ -838,6 +857,7 @@ func TestPasswordCmd_StatusLocked(t *testing.T) {
 }
 
 func TestPasswordCmd_StatusServerError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	mock.statusErr = errors.New("server down")
@@ -858,6 +878,7 @@ func TestPasswordCmd_StatusServerError(t *testing.T) {
 }
 
 func TestPasswordCmd_StatusConnectError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	withFailingPasswordClientFactory(t, errors.New("no server"))
 
@@ -878,6 +899,7 @@ func TestPasswordCmd_StatusConnectError(t *testing.T) {
 // --- Access-Mode Subcommand Tests ---
 
 func TestPasswordCmd_AccessModeSessionBased(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	withMockPasswordClient(t, mock)
@@ -911,6 +933,7 @@ func TestPasswordCmd_AccessModeSessionBased(t *testing.T) {
 }
 
 func TestPasswordCmd_AccessModePINPerOperation(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	mock.accessMode = AccessModeSessionBased
@@ -937,6 +960,7 @@ func TestPasswordCmd_AccessModePINPerOperation(t *testing.T) {
 }
 
 func TestPasswordCmd_AccessModeMissingMode(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	withMockPasswordClient(t, mock)
@@ -957,6 +981,7 @@ func TestPasswordCmd_AccessModeMissingMode(t *testing.T) {
 }
 
 func TestPasswordCmd_AccessModeInvalidMode(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	withMockPasswordClient(t, mock)
@@ -977,6 +1002,7 @@ func TestPasswordCmd_AccessModeInvalidMode(t *testing.T) {
 }
 
 func TestPasswordCmd_AccessModeServerError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	mock.setModeErr = errors.New("access denied")
@@ -997,6 +1023,7 @@ func TestPasswordCmd_AccessModeServerError(t *testing.T) {
 }
 
 func TestPasswordCmd_AccessModeConnectError(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	withFailingPasswordClientFactory(t, errors.New("no server"))
 
@@ -1017,6 +1044,7 @@ func TestPasswordCmd_AccessModeConnectError(t *testing.T) {
 // --- Unlock/Lock Roundtrip Test ---
 
 func TestPasswordCmd_UnlockLockRoundtrip(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	withMockPasswordClient(t, mock)
@@ -1196,6 +1224,7 @@ func TestDefaultPasswordClientFactory_UnsupportedScheme(t *testing.T) {
 // --- Status After Mode Change Integration Test ---
 
 func TestPasswordCmd_AccessModeThenStatus(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
 	mock := newMockPasswordStoreClient()
 	withMockPasswordClient(t, mock)
@@ -1238,7 +1267,7 @@ func TestPasswordStorePath_ExplicitFlagWins(t *testing.T) {
 	resetPasswordFlags()
 	t.Cleanup(resetPasswordFlags)
 
-	if err := passwordGetCmd.Flags().Set("store", "/explicit/store/path"); err != nil {
+	if err := setFlagForTest(t, passwordGetCmd.Flags(), "store", "/explicit/store/path"); err != nil {
 		t.Fatalf("Set(store): %v", err)
 	}
 

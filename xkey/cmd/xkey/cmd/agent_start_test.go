@@ -32,7 +32,7 @@ func TestRunAgentStart_InvalidListenAddressFailsValidation(t *testing.T) {
 	cmd.Flags().String("tls-cert", "", "")
 	cmd.Flags().String("tls-key", "", "")
 	cmd.Flags().String("tls-ca", "", "")
-	require.NoError(t, cmd.Flags().Set("listen", ""))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "listen", ""))
 
 	err := runAgentStart(cmd, nil)
 	require.ErrorIs(t, err, agent.ErrInvalidAddress)

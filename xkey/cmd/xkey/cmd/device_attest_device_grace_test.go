@@ -48,7 +48,7 @@ func TestRunDeviceAttestDevice_DeviceNotFound(t *testing.T) {
 	}))
 
 	cmd := attestDeviceCommand(t)
-	require.NoError(t, cmd.Flags().Set("device", "Nonexistent"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "device", "Nonexistent"))
 
 	err := runDeviceAttestDevice(cmd, nil)
 	require.ErrorIs(t, err, ErrDeviceNotFound)
@@ -77,7 +77,7 @@ func TestRunDeviceAttestDevice_ForceBypassesGracePeriod(t *testing.T) {
 	}))
 
 	cmd := attestDeviceCommand(t)
-	require.NoError(t, cmd.Flags().Set("force", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "force", "true"))
 
 	err := runDeviceAttestDevice(cmd, nil)
 	require.ErrorIs(t, err, ErrAttestDeviceVerifyFailed)

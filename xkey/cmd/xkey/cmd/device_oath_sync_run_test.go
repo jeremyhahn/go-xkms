@@ -37,7 +37,7 @@ func oathSyncTestCmd(t *testing.T, storePath string) *cobra.Command {
 	cmd.Flags().Duration("timeout", 50*time.Millisecond, "")
 	cmd.Flags().String("store", "", "")
 	if storePath != "" {
-		require.NoError(t, cmd.Flags().Set("store", storePath))
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "store", storePath))
 	}
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -70,7 +70,7 @@ func TestRunOATHSync_DeviceNotFound(t *testing.T) {
 	require.NoError(t, saveDevicesConfig(&DevicesConfig{Devices: []PairedDevice{brokenNoiseKeyDevice("A")}}))
 
 	cmd := oathSyncTestCmd(t, "")
-	require.NoError(t, cmd.Flags().Set("device", "Nonexistent"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "device", "Nonexistent"))
 	err := runOATHSync(cmd, nil)
 	require.ErrorIs(t, err, ErrDeviceNotFound)
 }

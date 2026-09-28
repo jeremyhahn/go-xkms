@@ -20,6 +20,7 @@ import (
 )
 
 func TestVersionCmd(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	// Test via root command to properly route output
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)

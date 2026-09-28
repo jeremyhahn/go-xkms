@@ -41,6 +41,7 @@ func resetTouchFlags() {
 }
 
 func TestTouchCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetTouchFlags()
 	resetPasswordFlags()
 
@@ -83,6 +84,7 @@ func TestTouchCmd_IsRegistered(t *testing.T) {
 }
 
 func TestPasswordTypeCmd_Help(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetTouchFlags()
 	resetPasswordFlags()
 
@@ -124,6 +126,7 @@ func TestPasswordTypeCmd_IsRegistered(t *testing.T) {
 }
 
 func TestPasswordTypeCmd_MissingArg(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	resetTouchFlags()
 	resetPasswordFlags()
 
@@ -189,7 +192,7 @@ func TestRunTouch_DaemonNotRunning(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("password", "", "")
 	cmd.Flags().String("socket", "", "")
-	require.NoError(t, cmd.Flags().Set("socket", filepath.Join(t.TempDir(), "no-daemon.sock")))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", filepath.Join(t.TempDir(), "no-daemon.sock")))
 
 	err := runTouch(cmd, nil)
 	require.ErrorIs(t, err, ErrTouchDaemonNotRunning)
@@ -199,8 +202,8 @@ func TestRunTouch_DaemonNotRunning_NamedPassword(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("password", "", "")
 	cmd.Flags().String("socket", "", "")
-	require.NoError(t, cmd.Flags().Set("socket", filepath.Join(t.TempDir(), "no-daemon.sock")))
-	require.NoError(t, cmd.Flags().Set("password", "DatabaseProd"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "socket", filepath.Join(t.TempDir(), "no-daemon.sock")))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "password", "DatabaseProd"))
 
 	err := runTouch(cmd, nil)
 	require.ErrorIs(t, err, ErrTouchDaemonNotRunning)

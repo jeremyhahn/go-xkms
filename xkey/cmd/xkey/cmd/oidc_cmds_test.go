@@ -79,7 +79,7 @@ func oidcTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, string) {
 func setOIDCFlags(t *testing.T, cmd *cobra.Command, values map[string]string) {
 	t.Helper()
 	for k, v := range values {
-		require.NoError(t, cmd.Flags().Set(k, v), "set --%s", k)
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), k, v), "set --%s", k)
 	}
 }
 
@@ -268,7 +268,7 @@ func TestRunOIDCStop_RequiresProviderOrAll(t *testing.T) {
 
 func TestRunOIDCStop_AllWithNoPIDDirectory(t *testing.T) {
 	cmd, buf, _ := oidcTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("all", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "all", "true"))
 
 	require.NoError(t, runOIDCStop(cmd, nil))
 	assert.Contains(t, buf.String(), "No background refresh processes running.")
@@ -307,7 +307,7 @@ func TestStopProcess_MissingPIDFileIsNotAnError(t *testing.T) {
 
 func TestRunOIDCStop_AllReportsNoneWhenAllStale(t *testing.T) {
 	cmd, buf, store := oidcTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("all", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "all", "true"))
 
 	stale := getPIDFile(store, "ghost")
 	require.NoError(t, os.MkdirAll(filepath.Dir(stale), 0700))
@@ -323,7 +323,7 @@ func addStandardProvider(t *testing.T, store string, values map[string]string) s
 	t.Helper()
 
 	cmd, buf, _ := oidcTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("token-store", store))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "token-store", store))
 	setOIDCFlags(t, cmd, values)
 	require.NoError(t, runOIDCProvidersAdd(cmd, nil))
 	return buf.String()
@@ -484,7 +484,7 @@ func TestRunOIDCProvidersAdd_RejectsDuplicateName(t *testing.T) {
 	})
 
 	cmd, _, _ := oidcTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("token-store", store))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "token-store", store))
 	setOIDCFlags(t, cmd, map[string]string{"name": "okta", "issuer": "https://i", "client-id": "c"})
 
 	assert.ErrorIs(t, runOIDCProvidersAdd(cmd, nil), ErrOIDCProviderExists)
@@ -582,7 +582,7 @@ func TestRunOIDCProvidersRemove_RemovesOnlyTheNamedProvider(t *testing.T) {
 	addStandardProvider(t, store, map[string]string{"name": "b", "issuer": "https://b", "client-id": "id"})
 
 	cmd, buf, _ := oidcTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("token-store", store))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "token-store", store))
 	require.NoError(t, runOIDCProvidersRemove(cmd, []string{"a"}))
 	assert.Contains(t, buf.String(), "Removed OIDC provider: a")
 
@@ -597,7 +597,7 @@ func TestRunOIDCProvidersRemove_UnknownProvider(t *testing.T) {
 	addStandardProvider(t, store, map[string]string{"name": "a", "issuer": "https://a", "client-id": "id"})
 
 	cmd, _, _ := oidcTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("token-store", store))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "token-store", store))
 	assert.ErrorIs(t, runOIDCProvidersRemove(cmd, []string{"missing"}), ErrOIDCProviderNotFound)
 }
 
@@ -678,7 +678,7 @@ func TestRunOIDCToken_TruncatesSecretsByDefault(t *testing.T) {
 
 func TestRunOIDCToken_ShowFullRevealsTokens(t *testing.T) {
 	cmd, buf, store := oidcTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("show-full", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "show-full", "true"))
 
 	access := strings.Repeat("A", 120)
 	refresh := strings.Repeat("R", 80)
@@ -733,7 +733,7 @@ func TestRunOIDCLogout_ClearsCurrentTokens(t *testing.T) {
 
 func TestRunOIDCLogout_AllRemovesStoreFile(t *testing.T) {
 	cmd, buf, store := oidcTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("all", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "all", "true"))
 	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://i", "",
 		"t", "", "", time.Now().Add(time.Hour), nil)))
 
@@ -744,7 +744,7 @@ func TestRunOIDCLogout_AllRemovesStoreFile(t *testing.T) {
 
 func TestRunOIDCLogout_AllOnMissingStore(t *testing.T) {
 	cmd, buf, _ := oidcTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("all", "true"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "all", "true"))
 
 	require.NoError(t, runOIDCLogout(cmd, nil))
 	assert.Contains(t, buf.String(), "No tokens to clear.")
@@ -890,7 +890,7 @@ func TestRunOIDCRefresh_WithProviderSkipsDiscoveryAndHonoursEncoding(t *testing.
 	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://issuer.invalid", "client",
 		"old-access", "old-refresh", "", time.Now().Add(-time.Minute), nil)))
 
-	require.NoError(t, cmd.Flags().Set("provider", "manual"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "provider", "manual"))
 	require.NoError(t, runOIDCRefresh(cmd, nil))
 	assert.Contains(t, buf.String(), "Token refreshed successfully!")
 
@@ -905,7 +905,7 @@ func TestRunOIDCRefresh_UnknownProviderReturnsTypedError(t *testing.T) {
 	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://issuer.invalid", "c",
 		"", "r", "", time.Now().Add(-time.Minute), nil)))
 
-	require.NoError(t, cmd.Flags().Set("provider", "does-not-exist"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "provider", "does-not-exist"))
 	err := runOIDCRefresh(cmd, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrOIDCProviderNotFound)

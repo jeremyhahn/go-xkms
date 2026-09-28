@@ -65,6 +65,7 @@ func resetTokenCmdFlags() {
 // merged them would not be exercising the wiring the operator meets.
 func runTokenCommand(t *testing.T, args []string, pinLines []string, presence string) (string, error) {
 	t.Helper()
+	resetCommandFlagsForTest(t, RootCmd)
 
 	resetTokenCmdFlags()
 
@@ -328,6 +329,7 @@ func TestInitToken_RefusesVolatileStorage(t *testing.T) {
 // TestInitToken_RefusesWhileTheDaemonIsRunning proves the command does not write
 // state the running daemon would overwrite on its next save.
 func TestInitToken_RefusesWhileTheDaemonIsRunning(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
 	newProvisioningDevice(t)
 
 	socketPath := startFakeFIDO2Daemon(t)

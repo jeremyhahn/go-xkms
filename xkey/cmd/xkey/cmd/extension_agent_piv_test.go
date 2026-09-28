@@ -654,9 +654,9 @@ func TestRunPivGenerate_PublicKeyOutputFormat_WritesFile(t *testing.T) {
 	withFilePIVStorage(t)
 
 	cmd, _ := newPIVGenerateTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("output-format", "public-key"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "output-format", "public-key"))
 	outPath := filepath.Join(t.TempDir(), "pub.pem")
-	require.NoError(t, cmd.Flags().Set("output", outPath))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "output", outPath))
 
 	require.NoError(t, runPivGenerate(cmd, []string{string(xkms.PIVSlotDigitalSignature)}))
 
@@ -671,7 +671,7 @@ func TestRunPivGenerate_RejectsInvalidAlgorithm(t *testing.T) {
 	withFilePIVStorage(t)
 
 	cmd, _ := newPIVGenerateTestCmd(t)
-	require.NoError(t, cmd.Flags().Set("algorithm", "carrier-pigeon"))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "algorithm", "carrier-pigeon"))
 
 	err := runPivGenerate(cmd, []string{string(xkms.PIVSlotAuthentication)})
 	require.Error(t, err)
@@ -716,7 +716,7 @@ func TestRunPivCSR_WritesCSRToOutputFile(t *testing.T) {
 
 	csrCmd, _ := newPIVCSRTestCmd(t, "user@example.com")
 	outPath := filepath.Join(t.TempDir(), "req.csr")
-	require.NoError(t, csrCmd.Flags().Set("output", outPath))
+	require.NoError(t, setFlagForTest(t, csrCmd.Flags(), "output", outPath))
 
 	require.NoError(t, runPivCSR(csrCmd, []string{string(xkms.PIVSlotAuthentication)}))
 
