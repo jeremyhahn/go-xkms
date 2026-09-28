@@ -18,6 +18,7 @@ package service
 import (
 	"crypto/rand"
 	"crypto/x509"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -68,7 +69,7 @@ func TestOpenDeviceTPM_SimulatorAnswersDeviceAttest(t *testing.T) {
 	host, port, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
 	require.NoError(t, err)
 
-	verified, err := deviceattest01.VerifyAttestation(net.DefaultResolver, unanchoredVerifier{}, host, port, "token", keyAuth)
+	verified, err := deviceattest01.VerifyAttestation(validation.NewClient(validation.Config{AllowPrivateTargets: true}), unanchoredVerifier{}, host, port, "token", keyAuth)
 	require.NoError(t, err)
 	assert.Empty(t, verified.Leaf.Subject.Names, "section 8.3.1 requires an empty subject")
 	assert.NotEmpty(t, certstore.ParseTCGAttributes(verified.Leaf).Manufacturer)
