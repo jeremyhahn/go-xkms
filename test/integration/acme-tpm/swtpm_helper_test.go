@@ -47,6 +47,7 @@ type SwtpmConnection struct {
 	conn        net.Conn
 	transport   transport.TPM
 	tpmModule   xkmssdk.TrustedPlatformModule
+	keys        xkmssdk.TPMKeyBackend
 	deviceID    string
 	ekCert      *x509.Certificate
 	iakAttrs    *xkmssdk.KeyAttributes
@@ -167,6 +168,7 @@ func (s *SwtpmConnection) InitializeTPM() error {
 	}
 
 	s.tpmModule = tpmModule
+	s.keys = backend
 	return nil
 }
 
@@ -244,6 +246,7 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 	}
 
 	s.tpmModule = tpmModule
+	s.keys = backend
 	return nil
 }
 
@@ -327,6 +330,11 @@ func (s *SwtpmConnection) GetEKCertificate() *x509.Certificate {
 // GetTPMModule returns the underlying TPM module for direct access
 func (s *SwtpmConnection) GetTPMModule() xkmssdk.TrustedPlatformModule {
 	return s.tpmModule
+}
+
+// GetKeyBackend returns the store the TPM's key blobs live in
+func (s *SwtpmConnection) GetKeyBackend() xkmssdk.TPMKeyBackend {
+	return s.keys
 }
 
 // Close closes the swtpm connection

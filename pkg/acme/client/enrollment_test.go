@@ -44,6 +44,7 @@ import (
 	"golang.org/x/crypto/acme"
 
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // mockTPM implements the local TPMModule interface for testing
@@ -55,7 +56,7 @@ type mockTPM struct {
 	createIDevIDFunc       func([]byte) (*IDevIDCSR, error)
 	activateCredentialFunc func([]byte, []byte) ([]byte, error)
 	provisionEKCertFunc    func([]byte) error
-	quoteFunc              func([]byte, []int) (*TPMQuote, error)
+	attestFunc             func(string, string) (*AttestedKey, error)
 }
 
 func (m *mockTPM) EK() crypto.PublicKey {
@@ -126,17 +127,11 @@ func (m *mockTPM) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
-func (m *mockTPM) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	if m.quoteFunc != nil {
-		return m.quoteFunc(nonce, pcrSelection)
+func (m *mockTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	if m.attestFunc != nil {
+		return m.attestFunc(name, keyAuth)
 	}
-	return &TPMQuote{
-		Quote:              []byte("mock-quoted-data"),
-		Signature:          []byte("mock-signature"),
-		PCRValues:          map[int][]byte{0: []byte("mock-pcr-0")},
-		Nonce:              nonce,
-		SignatureAlgorithm: x509.SHA256WithRSA,
-	}, nil
+	return newTestAttestedKey(keyAuth)
 }
 
 func (m *mockTPM) Close() error {
@@ -624,7 +619,7 @@ func TestDeviceAttest_InvalidConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			cert, err := client.DeviceAttest(ctx, tt.config, tt.pcrSelection)
+			cert, err := client.DeviceAttest(ctx, tt.config)
 			assert.Error(t, err)
 			assert.Nil(t, cert)
 			var caErr *caerrors.TrustedCAError
@@ -706,167 +701,6 @@ func TestSetupEndorseChallenge_Success(t *testing.T) {
 
 	// Give the server a moment to start
 	time.Sleep(150 * time.Millisecond)
-}
-
-func TestSetupAttestChallenge_TPMErrors(t *testing.T) {
-	client := createTestClient(t)
-
-	tests := []struct {
-		name         string
-		tpm          *mockTPM
-		pcrSelection []int
-		wantErr      string
-	}{
-		{
-			name: "Quote error",
-			tpm: &mockTPM{
-				quoteFunc: func([]byte, []int) (*TPMQuote, error) {
-					return nil, errors.New("failed to generate quote")
-				},
-			},
-			pcrSelection: []int{0, 1, 2},
-			wantErr:      "failed to generate TPM quote",
-		},
-		{
-			name: "IAKAttributes error",
-			tpm: &mockTPM{
-				quoteFunc: func([]byte, []int) (*TPMQuote, error) {
-					return &TPMQuote{
-						Signature: []byte("sig"),
-						Quote:     []byte("quoted"),
-					}, nil
-				},
-				iakAttributesFunc: func() (*KeyAttributes, error) {
-					return nil, errors.New("failed to get IAK attrs")
-				},
-			},
-			pcrSelection: []int{0, 1, 2},
-			wantErr:      "failed to get IAK attributes",
-		},
-		{
-			name: "EKCertificate error",
-			tpm: &mockTPM{
-				quoteFunc: func([]byte, []int) (*TPMQuote, error) {
-					return &TPMQuote{
-						Signature: []byte("sig"),
-						Quote:     []byte("quoted"),
-					}, nil
-				},
-				iakAttributesFunc: func() (*KeyAttributes, error) {
-					return &KeyAttributes{
-						SignatureAlgorithm: x509.SHA256WithRSA,
-						TPMPublicBytes:     []byte("pubkey"),
-					}, nil
-				},
-				ekCertFunc: func() (*x509.Certificate, error) {
-					return nil, errors.New("failed to get EK cert")
-				},
-			},
-			pcrSelection: []int{0, 1, 2},
-			wantErr:      "failed to get EK certificate",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &EnrollmentConfig{
-				TPMModule: tt.tpm,
-			}
-
-			attestStmt, err := client.setupAttestChallenge(config, "test-key-auth", tt.pcrSelection)
-			assert.Error(t, err)
-			assert.Nil(t, attestStmt)
-			assert.Contains(t, err.Error(), tt.wantErr)
-		})
-	}
-}
-
-func TestSetupAttestChallenge_Success(t *testing.T) {
-	client := createTestClient(t)
-
-	cert, err := createTestCertificate()
-	require.NoError(t, err)
-
-	tpm := &mockTPM{
-		quoteFunc: func(nonce []byte, pcrSel []int) (*TPMQuote, error) {
-			assert.Equal(t, []byte("test-key-auth"), nonce)
-			return &TPMQuote{
-				Signature: []byte("test-signature"),
-				Quote:     []byte("test-quoted-data"),
-			}, nil
-		},
-		iakAttributesFunc: func() (*KeyAttributes, error) {
-			return &KeyAttributes{
-				SignatureAlgorithm: x509.SHA256WithRSA,
-				TPMPublicBytes:     []byte("test-public-key"),
-			}, nil
-		},
-		ekCertFunc: func() (*x509.Certificate, error) {
-			return cert, nil
-		},
-	}
-
-	config := &EnrollmentConfig{
-		TPMModule: tpm,
-	}
-
-	pcrSelection := []int{0, 1, 2, 3}
-	attestStmt, err := client.setupAttestChallenge(config, "test-key-auth", pcrSelection)
-	assert.NoError(t, err)
-	assert.NotNil(t, attestStmt)
-
-	// Verify the attestation statement structure
-	var attestObj map[string]interface{}
-	err = json.Unmarshal(attestStmt, &attestObj)
-	require.NoError(t, err)
-
-	assert.Equal(t, "tpm", attestObj["fmt"])
-	assert.NotNil(t, attestObj["attStmt"])
-
-	attStmt := attestObj["attStmt"].(map[string]interface{})
-	assert.Equal(t, "2.0", attStmt["ver"])
-	assert.Equal(t, float64(-257), attStmt["alg"]) // COSEAlgorithmRS256
-}
-
-func TestSetupAttestChallenge_UnknownAlgorithm(t *testing.T) {
-	client := createTestClient(t)
-
-	cert, err := createTestCertificate()
-	require.NoError(t, err)
-
-	tpm := &mockTPM{
-		quoteFunc: func([]byte, []int) (*TPMQuote, error) {
-			return &TPMQuote{
-				Signature: []byte("sig"),
-				Quote:     []byte("quoted"),
-			}, nil
-		},
-		iakAttributesFunc: func() (*KeyAttributes, error) {
-			return &KeyAttributes{
-				SignatureAlgorithm: x509.UnknownSignatureAlgorithm,
-				TPMPublicBytes:     []byte("pubkey"),
-			}, nil
-		},
-		ekCertFunc: func() (*x509.Certificate, error) {
-			return cert, nil
-		},
-	}
-
-	config := &EnrollmentConfig{
-		TPMModule: tpm,
-	}
-
-	attestStmt, err := client.setupAttestChallenge(config, "test-key-auth", []int{0})
-	assert.NoError(t, err)
-	assert.NotNil(t, attestStmt)
-
-	// Should default to RS256
-	var attestObj map[string]interface{}
-	err = json.Unmarshal(attestStmt, &attestObj)
-	require.NoError(t, err)
-
-	attStmt := attestObj["attStmt"].(map[string]interface{})
-	assert.Equal(t, float64(-257), attStmt["alg"]) // COSEAlgorithmRS256
 }
 
 func TestStartEnrollServer_ChallengeEndpoint(t *testing.T) {
@@ -1134,7 +968,7 @@ type coverageBoostTPM struct {
 	createIDevIDFunc       func([]byte) (*IDevIDCSR, error)
 	activateCredentialFunc func([]byte, []byte) ([]byte, error)
 	provisionEKCertFunc    func([]byte) error
-	quoteFunc              func([]byte, []int) (*TPMQuote, error)
+	attestFunc             func(string, string) (*AttestedKey, error)
 }
 
 func (m *coverageBoostTPM) EK() crypto.PublicKey {
@@ -1204,17 +1038,11 @@ func (m *coverageBoostTPM) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
-func (m *coverageBoostTPM) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	if m.quoteFunc != nil {
-		return m.quoteFunc(nonce, pcrSelection)
+func (m *coverageBoostTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	if m.attestFunc != nil {
+		return m.attestFunc(name, keyAuth)
 	}
-	return &TPMQuote{
-		Quote:              []byte("test-quote"),
-		Signature:          []byte("test-signature"),
-		PCRValues:          map[int][]byte{0: make([]byte, 32)},
-		Nonce:              nonce,
-		SignatureAlgorithm: x509.SHA256WithRSA,
-	}, nil
+	return newTestAttestedKey(keyAuth)
 }
 
 func (m *coverageBoostTPM) Close() error {
@@ -1767,123 +1595,6 @@ func TestStartAttestServer_ChallengeWithMarshalFailure(t *testing.T) {
 	assert.Contains(t, response, "attStmt")
 }
 
-// TestSetupAttestChallenge_UnknownSignatureAlgorithm tests default to RS256 for unknown algorithms
-func TestSetupAttestChallenge_UnknownSignatureAlgorithm(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	// Create a discarding logger to suppress warning message
-	var logOutput bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logOutput, &slog.HandlerOptions{Level: slog.LevelWarn}))
-
-	client := &Client{
-		accountEmail:  "test@example.com",
-		accountSigner: key,
-		logger:        logger,
-	}
-
-	cert, err := createCoverageTestCert()
-	require.NoError(t, err)
-
-	// Both quote and IAK have unknown signature algorithm
-	tpm := &coverageBoostTPM{
-		quoteFunc: func(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-			return &TPMQuote{
-				Quote:              []byte("quote-data"),
-				Signature:          []byte("signature"),
-				PCRValues:          map[int][]byte{0: make([]byte, 32)},
-				Nonce:              nonce,
-				SignatureAlgorithm: x509.UnknownSignatureAlgorithm,
-			}, nil
-		},
-		iakAttributesFunc: func() (*KeyAttributes, error) {
-			return &KeyAttributes{
-				KeyID:              "iak",
-				SignatureAlgorithm: x509.UnknownSignatureAlgorithm,
-				TPMPublicBytes:     []byte("public"),
-			}, nil
-		},
-		ekCertFunc: func() (*x509.Certificate, error) {
-			return cert, nil
-		},
-	}
-
-	config := &EnrollmentConfig{
-		TPMModule: tpm,
-	}
-
-	attestStmt, err := client.setupAttestChallenge(config, "key-auth", []int{0, 1})
-	assert.NoError(t, err)
-	assert.NotNil(t, attestStmt)
-
-	var attestObj map[string]interface{}
-	err = json.Unmarshal(attestStmt, &attestObj)
-	require.NoError(t, err)
-
-	attStmt := attestObj["attStmt"].(map[string]interface{})
-	// Should default to RS256 (-257) when algorithm cannot be determined
-	assert.Equal(t, float64(-257), attStmt["alg"])
-
-	// Verify warning was logged
-	assert.Contains(t, logOutput.String(), "could not determine signature algorithm")
-}
-
-// TestSetupAttestChallenge_QuoteAlgorithmTakesPrecedence tests that quote algorithm takes precedence over IAK
-func TestSetupAttestChallenge_QuoteAlgorithmTakesPrecedence(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	client := &Client{
-		accountEmail:  "test@example.com",
-		accountSigner: key,
-		logger:        logger,
-	}
-
-	cert, err := createCoverageTestCert()
-	require.NoError(t, err)
-
-	// Quote has SHA512WithRSA, IAK has SHA256WithRSA - quote should take precedence
-	tpm := &coverageBoostTPM{
-		quoteFunc: func(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-			return &TPMQuote{
-				Quote:              []byte("quote-data"),
-				Signature:          []byte("signature"),
-				PCRValues:          map[int][]byte{0: make([]byte, 32)},
-				Nonce:              nonce,
-				SignatureAlgorithm: x509.SHA512WithRSA,
-			}, nil
-		},
-		iakAttributesFunc: func() (*KeyAttributes, error) {
-			return &KeyAttributes{
-				KeyID:              "iak",
-				SignatureAlgorithm: x509.SHA256WithRSA, // Different from quote
-				TPMPublicBytes:     []byte("public"),
-			}, nil
-		},
-		ekCertFunc: func() (*x509.Certificate, error) {
-			return cert, nil
-		},
-	}
-
-	config := &EnrollmentConfig{
-		TPMModule: tpm,
-	}
-
-	attestStmt, err := client.setupAttestChallenge(config, "key-auth", []int{0})
-	assert.NoError(t, err)
-	assert.NotNil(t, attestStmt)
-
-	var attestObj map[string]interface{}
-	err = json.Unmarshal(attestStmt, &attestObj)
-	require.NoError(t, err)
-
-	attStmt := attestObj["attStmt"].(map[string]interface{})
-	// Should use quote's SHA512WithRSA (-259)
-	assert.Equal(t, float64(-259), attStmt["alg"])
-}
-
 // TestSetupEndorseChallenge_Boost_Success tests successful setupEndorseChallenge execution
 func TestSetupEndorseChallenge_Boost_Success(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -2047,7 +1758,7 @@ func TestDeviceAttest_EnvVarExpansionError(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	cert, err := client.DeviceAttest(ctx, config, []int{0, 1, 7})
+	cert, err := client.DeviceAttest(ctx, config)
 
 	assert.Error(t, err)
 	assert.Nil(t, cert)
@@ -2300,106 +2011,6 @@ func TestStartEnrollServerHandlers_Integration(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestSetupAttestChallenge_AllAlgorithmPaths tests all algorithm selection paths
-func TestSetupAttestChallenge_AllAlgorithmPaths(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	cert, err := createCoverageTestCert()
-	require.NoError(t, err)
-
-	testCases := []struct {
-		name          string
-		quoteSigAlgo  x509.SignatureAlgorithm
-		iakSigAlgo    x509.SignatureAlgorithm
-		expectedCOSE  float64
-		expectWarning bool
-	}{
-		{
-			name:          "quote has ECDSA SHA256",
-			quoteSigAlgo:  x509.ECDSAWithSHA256,
-			iakSigAlgo:    x509.SHA256WithRSA,
-			expectedCOSE:  float64(COSEAlgorithmES256),
-			expectWarning: false,
-		},
-		{
-			name:          "quote unknown, IAK has RSA PSS SHA256",
-			quoteSigAlgo:  x509.UnknownSignatureAlgorithm,
-			iakSigAlgo:    x509.SHA256WithRSAPSS,
-			expectedCOSE:  float64(COSEAlgorithmPS256),
-			expectWarning: false,
-		},
-		{
-			name:          "quote unknown, IAK has Ed25519",
-			quoteSigAlgo:  x509.UnknownSignatureAlgorithm,
-			iakSigAlgo:    x509.PureEd25519,
-			expectedCOSE:  float64(COSEAlgorithmEdDSA),
-			expectWarning: false,
-		},
-		{
-			name:          "both unknown defaults to RS256",
-			quoteSigAlgo:  x509.UnknownSignatureAlgorithm,
-			iakSigAlgo:    x509.UnknownSignatureAlgorithm,
-			expectedCOSE:  float64(COSEAlgorithmRS256),
-			expectWarning: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			var logOutput bytes.Buffer
-			logger := slog.New(slog.NewTextHandler(&logOutput, &slog.HandlerOptions{Level: slog.LevelWarn}))
-
-			client := &Client{
-				accountEmail:  "test@example.com",
-				accountSigner: key,
-				logger:        logger,
-			}
-
-			tpm := &coverageBoostTPM{
-				quoteFunc: func(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-					return &TPMQuote{
-						Quote:              []byte("quote"),
-						Signature:          []byte("sig"),
-						PCRValues:          map[int][]byte{0: make([]byte, 32)},
-						Nonce:              nonce,
-						SignatureAlgorithm: tc.quoteSigAlgo,
-					}, nil
-				},
-				iakAttributesFunc: func() (*KeyAttributes, error) {
-					return &KeyAttributes{
-						KeyID:              "iak",
-						SignatureAlgorithm: tc.iakSigAlgo,
-						TPMPublicBytes:     []byte("public"),
-					}, nil
-				},
-				ekCertFunc: func() (*x509.Certificate, error) {
-					return cert, nil
-				},
-			}
-
-			config := &EnrollmentConfig{
-				TPMModule: tpm,
-			}
-
-			attestStmt, err := client.setupAttestChallenge(config, "key-auth", []int{0})
-			assert.NoError(t, err)
-			assert.NotNil(t, attestStmt)
-
-			var attestObj map[string]interface{}
-			err = json.Unmarshal(attestStmt, &attestObj)
-			require.NoError(t, err)
-
-			attStmt := attestObj["attStmt"].(map[string]interface{})
-			assert.Equal(t, tc.expectedCOSE, attStmt["alg"])
-
-			if tc.expectWarning {
-				assert.Contains(t, logOutput.String(), "could not determine signature algorithm")
-			}
-		})
-	}
-}
-
 // =====================================
 // Tests from enrollment_coverage_test.go
 // =====================================
@@ -2412,7 +2023,7 @@ type enrollmentTestTPM struct {
 	createIDevIDFunc       func([]byte) (*IDevIDCSR, error)
 	activateCredentialFunc func([]byte, []byte) ([]byte, error)
 	provisionEKCertFunc    func([]byte) error
-	quoteFunc              func([]byte, []int) (*TPMQuote, error)
+	attestFunc             func(string, string) (*AttestedKey, error)
 }
 
 func (m *enrollmentTestTPM) EK() crypto.PublicKey {
@@ -2482,17 +2093,11 @@ func (m *enrollmentTestTPM) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
-func (m *enrollmentTestTPM) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	if m.quoteFunc != nil {
-		return m.quoteFunc(nonce, pcrSelection)
+func (m *enrollmentTestTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	if m.attestFunc != nil {
+		return m.attestFunc(name, keyAuth)
 	}
-	return &TPMQuote{
-		Quote:              []byte("test-quote"),
-		Signature:          []byte("test-signature"),
-		PCRValues:          map[int][]byte{0: make([]byte, 32)},
-		Nonce:              nonce,
-		SignatureAlgorithm: x509.SHA256WithRSA,
-	}, nil
+	return newTestAttestedKey(keyAuth)
 }
 
 func (m *enrollmentTestTPM) Close() error {
@@ -3092,105 +2697,11 @@ func TestDeviceAttest_ExpandEnvVarsFailure(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	cert, err := client.DeviceAttest(ctx, config, []int{0, 1, 2})
+	cert, err := client.DeviceAttest(ctx, config)
 
 	assert.Error(t, err)
 	assert.Nil(t, cert)
 	assert.Contains(t, err.Error(), "failed to expand IP address")
-}
-
-// TestSetupAttestChallenge_QuoteWithSignatureAlgorithm tests quote with signature algorithm
-func TestSetupAttestChallenge_QuoteWithSignatureAlgorithm(t *testing.T) {
-	client := createEnrollmentTestClient(t)
-
-	cert, err := createEnrollmentTestCert()
-	require.NoError(t, err)
-
-	// Test with quote having its own signature algorithm
-	tpm := &enrollmentTestTPM{
-		quoteFunc: func(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-			return &TPMQuote{
-				Quote:              []byte("quote-data"),
-				Signature:          []byte("signature"),
-				PCRValues:          map[int][]byte{0: make([]byte, 32)},
-				Nonce:              nonce,
-				SignatureAlgorithm: x509.ECDSAWithSHA256,
-			}, nil
-		},
-		iakAttributesFunc: func() (*KeyAttributes, error) {
-			return &KeyAttributes{
-				KeyID:              "iak",
-				SignatureAlgorithm: x509.SHA256WithRSA,
-				TPMPublicBytes:     []byte("public"),
-			}, nil
-		},
-		ekCertFunc: func() (*x509.Certificate, error) {
-			return cert, nil
-		},
-	}
-
-	config := &EnrollmentConfig{
-		TPMModule: tpm,
-	}
-
-	attestStmt, err := client.setupAttestChallenge(config, "key-auth", []int{0, 1})
-	assert.NoError(t, err)
-	assert.NotNil(t, attestStmt)
-
-	var attestObj map[string]interface{}
-	err = json.Unmarshal(attestStmt, &attestObj)
-	require.NoError(t, err)
-
-	attStmt := attestObj["attStmt"].(map[string]interface{})
-	// Should use the quote's signature algorithm (ECDSA SHA256 = -7)
-	assert.Equal(t, float64(-7), attStmt["alg"])
-}
-
-// TestSetupAttestChallenge_FallbackToIAKAlgorithm tests fallback to IAK algorithm
-func TestSetupAttestChallenge_FallbackToIAKAlgorithm(t *testing.T) {
-	client := createEnrollmentTestClient(t)
-
-	cert, err := createEnrollmentTestCert()
-	require.NoError(t, err)
-
-	// Test with quote having no signature algorithm but IAK having one
-	tpm := &enrollmentTestTPM{
-		quoteFunc: func(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-			return &TPMQuote{
-				Quote:              []byte("quote-data"),
-				Signature:          []byte("signature"),
-				PCRValues:          map[int][]byte{0: make([]byte, 32)},
-				Nonce:              nonce,
-				SignatureAlgorithm: 0, // Unknown/zero
-			}, nil
-		},
-		iakAttributesFunc: func() (*KeyAttributes, error) {
-			return &KeyAttributes{
-				KeyID:              "iak",
-				SignatureAlgorithm: x509.ECDSAWithSHA384,
-				TPMPublicBytes:     []byte("public"),
-			}, nil
-		},
-		ekCertFunc: func() (*x509.Certificate, error) {
-			return cert, nil
-		},
-	}
-
-	config := &EnrollmentConfig{
-		TPMModule: tpm,
-	}
-
-	attestStmt, err := client.setupAttestChallenge(config, "key-auth", []int{0, 1})
-	assert.NoError(t, err)
-	assert.NotNil(t, attestStmt)
-
-	var attestObj map[string]interface{}
-	err = json.Unmarshal(attestStmt, &attestObj)
-	require.NoError(t, err)
-
-	attStmt := attestObj["attStmt"].(map[string]interface{})
-	// Should use the IAK's signature algorithm (ECDSA SHA384 = -35)
-	assert.Equal(t, float64(-35), attStmt["alg"])
 }
 
 // TestEnrollmentServerIntegration tests actual server startup and handling
@@ -3786,134 +3297,6 @@ func TestExpandEnvVars_Coverage(t *testing.T) {
 	}
 }
 
-// TestSetupAttestChallenge_Errors tests setupAttestChallenge error paths
-func TestSetupAttestChallenge_Errors(t *testing.T) {
-	client := createEnrollmentTestClient(t)
-
-	tests := []struct {
-		name        string
-		tpm         *enrollmentTestTPM
-		expectError bool
-		errorMsg    string
-	}{
-		{
-			name: "quote error",
-			tpm: &enrollmentTestTPM{
-				quoteFunc: func(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-					return nil, errors.New("quote failed")
-				},
-			},
-			expectError: true,
-			errorMsg:    "failed to generate TPM quote",
-		},
-		{
-			name: "IAK attributes error",
-			tpm: &enrollmentTestTPM{
-				quoteFunc: func(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-					return &TPMQuote{
-						Quote:     []byte("quote"),
-						Signature: []byte("sig"),
-					}, nil
-				},
-				iakAttributesFunc: func() (*KeyAttributes, error) {
-					return nil, errors.New("IAK attrs failed")
-				},
-			},
-			expectError: true,
-			errorMsg:    "failed to get IAK attributes",
-		},
-		{
-			name: "EK certificate error",
-			tpm: &enrollmentTestTPM{
-				quoteFunc: func(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-					return &TPMQuote{
-						Quote:     []byte("quote"),
-						Signature: []byte("sig"),
-					}, nil
-				},
-				iakAttributesFunc: func() (*KeyAttributes, error) {
-					return &KeyAttributes{
-						KeyID:              "iak",
-						SignatureAlgorithm: x509.SHA256WithRSA,
-						TPMPublicBytes:     []byte("public"),
-					}, nil
-				},
-				ekCertFunc: func() (*x509.Certificate, error) {
-					return nil, errors.New("EK cert failed")
-				},
-			},
-			expectError: true,
-			errorMsg:    "failed to get EK certificate",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &EnrollmentConfig{
-				TPMModule: tt.tpm,
-			}
-
-			attestStmt, err := client.setupAttestChallenge(config, "key-auth", []int{0, 1})
-
-			if tt.expectError {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorMsg)
-				assert.Nil(t, attestStmt)
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, attestStmt)
-			}
-		})
-	}
-}
-
-// TestSetupAttestChallenge_DefaultAlgorithm tests fallback to RS256 when algorithm is unknown
-func TestSetupAttestChallenge_DefaultAlgorithm(t *testing.T) {
-	client := createEnrollmentTestClient(t)
-
-	cert, err := createEnrollmentTestCert()
-	require.NoError(t, err)
-
-	// Test with both quote and IAK having unknown signature algorithm
-	tpm := &enrollmentTestTPM{
-		quoteFunc: func(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-			return &TPMQuote{
-				Quote:              []byte("quote-data"),
-				Signature:          []byte("signature"),
-				PCRValues:          map[int][]byte{0: make([]byte, 32)},
-				Nonce:              nonce,
-				SignatureAlgorithm: 0, // Unknown
-			}, nil
-		},
-		iakAttributesFunc: func() (*KeyAttributes, error) {
-			return &KeyAttributes{
-				KeyID:              "iak",
-				SignatureAlgorithm: 0, // Unknown
-				TPMPublicBytes:     []byte("public"),
-			}, nil
-		},
-		ekCertFunc: func() (*x509.Certificate, error) {
-			return cert, nil
-		},
-	}
-
-	config := &EnrollmentConfig{
-		TPMModule: tpm,
-	}
-
-	attestStmt, err := client.setupAttestChallenge(config, "key-auth", []int{0, 1})
-	assert.NoError(t, err)
-	assert.NotNil(t, attestStmt)
-
-	var attestObj map[string]interface{}
-	err = json.Unmarshal(attestStmt, &attestObj)
-	require.NoError(t, err)
-
-	attStmt := attestObj["attStmt"].(map[string]interface{})
-	// Should default to RS256 (-257)
-	assert.Equal(t, float64(-257), attStmt["alg"])
-}
-
 // TestStartEnrollServer_DirectExecution tests direct execution of startEnrollServer logic
 func TestStartEnrollServer_DirectExecution(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -4112,25 +3495,6 @@ func TestKeyAttributes_FieldsCoverage(t *testing.T) {
 	assert.Equal(t, "RSA-2048", attrs.Algorithm)
 	assert.Equal(t, x509.ECDSAWithSHA256, attrs.SignatureAlgorithm)
 	assert.Equal(t, []byte("tpm-public"), attrs.TPMPublicBytes)
-}
-
-// TestTPMQuote_FieldsCoverage tests TPMQuote struct field access
-func TestTPMQuote_FieldsCoverage(t *testing.T) {
-	quote := &TPMQuote{
-		Quote:              []byte("quote-data"),
-		Signature:          []byte("signature-data"),
-		PCRValues:          map[int][]byte{0: []byte("pcr0"), 1: []byte("pcr1")},
-		Nonce:              []byte("nonce-data"),
-		SignatureAlgorithm: x509.SHA384WithRSA,
-	}
-
-	assert.Equal(t, []byte("quote-data"), quote.Quote)
-	assert.Equal(t, []byte("signature-data"), quote.Signature)
-	assert.Equal(t, 2, len(quote.PCRValues))
-	assert.Equal(t, []byte("pcr0"), quote.PCRValues[0])
-	assert.Equal(t, []byte("pcr1"), quote.PCRValues[1])
-	assert.Equal(t, []byte("nonce-data"), quote.Nonce)
-	assert.Equal(t, x509.SHA384WithRSA, quote.SignatureAlgorithm)
 }
 
 // TestStartEndorseServerHandlers tests endorse server handler paths directly
@@ -4345,7 +3709,7 @@ func TestDeviceAttest_ValidationError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			cert, err := client.DeviceAttest(ctx, tt.config, []int{0, 1})
+			cert, err := client.DeviceAttest(ctx, tt.config)
 
 			assert.Error(t, err)
 			assert.Nil(t, cert)
@@ -4418,14 +3782,8 @@ func (m *testTPME2E) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
-func (m *testTPME2E) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	return &TPMQuote{
-		Quote:              []byte("mock-quote"),
-		Signature:          []byte("mock-signature"),
-		Nonce:              nonce,
-		PCRValues:          map[int][]byte{0: make([]byte, 32)},
-		SignatureAlgorithm: x509.SHA256WithRSA,
-	}, nil
+func (m *testTPME2E) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	return newTestAttestedKey(keyAuth)
 }
 
 func (m *testTPME2E) Close() error {
@@ -4653,7 +4011,6 @@ func TestEnrollDevice_ValidationFailures(t *testing.T) {
 func TestDeviceAttest_ValidationFailures(t *testing.T) {
 	client := createTestClient(t)
 	ctx := context.Background()
-	pcrSelection := []int{0, 1, 7}
 
 	tests := []struct {
 		name   string
@@ -4680,7 +4037,7 @@ func TestDeviceAttest_ValidationFailures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := client.DeviceAttest(ctx, tt.config, pcrSelection)
+			_, err := client.DeviceAttest(ctx, tt.config)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errMsg)
 		})
@@ -5169,8 +4526,10 @@ func (m *mockTPMForActivation) TPMManufacturer() (string, error)        { return
 func (m *mockTPMForActivation) IAKAttributes() (*KeyAttributes, error)  { return nil, nil }
 func (m *mockTPMForActivation) CreateIDevID([]byte) (*IDevIDCSR, error) { return nil, nil }
 func (m *mockTPMForActivation) ProvisionEKCert([]byte) error            { return nil }
-func (m *mockTPMForActivation) Quote([]byte, []int) (*TPMQuote, error)  { return nil, nil }
-func (m *mockTPMForActivation) Close() error                            { return nil }
+func (m *mockTPMForActivation) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	return newTestAttestedKey(keyAuth)
+}
+func (m *mockTPMForActivation) Close() error { return nil }
 func (m *mockTPMForActivation) ActivateCredential(_, _ []byte) ([]byte, error) {
 	if m.shouldFail {
 		return nil, assert.AnError
@@ -5452,8 +4811,10 @@ func (m *mockTPMWithErrors) IAKAttributes() (*KeyAttributes, error)         { re
 func (m *mockTPMWithErrors) CreateIDevID([]byte) (*IDevIDCSR, error)        { return nil, nil }
 func (m *mockTPMWithErrors) ActivateCredential(_, _ []byte) ([]byte, error) { return nil, nil }
 func (m *mockTPMWithErrors) ProvisionEKCert([]byte) error                   { return nil }
-func (m *mockTPMWithErrors) Quote([]byte, []int) (*TPMQuote, error)         { return nil, nil }
-func (m *mockTPMWithErrors) Close() error                                   { return nil }
+func (m *mockTPMWithErrors) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	return newTestAttestedKey(keyAuth)
+}
+func (m *mockTPMWithErrors) Close() error { return nil }
 
 // =====================================
 // Tests from enrollment_http_mock_test.go
@@ -5464,7 +4825,7 @@ type mockTPMModuleForEnroll struct {
 	ekCertificate     *x509.Certificate
 	createIDevIDError error
 	activateError     error
-	quoteError        error
+	attestErr         error
 }
 
 func (m *mockTPMModuleForEnroll) EK() crypto.PublicKey {
@@ -5525,17 +4886,11 @@ func (m *mockTPMModuleForEnroll) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
-func (m *mockTPMModuleForEnroll) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	if m.quoteError != nil {
-		return nil, m.quoteError
+func (m *mockTPMModuleForEnroll) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	if m.attestErr != nil {
+		return nil, m.attestErr
 	}
-	return &TPMQuote{
-		Quote:              []byte("mock-quote"),
-		Signature:          []byte("mock-signature"),
-		PCRValues:          map[int][]byte{0: make([]byte, 32)},
-		Nonce:              nonce,
-		SignatureAlgorithm: x509.SHA256WithRSA,
-	}, nil
+	return newTestAttestedKey(keyAuth)
 }
 
 func (m *mockTPMModuleForEnroll) Close() error {
@@ -5952,7 +5307,7 @@ type serverCoverageTPMModule struct {
 	iakAttrsError         error
 	createIDevIDError     error
 	activateError         error
-	quoteError            error
+	attestErr             error
 	activateCallCount     int
 	shouldFailNthActivate int
 }
@@ -6030,17 +5385,11 @@ func (m *serverCoverageTPMModule) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
-func (m *serverCoverageTPMModule) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	if m.quoteError != nil {
-		return nil, m.quoteError
+func (m *serverCoverageTPMModule) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	if m.attestErr != nil {
+		return nil, m.attestErr
 	}
-	return &TPMQuote{
-		Quote:              []byte("coverage-quote"),
-		Signature:          []byte("coverage-signature"),
-		PCRValues:          map[int][]byte{0: make([]byte, 32)},
-		Nonce:              nonce,
-		SignatureAlgorithm: x509.SHA256WithRSA,
-	}, nil
+	return newTestAttestedKey(keyAuth)
 }
 
 func (m *serverCoverageTPMModule) Close() error {
@@ -6447,7 +5796,9 @@ func TestStartAttestServer_RealHandlers(t *testing.T) {
 		Port: port,
 	}
 
-	attestStmt := []byte(`{"fmt":"tpm","attStmt":{"ver":"2.0","alg":-257,"sig":"test"}}`)
+	attested, err := newTestAttestedKey("attest-server-token-12345.thumbprint")
+	require.NoError(t, err)
+	attestStmt := attested.Statement
 	token := "attest-server-token-12345"
 
 	client := &Client{
@@ -6468,10 +5819,12 @@ func TestStartAttestServer_RealHandlers(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
 
-		var received map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&received)
+		// The statement is already the request the verifier decodes. Wrapping
+		// it again would bury the CBOR attestation object under a second
+		// attStmt that no verifier unwraps.
+		received, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		assert.Contains(t, received, "attStmt")
+		assert.Equal(t, attestStmt, received)
 	})
 
 	t.Run("challenge_endpoint_invalid_token", func(t *testing.T) {
@@ -7045,9 +6398,11 @@ func (m *mockTPMModule) CreateIDevID(qualifyingData []byte) (*IDevIDCSR, error) 
 func (m *mockTPMModule) ActivateCredential(credBlob, encSecret []byte) ([]byte, error) {
 	return nil, nil
 }
-func (m *mockTPMModule) ProvisionEKCert(certDER []byte) error                      { return nil }
-func (m *mockTPMModule) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) { return nil, nil }
-func (m *mockTPMModule) Close() error                                              { return nil }
+func (m *mockTPMModule) ProvisionEKCert(certDER []byte) error { return nil }
+func (m *mockTPMModule) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	return newTestAttestedKey(keyAuth)
+}
+func (m *mockTPMModule) Close() error { return nil }
 
 // TestEnrollmentConfig_Validate is tested in enrollment_test.go with more comprehensive test cases
 
@@ -7287,4 +6642,90 @@ func TestEnrollDevice_RegistrationFailure_Propagates(t *testing.T) {
 	// The account must not be marked registered after a failed attempt, so
 	// a later retry is not silently skipped.
 	assert.False(t, client.accountRegistered)
+}
+
+// TestSetupAttestChallenge_AttestsTheKeyNamedForTheCertificate checks that the
+// challenge is answered for the key the certificate is requested for -- the
+// one named config.CommonName -- over this challenge's key authorization.
+func TestSetupAttestChallenge_AttestsTheKeyNamedForTheCertificate(t *testing.T) {
+	client := createTestClient(t)
+	want, err := newTestAttestedKey("token.thumbprint")
+	require.NoError(t, err)
+
+	tpm := &mockTPM{
+		attestFunc: func(name, keyAuth string) (*AttestedKey, error) {
+			assert.Equal(t, "device.example.com", name)
+			assert.Equal(t, "token.thumbprint", keyAuth)
+			return want, nil
+		},
+	}
+	config := &EnrollmentConfig{TPMModule: tpm, CommonName: "device.example.com"}
+
+	attested, err := client.setupAttestChallenge(config, "token.thumbprint")
+	require.NoError(t, err)
+	assert.Same(t, want, attested)
+}
+
+func TestSetupAttestChallenge_ReportsABadAttestationStatement(t *testing.T) {
+	client := createTestClient(t)
+	tpm := &mockTPM{
+		attestFunc: func(string, string) (*AttestedKey, error) {
+			return nil, ErrAttestedKeyFailed
+		},
+	}
+
+	attested, err := client.setupAttestChallenge(&EnrollmentConfig{TPMModule: tpm, CommonName: "device"}, "token.thumbprint")
+	assert.Nil(t, attested)
+	var caErr *caerrors.TrustedCAError
+	require.ErrorAs(t, err, &caErr)
+	assert.Equal(t, caerrors.BadAttestationStatement, caErr.Type)
+}
+
+// permanentIdentifierOf reads the RFC 4043 permanentIdentifier otherName a
+// server matches a permanent-identifier order against.
+func permanentIdentifierOf(t *testing.T, csr *x509.CertificateRequest) string {
+	t.Helper()
+	others, err := ca.ParseOtherNames(csr.Extensions)
+	require.NoError(t, err)
+	require.Len(t, others, 1)
+	require.True(t, others[0].TypeID.Equal(ca.OIDPermanentIdentifier))
+	identifier, err := ca.ParsePermanentIdentifierExtension(others[0].Value)
+	require.NoError(t, err)
+	return identifier.IdentifierValue
+}
+
+func TestDeviceAttestCSR_IsForTheAttestedKeyAndTheOrdersIdentifier(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	der, err := deviceAttestCSR("device.example.com", "192.168.1.1", key)
+	require.NoError(t, err)
+	csr, err := x509.ParseCertificateRequest(der)
+	require.NoError(t, err)
+
+	require.NoError(t, csr.CheckSignature())
+	assert.Equal(t, &key.PublicKey, csr.PublicKey)
+	assert.Equal(t, "device.example.com", csr.Subject.CommonName)
+	assert.Equal(t, "192.168.1.1", permanentIdentifierOf(t, csr))
+	assert.Empty(t, csr.DNSNames, "a permanent-identifier order authorizes no DNS names")
+	assert.Empty(t, csr.IPAddresses, "a permanent-identifier order authorizes no IP addresses")
+}
+
+// failingSigner is a key that cannot sign, as a TPM key whose parent auth
+// was refused.
+type failingSigner struct{ public crypto.PublicKey }
+
+func (f failingSigner) Public() crypto.PublicKey { return f.public }
+
+func (f failingSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+	return nil, ErrAttestedKeyFailed
+}
+
+func TestDeviceAttestCSR_ReportsAKeyThatCannotSign(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	der, err := deviceAttestCSR("device.example.com", "192.168.1.1", failingSigner{public: key.Public()})
+	assert.ErrorIs(t, err, ErrAttestedKeyFailed)
+	assert.Nil(t, der)
 }

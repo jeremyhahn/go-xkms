@@ -157,7 +157,7 @@ func (dm *deviceManager) Attest(ctx context.Context, name string) (*DeviceAttest
 
 	attestCfg := buildEnrollmentConfig(spec, tpmModule, client.ChallengeTypeDeviceAttest01)
 
-	cert, err := acmeClient.DeviceAttest(ctx, attestCfg, spec.PCRSelection)
+	cert, err := acmeClient.DeviceAttest(ctx, attestCfg)
 	if err != nil {
 		return nil, err
 	}

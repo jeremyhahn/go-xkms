@@ -164,7 +164,7 @@ func TestDeviceAttest_Validation_Coverage(t *testing.T) {
 		IPAddress: "192.168.1.1",
 	}
 
-	_, err := client.DeviceAttest(context.Background(), config, []int{0, 1, 7})
+	_, err := client.DeviceAttest(context.Background(), config)
 	assert.Error(t, err)
 }
 
@@ -185,106 +185,9 @@ func TestDeviceAttest_EnvVarExpansion_Coverage(t *testing.T) {
 		IPAddress: "${NONEXISTENT_VAR_XYZ}",
 	}
 
-	_, err := client.DeviceAttest(context.Background(), config, []int{0})
+	_, err := client.DeviceAttest(context.Background(), config)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "expand IP address")
-}
-
-// TestSetupAttestChallenge_QuoteError_Coverage tests setupAttestChallenge with quote error
-func TestSetupAttestChallenge_QuoteError_Coverage(t *testing.T) {
-	mockTPM := newMockTPMForEnrollment(t)
-	mockTPM.errors["Quote"] = errors.New("quote error")
-
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	client := &Client{
-		config:        &Config{DirectoryURL: "https://example.com", Timeout: 30 * time.Second},
-		logger:        slog.Default(),
-		accountSigner: key,
-	}
-
-	config := &EnrollmentConfig{
-		Challenge: "device-attest-01",
-		TPMModule: mockTPM,
-		IPAddress: "192.168.1.1",
-	}
-
-	_, err := client.setupAttestChallenge(config, "keyauth", []int{0})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "quote")
-}
-
-// TestSetupAttestChallenge_IAKError_Coverage tests setupAttestChallenge with IAK error
-func TestSetupAttestChallenge_IAKError_Coverage(t *testing.T) {
-	mockTPM := newMockTPMForEnrollment(t)
-	mockTPM.errors["IAKAttributes"] = errors.New("iak error")
-
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	client := &Client{
-		config:        &Config{DirectoryURL: "https://example.com", Timeout: 30 * time.Second},
-		logger:        slog.Default(),
-		accountSigner: key,
-	}
-
-	config := &EnrollmentConfig{
-		Challenge: "device-attest-01",
-		TPMModule: mockTPM,
-		IPAddress: "192.168.1.1",
-	}
-
-	_, err := client.setupAttestChallenge(config, "keyauth", []int{0})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "IAK")
-}
-
-// TestSetupAttestChallenge_EKError_Coverage tests setupAttestChallenge with EK error
-func TestSetupAttestChallenge_EKError_Coverage(t *testing.T) {
-	mockTPM := newMockTPMForEnrollment(t)
-	mockTPM.errors["EKCertificate"] = errors.New("ek error")
-
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	client := &Client{
-		config:        &Config{DirectoryURL: "https://example.com", Timeout: 30 * time.Second},
-		logger:        slog.Default(),
-		accountSigner: key,
-	}
-
-	config := &EnrollmentConfig{
-		Challenge: "device-attest-01",
-		TPMModule: mockTPM,
-		IPAddress: "192.168.1.1",
-	}
-
-	_, err := client.setupAttestChallenge(config, "keyauth", []int{0})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "EK")
-}
-
-// TestSetupAttestChallenge_ValidOutput_Coverage tests successful attestation setup output
-func TestSetupAttestChallenge_ValidOutput_Coverage(t *testing.T) {
-	mockTPM := newMockTPMForEnrollment(t)
-
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	client := &Client{
-		config:        &Config{DirectoryURL: "https://example.com", Timeout: 30 * time.Second},
-		logger:        slog.Default(),
-		accountSigner: key,
-	}
-
-	config := &EnrollmentConfig{
-		Challenge: "device-attest-01",
-		TPMModule: mockTPM,
-		IPAddress: "192.168.1.1",
-	}
-
-	attestStmt, err := client.setupAttestChallenge(config, "keyauth", []int{0, 1, 7})
-	assert.NoError(t, err)
-	assert.NotNil(t, attestStmt)
-
-	// Verify it's valid JSON
-	var parsed map[string]interface{}
-	err = json.Unmarshal(attestStmt, &parsed)
-	assert.NoError(t, err)
-	assert.Equal(t, "tpm", parsed["fmt"])
 }
 
 // TestEnrollmentConfigDefaults_Coverage tests that defaults are properly set
@@ -362,39 +265,6 @@ func TestExpandEnvVars_MultipleVars_Coverage(t *testing.T) {
 	result, err := expandEnvVars("${TEST_HOST_COV}:${TEST_PORT_COV}")
 	assert.NoError(t, err)
 	assert.Equal(t, "192.168.1.1:8080", result)
-}
-
-// TestSetupAttestChallenge_UnknownAlg_Coverage tests attestation with unknown algorithm
-func TestSetupAttestChallenge_UnknownAlg_Coverage(t *testing.T) {
-	mockTPM := newMockTPMForEnrollment(t)
-	// Set unknown signature algorithm
-	mockTPM.iakAttrs.SignatureAlgorithm = x509.UnknownSignatureAlgorithm
-	mockTPM.quote.SignatureAlgorithm = x509.UnknownSignatureAlgorithm
-
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	client := &Client{
-		config:        &Config{DirectoryURL: "https://example.com", Timeout: 30 * time.Second},
-		logger:        slog.Default(),
-		accountSigner: key,
-	}
-
-	config := &EnrollmentConfig{
-		Challenge: "device-attest-01",
-		TPMModule: mockTPM,
-		IPAddress: "192.168.1.1",
-	}
-
-	// Should default to RS256
-	attestStmt, err := client.setupAttestChallenge(config, "keyauth", []int{0})
-	assert.NoError(t, err)
-
-	var parsed map[string]interface{}
-	err = json.Unmarshal(attestStmt, &parsed)
-	assert.NoError(t, err)
-
-	attStmt := parsed["attStmt"].(map[string]interface{})
-	// Should be -257 (RS256)
-	assert.Equal(t, float64(-257), attStmt["alg"])
 }
 
 // TestEnrollDeviceWithMockServer_Coverage tests EnrollDevice with a mock ACME server
@@ -516,23 +386,6 @@ func TestKeyAttributes_Coverage(t *testing.T) {
 	assert.Equal(t, "RSA-2048", attrs.Algorithm)
 	assert.Equal(t, x509.SHA256WithRSA, attrs.SignatureAlgorithm)
 	assert.NotNil(t, attrs.TPMPublicBytes)
-}
-
-// TestTPMQuote_Coverage tests TPMQuote struct
-func TestTPMQuote_Coverage(t *testing.T) {
-	quote := &TPMQuote{
-		Quote:              []byte("quote-data"),
-		Signature:          []byte("signature-data"),
-		PCRValues:          map[int][]byte{0: make([]byte, 32), 1: make([]byte, 32)},
-		Nonce:              []byte("nonce-data"),
-		SignatureAlgorithm: x509.SHA256WithRSA,
-	}
-
-	assert.NotNil(t, quote.Quote)
-	assert.NotNil(t, quote.Signature)
-	assert.Len(t, quote.PCRValues, 2)
-	assert.NotNil(t, quote.Nonce)
-	assert.Equal(t, x509.SHA256WithRSA, quote.SignatureAlgorithm)
 }
 
 // TestIDevIDCSR_Coverage tests IDevIDCSR struct
