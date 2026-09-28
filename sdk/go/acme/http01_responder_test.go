@@ -21,6 +21,13 @@ import (
 	"testing"
 )
 
+// loopbackChallengeClient returns an ACMEChallengeClient that may reach the
+// loopback responders these tests start. Production clients leave
+// AllowPrivateTargets false.
+func loopbackChallengeClient() *ACMEChallengeClient {
+	return NewACMEChallengeClient(ACMEChallengeClientConfig{AllowPrivateTargets: true})
+}
+
 // The SDK surface is what a consumer reaching go-xkms only through its SDK
 // module can call. These tests exercise it through the exported names alone,
 // so a re-export that stops resolving is caught here rather than downstream.
@@ -47,7 +54,7 @@ func TestNewHTTP01Responder_ServesTheKeyAuthorization(t *testing.T) {
 
 	// ACMEVerifyHTTP01 is the ACME server half of the same challenge, so a
 	// successful verification proves the two exported halves agree.
-	if err := ACMEVerifyHTTP01(nil, "127.0.0.1", port, token, keyAuth); err != nil {
+	if err := ACMEVerifyHTTP01(loopbackChallengeClient(), "127.0.0.1", port, token, keyAuth); err != nil {
 		t.Fatalf("ACMEVerifyHTTP01 against the SDK responder: %v", err)
 	}
 
@@ -158,7 +165,7 @@ func TestNewHTTP01Responder_ChallengeSetupSeam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("split responder address: %v", err)
 	}
-	if err := ACMEVerifyHTTP01(nil, "127.0.0.1", port, "seam-token", keyAuth); err != nil {
+	if err := ACMEVerifyHTTP01(loopbackChallengeClient(), "127.0.0.1", port, "seam-token", keyAuth); err != nil {
 		t.Errorf("verification of the provisioned challenge: %v", err)
 	}
 
@@ -208,7 +215,7 @@ func TestNewHTTP01Responder_ConcurrentOrders(t *testing.T) {
 				errs <- err
 				return
 			}
-			if err := ACMEVerifyHTTP01(nil, "127.0.0.1", port, token, keyAuth); err != nil {
+			if err := ACMEVerifyHTTP01(loopbackChallengeClient(), "127.0.0.1", port, token, keyAuth); err != nil {
 				errs <- err
 			}
 		}(responders[i], order.token, order.keyAuth)

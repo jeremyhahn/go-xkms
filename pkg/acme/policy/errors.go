@@ -90,6 +90,22 @@ var (
 	ErrIPHasZone = errors.New("policy: IP address contains a zone identifier")
 )
 
+// Permanent-identifier and network-target errors
+var (
+	// ErrPermanentIdentifierTooLong is returned when a permanent-identifier
+	// value exceeds MaxPermanentIdentifierLength.
+	ErrPermanentIdentifierTooLong = errors.New("policy: permanent-identifier is too long")
+
+	// ErrPermanentIdentifierInvalidCharacter is returned when a
+	// permanent-identifier value is not valid UTF-8 or contains whitespace
+	// or a control character.
+	ErrPermanentIdentifierInvalidCharacter = errors.New("policy: permanent-identifier contains an invalid character")
+
+	// ErrInvalidNetworkTarget is returned when a value the server would dial
+	// is not a bare hostname or canonical IP address.
+	ErrInvalidNetworkTarget = errors.New("policy: identifier is not a bare hostname or IP address")
+)
+
 // Blocklist errors
 var (
 	// ErrPolicyForbidden is returned when an identifier is forbidden by policy.

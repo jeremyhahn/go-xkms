@@ -72,6 +72,17 @@ account-scoped objects.
 `enroll-01` and `endorse-01` are go-xkms extensions. A standard client never
 selects them and is unaffected by their presence.
 
+The server contacts `http-01`, `enroll-01` and `device-attest-01` targets
+only at a bare hostname or IP that does not resolve to a reserved address
+(loopback, private, link-local, metadata), unless the operator set
+`acme.challenges.allow_private_targets`. A failed challenge's `error` is a
+fixed category -- `connection` with `detail` `"Challenge validation failed:
+connection failed"`, `"... unexpected HTTP status"`, `"... response too
+large"` or `"... redirect not permitted"`, or `incorrectResponse` with
+`"Challenge validation failed"` / `"... invalid validation target"` -- never
+the server's dial error, resolved address or the target's status code
+(go-xkms#1172).
+
 ### endorse-01 finalize
 
 An endorse-01 order's finalize CSR MUST carry the TPM's TCG manufacturer code

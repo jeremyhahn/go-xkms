@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -34,8 +35,15 @@ import (
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 )
+
+// loopbackClient returns a validation client that may reach the loopback
+// httptest servers these tests run against.
+func loopbackClient() *validation.Client {
+	return validation.NewClient(validation.Config{AllowPrivateTargets: true})
+}
 
 // Mock implementations for testing
 
@@ -227,9 +235,7 @@ func TestVerify_Success(t *testing.T) {
 		defaultSigAlg:   x509.SHA256WithRSA,
 	}
 
-	resolver := net.DefaultResolver
-
-	err = Verify(resolver, ca, host, port, "test-token", "test-keyauth")
+	err = Verify(loopbackClient(), ca, host, port, "test-token", "test-keyauth")
 	if err != nil {
 		t.Errorf("Verify() failed: %v", err)
 	}
@@ -255,12 +261,13 @@ func TestVerify_HTTPError(t *testing.T) {
 		defaultSigAlg: x509.SHA256WithRSA,
 	}
 
-	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail with HTTP error")
 	}
-	if !strings.Contains(err.Error(), "unexpected status code") {
-		t.Errorf("Expected 'unexpected status code' error, got: %v", err)
+	var status *validation.StatusError
+	if !errors.As(err, &status) || status.StatusCode != http.StatusNotFound {
+		t.Errorf("Expected a 404 *validation.StatusError, got: %v", err)
 	}
 }
 
@@ -280,7 +287,7 @@ func TestVerify_InvalidBase64CSR(t *testing.T) {
 		defaultSigAlg: x509.SHA256WithRSA,
 	}
 
-	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail with base64 decode error")
 	}
@@ -305,7 +312,7 @@ func TestVerify_CSRVerificationFailed(t *testing.T) {
 		defaultSigAlg: x509.SHA256WithRSA,
 	}
 
-	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when CSR verification fails")
 	}
@@ -341,7 +348,7 @@ func TestVerify_ActivationFailed(t *testing.T) {
 		defaultSigAlg:   "RS256",
 	}
 
-	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when activation secret doesn't match")
 	}
@@ -364,7 +371,7 @@ func TestVerify_ReadBodyError(t *testing.T) {
 
 	ca := &mockCA{defaultSigAlg: "RS256"}
 
-	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when reading body fails")
 	}
@@ -391,7 +398,7 @@ func TestVerify_JSONMarshalError(t *testing.T) {
 		defaultSigAlg:   "RS256",
 	}
 
-	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should succeed or fail based on server response")
 	}
@@ -420,12 +427,13 @@ func TestVerify_ActivationHTTPError(t *testing.T) {
 		defaultSigAlg:   "RS256",
 	}
 
-	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when activation returns non-200")
 	}
-	if !strings.Contains(err.Error(), "activation failed") {
-		t.Errorf("Expected 'activation failed' error, got: %v", err)
+	var status *validation.StatusError
+	if !errors.As(err, &status) || status.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected a 400 *validation.StatusError from the activation POST, got: %v", err)
 	}
 }
 
@@ -454,7 +462,7 @@ func TestVerify_ActivationReadBodyError(t *testing.T) {
 		defaultSigAlg:   "RS256",
 	}
 
-	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when activation response body read fails")
 	}
@@ -466,7 +474,7 @@ func TestVerify_InvalidDomain(t *testing.T) {
 	}
 
 	// Use invalid domain that will cause connection error
-	err := Verify(net.DefaultResolver, ca, "invalid.domain.that.does.not.exist", "9999", "token", "keyauth")
+	err := Verify(loopbackClient(), ca, "invalid.domain.that.does.not.exist", "9999", "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when domain is invalid")
 	}
@@ -512,9 +520,79 @@ func TestVerify_PostError(t *testing.T) {
 		defaultSigAlg:   x509.SHA256WithRSA,
 	}
 
-	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when POST request fails")
+	}
+}
+
+// TestVerify_RefusesReservedTargets proves the production client refuses
+// every reserved target class -- loopback, the link-local cloud metadata
+// address, RFC 1918 and IPv6 loopback -- before the TCG-CSR is fetched, and
+// never consults the CA.
+func TestVerify_RefusesReservedTargets(t *testing.T) {
+	client := validation.NewClient(validation.Config{})
+	for _, host := range []string{"127.0.0.1", "169.254.169.254", "10.0.0.1", "::1", "localhost"} {
+		t.Run(host, func(t *testing.T) {
+			ca := &mockCA{defaultSigAlg: x509.SHA256WithRSA}
+			err := Verify(client, ca, host, "8080", "token", "keyauth")
+			var verr *validation.Error
+			if !errors.As(err, &verr) || verr.Kind != validation.KindTargetRefused {
+				t.Fatalf("Verify(%s) error = %v, want a KindTargetRefused *validation.Error", host, err)
+			}
+			if ca.verifyCallCount != 0 {
+				t.Fatalf("the CA must not be consulted for a refused target")
+			}
+		})
+	}
+}
+
+// TestVerify_RejectsInjectedIdentifier proves a permanent-identifier that
+// carries a path, query, fragment, userinfo or port -- the shapes that let
+// an identifier choose the server's request -- is refused before any
+// connection is attempted.
+func TestVerify_RejectsInjectedIdentifier(t *testing.T) {
+	for _, domain := range []string{
+		"169.254.169.254/latest/meta-data/iam#",
+		"example.com?x=1",
+		"user:pass@example.com",
+		"example.com:22",
+		"example.com/path",
+		"example.com #",
+	} {
+		t.Run(domain, func(t *testing.T) {
+			err := Verify(loopbackClient(), &mockCA{}, domain, "8080", "token", "keyauth")
+			var verr *validation.Error
+			if !errors.As(err, &verr) || verr.Kind != validation.KindInvalidTarget {
+				t.Fatalf("Verify(%q) error = %v, want a KindInvalidTarget *validation.Error", domain, err)
+			}
+		})
+	}
+}
+
+// TestVerify_OversizedCSRResponse proves the CSR response is capped: a body
+// larger than maxCSRResponseBytes is refused, not read into memory whole.
+func TestVerify_OversizedCSRResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := bytes.Repeat([]byte("A"), 64<<10)
+		for written := int64(0); written <= maxCSRResponseBytes; written += int64(len(chunk)) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	defer ts.Close()
+
+	host, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	ca := &mockCA{defaultSigAlg: x509.SHA256WithRSA}
+
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
+	var verr *validation.Error
+	if !errors.As(err, &verr) || verr.Kind != validation.KindResponseTooLarge {
+		t.Fatalf("Verify() error = %v, want a KindResponseTooLarge *validation.Error", err)
+	}
+	if ca.verifyCallCount != 0 {
+		t.Fatalf("an oversized response must not reach the CA")
 	}
 }
 
@@ -534,7 +612,7 @@ func TestVerify_Redirect(t *testing.T) {
 		defaultSigAlg: x509.SHA256WithRSA,
 	}
 
-	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+	err := Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when receiving redirect response")
 	}
@@ -1621,7 +1699,7 @@ func BenchmarkVerify(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
+		_ = Verify(loopbackClient(), ca, host, port, "token", "keyauth")
 	}
 }
 
