@@ -45,8 +45,6 @@ import (
 const (
 	oidcCallbackTimeout = 5 * time.Minute
 	oidcProvidersFile   = "oidc-providers.json"
-	oidcTokensFile      = "tokens.json"
-	oidcTokenEncKey     = "xkey-oidc-token-store-encryption"
 	oidcScriptsDir      = "oidc-scripts"
 
 	// oidcProvidersBackendKey is the storage key used for provider
@@ -254,22 +252,23 @@ func (s *OIDCService) callbackReady() error {
 	return s.callbackErr
 }
 
-// SetDataDir initializes the token store and loads providers from the
-// specified data directory. This is the plain filesystem fallback used
-// when no barrier backend is available.
+// SetDataDir points provider configuration and saved scripts at the given
+// data directory and loads any existing providers. This is the fallback
+// path used when no barrier backend is available.
+//
+// go-qrdb's seal barrier is the ONE at-rest encryption xkey relies on; there
+// is no independent key this process can use to encrypt an OIDC token file
+// on disk, and a file "encrypted" with a key compiled into the binary is not
+// encrypted at all. So without a barrier, OIDC access and refresh tokens are
+// held in an in-memory store only: they never touch disk, and they do not
+// survive a restart (go-xkms#1203). SetBackend is the barrier-backed path,
+// which persists tokens for real.
 func (s *OIDCService) SetDataDir(dir string) {
 	s.dataDir = dir
 
-	tokensPath := filepath.Join(dir, oidcTokensFile)
-	store, err := oidc.NewFileTokenStore(tokensPath, []byte(oidcTokenEncKey))
-	if err != nil {
-		s.log.Warn("failed to open OIDC token store", "error", err)
-		store, err = oidc.NewFileTokenStore(tokensPath, nil)
-		if err != nil {
-			s.log.Error("failed to open OIDC token store without encryption; OIDC tokens will not persist", "error", err)
-		}
-	}
-	s.tokenStore = store
+	s.tokenStore = oidc.NewMemoryTokenStore()
+	s.log.Warn("no barrier available: OIDC tokens are kept in memory only and will not survive a restart",
+		"remedy", "run 'xkey barrier init' to persist OIDC tokens encrypted at rest")
 
 	if err := s.loadProviders(); err != nil {
 		s.log.Warn("failed to load OIDC providers", "error", err)

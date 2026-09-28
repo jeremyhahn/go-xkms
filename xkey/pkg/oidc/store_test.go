@@ -14,6 +14,7 @@
 package oidc
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -35,14 +36,23 @@ func TestFileTokenStore_NewFileTokenStore(t *testing.T) {
 		defer store.Close()
 	})
 
-	t.Run("creates store without encryption", func(t *testing.T) {
+	t.Run("refuses a nil encryption key", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "tokens.json")
 
 		store, err := NewFileTokenStore(path, nil)
-		require.NoError(t, err)
-		assert.NotNil(t, store)
-		defer store.Close()
+		assert.Nil(t, store)
+		assert.ErrorIs(t, err, ErrInvalidEncryptionKey,
+			"a nil key must be refused, never silently stored in plaintext")
+	})
+
+	t.Run("refuses an empty encryption key", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, "tokens.json")
+
+		store, err := NewFileTokenStore(path, []byte{})
+		assert.Nil(t, store)
+		assert.ErrorIs(t, err, ErrInvalidEncryptionKey)
 	})
 
 	t.Run("creates nested directories", func(t *testing.T) {
@@ -388,52 +398,38 @@ func TestFileTokenStore_Encryption(t *testing.T) {
 	})
 }
 
-func TestFileTokenStore_NoEncryption(t *testing.T) {
+// TestFileTokenStore_NeverWritesPlaintext proves that every token written to
+// disk is AES-256-GCM sealed: no code path in FileTokenStore serializes a
+// TokenResponse's fields to disk without first running it through the GCM
+// seal, so every persisted entry carries a nonce and its ciphertext never
+// contains the plaintext token strings (go-xkms#1203).
+func TestFileTokenStore_NeverWritesPlaintext(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "tokens.json")
 
-	t.Run("stores tokens without encryption", func(t *testing.T) {
-		store, err := NewFileTokenStore(path, nil) // nil key = no encryption
-		require.NoError(t, err)
+	store, err := NewFileTokenStore(path, []byte("encryption-key"))
+	require.NoError(t, err)
 
-		token := &TokenResponse{
-			AccessToken:  "plaintext-access-token",
-			RefreshToken: "plaintext-refresh-token",
-		}
-		err = store.Save("https://auth.example.com", token)
-		require.NoError(t, err)
-		store.Close()
+	token := &TokenResponse{
+		AccessToken:  "plaintext-access-token",
+		RefreshToken: "plaintext-refresh-token",
+	}
+	err = store.Save("https://auth.example.com", token)
+	require.NoError(t, err)
+	store.Close()
 
-		// Read raw file - tokens should be in plaintext (base64 encoded JSON)
-		data, err := os.ReadFile(path)
-		require.NoError(t, err)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
 
-		// Parse the file structure
-		var storeData struct {
-			Tokens map[string]struct {
-				Ciphertext []byte `json:"ciphertext"`
-				Nonce      []byte `json:"nonce"`
-			} `json:"tokens"`
-		}
-		err = json.Unmarshal(data, &storeData)
-		require.NoError(t, err)
+	var storeData encryptedStoreData
+	require.NoError(t, json.Unmarshal(data, &storeData))
+	require.NotEmpty(t, storeData.Tokens)
 
-		// Nonce should be nil for unencrypted data
-		for _, encToken := range storeData.Tokens {
-			assert.Nil(t, encToken.Nonce)
-		}
-	})
-
-	t.Run("loads tokens without encryption", func(t *testing.T) {
-		store, err := NewFileTokenStore(path, nil)
-		require.NoError(t, err)
-		defer store.Close()
-
-		loaded, err := store.Load("https://auth.example.com")
-		require.NoError(t, err)
-		assert.Equal(t, "plaintext-access-token", loaded.AccessToken)
-		assert.Equal(t, "plaintext-refresh-token", loaded.RefreshToken)
-	})
+	for issuer, encToken := range storeData.Tokens {
+		assert.NotEmpty(t, encToken.Nonce, "issuer %s must carry a GCM nonce, never a plaintext entry", issuer)
+		assert.NotContains(t, string(encToken.Ciphertext), "plaintext-access-token")
+		assert.NotContains(t, string(encToken.Ciphertext), "plaintext-refresh-token")
+	}
 }
 
 func TestFileTokenStore_Persistence(t *testing.T) {
@@ -700,23 +696,6 @@ func TestTokenStoreInterface(t *testing.T) {
 	var _ TokenStore = (*MemoryTokenStore)(nil)
 }
 
-func TestFileTokenStore_CloseWithNoKey(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "tokens.json")
-
-	// Create store without encryption key
-	store, err := NewFileTokenStore(path, nil)
-	require.NoError(t, err)
-
-	// Save a token
-	err = store.Save("https://auth.example.com", &TokenResponse{AccessToken: "test"})
-	require.NoError(t, err)
-
-	// Close should work correctly
-	err = store.Close()
-	assert.NoError(t, err)
-}
-
 func TestFileTokenStore_OverwriteToken(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "tokens.json")
@@ -739,41 +718,23 @@ func TestFileTokenStore_OverwriteToken(t *testing.T) {
 	assert.Equal(t, "updated", loaded.AccessToken)
 }
 
-func TestFileTokenStore_DecryptWithNoEncryption(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "tokens.json")
-
-	// Create store without encryption
-	store, err := NewFileTokenStore(path, nil)
-	require.NoError(t, err)
-
-	// Test decrypting with nil gcm (no encryption case)
-	encToken := &encryptedToken{
-		Ciphertext: []byte(`{"access_token":"test"}`),
-		Nonce:      nil, // No nonce means plaintext
-	}
-
-	result, err := store.decryptToken(encToken)
-	require.NoError(t, err)
-	assert.Equal(t, "test", result.AccessToken)
-
-	store.Close()
-}
-
+// TestFileTokenStore_DecryptInvalidJSON proves decryptToken reports
+// ErrDecryptionFailed when a correctly GCM-sealed entry unseals to bytes
+// that are not valid TokenResponse JSON, rather than a plaintext bypass.
 func TestFileTokenStore_DecryptInvalidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "tokens.json")
 
-	// Create store without encryption so decryption returns plaintext
-	store, err := NewFileTokenStore(path, nil)
+	store, err := NewFileTokenStore(path, []byte("key"))
 	require.NoError(t, err)
 	defer store.Close()
 
-	// Test decrypting invalid JSON
-	encToken := &encryptedToken{
-		Ciphertext: []byte("not valid json"),
-		Nonce:      nil, // No nonce means plaintext
-	}
+	nonce := make([]byte, store.gcm.NonceSize())
+	_, err = rand.Read(nonce)
+	require.NoError(t, err)
+	ciphertext := store.gcm.Seal(nil, nonce, []byte("not valid json"), nil)
+
+	encToken := &encryptedToken{Ciphertext: ciphertext, Nonce: nonce}
 
 	_, err = store.decryptToken(encToken)
 	assert.ErrorIs(t, err, ErrDecryptionFailed)
