@@ -75,6 +75,14 @@ func (m *mockFIDO2Backend) Capabilities() FIDO2KeyCapabilities {
 	return m.caps
 }
 
+func (m *mockFIDO2Backend) HandlesUserVerificationFor(backendID xkms.BackendType) bool {
+	return backendID == m.Type() && m.caps.HandlesUserVerification
+}
+
+func (m *mockFIDO2Backend) HandlesUserPresenceFor(backendID xkms.BackendType) bool {
+	return backendID == m.Type() && m.caps.HandlesUserPresence
+}
+
 func (m *mockFIDO2Backend) GenerateCredentialKey(algorithm int, credentialID []byte) (KeyHandle, []byte, error) {
 	m.generateCalled.Add(1)
 	if m.generateErr != nil {
@@ -216,11 +224,11 @@ func TestCompositeBackend_Capabilities_Merged(t *testing.T) {
 	if !caps.SupportsAttestation {
 		t.Error("SupportsAttestation should be true (tpm2 supports attestation)")
 	}
-	if !caps.HandlesUserPresence {
-		t.Error("HandlesUserPresence should be true (tpm2 handles user presence)")
+	if caps.HandlesUserPresence {
+		t.Error("HandlesUserPresence should be false (software does not collect presence; #1162)")
 	}
-	if !caps.HandlesUserVerification {
-		t.Error("HandlesUserVerification should be true (tpm2 handles user verification)")
+	if caps.HandlesUserVerification {
+		t.Error("HandlesUserVerification should be false (software does not verify; #1162)")
 	}
 }
 
@@ -796,5 +804,72 @@ func TestCompositeBackend_DefaultID(t *testing.T) {
 	cb.SetDefault(xkms.BackendType("nonexistent"))
 	if got := cb.DefaultID(); got != xkms.BackendType("nonexistent") {
 		t.Errorf("DefaultID() after SetDefault(\"nonexistent\") = %q, want %q", got, xkms.BackendType("nonexistent"))
+	}
+}
+
+// TestCompositeBackend_Capabilities_UserGesturesAreAND pins #1162: the
+// aggregate claims user presence or verification only when every member
+// collects it.
+func TestCompositeBackend_Capabilities_UserGesturesAreAND(t *testing.T) {
+	verifying := FIDO2KeyCapabilities{HandlesUserPresence: true, HandlesUserVerification: true}
+	tests := []struct {
+		name    string
+		members map[xkms.BackendType]FIDO2KeyCapabilities
+		want    bool
+	}{
+		{name: "no members", want: false},
+		{name: "only verifying members", want: true, members: map[xkms.BackendType]FIDO2KeyCapabilities{
+			"phone": verifying,
+		}},
+		{name: "software plus phone", want: false, members: map[xkms.BackendType]FIDO2KeyCapabilities{
+			xkms.BackendTypeSoftware: {},
+			"phone":                  verifying,
+		}},
+		{name: "no verifying members", want: false, members: map[xkms.BackendType]FIDO2KeyCapabilities{
+			xkms.BackendTypeSoftware: {},
+			xkms.BackendTypeTPM2:     {},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cb := NewCompositeBackend(xkms.BackendTypeSoftware)
+			for bt, caps := range tt.members {
+				cb.Register(bt, newMockBackend(string(bt), caps))
+			}
+			caps := cb.Capabilities()
+			if caps.HandlesUserVerification != tt.want {
+				t.Errorf("HandlesUserVerification = %v, want %v", caps.HandlesUserVerification, tt.want)
+			}
+			if caps.HandlesUserPresence != tt.want {
+				t.Errorf("HandlesUserPresence = %v, want %v", caps.HandlesUserPresence, tt.want)
+			}
+		})
+	}
+}
+
+// TestCompositeBackend_HandlesUserGestureFor checks that the per-credential
+// presence and verification answers route to the owning member and fail
+// closed for an unknown owner.
+func TestCompositeBackend_HandlesUserGestureFor(t *testing.T) {
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
+	cb.Register(xkms.BackendTypeSoftware, newMockBackend(string(xkms.BackendTypeSoftware), FIDO2KeyCapabilities{}))
+	cb.Register("phone", newMockBackend("phone", FIDO2KeyCapabilities{HandlesUserPresence: true, HandlesUserVerification: true}))
+
+	tests := []struct {
+		backendID xkms.BackendType
+		want      bool
+	}{
+		{backendID: "phone", want: true},
+		{backendID: xkms.BackendTypeSoftware, want: false},
+		{backendID: xkms.BackendTypeTPM2, want: false},
+		{backendID: "", want: false},
+	}
+	for _, tt := range tests {
+		if got := cb.HandlesUserVerificationFor(tt.backendID); got != tt.want {
+			t.Errorf("HandlesUserVerificationFor(%q) = %v, want %v", tt.backendID, got, tt.want)
+		}
+		if got := cb.HandlesUserPresenceFor(tt.backendID); got != tt.want {
+			t.Errorf("HandlesUserPresenceFor(%q) = %v, want %v", tt.backendID, got, tt.want)
+		}
 	}
 }

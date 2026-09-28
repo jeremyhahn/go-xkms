@@ -2912,6 +2912,14 @@ func (m *mockUVKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilities {
 	}
 }
 
+func (m *mockUVKeyBackend) HandlesUserVerificationFor(backendID xkms.BackendType) bool {
+	return backendID == m.Type() && m.handlesUV
+}
+
+func (m *mockUVKeyBackend) HandlesUserPresenceFor(xkms.BackendType) bool {
+	return false
+}
+
 func (m *mockUVKeyBackend) GenerateCredentialKey(algorithm int, credentialID []byte) (keybackend.KeyHandle, []byte, error) {
 	return nil, nil, nil
 }

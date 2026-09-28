@@ -199,26 +199,85 @@ token's `userVerified` flag.
 `CTAP2_ERR_INVALID_SUBCOMMAND` for every backend (`cmd_clientpin.go:278`). It
 used to treat a backend's `HandlesUserVerification` capability as an implicit
 successful verification. The phone backend reports that capability
-(`pkg/phone/phone.go:446`), so any local HID client could mint a `cm`, `acfg`
+(`pkg/phone/phone.go:459`), so any local HID client could mint a `cm`, `acfg`
 or `lbw` token without anyone being verified, then enumerate or delete
 resident credentials or change configuration. The capability means the backend
 verifies the user *inside its own key operation*: the phone's biometric gates
 `Sign` and `GenerateCredentialKey`. It is not a verification that can be run
-on demand (`keybackend/keybackend.go:55`), and the pairing protocol has no
+on demand (`keybackend/keybackend.go:65`), and the pairing protocol has no
 biometric-gated "verify user" call whose result the authenticator could check.
 Until one exists, the capability sets the UV flag on the `makeCredential` or
-`getAssertion` whose signature the phone produced (`cmd_makecredential.go:963`,
-`cmd_getassertion.go:970`) and nothing else.
+`getAssertion` whose signature the phone produced and nothing else; see the
+next section for how that is decided per credential.
 
 `getInfo` keeps the two consistent. `supportsPinUvAuthToken`
-(`cmd_getinfo.go:320`) gates `FIDO_2_1`, `credMgmt` and `pinUvAuthToken` on the
+(`cmd_getinfo.go:322`) gates `FIDO_2_1`, `credMgmt` and `pinUvAuthToken` on the
 PIN alone. `uv=true` is advertised for a verifying backend only when there is no
-`pinUvAuthToken` surface (`cmd_getinfo.go:230`), because CTAP 2.1 §6.4 reads
+`pinUvAuthToken` surface (`cmd_getinfo.go:231`), because CTAP 2.1 §6.4 reads
 `uv=true` next to `pinUvAuthToken=true` as a promise that subcommand `0x06`
 works. `xkey fido2` always enables credential management, which forces the PIN
 on (`config.go:594`), so the phone daemon reports `uv=false`,
 `pinUvAuthToken=true`: the browser collects the PIN, and the phone still asks
 for the biometric on every signature.
+
+### Backend UP and UV are per credential (go-xkms#1162)
+
+A key backend can collect user presence (UP) and verify the user (UV) inside
+its own key operation, as the phone's biometric prompt does. The authenticator
+relies on that only for the backend that owns the credential key, never for
+the key backend as a whole. It asks
+`FIDO2KeyBackend.HandlesUserPresenceFor(backendID)` and
+`HandlesUserVerificationFor(backendID)` (`keybackend/keybackend.go:127`,
+`:134`) with the credential's `BackendID`, through
+`backendHandlesUserPresenceFor` and `backendHandlesUserVerificationFor`
+(`cmd_getinfo.go:360`, `:342`).
+
+- getAssertion skips its local presence check, including the user-intent
+  check, only when the owning backend collects presence
+  (`cmd_getassertion.go:833`, `:896`). It sets UV without a `pinUvAuthParam`
+  only when the owning backend verifies (`cmd_getassertion.go:973`).
+- makeCredential sets UV without a `pinUvAuthParam` only when the backend
+  that created the key verifies. That backend is the `handle.BackendID()`
+  returned by `generateCredentialKeyPair` (`cmd_makecredential.go:434`, and
+  `:1687` for the Go API).
+
+`CompositeBackend` routes both questions to the member registered under
+`backendID`, the same routing `Sign` uses. An empty or unregistered ID answers
+false (`keybackend/composite.go:138`, `:150`), so the local presence check runs
+and no UV is claimed. The phone answers true only for its own backend type
+(`pkg/phone/phone.go:440`, `:446`). `BackendAdapter` answers from its
+capabilities, and no go-xkms provider claims either
+(`keybackend/adapter.go:88`, `:95`). Previously the composite OR-merged both
+capabilities, so registering a phone skipped the local presence check and set
+UP and UV on every software- and TPM-held credential as well.
+
+On a composite, `Capabilities().HandlesUserPresence` and
+`HandlesUserVerification` are now the AND across its members, and false when
+it has none (`keybackend/composite.go:97`, `:122`, `:125`). This is a lower
+bound that holds for every credential, so it is used only where the owning
+backend is not known yet:
+
+- makeCredential's presence and user-intent checks run before the key exists
+  (`cmd_makecredential.go:300`, `:348`, `:1606`). A mixed composite always runs
+  the local check, even when a phone is the default and will then prompt for
+  its biometric as well. Only a composite whose every member collects presence
+  skips it.
+- The `excludeList` credProtect check also runs before key generation
+  (`cmd_makecredential.go:357`, `:1618`). In a mixed composite, a
+  `userVerificationRequired` credential is matched only with platform UV.
+- `getInfo`'s `uv` and `makeCredUvNotRqd` options (`cmd_getinfo.go:231`,
+  `:265`). A software-plus-phone composite does not advertise `uv=true`.
+  `getInfo` makes no presence claim, and `up` keeps its default.
+
+`getNextAssertion` replays the first assertion's UP and UV flags for the rest
+of the batch, as CTAP 2.1 §6.3 requires. This is unchanged.
+
+These tests in `cmd_composite_gesture_test.go` cover this over CTAP:
+`TestCompositeUV_FlagComesFromOwningMember`,
+`TestCompositeUV_UnknownOwnerClaimsNothing`,
+`TestCompositeUV_GetInfoDoesNotAdvertiseUV`,
+`TestCompositeUP_LocalCheckUnlessOwnerCollectsPresence` and
+`TestCompositeUP_UnknownOwnerRunsLocalCheck`.
 
 ### Brute-force PIN retry ordering (go-xkms#686)
 

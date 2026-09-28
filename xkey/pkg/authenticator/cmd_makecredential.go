@@ -297,7 +297,7 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 		// Without this check, Chrome immediately commits to xKey's PIN flow.
 		if a.config.EnablePIN && a.IsPINSet() && a.config.EnableUserIntentCheck {
 			if rpPolicy == nil || rpPolicy.UVOverride != "discouraged" {
-				backendHandlesUPCheck := a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserPresence
+				backendHandlesUPCheck := a.backendHandlesUserPresence()
 				if !backendHandlesUPCheck {
 					ctx := a.commandContext()
 					debugLog("[MAKECRED] requesting user intent check for RP=%s before PIN required", req.RP.ID)
@@ -341,8 +341,11 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 		}
 	}
 
-	// Check if the key backend handles user presence internally (e.g., phone biometrics).
-	backendHandlesUP := a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserPresence
+	// Check if the key backend handles user presence internally (e.g., phone
+	// biometrics). The creating member is not known until the key exists, so
+	// for a composite this holds only when every member collects presence
+	// (#1162).
+	backendHandlesUP := a.backendHandlesUserPresence()
 
 	// Request user presence BEFORE key generation.
 	// This ensures the user approves the operation before the phone prompts for biometrics.
@@ -351,7 +354,7 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 	//
 	// The excludeList answer is decided here but withheld until after the gate,
 	// so a match cannot be read off a response that arrived without one.
-	excluded := a.excludeListMatches(req.ExcludeList, req.RP.ID, a.userVerificationSatisfied(req))
+	excluded := a.excludeListMatches(req.ExcludeList, req.RP.ID, a.userVerificationSatisfied(req, a.backendHandlesUserVerification()))
 
 	upPerformed := false
 	if (!pinAuthValid || a.config.RequireUserPresence) && !backendHandlesUP {
@@ -428,7 +431,7 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 	if upPerformed || backendHandlesUP || pinAuthValid {
 		flags |= FlagUP
 	}
-	if a.userVerificationSatisfied(req) {
+	if a.userVerificationSatisfied(req, a.backendHandlesUserVerificationFor(actualBackendID)) {
 		flags |= FlagUV
 	}
 
@@ -944,7 +947,13 @@ func (a *Authenticator) shouldGenerateHMACSecret(extensions map[string]interface
 // in this transaction. Per CTAP2 spec, the UV flag should only be set when the
 // authenticator has verified the user via PIN token or built-in verification
 // during THIS operation -- not merely because a PIN is configured.
-func (a *Authenticator) userVerificationSatisfied(req *MakeCredentialRequest) bool {
+//
+// backendVerified says whether the key backend verifies the user inside the
+// key operation of this makeCredential. After key generation it is
+// backendHandlesUserVerificationFor the backend that created the key; before
+// it, when that backend is not yet known, it is backendHandlesUserVerification,
+// which for a composite holds only when every member verifies (#1162).
+func (a *Authenticator) userVerificationSatisfied(req *MakeCredentialRequest, backendVerified bool) bool {
 	// UV is satisfied when:
 	// 1. The client provided a valid pinUvAuthParam (platform performed PIN/UV), OR
 	// 2. The key backend handles user verification internally (e.g., phone biometric).
@@ -957,14 +966,9 @@ func (a *Authenticator) userVerificationSatisfied(req *MakeCredentialRequest) bo
 		return true
 	}
 
-	// Check if the key backend handles user verification (e.g., phone biometric).
 	// When the backend performs biometric verification during key operations,
 	// that satisfies the UV requirement without needing platform-level PIN/UV.
-	if a.backendHandlesUserVerification() {
-		return true
-	}
-
-	return false
+	return backendVerified
 }
 
 // processMakeCredentialExtensions processes requested extensions and returns output values.
@@ -1595,8 +1599,11 @@ func (a *Authenticator) MakeCredential(
 		a.state.ResetPINRetries()
 	}
 
-	// Check if the key backend handles user presence internally (e.g., phone biometrics).
-	backendHandlesUP := a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserPresence
+	// Check if the key backend handles user presence internally (e.g., phone
+	// biometrics). The creating member is not known until the key exists, so
+	// for a composite this holds only when every member collects presence
+	// (#1162).
+	backendHandlesUP := a.backendHandlesUserPresence()
 
 	// Request user presence BEFORE key generation.
 	// This ensures the user approves the operation before the phone prompts for biometrics.
@@ -1608,7 +1615,7 @@ func (a *Authenticator) MakeCredential(
 	//
 	// The excludeList answer is decided here but withheld until after the gate,
 	// so a match cannot be read off a response that arrived without one.
-	excluded := a.excludeListMatches(req.ExcludeList, req.RP.ID, a.userVerificationSatisfied(req))
+	excluded := a.excludeListMatches(req.ExcludeList, req.RP.ID, a.userVerificationSatisfied(req, a.backendHandlesUserVerification()))
 
 	upPerformed := false
 	if (!pinAuthValid || a.config.RequireUserPresence) && !backendHandlesUP {
@@ -1677,7 +1684,7 @@ func (a *Authenticator) MakeCredential(
 	if upPerformed || backendHandlesUP || pinAuthValid {
 		flags |= FlagUP
 	}
-	if a.userVerificationSatisfied(req) {
+	if a.userVerificationSatisfied(req, a.backendHandlesUserVerificationFor(actualBackendID)) {
 		flags |= FlagUV
 	}
 

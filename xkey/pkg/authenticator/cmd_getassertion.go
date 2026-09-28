@@ -815,7 +815,7 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 	if !pinAuthValid && a.config.EnablePIN && a.IsPINSet() && a.config.EnableUserIntentCheck &&
 		(uvRequestedForIntent || a.config.AlwaysUV) {
 		if rpPolicy == nil || rpPolicy.UVOverride != "discouraged" {
-			backendHandlesUPCheck := a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserPresence
+			backendHandlesUPCheck := a.backendHandlesUserPresenceFor(credential.BackendID)
 			if !backendHandlesUPCheck {
 				ctx := a.commandContext()
 				debugLog("requesting user intent check for RPID=%s before PIN required", request.RPID)
@@ -874,9 +874,11 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 		}
 	}
 
-	// Check if the key backend handles user presence internally (e.g., phone biometrics).
-	// If so, user presence will be satisfied during the Sign operation.
-	backendHandlesUP := a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserPresence
+	// Check if the backend that owns this credential's key handles user
+	// presence internally (e.g., phone biometrics). If so, user presence will
+	// be satisfied during the Sign operation. Asked per credential, never of
+	// the composite as a whole (#1162).
+	backendHandlesUP := a.backendHandlesUserPresenceFor(credential.BackendID)
 
 	// Check the 'up' (user presence) option from the request.
 	// Per CTAP2 spec: if up=false, this is a silent credential discovery request
@@ -941,8 +943,9 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 	// Set the UV flag only when actual user verification was performed in this
 	// transaction:
 	//  1. the platform provided a valid pinUvAuthParam, or
-	//  2. the key backend performs user verification internally (e.g. a phone
-	//     biometric during Sign).
+	//  2. the backend that owns this credential's key performs user
+	//     verification inside Sign (e.g. a phone biometric). Asked per
+	//     credential, never of the composite as a whole (#1162).
 	//
 	// InternalPINHash is deliberately absent. The UV flag tells the relying
 	// party that a human verified themselves, and downstream systems make
@@ -952,7 +955,7 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 	case pinAuthValid:
 		flags |= FlagUV
 		debugLog("UV flag set (pinUvAuthParam verified), flags now: 0x%02x", byte(flags))
-	case a.backendHandlesUserVerification():
+	case a.backendHandlesUserVerificationFor(credential.BackendID):
 		flags |= FlagUV
 		debugLog("UV flag set (key backend handles verification), flags now: 0x%02x", byte(flags))
 	}

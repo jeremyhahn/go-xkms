@@ -83,12 +83,21 @@ func (c *CompositeBackend) Type() xkms.BackendType {
 // SupportsExport is true if any backend supports export.
 // SupportsImport is true if any backend supports import.
 // SupportsAttestation is true if any backend supports attestation.
+// HandlesUserPresence and HandlesUserVerification are true only if every
+// backend collects presence or performs verification (and at least one is
+// registered): the composite cannot know which member a future operation will
+// reach, so the aggregate never claims a gesture a member does not collect
+// (#1162). The per-credential answers are HandlesUserPresenceFor and
+// HandlesUserVerificationFor.
 func (c *CompositeBackend) Capabilities() FIDO2KeyCapabilities {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	seen := make(map[int]struct{})
-	var merged FIDO2KeyCapabilities
+	merged := FIDO2KeyCapabilities{
+		HandlesUserPresence:     len(c.backends) > 0,
+		HandlesUserVerification: len(c.backends) > 0,
+	}
 
 	for _, b := range c.backends {
 		caps := b.Capabilities()
@@ -110,15 +119,40 @@ func (c *CompositeBackend) Capabilities() FIDO2KeyCapabilities {
 		if caps.SupportsAttestation {
 			merged.SupportsAttestation = true
 		}
-		if caps.HandlesUserPresence {
-			merged.HandlesUserPresence = true
+		if !caps.HandlesUserPresence {
+			merged.HandlesUserPresence = false
 		}
-		if caps.HandlesUserVerification {
-			merged.HandlesUserVerification = true
+		if !caps.HandlesUserVerification {
+			merged.HandlesUserVerification = false
 		}
 	}
 
 	return merged
+}
+
+// HandlesUserVerificationFor routes to the member registered under backendID,
+// the same routing Sign and DeleteKey use, and reports whether that member
+// verifies the user inside its own key operations. An empty or unregistered
+// backendID reports false: an operation whose owner is unknown carries no
+// verification claim.
+func (c *CompositeBackend) HandlesUserVerificationFor(backendID xkms.BackendType) bool {
+	b, err := c.resolveBackend(backendID)
+	if err != nil {
+		return false
+	}
+	return b.HandlesUserVerificationFor(backendID)
+}
+
+// HandlesUserPresenceFor routes to the member registered under backendID and
+// reports whether that member collects user presence inside its own key
+// operations. An empty or unregistered backendID reports false, so the
+// authenticator runs its own presence check.
+func (c *CompositeBackend) HandlesUserPresenceFor(backendID xkms.BackendType) bool {
+	b, err := c.resolveBackend(backendID)
+	if err != nil {
+		return false
+	}
+	return b.HandlesUserPresenceFor(backendID)
 }
 
 // GenerateCredentialKey routes to the default backend.
