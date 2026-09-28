@@ -23,8 +23,6 @@ func (tpm *TPM2) NVWrite(
 	keyAttrs *types.KeyAttributes) error {
 
 	var hierarchyAuth, secretBytes []byte
-	var closer func() error
-	var session tpm2.Session
 	var err error
 
 	if keyAttrs.TPMAttributes == nil {
@@ -57,10 +55,6 @@ func (tpm *TPM2) NVWrite(
 	hashAlg := keyAttrs.TPMAttributes.HashAlg
 
 	defs := tpm2.NVDefineSpace{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
 		PublicInfo: tpm2.New2B(
 			tpm2.TPMSNVPublic{
 				NVIndex:    handle,
@@ -79,7 +73,7 @@ func (tpm *TPM2) NVWrite(
 			}),
 	}
 
-	_, err = defs.Execute(tpm.transport)
+	err = tpm.nvDefineSpace(hierarchy, hierarchyAuth, &defs)
 	if err != nil {
 		tpm.logger.Error("NVDefineSpace failed", slog.String("error", err.Error()))
 		return err
@@ -97,15 +91,13 @@ func (tpm *TPM2) NVWrite(
 		return err
 	}
 
-	session, closer, err = tpm.CreateSession(keyAttrs)
+	// The secret is written under the hierarchy's authorization; one salted
+	// session proves it and encrypts every chunk on its way into the TPM.
+	session, closer, err := tpm.hierarchyAuthSession(hierarchy, hierarchyAuth, encryptIn)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := closer(); err != nil {
-			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
-		}
-	}()
+	defer tpm.closeSession(closer, "NVWrite")
 
 	// Determine the maximum write chunk size from TPM capabilities.
 	// Fall back to 512 bytes on capability query failure (conservative;
@@ -125,12 +117,11 @@ func (tpm *TPM2) NVWrite(
 		write := tpm2.NVWrite{
 			AuthHandle: tpm2.AuthHandle{
 				Handle: hierarchy,
-				Auth:   tpm2.PasswordAuth(hierarchyAuth),
+				Auth:   session,
 			},
-			NVIndex: tpm2.AuthHandle{
+			NVIndex: tpm2.NamedHandle{
 				Handle: pub.NVIndex,
 				Name:   *nvName,
-				Auth:   session,
 			},
 			Data: tpm2.TPM2BMaxNVBuffer{
 				Buffer: chunk,
@@ -145,6 +136,17 @@ func (tpm *TPM2) NVWrite(
 			return err
 		}
 		offset += chunkSize
+
+		// The first write sets TPMA_NV_WRITTEN, which is part of the index's
+		// Name. An HMAC session authorizes over that Name (cpHash), so every
+		// later chunk must name the index as it now is.
+		if !pub.Attributes.Written {
+			pub.Attributes.Written = true
+			if nvName, err = tpm2.NVName(pub); err != nil {
+				tpm.logger.Error("failed to get NV name", slog.String("error", err.Error()))
+				return err
+			}
+		}
 	}
 
 	if tpm.debugSecrets {
@@ -265,41 +267,29 @@ func (tpm *TPM2) NVRead(
 		if err != nil {
 			return nil, err
 		}
-		defer func() {
-			if err := closer(); err != nil {
-				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
-			}
-		}()
+		defer tpm.closeSession(closer, "NVRead policy")
 		authHandle = tpm2.AuthHandle{
 			Handle: handle,
 			Name:   readPubRsp.NVName,
 			Auth:   session,
 		}
 	} else {
-		switch {
-		case attrs.AuthRead && len(hierarchyAuth) == 0:
-			// Index-self auth path: authHandle is the NV index itself.
-			authHandle = tpm2.AuthHandle{
-				Handle: handle,
-				Name:   readPubRsp.NVName,
-				Auth:   tpm2.PasswordAuth(nil),
-			}
-		case attrs.OwnerRead && len(hierarchyAuth) > 0:
-			// Owner-hierarchy path with supplied credentials.
-			authHandle = tpm2.AuthHandle{
-				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(hierarchyAuth),
-			}
-		case attrs.OwnerRead:
-			// Owner-hierarchy path with empty owner auth (TPM with no owner password).
-			authHandle = tpm2.AuthHandle{
-				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(nil),
-			}
-		default:
-			return nil, ErrNVReadNotAuthorized
+		var closer func() error
+		authHandle, closer, err = tpm.nvReadAuthorization(handle, readPubRsp.NVName, attrs, hierarchyAuth)
+		if err != nil {
+			return nil, err
 		}
+		defer tpm.closeSession(closer, "NVRead")
 	}
+
+	// The index holds a sealed secret, so every chunk leaves the TPM
+	// encrypted under a salted session of its own: the authorization above
+	// may be a policy session, which cannot encrypt it.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeEncSession, "NVRead encryption")
 
 	// Issue NVRead in chunks of at most TPM_PT_NV_BUFFER_MAX bytes.
 	// A single read of a size exceeding the buffer maximum returns
@@ -325,7 +315,7 @@ func (tpm *TPM2) NVRead(
 			},
 			Size:   chunkSize,
 			Offset: offset,
-		}.Execute(tpm.transport)
+		}.Execute(tpm.transport, encSession)
 		if err != nil {
 			tpm.logger.Error("NVRead failed",
 				slog.String("error", err.Error()),
@@ -381,10 +371,6 @@ func (tpm *TPM2) NVDefineCounter(keyAttrs *types.KeyAttributes) error {
 
 	// Counter NV indices have a fixed size of 8 bytes (uint64)
 	defs := tpm2.NVDefineSpace{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
 		PublicInfo: tpm2.New2B(
 			tpm2.TPMSNVPublic{
 				NVIndex:    handle,
@@ -403,7 +389,7 @@ func (tpm *TPM2) NVDefineCounter(keyAttrs *types.KeyAttributes) error {
 			}),
 	}
 
-	_, err := defs.Execute(tpm.transport)
+	err := tpm.nvDefineSpace(hierarchy, hierarchyAuth, &defs)
 	if err != nil {
 		tpm.logger.Error("NVDefineSpace for counter failed", slog.String("error", err.Error()))
 		return err
@@ -472,10 +458,6 @@ func (tpm *TPM2) NVDefineExtend(keyAttrs *types.KeyAttributes) error {
 	}
 
 	defs := tpm2.NVDefineSpace{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
 		PublicInfo: tpm2.New2B(
 			tpm2.TPMSNVPublic{
 				NVIndex:    handle,
@@ -494,7 +476,7 @@ func (tpm *TPM2) NVDefineExtend(keyAttrs *types.KeyAttributes) error {
 			}),
 	}
 
-	_, err = defs.Execute(tpm.transport)
+	err = tpm.nvDefineSpace(hierarchy, hierarchyAuth, &defs)
 	if err != nil {
 		tpm.logger.Error("NVDefineSpace for extend failed", slog.String("error", err.Error()))
 		return err
@@ -540,16 +522,6 @@ func (tpm *TPM2) NVIncrement(keyAttrs *types.KeyAttributes) (uint64, error) {
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	session, closer, err := tpm.CreateSession(keyAttrs)
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		if err := closer(); err != nil {
-			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
-		}
-	}()
-
 	hierarchy := keyAttrs.TPMAttributes.Hierarchy
 	handle := keyAttrs.TPMAttributes.Handle
 
@@ -563,17 +535,16 @@ func (tpm *TPM2) NVIncrement(keyAttrs *types.KeyAttributes) (uint64, error) {
 	}
 
 	// Increment the counter
-	_, err = tpm2.NVIncrement{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		NVIndex: tpm2.AuthHandle{
-			Handle: handle,
-			Name:   readPubRsp.NVName,
-			Auth:   session,
-		},
-	}.Execute(tpm.transport)
+	err = tpm.withHierarchyAuth(hierarchy, hierarchyAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
+		_, err := tpm2.NVIncrement{
+			AuthHandle: authHandle,
+			NVIndex: tpm2.NamedHandle{
+				Handle: handle,
+				Name:   readPubRsp.NVName,
+			},
+		}.Execute(tpm.transport)
+		return err
+	})
 	if err != nil {
 		tpm.logger.Error("NVIncrement failed", slog.String("error", err.Error()))
 		return 0, err
@@ -597,27 +568,11 @@ func (tpm *TPM2) NVIncrement(keyAttrs *types.KeyAttributes) (uint64, error) {
 	attrs := nvPub.Attributes
 
 	// Select the authorization path per TCG Part 3 §31.13.
-	var readAuthHandle tpm2.AuthHandle
-	switch {
-	case attrs.AuthRead && len(hierarchyAuth) == 0:
-		readAuthHandle = tpm2.AuthHandle{
-			Handle: handle,
-			Name:   readPubRsp.NVName,
-			Auth:   tpm2.PasswordAuth(nil),
-		}
-	case attrs.OwnerRead && len(hierarchyAuth) > 0:
-		readAuthHandle = tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		}
-	case attrs.OwnerRead:
-		readAuthHandle = tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(nil),
-		}
-	default:
-		return 0, ErrNVReadNotAuthorized
+	readAuthHandle, closeReadAuth, err := tpm.nvReadAuthorization(handle, readPubRsp.NVName, attrs, hierarchyAuth)
+	if err != nil {
+		return 0, err
 	}
+	defer tpm.closeSession(closeReadAuth, "NVIncrement read")
 
 	readRsp, err := tpm2.NVRead{
 		AuthHandle: readAuthHandle,
@@ -677,16 +632,14 @@ func (tpm *TPM2) NVExtend(keyAttrs *types.KeyAttributes, data []byte) error {
 		return err
 	}
 
-	// Extend the data into the NV index using raw TPM command
-	// (go-tpm does not expose NV_Extend command)
-	err = nvExtendExecute(
-		tpm.transport,
-		hierarchy,
-		handle,
-		readPubRsp.NVName,
-		hierarchyAuth,
-		data,
-	)
+	// Extend the data into the NV index (go-tpm does not implement
+	// TPM2_NV_Extend; nvExtendExecute authorizes it through the session).
+	err = tpm.withHierarchyAuth(hierarchy, hierarchyAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
+		return nvExtendExecute(tpm.transport, authHandle, tpm2.NamedHandle{
+			Handle: handle,
+			Name:   readPubRsp.NVName,
+		}, data)
+	})
 	if err != nil {
 		tpm.logger.Error("NVExtend failed", slog.String("error", err.Error()))
 		return err
@@ -755,26 +708,12 @@ func (tpm *TPM2) NVReadCounter(keyAttrs *types.KeyAttributes) (uint64, error) {
 			Auth:   session,
 		}
 	} else {
-		switch {
-		case attrs.AuthRead && len(hierarchyAuth) == 0:
-			authHandle = tpm2.AuthHandle{
-				Handle: handle,
-				Name:   readPubRsp.NVName,
-				Auth:   tpm2.PasswordAuth(nil),
-			}
-		case attrs.OwnerRead && len(hierarchyAuth) > 0:
-			authHandle = tpm2.AuthHandle{
-				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(hierarchyAuth),
-			}
-		case attrs.OwnerRead:
-			authHandle = tpm2.AuthHandle{
-				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(nil),
-			}
-		default:
-			return 0, ErrNVReadNotAuthorized
+		var closer func() error
+		authHandle, closer, err = tpm.nvReadAuthorization(handle, readPubRsp.NVName, attrs, hierarchyAuth)
+		if err != nil {
+			return 0, err
 		}
+		defer tpm.closeSession(closer, "NV read")
 	}
 
 	readRsp, err := tpm2.NVRead{
@@ -863,26 +802,12 @@ func (tpm *TPM2) NVReadExtend(keyAttrs *types.KeyAttributes) ([]byte, error) {
 			Auth:   session,
 		}
 	} else {
-		switch {
-		case attrs.AuthRead && len(hierarchyAuth) == 0:
-			authHandle = tpm2.AuthHandle{
-				Handle: handle,
-				Name:   readPubRsp.NVName,
-				Auth:   tpm2.PasswordAuth(nil),
-			}
-		case attrs.OwnerRead && len(hierarchyAuth) > 0:
-			authHandle = tpm2.AuthHandle{
-				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(hierarchyAuth),
-			}
-		case attrs.OwnerRead:
-			authHandle = tpm2.AuthHandle{
-				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(nil),
-			}
-		default:
-			return nil, ErrNVReadNotAuthorized
+		var closer func() error
+		authHandle, closer, err = tpm.nvReadAuthorization(handle, readPubRsp.NVName, attrs, hierarchyAuth)
+		if err != nil {
+			return nil, err
 		}
+		defer tpm.closeSession(closer, "NV read")
 	}
 
 	readRsp, err := tpm2.NVRead{
@@ -935,16 +860,16 @@ func (tpm *TPM2) NVUndefine(keyAttrs *types.KeyAttributes) error {
 		return err
 	}
 
-	_, err = tpm2.NVUndefineSpace{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		NVIndex: tpm2.NamedHandle{
-			Handle: handle,
-			Name:   readPubRsp.NVName,
-		},
-	}.Execute(tpm.transport)
+	err = tpm.withHierarchyAuth(hierarchy, hierarchyAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
+		_, err := tpm2.NVUndefineSpace{
+			AuthHandle: authHandle,
+			NVIndex: tpm2.NamedHandle{
+				Handle: handle,
+				Name:   readPubRsp.NVName,
+			},
+		}.Execute(tpm.transport)
+		return err
+	})
 	if err != nil {
 		tpm.logger.Error("NVUndefineSpace failed", slog.String("error", err.Error()))
 		return err
@@ -954,6 +879,60 @@ func (tpm *TPM2) NVUndefine(keyAttrs *types.KeyAttributes) error {
 		slog.String("handle", fmt.Sprintf("0x%x", handle)))
 
 	return nil
+}
+
+// nvDefineSpace executes defs under hierarchy, proving hierarchyAuth through
+// a salted session that also encrypts the new index's authValue on its way
+// into the TPM (see hierarchyAuthSession). Any AuthHandle already set on defs
+// is replaced.
+func (tpm *TPM2) nvDefineSpace(
+	hierarchy tpm2.TPMHandle,
+	hierarchyAuth []byte,
+	defs *tpm2.NVDefineSpace) error {
+
+	return tpm.withHierarchyAuth(hierarchy, hierarchyAuth, encryptIn, func(authHandle tpm2.AuthHandle) error {
+		defs.AuthHandle = authHandle
+		_, err := defs.Execute(tpm.transport)
+		return err
+	})
+}
+
+// nvReadAuthorization selects the TPM2_NV_Read authorization for the index
+// at handle from its TPMA_NV attributes (TCG Part 3 §31.13):
+//
+//   - TPMA_NV_AUTHREAD with no hierarchy auth: the index itself, whose
+//     authValue is empty.
+//   - TPMA_NV_OWNERREAD with hierarchy auth: the owner hierarchy, proven
+//     through a salted session (hierarchyAuthSession).
+//   - TPMA_NV_OWNERREAD with no hierarchy auth: the owner hierarchy with an
+//     empty authorization.
+//
+// The returned closer flushes the session, if one was started.
+func (tpm *TPM2) nvReadAuthorization(
+	handle tpm2.TPMHandle,
+	name tpm2.TPM2BName,
+	attrs tpm2.TPMANV,
+	hierarchyAuth []byte) (tpm2.AuthHandle, func() error, error) {
+
+	switch {
+	case attrs.AuthRead && len(hierarchyAuth) == 0:
+		return tpm2.AuthHandle{
+			Handle: handle,
+			Name:   name,
+			Auth:   tpm2.PasswordAuth(nil),
+		}, noopCloser, nil
+	case attrs.OwnerRead:
+		session, closer, err := tpm.hierarchyAuthSession(tpm2.TPMRHOwner, hierarchyAuth, encryptNone)
+		if err != nil {
+			return tpm2.AuthHandle{}, noopCloser, err
+		}
+		return tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   session,
+		}, closer, nil
+	default:
+		return tpm2.AuthHandle{}, noopCloser, ErrNVReadNotAuthorized
+	}
 }
 
 // nvChunkSizeFallback is the conservative default chunk size used when the

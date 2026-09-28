@@ -244,7 +244,7 @@ func TestIntegration_Read(t *testing.T) {
 // TestIntegration_Read_Encrypted tests Read() with encrypted session
 func TestIntegration_Read_Encrypted(t *testing.T) {
 	// Create TPM with encrypted session enabled
-	tpmInstance, _, cleanup := setupTPM2WithCapture(t, true)
+	tpmInstance, _, cleanup := setupTPM2WithCapture(t)
 	defer cleanup()
 
 	err := provisionIfNeeded(t, tpmInstance)

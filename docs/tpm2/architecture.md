@@ -288,6 +288,38 @@ configuration shape, configured independently
   now reports exactly what `PlatformSRKAttributes()` resolves, same as every
   other caller.
 
+## The TPM bus is outside the boundary
+
+A discrete TPM talks to the CPU over LPC, SPI or I²C, and a probe on that bus
+sees every command and response. The SO PIN, the USER PIN that is the Platform
+SRK's auth value, and everything sealed under it — including the PKCS#11 PIN
+unsealed automatically at boot — would cross it in plaintext through password
+sessions, unencrypted parameters and an unsalted `PolicyAuthValue` session
+whose HMAC key is the PIN itself.
+
+Shape chosen: protection is unconditional and lives in `session.go`. Every
+secret-bearing session is salted — against the EK when it is resident, which
+it only reads, otherwise against an ephemeral NULL-hierarchy key — every
+non-empty auth value is proven by HMAC, and every secret parameter is
+encrypted in the direction it travels. The mechanism and the command
+inventory are in [`engineering.md`](engineering.md) §"Bus protection".
+
+Rejected alternatives:
+
+- **Keeping an `EncryptSession` switch.** Rejected: it defaulted to `false`
+  while the documentation said `true`, and a switch whose off position leaks
+  the SO PIN is a misconfiguration waiting to ship. Nothing non-secret needed
+  it, so it was deleted rather than defaulted on.
+- **Salting against the SRK or Platform SRK when the EK is absent.** Rejected:
+  after `TPM2_Clear` no storage key exists either, so the window it would have
+  covered — setting the new hierarchy authorizations — is exactly the one it
+  cannot. A NULL-hierarchy key needs no authorization, exists on every TPM and
+  touches neither the EK nor the SSRK.
+- **Encrypting every session in both directions.** Rejected: the TPM refuses
+  the attribute on a command whose first parameter is not a TPM2B. Each
+  command names its direction, and a separate encryption session carries the
+  secret when the authorization is a policy session that cannot.
+
 ## What this feature deliberately does not do
 
 - **It does not own the barrier or the registry.** It supplies a strategy.

@@ -105,7 +105,7 @@ by five and reports unconverted folders as converted.
 |---|---|
 | [key-management](key-management/) | `architecture/unified-keyid-jwk-integration.md`, `key-agreement.md` |
 | [crypto-backends](crypto-backends/) | `backends/` |
-| [tpm2](tpm2/) | `configuration/tpm2-session-encryption.md` |
+| [tpm2](tpm2/) | `configuration/tpm2-session-encryption.md` — **absorbed and deleted** (go-xkms#1147): it documented the removed `EncryptSession` switch and an encrypted-versus-unencrypted comparison that no longer exists; session encryption is unconditional and documented in [`tpm2/engineering.md`](tpm2/engineering.md) §"Bus protection", its capture tests under §"Test strategy" |
 | [attestation-verifier](attestation-verifier/) | `attestation/README.md` — **absorbed and deleted** |
 | [pkcs11-provider-module](pkcs11-provider-module/) | `pkcs11/module/`, `references/pkcs11-v3.0-to-v3.2-changes.md`, `pkcs11/manager.md` |
 | [pkcs11-backend](pkcs11-backend/) | `pkcs11/backend/` (architecture.md, configuration.md, operations.md, runbook.md, security.md, README.md) — also corrects that folder's config.Pin/SOPIN description (now `*types.SecretValue`, credential-resolved) and its AttestKey "placeholder" claim (now fully implemented) |
@@ -375,7 +375,7 @@ Configuration guides for various components:
 - [Build System](configuration/build-system.md) - Build tags and compilation options
 - [AEAD Configuration](configuration/aead-auto-selection.md) - Authenticated encryption setup
 - [Symmetric Encryption](configuration/symmetric-encryption.md) - Symmetric key configuration
-- [TPM2 Session Encryption](configuration/tpm2-session-encryption.md) - TPM session security
+- [TPM2 Session Encryption](tpm2/engineering.md#bus-protection) - TPM session security
 
 ### [Bootstrap](bootstrap/)
 Secure trust establishment and server initialization:

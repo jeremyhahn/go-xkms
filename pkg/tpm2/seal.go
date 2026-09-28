@@ -127,6 +127,15 @@ func (tpm *TPM2) sealKeyInternal(
 		return nil, err
 	}
 
+	// The sealed secret and the object's authValue are encrypted on their
+	// way into the TPM by a salted session of their own: the parent's
+	// authorization may be a policy session, which cannot carry them.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptIn)
+	if err != nil {
+		tpm.closeSession(closer, "seal parent")
+		return nil, err
+	}
+
 	// Create a new seal key under the persisted SRK
 	sealKeyResponse, err := tpm2.Create{
 		ParentHandle: tpm2.AuthHandle{
@@ -147,8 +156,10 @@ func (tpm *TPM2) sealKeyInternal(
 				),
 			},
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
+	tpm.closeSession(closeEncSession, "seal encryption")
 	if err != nil {
+		tpm.closeSession(closer, "seal parent")
 		tpm.logger.Error("failed to create seal key", slog.String("error", err.Error()))
 		return nil, err
 	}
@@ -293,6 +304,15 @@ func (tpm *TPM2) unsealKeyInternal(
 		return nil, err2
 	}
 
+	// The sealed secret leaves the TPM encrypted under a salted session of
+	// its own: the key session may answer the PCR branch of the platform
+	// policy, which cannot encrypt it.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeEncSession, "unseal encryption")
+
 	// Unseal the data using the key session
 	unseal, err := tpm2.Unseal{
 		ItemHandle: tpm2.AuthHandle{
@@ -300,7 +320,7 @@ func (tpm *TPM2) unsealKeyInternal(
 			Name:   sealKey.Name,
 			Auth:   session2,
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
 	if err != nil {
 		tpm.logger.Error("failed to unseal data", slog.String("error", err.Error()))
 		return nil, err
@@ -393,6 +413,15 @@ func (tpm *TPM2) unsealFromBlobs(
 		return nil, err2
 	}
 
+	// The sealed secret leaves the TPM encrypted under a salted session of
+	// its own: the key session may answer the PCR branch of the platform
+	// policy, which cannot encrypt it.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeEncSession, "unseal encryption")
+
 	// Unseal the data using the key session
 	unseal, err := tpm2.Unseal{
 		ItemHandle: tpm2.AuthHandle{
@@ -400,7 +429,7 @@ func (tpm *TPM2) unsealFromBlobs(
 			Name:   sealKey.Name,
 			Auth:   session2,
 		},
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
 	if err != nil {
 		tpm.logger.Error("failed to unseal data from blobs", slog.String("error", err.Error()))
 		return nil, err

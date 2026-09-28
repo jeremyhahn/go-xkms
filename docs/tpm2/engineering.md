@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/tpm2`
 
@@ -232,6 +232,81 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   self-certification (`TPM2_CertifyCreation`) is authorized by the IAK's own
   authValue, not the EK's (#467).
 
+## Bus protection
+
+The TPM bus is outside the security boundary: an observer with a probe on
+LPC/SPI/I²C sees every command and response. No secret crosses it in
+plaintext, and nothing about that is configurable.
+
+**Salt key.** Every session that carries a secret is salted: its session key
+comes from a random salt encrypted to a TPM-resident key, so a capture neither
+decrypts its parameters nor lets the auth value behind its HMAC be brute
+forced offline. `saltKey` (`pkg/tpm2/session.go:93`) uses the persistent EK at
+`ek.handle`, which it only reads (`TPM2_ReadPublic`) and never modifies. When
+no EK is resident — between `TPM2_Clear` and `CreateEK` during provisioning,
+or on a TPM whose EK was never persisted — it creates an ephemeral ECC P-256
+key in the NULL hierarchy from go-tpm's `ECCSRKTemplate` (`session.go:105`)
+and flushes it as soon as `TPM2_StartAuthSession` returns. Any other lookup
+failure is `ErrSaltKey`; it is never answered with an unsalted session.
+
+**Auth values.** A non-empty auth value is proven through a salted HMAC
+session, never a `TPM_RS_PW` password session, which would put the value on
+the bus verbatim:
+
+- objects and NV indexes — `objectAuthSession` (`session.go:194`);
+- hierarchies (the SO PIN) — `hierarchyAuthSession` (`session.go:211`), bound
+  to the hierarchy. `TPM2_HierarchyChangeAuth` and `TPM2_Clear` change the
+  hierarchy's own auth, and the TPM computes their response HMAC with the new
+  value; a bound session authorizing its bind entity leaves the auth value out
+  of the HMAC key, so the response verifies. `withHierarchyAuth`
+  (`session.go:227`) wraps a command in one;
+- the PIN branch of the platform policy — `platformPolicySession`
+  (`session.go:345`) salts the `PolicyAuthValue` session. Unsalted, its HMAC
+  key is the PIN alone.
+
+An empty auth value with nothing to encrypt stays a zero-round-trip empty
+password session.
+
+**Parameter encryption.** AES-128-CFB on the first command or response
+parameter, in the direction the secret travels (`paramEncryption`,
+`session.go:49`): the TPM refuses the attribute with `TPM_RC_ATTRIBUTES` on a
+command whose first parameter is not a TPM2B, so it is set per command, never
+blanket. Where the package builds the authorization itself the same session
+encrypts; where the authorization comes from `CreateSession` /
+`CreateKeySession` — a policy session may answer the PCR branch, which cannot
+encrypt because the TPM mixes the entity's auth value into the key — a
+separate `encryptionSession` (`session.go:183`) is attached as an extra
+session.
+
+| Command | Secret | Protection | Site |
+|---|---|---|---|
+| `TPM2_CreatePrimary` (EK, SSRK, PSRK, IAK, IDevID, `ChangeAuth`) | new key's `userAuth` (the USER PIN for the PSRK); hierarchy auth | salted bound session, encrypt in | `createPrimary`, `key.go:552` |
+| `TPM2_EvictControl` | hierarchy auth | salted bound session | `evictControl`, `key.go:570` |
+| `TPM2_HierarchyChangeAuth` | old and new hierarchy auth | salted bound session, encrypt in | `hierarchyChangeAuth`, `tpm.go:1154` |
+| `TPM2_Clear` | lockout auth | salted bound session | `Clear`, `provision.go:26` |
+| `TPM2_PolicySecret` (endorsement) | endorsement auth | salted bound session | `policySecret`, `session.go:246` |
+| `TPM2_NV_DefineSpace` | hierarchy auth, index auth | salted bound session, encrypt in | `nvDefineSpace`, `nvram.go:888` |
+| `TPM2_NV_Write` (`NVWrite`) | sealed data; hierarchy auth | salted bound session, encrypt in | `nvram.go:117` |
+| `TPM2_NV_Read` (`NVRead`) | sealed data | extra session, encrypt out | `nvram.go:310` |
+| `TPM2_NV_Increment`, `TPM2_NV_Extend`, `TPM2_NV_UndefineSpace`, NV reads under owner auth | hierarchy auth | salted bound session | `nvram.go:539`, `:638`, `:864`, `nvReadAuthorization` `:911` |
+| `TPM2_Create` / `TPM2_CreateLoaded` (seal, RSA, ECDSA, secret, symmetric) | sealed data, key `userAuth` | extra session, encrypt in | `seal.go:140`, `rsa.go:124`, `ecdsa.go:123`, `secretkey.go:86`, `symmetric.go:155` |
+| `TPM2_Unseal` | sealed data (the auto-unsealed PKCS#11 PIN) | extra session, encrypt out | `seal.go:317`, `seal.go:426`, `symmetric.go:604` |
+| `TPM2_RSA_Decrypt`, `TPM2_ECDH_ZGen` | plaintext, shared secret | extra session, encrypt out | `rsa.go:307`, `ecdh.go:112` |
+| `TPM2_ActivateCredential` | recovered credential | extra session, encrypt out | `attestation.go:614` |
+| `TPM2_GetRandom` | key material | extra session, encrypt out | `random.go:88` |
+| `TPM2_Sign`, `TPM2_Quote`, `TPM2_Certify`, `TPM2_CertifyCreation`, `TPM2_Load` | key or parent auth | salted HMAC or policy session | `CreateSession` `session.go:523`, `createKeySession` `session.go:711` |
+
+`TPM2_NV_Extend` is not in go-tpm; `nvExtendExecute` (`nv_extend.go:38`)
+marshals it by hand but computes and verifies its authorization through the
+go-tpm `Session`, so it takes the same salted sessions as every other command.
+`HashSequence` (`tpm.go:1847`) runs its sequence object under an empty auth
+value: the ticket's hierarchy needs no authorization, and go-tpm cannot attach
+a session to `TPM2_HashSequenceStart` (its response handle is untagged).
+
+Not covered: callers that drive go-tpm directly rather than through
+`pkg/tpm2` — `pkg/luks`, `pkg/storage/hardware`, and `pkg/backend/tpm2`'s
+import path.
+
 ## Error semantics
 
 Typed errors throughout; `pkg/attestation/errors.go` holds the verification
@@ -267,6 +342,8 @@ vocabulary. The categories that need distinguishing:
 | `ErrTCGCSRPad` | the TPM's RNG could not supply the §13.1 random pad |
 | `ErrEKCertServiceUnreachable` | `EKConfig.CertDownload` is `true` and the manufacturer EK certificate service request (`downloadEKCertFromManufacturer`) failed to connect, timed out, or answered a non-200 status. The underlying transport error — including a context-deadline timeout — is reachable as detail through `errors.Is` |
 | `ErrEKCertServiceParseFailed` | the manufacturer EK certificate service answered 200 but the body was neither valid DER nor PEM `x509.Certificate` bytes |
+| `ErrSaltKey` | no key could be resolved to salt a session against: reading the EK failed for a reason other than an absent handle, or the ephemeral NULL-hierarchy key could not be created. No unsalted session is started in its place |
+| `ErrSaltedSession` | `TPM2_StartAuthSession` for a salted session failed; the TPM or transport error stays in the chain |
 | `ErrProvisioningStateRead` | `State` could not compute the live platform policy digest needed for `PlatformSRKPolicyCurrent` |
 | `ErrClearLockoutRefused`, `ErrClearPlatformRefused` | `ClearForReprovision`'s LOCKOUT or PLATFORM `TPM2_Clear` attempt was refused; logged, then the next path is tried |
 | `ErrForceClear` | the PPI sysfs write (`ForceClear`, the seam `ppiRequestWriter`) failed |
@@ -339,9 +416,9 @@ CA on this release still enrolls a device on the previous one.
   Policy NV Index with the platform Delegation Policy (see Invariants). The
   default configuration sets it on the IDevID. It does not alter the key.
 - **PCR selection and policy** — `pkg/seal/policy` and `pcr.go`.
-- **Session encryption** — TPM2 session encryption is configurable; see the
-  legacy `docs/configuration/tpm2-session-encryption.md` pending its own
-  migration.
+- **Session encryption** — not configurable. Every secret crosses the TPM bus
+  encrypted, always; the `encrypt-sessions` / `EncryptSession` switch was
+  removed (#1147). See [Bus protection](#bus-protection).
 - **`ek.cert-download`** (`EKConfig.CertDownload`, default `false`) — opts in
   to downloading the EK certificate from the TPM manufacturer's EK
   certificate service (`https://ekop.intel.com/ekcertservice/` by default)
@@ -421,6 +498,20 @@ The suite is unusually large and deliberately structured:
   DER/PEM download, a request that exceeds `CertDownloadTimeout`
   (`ErrEKCertServiceUnreachable`, bounded rather than blocking), and a
   malformed response (`ErrEKCertServiceParseFailed`).
+- **Bus capture** (`session_encryption_simulator_test.go`) — routes the TPM
+  through a recording transport and, for provisioning with an SO PIN, PSRK
+  creation, sealing and unsealing through both the PIN and the PCR branch, an
+  NV secret under owner auth and `TPM2_GetRandom`, asserts that the plaintext
+  PIN or secret appears in no command and no response, that each
+  secret-bearing command carries a session with the decrypt or encrypt
+  attribute, and that the sessions authorizing it are salted. The recorder
+  copies each command before forwarding it: the in-process simulator decrypts
+  an encrypted parameter in place, in the buffer it is handed. The same file
+  covers `saltKey` with no EK resident and with a failing transport. The
+  integration counterpart, `test/integration/tpm2/capture_test.go`, runs the
+  same kind of capture against the devcontainer's networked simulator
+  (`make test-tpm2-encryption`, or `make test-tpm2-encryption-local` against a
+  local simulator).
 - **Leak suites** — object contexts, auth sessions, auth sessions under
   transport fault, general resources. These are the regression guard for the
   package's hardest rule.

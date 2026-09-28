@@ -545,9 +545,47 @@ func (tpm *TPM2) KeyAttributes(
 	return attrs, nil
 }
 
+// createPrimary executes cmd under hierarchy. hierarchyAuth is proven through
+// hierarchyAuthSession, and the sensitive area -- the new key's authValue --
+// is encrypted on its way into the TPM by the same salted session. Any
+// PrimaryHandle already set on cmd is replaced.
+func (tpm *TPM2) createPrimary(
+	hierarchy tpm2.TPMHandle,
+	hierarchyAuth []byte,
+	cmd tpm2.CreatePrimary) (*tpm2.CreatePrimaryResponse, error) {
+
+	var rsp *tpm2.CreatePrimaryResponse
+	err := tpm.withHierarchyAuth(hierarchy, hierarchyAuth, encryptIn, func(authHandle tpm2.AuthHandle) error {
+		cmd.PrimaryHandle = authHandle
+		var err error
+		rsp, err = cmd.Execute(tpm.transport)
+		return err
+	})
+	return rsp, err
+}
+
+// evictControl executes TPM2_EvictControl for object at persistent under
+// hierarchy, proving hierarchyAuth through hierarchyAuthSession: a transient
+// object is made persistent, and a persistent object is evicted.
+func (tpm *TPM2) evictControl(
+	hierarchy tpm2.TPMHandle,
+	hierarchyAuth []byte,
+	object tpm2.NamedHandle,
+	persistent tpm2.TPMHandle) error {
+
+	return tpm.withHierarchyAuth(hierarchy, hierarchyAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
+		_, err := tpm2.EvictControl{
+			Auth:             authHandle,
+			ObjectHandle:     &object,
+			PersistentHandle: persistent,
+		}.Execute(tpm.transport)
+		return err
+	})
+}
+
 // Creates a TCG compliant persistent Endorsement Key under the Endorsement
-// Hierarchy. Optionally encrypts bus communication between the CPU <-> TPM
-// if enabled in the platform configuration file.
+// Hierarchy. The hierarchy authorization is proven through a salted session
+// and the sensitive area is encrypted on the TPM bus (see createPrimary).
 func (tpm *TPM2) CreateEK(
 	ekAttrs *types.KeyAttributes) error {
 
@@ -577,11 +615,7 @@ func (tpm *TPM2) CreateEK(
 	tpm.logger.Debug("tpm: creating EK", slog.String("algorithm", ekAttrs.KeyAlgorithm.String()))
 
 	// Create new EK primary key under the Endorsement Hierarchy
-	primaryKey, err := tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHEndorsement,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
+	primaryKey, err := tpm.createPrimary(tpm2.TPMRHEndorsement, hierarchyAuth, tpm2.CreatePrimary{
 		InPublic: tpm2.New2B(ekAttrs.TPMAttributes.Template),
 		InSensitive: tpm2.TPM2BSensitiveCreate{
 			Sensitive: &tpm2.TPMSSensitiveCreate{
@@ -590,7 +624,7 @@ func (tpm *TPM2) CreateEK(
 				},
 			},
 		},
-	}.Execute(tpm.transport)
+	})
 	if err != nil {
 		tpm.logger.Error("failed to create EK primary key", slog.String("error", err.Error()))
 		return err
@@ -606,17 +640,10 @@ func (tpm *TPM2) CreateEK(
 	}
 
 	// Make the EK persistent
-	_, err = tpm2.EvictControl{
-		Auth: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		ObjectHandle: &tpm2.NamedHandle{
-			Handle: primaryKey.ObjectHandle,
-			Name:   primaryKey.Name,
-		},
-		PersistentHandle: tpm2.TPMHandle(ekHandle),
-	}.Execute(tpm.transport)
+	err = tpm.evictControl(tpm2.TPMRHOwner, hierarchyAuth, tpm2.NamedHandle{
+		Handle: primaryKey.ObjectHandle,
+		Name:   primaryKey.Name,
+	}, ekHandle)
 	defer tpm.Flush(primaryKey.ObjectHandle)
 
 	if err != nil {
@@ -661,9 +688,10 @@ func (tpm *TPM2) CreateEK(
 }
 
 // Creates a persistent Storage Root Key (SRK) under the specified
-// hierarchy using the Endorsement Key (EK) to salt an HMAC session.
-// Optionally encrypts bus communication between the CPU <-> TPM if
-// enabled in the platform configuration file. If the HandleType is
+// hierarchy. The hierarchy authorization is proven through a session salted
+// against the Endorsement Key, and the SRK's authValue -- the USER PIN for
+// the Platform SRK -- is encrypted on the TPM bus (see createPrimary). The
+// EK and SRK templates are untouched. If the HandleType is
 // set to TPMHTTransient, the created objects handles are left
 // unflushed and the caller is responsible for flushing it when
 // done.
@@ -704,7 +732,6 @@ func (tpm *TPM2) CreateSRK(
 		slog.Bool("platform_policy", srkAttrs.PlatformPolicy),
 		slog.String("persistent_handle", fmt.Sprintf("0x%08x", uint32(srkAttrs.TPMAttributes.Handle))),
 		slog.String("handle_type", fmt.Sprintf("0x%02x", uint8(srkAttrs.TPMAttributes.HandleType))),
-		slog.Bool("encrypt_session", tpm.config.EncryptSession),
 		slog.Bool("has_parent", srkAttrs.Parent != nil),
 	)
 
@@ -747,12 +774,10 @@ func (tpm *TPM2) CreateSRK(
 		policyPin = pin
 	}
 
-	// Create SRK
-	primaryKeyCMD := tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
+	// Create SRK. The sensitive area carries the SRK's authValue -- the USER
+	// PIN for the Platform SRK -- so it is encrypted on its way to the TPM,
+	// and the hierarchy auth is proven through a salted session.
+	primaryKey, err = tpm.createPrimary(hierarchy, hierarchyAuth, tpm2.CreatePrimary{
 		InPublic: tpm2.New2B(srkAttrs.TPMAttributes.Template),
 		InSensitive: tpm2.TPM2BSensitiveCreate{
 			Sensitive: &tpm2.TPMSSensitiveCreate{
@@ -761,28 +786,7 @@ func (tpm *TPM2) CreateSRK(
 				},
 			},
 		},
-	}
-
-	if tpm.config.EncryptSession && srkAttrs.Parent != nil {
-
-		var session tpm2.Session
-		var closer func() error
-		session, closer, err = tpm.CreateSession(srkAttrs)
-		if err != nil {
-			tpm.logger.Error("failed to create session for SRK", slog.String("error", err.Error()))
-			return err
-		}
-		defer func() {
-			if err := closer(); err != nil {
-				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
-			}
-		}()
-
-		primaryKey, err = primaryKeyCMD.Execute(tpm.transport, session)
-
-	} else {
-		primaryKey, err = primaryKeyCMD.Execute(tpm.transport)
-	}
+	})
 	if err != nil {
 		tpm.logger.Error("failed to create SRK primary key", slog.String("error", err.Error()))
 		return err
@@ -792,19 +796,11 @@ func (tpm *TPM2) CreateSRK(
 
 	if srkAttrs.TPMAttributes.HandleType == tpm2.TPMHTPersistent {
 
-		// Make the SRK persistent
-		_, err = tpm2.EvictControl{
-			Auth: tpm2.AuthHandle{
-				Handle: hierarchy, // storage or platform
-				Auth:   tpm2.PasswordAuth(hierarchyAuth),
-			},
-			ObjectHandle: &tpm2.AuthHandle{
-				Handle: primaryKey.ObjectHandle,
-				Name:   primaryKey.Name,
-				Auth:   tpm2.PasswordAuth(hierarchyAuth),
-			},
-			PersistentHandle: srkAttrs.TPMAttributes.Handle,
-		}.Execute(tpm.transport)
+		// Make the SRK persistent (storage or platform hierarchy)
+		err = tpm.evictControl(hierarchy, hierarchyAuth, tpm2.NamedHandle{
+			Handle: primaryKey.ObjectHandle,
+			Name:   primaryKey.Name,
+		}, srkAttrs.TPMAttributes.Handle)
 
 		tpm.Flush(primaryKey.ObjectHandle)
 
@@ -998,11 +994,7 @@ func (tpm *TPM2) CreateIAK(
 		return nil, err
 	}
 
-	iakPrimary, err := tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHEndorsement,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
+	iakPrimary, err := tpm.createPrimary(tpm2.TPMRHEndorsement, hierarchyAuth, tpm2.CreatePrimary{
 		InPublic: tpm2.New2B(template),
 		InSensitive: tpm2.TPM2BSensitiveCreate{
 			Sensitive: &tpm2.TPMSSensitiveCreate{
@@ -1012,7 +1004,7 @@ func (tpm *TPM2) CreateIAK(
 			},
 		},
 		CreationPCR: pcrSelection,
-	}.Execute(tpm.transport)
+	})
 	if err != nil {
 		tpm.logger.Error("failed to create IAK primary key", slog.String("error", err.Error()))
 		return nil, err
@@ -1021,18 +1013,10 @@ func (tpm *TPM2) CreateIAK(
 
 	// Make the AK persistent
 	iakHandle := iakAttrs.TPMAttributes.Handle
-	_, err = tpm2.EvictControl{
-		Auth: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		ObjectHandle: &tpm2.AuthHandle{
-			Handle: iakPrimary.ObjectHandle,
-			Name:   iakPrimary.Name,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		PersistentHandle: iakHandle,
-	}.Execute(tpm.transport)
+	err = tpm.evictControl(tpm2.TPMRHOwner, hierarchyAuth, tpm2.NamedHandle{
+		Handle: iakPrimary.ObjectHandle,
+		Name:   iakPrimary.Name,
+	}, iakHandle)
 	if err != nil {
 		tpm.logger.Error("failed to persist IAK", slog.String("error", err.Error()))
 		return nil, err
@@ -1059,11 +1043,16 @@ func (tpm *TPM2) CreateIAK(
 	// userWithAuth SET), not the EK's. Presenting ekAuth here was invisible
 	// while both were empty and failed provisioning outright the moment
 	// iak.password was set (#467).
+	iakSession, closeIAKSession, err := tpm.objectAuthSession(iakAuth, encryptNone)
+	if err != nil {
+		return nil, err
+	}
+	defer tpm.closeSession(closeIAKSession, "IAK CertifyCreation")
 	certifyCreation := tpm2.CertifyCreation{
 		SignHandle: tpm2.AuthHandle{
 			Handle: iakHandle,
 			Name:   iakPrimary.Name,
-			Auth:   tpm2.PasswordAuth(iakAuth),
+			Auth:   iakSession,
 		},
 		ObjectHandle: tpm2.NamedHandle{
 			Handle: iakHandle,
@@ -1542,10 +1531,6 @@ func (tpm *TPM2) CreateIDevID(
 
 	// Create IDevID Key
 	primaryKeyCMD := tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHEndorsement,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
 		InPublic: tpm2.New2B(idevidTemplate),
 		InSensitive: tpm2.TPM2BSensitiveCreate{
 			Sensitive: &tpm2.TPMSSensitiveCreate{
@@ -1556,12 +1541,11 @@ func (tpm *TPM2) CreateIDevID(
 		},
 	}
 	// Set PCR selection if available
-	// Set PCR selection if available
 	if akAttrs.TPMAttributes != nil && len(akAttrs.TPMAttributes.PCRSelection.PCRSelections) > 0 {
 		primaryKeyCMD.CreationPCR = akAttrs.TPMAttributes.PCRSelection
 	}
 
-	primaryKey, err := primaryKeyCMD.Execute(tpm.transport)
+	primaryKey, err := tpm.createPrimary(tpm2.TPMRHEndorsement, hierarchyAuth, primaryKeyCMD)
 	if err != nil {
 		tpm.logger.Error("failed to create IDevID primary key", slog.String("error", err.Error()))
 		return nil, nil, err
@@ -1578,36 +1562,20 @@ func (tpm *TPM2) CreateIDevID(
 
 	if readErr == nil {
 		// Object exists, evict it
-		_, evictErr := tpm2.EvictControl{
-			Auth: tpm2.AuthHandle{
-				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(hierarchyAuth),
-			},
-			ObjectHandle: &tpm2.AuthHandle{
-				Handle: persistentHandle,
-				Name:   readPubResp.Name,
-				Auth:   tpm2.PasswordAuth(nil),
-			},
-			PersistentHandle: persistentHandle,
-		}.Execute(tpm.transport)
+		evictErr := tpm.evictControl(tpm2.TPMRHOwner, hierarchyAuth, tpm2.NamedHandle{
+			Handle: persistentHandle,
+			Name:   readPubResp.Name,
+		}, persistentHandle)
 		if evictErr != nil {
 			tpm.logger.Debug("Failed to evict existing key")
 		}
 	}
 
 	// Make the IDevID Key persistent
-	_, err = tpm2.EvictControl{
-		Auth: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		ObjectHandle: &tpm2.AuthHandle{
-			Handle: primaryKey.ObjectHandle,
-			Name:   primaryKey.Name,
-			Auth:   tpm2.PasswordAuth(akAuth),
-		},
-		PersistentHandle: persistentHandle,
-	}.Execute(tpm.transport)
+	err = tpm.evictControl(tpm2.TPMRHOwner, hierarchyAuth, tpm2.NamedHandle{
+		Handle: primaryKey.ObjectHandle,
+		Name:   primaryKey.Name,
+	}, persistentHandle)
 	if err != nil {
 		tpm.logger.Error("failed to persist IDevID", slog.String("error", err.Error()))
 		return nil, nil, err
@@ -1637,6 +1605,11 @@ func (tpm *TPM2) CreateIDevID(
 	// certified under the Certify branch of its key policy, as the Privacy
 	// Administrator (section 7.3.6.2). The IAK signs at the USER role, which
 	// its authValue still authorizes.
+	akSession, closeAKSession, err := tpm.objectAuthSession(akAuth, encryptNone)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tpm.closeSession(closeAKSession, "IDevID Certify signer")
 	adminSession, closeAdmin, err := tpm.DevIDAdminSession(
 		DevIDKeySigning, idevidTemplate.NameAlg, tpm2.TPMCCCertify, hierarchyAuth)
 	if err != nil {
@@ -1651,7 +1624,7 @@ func (tpm *TPM2) CreateIDevID(
 		SignHandle: tpm2.AuthHandle{
 			Handle: akAttrs.TPMAttributes.Handle,
 			Name:   akAttrs.TPMAttributes.Name,
-			Auth:   tpm2.PasswordAuth(akAuth),
+			Auth:   akSession,
 		},
 		QualifyingData: tpm2.TPM2BData{
 			Buffer: qualifyingData,
@@ -1820,17 +1793,10 @@ func (tpm *TPM2) DeleteKey(
 		if keyAttrs.TPMAttributes.HierarchyAuth != nil {
 			hierarchyAuth = keyAttrs.TPMAttributes.HierarchyAuth.Bytes()
 		}
-		_, err = tpm2.EvictControl{
-			Auth: tpm2.AuthHandle{
-				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(hierarchyAuth),
-			},
-			ObjectHandle: &tpm2.NamedHandle{
-				Handle: keyAttrs.TPMAttributes.Handle,
-				Name:   keyAttrs.TPMAttributes.Name,
-			},
-			PersistentHandle: keyAttrs.TPMAttributes.Handle,
-		}.Execute(tpm.transport)
+		err = tpm.evictControl(tpm2.TPMRHOwner, hierarchyAuth, tpm2.NamedHandle{
+			Handle: keyAttrs.TPMAttributes.Handle,
+			Name:   keyAttrs.TPMAttributes.Name,
+		}, keyAttrs.TPMAttributes.Handle)
 		if err != nil {
 			tpm.logger.Error("failed to evict key", slog.String("error", err.Error()))
 			return err

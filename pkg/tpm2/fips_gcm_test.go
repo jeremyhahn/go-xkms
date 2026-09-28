@@ -32,11 +32,11 @@ import (
 // explicit-nonce framing. Under fips140=only Go's crypto/cipher refuses
 // every AES-GCM construction that accepts a process-supplied IV, which
 // includes go-tpm's own HMAC session encryption (CFB) when it is enabled;
-// createSim(false, false) below disables that session encryption so this
+// createSim(false) below disables that session encryption so this
 // test reaches tpm2AESEncrypter's own AES-GCM selection, the one this
 // change touches, without tripping over that unrelated TPM-session gap.
 func TestSymmetricEncryptDecrypt_AgreesWithArbitraryIVGCMUsable(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -105,7 +105,7 @@ func TestSymmetricEncryptDecrypt_AgreesWithArbitraryIVGCMUsable(t *testing.T) {
 // framing. This does not depend on the process's FIPS posture: the fields
 // are checked before any AEAD construction runs.
 func TestSymmetricDecrypt_RandomNonceModeRejectsWrongLengthNonce(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)

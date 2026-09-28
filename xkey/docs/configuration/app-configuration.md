@@ -196,7 +196,6 @@ agent:
 ```yaml
 tpm:
   device: "/dev/tpmrm0"
-  encrypt_sessions: true
   platform_pcr_bank: "sha256"
   seal_pcr_bank: ""
   srk_handle: 0

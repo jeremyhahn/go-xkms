@@ -674,10 +674,6 @@ func (m *mockXKMSTPM) GoldenMeasurements() ([]byte, error) {
 	return nil, nil
 }
 
-func (m *mockXKMSTPM) HMAC(auth []byte) tpm2.Session {
-	return nil
-}
-
 func (m *mockXKMSTPM) HMACSaltedSession(handle tpm2.TPMHandle, pub tpm2.TPMTPublic, auth []byte) (tpm2.Session, func() error, error) {
 	return nil, func() error { return nil }, nil
 }

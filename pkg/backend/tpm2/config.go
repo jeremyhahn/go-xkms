@@ -49,9 +49,6 @@ type Config struct {
 	// SimulatorPort is the port for the TPM simulator (default: 2321)
 	SimulatorPort int `yaml:"simulator_port" json:"simulator_port"`
 
-	// EncryptSession enables encrypted sessions for CPU<->TPM communication
-	EncryptSession bool `yaml:"encrypt_session" json:"encrypt_session"`
-
 	// SRKHandle is the persistent handle for the Storage Root Key (default: 0x81000001)
 	SRKHandle uint32 `yaml:"srk_handle" json:"srk_handle"`
 
@@ -162,7 +159,6 @@ func (c *Config) ToTPMConfig() *pkgtpm2.Config {
 	cfg := &pkgtpm2.Config{
 		Device:          c.Device,
 		UseSimulator:    c.UseSimulator,
-		EncryptSession:  c.EncryptSession,
 		Hash:            c.Hash,
 		PlatformPCR:     c.PlatformPCR,
 		PlatformPCRBank: c.PlatformPCRBank,

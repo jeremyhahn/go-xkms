@@ -223,7 +223,6 @@ xkmsd:
   tls_enabled: true
 tpm:
   device: /dev/tpmrm0
-  encrypt_sessions: true
   platform_pcr_bank: sha256
   srk_handle: 2164260865
 password_protection:
@@ -319,7 +318,6 @@ device:
 
 	// TPM
 	assert.Equal(t, "/dev/tpmrm0", cfg.TPM.Device)
-	assert.True(t, cfg.TPM.EncryptSessions)
 	assert.Equal(t, "sha256", cfg.TPM.PlatformPCRBank)
 	assert.Equal(t, uint32(2164260865), cfg.TPM.SRKHandle)
 

@@ -20,7 +20,7 @@ import (
 // hold one open), builds a working session itself via CreateSession rather
 // than leaving ParentHandle.Auth unset.
 func TestLoadKeyPairFromBlobs_NilSession_BuildsItsOwnSession(t *testing.T) {
-	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t, false)
+	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t)
 	tpmImpl := tpm.(*TPM2)
 
 	const cn = "loadfromblobs-nil-session"
@@ -63,7 +63,7 @@ func TestLoadKeyPairFromBlobs_NilSession_BuildsItsOwnSession(t *testing.T) {
 // function reads the parent's Name back from the TPM instead of sending
 // TPM2_Load with an empty one.
 func TestLoadKeyPairFromBlobs_EmptyParentName_ResolvesFromTPM(t *testing.T) {
-	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t, false)
+	tpm, srkAttrs, backend := deleteKeyRegressionFixture(t)
 	tpmImpl := tpm.(*TPM2)
 
 	const cn = "loadfromblobs-empty-parent-name"

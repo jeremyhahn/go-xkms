@@ -315,7 +315,6 @@ func (m *mockTPM) Flush(_ tpm2.TPMHandle) { panic("mockTPM: Flush not expected")
 func (m *mockTPM) GoldenMeasurements() ([]byte, error) {
 	panic("mockTPM: GoldenMeasurements not expected")
 }
-func (m *mockTPM) HMAC(_ []byte) tpm2.Session { panic("mockTPM: HMAC not expected") }
 func (m *mockTPM) HMACSaltedSession(_ tpm2.TPMHandle, _ tpm2.TPMTPublic, _ []byte) (tpm2.Session, func() error, error) {
 	panic("mockTPM: HMACSaltedSession not expected")
 }
