@@ -17,13 +17,16 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	xkmsaudit "github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -158,4 +161,68 @@ func TestQueryAudit_RBACDisabledStillClampsTenantCallers(t *testing.T) {
 	_, err = svc.QueryAudit(identityCtx(qrdbsdk.SystemTenantID), &transport.AuditFilter{TenantID: "tenant-b"})
 	require.NoError(t, err)
 	assert.Equal(t, "tenant-b", stub.gotFilter.TenantID)
+}
+
+// memoryNodeConfigForAudit returns an in-memory qrdb node config with all
+// network protocols disabled, suitable for an in-process round-trip test.
+// Mirrors pkg/audit's memoryNodeConfig; not shared across packages because
+// that one lives in an external _test package.
+func memoryNodeConfigForAudit(t *testing.T) *qrdbsdk.DaemonConfig {
+	t.Helper()
+	cfg := qrdbsdk.DefaultDaemonConfig()
+	cfg.Raft.DataDir = t.TempDir()
+	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.MCP = false
+	cfg.Seal.Enabled = false
+	return cfg
+}
+
+// TestQueryAudit_SystemAuditorSeesIdentityLessEvent is the #1134 round-trip
+// proof: an event emitted with no identity on the context (a background job,
+// an internal operation) is stored under qrdbsdk.SystemTenantID by
+// audit.QRDBLogger, not "" (the audit chain's match-everything filter), so a
+// system-scoped caller without audit:read:cross -- which auditTenantFilter
+// clamps to SystemTenantID -- can read it back through QueryAudit. Before the
+// fix the event was stored under "" and only a caller holding
+// audit:read:cross (which queries with an empty filter) could ever see it.
+func TestQueryAudit_SystemAuditorSeesIdentityLessEvent(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx := context.Background()
+
+	sink := qrdbsdk.NewAuditRingBuffer(64)
+	serverOpts := []qrdbsdk.ServerOption{qrdbsdk.WithAuditLogger(sink)}
+
+	node, err := qrdbnode.NewStandaloneNode(ctx, memoryNodeConfigForAudit(t), serverOpts)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = node.Close() })
+
+	client := node.Client()
+	require.NotNil(t, client)
+	require.NotNil(t, client.Audit())
+
+	logger := xkmsaudit.NewQRDBLogger(client.Audit())
+	require.NoError(t, logger.Log(ctx, &xkmsaudit.Event{
+		Timestamp: time.Now().UTC(),
+		Subject:   "system",
+		Action:    "seal_auto_unseal",
+		Resource:  "barrier",
+		Outcome:   xkmsaudit.OutcomeAllow,
+	}))
+
+	svc, _ := auditServiceWithRBAC(t, &grantTableRBAC{})
+	svc.SetAuditClient(client.Audit())
+
+	page, err := svc.QueryAudit(
+		identityCtx(qrdbsdk.SystemTenantID, qrdbsdk.PermissionRoleAuditor),
+		&transport.AuditFilter{},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
+	assert.Equal(t, qrdbsdk.SystemTenantID, page.Events[0].TenantID)
+	assert.Equal(t, "seal_auto_unseal", page.Events[0].Action)
 }

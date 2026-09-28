@@ -18,6 +18,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -62,6 +63,15 @@ func (l *QRDBLogger) Log(ctx context.Context, event *Event) error {
 // resolves from the authenticated identity on the context. Shared by every
 // sink so the record shape cannot drift between the qrdb-hosted chain and
 // the local chained file.
+//
+// The tenant is normalized through qrdbsdk.NormalizeTenantID before it is
+// stored: an absent identity, or an identity with an empty TenantID, folds
+// onto qrdbsdk.SystemTenantID rather than "". "" is the audit chain's
+// match-everything filter (see pkg/xkms.auditTenantFilter), so an
+// unnormalized event emitted without an identity — a background job, an
+// internal operation — would be invisible to a system-scoped auditor without
+// audit:read:cross, which is clamped to SystemTenantID and never queries
+// with an empty filter (#1134).
 func toTransportEvent(ctx context.Context, event *Event) qrdbtransport.AuditEvent {
 	attributes := make(map[string]any, len(event.Details)+1)
 	for k, v := range event.Details {
@@ -71,7 +81,12 @@ func toTransportEvent(ctx context.Context, event *Event) qrdbtransport.AuditEven
 		attributes["resource_id"] = event.ResourceID
 	}
 
-	ev := qrdbtransport.AuditEvent{
+	var tenantID string
+	if id := auth.GetIdentity(ctx); id != nil {
+		tenantID = id.TenantID
+	}
+
+	return qrdbtransport.AuditEvent{
 		Timestamp:  event.Timestamp,
 		Actor:      event.Subject,
 		Action:     event.Action,
@@ -80,11 +95,8 @@ func toTransportEvent(ctx context.Context, event *Event) qrdbtransport.AuditEven
 		Attributes: attributes,
 		ClientIP:   event.Details["remote_addr"],
 		Role:       event.Details["role"],
+		TenantID:   qrdbsdk.NormalizeTenantID(tenantID),
 	}
-	if id := auth.GetIdentity(ctx); id != nil {
-		ev.TenantID = id.TenantID
-	}
-	return ev
 }
 
 // Close is a no-op: QRDBLogger does not own the AuditClient lifecycle. The
