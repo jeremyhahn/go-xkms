@@ -169,6 +169,17 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 		}
 	}
 
+	// The tenant stamped into the SPIFFE SAN is caller-supplied and login
+	// derives the caller's tenant from it, so a tenant-scoped caller may name
+	// only its own tenant (or none). Naming another tenant would mint a
+	// credential for that tenant and is refused with a *TenantBindingError
+	// that reads as not-found.
+	if req.TenantID != "" {
+		if err := bindTenantTarget(ctx, "sign csr", req.TenantID); err != nil {
+			return nil, err
+		}
+	}
+
 	ca, err := s.getCA()
 	if err != nil {
 		return nil, err

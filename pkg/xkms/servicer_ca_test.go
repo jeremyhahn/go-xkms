@@ -38,12 +38,14 @@ import (
 // Each method returns configurable values so tests can exercise both success
 // and error paths without a real CA implementation.
 type mockCA struct {
-	bundlePEM     []byte
-	bundleErr     error
-	cert          *x509.Certificate
-	certErr       error
-	signCSRCert   *x509.Certificate
-	signCSRErr    error
+	bundlePEM   []byte
+	bundleErr   error
+	cert        *x509.Certificate
+	certErr     error
+	signCSRCert *x509.Certificate
+	signCSRErr  error
+	// signCSRTenant records the tenant SignCSRWithSPIFFE was asked to stamp.
+	signCSRTenant string
 	issueCertPEM  []byte
 	issueChainPEM []byte
 	issueKeyPEM   []byte
@@ -66,6 +68,7 @@ func (m *mockCA) SignCSRRaw(_ context.Context, csrPEM []byte, profile string, va
 	return m.signCSRCert, m.signCSRErr
 }
 func (m *mockCA) SignCSRWithSPIFFE(_ context.Context, csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error) {
+	m.signCSRTenant = tenantID
 	return m.signCSRCert, m.signCSRErr
 }
 func (m *mockCA) IssueCertificateRaw(_ context.Context, commonName, organization string, sans []string, validityDays int, profile, algorithm string) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error) {

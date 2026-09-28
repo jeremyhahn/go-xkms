@@ -340,6 +340,7 @@ func TestMapCAError_AllCases(t *testing.T) {
 		{"InvalidKeyAttributes", xkms.ErrInvalidKeyAttributes, http.StatusBadRequest},
 		{"CertNotFound", xkms.ErrCertNotFound, http.StatusNotFound},
 		{"InvalidEncodingPEM", xkms.ErrInvalidEncodingPEM, http.StatusBadRequest},
+		{"TenantBindingRefusal", &xkms.TenantBindingError{Op: "sign csr", CallerTenantID: "a", TargetTenantID: "b"}, http.StatusNotFound},
 		{"Unknown", errors.New("unknown"), http.StatusInternalServerError},
 	}
 	for _, tt := range tests {

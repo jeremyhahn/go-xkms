@@ -509,6 +509,10 @@ func handleBarrierError(w http.ResponseWriter, err error) {
 		writeError(w, err, http.StatusBadRequest)
 	case errors.Is(err, seal.ErrCorruptRootKey):
 		writeError(w, err, http.StatusInternalServerError)
+	// BarrierEnableEncryption's target tenant is caller-supplied; the
+	// service's tenant binding refuses a foreign one as not-found.
+	case errors.Is(err, qrdbsdk.ErrTenantMissing):
+		writeError(w, err, http.StatusNotFound)
 
 	// Shamir-specific errors
 	case errors.Is(err, seal.ErrShamirNotConfigured):
