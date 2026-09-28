@@ -286,18 +286,18 @@ The dns-01 challenge is the **only** challenge type that supports wildcard domai
 
 ### Overview
 
-The device-attest-01 challenge is a custom ACME extension for remote attestation of TPM-equipped devices. It verifies platform integrity using TPM2_Quote and validates the attestation key certificate chain.
+The device-attest-01 challenge is a custom ACME extension for remote attestation of TPM-equipped devices. For the `tpm` format it verifies a TPM2_Certify statement per WebAuthn Level 2 section 8.3
+(`pkg/acme/challenges/device-attest-01/tpm.go:65`, `verifyTPMEvidence`): the AIK named in `x5c[0]` certifies the key in `pubArea`, binding the ACME key authorization into the certification's `extraData`, and `x5c` is anchored to a trusted root. PR #1058 (go-xkms#789) replaced an earlier design that verified a bare TPM2_Quote and checked the key authorization with a substring search over `certInfo` -- neither of which tied the evidence to a specific key or challenge; the current design does both.
 
 **References:**
 - [ACME Device Attestation Draft](https://datatracker.ietf.org/doc/draft-acme-device-attest)
-- [W3C WebAuthn TPM Attestation](https://www.w3.org/TR/webauthn/#sctn-tpm-attestation)
+- [W3C WebAuthn TPM Attestation, section 8.3](https://www.w3.org/TR/webauthn/#sctn-tpm-attestation)
 
 ### TPM Requirements
 
 - TPM 2.0 compliant hardware or software TPM
-- Attestation Key (AK) provisioned and certified
-- Support for TPM2_Quote operation
-- Platform Configuration Registers (PCRs) for integrity measurement
+- An Attestation Identity Key (AIK) certificate meeting WebAuthn Level 2 section 8.3.1 (`checkAIKCertificate`, `pkg/acme/challenges/device-attest-01/tpm.go:155`): X.509 v3, empty Subject, a subjectAltName naming the TPM manufacturer/model/version, `tcg-kp-AIKCertificate` extended key usage, and `CA:FALSE`
+- Support for TPM2_Certify, certifying the key being enrolled under that AIK
 
 ### Challenge Flow
 
@@ -312,7 +312,7 @@ Client (TPM)              ACME Server                CA
    |   Challenge(type: device-attest-01, token: xxx)  |
    |                           |                      |
    | 2. Generate attestation   |                      |
-   |    - TPM2_Quote           |                      |
+   |    - TPM2_Certify         |                      |
    |    - CBOR encode          |                      |
    |                           |                      |
    | 3. Setup HTTP server      |                      |
@@ -328,9 +328,11 @@ Client (TPM)              ACME Server                CA
    |                           |                      |
    |                           | 6. Verify attestation|
    |                           |--------------------->|
-   |                           |   - Verify quote     |
+   |                           |   - Verify AIK cert  |
    |                           |   - Verify AK chain  |
-   |                           |   - Check PCRs       |
+   |                           |   - Verify certify   |
+   |                           |     (Name, extraData,|
+   |                           |      signature)       |
    |                           |<---------------------|
    |                           |                      |
    |<--------------------------|                      |
@@ -347,10 +349,10 @@ The attestation object follows WebAuthn TPM format:
   "attStmt": {
     "ver": "2.0",
     "alg": -257,
-    "x5c": ["<DER-encoded AK certificate>"],
-    "sig": "<TPM2_Quote signature>",
-    "certInfo": "<TPMS_ATTEST structure>",
-    "pubArea": "<TPM2B_PUBLIC structure>"
+    "x5c": ["<DER-encoded AIK certificate>"],
+    "sig": "<AIK signature over certInfo>",
+    "certInfo": "<TPMS_ATTEST structure from TPM2_Certify>",
+    "pubArea": "<TPM2B_PUBLIC structure of the certified key>"
   }
 }
 ```
@@ -360,10 +362,12 @@ The attestation object follows WebAuthn TPM format:
 | `fmt` | Attestation format ("tpm") |
 | `ver` | TPM version ("2.0") |
 | `alg` | COSE algorithm (-257=RS256, -7=ES256, -8=EdDSA) |
-| `x5c` | AK certificate chain (DER-encoded) |
-| `sig` | TPM2_Quote signature over certInfo |
-| `certInfo` | TPMS_ATTEST structure from TPM2_Quote |
-| `pubArea` | TPM2B_PUBLIC structure of attested key |
+| `x5c` | AIK certificate chain (DER-encoded) |
+| `sig` | AIK signature over certInfo |
+| `certInfo` | TPMS_ATTEST structure from TPM2_Certify (`TPM_ST_ATTEST_CERTIFY`) |
+| `pubArea` | TPM2B_PUBLIC structure of the key being certified |
+
+certInfo's `extraData` must equal `TPMExtraData(alg, keyAuth)` (`tpm.go:205`) exactly -- the hash of the ACME key authorization under the hash algorithm `alg` names -- compared in constant time. There is no substring, prefix or containment fallback: a value present anywhere else in `certInfo` does not satisfy the check. This exact-match requirement is enforced by `pkg/attestation.VerifyInvariants` (via `pkg/tpm2.VerifyCertify`'s `subtle.ConstantTimeCompare(attest.ExtraData.Buffer, opts.ExpectedQualifyingData)`), not by this package.
 
 ### Implementation Details
 
@@ -372,19 +376,20 @@ The attestation object follows WebAuthn TPM format:
 ```go
 func Verify(
     resolver *net.Resolver,
-    ca CertificateAuthority,
+    ca AttestationVerifier,
     domain, port, challengeToken, expectedKeyAuth string) error
 ```
 
-**CertificateAuthority Interface:**
+**AttestationVerifier Interface** (`pkg/acme/challenges/device-attest-01/deviceattest01.go:175`):
 
 ```go
-type CertificateAuthority interface {
+type AttestationVerifier interface {
     VerifyAttestationObject(obj *AttestationObject, expectedChallenge []byte) error
-    VerifyQuote(quote, signature []byte, pcrs map[uint][]byte) error
     VerifyAKCertificateChain(certs [][]byte) error
 }
 ```
+
+There is no `VerifyQuote` method: the TPM2_Certify binding (Name match, `extraData` match, signature verification) is made statelessly by `pkg/attestation.VerifyInvariants`/`pkg/tpm2.VerifyCertify` against the AIK certificate already anchored by `VerifyAKCertificateChain`, not by a round trip to the CA.
 
 ### Client Setup
 
@@ -409,6 +414,8 @@ payload, err = deviceattest01.SetupWithPCRs(
 )
 ```
 
+> **Known gap:** `Setup`/`SetupWithPCRs` (`deviceattest01.go:510`, `deviceattest01.go:631`) still build evidence via `TrustedPlatformModule.Quote` -- a TPM2_Quote, `TPM_ST_ATTEST_QUOTE` -- which is not the TPM2_Certify (`TPM_ST_ATTEST_CERTIFY`) evidence `verifyTPMEvidence` now verifies (see Overview). A client built against these two functions cannot currently pass a live server's device-attest-01 `tpm` check. This predates and is separate from go-xkms#1060; it is not fixed here and needs its own design decision (a `TrustedPlatformModule.Certify` counterpart to `Quote`) before it is addressed.
+
 ### Error Types
 
 | Error | Description |
@@ -416,23 +423,9 @@ payload, err = deviceattest01.SetupWithPCRs(
 | `ErrInvalidKeyAlgorithm` | Unsupported key algorithm |
 | `ErrInvalidAttestationFormat` | Unsupported attestation format |
 | `ErrInvalidAttestationObject` | Cannot parse attestation object |
-| `ErrQuoteVerificationFailed` | TPM quote signature verification failed |
-| `ErrPCRMismatch` | PCR values don't match expected policy |
+| `ErrTPMAttestationInvalid` | The `tpm` attestation statement, its TPM2_Certify evidence, or its qualifying data is invalid |
+| `ErrAIKCertificateInvalid` | `x5c[0]` does not meet the WebAuthn section 8.3.1 AIK certificate requirements |
 | `ErrCertificateChainInvalid` | AK certificate chain invalid |
-
-### PCR Verification
-
-Standard PCR indices for integrity measurement:
-
-| PCR | Contents |
-|-----|----------|
-| 0 | BIOS code |
-| 1 | BIOS configuration |
-| 2 | Option ROM code |
-| 3 | Option ROM configuration |
-| 4 | MBR |
-| 7 | Secure Boot state |
-| 14 | Boot integrity (often used) |
 
 ---
 
