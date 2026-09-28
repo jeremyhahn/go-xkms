@@ -31,33 +31,31 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// testFrostSecretBackend is an in-memory types.KeyProvider that stores raw
-// FROST secret shares keyed by CN via the SealData field. It stands in for
-// backends.frost.secret_backend in this test.
-//
-// None of go-xkms's production backends (software, pkcs8, tpm2, pkcs11, the
-// cloud KMS backends) implement the attrs.SealData opaque-secret-storage
-// path pkg/keyprovider/frost.KeyStore.StoreKeyPackage calls through
-// SecretBackend.GenerateKey — only cmd/xkmsctl/frost.go's private
-// fileSecretBackend does, for the local CLI. That gap is pre-existing,
-// applies identically to every backend name backends.frost.secret_backend
-// can reference, and is outside #836's scope (config + server wiring); see
-// the #836 report for the finding. This test adapter exists so
-// TestFrostRESTLifecycle_ServerRegisteredBackend can still validate what
-// #836 actually delivers — config-driven construction, registration in
-// s.keyProviders, and the REST handlers resolving and driving that
-// registered backend — without depending on that separate, unresolved gap.
-// It is the same shape as pkg/api/rest's own frostSecretBackend test double
-// (handlers_frost_real_test.go).
+// testFrostSecretBackend is an in-memory types.SealingKeyProvider that
+// stands in for backends.frost.secret_backend in this test: GetKey/GenerateKey
+// hold a placeholder "wrapping key" object (so Server.initFrostBackend's
+// real seal.EnsurePrivateSealKey provisioning step, exercised exactly as it
+// runs against the real software/PKCS#8 backends, succeeds against this
+// double too), and Seal/Unseal "encrypt" a FROST secret share by prefixing
+// it with a fixed marker, so this test can validate what #836 delivers --
+// config-driven construction, registration in s.keyProviders, and the REST
+// handlers resolving and driving that registered backend -- without a real
+// cipher. It is the same shape as pkg/api/rest's own frostSecretBackend test
+// double (handlers_frost_real_test.go).
 type testFrostSecretBackend struct {
 	data map[string][]byte
 }
+
+// testFrostSealMarker prefixes every "sealed" payload this fixture
+// produces, so Unseal can detect (and reject) a payload it did not produce.
+const testFrostSealMarker = "server-test-sealed:"
 
 func newTestFrostSecretBackend() *testFrostSecretBackend {
 	return &testFrostSecretBackend{data: make(map[string][]byte)}
@@ -65,19 +63,22 @@ func newTestFrostSecretBackend() *testFrostSecretBackend {
 
 func (m *testFrostSecretBackend) Type() types.BackendType { return types.BackendTypeSoftware }
 func (m *testFrostSecretBackend) Capabilities() types.Capabilities {
-	return types.Capabilities{Keys: true, Signing: true}
+	return types.Capabilities{Keys: true, Signing: true, Sealing: true}
 }
+
+// GenerateKey and GetKey model the wrap key seal.EnsurePrivateSealKey
+// provisions (software/PKCS#8's AsymmetricSecretSealKeyAttributes): a
+// placeholder object stored by CN, not real key material, since this
+// double's Seal/Unseal (below) never read it back.
 func (m *testFrostSecretBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	if attrs.SealData != nil {
-		m.data[attrs.CN] = attrs.SealData.Bytes()
-	}
+	m.data[attrs.CN] = []byte("placeholder-wrap-key")
 	return nil, nil
 }
 func (m *testFrostSecretBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if v, ok := m.data[attrs.CN]; ok {
 		return v, nil
 	}
-	return nil, errors.New("frost secret share not found")
+	return nil, backend.ErrKeyNotFound
 }
 func (m *testFrostSecretBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
 	delete(m.data, attrs.CN)
@@ -96,6 +97,22 @@ func (m *testFrostSecretBackend) RotateKey(ctx context.Context, _ *types.KeyAttr
 	return errors.New("not implemented")
 }
 func (m *testFrostSecretBackend) Close() error { return nil }
+
+func (m *testFrostSecretBackend) CanSeal() bool { return true }
+
+func (m *testFrostSecretBackend) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
+	return &types.SealedData{
+		Backend:    types.BackendTypeSoftware,
+		Ciphertext: append([]byte(testFrostSealMarker), data...),
+	}, nil
+}
+
+func (m *testFrostSecretBackend) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+	if sealed == nil || len(sealed.Ciphertext) < len(testFrostSealMarker) || string(sealed.Ciphertext[:len(testFrostSealMarker)]) != testFrostSealMarker {
+		return nil, errors.New("frost secret share not found")
+	}
+	return sealed.Ciphertext[len(testFrostSealMarker):], nil
+}
 
 // TestFrostRESTLifecycle_ServerRegisteredBackend drives a full FROST
 // threshold-signing ceremony — dealer keygen, round 1, round 2, aggregate,

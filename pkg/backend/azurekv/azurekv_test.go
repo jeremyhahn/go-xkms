@@ -16,6 +16,7 @@
 package azurekv
 
 import (
+	"context"
 	"crypto"
 	"crypto/sha256"
 	"crypto/x509"
@@ -123,8 +124,8 @@ func TestNewBackend(t *testing.T) {
 			if b.config != tt.config {
 				t.Errorf("NewBackend() config mismatch")
 			}
-			if b.metadata == nil {
-				t.Errorf("NewBackend() metadata map not initialized")
+			if b.importTokens == nil {
+				t.Errorf("NewBackend() importTokens map not initialized")
 			}
 		})
 	}
@@ -225,9 +226,10 @@ func TestCreateKey(t *testing.T) {
 			}
 
 			// Verify metadata was stored
-			b.mu.RLock()
-			_, exists := b.metadata[tt.attrs.CN]
-			b.mu.RUnlock()
+			exists, err := storage.KeyExists(context.Background(), config.KeyStorage, tt.attrs.CN)
+			if err != nil {
+				t.Fatalf("storage.KeyExists() error = %v", err)
+			}
 			if !exists {
 				t.Error("CreateKey() metadata not stored")
 			}
@@ -480,9 +482,10 @@ func TestSave(t *testing.T) {
 	}
 
 	// Verify data was updated
-	b.mu.RLock()
-	savedData := b.metadata[attrs.CN]
-	b.mu.RUnlock()
+	savedData, err := storage.GetKey(context.Background(), config.KeyStorage, attrs.CN)
+	if err != nil {
+		t.Fatalf("storage.GetKey() error = %v", err)
+	}
 
 	if string(savedData) != string(newData) {
 		t.Errorf("Save() data not updated: got %s, want %s", savedData, newData)
@@ -517,9 +520,10 @@ func TestDelete(t *testing.T) {
 	}
 
 	// Verify metadata exists
-	b.mu.RLock()
-	_, exists := b.metadata[attrs.CN]
-	b.mu.RUnlock()
+	exists, err := storage.KeyExists(context.Background(), config.KeyStorage, attrs.CN)
+	if err != nil {
+		t.Fatalf("storage.KeyExists() error = %v", err)
+	}
 	if !exists {
 		t.Fatal("Metadata should exist before delete")
 	}
@@ -531,9 +535,10 @@ func TestDelete(t *testing.T) {
 	}
 
 	// Verify metadata was removed
-	b.mu.RLock()
-	_, exists = b.metadata[attrs.CN]
-	b.mu.RUnlock()
+	exists, err = storage.KeyExists(context.Background(), config.KeyStorage, attrs.CN)
+	if err != nil {
+		t.Fatalf("storage.KeyExists() error = %v", err)
+	}
 	if exists {
 		t.Error("Metadata should not exist after delete")
 	}
@@ -559,17 +564,31 @@ func TestClose(t *testing.T) {
 		t.Fatalf("NewBackendWithClient() error = %v", err)
 	}
 
-	// Add some metadata
-	b.metadata["test-key"] = []byte("test data")
+	// Store metadata through Config.KeyStorage, and stash a transient
+	// import token the way GetImportParameters does.
+	if err := storage.SaveKey(context.Background(), config.KeyStorage, "test-key", []byte("test data")); err != nil {
+		t.Fatalf("storage.SaveKey() error = %v", err)
+	}
+	b.importTokens["import-token-test-key"] = []byte("wrapping key material")
 
 	err = b.Close()
 	if err != nil {
 		t.Errorf("Close() unexpected error = %v", err)
 	}
 
-	// Verify metadata was cleared
-	if len(b.metadata) != 0 {
-		t.Error("Close() should clear metadata")
+	// Config.KeyStorage's lifecycle belongs to the caller, not this
+	// Backend: Close must never clear it (go-xkms#1098, mirroring awskms).
+	exists, err := storage.KeyExists(context.Background(), config.KeyStorage, "test-key")
+	if err != nil {
+		t.Fatalf("storage.KeyExists() error = %v", err)
+	}
+	if !exists {
+		t.Error("Close() must not remove metadata from Config.KeyStorage")
+	}
+
+	// Verify the transient import-token map was cleared.
+	if len(b.importTokens) != 0 {
+		t.Error("Close() should clear importTokens")
 	}
 
 	// Verify client was cleared

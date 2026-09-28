@@ -1,5 +1,13 @@
 # GUI Architecture
 
+> This page describes `pkg/acme/gui/admin`, the **desktop host** (Wails) for
+> the admin SPA. It has no current `cmd/` entry point; which binary hosts it
+> is tracked in go-xkms#743 / go-xkms#746 — see [README.md](README.md). The
+> admin UI xkmsd actually serves today is a separate implementation at
+> `/admin-ui` (`pkg/acme/web/packages/admin`,
+> `cmd/xkmsd/admin.go:73`/`:130`); its web-mode routing below (`/ui/admin/`
+> via `webui.RegisterRoutes()`) does not describe that surface.
+
 ## Dual-Mode Design
 
 The same Svelte bundle works in two environments without code changes. The transport layer auto-detects the runtime and resolves the correct API base URL.
