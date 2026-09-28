@@ -66,7 +66,9 @@ func (f *fakeQRDBUserClient) GetUserByCertThumbprint(ctx context.Context, thumbp
 	}
 	u, ok := f.byThumbprint[thumbprint]
 	if !ok {
-		return nil, errors.New("user not found")
+		// The SDK's one typed not-found, exactly as every qrdb transport
+		// returns it for an unbound thumbprint.
+		return nil, &qrdbtransport.UserNotFoundError{Lookup: "cert_spki/" + thumbprint}
 	}
 	return u, nil
 }
@@ -157,7 +159,9 @@ func TestQRDBUserStore_GetByCertFingerprint_UserNotFound(t *testing.T) {
 	store := NewQRDBUserStore(newFakeQRDBUserClient())
 
 	_, err := store.GetByCertFingerprint(context.Background(), "missing-thumb")
-	require.Error(t, err)
+	var notFound *qrdbsdk.UserNotFoundError
+	require.ErrorAs(t, err, &notFound,
+		"the store must pass qrdb's typed not-found through so the authenticator can tell it from an outage")
 }
 
 func TestQRDBUserStore_GetByCertFingerprint_NoRoleIDs(t *testing.T) {
