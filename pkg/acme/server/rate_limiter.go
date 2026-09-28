@@ -183,7 +183,7 @@ func (rl *RateLimiter) SetAuditLogger(logger audit.AuditLogger) {
 func NewClientRateLimiterMiddleware(maxRequests int, interval time.Duration, auditLog audit.AuditLogger) func(http.Handler) http.Handler {
 	limiter := NewRateLimiter(maxRequests, interval)
 	limiter.SetAuditLogger(auditLog)
-	return limiter.MiddlewareFunc(ClientID)
+	return limiter.MiddlewareFunc(rateLimitClientIDKey)
 }
 
 // recordRateLimitExceeded logs EventRateLimitExceeded for resourceKey.
@@ -306,7 +306,7 @@ func NewAccountRateLimiter(config *RateLimit) func(next http.Handler) http.Handl
 	}
 
 	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(ClientIP)
+	return limiter.MiddlewareFunc(rateLimitClientIPKey)
 }
 
 // NewOrderRateLimiter creates a middleware for limiting order creation per account.
@@ -326,7 +326,7 @@ func NewOrderRateLimiter(config *RateLimit) func(next http.Handler) http.Handler
 	}
 
 	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(ClientID)
+	return limiter.MiddlewareFunc(rateLimitClientIDKey)
 }
 
 // CertificateRateLimiter creates a middleware for limiting certificate operations per account.
@@ -346,7 +346,7 @@ func CertificateRateLimiter(config *RateLimit) func(next http.Handler) http.Hand
 	}
 
 	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(ClientID)
+	return limiter.MiddlewareFunc(rateLimitClientIDKey)
 }
 
 // OverallRateLimiter creates a middleware for limiting all requests per IP address.
@@ -366,7 +366,7 @@ func OverallRateLimiter(config *RateLimit) func(next http.Handler) http.Handler 
 	}
 
 	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(ClientIP)
+	return limiter.MiddlewareFunc(rateLimitClientIPKey)
 }
 
 // FailedValidationRateLimiter creates a middleware for limiting failed validation attempts per account.
@@ -386,7 +386,7 @@ func FailedValidationRateLimiter(config *RateLimit) func(next http.Handler) http
 	}
 
 	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(ClientID)
+	return limiter.MiddlewareFunc(rateLimitClientIDKey)
 }
 
 // TrustedProxies is the set of proxies trusted to name the client in the
@@ -445,6 +445,27 @@ func ClientID(r *http.Request) string {
 		return ClientIP(r)
 	}
 	return protectedHeader.KeyID
+}
+
+// rateLimitClientIPKey resolves ClientIP and folds it through
+// ratelimit.RateLimitKey, so every rate limiter keyed on the client's
+// transport/forwarded IP address (NewAccountRateLimiter, OverallRateLimiter,
+// and the tenant-aware new-account/overall limiters) buckets an IPv6 client
+// on its /64 rather than its full address, while an IPv4 client keys on its
+// exact address as before.
+func rateLimitClientIPKey(r *http.Request) string {
+	return ratelimit.RateLimitKey(ClientIP(r))
+}
+
+// rateLimitClientIDKey resolves ClientID and folds it through
+// ratelimit.RateLimitKey. A JWS KID passes through unchanged — it is never a
+// valid IP address — and the IP fallback is masked exactly like
+// rateLimitClientIPKey, so every ClientID-keyed limiter (new-order,
+// certificate, failed-validation, and the overall per-client admission
+// control) gets the same IPv6 /64 protection before an account exists to key
+// on.
+func rateLimitClientIDKey(r *http.Request) string {
+	return ratelimit.RateLimitKey(ClientID(r))
 }
 
 // writeJSONError writes an ACME error response in JSON format.

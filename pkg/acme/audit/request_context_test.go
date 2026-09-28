@@ -18,26 +18,45 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 )
 
 // TestClientIP verifies that an audit record names the client that actually
-// made the request rather than a reverse proxy standing in front of the CA.
+// made the request rather than a reverse proxy standing in front of the CA,
+// and that a forwarding header from an untrusted peer is never believed
+// (go-xkms#1179).
 func TestClientIP(t *testing.T) {
 	tests := []struct {
 		name    string
+		proxies []string
 		headers map[string]string
 		remote  string
 		want    string
 	}{
-		{name: "falls back to the peer address", remote: "198.51.100.4:52344", want: "198.51.100.4:52344"},
+		{name: "falls back to the peer address, port dropped", remote: "198.51.100.4:52344", want: "198.51.100.4"},
 		{
-			name:    "prefers X-Forwarded-For",
+			name:    "an untrusted peer's X-Forwarded-For is ignored",
 			headers: map[string]string{"X-Forwarded-For": "203.0.113.7", "X-Real-IP": "10.0.0.1"},
+			remote:  "10.0.0.1:9999",
+			want:    "10.0.0.1",
+		},
+		{
+			name:    "an untrusted peer's X-Real-IP is ignored",
+			headers: map[string]string{"X-Real-IP": "203.0.113.8"},
+			remote:  "10.0.0.1:9999",
+			want:    "10.0.0.1",
+		},
+		{
+			name:    "a trusted peer's X-Forwarded-For is believed",
+			proxies: []string{"10.0.0.1"},
+			headers: map[string]string{"X-Forwarded-For": "203.0.113.7", "X-Real-IP": "203.0.113.8"},
 			remote:  "10.0.0.1:9999",
 			want:    "203.0.113.7",
 		},
 		{
-			name:    "falls back to X-Real-IP",
+			name:    "a trusted peer's X-Real-IP is believed absent X-Forwarded-For",
+			proxies: []string{"10.0.0.1"},
 			headers: map[string]string{"X-Real-IP": "203.0.113.8"},
 			remote:  "10.0.0.1:9999",
 			want:    "203.0.113.8",
@@ -46,6 +65,14 @@ func TestClientIP(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			proxies, err := ratelimit.ParseTrustedProxies(tt.proxies)
+			if err != nil {
+				t.Fatalf("ParseTrustedProxies(%v): %v", tt.proxies, err)
+			}
+			old := trustedProxies
+			SetTrustedProxies(proxies)
+			defer func() { trustedProxies = old }()
+
 			req := httptest.NewRequest("POST", "/acme/revoke-cert", nil)
 			req.RemoteAddr = tt.remote
 			for key, value := range tt.headers {
@@ -63,6 +90,14 @@ func TestClientIP(t *testing.T) {
 // are carried on the context handlers pass to the Log helpers.
 func TestRequestContext(t *testing.T) {
 	t.Run("uses the client's correlation ID", func(t *testing.T) {
+		proxies, err := ratelimit.ParseTrustedProxies([]string{"198.51.100.4"})
+		if err != nil {
+			t.Fatalf("ParseTrustedProxies: %v", err)
+		}
+		old := trustedProxies
+		SetTrustedProxies(proxies)
+		defer func() { trustedProxies = old }()
+
 		req := httptest.NewRequest("POST", "/acme/new-account", nil)
 		req.RemoteAddr = "198.51.100.4:52344"
 		req.Header.Set("X-Request-ID", "client-correlation-id")
@@ -95,7 +130,7 @@ func TestRequestContext(t *testing.T) {
 		if !strings.HasPrefix(requestID, "req-") {
 			t.Fatalf("generated request ID = %q, want a req- prefix", requestID)
 		}
-		if got := extractSourceIP(ctx); got != "198.51.100.4:52344" {
+		if got := extractSourceIP(ctx); got != "198.51.100.4" {
 			t.Fatalf("source IP = %q", got)
 		}
 		if got := extractUserAgent(ctx); got != "" {

@@ -1014,6 +1014,42 @@ references.
 for account, order and issuance events, independent of the metrics above.
 Correlation IDs propagate from the transport middleware.
 
+**Audit source-IP resolution shares the rate limiter's trusted-proxy set
+(go-xkms#1179).** `audit.extractClientIP` (`pkg/acme/audit/hooks.go:128`)
+resolves the recorded source IP through the same `ratelimit.TrustedProxies`
+type the REST and ACME rate limiters use (`pkg/ratelimit/clientip.go:102`):
+the transport peer address, or, only when that peer is a configured trusted
+proxy, the right-most untrusted `X-Forwarded-For` hop. A package-level
+`trustedProxies` var (`hooks.go:107`) holds the value; `SetTrustedProxies`
+(`hooks.go:117`) sets it once at start-up. `startACMEServer`
+(`cmd/xkmsd/acme.go:164`) is the one place that parses
+`server.trusted_proxies` for the embedded ACME listener — the same config key
+`pkg/server/server.go:2892` parses for REST — and hands the result to both
+`acmeserver.TrustedProxies` (the ACME rate limiter's resolver) and
+`audit.SetTrustedProxies` (`cmd/xkmsd/acme.go:168-169`), so a forwarding
+header is trusted, or not, identically for rate limiting and for the audit
+trail. Neither introduces a second `trusted_proxies`-shaped key. An untrusted
+peer's forged `X-Forwarded-For` is never recorded as the source IP; audit
+records always keep full address precision (no /64 folding — that is a
+rate-limit-only concern, below).
+
+**IPv6 rate-limit keys fold to their /64, audit does not
+(go-xkms#1179).** `ratelimit.RateLimitKey` (`pkg/ratelimit/clientip.go:171`)
+takes the address `TrustedProxies.ClientIP` resolved and returns it unchanged
+for IPv4, or masked to its `/64` (`ipv6RateLimitPrefixBits`,
+`clientip.go:156`) for IPv6, so a client cannot evade a limiter by rotating
+through addresses an ISP delegates it within one `/64`. A value that is not a
+valid IP (a JWS key ID) passes through unchanged. `ratelimit.Middleware`
+(`pkg/ratelimit/ratelimit.go:247`) applies it for the REST limiters; the ACME
+limiters apply it through `rateLimitClientIPKey`/`rateLimitClientIDKey`
+(`pkg/acme/server/rate_limiter.go:456,467`), which every
+`*RateLimiter`/`*TenantRateLimiter` constructor in `rate_limiter.go` and
+`tenant_rate_limiter.go` now takes as its client-key function in place of the
+raw `ClientIP`/`ClientID`. `ClientIP`/`ClientID` themselves are unchanged and
+still return the full-precision address — `RateLimitKey` is applied only at
+the point a limiter builds its bucket key, never to the value the audit trail
+records.
+
 **Known gap:** the ACME server's per-tenant rate limiter
 (`pkg/acme/server/tenant_rate_limiter.go`) is wired through
 `cmd/xkmsd/acme.go` `buildACMERouterLimiters` (go-xkms#886), but its

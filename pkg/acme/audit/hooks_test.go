@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -154,37 +155,48 @@ func TestHTTPMiddleware_Disabled(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
+// mustAuditTrustedProxies parses a trusted-proxy list for a test, failing the
+// test on a malformed entry.
+func mustAuditTrustedProxies(t *testing.T, entries ...string) *ratelimit.TrustedProxies {
+	t.Helper()
+	proxies, err := ratelimit.ParseTrustedProxies(entries)
+	require.NoError(t, err)
+	return proxies
+}
+
 func TestExtractClientIP(t *testing.T) {
 	tests := []struct {
 		name     string
+		proxies  *ratelimit.TrustedProxies
 		headers  map[string]string
 		remoteIP string
 		expected string
 	}{
 		{
-			name: "X-Forwarded-For",
+			name: "untrusted peer forged X-Forwarded-For is ignored",
 			headers: map[string]string{
 				"X-Forwarded-For": "10.0.0.1",
 			},
 			remoteIP: "192.168.1.1:12345",
-			expected: "10.0.0.1",
+			expected: "192.168.1.1",
 		},
 		{
-			name: "X-Real-IP",
+			name: "untrusted peer forged X-Real-IP is ignored",
 			headers: map[string]string{
 				"X-Real-IP": "10.0.0.2",
 			},
 			remoteIP: "192.168.1.1:12345",
-			expected: "10.0.0.2",
+			expected: "192.168.1.1",
 		},
 		{
-			name:     "RemoteAddr fallback",
+			name:     "RemoteAddr fallback, port dropped",
 			headers:  map[string]string{},
 			remoteIP: "192.168.1.1:12345",
-			expected: "192.168.1.1:12345",
+			expected: "192.168.1.1",
 		},
 		{
-			name: "X-Forwarded-For takes precedence",
+			name:    "trusted proxy's X-Forwarded-For is believed",
+			proxies: mustAuditTrustedProxies(t, "192.168.1.1"),
 			headers: map[string]string{
 				"X-Forwarded-For": "10.0.0.1",
 				"X-Real-IP":       "10.0.0.2",
@@ -192,10 +204,23 @@ func TestExtractClientIP(t *testing.T) {
 			remoteIP: "192.168.1.1:12345",
 			expected: "10.0.0.1",
 		},
+		{
+			name:    "untrusted proxy's X-Forwarded-For is still ignored",
+			proxies: mustAuditTrustedProxies(t, "192.168.1.2"),
+			headers: map[string]string{
+				"X-Forwarded-For": "10.0.0.1",
+			},
+			remoteIP: "192.168.1.1:12345",
+			expected: "192.168.1.1",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			oldProxies := trustedProxies
+			defer func() { trustedProxies = oldProxies }()
+			trustedProxies = tt.proxies
+
 			req := httptest.NewRequest("GET", "/test", nil)
 			req.RemoteAddr = tt.remoteIP
 			for k, v := range tt.headers {
@@ -206,6 +231,18 @@ func TestExtractClientIP(t *testing.T) {
 			assert.Equal(t, tt.expected, ip)
 		})
 	}
+}
+
+func TestSetTrustedProxies(t *testing.T) {
+	oldProxies := trustedProxies
+	defer func() { trustedProxies = oldProxies }()
+
+	proxies := mustAuditTrustedProxies(t, "192.0.2.1")
+	SetTrustedProxies(proxies)
+	assert.Same(t, proxies, trustedProxies)
+
+	SetTrustedProxies(nil)
+	assert.Nil(t, trustedProxies)
 }
 
 func TestExtractActorFromRequest(t *testing.T) {
