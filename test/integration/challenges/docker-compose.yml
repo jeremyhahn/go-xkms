@@ -14,7 +14,13 @@
 # The acme-server service and its config are the acme-tpm lane's, reused
 # as-is rather than duplicated: this suite needs nothing acme-tpm's
 # config.acme-tpm.yaml doesn't already provide (enroll-01/endorse-01 enabled,
-# a working CA, a working ACME listener).
+# a working CA, a working ACME listener). That file's own header explains
+# why storage.backend is "file", not "qrdb": qrdb flips on the embedded
+# node's own barrier, which for strategy "passphrase" blocks boot behind an
+# unattended sealed-window ceremony nothing in this repository drives.
+# Sharing the file by reference (the bind mount below) means that fix
+# applies here automatically -- there is nothing else in this compose file
+# that duplicates it.
 services:
   acme-server:
     build:
