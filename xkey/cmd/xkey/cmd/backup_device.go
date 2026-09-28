@@ -103,7 +103,7 @@ credential fails with a decryption error and nothing is written.
 
 Examples:
   xkey backup from-device --password-stdin < password.txt
-  xkey backup from-device --key aabbccdd...
+  xkey backup from-device --key-stdin < key.hex
   xkey backup from-device --device "Pixel 8" --timeout 2m`,
 	RunE: runBackupFromDevice,
 }
@@ -123,7 +123,7 @@ func init() {
 	backupFromDeviceCmd.Flags().String("device", "", "Paired device name to restore from")
 	backupFromDeviceCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
 	backupPasswordSource.addFlags(backupFromDeviceCmd)
-	backupFromDeviceCmd.Flags().String("key", "", "Hex-encoded decryption key")
+	backupKeySource.addFlags(backupFromDeviceCmd)
 	addBackupStoreFlags(backupFromDeviceCmd)
 	addBarrierPasswordFlags(backupFromDeviceCmd)
 

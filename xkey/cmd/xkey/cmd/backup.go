@@ -29,6 +29,7 @@ import (
 
 	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
@@ -49,7 +50,17 @@ var (
 	ErrBackupDecryptFailed = errors.New("backup: decryption failed")
 
 	// ErrBackupKeyRequired indicates a password or key is required.
-	ErrBackupKeyRequired = errors.New("backup: password (--password-stdin or XKEY_BACKUP_PASSWORD) or --key required")
+	ErrBackupKeyRequired = errors.New(
+		"backup: password (--password-stdin or XKEY_BACKUP_PASSWORD) or " +
+			"key (--key-stdin or XKEY_BACKUP_KEY) required")
+
+	// ErrBackupKeyStdinEmpty indicates --key-stdin was given but standard
+	// input carried no key.
+	ErrBackupKeyStdinEmpty = errors.New("backup: --key-stdin was given but standard input carried no key")
+
+	// ErrBackupKeyStdinRead indicates standard input could not be read for
+	// --key-stdin.
+	ErrBackupKeyStdinRead = errors.New("backup: failed to read the key from standard input")
 
 	// ErrBackupPasswordStdinEmpty indicates --password-stdin was given but
 	// standard input carried no password.
@@ -167,7 +178,8 @@ Restored data is merged into the stores under the xkey data directory
 
 Examples:
   xkey backup restore ~/.xkey/backups/backup-20250207.xkb --password-stdin < password.txt
-  xkey backup restore backup.xkb --key aabbccdd...`,
+  xkey backup restore backup.xkb --key-stdin < key.hex
+  XKEY_BACKUP_KEY=aabbccdd... xkey backup restore backup.xkb`,
 	Args: cobra.ExactArgs(1),
 	RunE: runBackupRestore,
 }
@@ -197,7 +209,8 @@ backup.
 
 Examples:
   xkey backup contents backup.xkb --password-stdin < password.txt
-  xkey backup contents backup.xkb --key aabbccdd...`,
+  xkey backup contents backup.xkb --key-stdin < key.hex
+  XKEY_BACKUP_KEY=aabbccdd... xkey backup contents backup.xkb`,
 	Args: cobra.ExactArgs(1),
 	RunE: runBackupContents,
 }
@@ -218,13 +231,13 @@ func init() {
 
 	// Restore flags
 	backupPasswordSource.addFlags(backupRestoreCmd)
-	backupRestoreCmd.Flags().String("key", "", "Hex-encoded decryption key")
+	backupKeySource.addFlags(backupRestoreCmd)
 	addBackupStoreFlags(backupRestoreCmd)
 	addBarrierPasswordFlags(backupRestoreCmd)
 
 	// Contents flags
 	backupPasswordSource.addFlags(backupContentsCmd)
-	backupContentsCmd.Flags().String("key", "", "Hex-encoded decryption key")
+	backupKeySource.addFlags(backupContentsCmd)
 }
 
 // addBackupStoreFlags registers the store-location overrides shared by the
@@ -1292,7 +1305,7 @@ var backupDecryptReasons = []struct {
 	{backup.ErrLegacyBackupFormat, "unsalted version 1 backup format is no longer supported; re-create the backup"},
 	{backup.ErrVersionMismatch, "unsupported backup format version"},
 	{backup.ErrInvalidBackup, "file is not an xkey backup envelope"},
-	{backup.ErrNotPasswordSealed, "backup was sealed with a raw key; supply it with --key"},
+	{backup.ErrNotPasswordSealed, "backup was sealed with a raw key; supply it with --key-stdin or XKEY_BACKUP_KEY"},
 	{backup.ErrKeyDerivationFailed, "the backup's key-derivation record is invalid or has been altered"},
 }
 
@@ -1367,7 +1380,28 @@ const backupPasswordUsage = `The backup password may be supplied two ways, in pr
   XKEY_BACKUP_PASSWORD   environment variable
 
 There is no "--password" value flag: a value on the command line is visible
-to every other process on the host via 'ps'.`
+to every other process on the host via 'ps'.
+
+"backup restore" and "backup contents" accept a raw key the same two ways
+instead of a password:
+
+  --key-stdin             read the hex-encoded key from standard input
+  XKEY_BACKUP_KEY         environment variable
+
+There is no "--key" value flag either, for the same reason.`
+
+// backupKeySource is the one way a raw hex-encoded backup key enters the
+// CLI, for "backup restore", "backup contents" and "backup from-device". It
+// follows the PIN convention (pin_input.go): standard input or the
+// environment, never a value flag -- a "--key" value is visible to every
+// other process on the host via 'ps' (go-xkms#1209).
+var backupKeySource = pinSource{
+	label:      "backup key",
+	stdinFlag:  "key-stdin",
+	envVar:     "XKEY_BACKUP_KEY",
+	stdinEmpty: ErrBackupKeyStdinEmpty,
+	stdinRead:  ErrBackupKeyStdinRead,
+}
 
 // resolveSealingKey returns the key a new backup is sealed with: derived
 // from the backup password when one is supplied, otherwise generated at
@@ -1403,7 +1437,7 @@ func resolveSealingKey(cmd *cobra.Command, sentinel error) (*backup.Key, error) 
 // password, whose key can only be derived once the envelope's KDF record has
 // been read, or a raw key. Exactly one is set.
 type backupCredential struct {
-	password []byte
+	password *secure.Buffer
 	key      *backup.Key
 }
 
@@ -1416,17 +1450,24 @@ func resolveBackupCredential(cmd *cobra.Command) (*backupCredential, error) {
 		return nil, err
 	}
 	if len(password) > 0 {
-		return &backupCredential{password: password}, nil
+		// NewBufferFromBytes adopts password into protected memory and
+		// wipes the source slice.
+		protected, err := secure.NewBufferFromBytes(password)
+		if err != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrBackupDecryptFailed, Cause: err}
+		}
+		return &backupCredential{password: protected}, nil
 	}
 
-	keyHex, err := cmd.Flags().GetString("key")
+	keyHex, err := backupKeySource.resolveBytes(cmd)
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrBackupDecryptFailed, Cause: err}
+		return nil, err
 	}
-	if keyHex == "" {
+	if len(keyHex) == 0 {
 		return nil, ErrBackupKeyRequired
 	}
-	material, err := hex.DecodeString(keyHex)
+	defer enclave.Wipe(keyHex)
+	material, err := hex.DecodeString(string(keyHex))
 	if err != nil {
 		return nil, &DetailError{Err: ErrBackupDecryptFailed, Detail: fmt.Sprintf(": invalid hex key: %v", err)}
 	}
@@ -1445,7 +1486,7 @@ func (c *backupCredential) keyFor(encrypted *backup.EncryptedBackup) (*backup.Ke
 	if c.key != nil {
 		return c.key, nil
 	}
-	key, err := encrypted.PasswordKey(c.password)
+	key, err := encrypted.PasswordKey(c.password.Bytes())
 	if err != nil {
 		return nil, classifyBackupDecryptError(err)
 	}
@@ -1455,7 +1496,7 @@ func (c *backupCredential) keyFor(encrypted *backup.EncryptedBackup) (*backup.Ke
 
 // wipe zeroes the password and key the credential holds.
 func (c *backupCredential) wipe() {
-	enclave.Wipe(c.password)
+	c.password.Destroy()
 	c.key.Wipe()
 }
 

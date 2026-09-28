@@ -133,7 +133,7 @@ Run the autofill IPC server without a desktop environment:
 
 ```bash
 # Start with barrier encryption (production)
-xkey extension serve --barrier-password "secret"
+echo -n "secret" | xkey extension serve --barrier-password-stdin
 
 # Read barrier password from environment
 XKEY_BARRIER_PASSWORD=secret xkey extension serve
@@ -163,7 +163,7 @@ The `passphrase`, `tpm2`, `aws_kms`, `gcp_kms`, `azure_kv`, and `vault` strategi
 
 **Barrier password resolution order:**
 
-1. `--barrier-password` flag
+1. `--barrier-password-stdin` flag (reads standard input)
 2. `--barrier-password-file` flag (reads first line)
 3. `XKEY_BARRIER_PASSWORD` environment variable
 4. Interactive stdin prompt (if terminal is attached)
@@ -196,7 +196,7 @@ No additional flags.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--socket` | auto | IPC Unix socket path |
-| `--barrier-password` | | Barrier encryption password |
+| `--barrier-password-stdin` | `false` | Read the barrier encryption password from standard input |
 | `--barrier-password-file` | | Read barrier password from file (first line) |
 | `--no-barrier` | false | Skip barrier encryption (dev/testing) |
 | `--log-level` | info | Log level (debug, info, warn, error) |
@@ -347,7 +347,7 @@ This is expected when the extension is reinstalled or `chrome.storage.local` is 
 **Symptoms:** `extension serve: barrier password required`
 
 **Solutions:**
-1. Pass via flag: `--barrier-password "secret"`
+1. Pass via stdin: `--barrier-password-stdin` (pipe the password in)
 2. Pass via environment: `XKEY_BARRIER_PASSWORD=secret`
 3. Pass via file: `--barrier-password-file /run/secrets/barrier`
 4. Use TPM2-sealed barrier (no password needed)

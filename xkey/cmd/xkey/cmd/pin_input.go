@@ -210,6 +210,17 @@ func (p pinSource) resolveBytes(cmd *cobra.Command) ([]byte, error) {
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
 	}
+	return p.resolveBytesFrom(fromStdin)
+}
+
+// resolveBytesFrom is resolveBytes for a caller that has already determined
+// whether its stdin source was selected without going through a
+// *cobra.Command flag lookup -- buildFIDO2Config (fido2.go) reads Viper
+// directly rather than a specific command's flags, since it is called from
+// call sites that predate one being threaded through (go-xkms#1209). The
+// resolution order is identical: stdin when fromStdin is true, then the
+// environment variable, then nil when neither carries a value.
+func (p pinSource) resolveBytesFrom(fromStdin bool) ([]byte, error) {
 	if fromStdin {
 		data, readErr := stdinReader()
 		if readErr != nil {
@@ -224,8 +235,10 @@ func (p pinSource) resolveBytes(cmd *cobra.Command) ([]byte, error) {
 		return secret, nil
 	}
 
-	if value := os.Getenv(p.envVar); value != "" {
-		return []byte(value), nil
+	if p.envVar != "" {
+		if value := os.Getenv(p.envVar); value != "" {
+			return []byte(value), nil
+		}
 	}
 	return nil, nil
 }

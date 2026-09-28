@@ -22,6 +22,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/spf13/cobra"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -46,7 +47,7 @@ var (
 
 	// ErrDeviceBarrierPasswordRequired indicates the barrier is initialized
 	// but no password was supplied to unseal it.
-	ErrDeviceBarrierPasswordRequired = errors.New("device: barrier password required (--barrier-password, --barrier-password-file, or XKEY_BARRIER_PASSWORD)")
+	ErrDeviceBarrierPasswordRequired = errors.New("device: barrier password required (--barrier-password-stdin, --barrier-password-file, or XKEY_BARRIER_PASSWORD)")
 
 	// ErrDeviceBarrierUnsealFailed indicates the barrier could not be
 	// resolved or unsealed with the supplied password.
@@ -64,31 +65,42 @@ var (
 // identical wording.
 const noBarrierConfiguredWarning = "pairing key stored unencrypted: no barrier is initialized on this host; run `xkey barrier init` to protect it"
 
-// addDeviceBarrierFlags registers the --barrier-password[-file] flags shared
-// by every device command that seals or unseals the Noise static private key.
+// addDeviceBarrierFlags registers the --barrier-password-stdin and
+// --barrier-password-file flags shared by every device command that seals or
+// unseals the Noise static private key.
 func addDeviceBarrierFlags(cmd *cobra.Command) {
-	cmd.Flags().String("barrier-password", "", "Barrier password (or XKEY_BARRIER_PASSWORD)")
-	cmd.Flags().String("barrier-password-file", "", "Path to a file containing the barrier password")
+	addBarrierPasswordFlags(cmd)
 }
 
 // resolveDeviceBarrierPassword resolves the barrier password the same way
 // FIDO2's barrier storage does (see createBarrierStorage in fido2.go):
-// --barrier-password, then --barrier-password-file, then XKEY_BARRIER_PASSWORD.
+// --barrier-password-stdin, then --barrier-password-file, then
+// XKEY_BARRIER_PASSWORD. There is no "--barrier-password" value flag
+// (go-xkms#1209): a value on the command line is visible to every other
+// process on the host via 'ps'.
 func resolveDeviceBarrierPassword(cmd *cobra.Command) (string, error) {
-	password, _ := cmd.Flags().GetString("barrier-password")
-	if password == "" {
-		if path, _ := cmd.Flags().GetString("barrier-password-file"); path != "" {
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				return "", &SentinelCauseError{Sentinel: ErrDeviceBarrierUnsealFailed, Cause: err}
-			}
-			password = strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0])
+	fromStdin, err := cmd.Flags().GetBool(barrierPasswordSource.stdinFlag)
+	if err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
+	}
+	if fromStdin {
+		secret, err := barrierPasswordSource.resolveBytesFrom(true)
+		if err != nil {
+			return "", err
 		}
+		defer enclave.Wipe(secret)
+		return string(secret), nil
 	}
-	if password == "" {
-		password = os.Getenv("XKEY_BARRIER_PASSWORD")
+
+	if path, _ := cmd.Flags().GetString("barrier-password-file"); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", &SentinelCauseError{Sentinel: ErrDeviceBarrierUnsealFailed, Cause: err}
+		}
+		return strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0]), nil
 	}
-	return password, nil
+
+	return os.Getenv(barrierPasswordSource.envVar), nil
 }
 
 // openDeviceBarrier opens the barrier that seals the phone pairing Noise

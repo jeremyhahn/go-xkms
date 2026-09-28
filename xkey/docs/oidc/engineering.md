@@ -210,12 +210,15 @@ the underlying cause.
 | Flag | Commands | Meaning |
 |---|---|---|
 | `--token-store <path>` | `login`, `token`, `refresh`, `logout`, `status`, `stop`, `providers ...` | Default `~/.xkey/tokens.json`, used verbatim by the derived provider-config/PID/log-file paths regardless of the barrier decision; an explicit `--token-store` also selects a plain file at exactly that path for the token content itself (bypasses barrier auto-detection) |
-| `--barrier-password <pw>` | `login`, `token`, `refresh`, `logout` | Barrier password, plaintext on the command line (visible in `ps`; prefer the next two) |
+| `--barrier-password-stdin` | `login`, `token`, `refresh`, `logout` | Read the barrier password from standard input |
 | `--barrier-password-file <path>` | `login`, `token`, `refresh`, `logout` | First line of the named file |
 | `XKEY_BARRIER_PASSWORD` | (environment) | Read when neither flag is set; the source the detached background worker relies on via environment inheritance |
 | `--data-dir <path>` / `XKEY_DATA_DIR` | (shared, `resolveDataDir`) | Overrides where the barrier-backed and no-barrier-fallback stores are rooted |
 
-Resolution order for the barrier password: `--barrier-password`, then
+There is no `--barrier-password` value flag: a value on the command line is
+visible to every other process on the host via `ps`.
+
+Resolution order for the barrier password: `--barrier-password-stdin`, then
 `--barrier-password-file`, then `XKEY_BARRIER_PASSWORD`, then an interactive
 terminal prompt (`resolveBarrierPassword`, `extension_serve.go`) — the same
 order and the same function every other barrier-aware CLI command uses.

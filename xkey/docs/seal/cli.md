@@ -114,8 +114,8 @@ can collect.
 
 | Flag | Commands | Meaning |
 |---|---|---|
-| `--barrier-password-file string` | `extension serve`, `fido2` | First line of the named file — prefer this over `--barrier-password` |
-| `--barrier-password string` | `extension serve`, `fido2` | Plaintext on the command line; visible via `ps` |
+| `--barrier-password-stdin` | `extension serve`, `fido2` | Read the barrier password from standard input |
+| `--barrier-password-file string` | `extension serve`, `fido2` | First line of the named file |
 | `--tpm-device string`, `--tpm-simulator` | `extension serve` (also `barrier`, `policy`) | Same TPM selection as `barrier` |
 | `--no-barrier` | `extension serve` | Skip the barrier entirely, plain file storage (testing only) |
 

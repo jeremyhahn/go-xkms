@@ -24,11 +24,11 @@ import (
 
 // TestSecretServiceUnlockFunc_FlagPassword exercises the closure without
 // ever reaching its interactive-terminal fallback: a non-empty
-// --barrier-password resolves before readBarrierPassword is consulted, so
+// XKEY_BARRIER_PASSWORD resolves before readBarrierPassword is consulted, so
 // this never touches os.Stdin.
 func TestSecretServiceUnlockFunc_FlagPassword(t *testing.T) {
 	cmd := newSecretServicePasswordTestCmd()
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", "unlock-me"))
+	t.Setenv("XKEY_BARRIER_PASSWORD", "unlock-me")
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 

@@ -143,11 +143,13 @@ once per process lifetime, not once per refresh interval.
 
 The detached background process is a separate `os/exec` invocation with no
 controlling terminal, so it cannot satisfy an interactive barrier password
-prompt. `startBackgroundRefresh` forwards `--barrier-password-file <path>`
-on the child's argv when the parent had it set; a bare `--barrier-password`
-value is never forwarded on argv (it would appear in that process's `ps`
-output for any local user to read), and `XKEY_BARRIER_PASSWORD` reaches the
-child through ordinary environment inheritance (`exec.Command` with no
+prompt, and it has no standard input to read a piped
+`--barrier-password-stdin` value from either (there is no `--barrier-password`
+value flag to forward in the first place: a value on the command line would
+be visible in that process's `ps` output to any local user).
+`startBackgroundRefresh` forwards `--barrier-password-file <path>` on the
+child's argv when the parent had it set, and `XKEY_BARRIER_PASSWORD` reaches
+the child through ordinary environment inheritance (`exec.Command` with no
 `Env` override inherits the parent's environment) rather than an explicit
 argument.
 

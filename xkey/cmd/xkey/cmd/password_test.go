@@ -244,10 +244,12 @@ func TestPasswordCmd_AddMissingName(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(storePath) })
 
+	t.Setenv("XKEY_STATIC_PASSWORD", "test")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"password", "add", "--password", "test", "--store", storePath})
+	RootCmd.SetArgs([]string{"password", "add", "--store", storePath})
 
 	err = RootCmd.Execute()
 	if err != ErrPasswordMissingName {
@@ -276,6 +278,63 @@ func TestPasswordCmd_AddMissingSource(t *testing.T) {
 	}
 }
 
+// TestPasswordCmd_AddFromStdin pins the stdin source for the password value:
+// piped input, trimmed of its trailing newline, is stored the same as the
+// environment source.
+func TestPasswordCmd_AddFromStdin(t *testing.T) {
+	resetCommandFlagsForTest(t, RootCmd)
+	resetPasswordFlags()
+
+	storePath, err := os.MkdirTemp("", "pw-test-add-stdin-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(storePath) })
+
+	stubStdin(t, []byte("stdin-secret\n"), nil)
+
+	buf := new(bytes.Buffer)
+	RootCmd.SetOut(buf)
+	RootCmd.SetErr(buf)
+	RootCmd.SetArgs([]string{
+		"password", "add",
+		"--name", "StdinEntry",
+		"--password-stdin",
+		"--store", storePath,
+	})
+
+	if err := RootCmd.Execute(); err != nil {
+		t.Fatalf("password add --password-stdin failed: %v", err)
+	}
+
+	backend, err := xkms.NewFileStorageBackend(storePath)
+	if err != nil {
+		t.Fatalf("failed to open store backend: %v", err)
+	}
+	store := xkms.NewStaticPasswordStore(backend)
+	defer func() { _ = store.Close() }()
+
+	pw, err := store.Get("StdinEntry")
+	if err != nil {
+		t.Fatalf("store.Get(StdinEntry) failed: %v", err)
+	}
+	if pw.Password != "stdin-secret" {
+		t.Errorf("stored entry password = %q, want %q", pw.Password, "stdin-secret")
+	}
+}
+
+// TestPasswordAddCmd_NoPasswordValueFlag pins go-xkms#1209: "xkey password
+// add" does not accept the password as a flag value, which every other
+// process on the host could read through 'ps'.
+func TestPasswordAddCmd_NoPasswordValueFlag(t *testing.T) {
+	if flag := passwordAddCmd.Flags().Lookup("password"); flag != nil {
+		t.Error("--password value flag must not exist")
+	}
+	if passwordAddCmd.Flags().Lookup("password-stdin") == nil {
+		t.Error("--password-stdin flag must exist")
+	}
+}
+
 func TestPasswordCmd_AddMutuallyExclusive(t *testing.T) {
 	resetCommandFlagsForTest(t, RootCmd)
 	resetPasswordFlags()
@@ -286,13 +345,14 @@ func TestPasswordCmd_AddMutuallyExclusive(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(storePath) })
 
+	t.Setenv("XKEY_STATIC_PASSWORD", "pw")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
 	RootCmd.SetArgs([]string{
 		"password", "add",
 		"--name", "test",
-		"--password", "pw",
 		"--generate",
 		"--store", storePath,
 	})
@@ -390,13 +450,14 @@ func TestPasswordCmd_AddAndList(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(storePath) })
 
 	// Add a password entry via RootCmd.
+	t.Setenv("XKEY_STATIC_PASSWORD", "s3cretP@ss!")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
 	RootCmd.SetArgs([]string{
 		"password", "add",
 		"--name", "TestService",
-		"--password", "s3cretP@ss!",
 		"--store", storePath,
 	})
 
@@ -508,13 +569,14 @@ func TestPasswordCmd_AddWithMetadata(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(storePath) })
 
+	t.Setenv("XKEY_STATIC_PASSWORD", "gh_tok_abc123")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
 	RootCmd.SetArgs([]string{
 		"password", "add",
 		"--name", "GitHubWork",
-		"--password", "gh_tok_abc123",
 		"--title", "GitHub (Work)",
 		"--username", "jdoe",
 		"--url", "https://github.com",
@@ -569,13 +631,14 @@ func TestPasswordCmd_AddWithoutMetadata(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(storePath) })
 
+	t.Setenv("XKEY_STATIC_PASSWORD", "simple123")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
 	RootCmd.SetArgs([]string{
 		"password", "add",
 		"--name", "SimplePW",
-		"--password", "simple123",
 		"--store", storePath,
 	})
 
@@ -615,10 +678,12 @@ func TestPasswordCmd_Unlock(t *testing.T) {
 	mock := newMockPasswordStoreClient()
 	withMockPasswordClient(t, mock)
 
+	t.Setenv("XKEY_PIN", "1234")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"password", "unlock", "--pin", "1234"})
+	RootCmd.SetArgs([]string{"password", "unlock"})
 
 	err := RootCmd.Execute()
 	if err != nil {
@@ -671,10 +736,12 @@ func TestPasswordCmd_UnlockServerError(t *testing.T) {
 	mock.unlockErr = errors.New("invalid PIN")
 	withMockPasswordClient(t, mock)
 
+	t.Setenv("XKEY_PIN", "wrong")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"password", "unlock", "--pin", "wrong"})
+	RootCmd.SetArgs([]string{"password", "unlock"})
 
 	err := RootCmd.Execute()
 	if err == nil {
@@ -690,10 +757,12 @@ func TestPasswordCmd_UnlockConnectError(t *testing.T) {
 	resetPasswordFlags()
 	withFailingPasswordClientFactory(t, errors.New("no server"))
 
+	t.Setenv("XKEY_PIN", "1234")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"password", "unlock", "--pin", "1234"})
+	RootCmd.SetArgs([]string{"password", "unlock"})
 
 	err := RootCmd.Execute()
 	if err == nil {
@@ -1055,10 +1124,12 @@ func TestPasswordCmd_UnlockLockRoundtrip(t *testing.T) {
 	}
 
 	// Unlock the store.
+	t.Setenv("XKEY_PIN", "mypin")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"password", "unlock", "--pin", "mypin"})
+	RootCmd.SetArgs([]string{"password", "unlock"})
 
 	err := RootCmd.Execute()
 	if err != nil {

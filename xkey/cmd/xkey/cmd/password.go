@@ -22,6 +22,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -45,8 +46,8 @@ const (
 // Password command errors.
 var (
 	ErrPasswordMissingName       = errors.New("password: --name is required")
-	ErrPasswordMissingSource     = errors.New("password: --password or --generate is required")
-	ErrPasswordMutuallyExclusive = errors.New("password: --password and --generate are mutually exclusive")
+	ErrPasswordMissingSource     = errors.New("password: a password (--password-stdin or XKEY_STATIC_PASSWORD) or --generate is required")
+	ErrPasswordMutuallyExclusive = errors.New("password: a password (--password-stdin or XKEY_STATIC_PASSWORD) and --generate are mutually exclusive")
 	ErrPasswordMissingRemoveArg  = errors.New("password: specify password name to remove")
 	ErrPasswordMissingGetArg     = errors.New("password: specify password name to retrieve")
 	ErrPasswordMissingTypeArg    = errors.New("password: specify password name to type")
@@ -75,7 +76,28 @@ var (
 	ErrPasswordValuesNotOverIPC = errors.New(
 		"password: password values are never returned over the daemon IPC socket; " +
 			"re-run with --source disk to read the on-disk store directly")
+
+	// ErrPasswordStdinEmpty indicates --password-stdin was given but standard
+	// input carried no password.
+	ErrPasswordStdinEmpty = errors.New("password: --password-stdin was given but standard input carried no password")
+
+	// ErrPasswordStdinRead indicates standard input could not be read for
+	// --password-stdin.
+	ErrPasswordStdinRead = errors.New("password: failed to read the password from standard input")
 )
+
+// passwordValueSource is the one way a static password's value enters the
+// CLI for "password add". It follows the PIN convention (pin_input.go):
+// standard input or the environment, never a "--password" value flag -- a
+// value on the command line is visible to every other process on the host
+// via 'ps' (go-xkms#1209).
+var passwordValueSource = pinSource{
+	label:      "password",
+	stdinFlag:  "password-stdin",
+	envVar:     "XKEY_STATIC_PASSWORD",
+	stdinEmpty: ErrPasswordStdinEmpty,
+	stdinRead:  ErrPasswordStdinRead,
+}
 
 // PasswordStoreClientService defines the subset of the transport.PasswordService
 // interface needed by the password store session management commands. This enables
@@ -127,11 +149,11 @@ A remote xkmsd server owns the session verbs — 'unlock', 'lock' and
 
 Examples:
   # Add a password manually
-  xkey password add --name "DatabaseProd" --password "s3cretP@ss!"
+  xkey password add --name "DatabaseProd" --password-stdin < password.txt
 
   # Add a password with metadata
-  xkey password add --name "DatabaseProd" --password "s3cretP@ss!" \
-    --title "Production DB" --username "admin" --url "https://db.example.com"
+  xkey password add --name "DatabaseProd" --password-stdin \
+    --title "Production DB" --username "admin" --url "https://db.example.com" < password.txt
 
   # Generate a random password
   xkey password add --name "ServiceAccount" --generate --length 64
@@ -155,7 +177,7 @@ Examples:
   xkey password remove "DatabaseProd"
 
   # Unlock the password store (session-based access mode)
-  xkey password unlock --pin "1234"
+  echo 1234 | xkey password unlock --pin-stdin
 
   # Lock the password store
   xkey password lock
@@ -173,9 +195,11 @@ var passwordAddCmd = &cobra.Command{
 	Short: "Add a new static password",
 	Long: `Add a new static password to the store.
 
-You can provide the password directly with --password, or generate a
-cryptographically random password with --generate. These options are
-mutually exclusive.
+You can provide the password directly with --password-stdin or
+XKEY_STATIC_PASSWORD, or generate a cryptographically random password with
+--generate. These options are mutually exclusive. There is no "--password"
+value flag: a value on the command line is visible to every other process on
+the host via 'ps'.
 
 Generated passwords use crypto/rand for uniform distribution. The --charset
 flag controls the character set: "all" includes letters, digits, and symbols;
@@ -187,10 +211,10 @@ extension for domain-based credential matching.
 
 Examples:
   # Store an existing password
-  xkey password add --name "DatabaseProd" --password "s3cretP@ss!"
+  xkey password add --name "DatabaseProd" --password-stdin < password.txt
 
   # Store with full metadata for browser autofill
-  xkey password add --name "GitHubWork" --password "tok_abc123" \
+  XKEY_STATIC_PASSWORD="tok_abc123" xkey password add --name "GitHubWork" \
     --title "GitHub (Work)" --username "jdoe" --url "https://github.com"
 
   # Generate a 32-character password (default length)
@@ -200,7 +224,7 @@ Examples:
   xkey password add --name "WiFi" --generate --length 64 --charset alphanumeric --notes "Office WiFi"
 
   # Use a custom store path
-  xkey password add --name "Backup" --password "p@ss" --store /tmp/passwords`,
+  xkey password add --name "Backup" --password-stdin --store /tmp/passwords < password.txt`,
 	RunE: runPasswordAdd,
 }
 
@@ -312,12 +336,14 @@ operation requires its own PIN.
 
 This acts on an xkmsd server's session and requires --xkmsd-url.
 
-Examples:
-  # Unlock with PIN flag
-  xkey password unlock --pin "1234"
+` + pinUsage + `
 
-  # Unlock with interactive PIN prompt
-  xkey password unlock`,
+Examples:
+  # Unlock with the PIN piped on standard input
+  echo 1234 | xkey password unlock --pin-stdin
+
+  # Unlock with the PIN from the environment
+  XKEY_PIN=1234 xkey password unlock`,
 	RunE: runPasswordUnlock,
 }
 
@@ -389,7 +415,12 @@ Examples:
 func runPasswordAdd(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	name, _ := cmd.Flags().GetString("name")
-	password, _ := cmd.Flags().GetString("password")
+	passwordBytes, err := passwordValueSource.resolveBytes(cmd)
+	if err != nil {
+		return err
+	}
+	defer enclave.Wipe(passwordBytes)
+	password := string(passwordBytes)
 	generate, err := commandFlagBool(cmd, "generate")
 	if err != nil {
 		return err
@@ -790,7 +821,10 @@ func runPasswordType(cmd *cobra.Command, args []string) (err error) {
 
 // runPasswordUnlock executes the password unlock command.
 func runPasswordUnlock(cmd *cobra.Command, args []string) (err error) {
-	pin, _ := cmd.Flags().GetString("pin")
+	pin, err := resolvePINInput(cmd)
+	if err != nil {
+		return err
+	}
 
 	if pin == "" {
 		return ErrPasswordMissingPIN
@@ -1065,7 +1099,7 @@ func init() {
 
 	// password add flags.
 	passwordAddCmd.Flags().String("name", "", "Password name (e.g., DatabaseProd)")
-	passwordAddCmd.Flags().String("password", "", "The password to store")
+	passwordValueSource.addFlags(passwordAddCmd)
 	passwordAddCmd.Flags().Bool("generate", false, "Generate a random password")
 	passwordAddCmd.Flags().Int("length", xkms.StaticPasswordDefaultLength, "Generated password length")
 	passwordAddCmd.Flags().String("charset", "all", "Password charset: all, alphanumeric")
@@ -1092,7 +1126,7 @@ func init() {
 	passwordRemoveCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 
 	// password unlock flags.
-	passwordUnlockCmd.Flags().String("pin", "", "User PIN for unlocking the store")
+	addPINFlags(passwordUnlockCmd)
 
 	// password access-mode flags.
 	passwordAccessModeCmd.Flags().String("mode", "", "Access mode: pin_per_operation or session_based")

@@ -23,6 +23,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/spf13/cobra"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -37,7 +38,8 @@ var (
 	ErrSecretServiceStartFailed = errors.New("secret-service: failed to start")
 
 	// ErrSecretServiceUnlockFailed is returned when a configured
-	// --barrier-password-file cannot be read at unlock time.
+	// --barrier-password-file cannot be read at unlock time, or standard
+	// input cannot be read for --barrier-password-stdin.
 	ErrSecretServiceUnlockFailed = errors.New("secret-service: failed to resolve barrier password")
 )
 
@@ -63,7 +65,7 @@ entry; there is exactly one lock behind all of them, the barrier itself
 Locked=true and no method that would touch a secret succeeds -- they fail
 with org.freedesktop.Secret.Error.IsLocked instead. A client's Service.Unlock
 opens a Prompt that this command resolves the same way 'xkey barrier unseal'
-does: --barrier-password, then --barrier-password-file, then
+does: --barrier-password-stdin, then --barrier-password-file, then
 XKEY_BARRIER_PASSWORD, then (only on an interactive terminal) an
 interactive password prompt.
 
@@ -81,7 +83,7 @@ Examples:
   xkey secret-service
 
   # Run with the barrier already unsealed at startup (piped password)
-  echo "mypassword" | xkey secret-service --barrier-password-file /dev/stdin
+  echo "mypassword" | xkey secret-service --barrier-password-stdin
 
   # Run on the system bus (requires a matching D-Bus policy file)
   xkey secret-service --bus system`,
@@ -96,8 +98,7 @@ func init() {
 	secretServiceCmd.Flags().StringVar(&barrierStrategy, "strategy", "", "barrier seal strategy override (default: the strategy the barrier was initialized with)")
 	secretServiceCmd.Flags().StringVar(&barrierTPMDevice, "tpm-device", "", "TPM device path for the tpm2 strategy (default: $TPM_DEVICE_PATH or /dev/tpmrm0)")
 	secretServiceCmd.Flags().BoolVar(&barrierTPMSimulator, "tpm-simulator", false, "use the in-process TPM simulator instead of a hardware device (requires a simulator build)")
-	secretServiceCmd.Flags().String("barrier-password", "", "barrier password used to unlock on demand (or XKEY_BARRIER_PASSWORD)")
-	secretServiceCmd.Flags().String("barrier-password-file", "", "path to a file containing the barrier password")
+	addBarrierPasswordFlags(secretServiceCmd)
 }
 
 func runSecretService(cmd *cobra.Command, args []string) (err error) {
@@ -214,23 +215,33 @@ func secretServiceUnlockFunc(cmd *cobra.Command) secretservice.UnlockFunc {
 }
 
 // resolveSecretServicePassword resolves the barrier password the same way
-// `xkey barrier unseal` and the device commands do: --barrier-password,
-// then --barrier-password-file, then XKEY_BARRIER_PASSWORD. An empty result
-// with a nil error means "no password configured", not a failure: the
+// `xkey barrier unseal` and the device commands do: --barrier-password-stdin,
+// then --barrier-password-file, then XKEY_BARRIER_PASSWORD. There is no
+// "--barrier-password" value flag (go-xkms#1209): a value on the command
+// line is visible to every other process on the host via 'ps'. An empty
+// result with a nil error means "no password configured", not a failure: the
 // caller falls back to an interactive prompt.
 func resolveSecretServicePassword(cmd *cobra.Command) (string, error) {
-	password, _ := cmd.Flags().GetString("barrier-password")
-	if password == "" {
-		if path, _ := cmd.Flags().GetString("barrier-password-file"); path != "" {
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				return "", &SentinelCauseError{Sentinel: ErrSecretServiceUnlockFailed, Cause: err}
-			}
-			password = strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0])
+	fromStdin, err := cmd.Flags().GetBool(barrierPasswordSource.stdinFlag)
+	if err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
+	}
+	if fromStdin {
+		secret, err := barrierPasswordSource.resolveBytesFrom(true)
+		if err != nil {
+			return "", &SentinelCauseError{Sentinel: ErrSecretServiceUnlockFailed, Cause: err}
 		}
+		defer enclave.Wipe(secret)
+		return string(secret), nil
 	}
-	if password == "" {
-		password = os.Getenv("XKEY_BARRIER_PASSWORD")
+
+	if path, _ := cmd.Flags().GetString("barrier-password-file"); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", &SentinelCauseError{Sentinel: ErrSecretServiceUnlockFailed, Cause: err}
+		}
+		return strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0]), nil
 	}
-	return password, nil
+
+	return os.Getenv(barrierPasswordSource.envVar), nil
 }

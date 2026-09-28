@@ -319,7 +319,7 @@ Legacy sealed-blob store (`SealService`/`PlatformPolicyService`/
 | Data directory | `--data-dir` flag (where the command has one) → `XKEY_DATA_DIR` → `data_dir` config key → `~/.xkey/data` (`resolveDataDir`, `datadir.go`) | Roots the barrier, the PCR policy store, and PIN state |
 | PCR policy store path | `xkey policy`'s `--store` flag; empty resolves to `<data dir>/pcr_policies` | Same location `pkg/gui/app.go`'s `initializeDataDir` opens |
 | TPM device | `--tpm-device`/`--tpm-simulator` flags → `TPM_DEVICE_PATH` env → `/dev/tpmrm0` (`resolveTPMDevice`, `extension_serve.go`) | `--tpm-simulator` requires a `-tags tpm_simulator` build; never for production data |
-| Barrier password | `--barrier-password` flag → `--barrier-password-file` → `XKEY_BARRIER_PASSWORD` env → interactive prompt (terminal only) (`resolveBarrierPassword`) | Not consulted at all for a tpm2-strategy or cloud-KMS-strategy barrier's unseal |
+| Barrier password | `--barrier-password-stdin` flag → `--barrier-password-file` → `XKEY_BARRIER_PASSWORD` env → interactive prompt (terminal only) (`resolveBarrierPassword`) | Not consulted at all for a tpm2-strategy or cloud-KMS-strategy barrier's unseal |
 | Cloud KMS connection settings | `xkey barrier init --strategy <id> --<provider>-...` flags, persisted to `Config.Barrier.CloudKMS.<Provider>` | Read back by every later `unseal`/`extension serve`; never re-specified on the command line |
 
 ## Tests

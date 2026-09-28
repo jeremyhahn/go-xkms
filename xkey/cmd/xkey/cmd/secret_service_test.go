@@ -24,22 +24,32 @@ import (
 )
 
 // newSecretServicePasswordTestCmd builds a bare *cobra.Command carrying just
-// the two flags resolveSecretServicePassword reads, isolated from the
+// the flags resolveSecretServicePassword reads, isolated from the
 // package-level secretServiceCmd singleton.
 func newSecretServicePasswordTestCmd() *cobra.Command {
 	c := &cobra.Command{Use: "test"}
-	c.Flags().String("barrier-password", "", "")
-	c.Flags().String("barrier-password-file", "", "")
+	addBarrierPasswordFlags(c)
 	return c
 }
 
-func TestResolveSecretServicePassword_Flag(t *testing.T) {
+// TestResolveSecretServicePassword_Stdin pins the top-precedence source:
+// --barrier-password-stdin. There is no "--barrier-password" value flag
+// (go-xkms#1209).
+func TestResolveSecretServicePassword_Stdin(t *testing.T) {
 	c := newSecretServicePasswordTestCmd()
-	require.NoError(t, setFlagForTest(t, c.Flags(), "barrier-password", "flag-password"))
+	stubStdin(t, []byte("stdin-password\n"), nil)
+	require.NoError(t, c.Flags().Set(barrierPasswordSource.stdinFlag, "true"))
 
 	password, err := resolveSecretServicePassword(c)
 	require.NoError(t, err)
-	assert.Equal(t, "flag-password", password)
+	assert.Equal(t, "stdin-password", password)
+}
+
+// TestSecretServiceCmd_NoBarrierPasswordValueFlag pins go-xkms#1209: the
+// daemon does not accept the barrier password as a flag value, which every
+// other process on the host could read through 'ps'.
+func TestSecretServiceCmd_NoBarrierPasswordValueFlag(t *testing.T) {
+	assert.Nil(t, secretServiceCmd.Flags().Lookup("barrier-password"), "--barrier-password value flag must not exist")
 }
 
 func TestResolveSecretServicePassword_File(t *testing.T) {
@@ -82,15 +92,19 @@ func TestResolveSecretServicePassword_NoneConfiguredIsNotAnError(t *testing.T) {
 	assert.Empty(t, password)
 }
 
-func TestResolveSecretServicePassword_FlagTakesPrecedenceOverEnv(t *testing.T) {
+// TestResolveSecretServicePassword_StdinTakesPrecedenceOverEnv pins that
+// --barrier-password-stdin outranks XKEY_BARRIER_PASSWORD, the same
+// precedence order resolveBarrierPassword uses.
+func TestResolveSecretServicePassword_StdinTakesPrecedenceOverEnv(t *testing.T) {
 	t.Setenv("XKEY_BARRIER_PASSWORD", "env-password")
 
 	c := newSecretServicePasswordTestCmd()
-	require.NoError(t, setFlagForTest(t, c.Flags(), "barrier-password", "flag-password"))
+	stubStdin(t, []byte("stdin-password\n"), nil)
+	require.NoError(t, c.Flags().Set(barrierPasswordSource.stdinFlag, "true"))
 
 	password, err := resolveSecretServicePassword(c)
 	require.NoError(t, err)
-	assert.Equal(t, "flag-password", password)
+	assert.Equal(t, "stdin-password", password)
 }
 
 // TestSecretServiceCmd_Registered proves `xkey secret-service` is wired
@@ -105,7 +119,7 @@ func TestSecretServiceCmd_Registered(t *testing.T) {
 	}
 	require.True(t, found, "secret-service must be registered under the root command")
 
-	for _, name := range []string{"bus", "data-dir", "strategy", "tpm-device", "tpm-simulator", "barrier-password", "barrier-password-file"} {
+	for _, name := range []string{"bus", "data-dir", "strategy", "tpm-device", "tpm-simulator", "barrier-password-stdin", "barrier-password-file"} {
 		assert.NotNil(t, secretServiceCmd.Flags().Lookup(name), "missing --%s flag", name)
 	}
 }

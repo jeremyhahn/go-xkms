@@ -184,10 +184,10 @@ FIDO2 provides passwordless authentication using security keys or the xkey virtu
 
 ```bash
 # Software backend for development
-sudo xkey fido2 --pin --set-pin 123456
+echo 123456 | sudo xkey fido2 --pin --set-pin-stdin
 
 # Or with TPM-backed keys for production
-sudo xkey fido2 --backend tpm2 --pin --set-pin 123456
+echo 123456 | sudo xkey fido2 --backend tpm2 --pin --set-pin-stdin
 ```
 
 **2. Register the admin FIDO2 credential:**

@@ -55,7 +55,7 @@ Store a secret in the platform store.
 
 ```bash
 # Store a secret by value
-xkey platform-store put my-secret --value "s3cret"
+echo -n "s3cret" | xkey platform-store put my-secret --value-stdin
 
 # Store a secret from a file
 xkey platform-store put my-cert --file /path/to/cert.pem
@@ -63,10 +63,14 @@ xkey platform-store put my-cert --file /path/to/cert.pem
 
 | Flag | Description |
 |------|-------------|
-| `--value` | Secret value to store |
+| `--value-stdin` | Read the secret value from standard input |
 | `--file` | Path to file containing the secret |
 
-`--value` and `--file` are mutually exclusive. One must be provided.
+There is no `--value` value flag: a value on the command line is visible to
+every other process on the host via `ps`. The value comes from
+`--value-stdin` or the `XKEY_PLATFORM_STORE_VALUE` environment variable.
+`--value-stdin`/`XKEY_PLATFORM_STORE_VALUE` and `--file` are mutually
+exclusive. One must be provided.
 
 ### `xkey platform-store get <name>`
 
