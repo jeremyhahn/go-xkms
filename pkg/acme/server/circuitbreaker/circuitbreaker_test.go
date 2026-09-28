@@ -258,6 +258,79 @@ func TestCircuitBreakerManualControl(t *testing.T) {
 	})
 }
 
+// TestCircuitBreakerManualControlNotifiesStateChange verifies that Trip and
+// Reset, called directly rather than reached through a failure/success
+// count, still deliver the OnStateChange callback -- transitionTo's own path
+// to transitionToLocked, distinct from the one driven by Execute.
+func TestCircuitBreakerManualControlNotifiesStateChange(t *testing.T) {
+	var mu sync.Mutex
+	var changes []struct{ from, to State }
+	cb := New(&Config{
+		Name: "test-manual-notify",
+		OnStateChange: func(name string, from, to State) {
+			mu.Lock()
+			defer mu.Unlock()
+			changes = append(changes, struct{ from, to State }{from, to})
+		},
+	})
+
+	cb.Trip()
+	cb.Reset()
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, changes, 2)
+	assert.Equal(t, StateClosed, changes[0].from)
+	assert.Equal(t, StateOpen, changes[0].to)
+	assert.Equal(t, StateOpen, changes[1].from)
+	assert.Equal(t, StateClosed, changes[1].to)
+}
+
+// TestCircuitBreakerOpenToHalfOpenNotifiesStateChange verifies that the
+// Open->HalfOpen transition driven from inside beforeRequest (as opposed to
+// Trip/Reset's direct transitionTo call) also delivers OnStateChange.
+// ResetTimeout 0 makes the transition immediate on the next call, so the
+// test needs no wall-clock wait.
+func TestCircuitBreakerOpenToHalfOpenNotifiesStateChange(t *testing.T) {
+	var mu sync.Mutex
+	var changes []struct{ from, to State }
+	cb := New(&Config{
+		Name:                "test-halfopen-notify",
+		MaxFailures:         1,
+		ResetTimeout:        0,
+		HalfOpenMaxRequests: 1,
+		SuccessThreshold:    1000, // Never close during this test.
+		OnStateChange: func(name string, from, to State) {
+			mu.Lock()
+			defer mu.Unlock()
+			changes = append(changes, struct{ from, to State }{from, to})
+		},
+	})
+
+	// First call fails and opens the circuit.
+	_ = cb.Execute(func() error { return errors.New("error") })
+	require.Equal(t, StateOpen, cb.State())
+
+	// Second call: ResetTimeout 0 means beforeRequest moves Open->HalfOpen
+	// immediately, before admitting this call.
+	_ = cb.Execute(func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		// The transition must have already been observed by the time the
+		// admitted call runs.
+		require.Len(t, changes, 2)
+		return nil
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, changes, 2)
+	assert.Equal(t, StateClosed, changes[0].from)
+	assert.Equal(t, StateOpen, changes[0].to)
+	assert.Equal(t, StateOpen, changes[1].from)
+	assert.Equal(t, StateHalfOpen, changes[1].to)
+}
+
 // TestCircuitBreakerConcurrency checks that concurrent Execute calls are
 // counted correctly -- none lost, none double-counted.
 //

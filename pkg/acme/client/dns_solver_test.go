@@ -471,6 +471,33 @@ func TestDNSSolverClose(t *testing.T) {
 	}
 }
 
+// TestDNSCleanupErrorErrorAndUnwrap covers DNSCleanupError's Error and
+// Unwrap, and confirms Is matches ErrDNSRecordCleanup via errors.Is rather
+// than by identity on the wrapped cause.
+func TestDNSCleanupErrorErrorAndUnwrap(t *testing.T) {
+	cause := errors.New("provider timeout")
+	err := &DNSCleanupError{Domain: "example.com", Err: cause}
+
+	got := err.Error()
+	if got == "" {
+		t.Fatal("Error() returned an empty string")
+	}
+	if !strings.Contains(got, "example.com") || !strings.Contains(got, cause.Error()) {
+		t.Errorf("Error() = %q, want it to mention the domain and cause", got)
+	}
+
+	if err.Unwrap() != cause {
+		t.Errorf("Unwrap() = %v, want %v", err.Unwrap(), cause)
+	}
+
+	if !errors.Is(err, ErrDNSRecordCleanup) {
+		t.Error("expected errors.Is to match ErrDNSRecordCleanup")
+	}
+	if errors.Is(err, ErrDNSSolverClosed) {
+		t.Error("Is must not match a sentinel that is neither ErrDNSRecordCleanup nor the wrapped cause")
+	}
+}
+
 func TestDNSSolverActiveRecordCount(t *testing.T) {
 	provider := newMockDNSProvider()
 	solver, _ := NewDNSSolver(provider)

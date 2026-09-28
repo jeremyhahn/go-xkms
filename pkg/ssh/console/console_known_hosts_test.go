@@ -338,3 +338,51 @@ func TestFirstContactConfirmer_EmitFailureIsLoggedNotFatal(t *testing.T) {
 		t.Fatal("expected no known_hosts mirror file to be created when Emit fails")
 	}
 }
+
+// TestFirstContactConfirmer_AppendMissingFailureIsLoggedNotFatal covers the
+// mirror-write branch: Emit succeeds but AppendMissing cannot open the
+// destination (a directory, not a file), so the confirmer still accepts the
+// connection -- the trust decision was already made by HostKeyConfirm -- and
+// logs the failure with slog.Warn rather than propagating it.
+func TestFirstContactConfirmer_AppendMissingFailureIsLoggedNotFatal(t *testing.T) {
+	handler := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("signer: %v", err)
+	}
+
+	// A path under a directory that does not exist passes the earlier
+	// LookupFile check (a missing file just means "not yet known") but
+	// AppendMissing's os.OpenFile(O_CREATE) cannot create the file without
+	// its parent directory, so the mirror write fails deterministically.
+	unwritableDest := filepath.Join(t.TempDir(), "no-such-dir", "known_hosts")
+
+	confirmer := firstContactConfirmer(DialRequest{
+		HostKeyScope:         scope.User,
+		HostKeyOwner:         "tester",
+		KnownHostsExtraFiles: []string{unwritableDest},
+		HostKeyConfirm: func(context.Context, string, ssh.PublicKey) (bool, error) {
+			return true, nil
+		},
+	})
+
+	accept, cerr := confirmer(context.Background(), "badhost.example.com", signer.PublicKey())
+	if cerr != nil {
+		t.Fatalf("confirmer: %v", cerr)
+	}
+	if !accept {
+		t.Fatal("expected the confirmer to accept -- HostKeyConfirm already approved the key")
+	}
+
+	if !handler.hasMessage("ssh/console: failed to mirror an accepted host key into an external known_hosts file") {
+		t.Fatal("expected the AppendMissing failure to be logged")
+	}
+}

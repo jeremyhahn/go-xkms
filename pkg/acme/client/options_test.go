@@ -16,8 +16,10 @@ package client
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/auth"
+	xkmsauth "github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -65,4 +67,48 @@ func TestWithAuthClient_NilClient(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tca)
 	assert.Nil(t, tca.authClient)
+}
+
+// TestWithAuthorizer_SetsAuthorizer verifies the option wires the given
+// *auth.Authorizer into the TrustedCA struct unchanged.
+func TestWithAuthorizer_SetsAuthorizer(t *testing.T) {
+	authorizer := xkmsauth.NewAuthorizer(nil)
+
+	tca, err := New(
+		WithCA(newMockCA()),
+		WithStorageFactory(newMockStorageFactory()),
+		WithAuthorizer(authorizer),
+		WithConfig(validConfig()),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, tca)
+
+	assert.Same(t, authorizer, tca.authorizer)
+}
+
+// TestWithTenantRateLimit_SetsQuota verifies the option wires both the
+// request count and interval into the TrustedCA struct, and that omitting it
+// leaves the per-tenant quota at its zero value (disabled).
+func TestWithTenantRateLimit_SetsQuota(t *testing.T) {
+	tca, err := New(
+		WithCA(newMockCA()),
+		WithStorageFactory(newMockStorageFactory()),
+		WithTenantRateLimit(50, time.Minute),
+		WithConfig(validConfig()),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, tca)
+
+	assert.Equal(t, 50, tca.tenantRateLimitRequests)
+	assert.Equal(t, time.Minute, tca.tenantRateLimitInterval)
+
+	tcaDefault, err := New(
+		WithCA(newMockCA()),
+		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(validConfig()),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, tcaDefault)
+	assert.Zero(t, tcaDefault.tenantRateLimitRequests)
+	assert.Zero(t, tcaDefault.tenantRateLimitInterval)
 }
