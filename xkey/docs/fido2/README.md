@@ -113,9 +113,15 @@ against a Chrome started with remote debugging.
 | `--password-store` | `./data/staticpw` | Static password store path |
 | `--default-password` | (none) | Password name to type on bare touch |
 
-Every flag also has an `XKEY_FIDO2_*` environment variable and a config-file
-key. Flags take precedence over environment variables, which take precedence
-over the config file.
+Only `--storage`, `--storage-path`, `--name` and `--attestation` also have an
+`XKEY_FIDO2_*` environment variable and a config-file key (`fido2.storage`,
+`fido2.storage_path`, `fido2.device_name`, `fido2.attestation`); every other
+flag on this page is CLI-only. Where a source exists, a flag takes precedence
+over the environment variable, which takes precedence over the config file.
+See [virtual-authenticator/cli.md](../virtual-authenticator/cli.md#configuration-sources)
+(the normative page this one is superseded by) for the full picture,
+including why `--attestation`'s effective default is `packed`, not the `none`
+shown above (go-xkms#871).
 
 ## User Presence Modes
 
