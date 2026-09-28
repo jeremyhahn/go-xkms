@@ -1557,7 +1557,7 @@ func (s *Server) initializeAuditLogger() error {
 // client certificate's SPKI thumbprint to a user. When xkms hosts (or dials)
 // the qrdb engine, identity is resolved against qrdb's user store — the single
 // source of identity for the stack — via the GetUserByCertThumbprint index,
-// with role ids resolved to names through the role client. Absent a qrdb
+// carrying the user's qrdb role IDs verbatim for the RBAC authorizer. Absent a qrdb
 // client (non-qrdb storage backends), the mTLS authenticator falls back to
 // certificate-field extraction (handled in buildIdentity when the store is
 // nil).
@@ -1576,7 +1576,7 @@ func (s *Server) qrdbUserStore() *auth.QRDBUserStore {
 	if s.qrdbClient == nil {
 		return nil
 	}
-	return auth.NewQRDBUserStore(s.qrdbClient.Users(), s.qrdbClient.Roles())
+	return auth.NewQRDBUserStore(s.qrdbClient.Users())
 }
 
 // initializeBarrier creates and configures the barrier (seal/unseal) subsystem.

@@ -102,6 +102,24 @@ once, to the externally visible base.
 
 ## Invariants
 
+- **The admin plane resolves every mTLS caller to its qrdb user before the
+  permission gate runs.** xkmsd builds the admin plane's authenticator with
+  the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:159-167`), so the
+  identity `PermissionGate.Authorize` (`pkg/acme/admin/authz.go:83`) hands to
+  qrdb's RBAC carries the user's tenant and **qrdb role IDs** — every role,
+  verbatim (`pkg/auth/qrdb_userstore.go:50-59`, `pkg/auth/mtls.go:220`).
+  go-qrdb resolves permissions by role ID only; a role name, or a missing
+  store, leaves the identity with no resolvable role and every admin route
+  answers 403, which is what go-xkms#1069 was. A certificate bound to no user
+  still authenticates from its fields but holds no role, so it is refused on
+  every route. The admin plane declares no permission of its own: each
+  `gate.Wrap` resource:action (`pkg/acme/admin/handlers.go:108-143`,
+  `tenant_handlers.go:61-127`) is a qrdb-registered permission that qrdb
+  places on its built-in roles — Owner holds all of them; Admin holds all but
+  `roles:create`/`roles:update`/`roles:delete`; Operator and Auditor each hold
+  a subset of the read/list permissions (qrdb's placement, not restated by
+  xkms). `cmd/xkmsd/admin_authz_test.go` walks the published router
+  and pins all three properties against a first-boot-seeded node.
 - **Every POST carries a fresh nonce, and a nonce is consumed exactly once.**
   Replaying a nonce is rejected, not tolerated.
 - **Every POST is JWS-signed by the account key** (or, for `new-account`, by the

@@ -1,0 +1,359 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package main
+
+// Authorization tests for the ACME admin plane as xkmsd composes it
+// (finalizeAdminModule), against a real embedded qrdb node whose first boot
+// has seeded the system tenant, the built-in roles and the administrator.
+//
+// They exist because of go-xkms#1069: the admin plane's mTLS authenticator
+// was built without the qrdb user store, so every identity reaching the
+// permission gate carried no roles and no tenant, and qrdb's authorizer
+// denied every admin route -- even to the first-boot administrator. The
+// crypto plane never showed it because qrdb's own middleware resolves its
+// identities.
+//
+// The route set is never hand-listed: every test walks the router
+// finalizeAdminModule publishes, and learns which resource:action each route
+// demands from the permission gate's own decision log. A route added to
+// pkg/acme/admin is covered the moment it is registered.
+//
+// ACME is disabled in this fixture (finalizeAdminModule receives a nil
+// *acmeServer, as run() does when acme.enabled is false), so a handler behind
+// a passed gate may be unable to complete its work. That is outside what
+// these tests measure -- the gate's decision -- so serveAdminRoute contains a
+// handler panic to the one request and reports it as a completed, authorized
+// dispatch.
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"log/slog"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/gorilla/mux"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+)
+
+// Messages the admin PermissionGate logs for each decision
+// (pkg/acme/admin/authz.go). The tests read decisions from them rather than
+// from status codes alone, because a handler behind a granted gate may itself
+// answer 403 for a reason unrelated to RBAC.
+const (
+	gateGrantedMsg = "ACME admin authorization granted"
+	gateDeniedMsg  = "ACME admin authorization denied"
+)
+
+// gateDecision is one PermissionGate decision, as logged.
+type gateDecision struct {
+	granted    bool
+	subject    string
+	permission string
+}
+
+// gateLog is a slog.Handler that records every PermissionGate decision.
+type gateLog struct {
+	mu        sync.Mutex
+	decisions []gateDecision
+}
+
+func (l *gateLog) Enabled(context.Context, slog.Level) bool { return true }
+
+func (l *gateLog) Handle(_ context.Context, r slog.Record) error {
+	if r.Message != gateGrantedMsg && r.Message != gateDeniedMsg {
+		return nil
+	}
+	d := gateDecision{granted: r.Message == gateGrantedMsg}
+	var resource, action string
+	r.Attrs(func(a slog.Attr) bool {
+		switch a.Key {
+		case "subject":
+			d.subject = a.Value.String()
+		case "resource":
+			resource = a.Value.String()
+		case "action":
+			action = a.Value.String()
+		}
+		return true
+	})
+	d.permission = resource + ":" + action
+	l.mu.Lock()
+	l.decisions = append(l.decisions, d)
+	l.mu.Unlock()
+	return nil
+}
+
+func (l *gateLog) WithAttrs([]slog.Attr) slog.Handler { return l }
+func (l *gateLog) WithGroup(string) slog.Handler      { return l }
+
+// take returns and clears the decisions recorded so far.
+func (l *gateLog) take() []gateDecision {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := l.decisions
+	l.decisions = nil
+	return out
+}
+
+// adminRoute is one method+path the published admin router answers.
+type adminRoute struct {
+	method string
+	path   string
+}
+
+func (r adminRoute) String() string { return r.method + " " + r.path }
+
+// adminAuthzFixture is an embedded, first-boot-seeded qrdb node with the ACME
+// admin plane composed on it exactly as xkmsd composes it.
+type adminAuthzFixture struct {
+	client *qrdbsdk.Client
+	router http.Handler
+	routes []adminRoute
+	log    *gateLog
+}
+
+// newAdminAuthzFixture builds the fixture. server.New runs qrdb's canonical
+// first boot, so the node already holds the system tenant, the built-in roles
+// and the administrator when finalizeAdminModule composes the admin plane.
+func newAdminAuthzFixture(t *testing.T) *adminAuthzFixture {
+	t.Helper()
+	original := adminRouterState.Load()
+	t.Cleanup(func() { adminRouterState.Store(original) })
+
+	srv, _ := newEmbeddedQRDBServer(t)
+	log := &gateLog{}
+	require.NoError(t, finalizeAdminModule(srv, nil, slog.New(log)))
+
+	published := adminRouterState.Load()
+	require.NotNil(t, published, "finalizeAdminModule must publish the admin router")
+	muxRouter, ok := (*published).(*mux.Router)
+	require.True(t, ok, "published admin router is %T, want *mux.Router", *published)
+
+	return &adminAuthzFixture{
+		client: srv.QRDBClient(),
+		router: muxRouter,
+		routes: walkAdminRoutes(t, muxRouter),
+		log:    log,
+	}
+}
+
+// pathVariable matches a gorilla/mux path variable such as {id}.
+var pathVariable = regexp.MustCompile(`\{[^}]+\}`)
+
+// walkAdminRoutes enumerates every method+path the router serves, filling
+// each path variable with a placeholder. Prefix-only subrouter entries carry
+// no methods and are not routes.
+func walkAdminRoutes(t *testing.T, router *mux.Router) []adminRoute {
+	t.Helper()
+	var routes []adminRoute
+	err := router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+		methods, err := route.GetMethods()
+		if err != nil {
+			return nil
+		}
+		tmpl, err := route.GetPathTemplate()
+		if err != nil {
+			return err
+		}
+		path := pathVariable.ReplaceAllString(tmpl, "authz-1069")
+		for _, m := range methods {
+			routes = append(routes, adminRoute{method: m, path: path})
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, routes, "the admin router registered no routes")
+	return routes
+}
+
+// systemRole resolves a built-in role of the system tenant.
+func systemRole(t *testing.T, client *qrdbsdk.Client, name string) *qrdbtransport.Role {
+	t.Helper()
+	r, err := client.Roles().GetRoleByName(context.Background(),
+		&qrdbtransport.GetRoleByNameRequest{TenantID: qrdbsdk.SystemTenantID, Name: name})
+	require.NoError(t, err, "first boot must seed the %q role", name)
+	return r
+}
+
+// firstBootAdmin returns the administrator first boot created: the system
+// tenant user holding the built-in Admin role.
+func firstBootAdmin(t *testing.T, client *qrdbsdk.Client) *qrdbtransport.User {
+	t.Helper()
+	adminRole := systemRole(t, client, qrdbsdk.RoleNameAdmin)
+	list, err := client.Users().ListUsers(context.Background(),
+		&qrdbtransport.ListUsersRequest{TenantID: qrdbsdk.SystemTenantID})
+	require.NoError(t, err)
+	for _, u := range list.Users {
+		if slices.Contains(u.RoleIDs, adminRole.ID) {
+			return u
+		}
+	}
+	t.Fatal("first boot created no system-tenant user holding the Admin role")
+	return nil
+}
+
+// newClientCert returns a self-signed client certificate for commonName. The
+// admin plane's authenticator resolves a certificate by its SPKI thumbprint;
+// chain verification is the TLS listener's job and is not exercised here.
+func newClientCert(t *testing.T, commonName string) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: commonName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert
+}
+
+// bindClientCert issues a client certificate and binds its SPKI thumbprint
+// to the user, as xkmsctl's enrollment does.
+func bindClientCert(t *testing.T, client *qrdbsdk.Client, u *qrdbtransport.User) *x509.Certificate {
+	t.Helper()
+	cert := newClientCert(t, u.Username)
+	_, err := client.Users().AddCertBinding(context.Background(), u.ID, qrdbsdk.ComputeSPKIThumbprint(cert), 0)
+	require.NoError(t, err)
+	return cert
+}
+
+// serveAdminRoute dispatches one request for route, presenting cert as the
+// verified mTLS peer certificate, and returns the status. A handler panic
+// behind a passed gate (ACME disabled; see the file comment) is contained to
+// this request and reported as 500.
+func serveAdminRoute(t *testing.T, router http.Handler, route adminRoute, cert *x509.Certificate) (status int) {
+	t.Helper()
+	req := httptest.NewRequest(route.method, route.path, nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	rec := httptest.NewRecorder()
+	defer func() {
+		if recover() != nil {
+			status = http.StatusInternalServerError
+		}
+	}()
+	router.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// TestAdminPlane_FirstBootAdminAuthorizedOnEveryRoute is the go-xkms#1069
+// regression: the first-boot administrator, presenting its bound client
+// certificate, passes the permission gate on every admin route.
+func TestAdminPlane_FirstBootAdminAuthorizedOnEveryRoute(t *testing.T) {
+	f := newAdminAuthzFixture(t)
+	admin := firstBootAdmin(t, f.client)
+	cert := bindClientCert(t, f.client, admin)
+
+	for _, route := range f.routes {
+		status := serveAdminRoute(t, f.router, route, cert)
+		decisions := f.log.take()
+
+		require.Len(t, decisions, 1, "%s: want exactly one gate decision", route)
+		assert.True(t, decisions[0].granted, "%s: gate denied %s to the first-boot administrator",
+			route, decisions[0].permission)
+		assert.Equal(t, admin.Username, decisions[0].subject, "%s: gate saw the wrong subject", route)
+		assert.NotEqual(t, http.StatusUnauthorized, status, "%s", route)
+		assert.NotEqual(t, http.StatusForbidden, status, "%s", route)
+	}
+}
+
+// TestAdminPlane_IdentityWithoutRoleRefusedOnEveryRoute proves the gate still
+// fails closed: an authenticated identity holding no role -- a real user with
+// no role assignment, and a certificate bound to no user at all -- is refused
+// on every admin route.
+func TestAdminPlane_IdentityWithoutRoleRefusedOnEveryRoute(t *testing.T) {
+	f := newAdminAuthzFixture(t)
+
+	roleless, err := f.client.Users().CreateUser(context.Background(), &qrdbtransport.CreateUserRequest{
+		Username:             "roleless-1069",
+		TenantID:             qrdbsdk.SystemTenantID,
+		WithoutEmailLoginKey: true,
+	})
+	require.NoError(t, err)
+	require.Empty(t, roleless.RoleIDs, "fixture: the user must hold no role")
+
+	cases := map[string]*x509.Certificate{
+		"user without a role": bindClientCert(t, f.client, roleless),
+		"unbound certificate": newClientCert(t, "nobody-1069"),
+	}
+	for name, cert := range cases {
+		t.Run(name, func(t *testing.T) {
+			for _, route := range f.routes {
+				status := serveAdminRoute(t, f.router, route, cert)
+				decisions := f.log.take()
+
+				assert.Equal(t, http.StatusForbidden, status, "%s", route)
+				require.Len(t, decisions, 1, "%s: want exactly one gate decision", route)
+				assert.False(t, decisions[0].granted, "%s: gate granted %s to an identity holding no role",
+					route, decisions[0].permission)
+			}
+		})
+	}
+}
+
+// TestAdminPlane_RoutePermissionsRegisteredAndGranted proves every
+// resource:action the admin route tables demand (learned from the gate, not
+// hand-listed) is registered in qrdb's permission registry and materialized
+// into the seeded Owner role, which holds every permission by default.
+//
+// The admin plane declares no permission of its own: every one it demands is
+// a qrdb-owned permission that qrdb registers and places on its built-in
+// roles. So this test also pins that ownership -- a route demanding a
+// permission qrdb does not know fails here rather than as a production 403,
+// and there is no xkms-side registration that could drift from the routes.
+// Placement on the other built-in roles is qrdb's decision, deliberately not
+// restated here (the Admin role, for one, does not hold roles:create,
+// roles:update or roles:delete).
+func TestAdminPlane_RoutePermissionsRegisteredAndGranted(t *testing.T) {
+	f := newAdminAuthzFixture(t)
+	cert := bindClientCert(t, f.client, firstBootAdmin(t, f.client))
+
+	demanded := map[string]bool{}
+	for _, route := range f.routes {
+		serveAdminRoute(t, f.router, route, cert)
+		for _, d := range f.log.take() {
+			demanded[d.permission] = true
+		}
+	}
+	require.NotEmpty(t, demanded)
+
+	owner := systemRole(t, f.client, qrdbsdk.RoleNameOwner)
+	for perm := range demanded {
+		assert.True(t, qrdbsdk.IsPermissionRegistered(qrdbsdk.Permission(perm)),
+			"admin route permission %s is not registered with qrdb", perm)
+		assert.True(t, slices.Contains(owner.Permissions, perm),
+			"seeded Owner role does not hold admin route permission %s", perm)
+	}
+}
