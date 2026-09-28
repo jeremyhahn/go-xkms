@@ -213,6 +213,20 @@ specific permission before assuming a non-Admin role holds it.
 | `ErrRoleClientRequired` | `pkg/auth/rolemembership.go:29` | `HoldsSystemRole` called without a role client: membership unknown, fail closed |
 | `*RoleResolutionError{TenantID, Role, Err}` | `pkg/auth/rolemembership.go:35` | the role store could not resolve the system role's identifier; surfaces from `PasswordUpdate` / `PasswordDelete` on a non-owner's shared entry |
 
+**The client never sees the error text above verbatim** (go-xkms#1103). Every
+transport's gate translates a denial into a fixed, generic message —
+`ErrAccessDenied`/`ErrAuthenticationRequired` on gRPC
+(`pkg/api/grpc/service.go`), `"Access denied: insufficient permissions"`/
+`"Authentication required"` on REST (`pkg/api/rest/rbac_middleware.go`) — and
+records the real cause server-side instead: gRPC's `Service.authorize` in the
+audit event's `Details["reason"]` (see Observability), REST's
+`RBACMiddleware` via `slog.Warn`. `pkg/api/grpc/server.go`'s authentication
+interceptors follow the same split one level up the stack, before an
+identity even reaches `authorize`: a rejected credential (a user-store or
+barrier failure, or why a certificate was refused) becomes the fixed
+`errAuthenticationFailed` ("authentication failed") on the wire, logged via
+`s.logger.Warn` server-side.
+
 MCP fails closed the same way REST does: `mcp.NewServer` refuses to start
 serving when RBAC is enabled without a usable authorizer, rather than
 silently running with RBAC believed-enabled-but-not-enforced (comment,
@@ -331,6 +345,10 @@ re-exported verbatim so a downstream consumer needs a single import.
 gRPC's `Service.authorize` (`pkg/api/grpc/service.go`) emits a structured
 `audit.Event{Subject, Action, Resource, ResourceID, Outcome, Details:
 {"transport": "grpc"}}` on **every** authorization decision, allow or deny.
+On deny, `Details["reason"]` additionally carries the denying error's text
+(the qrdb `PermissionDeniedError` or `ErrUnauthenticated`'s message) —
+that is the only place the reason is recorded; the client response carries
+only the fixed generic message (go-xkms#1103, see Error semantics).
 REST's `RBACMiddleware` and MCP's authorization gate log via structured
 `slog` (`Warn` on denial, `Debug` on grant) but do not construct an
 `audit.Event` record — verified: neither `pkg/api/rest/rbac_middleware.go`
