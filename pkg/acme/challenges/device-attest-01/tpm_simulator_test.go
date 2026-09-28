@@ -25,7 +25,6 @@ import (
 	"encoding/asn1"
 	"io"
 	"math/big"
-	"net"
 	"testing"
 
 	"github.com/google/go-tpm-tools/simulator"
@@ -228,7 +227,7 @@ func genuineTPMAttestation(t *testing.T, device *simulatedTPM, issuer *aikIssuer
 func verifyServed(t *testing.T, ca AttestationVerifier, object *AttestationObject) (*VerifiedAttestation, error) {
 	t.Helper()
 	host, port := serveAttestation(t, object)
-	return VerifyAttestation(net.DefaultResolver, ca, host, port, "token", tpmKeyAuth)
+	return VerifyAttestation(loopbackClient(), ca, host, port, "token", tpmKeyAuth)
 }
 
 func softwareCSR(t *testing.T) *x509.CertificateRequest {
@@ -297,7 +296,7 @@ func TestVerifyDoesNotAuthorizeTPMOnTheChallengeAlone(t *testing.T) {
 	issuer := newAIKIssuer(t, "AIK CA")
 	host, port := serveAttestation(t, genuineTPMAttestation(t, device, issuer))
 
-	err := Verify(net.DefaultResolver, anchoredTo(issuer), host, port, "token", tpmKeyAuth)
+	err := Verify(loopbackClient(), anchoredTo(issuer), host, port, "token", tpmKeyAuth)
 	assert.ErrorIs(t, err, ErrKeyBindingRequired)
 }
 

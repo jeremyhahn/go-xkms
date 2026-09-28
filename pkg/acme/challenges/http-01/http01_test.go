@@ -15,6 +15,7 @@ package http01
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -24,8 +25,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 )
+
+// loopbackClient returns a validation client that may reach the loopback
+// httptest servers these tests run against.
+func loopbackClient() *validation.Client {
+	return validation.NewClient(validation.Config{AllowPrivateTargets: true})
+}
 
 func TestVerify_Success(t *testing.T) {
 	expectedKeyAuth := "test-token.test-thumbprint"
@@ -47,9 +55,9 @@ func TestVerify_Success(t *testing.T) {
 		t.Fatalf("Failed to parse test server URL: %v", err)
 	}
 
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
+	err = Verify(client, host, port, "test-token", expectedKeyAuth)
 	if err != nil {
 		t.Errorf("Verify() failed: %v", err)
 	}
@@ -72,9 +80,9 @@ func TestVerify_KeyAuthMismatch(t *testing.T) {
 		t.Fatalf("Failed to parse test server URL: %v", err)
 	}
 
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
+	err = Verify(client, host, port, "test-token", expectedKeyAuth)
 	if err == nil {
 		t.Error("Verify() should have failed with key authorization mismatch")
 	}
@@ -98,9 +106,9 @@ func TestVerify_HTTPError(t *testing.T) {
 		t.Fatalf("Failed to parse test server URL: %v", err)
 	}
 
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
+	err = Verify(client, host, port, "test-token", expectedKeyAuth)
 	if err == nil {
 		t.Error("Verify() should have failed with HTTP error")
 	}
@@ -110,10 +118,10 @@ func TestVerify_HTTPError(t *testing.T) {
 }
 
 func TestVerify_NetworkError(t *testing.T) {
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
 	// Use an invalid host/port combination to trigger a network error
-	err := Verify(resolver, "invalid-host-that-does-not-exist", "9999", "test-token", "test-keyauth")
+	err := Verify(client, "invalid-host-that-does-not-exist", "9999", "test-token", "test-keyauth")
 	if err == nil {
 		t.Error("Verify() should have failed with network error")
 	}
@@ -135,9 +143,9 @@ func TestVerify_WithWhitespace(t *testing.T) {
 		t.Fatalf("Failed to parse test server URL: %v", err)
 	}
 
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
+	err = Verify(client, host, port, "test-token", expectedKeyAuth)
 	if err != nil {
 		t.Errorf("Verify() should handle whitespace trimming: %v", err)
 	}
@@ -196,12 +204,19 @@ func TestChallengeHandlerHTTPx_DifferentMethods(t *testing.T) {
 	}
 }
 
-func TestVerify_FollowRedirectsDisabled(t *testing.T) {
+// TestVerify_FollowsRedirect pins RFC 8555 section 8.3: the server follows
+// a redirect when dereferencing the challenge URL, and the redirect target's
+// key authorization is what is checked.
+func TestVerify_FollowsRedirect(t *testing.T) {
 	expectedKeyAuth := "test-token.test-thumbprint"
 
-	// Create a test server that redirects
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, expectedKeyAuth)
+	}))
+	defer target.Close()
+
 	redirectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://example.com", http.StatusMovedPermanently)
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusFound)
 	}))
 	defer redirectServer.Close()
 
@@ -210,14 +225,46 @@ func TestVerify_FollowRedirectsDisabled(t *testing.T) {
 		t.Fatalf("Failed to parse test server URL: %v", err)
 	}
 
-	resolver := net.DefaultResolver
-
-	err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
-	if err == nil {
-		t.Error("Verify() should fail on redirect (RFC 8555 compliance)")
+	if err := Verify(loopbackClient(), host, port, "test-token", expectedKeyAuth); err != nil {
+		t.Fatalf("Verify() through a redirect failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unexpected HTTP status") {
-		t.Errorf("Expected 'unexpected HTTP status' error, got: %v", err)
+}
+
+// TestVerify_RefusesLoopbackByDefault proves the production client -- no
+// AllowPrivateTargets -- will not fetch a challenge from a loopback target.
+func TestVerify_RefusesLoopbackByDefault(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("a reserved target must never be contacted")
+	}))
+	defer ts.Close()
+
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatalf("Failed to parse test server URL: %v", err)
+	}
+
+	err = Verify(validation.NewClient(validation.Config{}), host, port, "test-token", "keyauth")
+	var verr *validation.Error
+	if !errors.As(err, &verr) || verr.Kind != validation.KindTargetRefused {
+		t.Fatalf("Verify() error = %v, want a KindTargetRefused *validation.Error", err)
+	}
+}
+
+// TestVerify_RejectsInjectedDomain proves an identifier carrying URL syntax
+// is refused before any request is made.
+func TestVerify_RejectsInjectedDomain(t *testing.T) {
+	err := Verify(loopbackClient(), "169.254.169.254/latest/meta-data#", "80", "token", "keyauth")
+	var verr *validation.Error
+	if !errors.As(err, &verr) || verr.Kind != validation.KindInvalidTarget {
+		t.Fatalf("Verify() error = %v, want a KindInvalidTarget *validation.Error", err)
+	}
+}
+
+// TestVerify_NilClient proves a verifier wired without a client fails
+// closed.
+func TestVerify_NilClient(t *testing.T) {
+	if err := Verify(nil, "example.com", "80", "token", "keyauth"); !errors.Is(err, validation.ErrNilClient) {
+		t.Fatalf("Verify(nil client) error = %v, want ErrNilClient", err)
 	}
 }
 
@@ -232,9 +279,9 @@ func TestVerify_ReadBodyError(t *testing.T) {
 
 	host, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
 
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, host, port, "test-token", "expected-keyauth")
+	err := Verify(client, host, port, "test-token", "expected-keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when body reading fails due to content-length mismatch")
 	}
@@ -300,9 +347,9 @@ func TestVerify_HTTPStatusCodes(t *testing.T) {
 				t.Fatalf("Failed to parse URL: %v", err)
 			}
 
-			resolver := net.DefaultResolver
+			client := loopbackClient()
 
-			err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
+			err = Verify(client, host, port, "test-token", expectedKeyAuth)
 
 			if tc.shouldFail && err == nil {
 				t.Error("Expected Verify to fail but it succeeded")
@@ -340,7 +387,8 @@ func TestVerify_CustomResolver(t *testing.T) {
 		},
 	}
 
-	err = Verify(customResolver, host, port, "test-token", expectedKeyAuth)
+	client := validation.NewClient(validation.Config{AllowPrivateTargets: true, Resolver: customResolver})
+	err = Verify(client, host, port, "test-token", expectedKeyAuth)
 	if err != nil {
 		t.Errorf("Verify with custom resolver failed: %v", err)
 	}
@@ -359,9 +407,9 @@ func TestVerify_EmptyResponse(t *testing.T) {
 		t.Fatalf("Failed to parse URL: %v", err)
 	}
 
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err = Verify(resolver, host, port, "test-token", "expected-keyauth")
+	err = Verify(client, host, port, "test-token", "expected-keyauth")
 	if err == nil {
 		t.Error("Verify should fail with empty response")
 	}
@@ -414,11 +462,11 @@ func BenchmarkVerify(b *testing.B) {
 		b.Fatalf("Failed to parse test server URL: %v", err)
 	}
 
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = Verify(resolver, host, port, "bench-token", expectedKeyAuth)
+		_ = Verify(client, host, port, "bench-token", expectedKeyAuth)
 	}
 }
 

@@ -396,6 +396,69 @@ critical and holds only a `directoryName`, which `crypto/x509` reports in
 `UnhandledCriticalExtensions`; `checkAIKCertificate` reads it, so the
 `AttestationVerifier` must treat it as handled when it verifies the chain.
 
+## Challenge validation client
+
+Every verifier that contacts a target the ACME client named -- `http-01`,
+`enroll-01` (both its GET of the TCG-CSR-IDEVID and its POST of the
+credential challenge), and `device-attest-01` -- does so through one
+`*validation.Client` (`pkg/acme/challenges/validation/client.go:98`). The
+target is attacker-chosen: a `permanent-identifier` is an opaque string, and
+before go-xkms#1172 `enroll-01` spliced it into
+`fmt.Sprintf("http://%s:%s%s%s", ...)`, so a value like
+`169.254.169.254/latest/meta-data/#` chose the host, path and port of a
+server-side GET and POST, and the challenge's `error.detail` echoed back the
+status or dial error. `endorse-01` makes no request and does not use the
+client.
+
+What the client guarantees:
+
+- **The URL is built, not formatted.** `Target.URL`
+  (`client.go:154`) requires `policy.ValidateNetworkTarget`
+  (`pkg/acme/policy/validator.go:376`) -- a bare RFC 1123 hostname or a
+  canonical, zone-free IP literal -- and a TCP port, then assembles
+  `url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: path}`.
+  A host carrying `/ ? # @ :` or whitespace is `KindInvalidTarget` before any
+  request.
+- **Reserved addresses are refused at dial time.** Unless
+  `acme.challenges.allow_private_targets` is set, the `net.Dialer.Control`
+  hook `refuseReservedAddress` (`client.go:262`) rejects any connection whose
+  resolved address satisfies `policy.IsReservedIP`
+  (`validator.go:355`): loopback, RFC 1918 / RFC 4193 private, link-local
+  (169.254/16 including the cloud metadata address, fe80::/10), multicast,
+  unspecified, CGNAT 100.64/10, the TEST-NETs, 240/4, NAT64, 6to4 and the
+  other special-purpose ranges, with IPv4-mapped IPv6 unmapped first. The
+  hook sees the address actually being connected to, after resolution, so a
+  public-looking name that resolves (or re-resolves, DNS rebinding) to an
+  internal address is refused. `IsReservedIP` is the same classification the
+  `rejectReservedIPs` identifier policy uses.
+- **No proxy.** The transport's `Proxy` is nil (`client.go:121`), so the
+  address checked is the address dialed.
+- **Redirects.** `http-01` follows up to `MaxRedirects` (10) `http`/`https`
+  redirects, RFC 8555 section 8.3; each hop dials through the same transport,
+  so the dial-time check re-runs per hop (`redirectPolicy`, `client.go:242`).
+  `enroll-01` and `device-attest-01` refuse redirects.
+- **Bounded responses.** `readLimited` (`client.go:225`) reads through
+  `io.LimitReader(limit+1)` and refuses -- does not truncate -- a body over
+  the limit (`KindResponseTooLarge`). The default is `DefaultMaxResponseBytes`
+  (64 KiB, `client.go:64`); `enroll-01` raises it for the CSR fetch to the
+  base64url length of `tpm2.MaxIDevIDCSRSize`
+  (`pkg/acme/challenges/enroll-01/enroll01.go:136`), because the TCG-CSR
+  carries the boot event log.
+- **Generic client errors.** Failures are `*validation.Error`
+  (`pkg/acme/challenges/validation/errors.go`) whose `Kind` is a fixed,
+  client-safe category. `ChallengeHandler` logs and audits the full error but
+  returns only `challengeProblem(err)`
+  (`pkg/acme/server/handlers/challenge.go:47`): `connection` with
+  `"Challenge validation failed: <category>"` for a transport failure, and
+  `incorrectResponse` with `"Challenge validation failed"` for everything
+  else. A refused target reads exactly like any other connection failure, so
+  the challenge is not an oracle for which names resolve internally.
+
+One client is built per ACME server: `buildChallengeMap`
+(`cmd/xkmsd/acme.go:486`) for xkmsd, and a `TrustedCA` embedder builds its
+own with `NewACMEChallengeClient` (`sdk/go/acme`) and passes it to
+`http01.Verify` / `ACMEAttestationVerifiers(client, enroll, endorse)`.
+
 ## Circuit breakers and degradation
 
 `pkg/acme/server/circuitbreaker` is the one circuit breaker implementation
@@ -504,7 +567,7 @@ The mapping an implementer needs:
 | account does not exist | `accountDoesNotExist` | 400 |
 | identifier not allowed by policy | `rejectedIdentifier` | 403 |
 | CAA forbids issuance | `caa` | 403 |
-| challenge validation failed | `incorrectResponse` / `connection` / `dns` | 403 |
+| challenge validation failed (fixed detail, never the verifier's error; see "Challenge validation client") | `incorrectResponse` / `connection` / `dns` | 403 |
 | rate limit exceeded | `rateLimited` | 429 |
 | order not ready to finalize | `orderNotReady` | 403 |
 | CSR does not match the order (`dns`/`ip` orders) | `badCSR` | 400 |
@@ -583,6 +646,16 @@ identifier is still reachable at its real address. Off by default
 (`XKMS_ACME_ENROLLMENT_ALLOW_LOOPBACK_IDENTIFIER`): with the key false, a
 loopback identifier is refused with `ErrLoopbackIdentifierNotAllowed` before
 the challenge verifier runs, rather than being silently substituted (#140).
+
+`acme.challenges.allow_private_targets` (`ACMEChallengesConfig`,
+`pkg/config/acme.go:756`; `XKMS_ACME_CHALLENGES_ALLOW_PRIVATE_TARGETS`)
+lets the challenge validation client connect to reserved addresses --
+loopback, private, link-local, metadata. Off by default, which is the
+production setting. It exists for the test lanes, whose challenge targets
+are loopback or container-network addresses, and for lab deployments whose
+devices sit on a private network. With `allow_loopback_identifier` on, the
+substituted client IP is itself a private address in most labs, so both keys
+are normally set together there (go-xkms#1172).
 
 The xkmsd ACME listener (`acme.tls`, `ACMEConfig` / `ACMETLSConfig`,
 `pkg/config/acme.go`) always uses its own dedicated TLS certificate/key pair;

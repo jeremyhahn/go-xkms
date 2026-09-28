@@ -654,6 +654,18 @@ var PackIDevIDContent = tpm2.PackIDevIDContent
 // UnmarshalIDevIDCSR deserializes a TCG_CSR_IDEVID from a big-endian byte array.
 var UnmarshalIDevIDCSR = tpm2.UnmarshalIDevIDCSR
 
+// MaxIDevIDCSRSize is the largest packed TCG-CSR-IDEVID UnmarshalIDevIDCSR
+// accepts.
+const MaxIDevIDCSRSize = tpm2.MaxIDevIDCSRSize
+
+// IDevIDCSRTooLargeError is returned when a packed TCG-CSR-IDEVID exceeds
+// MaxIDevIDCSRSize.
+type IDevIDCSRTooLargeError = tpm2.IDevIDCSRTooLargeError
+
+// IDevIDCSRFieldSizeError is returned when a TCG-CSR-IDEVID length field
+// declares more bytes than remain in the message.
+type IDevIDCSRFieldSizeError = tpm2.IDevIDCSRFieldSizeError
+
 // UnpackIDevIDContent deserializes TCG_IDEVID_CONTENT from a bytes.Reader.
 var UnpackIDevIDContent = tpm2.UnpackIDevIDContent
 

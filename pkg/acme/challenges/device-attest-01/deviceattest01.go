@@ -14,20 +14,16 @@
 package deviceattest01
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"log/slog"
-	"net"
-	"net/http"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -247,7 +243,7 @@ type TrustedPlatformModule interface {
 // VerifiedAttestation.BindCSRKey has run against the key being certified.
 //
 // Parameters:
-//   - resolver: DNS resolver for domain name resolution
+//   - client: the shared challenge-validation client
 //   - ca: attestation verifier for the attestation object and x5c anchoring
 //   - domain: Domain/identifier to verify
 //   - port: HTTP port for challenge communication
@@ -259,11 +255,11 @@ type TrustedPlatformModule interface {
 //   - ErrKeyBindingRequired for a format whose binding needs the CSR
 //   - error if verification fails
 func Verify(
-	resolver *net.Resolver,
+	client *validation.Client,
 	ca AttestationVerifier,
 	domain, port, challengeToken, expectedKeyAuth string) error {
 
-	verified, err := VerifyAttestation(resolver, ca, domain, port, challengeToken, expectedKeyAuth)
+	verified, err := VerifyAttestation(client, ca, domain, port, challengeToken, expectedKeyAuth)
 	if err != nil {
 		return err
 	}
@@ -279,44 +275,20 @@ func Verify(
 // The returned value is NOT an authorization on its own for a format that
 // binds through the CSR: see VerifiedAttestation.
 func VerifyAttestation(
-	resolver *net.Resolver,
+	client *validation.Client,
 	ca AttestationVerifier,
 	domain, port, challengeToken, expectedKeyAuth string) (*VerifiedAttestation, error) {
 
-	// Retrieve attestation from client's challenge endpoint
-	endpoint := fmt.Sprintf("http://%s:%s%s%s", domain, port, challengePath, challengeToken)
-
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,
-				KeepAlive: 5 * time.Second,
-				Resolver:  resolver,
-			}).DialContext,
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
-	resp, err := client.Get(endpoint)
+	// Retrieve attestation from client's challenge endpoint through the
+	// shared challenge-validation client: a bare host only, no reserved
+	// target address, no redirects, and a capped response.
+	body, err := client.Get(context.Background(), validation.Target{
+		Host: domain,
+		Port: port,
+		Path: challengePath + challengeToken,
+	})
 	if err != nil {
-		return nil, caerrors.ConnectionFailureError("device-attest-01: failed to contact client: %v", err)
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			slog.Debug("device-attest-01: failed to close response body", slog.String("error", closeErr.Error()))
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, caerrors.ConnectionFailureError("device-attest-01: unexpected status code: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, caerrors.ConnectionFailureError("device-attest-01: failed to read response: %v", err)
+		return nil, err
 	}
 
 	// Decode the attestation request

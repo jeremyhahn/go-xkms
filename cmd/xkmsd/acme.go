@@ -479,13 +479,20 @@ func buildChallengeMap(
 	resilience config.ACMEResilienceConfig,
 	breakers *circuitbreaker.Manager,
 ) map[string]common.ChallengeVerifierFunc {
+	// One challenge-validation client serves every verifier that contacts a
+	// client-named target. It refuses reserved addresses unless
+	// acme.challenges.allow_private_targets is set.
+	client := acmesdk.NewACMEChallengeClient(acmesdk.ACMEChallengeClientConfig{
+		AllowPrivateTargets: cfg.AllowPrivateTargets,
+	})
+
 	m := make(map[string]common.ChallengeVerifierFunc, 2)
 	if cfg.HTTP01 {
 		m[common.ChallengeTypeHTTP01] = common.ChallengeVerifierFunc(func(
-			resolver *net.Resolver,
+			_ *net.Resolver,
 			_ common.CertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-			return http01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
+			return http01.Verify(client, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		})
 	}
 	if cfg.DNS01 {
@@ -499,7 +506,7 @@ func buildChallengeMap(
 	// The TPM attestation challenges (enroll-01/endorse-01) use the shared SDK
 	// wiring so every ACME server in the stack (xkmsd, quicbaas) enables them
 	// identically. The verifiers encapsulate the CA type-assertion + Verify.
-	for challengeType, verifier := range acmesdk.ACMEAttestationVerifiers(cfg.Enroll01, cfg.Endorse01) {
+	for challengeType, verifier := range acmesdk.ACMEAttestationVerifiers(client, cfg.Enroll01, cfg.Endorse01) {
 		m[challengeType] = verifier
 	}
 	return acmeserver.WrapChallengeVerifiers(m, resilience, breakers)

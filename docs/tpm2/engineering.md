@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/tpm2`
 
@@ -300,6 +300,27 @@ ECDSA) — changing it changes every verifier in `pkg/ca` and `pkg/acme`; and
 `idevid.pad=false` emits an unpadded structure the specification's typedef
 does not describe. `UnmarshalIDevIDCSR` accepts both structure versions so a
 CA on this release still enrolls a device on the previous one.
+
+**Parsing is bounded by the input, not by the length fields.** A
+TCG-CSR-IDEVID reaches the CA from the network -- the `enroll-01` challenge
+response and ACME finalize (`pkg/acme/server/handlers/order_finalize.go`) --
+and carries fifteen attacker-chosen 32-bit lengths.
+`UnmarshalIDevIDCSR` (`pkg/tpm2/idevid_csr.go:656`) refuses input over
+`MaxIDevIDCSRSize` (1 MiB, `idevid_csr.go:35`) with
+`*IDevIDCSRTooLargeError`, and every variable-length field, the signature
+included, is read by `readSizedField` (`idevid_csr.go:822`), which compares
+the declared length with the bytes remaining **before** `make` and returns
+`*IDevIDCSRFieldSizeError{Field, Declared, Remaining}` (it wraps
+`io.ErrUnexpectedEOF`) when it does not fit. `UnpackIDevIDContent`
+(`idevid_csr.go:702`) applies the same bound to a caller's reader.
+`UnpackIDevIDCSR` (`idevid_csr.go:849`), whose size fields and data slices
+are independent struct fields, copies through `copySizedField`
+(`idevid_csr.go:839`): a size larger than its slice is `store.ErrCorruptCopy`
+before the buffer is allocated. `ParseEventLog` bounds each event's data at
+`MaxEventDataSize` (`pkg/tpm2/eventlog.go:38`, `*EventDataTooLargeError`).
+`UnpackProdCaData` (`prodcadata.go`) already checked the sum of its four
+lengths against the input before allocating. Regression and fuzz coverage:
+`pkg/tpm2/idevid_csr_bounds_test.go` (`FuzzUnmarshalIDevIDCSR`), go-xkms#1172.
 
 ## Configuration
 
