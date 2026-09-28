@@ -1658,11 +1658,10 @@ func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
 	sudoUser := os.Getenv("SUDO_USER")
 	sudoUID := os.Getenv("SUDO_UID")
 
-	// Get socket path for dialog mode
+	// Socket path for dialog mode. cfg.SocketPath is always resolved by
+	// resolvedSocketPath, which under sudo already derives the invoking
+	// user's per-user socket (see ipc.DefaultSocketPath).
 	socketPath := cfg.SocketPath
-	if socketPath == "" && sudoUID != "" {
-		socketPath = fmt.Sprintf("/tmp/xkey-%s/xkey.sock", sudoUID)
-	}
 
 	// Get the current executable path for self-invocation
 	execPath, err := os.Executable()

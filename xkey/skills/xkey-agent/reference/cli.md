@@ -10,7 +10,7 @@ Generated from the xkey cobra command tree by `make skill-reference`; do not edi
 | `--config` | string |  | config file path (default: ~/.config/xkey/xkey.yaml) |
 | `--log-file` | string |  | log output file path (default: stderr) |
 | `--log-level` | string | info | log level (debug, info, warn, error) |
-| `--socket` | string |  | IPC socket path of the xkey instance to talk to (default: derived from XKEY_HOME, or $XDG_RUNTIME_DIR/xkey/xkey.sock) |
+| `--socket` | string |  | IPC socket path of the xkey instance to talk to (default: derived from XKEY_HOME, or $XDG_RUNTIME_DIR/xkey/xkey.sock, or a per-user fallback: $TMPDIR or ~/Library/Caches on macOS, ~/.xkey/run elsewhere; the directory must be mode 0700 and owned by you) |
 | `--xkmsd-url` | string |  | xkmsd server URL (unix:// or grpc://) - enables server mode for all commands |
 
 ## xkey agent

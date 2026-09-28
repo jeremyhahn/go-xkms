@@ -1364,7 +1364,7 @@ func newPasswordTypeTestCmd(t *testing.T, sockPath string) (*cobra.Command, *byt
 }
 
 func TestRunPasswordType_TypesThroughRunningDaemon(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "xkey-ipc.sock")
+	sockPath := filepath.Join(privateTempDir(t), "xkey-ipc.sock")
 	handler := &typePasswordHandler{resp: ipc.OKResponse(ipc.ActionTypedPassword)}
 
 	srv, err := ipc.NewServer(sockPath, handler, nil)
@@ -1389,7 +1389,7 @@ func TestRunPasswordType_TypesThroughRunningDaemon(t *testing.T) {
 }
 
 func TestRunPasswordType_DaemonReportsError(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "xkey-ipc.sock")
+	sockPath := filepath.Join(privateTempDir(t), "xkey-ipc.sock")
 	handler := &typePasswordHandler{resp: ipc.ErrorResponse("no such entry")}
 
 	srv, err := ipc.NewServer(sockPath, handler, nil)
@@ -1409,7 +1409,7 @@ func TestRunPasswordType_DaemonReportsError(t *testing.T) {
 }
 
 func TestRunPasswordType_DaemonNotRunning(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "no-daemon.sock")
+	sockPath := filepath.Join(privateTempDir(t), "no-daemon.sock")
 
 	cmd, _ := newPasswordTypeTestCmd(t, sockPath)
 	err := runPasswordType(cmd, []string{"github"})

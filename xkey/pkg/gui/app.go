@@ -3320,13 +3320,17 @@ func (a *App) startIPCServer() {
 	if err != nil {
 		// If another IPC server is already listening on the socket, it is
 		// likely a stale process from a previous unclean shutdown. Since
-		// the current GUI instance is authoritative, forcefully remove the
-		// socket and retry. Any clients connected to the old socket will
-		// get connection errors and reconnect to the new instance.
-		if errors.Is(err, ipc.ErrSocketCreateFailed) {
+		// the current GUI instance is authoritative, remove the socket and
+		// retry. Any clients connected to the old socket will get
+		// connection errors and reconnect to the new instance.
+		//
+		// ReclaimSocket removes the socket only if its directory is private
+		// to this user and the socket itself is owned by this user: a
+		// socket another user planted is refused, never taken over.
+		if errors.Is(err, ipc.ErrSocketInUse) {
 			a.log.Warn("IPC socket held by another process, taking over", "socket", socketPath)
-			if removeErr := os.Remove(socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-				a.log.Error("failed to remove stale IPC socket", "error", removeErr)
+			if reclaimErr := ipc.ReclaimSocket(socketPath); reclaimErr != nil {
+				a.log.Error("refusing to take over IPC socket", "socket", socketPath, "error", reclaimErr)
 				return
 			}
 			srv, err = ipc.NewServer(socketPath, handler, a.log)

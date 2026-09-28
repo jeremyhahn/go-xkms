@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +31,15 @@ import (
 
 // errFullHandler is the failure injected into the full handler.
 var errFullHandler = errors.New("handler unavailable")
+
+// assertNotEchoed checks that a client-facing handler error carries only the
+// fixed ErrHandlerFailed text: the handler's own detail is logged by the
+// server, never sent to the client (issue #1117).
+func assertNotEchoed(t *testing.T, got, detail string) {
+	t.Helper()
+	assert.Equal(t, ErrHandlerFailed.Error(), got)
+	assert.NotContains(t, got, detail)
+}
 
 // autofillCall records one dispatched autofill invocation and its arguments.
 type autofillCall struct {
@@ -156,7 +164,7 @@ func (h *fullHandler) HandleUnlock(pin string) (*UnlockResult, error) {
 func startFullTestServer(t *testing.T, handler Handler) (*Server, string) {
 	t.Helper()
 
-	socketPath := filepath.Join(t.TempDir(), "xkey.sock")
+	socketPath := filepath.Join(privateDir(t), "xkey.sock")
 	srv, err := NewServer(socketPath, handler, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
@@ -288,7 +296,7 @@ func TestServer_AutofillHandlerFailure(t *testing.T) {
 	})
 
 	assert.Equal(t, StatusError, resp.Status)
-	assert.Contains(t, resp.Error, errFullHandler.Error())
+	assertNotEchoed(t, resp.Error, errFullHandler.Error())
 	assert.Nil(t, resp.Autofill, "a failed handler must not return a partial result")
 }
 
@@ -419,7 +427,7 @@ func TestServer_PairingHandlerFailure(t *testing.T) {
 	})
 
 	assert.Equal(t, StatusError, resp.Status)
-	assert.Contains(t, resp.Error, errFullHandler.Error())
+	assertNotEchoed(t, resp.Error, errFullHandler.Error())
 }
 
 func TestServer_UnlockDispatch(t *testing.T) {
@@ -473,7 +481,7 @@ func TestServer_UnlockHandlerFailure(t *testing.T) {
 	})
 
 	assert.Equal(t, StatusError, resp.Status)
-	assert.Contains(t, resp.Error, errFullHandler.Error())
+	assertNotEchoed(t, resp.Error, errFullHandler.Error())
 	assert.Nil(t, resp.Unlock)
 }
 
@@ -514,7 +522,7 @@ func TestServer_OptionalHandlersNotImplemented(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			resp := roundTrip(t, socketPath, tt.msg)
 			assert.Equal(t, StatusError, resp.Status)
-			assert.Contains(t, resp.Error, tt.want)
+			assertNotEchoed(t, resp.Error, tt.want)
 		})
 	}
 }
@@ -637,27 +645,6 @@ func TestClient_ClosedRejectsAllCalls(t *testing.T) {
 	assert.Empty(t, handler.recorded(), "a closed client must not reach the server")
 }
 
-func TestEffectiveUIDAndDefaultSocketPath(t *testing.T) {
-	t.Run("uses XDG_RUNTIME_DIR when set", func(t *testing.T) {
-		t.Setenv("XDG_RUNTIME_DIR", "/run/user/4242")
-		assert.Equal(t, "/run/user/4242/xkey/xkey.sock", DefaultSocketPath())
-	})
-
-	t.Run("falls back to a uid-scoped tmp directory", func(t *testing.T) {
-		t.Setenv("XDG_RUNTIME_DIR", "")
-		path := DefaultSocketPath()
-		assert.Equal(t, filepath.Join("/tmp", "xkey-"+strconv.Itoa(effectiveUID()), "xkey.sock"), path)
-	})
-
-	t.Run("sudo uid is honoured only when running as root", func(t *testing.T) {
-		t.Setenv("SUDO_UID", "4242")
-		// effectiveUID only trusts SUDO_UID when the process is root; the
-		// result must always be a real uid on this system.
-		uid := effectiveUID()
-		assert.True(t, uid >= 0)
-	})
-}
-
 // TestDispatchAutofill_UnknownAction covers the dispatch table's defensive
 // fallback. Message validation normally rejects unknown actions first, so this
 // branch guards against a validator/dispatcher mismatch (an action accepted by
@@ -743,7 +730,7 @@ func TestServer_HandlerErrorsPropagatePerAction(t *testing.T) {
 
 			resp := roundTrip(t, socketPath, &Message{Type: MessageTypeAutofill, Autofill: payload})
 			assert.Equal(t, StatusError, resp.Status)
-			assert.Contains(t, resp.Error, errFullHandler.Error())
+			assertNotEchoed(t, resp.Error, errFullHandler.Error())
 			assert.Nil(t, resp.Autofill)
 		})
 	}
@@ -760,7 +747,7 @@ func TestServer_HandlerErrorsPropagatePerAction(t *testing.T) {
 
 			resp := roundTrip(t, socketPath, &Message{Type: MessageTypePairing, Pairing: payload})
 			assert.Equal(t, StatusError, resp.Status)
-			assert.Contains(t, resp.Error, errFullHandler.Error())
+			assertNotEchoed(t, resp.Error, errFullHandler.Error())
 			assert.Nil(t, resp.Pairing)
 		})
 	}
