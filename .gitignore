@@ -88,6 +88,13 @@ playwright-report/
 # compiled binaries never enter the module tree (module zip size limit)
 /acme-client
 /pkcs11-module
+# `go build` inside a cmd/ directory writes the binary next to its source
+/cmd/acme-client/acme-client
+/cmd/pkcs11-module/pkcs11-module
+/cmd/xkmsctl/xkmsctl
+/cmd/xkmsd/xkmsd
+/xkey/cmd/e2eprobe/e2eprobe
+/xkey/cmd/xkey/xkey
 /server
 /x25519-ecdh
 /aes
