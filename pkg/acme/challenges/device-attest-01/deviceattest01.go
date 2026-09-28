@@ -50,36 +50,28 @@ import (
 // - Support for TPM2_Quote operation
 // - Platform Configuration Registers (PCRs) for integrity measurement
 //
-// Challenge Flow:
-// 1. ACME server provides challenge token and nonce
-// 2. Client performs TPM2_Quote using challenge token as qualifying data
-// 3. Client creates attestation object in TPM format (per WebAuthn spec)
-// 4. Attestation object includes:
-//    - Format identifier ("tpm")
-//    - Attestation statement with signature, certInfo, pubArea
-//    - AK certificate in x5c array
-// 5. Client encodes attestation object in CBOR format
-// 6. Client submits attestation object to ACME server
-// 7. Server verifies:
-//    - Quote signature using AK public key
-//    - certInfo matches expected PCR values
-//    - Qualifying data matches challenge token
-//    - AK certificate chain is valid
+// Server-side verification of the "tpm" format is the WebAuthn Level 2
+// section 8.3 procedure, with the key authorization in place of
+// authenticatorData || clientDataHash (see TPMExtraData):
+//    - certInfo is a TPM2_Certify: TPM_GENERATED_VALUE, TPM_ST_ATTEST_CERTIFY
+//    - its attested Name is the Name of pubArea under pubArea's nameAlg
+//    - its extraData is the alg hash of the key authorization
+//    - sig verifies over certInfo under x5c[0], the AIK certificate, with alg
+//    - x5c chains to the configured roots, and x5c[0] meets section 8.3.1
+//    - at finalization, pubArea's key is the CSR's key (BindCSRKey)
 //
-// Security Properties:
-// - Proves platform integrity via PCR measurements
-// - Validates AK certificate chain
-// - Ensures quote freshness via nonce/challenge token
-// - Binds attestation to specific device state
+// The last step is why Verify refuses this format: the attested key is only
+// known to be the certified key once the CSR has been compared with pubArea,
+// and the CSR arrives one request after the challenge. See binding.go.
 //
 // Attestation Format:
 // The attestation object follows W3C WebAuthn TPM attestation format:
 // - ver: TPM version ("2.0")
-// - alg: Signature algorithm (RS256=-257, ES256=-7, EdDSA=-8)
-// - x5c: AK certificate chain (array of DER-encoded certificates)
-// - sig: TPM2_Quote signature over certInfo
-// - certInfo: TPMS_ATTEST structure from TPM2_Quote
-// - pubArea: TPM2B_PUBLIC structure of the attested key
+// - alg: COSE algorithm of sig (RS256=-257, ES256=-7, PS256=-37, ...)
+// - x5c: AIK certificate followed by its chain (DER-encoded certificates)
+// - sig: the AIK's signature over certInfo (WebAuthn L2 section 6.5.6 encoding)
+// - certInfo: TPMS_ATTEST structure from TPM2_Certify of the attested key
+// - pubArea: TPMT_PUBLIC structure of the attested key
 
 const (
 	challengePath = "/.well-known/acme-challenge/"
@@ -119,9 +111,9 @@ type AttestationStatement struct {
 	Ver      string        `json:"ver" cbor:"ver"`           // TPM version ("2.0")
 	Alg      int64         `json:"alg" cbor:"alg"`           // COSE algorithm identifier
 	X5c      []interface{} `json:"x5c" cbor:"x5c"`           // AK certificate chain
-	Sig      []byte        `json:"sig" cbor:"sig"`           // TPM2_Quote signature
-	CertInfo []byte        `json:"certInfo" cbor:"certInfo"` // TPMS_ATTEST structure
-	PubArea  []byte        `json:"pubArea" cbor:"pubArea"`   // TPM2B_PUBLIC structure
+	Sig      []byte        `json:"sig" cbor:"sig"`           // AIK signature over certInfo
+	CertInfo []byte        `json:"certInfo" cbor:"certInfo"` // TPMS_ATTEST structure (TPM2_Certify)
+	PubArea  []byte        `json:"pubArea" cbor:"pubArea"`   // TPMT_PUBLIC of the attested key
 }
 
 // AttestationRequest represents the client's attestation request
@@ -139,8 +131,17 @@ var (
 	// ErrInvalidAttestationObject is returned when the attestation object cannot be parsed
 	ErrInvalidAttestationObject = errors.New("device-attest-01: invalid attestation object")
 
-	// ErrQuoteVerificationFailed is returned when the TPM quote signature verification fails
-	ErrQuoteVerificationFailed = errors.New("device-attest-01: quote verification failed")
+	// ErrTPMAttestationInvalid is returned when a "tpm" attestation statement
+	// does not satisfy the WebAuthn Level 2 section 8.3 verification
+	// procedure: a missing or malformed field, an unknown alg, or a
+	// certification that does not verify. The cause is joined, so a caller can
+	// tell a quote offered as a certification from a certification of the
+	// wrong key or over the wrong challenge.
+	ErrTPMAttestationInvalid = errors.New("device-attest-01: tpm attestation statement invalid")
+
+	// ErrAIKCertificateInvalid is returned when x5c[0] does not meet the
+	// WebAuthn Level 2 section 8.3.1 TPM attestation certificate requirements.
+	ErrAIKCertificateInvalid = errors.New("device-attest-01: AIK certificate does not meet the tpm attestation requirements")
 
 	// ErrPCRMismatch is returned when PCR values don't match expected policy
 	ErrPCRMismatch = errors.New("device-attest-01: PCR values do not match policy")
@@ -172,17 +173,17 @@ var (
 	ErrNoVerifiedAttestation = errors.New("device-attest-01: no verified attestation to bind")
 )
 
-// AttestationVerifier verifies a device attestation object, its TPM quote, and
-// the attestation key's certificate chain.
+// AttestationVerifier is the server's policy over a device attestation: any
+// check it adds to the attestation object, and the trust anchors the
+// attestation certificate chain must reach.
 type AttestationVerifier interface {
 	// VerifyAttestationObject verifies an attestation object
 	// Returns error if verification fails
 	VerifyAttestationObject(obj *AttestationObject, expectedChallenge []byte) error
 
-	// VerifyQuote verifies a TPM quote signature
-	VerifyQuote(quote, signature []byte, pcrs map[uint][]byte) error
-
-	// VerifyAKCertificateChain verifies the AK certificate chain
+	// VerifyAKCertificateChain verifies the x5c chain, leaf first, against
+	// the configured roots. For the "tpm" format the leaf is the AIK
+	// certificate whose key signed certInfo.
 	VerifyAKCertificateChain(certs [][]byte) error
 }
 
@@ -231,29 +232,30 @@ type TrustedPlatformModule interface {
 // ACME challenge verifier is called in.
 //
 // This function implements server-side attestation verification:
-// 1. Retrieves attestation statement from client's challenge endpoint
-// 2. Decodes and parses the CBOR-encoded attestation object
-// 3. Verifies the TPM quote signature using AK public key
-// 4. Validates certInfo structure and PCR values against policy
-// 5. Checks qualifying data matches challenge token
-// 6. Verifies AK certificate chain to trusted root
+//  1. Retrieves attestation statement from client's challenge endpoint
+//  2. Decodes and parses the CBOR-encoded attestation object
+//  3. Anchors the x5c certificate chain to the configured roots
+//  4. Verifies the format's evidence: for "tpm", the WebAuthn Level 2 section
+//     8.3 TPM2_Certify procedure over the key authorization; for "dice", the
+//     nonce the alias certificate echoes
 //
-// IT REFUSES THE DICE FORMAT, and that refusal is the point rather than a gap.
-// A challenge verifier renders a verdict with no CSR in front of it -- the CSR
-// arrives at finalization, one request later -- and a DICE attestation that is
-// declared valid on the nonce alone has authorized issuance for a key nobody
-// compared against the device's. The evidence is public, so anyone holding a
-// genuine device's answer could then present it beside a CSR for a key they
-// generated in software. FormatDICE is verified through VerifyAttestation,
-// whose result cannot authorize anything until VerifiedAttestation.BindCSRKey
-// has run against the key being certified.
+// IT REFUSES EVERY FORMAT IT CAN VERIFY, and that refusal is the point rather
+// than a gap. Both "tpm" and "dice" attest a key -- pubArea, the alias
+// certificate's key -- and a challenge verifier renders its verdict with no
+// CSR in front of it: the CSR arrives at finalization, one request later. An
+// attestation declared valid here would have authorized issuance for a key
+// nobody compared against the device's. The evidence is public, so anyone
+// holding a genuine device's answer could then present it beside a CSR for a
+// key they generated in software. These formats are verified through
+// VerifyAttestation, whose result cannot authorize anything until
+// VerifiedAttestation.BindCSRKey has run against the key being certified.
 //
 // Parameters:
 //   - resolver: DNS resolver for domain name resolution
-//   - ca: attestation verifier for the attestation object, quote, and AK chain
+//   - ca: attestation verifier for the attestation object and x5c anchoring
 //   - domain: Domain/identifier to verify
 //   - port: HTTP port for challenge communication
-//   - challengeToken: Challenge token (used as qualifying data)
+//   - challengeToken: Challenge token, naming the endpoint to fetch
 //   - expectedKeyAuth: Expected key authorization
 //
 // Returns:
@@ -344,13 +346,16 @@ func VerifyAttestation(
 		return nil, caerrors.BadAttestationStatementError("device-attest-01: attestation verification failed: %v", err)
 	}
 
-	// Extract and verify certificate chain
+	// Extract and verify certificate chain. Every entry must be a certificate:
+	// dropping one that is not would anchor a chain other than the one sent.
 	if len(attestObj.AttStatement.X5c) > 0 {
-		var certChain [][]byte
+		certChain := make([][]byte, 0, len(attestObj.AttStatement.X5c))
 		for _, cert := range attestObj.AttStatement.X5c {
-			if certBytes, ok := cert.([]byte); ok {
-				certChain = append(certChain, certBytes)
+			certBytes, ok := cert.([]byte)
+			if !ok {
+				return nil, &errs.Detail{Err: ErrCertificateChainInvalid, Detail: "an x5c entry is not a byte string"}
 			}
+			certChain = append(certChain, certBytes)
 		}
 		if err := ca.VerifyAKCertificateChain(certChain); err != nil {
 			return nil, ErrCertificateChainInvalid
@@ -365,18 +370,15 @@ func VerifyAttestation(
 	if !supported {
 		return nil, ErrInvalidAttestationFormat
 	}
-	leaf, err := verifyEvidence(attestObj, ca, expectedKeyAuth)
+	verified, err := verifyEvidence(attestObj, ca, expectedKeyAuth)
 	if err != nil {
 		return nil, err
 	}
 
-	verified := &VerifiedAttestation{
-		Format:           format,
-		KeyAuthorization: expectedKeyAuth,
-		Leaf:             leaf,
-	}
-	if leaf != nil {
-		verified.LeafDER = leaf.Raw
+	verified.Format = format
+	verified.KeyAuthorization = expectedKeyAuth
+	if verified.Leaf != nil {
+		verified.LeafDER = verified.Leaf.Raw
 	}
 	return verified, nil
 }
@@ -385,13 +387,13 @@ func VerifyAttestation(
 // after the shared steps (format recognition, attestation object verification
 // and certificate chain anchoring) have run.
 //
-// It returns the leaf certificate its checks were made against, or nil for a
-// format that establishes nothing further about a leaf. The leaf is returned
-// rather than discarded because a format whose key binding needs the CSR
-// cannot complete at challenge time, and the certificate the binding is made
-// against must be the one that was actually verified -- not one re-fetched
-// later from a device that has moved on.
-type evidenceVerifier func(*AttestationObject, AttestationVerifier, string) (*x509.Certificate, error)
+// It returns the evidence its checks were made against -- the format-specific
+// fields of a VerifiedAttestation, which the caller completes. The evidence is
+// returned rather than discarded because a format whose key binding needs the
+// CSR cannot complete at challenge time, and the evidence the binding is made
+// against must be the evidence that was actually verified -- not evidence
+// re-fetched later from a device that has moved on.
+type evidenceVerifier func(*AttestationObject, AttestationVerifier, string) (*VerifiedAttestation, error)
 
 // evidenceVerifiers dispatches an attestation object to its format's evidence
 // check. It is also the single source of truth for which formats this server
@@ -400,28 +402,6 @@ type evidenceVerifier func(*AttestationObject, AttestationVerifier, string) (*x5
 var evidenceVerifiers = map[AttestationFormat]evidenceVerifier{
 	FormatTPM:  verifyTPMEvidence,
 	FormatDICE: verifyDICEEvidence,
-}
-
-// verifyTPMEvidence checks a TPM 2.0 quote and its qualifying data.
-//
-// It returns no leaf: this format's evidence is the quote, and the x5c chain
-// carries the attestation key's certificate rather than a certificate over the
-// key being enrolled.
-func verifyTPMEvidence(attestObj *AttestationObject, ca AttestationVerifier, expectedKeyAuth string) (*x509.Certificate, error) {
-	if err := ca.VerifyQuote(
-		attestObj.AttStatement.CertInfo,
-		attestObj.AttStatement.Sig,
-		nil, // PCR values would be extracted from certInfo in production
-	); err != nil {
-		return nil, ErrQuoteVerificationFailed
-	}
-
-	// Verify certInfo contains expected qualifying data
-	if !bytes.Contains(attestObj.AttStatement.CertInfo, []byte(expectedKeyAuth)) {
-		return nil, caerrors.BadAttestationStatementError("device-attest-01: qualifying data mismatch")
-	}
-
-	return nil, nil
 }
 
 // verifyDICEEvidence checks that the DICE leaf echoed this challenge.
@@ -433,7 +413,7 @@ func verifyTPMEvidence(attestObj *AttestationObject, ca AttestationVerifier, exp
 // mechanism TCG DICE Attestation Architecture section 6.1.4 defines. The
 // device has no clock, so this nonce is the whole of the freshness argument
 // and nothing here consults a timestamp.
-func verifyDICEEvidence(attestObj *AttestationObject, _ AttestationVerifier, expectedKeyAuth string) (*x509.Certificate, error) {
+func verifyDICEEvidence(attestObj *AttestationObject, _ AttestationVerifier, expectedKeyAuth string) (*VerifiedAttestation, error) {
 	if expectedKeyAuth == "" {
 		return nil, caerrors.BadAttestationStatementError("device-attest-01: no key authorization to bind the dice attestation to")
 	}
@@ -467,11 +447,11 @@ func verifyDICEEvidence(attestObj *AttestationObject, _ AttestationVerifier, exp
 	// was chosen for. Hashing is what Apple's device-attest-01 profile does,
 	// for the same reason.
 	//
-	// This is a DICE-format rule and not a change to FormatTPM, which still
-	// binds the raw key authorization into the quote's qualifying data. The two
-	// formats bind different bytes because their containers admit different
-	// sizes, and saying so here is cheaper than someone later discovering it
-	// while comparing the wrong two values.
+	// FormatTPM binds the key authorization through the certification's
+	// extraData instead, hashed with the statement's alg (TPMExtraData). For
+	// the SHA-256 algorithms the two digests coincide; they are defined
+	// separately because the DICE container fixes the hash and the WebAuthn
+	// "tpm" statement lets alg choose it.
 	want := sha256.Sum256([]byte(expectedKeyAuth))
 	if subtle.ConstantTimeCompare(challenge, want[:]) != 1 {
 		return nil, caerrors.BadAttestationStatementError("device-attest-01: dice attestation nonce mismatch")
@@ -482,7 +462,7 @@ func verifyDICEEvidence(attestObj *AttestationObject, _ AttestationVerifier, exp
 	// which key the certificate the CA is about to sign is for. That comparison
 	// is VerifiedAttestation.BindCSRKey and it needs the CSR, which arrives one
 	// request later.
-	return leaf, nil
+	return &VerifiedAttestation{Leaf: leaf}, nil
 }
 
 // DICENonce is the value a DICE attester places in its eat_nonce claim for a

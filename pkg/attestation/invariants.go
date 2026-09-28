@@ -14,6 +14,7 @@
 package attestation
 
 import (
+	"crypto"
 	"crypto/subtle"
 	"crypto/x509"
 	"errors"
@@ -22,6 +23,7 @@ import (
 
 	android "github.com/jeremyhahn/go-xkms/pkg/attestation/android"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
@@ -77,7 +79,9 @@ type Evidence struct {
 	Leaf *x509.Certificate
 
 	// SubjectSPKI is the DER SubjectPublicKeyInfo of the key being certified.
-	// Used by formats whose leaf certifies that key directly.
+	// Used by formats whose leaf certifies that key directly, and by TPM
+	// formats whose CSR arrives separately from the certification: when set,
+	// the key in SubjectPublicArea must be this key.
 	SubjectSPKI []byte
 
 	// AttesterPublicArea and SubjectPublicArea are marshalled TPMT_PUBLIC.
@@ -86,13 +90,26 @@ type Evidence struct {
 	AttesterPublicArea []byte
 	SubjectPublicArea  []byte
 
+	// AttesterCertificate identifies the attesting key by its X.509
+	// certificate, for TPM carriers that deliver it that way instead of as a
+	// public area -- the WebAuthn "tpm" attestation statement's aikCert. Set
+	// it or AttesterPublicArea, never both. Its chain must already be anchored.
+	AttesterCertificate *x509.Certificate
+
 	// CertifyInfo and CertifySignature are the TPM2_Certify structure binding
 	// the subject key to the attesting key, and the raw signature over it.
 	CertifyInfo      []byte
 	CertifySignature []byte
 
+	// CertifySignatureAlgorithm is the algorithm CertifySignature was made
+	// with when the attester is identified by AttesterCertificate. The
+	// signature is then that algorithm's ordinary encoding rather than a value
+	// whose scheme a public area declares.
+	CertifySignatureAlgorithm x509.SignatureAlgorithm
+
 	// ExpectedChallenge is the nonce this CA issued, or nil when freshness is
-	// established elsewhere in the ceremony.
+	// established elsewhere in the ceremony. For a TPM2_Certify it is compared
+	// with the certification's extraData.
 	//
 	// The TCG ceremony sets this nil deliberately: its certification is made
 	// when the IDevID is created, long before a CA picks a challenge, and
@@ -115,6 +132,11 @@ type formatProfile struct {
 	// bindTPMCertify: the attesting key certified the subject through a
 	// TPM2_Certify structure, so binding is a Name comparison.
 	bindTPMCertify bool
+
+	// challengeInCertify: the challenge, when one was issued, is the
+	// TPM2_Certify extraData. It is read out of the signed certification by
+	// the binding check rather than out of a leaf certificate.
+	challengeInCertify bool
 
 	// challenge extracts the caller-supplied nonce, or nil when the format has
 	// no challenge mechanism.
@@ -141,8 +163,9 @@ var profiles = map[string]formatProfile{
 		note:      "the leaf certifies the slot key; PIV attestation is static and carries no challenge",
 	},
 	FormatTPM2: {
-		bindTPMCertify: true,
-		note:           "the attesting key certifies the subject key through TPM2_Certify",
+		bindTPMCertify:     true,
+		challengeInCertify: true,
+		note:               "the attesting key certifies the subject key through TPM2_Certify; a challenge, when issued, is its extraData",
 	},
 	FormatDICE: {
 		bindLeafSPKI: true,
@@ -208,6 +231,12 @@ func VerifyInvariants(ev *Evidence) error {
 
 // verifyFreshness checks the attested challenge where the format carries one.
 func verifyFreshness(profile formatProfile, ev *Evidence) error {
+	if profile.challengeInCertify {
+		// The challenge is inside the signed certification, so it is checked
+		// with it, in verifyTPMCertifyBinding. Checking it here would mean
+		// reading a field out of bytes whose signature has not yet verified.
+		return nil
+	}
 	if profile.challenge == nil {
 		// The format has no challenge mechanism. A caller that supplied one
 		// anyway is confused about what this evidence can prove, and silently
@@ -255,25 +284,104 @@ func verifyBinding(profile formatProfile, ev *Evidence, format string) error {
 		return nil
 
 	case profile.bindTPMCertify:
-		if len(ev.AttesterPublicArea) == 0 || len(ev.SubjectPublicArea) == 0 {
-			// The TPM Name is a digest over the public *area* and cannot be
-			// derived from a public key, so a carrier that omits the areas
-			// cannot express this binding at all.
-			return fmt.Errorf("%w: %s binds through TPM2_Certify, which needs both public areas",
-				ErrBindingUnavailable, format)
-		}
-		if _, err := tpm2.VerifyCertifyRaw(
-			ev.CertifyInfo,
-			ev.CertifySignature,
-			ev.AttesterPublicArea,
-			ev.SubjectPublicArea,
-			nil,
-		); err != nil {
-			return fmt.Errorf("%w: %v", ErrKeyNotBound, err)
-		}
-		return nil
+		return verifyTPMCertifyBinding(ev, format)
 
 	default:
 		return fmt.Errorf("%w: %s declares no binding mechanism", ErrUnknownFormat, format)
 	}
+}
+
+// verifyTPMCertifyBinding checks a TPM2_Certify binding: that the attesting key
+// certified the subject public area, that the certification carries the
+// challenge when one was issued, and -- when the key being certified arrived
+// separately, as a CSR does -- that it is the key the TPM certified.
+//
+// The attesting key is identified one of two ways, depending on the carrier:
+// by its public area (TCG-CSR-IDEVID), or by its X.509 certificate (the
+// WebAuthn "tpm" statement's aikCert). Either reaches the same pkg/tpm2
+// verifier, so the two carriers cannot disagree about what a certification
+// proves.
+func verifyTPMCertifyBinding(ev *Evidence, format string) error {
+	if len(ev.SubjectPublicArea) == 0 {
+		// The TPM Name is a digest over the public *area* and cannot be
+		// derived from a public key, so a carrier that omits the area cannot
+		// express this binding at all.
+		return &errs.Detail{
+			Err:    ErrBindingUnavailable,
+			Detail: format + " binds through TPM2_Certify, which needs the subject public area",
+		}
+	}
+
+	opts := &tpm2.VerifyCertifyOptions{}
+	if len(ev.ExpectedChallenge) > 0 {
+		opts.ExpectedQualifyingData = ev.ExpectedChallenge
+	}
+
+	var err error
+	switch {
+	case len(ev.AttesterPublicArea) > 0 && ev.AttesterCertificate != nil:
+		// Two identities for one attester is a caller unsure which was
+		// verified. Picking one would leave the other believed checked.
+		return &errs.Detail{
+			Err:    ErrBindingUnavailable,
+			Detail: format + " attester is identified by both a public area and a certificate",
+		}
+	case len(ev.AttesterPublicArea) > 0:
+		_, err = tpm2.VerifyCertifyRaw(
+			ev.CertifyInfo,
+			ev.CertifySignature,
+			ev.AttesterPublicArea,
+			ev.SubjectPublicArea,
+			opts,
+		)
+	case ev.AttesterCertificate != nil:
+		_, err = tpm2.VerifyCertifyByCertificate(
+			ev.CertifyInfo,
+			ev.CertifySignature,
+			ev.CertifySignatureAlgorithm,
+			ev.AttesterCertificate,
+			ev.SubjectPublicArea,
+			opts,
+		)
+	default:
+		return &errs.Detail{
+			Err:    ErrBindingUnavailable,
+			Detail: format + " binds through TPM2_Certify, which needs the attester's public area or certificate",
+		}
+	}
+	if err != nil {
+		if errors.Is(err, tpm2.ErrCertifyQualifyingDataMismatch) {
+			return &errs.Joined{Lead: ErrStaleEvidence, Cause: err}
+		}
+		return &errs.Joined{Lead: ErrKeyNotBound, Cause: err}
+	}
+
+	if len(ev.SubjectSPKI) == 0 {
+		// The subject public area is itself the key being certified, as in a
+		// TCG-CSR-IDEVID, which packs it beside the certification.
+		return nil
+	}
+	return verifyCertifiedKeyIsSubjectKey(ev.SubjectPublicArea, ev.SubjectSPKI)
+}
+
+// verifyCertifiedKeyIsSubjectKey checks that the key a TPM certified, read
+// from its public area, is the key in subjectSPKI.
+//
+// The comparison is of keys, not encodings: a SubjectPublicKeyInfo can express
+// one key more than one way, and refusing a CSR over its encoding would be
+// refusing the right key.
+func verifyCertifiedKeyIsSubjectKey(subjectPublicArea, subjectSPKI []byte) error {
+	certified, err := tpm2.ExtractPublicKeyFromTPMPublic(subjectPublicArea)
+	if err != nil {
+		return &errs.Joined{Lead: ErrKeyNotBound, Detail: "the certified public area holds no usable key", Cause: err}
+	}
+	requested, err := x509.ParsePKIXPublicKey(subjectSPKI)
+	if err != nil {
+		return &errs.Joined{Lead: ErrKeyNotBound, Detail: "the subject key does not parse", Cause: err}
+	}
+	comparable, ok := certified.(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !comparable.Equal(requested) {
+		return ErrKeyNotBound
+	}
+	return nil
 }

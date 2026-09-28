@@ -33,26 +33,14 @@ import (
 
 type mockCA struct {
 	verifyError         error
-	verifyQuoteError    error
 	verifyAKChainError  error
-	verifyQuoteCount    int
 	verifyAKChainCount  int
-	verifyQuoteCalled   bool
 	verifyAKChainCalled bool
 }
 
 func (m *mockCA) VerifyAttestationObject(obj *AttestationObject, expectedChallenge []byte) error {
 	if m.verifyError != nil {
 		return m.verifyError
-	}
-	return nil
-}
-
-func (m *mockCA) VerifyQuote(quote, signature []byte, pcrs map[uint][]byte) error {
-	m.verifyQuoteCalled = true
-	m.verifyQuoteCount++
-	if m.verifyQuoteError != nil {
-		return m.verifyQuoteError
 	}
 	return nil
 }
@@ -152,63 +140,6 @@ func TestVerify_NetworkError(t *testing.T) {
 	// Verify it's a network error, not a CA verification error
 	if !strings.Contains(err.Error(), "failed to contact client") {
 		t.Errorf("Expected network error, got: %v", err)
-	}
-}
-
-func TestVerify_Success(t *testing.T) {
-	// Create valid attestation object
-	expectedKeyAuth := "test-keyauth"
-	obj := &AttestationObject{
-		Format: "tpm",
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      -257,
-			X5c:      []interface{}{[]byte("cert-bytes")},
-			Sig:      []byte("signature"),
-			CertInfo: []byte("cert-info-with-test-keyauth-included"),
-			PubArea:  []byte("pub-area"),
-		},
-	}
-
-	cborData, err := cbor.Marshal(obj)
-	if err != nil {
-		t.Fatalf("Failed to marshal test object: %v", err)
-	}
-
-	attestReq := AttestationRequest{AttStmt: cborData}
-	jsonData, err := json.Marshal(attestReq)
-	if err != nil {
-		t.Fatalf("Failed to marshal request: %v", err)
-	}
-
-	// Create mock HTTP server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(jsonData)
-	}))
-	defer server.Close()
-
-	// Parse server URL to get host and port
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{}
-	resolver := net.DefaultResolver
-
-	err = Verify(resolver, ca, host, port, "token", expectedKeyAuth)
-	if err != nil {
-		t.Fatalf("Verify() should succeed: %v", err)
-	}
-
-	// Verify CA methods were called
-	if !ca.verifyQuoteCalled {
-		t.Error("Verify() should call VerifyQuote")
-	}
-
-	if !ca.verifyAKChainCalled {
-		t.Error("Verify() should call VerifyAKCertificateChain")
 	}
 }
 
@@ -411,224 +342,6 @@ func TestVerify_AKCertificateChainError(t *testing.T) {
 	err := Verify(resolver, ca, host, port, "token", "keyauth")
 	if err != ErrCertificateChainInvalid {
 		t.Errorf("Expected ErrCertificateChainInvalid, got: %v", err)
-	}
-}
-
-func TestVerify_QuoteVerificationError(t *testing.T) {
-	// Create valid attestation object
-	obj := &AttestationObject{
-		Format: "tpm",
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      -257,
-			X5c:      []interface{}{[]byte("cert-bytes")},
-			Sig:      []byte("signature"),
-			CertInfo: []byte("cert-info-with-keyauth"),
-			PubArea:  []byte("pub-area"),
-		},
-	}
-
-	cborData, _ := cbor.Marshal(obj)
-	attestReq := AttestationRequest{AttStmt: cborData}
-	jsonData, _ := json.Marshal(attestReq)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(jsonData)
-	}))
-	defer server.Close()
-
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{
-		verifyQuoteError: errors.New("Quote verification failed"),
-	}
-	resolver := net.DefaultResolver
-
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
-	if err != ErrQuoteVerificationFailed {
-		t.Errorf("Expected ErrQuoteVerificationFailed, got: %v", err)
-	}
-}
-
-func TestVerify_QualifyingDataMismatch(t *testing.T) {
-	// Create attestation object without the expected keyauth in certInfo
-	obj := &AttestationObject{
-		Format: "tpm",
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      -257,
-			X5c:      []interface{}{[]byte("cert-bytes")},
-			Sig:      []byte("signature"),
-			CertInfo: []byte("cert-info-without-expected-data"),
-			PubArea:  []byte("pub-area"),
-		},
-	}
-
-	cborData, _ := cbor.Marshal(obj)
-	attestReq := AttestationRequest{AttStmt: cborData}
-	jsonData, _ := json.Marshal(attestReq)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(jsonData)
-	}))
-	defer server.Close()
-
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{}
-	resolver := net.DefaultResolver
-
-	err := Verify(resolver, ca, host, port, "token", "expected-keyauth-value")
-	if err == nil {
-		t.Error("Verify() should fail when qualifying data doesn't match")
-	}
-
-	if !strings.Contains(err.Error(), "qualifying data mismatch") {
-		t.Errorf("Expected qualifying data mismatch error, got: %v", err)
-	}
-}
-
-func TestVerify_EmptyCertificateChain(t *testing.T) {
-	// Create attestation object without X5c
-	expectedKeyAuth := "test-keyauth"
-	obj := &AttestationObject{
-		Format: "tpm",
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      -257,
-			X5c:      []interface{}{}, // Empty certificate chain
-			Sig:      []byte("signature"),
-			CertInfo: []byte("cert-info-with-test-keyauth"),
-			PubArea:  []byte("pub-area"),
-		},
-	}
-
-	cborData, _ := cbor.Marshal(obj)
-	attestReq := AttestationRequest{AttStmt: cborData}
-	jsonData, _ := json.Marshal(attestReq)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(jsonData)
-	}))
-	defer server.Close()
-
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{}
-	resolver := net.DefaultResolver
-
-	err := Verify(resolver, ca, host, port, "token", expectedKeyAuth)
-	if err != nil {
-		t.Fatalf("Verify() should succeed with empty cert chain: %v", err)
-	}
-
-	// Verify AK chain was NOT called since X5c is empty
-	if ca.verifyAKChainCalled {
-		t.Error("Verify() should not call VerifyAKCertificateChain when X5c is empty")
-	}
-}
-
-func TestVerify_NonByteCertificate(t *testing.T) {
-	// Create attestation with non-byte certificate (should be skipped)
-	expectedKeyAuth := "test-keyauth"
-	obj := &AttestationObject{
-		Format: "tpm",
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      -257,
-			X5c:      []interface{}{"not-a-byte-slice", 12345}, // Invalid cert types
-			Sig:      []byte("signature"),
-			CertInfo: []byte("cert-info-with-test-keyauth"),
-			PubArea:  []byte("pub-area"),
-		},
-	}
-
-	cborData, _ := cbor.Marshal(obj)
-	attestReq := AttestationRequest{AttStmt: cborData}
-	jsonData, _ := json.Marshal(attestReq)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(jsonData)
-	}))
-	defer server.Close()
-
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{}
-	resolver := net.DefaultResolver
-
-	err := Verify(resolver, ca, host, port, "token", expectedKeyAuth)
-	if err != nil {
-		t.Fatalf("Verify() should succeed even with non-byte certs: %v", err)
-	}
-
-	// Verify AK chain WAS called but with empty cert chain (non-byte certs filtered out)
-	if !ca.verifyAKChainCalled {
-		t.Error("Verify() should call VerifyAKCertificateChain even if no valid byte certs extracted")
-	}
-}
-
-func TestVerify_MultipleValidCerts(t *testing.T) {
-	// Create attestation with multiple valid certificates
-	expectedKeyAuth := "test-keyauth"
-	obj := &AttestationObject{
-		Format: "tpm",
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      -257,
-			X5c:      []interface{}{[]byte("cert-1"), []byte("cert-2"), []byte("cert-3")},
-			Sig:      []byte("signature"),
-			CertInfo: []byte("cert-info-with-test-keyauth"),
-			PubArea:  []byte("pub-area"),
-		},
-	}
-
-	cborData, _ := cbor.Marshal(obj)
-	attestReq := AttestationRequest{AttStmt: cborData}
-	jsonData, _ := json.Marshal(attestReq)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(jsonData)
-	}))
-	defer server.Close()
-
-	serverURL := strings.TrimPrefix(server.URL, "http://")
-	parts := strings.Split(serverURL, ":")
-	host := parts[0]
-	port := parts[1]
-
-	ca := &mockCA{}
-	resolver := net.DefaultResolver
-
-	err := Verify(resolver, ca, host, port, "token", expectedKeyAuth)
-	if err != nil {
-		t.Fatalf("Verify() should succeed with multiple certs: %v", err)
-	}
-
-	if !ca.verifyAKChainCalled {
-		t.Error("Verify() should call VerifyAKCertificateChain with multiple certs")
-	}
-
-	// Verify it was called exactly once
-	if ca.verifyAKChainCount != 1 {
-		t.Errorf("Expected VerifyAKCertificateChain to be called once, got %d", ca.verifyAKChainCount)
 	}
 }
 
@@ -2716,14 +2429,16 @@ func TestErrorVariables(t *testing.T) {
 	assert.NotNil(t, ErrInvalidKeyAlgorithm)
 	assert.NotNil(t, ErrInvalidAttestationFormat)
 	assert.NotNil(t, ErrInvalidAttestationObject)
-	assert.NotNil(t, ErrQuoteVerificationFailed)
+	assert.NotNil(t, ErrTPMAttestationInvalid)
+	assert.NotNil(t, ErrAIKCertificateInvalid)
 	assert.NotNil(t, ErrPCRMismatch)
 	assert.NotNil(t, ErrCertificateChainInvalid)
 
 	assert.Contains(t, ErrInvalidKeyAlgorithm.Error(), "invalid key algorithm")
 	assert.Contains(t, ErrInvalidAttestationFormat.Error(), "invalid attestation format")
 	assert.Contains(t, ErrInvalidAttestationObject.Error(), "invalid attestation object")
-	assert.Contains(t, ErrQuoteVerificationFailed.Error(), "quote verification failed")
+	assert.Contains(t, ErrTPMAttestationInvalid.Error(), "tpm attestation statement invalid")
+	assert.Contains(t, ErrAIKCertificateInvalid.Error(), "AIK certificate")
 	assert.Contains(t, ErrPCRMismatch.Error(), "PCR values do not match")
 	assert.Contains(t, ErrCertificateChainInvalid.Error(), "certificate chain invalid")
 }

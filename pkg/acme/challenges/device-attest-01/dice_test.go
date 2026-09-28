@@ -118,8 +118,10 @@ func TestVerifyDICEEvidenceAcceptsAMatchingNonce(t *testing.T) {
 	// DICENonce is exported precisely so a device, a provisioning tool and this
 	// test agree on it rather than each hashing something slightly different.
 	object := diceAttestationObject(t, DICENonce(diceKeyAuth))
-	leaf, err := verifyDICEEvidence(object, nil, diceKeyAuth)
+	verified, err := verifyDICEEvidence(object, nil, diceKeyAuth)
 	require.NoError(t, err)
+	require.NotNil(t, verified)
+	leaf := verified.Leaf
 
 	// The verified leaf comes back rather than being discarded: the nonce says
 	// the device answered this challenge and nothing about which key the CA is
@@ -252,9 +254,9 @@ func TestVerifyDICEEvidenceRejectsBadInput(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			leaf, err := verifyDICEEvidence(test.object(t), nil, test.keyAuth)
+			verified, err := verifyDICEEvidence(test.object(t), nil, test.keyAuth)
 			require.Error(t, err, "malformed dice evidence was accepted")
-			assert.Nil(t, leaf, "a refused attestation must carry no leaf forward")
+			assert.Nil(t, verified, "a refused attestation must carry no leaf forward")
 		})
 	}
 }

@@ -1,6 +1,6 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
@@ -115,6 +115,15 @@ this identifier.
 | the CSR carries a DNS or IP SAN, or an email/URI SAN | `rejectedIdentifier` (401) / `malformed` (400) unless that exact name is one of the order's authorized `dns`/`ip` identifiers |
 
 As with endorse-01, each is refused before the order moves to `processing`.
+
+A `device-attest-01` finalize is also refused unless the CSR's key is the key
+the challenge attested: for the `tpm` format, the key in the statement's
+`pubArea`, which the AIK in `x5c[0]` certified with TPM2_Certify over the key
+authorization (WebAuthn Level 2 §8.3). The attestation object is unchanged on
+the wire — `fmt: "tpm"`, `attStmt: {ver, alg, x5c, sig, certInfo, pubArea}` —
+but `certInfo` must be a TPM2_Certify, not a TPM2_Quote, and `extraData` must
+be `TPMExtraData(alg, keyAuthorization)`. See
+[engineering.md](engineering.md#device-attest-01-key-binding).
 `endorse-01` is the one exception: its permanent identifier is the EK public
 key being certified, authorized when the endorse-01 challenge itself was
 validated, so its finalize CSR is never checked against the order's

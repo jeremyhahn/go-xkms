@@ -18,12 +18,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/subtle"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"math/big"
 
 	"github.com/google/go-tpm/tpm2"
 
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -170,6 +172,87 @@ func VerifyCertify(
 		return nil, err
 	}
 
+	return verifyCertifiedObject(certifyInfo, subject, attesterKey, opts)
+}
+
+// VerifyCertifyByCertificate is [VerifyCertify] for an attesting key known by
+// its X.509 certificate rather than by its TPM public area.
+//
+// The WebAuthn "tpm" attestation statement (WebAuthn Level 2 section 8.3)
+// carries the evidence this way: the attesting key is the AIK certified by
+// x5c[0], and sig is that key's ordinary signature over certInfo made with
+// the COSE algorithm the statement names -- ASN.1 DER for ECDSA, the raw
+// value for RSA (WebAuthn Level 2 section 6.5.6) -- not a TPMT_SIGNATURE.
+// signatureAlgorithm is that algorithm in its X.509 form.
+//
+// With no public area there is no restricted attribute to read, so check 3 of
+// [VerifyCertify] is made against what the certificate asserts instead: an
+// attesting key certificate must carry tcg-kp-AIKCertificate (2.23.133.8.3),
+// which is its issuer's statement that the key is a TPM attestation key and so
+// restricted. That statement only means something once the certificate is
+// known to descend from a root the caller trusts, so anchoring the chain is
+// the caller's job and must happen first.
+//
+// The remaining checks -- TPM_GENERATED_VALUE, the certification type, the
+// Name binding and the qualifying data -- are exactly those [VerifyCertify]
+// makes.
+func VerifyCertifyByCertificate(
+	certifyInfo []byte,
+	signature []byte,
+	signatureAlgorithm x509.SignatureAlgorithm,
+	attester *x509.Certificate,
+	subjectPub []byte,
+	opts *VerifyCertifyOptions,
+) (*CertifyVerification, error) {
+	if opts == nil {
+		opts = &VerifyCertifyOptions{}
+	}
+	if len(certifyInfo) == 0 || len(signature) == 0 {
+		return nil, &errs.Detail{Err: ErrCertifyMalformed, Detail: "certifyInfo and signature are both required"}
+	}
+	if attester == nil {
+		return nil, &errs.Detail{Err: ErrCertifyMalformed, Detail: "no attesting key certificate"}
+	}
+
+	subject, err := tpm2.Unmarshal[tpm2.TPMTPublic](subjectPub)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrCertifyMalformed, Detail: "subject public area", Cause: err}
+	}
+
+	if !opts.AllowUnrestrictedAttester && !certifiesAttestationKey(attester) {
+		return nil, &errs.Detail{
+			Err:    ErrCertifyAttesterUnrestricted,
+			Detail: "the attesting key certificate does not carry tcg-kp-AIKCertificate (2.23.133.8.3)",
+		}
+	}
+
+	if err := attester.CheckSignature(signatureAlgorithm, certifyInfo, signature); err != nil {
+		return nil, &errs.Joined{Lead: ErrCertifySignature, Cause: err}
+	}
+
+	return verifyCertifiedObject(certifyInfo, subject, attester.PublicKey, opts)
+}
+
+// certifiesAttestationKey reports whether a certificate's extended key usage
+// names its key a TCG attestation key.
+func certifiesAttestationKey(cert *x509.Certificate) bool {
+	for _, usage := range cert.UnknownExtKeyUsage {
+		if usage.Equal(certstore.OIDTCGKpAIKCertificate) {
+			return true
+		}
+	}
+	return false
+}
+
+// verifyCertifiedObject makes the checks on a TPM2_Certify structure that
+// hold whichever way its attesting key was identified. It must only be called
+// once the signature over certifyInfo has verified.
+func verifyCertifiedObject(
+	certifyInfo []byte,
+	subject *tpm2.TPMTPublic,
+	attesterKey crypto.PublicKey,
+	opts *VerifyCertifyOptions,
+) (*CertifyVerification, error) {
 	// Parsed only after the signature holds: until then these are bytes the
 	// caller chose, and reading fields out of them would be reading attacker
 	// input. go-tpm checks the magic itself for the `gotpm:"check"` field, and
