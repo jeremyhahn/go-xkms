@@ -104,7 +104,7 @@ once, to the externally visible base.
 
 - **The admin plane resolves every mTLS caller to its qrdb user before the
   permission gate runs.** xkmsd builds the admin plane's authenticator with
-  the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:159-167`), so the
+  the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:175-178`), so the
   identity `PermissionGate.Authorize` (`pkg/acme/admin/authz.go:83`) hands to
   qrdb's RBAC carries the user's tenant and **qrdb role IDs** — every role,
   verbatim (`pkg/auth/qrdb_userstore.go:50-59`, `pkg/auth/mtls.go:220`).
@@ -120,6 +120,31 @@ once, to the externally visible base.
   a subset of the read/list permissions (qrdb's placement, not restated by
   xkms). `cmd/xkmsd/admin_authz_test.go` walks the published router
   and pins all three properties against a first-boot-seeded node.
+- **The admin plane degrades typed, never panics, and never falls back to an
+  allow-all authorizer (go-xkms#1075).** `finalizeAdminModule` always
+  constructs the admin service, even with ACME disabled: `acme.CA()` and
+  `acme.StorageFactory()` are nil for a nil `*acmeServer`
+  (`cmd/xkmsd/admin.go:154-160`). Every `AdminService` method that reads
+  the CA or storage factory — certificate, account, and order
+  listing/lookup, revoke, and `GetStatus`/`GetStats`
+  (`pkg/acme/admin/service.go`) — guards its dependency and returns the
+  typed `ErrCANotConfigured` / `ErrStorageNotConfigured`
+  (`pkg/acme/admin/types.go:40-54`) instead of dereferencing a nil
+  interface. `Handlers`' `writeUnavailableIfNotConfigured`
+  (`pkg/acme/admin/handlers.go:567`) answers both with RFC 7807's 501 Not
+  Implemented, the same shape `ListAuditLogs` already used for a missing
+  audit trail. Separately, a nil qrdb client (`srv.QRDBClient() == nil`,
+  reachable only if the admin surface is composed without the embedded
+  qrdb node it always ships with) is not a degrade-and-continue case:
+  `finalizeAdminModule` refuses construction with the typed
+  `ErrAdminQRDBClientRequired` (`cmd/xkmsd/admin.go:79,146-151`) rather
+  than building `auth.NewAuthorizer(nil)`, which is legitimate
+  "RBAC disabled: allow all" elsewhere in the stack but has no such
+  meaning on a plane whose `PermissionGate` has no optional-authorization
+  mode. `cmd/xkmsd/admin_nildeps_test.go` walks the published router with
+  ACME disabled and proves every route answers without panicking, that
+  the CA/storage-backed routes answer 501, and that a nil qrdb client is
+  refused at construction.
 - **`PermissionGate.Authorize` (`pkg/acme/admin/authz.go:93`) is the one place
   that logs an admin authorization denial, for every transport.** REST
   (`Wrap`, `authz.go:142-156`), gRPC (`UnaryAuthorizationInterceptor`,
