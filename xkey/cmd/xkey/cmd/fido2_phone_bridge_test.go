@@ -824,8 +824,7 @@ func TestConnectXKMSdBridge_Disabled(t *testing.T) {
 // checked, and connectXKMSdBridge returns, before cmd is dereferenced at all.
 // A nil cmd here would panic if that ordering ever regressed.
 func TestConnectXKMSdBridge_DisabledIgnoresNilCmd(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(func() { viper.Reset() })
+	resetViperForTest(t)
 
 	viper.Set("xkmsd.enabled", false)
 
