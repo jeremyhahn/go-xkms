@@ -1724,22 +1724,34 @@ func TestBackend_GenerateRSAWithSize_KeySizeNormalization(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
+	// go-xkms#1204: a keySize below types.RSAKeySize2048 is refused by name
+	// before this method ever looks at b.pool, so those cases now surface a
+	// *types.RSAKeySizeError instead of falling through to ErrNotInitialized.
+	// Zero still selects the RSAKeySize2048 default and reaches the
+	// pool-initialized check exactly as before.
 	tests := []struct {
-		name            string
-		keySize         int
-		shouldNormalize bool
+		name        string
+		keySize     int
+		wantSizeErr bool
 	}{
-		{"zero key size", 0, true},
-		{"too small key size", 256, true},
+		{"zero key size selects default", 0, false},
+		{"too small key size is refused", 256, true},
 		{"valid 2048", 2048, false},
 		{"valid 4096", 4096, false},
-		{"negative key size", -1, true},
+		{"negative key size is refused", -1, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Should return ErrNotInitialized because context is nil
 			_, err := b.GenerateRSAWithSize(attrs, tt.keySize)
+			if tt.wantSizeErr {
+				var sizeErr *types.RSAKeySizeError
+				if !errors.As(err, &sizeErr) {
+					t.Errorf("GenerateRSAWithSize() error = %v, want a *types.RSAKeySizeError", err)
+				}
+				return
+			}
+			// Should return ErrNotInitialized because context is nil.
 			if err != ErrNotInitialized {
 				t.Errorf("GenerateRSAWithSize() error = %v, want %v", err, ErrNotInitialized)
 			}

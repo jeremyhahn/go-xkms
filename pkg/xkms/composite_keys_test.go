@@ -114,6 +114,73 @@ func TestCompositeKeyStore_GenerateRSA(t *testing.T) {
 	}
 }
 
+// TestCompositeKeyStore_GenerateRSA_RefusesUndersizedModulus proves
+// compositeBackend.GenerateRSA -- the one Backend implementation every
+// caller in this module reaches, including the REST and gRPC handlers that
+// build their own KeyAttributes independently of the RPC service's own
+// buildKeyAttributes -- refuses an explicitly requested RSA modulus below
+// types.RSAKeySize2048 before the underlying backend is ever asked to
+// generate a key (go-xkms#1204).
+func TestCompositeKeyStore_GenerateRSA_RefusesUndersizedModulus(t *testing.T) {
+	ks, mockBackend, _ := setupKeyStore()
+	defer func() { _ = ks.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:           "undersized-rsa",
+		KeyType:      backend.KEY_TYPE_TLS,
+		StoreType:    backend.STORE_SW,
+		KeyAlgorithm: x509.RSA,
+		RSAAttributes: &types.RSAAttributes{
+			KeySize: 1024,
+		},
+	}
+
+	key, err := ks.GenerateRSA(context.Background(), attrs)
+	if err == nil {
+		t.Fatal("expected an error for a 1024-bit RSA request, got nil")
+	}
+	if key != nil {
+		t.Errorf("expected no key on refusal, got %v", key)
+	}
+	if !errors.Is(err, xkms.ErrInvalidKeyAttributes) {
+		t.Errorf("expected ErrInvalidKeyAttributes, got: %v", err)
+	}
+
+	// The refusal must happen before the backend is ever reached: a 1024-bit
+	// key must never be handed to a concrete backend to generate.
+	if len(mockBackend.GenerateKeyCalls) != 0 {
+		t.Errorf("expected 0 GenerateKey calls, got %d", len(mockBackend.GenerateKeyCalls))
+	}
+}
+
+// TestCompositeKeyStore_GenerateRSA_ZeroKeySizeStillDefaults proves the
+// go-xkms#1204 guard does not reinterpret "no size named" (RSAAttributes
+// with KeySize zero) as "too small": that case is left to the concrete
+// backend, which supplies types.RSAKeySize2048 itself.
+func TestCompositeKeyStore_GenerateRSA_ZeroKeySizeStillDefaults(t *testing.T) {
+	ks, mockBackend, _ := setupKeyStore()
+	defer func() { _ = ks.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:            "default-size-rsa",
+		KeyType:       backend.KEY_TYPE_TLS,
+		StoreType:     backend.STORE_SW,
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{},
+	}
+
+	key, err := ks.GenerateRSA(context.Background(), attrs)
+	if err != nil {
+		t.Fatalf("unexpected error for an unspecified key size: %v", err)
+	}
+	if key == nil {
+		t.Fatal("expected key, got nil")
+	}
+	if len(mockBackend.GenerateKeyCalls) != 1 {
+		t.Errorf("expected 1 GenerateKey call, got %d", len(mockBackend.GenerateKeyCalls))
+	}
+}
+
 func TestCompositeKeyStore_GenerateECDSA(t *testing.T) {
 	tests := []struct {
 		name        string

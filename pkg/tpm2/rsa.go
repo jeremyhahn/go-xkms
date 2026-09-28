@@ -60,6 +60,18 @@ func (tpm *TPM2) CreateRSA(
 		spec.KeyBits = uint16(keyAttrs.RSAAttributes.KeySize)
 	}
 
+	// A modulus size a caller actually named is held to the project's
+	// RSAKeySize2048 floor here, before it ever reaches KeyTemplate: that
+	// function's own definedRSAKeyBits check answers a different question
+	// (which sizes TPM 2.0 defines at all, which still includes 1024) and
+	// is a device-capability concern, not this project's minimum-strength
+	// policy. Leaving RSAKeySize2048 unenforced here let a caller obtain a
+	// 1024-bit key straight from CreateRSA, independent of whatever the RPC
+	// service validated (go-xkms#1204).
+	if err := types.ValidateRSAKeySize(int(spec.KeyBits)); err != nil {
+		return nil, err
+	}
+
 	if keyAttrs.KeyType == types.KeyTypeEncryption {
 		// A decryption key carries the decrypt attribute rather than
 		// signEncrypt, and stays unrestricted so TPM2_RSA_Decrypt may be used
