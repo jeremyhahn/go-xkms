@@ -192,17 +192,25 @@ func (c *Config) ToTPMConfig() *pkgtpm2.Config {
 		// PlatformSRK is the storage parent this backend actually uses for
 		// its own key operations (see Backend.srkAttrs in backend.go): xkms's
 		// own purposes, which do not need to follow the TCG-standard SSRK
-		// workflow. PlatformPolicy is left false here -- this backend seals
-		// and signs with a plain password-authorized Platform SRK, not a
-		// PCR-policy-bound one; a caller that wants platform-policy binding
-		// configures it through TPMConfig. Its owner-hierarchy authorization
-		// is likewise never taken from this struct, for the same reason SSRK
-		// carries none: duplicating a hierarchy-auth field here risks it
-		// being wired to the wrong key, which is exactly the defect this
-		// config previously had (a HierarchyAuth field that fed SSRK instead
-		// of PlatformSRK).
+		// workflow. PlatformPolicy is always true here, matching
+		// pkgtpm2.DefaultConfig and the PSRK enrollment path
+		// (pkg/tpm2/platform_keystore.go's Initialize/EnrollPlatformSRK):
+		// the design settled in go-xkms#677 is authValue = user PIN,
+		// authPolicy = platform PCR policy, unconditionally, with no plain
+		// password-only shape. Deriving both this backend's autodetected
+		// Platform SRK and the enrolled one from the same PlatformPolicy:
+		// true is what go-xkms#997 fixes -- a backend built with the old
+		// PlatformPolicy: false here created a Platform SRK with no
+		// AuthPolicy baked into its template, which disagreed with the one
+		// enrollment created and left the two unable to interoperate. Its
+		// owner-hierarchy authorization is likewise never taken from this
+		// struct, for the same reason SSRK carries none: duplicating a
+		// hierarchy-auth field here risks it being wired to the wrong key,
+		// which is exactly the defect this config previously had (a
+		// HierarchyAuth field that fed SSRK instead of PlatformSRK).
 		PlatformSRK: &pkgtpm2.PlatformSRKConfig{
-			SRKHandle: platformSRKHandle,
+			SRKHandle:      platformSRKHandle,
+			PlatformPolicy: true,
 		},
 	}
 
