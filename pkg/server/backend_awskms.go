@@ -45,6 +45,7 @@ func (s *Server) initAWSKMSBackend() error {
 		AccessKeyID:     s.config.Backends.AWSKMS.AccessKey,
 		SecretAccessKey: string(secretAccessKey),
 		Endpoint:        s.config.Backends.AWSKMS.Endpoint,
+		KeyID:           s.config.Backends.AWSKMS.KeyID,
 		KeyStorage:      storage,
 	})
 	if err != nil {

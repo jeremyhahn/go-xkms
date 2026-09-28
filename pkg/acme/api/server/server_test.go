@@ -554,7 +554,6 @@ func TestHandleMCP_ListCertificates(t *testing.T) {
 	mockAdmin := &mockAdminService{
 		certificates: []*admin.CertificateInfo{
 			{
-				ID:           1,
 				SerialNumber: "123456",
 				Subject:      "CN=test",
 				NotBefore:    now,
@@ -596,7 +595,6 @@ func TestHandleMCP_GetCertificate(t *testing.T) {
 	now := time.Now()
 	mockAdmin := &mockAdminService{
 		certificate: &admin.CertificateInfo{
-			ID:           1,
 			SerialNumber: "123456",
 			Subject:      "CN=test",
 			NotBefore:    now,
@@ -1788,7 +1786,6 @@ func TestGRPC_ListCertificates(t *testing.T) {
 	mockAdmin := &mockAdminService{
 		certificates: []*admin.CertificateInfo{
 			{
-				ID:           1,
 				SerialNumber: "123456",
 				Subject:      "CN=test",
 				NotBefore:    now,
@@ -1815,7 +1812,6 @@ func TestGRPC_GetCertificate(t *testing.T) {
 	now := time.Now()
 	mockAdmin := &mockAdminService{
 		certificate: &admin.CertificateInfo{
-			ID:           1,
 			SerialNumber: "123456",
 			Subject:      "CN=test",
 			NotBefore:    now,
@@ -2158,7 +2154,6 @@ func TestConvertAdminCertToProto_Nil(t *testing.T) {
 func TestConvertAdminCertToProto_Full(t *testing.T) {
 	now := time.Now()
 	cert := &admin.CertificateInfo{
-		ID:           1,
 		SerialNumber: "123456",
 		Subject:      "CN=test",
 		Issuer:       "CN=issuer",

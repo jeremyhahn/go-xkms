@@ -1,6 +1,6 @@
 # DICE Device Identity — API
 
-> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `dice-device-identity` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Transports
 
@@ -51,8 +51,10 @@ Verification is therefore two phases:
 | `VerifyAttestation(...) (*VerifiedAttestation, error)` | challenge | Format, chain anchoring, freshness. Returns the **verified leaf**. |
 | `(*VerifiedAttestation).BindCSRKey(csr)` | finalization | The CSR self-signature verifies, and its SubjectPublicKeyInfo is the alias certificate's, through `attestation.VerifyInvariants`. |
 
-`Verify` — the one-shot `ChallengeVerifierFunc` shape — still serves `tpm` and
-**refuses** `dice` with `ErrKeyBindingRequired`. A server wiring this challenge
+`Verify` — the one-shot `ChallengeVerifierFunc` shape — **refuses** `dice`
+with `ErrKeyBindingRequired`, and `tpm` too: its evidence certifies `pubArea`,
+which is bound to the CSR the same way (see
+[acme-issuance/engineering.md](../acme-issuance/engineering.md#device-attest-01-key-binding)). A server wiring this challenge
 holds the `VerifiedAttestation` between the two requests and runs `BindCSRKey`
 before issuance; there is no path on which the nonce alone authorizes a
 certificate.

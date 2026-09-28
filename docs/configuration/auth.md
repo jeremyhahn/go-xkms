@@ -115,6 +115,13 @@ auth:
 For production mTLS, use `require_and_verify`. The `client_cas` list must
 include every CA that signs client certificates.
 
+When `storage.backend: qrdb` (the unified API server), this list keeps
+verifying client certificates after the embedded CA composes: the client-CA
+pool served post-composition is the union of `ca_file`/`client_cas` and the
+CA's own bundle, not the bundle alone
+(`Server.unifiedClientCAPool`, `pkg/server/unified_tls.go:196`, called from
+`upgradeUnifiedTLSCert`, `pkg/server/unified_tls.go:157`).
+
 ### RBAC requires the qrdb storage backend
 
 Roles and permissions live in the qrdb identity plane, and that plane exists

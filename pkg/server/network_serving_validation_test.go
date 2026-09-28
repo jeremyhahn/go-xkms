@@ -65,3 +65,37 @@ func TestConfig_Validate_NetworkServingWithQRDBAndTLSIsValid(t *testing.T) {
 
 	assert.NoError(t, cfg.Validate())
 }
+
+// TestConfig_Validate_LoopbackDesktopExemptsNetworkServingRequirements
+// proves the go-xkms#666 exemption: a config with Protocols.REST enabled
+// (as pkg/server/loopback.desktopConfig forces for the 127.0.0.1-only
+// desktop listener) but neither qrdb storage nor TLS passes Validate when
+// LoopbackDesktop is set, exactly as NetworkServing's doc comment says the
+// loopback desktop engine is exempt.
+func TestConfig_Validate_LoopbackDesktopExemptsNetworkServingRequirements(t *testing.T) {
+	cfg := createMinimalConfig(t)
+	cfg.Protocols.REST = true
+	cfg.Storage.Backend = "file"
+	cfg.TLS.Enabled = false
+	cfg.LoopbackDesktop = true
+
+	assert.NoError(t, cfg.Validate())
+}
+
+// TestConfig_Validate_LoopbackDesktopDoesNotExemptOtherRESTConfigs proves
+// the exemption is scoped to LoopbackDesktop alone: a config with
+// Protocols.REST enabled, no TLS, and LoopbackDesktop left unset (the shape
+// of a real network deployment that merely forgot TLS) is still refused --
+// setting LoopbackDesktop is not a general escape hatch from the
+// storage.backend "qrdb" + tls.enabled requirement.
+func TestConfig_Validate_LoopbackDesktopDoesNotExemptOtherRESTConfigs(t *testing.T) {
+	cfg := createMinimalConfig(t)
+	cfg.Protocols.REST = true
+	cfg.Storage.Backend = "file"
+	cfg.TLS.Enabled = false
+	// cfg.LoopbackDesktop intentionally left false.
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `storage.backend "qrdb"`)
+}

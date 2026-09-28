@@ -185,7 +185,7 @@ func TestAuditTrail_RevocationIsRecordedAndQueryable(t *testing.T) {
 	// real state change, not an attempt.
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
-	updated, err := certificateDAO.Get(req.Context(), acmeCert.ID)
+	updated, err := certificateDAO.Get(req.Context(), acmeCert.EntityID())
 	require.NoError(t, err)
 	require.Equal(t, common.StatusRevoked, updated.Status)
 
@@ -324,7 +324,7 @@ func TestAuditTrail_UnauthorizedRevocationIsRecorded(t *testing.T) {
 
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
-	unchanged, err := certificateDAO.Get(req.Context(), acmeCert.ID)
+	unchanged, err := certificateDAO.Get(req.Context(), acmeCert.EntityID())
 	require.NoError(t, err)
 	require.NotEqual(t, common.StatusRevoked, unchanged.Status)
 
@@ -529,7 +529,7 @@ func TestAuditTrail_WriteFailureFailsSecurityOperation(t *testing.T) {
 
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
-	updated, err := certificateDAO.Get(req.Context(), acmeCert.ID)
+	updated, err := certificateDAO.Get(req.Context(), acmeCert.EntityID())
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusRevoked, updated.Status)
 }

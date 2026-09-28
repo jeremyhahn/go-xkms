@@ -86,25 +86,6 @@ func TestVerifyDoesNotAuthorizeDICEOnTheNonceAlone(t *testing.T) {
 	assert.ErrorIs(t, err, ErrKeyBindingRequired)
 }
 
-// The TPM format is unaffected: its evidence is a quote over qualifying data
-// and there is no leaf certifying an enrolled key, so there is nothing further
-// to bind and the one-shot verifier still answers.
-func TestVerifyStillAnswersForTPM(t *testing.T) {
-	object := &AttestationObject{
-		Format: string(FormatTPM),
-		AttStatement: AttestationStatement{
-			Ver:      "2.0",
-			Alg:      -257,
-			X5c:      []interface{}{[]byte("cert-bytes")},
-			Sig:      []byte("signature"),
-			CertInfo: []byte("cert-info-with-test-keyauth-included"),
-		},
-	}
-	host, port := serveAttestation(t, object)
-
-	require.NoError(t, Verify(net.DefaultResolver, &mockCA{}, host, port, "token", "test-keyauth"))
-}
-
 // TestBindCSRKeyRefusesACSRForAnUnrelatedKey is the binding itself, on the
 // path an order takes: verify the device's evidence, then meet the CSR.
 func TestBindCSRKeyRefusesACSRForAnUnrelatedKey(t *testing.T) {
@@ -156,9 +137,9 @@ func TestBindCSRKeyRefusesWhatItCannotCheck(t *testing.T) {
 		assert.ErrorIs(t, verified.BindCSRKey(nil), ErrKeyBindingUnavailable)
 	})
 
-	t.Run("a format that binds elsewhere", func(t *testing.T) {
-		tpm := &VerifiedAttestation{Format: FormatTPM, KeyAuthorization: diceKeyAuth}
-		assert.ErrorIs(t, tpm.BindCSRKey(csrFor(t, aliasKey)), ErrKeyBindingUnavailable)
+	t.Run("a format with no csr binding", func(t *testing.T) {
+		unknown := &VerifiedAttestation{Format: AttestationFormat("apple"), KeyAuthorization: diceKeyAuth, Leaf: leaf}
+		assert.ErrorIs(t, unknown.BindCSRKey(csrFor(t, aliasKey)), ErrKeyBindingUnavailable)
 	})
 
 	t.Run("no verified leaf", func(t *testing.T) {

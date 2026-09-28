@@ -1,6 +1,6 @@
 # Password Vault — Architecture
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## The problem
 
@@ -21,7 +21,6 @@ The core is a set of small, composable stores rather than one type:
 |---|---|
 | Entry model | `entity.go`, `types.go` |
 | Base store | `store.go` |
-| Encrypted store | `encrypted_store.go` |
 | DAO-backed store | `dao_store.go` |
 | Scoping | `scope.go`, `scoped_store.go` |
 | Teams | `team_entity.go`, `team_store.go`, `team_scoped_store.go` |
@@ -29,7 +28,12 @@ The core is a set of small, composable stores rather than one type:
 | Access control | `access.go` |
 | Expiry | `expiry.go` |
 | Generation | `generator.go` |
-| Validation, migration, errors | `validation.go`, `migration.go`, `errors.go` |
+| Validation, errors | `validation.go`, `errors.go` |
+
+`pkg/staticpw` has no encrypted-store or PIN-store decorator file: `store.go`'s
+`BackendStore` is the only concrete `Store`, and encryption at rest is a
+property of the `storage.Backend` it is given (see "Component boundaries"
+below), not a wrapper type in this package.
 
 The design decision that shapes everything else is **access mode**
 (`access.go:23`):
@@ -48,9 +52,15 @@ const (
 - **`session_based`** — unlock once, then reads work until the store is locked
   again. What people actually use.
 
-Backed by `PINAccessStore` and `SessionStore` respectively. Making this an
-explicit, switchable mode rather than a hardcoded policy is what lets one
-implementation serve both an unattended service and a human at a desktop.
+Only `session_based` is a reachable code path today:
+`TenantPasswordStoreManager.UnlockTenant`/`LockTenant` (`tenant_store_manager.go:162`,
+`:143`) hold the per-tenant session lock, gated on the tenant barrier being
+unsealed, with the PIN itself checked one layer up by
+`XKMSService.verifyPasswordStoreUserPIN` (`pkg/xkms/servicer_password.go:361`).
+`pin_per_operation` is a defined `AccessMode` constant (`access.go:33`) with
+no store implementation behind it — see `access.go:16-28`. Making the mode an
+explicit, switchable value rather than a hardcoded policy is what leaves room
+for a future per-operation implementation without another API shape.
 
 Rejected alternatives:
 
@@ -81,13 +91,18 @@ the core.
 ```
 add:     xkmsctl password add NAME --password -
            → validation → entity → scoped/team/tenant store
-             → encrypted_store → the barrier
+             → storage.Backend → the barrier
 
-read:    xkmsctl password get ID --decrypt
-           → access mode gate:
-               pin_per_operation → --user-pin required on this call
-               session_based     → requires a prior `password unlock`
-             → decrypt → plaintext returned
+read:    xkmsctl password get ID
+           → session lock gate (tenant stores only; session_based, the only
+             implemented mode — requires a prior `password unlock`)
+             → store.Get → entry returned exactly as stored
+
+           `--decrypt`/`--user-pin` on this call always fail with
+           ErrPasswordDecryptNotSupported (servicer_password.go:188): there
+           is no field-level decrypt step to opt into — a plain `get`
+           already returns the entry as stored, because `pkg/staticpw` does
+           not encrypt the `Password` field itself.
 
 autofill: browser extension → native-messaging host → xkey IPC → the same store
 ```
@@ -97,11 +112,17 @@ the store is unlocked and in which mode.
 
 ## Trust boundaries
 
-- **`--decrypt` is the boundary.** Listing and metadata do not expose plaintext;
-  `get --decrypt` does. That is why it is a flag rather than the default.
-- **Access mode is the policy.** `session_based` means anything that can reach
-  the store while it is unlocked can read every entry in scope.
-  `pin_per_operation` re-authenticates each read.
+- **There is no field-level decrypt boundary.** `PasswordGet` refuses
+  `--decrypt`/`--user-pin` outright (`ErrPasswordDecryptNotSupported`,
+  `pkg/xkms/servicer_password.go:188`): a plain `get` already returns the
+  entry exactly as stored, because `pkg/staticpw` never encrypted the
+  `Password` field on its own. The real boundary is the session lock:
+  `list`/`get` on a tenant store fail with `ErrStoreLocked` until `password
+  unlock` succeeds.
+- **Access mode is the policy.** `session_based` — the only implemented mode
+  — means anything that can reach the store while a tenant is unlocked can
+  read every entry in scope. `pin_per_operation` is a defined value with no
+  store behind it; it re-authenticates nothing today.
 - **Scope and sharing are access control, not organisation.** `--shared` shares
   an entry with the tenant; `--scope own|shared|all` chooses what a listing
   reveals. Team stores (`team_*`) extend this to groups.

@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — CLI
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 Binary: `xkey`. Groups: `fido2` (the daemon, token lifecycle, and per-RP
 policy) and `uhid` (device setup). Sources: `xkey/cmd/xkey/cmd/fido2.go`,
@@ -48,6 +48,38 @@ legitimate choice for a host that has no barrier password to manage.
 
 A relying party cannot tell these apart over CTAP2. If you tell someone your
 credentials are hardware-backed, `--backend` is the flag that makes that true.
+
+### Configuration sources
+
+Of every `xkey fido2` flag, only four are also settable outside the command
+line, because only these four are declared on `xkeyconfig.FIDO2Config`
+(`pkg/config/config.go:72-82`): `--storage`, `--storage-path`, `--name` and
+`--attestation`. Every other flag on this page (`--backend`, `--tpm-device`,
+`--pin`, `--interactive`, `--notify*`, `--cdp*`, the phone and password
+settings, …) is CLI-only. `buildFIDO2Config`
+(`cmd/xkey/cmd/fido2.go:553-596`) resolves the four in flag-beats-
+environment-beats-config-file order:
+
+| Flag | Config key | Environment variable |
+|---|---|---|
+| `--storage` | `fido2.storage` | `XKEY_FIDO2_STORAGE` |
+| `--storage-path` | `fido2.storage_path` | `XKEY_FIDO2_STORAGE_PATH` |
+| `--name` | `fido2.device_name` | `XKEY_FIDO2_DEVICE_NAME` |
+| `--attestation` | `fido2.attestation` | `XKEY_FIDO2_ATTESTATION` |
+
+**The effective default for `--attestation` is `packed`, not the `none`
+its own flag declares.** `xkeyconfig.DefaultConfig()` bakes in
+`FIDO2.Attestation: "packed"` (`pkg/config/config.go`), and
+`buildFIDO2Config` installs that as the flag's own default whenever no flag,
+environment variable or config file names one -- the same three call sites
+that read `FIDO2.Attestation` from the unified config
+(`cmd/xkey/cmd/fido2.go`, `extension_serve.go`, `pkg/gui/app.go`) already
+agreed on `packed` before go-xkms#871; it only extended the same mechanism to
+`--storage`/`--storage-path`/`--name`. Those three have no such baked
+override -- `xkeyconfig.DefaultConfig().FIDO2.Storage`/`.DeviceName` are
+empty precisely so an unconfigured `xkey fido2` keeps behaving as this page's
+"The default is `memory`" says, and only an explicit
+`XKEY_FIDO2_STORAGE`/config-file/flag value changes it.
 
 ### Presence and PIN
 

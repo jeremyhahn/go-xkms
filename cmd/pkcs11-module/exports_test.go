@@ -59,18 +59,26 @@ const (
 	testUserPIN = "user-pin-1234"
 )
 
-// newTestFixture installs an initialized module as the global module the C
-// entry points resolve, provisions its token, and returns a read-write session
-// with the normal user logged in. The token sets CKF_LOGIN_REQUIRED at
-// creation, so every key-bearing initializer is refused until that happens.
-func newTestFixture(t *testing.T) *testFixture {
+// provisionTestModule installs an initialized module backed by client as the
+// global module the C entry points resolve, provisions its token, and returns
+// a read-write session with the normal user logged in. The token sets
+// CKF_LOGIN_REQUIRED at creation, so every key-bearing initializer is refused
+// until that happens.
+//
+// Shared by newTestFixture (offlineTransport, whose embedded PKCS11Transport
+// is nil so any backend-delegating call panics -- the fixture for tests
+// scoped to session/argument bookkeeping) and newCryptoFixture
+// (pkcs11test.CryptoMockClient, real RSA/AES/HKDF crypto -- the fixture for
+// tests that drive a C_* entry point through a genuine cryptographic success
+// path), so the two fixtures cannot drift on how a token is provisioned.
+func provisionTestModule(t *testing.T, client module.PKCS11Transport) (m *module.Module, session module.SessionHandle) {
 	t.Helper()
 
 	module.ResetGlobalModule()
 	t.Cleanup(module.ResetGlobalModule)
 
 	m, err := module.New(
-		module.WithClient(offlineTransport{}),
+		module.WithClient(client),
 		module.WithConfig(module.DefaultConfig()),
 	)
 	if err != nil {
@@ -102,13 +110,25 @@ func newTestFixture(t *testing.T) *testFixture {
 		t.Fatalf("CloseSession: %s", rv)
 	}
 
-	session, rv := m.OpenSession(0, module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
+	session, rv = m.OpenSession(0, module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
 		t.Fatalf("OpenSession (user): %s", rv)
 	}
 	if rv := m.Login(session, module.CKU_USER, []byte(testUserPIN)); rv != module.CKR_OK {
 		t.Fatalf("Login (user): %s", rv)
 	}
+
+	return m, session
+}
+
+// newTestFixture installs an initialized module as the global module the C
+// entry points resolve, provisions its token, and returns a read-write session
+// with the normal user logged in. The token sets CKF_LOGIN_REQUIRED at
+// creation, so every key-bearing initializer is refused until that happens.
+func newTestFixture(t *testing.T) *testFixture {
+	t.Helper()
+
+	m, session := provisionTestModule(t, offlineTransport{})
 
 	f := &testFixture{m: m, session: session}
 	f.privKey = f.createKey(t, module.CKO_PRIVATE_KEY, "test-private-key")

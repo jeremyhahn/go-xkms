@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — Architecture
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Scope
 
@@ -179,11 +179,14 @@ by backend:
 | Cloud KMS (AWS/GCP/Azure/Vault) | Yes, when IAM/identity is configured | No (external auth) | Yes |
 | Software (Argon2id/PBKDF2) | No | Always | No |
 
-The static password store additionally has two auto-unseal modes once its
-PIN is available: **per-operation** (`pin_per_operation` — the PIN is held
-in memory and supplied on every decrypt) and **session** (`session_based` —
-`SessionStore.Unlock(pin)` is called once and subsequent operations succeed
-until `Lock()`).
+The static password store additionally defines two `AccessMode` values, but
+only one is a reachable code path: **session** (`session_based` —
+`TenantPasswordStoreManager.UnlockTenant` is called once, on a remote
+`xkmsd` server, and subsequent operations for that tenant succeed until
+`LockTenant`; go-xkms `pkg/staticpw/access.go`, `tenant_store_manager.go`).
+**per-operation** (`pin_per_operation`) is a defined constant with no store
+implementation behind it (go-xkms#864) and is not reachable through `xkey`
+or `xkmsd` today.
 
 ## The legacy sealed-blob store (GUI only)
 

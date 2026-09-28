@@ -493,7 +493,6 @@ func (s *Server) ensureSSHClient() sdkssh.Client {
 	return s.sshClient
 }
 
-// New creates a new unified server instance
 // Option customizes server construction. Options are additive and applied
 // before subsystem initialization; they can only add capabilities (e.g.
 // compose an extra authenticator), never bypass the fail-closed defaults.
@@ -521,7 +520,23 @@ func WithExtraModules(mods ...qrdbsdk.ServiceModule) Option {
 	return func(s *Server) { s.extraModules = append(s.extraModules, mods...) }
 }
 
+// New creates a new unified server instance from cfg.
+//
+// New validates cfg before touching the filesystem or any storage backend:
+// cfg.Validate() runs first and its failure is returned wrapped in
+// ErrServiceInit{Service: "configuration"}. Validate also normalizes cfg in
+// place -- defaulting Storage.Backend to "pebble", Storage.QRDB.Transport to
+// "embedded", and Cluster.ShardID to 1 when they are unset -- so every
+// subsystem New initializes afterward observes the normalized values, not
+// the caller's original zero values. An embedded caller that constructs its
+// own *config.Config (rather than going through config.Load, which already
+// validates) gets exactly the same fail-closed check a YAML-driven daemon
+// does; there is no path through New that skips it.
 func New(cfg *config.Config, opts ...Option) (*Server, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, &ErrServiceInit{Service: "configuration", Err: err}
+	}
+
 	// Setup logging
 	logger := setupLogger(cfg.Logging)
 
@@ -1755,7 +1770,21 @@ func (s *Server) initializePINManager() error {
 		strategy = "software"
 	}
 
-	pinDir := s.config.Storage.Path + "/pin"
+	// The software PIN store is always file-backed (filestorage.New below),
+	// independent of storage.backend, so it needs storage.path even for a
+	// qrdb backend. config.Validate requires storage.path for every backend
+	// except a remote qrdb transport (rest/grpc), which is the one shape
+	// that can still reach here with it empty; guard rather than let
+	// filestorage.New resolve "" + "/pin" into the filesystem root's own
+	// "/pin" directory (go-xkms#666).
+	if s.config.Storage.Path == "" {
+		return &ErrConfigRequired{
+			Field:   "storage.path",
+			Backend: "pin",
+			Hint:    "the PIN state directory is derived from storage.path and must not resolve to the filesystem root",
+		}
+	}
+	pinDir := filepath.Join(s.config.Storage.Path, "pin")
 
 	switch strategy {
 	case "software":
@@ -1785,15 +1814,25 @@ func (s *Server) initializePINManager() error {
 
 // initializePasswordStore initializes the static password store.
 func (s *Server) initializePasswordStore() error {
-	passwordStoragePath := s.config.Storage.Path + "/passwords"
-
 	backend, err := s.createStorage("passwords")
 	if err != nil {
 		return &ErrStorageCreate{Resource: "password storage", Err: err}
 	}
 
 	s.passwordStore = staticpw.NewStore(backend)
-	s.logger.Info("Password store initialized", "path", passwordStoragePath)
+
+	// createStorage above is the actual storage seam and already scopes
+	// correctly per backend -- a qrdb backend ignores storage.path entirely
+	// and prefixes a view over the shared qrdb store instead. storage.path is
+	// therefore empty here only for a remote qrdb transport (config.Validate
+	// requires it for every other backend), and there is no on-disk location
+	// to name in that case; report the backend instead of joining an empty
+	// root into a path that would look absolute but mean nothing.
+	if s.config.Storage.Path == "" {
+		s.logger.Info("Password store initialized", "backend", s.config.Storage.Backend)
+		return nil
+	}
+	s.logger.Info("Password store initialized", "path", filepath.Join(s.config.Storage.Path, "passwords"))
 	return nil
 }
 
