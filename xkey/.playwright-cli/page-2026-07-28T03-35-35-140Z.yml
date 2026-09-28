@@ -145,10 +145,10 @@
                   - generic [ref=e203]: Disconnected
               - generic [ref=e204]:
                 - generic [ref=e205]: Volume Path
-                - generic [ref=e206]: /home/jhahn/.xkey.luks
+                - generic [ref=e206]: $HOME/.xkey.luks
               - generic [ref=e207]:
                 - generic [ref=e208]: Mount Point
-                - generic [ref=e209]: /home/jhahn/.xkey
+                - generic [ref=e209]: $HOME/.xkey
           - generic [ref=e211]:
             - heading "Actions" [level=2] [ref=e212]
             - generic [ref=e214]:

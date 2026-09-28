@@ -57,8 +57,10 @@ translates APDUs into PKCS#11 calls in-process, and it is what
 client for the out-of-process case: a caller that is not the xkey process
 dials the socket a *running* xkey instance already listens on and asks it
 to perform the operation using the session that instance holds. Socket
-resolution, in order: the constructor argument, the `XKEY_IPC_SOCKET`
-environment variable, `~/.xkey/run/xkey.sock`. Each request opens a fresh
+resolution, in order: the constructor argument, then
+`ipc.DefaultSocketPath()` — the same resolver the xkey CLI uses for its
+`--socket` fallback (`XKEY_IPC_SOCKET`, then the `XKEY_HOME`-derived
+instance socket, then the XDG runtime default). Each request opens a fresh
 connection (`sendMessage`) and closes it; `Close` is a no-op because there
 is no persistent connection to release.
 

@@ -1,6 +1,6 @@
 # Agent Automation — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
 
 ## Exported surface
 
@@ -150,6 +150,98 @@ daemon a browser or `xkey auth` talks to.
 `ErrXKeyAuthFailed`. That is how an SDK consumer authenticates through a running
 xkey instead of a key file.
 
+### `xkey provision` (`xkey/cmd/xkey/cmd/provision.go`, #1033)
+
+Sequences the same service-layer functions "barrier init", "pin
+set-so"/"set-user", "fido2 init-token", "piv generate" and "ssh keys
+generate" each already call, against one target home, from three separate
+secrets. It is not a parallel implementation of any of those ceremonies.
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--home` | `""` | target xkey home; falls back to `XKEY_HOME`; one of the two is required |
+| `--agent` | `""` | required; the agent's display name |
+| `--force` | `false` | provision an already-initialized home |
+| `--pin-stdin` | `false` | user PIN, via `addPINFlags`/`resolvePINInput`, same as everywhere else in this feature |
+| `--so-pin-stdin` | `false` | SO PIN, via `addSOPINFlags`/`resolveSOPINInput`, same as `extension serve` |
+| `--barrier-password` / `--barrier-password-file` | `""` | barrier password, via `addBarrierPasswordFlags`/`resolveBarrierPassword`, same as `extension serve` and fido2's `--storage barrier` mode |
+| `--chrome-profile-dir` | `""` | also calls `nativemsg.InstallProfileManifest` |
+| `--json` | `false` | machine-readable report |
+
+**Three distinct secrets, never one standing in for another.** `runProvision`
+resolves and validates all three before touching any state:
+`resolvePINInput` (user PIN) → `resolveSOPINInput` (SO PIN) →
+`resolveBarrierPassword` (barrier password), each returning its own typed
+sentinel when missing (`ErrProvisionUserPINRequired`,
+`ErrProvisionSOPINRequired`, `ErrProvisionBarrierPasswordRequired`). The user
+PIN becomes the host PIN service's User PIN (`provisionPIN`'s `userPIN`
+parameter). The SO PIN becomes *both* the host PIN service's SO PIN
+(`svc.SetSOPIN`, authorizing `svc.SetUserPIN` too) *and* the FIDO2
+authenticator's own, separate Security Officer PIN
+(`provisionFIDO2`'s `soPIN` parameter, `auth.InitializeToken`) — the two
+already share the name "SO PIN" without sharing a store (see `pin_set.go`
+and `fido2_init_token.go`), so reusing one input for both is not the bug the
+user/SO PIN collapse would be. The barrier password comes from
+`resolveBarrierPassword` alone (`provisionBarrier`'s `barrierPassword`
+parameter) and is used for nothing else. `addBarrierPasswordFlags` and
+`resolveBarrierPassword` are the exact functions `barrier_store.go` and
+`extension_serve.go` already share with `extension serve` and fido2's
+`--storage barrier` mode — not a new flag pair invented for this command.
+Collapsing the SO PIN into the user PIN (this command's behavior before
+this fix) would erase the SO/user separation the host PIN service exists to
+enforce: the SO can reset or unblock the user, but the user cannot reset the
+SO. Because `--pin-stdin`, `--so-pin-stdin` and `resolveBarrierPassword`'s
+interactive fallback all read the *same* standard input stream, only one of
+the three may use its stdin form in a given invocation; the other two must
+come from their file/environment-variable form.
+
+`runProvisionPersistentPreRun` resolves `--home`/`XKEY_HOME` and exports it
+as `XKEY_HOME` (`os.Setenv`) before calling `RootCmd.PersistentPreRunE`
+directly. This is necessary, not decorative: Cobra invokes only the nearest
+`PersistentPreRunE` in the command chain, so defining one on `provisionCmd`
+replaces root's rather than running alongside it, and `resolvedHome` /
+`loadedConfig` (`root.go`) — which `resolveXKeySSHDataDir` and `GetConfig()`
+read directly, not re-resolved per call — must already reflect `--home`
+by the time they run.
+
+**Ordering is deliberate, not the order a plain reading of the issue
+suggests.** SSH key generation runs *before* barrier initialization: once a
+barrier root key exists, `xkeySSHBackend` (`ssh.go`) refuses every operation,
+including reads, with `ErrSSHStoreBarrierEncrypted` — the CLI has no
+barrier-unlock flow of its own. Generating the SSH key first is the only
+order in which every step can complete non-interactively on a fresh home.
+On a `--force` re-provision of an already-initialized home, SSH key
+generation is not attempted at all — `AgentProvisionResult.SSHNote` reports
+it as skipped, rather than failing the whole run over one step that cannot
+succeed either way it is ordered.
+
+FIDO2 token initialization normally waits on an interactive user-presence
+prompt (`requestUserPresence`, `pkg/authenticator/token.go`).
+`provisionFIDO2` substitutes `authenticator.NewAutoGrantHandler()` — the same
+handler `extension_serve.go` installs for headless operation — for the
+interactive handler `fido2 init-token` installs. It also forces
+`fido2.storage` away from its process-wide default of `memory`
+(`ensureFIDO2PersistentStorage`, restored via `defer` after the step): a
+Security Officer PIN established in memory storage vanishes the moment this
+process exits, which `fido2 init-token` already refuses outright
+(`ErrTokenVolatileStorage`); provisioning makes the same choice an operator
+configuring a persistent instance would make rather than surfacing that
+refusal. PIV key generation needs no such substitution — `piv generate`
+against the default software backend prompts for nothing.
+
+The agent's display name is persisted to the *resolved home's own* config
+file (`config.SaveToPath(cfg, home.ConfigPath())`, i.e.
+`<home>/config.yaml`, `fido2.device_name`), not through the package-level
+`config.Save` (which targets the operator's shared
+`~/.config/xkey/xkey.yaml`): saving to the shared XDG path would leak one
+agent's display name into every other agent's config on a host running one
+xkey instance per agent.
+
+`AgentProvisionResult` (JSON and human-readable) never carries a secret: it
+names the `XKEY_HOME` export line, the resolved socket path, the barrier
+strategy, the PIN status (`set` / `already set`), the FIDO2 AAGUID and token
+state, the PIV slots set up, and the SSH key's public half and fingerprint.
+
 ## Invariants
 
 - **Every automation switch is opt-in and defaults off.** `--require-touch`
@@ -211,6 +303,24 @@ xkey instead of a key file.
   `xkey touch` — not just silence.
 - **Concurrency.** One ceremony at a time per authenticator; the IPC socket
   serialises.
+- **`xkey provision` never falls back to xkey's own default home
+  resolution.** `--home` or an inherited `XKEY_HOME` is required, explicitly;
+  the normal `~/.xkey` / binary-marker / `/etc/xkey` chain
+  (`xhome.Resolve`) is not consulted. Provisioning into the operator's own
+  default home by accident is exactly the failure this command exists to
+  prevent on a host running one xkey instance per agent.
+- **`xkey provision` never lets one secret stand in for another.** The user
+  PIN, the SO PIN and the barrier password are three separate inputs
+  (`resolvePINInput`, `resolveSOPINInput`, `resolveBarrierPassword`), each
+  required and each refusing by its own typed error when missing. The SO PIN
+  alone is shared across two credentials that already share its name without
+  sharing a store (the host PIN service's SO PIN and the FIDO2
+  authenticator's own); the user PIN and the barrier password are each used
+  for exactly one thing. Do not collapse the SO PIN and the user PIN into one
+  input again — that erases the SO/user separation the host PIN service
+  exists to enforce (the SO can reset or unblock the user; the user cannot
+  reset the SO), which is a security-policy change this command must never
+  make implicitly.
 
 ## Error semantics
 
@@ -229,6 +339,12 @@ xkey instead of a key file.
 | authenticator constructed without a handler | `ErrUserPresenceHandlerRequired` |
 | SDK cannot reach the socket | `ErrXKeyAuthFailed` |
 | CDP port unreachable | the bridge is off, or bound elsewhere |
+| `xkey provision` with no `--home`/`XKEY_HOME` | `ErrProvisionHomeRequired`, non-zero; nothing is written |
+| `xkey provision` against an already-initialized home, no `--force` | `ErrProvisionAlreadyInitialized`, non-zero; nothing is written |
+| `xkey provision` with no user PIN | `ErrProvisionUserPINRequired` (or the underlying `resolvePINInput` error), non-zero; nothing is written |
+| `xkey provision` with no SO PIN | `ErrProvisionSOPINRequired` (or the underlying `resolveSOPINInput` error), non-zero; nothing is written |
+| `xkey provision` with no barrier password | `ErrProvisionBarrierPasswordRequired` wrapping `resolveBarrierPassword`'s error, non-zero; nothing is written |
+| `xkey provision --force` against an already-initialized home | PIN/FIDO2/PIV steps still run (or report "already set"/"already initialized"); SSH key generation is reported as skipped, not failed |
 
 **Fail closed:** none of these degrade to an unauthenticated path, and none
 report a gesture that did not happen.
@@ -285,6 +401,20 @@ Nothing new. Credentials are the authenticator's; sessions are
   the persisted file from a separate process; `unlock_test.go` proves the
   CLI surfaces the remaining-attempts count and that `--pin` no longer
   parses.
+- **`xkey provision`** — `xkey/cmd/xkey/cmd/provision_test.go`, driven
+  through `RootCmd.Execute()` end to end with three *distinct* secrets (a
+  test that collapsed them back to one value would pass by coincidence, so
+  the suite deliberately does not): a fresh temp home provisions completely
+  (barrier initializes under the barrier password, FIDO2/PIV/SSH all report
+  success, and the host PIN service's `VerifySOPIN`/`VerifyUserPIN` confirm
+  the SO PIN verifies as SO and the user PIN as user, and that each is
+  refused as the other); no `--home`/`XKEY_HOME` refuses; a second run
+  against the same home refuses without `--force`; `--force` against an
+  already-initialized home completes PIN/FIDO2/PIV and reports SSH as
+  skipped; an empty `--pin-stdin` input and each of the three secrets
+  omitted entirely each refuse by their own typed error before anything is
+  written; `--json` round-trips through `AgentProvisionResult` with none of
+  the three secrets anywhere in the output.
 
 ## Observability
 
@@ -324,5 +454,6 @@ The acceptance tests are `instance_isolation_test.go` (two daemons under one
 UID, where a client naming B never sees A's credential),
 `extension_profile_dir_test.go` and `xkey/pkg/nativemsg/profile_manifest_test.go`.
 
-`xkey/pkg/pkcs11/ipc_transport.go` still has its own default
-(`~/.xkey/run/xkey.sock`), which is a known divergence tracked separately.
+`xkey/pkg/pkcs11/ipc_transport.go`'s `NewIPCTransport` resolves its default
+socket through `ipc.DefaultSocketPath()` as well (#1038), so the module and
+the CLI always agree on which instance an unqualified caller talks to.

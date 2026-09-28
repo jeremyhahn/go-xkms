@@ -431,6 +431,16 @@ func TestAttestingBackend(t *testing.T) {
 		require.ErrorIs(t, err, sentinel)
 	})
 
+	t.Run("rejects a generated key with no COSE algorithm mapping", func(t *testing.T) {
+		_, edKey, keyErr := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, keyErr)
+		backend := newBackend(&stubAttestationSource{signer: edKey})
+
+		_, _, err := backend.GenerateAttestationKey()
+
+		require.ErrorIs(t, err, ErrUnsupportedAttestationKey)
+	})
+
 	t.Run("returns the provisioned chain", func(t *testing.T) {
 		backend := newBackend(&stubAttestationSource{signer: key, chain: []*x509.Certificate{cert}})
 

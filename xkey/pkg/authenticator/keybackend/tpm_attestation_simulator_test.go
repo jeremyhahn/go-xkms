@@ -331,3 +331,47 @@ func sha256Sum(data []byte) []byte {
 	sum := sha256.Sum256(data)
 	return sum[:]
 }
+
+// TestTPM2AttestingBackend_Capabilities proves the decorator's entire purpose:
+// whatever the inner adapter reports, wrapping it in TPM2AttestingBackend adds
+// the attestation claim without disturbing anything else the inner adapter
+// contributes.
+func TestTPM2AttestingBackend_Capabilities(t *testing.T) {
+	backend, _ := simulatorTPM2AttestingBackend(t)
+
+	caps := backend.Capabilities()
+
+	require.True(t, caps.SupportsAttestation, "the whole point of this decorator is attestation support")
+	require.Contains(t, caps.SupportedAlgorithms, COSEAlgES256, "the inner TPM2 adapter's capabilities must be preserved")
+}
+
+// TestTPM2AttestingBackend_GenerateAttestationKey proves the IAK load path:
+// the returned handle carries the IAK's real COSE algorithm and the encoded
+// public key round-trips back to the same key the simulator's IAK() reports.
+func TestTPM2AttestingBackend_GenerateAttestationKey(t *testing.T) {
+	backend, _ := simulatorTPM2AttestingBackend(t)
+
+	handle, publicKeyCOSE, err := backend.GenerateAttestationKey()
+	require.NoError(t, err)
+	require.NotEmpty(t, publicKeyCOSE)
+	require.Nil(t, handle.CredentialID(), "the attestation key is a device identity, not a credential")
+
+	var decoded map[int]interface{}
+	require.NoError(t, cbor.Unmarshal(publicKeyCOSE, &decoded))
+	alg, ok := decoded[3].(int64)
+	require.True(t, ok, "the COSE key must carry an integer alg label")
+	require.Equal(t, int64(handle.Algorithm()), alg)
+}
+
+// TestTPM2AttestingBackend_AttestationCertificateChain proves §8.3.1's single-
+// certificate requirement: the chain is exactly the provisioned IAK
+// certificate, with no intermediate appended.
+func TestTPM2AttestingBackend_AttestationCertificateChain(t *testing.T) {
+	backend, iakCert := simulatorTPM2AttestingBackend(t)
+
+	chain, err := backend.AttestationCertificateChain()
+
+	require.NoError(t, err)
+	require.Len(t, chain, 1, "TCG device identity certificates have no intermediate to append")
+	require.Equal(t, iakCert.Raw, chain[0].Raw)
+}

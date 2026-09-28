@@ -947,6 +947,7 @@ test-scripts:
 	@bash test/scripts/release-assets.test.sh
 	@bash test/scripts/changelog-assemble.test.sh
 	@bash test/scripts/retry.test.sh
+	@bash test/scripts/check-public-literals.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 .PHONY: test-go
@@ -3595,6 +3596,12 @@ check-insecure-tls:
 		exit 1; \
 	fi
 	@echo "$(GREEN)✓ InsecureSkipVerify allowlist check passed$(RESET)"
+
+.PHONY: check-public-literals
+## check-public-literals: Public-release readiness gate -- no lab/fleet/owner literals (go-xkms#1030)
+check-public-literals:
+	@echo "$(CYAN)$(BOLD)→ Checking for internal literals (lab/fleet/owner)...$(RESET)"
+	@bash scripts/check-public-literals.sh
 
 
 # Modules that `vet` and `lint` cover. Go tooling does not cross module

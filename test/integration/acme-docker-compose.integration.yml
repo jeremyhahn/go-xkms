@@ -9,8 +9,8 @@ services:
       context: ../../..
       dockerfile: go-trusted-ca/test/Dockerfile.server
       additional_contexts:
-        go-quicraft: /home/jhahn/sources/go-quicraft
-        go-qrdb: /home/jhahn/sources/go-qrdb
+        go-quicraft: ../../../go-quicraft
+        go-qrdb: ../../../go-qrdb
     networks:
       - integration-network
     environment:
@@ -93,8 +93,8 @@ services:
       - ../../../go-objstore:/workspace/go-objstore
       - ../../../go-tpm:/workspace/go-tpm
       - ../../../go-codec:/workspace/go-codec
-      - /home/jhahn/sources/go-quicraft:/workspace/go-quicraft
-      - /home/jhahn/sources/go-qrdb:/workspace/go-qrdb
+      - ../../../go-quicraft:/workspace/go-quicraft
+      - ../../../go-qrdb:/workspace/go-qrdb
       - test-results:/test-results
       - test-logs:/var/log/tests
       - tpm-state:/tpm

@@ -242,10 +242,10 @@ docker compose run --rm integration-test go test -v -short ./test/integration/..
 
 ## Next Steps
 
-1. Read full documentation: `/home/jhahn/sources/go-xkms/test/docker/README.md`
-2. Review test examples: `/home/jhahn/sources/go-xkms/test/integration/`
+1. Read full documentation: `test/docker/README.md`
+2. Review test examples: `test/integration/`
 3. Explore Makefile targets: `make help`
-4. Check project README: `/home/jhahn/sources/go-xkms/README.md`
+4. Check project README: `README.md`
 
 ## Useful Commands
 

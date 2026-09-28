@@ -103,6 +103,11 @@ var luksExemptGroups = map[string]bool{
 	// "start", "stop" and "device" — the last of which exempted the entire
 	// top-level `device` command group.
 	"usb": true,
+	// provision drives barrier init, PIN set-so/set-user and FIDO2 token
+	// initialization against a home that has not been unsealed yet — often
+	// one that does not exist yet — exactly like the "barrier" and "pin"
+	// groups it calls into.
+	"provision": true,
 }
 
 // isLUKSExempt reports whether cmd (or any ancestor) belongs to a group
