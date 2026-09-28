@@ -252,6 +252,14 @@ func createSim(entropy bool) (*slog.Logger, TrustedPlatformModule) {
 		}
 	}
 
+	enrollSimPlatformSRK(logger, tpm.(*TPM2), config)
+
+	return logger, tpm
+}
+
+// enrollSimPlatformSRK creates the Platform SRK on a provisioned simulator
+// when it is not already present.
+func enrollSimPlatformSRK(logger *slog.Logger, tpm *TPM2, config *Config) {
 	// Provision(nil) only creates the TCG-standard EK and Shared SRK. xkms's
 	// own sealing (defaultSealKeyAttributes/defaultUnsealKeyAttributes) always
 	// uses the Platform SRK and never falls back to the Shared SRK, so this
@@ -267,22 +275,20 @@ func createSim(entropy bool) (*slog.Logger, TrustedPlatformModule) {
 	// external "tpm2_test" package from that, and this file (and everything
 	// that calls createSim) is package tpm2. Every other module's tests use
 	// the shared helper; this is the one place that cannot.
-	if _, psrkErr := tpm.(*TPM2).PlatformSRKAttributes(); psrkErr != nil {
+	if _, psrkErr := tpm.PlatformSRKAttributes(); psrkErr != nil {
 		psrkAttrs, buildErr := PlatformSRKAttributesFromConfig(config)
 		if buildErr != nil {
 			logger.Error("failed to build Platform SRK attributes", "error", buildErr)
 			panic(buildErr)
 		}
-		if ekAttrs, ekErr := tpm.(*TPM2).EKAttributes(); ekErr == nil {
+		if ekAttrs, ekErr := tpm.EKAttributes(); ekErr == nil {
 			psrkAttrs.Parent = ekAttrs
 		}
-		if createErr := tpm.(*TPM2).CreateSRK(psrkAttrs); createErr != nil {
+		if createErr := tpm.CreateSRK(psrkAttrs); createErr != nil {
 			logger.Error("failed to create Platform SRK", "error", createErr)
 			panic(createErr)
 		}
 	}
-
-	return logger, tpm
 }
 
 // ---------------------------------------------------------------------------

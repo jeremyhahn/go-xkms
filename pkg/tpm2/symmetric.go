@@ -28,6 +28,7 @@ import (
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 
 	"github.com/jeremyhahn/go-enclave"
@@ -67,23 +68,32 @@ type tpm2AESEncrypter struct {
 	mu    sync.Mutex
 }
 
-// GenerateSymmetricKey generates a new AES symmetric key in the TPM.
+// GenerateSymmetricKey generates a new AES symmetric key and seals it in the
+// TPM under the Platform SRK.
 //
 // TPM 2.0 supports symmetric encryption with the following constraints:
 //   - AES-128 and AES-256 (AES-192 is not in the TPM 2.0 spec)
-//   - Keys stored as TPM blobs (public + encrypted private)
-//   - Key material never leaves the TPM in plaintext
+//   - The key is stored as a sealed keyed-hash object (public + encrypted
+//     private blob) whose parent is the Platform SRK
 //
-// For actual encryption/decryption operations, we use software AES-GCM with
-// the key material stored securely in the TPM. The TPM2_EncryptDecrypt2
-// command uses CFB mode which doesn't provide AEAD authentication, so we
-// implement AES-GCM in software using TPM-protected key material.
+// The key object is created by sealKeyInternal, the same path every other
+// secret go-xkms seals under the Platform SRK takes (see symmetricSealAttrs):
+// creating it, and later loading it, is authorized by the Platform SRK's
+// USER PIN or its platform PCR policy, and the object's own authorization
+// is attrs.Password and, when attrs.PlatformPolicy is set, the platform
+// policy. The key material enters the TPM encrypted under a salted session.
+//
+// Encryption and decryption run AES-GCM in Go over the unsealed key (see
+// loadKeyMaterial): TPM2_EncryptDecrypt2 offers no AEAD mode.
 //
 // Parameters:
-//   - attrs: Key attributes including symmetric algorithm and key size (128 or 256 bits)
+//   - attrs: Key attributes including symmetric algorithm and key size (128
+//     or 256 bits). attrs.Parent names the Platform SRK and carries its USER
+//     PIN; nil selects the Platform SRK's own attributes.
 //
 // Returns:
 //   - SymmetricKey for the generated key
+//   - ErrSymmetricKeyParent if attrs.Parent is not the Platform SRK
 //   - Error if generation fails or attributes are invalid
 func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if err := validateSymmetricKeyAttributes(attrs); err != nil {
@@ -100,95 +110,28 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 		return nil, ErrNotInitialized
 	}
 
-	// Get SRK handle and name
-	srkHandle := tpm2.TPMHandle(tpm.config.SSRK.Handle)
-	srkName, _, err := tpm.ReadHandle(srkHandle)
+	sealAttrs, err := tpm.symmetricSealAttrs(attrs)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to read SRK", Err: err}
+		return nil, err
 	}
 
-	// Check if key already exists by trying to load the private blob
-	_, err = tpm.backend.Get(attrs, ".priv")
-	if err == nil {
-		// Key already exists
+	// Check if key already exists by trying to load the public blob
+	if _, err := tpm.backend.Get(attrs, store.FSEXT_PUBLIC_BLOB); err == nil {
 		return nil, kbackend.ErrKeyAlreadyExists
 	}
 
 	// Generate the AES key material using the configured RNG
-	keyBytes := keySize / 8 // Convert bits to bytes
-	keyMaterial := make([]byte, keyBytes)
+	keyMaterial := make([]byte, keySize/8)
+	defer enclave.Wipe(keyMaterial)
 	if _, err := tpm.random.Read(keyMaterial); err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to generate key material", Err: err}
 	}
 
-	// Build keyed hash template for sealing the AES key
-	// We seal the key material to the TPM using a keyed hash object
-	// This allows us to store/retrieve the actual key bytes securely
-	template := tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgKeyedHash,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			FixedTPM:     true,
-			FixedParent:  true,
-			UserWithAuth: true,
-			NoDA:         true, // No dictionary attack protection needed for data
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgKeyedHash,
-			&tpm2.TPMSKeyedHashParms{
-				Scheme: tpm2.TPMTKeyedHashScheme{
-					Scheme: tpm2.TPMAlgNull, // Just storage, no HMAC
-				},
-			},
-		),
-	}
+	sealAttrs.SealData = types.NewSealData(keyMaterial)
+	defer sealAttrs.SealData.Clear()
 
-	// The key material is encrypted on its way into the TPM by a salted
-	// session.
-	encSession, closeEncSession, err := tpm.encryptionSession(encryptIn)
-	if err != nil {
-		return nil, err
-	}
-	defer tpm.closeSession(closeEncSession, "symmetric key creation encryption")
-
-	// Create the sealed object with the key material
-	createResp, err := tpm2.Create{
-		ParentHandle: &tpm2.NamedHandle{
-			Handle: srkHandle,
-			Name:   srkName,
-		},
-		InPublic: tpm2.New2B(template),
-		InSensitive: tpm2.TPM2BSensitiveCreate{
-			Sensitive: &tpm2.TPMSSensitiveCreate{
-				Data: tpm2.NewTPMUSensitiveCreate(
-					&tpm2.TPM2BSensitiveData{
-						Buffer: keyMaterial,
-					},
-				),
-			},
-		},
-	}.Execute(tpm.transport, encSession)
-
-	if err != nil {
+	if _, err := tpm.sealKeyInternal(sealAttrs, tpm.backend, false); err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to create symmetric key", Err: err}
-	}
-
-	// Marshal the key blob for storage
-	privateBlob := tpm2.Marshal(createResp.OutPrivate)
-	publicBlob := tpm2.Marshal(createResp.OutPublic)
-
-	// Save private blob
-	if err := tpm.backend.Save(attrs, privateBlob, ".priv", false); err != nil {
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to save private blob", Err: err}
-	}
-
-	// Save public blob
-	if err := tpm.backend.Save(attrs, publicBlob, ".pub", false); err != nil {
-		// Cleanup private blob on failure. A failed cleanup is joined onto the
-		// save error rather than discarded, since it leaves an orphaned
-		// private blob behind with no public half.
-		deleteErr := tpm.backend.Delete(attrs)
-		return nil, errors.Join(&errs.Wrapped{Msg: "tpm2: failed to save public blob", Err: err}, deleteErr)
 	}
 
 	// Initialize AEAD tracking options for this key
@@ -200,17 +143,56 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 		}
 	}
 
-	// Create the symmetric key object (doesn't contain actual key material)
-	// The key material is sealed in the TPM blob and never exposed
-	symmetricKey := &tpm2SymmetricKey{
+	// The returned key object carries no key material: it stays sealed in
+	// the TPM blob.
+	return &tpm2SymmetricKey{
 		algorithm: string(attrs.SymmetricAlgorithm),
 		keySize:   keySize,
+	}, nil
+}
+
+// symmetricSealAttrs returns the attributes the sealed object behind the
+// symmetric key attrs is created, loaded and unsealed under.
+//
+// The parent is attrs.Parent, or the Platform SRK's own attributes when the
+// caller named none, and it must be the Platform SRK: go-xkms never parents
+// its secrets on the Shared SRK. Its USER PIN (Parent.Password) or, without
+// one, its platform PCR policy authorizes TPM2_Create and TPM2_Load exactly as
+// for every other object sealKeyInternal seals (see CreateSession).
+//
+// The object's own authorization is attrs.Password and attrs.PlatformPolicy,
+// as seal.go applies them. The template is always KeyedHashTemplate, so a
+// caller-supplied TPMAttributes cannot reintroduce NoDA or drop the policy.
+// The result is a copy: sealKeyInternal records the transient handle and
+// template on it, and GenerateSymmetricKey attaches the key material to it,
+// neither of which may reach the caller's attributes.
+func (tpm *TPM2) symmetricSealAttrs(attrs *types.KeyAttributes) (*types.KeyAttributes, error) {
+	parent := attrs.Parent
+	if parent == nil {
+		psrk, err := tpm.PlatformSRKAttributes()
+		if err != nil {
+			return nil, &errs.Joined{Lead: ErrSymmetricKeyParent, Detail: "no usable Platform SRK", Cause: err}
+		}
+		parent = psrk
 	}
 
-	// Zero out the key material from memory
-	enclave.Wipe(keyMaterial)
+	psrkHandle := platformSRKHandle(tpm.config)
+	if parent.TPMAttributes == nil || parent.TPMAttributes.Handle != psrkHandle {
+		var got tpm2.TPMHandle
+		if parent.TPMAttributes != nil {
+			got = parent.TPMAttributes.Handle
+		}
+		return nil, &errs.Detail{
+			Err:    ErrSymmetricKeyParent,
+			Detail: fmt.Sprintf("%s: parent handle 0x%x, Platform SRK 0x%x", attrs.CN, uint32(got), uint32(psrkHandle)),
+		}
+	}
 
-	return symmetricKey, nil
+	sealAttrs := *attrs
+	sealAttrs.Parent = parent
+	sealAttrs.TPMAttributes = nil
+	sealAttrs.SealData = nil
+	return &sealAttrs, nil
 }
 
 // GetSymmetricKey retrieves an existing symmetric key from the TPM.
@@ -243,7 +225,7 @@ func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey
 	// ErrKeyRetrievalFailed instead, so callers such as getOrGenerateCAKey
 	// never mistake "could not read the key" for "the key does not exist
 	// yet" and silently generate a replacement.
-	publicBlob, err := tpm.backend.Get(attrs, ".pub")
+	publicBlob, err := tpm.backend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, &errs.Detail{Err: kbackend.ErrKeyNotFound, Detail: attrs.CN}
@@ -251,14 +233,14 @@ func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey
 		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
-	// Unmarshal public structure to verify it's valid
-	tpmPublic, err := tpm2.Unmarshal[tpm2.TPM2BPublic](publicBlob)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to unmarshal public blob", Err: err}
-	}
-
+	// The public area is stored as SaveKeyPair writes it and LoadKeyPair
+	// reads it: the bare TPMT_PUBLIC.
+	tpmPublic := tpm2.BytesAs2B[tpm2.TPMTPublic](publicBlob)
 	pub, err := tpmPublic.Contents()
 	if err != nil {
+		if unprotectedSymmetricKeyBlob(publicBlob) {
+			return nil, &errs.Detail{Err: ErrUnprotectedSymmetricKey, Detail: attrs.CN}
+		}
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to get public contents", Err: err}
 	}
 
@@ -540,81 +522,43 @@ func (e *tpm2AESEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decryp
 	return plaintext, nil
 }
 
-// loadKeyMaterial loads the symmetric key from the TPM and unseals the key material.
+// loadKeyMaterial unseals the symmetric key's material from the TPM.
 //
-// This operation loads the sealed keyed hash object into a transient handle,
-// uses TPM2_Unseal to extract the key material, and then flushes the handle.
-// The key material is returned for use in software AES-GCM operations.
+// It is unsealKeyInternal over the attributes symmetricSealAttrs resolves:
+// TPM2_Load under the Platform SRK is authorized by its USER PIN or platform
+// PCR policy, TPM2_Unseal by the key object's own authorization, and the
+// unsealed material leaves the TPM encrypted under a salted session
+// (encryptOut), so it never crosses the TPM bus in the clear.
 //
 // IMPORTANT: The caller MUST zero out the returned key material after use.
 func (e *tpm2AESEncrypter) loadKeyMaterial() ([]byte, error) {
-	// Get SRK handle and name
-	srkHandle := tpm2.TPMHandle(e.tpm.config.SSRK.Handle)
-	srkName, _, err := e.tpm.ReadHandle(srkHandle)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to read SRK", Err: err}
-	}
-
-	// Load key blobs from storage
-	privateBlob, err := e.tpm.backend.Get(e.attrs, ".priv")
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to load private blob", Err: err}
-	}
-
-	publicBlob, err := e.tpm.backend.Get(e.attrs, ".pub")
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to load public blob", Err: err}
-	}
-
-	// Unmarshal blobs
-	tpmPrivate, err := tpm2.Unmarshal[tpm2.TPM2BPrivate](privateBlob)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to unmarshal private blob", Err: err}
-	}
-
-	tpmPublic, err := tpm2.Unmarshal[tpm2.TPM2BPublic](publicBlob)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to unmarshal public blob", Err: err}
-	}
-
-	// Load the sealed object into TPM
-	loadResp, err := tpm2.Load{
-		ParentHandle: &tpm2.NamedHandle{
-			Handle: srkHandle,
-			Name:   srkName,
-		},
-		InPrivate: *tpmPrivate,
-		InPublic:  *tpmPublic,
-	}.Execute(e.tpm.transport)
-
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to load sealed key", Err: err}
-	}
-	// Flush logs its own failure (tpm.Flush); a discarded FlushContext error
-	// here would otherwise leave a leaked transient handle unreported.
-	defer e.tpm.Flush(loadResp.ObjectHandle)
-
-	// Unseal the key material using TPM2_Unseal. The key material leaves
-	// the TPM encrypted under a salted session.
-	encSession, closeEncSession, err := e.tpm.encryptionSession(encryptOut)
+	sealAttrs, err := e.tpm.symmetricSealAttrs(e.attrs)
 	if err != nil {
 		return nil, err
 	}
-	defer e.tpm.closeSession(closeEncSession, "symmetric key unseal encryption")
-	unsealResp, err := tpm2.Unseal{
-		ItemHandle: tpm2.AuthHandle{
-			Handle: loadResp.ObjectHandle,
-			Name:   loadResp.Name,
-			Auth:   tpm2.PasswordAuth(nil), // No password protection for now
-		},
-	}.Execute(e.tpm.transport, encSession)
-
+	keyMaterial, err := e.tpm.unsealKeyInternal(sealAttrs, e.tpm.backend)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to unseal key material", Err: err}
 	}
+	return keyMaterial, nil
+}
 
-	// Return the unsealed key material
-	return unsealResp.OutData.Buffer, nil
+// unprotectedSymmetricKeyBlob reports whether publicBlob is the public area
+// of a symmetric key written before symmetric keys moved under the Platform
+// SRK. Those releases stored it as a size-prefixed TPM2B_PUBLIC of a keyed-hash
+// object with NoDA set, parented on the Shared SRK with no authorization. It
+// is recognised only so GetSymmetricKey can refuse it by name
+// (ErrUnprotectedSymmetricKey); it is never loaded.
+func unprotectedSymmetricKeyBlob(publicBlob []byte) bool {
+	legacy, err := tpm2.Unmarshal[tpm2.TPM2BPublic](publicBlob)
+	if err != nil {
+		return false
+	}
+	pub, err := legacy.Contents()
+	if err != nil {
+		return false
+	}
+	return pub.Type == tpm2.TPMAlgKeyedHash && pub.ObjectAttributes.NoDA
 }
 
 // validateSymmetricKeyAttributes validates key attributes for symmetric operations.

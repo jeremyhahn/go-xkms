@@ -20,7 +20,9 @@ func capture(h *simHarness) *tpmbus.Capture {
 }
 
 // createPSRK creates a Platform SRK whose authValue is userPIN under an owner
-// hierarchy whose authorization has been changed to soPIN.
+// hierarchy whose authorization has been changed to soPIN. It carries the
+// platform policy exactly when the harness configuration asks for one
+// (PlatformSRKConfig.PlatformPolicy, set by newSimConfig).
 func createPSRK(t *testing.T, h *simHarness, soPIN, userPIN []byte) *types.KeyAttributes {
 	t.Helper()
 	owner := tpm2.TPMRHOwner
@@ -28,7 +30,8 @@ func createPSRK(t *testing.T, h *simHarness, soPIN, userPIN []byte) *types.KeyAt
 
 	psrkAttrs, err := PlatformSRKAttributesFromConfig(h.TPM.config)
 	require.NoError(t, err)
-	require.True(t, psrkAttrs.PlatformPolicy, "the harness Platform SRK must carry the platform policy")
+	require.Equal(t, h.TPM.config.PlatformSRK.PlatformPolicy, psrkAttrs.PlatformPolicy,
+		"the Platform SRK must carry the platform policy exactly when configured to")
 	psrkAttrs.Password = mustPassword(userPIN)
 	psrkAttrs.TPMAttributes.HierarchyAuth = mustPassword(soPIN)
 	require.NoError(t, h.TPM.CreateSRK(psrkAttrs))
