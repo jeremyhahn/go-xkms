@@ -29,8 +29,6 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"time"
-
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // unifiedTLSProvider serves the unified API server's certificate through a
@@ -138,14 +136,25 @@ func parseClientAuthMode(mode string) tls.ClientAuthType {
 	}
 }
 
+// caBundleSource is the subset of ca.TrustedCA that upgradeUnifiedTLSCert
+// and unifiedClientCAPool need: the CA's own PEM bundle, unioned into the
+// unified provider's client-CA pool alongside the operator-configured
+// client CAs.
+type caBundleSource interface {
+	// CABundle returns the CA certificate chain in PEM format.
+	CABundle() ([]byte, error)
+}
+
 // upgradeUnifiedTLSCert swaps the CA-issued server certificate into the
 // unified provider once the CA has composed (called after
-// ensureTLSServerCert), and installs the CA's bundle as the client-CA pool
-// so admin-mTLS clients presenting CA-issued certificates verify. pools may
-// be nil (no CA bundle available); the serving certificate still upgrades.
-// A failure leaves the bootstrap certificate serving — degraded but
-// available — and is reported to the caller for logging.
-func (s *Server) upgradeUnifiedTLSCert(pools ca.CATrustPools) error {
+// ensureTLSServerCert), and installs the client-CA pool computed by
+// unifiedClientCAPool -- the union of the operator-configured client CAs and
+// the CA's bundle -- so both an operator-anchored mTLS client and a
+// CA-issued one verify after the upgrade. bundle may be nil (no CA bundle
+// source available); the serving certificate still upgrades. A failure
+// leaves the previously installed client-CA pool serving -- degraded but
+// available -- and is reported to the caller for logging.
+func (s *Server) upgradeUnifiedTLSCert(bundle caBundleSource) error {
 	s.mu.Lock()
 	provider := s.unifiedTLS
 	s.mu.Unlock()
@@ -159,8 +168,8 @@ func (s *Server) upgradeUnifiedTLSCert(pools ca.CATrustPools) error {
 	if len(cfg.Certificates) == 0 {
 		return ErrNoTLSCertAvailable
 	}
-	if pools != nil {
-		if pool, poolErr := pools.CABundleCertPool(); poolErr == nil {
+	if bundle != nil {
+		if pool, poolErr := s.unifiedClientCAPool(bundle); poolErr == nil {
 			provider.clientCAs.Store(pool)
 		} else {
 			s.logger.Warn("unified API server: client-CA pool not upgraded",
@@ -171,6 +180,44 @@ func (s *Server) upgradeUnifiedTLSCert(pools ca.CATrustPools) error {
 	s.logger.Info("unified API server: CA-issued TLS certificate installed",
 		"cn", s.config.TLS.ServerCN)
 	return nil
+}
+
+// unifiedClientCAPool builds the client-CA pool the unified provider
+// verifies mTLS clients against once the CA has composed: the union of the
+// operator-configured client CAs (tls.ca_file plus tls.client_cas, resolved
+// through loadClientCAsUnion -- the same helper buildTLSConfig uses at
+// startup, so the two call sites can never disagree on what "configured
+// client CAs" means) and the CA's own bundle.
+//
+// Before this, upgradeUnifiedTLSCert replaced the pool outright with the CA
+// bundle alone: once the CA composed, an mTLS client anchored only by an
+// operator-configured client CA silently stopped verifying, even though
+// tls.client_cas still named that CA (go-xkms#794).
+func (s *Server) unifiedClientCAPool(bundle caBundleSource) (*x509.CertPool, error) {
+	primary := []string{}
+	if s.config.TLS.CAFile != "" {
+		primary = append(primary, s.config.TLS.CAFile)
+	}
+	configured, err := loadClientCAsUnion(primary, s.config.TLS.ClientCAs)
+	if err != nil {
+		return nil, err
+	}
+
+	pool := configured
+	if pool == nil {
+		pool = x509.NewCertPool()
+	} else {
+		pool = pool.Clone()
+	}
+
+	bundlePEM, err := bundle.CABundle()
+	if err != nil {
+		return nil, &ErrTLSCertOp{Operation: "load CA bundle for the unified client-CA pool", Err: err}
+	}
+	if len(bundlePEM) > 0 && !pool.AppendCertsFromPEM(bundlePEM) {
+		return nil, &ErrCertParse{}
+	}
+	return pool, nil
 }
 
 // ensureBootstrapCert loads the persisted node-local bootstrap keypair or

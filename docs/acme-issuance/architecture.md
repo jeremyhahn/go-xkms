@@ -1,6 +1,6 @@
 # ACME Issuance — Architecture
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## The problem
 
@@ -36,6 +36,24 @@ Five challenge types are implemented (`pkg/acme/challenges/`):
 TCG CSR carrying its IDevID, the server issues a `MakeCredential` challenge that
 only the real TPM can activate, and the node's certificate is bound to hardware
 that was verified, not asserted.
+
+`device-attest-01` attests a key, not an identifier, and the key it attests is
+only compared with the certificate's key at finalization: the evidence arrives
+at the challenge and the CSR one request later. Its verification is therefore
+two phases for both formats it accepts — `VerifyAttestation` at the challenge,
+`VerifiedAttestation.BindCSRKey` at finalization — and the one-shot `Verify`
+refuses both with `ErrKeyBindingRequired`
+(`pkg/acme/challenges/device-attest-01/deviceattest01.go:265`). For the `tpm`
+format the evidence is the WebAuthn Level 2 §8.3 TPM2_Certify of `pubArea` by
+the AIK in `x5c[0]`; the binding requires the CSR's key to be `pubArea`'s key.
+Both phases go through the one binding gate, `attestation.VerifyInvariants`,
+that the TCG-CSR and SignCSR carriers use. See
+[engineering.md](engineering.md#device-attest-01-key-binding).
+
+Rejected for `tpm`: verifying the statement as a TPM2_Quote over the key
+authorization. That was the previous verifier, and a quote attests platform
+state, not a key — it never read `pubArea`, so any genuine device's evidence
+authorized a certificate for any key.
 
 Rejected alternatives:
 
