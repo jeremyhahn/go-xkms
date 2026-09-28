@@ -15,22 +15,17 @@ package service
 
 import (
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/asn1"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math/big"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/client"
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -190,62 +185,13 @@ func provisionSimulatorIdentity(name string, tpm xkmssdk.TrustedPlatformModule, 
 
 // provisionSimulatorIAKCertificate installs a throwaway IAK certificate on
 // the simulator, in the WebAuthn Level 2 section 8.3.1 shape a "tpm"
-// attestation statement's x5c[0] must have: an empty subject, a
-// subjectAltName naming the TPM's manufacturer, model and version,
-// tcg-kp-AIKCertificate, and not a CA. It is signed by an unrelated one-off
-// key, as the simulator's EK certificate is (selfSignedSimulatorEKCert), and
-// stands in for the certificate an attestation CA issues a real device. It is
-// development and testing tooling only -- see openDeviceTPM's simulator gate.
+// attestation statement's x5c[0] must have. It is development and testing
+// tooling only -- see openDeviceTPM's simulator gate. The certificate itself
+// is minted by xkmssdk.ProvisionSimulatorIAKCertificate (pkg/tpm2/tpm2test),
+// the same helper test/integration/acme-tpm's swtpm fixtures use, so the
+// shape of a throwaway IAK certificate is defined in exactly one place.
 func provisionSimulatorIAKCertificate(name string, tpm xkmssdk.TrustedPlatformModule) error {
-	iak, err := tpm.IAK()
-	if err != nil {
-		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
-	}
-	props, err := tpm.FixedProperties()
-	if err != nil {
-		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
-	}
-	san, err := ca.BuildSubjectAltName(pkix.Name{}, nil, nil, nil, nil, nil, []pkix.Name{{
-		ExtraNames: []pkix.AttributeTypeAndValue{
-			{Type: ca.OIDTCGAttributeTPMManufacturer, Value: props.ManufacturerCode},
-			{Type: ca.OIDTCGAttributeTPMModel, Value: "xkms-simulator"},
-			{Type: ca.OIDTCGAttributeTPMVersion, Value: fmt.Sprintf("id:%04X%04X", props.FwMajor, props.FwMinor)},
-		},
-	}})
-	if err != nil {
-		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
-	}
-
-	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
-	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
-	}
-	template := &x509.Certificate{
-		SerialNumber:          serial,
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * 365 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{ca.OIDTCGKpAIKCertificate},
-		BasicConstraintsValid: true,
-		ExtraExtensions:       []pkix.Extension{san},
-	}
-	issuer := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "xkms-simulator-aik-ca"},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, issuer, iak, signer)
-	if err != nil {
-		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
-	}
-	if err := tpm.ProvisionIAKCert(cert); err != nil {
+	if err := xkmssdk.ProvisionSimulatorIAKCertificate(tpm); err != nil {
 		return ErrDeviceTPMProvisionFailed{Name: name, Err: err}
 	}
 	return nil

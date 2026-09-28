@@ -562,6 +562,12 @@ var OpenSimulator = tpm2.OpenSimulator
 // TCG-standard keys, and xkms seals under the Platform SRK.
 var EnrollSimulatorPlatformSRK = tpm2test.EnrollPlatformSRK
 
+// ProvisionSimulatorIAKCertificate installs a throwaway IAK certificate on a
+// simulator or swtpm, for tests. device-attest-01's Setup requires
+// TrustedPlatformModule.IAKCertificate to resolve, and neither backend ever
+// has a CA-issued one.
+var ProvisionSimulatorIAKCertificate = tpm2test.ProvisionIAKCertificate
+
 // NewPlatformKeyStore creates a new PlatformKeyStore with integrated TPM PIN management.
 var NewPlatformKeyStore = tpm2.NewPlatformKeyStore
 

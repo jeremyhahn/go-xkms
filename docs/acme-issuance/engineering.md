@@ -955,7 +955,14 @@ storage. Changing the storage layout requires a data migration step.
   `test/integration/acmeadmin/docker-compose.yml`.
 - **TCG / attestation** — `test/integration/acme-tpm` plus
   `pkg/acme/server/handlers/audit_tcg_test.go`,
-  `compliance_attestation_test.go`.
+  `compliance_attestation_test.go`. `swtpm_helper_test.go`'s
+  `SwtpmConnection.Provision` enrolls the Platform SRK and installs a
+  throwaway IAK certificate via the same
+  `xkmssdk.EnrollSimulatorPlatformSRK`/`xkmssdk.ProvisionSimulatorIAKCertificate`
+  helpers `pkg/acme/client/service.openDeviceTPM` uses for the in-process
+  simulator, so `TestDeviceAttest_CompleteWorkflow` and the other
+  device-attest-01 swtpm tests certify a certificate key under the Platform
+  SRK exactly as production device-attest-01 does.
 - **device-attest-01 `tpm` binding** —
   `pkg/acme/challenges/device-attest-01/tpm_simulator_test.go` (build tag
   `tpm_simulator`) produces real TPM2_Certify and TPM2_Quote output with the
