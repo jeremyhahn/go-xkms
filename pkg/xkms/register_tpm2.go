@@ -46,7 +46,6 @@ func init() {
 //   - "use_simulator" (bool): Use TPM simulator instead of hardware
 //   - "simulator_host" (string): Simulator hostname (default: "localhost")
 //   - "simulator_port" (int): Simulator port (default: 2321)
-//   - "encrypt_session" (bool): Enable encrypted TPM sessions
 func newTPM2KeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
 	tpmConfig := &tpm2backend.Config{}
 
@@ -64,9 +63,6 @@ func newTPM2KeyProvider(config map[string]interface{}) (types.KeyProvider, error
 	}
 	if port, ok := config["simulator_port"].(int); ok {
 		tpmConfig.SimulatorPort = port
-	}
-	if encrypt, ok := config["encrypt_session"].(bool); ok {
-		tpmConfig.EncryptSession = encrypt
 	}
 
 	return tpm2backend.NewBackend(tpmConfig)

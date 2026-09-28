@@ -344,7 +344,7 @@ func TestExtensionServeCmd_NoBarrier_IPCConnectivity(t *testing.T) {
 	xhome.SetRoot(tmpDir)
 	defer xhome.ResetRoot()
 
-	socketPath := filepath.Join(tmpDir, "test-serve.sock")
+	socketPath := filepath.Join(privateTempDir(t), "test-serve.sock")
 
 	// Build and execute the serve command in a goroutine.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -447,7 +447,7 @@ func TestExtensionServeCmd_BarrierMode_IPCConnectivity(t *testing.T) {
 	xhome.SetRoot(tmpDir)
 	defer xhome.ResetRoot()
 
-	socketPath := filepath.Join(tmpDir, "test-barrier-serve.sock")
+	socketPath := filepath.Join(privateTempDir(t), "test-barrier-serve.sock")
 	barrierPassword := "test-barrier-password-123"
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -773,7 +773,7 @@ func TestExtensionServe_PKCS11Strategy_Refused(t *testing.T) {
 	writeSealedRootKey(t, filepath.Join(tmpDir, "data"), "pkcs11")
 
 	cmd := &cobra.Command{Use: "serve", RunE: runExtensionServe}
-	cmd.Flags().String("socket", filepath.Join(tmpDir, "test.sock"), "")
+	cmd.Flags().String("socket", filepath.Join(privateTempDir(t), "test.sock"), "")
 	cmd.Flags().String("log-level", "error", "")
 	cmd.Flags().String("log-file", "", "")
 	cmd.Flags().String("barrier-password", "", "")
@@ -802,7 +802,7 @@ func TestExtensionServe_ShamirStrategy_Refused(t *testing.T) {
 	writeSealedRootKey(t, filepath.Join(tmpDir, "data"), "shamir")
 
 	cmd := &cobra.Command{Use: "serve", RunE: runExtensionServe}
-	cmd.Flags().String("socket", filepath.Join(tmpDir, "test.sock"), "")
+	cmd.Flags().String("socket", filepath.Join(privateTempDir(t), "test.sock"), "")
 	cmd.Flags().String("log-level", "error", "")
 	cmd.Flags().String("log-file", "", "")
 	cmd.Flags().String("barrier-password", "", "")
@@ -839,7 +839,7 @@ func TestExtensionServe_CloudKMSStrategy_Attempted(t *testing.T) {
 			writeSealedRootKey(t, filepath.Join(tmpDir, "data"), strategy)
 
 			cmd := &cobra.Command{Use: "serve", RunE: runExtensionServe}
-			cmd.Flags().String("socket", filepath.Join(tmpDir, "test.sock"), "")
+			cmd.Flags().String("socket", filepath.Join(privateTempDir(t), "test.sock"), "")
 			cmd.Flags().String("log-level", "error", "")
 			cmd.Flags().String("log-file", "", "")
 			cmd.Flags().String("barrier-password", "", "")
@@ -981,7 +981,7 @@ func TestExtensionServeCmd_NoAuth_NoBarrier(t *testing.T) {
 	xhome.SetRoot(tmpDir)
 	defer xhome.ResetRoot()
 
-	socketPath := filepath.Join(tmpDir, "test-noauth-serve.sock")
+	socketPath := filepath.Join(privateTempDir(t), "test-noauth-serve.sock")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

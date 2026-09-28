@@ -192,8 +192,8 @@ func (h *FIDO2Handler) AuthenticateWebAuthn(opts WebAuthnAuthenticationOptions) 
 	if len(opts.Challenge) == 0 {
 		return nil, &errs.Message{Msg: "fido2: authentication challenge required"}
 	}
-	if opts.Origin == "" {
-		return nil, &errs.Message{Msg: "fido2: authentication origin required"}
+	if err := ValidateRPID(opts.RPID, opts.Origin); err != nil {
+		return nil, err
 	}
 
 	// Build clientDataJSON and derive the clientDataHash the authenticator signs.
@@ -279,11 +279,10 @@ func (h *FIDO2Handler) AuthenticateWebAuthn(opts WebAuthnAuthenticationOptions) 
 // document directly.
 //
 // The origin is NOT carried in the WebAuthn options (the browser supplies it
-// from its security context), so the caller provides it. When origin is empty,
-// the WebAuthn-standard same-origin default "https://<rpId>" is used; this is
-// correct whenever the relying party origin host equals the RP ID. Callers whose
-// origin host differs from the RP ID (a registrable-suffix RP ID) must pass the
-// explicit origin.
+// from its security context), so the caller provides it, and the server's rpId
+// must be the origin's effective domain or a registrable suffix of it
+// (ValidateRPID). An empty origin is refused: it is never derived from the
+// server-supplied rpId.
 func parseRequestOptions(optionsJSON []byte, origin string) (WebAuthnAuthenticationOptions, error) {
 	if len(optionsJSON) == 0 {
 		return WebAuthnAuthenticationOptions{}, &errs.Wrapped{Msg: "fido2", Err: ErrAssertionOptionsRequired}
@@ -312,9 +311,8 @@ func parseRequestOptions(optionsJSON []byte, origin string) (WebAuthnAuthenticat
 		return WebAuthnAuthenticationOptions{}, &errs.Wrapped{Msg: "fido2", Err: ErrAssertionRPIDMissing}
 	}
 
-	resolvedOrigin := origin
-	if resolvedOrigin == "" {
-		resolvedOrigin = "https://" + reqOpts.RelyingPartyID
+	if err := ValidateRPID(reqOpts.RelyingPartyID, origin); err != nil {
+		return WebAuthnAuthenticationOptions{}, err
 	}
 
 	allowCredentialIDs := make([][]byte, 0, len(reqOpts.AllowedCredentials))
@@ -332,7 +330,7 @@ func parseRequestOptions(optionsJSON []byte, origin string) (WebAuthnAuthenticat
 
 	return WebAuthnAuthenticationOptions{
 		Challenge:               challenge,
-		Origin:                  resolvedOrigin,
+		Origin:                  origin,
 		RPID:                    reqOpts.RelyingPartyID,
 		AllowCredentialIDs:      allowCredentialIDs,
 		RequireUserVerification: reqOpts.UserVerification == protocol.VerificationRequired,
@@ -340,36 +338,29 @@ func parseRequestOptions(optionsJSON []byte, origin string) (WebAuthnAuthenticat
 	}, nil
 }
 
-// AssertWithOptions drives a connected CTAP2 authenticator through a WebAuthn
-// assertion ceremony whose options were issued by a relying party server, and
-// returns the WebAuthn assertion JSON for the server to verify.
+// AssertWithOptionsAndOrigin drives a connected CTAP2 authenticator through a
+// WebAuthn assertion ceremony whose options were issued by a relying party
+// server, and returns the WebAuthn assertion JSON for the server to verify.
 //
 // optionsJSON is the server's BeginLogin output: the JSON-marshaled WebAuthn
 // PublicKeyCredentialRequestOptions (challenge, rpId, allowCredentials,
 // userVerification, timeout), in either the wrapped browser shape
-// ({"publicKey": {...}}) or the bare request-options shape. AssertWithOptions
-// parses it, builds the clientDataJSON over the supplied challenge and the
-// WebAuthn-standard same-origin default ("https://<rpId>"), invokes CTAP2
-// authenticatorGetAssertion on the local authenticator, and assembles the
+// ({"publicKey": {...}}) or the bare request-options shape. It is parsed, the
+// server's rpId is checked against origin (ValidateRPID), the clientDataJSON
+// is built over the supplied challenge and origin, CTAP2
+// authenticatorGetAssertion runs on the local authenticator, and the
 // navigator.credentials.get() response document (id, rawId, type,
-// response{authenticatorData, clientDataJSON, signature, userHandle}).
+// response{authenticatorData, clientDataJSON, signature, userHandle}) is
+// assembled.
+//
+// origin is the caller's WebAuthn origin and must match one of the relying
+// party's configured RPOrigins or the server will reject the assertion. It is
+// required: it is never derived from the server-supplied rpId.
 //
 // The returned bytes are exactly the body the server consumes via
-// protocol.ParseCredentialRequestResponseBody in FinishLogin. Callers whose
-// origin host differs from the RP ID must use AssertWithOptionsAndOrigin.
-//
-// The context bounds device acquisition; the CTAP user-presence timeout is taken
-// from the options' timeout (falling back to the handler config when zero).
-//
-// A PIN-protected authenticator needs Assert, which carries one.
-func (h *FIDO2Handler) AssertWithOptions(ctx context.Context, optionsJSON []byte) ([]byte, error) {
-	return h.Assert(ctx, WebAuthnAssertionRequest{OptionsJSON: optionsJSON})
-}
-
-// AssertWithOptionsAndOrigin is AssertWithOptions with an explicit WebAuthn
-// origin. The origin must match one of the relying party's configured RPOrigins
-// or the server will reject the assertion. When origin is empty, the
-// WebAuthn-standard same-origin default "https://<rpId>" is used.
+// protocol.ParseCredentialRequestResponseBody in FinishLogin. The context
+// bounds device acquisition; the CTAP user-presence timeout is taken from the
+// options' timeout (falling back to the handler config when zero).
 //
 // A PIN-protected authenticator needs Assert, which carries one.
 func (h *FIDO2Handler) AssertWithOptionsAndOrigin(ctx context.Context, optionsJSON []byte, origin string) ([]byte, error) {
@@ -391,8 +382,9 @@ type WebAuthnAssertionRequest struct {
 	// PublicKeyCredentialRequestOptions shape.
 	OptionsJSON []byte
 
-	// Origin is the WebAuthn origin the clientDataJSON is built over. Empty
-	// selects the WebAuthn-standard same-origin default "https://<rpId>".
+	// Origin is the WebAuthn origin the clientDataJSON is built over. It is
+	// required, and the options' rpId must be its effective domain or a
+	// registrable suffix of it (ValidateRPID).
 	Origin string
 
 	// PIN is the authenticator's CTAP2 PIN. Nil leaves the GetAssertion

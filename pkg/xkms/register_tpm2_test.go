@@ -38,12 +38,11 @@ func TestNewTPM2KeyProvider_ExtractsAllConfigKeys(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	kp, err := newTPM2KeyProvider(map[string]interface{}{
-		"device":          "unused-when-simulated",
-		"key_dir":         tmpDir,
-		"use_simulator":   true,
-		"simulator_host":  "",
-		"simulator_port":  2321,
-		"encrypt_session": true,
+		"device":         "unused-when-simulated",
+		"key_dir":        tmpDir,
+		"use_simulator":  true,
+		"simulator_host": "",
+		"simulator_port": 2321,
 	})
 
 	if err != nil {
@@ -63,12 +62,11 @@ func TestNewTPM2KeyProvider_WrongConfigValueTypes(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	kp, err := newTPM2KeyProvider(map[string]interface{}{
-		"device":          123,    // wrong type: not a string, ignored
-		"key_dir":         tmpDir, // pinned: valid string
-		"use_simulator":   true,   // pinned: valid bool, never touches hardware
-		"simulator_host":  42,     // wrong type: not a string, ignored
-		"simulator_port":  "2321", // wrong type: not an int, ignored
-		"encrypt_session": "true", // wrong type: not a bool, ignored
+		"device":         123,    // wrong type: not a string, ignored
+		"key_dir":        tmpDir, // pinned: valid string
+		"use_simulator":  true,   // pinned: valid bool, never touches hardware
+		"simulator_host": 42,     // wrong type: not a string, ignored
+		"simulator_port": "2321", // wrong type: not an int, ignored
 	})
 
 	if err != nil {

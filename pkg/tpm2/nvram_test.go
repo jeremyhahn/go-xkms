@@ -23,82 +23,74 @@ import (
 
 func TestNVWithAuthNoPolicy(t *testing.T) {
 
-	encryptOpts := map[string]bool{
-		"withEncryption":    true,
-		"withoutEncryption": false,
-	}
-
 	policyOpts := map[string]bool{
 		"withPolicy":    true,
 		"withoutPolicy": false,
 	}
 
-	for _, encryptOpt := range encryptOpts {
+	for _, policyOpt := range policyOpts {
 
-		for _, policyOpt := range policyOpts {
+		_, tpm := createSim(false)
 
-			_, tpm := createSim(encryptOpt, false)
+		userPIN := mustPassword([]byte("user-pin"))
+		secret := []byte("secret")
 
-			userPIN := mustPassword([]byte("user-pin"))
-			secret := []byte("secret")
+		ekAttrs, err := tpm.EKAttributes()
+		assert.Nil(t, err)
 
-			ekAttrs, err := tpm.EKAttributes()
-			assert.Nil(t, err)
+		oldHierarchyAuth := ekAttrs.TPMAttributes.HierarchyAuth
 
-			oldHierarchyAuth := ekAttrs.TPMAttributes.HierarchyAuth
+		// Change the hierarchy authorization passwords to user-pin
+		err = tpm.SetHierarchyAuth(oldHierarchyAuth, userPIN, nil)
+		assert.Nil(t, err)
 
-			// Change the hierarchy authorization passwords to user-pin
-			err = tpm.SetHierarchyAuth(oldHierarchyAuth, userPIN, nil)
-			assert.Nil(t, err)
+		ekAttrs.TPMAttributes.HierarchyAuth = userPIN
 
-			ekAttrs.TPMAttributes.HierarchyAuth = userPIN
+		keyAttrs := &types.KeyAttributes{
+			Parent:         ekAttrs,
+			Password:       mustPassword([]byte("test")),
+			PlatformPolicy: policyOpt,
+			SealData:       types.NewSealData(secret),
+			TPMAttributes: &types.TPMAttributes{
+				Handle:        tpm2.TPMHandle(nvramOwnerIndex),
+				HashAlg:       tpm2.TPMAlgSHA256,
+				Hierarchy:     tpm2.TPMRHOwner,
+				HierarchyAuth: userPIN,
+			},
+		}
 
-			keyAttrs := &types.KeyAttributes{
-				Parent:         ekAttrs,
-				Password:       mustPassword([]byte("test")),
-				PlatformPolicy: policyOpt,
-				SealData:       types.NewSealData(secret),
-				TPMAttributes: &types.TPMAttributes{
-					Handle:        tpm2.TPMHandle(nvramOwnerIndex),
-					HashAlg:       tpm2.TPMAlgSHA256,
-					Hierarchy:     tpm2.TPMRHOwner,
-					HierarchyAuth: userPIN,
-				},
-			}
+		// providing valid auth - should work
+		err = tpm.NVWrite(keyAttrs)
+		assert.Nil(t, err)
 
-			// providing valid auth - should work
-			err = tpm.NVWrite(keyAttrs)
-			assert.Nil(t, err)
+		// correct auth, no PCR policy - should work
+		dataSize := uint16(len(secret))
+		nvSecret, err := tpm.NVRead(keyAttrs, dataSize)
+		assert.Nil(t, err)
+		assert.NotNil(t, nvSecret)
+		assert.Equal(t, secret, nvSecret)
 
-			// correct auth, no PCR policy - should work
-			dataSize := uint16(len(secret))
-			nvSecret, err := tpm.NVRead(keyAttrs, dataSize)
+		// providing invalid hierarchy auth - should fail
+		keyAttrs.Parent.TPMAttributes.HierarchyAuth = mustPassword([]byte("test"))
+		err = tpm.NVWrite(keyAttrs)
+		assert.NotNil(t, err)
+
+		// // providing invalid key auth - should fail
+		// keyAttrs.Password = mustPassword([]byte{})
+		// err = tpm.NVWrite(keyAttrs)
+		// assert.NotNil(t, err)
+
+		keyAttrs.Parent.TPMAttributes.HierarchyAuth = userPIN
+		keyAttrs.Password = mustPassword([]byte{})
+		if policyOpt {
+
+			// invalid key auth with platform policy - should succeed
+			nvSecret, err = tpm.NVRead(keyAttrs, dataSize)
 			assert.Nil(t, err)
 			assert.NotNil(t, nvSecret)
-			assert.Equal(t, secret, nvSecret)
-
-			// providing invalid hierarchy auth - should fail
-			keyAttrs.Parent.TPMAttributes.HierarchyAuth = mustPassword([]byte("test"))
-			err = tpm.NVWrite(keyAttrs)
-			assert.NotNil(t, err)
-
-			// // providing invalid key auth - should fail
-			// keyAttrs.Password = mustPassword([]byte{})
-			// err = tpm.NVWrite(keyAttrs)
-			// assert.NotNil(t, err)
-
-			keyAttrs.Parent.TPMAttributes.HierarchyAuth = userPIN
-			keyAttrs.Password = mustPassword([]byte{})
-			if policyOpt {
-
-				// invalid key auth with platform policy - should succeed
-				nvSecret, err = tpm.NVRead(keyAttrs, dataSize)
-				assert.Nil(t, err)
-				assert.NotNil(t, nvSecret)
-			}
-
-			_ = tpm.Close()
 		}
+
+		_ = tpm.Close()
 	}
 }
 
@@ -165,7 +157,7 @@ func TestNVDefineCounter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, tpmIface := createSim(false, false)
+			_, tpmIface := createSim(false)
 			defer func() { _ = tpmIface.Close() }()
 
 			tpm := tpmIface.(*TPM2)
@@ -280,7 +272,7 @@ func TestNVDefineExtend(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, tpmIface := createSim(false, false)
+			_, tpmIface := createSim(false)
 			defer func() { _ = tpmIface.Close() }()
 
 			tpm := tpmIface.(*TPM2)
@@ -312,7 +304,7 @@ func TestNVDefineExtend(t *testing.T) {
 func TestNVIncrement(t *testing.T) {
 
 	t.Run("success_increment_counter", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -352,7 +344,7 @@ func TestNVIncrement(t *testing.T) {
 	})
 
 	t.Run("error_nil_tpm_attributes", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -368,7 +360,7 @@ func TestNVIncrement(t *testing.T) {
 	})
 
 	t.Run("error_nil_parent", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		keyAttrs := &types.KeyAttributes{
@@ -389,7 +381,7 @@ func TestNVIncrement(t *testing.T) {
 func TestNVExtend(t *testing.T) {
 
 	t.Run("success_extend_data", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -437,7 +429,7 @@ func TestNVExtend(t *testing.T) {
 	})
 
 	t.Run("error_nil_data", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -457,7 +449,7 @@ func TestNVExtend(t *testing.T) {
 	})
 
 	t.Run("error_empty_data", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -477,7 +469,7 @@ func TestNVExtend(t *testing.T) {
 	})
 
 	t.Run("error_nil_tpm_attributes", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -493,7 +485,7 @@ func TestNVExtend(t *testing.T) {
 	})
 
 	t.Run("error_nil_parent", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		keyAttrs := &types.KeyAttributes{
@@ -514,7 +506,7 @@ func TestNVExtend(t *testing.T) {
 func TestNVReadCounter(t *testing.T) {
 
 	t.Run("success_read_counter", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -557,7 +549,7 @@ func TestNVReadCounter(t *testing.T) {
 	})
 
 	t.Run("error_nil_tpm_attributes", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -573,7 +565,7 @@ func TestNVReadCounter(t *testing.T) {
 	})
 
 	t.Run("error_nil_parent", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		keyAttrs := &types.KeyAttributes{
@@ -605,7 +597,7 @@ func TestNVReadExtend(t *testing.T) {
 
 	for _, tt := range hashAlgTests {
 		t.Run("success_read_"+tt.name, func(t *testing.T) {
-			_, tpm := createSim(false, false)
+			_, tpm := createSim(false)
 			defer func() { _ = tpm.Close() }()
 
 			ekAttrs, err := tpm.EKAttributes()
@@ -640,7 +632,7 @@ func TestNVReadExtend(t *testing.T) {
 	}
 
 	t.Run("error_nil_tpm_attributes", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -656,7 +648,7 @@ func TestNVReadExtend(t *testing.T) {
 	})
 
 	t.Run("error_nil_parent", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		keyAttrs := &types.KeyAttributes{
@@ -677,7 +669,7 @@ func TestNVReadExtend(t *testing.T) {
 func TestNVUndefine(t *testing.T) {
 
 	t.Run("success_undefine_counter", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -706,7 +698,7 @@ func TestNVUndefine(t *testing.T) {
 	})
 
 	t.Run("success_undefine_extend", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -735,7 +727,7 @@ func TestNVUndefine(t *testing.T) {
 	})
 
 	t.Run("error_nil_tpm_attributes", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		ekAttrs, err := tpm.EKAttributes()
@@ -751,7 +743,7 @@ func TestNVUndefine(t *testing.T) {
 	})
 
 	t.Run("error_nil_parent", func(t *testing.T) {
-		_, tpm := createSim(false, false)
+		_, tpm := createSim(false)
 		defer func() { _ = tpm.Close() }()
 
 		keyAttrs := &types.KeyAttributes{
@@ -800,7 +792,7 @@ func TestHashAlgDigestSize(t *testing.T) {
 
 // TestNVCounterWithHierarchyAuth tests counter operations with hierarchy authentication
 func TestNVCounterWithHierarchyAuth(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	userPIN := mustPassword([]byte("user-pin"))
@@ -853,7 +845,7 @@ func TestNVCounterWithHierarchyAuth(t *testing.T) {
 
 // TestNVExtendWithHierarchyAuth tests extend operations with hierarchy authentication
 func TestNVExtendWithHierarchyAuth(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	userPIN := mustPassword([]byte("user-pin"))
@@ -905,7 +897,7 @@ func TestNVExtendWithHierarchyAuth(t *testing.T) {
 
 // TestCertificateNVRAMOperations tests NVRAM certificate operations
 func TestCertificateNVRAMOperations(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl, ok := tpm.(*TPM2)
@@ -1006,7 +998,7 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 // value.  Without the fix, the function would send the owner handle with
 // the wrong (empty) password and receive TPM_RC_BAD_AUTH.
 func TestNVReadAuthReadWithNonEmptyOwnerAuth(t *testing.T) {
-	_, tpmIface := createSim(false, false)
+	_, tpmIface := createSim(false)
 	defer func() { _ = tpmIface.Close() }()
 
 	tpm := tpmIface.(*TPM2)
@@ -1105,7 +1097,7 @@ func TestNVReadAuthReadWithNonEmptyOwnerAuth(t *testing.T) {
 // (no AUTHREAD) is still readable via NVRead when the caller supplies the
 // correct owner hierarchy auth.
 func TestNVReadOwnerReadWithOwnerAuth(t *testing.T) {
-	_, tpmIface := createSim(false, false)
+	_, tpmIface := createSim(false)
 	defer func() { _ = tpmIface.Close() }()
 
 	tpm := tpmIface.(*TPM2)
@@ -1199,7 +1191,7 @@ func TestNVReadOwnerReadWithOwnerAuth(t *testing.T) {
 // read, bit 16) and no owner- or auth-value-based read attribute, then
 // calling NVRead which must return the typed error without panicking.
 func TestNVReadNotAuthorizedError(t *testing.T) {
-	_, tpmIface := createSim(false, false)
+	_, tpmIface := createSim(false)
 	defer func() { _ = tpmIface.Close() }()
 
 	tpm := tpmIface.(*TPM2)
@@ -1300,7 +1292,7 @@ func TestNVReadNotAuthorizedError(t *testing.T) {
 //     would exceed the index's actual DataSize is clamped and succeeds (the
 //     clamping semantics guarantee the API is robust to over-sized requests).
 func TestNVReadWriteChunked(t *testing.T) {
-	_, tpmIface := createSim(false, false)
+	_, tpmIface := createSim(false)
 	defer func() { _ = tpmIface.Close() }()
 
 	tpm := tpmIface.(*TPM2)
@@ -1470,10 +1462,11 @@ func TestNVIndexMaxSize_TransportFailure(t *testing.T) {
 func TestNvExtendExecute_TransportFailure(t *testing.T) {
 	err := nvExtendExecute(
 		failingTransport{},
-		tpm2.TPMRHOwner,
-		tpm2.TPMHandle(0x01500040),
-		tpm2.TPM2BName{Buffer: []byte("nv-index-name")},
-		nil,
+		tpm2.AuthHandle{Handle: tpm2.TPMRHOwner, Auth: tpm2.PasswordAuth(nil)},
+		tpm2.NamedHandle{
+			Handle: tpm2.TPMHandle(0x01500040),
+			Name:   tpm2.TPM2BName{Buffer: []byte("nv-index-name")},
+		},
 		[]byte("extend-data"),
 	)
 	require.Error(t, err)

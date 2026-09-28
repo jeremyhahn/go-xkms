@@ -209,7 +209,6 @@ func TestSaveToPath_RoundTrip_AllSections(t *testing.T) {
 	cfg.XKMSD.Protocol = "grpc"
 	cfg.XKMSD.TLSEnabled = true
 	cfg.TPM.Device = "/dev/tpmrm0"
-	cfg.TPM.EncryptSessions = true
 	cfg.PasswordProtection.Enabled = true
 	cfg.PasswordProtection.Mode = "barrier"
 	cfg.Trust.Roots = []string{"/etc/xkey/roots/ca.pem"}

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -138,6 +139,25 @@ func TestLoadFromPath_InvalidConfig(t *testing.T) {
 		"expected ErrConfigInvalid, got %v", err)
 }
 
+// TestLoadFromPath_InvalidDeviceScanTimeout proves a syntactically valid but
+// out-of-range device.scan_timeout (a duration of zero) is rejected by
+// Validate, the same way an out-of-range int or an unknown enum value is.
+func TestLoadFromPath_InvalidDeviceScanTimeout(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
+
+	yamlContent := `device:
+  scan_timeout: 0s
+`
+	require.NoError(t, os.WriteFile(cfgPath, []byte(yamlContent), 0600))
+
+	cfg, err := LoadFromPath(cfgPath)
+	assert.Nil(t, cfg)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid),
+		"expected ErrConfigInvalid, got %v", err)
+}
+
 func TestLoadFromPath_PartialConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
@@ -203,7 +223,6 @@ xkmsd:
   tls_enabled: true
 tpm:
   device: /dev/tpmrm0
-  encrypt_sessions: true
   platform_pcr_bank: sha256
   srk_handle: 2164260865
 password_protection:
@@ -251,6 +270,9 @@ state:
   storage_type: barrier
   barrier_initialized: true
   barrier_strategy: tpm-pcr
+device:
+  trust_new_devices: true
+  scan_timeout: 45s
 `
 	require.NoError(t, os.WriteFile(cfgPath, []byte(yamlContent), 0600))
 
@@ -296,7 +318,6 @@ state:
 
 	// TPM
 	assert.Equal(t, "/dev/tpmrm0", cfg.TPM.Device)
-	assert.True(t, cfg.TPM.EncryptSessions)
 	assert.Equal(t, "sha256", cfg.TPM.PlatformPCRBank)
 	assert.Equal(t, uint32(2164260865), cfg.TPM.SRKHandle)
 
@@ -351,6 +372,10 @@ state:
 	assert.Equal(t, "barrier", cfg.State.StorageType)
 	assert.True(t, cfg.State.BarrierInitialized)
 	assert.Equal(t, "tpm-pcr", cfg.State.BarrierStrategy)
+
+	// Device
+	assert.True(t, cfg.Device.TrustNewDevices)
+	assert.Equal(t, 45*time.Second, cfg.Device.ScanTimeout)
 }
 
 // TestLoadFromPath_EnvOverride verifies that environment variable overrides
@@ -432,6 +457,56 @@ func TestLoadFromPath_EnvOverride_InvalidValueIsRejected(t *testing.T) {
 	assert.Nil(t, cfg)
 	assert.ErrorIs(t, err, ErrConfigInvalid)
 	assert.Contains(t, err.Error(), "log.level")
+}
+
+// TestLoadFromPath_EnvOverride_DeviceSettings proves that
+// XKEY_DEVICE_TRUST_NEW_DEVICES and XKEY_DEVICE_SCAN_TIMEOUT win over a file
+// value for the two device.* settings go-xkms#1071 gave config-file/env
+// meaning, exercising both leaves' types (bool and time.Duration).
+func TestLoadFromPath_EnvOverride_DeviceSettings(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("device:\n  trust_new_devices: false\n  scan_timeout: 20s\n"), 0600))
+
+	t.Setenv("XKEY_DEVICE_TRUST_NEW_DEVICES", "true")
+	t.Setenv("XKEY_DEVICE_SCAN_TIMEOUT", "90s")
+
+	cfg, err := LoadFromPath(cfgPath)
+	require.NoError(t, err)
+	assert.True(t, cfg.Device.TrustNewDevices, "environment must win over the file")
+	assert.Equal(t, 90*time.Second, cfg.Device.ScanTimeout, "environment must win over the file")
+}
+
+// TestLoadFromPath_DeviceSettings_FileBeatsDefault proves that a file value
+// for device.* wins over DefaultConfig's built-in default when the
+// environment supplies neither leaf.
+func TestLoadFromPath_DeviceSettings_FileBeatsDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("device:\n  trust_new_devices: true\n  scan_timeout: 20s\n"), 0600))
+
+	cfg, err := LoadFromPath(cfgPath)
+	require.NoError(t, err)
+	assert.True(t, cfg.Device.TrustNewDevices)
+	assert.Equal(t, 20*time.Second, cfg.Device.ScanTimeout)
+	assert.NotEqual(t, DefaultConfig().Device.ScanTimeout, cfg.Device.ScanTimeout, "the probe value must differ from the default")
+}
+
+// TestLoadFromPath_EnvOverride_DeviceScanTimeoutInvalidIsRejected proves an
+// unparsable duration supplied by the environment goes through the same
+// validation as one from the file, rather than being silently zeroed or
+// ignored.
+func TestLoadFromPath_EnvOverride_DeviceScanTimeoutInvalidIsRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("log:\n  level: info\n"), 0600))
+
+	t.Setenv("XKEY_DEVICE_SCAN_TIMEOUT", "not-a-duration")
+
+	cfg, err := LoadFromPath(cfgPath)
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrConfigLoadFailed)
 }
 
 // TestLoadFromPath_EnvOverride_CompositeLeafIsRejected proves that a variable

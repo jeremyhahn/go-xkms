@@ -12,8 +12,7 @@ import (
 // TestTPMSessionEncryption verifies that session encryption is enabled and working
 // by capturing raw TPM traffic and analyzing it for encryption indicators
 func TestTPMSessionEncryption(t *testing.T) {
-	// Create TPM backend with encryption enabled
-	tpmInstance, capture, cleanup := setupTPM2WithCapture(t, true)
+	tpmInstance, capture, cleanup := setupTPM2WithCapture(t)
 	defer cleanup()
 
 	// Clear any startup/provisioning packets
@@ -80,68 +79,9 @@ func TestTPMSessionEncryption(t *testing.T) {
 	t.Logf("Encryption verification passed: %.1f%% of sessions encrypted", analysis.EncryptionPercentage)
 }
 
-// TestTPMSessionNoEncryption verifies unencrypted sessions for comparison
-func TestTPMSessionNoEncryption(t *testing.T) {
-	// Create TPM backend with encryption DISABLED
-	tpmInstance, capture, cleanup := setupTPM2WithCapture(t, false)
-	defer cleanup()
-
-	// Clear any startup/provisioning packets
-	capture.Clear()
-
-	// Perform operation without encryption
-	t.Log("Creating sealed key WITHOUT encrypted session...")
-
-	// Get SRK for parent
-	srkAttrs, err := tpmInstance.SSRKAttributes()
-	if err != nil {
-		t.Fatalf("Failed to get SRK attributes: %v", err)
-	}
-
-	// Create key attributes for sealed data
-	sealAttrs := &types.KeyAttributes{
-		CN:           "test-unencrypted-seal",
-		KeyAlgorithm: x509.RSA,
-		KeyType:      types.KeyTypeCA,
-		Parent:       srkAttrs,
-		Password:     mustPassword(nil),
-		StoreType:    types.StoreTPM2,
-		TPMAttributes: &types.TPMAttributes{
-			Hierarchy: 0x40000001, // TPM_RH_OWNER
-		},
-	}
-
-	// Seal data without encryption
-	_, err = tpmInstance.SealKey(sealAttrs, nil, false)
-	if err != nil {
-		t.Fatalf("Failed to seal data: %v", err)
-	}
-
-	// Get captured packets
-	packets := capture.GetPackets()
-	if len(packets) == 0 {
-		t.Fatal("Should have captured TPM traffic")
-	}
-
-	t.Logf("Captured %d TPM packets", len(packets))
-
-	// Analyze - should show no encryption
-	analysis := AnalyzePackets(packets, getSensitivePatterns())
-	t.Log(analysis.FormatAnalysis())
-
-	// Baseline expectations: unencrypted should have 0% encryption
-	if analysis.EncryptedSessions > 0 {
-		t.Logf("Note: Found %d encrypted sessions even with encryption disabled (may be default TPM behavior)",
-			analysis.EncryptedSessions)
-	}
-
-	t.Log("Unencrypted baseline test completed")
-}
-
 // TestTPMMultipleOperationsEncryption verifies encryption across multiple operations
 func TestTPMMultipleOperationsEncryption(t *testing.T) {
-	// Create TPM backend with encryption enabled
-	tpmInstance, capture, cleanup := setupTPM2WithCapture(t, true)
+	tpmInstance, capture, cleanup := setupTPM2WithCapture(t)
 	defer cleanup()
 
 	// Get SRK for operations
@@ -221,7 +161,7 @@ func TestTPMMultipleOperationsEncryption(t *testing.T) {
 // TestTPMPacketParsing verifies packet parsing utilities work correctly
 func TestTPMPacketParsing(t *testing.T) {
 	// Create TPM instance to generate real packets
-	tpmInstance, capture, cleanup := setupTPM2WithCapture(t, true)
+	tpmInstance, capture, cleanup := setupTPM2WithCapture(t)
 	defer cleanup()
 
 	// Clear startup packets

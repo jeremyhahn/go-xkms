@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -44,6 +45,7 @@ type Config struct {
 	GUI                GUISection               `yaml:"gui" json:"gui" mapstructure:"gui"`
 	State              StateSection             `yaml:"state" json:"state" mapstructure:"state"`
 	Barrier            BarrierSection           `yaml:"barrier,omitempty" json:"barrier,omitempty" mapstructure:"barrier"`
+	Device             DeviceConfig             `yaml:"device" json:"device" mapstructure:"device"`
 }
 
 // BarrierSection holds settings for barrier sealing strategies that need
@@ -137,6 +139,28 @@ type PhoneConfig struct {
 	TPMEnrollment bool `yaml:"tpm_enrollment" json:"tpm_enrollment" mapstructure:"tpm_enrollment"`
 }
 
+// DeviceConfig holds settings for the `xkey device` command group that carry
+// config-file/environment meaning across invocations: a persistent security
+// posture (TrustNewDevices) and a default that both `device pair` and
+// `device scan` share (ScanTimeout). Per-invocation choices -- which device
+// to target, whether to force a re-pair, which device to filter `device
+// status` on -- have no config-file meaning and stay flag-only; they are
+// read directly off the command in cmd/xkey/cmd/device*.go and never reach
+// this struct (go-xkms#1071).
+type DeviceConfig struct {
+	// TrustNewDevices allows `device pair` and related commands to accept a
+	// device with no stored expected key (an empty Noise prologue). It
+	// mirrors the --trust-new-devices persistent flag; off by default,
+	// since it widens what a first, unauthenticated connection is allowed
+	// to be.
+	TrustNewDevices bool `yaml:"trust_new_devices" json:"trust_new_devices" mapstructure:"trust_new_devices"`
+
+	// ScanTimeout bounds how long `device pair` (auto-discovery) and
+	// `device scan` wait for BLE devices to answer before giving up, when
+	// --timeout is not given explicitly on that invocation.
+	ScanTimeout time.Duration `yaml:"scan_timeout" json:"scan_timeout" mapstructure:"scan_timeout"`
+}
+
 // XKMSDConfig holds connection settings for the xkmsd server.
 type XKMSDConfig struct {
 	Address       string `yaml:"address" json:"address" mapstructure:"address"`
@@ -172,7 +196,6 @@ type AgentConfig struct {
 // TPMConfig holds direct TPM access parameters.
 type TPMConfig struct {
 	Device          string `yaml:"device" json:"device" mapstructure:"device"`
-	EncryptSessions bool   `yaml:"encrypt_sessions" json:"encrypt_sessions" mapstructure:"encrypt_sessions"`
 	PlatformPCRBank string `yaml:"platform_pcr_bank" json:"platform_pcr_bank" mapstructure:"platform_pcr_bank"`
 	SealPCRBank     string `yaml:"seal_pcr_bank" json:"seal_pcr_bank" mapstructure:"seal_pcr_bank"`
 	SRKHandle       uint32 `yaml:"srk_handle" json:"srk_handle" mapstructure:"srk_handle"`
@@ -400,7 +423,6 @@ func DefaultConfig() *Config {
 		},
 		TPM: TPMConfig{
 			Device:          "/dev/tpmrm0",
-			EncryptSessions: true,
 			PlatformPCRBank: "sha256",
 		},
 		OIDC: OIDCConfig{
@@ -427,6 +449,9 @@ func DefaultConfig() *Config {
 		},
 		State: StateSection{
 			StorageEngine: "file",
+		},
+		Device: DeviceConfig{
+			ScanTimeout: 30 * time.Second,
 		},
 		// Barrier.CloudKMS's four provider pointers are initialized (empty,
 		// not nil) rather than left nil: registerConfigKeys/walkConfigKeys
@@ -489,6 +514,10 @@ func (c *Config) Validate() error {
 
 	if c.OIDC.CallbackPort < 1 || c.OIDC.CallbackPort > 65535 {
 		return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": oidc.callback_port must be between 1 and 65535, got %d", c.OIDC.CallbackPort)}
+	}
+
+	if c.Device.ScanTimeout <= 0 {
+		return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": device.scan_timeout must be > 0, got %s", c.Device.ScanTimeout)}
 	}
 	for key, addr := range map[string]string{
 		"agent.listen_address":       c.Agent.ListenAddress,

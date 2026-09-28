@@ -96,6 +96,15 @@ func (tpm *TPM2) ECDHZGen(
 		}
 	}()
 
+	// The shared secret leaves the TPM encrypted under a salted session of
+	// its own: the key's authorization may be a policy session, which
+	// cannot carry it.
+	encSession, closeEncSession, err := tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create encryption session", Err: err}
+	}
+	defer tpm.closeSession(closeEncSession, "ECDH_ZGen encryption")
+
 	// Execute ECDH_ZGen command
 	// Per TCG TPM 2.0 specification Part 3, section 14.5:
 	// TPM2_ECDH_ZGen uses the TPM-resident private key to perform
@@ -107,7 +116,7 @@ func (tpm *TPM2) ECDHZGen(
 			Auth:   auth,
 		},
 		InPoint: tpm2.New2B(*peerPublicKey),
-	}.Execute(tpm.transport)
+	}.Execute(tpm.transport, encSession)
 
 	if err != nil {
 		tpm.logger.Error("TPM2_ECDH_ZGen failed",

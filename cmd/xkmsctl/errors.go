@@ -511,17 +511,18 @@ var (
 	// ErrFinishRegistrationFailed is the sentinel error "failed to finish registration".
 	ErrFinishRegistrationFailed = errors.New("failed to finish registration")
 
-	// ErrFrostAttributesRequired is the sentinel error returned by the
-	// file-backed FROST secret store's Signer/Decrypter when attrs carries no
-	// FrostAttributes: without the group's ciphersuite and M-of-N parameters
-	// it cannot build the ceremony-aware backend those operations delegate to.
-	ErrFrostAttributesRequired = errors.New("FROST attributes (algorithm, threshold, total) are required to build a signer or decrypter for a file-backed secret")
+	// ErrSoftwareBackendNotSealer is the sentinel error returned when the SDK
+	// software backend used to hold FROST secret shares unexpectedly does
+	// not implement client.SealingKeyProvider. Every production software
+	// backend does; reaching this indicates an SDK defect, not an operator
+	// config mistake.
+	ErrSoftwareBackendNotSealer = errors.New("software backend does not implement SealingKeyProvider")
 
-	// ErrFrostPublicStorageRequired is the sentinel error returned by the
-	// file-backed FROST secret store's Signer/Decrypter when it was
-	// constructed without access to the group's public storage (group public
-	// key, verification shares): a secret share alone cannot produce either.
-	ErrFrostPublicStorageRequired = errors.New("file-backed FROST secret store has no public storage configured, required to build a signer or decrypter")
+	// ErrProvisionFrostSealKeyFailed is the sentinel error "failed to
+	// provision FROST secret wrapping key", returned when the software
+	// backend's Ed25519 wrapping key (used to seal/unseal FROST secret
+	// shares) could not be generated or retrieved.
+	ErrProvisionFrostSealKeyFailed = errors.New("failed to provision FROST secret wrapping key")
 
 	// ErrGenerateCAFailed is the sentinel error "failed to generate CA".
 	ErrGenerateCAFailed = errors.New("failed to generate CA")
@@ -591,9 +592,6 @@ var (
 
 	// ErrGetPIVCertificateFailed is the sentinel error "failed to get PIV certificate".
 	ErrGetPIVCertificateFailed = errors.New("failed to get PIV certificate")
-
-	// ErrGetSecretFailed is the sentinel error "failed to get secret".
-	ErrGetSecretFailed = errors.New("failed to get secret")
 
 	// ErrGetTenantFailed is the sentinel error "failed to get tenant".
 	ErrGetTenantFailed = errors.New("failed to get tenant")
@@ -938,9 +936,6 @@ var (
 	// ErrStorePIVCertificateFailed is the sentinel error "failed to store PIV certificate".
 	ErrStorePIVCertificateFailed = errors.New("failed to store PIV certificate")
 
-	// ErrStoreSecretFailed is the sentinel error "failed to store secret".
-	ErrStoreSecretFailed = errors.New("failed to store secret")
-
 	// ErrUnknownOutputFormat is the sentinel error "unknown output format".
 	ErrUnknownOutputFormat = errors.New("unknown output format")
 
@@ -1271,6 +1266,12 @@ var (
 	// naming a flag that no longer exists.
 	ErrWebAuthnPINRequired = errors.New("webauthn: this authenticator requires a PIN; supply it with --" +
 		pinFlagStdin + " (preferred), the " + pinEnvVar + " environment variable, or --" + pinFlagValue)
+
+	// ErrWebAuthnOriginRequired indicates a WebAuthn ceremony verb could not
+	// determine the origin to bind into the ceremony: no --origin was given
+	// and --server is not an http(s) URL to derive one from.
+	ErrWebAuthnOriginRequired = errors.New("webauthn: the origin cannot be derived from --server; supply it with --" +
+		originFlag + " (for example https://kms.example.com)")
 
 	// ErrChangeSOPINFailed is the sentinel error "failed to change SO PIN".
 	ErrChangeSOPINFailed = errors.New("failed to change SO PIN")

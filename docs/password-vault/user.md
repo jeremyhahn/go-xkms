@@ -1,6 +1,6 @@
 # Password Vault — User Guide
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## What goes in here
 
@@ -23,10 +23,10 @@ xkmsctl password unlock --user-pin -
 xkmsctl password status -o json
 ```
 
-Under `session_based` mode you unlock once and reads work until you lock again.
-Under `pin_per_operation` there is no unlock — every read carries the PIN.
+You unlock once and reads work until you lock again.
 
-`password status` tells you which mode you are in, and it works while locked.
+`password status` tells you whether the store is unlocked, and it works while
+locked.
 
 ## Adding and reading
 
@@ -36,34 +36,35 @@ xkmsctl password add "upstream-portal" \
     --folder infra --password -
 
 xkmsctl password list --folder infra -o json
-xkmsctl password get pw-123 -o json                  # metadata only
-xkmsctl password get pw-123 --decrypt --user-pin -   # the actual password
+xkmsctl password get pw-123 -o json
 ```
 
-**Plaintext is opt-in.** Without `--decrypt` you get metadata — which is what
-you want in a script, in a log, and on a screen-share.
+`password get` returns the entry, including the password field, exactly as it
+was stored once the store is unlocked -- there is no separate plaintext/
+metadata mode and no `--decrypt` flag: confidentiality at rest is provided by
+the tenant barrier, not by anything on a `get` request. `password list` never
+returns the password field, whether or not the store is unlocked.
 
 Omit `--password` and it prompts. `-` reads stdin. Typing the value on the
 command line puts it in your shell history.
 
-**Do not put passwords in `--notes`.** It is free-form, it reaches durable
-storage, and it is not what the decrypt gate protects.
+**Do not put passwords in `--notes`.** It is free-form and it reaches durable
+storage exactly like the `password` field does.
 
-## Choosing the access mode
+## Access mode
 
 ```
 xkmsctl password access-mode session_based
-xkmsctl password access-mode pin_per_operation
 ```
 
-This is a real security decision:
+`session_based` is the only mode that actually takes effect: the mode is
+fixed by how the store was set up when the server started, and
+`pin_per_operation` cannot be switched to at runtime. Requesting
+`pin_per_operation` on a store that is not already in that mode fails rather
+than silently staying on `session_based`.
 
-- **`session_based`** — convenient. While the store is unlocked, anything that
-  can reach it can read every entry in your scope.
-- **`pin_per_operation`** — the PIN on every single read. Annoying, and the
-  exposure window is one operation instead of one session.
-
-Pick deliberately, and `password lock` when you walk away.
+`password lock` when you walk away — while the store is unlocked, anything
+that can reach it can read every entry in your scope.
 
 ## Sharing within a team
 
@@ -96,12 +97,11 @@ xkmsctl password generate --length 32
 
 | What you see | What it means | What to do |
 |---|---|---|
-| reads fail with "locked" | `session_based`, and you have not unlocked | `password unlock --user-pin -` |
-| every read asks for a PIN | `pin_per_operation` mode | expected; or change the mode deliberately |
+| reads fail with "locked" | you have not unlocked the store | `password unlock --user-pin -` |
 | an entry you created is "not found" | wrong scope or tenant | `--scope all`, and check `--tenant-id` |
 | `password` routes return 404 | the vault is not configured on this server | server-side configuration |
 | an expired entry still works | expiry is metadata, not enforcement | rotate it |
-| plaintext appeared in a log | something asked for `--decrypt` and printed it | use metadata-only reads in scripts |
+| plaintext appeared in a log | `password get` logged or printed the response | avoid logging `get` output; use `password list` in scripts |
 | the browser extension cannot reach the vault | xkey's IPC socket | check the daemon and the socket path |
 
 ## Where to go next

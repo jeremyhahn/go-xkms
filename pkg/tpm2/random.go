@@ -72,59 +72,19 @@ func (tpm *TPM2) Read(data []byte) (n int, err error) {
 // This is an internal helper function that handles the actual TPM call.
 func (tpm *TPM2) readChunk(data []byte, requestSize int) (int, error) {
 
-	var sess tpm2.Session
-
-	if tpm.config.EncryptSession {
-
-		ekHandle := tpm2.TPMHandle(tpm.config.EK.Handle)
-		response, err := tpm2.ReadPublic{
-			ObjectHandle: ekHandle,
-		}.Execute(tpm.transport)
-		if err != nil {
-
-			tpm.logger.Debug("EK handle not found, creating transient EK", slog.String("error", err.Error()))
-
-			ekAttrs, err := tpm.EKAttributes()
-			if err != nil {
-				return 0, err
-			}
-			sess = tpm2.HMAC(
-				tpm2.TPMAlgSHA256,
-				16,
-				tpm2.AESEncryption(
-					128,
-					tpm2.EncryptOut),
-				tpm2.Salted(ekAttrs.TPMAttributes.Handle, ekAttrs.TPMAttributes.Public))
-
-		} else {
-
-			// Use the persistent EK handle to encrypt the session
-			ekPub, err := response.OutPublic.Contents()
-			if err != nil {
-				tpm.logger.Error("failed to get EK public contents", slog.String("error", err.Error()))
-				return 0, err
-			}
-			sess = tpm2.HMAC(
-				tpm2.TPMAlgSHA256,
-				16,
-				tpm2.AESEncryption(
-					128,
-					tpm2.EncryptOut),
-				tpm2.Salted(ekHandle, *ekPub))
-		}
-
-	} else {
-		// No key available to salt the connection
-		sess = tpm2.HMAC(
-			tpm2.TPMAlgSHA256,
-			16,
-			tpm2.AESEncryption(128, tpm2.EncryptOut))
-	}
-
-	// Get the random bytes
 	if requestSize > math.MaxUint16 {
 		return 0, &errs.Message{Msg: fmt.Sprintf("request size too large: %d", requestSize)}
 	}
+
+	// The random bytes are key material, so they leave the TPM encrypted
+	// under a salted session.
+	sess, closer, err := tpm.encryptionSession(encryptOut)
+	if err != nil {
+		return 0, err
+	}
+	defer tpm.closeSession(closer, "GetRandom encryption")
+
+	// Get the random bytes
 	resp, err := tpm2.GetRandom{
 		BytesRequested: uint16(requestSize), // #nosec G115 -- Bounds checked above
 	}.Execute(tpm.Transport(), sess)

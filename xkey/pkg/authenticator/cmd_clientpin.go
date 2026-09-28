@@ -26,6 +26,7 @@ import (
 	"io"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/jeremyhahn/go-enclave"
@@ -78,15 +79,27 @@ const (
 
 // PIN protocol constants.
 const (
-	PINProtocol1          = 1
-	PINProtocol2          = 2
-	PINMinLength          = 4
-	PINHashSize           = 16
-	PINAuthSizeV1         = 16
-	PINAuthSizeV2         = 32
-	PINTokenSize          = 32
-	AESBlockSize          = 16
+	PINProtocol1  = 1
+	PINProtocol2  = 2
+	PINMinLength  = 4
+	PINHashSize   = 16
+	PINAuthSizeV1 = 16
+	PINAuthSizeV2 = 32
+	PINTokenSize  = 32
+	AESBlockSize  = 16
+
+	// EncryptedPINMinLength is the size, in bytes, of the zero-padded PIN
+	// plaintext that decryptPIN produces and that encryptNewPIN/encryptNewPINV2
+	// build: CTAP 2.1 §6.5.6 pads newPin to exactly one AES block count (64
+	// bytes) regardless of protocol, so it is also the exact V1 newPinEnc
+	// length and the ciphertext length within a V2 newPinEnc.
 	EncryptedPINMinLength = 64
+
+	// PINMaxLength is the largest PIN, in bytes, CTAP 2.1 §6.5.5.5 step 5
+	// permits. A PIN filling all 64 padded bytes has no room for the 0x00
+	// terminator decryptPIN requires, so this is also the largest PIN that
+	// can round-trip through the padding scheme.
+	PINMaxLength = 63
 )
 
 // pinUvAuthToken lifetime limits from CTAP 2.1 §6.5.2.1. A token is minted by
@@ -222,6 +235,19 @@ type pinProtocolState struct {
 // This is embedded in Authenticator and protected by the same mutex.
 type authenticatorPINState struct {
 	protocol *pinProtocolState
+
+	// mismatches counts consecutive user PIN mismatches since the last
+	// correct PIN or power-up (CTAP 2.1 §6.5.5.5). It lives here rather than
+	// in protocol so regenerating the key agreement does not clear it, and
+	// clearPINState (authenticatorReset) does.
+	mismatches pinMismatchGuard
+}
+
+// userPINRefusals are the user PIN's failed-attempt errors.
+var userPINRefusals = pinRefusals{
+	blocked:     ErrPINBlocked,
+	authBlocked: ErrPINAuthBlocked,
+	invalid:     ErrPINInvalid,
 }
 
 // handleClientPIN implements the CTAP2 authenticatorClientPIN command (0x06).
@@ -276,7 +302,18 @@ func (a *Authenticator) handleClientPIN(data []byte) ([]byte, error) {
 		return a.handleGetPINToken(req)
 
 	case ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions:
-		return a.handleGetPinUvAuthTokenUsingUvWithPermissions(req)
+		// Unsupported, deliberately (#1145). Minting a token here requires a
+		// standalone built-in user verification ceremony whose success the
+		// authenticator can check (CTAP 2.1 §6.5.5.7.3), and no key backend
+		// offers one. keybackend.FIDO2KeyCapabilities.HandlesUserVerification
+		// means verification happens INSIDE the backend's own key operation
+		// (a phone biometric gating Sign), not that a user can be verified on
+		// demand, so it can never authorize a token that later drives
+		// credential management or authenticatorConfig. getOptions keeps the
+		// uv option off whenever pinUvAuthToken is advertised, so a
+		// conforming platform never sends this subcommand; the PIN path
+		// (subcommand 0x09) is the one way to obtain a pinUvAuthToken.
+		return nil, ErrInvalidSubcommand
 
 	case ClientPINSubCmdGetPinUvAuthTokenUsingPinWithPermissions:
 		return a.handleGetPinUvAuthTokenUsingPinWithPermissions(req)
@@ -290,13 +327,19 @@ func (a *Authenticator) handleClientPIN(data []byte) ([]byte, error) {
 }
 
 // handleGetRetries returns the current PIN retry count.
+//
+// powerCycleState (CTAP 2.1 §6.5.5.2) reports whether the consecutive-mismatch
+// block is in force, so a platform can tell "power-cycle the authenticator"
+// from "attempts remain".
 func (a *Authenticator) handleGetRetries() ([]byte, error) {
 	a.mu.RLock()
 	retries := a.state.PINRetries()
+	powerCycle := a.pinState.mismatches.authBlocked()
 	a.mu.RUnlock()
 
 	response := map[int]interface{}{
-		clientPINResponseKeyPinRetries: uint8(retries),
+		clientPINResponseKeyPinRetries:      uint8(retries),
+		clientPINResponseKeyPowerCycleState: powerCycle,
 	}
 
 	data, err := encodeCBOR(response)
@@ -431,11 +474,12 @@ func (a *Authenticator) establishPINLocked(newPIN []byte) error {
 	a.state.SetPINRetries(a.config.PINMaxRetries)
 
 	// CTAP 2.1 §6.5.2.1: a pinUvAuthToken must not outlive the PIN state it
-	// was minted under. This path runs only when no PIN was set, but a token
-	// can still be outstanding: getPinUvAuthTokenUsingUvWithPermissions mints
-	// one against the authenticator's built-in user verification and never
-	// asks whether a PIN exists. Establishing a PIN must not leave that token
-	// usable.
+	// was minted under. This path runs only when no PIN was set, and today
+	// every minting path requires a PIN (getPinUvAuthTokenUsingUv is refused,
+	// #1145), so no token should be outstanding here. The invalidation stays
+	// so that guarantee does not depend on every future minting path
+	// remembering to check for a PIN: establishing a PIN must never leave a
+	// token minted without one usable.
 	//
 	// Placed after the new PIN is accepted into a.state and before it is
 	// persisted, so a storage failure cannot leave a live token behind a PIN
@@ -567,15 +611,13 @@ func (a *Authenticator) handleChangePIN(req *ClientPINRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	// Decrypt the new PIN.
+	// Decrypt the new PIN. decryptPIN already enforces the CTAP 2.1 §6.5.5.5
+	// step 5 length policy (non-empty, <= 63 bytes, >= a.config.PINMinLength
+	// Unicode code points) as part of extracting it from its padded form, so
+	// there is no separate length check to repeat here.
 	newPIN, err := a.decryptPIN(encKey, req.PinUvAuthProtocol, req.NewPinEnc)
 	if err != nil {
 		return nil, err
-	}
-
-	// Validate PIN length.
-	if len(newPIN) < a.config.PINMinLength {
-		return nil, ErrPINPolicyViolation
 	}
 
 	// Hash and store the new PIN. The retry budget was already reset and
@@ -687,96 +729,6 @@ func (a *Authenticator) handleGetPINToken(req *ClientPINRequest) ([]byte, error)
 	a.beginUsingPinUvAuthTokenLocked(pinToken, PINPermissionMakeCredential|PINPermissionGetAssertion, "")
 
 	// Encrypt the PIN token.
-	encryptedToken, err := a.encryptData(encKey, req.PinUvAuthProtocol, pinToken)
-	if err != nil {
-		return nil, err
-	}
-
-	// Save state.
-	if err := a.storage.SaveState(a.state); err != nil {
-		return nil, ErrStorageError
-	}
-
-	response := map[int]interface{}{
-		clientPINResponseKeyPinUvAuthToken: encryptedToken,
-	}
-
-	data, err := encodeCBOR(response)
-	if err != nil {
-		return nil, err
-	}
-
-	return a.successResponse(data), nil
-}
-
-// handleGetPinUvAuthTokenUsingUvWithPermissions generates a pinUvAuthToken using
-// built-in user verification (UV) instead of PIN verification. This is used when
-// the authenticator reports uv=true in GetInfo and the platform sends subCommand 0x06.
-// The flow is identical to the PIN-with-permissions variant except PIN hash
-// verification is skipped entirely -- the key backend's built-in UV (e.g.,
-// biometric on a phone) is considered sufficient.
-func (a *Authenticator) handleGetPinUvAuthTokenUsingUvWithPermissions(req *ClientPINRequest) ([]byte, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	// The backend must support built-in user verification.
-	if a.keyBackend == nil || !a.keyBackend.Capabilities().HandlesUserVerification {
-		return nil, ErrInvalidSubcommand
-	}
-
-	// Validate permissions are non-zero.
-	if req.Permissions == 0 {
-		return nil, ErrInvalidParameter
-	}
-
-	// Initialize PIN protocol if needed.
-	if err := a.initPINProtocol(); err != nil {
-		return nil, err
-	}
-
-	// Verify platform key agreement is provided.
-	if len(req.KeyAgreement) == 0 {
-		return nil, ErrMissingKeyAgreement
-	}
-
-	// Derive shared secret.
-	sharedSecret, err := a.deriveSharedSecret(req.KeyAgreement, req.PinUvAuthProtocol)
-	if err != nil {
-		return nil, err
-	}
-	a.pinState.protocol.sharedSecret = sharedSecret
-
-	// Determine encryption key based on protocol version.
-	encKey := sharedSecret
-	if req.PinUvAuthProtocol == PINProtocol2 {
-		encKey = a.pinState.protocol.aesKey
-	}
-
-	// Check UV retries.
-	if a.state.UVRetries() <= 0 {
-		return nil, ErrUVBlocked
-	}
-
-	slog.Debug("[CTAP2] getPinUvAuthTokenUsingUvWithPermissions",
-		"protocol", req.PinUvAuthProtocol,
-		"permissions", req.Permissions,
-		"rpID", req.RPID,
-	)
-
-	// Built-in UV is handled by the key backend; when HandlesUserVerification
-	// is true the backend performs UV as part of its operations (e.g., biometric
-	// prompt on a phone). We treat the capability as implicit success.
-	// Reset UV retries on success.
-	a.state.SetUVRetries(DefaultUVRetries)
-
-	// Generate a new PIN/UV auth token with permissions.
-	pinToken := make([]byte, PINTokenSize)
-	if _, err := rand.Read(pinToken); err != nil {
-		return nil, ErrCryptoError
-	}
-	a.beginUsingPinUvAuthTokenLocked(pinToken, req.Permissions, req.RPID)
-
-	// Encrypt the token.
 	encryptedToken, err := a.encryptData(encKey, req.PinUvAuthProtocol, pinToken)
 	if err != nil {
 		return nil, err
@@ -933,24 +885,38 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 // that status promises the platform that a power cycle will resume attempts,
 // and a storage fault is not fixed by one.
 //
+// A mismatch also regenerates the authenticator's keyAgreement key, so the
+// platform must run key agreement again before its next attempt, and counts
+// toward the consecutive-mismatch block: after PINMaxConsecutiveFailures
+// mismatches in a row every further attempt is refused with ErrPINAuthBlocked,
+// without spending a retry, until the authenticator restarts (its power
+// cycle). A correct PIN clears the count. The Security Officer PIN applies the
+// same rule through the same pinMismatchGuard.
+//
 // Returns ErrStorageError if the decremented (or, on success, reset) retry
 // counter could not be persisted, ErrPINBlocked if the retry budget is now
-// exhausted, and ErrPINInvalid if candidateHash does not match.
+// exhausted, ErrPINAuthBlocked if the consecutive-mismatch limit is reached,
+// and ErrPINInvalid if candidateHash does not match.
 //
 // The caller must hold a.mu for writing.
 func (a *Authenticator) verifyPinHashAndConsumeRetryLocked(candidateHash []byte) error {
+	if a.pinState.mismatches.authBlocked() {
+		return ErrPINAuthBlocked
+	}
+
 	a.state.DecrementPINRetries()
 	if err := a.storage.SaveState(a.state); err != nil {
 		return errors.Join(ErrStorageError, err)
 	}
 
 	if !a.verifyPINHashLocked(candidateHash) {
-		if a.state.PINRetries() <= 0 {
-			return ErrPINBlocked
+		if err := a.regenerateKeyAgreementLocked(); err != nil {
+			return err
 		}
-		return ErrPINInvalid
+		return a.pinState.mismatches.recordMismatch(a.state.PINRetries() <= 0, userPINRefusals)
 	}
 
+	a.pinState.mismatches.reset()
 	a.state.SetPINRetries(a.config.PINMaxRetries)
 	if err := a.storage.SaveState(a.state); err != nil {
 		return errors.Join(ErrStorageError, err)
@@ -964,30 +930,9 @@ func (a *Authenticator) initPINProtocol() error {
 		return nil
 	}
 
-	// Generate ECDH key pair using P-256.
-	privateKey, err := ecdh.P256().GenerateKey(rand.Reader)
+	privateKey, coseKey, err := newKeyAgreementKey()
 	if err != nil {
-		return ErrKeyGenerationFailed
-	}
-
-	// Encode public key in COSE format.
-	publicKey := privateKey.PublicKey()
-	publicKeyBytes := publicKey.Bytes()
-
-	// P-256 uncompressed point format: 04 || X || Y.
-	if len(publicKeyBytes) != 65 || publicKeyBytes[0] != 0x04 {
-		return ErrKeyGenerationFailed
-	}
-
-	xBytes := publicKeyBytes[1:33]
-	yBytes := publicKeyBytes[33:65]
-
-	coseKey := map[int]interface{}{
-		coseKeyLabelKty: COSEKeyTypeEC2,
-		coseKeyLabelAlg: COSEAlgECDHESHKDF256,
-		coseKeyLabelCrv: COSECurveP256,
-		coseKeyLabelX:   xBytes,
-		coseKeyLabelY:   yBytes,
+		return err
 	}
 
 	a.pinState.protocol = &pinProtocolState{
@@ -995,6 +940,57 @@ func (a *Authenticator) initPINProtocol() error {
 		publicKeyCOSE: coseKey,
 	}
 
+	return nil
+}
+
+// newKeyAgreementKey generates a P-256 ECDH key pair for the PIN/UV auth
+// protocol and returns it with its public key encoded as a COSE_Key map.
+func newKeyAgreementKey() (*ecdh.PrivateKey, map[int]interface{}, error) {
+	privateKey, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, ErrKeyGenerationFailed
+	}
+
+	// P-256 uncompressed point format: 04 || X || Y.
+	publicKeyBytes := privateKey.PublicKey().Bytes()
+	if len(publicKeyBytes) != 65 || publicKeyBytes[0] != 0x04 {
+		return nil, nil, ErrKeyGenerationFailed
+	}
+
+	coseKey := map[int]interface{}{
+		coseKeyLabelKty: COSEKeyTypeEC2,
+		coseKeyLabelAlg: COSEAlgECDHESHKDF256,
+		coseKeyLabelCrv: COSECurveP256,
+		coseKeyLabelX:   publicKeyBytes[1:33],
+		coseKeyLabelY:   publicKeyBytes[33:65],
+	}
+	return privateKey, coseKey, nil
+}
+
+// regenerateKeyAgreementLocked replaces the authenticator's keyAgreement key
+// pair after a PIN mismatch, the PIN/UV auth protocol's regenerate() that
+// CTAP 2.1 §6.5.5.5 requires, and discards every secret derived from the old
+// key. The pinUvAuthToken is not derived from the key agreement and is left
+// alone: a wrong guess must not revoke the token a legitimate holder already
+// minted.
+//
+// The caller must hold a.mu for writing.
+func (a *Authenticator) regenerateKeyAgreementLocked() error {
+	privateKey, coseKey, err := newKeyAgreementKey()
+	if err != nil {
+		return err
+	}
+
+	p := a.pinState.protocol
+	if p == nil {
+		a.pinState.protocol = &pinProtocolState{privateKey: privateKey, publicKeyCOSE: coseKey}
+		return nil
+	}
+	p.privateKey = privateKey
+	p.publicKeyCOSE = coseKey
+	p.sharedSecret = nil
+	p.hmacKey = nil
+	p.aesKey = nil
 	return nil
 }
 
@@ -1016,10 +1012,37 @@ func hkdfDerive(ikm []byte, info string) ([]byte, error) {
 	return out, nil
 }
 
-// deriveSharedSecret derives the shared secret using ECDH with the platform's public key.
-// For protocol 1, the raw ECDH output is hashed with SHA-256 to produce a single shared secret.
-// For protocol 2, the raw ECDH output is fed into HKDF-SHA-256 to derive separate hmacKey and aesKey.
-func (a *Authenticator) deriveSharedSecret(platformKeyAgreement []byte, protocol uint8) ([]byte, error) {
+// pinSharedSecret is the output of a PIN/UV auth protocol's kdf(Z) (CTAP 2.1
+// §6.5.6 protocol one, §6.5.7 protocol two): the key authenticate()/verify()
+// use and the key encrypt()/decrypt() use. Protocol one derives a single key
+// and uses it for both roles; protocol two derives two independent keys.
+type pinSharedSecret struct {
+	// protocol is the PIN/UV auth protocol the keys were derived for.
+	protocol uint8
+
+	// hmacKey keys authenticate() and verify().
+	hmacKey []byte
+
+	// aesKey keys encrypt() and decrypt().
+	aesKey []byte
+}
+
+// wipe zeroes both keys.
+func (s *pinSharedSecret) wipe() {
+	enclave.Wipe(s.hmacKey)
+	enclave.Wipe(s.aesKey)
+}
+
+// agreeSharedSecret is the authenticator side of a PIN/UV auth protocol's
+// decapsulate(): ECDH between the authenticator's current key agreement key
+// (the one getKeyAgreement handed out) and the platform's COSE_Key, followed by
+// the protocol's kdf(Z). Protocol one's kdf is SHA-256(Z); protocol two's is
+// HKDF-SHA-256 over Z with the "CTAP2 HMAC key" and "CTAP2 AES key" infos.
+//
+// It reads pinState but never modifies it, so a caller that only needs a
+// request-scoped secret -- the hmac-secret extension -- cannot disturb the
+// clientPin session. The caller must hold a.mu.
+func (a *Authenticator) agreeSharedSecret(platformKeyAgreement []byte, protocol uint8) (*pinSharedSecret, error) {
 	if a.pinState.protocol == nil || a.pinState.protocol.privateKey == nil {
 		return nil, ErrMissingKeyAgreement
 	}
@@ -1066,14 +1089,13 @@ func (a *Authenticator) deriveSharedSecret(platformKeyAgreement []byte, protocol
 	if err != nil {
 		return nil, ErrKeyAgreementFailed
 	}
-
-	a.pinState.protocol.activeProtocol = protocol
+	defer enclave.Wipe(rawSharedSecret)
 
 	if protocol == PINProtocol2 {
 		// V2 kdf(Z): The raw ECDH x-coordinate is used directly as IKM for
 		// HKDF-SHA-256 to derive separate hmacKey and aesKey. Unlike V1,
 		// SHA-256 is NOT applied before HKDF.
-		// Reference: CTAP2.1 §6.5.6, python-fido2 reference implementation.
+		// Reference: CTAP2.1 §6.5.7, python-fido2 reference implementation.
 		hmacKey, err := hkdfDerive(rawSharedSecret, "CTAP2 HMAC key")
 		if err != nil {
 			return nil, err
@@ -1082,16 +1104,31 @@ func (a *Authenticator) deriveSharedSecret(platformKeyAgreement []byte, protocol
 		if err != nil {
 			return nil, err
 		}
-		a.pinState.protocol.hmacKey = hmacKey
-		a.pinState.protocol.aesKey = aesKey
-		// Return hmacKey as the "sharedSecret" for backward compatibility with
-		// callers that use it for authentication verification.
-		return hmacKey, nil
+		return &pinSharedSecret{protocol: PINProtocol2, hmacKey: hmacKey, aesKey: aesKey}, nil
 	}
 
-	// V1 kdf(Z): SHA-256 of the raw ECDH x-coordinate.
+	// V1 kdf(Z): SHA-256 of the raw ECDH x-coordinate, one key for both roles.
 	hash := sha256.Sum256(rawSharedSecret)
-	return hash[:], nil
+	return &pinSharedSecret{protocol: PINProtocol1, hmacKey: hash[:], aesKey: hash[:]}, nil
+}
+
+// deriveSharedSecret establishes the clientPin session's shared secret with
+// the platform's public key and records it in pinState: the active protocol
+// and, for protocol 2, the separate hmacKey and aesKey. It returns the key
+// authenticate()/verify() use -- SHA-256(Z) for protocol 1, the HKDF hmacKey
+// for protocol 2.
+func (a *Authenticator) deriveSharedSecret(platformKeyAgreement []byte, protocol uint8) ([]byte, error) {
+	secret, err := a.agreeSharedSecret(platformKeyAgreement, protocol)
+	if err != nil {
+		return nil, err
+	}
+
+	a.pinState.protocol.activeProtocol = protocol
+	if protocol == PINProtocol2 {
+		a.pinState.protocol.hmacKey = secret.hmacKey
+		a.pinState.protocol.aesKey = secret.aesKey
+	}
+	return secret.hmacKey, nil
 }
 
 // verifyPinAuth verifies the pinUvAuthParam using HMAC-SHA-256.
@@ -1110,88 +1147,115 @@ func (a *Authenticator) verifyPinAuth(key []byte, protocol uint8, data, authPara
 	return hmac.Equal(expected[:PINAuthSizeV1], authParam)
 }
 
-// decryptPIN decrypts an encrypted PIN using AES-256-CBC.
-// For V1, a zero IV is used. For V2, the IV is extracted from the first 16 bytes of the ciphertext.
+// decryptPIN decrypts an encrypted PIN using AES-256-CBC and validates it
+// per CTAP 2.1 §6.5.5.5 (setPIN) / §6.5.5.6 (changePIN).
+//
+// encryptedPIN must be exactly EncryptedPINMinLength (64) bytes for
+// protocol 1, or exactly AESBlockSize+EncryptedPINMinLength (80: a 16-byte
+// IV followed by 64 bytes of ciphertext) for protocol 2. Any other length is
+// rejected with ErrInvalidParameter (CTAP1_ERR_INVALID_PARAMETER) before
+// CryptBlocks runs: CryptBlocks panics when its input is not a whole number
+// of AES blocks, and nothing on the CTAP/uhid path recovered from that
+// panic before dispatchCommand's recover boundary was added (go-xkms#1149).
+//
+// The decrypted buffer is then handed to extractPaddedPIN, which applies
+// the padding and length policy from CTAP 2.1 §6.5.5.5 step 5.
 func (a *Authenticator) decryptPIN(key []byte, protocol uint8, encryptedPIN []byte) ([]byte, error) {
-	var iv []byte
-	var ciphertext []byte
-
+	want := EncryptedPINMinLength // V1: zero IV, exactly the 64-byte padded PIN.
 	if protocol == PINProtocol2 {
-		// V2: first 16 bytes are IV, remainder is ciphertext.
-		if len(encryptedPIN) < AESBlockSize+EncryptedPINMinLength {
-			return nil, ErrDecryptionFailed
-		}
-		iv = encryptedPIN[:AESBlockSize]
-		ciphertext = encryptedPIN[AESBlockSize:]
-	} else {
-		// V1: zero IV, entire input is ciphertext.
-		if len(encryptedPIN) < EncryptedPINMinLength {
-			return nil, ErrDecryptionFailed
-		}
-		iv = make([]byte, AESBlockSize)
-		ciphertext = encryptedPIN
+		want = AESBlockSize + EncryptedPINMinLength // V2: 16-byte IV + 64 bytes.
+	}
+	if len(encryptedPIN) != want {
+		return nil, ErrInvalidParameter
 	}
 
-	block, err := aes.NewCipher(key)
+	decrypted, err := decryptData(key, protocol, encryptedPIN)
 	if err != nil {
-		return nil, ErrDecryptionFailed
+		return nil, err
 	}
 
-	mode := cipher.NewCBCDecrypter(block, iv)
+	return extractPaddedPIN(decrypted, a.config.PINMinLength)
+}
 
-	decrypted := make([]byte, len(ciphertext))
-	mode.CryptBlocks(decrypted, ciphertext)
-
-	// Remove padding (null-terminated PIN).
-	pinLen := 0
-	for i, b := range decrypted {
-		if b == 0 {
-			pinLen = i
+// extractPaddedPIN validates and extracts a PIN from the zero-padded,
+// block-decrypted plaintext newPinEnc decrypts to, per CTAP 2.1 §6.5.5.5
+// step 5: the PIN is every byte before the first 0x00 terminator byte, and
+// every byte from the terminator onward must also be 0x00 -- a stray
+// non-zero byte after the terminator means the plaintext is not a validly
+// padded PIN (whether from a corrupted ceremony or an attempt to smuggle
+// data past the terminator), so it is rejected rather than silently
+// dropped. A buffer with no terminator at all is rejected too: it has no
+// room left for one, so the PIN it would represent is 64 bytes long,
+// exceeding the 63-byte maximum by construction.
+//
+// The extracted PIN is then checked against minLength (CTAP 2.1 §6.5.5.5
+// step 5's minPINLength, counted in Unicode code points since a PIN is
+// UTF-8 text) and the 63-byte maximum. Every violation -- no terminator, an
+// empty PIN, one under minLength, or one over 63 bytes -- reports the same
+// ErrPINPolicyViolation (CTAP2_ERR_PIN_POLICY_VIOLATION), so a platform
+// cannot use the error to distinguish a malformed ceremony from an
+// out-of-policy PIN.
+func extractPaddedPIN(padded []byte, minLength int) ([]byte, error) {
+	terminator := -1
+	for i, b := range padded {
+		if b == 0x00 {
+			terminator = i
 			break
 		}
 	}
-	if pinLen == 0 {
-		// No null terminator found, use entire decrypted data.
-		pinLen = len(decrypted)
+	if terminator == -1 {
+		return nil, ErrPINPolicyViolation
+	}
+	for _, b := range padded[terminator:] {
+		if b != 0x00 {
+			return nil, ErrPINPolicyViolation
+		}
 	}
 
-	return decrypted[:pinLen], nil
+	pin := padded[:terminator]
+	if err := validatePINLength(pin, minLength); err != nil {
+		return nil, err
+	}
+	return pin, nil
+}
+
+// validatePINLength enforces the CTAP 2.1 PIN length policy: non-empty, no
+// more than PINMaxLength (63) bytes, and at least minLength Unicode code
+// points (CTAP 2.1 §6.5.5.5 step 5, §6.4 minPINLength). A code-point count
+// rather than a byte count matters once a PIN contains multi-byte UTF-8
+// characters, where byte length overstates how many characters a user
+// actually entered.
+func validatePINLength(pin []byte, minLength int) error {
+	if len(pin) == 0 || len(pin) > PINMaxLength {
+		return ErrPINPolicyViolation
+	}
+	if utf8.RuneCount(pin) < minLength {
+		return ErrPINPolicyViolation
+	}
+	return nil
 }
 
 // decryptBlock decrypts a single AES block using AES-256-CBC.
 // For V1, expects exactly 16 bytes with a zero IV.
-// For V2, expects 32 bytes: 16-byte IV followed by 16-byte ciphertext.
+// For V2, expects exactly 32 bytes: 16-byte IV followed by 16-byte ciphertext.
+//
+// Both branches already sliced a fixed AESBlockSize/PINHashSize-sized window
+// out of encrypted rather than passing its full length to CryptBlocks, so
+// neither could panic on an oversized pinHashEnc even before this length
+// check existed. The V2 branch's bound is tightened from a minimum to an
+// exact match anyway, matching decryptPIN: CTAP 2.1 fixes pinHashEnc's
+// length per protocol, so trailing bytes past that length are malformed
+// input, not a length this authenticator should silently accept.
 func (a *Authenticator) decryptBlock(key []byte, protocol uint8, encrypted []byte) ([]byte, error) {
-	var iv []byte
-	var ciphertext []byte
-
+	want := PINHashSize // V1: exactly 16 bytes, zero IV.
 	if protocol == PINProtocol2 {
-		// V2: 16-byte IV + 16-byte ciphertext = 32 bytes minimum.
-		if len(encrypted) < AESBlockSize+PINHashSize {
-			return nil, ErrDecryptionFailed
-		}
-		iv = encrypted[:AESBlockSize]
-		ciphertext = encrypted[AESBlockSize : AESBlockSize+PINHashSize]
-	} else {
-		// V1: exactly 16 bytes, zero IV.
-		if len(encrypted) != PINHashSize {
-			return nil, ErrDecryptionFailed
-		}
-		iv = make([]byte, AESBlockSize)
-		ciphertext = encrypted
+		want = AESBlockSize + PINHashSize // V2: 16-byte IV + 16-byte ciphertext.
 	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
+	if len(encrypted) != want {
 		return nil, ErrDecryptionFailed
 	}
 
-	mode := cipher.NewCBCDecrypter(block, iv)
-
-	decrypted := make([]byte, len(ciphertext))
-	mode.CryptBlocks(decrypted, ciphertext)
-
-	return decrypted, nil
+	return decryptData(key, protocol, encrypted)
 }
 
 // encryptData encrypts data using AES-256-CBC per CTAP2 §6.5.5/§6.5.6.
@@ -1231,6 +1295,38 @@ func (a *Authenticator) encryptData(key []byte, protocol uint8, plaintext []byte
 	}
 
 	return ciphertext, nil
+}
+
+// decryptData is a PIN/UV auth protocol's decrypt(key, demCiphertext)
+// (CTAP 2.1 §6.5.6, §6.5.7): AES-256-CBC with no padding. Protocol 1 uses an
+// all-zero IV; protocol 2 reads the IV from the first 16 bytes of ciphertext.
+//
+// The ciphertext body must be a non-empty whole number of AES blocks, checked
+// before CryptBlocks runs because CryptBlocks panics on any other length. A
+// caller whose field has a fixed size per protocol checks that exact size
+// first; this check is the floor that keeps every caller panic-free.
+func decryptData(key []byte, protocol uint8, ciphertext []byte) ([]byte, error) {
+	iv := make([]byte, AESBlockSize)
+	body := ciphertext
+	if protocol == PINProtocol2 {
+		if len(ciphertext) < AESBlockSize {
+			return nil, ErrDecryptionFailed
+		}
+		copy(iv, ciphertext[:AESBlockSize])
+		body = ciphertext[AESBlockSize:]
+	}
+	if len(body) == 0 || len(body)%AESBlockSize != 0 {
+		return nil, ErrDecryptionFailed
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, ErrDecryptionFailed
+	}
+
+	plaintext := make([]byte, len(body))
+	cipher.NewCBCDecrypter(block, iv).CryptBlocks(plaintext, body)
+	return plaintext, nil
 }
 
 // decodeClientPINRequest decodes a CBOR-encoded ClientPIN request.

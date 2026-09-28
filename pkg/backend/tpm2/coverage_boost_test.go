@@ -324,7 +324,6 @@ func TestConfig_ToTPMConfig_CompleteConfig(t *testing.T) {
 		UseSimulator:    true,
 		SimulatorHost:   "localhost",
 		SimulatorPort:   2321,
-		EncryptSession:  true,
 		SRKHandle:       0x81000002,
 		EKHandle:        0x81010002,
 		Hash:            "SHA-384",
@@ -350,9 +349,6 @@ func TestConfig_ToTPMConfig_CompleteConfig(t *testing.T) {
 	}
 	if tpmConfig.CommandAddress != "localhost:2321" {
 		t.Errorf("CommandAddress: expected localhost:2321, got %s", tpmConfig.CommandAddress)
-	}
-	if tpmConfig.EncryptSession != config.EncryptSession {
-		t.Errorf("EncryptSession: expected %v, got %v", config.EncryptSession, tpmConfig.EncryptSession)
 	}
 	if tpmConfig.Hash != config.Hash {
 		t.Errorf("Hash: expected %s, got %s", config.Hash, tpmConfig.Hash)

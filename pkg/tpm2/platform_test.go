@@ -332,7 +332,6 @@ func (m *mockTPMForPKS) FixedProperties() (*PropertiesFixed, error) {
 }
 func (m *mockTPMForPKS) Flush(_ tpm2.TPMHandle)              {}
 func (m *mockTPMForPKS) GoldenMeasurements() ([]byte, error) { return nil, nil }
-func (m *mockTPMForPKS) HMAC(_ []byte) tpm2.Session          { return nil }
 func (m *mockTPMForPKS) HMACSaltedSession(_ tpm2.TPMHandle, _ tpm2.TPMTPublic, _ []byte) (tpm2.Session, func() error, error) {
 	return nil, nil, nil
 }

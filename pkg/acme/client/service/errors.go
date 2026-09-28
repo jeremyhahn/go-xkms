@@ -76,13 +76,6 @@ func (e ErrInvalidDNSProviderCredential) Error() string {
 	return fmt.Sprintf("acme-client-service: invalid %q credential for dns-01 provider %q: %s", e.Key, e.Provider, e.Reason)
 }
 
-// ErrTPMModuleRequired indicates that a TPM module is required but not configured.
-type ErrTPMModuleRequired struct{}
-
-func (e ErrTPMModuleRequired) Error() string {
-	return "acme-client-service: TPM module required for device-attest-01 challenge"
-}
-
 // ErrMissingEmail indicates that an email address is required but not provided.
 type ErrMissingEmail struct{}
 

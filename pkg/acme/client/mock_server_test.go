@@ -427,7 +427,6 @@ type mockTPMForEnrollment struct {
 	ekCert         *x509.Certificate
 	iakAttrs       *KeyAttributes
 	idevidCSR      *IDevIDCSR
-	quote          *TPMQuote
 	activateResult []byte
 	errors         map[string]error
 }
@@ -454,13 +453,6 @@ func newMockTPMForEnrollment(t *testing.T) *mockTPMForEnrollment {
 			CSR:                []byte("mock-tcg-csr-data"),
 			IAKPublic:          []byte("mock-iak-public"),
 			QualifyingData:     []byte("mock-qualifying-data"),
-			SignatureAlgorithm: x509.SHA256WithRSA,
-		},
-		quote: &TPMQuote{
-			Quote:              []byte("mock-quote-data"),
-			Signature:          []byte("mock-quote-signature"),
-			PCRValues:          map[int][]byte{0: make([]byte, 32)},
-			Nonce:              []byte("mock-nonce"),
 			SignatureAlgorithm: x509.SHA256WithRSA,
 		},
 		activateResult: []byte("mock-activated-secret"),
@@ -521,12 +513,11 @@ func (m *mockTPMForEnrollment) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
-func (m *mockTPMForEnrollment) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	if err, ok := m.errors["Quote"]; ok {
+func (m *mockTPMForEnrollment) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	if err, ok := m.errors["CreateAttestedKey"]; ok {
 		return nil, err
 	}
-	m.quote.Nonce = nonce
-	return m.quote, nil
+	return newTestAttestedKey(keyAuth)
 }
 
 func (m *mockTPMForEnrollment) Close() error {
@@ -575,56 +566,6 @@ func TestIDevIDCSR_Fields(t *testing.T) {
 			}
 			// Add validation method test if exists
 			isValid := len(tt.csr.CSR) > 0
-			if tt.wantErr {
-				assert.False(t, isValid)
-			} else {
-				assert.True(t, isValid)
-			}
-		})
-	}
-}
-
-// TestTPMQuote_Fields tests TPMQuote field accessibility
-func TestTPMQuote_Fields(t *testing.T) {
-	tests := []struct {
-		name    string
-		quote   *TPMQuote
-		wantErr bool
-	}{
-		{
-			name: "Valid quote",
-			quote: &TPMQuote{
-				Quote:     []byte("quote-data"),
-				Signature: []byte("signature"),
-				PCRValues: map[int][]byte{0: make([]byte, 32)},
-			},
-			wantErr: false,
-		},
-		{
-			name: "Missing quote data",
-			quote: &TPMQuote{
-				Signature: []byte("signature"),
-				PCRValues: map[int][]byte{0: make([]byte, 32)},
-			},
-			wantErr: true,
-		},
-		{
-			name: "Missing signature",
-			quote: &TPMQuote{
-				Quote:     []byte("quote-data"),
-				PCRValues: map[int][]byte{0: make([]byte, 32)},
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.quote == nil {
-				assert.True(t, tt.wantErr)
-				return
-			}
-			isValid := len(tt.quote.Quote) > 0 && len(tt.quote.Signature) > 0
 			if tt.wantErr {
 				assert.False(t, isValid)
 			} else {
@@ -688,10 +629,10 @@ func TestMockTPMForEnrollment_AllMethods(t *testing.T) {
 	err = tpm.ProvisionEKCert([]byte("cert"))
 	assert.NoError(t, err)
 
-	// Test Quote
-	quote, err := tpm.Quote([]byte("nonce"), []int{0, 1, 7})
+	// Test CreateAttestedKey
+	attested, err := tpm.CreateAttestedKey("device", "key-auth")
 	assert.NoError(t, err)
-	assert.NotNil(t, quote)
+	assert.NotNil(t, attested)
 
 	// Test Close
 	err = tpm.Close()
@@ -710,7 +651,7 @@ func TestMockTPMForEnrollment_WithErrors(t *testing.T) {
 	tpm.errors["CreateIDevID"] = testErr
 	tpm.errors["ActivateCredential"] = testErr
 	tpm.errors["ProvisionEKCert"] = testErr
-	tpm.errors["Quote"] = testErr
+	tpm.errors["CreateAttestedKey"] = testErr
 	tpm.errors["Close"] = testErr
 
 	// Test all error paths
@@ -732,7 +673,7 @@ func TestMockTPMForEnrollment_WithErrors(t *testing.T) {
 	err = tpm.ProvisionEKCert(nil)
 	assert.Error(t, err)
 
-	_, err = tpm.Quote(nil, nil)
+	_, err = tpm.CreateAttestedKey("device", "key-auth")
 	assert.Error(t, err)
 
 	err = tpm.Close()

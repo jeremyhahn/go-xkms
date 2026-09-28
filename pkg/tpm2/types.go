@@ -139,6 +139,19 @@ var (
 	// read. Mirrors pkg/backend/tpm2.ErrKeyRetrievalFailed.
 	ErrKeyRetrievalFailed = errors.New("tpm: symmetric key retrieval failed")
 
+	// ErrSymmetricKeyParent indicates a symmetric key was asked to live under
+	// a storage parent other than the Platform SRK. go-xkms seals its own
+	// secrets under the Platform SRK only; the Shared SRK stays the untouched
+	// TCG default for other software on the TPM.
+	ErrSymmetricKeyParent = errors.New("tpm: symmetric keys must be parented on the Platform SRK")
+
+	// ErrUnprotectedSymmetricKey indicates a stored symmetric key blob was
+	// written before symmetric keys moved under the Platform SRK: it is
+	// parented on the Shared SRK with no authorization and NoDA set, so any
+	// process with TPM access could unseal it. It is refused rather than
+	// loaded; delete it and generate a new key.
+	ErrUnprotectedSymmetricKey = errors.New("tpm: symmetric key predates Platform SRK protection (Shared SRK parent, no authorization); delete and regenerate it")
+
 	ErrNotConfigured           = errors.New("tpm: IDevID not configured")
 	ErrEndorsementCertNotFound = errors.New("tpm: endorsement certificate not found")
 

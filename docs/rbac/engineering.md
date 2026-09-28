@@ -1,6 +1,6 @@
 # RBAC — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115)
 
 ## Exported surface
 
@@ -20,6 +20,41 @@ client. `Authorize` returns `nil` (allowed) whenever `!Enabled()`;
 `rbac.Authorize` after normalizing an empty `identity.TenantID` to
 `qrdbsdk.SystemTenantID`.
 
+### `pkg/auth/rolemembership.go` — role membership
+
+```go
+var ErrRoleClientRequired error
+
+type RoleResolutionError struct {
+	TenantID string
+	Role     string
+	Err      error
+}
+
+func HoldsSystemRole(ctx context.Context, roles qrdbtransport.RoleClient, identity *Identity, roleName string) (bool, error)
+```
+
+`HoldsSystemRole` (`pkg/auth/rolemembership.go:71`) reports whether the
+identity holds the named qrdb system role of **its own** tenant. It resolves
+the name to the identifier the role is persisted under with
+`qrdbsdk.ResolveSystemRoleID` over the node's role store (`:88`). Then it
+matches that identifier against `identity.Roles`. A role name on the
+identity matches nothing. An empty `TenantID` resolves in the system tenant.
+
+A nil or roleless identity is not a member. A nil role client returns
+`ErrRoleClientRequired` (`:29`). A store failure, including a store that
+returns neither a role nor an error, returns `*RoleResolutionError` (`:35`).
+Both mean membership is unknown, and the caller must fail closed.
+
+Use it only where the decision is role membership. The one such call site is
+the shared-password administrator override,
+`XKMSService.checkSharedPasswordOwnership`
+(`pkg/xkms/servicer_password.go:128`). It admits the owner, or a member of
+`sharedPasswordAdministratorRoles` (Admin, SO; `:113`), and refuses everyone
+else with `staticpw.ErrNotOwner`, including every caller when no role
+client is wired. Every other decision is a resource:action through
+`Authorizer`.
+
 ### `pkg/auth/permissions.go` — the vocabulary
 
 The full resource and action list, verbatim from the constants (this file is
@@ -32,13 +67,32 @@ The full resource and action list, verbatim from the constants (this file is
 
 **Actions:** `sign`, `verify`, `encrypt`, `decrypt`, `create`, `rotate`,
 `delete`, `list`, `get`, `import`, `export`, `wrap`, `unwrap`, `derive`,
-`generate`, `revoke`, `read`, `update`, `write`, `use`, `disable`, `status`,
+`generate`, `revoke`, `read`, `read:cross`, `update`, `write`, `use`, `disable`, `status`,
 `capabilities`, `bootstrap`, `seal`, `unseal`, `rekey`, `rotate_root_key`,
 `generate_recovery`, `recover_with_keys`, `initialize_shamir`,
 `unseal-share`, `enable_encryption`, `init`, `claim_cert`,
 `claim_share_begin`, `claim_share_complete`, `sign_csr`,
 `enroll_custodian`, `revoke_custodian`, `submit`, `strategy`, `lock`,
 `unlock`.
+
+`read:cross` (`auth.ActionReadCross`, `pkg/auth/permissions.go:148`) is used
+only as `audit:read:cross`, qrdb's `AuditReadCross`. The qrdb SDK does not
+re-export that constant, so xkms restates the string.
+`TestActionReadCross_MatchesQRDBAuditReadCross` (`pkg/auth/permissions_test.go`)
+fails the build if qrdb's registry stops knowing it. qrdb declares it
+`ScopeCross`. Admin holds it and Auditor does not.
+
+### `pkg/xkms` — the service's Authorizer
+
+```go
+func (s *XKMSService) SetAuthorizer(a *auth.Authorizer)
+```
+
+(`pkg/xkms/service.go:324`.) The server passes it the transports' own
+Authorizer (`pkg/server/server.go:835`). The service uses it for one decision
+the route gate cannot make: whether a system-tenant caller of `QueryAudit`
+holds `audit:read:cross`. A nil Authorizer is RBAC-disabled, as everywhere
+else. The service clamps tenant identities whatever the Authorizer says.
 
 A permission is a `resource:action` pair. A transport must never declare its
 own resource or action string literal — `internal/authzscan` enforces this
@@ -150,18 +204,70 @@ specific permission before assuming a non-Admin role holds it.
 - **A route/RPC/tool's resource and action must be `pkg/auth` constants,
   never string literals**, on the two transports without an in-process
   table to check against (gRPC, QUIC) — enforced by `internal/authzscan`.
+- **A tenant named in a request is never the target tenant.** The gate
+  resolves a self-scope permission against the caller's own tenant, so a
+  handler that forwards a request tenant to a store or query escapes it. The
+  service derives the tenant from the identity, as `pkcs11StateScope` and
+  `auditTenantFilter` do. A transport must not do this itself, and must not
+  forward a request tenant unexamined.
+- **No authorization decision compares `Identity.Roles` against a role
+  name.** Identities carry role identifiers, so a name comparison never
+  matches a real grant and does match an unverified token claim
+  (go-xkms#1074). `Identity.HasRole` is go-qrdb's and does exactly that, so
+  the `forbidigo` rule at `.golangci.yml:115` forbids calling it anywhere in
+  the module. Role membership goes through `HoldsSystemRole`.
+- **Servicers do not authorize.** The permission is enforced once, at the
+  transport, before dispatch. `XKMSService.SignCSR` used to run its own
+  role check on top of `certs:generate`; it no longer does
+  (`pkg/xkms/servicer_ca.go:139`).
+- **No role is exempt from tenant scoping.** `tenantgate.Access` consults
+  only `auth.IsCrossTenant`, qrdb's system-tenant rule
+  (`pkg/api/tenantgate/tenantgate.go:107`).
 - **Role reassignment after user creation does not exist.** `roleNameToID`
   runs once, at `CreateUser`; there is no update path.
+- **With a `UserStore` configured, an mTLS identity is always a bound user's.**
+  `MTLSAuthenticator.userIdentity` (`pkg/auth/mtls.go:216`) builds the
+  identity only from a bound, enabled user record. An unbound certificate
+  (qrdb's typed `UserNotFoundError`) is refused with `ErrCertNotBound`
+  (`pkg/auth/mtls.go:224-226`). Any other store error (sealed tenant
+  barrier, failed index read, unreachable remote) fails closed as
+  `*UserLookupError` (`pkg/auth/mtls.go:228`). Neither falls back to the
+  certificate's fields. That identity would carry the caller-chosen CN as
+  `Subject` and first OU as `TenantID`. Handlers scope per-user state on
+  that pair (the password vault, `pkg/api/rest/password_handlers.go:95`),
+  and with RBAC disabled nothing else stands between it and the handler.
+  During an outage it would also admit an account the store would have
+  refused. Only an authenticator built without a store
+  (`pkg/auth/mtls.go:258`, used when no qrdb identity plane is hosted)
+  derives an identity from certificate fields.
 
 ## Error semantics
 
 | Error | Where | Meaning |
 |---|---|---|
 | `ErrUnauthenticated` | `pkg/auth/errors.go` | `Authorize` called with a nil identity while enabled |
+| `ErrCertNotBound` | `pkg/auth/errors.go:45` | mTLS authenticator with a `UserStore`: the client certificate's SPKI thumbprint is bound to no user. The request is unauthenticated (REST 401), and the gate never runs |
+| `*UserLookupError{Err}` | `pkg/auth/errors.go:54` | mTLS authenticator with a `UserStore`: the store failed for any reason other than a definite not-found. It fails closed, and `Err` carries the store's error |
 | qrdb's `PermissionDeniedError` | returned by `rbac.Authorize` | grant missing, or tenant scope gate rejects the request |
 | `ErrAuthorizerRequired` | `pkg/api/rest/errors.go` | `rest.NewServer` refuses to construct when `EnableRBAC` is true but no usable authorizer was supplied — fails closed at construction, never falls back to allow-all |
 | `*ErrUnknownRole{Role}` | `pkg/xkms/errors.go` | `CreateUser`'s role name does not match any existing qrdb role, wrapped in `*ErrUserOperation{Operation: "resolve role"}` |
 | `ErrInvalidRole` | `cmd/xkmsctl` | `--role` value fails `IsValidRole` |
+| `ErrRoleClientRequired` | `pkg/auth/rolemembership.go:29` | `HoldsSystemRole` called without a role client: membership unknown, fail closed |
+| `*RoleResolutionError{TenantID, Role, Err}` | `pkg/auth/rolemembership.go:35` | the role store could not resolve the system role's identifier; surfaces from `PasswordUpdate` / `PasswordDelete` on a non-owner's shared entry |
+
+**The client never sees the error text above verbatim** (go-xkms#1103). Every
+transport's gate translates a denial into a fixed, generic message —
+`ErrAccessDenied`/`ErrAuthenticationRequired` on gRPC
+(`pkg/api/grpc/service.go`), `"Access denied: insufficient permissions"`/
+`"Authentication required"` on REST (`pkg/api/rest/rbac_middleware.go`) — and
+records the real cause server-side instead: gRPC's `Service.authorize` in the
+audit event's `Details["reason"]` (see Observability), REST's
+`RBACMiddleware` via `slog.Warn`. `pkg/api/grpc/server.go`'s authentication
+interceptors follow the same split one level up the stack, before an
+identity even reaches `authorize`: a rejected credential (a user-store or
+barrier failure, or why a certificate was refused) becomes the fixed
+`errAuthenticationFailed` ("authentication failed") on the wire, logged via
+`s.logger.Warn` server-side.
 
 MCP fails closed the same way REST does: `mcp.NewServer` refuses to start
 serving when RBAC is enabled without a usable authorizer, rather than
@@ -259,6 +365,25 @@ re-exported verbatim so a downstream consumer needs a single import.
   gate per call site rather than per table), rejecting a raw string literal
   or an unrecognized `pkg/auth` constant name; `pkg/api/grpc/authz_golden_test.go`
   is the golden test built on it.
+- **Request-tenant confinement** — `pkg/xkms/servicer_pkcs11state_tenant_test.go`
+  and `pkg/xkms/servicer_audit_tenant_test.go`. The audit tests decide
+  `audit:read:cross` from qrdb's real built-in grant table
+  (`qrdbsdk.HasPermissionRoleGrant`) and apply its `ScopeCross` rule.
+- **Role identifiers, against a real node** — `testutil.NewFirstBootNode`
+  (`pkg/testutil/firstbootnode.go:50`) boots an in-memory qrdb node and runs
+  qrdb's own first-boot. `ProvisionTenant` (`:95`) adds a tenant with its
+  own built-in roles, and `RoleID` (`:124`) reads back the identifier a
+  seeded user record would carry. The tests built on it check each former
+  name-comparison site. A seeded Admin (or SO) identifier is allowed, a
+  lesser role is refused, and a name-bearing identity gets nothing:
+  `pkg/auth/rolemembership_test.go`,
+  `pkg/xkms/servicer_password_test.go` (`TestCheckSharedPasswordOwnership_*`,
+  `TestPassword{Update,Delete}_SharedOwnership*`),
+  `pkg/xkms/servicer_ca_test.go` (`TestSignCSR_SeededAdminRoleIDSigns`),
+  `pkg/api/mcp/authz_roleid_test.go` (`certs:generate` at the gate), and
+  `pkg/api/tenantgate/tenantgate_test.go`. A fake that grants by role name
+  cannot catch this class of defect: in the fake, the name and the
+  identifier are the same string.
 - **Makefile targets** — `test-auth`, `coverage-auth`.
 
 ## Observability
@@ -266,6 +391,10 @@ re-exported verbatim so a downstream consumer needs a single import.
 gRPC's `Service.authorize` (`pkg/api/grpc/service.go`) emits a structured
 `audit.Event{Subject, Action, Resource, ResourceID, Outcome, Details:
 {"transport": "grpc"}}` on **every** authorization decision, allow or deny.
+On deny, `Details["reason"]` additionally carries the denying error's text
+(the qrdb `PermissionDeniedError` or `ErrUnauthenticated`'s message) —
+that is the only place the reason is recorded; the client response carries
+only the fixed generic message (go-xkms#1103, see Error semantics).
 REST's `RBACMiddleware` and MCP's authorization gate log via structured
 `slog` (`Warn` on denial, `Debug` on grant) but do not construct an
 `audit.Event` record — verified: neither `pkg/api/rest/rbac_middleware.go`

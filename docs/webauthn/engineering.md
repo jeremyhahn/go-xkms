@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/webauthn`
 
@@ -119,8 +119,15 @@ invalidates every existing credential.
   from the request.
 - **Origin and RP id are verified on every finish.** A response from an
   unlisted origin fails.
-- **Signature counters move forward.** A counter that does not increase is
-  treated as a cloning signal, not as a retry.
+- **A counter that does not advance is reported, not refused.** go-webauthn
+  flags it as `CloneWarning`; `finishLoginUser` logs it at Warn and records
+  a `CloneWarningAuditAction` (`auth.webauthn.clone_warning`) audit event
+  through `ServiceParams.AuditLogger` (`service.go:91,440`,
+  `clone_warning.go:29,48`), and the login proceeds. The flag is sticky on the
+  stored credential, so every later login with it is reported
+  (`first_detection` marks the one that raised it). The action classifies
+  `SeveritySecurity`: a failed audit write fails the login. Refusing a flagged
+  credential is relying-party policy that this service does not impose.
 - **`AllowPublicRegistration` defaults closed, and nil ≠ false.** An unset
   flag means registration is disabled (go-xkms#184: the stack registration
   model is invite-only by default, and a setting that can silently produce an
@@ -273,7 +280,9 @@ happen.
 
 Ceremony outcomes are logged with the correlation ID. `Config.Debug` adds
 verbose ceremony detail and must stay off in production — it logs material
-useful to an attacker. Failures are audited through `pkg/audit`; the login
+useful to an attacker. Failures are audited through `pkg/audit`, and so is a
+login with a possibly cloned credential (see Invariants); xkmsd wires its audit
+logger in before the service is built. The login
 route groups sit behind the rate limiter (`pkg/ratelimit`), whose rejections are
 metered in `pkg/metrics`.
 
@@ -352,7 +361,11 @@ type AuthenticatorAdapter interface {
 
 `CeremonyOptions` carries the relying party's JSON options plus the two
 things they cannot carry: `Origin` (a browser takes it from its security
-context) and `PIN` (a browser prompts for it).
+context) and `PIN` (a browser prompts for it). `Origin` is required: both
+adapters refuse an empty one, and refuse a server rpId the origin does not
+cover, through `fido2.ValidateRPID` (`software_adapter.go:115,253`; the
+hardware adapter through `pkg/fido2`). `NewClient` refuses a configuration
+from which no origin can be derived (`client.go:64`).
 
 Two adapters ship:
 
@@ -379,7 +392,7 @@ type Config struct {
 	HTTPClient           *http.Client         // default HTTPRelyingParty's client (optional)
 	TLSConfig            *tls.Config          // used when HTTPClient is nil
 	Timeout              time.Duration        // default 30s
-	Origin               string               // WebAuthn origin; empty derives it from ServerURL
+	Origin               string               // WebAuthn origin; empty derives it from ServerURL (OriginFromURL); none derivable fails NewClient
 	AuthenticatorAdapter AuthenticatorAdapter // required
 	RelyingParty         RelyingParty         // nil builds the default HTTPRelyingParty from ServerURL
 }
@@ -415,6 +428,7 @@ SDK-transport RP (the `xkey`/`xkmsctl` shape), over an already-connected
 rp, _ := webauthnclient.NewTransportRelyingParty(transportClient)
 c, _ := webauthnclient.NewClient(&webauthnclient.Config{
 	RelyingParty:         rp,
+	Origin:               "https://kms.example.com", // required: no ServerURL to derive it from
 	AuthenticatorAdapter: adapter,
 })
 ```

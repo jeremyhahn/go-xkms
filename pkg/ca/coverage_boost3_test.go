@@ -28,7 +28,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"math/big"
 	"strings"
 	"testing"
@@ -116,21 +115,19 @@ func TestCheckCertificateStatus_Revoked_InMemory(t *testing.T) {
 }
 
 // =============================================================================
-// OCSP — loadRevocationFromStore paths
+// lookupRevocation — the shared single-serial read path (IsRevoked, OCSP)
 // =============================================================================
 
-func TestLoadRevocationFromStore_NotFound(t *testing.T) {
+func TestLookupRevocation_NotFound(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
-	_, err := resp.loadRevocationFromStore(context.Background(), big.NewInt(404))
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrCRLNotFound), "got: %v", err)
+	info, err := ca.lookupRevocation(context.Background(), big.NewInt(404))
+	require.NoError(t, err)
+	assert.Nil(t, info, "a definite store miss means not revoked")
 }
 
-func TestLoadRevocationFromStore_ValidRecord(t *testing.T) {
+func TestLookupRevocation_ValidRecord(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
 	serial := big.NewInt(77777)
 	rec := persistedRevocation{
@@ -144,10 +141,12 @@ func TestLoadRevocationFromStore_ValidRecord(t *testing.T) {
 	key := revocationKey(serial) + ".json"
 	require.NoError(t, ca.revocationStore.Put(context.Background(), key, data))
 
-	loaded, err := resp.loadRevocationFromStore(context.Background(), serial)
+	loaded, err := ca.lookupRevocation(context.Background(), serial)
 	require.NoError(t, err)
-	assert.Equal(t, rec.Serial, loaded.Serial)
+	require.NotNil(t, loaded)
+	assert.Equal(t, 0, loaded.SerialNumber.Cmp(serial))
 	assert.Equal(t, rec.Reason, loaded.Reason)
+	assert.True(t, rec.RevokedAt.Equal(loaded.RevocationTime))
 }
 
 // =============================================================================

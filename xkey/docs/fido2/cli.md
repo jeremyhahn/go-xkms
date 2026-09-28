@@ -1,6 +1,6 @@
 # FIDO2 Daemon and GUI Device Host — CLI
 
-> **Status: NORMATIVE** · Feature: `fido2` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `fido2` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 Binary: `xkey`. This page covers the verbs this folder owns: `xkey touch`,
 `xkey unlock`, `xkey fido2 status` and `xkey fido2 provision-attestation`.
@@ -29,7 +29,7 @@ pending request". A daemon that is not running fails with
 ```bash
 xkey touch
 xkey touch --password "DatabaseProd"
-xkey touch --socket /tmp/xkey.sock
+xkey touch --socket "$XDG_RUNTIME_DIR/xkey/xkey.sock"
 ```
 
 ## `xkey unlock`

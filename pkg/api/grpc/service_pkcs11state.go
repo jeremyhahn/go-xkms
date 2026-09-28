@@ -22,12 +22,23 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // The PKCS11State* handlers are the gRPC (and, over the same generated client,
 // Unix) server side of the remote-mode PKCS#11 module's persistence. They gate
 // on the keys resource — the records are a token's key/object state — resolve
 // the concrete XKMSService, and translate the opaque record verbatim.
+
+// mapPKCS11StateError translates a service-layer PKCS#11-state error into a
+// gRPC status: a fault in the request (xkms.IsPKCS11StateRequestError, which
+// includes naming another tenant) is InvalidArgument, anything else Internal.
+func mapPKCS11StateError(err error) error {
+	if xkms.IsPKCS11StateRequestError(err) {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	return status.Error(codes.Internal, err.Error())
+}
 
 // pkcs11StateServiceReady reports the service-unavailable error if the XKMSService
 // is not wired, so the five handlers share one nil check.
@@ -51,7 +62,7 @@ func (s *Service) PKCS11StatePut(ctx context.Context, req *pb.PKCS11StatePutRequ
 	if _, err := s.xkmsService.PKCS11StatePut(ctx, &transport.PKCS11StatePutRequest{
 		TenantID: req.TenantId, Token: req.Token, Key: req.Key, Value: req.Value,
 	}); err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, mapPKCS11StateError(err)
 	}
 	return &pb.PKCS11StatePutResponse{}, nil
 }
@@ -70,7 +81,7 @@ func (s *Service) PKCS11StatePutIfAbsent(ctx context.Context, req *pb.PKCS11Stat
 		TenantID: req.TenantId, Token: req.Token, Key: req.Key, Value: req.Value,
 	})
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, mapPKCS11StateError(err)
 	}
 	return &pb.PKCS11StatePutIfAbsentResponse{Stored: resp.Stored}, nil
 }
@@ -90,7 +101,7 @@ func (s *Service) PKCS11StateCAS(ctx context.Context, req *pb.PKCS11StateCASRequ
 		Expected: req.Expected, New: req.New,
 	})
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, mapPKCS11StateError(err)
 	}
 	return &pb.PKCS11StateCASResponse{Swapped: resp.Swapped, Current: resp.Current}, nil
 }
@@ -109,7 +120,7 @@ func (s *Service) PKCS11StateCAD(ctx context.Context, req *pb.PKCS11StateCADRequ
 		TenantID: req.TenantId, Token: req.Token, Key: req.Key, Expected: req.Expected,
 	})
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, mapPKCS11StateError(err)
 	}
 	return &pb.PKCS11StateCADResponse{Deleted: resp.Deleted}, nil
 }
@@ -128,7 +139,7 @@ func (s *Service) PKCS11StateGet(ctx context.Context, req *pb.PKCS11StateGetRequ
 		TenantID: req.TenantId, Token: req.Token, Key: req.Key,
 	})
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, mapPKCS11StateError(err)
 	}
 	return &pb.PKCS11StateGetResponse{Value: resp.Value, Found: resp.Found}, nil
 }
@@ -146,7 +157,7 @@ func (s *Service) PKCS11StateDelete(ctx context.Context, req *pb.PKCS11StateDele
 	if _, err := s.xkmsService.PKCS11StateDelete(ctx, &transport.PKCS11StateDeleteRequest{
 		TenantID: req.TenantId, Token: req.Token, Key: req.Key,
 	}); err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, mapPKCS11StateError(err)
 	}
 	return &pb.PKCS11StateDeleteResponse{}, nil
 }
@@ -165,7 +176,7 @@ func (s *Service) PKCS11StateList(ctx context.Context, req *pb.PKCS11StateListRe
 		TenantID: req.TenantId, Token: req.Token, Prefix: req.Prefix,
 	})
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, mapPKCS11StateError(err)
 	}
 	return &pb.PKCS11StateListResponse{Keys: resp.Keys}, nil
 }

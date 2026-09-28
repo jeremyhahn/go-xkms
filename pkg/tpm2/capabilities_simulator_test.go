@@ -22,11 +22,10 @@ func createSimNoStore(t *testing.T) TrustedPlatformModule {
 	logger := slog.Default()
 
 	config := &Config{
-		EncryptSession: false,
-		UseEntropy:     false,
-		Device:         "/dev/tpmrm0",
-		UseSimulator:   true,
-		Hash:           "SHA-256",
+		UseEntropy:   false,
+		Device:       "/dev/tpmrm0",
+		UseSimulator: true,
+		Hash:         "SHA-256",
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,

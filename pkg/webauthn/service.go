@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -51,14 +52,15 @@ func sessionClaimError(op string, err error) error {
 
 // Service provides WebAuthn registration and authentication operations.
 type Service struct {
-	webauthn   *webauthn.WebAuthn
-	config     *Config
-	users      UserStore
-	sessions   SessionStore
-	creds      CredentialStore
-	jwtGen     JWTGenerator // optional
-	logger     *slog.Logger
-	configured bool
+	webauthn    *webauthn.WebAuthn
+	config      *Config
+	users       UserStore
+	sessions    SessionStore
+	creds       CredentialStore
+	jwtGen      JWTGenerator // optional
+	logger      *slog.Logger
+	auditLogger audit.Logger // optional
+	configured  bool
 }
 
 // ServiceParams contains dependencies for creating a WebAuthn service.
@@ -82,6 +84,11 @@ type ServiceParams struct {
 	// Logger is an optional logger for the service.
 	// If nil, uses slog.Default().
 	Logger *slog.Logger
+
+	// AuditLogger receives the service's security audit events (a login
+	// with a possibly cloned credential, see CloneWarningAuditAction). Nil
+	// records none; the warning is still logged through Logger.
+	AuditLogger audit.Logger
 }
 
 // NewService creates a new WebAuthn service with the provided dependencies.
@@ -117,14 +124,15 @@ func NewService(params ServiceParams) (*Service, error) {
 	}
 
 	return &Service{
-		webauthn:   wa,
-		config:     params.Config,
-		users:      params.UserStore,
-		sessions:   params.SessionStore,
-		creds:      params.CredentialStore,
-		jwtGen:     params.JWTGenerator,
-		logger:     logger,
-		configured: true,
+		webauthn:    wa,
+		config:      params.Config,
+		users:       params.UserStore,
+		sessions:    params.SessionStore,
+		creds:       params.CredentialStore,
+		jwtGen:      params.JWTGenerator,
+		logger:      logger,
+		auditLogger: params.AuditLogger,
+		configured:  true,
 	}, nil
 }
 
@@ -427,6 +435,11 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 	cred, err := s.creds.GetByCredentialID(ctx, credential.ID)
 	if err != nil {
 		return nil, WrapError("get credential for update", err)
+	}
+	if credential.Authenticator.CloneWarning {
+		if err := s.reportCloneWarning(ctx, user, cred, response.Response.AuthenticatorData.Counter); err != nil {
+			return nil, err
+		}
 	}
 	cred.Authenticator.SignCount = credential.Authenticator.SignCount
 	cred.Authenticator.CloneWarning = credential.Authenticator.CloneWarning

@@ -1,6 +1,6 @@
 # ACME Issuance — CLI
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Two binaries cover ACME, on opposite sides of the protocol:
 
@@ -27,11 +27,14 @@ standalone CA project that was decommissioned in August 2026, its CA
 functionality having been folded into go-xkms as `TrustedCA` and the ACME
 implementation documented here. `trusted-acme-client` is the surviving client.
 
-One live consequence: `test/integration/acme-docker-compose.integration.yml`
-still sets `CACTL_BINARY` to a path inside a checkout of that retired project.
-That reference cannot resolve and should be removed — a code change, not a
-documentation one, so it is reported rather than made in this docs-only
-migration.
+One former live consequence: `test/integration/cactl` drove a `cactl` binary
+that could not resolve, and the compose file that ran it
+(`test/integration/acme-docker-compose.integration.yml`) built from a
+sibling `go-trusted-ca` checkout that does not exist in this repository.
+go-xkms#949 replaced that test package with `test/integration/acmeadmin`,
+which drives `xkmsctl acme --acme-transport rest` instead, and replaced the
+compose file with `test/integration/acmeadmin/docker-compose.yml`, which
+builds `xkmsd` and `xkmsctl` from this repository.
 
 ## Global flags
 
@@ -110,14 +113,14 @@ trusted-acme-client cert deploy web-prod
 The hardware-identity path. This is what `enroll-01` and `device-attest-01`
 exist for. Like certificates, devices are named specs in the config file
 (`devices.<name>`) — the account, the TPM to open, the ACME permanent
-identifier, the common name, the PCR selection and the local challenge
+identifier, the common name and the local challenge
 server's bind address/port are configured once, and the verbs act on the
 name. There is no flag-based, config-free form.
 
 | Verb | Args | Purpose |
 |---|---|---|
 | `device enroll <name>` | spec name | Enroll the device via `enroll-01`, issuing its IAK and IDevID certificates |
-| `device attest <name>` | spec name | Attest the device via `device-attest-01`, using the spec's PCR selection |
+| `device attest <name>` | spec name | Attest the device via `device-attest-01`: the IAK certifies the certificate key, which the TPM holds under the Platform SRK |
 
 ```
 trusted-acme-client device enroll edge-gateway-01
@@ -132,7 +135,6 @@ devices:
     account: prod
     common-name: edge-gateway-01.example.com
     identifier: edge-gateway-01.example.com   # ACME permanent-identifier value
-    pcr-selection: [0, 1, 2, 3, 4, 5, 6, 7]
     challenge:
       port: "8080"
     tpm:
@@ -149,10 +151,12 @@ simulated node) naming an already-provisioned TPM. go-xkms never
 auto-provisions real hardware: an unprovisioned physical TPM is refused, not
 silently provisioned, by this command.
 
-Changing `pcr-selection` changes what the attestation certificate attests to.
-The default set is the firmware and boot measurements; adding a PCR that
-changes on every update makes the attestation fail after the next update,
-which is sometimes exactly what you want and sometimes an outage.
+`device attest` issues the certificate for a P-256 key the TPM holds under
+the Platform SRK, named by `common-name`. The key is created on the first
+attestation and reused on later ones. The evidence is a TPM2_Certify of that
+key by the IAK, so the IAK certificate must already be installed in the TPM.
+The evidence certifies a key, not PCR state, so a `pcr-selection` in the spec
+does not reach the attestation.
 
 ## `trusted-acme-client service`
 

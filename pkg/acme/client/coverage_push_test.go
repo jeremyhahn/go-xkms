@@ -50,13 +50,12 @@ type coveragePushTPMModule struct {
 	iakAttrs         *KeyAttributes
 	idevidCSR        *IDevIDCSR
 	activatedSecret  []byte
-	quote            *TPMQuote
 	ekCertError      error
 	ekAttrsError     error
 	iakAttrsError    error
 	idevidCSRError   error
 	activateError    error
-	quoteError       error
+	attestErr        error
 	provisionEKError error
 	closeError       error
 }
@@ -106,11 +105,11 @@ func (m *coveragePushTPMModule) ProvisionEKCert(certDER []byte) error {
 	return m.provisionEKError
 }
 
-func (m *coveragePushTPMModule) Quote(nonce []byte, pcrSelection []int) (*TPMQuote, error) {
-	if m.quoteError != nil {
-		return nil, m.quoteError
+func (m *coveragePushTPMModule) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
+	if m.attestErr != nil {
+		return nil, m.attestErr
 	}
-	return m.quote, nil
+	return newTestAttestedKey(keyAuth)
 }
 
 func (m *coveragePushTPMModule) Close() error {
@@ -554,7 +553,7 @@ func TestCoveragePush_DeviceAttest_InvalidConfig(t *testing.T) {
 
 	// Invalid config - missing challenge type
 	config := &EnrollmentConfig{}
-	_, err = client.DeviceAttest(context.Background(), config, []int{0, 1, 2})
+	_, err = client.DeviceAttest(context.Background(), config)
 	require.Error(t, err)
 }
 

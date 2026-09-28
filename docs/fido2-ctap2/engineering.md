@@ -1,6 +1,6 @@
 # FIDO2 / CTAP2 Client — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `fido2-ctap2` · Repo: `go-xkms` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `fido2-ctap2` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/fido2`
 
@@ -73,6 +73,18 @@ relying party.
   zeroize it when done.
 - **A credential is bound to its RP id.** Changing `RelyingPartyID` makes
   existing credentials unusable — the authenticator will not find them.
+- **A server-supplied rpId must be covered by the caller's origin.** Every
+  WebAuthn ceremony entry point (`ParseWebAuthnRegistrationOptions`,
+  `RegisterWebAuthn`, `AuthenticateWebAuthn`, and the options parser behind
+  `Assert`/`AssertWithOptionsAndOrigin`) runs `ValidateRPID`
+  (`rpid.go:37`; called at `webauthn_attestation.go:314,360`,
+  `webauthn_assertion.go:195,314`) before the authenticator is touched: the
+  rpId must equal the origin's host or be a registrable-domain suffix of it
+  (WebAuthn L2 §5.1.3 step 8, §5.1.4.1 step 7). A suffix that is itself a
+  public suffix (`com`, `co.uk`, `github.io`, per `golang.org/x/net/publicsuffix`)
+  or any suffix of an IP-literal host is refused (`rpid.go:63`). The origin is
+  required and is never derived from the rpId: an empty origin fails with
+  `ErrOriginRequired`.
 - **`WaitForDevice` respects context cancellation**; it does not spin.
 - **`Close()` releases the HID handle.** A leaked handle blocks the next open on
   some platforms.
@@ -91,6 +103,7 @@ Typed errors throughout. The categories a caller must distinguish:
 | PIN required | `RequireUserVerification`, or the key demands it | collect the PIN |
 | PIN invalid / retries remaining | wrong PIN | surface the remaining count — the key locks out |
 | credential not found | wrong RP id, or the credential is not on this key | do not retry blindly |
+| `ErrOriginRequired` / `ErrInvalidOrigin` / `ErrRPIDOriginMismatch` | no origin, a malformed one, or a server rpId the origin does not cover | supply the real origin; a mismatch is a hostile or misconfigured relying party — do not retry |
 | CTAP protocol error | transport or firmware level | `RetryCount`/`RetryDelay` cover transients |
 
 **Fail closed:** an absent device, a timed-out touch, a failed PIN or a missing

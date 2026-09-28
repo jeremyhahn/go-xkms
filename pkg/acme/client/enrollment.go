@@ -15,6 +15,7 @@ package client
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -732,8 +733,13 @@ func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, tok
 	}
 }
 
-// DeviceAttest performs device attestation using the device-attest-01 challenge
-func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig, pcrSelection []int) (*x509.Certificate, error) {
+// DeviceAttest performs device attestation using the device-attest-01 challenge.
+//
+// The certificate is issued for the TPM key config.TPMModule attests under
+// config.CommonName (TPMModule.CreateAttestedKey): the challenge response is
+// the IAK's TPM2_Certify of that key, and the CSR is signed by it, which is
+// what lets the server bind the one to the other.
+func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x509.Certificate, error) {
 	if err := config.Validate(); err != nil {
 		return nil, caerrors.MalformedError("invalid enrollment config: %v", err)
 	}
@@ -747,8 +753,7 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig, pcr
 	c.logger.Info("starting device attestation",
 		"challenge", config.Challenge,
 		"ip_address", ipAddress,
-		"port", config.Port,
-		"pcr_count", len(pcrSelection))
+		"port", config.Port)
 
 	// Create order for attestation
 	order, err := c.authorizeOrder(ctx, []acme.AuthzID{
@@ -765,7 +770,9 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig, pcr
 		"order_uri", order.URI,
 		"status", order.Status)
 
-	// Process authorizations
+	// Process authorizations. Every one is answered for the same key, the
+	// one the CSR is signed with below.
+	var attested *AttestedKey
 	for _, authzURL := range order.AuthzURLs {
 		authz, err := c.client.GetAuthorization(ctx, authzURL)
 		if err != nil {
@@ -797,13 +804,13 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig, pcr
 		}
 
 		// Setup the device-attest-01 challenge
-		attestStmt, err := c.setupAttestChallenge(config, keyAuth, pcrSelection)
+		attested, err = c.setupAttestChallenge(config, keyAuth)
 		if err != nil {
 			return nil, caerrors.InternalServerError("attestation failed: challenge setup failed: %v", err)
 		}
 
 		// Start HTTP server to serve attestation
-		go c.startAttestServer(config, attestStmt, attestChallenge.Token)
+		go c.startAttestServer(config, attested.Statement, attestChallenge.Token)
 
 		// Give server time to start
 		time.Sleep(100 * time.Millisecond)
@@ -841,14 +848,11 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig, pcr
 		return nil, caerrors.InternalServerError("order not ready: order status is %s, expected ready", order.Status)
 	}
 
-	// Create CSR for attestation certificate
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: config.CommonName,
-		},
+	if attested == nil {
+		return nil, caerrors.InternalServerError("attestation failed: the order carried no authorization to attest")
 	}
 
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, c.accountSigner)
+	csrDER, err := deviceAttestCSR(config.CommonName, ipAddress, attested.Signer)
 	if err != nil {
 		return nil, caerrors.BadCSRError("attestation failed: failed to create CSR: %v", err)
 	}
@@ -875,60 +879,44 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig, pcr
 	return cert, nil
 }
 
-// setupAttestChallenge generates the attestation statement for device-attest-01
-func (c *Client) setupAttestChallenge(config *EnrollmentConfig, keyAuth string, pcrSelection []int) ([]byte, error) {
-	// Generate TPM quote using key authorization as qualifying data
-	quote, err := config.TPMModule.Quote([]byte(keyAuth), pcrSelection)
+// deviceAttestCSR is the device-attest-01 finalize request. It is signed by
+// the attested key, because the server certifies the key the device's TPM
+// certified and no other, and it names the order's permanent identifier in the
+// RFC 4043 permanentIdentifier otherName the server matches the order against
+// -- never the Common Name, which is display text.
+func deviceAttestCSR(commonName, permanentIdentifier string, signer crypto.Signer) ([]byte, error) {
+	identifier, err := ca.MarshalPermanentIdentifier(permanentIdentifier, nil)
 	if err != nil {
-		return nil, caerrors.BadAttestationStatementError("failed to generate TPM quote: %v", err)
+		return nil, err
 	}
-
-	// Get IAK attributes for AK certificate
-	iakAttrs, err := config.TPMModule.IAKAttributes()
+	subject := pkix.Name{CommonName: commonName}
+	san, err := ca.BuildSubjectAltName(subject, nil, nil, nil, nil,
+		[]ca.OtherName{{TypeID: ca.OIDPermanentIdentifier, Value: identifier}}, nil)
 	if err != nil {
-		return nil, caerrors.BadAttestationStatementError("failed to get IAK attributes: %v", err)
+		return nil, err
 	}
-
-	// Get EK certificate for the certificate chain
-	ekCert, err := config.TPMModule.EKCertificate()
-	if err != nil {
-		return nil, caerrors.BadAttestationStatementError("failed to get EK certificate: %v", err)
+	template := &x509.CertificateRequest{
+		Subject:         subject,
+		ExtraExtensions: []pkix.Extension{san},
 	}
-
-	// Determine the COSE algorithm from the quote's signature algorithm
-	// If not available, fall back to the IAK attributes
-	coseAlg := COSEAlgorithmUnknown
-	if quote.SignatureAlgorithm != 0 {
-		coseAlg = COSEAlgorithmFromSignatureAlgorithm(quote.SignatureAlgorithm)
-	} else if iakAttrs.SignatureAlgorithm != 0 {
-		coseAlg = COSEAlgorithmFromSignatureAlgorithm(iakAttrs.SignatureAlgorithm)
-	}
-
-	// Default to RS256 if algorithm couldn't be determined
-	if coseAlg == COSEAlgorithmUnknown {
-		coseAlg = COSEAlgorithmRS256
-		c.logger.Warn("could not determine signature algorithm, defaulting to RS256")
-	}
-
-	// Create attestation object with configurable algorithm
-	attestObj := map[string]interface{}{
-		"fmt": "tpm",
-		"attStmt": map[string]interface{}{
-			"ver":      "2.0",
-			"alg":      int(coseAlg),
-			"x5c":      []interface{}{ekCert.Raw},
-			"sig":      quote.Signature,
-			"certInfo": quote.Quote,
-			"pubArea":  iakAttrs.TPMPublicBytes,
-		},
-	}
-
-	// Encode attestation object as JSON
-	return json.Marshal(attestObj)
+	return x509.CreateCertificateRequest(rand.Reader, template, signer)
 }
 
-// startAttestServer starts an HTTP server for device-attest-01 challenge handling
-func (c *Client) startAttestServer(config *EnrollmentConfig, attestStmt []byte, token string) {
+// setupAttestChallenge answers a device-attest-01 challenge: the TPM
+// certifies the certificate key named config.CommonName over keyAuth, and the
+// returned key signs the CSR at finalization.
+func (c *Client) setupAttestChallenge(config *EnrollmentConfig, keyAuth string) (*AttestedKey, error) {
+	attested, err := config.TPMModule.CreateAttestedKey(config.CommonName, keyAuth)
+	if err != nil {
+		return nil, caerrors.BadAttestationStatementError("failed to attest the certificate key: %v", err)
+	}
+	return attested, nil
+}
+
+// startAttestServer starts an HTTP server for device-attest-01 challenge
+// handling. statement is served as it is: it is already the JSON request the
+// server's verifier decodes.
+func (c *Client) startAttestServer(config *EnrollmentConfig, statement []byte, token string) {
 	mux := http.NewServeMux()
 
 	// Challenge endpoint - serves attestation statement
@@ -939,19 +927,8 @@ func (c *Client) startAttestServer(config *EnrollmentConfig, attestStmt []byte, 
 			return
 		}
 
-		// Wrap attestation in the expected request format
-		attestReq := map[string]interface{}{
-			"attStmt": attestStmt,
-		}
-
-		jsonData, err := json.Marshal(attestReq)
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-
 		w.Header().Set("Content-Type", "application/json")
-		if _, err := w.Write(jsonData); err != nil {
+		if _, err := w.Write(statement); err != nil {
 			c.logger.Error("failed to write device-attest-01 challenge response", "error", err)
 		}
 	})

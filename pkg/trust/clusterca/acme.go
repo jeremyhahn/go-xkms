@@ -41,14 +41,17 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // tpmProvider is the surface a backend must expose for enroll-01: access to
-// the underlying TrustedPlatformModule. The tpm2 backend satisfies it.
+// the underlying TrustedPlatformModule and to the store its key blobs live
+// in. The tpm2 backend satisfies it.
 type tpmProvider interface {
 	TPM() pkgtpm2.TrustedPlatformModule
+	KeyBackend() store.KeyBackend
 }
 
 // provisionACME resolves the node identity in ACME-attested mode: cached
@@ -425,7 +428,7 @@ func (p *Provisioner) enrollJoiner(ctx context.Context) (*Result, error) {
 		IPAddress:  host,
 		Port:       p.opts.ACME.ChallengePort,
 		ListenHost: p.opts.ACME.ChallengeHost,
-		TPMModule:  acmeclient.NewXKMSTPMAdapter(tpm),
+		TPMModule:  acmeclient.NewXKMSTPMAdapter(tpm, provider.KeyBackend()),
 	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "clusterca: acme enrollment", Err: err}

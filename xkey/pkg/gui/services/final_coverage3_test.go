@@ -1187,10 +1187,15 @@ func TestFC3_OIDCService_Login_ListenerPortConflict(t *testing.T) {
 	svc.SetTokenStore(oidc.NewMemoryTokenStore())
 	svc.SetBrowserOpen(func(u string) error { return nil })
 
-	// Occupy the port first. net.Listen binds synchronously, so the port is
-	// held before this call returns -- no readiness wait is needed for
-	// Login's later net.Listen on the same port to observe it in use.
-	blockerListener, err := net.Listen("tcp", ":18994")
+	// Reserve an OS-assigned port, then occupy it. net.Listen binds
+	// synchronously, so the port is held before this call returns -- no
+	// readiness wait is needed for Login's later net.Listen on the same
+	// port to observe it in use. A dynamic port (rather than a literal)
+	// keeps this collision self-contained: a fixed port can already be
+	// bound by another package's test running in parallel in CI
+	// (go-xkms#1142).
+	conflictPort := freeLoopbackPort(t)
+	blockerListener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", conflictPort))
 	require.NoError(t, err)
 	blocker := &http.Server{Handler: http.NewServeMux()}
 	go func() { _ = blocker.Serve(blockerListener) }()
@@ -1200,7 +1205,7 @@ func TestFC3_OIDCService_Login_ListenerPortConflict(t *testing.T) {
 		Name:        "port-conflict",
 		Issuer:      serverURL,
 		ClientID:    "cid",
-		RedirectURL: "http://localhost:18994/callback",
+		RedirectURL: fmt.Sprintf("http://localhost:%d/callback", conflictPort),
 		Scopes:      []string{"openid"},
 	}
 	require.NoError(t, svc.AddProvider(entry))

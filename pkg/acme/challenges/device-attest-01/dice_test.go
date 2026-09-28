@@ -322,13 +322,3 @@ func TestDICEVerificationConsultsNoClock(t *testing.T) {
 	assert.NoError(t, err,
 		"freshness here is the nonce; expiry belongs to the chain verifier")
 }
-
-// TestSetupRefusesDICE records the boundary. Setup builds evidence with a local
-// TPM; a DICE device mints its own alias certificate, so there is nothing for
-// this host to construct and saying so is not the same as a missing feature.
-func TestSetupRefusesDICE(t *testing.T) {
-	payload, err := Setup("keyauth", &mockKeyAttributes{keyAlgorithm: x509.ECDSA}, FormatDICE, &mockTPM{})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidAttestationFormat)
-	assert.Nil(t, payload)
-}

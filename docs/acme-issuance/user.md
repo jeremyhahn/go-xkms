@@ -1,6 +1,6 @@
 # ACME Issuance — User Guide
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Prerequisites
 
@@ -84,7 +84,7 @@ Reason `1` is key compromise, `4` is superseded, `0` is unspecified.
 
 This is the path the platform uses to admit a node. Devices, like
 certificates, are named specs in the config file — configure the account,
-the TPM, the common name and the PCR selection once under `devices.<name>`,
+the TPM, the common name and the identifier once under `devices.<name>`,
 then act on the name:
 
 ```yaml
@@ -93,7 +93,6 @@ devices:
     account: prod
     common-name: node-07.example.com
     identifier: node-07.example.com
-    pcr-selection: [0, 1, 2, 3, 4, 5, 6, 7]
     tpm:
       config:
         device: /dev/tpmrm0
@@ -107,16 +106,17 @@ The server sends a challenge only the real TPM can answer: it encrypts a secret
 to the TPM's endorsement key, and the TPM must activate it. Nothing you can type
 substitutes for the hardware.
 
-To bind the certificate to the machine's measured state as well as its identity:
+To get a certificate for a key that provably lives in the machine's TPM:
 
 ```
 trusted-acme-client device attest node-07
 ```
 
-Choose the PCR set deliberately. The default covers firmware and boot. Including
-a PCR that changes on every kernel update means the attestation stops matching
-after the next update — which is either the security property you wanted or an
-outage you did not, depending on what the certificate is for.
+The TPM holds the key under its Platform SRK. The device's IAK certifies it
+for the challenge, and the server issues only for the key it certified. The
+IAK certificate must already be installed in the TPM. This proves where the
+key lives, not the machine's measured boot state: PCRs are not part of the
+evidence.
 
 `tpm` is optional; leaving it unset opens go-xkms's own simulator-backed TPM2
 defaults, which is development and testing only. A production spec always

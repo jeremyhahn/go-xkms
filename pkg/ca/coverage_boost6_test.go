@@ -380,20 +380,20 @@ func TestSign_IntermediateCA_DifferentKey(t *testing.T) {
 }
 
 // =============================================================================
-// loadRevocationFromStore — list scan path (key not in list → ErrCRLNotFound)
+// lookupRevocation — objectStore is never consulted for revocation state
 // =============================================================================
 
-func TestLoadRevocationFromStore_ListScan_NotFound(t *testing.T) {
+func TestLookupRevocation_IgnoresObjectStore(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
-	// Store something under the prefix so objectStore.List returns non-empty.
+	// A record in the legacy object store is not revocation state: the
+	// revocation store is the sole persistence medium.
 	require.NoError(t, ca.objectStore.Put(
-		revocationKeyPrefix+"other-serial.json",
-		pemReader([]byte(`{"serial":"other"}`)),
+		revocationKeyPrefix+"999888777.json",
+		pemReader([]byte(`{"serial":"999888777"}`)),
 	))
 
-	// A serial that doesn't match the stored key → should return ErrCRLNotFound.
-	_, err := resp.loadRevocationFromStore(context.Background(), big.NewInt(999888777))
-	assert.ErrorIs(t, err, ErrCRLNotFound)
+	info, err := ca.lookupRevocation(context.Background(), big.NewInt(999888777))
+	require.NoError(t, err)
+	assert.Nil(t, info)
 }

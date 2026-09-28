@@ -114,7 +114,7 @@ func createProvisionTestCertificate(t *testing.T) *x509.Certificate {
 // TestProvisioningWorkflow tests the complete TPM provisioning flow.
 // This exercises: Install(), fileIntegritySum(), CreatePlatformPolicy(), and hierarchy setup.
 func TestProvisioningWorkflow(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Verify EK was provisioned
@@ -142,7 +142,7 @@ func TestProvisioningWorkflow(t *testing.T) {
 // TestProvisionWithPlatformPolicy tests provisioning with platform PCR policy.
 // This exercises fileIntegritySum() and CreatePlatformPolicy().
 func TestProvisionWithPlatformPolicy(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Get platform policy digest (exercises fileIntegritySum)
@@ -159,7 +159,7 @@ func TestProvisionWithPlatformPolicy(t *testing.T) {
 
 // TestHierarchyAuthSetup tests setting hierarchy authorizations.
 func TestHierarchyAuthSetup(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	ekAttrs, err := tpm.EKAttributes()
@@ -176,7 +176,7 @@ func TestHierarchyAuthSetup(t *testing.T) {
 // TestKeyHierarchyCreation tests creating keys under the provisioned hierarchy.
 // This exercises CreateSRK, CreateRSA, CreateECDSA with provisioned keys.
 func TestKeyHierarchyCreation(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	ekAttrs, err := tpm.EKAttributes()
@@ -223,7 +223,7 @@ func TestKeyHierarchyCreation(t *testing.T) {
 // TestProvisionedKeyOperations tests operations with provisioned keys.
 // This exercises Sign, Hash, SignValidate with provisioned IAK.
 func TestProvisionedKeyOperations(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	iakAttrs, err := tpm.IAKAttributes()
@@ -270,7 +270,7 @@ func TestProvisionedKeyOperations(t *testing.T) {
 // reading the attribute caches directly made the call depend on which method
 // happened to run first.
 func TestProvisionedAttestationOperations(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	profile, err := tpm.AKProfile()
@@ -309,7 +309,7 @@ func TestProvisionedAttestationOperations(t *testing.T) {
 // TestEKOperations tests operations specific to the Endorsement Key.
 // This exercises EKRSA, EKCertificate.
 func TestEKOperations(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Test EKRSA
@@ -333,7 +333,7 @@ func TestEKOperations(t *testing.T) {
 // TestSessionCreation tests session creation with provisioned keys.
 // This exercises CreateSession, PlatformPolicySession, NonceSession.
 func TestSessionCreation(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	ekAttrs, err := tpm.EKAttributes()
@@ -356,7 +356,7 @@ func TestSessionCreation(t *testing.T) {
 
 // TestParsePublicKeyFromProvisioned tests parsing public keys from provisioned keys.
 func TestParsePublicKeyFromProvisioned(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Get EK public area
@@ -378,7 +378,7 @@ func TestParsePublicKeyFromProvisioned(t *testing.T) {
 
 // TestClearWithNilAuthCoverage tests Clear with nil lockout authorization.
 func TestClearWithNilAuthCoverage(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Clear with nil lockout auth
@@ -388,7 +388,7 @@ func TestClearWithNilAuthCoverage(t *testing.T) {
 
 // TestClearWithInvalidAuthCoverage tests Clear with invalid lockout authorization.
 func TestClearWithInvalidAuthCoverage(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// First set a non-empty lockout auth
@@ -690,7 +690,7 @@ func TestWriteEKCertCoverage(t *testing.T) {
 
 // TestParseEKCertificateValidCoverage tests parsing of valid DER-encoded certificates.
 func TestParseEKCertificateValidCoverage(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	testCert := createProvisionTestCertificate(t)
@@ -704,7 +704,7 @@ func TestParseEKCertificateValidCoverage(t *testing.T) {
 
 // TestParseEKCertificateInvalidCoverage tests parsing of invalid certificate data.
 func TestParseEKCertificateInvalidCoverage(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Try to parse invalid data
@@ -715,7 +715,7 @@ func TestParseEKCertificateInvalidCoverage(t *testing.T) {
 
 // TestParseEKCertificateEmptyCoverage tests parsing empty certificate data.
 func TestParseEKCertificateEmptyCoverage(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	// Try to parse empty data
@@ -729,7 +729,7 @@ func TestParseEKCertificateEmptyCoverage(t *testing.T) {
 
 // TestPlatformPolicyDigestHashCoverage tests retrieving the platform policy digest hash.
 func TestPlatformPolicyDigestHashCoverage(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	digest, err := tpm.PlatformPolicyDigestHash()
@@ -744,7 +744,7 @@ func TestPlatformPolicyDigestHashCoverage(t *testing.T) {
 
 // TestCreatePlatformPolicyCoverage tests the platform policy creation.
 func TestCreatePlatformPolicyCoverage(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	err := tpm.CreatePlatformPolicy()
@@ -826,7 +826,7 @@ func TestCreatePlatformPolicyEmptyGoldenPCRsCoverage(t *testing.T) {
 
 // TestSetHierarchyAuthSpecificHierarchyCoverage tests setting auth for specific hierarchies.
 func TestSetHierarchyAuthSpecificHierarchyCoverage(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	newPassword := mustPassword([]byte("new-hierarchy-auth"))
@@ -853,7 +853,7 @@ func TestSetHierarchyAuthSpecificHierarchyCoverage(t *testing.T) {
 
 // TestGoldenMeasurementsCoverage tests the GoldenMeasurements function.
 func TestGoldenMeasurementsCoverage(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	goldenPCR, gmErr := tpm.GoldenMeasurements()
@@ -869,7 +869,7 @@ func TestGoldenMeasurementsCoverage(t *testing.T) {
 // TestFactoryReset_Success provisions the TPM and then factory resets,
 // verifying that the EK remains while SRK, IAK, and IDevID are removed.
 func TestFactoryReset_Success(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl, ok := tpm.(*TPM2)
@@ -936,7 +936,7 @@ func TestFactoryReset_Success(t *testing.T) {
 // TestFactoryReset_EmptyTPM verifies that factory reset on a TPM with
 // no provisioned keys (only EK) completes without errors.
 func TestFactoryReset_EmptyTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl, ok := tpm.(*TPM2)
@@ -955,7 +955,7 @@ func TestFactoryReset_EmptyTPM(t *testing.T) {
 // preserveHandles is now derived from the TPM's actual configured
 // EK.Handle rather than a hardcoded TCG-default pair.
 func TestFactoryReset_IAKAtLegacyECCHandle_Evicted(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl, ok := tpm.(*TPM2)
@@ -996,7 +996,7 @@ func TestFactoryReset_IAKAtLegacyECCHandle_Evicted(t *testing.T) {
 // which leaves a persistent object at that address that the package no
 // longer owns.
 func TestFactoryReset_ForeignObjectAtTCGECCEKHandle_Preserved(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl, ok := tpm.(*TPM2)

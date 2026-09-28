@@ -425,6 +425,9 @@ func newAdminCreateCmdCopy() *cobra.Command {
 	cmd.Flags().Bool("user-verification", false, "")
 	cmd.Flags().String("method", "fido2", "")
 	cmd.Flags().String("cert-file", "", "")
+	// These tests run over no http(s) --server, so the origin is supplied;
+	// TestResolveWebAuthnOrigin covers its derivation and absence.
+	cmd.Flags().String(originFlag, "https://kms.example.com", "")
 	addPINFlags(cmd)
 	return cmd
 }
