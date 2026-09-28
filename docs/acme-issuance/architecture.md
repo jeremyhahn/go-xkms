@@ -200,6 +200,11 @@ through ACME against an existing node's directory.
   `TCAACMEConfig.Resilience` rather than a parallel type, so the same
   `storage`/`kms`/`http01`/`dns01` breaker sections and defaults apply to
   both compositions' configuration.
+  A challenge the validation client refuses before contacting the target
+  (an invalid target, or a reserved address) does not count toward the
+  `http01`/`dns01` breaker (go-xkms#1181): the target is client-chosen, so
+  counting refusals would let any account open the server-wide breaker. See
+  [`engineering.md`](engineering.md) "Circuit breakers and degradation".
   An open breaker fails only the call it guards — a challenge validation
   attempt returns an `incorrectResponse` problem instead of hanging on a dead
   verifier target, a KMS-backed finalize fails instead of blocking — it does

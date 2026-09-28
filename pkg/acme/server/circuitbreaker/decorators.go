@@ -18,6 +18,7 @@ import (
 	"crypto"
 	"net"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/ct"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
@@ -29,14 +30,22 @@ import (
 // of reaching the network; this is what keeps a slow or unreachable http-01
 // or dns-01 target from holding up every other challenge validation sharing
 // the same worker.
+//
+// A verification the challenge-validation client refused without contacting
+// the target (validation.IsTargetRejected: an invalid target, or one that
+// resolved to a reserved address) is returned to the caller but not recorded
+// by cb. The target is chosen by the ACME client, so counting those refusals
+// would let any account open the breaker -- and stall every http-01
+// validation on the server -- by naming internal addresses. A connection
+// failure to a target the client did contact still counts.
 func WrapChallengeVerifier(cb *CircuitBreaker, fn common.ChallengeVerifierFunc) common.ChallengeVerifierFunc {
 	return func(
 		resolver *net.Resolver,
 		ca common.CertificateAuthority,
 		authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-		return cb.Execute(func() error {
+		return cb.execute(context.Background(), func() error {
 			return fn(resolver, ca, authzValue, challengePort, challengeToken, expectedKeyAuth)
-		})
+		}, validation.IsTargetRejected)
 	}
 }
 

@@ -86,6 +86,24 @@ func (e *Error) Error() string {
 // Unwrap returns the underlying error.
 func (e *Error) Unwrap() error { return e.Err }
 
+// IsTargetRejected reports whether err is a validation failure the client
+// decided by itself, without the target having been contacted: the target
+// is not a bare hostname or IP literal with a TCP port (KindInvalidTarget),
+// or the dialer refused the reserved address it resolved to
+// (KindTargetRefused). Such a failure is a policy decision about a
+// client-chosen target, not evidence that the network or the target is
+// unhealthy, so a circuit breaker guarding challenge validation must not
+// count it: every ACME account can produce one at will.
+//
+// Every other failure, including KindConnection, reports false.
+func IsTargetRejected(err error) bool {
+	var verr *Error
+	if !errors.As(err, &verr) {
+		return false
+	}
+	return verr.Kind == KindInvalidTarget || verr.Kind == KindTargetRefused
+}
+
 // AddressNotPermittedError is returned by the dialer when the resolved
 // address is reserved and Config.AllowPrivateTargets is false.
 type AddressNotPermittedError struct {
