@@ -1,6 +1,6 @@
 # Device Pairing and Enrollment — Engineering
 
-> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 For the phone-pairing verbs (`pair`, `scan`, `listen`, `attest*`, `*-sync`,
 `share*`, `relay`'s Noise/barrier semantics) see
@@ -101,15 +101,28 @@ for the only mode with a shipped CLI verb today (`xkey oath scan`).
 
 ## Configuration
 
-`device.*` and `piv`-style persistent flags on `deviceCmd` and its
-subcommands are bound to the package-level `viper` singleton with
-`viper.BindPFlag` only (`device.trust_new_devices`, `device.pair.*`,
-`device.scan.timeout`, `device.status.device`, `device.listen.*`). **That
-singleton never calls `ReadInConfig` or `AutomaticEnv`** anywhere in
-`cmd/xkey/cmd`, so — unlike the flags below — none of these device flags is
-settable through `~/.config/xkey/config.yaml` or an environment variable;
-`viper.GetString`/`GetBool` on these keys only ever reflects the bound CLI
-flag.
+`device.*` persistent flags on `deviceCmd` and most of its subcommands are
+still bound to the package-level `viper` singleton with `viper.BindPFlag`
+only (`device.trust_new_devices`, `device.pair.*`, `device.scan.timeout`,
+`device.status.device`). **That singleton never calls `ReadInConfig` or
+`AutomaticEnv`** anywhere in `cmd/xkey/cmd`, so — unlike the flags below —
+none of these device flags is settable through `~/.config/xkey/config.yaml`
+or an environment variable; `viper.GetString`/`GetBool` on these keys only
+ever reflects the bound CLI flag.
+
+**`device listen` and `device sync`/`sync-push`/`sync-pull`/`sync-status`
+never bound their flags to viper at all**, despite appearing to
+(`device_listen.go`, `device_sync.go` pre-go-xkms#871): `runDeviceListen` and
+`runDeviceSyncMode`/`runDeviceSyncStatus` always read their flags directly
+via `cmd.Flags().GetString`/`GetBool`/`GetDuration`, so the
+`viper.BindPFlag("device.listen.*", ...)` and
+`viper.BindPFlag("device.sync*.*", ...)` calls that used to sit in each
+command's `init()` were dead code -- bound but never read back through
+`viper.Get*` anywhere -- and were deleted rather than wired up: `sync`'s
+`--trust-store`/`--oath`/`--passwords`/`--all`/`--dry-run` select what one
+invocation does and have no sensible config-file meaning, and `listen`'s
+settings had no config/environment claim to make true in the first place (its
+`--help` never mentioned one). Both remain CLI-flag-only, now honestly.
 
 The one exception is `device relay --listen`, which resolves through the
 real, layered config system (`xkey/pkg/config`, env prefix `XKEY_`):

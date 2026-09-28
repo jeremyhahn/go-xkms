@@ -113,19 +113,18 @@ var passwordGetCmd = &cobra.Command{
 	Short: "Retrieve a password entry",
 	Long: `Retrieve a password entry by ID.
 
-Pass --decrypt to include the plaintext password in the output. The
-store access mode may require a user PIN (--user-pin) per operation.
+The store must be unlocked first (see "password unlock"); the entry is
+returned exactly as stored -- confidentiality at rest is provided by the
+tenant barrier, not by a per-request decryption step.
 
 Example:
-  xkmsctl password get 4f1c... --decrypt`,
+  xkmsctl password get 4f1c...`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		fr := newFlagReader(cmd)
-		decrypt := fr.Bool("decrypt")
-		userPIN := fr.String("user-pin")
 		tenantID := fr.String("tenant-id")
 		if err := fr.Err(); err != nil {
 			handleError(err)
@@ -134,8 +133,6 @@ Example:
 
 		passwordGet(cfg, printer, &client.PasswordGetRequest{
 			ID:       args[0],
-			Decrypt:  decrypt,
-			UserPIN:  userPIN,
 			TenantID: tenantID,
 		})
 	},
@@ -737,8 +734,6 @@ func init() {
 	passwordAddCmd.Flags().Bool("shared", false, "share the entry with the tenant")
 
 	// password get flags
-	passwordGetCmd.Flags().Bool("decrypt", false, "include the plaintext password in the output")
-	passwordGetCmd.Flags().String("user-pin", "", "user PIN (required in pin_per_operation mode)")
 	passwordGetCmd.Flags().String("tenant-id", "", "tenant scope for the entry")
 
 	// password list flags

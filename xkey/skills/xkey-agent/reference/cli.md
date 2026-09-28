@@ -299,6 +299,7 @@ Usage: `xkey barrier init [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--aws-endpoint` | string |  | Custom AWS KMS endpoint (optional; for testing against an emulator) |
+| `--aws-key-id` | string |  | Existing AWS KMS key ID, ARN, alias, or alias ARN to seal under (optional; a CMK is created and persisted when unset) |
 | `--aws-region` | string |  | AWS region for the aws_kms barrier strategy |
 | `--azure-allow-local-vault-url` | bool | false | Allow a localhost/127.0.0.1 vault URL (development only) |
 | `--azure-vault-url` | string |  | Azure Key Vault URL for the azure_kv barrier strategy |
@@ -1625,8 +1626,8 @@ Inherited by subcommands:
 | `--backend` | string | software | Key backend: software, tpm2, or pkcs11 |
 | `--piv-storage` | string |  | Certificate storage type override: file, tpm2, or pkcs11 (default: matches backend) |
 | `--pkcs11-library` | string | /usr/lib/softhsm/libsofthsm2.so | PKCS#11 library path |
-| `--pkcs11-pin` | string |  | PKCS#11 user PIN |
-| `--pkcs11-so-pin` | string |  | PKCS#11 Security Officer PIN (required for key generation) |
+| `--pkcs11-pin-stdin` | bool | false | Read the PKCS#11 PIN from standard input |
+| `--pkcs11-so-pin-stdin` | bool | false | Read the PKCS#11 Security Officer PIN from standard input |
 | `--pkcs11-token` | string |  | PKCS#11 token label |
 | `--storage-path` | string |  | Path for file storage (default: ~/.xkey/data/piv, see XKEY_DATA_DIR) |
 | `--tpm-device` | string | /dev/tpmrm0 | TPM device path for tpm2 backend/storage |

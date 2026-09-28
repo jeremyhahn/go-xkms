@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0-alpha] - 2026-09-28
+
+### Security
+
+- **Every ACME admin route on xkmsd's unified mTLS listener answered 403, even to the first-boot administrator; mTLS callers now reach qrdb RBAC as their bound qrdb user with that user's role IDs.** Two defects in the chain from client certificate to authorization decision caused it. First, `cmd/xkmsd/admin.go` `finalizeAdminModule` built the admin plane's mTLS authenticator with no user store, so it could only read certificate fields: the identity reaching `PermissionGate` carried no roles and no tenant, and go-qrdb's authorizer, which unions the grants of `Identity.Roles`, denied every `gate.Wrap` permission. The authenticator is now built with `auth.QRDBUserStore`, as the crypto plane's is. Second, `pkg/auth/qrdb_userstore.go` reported only the user's first role, translated to its name, while go-qrdb looks roles up by ID. Wiring the store alone therefore still failed with `role: not found: admin`, and the same failure hit every mTLS identity that `pkg/server` and the REST host resolved through that store. `auth.MTLSUser.Role string` is now `Roles []string` and carries every qrdb role ID verbatim, which is go-qrdb's own identity contract (its middleware sets `Identity.Roles = user.RoleIDs`). `NewQRDBUserStore` no longer takes a role client. The admin plane declares no permissions of its own: every one it demands is already registered by qrdb and granted to the built-in roles, so none is registered by xkms. `cmd/xkmsd/admin_authz_test.go` walks the published admin router against a first-boot-seeded embedded node. It shows that the first-boot administrator passes the gate on every route, that a roleless user and a certificate bound to no user are refused on every route, and that every permission the routes demand is registered with qrdb and held by the seeded Owner role (go-xkms#1069).
+
+### Added
+
+- **An operator can point the `aws_kms` barrier seal key at an existing AWS KMS CMK instead of letting xkmsd/xkey provision one** (#842). `backends.awskms.key_id` (xkmsd) and `barrier.cloud_kms.aws_kms.key_id` / `xkey barrier init --aws-key-id` (xkey) accept a key ID, key ARN, alias, or alias ARN, threaded into `awskms.Config.KeyID` at every construction site (`pkg/server/backend_awskms.go`, `pkg/server/platform_store_awskms.go`, `xkey/cmd/xkey/cmd/barrier_cloudkms_awskms.go`). `awskms.Config.Validate` rejects a malformed value with the typed `ErrInvalidKeyID`, matching AWS's own key-ID/ARN/alias/alias-ARN shapes (including multi-Region `mrk-` keys and the `aws-cn`/`aws-us-gov` partitions). `pkg/seal.EnsureSealKey` now fails closed with a new typed `ErrOperatorSealKeyNotFound` when an operator-configured key resolves not-found at barrier init, instead of silently falling through to `GenerateSymmetricKey` and provisioning a different, unrequested CMK. Existence is still checked against the live AWS KMS API the first time the key is resolved (`DescribeKey`). Files: `pkg/backend/awskms/config.go`, `pkg/seal/cloud_provision.go`, `pkg/config/config.go`, `xkey/pkg/config/barrier_cloud.go`, `xkey/cmd/xkey/cmd/barrier_cloudkms{,_awskms}.go`. Verified by `pkg/backend/awskms/config_test.go` (every accepted key-ID/ARN/alias/alias-ARN shape, and malformed-value rejection), `pkg/seal/cloud_provision_test.go` and `cloud_provision_awskms_test.go` (an operator-configured key is resolved and reused with `CreateKey` never called; a missing operator key fails closed with `ErrOperatorSealKeyNotFound` and never calls `CreateKey`; the no-`key_id` create path is unchanged), and `xkey/pkg/config/barrier_cloud_test.go` (`KeyID` round-trips through `Save`/`Load`).
+
+### Fixed
+
+- **The ACME admin gRPC permission map is keyed by the real method names, and covers the account operations** (#743). `MethodPermissions` (`pkg/acme/api/server/interceptor_authz.go`) used hand-written `"/admin.v1.AdminService/..."` keys. The generated service is `trustedca.admin.v1.AdminService`, so every call would have missed the map and been denied as unmapped once the server is wired. The map is now keyed by the generated `adminv1.AdminService_*_FullMethodName` constants. It also gains `ListAccounts`, `GetAccount` and `DisableAccount`, with the same permissions REST and MCP already enforce. A test checks the map against the service descriptor in both directions.
+- **BREAKING: ACME certificates are now keyed by their full X.509 serial
+  number, not its low 64 bits.** `OrderFinalizeHandler` stored an issued
+  certificate's `ACMECertificate.ID` (and the "id" segment of its
+  `/acme/cert/{id}` URL) as `cert.SerialNumber.Uint64()`, silently taking the
+  low 64 bits of the CA's 128-bit serial (`pkg/ca.SerialNumberBits`) when it
+  overflowed `uint64` - so two certificates whose serials happened to share
+  those bits collided in storage, and the second issuance silently
+  overwrote the first's record. `entities.ACMECertificate.Serial` now holds
+  the certificate's complete serial number as a canonical lowercase hex
+  string (no truncation, no precision loss), and it is what
+  `/acme/cert/{id}` and certificate revocation key on; the DAO's own numeric
+  row key is an FNV-1a hash of `Serial` (`entities.StringToEntityID`,
+  mirroring `Tenant` and `ExternalAccountBinding`), kept only to satisfy the
+  generic DAO's `uint64` entity-ID contract, and is never a certificate's
+  public identity. `/acme/cert/{id}` accepts an optional `0x`/`0X` prefix and
+  normalizes case, so differently-spelled encodings of the same serial reach
+  the same record; a malformed or non-positive serial in the URL is rejected
+  with a typed `*entities.InvalidSerialError` (surfaced as an ACME
+  `malformed` error), never a panic. `pkg/acme/admin`'s certificate lookups
+  already matched on the full decimal serial parsed from the stored PEM and
+  are unaffected. No migration is provided (pre-release alpha): existing
+  stored `ACMECertificate` records keyed by the old truncated numeric ID are
+  no longer reachable by that ID and must be re-issued if still needed.
+  Follow-up: the new FNV-1a row key is itself only 64 bits, so a hash
+  collision between two DIFFERENT full serials remains possible in
+  principle (astronomically unlikely, but the whole point of this fix).
+  Certificate fetch (`CertificateHandler`) and revoke (`RevokeCertHandler`)
+  now verify the fetched row's `Serial` matches the requested serial and
+  treat a mismatch as not-found, never serving or revoking the wrong
+  certificate. `storage.SaveCertificateNoCollision` (used by
+  `OrderFinalizeHandler` and the ACME client's local certificate cache)
+  refuses to overwrite a row already holding a different certificate,
+  returning a typed `*storage.CertificateSerialCollisionError`; it uses the
+  DAO's atomic `SaveIfAbsent` when the backing store supports it, and falls
+  back to a Get-then-Save sequence otherwise (not atomic against a
+  concurrent writer - go-qrdb does not expose a way through the SDK
+  boundary to detect "atomic unsupported" as distinct from other
+  `SaveIfAbsent` failures, so this function cannot do better without a new
+  go-qrdb primitive, which it does not add). `admin.CertificateInfo.ID` and
+  its SDK mirror are removed - no consumer read it, and it was an opaque
+  internal storage hash with no business being on the wire; `SerialNumber`
+  is the certificate's identity. (go-xkms#744).
+- **`server.New` now runs `config.Validate` itself, instead of trusting the caller to have already — BREAKING for an embedder that constructs `*config.Config` by hand.** `config.Load` always called `Validate`, but `New` did not, so a hand-built configuration (an embedder, or a test) could reach subsystem init with a shape `Load` would have refused. The sharpest case: an empty `storage.path` reached `initializePINManager`, which built its state directory by string concatenation (`Storage.Path + "/pin"`), resolving to the filesystem root's own `/pin` directory. `New` now calls `cfg.Validate()` first, before touching the filesystem or storage at all, and wraps a failure in `*ErrServiceInit{Service: "configuration"}`; `Validate` also normalizes `cfg` in place (defaults `Storage.Backend` to `"pebble"`, `Storage.QRDB.Transport` to `"embedded"`, `Cluster.ShardID` to `1`), so every subsystem `New` initializes afterward sees the normalized values. `initializePINManager` (`pkg/server/server.go`) additionally builds its path with `filepath.Join` and guards an empty `storage.path` with a typed `*ErrConfigRequired`, for defense in depth if it is ever reached without going through `New` (its PIN store is always file-backed, independent of `storage.backend`). `initializePasswordStore` also switches to `filepath.Join`; it has no equivalent hard guard because its real write already goes through the backend-aware `createStorage` seam, which never touches `storage.path` for a `qrdb` backend. The loopback desktop engine (`pkg/server/loopback`) forces `Protocols.REST` on for its 127.0.0.1-only listener, which makes `Validate`'s network-serving check (`storage.backend "qrdb"` + `tls.enabled`) trip on a launch that never leaves the loopback interface; it now sets the new `config.Config.LoopbackDesktop` field (`yaml:"-"`, unreachable from any config file/env/flag) and `Validate` honours it to skip exactly that requirement, nothing else. Files: `pkg/server/server.go`, `pkg/config/config.go`, `pkg/server/loopback/loopback.go`. An embedder that was relying on `New` accepting a configuration `config.Load` would have refused must fix the configuration; there is no compatibility shim. Verified by `TestNew_EmptyStoragePath_RejectedBeforeAnyFilesystemWrite` (nothing is created under the working directory), `TestNew_InvalidConfig_RejectedWithTypedError`, `TestNew_ValidConfig_Succeeds`, `TestConfig_Validate_LoopbackDesktopExemptsNetworkServingRequirements`, `TestConfig_Validate_LoopbackDesktopDoesNotExemptOtherRESTConfigs`, and the existing `pkg/server/loopback` suite (a real loopback launch still succeeds). Making `New` always validate also exposed a `backends.tpm2` validation defect that would otherwise have been a startup regression for every `use_simulator: true` deployment (including `test/integration/api/config.test.yaml`, which sets no `device_path`): `Validate` required `device_path` even when `use_simulator` is true, though the simulator is addressed by `simulator_host`/`simulator_port` and never opens `device_path` at all. `Validate` now requires `device_path` only when `use_simulator` is false; verified by `TestValidate_Backends/TPM2_simulator_without_device_path` (accepted) alongside the existing `TestValidate_Backends/TPM2_enabled_without_device_path_(hardware)` (still refused with the same typed error). go-xkms#666.
+- **`xkey piv`, `xkey fido2` and `xkey device listen`/`sync*` now honour the
+  config file and environment variable sources they advertised (or should
+  have), instead of silently reading only their command-line flag —
+  BREAKING for `--pkcs11-pin`/`--pkcs11-so-pin`.** The global `viper`
+  instance these commands bound flags to (`root.go:245-247`'s own comment
+  called it "phased out") was never pointed at a config file and never had
+  `AutomaticEnv` enabled, so every `piv.*`/`device.listen.*`/`device.sync*.*`
+  key it exposed only ever reflected the bound flag's current value; the
+  `fido2` command's Long help claimed `XKEY_FIDO2_*`/config-file support for
+  every flag when only `fido2.attestation` was actually wired, and even that
+  wiring was itself blind to `pkg/config`'s own `fido2.storage`/
+  `storage_path`/`device_name` keys. `xkeyconfig.PIVConfig`
+  (`pkg/config/config.go:93-107`) is new: `--backend`, `--piv-storage`,
+  `--storage-path`, `--tpm-device`, `--pkcs11-library` and `--pkcs11-token`
+  now resolve flag-then-config/environment-then-backend-matched-default
+  through it, the same precedence `resolveXKMSdURL` already used for the
+  xkmsd endpoint; `buildPIVConfig` (`cmd/xkey/cmd/piv.go:603-639`) and every
+  command that builds PIV storage (`piv`, `cert request`/`show`/`export`,
+  `device listen`, `provision`, `auth login --piv`) go through it. The
+  PKCS#11 PIN and Security Officer PIN deliberately stay out of that config
+  section and out of any generic environment binding: `--pkcs11-pin` and
+  `--pkcs11-so-pin` value flags are gone (a value on the command line is
+  visible to every other process on the host via `ps`, the same reason
+  `--pin`/`--so-pin` were removed in #272) and are replaced by
+  `--pkcs11-pin-stdin`/`XKEY_PIV_PKCS11_PIN` and
+  `--pkcs11-so-pin-stdin`/`XKEY_PIV_PKCS11_SO_PIN`
+  (`pivPKCS11PINSource`/`pivPKCS11SOPINSource`, `piv.go:57-69`), the same
+  stdin-then-dedicated-env-var convention `pin_input.go` already used for the
+  host PIN service's own PIN. `buildFIDO2Config`
+  (`cmd/xkey/cmd/fido2.go:553-596`) now installs `fido2.storage`,
+  `fido2.storage_path` and `fido2.device_name` from the loaded config the
+  same way it already did for `fido2.attestation`, and the command's Long
+  help now names exactly the four flags (`--storage`, `--storage-path`,
+  `--name`, `--attestation`) that have a config/environment source instead of
+  claiming all of them do. `device listen`'s and `device sync`/`sync-push`/
+  `sync-pull`/`sync-status`'s `viper.BindPFlag` calls were dead code — bound
+  but never read back through `viper.Get*` anywhere, since both commands
+  already read their flags directly off `cmd.Flags()` — and are deleted
+  rather than wired up: `sync`'s `--trust-store`/`--oath`/`--passwords`/
+  `--all`/`--dry-run` select what one invocation does and have no config-file
+  meaning, and `listen`'s `--help` never claimed a config/environment source
+  to begin with. Files: `pkg/config/config.go`, `pkg/config/load_test.go`,
+  `pkg/config/config_test.go`, `cmd/xkey/cmd/piv.go`, `pin_input.go`,
+  `auth_piv.go`, `cert.go`, `piv_import.go`, `piv_generate.go`, `piv_csr.go`,
+  `provision.go`, `device_listen.go`, `device_sync.go`, `fido2.go`, and the
+  corresponding `_test.go` files; docs:
+  `xkey/docs/piv/{cli,engineering,architecture}.md`,
+  `xkey/docs/virtual-authenticator/cli.md`, `xkey/docs/fido2/README.md`,
+  `xkey/docs/device/engineering.md` (go-xkms#871).
+
 ## [0.33.0-alpha] - 2026-09-28
 
 ### Security

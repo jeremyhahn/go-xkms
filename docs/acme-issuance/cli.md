@@ -27,11 +27,14 @@ standalone CA project that was decommissioned in August 2026, its CA
 functionality having been folded into go-xkms as `TrustedCA` and the ACME
 implementation documented here. `trusted-acme-client` is the surviving client.
 
-One live consequence: `test/integration/acme-docker-compose.integration.yml`
-still sets `CACTL_BINARY` to a path inside a checkout of that retired project.
-That reference cannot resolve and should be removed — a code change, not a
-documentation one, so it is reported rather than made in this docs-only
-migration.
+One former live consequence: `test/integration/cactl` drove a `cactl` binary
+that could not resolve, and the compose file that ran it
+(`test/integration/acme-docker-compose.integration.yml`) built from a
+sibling `go-trusted-ca` checkout that does not exist in this repository.
+go-xkms#949 replaced that test package with `test/integration/acmeadmin`,
+which drives `xkmsctl acme --acme-transport rest` instead, and replaced the
+compose file with `test/integration/acmeadmin/docker-compose.yml`, which
+builds `xkmsd` and `xkmsctl` from this repository.
 
 ## Global flags
 

@@ -16,9 +16,11 @@
 package azurekv
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/x509"
+	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -41,17 +43,40 @@ func testBackend(t *testing.T) (*Backend, *MockKeyVaultClient) {
 	return b, mockClient
 }
 
+// testBackendWithSecrets creates a test backend with both a mock key-vault
+// client and a mock secrets client, wired together through
+// NewBackendWithClients (go-xkms#1090). Unlike testBackend, this lets
+// GenerateSymmetricKey/GetSymmetricKey exercise their real Secrets API call
+// path -- SetSecret/GetSecret through SecretsClient -- instead of requiring
+// key material to be injected directly as newLocalSymmetricKey does.
+func testBackendWithSecrets(t *testing.T) (*Backend, *MockSecretsClient) {
+	t.Helper()
+
+	secretsClient := NewMockSecretsClient()
+	config := &Config{
+		VaultURL:    "https://mock-vault.vault.azure.net",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+	b, err := NewBackendWithClients(config, NewMockKeyVaultClient(), secretsClient)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	return b, secretsClient
+}
+
 // newLocalSymmetricKey builds the concrete symmetric key the backend returns,
 // with locally generated key material and the backend's real AEAD tracker
 // attached.
 //
-// GenerateSymmetricKey and GetSymmetricKey persist and fetch the key bytes
-// through the Azure Secrets API, which the key-vault mock does not implement;
-// that round trip is covered by the emulator-backed suite in
-// test/integration/azurekv. Everything the tests below assert — AES-GCM
-// encrypt/decrypt, AAD binding, nonce-reuse detection and the bytes limit —
-// runs locally in azureSymmetricKey, so injecting the key material directly
-// exercises the production code path without a cloud dependency.
+// GenerateSymmetricKey and GetSymmetricKey's own Secrets API round trip is
+// covered directly by TestGenerateSymmetricKey_StoresSecretAndRoundTrips and
+// friends below (go-xkms#1090) via testBackendWithSecrets, and end to end
+// against the real Key Vault emulator by test/integration/azurekv. The
+// AES-GCM tests below don't need either: they assert Encrypt/Decrypt, AAD
+// binding, nonce-reuse detection and the bytes limit, all of which run
+// locally in azureSymmetricKey once key material exists, so injecting it
+// directly keeps those tests focused on the crypto, not the Secrets API.
 func newLocalSymmetricKey(t *testing.T, b *Backend, attrs *types.KeyAttributes) *azureSymmetricKey {
 	t.Helper()
 
@@ -95,9 +120,9 @@ func TestSymmetricBackendImplementation(t *testing.T) {
 // validates the requested AES key size before it ever contacts Azure.
 //
 // The success path — generate, store as a Key Vault secret, read back — is
-// covered end to end against the Key Vault emulator by
-// test/integration/azurekv. Duplicating it here is impossible without a
-// Secrets API double and would add no coverage.
+// covered against the SecretsClient seam by
+// TestGenerateSymmetricKey_StoresSecretAndRoundTrips below, and end to end
+// against the real Key Vault emulator by test/integration/azurekv.
 func TestGenerateSymmetricKey_RejectsUnsupportedKeySize(t *testing.T) {
 	b, _ := testBackend(t)
 	defer func() { _ = b.Close() }()
@@ -172,6 +197,170 @@ func TestGetSymmetricKeyNotFound(t *testing.T) {
 	_, err := b.GetSymmetricKey(context.Background(), attrs)
 	if err == nil {
 		t.Error("Expected error for non-existent key, got nil")
+	}
+}
+
+// TestGenerateSymmetricKey_StoresSecretAndRoundTrips is the happy path for
+// GenerateSymmetricKey/GetSymmetricKey against the SecretsClient seam
+// (go-xkms#1090): the key GenerateSymmetricKey returns and the key a
+// subsequent GetSymmetricKey resolves must carry identical raw material,
+// proving the round trip through SetSecret/GetSecret -- base64 encode on
+// the way in, decode on the way out -- is lossless.
+func TestGenerateSymmetricKey_StoresSecretAndRoundTrips(t *testing.T) {
+	b, secretsClient := testBackendWithSecrets(t)
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-roundtrip-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_AZUREKV,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	generated, err := b.GenerateSymmetricKey(context.Background(), attrs)
+	if err != nil {
+		t.Fatalf("GenerateSymmetricKey failed: %v", err)
+	}
+	if generated.KeySize() != 256 {
+		t.Errorf("KeySize() = %d, want 256", generated.KeySize())
+	}
+	if secretsClient.SetSecretCallCount() != 1 {
+		t.Errorf("SetSecret call count = %d, want 1", secretsClient.SetSecretCallCount())
+	}
+	generatedRaw, err := generated.Raw()
+	if err != nil {
+		t.Fatalf("generated.Raw() failed: %v", err)
+	}
+
+	fetched, err := b.GetSymmetricKey(context.Background(), attrs)
+	if err != nil {
+		t.Fatalf("GetSymmetricKey failed: %v", err)
+	}
+	fetchedRaw, err := fetched.Raw()
+	if err != nil {
+		t.Fatalf("fetched.Raw() failed: %v", err)
+	}
+
+	if !bytes.Equal(generatedRaw, fetchedRaw) {
+		t.Error("GetSymmetricKey did not return the same key material GenerateSymmetricKey stored")
+	}
+}
+
+// TestGenerateSymmetricKey_SecretsClientSetSecretError verifies that a
+// SecretsClient.SetSecret failure -- a throttled or unreachable Key Vault --
+// surfaces as an error from GenerateSymmetricKey with no key returned,
+// rather than a key that silently was never persisted.
+func TestGenerateSymmetricKey_SecretsClientSetSecretError(t *testing.T) {
+	b, secretsClient := testBackendWithSecrets(t)
+	defer func() { _ = b.Close() }()
+
+	secretsClient.SetSetError(errors.New("azure: throttled"))
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-generate-set-error-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_AZUREKV,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
+	if err == nil {
+		t.Fatal("GenerateSymmetricKey must fail when the secrets client's SetSecret fails")
+	}
+	if key != nil {
+		t.Error("GenerateSymmetricKey must not return a key alongside an error")
+	}
+}
+
+// TestGetSymmetricKey_SecretsClientGetSecretError verifies that a
+// SecretsClient.GetSecret failure -- an RBAC denial, a transport fault --
+// surfaces as an error from GetSymmetricKey even though local metadata for
+// the key exists.
+func TestGetSymmetricKey_SecretsClientGetSecretError(t *testing.T) {
+	b, secretsClient := testBackendWithSecrets(t)
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-get-error-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_AZUREKV,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	if _, err := b.GenerateSymmetricKey(context.Background(), attrs); err != nil {
+		t.Fatalf("GenerateSymmetricKey failed: %v", err)
+	}
+
+	secretsClient.SetGetError(errors.New("azure: forbidden"))
+
+	if _, err := b.GetSymmetricKey(context.Background(), attrs); err == nil {
+		t.Fatal("GetSymmetricKey must fail when the secrets client's GetSecret fails")
+	}
+}
+
+// TestGetSymmetricKey_SecretNotFoundInVault verifies that GetSymmetricKey
+// fails when the backing secret has been removed directly in Key Vault --
+// out of band from this backend's in-memory metadata, which still records
+// the key from the earlier GenerateSymmetricKey call. This is a different
+// failure than TestGetSymmetricKeyNotFound, which never gets past the
+// in-memory metadata check before touching the secrets client at all.
+func TestGetSymmetricKey_SecretNotFoundInVault(t *testing.T) {
+	b, secretsClient := testBackendWithSecrets(t)
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-secret-deleted-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_AZUREKV,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	if _, err := b.GenerateSymmetricKey(context.Background(), attrs); err != nil {
+		t.Fatalf("GenerateSymmetricKey failed: %v", err)
+	}
+
+	secretsClient.DeleteSecretValue(attrs.CN)
+
+	if _, err := b.GetSymmetricKey(context.Background(), attrs); err == nil {
+		t.Fatal("GetSymmetricKey must fail when the backing secret no longer exists in Key Vault")
+	}
+}
+
+// TestGetSymmetricKey_MalformedSecretData verifies that GetSymmetricKey
+// returns an error, rather than panicking or returning a corrupt key, when
+// the Key Vault secret's Value does not carry what storeSymmetricKeySecret
+// itself would ever write: a nil Value, or content that is not valid
+// base64.
+func TestGetSymmetricKey_MalformedSecretData(t *testing.T) {
+	notBase64 := "not-valid-base64!!!"
+
+	tests := []struct {
+		name  string
+		value *string
+	}{
+		{name: "nil secret value", value: nil},
+		{name: "non-base64 secret value", value: &notBase64},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, secretsClient := testBackendWithSecrets(t)
+			defer func() { _ = b.Close() }()
+
+			attrs := &types.KeyAttributes{
+				CN:                 "test-malformed-" + tt.name,
+				KeyType:            backend.KEY_TYPE_SECRET,
+				StoreType:          backend.STORE_AZUREKV,
+				SymmetricAlgorithm: types.SymmetricAES256GCM,
+			}
+			if _, err := b.GenerateSymmetricKey(context.Background(), attrs); err != nil {
+				t.Fatalf("GenerateSymmetricKey failed: %v", err)
+			}
+
+			secretsClient.SetSecretValue(attrs.CN, tt.value)
+
+			if _, err := b.GetSymmetricKey(context.Background(), attrs); err == nil {
+				t.Fatal("GetSymmetricKey must fail on malformed secret data")
+			}
+		})
 	}
 }
 

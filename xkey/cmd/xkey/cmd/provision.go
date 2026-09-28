@@ -646,7 +646,10 @@ func provisionFIDO2(cmd *cobra.Command, soPIN string) (result *AgentProvisionFID
 // this needs no presence-handler substitution.
 func provisionPIV(cmd *cobra.Command, agent string) ([]AgentProvisionPIVSlot, error) {
 	logger := slog.Default()
-	pivCfg := buildPIVConfig()
+	pivCfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := ensurePIVInitialized(pivCfg, logger); err != nil {
 		return nil, err

@@ -108,7 +108,7 @@ func TestRevokeCertHandlerUnauthorizedDomain(t *testing.T) {
 	// Store the certificate in the database
 	certDAO, _ := service.storageFactory.CertificateDAO()
 	certEntity := &entities.ACMECertificate{
-		ID:     cert.SerialNumber.Uint64(),
+		Serial: cert.SerialNumber.Text(16),
 		PEM:    string(encodeCertificatePEM(certDER)),
 		Status: common.StatusValid,
 	}

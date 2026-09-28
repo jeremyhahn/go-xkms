@@ -9,12 +9,11 @@ package frost_test
 
 import (
 	"context"
-	"crypto"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
-
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -26,16 +25,17 @@ func TestFrostBackend_InterfaceCompliance(t *testing.T) {
 	publicStore, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
 
-	secretBackend := newTestSecretBackend()
+	secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 	config := &frost.Config{
-		PublicStorage:       publicStore,
-		SecretBackend:       secretBackend,
-		Algorithm:           types.FrostAlgorithmEd25519,
-		DefaultThreshold:    2,
-		DefaultTotal:        3,
-		ParticipantID:       1,
-		EnableNonceTracking: true,
+		PublicStorage:           publicStore,
+		SecretBackend:           secretBackend,
+		SecretSealKeyAttributes: sealAttrs,
+		Algorithm:               types.FrostAlgorithmEd25519,
+		DefaultThreshold:        2,
+		DefaultTotal:            3,
+		ParticipantID:           1,
+		EnableNonceTracking:     true,
 	}
 
 	backend, err := frost.NewBackend(config)
@@ -62,16 +62,17 @@ func TestFrostBackend_KeyLifecycle(t *testing.T) {
 	publicStore, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
 
-	secretBackend := newTestSecretBackend()
+	secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 	config := &frost.Config{
-		PublicStorage:       publicStore,
-		SecretBackend:       secretBackend,
-		Algorithm:           types.FrostAlgorithmEd25519,
-		DefaultThreshold:    2,
-		DefaultTotal:        3,
-		ParticipantID:       1,
-		EnableNonceTracking: true,
+		PublicStorage:           publicStore,
+		SecretBackend:           secretBackend,
+		SecretSealKeyAttributes: sealAttrs,
+		Algorithm:               types.FrostAlgorithmEd25519,
+		DefaultThreshold:        2,
+		DefaultTotal:            3,
+		ParticipantID:           1,
+		EnableNonceTracking:     true,
 	}
 
 	backend, err := frost.NewBackend(config)
@@ -170,16 +171,17 @@ func TestFrostBackend_AllAlgorithms(t *testing.T) {
 			publicStore, err := storage.NewMemoryBackend()
 			require.NoError(t, err)
 
-			secretBackend := newTestSecretBackend()
+			secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 			config := &frost.Config{
-				PublicStorage:       publicStore,
-				SecretBackend:       secretBackend,
-				Algorithm:           algo,
-				DefaultThreshold:    2,
-				DefaultTotal:        3,
-				ParticipantID:       1,
-				EnableNonceTracking: true,
+				PublicStorage:           publicStore,
+				SecretBackend:           secretBackend,
+				SecretSealKeyAttributes: sealAttrs,
+				Algorithm:               algo,
+				DefaultThreshold:        2,
+				DefaultTotal:            3,
+				ParticipantID:           1,
+				EnableNonceTracking:     true,
 			}
 
 			backend, err := frost.NewBackend(config)
@@ -231,16 +233,17 @@ func TestFrostBackend_ThresholdVariations(t *testing.T) {
 			publicStore, err := storage.NewMemoryBackend()
 			require.NoError(t, err)
 
-			secretBackend := newTestSecretBackend()
+			secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 			config := &frost.Config{
-				PublicStorage:       publicStore,
-				SecretBackend:       secretBackend,
-				Algorithm:           types.FrostAlgorithmEd25519,
-				DefaultThreshold:    tc.threshold,
-				DefaultTotal:        tc.total,
-				ParticipantID:       1,
-				EnableNonceTracking: true,
+				PublicStorage:           publicStore,
+				SecretBackend:           secretBackend,
+				SecretSealKeyAttributes: sealAttrs,
+				Algorithm:               types.FrostAlgorithmEd25519,
+				DefaultThreshold:        tc.threshold,
+				DefaultTotal:            tc.total,
+				ParticipantID:           1,
+				EnableNonceTracking:     true,
 			}
 
 			backend, err := frost.NewBackend(config)
@@ -277,16 +280,17 @@ func TestFrostBackend_ErrorHandling(t *testing.T) {
 	publicStore, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
 
-	secretBackend := newTestSecretBackend()
+	secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 	config := &frost.Config{
-		PublicStorage:       publicStore,
-		SecretBackend:       secretBackend,
-		Algorithm:           types.FrostAlgorithmEd25519,
-		DefaultThreshold:    2,
-		DefaultTotal:        3,
-		ParticipantID:       1,
-		EnableNonceTracking: true,
+		PublicStorage:           publicStore,
+		SecretBackend:           secretBackend,
+		SecretSealKeyAttributes: sealAttrs,
+		Algorithm:               types.FrostAlgorithmEd25519,
+		DefaultThreshold:        2,
+		DefaultTotal:            3,
+		ParticipantID:           1,
+		EnableNonceTracking:     true,
 	}
 
 	backend, err := frost.NewBackend(config)
@@ -365,81 +369,24 @@ func TestFrostBackend_ErrorHandling(t *testing.T) {
 	})
 }
 
-// testSecretBackend is a simple in-memory backend for testing
-type testSecretBackend struct {
-	store storage.Backend
-}
+// newSoftwareFrostSecretBackend builds a real *software.SoftwareBackend
+// (in-memory storage) and provisions its FROST Ed25519 wrapping key through
+// seal.EnsurePrivateSealKey -- the same production composition
+// pkg/server's ensureFrostSecretSealKey uses for the "software"
+// secret_backend -- so secret shares stored through it are actually sealed,
+// not written to storage in the clear.
+func newSoftwareFrostSecretBackend(t *testing.T) (types.SealingKeyProvider, *types.KeyAttributes) {
+	t.Helper()
 
-func newTestSecretBackend() *testSecretBackend {
-	store, _ := storage.NewMemoryBackend()
-	return &testSecretBackend{store: store}
-}
+	keyStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+	provider, err := software.NewBackend(&software.Config{KeyStorage: keyStorage})
+	require.NoError(t, err)
+	sealer, ok := provider.(types.SealingKeyProvider)
+	require.True(t, ok, "software.SoftwareBackend must implement types.SealingKeyProvider")
 
-func (b *testSecretBackend) Type() types.BackendType {
-	return types.BackendTypeSoftware
-}
+	attrs := frost.AsymmetricSecretSealKeyAttributes(types.StoreSoftware)
+	require.NoError(t, seal.EnsurePrivateSealKey(context.Background(), provider, attrs))
 
-func (b *testSecretBackend) Capabilities() types.Capabilities {
-	return types.Capabilities{
-		Keys:           true,
-		Signing:        false,
-		Decryption:     false,
-		KeyRotation:    true,
-		Import:         true,
-		Export:         true,
-		HardwareBacked: false,
-	}
-}
-
-func (b *testSecretBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	// For FROST, store the secret share data from SealData
-	if attrs.SealData != nil {
-		data := attrs.SealData.Bytes()
-		if len(data) > 0 {
-			path := "frost/secrets/" + attrs.CN + ".secret"
-			if err := b.store.Put(ctx, path, data); err != nil {
-				return nil, &errs.Wrapped{Msg: "failed to store secret", Err: err}
-			}
-		}
-	}
-	return nil, nil
-}
-
-func (b *testSecretBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	path := "frost/secrets/" + attrs.CN + ".secret"
-	data, err := b.store.Get(ctx, path)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get secret", Err: err}
-	}
-	return data, nil
-}
-
-func (b *testSecretBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
-	path := "frost/secrets/" + attrs.CN + ".secret"
-	return b.store.Delete(ctx, path)
-}
-
-func (b *testSecretBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
-	return nil, nil
-}
-
-func (b *testSecretBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
-	return nil, nil
-}
-
-func (b *testSecretBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
-	return nil, nil
-}
-
-func (b *testSecretBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
-	return nil
-}
-
-func (b *testSecretBackend) Close() error {
-	return nil
-}
-
-// Storage returns the underlying storage backend
-func (b *testSecretBackend) Storage() storage.Backend {
-	return b.store
+	return sealer, attrs
 }

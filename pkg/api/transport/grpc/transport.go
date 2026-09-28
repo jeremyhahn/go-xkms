@@ -2682,8 +2682,7 @@ func (t *Transport) PasswordGet(ctx context.Context, req *transport.PasswordGetR
 	}
 
 	pbReq := &pb.PasswordGetRequest{
-		Id:      req.ID,
-		Decrypt: req.Decrypt,
+		Id: req.ID,
 	}
 
 	resp, err := t.client.PasswordGet(ctx, pbReq)

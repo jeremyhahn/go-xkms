@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	adminv1 "github.com/jeremyhahn/go-xkms/api/proto/admin/v1"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -192,7 +193,7 @@ func TestUnaryAuthorizationInterceptor_RealPeerCredentials_MapsConfiguredUID(t *
 
 	ran := false
 	_, err = interceptor(ctx, nil,
-		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/RevokeCertificate"},
+		&grpc.UnaryServerInfo{FullMethod: adminv1.AdminService_RevokeCertificate_FullMethodName},
 		func(ctx context.Context, _ interface{}) (interface{}, error) {
 			ran = true
 			id := auth.GetIdentity(ctx)
@@ -227,7 +228,7 @@ func TestUnaryAuthorizationInterceptor_RealPeerCredentials_UnmappedUIDDenied(t *
 
 	ran := false
 	_, err = interceptor(ctx, nil,
-		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/ListCertificates"},
+		&grpc.UnaryServerInfo{FullMethod: adminv1.AdminService_ListCertificates_FullMethodName},
 		func(ctx context.Context, _ interface{}) (interface{}, error) {
 			ran = true
 			return "ok", nil

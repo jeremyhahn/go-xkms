@@ -15,10 +15,10 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
 
 func (s *RestService) CertificateHandler(w http.ResponseWriter, r *http.Request) {
@@ -26,8 +26,11 @@ func (s *RestService) CertificateHandler(w http.ResponseWriter, r *http.Request)
 	s.logger.Debug("CertificateHandler", "method", r.Method, "url", r.URL)
 	ctx := r.Context()
 
-	strCertID := mux.Vars(r)["id"]
-	certID, err := strconv.ParseUint(strCertID, 10, 64)
+	// The "id" path segment is the certificate's full serial number,
+	// hex-encoded (see entities.ACMECertificate.Serial). NormalizeSerial
+	// rejects anything that isn't a valid positive hex integer with a typed
+	// error rather than letting a malformed value reach the DAO lookup.
+	serial, err := entities.NormalizeSerial(mux.Vars(r)["id"])
 	if err != nil {
 		writeError(w, common.MalformedError("Invalid certificate ID", nil))
 		return
@@ -37,15 +40,29 @@ func (s *RestService) CertificateHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, common.ServerInternal("Failed to create certificate DAO"))
 		return
 	}
-	certificate, err := certificateDAO.Get(ctx, certID)
+	certificate, err := certificateDAO.Get(ctx, entities.StringToEntityID(serial))
 	if err != nil {
 		writeError(w, common.MalformedError("Certificate not found", nil))
 		return
 	}
 
+	// The DAO row is keyed by a 64-bit hash of Serial (entities.StringToEntityID),
+	// not Serial itself, so an astronomically unlikely hash collision between
+	// two different certificates would otherwise return the WRONG certificate
+	// here instead of a not-found. Verify the row actually holds the
+	// certificate that was asked for before serving it.
+	if certificate.Serial != serial {
+		s.logger.Error("Certificate storage row collision on fetch",
+			"requested_serial", serial,
+			"stored_serial", certificate.Serial)
+		writeError(w, common.MalformedError("Certificate not found", nil))
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/pem-certificate-chain")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte(certificate.PEM)); err != nil {
+	if _, err := w.Write([]byte(certificate.PEM)); err != nil { // #nosec G705 -- non-HTML content-type (nosniff); stored PEM certificate chain, not attacker-controlled markup
 		s.logger.Error("failed to write certificate response", "error", err.Error())
 	}
 }

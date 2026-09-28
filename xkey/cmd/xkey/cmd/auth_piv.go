@@ -23,8 +23,8 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // PIV login errors.
@@ -43,28 +43,50 @@ var (
 )
 
 // buildAuthPIVConfig builds the PIVConfig for the "auth login --piv" command
-// from its own --backend flag plus the same Viper-bound storage settings the
-// "piv" command group uses (storage path, PKCS#11 library/token/PIN). The
-// backend is read from --backend rather than from Viper because "auth
-// login" is a sibling command tree to "piv" and does not share its
-// persistent flags.
-func buildAuthPIVConfig(cmd *cobra.Command) *PIVConfig {
+// from its own --backend flag plus the same unified-config-resolved storage
+// settings the "piv" command group uses (storage path, PKCS#11
+// library/token, and the PIN/SO-PIN's dedicated stdin/env sources). The
+// backend is read from --backend rather than through pivConfigString because
+// "auth login" is a sibling command tree to "piv" and declares its own
+// --backend flag with a different default; every other setting resolves
+// through the same GetConfig().PIV fields buildPIVConfig reads
+// (go-xkms#871).
+func buildAuthPIVConfig(cmd *cobra.Command) (*PIVConfig, error) {
 	backendFlag, _ := cmd.Flags().GetString("backend")
 	backend := PIVBackendType(backendFlag)
 	if backend == "" {
 		backend = PIVBackendSoftware
 	}
 
+	storageType := PIVStorageType(pivStorageOverride(cmd))
+	if storageType == "" {
+		storageType = defaultPIVStorageTypeForBackend(backend)
+	}
+
+	var cfgPIV xkeyconfig.PIVConfig
+	if cfg := GetConfig(); cfg != nil {
+		cfgPIV = cfg.PIV
+	}
+
+	pkcs11PIN, err := resolvePIVPKCS11Secret(cmd, pivPKCS11PINSource)
+	if err != nil {
+		return nil, err
+	}
+	pkcs11SOPIN, err := resolvePIVPKCS11Secret(cmd, pivPKCS11SOPINSource)
+	if err != nil {
+		return nil, err
+	}
+
 	return &PIVConfig{
 		Backend:       backend,
-		StorageType:   defaultPIVStorageTypeForBackend(backend),
-		StoragePath:   viper.GetString(viperKeyPIVStoragePath),
-		TPMDevice:     viper.GetString(viperKeyPIVTPMDevice),
-		PKCS11Library: viper.GetString(viperKeyPIVPKCS11Library),
-		PKCS11Token:   viper.GetString(viperKeyPIVPKCS11Token),
-		PKCS11PIN:     viper.GetString(viperKeyPIVPKCS11PIN),
-		PKCS11SOPIN:   viper.GetString(viperKeyPIVPKCS11SOPIN),
-	}
+		StorageType:   storageType,
+		StoragePath:   pivConfigString(cmd, "storage-path", cfgPIV.StoragePath),
+		TPMDevice:     pivConfigString(cmd, "tpm-device", cfgPIV.TPMDevice),
+		PKCS11Library: pivConfigString(cmd, "pkcs11-library", cfgPIV.PKCS11Library),
+		PKCS11Token:   pivConfigString(cmd, "pkcs11-token", cfgPIV.PKCS11Token),
+		PKCS11PIN:     pkcs11PIN,
+		PKCS11SOPIN:   pkcs11SOPIN,
+	}, nil
 }
 
 // runAuthLoginPIV authenticates to serverURL by presenting the certificate
@@ -80,7 +102,10 @@ func runAuthLoginPIV(cmd *cobra.Command, logger *slog.Logger, serverURL string) 
 		return err
 	}
 
-	pivCfg := buildAuthPIVConfig(cmd)
+	pivCfg, err := buildAuthPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 	if err := ensurePIVInitialized(pivCfg, logger); err != nil {
 		return err
 	}

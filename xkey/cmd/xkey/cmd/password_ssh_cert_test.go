@@ -393,7 +393,7 @@ func TestRunCertShow_MissingCertificate(t *testing.T) {
 func TestRunCertShow_RendersStoredCertificate(t *testing.T) {
 	withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "client-cert")))
 	require.NoError(t, storage.Close())
@@ -432,7 +432,7 @@ func TestRunCertExport_RequiresFile(t *testing.T) {
 func TestRunCertExport_WritesPrivatePEM(t *testing.T) {
 	withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "exported-cert")))
 	require.NoError(t, storage.Close())
@@ -476,7 +476,7 @@ func TestRunCertExport_MissingCertificate(t *testing.T) {
 func TestRunCertExport_ReportsUnwritableTarget(t *testing.T) {
 	withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "cert")))
 	require.NoError(t, storage.Close())

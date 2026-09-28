@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	adminv1 "github.com/jeremyhahn/go-xkms/api/proto/admin/v1"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
@@ -32,35 +33,39 @@ var crossSurfaceOperations = []struct {
 	grpcMethod string
 	mcpMethod  string
 }{
-	{"get status", "/admin.v1.AdminService/GetStatus", "admin.getStatus"},
-	{"get stats", "/admin.v1.AdminService/GetStats", "admin.getStats"},
+	{"get status", adminv1.AdminService_GetStatus_FullMethodName, "admin.getStatus"},
+	{"get stats", adminv1.AdminService_GetStats_FullMethodName, "admin.getStats"},
 
-	{"list certificates", "/admin.v1.AdminService/ListCertificates", "admin.listCertificates"},
-	{"get certificate", "/admin.v1.AdminService/GetCertificate", "admin.getCertificate"},
-	{"revoke certificate", "/admin.v1.AdminService/RevokeCertificate", "admin.revokeCertificate"},
+	{"list certificates", adminv1.AdminService_ListCertificates_FullMethodName, "admin.listCertificates"},
+	{"get certificate", adminv1.AdminService_GetCertificate_FullMethodName, "admin.getCertificate"},
+	{"revoke certificate", adminv1.AdminService_RevokeCertificate_FullMethodName, "admin.revokeCertificate"},
 
-	{"create tenant", "/admin.v1.AdminService/CreateTenant", "admin.createTenant"},
-	{"get tenant", "/admin.v1.AdminService/GetTenant", "admin.getTenant"},
-	{"update tenant", "/admin.v1.AdminService/UpdateTenant", "admin.updateTenant"},
-	{"delete tenant", "/admin.v1.AdminService/DeleteTenant", "admin.deleteTenant"},
-	{"list tenants", "/admin.v1.AdminService/ListTenants", "admin.listTenants"},
+	{"create tenant", adminv1.AdminService_CreateTenant_FullMethodName, "admin.createTenant"},
+	{"get tenant", adminv1.AdminService_GetTenant_FullMethodName, "admin.getTenant"},
+	{"update tenant", adminv1.AdminService_UpdateTenant_FullMethodName, "admin.updateTenant"},
+	{"delete tenant", adminv1.AdminService_DeleteTenant_FullMethodName, "admin.deleteTenant"},
+	{"list tenants", adminv1.AdminService_ListTenants_FullMethodName, "admin.listTenants"},
 
-	{"create EAB", "/admin.v1.AdminService/CreateEAB", "admin.createEAB"},
-	{"get EAB", "/admin.v1.AdminService/GetEAB", "admin.getEAB"},
-	{"delete EAB", "/admin.v1.AdminService/DeleteEAB", "admin.deleteEAB"},
-	{"list EABs", "/admin.v1.AdminService/ListEABs", "admin.listEABs"},
+	{"create EAB", adminv1.AdminService_CreateEAB_FullMethodName, "admin.createEAB"},
+	{"get EAB", adminv1.AdminService_GetEAB_FullMethodName, "admin.getEAB"},
+	{"delete EAB", adminv1.AdminService_DeleteEAB_FullMethodName, "admin.deleteEAB"},
+	{"list EABs", adminv1.AdminService_ListEABs_FullMethodName, "admin.listEABs"},
 
-	{"create role", "/admin.v1.AdminService/CreateTenantRole", "admin.createRole"},
-	{"get role", "/admin.v1.AdminService/GetTenantRole", "admin.getRole"},
-	{"update role", "/admin.v1.AdminService/UpdateTenantRole", "admin.updateRole"},
-	{"delete role", "/admin.v1.AdminService/DeleteTenantRole", "admin.deleteRole"},
-	{"list roles", "/admin.v1.AdminService/ListTenantRoles", "admin.listRoles"},
+	{"create role", adminv1.AdminService_CreateTenantRole_FullMethodName, "admin.createRole"},
+	{"get role", adminv1.AdminService_GetTenantRole_FullMethodName, "admin.getRole"},
+	{"update role", adminv1.AdminService_UpdateTenantRole_FullMethodName, "admin.updateRole"},
+	{"delete role", adminv1.AdminService_DeleteTenantRole_FullMethodName, "admin.deleteRole"},
+	{"list roles", adminv1.AdminService_ListTenantRoles_FullMethodName, "admin.listRoles"},
 
-	{"create user", "/admin.v1.AdminService/CreateTenantUser", "admin.createUser"},
-	{"get user", "/admin.v1.AdminService/GetTenantUser", "admin.getUser"},
-	{"update user", "/admin.v1.AdminService/UpdateTenantUser", "admin.updateUser"},
-	{"delete user", "/admin.v1.AdminService/DeleteTenantUser", "admin.deleteUser"},
-	{"list users", "/admin.v1.AdminService/ListTenantUsers", "admin.listUsers"},
+	{"create user", adminv1.AdminService_CreateTenantUser_FullMethodName, "admin.createUser"},
+	{"get user", adminv1.AdminService_GetTenantUser_FullMethodName, "admin.getUser"},
+	{"update user", adminv1.AdminService_UpdateTenantUser_FullMethodName, "admin.updateUser"},
+	{"delete user", adminv1.AdminService_DeleteTenantUser_FullMethodName, "admin.deleteUser"},
+	{"list users", adminv1.AdminService_ListTenantUsers_FullMethodName, "admin.listUsers"},
+
+	{"list accounts", adminv1.AdminService_ListAccounts_FullMethodName, "admin.listAccounts"},
+	{"get account", adminv1.AdminService_GetAccount_FullMethodName, "admin.getAccount"},
+	{"disable account", adminv1.AdminService_DisableAccount_FullMethodName, "admin.disableAccount"},
 }
 
 // TestCrossSurface_SameOperationSamePermission verifies the gRPC and MCP tables

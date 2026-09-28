@@ -404,8 +404,52 @@ func (c *CryptoMockClient) Encrypt(ctx context.Context, req *transport.EncryptRe
 	}, nil
 }
 
-// Decrypt performs real AES-GCM decryption using the stored or lazily-generated key.
+// Decrypt dispatches on the request's padding, mirroring the split
+// pkg/pkcs11/module's CryptoManager.Decrypt makes between CKM_AES_GCM and
+// CKM_RSA_PKCS_OAEP (see crypto.go rsaOAEPForMechanism / DecryptInit):
+// Padding "oaep" runs RSA-OAEP against the stored or lazily-generated
+// asymmetric key, everything else runs AES-GCM against the stored or
+// lazily-generated symmetric key. A padding name that is neither is refused
+// rather than silently run through AES-GCM, since that would decrypt an RSA
+// ciphertext as though it were a symmetric one.
 func (c *CryptoMockClient) Decrypt(ctx context.Context, req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
+	switch strings.ToLower(strings.TrimSpace(req.Padding)) {
+	case "oaep":
+		return c.decryptOAEP(req)
+	case "", "pkcs1v15":
+		return c.decryptAESGCM(req)
+	default:
+		return nil, ErrUnsupportedPadding
+	}
+}
+
+// decryptOAEP performs real RSA-OAEP decryption using the stored or
+// lazily-generated asymmetric key's private half, the same key storage
+// EncryptAsym uses, so an OAEP round trip through this mock resolves to the
+// same key pair on both halves.
+func (c *CryptoMockClient) decryptOAEP(req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
+	key, err := c.getOrCreateAsymKey(req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
+	rsaKey, ok := key.(*rsa.PrivateKey)
+	if !ok {
+		return nil, ErrUnsupportedKeyType
+	}
+
+	hashAlg := c.parseHash(req.Hash)
+	plaintext, err := rsa.DecryptOAEP(hashAlg.New(), rand.Reader, rsaKey, req.Ciphertext, req.Label)
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.DecryptResponse{Plaintext: plaintext}, nil
+}
+
+// decryptAESGCM performs real AES-GCM decryption using the stored or
+// lazily-generated symmetric key.
+func (c *CryptoMockClient) decryptAESGCM(req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
 	key, err := c.getOrCreateSymKey(req.KeyID)
 	if err != nil {
 		return nil, err

@@ -357,6 +357,34 @@ func TestKeyUsageString(t *testing.T) {
 
 // Tests for UserStore integration
 
+// TestMTLSAuthenticator_WithUserStore_CarriesEveryRole proves every role the
+// store reports reaches the identity, in order, and that the identity does not
+// alias the store's slice. The first-boot administrator holds both Admin and
+// Owner; dropping all but the first would silently shrink its grant set
+// (go-xkms#1069).
+func TestMTLSAuthenticator_WithUserStore_CarriesEveryRole(t *testing.T) {
+	ca, err := testutil.GenerateTestCA()
+	require.NoError(t, err)
+	clientCert, err := testutil.GenerateTestClientCert(ca, "cert-client")
+	require.NoError(t, err)
+
+	storeRoles := []string{"role-id-admin", "role-id-owner"}
+	store := &mockUserStore{
+		user: MTLSUser{Username: "admin", TenantID: "system", Roles: storeRoles, Enabled: true},
+	}
+	authn := NewMTLSAuthenticator(&MTLSConfig{UserStore: store})
+
+	identity, err := authn.AuthenticateHTTP(&http.Request{
+		TLS: &tls.ConnectionState{PeerCertificates: []*x509.Certificate{clientCert.Cert}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"role-id-admin", "role-id-owner"}, identity.Roles)
+	assert.Equal(t, "system", identity.TenantID)
+
+	identity.Roles[0] = "tampered"
+	assert.Equal(t, "role-id-admin", storeRoles[0], "identity roles must not alias the store's slice")
+}
+
 func TestMTLSAuthenticator_WithUserStore_HTTP_Success(t *testing.T) {
 	ca, err := testutil.GenerateTestCA()
 	require.NoError(t, err)
@@ -369,7 +397,7 @@ func TestMTLSAuthenticator_WithUserStore_HTTP_Success(t *testing.T) {
 			Username:    "alice",
 			Email:       "alice@example.com",
 			DisplayName: "Alice Smith",
-			Role:        "admin",
+			Roles:       []string{"admin"},
 			Enabled:     true,
 		},
 	}
@@ -409,7 +437,7 @@ func TestMTLSAuthenticator_WithUserStore_GRPC_Success(t *testing.T) {
 		user: MTLSUser{
 			Username:    "bob",
 			DisplayName: "Bob Jones",
-			Role:        "operator",
+			Roles:       []string{"operator"},
 			Enabled:     true,
 		},
 	}
@@ -453,7 +481,7 @@ func TestMTLSAuthenticator_WithUserStore_DisabledUser(t *testing.T) {
 		user: MTLSUser{
 			Username:    "disabled-alice",
 			DisplayName: "Alice Disabled",
-			Role:        "user",
+			Roles:       []string{"user"},
 			Enabled:     false,
 		},
 	}
@@ -520,7 +548,7 @@ func TestMTLSAuthenticator_WithUserStore_NoRole(t *testing.T) {
 		user: MTLSUser{
 			Username:    "norole-user",
 			DisplayName: "No Role",
-			Role:        "",
+			Roles:       nil,
 			Enabled:     true,
 		},
 	}
@@ -558,7 +586,7 @@ func TestMTLSAuthenticator_LooksUpBySPKIThumbprint(t *testing.T) {
 	store := &mockUserStore{
 		user: MTLSUser{
 			Username: "spki-user",
-			Role:     "admin",
+			Roles:    []string{"admin"},
 			Enabled:  true,
 		},
 	}
@@ -653,7 +681,7 @@ func TestMTLSAuthenticator_TenantID_FromUserStore(t *testing.T) {
 		user: MTLSUser{
 			Username:    "tenant-user",
 			DisplayName: "Tenant User",
-			Role:        "admin",
+			Roles:       []string{"admin"},
 			TenantID:    "tenant-123",
 			Enabled:     true,
 		},
@@ -752,7 +780,7 @@ func TestMTLSAuthenticator_WithUserStore_NoEmail_OmitsKey(t *testing.T) {
 	store := &mockUserStore{
 		user: MTLSUser{
 			Username: "svc-backup",
-			Role:     "operator",
+			Roles:    []string{"operator"},
 			Enabled:  true,
 		},
 	}

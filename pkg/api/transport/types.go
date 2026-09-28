@@ -1841,8 +1841,6 @@ type PasswordAddResponse struct {
 // PasswordGetRequest contains parameters for retrieving a password.
 type PasswordGetRequest struct {
 	ID       string `json:"id"`
-	Decrypt  bool   `json:"decrypt,omitempty"`
-	UserPIN  string `json:"user_pin,omitempty"`
 	TenantID string `json:"tenant_id,omitempty"`
 }
 

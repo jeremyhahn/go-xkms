@@ -1,6 +1,6 @@
 # PIV Certificate Management — Architecture
 
-> **Status: NORMATIVE** · Feature: `piv` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `piv` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Scope: the xkey CLI/GUI surface, not the PIV storage implementation
 
@@ -82,12 +82,22 @@ The superseded `xkey/docs/piv/README.md` documented `store`, `show`, `list`,
   `cmd/xkey/cmd/piv_generate.go`) that generate a CSR for an existing slot
   key, or generate a new key pair with a self-signed, CA-signed, CSR-only,
   or bare-public-key output.
-- **It omitted `--pkcs11-so-pin`**, a real persistent flag
-  (`cmd/xkey/cmd/piv.go:453`) alongside `--pkcs11-pin`.
+- **It omitted the PKCS#11 Security Officer PIN entirely**, a real
+  persistent input alongside the user PIN
+  (`pivPKCS11SOPINSource`, `cmd/xkey/cmd/piv.go:479`; neither has taken a
+  value flag since go-xkms#871 replaced `--pkcs11-pin`/`--pkcs11-so-pin`
+  with `--pkcs11-pin-stdin`/`--pkcs11-so-pin-stdin`, matching the rest of
+  this CLI's PIN inputs).
 - **Its Configuration table claimed YAML config file and environment
-  variable support** (`piv.backend` / `PIV_BACKEND`, etc.) that does not
-  exist. See [engineering.md](engineering.md#configuration) for what is
-  actually true: these are CLI-flag-only settings.
+  variable support** (`piv.backend` / `PIV_BACKEND`, etc.) that, at the time,
+  did not exist: `PIVCmd`'s flags were viper-bound with no config file or
+  `AutomaticEnv` behind them. go-xkms#871 made that claim true for
+  `--backend`, `--piv-storage`, `--storage-path`, `--tpm-device`,
+  `--pkcs11-library` and `--pkcs11-token` (the `piv:` config section plus
+  matching `XKEY_PIV_*` variables) while keeping the PKCS#11 PIN/SO-PIN on
+  their own dedicated stdin/environment path, never the config file. See
+  [engineering.md](engineering.md#configuration) for the current, accurate
+  picture.
 
 ## What this feature deliberately does not do
 

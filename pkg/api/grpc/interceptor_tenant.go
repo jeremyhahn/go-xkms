@@ -74,7 +74,6 @@ func tenantAccessStatus(ctx context.Context, method string, registry *seal.Barri
 // Behavior:
 //   - Cross-tenant-scoped identity (nil, empty TenantID, or the reserved
 //     system tenant): passes through (system-level or bootstrap access)
-//   - SO role: passes through with cross-tenant access
 //   - No barrier registry configured: passes through
 //   - Tenant not found in registry: returns PermissionDenied
 //   - Tenant barrier is sealed: returns Unavailable
