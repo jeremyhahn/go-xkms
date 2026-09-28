@@ -88,6 +88,13 @@ var (
 
 	// ErrAlreadyRevoked indicates the certificate is already revoked.
 	ErrAlreadyRevoked = errors.New("ca: certificate already revoked")
+
+	// ErrRevocationRecordCorrupt indicates a persisted revocation record
+	// could not be decoded, or decoded to a serial that does not match the
+	// key it is stored under. Every reader of revocation state fails closed
+	// on it: a record that cannot be read is never treated as "not
+	// revoked", because that would silently un-revoke the certificate.
+	ErrRevocationRecordCorrupt = errors.New("ca: corrupt revocation record")
 )
 
 // Chain errors indicate issues with certificate chain validation.

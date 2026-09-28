@@ -451,7 +451,7 @@ func TestImportIssuingCAs_AIARequestFails(t *testing.T) {
 }
 
 // =============================================================================
-// loadRevocationFromStore — checkCertificateStatus cold path (object store,
+// lookupRevocation — checkCertificateStatus cold path (object store,
 // record NOT found → ocsp.Good)
 // =============================================================================
 

@@ -318,19 +318,20 @@ func TestRevokeCert_NotInitialized(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — loadPersistedRevocations (70%) — corrupt record path
+// ca_extensions.go — loadPersistedRevocations — corrupt record path
 // =============================================================================
 
-// This exercises the corrupt-unmarshal branch by inserting a junk blob
-// directly into revocationStore, the sole persistence medium.
+// TestLoadPersistedRevocations_CorruptBlob proves a non-JSON record under the
+// revocation prefix fails the load with ErrRevocationRecordCorrupt naming
+// the key, rather than being skipped.
 func TestLoadPersistedRevocations_CorruptBlob(t *testing.T) {
 	ca := setupTestCA(t)
-	// Insert a non-JSON blob under the revocation key prefix.
 	key := revocationKeyPrefix + "badrecord.json"
 	require.NoError(t, ca.revocationStore.Put(context.Background(), key, []byte("not-json")))
-	// loadPersistedRevocations should log+skip, not return an error.
+
 	err := ca.loadPersistedRevocations(context.Background())
-	assert.NoError(t, err)
+	require.ErrorIs(t, err, ErrRevocationRecordCorrupt)
+	assert.Contains(t, err.Error(), key)
 }
 
 // stubReader is a minimal io.ReadCloser for injecting bytes into tests.

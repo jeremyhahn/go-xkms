@@ -771,16 +771,15 @@ func (ca *CA) putRevocationBlob(ctx context.Context, serial *big.Int, buf []byte
 
 // getRevocationBlob reads a single persisted revocation record from the
 // datastore-backed revocation store. Returns ErrCRLNotFound when no record
-// exists for serial; the OCSP responder's cold path relies on that
-// distinction to answer ocsp.Good rather than ocsp.Unknown for a
-// never-revoked serial.
+// exists for serial; lookupRevocation relies on that distinction to report
+// "not revoked" only for a definite miss, never for a store fault.
 func (ca *CA) getRevocationBlob(ctx context.Context, serial *big.Int) ([]byte, error) {
 	data, err := ca.revocationStore.Get(ctx, revocationKey(serial)+".json")
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, ErrCRLNotFound
 		}
-		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("get revocation: %v", err)}
+		return nil, &errs.Joined{Lead: ErrStorageError, Detail: "get revocation", Cause: err}
 	}
 	return data, nil
 }
@@ -796,38 +795,107 @@ func (ca *CA) listRevocationBlobs(ctx context.Context) (map[string][]byte, error
 	return out, err
 }
 
-// loadPersistedRevocations reads revocation records from the object store
-// and merges them into the in-memory revocations map. It is called by Load()
-// after the CA certs are loaded and before the CA is marked initialised so
-// IsRevoked reflects persisted state from the first call.
+// decodeRevocationRecord decodes the persisted revocation record stored
+// under key. It fails with ErrRevocationRecordCorrupt, naming key, when the
+// payload is not a valid record or names a serial other than the one key
+// was written for (revocationKey(serial)+".json"). Every reader of
+// revocation state -- Load, IsRevoked, OCSP and CRL generation -- goes
+// through here, so none of them can treat an unreadable record as "not
+// revoked".
+func decodeRevocationRecord(key string, data []byte) (*RevocationInfo, error) {
+	var rec persistedRevocation
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, &errs.Detail{Err: ErrRevocationRecordCorrupt, Detail: fmt.Sprintf("key %q: %v", key, err)}
+	}
+	serial, ok := new(big.Int).SetString(rec.Serial, 10)
+	if !ok {
+		return nil, &errs.Detail{Err: ErrRevocationRecordCorrupt, Detail: fmt.Sprintf("key %q: invalid serial %q", key, rec.Serial)}
+	}
+	if revocationKey(serial)+".json" != key {
+		return nil, &errs.Detail{Err: ErrRevocationRecordCorrupt, Detail: fmt.Sprintf("key %q: record names serial %s", key, rec.Serial)}
+	}
+	return &RevocationInfo{
+		SerialNumber:   serial,
+		RevocationTime: rec.RevokedAt,
+		Reason:         rec.Reason,
+	}, nil
+}
+
+// cacheRevocation records info in the in-memory revocations map unless an
+// entry for the serial is already present, and returns the entry the map
+// holds afterwards. Caching is safe without invalidation because revocation
+// is permanent: this CA has no un-revoke or hold-release path, so a serial
+// that is revoked in the store stays revoked. Only positive results are
+// ever cached -- a miss is always re-read from the store, because another
+// instance may revoke the serial at any time.
+func (ca *CA) cacheRevocation(info *RevocationInfo) *RevocationInfo {
+	key := info.SerialNumber.Text(10)
+	ca.revocationsMutex.Lock()
+	defer ca.revocationsMutex.Unlock()
+	if existing, ok := ca.revocations[key]; ok {
+		return existing
+	}
+	ca.revocations[key] = info
+	return info
+}
+
+// lookupRevocation reports the revocation of serial, or nil when serial is
+// not revoked. It is the one read path for a single serial, shared by
+// IsRevoked (and so Verify and VerifyPeerCertificate) and the OCSP
+// responder.
 //
-// Missing or corrupt records are logged and skipped rather than aborting
-// Load(); a single bad record should not render the CA inoperable.
+// The in-memory map is consulted first. On a miss the replicated
+// revocationStore is read, so a revocation written by another instance in
+// the cluster -- which never passes through this instance's map -- is
+// still seen. A hit from the store is cached (see cacheRevocation).
+//
+// Only a definite storage.ErrNotFound means "not revoked". Any other store
+// fault is returned wrapped in ErrStorageError and a record that cannot be
+// decoded in ErrRevocationRecordCorrupt; neither is ever reported as "not
+// revoked".
+func (ca *CA) lookupRevocation(ctx context.Context, serial *big.Int) (*RevocationInfo, error) {
+	ca.revocationsMutex.RLock()
+	info, ok := ca.revocations[serial.Text(10)]
+	ca.revocationsMutex.RUnlock()
+	if ok {
+		return info, nil
+	}
+
+	data, err := ca.getRevocationBlob(ctx, serial)
+	if err != nil {
+		if errors.Is(err, ErrCRLNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	info, err = decodeRevocationRecord(revocationKey(serial)+".json", data)
+	if err != nil {
+		return nil, err
+	}
+	return ca.cacheRevocation(info), nil
+}
+
+// loadPersistedRevocations reads every revocation record from the
+// replicated revocationStore and merges it into the in-memory revocations
+// map. Load() calls it before marking the CA initialised, and
+// generateAndPersistCRL calls it before building a CRL so the CRL includes
+// revocations recorded by every instance in the cluster, not only this one.
+//
+// It fails closed: a listing error is returned wrapped in ErrStorageError,
+// and a record that cannot be decoded aborts with
+// ErrRevocationRecordCorrupt naming its key. Skipping a corrupt record
+// would silently un-revoke the certificate it describes.
 func (ca *CA) loadPersistedRevocations(ctx context.Context) error {
 	blobs, err := ca.listRevocationBlobs(ctx)
 	if err != nil {
-		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("list revocations: %v", err)}
+		return &errs.Joined{Lead: ErrStorageError, Detail: "list revocations", Cause: err}
 	}
 	for k, data := range blobs {
-		var rec persistedRevocation
-		if err := json.Unmarshal(data, &rec); err != nil {
-			slog.Warn("ca: failed to unmarshal persisted revocation", "key", k, "err", err)
-			continue
+		info, err := decodeRevocationRecord(k, data)
+		if err != nil {
+			return err
 		}
-		serial, ok := new(big.Int).SetString(rec.Serial, 10)
-		if !ok {
-			slog.Warn("ca: persisted revocation has invalid serial", "key", k, "serial", rec.Serial)
-			continue
-		}
-		ca.revocationsMutex.Lock()
-		if _, exists := ca.revocations[rec.Serial]; !exists {
-			ca.revocations[rec.Serial] = &RevocationInfo{
-				SerialNumber:   serial,
-				RevocationTime: rec.RevokedAt,
-				Reason:         rec.Reason,
-			}
-		}
-		ca.revocationsMutex.Unlock()
+		ca.cacheRevocation(info)
 	}
 	return nil
 }
