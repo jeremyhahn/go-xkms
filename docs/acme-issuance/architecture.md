@@ -141,6 +141,14 @@ through ACME against an existing node's directory.
   clients already retry.
 - **Challenge validation happens server-side, out of band.** Nothing the client
   asserts about itself is trusted; the server fetches, resolves, or activates.
+- **The validation target is client-chosen, so the server's reach is
+  bounded.** Every fetch from a client-named host goes through one
+  SSRF-safe client (`pkg/acme/challenges/validation`): bare host only, no
+  loopback/private/link-local/metadata address after DNS resolution, capped
+  responses, and client-facing errors reduced to a fixed category. Reaching a
+  private target is an explicit, default-off switch,
+  `acme.challenges.allow_private_targets` (go-xkms#1172; see
+  [`engineering.md`](engineering.md) "Challenge validation client").
 - **`enroll-01` trusts the TPM manufacturer chain**, not the requester. If the
   EK certificate does not chain to a trusted manufacturer root, activation
   cannot succeed.

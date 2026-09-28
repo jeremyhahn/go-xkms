@@ -27,6 +27,41 @@ var (
 	ErrInvalidSignature = errors.New("tpm: invalid signature")
 )
 
+// MaxIDevIDCSRSize is the largest packed TCG-CSR-IDEVID UnmarshalIDevIDCSR
+// accepts. The TCG DevID specification does not bound the structure; the
+// largest field in practice is the boot event log, tens of kilobytes on
+// real firmware, so 1 MiB leaves ample headroom while keeping a hostile
+// message from dictating the parser's memory use.
+const MaxIDevIDCSRSize = 1 << 20
+
+// IDevIDCSRTooLargeError is returned when a packed TCG-CSR-IDEVID exceeds
+// MaxIDevIDCSRSize.
+type IDevIDCSRTooLargeError struct {
+	Size int
+	Max  int
+}
+
+func (e *IDevIDCSRTooLargeError) Error() string {
+	return fmt.Sprintf("tpm: TCG-CSR-IDEVID is %d bytes, larger than the %d-byte maximum", e.Size, e.Max)
+}
+
+// IDevIDCSRFieldSizeError is returned when a TCG-CSR-IDEVID length field
+// declares more bytes than remain in the message. It wraps
+// io.ErrUnexpectedEOF: the message is truncated relative to its own
+// declarations.
+type IDevIDCSRFieldSizeError struct {
+	Field     string
+	Declared  uint32
+	Remaining int
+}
+
+func (e *IDevIDCSRFieldSizeError) Error() string {
+	return fmt.Sprintf("tpm: TCG-CSR-IDEVID field %s declares %d bytes but only %d remain", e.Field, e.Declared, e.Remaining)
+}
+
+// Unwrap returns io.ErrUnexpectedEOF.
+func (e *IDevIDCSRFieldSizeError) Unwrap() error { return io.ErrUnexpectedEOF }
+
 // Creates a TCG_CSR_IDEVID structure in alignment with the TCG
 // TPM 2.0 Keys for Device Identity and Attestation - Section 13.1 -
 // TCG-CSR-IDEVID.
@@ -610,8 +645,18 @@ func bytesToUint32(b [4]byte) uint32 {
 	return binary.BigEndian.Uint32(b[:])
 }
 
-// Unmarshalls a TCG_CSR_IDEVID big endian byte array
+// UnmarshalIDevIDCSR parses a packed, big-endian TCG_CSR_IDEVID.
+//
+// The input is attacker-supplied (an enroll-01 challenge response, an ACME
+// finalize request), so it is bounded before anything is allocated: input
+// larger than MaxIDevIDCSRSize is refused with *IDevIDCSRTooLargeError, and
+// every length field is checked against the bytes actually remaining before
+// its buffer is made (see readSizedField), so a declared length can never
+// allocate more than the message carries.
 func UnmarshalIDevIDCSR(csrBytes []byte) (*TCG_CSR_IDEVID, error) {
+	if len(csrBytes) > MaxIDevIDCSRSize {
+		return nil, &IDevIDCSRTooLargeError{Size: len(csrBytes), Max: MaxIDevIDCSRSize}
+	}
 
 	reader := bytes.NewReader(csrBytes)
 
@@ -636,26 +681,29 @@ func UnmarshalIDevIDCSR(csrBytes []byte) (*TCG_CSR_IDEVID, error) {
 		SigSz:     sigSz,
 	}
 
-	csrContentBytes := make([]byte, 0)
-	if _, err := io.ReadFull(reader, csrContentBytes); err != nil {
-		return nil, err
-	}
-
 	csrContents, err := UnpackIDevIDContent(reader)
 	if err != nil {
 		return nil, err
 	}
 	csr.CsrContents = *csrContents
 
-	csr.Signature = make([]byte, bytesToUint32(sigSz))
-	if _, err := io.ReadFull(reader, csr.Signature); err != nil {
+	csr.Signature, err = readSizedField(reader, "Signature", sigSz)
+	if err != nil {
 		return nil, err
 	}
 
 	return &csr, nil
 }
 
+// UnpackIDevIDContent parses a TCG_IDEVID_CONTENT from reader. Every
+// variable-length field is bounded by the bytes remaining in reader before
+// its buffer is allocated; a field declaring more than remains is refused
+// with *IDevIDCSRFieldSizeError, which wraps io.ErrUnexpectedEOF.
 func UnpackIDevIDContent(reader *bytes.Reader) (*TCG_IDEVID_CONTENT, error) {
+	if reader.Len() > MaxIDevIDCSRSize {
+		return nil, &IDevIDCSRTooLargeError{Size: reader.Len(), Max: MaxIDevIDCSRSize}
+	}
+
 	content := &TCG_IDEVID_CONTENT{}
 
 	if err := binary.Read(reader, binary.BigEndian, &content.StructVer); err != nil {
@@ -722,72 +770,79 @@ func UnpackIDevIDContent(reader *bytes.Reader) (*TCG_IDEVID_CONTENT, error) {
 		return nil, err
 	}
 
-	content.ProdModel = make([]byte, bytesToUint32(content.ProdModelSz))
-	if _, err := io.ReadFull(reader, content.ProdModel); err != nil {
+	var err error
+	if content.ProdModel, err = readSizedField(reader, "ProdModel", content.ProdModelSz); err != nil {
 		return nil, err
 	}
-
-	content.ProdSerial = make([]byte, bytesToUint32(content.ProdSerialSz))
-	if _, err := io.ReadFull(reader, content.ProdSerial); err != nil {
+	if content.ProdSerial, err = readSizedField(reader, "ProdSerial", content.ProdSerialSz); err != nil {
 		return nil, err
 	}
-
-	content.ProdCaData = make([]byte, bytesToUint32(content.ProdCaDataSz))
-	if _, err := io.ReadFull(reader, content.ProdCaData); err != nil {
+	if content.ProdCaData, err = readSizedField(reader, "ProdCaData", content.ProdCaDataSz); err != nil {
 		return nil, err
 	}
-
-	content.BootEvntLog = make([]byte, bytesToUint32(content.BootEvntLogSz))
-	if _, err := io.ReadFull(reader, content.BootEvntLog); err != nil {
+	if content.BootEvntLog, err = readSizedField(reader, "BootEvntLog", content.BootEvntLogSz); err != nil {
 		return nil, err
 	}
-
-	content.EkCert = make([]byte, bytesToUint32(content.EkCertSZ))
-	if _, err := io.ReadFull(reader, content.EkCert); err != nil {
+	if content.EkCert, err = readSizedField(reader, "EkCert", content.EkCertSZ); err != nil {
 		return nil, err
 	}
-
-	content.AttestPub = make([]byte, bytesToUint32(content.AttestPubSZ))
-	if _, err := io.ReadFull(reader, content.AttestPub); err != nil {
+	if content.AttestPub, err = readSizedField(reader, "AttestPub", content.AttestPubSZ); err != nil {
 		return nil, err
 	}
-
-	content.AtCreateTkt = make([]byte, bytesToUint32(content.AtCreateTktSZ))
-	if _, err := io.ReadFull(reader, content.AtCreateTkt); err != nil {
+	if content.AtCreateTkt, err = readSizedField(reader, "AtCreateTkt", content.AtCreateTktSZ); err != nil {
 		return nil, err
 	}
-
-	content.AtCertifyInfo = make([]byte, bytesToUint32(content.AtCertifyInfoSZ))
-	if _, err := io.ReadFull(reader, content.AtCertifyInfo); err != nil {
+	if content.AtCertifyInfo, err = readSizedField(reader, "AtCertifyInfo", content.AtCertifyInfoSZ); err != nil {
 		return nil, err
 	}
-
-	content.AtCertifyInfoSig = make([]byte, bytesToUint32(content.AtCertifyInfoSignatureSZ))
-	if _, err := io.ReadFull(reader, content.AtCertifyInfoSig); err != nil {
+	if content.AtCertifyInfoSig, err = readSizedField(reader, "AtCertifyInfoSig", content.AtCertifyInfoSignatureSZ); err != nil {
 		return nil, err
 	}
-
-	content.SigningPub = make([]byte, bytesToUint32(content.SigningPubSZ))
-	if _, err := io.ReadFull(reader, content.SigningPub); err != nil {
+	if content.SigningPub, err = readSizedField(reader, "SigningPub", content.SigningPubSZ); err != nil {
 		return nil, err
 	}
-
-	content.SgnCertifyInfo = make([]byte, bytesToUint32(content.SgnCertifyInfoSZ))
-	if _, err := io.ReadFull(reader, content.SgnCertifyInfo); err != nil {
+	if content.SgnCertifyInfo, err = readSizedField(reader, "SgnCertifyInfo", content.SgnCertifyInfoSZ); err != nil {
 		return nil, err
 	}
-
-	content.SgnCertifyInfoSig = make([]byte, bytesToUint32(content.SgnCertifyInfoSignatureSZ))
-	if _, err := io.ReadFull(reader, content.SgnCertifyInfoSig); err != nil {
+	if content.SgnCertifyInfoSig, err = readSizedField(reader, "SgnCertifyInfoSig", content.SgnCertifyInfoSignatureSZ); err != nil {
 		return nil, err
 	}
-
-	content.Pad = make([]byte, bytesToUint32(content.PadSz))
-	if _, err := io.ReadFull(reader, content.Pad); err != nil {
+	if content.Pad, err = readSizedField(reader, "Pad", content.PadSz); err != nil {
 		return nil, err
 	}
 
 	return content, nil
+}
+
+// readSizedField reads a field whose big-endian length was declared earlier
+// in the same message. The declared length is checked against the bytes
+// remaining in reader BEFORE the buffer is made: a 4-byte length field
+// could otherwise ask for 4 GiB, and a TCG-CSR-IDEVID carries fifteen of
+// them.
+func readSizedField(reader *bytes.Reader, field string, size [4]byte) ([]byte, error) {
+	declared := bytesToUint32(size)
+	if int64(declared) > int64(reader.Len()) {
+		return nil, &IDevIDCSRFieldSizeError{Field: field, Declared: declared, Remaining: reader.Len()}
+	}
+	buf := make([]byte, declared)
+	if _, err := io.ReadFull(reader, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+// copySizedField returns a copy of the first size bytes of src. size comes
+// from a TCG_CSR_IDEVID size field and src from the field it describes; the
+// two are independent in the struct, so a size larger than src is
+// corruption and is refused with store.ErrCorruptCopy before the buffer is
+// made, never zero-padded and never allowed to drive the allocation.
+func copySizedField(size uint32, src []byte) ([]byte, error) {
+	if uint64(size) > uint64(len(src)) {
+		return nil, store.ErrCorruptCopy
+	}
+	dst := make([]byte, size)
+	copy(dst, src)
+	return dst, nil
 }
 
 // Unpacks a TCG_CSR_IDEVID big endian byte array
@@ -814,8 +869,10 @@ func UnpackIDevIDCSR(
 		return nil, err
 	}
 
-	tcgCSR.Signature = make([]byte, tcgCSR.SigSz)
-	copy(tcgCSR.Signature, tcgCSRIDevID.Signature)
+	tcgCSR.Signature, err = copySizedField(tcgCSR.SigSz, tcgCSRIDevID.Signature)
+	if err != nil {
+		return nil, err
+	}
 
 	tcgContents := UNPACKED_TCG_IDEVID_CONTENT{}
 
@@ -915,82 +972,69 @@ func UnpackIDevIDCSR(
 		return nil, err
 	}
 
-	tcgContents.ProdModel = make([]byte, tcgContents.ProdModelSz)
-	n := copy(tcgContents.ProdModel, tcgCSRIDevID.CsrContents.ProdModel)
-	if n != int(tcgContents.ProdModelSz) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.ProdModel, err = copySizedField(tcgContents.ProdModelSz, tcgCSRIDevID.CsrContents.ProdModel)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.ProdSerial = make([]byte, tcgContents.ProdSerialSz)
-	n = copy(tcgContents.ProdSerial, tcgCSRIDevID.CsrContents.ProdSerial)
-	if n != int(tcgContents.ProdSerialSz) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.ProdSerial, err = copySizedField(tcgContents.ProdSerialSz, tcgCSRIDevID.CsrContents.ProdSerial)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.ProdCaData = make([]byte, tcgContents.ProdCaDataSz)
-	n = copy(tcgContents.ProdCaData, tcgCSRIDevID.CsrContents.ProdCaData)
-	if n != int(tcgContents.ProdCaDataSz) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.ProdCaData, err = copySizedField(tcgContents.ProdCaDataSz, tcgCSRIDevID.CsrContents.ProdCaData)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.BootEvntLog = make([]byte, tcgContents.BootEvntLogSz)
-	n = copy(tcgContents.BootEvntLog, tcgCSRIDevID.CsrContents.BootEvntLog)
-	if n != int(tcgContents.BootEvntLogSz) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.BootEvntLog, err = copySizedField(tcgContents.BootEvntLogSz, tcgCSRIDevID.CsrContents.BootEvntLog)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.EkCert = make([]byte, tcgContents.EkCertSZ)
-	n = copy(tcgContents.EkCert, tcgCSRIDevID.CsrContents.EkCert)
-	if n != int(tcgContents.EkCertSZ) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.EkCert, err = copySizedField(tcgContents.EkCertSZ, tcgCSRIDevID.CsrContents.EkCert)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.AttestPub = make([]byte, tcgContents.AttestPubSZ)
-	n = copy(tcgContents.AttestPub, tcgCSRIDevID.CsrContents.AttestPub)
-	if n != int(tcgContents.AttestPubSZ) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.AttestPub, err = copySizedField(tcgContents.AttestPubSZ, tcgCSRIDevID.CsrContents.AttestPub)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.AtCreateTkt = make([]byte, tcgContents.AtCreateTktSZ)
-	n = copy(tcgContents.AtCreateTkt, tcgCSRIDevID.CsrContents.AtCreateTkt)
-	if n != int(tcgContents.AtCreateTktSZ) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.AtCreateTkt, err = copySizedField(tcgContents.AtCreateTktSZ, tcgCSRIDevID.CsrContents.AtCreateTkt)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.AtCertifyInfo = make([]byte, tcgContents.AtCertifyInfoSZ)
-	n = copy(tcgContents.AtCertifyInfo, tcgCSRIDevID.CsrContents.AtCertifyInfo)
-	if n != int(tcgContents.AtCertifyInfoSZ) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.AtCertifyInfo, err = copySizedField(tcgContents.AtCertifyInfoSZ, tcgCSRIDevID.CsrContents.AtCertifyInfo)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.AtCertifyInfoSig = make([]byte, tcgContents.AtCertifyInfoSignatureSZ)
-	n = copy(tcgContents.AtCertifyInfoSig, tcgCSRIDevID.CsrContents.AtCertifyInfoSig)
-	if n != int(tcgContents.AtCertifyInfoSignatureSZ) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.AtCertifyInfoSig, err = copySizedField(tcgContents.AtCertifyInfoSignatureSZ, tcgCSRIDevID.CsrContents.AtCertifyInfoSig)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.SigningPub = make([]byte, tcgContents.SigningPubSZ)
-	n = copy(tcgContents.SigningPub, tcgCSRIDevID.CsrContents.SigningPub)
-	if n != int(tcgContents.SigningPubSZ) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.SigningPub, err = copySizedField(tcgContents.SigningPubSZ, tcgCSRIDevID.CsrContents.SigningPub)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.SgnCertifyInfo = make([]byte, tcgContents.SgnCertifyInfoSZ)
-	n = copy(tcgContents.SgnCertifyInfo, tcgCSRIDevID.CsrContents.SgnCertifyInfo)
-	if n != int(tcgContents.SgnCertifyInfoSZ) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.SgnCertifyInfo, err = copySizedField(tcgContents.SgnCertifyInfoSZ, tcgCSRIDevID.CsrContents.SgnCertifyInfo)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.SgnCertifyInfoSig = make([]byte, tcgContents.SgnCertifyInfoSignatureSZ)
-	n = copy(tcgContents.SgnCertifyInfoSig, tcgCSRIDevID.CsrContents.SgnCertifyInfoSig)
-	if n != int(tcgContents.SgnCertifyInfoSignatureSZ) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.SgnCertifyInfoSig, err = copySizedField(tcgContents.SgnCertifyInfoSignatureSZ, tcgCSRIDevID.CsrContents.SgnCertifyInfoSig)
+	if err != nil {
+		return nil, err
 	}
 
-	tcgContents.Pad = make([]byte, tcgContents.PadSz)
-	n = copy(tcgContents.Pad, tcgCSRIDevID.CsrContents.Pad)
-	if n != int(tcgContents.PadSz) {
-		return nil, store.ErrCorruptCopy
+	tcgContents.Pad, err = copySizedField(tcgContents.PadSz, tcgCSRIDevID.CsrContents.Pad)
+	if err != nil {
+		return nil, err
 	}
 
 	tcgCSR.CsrContents = tcgContents
