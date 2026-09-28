@@ -711,30 +711,55 @@ func revocationKey(serial *big.Int) string {
 	return revocationKeyPrefix + serial.Text(10)
 }
 
-// recordRevocation captures a revocation in the in-memory map and, when an
-// object store is configured, persists the record. It is shared by Revoke
-// (serial-based) and RevokeCert (certificate-based) to keep behaviour
-// consistent.
+// recordRevocation captures a revocation in the datastore-backed revocation
+// store and, once that write actually lands, in the in-memory map. It is
+// shared by Revoke (serial-based) and RevokeCert (certificate-based) to keep
+// behaviour consistent.
+//
+// Ordering matters (go-xkms#1131). The duplicate check reads through
+// lookupRevocation -- the map, then the replicated store -- instead of the
+// map alone, so a serial another cluster node already revoked is caught here
+// rather than silently overwritten with this call's reason and time. The
+// write itself goes to the store via putRevocationBlobIfAbsent before the map
+// is touched: a store failure returns a typed error with the map left
+// exactly as it was, so a caller can retry once the store recovers instead of
+// a retry being rejected with ErrAlreadyRevoked for a record that was never
+// actually persisted. Only a write that lands -- ours or, if we lost a race
+// to another node between the duplicate check and the write, the one that
+// beat us -- updates the map, via cacheRevocation.
+//
+// The store write uses PutIfAbsent, the one guarded primitive
+// storage.Backend declares unconditionally (compare-and-swap and
+// compare-and-delete are optional capabilities; create-if-absent is not).
+// For a replicated backend (go-qrdb, in every configuration this package
+// runs against) PutIfAbsent is a linearizable cross-node compare-and-swap
+// keyed on "the record has never been written" -- see
+// pkg/storage/qrdb/backend_putifabsent.go -- so two nodes racing to revoke
+// the same serial can still both attempt the write, but only one of them
+// stores it; the loser observes stored=false and reports ErrAlreadyRevoked
+// with the winner's record rather than corrupting it. This closes the race
+// the duplicate check alone cannot: the duplicate check and the write are
+// two separate store operations, and PutIfAbsent -- not an extra check --
+// is what makes the second one refuse when the first already landed
+// elsewhere.
 func (ca *CA) recordRevocation(ctx context.Context, serial *big.Int, reason int, deletedKeys bool) error {
 	if serial == nil {
 		return ErrInvalidCertificate
 	}
 
 	key := serial.Text(10)
+
+	// Fail-closed duplicate check: a store read fault here must abort the
+	// revocation attempt, never be treated as "not yet revoked".
+	existing, err := ca.lookupRevocation(ctx, serial)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return alreadyRevokedError(existing)
+	}
+
 	now := time.Now()
-
-	ca.revocationsMutex.Lock()
-	if _, exists := ca.revocations[key]; exists {
-		ca.revocationsMutex.Unlock()
-		return ErrAlreadyRevoked
-	}
-	ca.revocations[key] = &RevocationInfo{
-		SerialNumber:   serial,
-		RevocationTime: now,
-		Reason:         reason,
-	}
-	ca.revocationsMutex.Unlock()
-
 	payload := persistedRevocation{
 		Serial:      key,
 		Reason:      reason,
@@ -745,9 +770,29 @@ func (ca *CA) recordRevocation(ctx context.Context, serial *big.Int, reason int,
 	if err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("marshal revocation: %v", err)}
 	}
-	if err := ca.putRevocationBlob(ctx, serial, buf); err != nil {
-		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("persist revocation: %v", err)}
+
+	stored, err := ca.putRevocationBlobIfAbsent(ctx, serial, buf)
+	if err != nil {
+		return &errs.Joined{Lead: ErrStorageError, Detail: "persist revocation", Cause: err}
 	}
+	if !stored {
+		// Another writer's record for this serial landed between our
+		// duplicate check and our write. Report ErrAlreadyRevoked with
+		// whatever the store now holds; fall back to the bare sentinel if
+		// even that read cannot complete, since the write's own stored=false
+		// already proves a record exists.
+		winner, lookupErr := ca.lookupRevocation(ctx, serial)
+		if lookupErr == nil && winner != nil {
+			return alreadyRevokedError(winner)
+		}
+		return ErrAlreadyRevoked
+	}
+
+	ca.cacheRevocation(&RevocationInfo{
+		SerialNumber:   serial,
+		RevocationTime: now,
+		Reason:         reason,
+	})
 
 	// Refresh the published CRL so it reflects this revocation without
 	// waiting for its NextUpdate to lapse. Best-effort: the revocation
@@ -762,11 +807,28 @@ func (ca *CA) recordRevocation(ctx context.Context, serial *big.Int, reason int,
 	return nil
 }
 
-// putRevocationBlob persists a serialized revocation record to the
-// datastore-backed revocation store, the sole persistence medium for
-// revocation state.
-func (ca *CA) putRevocationBlob(ctx context.Context, serial *big.Int, buf []byte) error {
-	return ca.revocationStore.Put(ctx, revocationKey(serial)+".json", buf)
+// alreadyRevokedError renders ErrAlreadyRevoked carrying info's original
+// revocation time and reason, so a caller that loses a revocation race --
+// either at recordRevocation's duplicate check or at its guarded write --
+// learns what is already on record rather than only that it lost.
+func alreadyRevokedError(info *RevocationInfo) error {
+	return &errs.Detail{
+		Err: ErrAlreadyRevoked,
+		Detail: fmt.Sprintf("serial %s revoked at %s with reason %d",
+			info.SerialNumber.Text(10), info.RevocationTime.Format(time.RFC3339), info.Reason),
+	}
+}
+
+// putRevocationBlobIfAbsent persists a serialized revocation record to the
+// datastore-backed revocation store via the guarded PutIfAbsent write,
+// storage.Backend's create-if-absent primitive, the one guarded write every
+// Backend implementation -- not just those that opt into CompareAndSwapper --
+// must provide. It reports stored=false, not an error, when a record for
+// this serial already exists: that is the guard doing its job, and
+// recordRevocation reads it as "another writer already recorded this
+// serial", never as a fault.
+func (ca *CA) putRevocationBlobIfAbsent(ctx context.Context, serial *big.Int, buf []byte) (bool, error) {
+	return ca.revocationStore.PutIfAbsent(ctx, revocationKey(serial)+".json", buf)
 }
 
 // getRevocationBlob reads a single persisted revocation record from the

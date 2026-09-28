@@ -87,6 +87,10 @@ var (
 	ErrCRLGenerationFailed = errors.New("ca: crl generation failed")
 
 	// ErrAlreadyRevoked indicates the certificate is already revoked.
+	// recordRevocation (go-xkms#1131) returns it wrapped in *errs.Detail,
+	// naming the original revocation's time and reason, whenever the
+	// existing record was readable; errors.Is still matches the wrapped
+	// form.
 	ErrAlreadyRevoked = errors.New("ca: certificate already revoked")
 
 	// ErrRevocationRecordCorrupt indicates a persisted revocation record

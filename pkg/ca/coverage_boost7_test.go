@@ -614,7 +614,7 @@ func TestImportCertificatePEM_Success_B7(t *testing.T) {
 
 // =============================================================================
 // ca_extensions.go — RevokeCert with object store (recordRevocation /
-// putRevocationBlob round-trip)
+// putRevocationBlobIfAbsent round-trip)
 // =============================================================================
 
 func TestRevokeCert_WithObjectStore_RoundTrip_B7(t *testing.T) {
