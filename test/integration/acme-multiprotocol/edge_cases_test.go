@@ -13,11 +13,18 @@
 
 //go:build integration
 
-package cactl
+// Edge-case and consistency coverage moved from test/integration/cactl
+// (go-xkms#949's port to xkmsctl): these exercise pkg/acme/api's
+// AdminAdapter directly across every configured protocol, not the
+// xkmsctl/cactl CLI, so they belong beside this package's other
+// adapter-level coverage rather than the CLI-driven
+// test/integration/acmeadmin. The CLI-only cases from the same source
+// files (output-format smoke tests) were ported to
+// test/integration/acmeadmin instead; see that package's cli_test.go.
+package multiprotocol
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -25,15 +32,13 @@ import (
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/api"
-	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
-	"github.com/jeremyhahn/go-xkms/test/integration/acme-multiprotocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestCactlConcurrency tests concurrent operations via all protocols.
-func TestCactlConcurrency(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestConcurrencyMultiProtocol tests concurrent operations via all protocols.
+func TestConcurrencyMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -49,7 +54,6 @@ func TestCactlConcurrency(t *testing.T) {
 	})
 }
 
-// testConcurrentTenantCreation tests creating multiple tenants concurrently.
 func testConcurrentTenantCreation(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -58,7 +62,6 @@ func testConcurrentTenantCreation(t *testing.T, adapter api.AdminAdapter, protoc
 	tenantIDs := make([]string, numTenants)
 	errCh := make(chan error, numTenants)
 
-	// Create tenants concurrently
 	for i := 0; i < numTenants; i++ {
 		go func(idx int) {
 			name := fmt.Sprintf("%sconcurrent-%s-%d-%d", testTenantPrefix, protocol, time.Now().UnixNano(), idx)
@@ -74,13 +77,11 @@ func testConcurrentTenantCreation(t *testing.T, adapter api.AdminAdapter, protoc
 		}(i)
 	}
 
-	// Collect results
 	for i := 0; i < numTenants; i++ {
 		err := <-errCh
 		assert.NoError(t, err, "concurrent tenant creation should succeed via %s", protocol)
 	}
 
-	// Cleanup
 	for _, id := range tenantIDs {
 		if id != "" {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), defaultTimeout)
@@ -90,12 +91,10 @@ func testConcurrentTenantCreation(t *testing.T, adapter api.AdminAdapter, protoc
 	}
 }
 
-// testConcurrentEABCreation tests creating multiple EABs concurrently.
 func testConcurrentEABCreation(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// First create a tenant
 	tenantName := fmt.Sprintf("%sconcurrent-eab-%s-%d", testTenantPrefix, protocol, time.Now().UnixNano())
 	tenant, err := adapter.CreateTenant(ctx, &admin.CreateTenantRequest{Name: tenantName})
 	require.NoError(t, err)
@@ -109,12 +108,11 @@ func testConcurrentEABCreation(t *testing.T, adapter api.AdminAdapter, protocol 
 	eabIDs := make([]string, numEABs)
 	errCh := make(chan error, numEABs)
 
-	// Create EABs concurrently
 	for i := 0; i < numEABs; i++ {
 		go func(idx int) {
 			req := &admin.CreateEABRequest{
 				Purpose: "account-binding",
-				Contact: []string{fmt.Sprintf("test%d@example.com", idx)},
+				Contact: []string{fmt.Sprintf("test%d@kms.example.com", idx)},
 			}
 
 			eab, err := adapter.CreateEAB(ctx, tenant.ID, req)
@@ -127,13 +125,11 @@ func testConcurrentEABCreation(t *testing.T, adapter api.AdminAdapter, protocol 
 		}(i)
 	}
 
-	// Collect results
 	for i := 0; i < numEABs; i++ {
 		err := <-errCh
 		assert.NoError(t, err, "concurrent EAB creation should succeed via %s", protocol)
 	}
 
-	// Cleanup EABs
 	for _, id := range eabIDs {
 		if id != "" {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), defaultTimeout)
@@ -143,9 +139,10 @@ func testConcurrentEABCreation(t *testing.T, adapter api.AdminAdapter, protocol 
 	}
 }
 
-// TestCactlSpecialCharacters tests operations with special characters in names.
-func TestCactlSpecialCharacters(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestSpecialCharactersMultiProtocol tests operations with special
+// characters in names.
+func TestSpecialCharactersMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -161,12 +158,10 @@ func TestCactlSpecialCharacters(t *testing.T) {
 	})
 }
 
-// testTenantWithSpecialChars tests tenant names with special characters.
 func testTenantWithSpecialChars(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// Test various special characters in tenant names
 	testCases := []struct {
 		name       string
 		tenantName string
@@ -191,7 +186,6 @@ func testTenantWithSpecialChars(t *testing.T, adapter api.AdminAdapter, protocol
 				require.NoError(t, err, "CreateTenant with '%s' should succeed via %s", tc.tenantName, protocol)
 				assert.Equal(t, tc.tenantName, tenant.Name)
 
-				// Cleanup
 				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), defaultTimeout)
 				_ = adapter.DeleteTenant(cleanupCtx, tenant.ID)
 				cleanupCancel()
@@ -200,12 +194,10 @@ func testTenantWithSpecialChars(t *testing.T, adapter api.AdminAdapter, protocol
 	}
 }
 
-// testRoleWithSpecialChars tests roles with special characters in descriptions.
 func testRoleWithSpecialChars(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// Create tenant first
 	tenantName := fmt.Sprintf("%srole-special-%s-%d", testTenantPrefix, protocol, time.Now().UnixNano())
 	tenant, err := adapter.CreateTenant(ctx, &admin.CreateTenantRequest{Name: tenantName})
 	require.NoError(t, err)
@@ -215,7 +207,6 @@ func testRoleWithSpecialChars(t *testing.T, adapter api.AdminAdapter, protocol a
 		_ = adapter.DeleteTenant(cleanupCtx, tenant.ID)
 	}()
 
-	// Create role with special characters in name
 	roleName := fmt.Sprintf("test-role-special-%d", time.Now().UnixNano())
 	createReq := &db.CreateRoleRequest{
 		Name: roleName,
@@ -229,15 +220,14 @@ func testRoleWithSpecialChars(t *testing.T, adapter api.AdminAdapter, protocol a
 	require.NoError(t, err, "CreateTenantRole with special chars should succeed via %s", protocol)
 	assert.Equal(t, roleName, created.Name)
 
-	// Cleanup
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), defaultTimeout)
 	_ = adapter.DeleteTenantRole(cleanupCtx, tenant.ID, created.ID)
 	cleanupCancel()
 }
 
-// TestCactlBoundaryConditions tests operations at boundary conditions.
-func TestCactlBoundaryConditions(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestBoundaryConditionsMultiProtocol tests operations at boundary conditions.
+func TestBoundaryConditionsMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -257,12 +247,10 @@ func TestCactlBoundaryConditions(t *testing.T) {
 	})
 }
 
-// testEmptyPagination tests pagination with no results.
 func testEmptyPagination(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// Request a very high page number to get empty results
 	req := &admin.ListCertificatesRequest{
 		Page:    9999,
 		PerPage: 10,
@@ -276,14 +264,13 @@ func testEmptyPagination(t *testing.T, adapter api.AdminAdapter, protocol api.Pr
 	}
 }
 
-// testMaxPagination tests pagination with maximum per-page.
 func testMaxPagination(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
 	req := &admin.ListTenantsRequest{
 		Page:    1,
-		PerPage: 1000, // Large per-page
+		PerPage: 1000,
 	}
 
 	tenants, pagination, err := adapter.ListTenants(ctx, req)
@@ -294,12 +281,10 @@ func testMaxPagination(t *testing.T, adapter api.AdminAdapter, protocol api.Prot
 	}
 }
 
-// testMinimalTenant tests creating a tenant with minimal data.
 func testMinimalTenant(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// Create tenant with only required fields
 	req := &admin.CreateTenantRequest{
 		Name: fmt.Sprintf("%sminimal-%s-%d", testTenantPrefix, protocol, time.Now().UnixNano()),
 	}
@@ -309,15 +294,14 @@ func testMinimalTenant(t *testing.T, adapter api.AdminAdapter, protocol api.Prot
 	assert.NotEmpty(t, tenant.ID)
 	assert.Equal(t, req.Name, tenant.Name)
 
-	// Cleanup
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), defaultTimeout)
 	_ = adapter.DeleteTenant(cleanupCtx, tenant.ID)
 	cleanupCancel()
 }
 
-// TestCactlIdempotency tests idempotent operations.
-func TestCactlIdempotency(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestIdempotencyMultiProtocol tests idempotent operations.
+func TestIdempotencyMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -327,7 +311,6 @@ func TestCactlIdempotency(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 			defer cancel()
 
-			// Deleting non-existent tenant should fail (not idempotent)
 			err := adapter.DeleteTenant(ctx, "nonexistent-tenant-id-12345")
 			assert.Error(t, err, "DeleteTenant for nonexistent should fail via %s", protocol)
 		})
@@ -336,7 +319,6 @@ func TestCactlIdempotency(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 			defer cancel()
 
-			// Create a tenant
 			tenantName := fmt.Sprintf("%sidempotent-%s-%d", testTenantPrefix, protocol, time.Now().UnixNano())
 			tenant, err := adapter.CreateTenant(ctx, &admin.CreateTenantRequest{Name: tenantName})
 			require.NoError(t, err)
@@ -346,7 +328,6 @@ func TestCactlIdempotency(t *testing.T) {
 				_ = adapter.DeleteTenant(cleanupCtx, tenant.ID)
 			}()
 
-			// Get the tenant multiple times - should return same result
 			for i := 0; i < 3; i++ {
 				retrieved, err := adapter.GetTenant(ctx, tenant.ID)
 				require.NoError(t, err, "GetTenant iteration %d should succeed via %s", i, protocol)
@@ -357,14 +338,14 @@ func TestCactlIdempotency(t *testing.T) {
 	})
 }
 
-// TestCactlProtocolConsistency tests that all protocols return consistent results.
-func TestCactlProtocolConsistency(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestProtocolConsistencyMultiProtocol tests that all protocols return
+// consistent results for a tenant created via REST.
+func TestProtocolConsistencyMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	ctx := context.Background()
 
-	// Create a tenant using REST
 	restAdapter := tc.RESTAdapter
 	if restAdapter == nil {
 		t.Fatal("REST adapter not available")
@@ -385,7 +366,6 @@ func TestCactlProtocolConsistency(t *testing.T) {
 		_ = restAdapter.DeleteTenant(cleanupCtx, createdTenant.ID)
 	}()
 
-	// Verify all protocols can see the same tenant
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
 		protocol := adapter.Protocol()
 
@@ -399,9 +379,9 @@ func TestCactlProtocolConsistency(t *testing.T) {
 	})
 }
 
-// TestCactlRoleComplexOperations tests complex RBAC role scenarios.
-func TestCactlRoleComplexOperations(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestRoleComplexOperationsMultiProtocol tests complex RBAC role scenarios.
+func TestRoleComplexOperationsMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -417,12 +397,10 @@ func TestCactlRoleComplexOperations(t *testing.T) {
 	})
 }
 
-// testRoleWithMultiplePermissions tests roles with many permissions.
 func testRoleWithMultiplePermissions(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// Create tenant
 	tenantName := fmt.Sprintf("%srole-perms-%s-%d", testTenantPrefix, protocol, time.Now().UnixNano())
 	tenant, err := adapter.CreateTenant(ctx, &admin.CreateTenantRequest{Name: tenantName})
 	require.NoError(t, err)
@@ -450,18 +428,15 @@ func testRoleWithMultiplePermissions(t *testing.T, adapter api.AdminAdapter, pro
 	assert.NotNil(t, created)
 	assert.Len(t, created.Permissions, 6)
 
-	// Cleanup
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), defaultTimeout)
 	_ = adapter.DeleteTenantRole(cleanupCtx, tenant.ID, created.ID)
 	cleanupCancel()
 }
 
-// testRoleWithNestedResourcePermissions tests roles with nested resource-scoped permissions.
 func testRoleWithNestedResourcePermissions(t *testing.T, adapter api.AdminAdapter, protocol api.Protocol) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// Create tenant
 	tenantName := fmt.Sprintf("%srole-nested-%s-%d", testTenantPrefix, protocol, time.Now().UnixNano())
 	tenant, err := adapter.CreateTenant(ctx, &admin.CreateTenantRequest{Name: tenantName})
 	require.NoError(t, err)
@@ -491,65 +466,14 @@ func testRoleWithNestedResourcePermissions(t *testing.T, adapter api.AdminAdapte
 	assert.NotNil(t, created)
 	assert.Len(t, created.Permissions, 8)
 
-	// Cleanup
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), defaultTimeout)
 	_ = adapter.DeleteTenantRole(cleanupCtx, tenant.ID, created.ID)
 	cleanupCancel()
 }
 
-// TestCLIOutputFormatConsistency tests that output formats are consistent.
-func TestCLIOutputFormatConsistency(t *testing.T) {
-	cfg := newCactlConfig()
-
-	// Find binary
-	if err := locateCactlBinary(cfg); err != nil {
-		t.Fatalf("cactl binary not found: %v", err)
-	}
-
-	t.Run("JSONOutputIsValidJSON", func(t *testing.T) {
-		output := requireCactlSuccess(t, cfg, "status", "-o", "json")
-		var status admin.CAStatus
-		err := json.Unmarshal([]byte(output), &status)
-		assert.NoError(t, err, "JSON output should be valid JSON")
-	})
-
-	t.Run("TableOutputHasHeaders", func(t *testing.T) {
-		output := requireCactlSuccess(t, cfg, "status", "-o", "table")
-		// Table output typically includes field names
-		assert.NotEmpty(t, output, "Table output should not be empty")
-	})
-
-	t.Run("YAMLOutputIsValid", func(t *testing.T) {
-		output := requireCactlSuccess(t, cfg, "status", "-o", "yaml")
-		// YAML should contain key-value pairs
-		assert.Contains(t, output, ":", "YAML output should contain colons")
-	})
-}
-
-// locateCactlBinary attempts to find the cactl binary.
-func locateCactlBinary(cfg *cactlConfig) error {
-	possiblePaths := []string{
-		cfg.Binary,
-		"./cactl",
-		"../../../cmd/cactl/cactl",
-		"/usr/local/bin/cactl",
-		"/workspace/go-xkms/bin/cactl",
-	}
-
-	for _, p := range possiblePaths {
-		_, err := runCactl(&cactlConfig{Binary: p, Timeout: 5 * time.Second}, "version")
-		if err == nil {
-			cfg.Binary = p
-			return nil
-		}
-	}
-
-	return caerrors.NotFoundError("cactl binary not found in common locations")
-}
-
-// TestCactlEABPurposeTypes tests EAB creation with different purpose types.
-func TestCactlEABPurposeTypes(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestEABPurposeTypesMultiProtocol tests EAB creation with different purpose types.
+func TestEABPurposeTypesMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -557,7 +481,6 @@ func TestCactlEABPurposeTypes(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		defer cancel()
 
-		// Create tenant
 		tenantName := fmt.Sprintf("%seab-purpose-%s-%d", testTenantPrefix, protocol, time.Now().UnixNano())
 		tenant, err := adapter.CreateTenant(ctx, &admin.CreateTenantRequest{Name: tenantName})
 		require.NoError(t, err)
@@ -577,7 +500,7 @@ func TestCactlEABPurposeTypes(t *testing.T) {
 			t.Run(purpose, func(t *testing.T) {
 				req := &admin.CreateEABRequest{
 					Purpose: purpose,
-					Contact: []string{"test@example.com"},
+					Contact: []string{"test@kms.example.com"},
 				}
 
 				eab, err := adapter.CreateEAB(ctx, tenant.ID, req)
@@ -585,16 +508,15 @@ func TestCactlEABPurposeTypes(t *testing.T) {
 				assert.NotEmpty(t, eab.ID)
 				assert.NotEmpty(t, eab.MACKey)
 
-				// Cleanup
 				_ = adapter.DeleteEAB(ctx, tenant.ID, eab.ID)
 			})
 		}
 	})
 }
 
-// TestCactlTenantStatusTransitions tests tenant status changes.
-func TestCactlTenantStatusTransitions(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestTenantStatusTransitionsMultiProtocol tests tenant status changes.
+func TestTenantStatusTransitionsMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -602,7 +524,6 @@ func TestCactlTenantStatusTransitions(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		defer cancel()
 
-		// Create tenant
 		tenantName := fmt.Sprintf("%sstatus-%s-%d", testTenantPrefix, protocol, time.Now().UnixNano())
 		tenant, err := adapter.CreateTenant(ctx, &admin.CreateTenantRequest{Name: tenantName})
 		require.NoError(t, err)
@@ -612,10 +533,8 @@ func TestCactlTenantStatusTransitions(t *testing.T) {
 			_ = adapter.DeleteTenant(cleanupCtx, tenant.ID)
 		}()
 
-		// Verify initial status
 		assert.Equal(t, "active", tenant.Status, "Initial status should be 'active' via %s", protocol)
 
-		// Update tenant name
 		updated, err := adapter.UpdateTenant(ctx, tenant.ID, &admin.UpdateTenantRequest{
 			Name: tenantName + "-updated",
 		})
@@ -625,9 +544,9 @@ func TestCactlTenantStatusTransitions(t *testing.T) {
 	})
 }
 
-// TestCactlListFiltering tests list operations with various filters.
-func TestCactlListFiltering(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestListFilteringMultiProtocol tests list operations with various filters.
+func TestListFilteringMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -637,7 +556,6 @@ func TestCactlListFiltering(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 			defer cancel()
 
-			// Test filtering certificates by status
 			validReq := &admin.ListCertificatesRequest{
 				Page:    1,
 				PerPage: 10,
@@ -663,9 +581,9 @@ func TestCactlListFiltering(t *testing.T) {
 	})
 }
 
-// TestCactlBenchmarkMultiProtocol runs benchmarks across all protocols.
-func TestCactlBenchmarkMultiProtocol(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestBenchmarkMultiProtocol reports GetStatus latency across all protocols.
+func TestBenchmarkMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	ctx := context.Background()
@@ -674,7 +592,6 @@ func TestCactlBenchmarkMultiProtocol(t *testing.T) {
 		protocol := adapter.Protocol()
 
 		t.Run("GetStatus", func(t *testing.T) {
-			// Warm up
 			_, _ = adapter.GetStatus(ctx)
 
 			start := time.Now()
@@ -692,9 +609,9 @@ func TestCactlBenchmarkMultiProtocol(t *testing.T) {
 	})
 }
 
-// TestCactlErrorMessages tests that error messages are informative.
-func TestCactlErrorMessages(t *testing.T) {
-	tc := multiprotocol.NewTestContext(t)
+// TestErrorMessagesMultiProtocol tests that error messages are informative.
+func TestErrorMessagesMultiProtocol(t *testing.T) {
+	tc := NewTestContext(t)
 	defer tc.Cleanup()
 
 	tc.ForEachProtocol(t, func(t *testing.T, adapter api.AdminAdapter) {
@@ -712,7 +629,6 @@ func TestCactlErrorMessages(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 			defer cancel()
 
-			// Create a tenant first
 			tenantName := fmt.Sprintf("%serror-test-%s-%d", testTenantPrefix, protocol, time.Now().UnixNano())
 			tenant, err := adapter.CreateTenant(ctx, &admin.CreateTenantRequest{Name: tenantName})
 			require.NoError(t, err)
@@ -724,7 +640,34 @@ func TestCactlErrorMessages(t *testing.T) {
 
 			_, err = adapter.GetEAB(ctx, tenant.ID, "nonexistent-eab-id")
 			require.Error(t, err)
-			// Just verify it errors - exact message format varies by protocol
+		})
+
+		t.Run("CertificateNotFoundError", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+			defer cancel()
+
+			_, err := adapter.GetCertificate(ctx, "00:00:00:00:00:00:00:00")
+			assert.Error(t, err, "GetCertificate for nonexistent cert should fail via %s", protocol)
+		})
+
+		t.Run("CreateDuplicateTenantError", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+			defer cancel()
+
+			tenantName := fmt.Sprintf("%sdup-%s-%d", testTenantPrefix, protocol, time.Now().UnixNano())
+			req := &admin.CreateTenantRequest{Name: tenantName}
+
+			tenant, err := adapter.CreateTenant(ctx, req)
+			require.NoError(t, err, "first CreateTenant should succeed via %s", protocol)
+			defer func() {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), defaultTimeout)
+				defer cleanupCancel()
+				_ = adapter.DeleteTenant(cleanupCtx, tenant.ID)
+			}()
+
+			reqDup := &admin.CreateTenantRequest{ID: tenant.ID, Name: tenantName + "-dup"}
+			_, err = adapter.CreateTenant(ctx, reqDup)
+			assert.Error(t, err, "CreateTenant with duplicate ID should fail via %s", protocol)
 		})
 	})
 }

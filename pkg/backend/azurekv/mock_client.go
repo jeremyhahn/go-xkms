@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
+	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 )
 
 // MockKeyVaultClient is a mock implementation of the KeyVaultClient interface for testing.
@@ -881,4 +882,108 @@ func (m *MockKeyVaultClient) ImportKey(ctx context.Context, name string, params 
 	}
 
 	return response, nil
+}
+
+// MockSecretsClient is a mock implementation of the SecretsClient interface
+// for testing. It mirrors MockKeyVaultClient's shape (in-memory storage,
+// SetXError error injection) so GenerateSymmetricKey/GetSymmetricKey --
+// which call SecretsClient rather than KeyVaultClient -- can be exercised
+// the same way CreateKey/GetKey already are, without a live Azure Key
+// Vault. It lives here rather than in a _test.go file so it can be shared
+// across package boundaries (e.g. pkg/seal's cloud-seal-strategy tests)
+// exactly as MockKeyVaultClient already is.
+type MockSecretsClient struct {
+	secrets  map[string]*string // name -> stored value; a present key with a nil value simulates a secret Azure reports with no Value
+	setCalls int
+	setErr   error
+	getErr   error
+	mu       sync.RWMutex
+}
+
+// NewMockSecretsClient creates a new mock Azure Key Vault secrets client for testing.
+func NewMockSecretsClient() *MockSecretsClient {
+	return &MockSecretsClient{
+		secrets: make(map[string]*string),
+	}
+}
+
+// SetSetError sets an error to be returned by SetSecret operations.
+func (m *MockSecretsClient) SetSetError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.setErr = err
+}
+
+// SetGetError sets an error to be returned by GetSecret operations.
+func (m *MockSecretsClient) SetGetError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.getErr = err
+}
+
+// SetSecretValue directly stores value under name, bypassing SetSecret. This
+// lets tests simulate secret data GenerateSymmetricKey itself would never
+// produce -- a nil value, or content that is not valid base64 -- so
+// GetSymmetricKey's handling of malformed Key Vault data can be exercised.
+func (m *MockSecretsClient) SetSecretValue(name string, value *string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.secrets[name] = value
+}
+
+// DeleteSecretValue removes name, simulating a secret deleted directly in
+// Key Vault out of band from this backend's in-memory metadata (which
+// still records the key from an earlier GenerateSymmetricKey call).
+func (m *MockSecretsClient) DeleteSecretValue(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.secrets, name)
+}
+
+// SetSecretCallCount returns the number of times SetSecret has succeeded
+// (i.e. was called while no setErr was configured), letting tests assert a
+// symmetric key is generated exactly once even when a caller such as
+// seal.EnsureSealKey provisions idempotently across multiple calls.
+func (m *MockSecretsClient) SetSecretCallCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.setCalls
+}
+
+// SetSecret stores a secret in the mock vault.
+func (m *MockSecretsClient) SetSecret(ctx context.Context, name string, params azsecrets.SetSecretParameters, options *azsecrets.SetSecretOptions) (azsecrets.SetSecretResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.setErr != nil {
+		return azsecrets.SetSecretResponse{}, m.setErr
+	}
+
+	m.secrets[name] = params.Value
+	m.setCalls++
+
+	return azsecrets.SetSecretResponse{
+		Secret: azsecrets.Secret{Value: params.Value},
+	}, nil
+}
+
+// GetSecret retrieves a secret from the mock vault. A name with no stored
+// entry returns a "not found" error, mirroring how MockKeyVaultClient.GetKey
+// reports a missing key.
+func (m *MockSecretsClient) GetSecret(ctx context.Context, name, version string, options *azsecrets.GetSecretOptions) (azsecrets.GetSecretResponse, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.getErr != nil {
+		return azsecrets.GetSecretResponse{}, m.getErr
+	}
+
+	value, exists := m.secrets[name]
+	if !exists {
+		return azsecrets.GetSecretResponse{}, &errs.Message{Msg: fmt.Sprintf("secret not found: %s", name)}
+	}
+
+	return azsecrets.GetSecretResponse{
+		Secret: azsecrets.Secret{Value: value},
+	}, nil
 }

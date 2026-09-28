@@ -1,6 +1,6 @@
 # FROST Threshold Signing — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 All symbols below require `-tags frost` unless noted. See
 [`architecture.md`](architecture.md) for why the CLI and network-API surfaces
@@ -34,7 +34,8 @@ enabled on a stock `xkmsd` today.
 | Field | Required | Default | Notes |
 |---|---|---|---|
 | `PublicStorage storage.Backend` | yes | — | `ConfigError{Field: "PublicStorage"}` if nil. |
-| `SecretBackend types.KeyProvider` | yes | — | `ConfigError{Field: "SecretBackend"}` if nil. |
+| `SecretBackend types.SealingKeyProvider` | yes | — | `ConfigError{Field: "SecretBackend"}` if nil or `!SecretBackend.CanSeal()` (`config.go:73-76`). Must implement both `types.KeyProvider` (`Type`/`Capabilities`, used by `FrostBackend`) and `types.Sealer` (`Seal`/`Unseal`/`CanSeal`) — see "Secret share sealing" below. |
+| `SecretSealKeyAttributes *types.KeyAttributes` | no | `nil` | Identifies the wrapping key `SecretBackend` seals/unseals with. `nil` when the backend needs no attributes at all (only a bare test `Sealer`); a fixed `CN` names one wrapping key reused for every FROST key in the store (PKCS#11/cloud KMS/software/PKCS#8); a `CN`-less template (`Parent` only, TPM2) gets a per-key `CN` filled in — see `KeyStore.secretSealKeyAttributesFor` (`storage.go:125`). |
 | `DKG KeyGenerator` | no | `NewTrustedDealer()` | See architecture.md — no other generator ships. |
 | `Algorithm types.FrostAlgorithm` | no | `FrostAlgorithmEd25519` | Must be one of the five ciphersuites below or `ConfigError{Field: "Algorithm"}`. |
 | `ParticipantID uint32` | no | `0` | `0` means dealer mode in `xkmsctl`; when set, must be `1..DefaultTotal`. |
@@ -49,6 +50,61 @@ enabled on a stock `xkmsd` today.
 `DefaultConfig()` returns a `*Config` with `Algorithm`, `DefaultThreshold`,
 `DefaultTotal`, and `EnableNonceTracking` pre-set; callers still must supply
 `PublicStorage` and `SecretBackend`.
+
+## Secret share sealing (`pkg/keyprovider/frost/storage.go`, `wrapkey.go`)
+
+Each participant's FROST secret key share is protected by the secret
+backend's own `types.Sealer` implementation — TPM2 PCR-bound seal under the
+Platform SRK, PKCS#11/cloud KMS AES-256-GCM envelope encryption under a
+provisioned symmetric key, or software/PKCS#8's HKDF-derived AES-GCM key
+(go-xkms#841). There is no `SealData`/`GenerateKey`-based opaque-secret path
+on any backend; `KeyStore` never calls `SecretBackend.GenerateKey` or
+`GetKey` for the secret share.
+
+- `KeyStore.StoreKeyPackage` (`storage.go:176`) calls
+  `secretBackend.Seal(ctx, pkg.SecretShare.Value, ks.secretSealOptions(keyID))`
+  and persists the resulting `types.SealedData`, JSON-marshaled, in
+  `PublicStorage` at `frost/keys/<keyID>/secret_share.json`
+  (`secretShareFile`, `storage.go:45-50`). Sealing is what makes storing the
+  envelope in the same (unencrypted-at-rest) storage as the public
+  components safe.
+- `KeyStore.LoadKeyPackage` (`storage.go:231`) reads that envelope back and
+  calls `secretBackend.Unseal(ctx, &sealed, ks.secretUnsealOptions(keyID))`.
+  Its return value is used directly as the secret share bytes — no type
+  assertion, since `Unseal` already returns `[]byte`.
+- `KeyStore.DeleteKey` (`storage.go:372`) deletes `secret_share.json` from
+  `PublicStorage` first (in place of the old `SecretBackend.DeleteKey`
+  call), then the verification shares and group public key, then metadata
+  last, preserving the original resumable-on-partial-failure ordering.
+
+### Wrapping-key attributes (`pkg/keyprovider/frost/wrapkey.go`)
+
+| Function | Backend family | Notes |
+|---|---|---|
+| `SymmetricSecretSealKeyAttributes(store types.StoreType)` (`wrapkey.go:42`) | PKCS#11, AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault | `CN: SecretSealKeyCN`, `KeyType: KeyTypeEncryption`, `SymmetricAlgorithm: SymmetricAES256GCM`. Provision with `seal.EnsureSealKey`. |
+| `AsymmetricSecretSealKeyAttributes(store types.StoreType)` (`wrapkey.go:60`) | software, PKCS#8 | `CN: SecretSealKeyCN`, `KeyAlgorithm: x509.Ed25519`. These backends' `Seal` loads an existing private key via `GetKey` and derives an AES key from it (HKDF); provision with `seal.EnsurePrivateSealKey`. |
+| `TPM2SecretSealKeyAttributes(psrkAttrs *types.KeyAttributes)` (`wrapkey.go:77`) | TPM2 | `Parent: psrkAttrs`, no `CN` — a template. TPM2 seals directly under the Platform SRK and needs no provisioning step; `KeyStore` fills in a per-FROST-key `CN` (`"frost-secret:" + keyID`, `secretSealCN`, `storage.go:140`) so each key gets its own TPM-sealed object identity instead of every key's `Seal` overwriting one shared slot. |
+
+`SecretSealKeyCN = "xkms-frost-wrap"` (`wrapkey.go:35`) is distinct from
+`seal.SealKeyCN` (`"xkms-barrier-seal"`), the barrier's own wrapping key, so
+a backend serving both roles (e.g. TPM2 as both a barrier hardware strategy
+and `backends.frost.secret_backend`) never shares a single key across the
+two roles.
+
+### Provisioning (`pkg/server/backend_frost.go`, `pkg/seal/cloud_provision.go`)
+
+`Server.ensureFrostSecretSealKey` (`backend_frost.go`, added for #841)
+dispatches on `backends.frost.secret_backend`'s name and provisions
+(idempotently) the wrapping key before constructing `frost.Config`:
+
+| `secret_backend` | Provisioning |
+|---|---|
+| `tpm2` | None — `frost.TPM2SecretSealKeyAttributes(backend.SRKAttributes())`. |
+| `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault` | `seal.EnsureSealKey(ctx, <matching StrategyID>, provider, attrs)` — the same idempotent check-and-skip (`GetSymmetricKey`/`GenerateSymmetricKey`) the barrier's hardware seal strategies use (go-xkms#757). |
+| `software`, `pkcs8` | `seal.EnsurePrivateSealKey(ctx, provider, attrs)` (`pkg/seal/cloud_provision.go`) — the asymmetric counterpart to `EnsureSealKey`: `GetKey`-then-`GenerateKey` check-and-skip for a backend whose `Seal` derives its wrapping key from an existing private key rather than a symmetric primitive. |
+
+`pkg/xkms/register_frost.go`'s `newFROSTKeyProvider` factory (see below)
+provisions its `pkcs8` secret backend's wrapping key the same way, inline.
 
 ## Ciphersuites (`pkg/keyprovider/frost/ciphersuite.go`)
 
@@ -89,10 +145,13 @@ value.
 (`register_frost.go:42`) builds a software-backed `frost.Config` (a `pkcs8`
 `SecretBackend`, an in-memory `PublicStorage`) from a
 `map[string]interface{}` with three optional keys: `"threshold"` (int),
-`"total"` (int), `"participant_id"` (int). This factory is reachable only
-through `xkms.AutoInitialize`/direct library embedding — **`xkmsd` never
-calls it**; see architecture.md for the missing `pkg/server`/`pkg/config`
-wiring.
+`"total"` (int), `"participant_id"` (int). It provisions the `pkcs8`
+backend's Ed25519 wrapping key with `seal.EnsurePrivateSealKey` before
+constructing `frost.Config`, mirroring `pkg/server`'s composition. This
+factory is reachable only through `xkms.AutoInitialize`/direct library
+embedding — **`xkmsd` never calls it**; `pkg/server/backend_frost.go`'s
+`Server.initFrostBackend` (called from `server.go:1084`) is the config-driven
+wiring `xkmsd` actually uses, and it is independent of this factory.
 
 ## SDK re-exports (`sdk/go/frost.go`, `-tags frost`)
 
@@ -119,8 +178,26 @@ itself.
 ## Testing
 
 - Unit: `pkg/keyprovider/frost/*_test.go` (backend, ciphersuite, config,
-  errors, keygen, nonce, rounds, signer, storage — 687+ lines in
+  errors, keygen, nonce, rounds, signer, storage, wrapkey — 687+ lines in
   `backend_test.go` alone). Run with `go test -tags frost ./pkg/keyprovider/frost/...`.
+  A seal/unseal round trip against every whitelisted `secret_backend` is
+  covered per backend, each gated behind its own build tag alongside
+  `frost`: `backend_software_test.go` (software and PKCS#8, no extra tag —
+  also covers restart survival and the wrong-wrap-key typed-error case),
+  `backend_tpm2_sim_test.go` (`tpm_simulator`, real simulator, also covers
+  distinct per-key sealed objects and a corrupted-envelope typed error),
+  `backend_awskms_test.go` / `backend_gcpkms_test.go` (mocked KMS clients).
+  `pkg/backend/pkcs11/frost_seal_test.go` (`pkcs11`, real SoftHSM2 token via
+  the package's own `newProvisionedBackend` helper) and
+  `pkg/backend/vault/frost_seal_test.go` (`vault`, the package's own
+  in-process Transit engine double) live beside those backends instead,
+  since their test helpers are unexported. Azure Key Vault's
+  `GenerateSymmetricKey`/`GetSymmetricKey` construct a real `azsecrets`
+  client unconditionally (no injectable seam — see
+  `pkg/backend/azurekv/azurekv_symmetric_test.go`'s own `newLocalSymmetricKey`
+  comment), so the full FROST+`azurekv` round trip is exercised by the
+  emulator-backed integration suite (`test/integration/azurekv`), not a unit
+  test, consistent with that package's own existing boundary.
 - Integration: `test/integration/frost/{backend,signing}_integration_test.go`
   construct a `frost.Backend` directly, in-process — they do not stand up an
   `xkmsd` with a configured FROST backend (there is no config surface to do

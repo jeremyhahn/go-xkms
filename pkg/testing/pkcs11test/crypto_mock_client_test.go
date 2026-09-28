@@ -23,6 +23,107 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
+// TestCryptoMockClient_Decrypt_OAEPRoundTrip verifies that a Decrypt request
+// carrying Padding "oaep" runs RSA-OAEP against the same asymmetric key
+// EncryptAsym encrypted under, rather than always running AES-GCM against
+// getOrCreateSymKey. This is the regression test for the bug where Decrypt
+// ignored req.Padding entirely: every OAEP decrypt silently created an
+// unrelated AES key and failed.
+func TestCryptoMockClient_Decrypt_OAEPRoundTrip(t *testing.T) {
+	c := NewCryptoMockClient()
+	ctx := context.Background()
+	plaintext := []byte("mock pkcs11 OAEP plaintext")
+
+	encResp, err := c.EncryptAsym(ctx, &transport.EncryptAsymRequest{
+		KeyID:     "oaep-key",
+		Plaintext: plaintext,
+		Hash:      "SHA-256",
+	})
+	if err != nil {
+		t.Fatalf("EncryptAsym() error = %v", err)
+	}
+
+	decResp, err := c.Decrypt(ctx, &transport.DecryptRequest{
+		KeyID:      "oaep-key",
+		Ciphertext: encResp.Ciphertext,
+		Padding:    "oaep",
+		Hash:       "SHA-256",
+	})
+	if err != nil {
+		t.Fatalf("Decrypt() error = %v", err)
+	}
+	if !bytes.Equal(decResp.Plaintext, plaintext) {
+		t.Errorf("Decrypt() plaintext = %q, want %q", decResp.Plaintext, plaintext)
+	}
+}
+
+// TestCryptoMockClient_Decrypt_OAEPWrongLabel verifies that decrypting under
+// a different OAEP label than the ciphertext was encrypted under fails,
+// rather than recovering the wrong plaintext or panicking.
+func TestCryptoMockClient_Decrypt_OAEPWrongLabel(t *testing.T) {
+	c := NewCryptoMockClient()
+	ctx := context.Background()
+
+	encResp, err := c.EncryptAsym(ctx, &transport.EncryptAsymRequest{
+		KeyID:     "oaep-label-key",
+		Plaintext: []byte("label-bound plaintext"),
+		Hash:      "SHA-256",
+		Label:     []byte("encrypt-label"),
+	})
+	if err != nil {
+		t.Fatalf("EncryptAsym() error = %v", err)
+	}
+
+	_, err = c.Decrypt(ctx, &transport.DecryptRequest{
+		KeyID:      "oaep-label-key",
+		Ciphertext: encResp.Ciphertext,
+		Padding:    "oaep",
+		Hash:       "SHA-256",
+		Label:      []byte("decrypt-label"),
+	})
+	if err == nil {
+		t.Fatal("Decrypt() with a mismatched OAEP label should return an error")
+	}
+}
+
+// TestCryptoMockClient_Decrypt_OAEPNonRSAKey verifies that an OAEP decrypt
+// against a key id already bound to a non-RSA asymmetric key is refused with
+// ErrUnsupportedKeyType rather than run as though it were RSA.
+func TestCryptoMockClient_Decrypt_OAEPNonRSAKey(t *testing.T) {
+	c := NewCryptoMockClient()
+	ctx := context.Background()
+
+	if _, err := c.GenerateKey(ctx, &transport.GenerateKeyRequest{KeyID: "ec-key", KeyType: "ecdsa"}); err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+
+	_, err := c.Decrypt(ctx, &transport.DecryptRequest{
+		KeyID:      "ec-key",
+		Ciphertext: []byte("irrelevant"),
+		Padding:    "oaep",
+	})
+	if !errors.Is(err, ErrUnsupportedKeyType) {
+		t.Errorf("Decrypt() error = %v, want ErrUnsupportedKeyType", err)
+	}
+}
+
+// TestCryptoMockClient_Decrypt_UnsupportedPadding verifies that a padding
+// name Decrypt does not recognize is refused rather than silently run
+// through AES-GCM against a key id that was never meant to be symmetric.
+func TestCryptoMockClient_Decrypt_UnsupportedPadding(t *testing.T) {
+	c := NewCryptoMockClient()
+	ctx := context.Background()
+
+	_, err := c.Decrypt(ctx, &transport.DecryptRequest{
+		KeyID:      "any-key",
+		Ciphertext: []byte("irrelevant"),
+		Padding:    "raw",
+	})
+	if !errors.Is(err, ErrUnsupportedPadding) {
+		t.Errorf("Decrypt() error = %v, want ErrUnsupportedPadding", err)
+	}
+}
+
 // requireMockEncrypt runs CryptoMockClient.Encrypt for a test that needs the
 // result to exercise further behavior, and reports whether the caller can
 // continue using it. The mock always builds its AES-GCM AEAD with

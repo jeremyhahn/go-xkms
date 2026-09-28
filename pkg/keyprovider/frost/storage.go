@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -42,6 +41,13 @@ const (
 
 	// verificationSharesDir is the directory for verification shares
 	verificationSharesDir = "verification_shares"
+
+	// secretShareFile is the filename for the sealed secret key share.
+	// Sealing (see types.Sealer) is what makes it safe to hold this file in
+	// publicStorage alongside the group's public components: the payload is
+	// an opaque, backend-encrypted envelope (types.SealedData), not the
+	// secret share in the clear.
+	secretShareFile = "secret_share.json"
 
 	// noncesPrefix is the base prefix for used nonce tracking
 	noncesPrefix = "frost/nonces"
@@ -76,19 +82,83 @@ type KeyMetadata struct {
 
 // KeyStore manages storage of FROST key components.
 type KeyStore struct {
-	// publicStorage stores public components (metadata, group public key, verification shares)
+	// publicStorage stores public components (metadata, group public key,
+	// verification shares) AND the sealed secret share: sealing is what
+	// makes storing the latter there safe (see secretShareFile).
 	publicStorage storage.Backend
 
-	// secretBackend stores the secret key share (can be any go-xkms backend)
-	secretBackend types.KeyProvider
+	// secretBackend seals and unseals the secret key share using its own
+	// native mechanism (can be any go-xkms backend that implements
+	// types.Sealer alongside types.KeyProvider).
+	secretBackend types.SealingKeyProvider
+
+	// secretSealKeyAttributes identifies the wrapping key secretBackend
+	// seals/unseals with. See Config.SecretSealKeyAttributes for the three
+	// forms this takes (nil, a fixed CN, or a CN-less template).
+	secretSealKeyAttributes *types.KeyAttributes
 }
 
-// NewKeyStore creates a new KeyStore with the given storage backends.
-func NewKeyStore(publicStorage storage.Backend, secretBackend types.KeyProvider) *KeyStore {
+// NewKeyStore creates a new KeyStore with the given storage backend, secret
+// sealer, and wrapping-key attributes (see Config.SecretSealKeyAttributes
+// for what secretSealKeyAttributes may be).
+func NewKeyStore(publicStorage storage.Backend, secretBackend types.SealingKeyProvider, secretSealKeyAttributes *types.KeyAttributes) *KeyStore {
 	return &KeyStore{
-		publicStorage: publicStorage,
-		secretBackend: secretBackend,
+		publicStorage:           publicStorage,
+		secretBackend:           secretBackend,
+		secretSealKeyAttributes: secretSealKeyAttributes,
 	}
+}
+
+// secretSealKeyAttributesFor returns the KeyAttributes to use as
+// SealOptions.KeyAttributes / UnsealOptions.KeyAttributes when sealing or
+// unsealing keyID's secret share.
+//
+// ks.secretSealKeyAttributes is nil when the secret backend needs no
+// KeyAttributes at all. When its CN is already set, it identifies a single
+// wrapping key reused for every FROST key in this store and is returned
+// unchanged. When its CN is empty, it is a template (currently produced
+// only by TPM2SecretSealKeyAttributes) and a clone with CN filled in from
+// keyID is returned instead, so each FROST key gets its own TPM-sealed
+// object identity -- sharing one CN across many FROST keys would make each
+// new Seal silently overwrite the TPM backend's stored copy of a previous
+// key's sealed object.
+func (ks *KeyStore) secretSealKeyAttributesFor(keyID string) *types.KeyAttributes {
+	if ks.secretSealKeyAttributes == nil {
+		return nil
+	}
+	if ks.secretSealKeyAttributes.CN != "" {
+		return ks.secretSealKeyAttributes
+	}
+	clone := *ks.secretSealKeyAttributes
+	clone.CN = secretSealCN(keyID)
+	return &clone
+}
+
+// secretSealCN names the per-key wrapping object a backend that seals
+// directly under a hierarchy key (TPM2's Platform SRK) creates for keyID's
+// secret share.
+func secretSealCN(keyID string) string {
+	return "frost-secret:" + keyID
+}
+
+// secretSealOptions builds the SealOptions StoreKeyPackage seals keyID's
+// secret share with.
+func (ks *KeyStore) secretSealOptions(keyID string) *types.SealOptions {
+	attrs := ks.secretSealKeyAttributesFor(keyID)
+	if attrs == nil {
+		return nil
+	}
+	return &types.SealOptions{KeyAttributes: attrs}
+}
+
+// secretUnsealOptions builds the UnsealOptions LoadKeyPackage unseals
+// keyID's secret share with.
+func (ks *KeyStore) secretUnsealOptions(keyID string) *types.UnsealOptions {
+	attrs := ks.secretSealKeyAttributesFor(keyID)
+	if attrs == nil {
+		return nil
+	}
+	return &types.UnsealOptions{KeyAttributes: attrs}
 }
 
 // keyPath returns the storage path for a key component.
@@ -104,6 +174,9 @@ func verificationSharePath(keyID string, participantID uint32) string {
 
 // StoreKeyPackage stores a FROST key package.
 func (ks *KeyStore) StoreKeyPackage(ctx context.Context, keyID string, pkg *KeyPackage, metadata *KeyMetadata) error {
+	if ks.secretBackend == nil || !ks.secretBackend.CanSeal() {
+		return &ConfigError{Field: "SecretBackend", Message: "must be configured and support sealing"}
+	}
 
 	// Store metadata
 	metadataBytes, err := json.Marshal(metadata)
@@ -127,29 +200,28 @@ func (ks *KeyStore) StoreKeyPackage(ctx context.Context, keyID string, pkg *KeyP
 		}
 	}
 
-	// Store secret share using the secret backend
-	// The secret backend handles encryption/protection
-	//
-	// KeyType is required by types.KeyAttributes.Validate, which a real
-	// backend (e.g. the software backend) enforces on GenerateKey; FROST is
-	// signing-only (RFC 9591), so KeyTypeSigning is the only correct value.
-	attrs := &types.KeyAttributes{
-		CN:        keyID,
-		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StoreFrost,
-		SealData:  types.NewSealData(pkg.SecretShare.Value),
-		FrostAttributes: &types.FrostAttributes{
-			Threshold:     metadata.Threshold,
-			Total:         metadata.Total,
-			Algorithm:     metadata.Algorithm,
-			ParticipantID: metadata.ParticipantID,
-		},
-	}
-
-	if _, err := ks.secretBackend.GenerateKey(ctx, attrs); err != nil {
+	// Seal the secret share using the secret backend's own native
+	// mechanism (TPM2: PCR-bound seal under the Platform SRK; PKCS#11/cloud
+	// KMS: AES-GCM under a provisioned symmetric wrapping key;
+	// software/PKCS#8: HKDF-derived AES-GCM key from a provisioned private
+	// key) and persist the resulting envelope in public storage -- sealing
+	// is exactly what makes that safe.
+	sealed, err := ks.secretBackend.Seal(ctx, pkg.SecretShare.Value, ks.secretSealOptions(keyID))
+	if err != nil {
 		// Clean up public components on failure
 		cleanupErr := ks.DeleteKey(ctx, keyID)
-		return errors.Join(&errs.Wrapped{Msg: "failed to store secret share", Err: err}, cleanupErr)
+		return errors.Join(&errs.Wrapped{Msg: "failed to seal secret share", Err: err}, cleanupErr)
+	}
+
+	sealedBytes, err := json.Marshal(sealed)
+	if err != nil {
+		cleanupErr := ks.DeleteKey(ctx, keyID)
+		return errors.Join(&errs.Wrapped{Msg: "failed to marshal sealed secret share", Err: err}, cleanupErr)
+	}
+
+	if err := ks.publicStorage.Put(ctx, keyPath(keyID, secretShareFile), sealedBytes); err != nil {
+		cleanupErr := ks.DeleteKey(ctx, keyID)
+		return errors.Join(&errs.Wrapped{Msg: "failed to store sealed secret share", Err: err}, cleanupErr)
 	}
 
 	return nil
@@ -194,29 +266,24 @@ func (ks *KeyStore) LoadKeyPackage(ctx context.Context, keyID string, participan
 		return nil, nil, &errs.Message{Msg: fmt.Sprintf("insufficient verification shares: have %d, need at least %d", len(verificationShares), metadata.Threshold)}
 	}
 
-	// Load secret share from secret backend
-	attrs := &types.KeyAttributes{
-		CN:        keyID,
-		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StoreFrost,
-		FrostAttributes: &types.FrostAttributes{
-			Threshold:     metadata.Threshold,
-			Total:         metadata.Total,
-			Algorithm:     metadata.Algorithm,
-			ParticipantID: metadata.ParticipantID,
-		},
+	// Load and unseal the secret share from the secret backend.
+	if ks.secretBackend == nil || !ks.secretBackend.CanSeal() {
+		return nil, nil, &ConfigError{Field: "SecretBackend", Message: "must be configured and support sealing"}
 	}
 
-	secretKey, err := ks.secretBackend.GetKey(ctx, attrs)
+	sealedBytes, err := ks.publicStorage.Get(ctx, keyPath(keyID, secretShareFile))
 	if err != nil {
-		return nil, nil, &errs.Wrapped{Msg: "failed to load secret share", Err: err}
+		return nil, nil, &errs.Wrapped{Msg: "failed to load sealed secret share", Err: err}
 	}
 
-	// Extract secret bytes from the returned key
-	// The secret backend may return the key in different formats
-	secretBytes, ok := secretKey.([]byte)
-	if !ok {
-		return nil, nil, &errs.Message{Msg: fmt.Sprintf("unexpected secret key type: %T", secretKey)}
+	var sealed types.SealedData
+	if err := json.Unmarshal(sealedBytes, &sealed); err != nil {
+		return nil, nil, &errs.Wrapped{Msg: "failed to unmarshal sealed secret share", Err: err}
+	}
+
+	secretBytes, err := ks.secretBackend.Unseal(ctx, &sealed, ks.secretUnsealOptions(keyID))
+	if err != nil {
+		return nil, nil, &errs.Wrapped{Msg: "failed to unseal secret share", Err: err}
 	}
 
 	// Use participant ID from metadata if not specified (0 means use metadata)
@@ -294,17 +361,14 @@ func (ks *KeyStore) LoadPublicKeyPackage(ctx context.Context, keyID string) (*Pu
 //
 // Deletion order is chosen so that a failure partway through leaves a key a
 // retried DeleteKey can still find and finish deleting, rather than an
-// orphaned remainder no path can reach: the secret share goes first
-// (through the secret backend), then the verification shares and the group
-// public key, and the metadata record — the one component KeyExists,
-// LoadKeyPackage, and this method itself all use to find the key at all —
-// goes last. Every failure is propagated (joined with errors.Join when more
-// than one step fails) rather than ignored; a retry after a partial failure
-// resumes at whichever step did not yet report success, since an already
-// deleted component's own "not found" is not itself treated as failure
-// (storage.ErrNotFound for public components; backend.ErrKeyNotFound, the
-// one typed not-found errors.Is can match across every current secret
-// backend implementation, for the secret share).
+// orphaned remainder no path can reach: the sealed secret share goes first,
+// then the verification shares and the group public key, and the metadata
+// record — the one component KeyExists, LoadKeyPackage, and this method
+// itself all use to find the key at all — goes last. Every failure is
+// propagated (joined with errors.Join when more than one step fails)
+// rather than ignored; a retry after a partial failure resumes at whichever
+// step did not yet report success, since an already deleted component's own
+// storage.ErrNotFound is not itself treated as failure.
 func (ks *KeyStore) DeleteKey(ctx context.Context, keyID string) error {
 	metadataBytes, err := ks.publicStorage.Get(ctx, keyPath(keyID, metadataFile))
 	if err != nil {
@@ -318,19 +382,8 @@ func (ks *KeyStore) DeleteKey(ctx context.Context, keyID string) error {
 		return &errs.Wrapped{Msg: "failed to unmarshal metadata", Err: err}
 	}
 
-	// Delete the secret share first, through the secret backend.
-	attrs := &types.KeyAttributes{
-		CN:        keyID,
-		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StoreFrost,
-		FrostAttributes: &types.FrostAttributes{
-			Threshold:     metadata.Threshold,
-			Total:         metadata.Total,
-			Algorithm:     metadata.Algorithm,
-			ParticipantID: metadata.ParticipantID,
-		},
-	}
-	if err := ks.secretBackend.DeleteKey(ctx, attrs); err != nil && !errors.Is(err, backend.ErrKeyNotFound) {
+	// Delete the sealed secret share first.
+	if err := ks.publicStorage.Delete(ctx, keyPath(keyID, secretShareFile)); err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return &errs.Wrapped{Msg: "failed to delete secret share", Err: err}
 	}
 

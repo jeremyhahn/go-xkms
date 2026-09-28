@@ -104,6 +104,9 @@ it.
 | `xkmsctl user register ... --role readonly` fails | `readonly` is not a real role — the help text is wrong (see cli.md) | use one of `so`, `admin`, `operator`, `user`, `auditor`, `custodian` |
 | new user isn't `admin` even though you passed `--role admin` on the very first registration | irrelevant — the first user is always `admin` regardless of the flag | nothing to fix |
 | an `operator`/`user`/`auditor`/`custodian` can't reach SSH/PIV/password-vault/seal operations | those built-in roles are not automatically extended to xkms's own hardware surfaces | grant `admin`, or build a custom role via the SDK |
+| an identity provider puts `admin` or `so` in the token's `roles`/`groups` claim, but the caller still gets `403` | xkms and qrdb match a role by its qrdb identifier, never by name: a claimed role name confers nothing | create the account in qrdb with the role (`xkmsctl user register --role ...`); authentication then carries the role's identifier |
+| a tenant's own Security Officer gets `403 tenant not found` or `503 tenant barrier is sealed` | only system-tenant identities are cross-tenant; a tenant officer is scoped to its tenant like any other tenant identity | register the tenant, or unseal its barrier, first |
+| an `admin` or `so` changes another user's shared vault entry, but an `operator` gets `not the owner` | only the owner, or a tenant Admin or SO, may change a shared entry | as designed |
 
 ## Tenant admins stay in their tenant
 

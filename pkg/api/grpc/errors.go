@@ -34,6 +34,16 @@ import (
 // explicitly.
 var ErrAuthenticatorRequired = errors.New("grpc: authenticator is required")
 
+// errAuthenticationFailed is the fixed, generic message the authentication
+// interceptors (server.go's authenticationUnaryInterceptor and
+// authenticationStreamInterceptor) return to the client when the configured
+// auth.Authenticator rejects a request's credentials, matching
+// pkg/api/rest/middleware.go's AuthenticationMiddleware wording. The
+// rejection reason -- a user-store or barrier failure, or why a certificate
+// was refused -- is never echoed to the caller; each interceptor logs it
+// server-side instead (go-xkms#1103).
+const errAuthenticationFailed = "authentication failed"
+
 // notLeaderReason is the ErrorInfo.Reason set on a not-leader gRPC status so
 // clients can branch on it programmatically without parsing the message.
 const notLeaderReason = "NOT_LEADER"
