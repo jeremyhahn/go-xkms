@@ -60,8 +60,9 @@ func (s *RestService) CertificateHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/pem-certificate-chain")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte(certificate.PEM)); err != nil {
+	if _, err := w.Write([]byte(certificate.PEM)); err != nil { // #nosec G705 -- non-HTML content-type (nosniff); stored PEM certificate chain, not attacker-controlled markup
 		s.logger.Error("failed to write certificate response", "error", err.Error())
 	}
 }
