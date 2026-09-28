@@ -29,7 +29,6 @@ package main
 import (
 	"bytes"
 	"reflect"
-	"runtime"
 	"testing"
 	"unsafe"
 
@@ -51,11 +50,10 @@ func TestWriteCAttributeArray_DecodeErrorReportsUnavailable(t *testing.T) {
 	ft := fn.Type()
 
 	cAttrBuf := newAlignedBuf(cAttributeSize)
-	buildCAttribute(cAttrBuf, 0, module.CKA_WRAP_TEMPLATE, []byte{0xFF}) // pValue non-nil, so decode is reached.
+	buildCAttribute(t, cAttrBuf, 0, module.CKA_WRAP_TEMPLATE, []byte{0xFF}) // pValue non-nil, so decode is reached.
 	malformed := []byte{0xFF, 0xFF, 0xFF, 0xFF}
 
 	out := fn.Call([]reflect.Value{writeCAttributeArrayPtr(cAttrBuf, ft), reflect.ValueOf(malformed)})
-	runtime.KeepAlive(cAttrBuf)
 	if out[0].Bool() {
 		t.Error("writeCAttributeArray(malformed encoding) bufferTooSmall = true, want false")
 	}
@@ -76,14 +74,12 @@ func TestWriteCAttributeArray_OuterBufferTooSmall(t *testing.T) {
 	// CK_ATTRIBUTE (24 bytes) the encoded single-entry array requires.
 	cAttrBuf := newAlignedBuf(cAttributeSize)
 	undersizedOuter := make([]byte, 1)
-	buildCAttribute(cAttrBuf, 0, module.CKA_WRAP_TEMPLATE, undersizedOuter)
+	buildCAttribute(t, cAttrBuf, 0, module.CKA_WRAP_TEMPLATE, undersizedOuter)
 
 	inner := []module.Attribute{{Type: module.CKA_LABEL, Value: []byte("inner")}}
 	encoded := module.EncodeAttributeArray(inner)
 
 	out := fn.Call([]reflect.Value{writeCAttributeArrayPtr(cAttrBuf, ft), reflect.ValueOf(encoded)})
-	runtime.KeepAlive(cAttrBuf)
-	runtime.KeepAlive(undersizedOuter)
 	if !out[0].Bool() {
 		t.Error("writeCAttributeArray(outer buffer too small) bufferTooSmall = false, want true")
 	}
@@ -100,18 +96,15 @@ func TestWriteCAttributeArray_ElementCopiesRealValue(t *testing.T) {
 	ft := fn.Type()
 
 	labelDest := make([]byte, 5) // exactly "inner"'s length.
-	outerElems := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL, Value: labelDest}})
+	outerElems := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL, Value: labelDest}})
 
 	cAttrBuf := newAlignedBuf(cAttributeSize)
-	buildCAttribute(cAttrBuf, 0, module.CKA_WRAP_TEMPLATE, outerElems)
+	buildCAttribute(t, cAttrBuf, 0, module.CKA_WRAP_TEMPLATE, outerElems)
 
 	inner := []module.Attribute{{Type: module.CKA_LABEL, Value: []byte("inner")}}
 	encoded := module.EncodeAttributeArray(inner)
 
 	out := fn.Call([]reflect.Value{writeCAttributeArrayPtr(cAttrBuf, ft), reflect.ValueOf(encoded)})
-	runtime.KeepAlive(cAttrBuf)
-	runtime.KeepAlive(outerElems)
-	runtime.KeepAlive(labelDest)
 	if out[0].Bool() {
 		t.Error("writeCAttributeArray(element fits) bufferTooSmall = true, want false")
 	}
@@ -133,18 +126,15 @@ func TestWriteCAttributeArray_ElementBufferTooSmall(t *testing.T) {
 	ft := fn.Type()
 
 	labelDest := make([]byte, 2) // shorter than "inner" (5 bytes).
-	outerElems := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL, Value: labelDest}})
+	outerElems := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL, Value: labelDest}})
 
 	cAttrBuf := newAlignedBuf(cAttributeSize)
-	buildCAttribute(cAttrBuf, 0, module.CKA_WRAP_TEMPLATE, outerElems)
+	buildCAttribute(t, cAttrBuf, 0, module.CKA_WRAP_TEMPLATE, outerElems)
 
 	inner := []module.Attribute{{Type: module.CKA_LABEL, Value: []byte("inner")}}
 	encoded := module.EncodeAttributeArray(inner)
 
 	out := fn.Call([]reflect.Value{writeCAttributeArrayPtr(cAttrBuf, ft), reflect.ValueOf(encoded)})
-	runtime.KeepAlive(cAttrBuf)
-	runtime.KeepAlive(outerElems)
-	runtime.KeepAlive(labelDest)
 	if !out[0].Bool() {
 		t.Error("writeCAttributeArray(element too small) bufferTooSmall = false, want true")
 	}

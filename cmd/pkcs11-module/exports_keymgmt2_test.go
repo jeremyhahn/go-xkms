@@ -43,7 +43,6 @@ package main
 
 import (
 	"reflect"
-	"runtime"
 	"testing"
 	"unsafe"
 
@@ -145,7 +144,6 @@ func TestKeyManagement_InvalidSessionIsReportedWithAWellFormedMechanism(t *testi
 			ft := reflect.ValueOf(tc.fn).Type()
 			mech := cMechanismPtr(buf, ft, 1)
 			out := reflect.ValueOf(tc.fn).Call(tc.args(ft, mech))
-			runtime.KeepAlive(buf)
 
 			if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_SESSION_HANDLE_INVALID {
 				t.Fatalf("%s(unknown session, well-formed mechanism) = %s, want CKR_SESSION_HANDLE_INVALID", tc.name, rv)

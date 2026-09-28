@@ -38,11 +38,10 @@ func TestCDecrypt_QueryModeAndBufferTooSmall(t *testing.T) {
 	plaintext := []byte("plaintext for the C_Decrypt two-call idiom probe")
 	ciphertext := encryptOnceViaC(t, session, key, gcmRoundTripIV, plaintext)
 
-	decryptMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	decryptMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	if rv := decryptInitViaC(t, session, key, decryptMechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_DecryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(decryptMechBuf)
 
 	fn := reflect.ValueOf(C_Decrypt)
 	ft := fn.Type()
@@ -94,7 +93,7 @@ func TestCWrapKey_QueryModeAndBufferTooSmall(t *testing.T) {
 	wrappingKey := generateAESKeyViaC(t, session, "wrapkey-querymode-wrapping")
 	targetKey := generateAESKeyViaC(t, session, "wrapkey-querymode-target")
 
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	fn := reflect.ValueOf(C_WrapKey)
 	ft := fn.Type()
 
@@ -107,7 +106,6 @@ func TestCWrapKey_QueryModeAndBufferTooSmall(t *testing.T) {
 		reflect.Zero(ft.In(4)),
 		queryLen,
 	})
-	runtime.KeepAlive(mechBuf)
 	if rv := module.CK_RV(qout[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_WrapKey(pWrappedKey=NULL) = %s, want CKR_OK", rv)
 	}
@@ -120,7 +118,7 @@ func TestCWrapKey_QueryModeAndBufferTooSmall(t *testing.T) {
 	// module_authwrap.go's guardGCMNonce doc comment (quoted in
 	// exports_cryptoroundtrip_test.go) explains why the same (key, IV) pair
 	// cannot be reused for a second real wrap.
-	undersizedMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams([]byte("wrapkey-iv-2"), 96, nil, 128))
+	undersizedMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, []byte("wrapkey-iv-2"), 96, nil, 128))
 	undersized := make([]byte, 1)
 	smallLen := reflect.New(ft.In(5).Elem())
 	smallLen.Elem().SetUint(1)
@@ -132,7 +130,6 @@ func TestCWrapKey_QueryModeAndBufferTooSmall(t *testing.T) {
 		setBufferPtr(undersized, ft, 4),
 		smallLen,
 	})
-	runtime.KeepAlive(undersizedMechBuf)
 	runtime.KeepAlive(undersized)
 	if rv := module.CK_RV(sout[0].Uint()); rv != module.CKR_BUFFER_TOO_SMALL {
 		t.Fatalf("C_WrapKey(1-byte buffer) = %s, want CKR_BUFFER_TOO_SMALL", rv)
@@ -150,7 +147,7 @@ func TestCWrapKey_MalformedMechanismParamIsRefused(t *testing.T) {
 	f := newTestFixture(t)
 
 	shortParam := make([]byte, 4) // CK_GCM_PARAMS is larger than 4 bytes.
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, shortParam)
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, shortParam)
 
 	fn := reflect.ValueOf(C_WrapKey)
 	ft := fn.Type()
@@ -162,8 +159,6 @@ func TestCWrapKey_MalformedMechanismParamIsRefused(t *testing.T) {
 		reflect.Zero(ft.In(4)),
 		allocOf(ft, 5),
 	})
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(shortParam)
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_MECHANISM_PARAM_INVALID {
 		t.Fatalf("C_WrapKey(short CK_GCM_PARAMS) = %s, want CKR_MECHANISM_PARAM_INVALID", rv)
 	}

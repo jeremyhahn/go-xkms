@@ -41,7 +41,7 @@ func TestCWrapKeyAuthenticated_MalformedMechanismParamIsRefused(t *testing.T) {
 	f := newTestFixture(t)
 
 	shortParam := make([]byte, 8) // CK_GCM_MESSAGE_PARAMS is 48 bytes.
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, shortParam)
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, shortParam)
 
 	fn := reflect.ValueOf(C_WrapKeyAuthenticated)
 	ft := fn.Type()
@@ -55,8 +55,6 @@ func TestCWrapKeyAuthenticated_MalformedMechanismParamIsRefused(t *testing.T) {
 		reflect.Zero(ft.In(6)),
 		allocOf(ft, 7),
 	})
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(shortParam)
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_MECHANISM_PARAM_INVALID {
 		t.Fatalf("C_WrapKeyAuthenticated(short CK_GCM_MESSAGE_PARAMS) = %s, want CKR_MECHANISM_PARAM_INVALID", rv)
 	}
@@ -69,7 +67,7 @@ func TestCWrapKeyAuthenticated_MalformedMechanismParamIsRefused(t *testing.T) {
 // exports_v32.go.
 func TestCWrapKeyAuthenticated_InvalidWrappingKeyIsRefused(t *testing.T) {
 	f := newTestFixture(t)
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMMessageParams(nil, 0, module.CKG_NO_GENERATE, nil, 0))
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMMessageParams(t, nil, 0, module.CKG_NO_GENERATE, nil, 0))
 
 	fn := reflect.ValueOf(C_WrapKeyAuthenticated)
 	ft := fn.Type()
@@ -110,7 +108,6 @@ func TestCWrapKeyAuthenticated_InvalidWrappingKeyIsRefused(t *testing.T) {
 		}
 	})
 
-	runtime.KeepAlive(mechBuf)
 }
 
 // TestCUnwrapKeyAuthenticated_InvalidUnwrappingKeyIsRefused proves an
@@ -118,9 +115,9 @@ func TestCWrapKeyAuthenticated_InvalidWrappingKeyIsRefused(t *testing.T) {
 // CKR_UNWRAPPING_KEY_HANDLE_INVALID.
 func TestCUnwrapKeyAuthenticated_InvalidUnwrappingKeyIsRefused(t *testing.T) {
 	f := newTestFixture(t)
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMMessageParams([]byte("authwrap-iv1"), 0, module.CKG_NO_GENERATE, nil, 0))
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMMessageParams(t, []byte("authwrap-iv1"), 0, module.CKG_NO_GENERATE, nil, 0))
 	wrappedKey := make([]byte, 32)
-	template := buildCAttributeArray([]module.Attribute{
+	template := buildCAttributeArray(t, []module.Attribute{
 		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
 		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
 	})
@@ -139,9 +136,7 @@ func TestCUnwrapKeyAuthenticated_InvalidUnwrappingKeyIsRefused(t *testing.T) {
 		scalarOf(ft, 8, 0),
 		allocOf(ft, 9),
 	})
-	runtime.KeepAlive(mechBuf)
 	runtime.KeepAlive(wrappedKey)
-	runtime.KeepAlive(template)
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_UNWRAPPING_KEY_HANDLE_INVALID {
 		t.Fatalf("C_UnwrapKeyAuthenticated(invalid unwrapping key) = %s, want CKR_UNWRAPPING_KEY_HANDLE_INVALID", rv)
 	}
@@ -158,7 +153,7 @@ func TestCUnwrapKeyAuthenticated_ArgumentValidation(t *testing.T) {
 	wrappedKey := make([]byte, 32)
 
 	t.Run("NULL associated data with nonzero length", func(t *testing.T) {
-		mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMMessageParams([]byte("authwrap-ivvv"), 0, module.CKG_NO_GENERATE, nil, 0))
+		mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMMessageParams(t, []byte("authwrap-ivvv"), 0, module.CKG_NO_GENERATE, nil, 0))
 		fn := reflect.ValueOf(C_UnwrapKeyAuthenticated)
 		ft := fn.Type()
 		out := fn.Call([]reflect.Value{
@@ -173,7 +168,6 @@ func TestCUnwrapKeyAuthenticated_ArgumentValidation(t *testing.T) {
 			scalarOf(ft, 8, 16),
 			allocOf(ft, 9),
 		})
-		runtime.KeepAlive(mechBuf)
 		runtime.KeepAlive(wrappedKey)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_ARGUMENTS_BAD {
 			t.Fatalf("C_UnwrapKeyAuthenticated(pAssociatedData=NULL, len=16) = %s, want CKR_ARGUMENTS_BAD", rv)
@@ -182,7 +176,7 @@ func TestCUnwrapKeyAuthenticated_ArgumentValidation(t *testing.T) {
 
 	t.Run("malformed mechanism param", func(t *testing.T) {
 		shortParam := make([]byte, 8)
-		mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, shortParam)
+		mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, shortParam)
 		fn := reflect.ValueOf(C_UnwrapKeyAuthenticated)
 		ft := fn.Type()
 		out := fn.Call([]reflect.Value{
@@ -197,8 +191,6 @@ func TestCUnwrapKeyAuthenticated_ArgumentValidation(t *testing.T) {
 			scalarOf(ft, 8, 0),
 			allocOf(ft, 9),
 		})
-		runtime.KeepAlive(mechBuf)
-		runtime.KeepAlive(shortParam)
 		runtime.KeepAlive(wrappedKey)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_MECHANISM_PARAM_INVALID {
 			t.Fatalf("C_UnwrapKeyAuthenticated(short CK_GCM_MESSAGE_PARAMS) = %s, want CKR_MECHANISM_PARAM_INVALID", rv)
@@ -206,8 +198,8 @@ func TestCUnwrapKeyAuthenticated_ArgumentValidation(t *testing.T) {
 	})
 
 	t.Run("template count overflow", func(t *testing.T) {
-		mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMMessageParams([]byte("authwrap-ivvv"), 0, module.CKG_NO_GENERATE, nil, 0))
-		template := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}})
+		mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMMessageParams(t, []byte("authwrap-ivvv"), 0, module.CKG_NO_GENERATE, nil, 0))
+		template := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}})
 		fn := reflect.ValueOf(C_UnwrapKeyAuthenticated)
 		ft := fn.Type()
 		out := fn.Call([]reflect.Value{
@@ -222,8 +214,6 @@ func TestCUnwrapKeyAuthenticated_ArgumentValidation(t *testing.T) {
 			scalarOf(ft, 8, 0),
 			allocOf(ft, 9),
 		})
-		runtime.KeepAlive(mechBuf)
-		runtime.KeepAlive(template)
 		runtime.KeepAlive(wrappedKey)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_ARGUMENTS_BAD {
 			t.Fatalf("C_UnwrapKeyAuthenticated(ulAttributeCount > MaxInt32) = %s, want CKR_ARGUMENTS_BAD", rv)

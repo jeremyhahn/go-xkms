@@ -39,10 +39,12 @@ package main
 // dispatch and the ciphertext/signature bytes actually crossing the cgo
 // boundary.
 //
-// See exports_v32_kem_roundtrip_test.go's package comment for why every
-// template or mechanism this file builds with buildCAttributeArray/
-// buildCMechanismWithParam keeps its source []module.Attribute or parameter
-// []byte alive with runtime.KeepAlive independently of the returned buffer.
+// Every template or mechanism this file builds with buildCAttributeArray/
+// buildCMechanismWithParam has its pointer-bearing fields pinned for the rest
+// of the test by putPtr (exports_mechdecode_test.go's runtime.Pinner-backed
+// pin), so neither the returned buffer nor its source []module.Attribute or
+// parameter []byte needs an explicit runtime.KeepAlive; see
+// exports_v32_kem_roundtrip_test.go's package comment and #1197.
 
 import (
 	"bytes"
@@ -59,13 +61,13 @@ import (
 var messageGCMIV = []byte("message-ivv!")
 
 // messageAESGCMMechanism builds the CKM_AES_GCM mechanism buffer this file's
-// message-based encrypt/decrypt Init calls carry, keeping the CK_GCM_PARAMS
-// buffer it points into alive for as long as the returned mechanism buffer is
-// in use (see exports_v32_kem_roundtrip_test.go's package comment on why the
-// source buffer, not just the CK_MECHANISM record, must stay reachable).
-func messageAESGCMMechanism() (mechBuf, gcmParams []byte) {
-	gcmParams = buildGCMParams(messageGCMIV, 96, nil, 128)
-	return buildCMechanismWithParam(module.CKM_AES_GCM, gcmParams), gcmParams
+// message-based encrypt/decrypt Init calls carry. buildGCMParams and
+// buildCMechanismWithParam pin every pointer they write for the rest of t
+// (exports_mechdecode_test.go's putPtr/pin), so the returned buffers stay
+// valid regardless of how long they remain in use.
+func messageAESGCMMechanism(t testing.TB) (mechBuf, gcmParams []byte) {
+	gcmParams = buildGCMParams(t, messageGCMIV, 96, nil, 128)
+	return buildCMechanismWithParam(t, module.CKM_AES_GCM, gcmParams), gcmParams
 }
 
 // messageInitViaC drives one of the four message-based Init functions
@@ -81,7 +83,6 @@ func messageInitViaC(t *testing.T, fn any, session module.SessionHandle, mechBuf
 		cMechanismPtr(mechBuf, ft, 1),
 		scalarOf(ft, 2, uint64(key)),
 	})
-	runtime.KeepAlive(mechBuf)
 	return module.CK_RV(out[0].Uint())
 }
 
@@ -167,11 +168,10 @@ func TestMessageEncryptDecrypt_RoundTrip(t *testing.T) {
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-roundtrip-aes")
 
-	encMechBuf, encGCMParams := messageAESGCMMechanism()
+	encMechBuf, _ := messageAESGCMMechanism(t)
 	if rv := messageInitViaC(t, C_MessageEncryptInit, session, encMechBuf, key); rv != module.CKR_OK {
 		t.Fatalf("C_MessageEncryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(encGCMParams)
 
 	aad := []byte("message-associated-data")
 	plaintext := []byte("a single message encrypted end to end through the cgo boundary")
@@ -191,11 +191,10 @@ func TestMessageEncryptDecrypt_RoundTrip(t *testing.T) {
 		t.Fatalf("C_MessageEncryptFinal = %s, want CKR_OK or CKR_OPERATION_NOT_INITIALIZED", rv)
 	}
 
-	decMechBuf, decGCMParams := messageAESGCMMechanism()
+	decMechBuf, _ := messageAESGCMMechanism(t)
 	if rv := messageInitViaC(t, C_MessageDecryptInit, session, decMechBuf, key); rv != module.CKR_OK {
 		t.Fatalf("C_MessageDecryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(decGCMParams)
 	recovered, rv := decryptMessageViaC(t, session, aad, ciphertext)
 	if rv != module.CKR_OK {
 		t.Fatalf("C_DecryptMessage = %s, want CKR_OK", rv)
@@ -209,11 +208,10 @@ func TestMessageEncryptDecrypt_RoundTrip(t *testing.T) {
 	}
 
 	t.Run("tampered ciphertext is rejected", func(t *testing.T) {
-		tamperMechBuf, tamperGCMParams := messageAESGCMMechanism()
+		tamperMechBuf, _ := messageAESGCMMechanism(t)
 		if rv := messageInitViaC(t, C_MessageDecryptInit, session, tamperMechBuf, key); rv != module.CKR_OK {
 			t.Fatalf("C_MessageDecryptInit = %s, want CKR_OK", rv)
 		}
-		runtime.KeepAlive(tamperGCMParams)
 		tampered := append([]byte(nil), ciphertext...)
 		tampered[0] ^= 0xFF
 		if _, rv := decryptMessageViaC(t, session, aad, tampered); rv != module.CKR_ENCRYPTED_DATA_INVALID {
@@ -318,11 +316,10 @@ func TestMultiPartMessageEncryptDecrypt_RoundTrip(t *testing.T) {
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-multipart-aes")
 
-	encMechBuf, encGCMParams := messageAESGCMMechanism()
+	encMechBuf, _ := messageAESGCMMechanism(t)
 	if rv := messageInitViaC(t, C_MessageEncryptInit, session, encMechBuf, key); rv != module.CKR_OK {
 		t.Fatalf("C_MessageEncryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(encGCMParams)
 
 	aad := []byte("multipart-associated-data")
 	plaintext := []byte("multi-part-message-plaintext-data")
@@ -335,11 +332,10 @@ func TestMultiPartMessageEncryptDecrypt_RoundTrip(t *testing.T) {
 	}
 	_ = messageFinalViaC(t, C_MessageEncryptFinal, session)
 
-	decMechBuf, decGCMParams := messageAESGCMMechanism()
+	decMechBuf, _ := messageAESGCMMechanism(t)
 	if rv := messageInitViaC(t, C_MessageDecryptInit, session, decMechBuf, key); rv != module.CKR_OK {
 		t.Fatalf("C_MessageDecryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(decGCMParams)
 	recovered, rv := decryptMessageBeginNextViaC(t, session, aad, ciphertext)
 	if rv != module.CKR_OK {
 		t.Fatalf("C_DecryptMessageBegin/Next(final) = %s, want CKR_OK", rv)
@@ -628,11 +624,10 @@ func TestCEncryptMessage_BufferTooSmall(t *testing.T) {
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-buffertoosmall-aes")
 
-	mechBuf, gcmParams := messageAESGCMMechanism()
+	mechBuf, _ := messageAESGCMMechanism(t)
 	if rv := messageInitViaC(t, C_MessageEncryptInit, session, mechBuf, key); rv != module.CKR_OK {
 		t.Fatalf("C_MessageEncryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(gcmParams)
 
 	plaintext := []byte("plaintext for the message buffer-too-small probe")
 	fn := reflect.ValueOf(C_EncryptMessage)
@@ -690,11 +685,10 @@ func TestCEncryptMessageNext_NonFinalQueryModeReportsZero(t *testing.T) {
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-nonfinal-query-aes")
 
-	mechBuf, gcmParams := messageAESGCMMechanism()
+	mechBuf, _ := messageAESGCMMechanism(t)
 	if rv := messageInitViaC(t, C_MessageEncryptInit, session, mechBuf, key); rv != module.CKR_OK {
 		t.Fatalf("C_MessageEncryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(gcmParams)
 
 	beginFn := reflect.ValueOf(C_EncryptMessageBegin)
 	bft := beginFn.Type()
@@ -739,7 +733,7 @@ func TestCDecryptMessageNext_NonFinalQueryModeReportsZero(t *testing.T) {
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-decrypt-nonfinal-query-aes")
 
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	if rv := messageInitViaC(t, C_MessageDecryptInit, session, mechBuf, key); rv != module.CKR_OK {
 		t.Fatalf("C_MessageDecryptInit = %s, want CKR_OK", rv)
 	}
@@ -800,11 +794,10 @@ func TestCEncryptMessageNext_FinalQueryModeAndBufferTooSmall(t *testing.T) {
 		// second real encryption under the same (key, IV) pair -- which the
 		// "buffer too small" subtest below would otherwise be.
 		key := generateAESKeyViaC(t, session, "message-encryptnext-final-query-aes")
-		mechBuf, gcmParams := messageAESGCMMechanism()
+		mechBuf, _ := messageAESGCMMechanism(t)
 		if rv := messageInitViaC(t, C_MessageEncryptInit, session, mechBuf, key); rv != module.CKR_OK {
 			t.Fatalf("C_MessageEncryptInit = %s, want CKR_OK", rv)
 		}
-		runtime.KeepAlive(gcmParams)
 		bout := beginFn.Call([]reflect.Value{
 			scalarOf(bft, 0, uint64(session)), reflect.Zero(bft.In(1)), scalarOf(bft, 2, 0), reflect.Zero(bft.In(3)), scalarOf(bft, 4, 0),
 		})
@@ -830,11 +823,10 @@ func TestCEncryptMessageNext_FinalQueryModeAndBufferTooSmall(t *testing.T) {
 
 	t.Run("buffer too small", func(t *testing.T) {
 		key := generateAESKeyViaC(t, session, "message-encryptnext-final-small-aes")
-		mechBuf, gcmParams := messageAESGCMMechanism()
+		mechBuf, _ := messageAESGCMMechanism(t)
 		if rv := messageInitViaC(t, C_MessageEncryptInit, session, mechBuf, key); rv != module.CKR_OK {
 			t.Fatalf("C_MessageEncryptInit = %s, want CKR_OK", rv)
 		}
-		runtime.KeepAlive(gcmParams)
 		bout := beginFn.Call([]reflect.Value{
 			scalarOf(bft, 0, uint64(session)), reflect.Zero(bft.In(1)), scalarOf(bft, 2, 0), reflect.Zero(bft.In(3)), scalarOf(bft, 4, 0),
 		})
@@ -876,7 +868,7 @@ func TestCDecryptMessageNext_FinalQueryModeAndBufferTooSmall(t *testing.T) {
 	bft := beginFn.Type()
 	nextFn := reflect.ValueOf(C_DecryptMessageNext)
 	nft := nextFn.Type()
-	decMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	decMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 
 	t.Run("query mode", func(t *testing.T) {
 		if rv := messageInitViaC(t, C_MessageDecryptInit, session, decMechBuf, key); rv != module.CKR_OK {
@@ -934,7 +926,6 @@ func TestCDecryptMessageNext_FinalQueryModeAndBufferTooSmall(t *testing.T) {
 		}
 	})
 
-	runtime.KeepAlive(decMechBuf)
 }
 
 // TestCEncryptMessage_BufferTooSmall for C_DecryptMessage.
@@ -947,7 +938,7 @@ func TestCDecryptMessage_BufferTooSmall(t *testing.T) {
 
 	// The decrypt mechanism's IV must match the one encryptOnceViaC used
 	// (gcmRoundTripIV), not messageAESGCMMechanism's own messageGCMIV.
-	ivMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	ivMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	if rv := messageInitViaC(t, C_MessageDecryptInit, session, ivMechBuf, key); rv != module.CKR_OK {
 		t.Fatalf("C_MessageDecryptInit = %s, want CKR_OK", rv)
 	}
@@ -1199,11 +1190,10 @@ func TestCEncryptMessage_QueryModeAndMalformedParam(t *testing.T) {
 	key := generateAESKeyViaC(t, session, "message-encrypt-querymode-aes")
 
 	t.Run("query mode", func(t *testing.T) {
-		mechBuf, gcmParams := messageAESGCMMechanism()
+		mechBuf, _ := messageAESGCMMechanism(t)
 		if rv := messageInitViaC(t, C_MessageEncryptInit, session, mechBuf, key); rv != module.CKR_OK {
 			t.Fatalf("C_MessageEncryptInit = %s, want CKR_OK", rv)
 		}
-		runtime.KeepAlive(gcmParams)
 
 		plaintext := []byte("plaintext for the query-mode probe")
 		fn := reflect.ValueOf(C_EncryptMessage)
@@ -1234,11 +1224,10 @@ func TestCEncryptMessage_QueryModeAndMalformedParam(t *testing.T) {
 	})
 
 	t.Run("malformed mechanism-parameter", func(t *testing.T) {
-		mechBuf, gcmParams := messageAESGCMMechanism()
+		mechBuf, _ := messageAESGCMMechanism(t)
 		if rv := messageInitViaC(t, C_MessageEncryptInit, session, mechBuf, key); rv != module.CKR_OK {
 			t.Fatalf("C_MessageEncryptInit = %s, want CKR_OK", rv)
 		}
-		runtime.KeepAlive(gcmParams)
 
 		plaintext := []byte("plaintext")
 		shortParam := make([]byte, 4) // CK_GCM_MESSAGE_PARAMS is 48 bytes.
@@ -1272,7 +1261,7 @@ func TestCDecryptMessage_QueryModeAndMalformedParam(t *testing.T) {
 	ciphertext := encryptOnceViaC(t, session, key, gcmRoundTripIV, plaintext)
 
 	t.Run("query mode", func(t *testing.T) {
-		mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+		mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 		if rv := messageInitViaC(t, C_MessageDecryptInit, session, mechBuf, key); rv != module.CKR_OK {
 			t.Fatalf("C_MessageDecryptInit = %s, want CKR_OK", rv)
 		}
@@ -1304,7 +1293,7 @@ func TestCDecryptMessage_QueryModeAndMalformedParam(t *testing.T) {
 	})
 
 	t.Run("malformed mechanism-parameter", func(t *testing.T) {
-		mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+		mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 		if rv := messageInitViaC(t, C_MessageDecryptInit, session, mechBuf, key); rv != module.CKR_OK {
 			t.Fatalf("C_MessageDecryptInit = %s, want CKR_OK", rv)
 		}
@@ -1337,11 +1326,10 @@ func TestCDecryptMessage_QueryModeAndMalformedParam(t *testing.T) {
 func TestCEncryptMessageBegin_MalformedParamIsRefused(t *testing.T) {
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-encryptbegin-malformed-aes")
-	mechBuf, gcmParams := messageAESGCMMechanism()
+	mechBuf, _ := messageAESGCMMechanism(t)
 	if rv := messageInitViaC(t, C_MessageEncryptInit, session, mechBuf, key); rv != module.CKR_OK {
 		t.Fatalf("C_MessageEncryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(gcmParams)
 
 	shortParam := make([]byte, 4)
 	fn := reflect.ValueOf(C_EncryptMessageBegin)
@@ -1365,7 +1353,7 @@ func TestCEncryptMessageBegin_MalformedParamIsRefused(t *testing.T) {
 func TestCDecryptMessageBegin_MalformedParamIsRefused(t *testing.T) {
 	_, session := newCryptoFixture(t)
 	key := generateAESKeyViaC(t, session, "message-decryptbegin-malformed-aes")
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	if rv := messageInitViaC(t, C_MessageDecryptInit, session, mechBuf, key); rv != module.CKR_OK {
 		t.Fatalf("C_MessageDecryptInit = %s, want CKR_OK", rv)
 	}
