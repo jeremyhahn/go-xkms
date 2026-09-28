@@ -525,7 +525,7 @@ Inherited by subcommands:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--trust-new-devices` | bool | false | Allow connection to unpaired devices (empty prologue) |
+| `--trust-new-devices` | bool | false | Allow connection to unpaired devices (empty prologue) (default: device.trust_new_devices, false) |
 
 ## xkey device attest
 
@@ -652,7 +652,7 @@ Usage: `xkey device pair [flags]`
 | `--device` | string |  | Specific device name or address to pair |
 | `--force` | bool | false | Force re-pairing even if already paired |
 | `--so-pin-stdin` | bool | false | Read the SO PIN from standard input |
-| `--timeout` | duration | 30s | Scan timeout duration |
+| `--timeout` | duration | 30s | Scan timeout duration (default: device.scan_timeout, 30s) |
 
 ## xkey device relay
 
@@ -673,7 +673,7 @@ Usage: `xkey device scan [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--timeout` | duration | 30s | Scan timeout duration |
+| `--timeout` | duration | 30s | Scan timeout duration (default: device.scan_timeout, 30s) |
 
 ## xkey device share
 
