@@ -2954,6 +2954,14 @@ func (p *awsKMSProvider) GetSymmetricKey(_ context.Context, _ *types.KeyAttribut
 	if p.getKeyErr != nil {
 		return nil, p.getKeyErr
 	}
+	if p.saveCalled {
+		// Save just seeded the metadata store with the operator's real key
+		// ID (ensureSealKey's AWS KMS branch runs Save before this call), so
+		// a real awskms.Backend would now resolve it successfully -- mirror
+		// that instead of reporting not-found for a key that was just
+		// configured.
+		return nil, nil
+	}
 	return nil, backend.ErrKeyNotFound
 }
 
@@ -3021,6 +3029,28 @@ func TestEnsureSealKey_AWSKMSNoOperatorKeyCreatesOne(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, prov.saveCalled, "no metadata should be pre-seeded without an operator-configured key")
 	assert.True(t, prov.generateCalled, "GenerateSymmetricKey must run to create the seal key")
+}
+
+// TestEnsureSealKey_AWSKMSOperatorKeyNotFoundFailsClosed verifies that when
+// the operator-configured CMK (OperatorSealKeyID) does not exist -- the
+// provider reports backend.ErrKeyNotFound even after the metadata seed --
+// ensureSealKey fails closed with a typed error instead of falling through
+// to GenerateSymmetricKey and provisioning an unrelated CMK (go-xkms#842).
+func TestEnsureSealKey_AWSKMSOperatorKeyNotFoundFailsClosed(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{})
+	prov := &awsKMSProvider{
+		operatorKeyID: "arn:aws:kms:us-east-1:123456789012:key/deadbeef-1234-5678-90ab-1234567890ab",
+		getKeyErr:     backend.ErrKeyNotFound,
+	}
+	keyAttrs := sealKeyAttributesFor(types.StoreAWSKMS)
+	err := s.ensureSealKey(seal.StrategyAWSKMS, prov, keyAttrs)
+	require.Error(t, err)
+	assert.True(t, prov.saveCalled, "the operator key ID is still seeded before resolution is attempted")
+	assert.False(t, prov.generateCalled, "GenerateSymmetricKey must never run for a missing operator-configured CMK")
+
+	var notFound *seal.ErrOperatorSealKeyNotFound
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, prov.operatorKeyID, notFound.KeyID)
 }
 
 // ============================================================================

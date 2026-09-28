@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — User Guide
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Set up the barrier
 
@@ -11,6 +11,9 @@ xkey barrier init --strategy software
 
 # Or seal to a cloud KMS instead of local hardware:
 xkey barrier init --strategy aws_kms --aws-region us-east-1
+# ...or seal under a CMK you already manage, instead of a new one xkey creates:
+xkey barrier init --strategy aws_kms --aws-region us-east-1 \
+  --aws-key-id arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab
 xkey barrier init --strategy gcp_kms --gcp-project-id my-project \
   --gcp-location us-east1 --gcp-key-ring xkey-barrier
 xkey barrier init --strategy azure_kv --azure-vault-url https://my-vault.vault.azure.net/

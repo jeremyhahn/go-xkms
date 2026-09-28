@@ -294,6 +294,41 @@ func TestEnsureSealKey_AWSKMSNoOperatorKeyCreatesOne(t *testing.T) {
 	assert.True(t, prov.genKeyCalled, "GenerateSymmetricKey must run to create the seal key")
 }
 
+// TestEnsureSealKey_AWSKMSOperatorKeyNotFoundFailsClosed proves that when an
+// operator-configured CMK (Config.KeyID) resolves to backend.ErrKeyNotFound
+// -- the key genuinely does not exist -- EnsureSealKey fails closed with a
+// typed ErrOperatorSealKeyNotFound instead of falling through to
+// GenerateSymmetricKey and silently provisioning an unrelated CMK
+// (go-xkms#842).
+func TestEnsureSealKey_AWSKMSOperatorKeyNotFoundFailsClosed(t *testing.T) {
+	const operatorKeyID = "arn:aws:kms:us-east-1:123456789012:key/does-not-exist"
+	prov := &cloudProvisionProvider{
+		operatorKeyID: operatorKeyID,
+		getKeyErr:     backend.ErrKeyNotFound,
+	}
+	keyAttrs := SealKeyAttributes(types.StoreAWSKMS)
+	err := EnsureSealKey(context.Background(), StrategyAWSKMS, prov, keyAttrs)
+	require.Error(t, err)
+	assert.False(t, prov.genKeyCalled, "GenerateSymmetricKey must never run for a missing operator-configured CMK")
+
+	var notFound *ErrOperatorSealKeyNotFound
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, string(StrategyAWSKMS), notFound.Strategy)
+	assert.Equal(t, operatorKeyID, notFound.KeyID)
+	assert.True(t, errors.Is(err, backend.ErrKeyNotFound), "ErrOperatorSealKeyNotFound must unwrap to backend.ErrKeyNotFound")
+}
+
+// TestErrOperatorSealKeyNotFound_Error covers ErrOperatorSealKeyNotFound's
+// message formatting and its Unwrap contract.
+func TestErrOperatorSealKeyNotFound_Error(t *testing.T) {
+	cause := errors.New("describe key: not found")
+	err := &ErrOperatorSealKeyNotFound{Strategy: "aws_kms", KeyID: "alias/missing", Err: cause}
+	assert.Contains(t, err.Error(), "aws_kms")
+	assert.Contains(t, err.Error(), "alias/missing")
+	assert.Contains(t, err.Error(), cause.Error())
+	assert.Same(t, cause, err.Unwrap())
+}
+
 func TestBuildCloudKMSStrategy_AllFourStrategies(t *testing.T) {
 	cases := []struct {
 		id    StrategyID

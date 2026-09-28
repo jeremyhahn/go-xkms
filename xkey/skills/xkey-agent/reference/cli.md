@@ -299,6 +299,7 @@ Usage: `xkey barrier init [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--aws-endpoint` | string |  | Custom AWS KMS endpoint (optional; for testing against an emulator) |
+| `--aws-key-id` | string |  | Existing AWS KMS key ID, ARN, alias, or alias ARN to seal under (optional; a CMK is created and persisted when unset) |
 | `--aws-region` | string |  | AWS region for the aws_kms barrier strategy |
 | `--azure-allow-local-vault-url` | bool | false | Allow a localhost/127.0.0.1 vault URL (development only) |
 | `--azure-vault-url` | string |  | Azure Key Vault URL for the azure_kv barrier strategy |
