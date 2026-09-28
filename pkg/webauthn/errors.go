@@ -71,6 +71,27 @@ var (
 	ErrPublicRegistrationDisabled = errors.New("webauthn: public registration is disabled; the account must be provisioned by an administrator first")
 )
 
+// SessionLimitError reports that the session store already holds its
+// maximum number of unfinished ceremonies, so a new ceremony cannot begin
+// until sessions complete or expire. Transports serve it as 503 Service
+// Unavailable (gRPC ResourceExhausted): the condition is transient and the
+// caller should retry later.
+type SessionLimitError struct {
+	// Limit is the store's session cap.
+	Limit int
+}
+
+// Error describes the exhausted capacity.
+func (e *SessionLimitError) Error() string {
+	return fmt.Sprintf("webauthn: session store is full (%d unfinished ceremonies)", e.Limit)
+}
+
+// IsSessionLimit reports whether err is, or wraps, a *SessionLimitError.
+func IsSessionLimit(err error) bool {
+	var limitErr *SessionLimitError
+	return errors.As(err, &limitErr)
+}
+
 // WebAuthnError wraps an error with additional context.
 type WebAuthnError struct {
 	Op  string // Operation that failed

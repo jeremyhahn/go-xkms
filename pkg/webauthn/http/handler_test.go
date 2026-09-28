@@ -712,6 +712,12 @@ func TestHandler_HandleServiceError(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 			wantCode:   ErrorCodeUserNotFound,
 		},
+		{
+			name:       "session store full",
+			err:        pkgwebauthn.WrapError("save session", &pkgwebauthn.SessionLimitError{Limit: 3}),
+			wantStatus: http.StatusServiceUnavailable,
+			wantCode:   ErrorCodeSessionLimit,
+		},
 	}
 
 	for _, tt := range tests {

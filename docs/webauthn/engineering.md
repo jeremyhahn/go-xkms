@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/webauthn`
 
@@ -184,7 +184,7 @@ ceremony create a duplicate account; a false error costs a retry.
 Through the three store interfaces. Production wiring is go-qrdb via
 `go-qrdb/sdk/go` (`qrdb_userstore.go`, `backend_stores.go`). Credentials carry
 the credential id, public key, AAGUID, sign counter and user handle. Sessions
-are short-lived and deleted on finish.
+are short-lived and in memory; see §"Session lifetime and the session cap".
 
 go-xkms defines no user model of its own — `User` is an interface satisfied by
 qrdb's identity.
@@ -231,6 +231,37 @@ the seam, a passkey enrolled through xkms's own registration routes created
 no factor, and login failed with "factor not found" while the credential sat
 in the shared store.
 
+### Session lifetime and the session cap
+
+A begin request stores a ceremony session before anyone is authenticated
+(`POST /api/v1/webauthn/login/begin` with an empty body is enough), so the
+session store is bounded two ways:
+
+- **Swept.** `SweepSessions(ctx, store, interval)`
+  (`pkg/webauthn/session_sweeper.go:34`) calls `Cleanup` on any store that
+  implements `SessionCleaner` (`interfaces.go:47`) every interval until `ctx`
+  ends, then returns; `Service.SweepSessions` (`session_sweeper.go:57`) runs it
+  on the service's own store. The default interval,
+  `DefaultSessionSweepInterval` (`session_sweeper.go:24`), is one minute.
+- **Capped.** `MemorySessionStore` holds at most `DefaultMaxSessions` (10,000,
+  `memory_stores.go:180`; `WithMaxSessions`, `:168`, overrides it). At the cap
+  `Save` (`:238`) first removes expired sessions itself, and refuses with
+  `*SessionLimitError` (`errors.go:79`; `IsSessionLimit`, `:90`) only when
+  every held session is still live. Transports map it to 503 /
+  `ResourceExhausted` ([api.md](api.md) §"Status and error mapping").
+
+**One owner for the sweeper.** xkmsd owns the one `Service` shared by the
+browser and SDK ceremonies, so `pkg/server` runs its sweeper:
+`startWebAuthnSessionSweeper` (`pkg/server/server.go:2698`), called from
+`Start` (`:2664`), runs it on a goroutine tracked by the server's wait group
+under the server context. `Shutdown` cancels that context and waits on the
+group, so the sweeper stops with the server and does not leak.
+
+A composing host's self-built surface (`rest.NewHostServer`) has no lifecycle
+hook to stop a goroutine, so it runs no sweeper; the sweep-on-save at the cap
+keeps its store bounded and self-healing. `rest.WebAuthnStores`
+`StartCleanupRoutine` is a thin wrapper over the same `SweepSessions`.
+
 ### Session expiry takes an injectable clock
 
 `MemorySessionStore` measures a session's TTL against a `Clock` — a
@@ -247,19 +278,22 @@ that establishes it by sleeping is asserting the machine was not busy —
 statements land more than 100ms apart, which under `-race` on a shared runner
 they can (#287).
 
-**The cleanup routine is the deliberate exception.** `StartCleanupRoutine`
-ticks on a real `time.Ticker`, so a test for it keeps real time and a short TTL
-and waits on the *event* — `MemorySessionStore.Count()` reaching zero — rather
-than on a duration. Handing that test a fake clock would stop the session ever
-expiring by the routine's reckoning, and it would wait for an event that cannot
-happen.
+**The sweeper ticks on a real `time.Ticker`**, but expiry is still measured
+against the store's clock. `session_sweeper_test.go` therefore advances an
+injected clock past the TTL, runs the sweeper with a one-millisecond interval,
+and waits on the *event* — `MemorySessionStore.Count()` reaching the expected
+value — rather than on a duration. `StartCleanupRoutine`'s own test keeps real
+time and a short TTL for the same reason.
 
 ## Test strategy
 
 - **Unit** — `service_test.go`, `config_test.go`, `types_test.go`,
   `registration_policy_test.go`, `verification_error_test.go`,
   `error_paths_test.go`, `memory_stores_test.go`, `backend_stores_test.go`,
-  `backend_stores_gaps_test.go`, `mock_authenticator_test.go`.
+  `backend_stores_gaps_test.go`, `mock_authenticator_test.go`,
+  `session_sweeper_test.go` (cap refuses then recovers after a sweep, the
+  sweeper removes expired sessions and returns when its context ends). The
+  lifecycle ownership is pinned in `pkg/server/rest_limits_test.go`.
 - **Store conformance** — `qrdb_userstore_test.go`, `qrdb_userstore_gaps_test.go`,
   `qrdb_error_paths_test.go`, and `qrdb_register_login_repro_test.go` (a
   regression reproduction kept as a permanent test).
