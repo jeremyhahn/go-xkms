@@ -45,6 +45,13 @@ var ErrPolicyTamperLocked = errors.New("authenticator: policy tamper detected, u
 // ErrInvalidCommand indicates an invalid or unsupported CTAP command was received.
 var ErrInvalidCommand = errors.New("authenticator: invalid command")
 
+// ErrCommandPanicked indicates a command handler panicked and was recovered
+// by dispatchCommand, the single recover boundary between a decoded CTAP2
+// command and the transport's read loop. It always maps to CTAP2_ERR_OTHER
+// (errorToStatus's default case): a panic is a handler bug, not a condition
+// the platform can resolve by retrying with different parameters.
+var ErrCommandPanicked = errors.New("authenticator: command handler panicked")
+
 // ErrInvalidParameter indicates one or more parameters in the request are invalid.
 var ErrInvalidParameter = errors.New("authenticator: invalid parameter")
 
