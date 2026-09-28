@@ -793,3 +793,60 @@ func TestRegisterRoutes_NilAuthMiddleware(t *testing.T) {
 		t.Errorf("expected status 401, got %d", rec.Code)
 	}
 }
+
+// TestErrAssetLoad_Error confirms the packaging-defect error names both the
+// origin package and the underlying detail, so a panic surfaced from
+// uiAssetsFS's init identifies itself unambiguously.
+func TestErrAssetLoad_Error(t *testing.T) {
+	err := &ErrAssetLoad{Detail: "sub dir: no such directory"}
+
+	want := "swagger: failed to load vendored UI assets: sub dir: no such directory"
+	if got := err.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+// TestInitializerHandler_UnknownSpecNotFound_WithLogger exercises the same
+// unknown-spec 404 path as TestInitializerHandler_UnknownSpecNotFound, but
+// with a logger attached so the warning branch runs too.
+func TestInitializerHandler_UnknownSpecNotFound_WithLogger(t *testing.T) {
+	h := NewHandler(&Config{Logger: discardLogger()})
+	req := httptest.NewRequest(http.MethodGet, "/docs/swagger-initializer.js?spec=missing", nil)
+	rec := httptest.NewRecorder()
+
+	h.InitializerHandler(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", rec.Code)
+	}
+}
+
+// TestInitializerHandler_TemplateError_WithLogger exercises the template
+// rendering failure branch with a logger attached, mirroring
+// TestInitializerHandler_TemplateError but confirming the logger.Error call
+// does not itself panic or otherwise disrupt the 500 response.
+func TestInitializerHandler_TemplateError_WithLogger(t *testing.T) {
+	h := NewHandler(&Config{Logger: discardLogger()})
+	req := httptest.NewRequest(http.MethodGet, "/docs/swagger-initializer.js", nil)
+	w := newFailingResponseWriter()
+
+	h.InitializerHandler(w, req)
+
+	if w.statusCode != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.statusCode)
+	}
+}
+
+// TestAssetHandler_WithLogger exercises AssetHandler's debug-logging branch,
+// which the logger-less tests above never reach.
+func TestAssetHandler_WithLogger(t *testing.T) {
+	h := NewHandler(&Config{Logger: discardLogger()})
+	req := httptest.NewRequest(http.MethodGet, "/docs/swagger-ui.css", nil)
+	rec := httptest.NewRecorder()
+
+	h.AssetHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
+}

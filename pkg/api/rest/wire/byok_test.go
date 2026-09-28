@@ -213,3 +213,20 @@ func TestGetImportParametersRequest_CarriesEveryField(t *testing.T) {
 	body := NewGetImportParametersRequest(&transport.GetImportParametersRequest{Backend: "b", KeyID: "k", Algorithm: "a", KeyType: "rsa", KeySize: 2048, Curve: "P-256"})
 	assert.Equal(t, GetImportParametersRequest{Backend: "b", KeyID: "k", Algorithm: "a", KeyType: "rsa", KeySize: 2048, Curve: "P-256"}, body)
 }
+
+// TestWrappingPublicKeyError_ErrorAndUnwrap pins the exact shape callers see:
+// the message names both the sentinel condition and the underlying parse
+// failure, Unwrap surfaces the parse failure to errors.As, and Is matches the
+// sentinel so a caller that only needs "was this a DER problem" can use
+// errors.Is without knowing the concrete type.
+func TestWrappingPublicKeyError_ErrorAndUnwrap(t *testing.T) {
+	inner := errors.New("asn1: syntax error")
+	err := &WrappingPublicKeyError{Err: inner}
+
+	wantMsg := "rest/wire: wrapping public key is not DER-encoded PKIX: asn1: syntax error"
+	assert.Equal(t, wantMsg, err.Error())
+	assert.Same(t, inner, err.Unwrap())
+	assert.True(t, errors.Is(err, ErrWrappingPublicKeyNotDER))
+	assert.False(t, errors.Is(err, errors.New("rest/wire: wrapping public key is not DER-encoded PKIX")),
+		"Is must match the sentinel by identity, not by an equal-looking new error")
+}
