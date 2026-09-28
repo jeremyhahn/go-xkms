@@ -448,7 +448,7 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	// positive request cap.
 	acmeRouter.Use(restService.TenantAuthMiddleware)
 	if tca.multiTenant && tca.tenantRateLimitRequests > 0 {
-		tca.tenantRateLimiter = server.NewTenantRateLimiter(
+		tenantRateLimiter := server.NewTenantRateLimiter(
 			&server.TenantRateLimiterConfig{
 				DefaultConfig: &server.RateLimitConfig{
 					OverallRequestRate: &server.RateLimit{
@@ -461,7 +461,16 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 			func(*http.Request) string { return "" }, // shared bucket per tenant
 			"overall",
 		)
-		acmeRouter.Use(tca.tenantRateLimiter.Middleware())
+		// Published under tca.mu, matching every other field Shutdown reads
+		// back (restService above, acmeServer below): Shutdown can run
+		// concurrently with the tail of Serve's own setup (a caller invoking
+		// it before the ACME listener goroutine even starts), and an
+		// unsynchronized write here raced Shutdown's locked read of the same
+		// field.
+		tca.mu.Lock()
+		tca.tenantRateLimiter = tenantRateLimiter
+		tca.mu.Unlock()
+		acmeRouter.Use(tenantRateLimiter.Middleware())
 		tca.logger.Info("ACME tenant rate limiting enabled",
 			slog.Int("max_requests", tca.tenantRateLimitRequests),
 			slog.Duration("interval", tca.tenantRateLimitInterval))

@@ -82,6 +82,46 @@ func TestNewBarrierRegistry_Success(t *testing.T) {
 	assert.Same(t, barrier, registry.SystemBarrier())
 }
 
+// TestWrapBarrierRegistry_AdoptsInnerAndSystem covers the adoption path an
+// embedded qrdb node's seal integration uses: wrapping an already-constructed
+// go-qrdb BarrierRegistry (and its system barrier) rather than building a new
+// one, so SystemBarrier and Inner both report exactly what was handed in.
+func TestWrapBarrierRegistry_AdoptsInnerAndSystem(t *testing.T) {
+	store := newMemoryBackend()
+	strategy := NewSoftwareStrategy()
+
+	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
+		RootKeyPath: "test/root-key",
+	}, strategy)
+	require.NoError(t, err)
+
+	registry, err := NewBarrierRegistry(barrier)
+	require.NoError(t, err)
+
+	wrapped := WrapBarrierRegistry(registry.Inner(), barrier)
+	require.NotNil(t, wrapped)
+	assert.Same(t, barrier, wrapped.SystemBarrier())
+	assert.Same(t, registry.Inner(), wrapped.Inner())
+}
+
+// TestBarrierRegistry_Attach covers Attach's delegation to the underlying
+// go-qrdb registry, used to wire the volume-pool subsystem on after the
+// system barrier (and therefore the registry) already exists.
+func TestBarrierRegistry_Attach(t *testing.T) {
+	store := newMemoryBackend()
+	strategy := NewSoftwareStrategy()
+
+	barrier, err := NewBarrier(testLogger(), store, BarrierConfig{
+		RootKeyPath: "test/root-key",
+	}, strategy)
+	require.NoError(t, err)
+
+	registry, err := NewBarrierRegistry(barrier)
+	require.NoError(t, err)
+
+	assert.NotPanics(t, func() { registry.Attach() })
+}
+
 // isAlreadyUnsealed returns true if err is any "already unsealed" error.
 func isAlreadyUnsealed(err error) bool {
 	return errors.Is(err, ErrAlreadyUnsealed) || errors.Is(err, ErrTenantAlreadyUnsealed)

@@ -101,6 +101,31 @@ func TestMiddleware_OpenRejectsWithServiceUnavailable(t *testing.T) {
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 }
 
+// TestMiddleware_OpenRetryAfterFloorsAtOneSecond verifies that
+// writeCircuitOpenError clamps a sub-second remaining-reset-timeout to one
+// second rather than advertising a Retry-After of 0. ResetTimeout is short
+// enough that the elapsed time since Trip is a small fraction of it, so the
+// clamp is exercised deterministically without any wall-clock wait.
+func TestMiddleware_OpenRetryAfterFloorsAtOneSecond(t *testing.T) {
+	cb := New(&Config{
+		Name:         "mw-open-short-reset",
+		MaxFailures:  1,
+		ResetTimeout: 500 * time.Millisecond,
+	})
+	cb.Trip()
+	require.Equal(t, StateOpen, cb.State())
+
+	handler := Middleware(cb)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.Equal(t, "1", rec.Header().Get("Retry-After"))
+}
+
 // TestMiddleware_HalfOpenProbeCloses verifies the full cycle: a failure
 // opens the breaker, the next request (ResetTimeout 0) is admitted as a
 // half-open probe, and a successful probe closes the breaker again.

@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
@@ -135,14 +136,27 @@ type phoneBackendWithBridge struct {
 	// enrollerCloser owns the TPM handle opened for device enrollment, when
 	// this bridge opened one of its own rather than borrowing a shared TPM.
 	enrollerCloser io.Closer
-	logger         *slog.Logger
+	// collaborators holds the long-lived OATH store and sync data sources
+	// buildListenBridgeConfig opened for this bridge (go-xkms#1041), the same
+	// collaborators "xkey device listen" wires and closes at shutdown. A phone
+	// paired through this bridge reaches the identical on-disk stores those
+	// commands read and write, not a second wiring that leaves them nil.
+	collaborators *listenBridgeCollaborators
+	logger        *slog.Logger
 }
 
-// Close closes the phone backend, stops the message router, and closes the
-// xkmsd SDK client connection.
+// Close closes the phone backend, stops the message router, releases the
+// OATH store and sync data sources the bridge opened, and closes the xkmsd
+// SDK client connection.
 func (b *phoneBackendWithBridge) Close() error {
 	// Close the phone backend first (stops router, disconnects transport).
 	backendErr := b.PhoneKeyBackend.Close()
+
+	// Release the OATH store and sync sources before the client and TPM go
+	// away, matching the order "xkey device listen" tears down the same
+	// collaborators in. b.collaborators.Close() is a safe no-op when nil (no
+	// bridge was built, or a collaborator failed to open).
+	b.collaborators.Close()
 
 	// Close the xkmsd SDK client.
 	var clientErr error
@@ -174,7 +188,16 @@ var _ keybackend.FIDO2KeyBackend = (*phoneBackendWithBridge)(nil)
 //
 // Returns nil if xkmsd is not enabled. Returns an error if xkmsd
 // is enabled but the connection or bridge creation fails.
-func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*phoneBackendWithBridge, error) {
+//
+// cmd is the "xkey fido2" command invocation: it is handed to
+// buildListenBridgeConfig unchanged, exactly as "xkey device listen" hands
+// its own command to the same function, so the OATH store and sync service
+// this bridge serves are opened from the same --barrier-password /
+// --barrier-password-file flags (go-xkms#1041). fido2Cmd registers those
+// flags itself (fido2.go), so a phone paired through "xkey fido2" reaches the
+// identical barrier the operator already unlocked for FIDO2 credential
+// storage, not a second, differently-configured one.
+func connectXKMSdBridge(backend *phone.PhoneKeyBackend, cmd *cobra.Command, logger *slog.Logger) (*phoneBackendWithBridge, error) {
 	cfg := loadXKMSdBridgeConfig()
 	if !cfg.Enabled {
 		return nil, nil
@@ -192,18 +215,17 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*p
 	enroller, enrollerCloser, enrollerErr := resolveListenEnroller(
 		cfg.TPMEnrollment, nil, cfg.TPMDevice, cfg.TPMPCRBank, logger)
 
-	// Create the Bridge for routing remote.* requests.
-	bridgeCfg := &pairing.BridgeConfig{
-		AllowedBackends: cfg.AllowedBackends,
-		DeniedBackends:  cfg.DeniedBackends,
-		RequestTimeout:  cfg.RequestTimeout,
-		TPM:             enroller,
-		TPMOpenErr:      enrollerErr,
-		Logger:          logger,
-	}
+	// Build the Bridge configuration through the exact same collaborator
+	// wiring "xkey device listen" uses (buildListenBridgeConfig,
+	// device_listen.go): the OATH store, PIV certificate storage, and sync
+	// service a phone reaches through this bridge are the same ones a paired
+	// laptop's "xkey device listen" serves, not a parallel implementation
+	// that only forwards ping/attestation/TPM enrollment (go-xkms#1041).
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, enroller, enrollerErr)
 
 	bridge, err := pairing.NewBridge(client, bridgeCfg)
 	if err != nil {
+		collaborators.Close()
 		if enrollerCloser != nil {
 			err = errors.Join(err, enrollerCloser.Close())
 		}
@@ -221,6 +243,7 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*p
 	// phoneBackendWithBridge is built below. Same cleanup as the NewBridge
 	// failure directly above.
 	if err := backend.EnableBidirectional(bridge); err != nil {
+		collaborators.Close()
 		if enrollerCloser != nil {
 			err = errors.Join(err, enrollerCloser.Close())
 		}
@@ -237,6 +260,7 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*p
 		xkmsdClient:     client,
 		bridge:          bridge,
 		enrollerCloser:  enrollerCloser,
+		collaborators:   collaborators,
 		logger:          logger,
 	}, nil
 }

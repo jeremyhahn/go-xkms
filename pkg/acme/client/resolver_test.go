@@ -16,6 +16,7 @@ package client
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -783,6 +784,33 @@ func TestResolverClose(t *testing.T) {
 			t.Error("Solve should fail after close")
 		}
 	})
+}
+
+// TestChallengeCleanupErrorErrorAndUnwrap covers ChallengeCleanupError's
+// Error and Unwrap, and confirms Is matches ErrChallengeCleanupFailed via
+// errors.Is rather than by identity on the wrapped cause.
+func TestChallengeCleanupErrorErrorAndUnwrap(t *testing.T) {
+	cause := errors.New("txt record still present")
+	err := &ChallengeCleanupError{ChallengeType: "dns-01", Domain: "example.com", Err: cause}
+
+	got := err.Error()
+	if got == "" {
+		t.Fatal("Error() returned an empty string")
+	}
+	if !strings.Contains(got, "dns-01") || !strings.Contains(got, "example.com") || !strings.Contains(got, cause.Error()) {
+		t.Errorf("Error() = %q, want it to mention challenge type, domain and cause", got)
+	}
+
+	if err.Unwrap() != cause {
+		t.Errorf("Unwrap() = %v, want %v", err.Unwrap(), cause)
+	}
+
+	if !errors.Is(err, ErrChallengeCleanupFailed) {
+		t.Error("expected errors.Is to match ErrChallengeCleanupFailed")
+	}
+	if errors.Is(err, ErrResolverClosed) {
+		t.Error("Is must not match a sentinel that is neither ErrChallengeCleanupFailed nor the wrapped cause")
+	}
 }
 
 func TestResolverConcurrentAccess(t *testing.T) {

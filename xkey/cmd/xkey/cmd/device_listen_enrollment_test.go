@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -93,11 +94,12 @@ func TestResolveListenEnroller_ReusesTheAttestationTPM(t *testing.T) {
 // enroller is irrelevant when xkmsd is off: without a client there is no
 // bridge to configure at all.
 func TestConnectListenBridge_DisabledXKMSdServesNoBridge(t *testing.T) {
-	client, bridge, err := connectListenBridge(newTestLogger(), nil, nil)
+	client, bridge, collaborators, err := connectListenBridge(&cobra.Command{}, newTestLogger(), nil, nil)
 
 	require.NoError(t, err)
 	assert.Nil(t, client)
 	assert.Nil(t, bridge)
+	assert.Nil(t, collaborators)
 }
 
 // TestListenHandler_WithoutAnEnrollmentTPM_ReportsUnavailable is the

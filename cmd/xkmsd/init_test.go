@@ -228,6 +228,62 @@ func TestReadAndValidateCSR_InvalidDER(t *testing.T) {
 	}
 }
 
+// TestReadAndValidateCSR_InvalidSignature proves the final security check --
+// CheckSignature -- is actually reached and enforced: a CSR that parses
+// cleanly (well-formed ASN.1) but whose signature does not verify against
+// its own public key (tampered or corrupted in transit) is rejected with
+// ErrCSRSignatureInvalid rather than accepted on the strength of parsing
+// alone.
+func TestReadAndValidateCSR_InvalidSignature(t *testing.T) {
+	dir := t.TempDir()
+	csrPEM := generateTestCSR(t, "test-officer")
+
+	block, _ := pem.Decode(csrPEM)
+	if block == nil {
+		t.Fatal("fixture setup: generateTestCSR did not return valid PEM")
+	}
+	// Flip the DER's final byte. x509.CreateCertificateRequest places the
+	// signature last, so this corrupts the signature bytes while leaving
+	// the ASN.1 structure (and therefore x509.ParseCertificateRequest)
+	// intact -- the CSR must fail signature verification, not parsing.
+	corrupted := make([]byte, len(block.Bytes))
+	copy(corrupted, block.Bytes)
+	corrupted[len(corrupted)-1] ^= 0xFF
+	tamperedPEM := pem.EncodeToMemory(&pem.Block{Type: block.Type, Bytes: corrupted})
+
+	path := writeTestCSR(t, dir, "tampered.csr", tamperedPEM)
+
+	_, err := readAndValidateCSR(path)
+	if err == nil {
+		t.Fatal("expected error for a CSR with an invalid signature")
+	}
+	if !errors.Is(err, ErrCSRSignatureInvalid) {
+		t.Errorf("expected ErrCSRSignatureInvalid, got %v", err)
+	}
+}
+
+// TestReadAndValidateCSR_StatErrorNotNotExist proves a stat failure other
+// than "file does not exist" (for example a malformed path) is reported as
+// ErrCSRReadFailed rather than misclassified as ErrCSRFileNotFound, which
+// would tell an operator to check a typo when the real problem is a
+// different I/O fault.
+func TestReadAndValidateCSR_StatErrorNotNotExist(t *testing.T) {
+	// A NUL byte in a path is rejected by the kernel with EINVAL, never
+	// ENOENT, on every platform this project builds for -- a portable way
+	// to force os.Stat's non-IsNotExist branch without touching file modes
+	// (this suite runs as root in CI, where permission bits are moot).
+	_, err := readAndValidateCSR("bad\x00path")
+	if err == nil {
+		t.Fatal("expected error for a malformed path")
+	}
+	if !errors.Is(err, ErrCSRReadFailed) {
+		t.Errorf("expected ErrCSRReadFailed, got %v", err)
+	}
+	if errors.Is(err, ErrCSRFileNotFound) {
+		t.Error("a non-ENOENT stat failure must not be reported as ErrCSRFileNotFound")
+	}
+}
+
 func TestBuildOfficerConfigs_ValidOfficers(t *testing.T) {
 	dir := t.TempDir()
 	csr1 := generateTestCSR(t, "officer1")

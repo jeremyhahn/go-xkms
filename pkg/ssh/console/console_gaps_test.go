@@ -66,6 +66,11 @@ func TestErrorTypes(t *testing.T) {
 	if ce.Error() == "" {
 		t.Fatal("ClosedError.Error empty")
 	}
+
+	wce := &WriteClosedError{}
+	if wce.Error() == "" {
+		t.Fatal("WriteClosedError.Error empty")
+	}
 }
 
 // TestDial_InputGuards covers the nil Signer / nil KnownHosts guards without a
@@ -130,6 +135,38 @@ func TestConsole_OpenOnClient(t *testing.T) {
 		t.Fatalf("client should remain usable after console Close: %v", err)
 	}
 	_ = sess.Close()
+}
+
+// errWriteCloser is an io.WriteCloser whose Close reports a fixed, non-EOF
+// error -- the transport failure CloseWrite must surface, as opposed to the
+// io.EOF it deliberately swallows because that just means the remote already
+// closed the channel.
+type errWriteCloser struct {
+	closeErr error
+}
+
+func (errWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (w errWriteCloser) Close() error              { return w.closeErr }
+
+// TestConsole_CloseWriteSurfacesNonEOFStdinCloseError covers CloseWrite's
+// error path directly: a real SSH session's stdin.Close realistically only
+// ever fails with io.EOF (already-closed channel), so this constructs an
+// sshConsole around a stub stdin instead of driving the failure through a
+// live handshake.
+func TestConsole_CloseWriteSurfacesNonEOFStdinCloseError(t *testing.T) {
+	wantErr := errors.New("stdin close boom")
+	c := &sshConsole{stdin: errWriteCloser{closeErr: wantErr}}
+
+	err := c.CloseWrite()
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("CloseWrite() = %v, want %v", err, wantErr)
+	}
+
+	// CloseWrite is idempotent: a second call must return the same recorded
+	// error without re-invoking stdin.Close (writeCloseOnce guards it).
+	if err2 := c.CloseWrite(); !errors.Is(err2, wantErr) {
+		t.Fatalf("second CloseWrite() = %v, want %v", err2, wantErr)
+	}
 }
 
 // TestHandlerOptions covers the WithDialTimeout and WithCheckOrigin options.

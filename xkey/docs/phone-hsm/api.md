@@ -1,6 +1,6 @@
 # Phone as HSM — API
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 Transport shapes:
 [`../../../docs/key-management/api.md`](../../../docs/key-management/api.md).
@@ -103,6 +103,20 @@ the session.
 
 A failed send disconnects rather than retrying: a Noise session cannot be
 resumed mid-nonce-sequence.
+
+### A `remote.*` method can be unavailable on a specific host
+
+Several `remote.*` methods depend on a collaborator the desktop CLI wires in
+optionally: `remote.oath*` needs an OATH store, `remote.pivListSlots`/
+`pivGetCert` need PIV certificate storage, and `remote.sync*` needs a sync
+service. A phone that calls one of these against a host where the
+collaborator was never configured gets a JSON-RPC error with code `-32035`
+(`ErrorCodeFeatureUnavailable`) rather than a fabricated empty success — treat
+it as "not offered here," the same as a phone declining an operation its
+hardware does not support. `remote.createBackup`/`restoreBackup`/`listBackups`
+currently answer this way unconditionally: see
+[`engineering.md`](engineering.md) §"Bridge collaborators are optional, and
+say so honestly" for why.
 
 ## The cross-repo wire contract
 

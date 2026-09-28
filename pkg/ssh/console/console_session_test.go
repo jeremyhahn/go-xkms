@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -40,6 +41,11 @@ type sessionServerOptions struct {
 
 	// rejectShell makes the server refuse "shell".
 	rejectShell bool
+
+	// rejectEnv makes the server refuse every "env" request, per RFC 4254
+	// 6.4's allowance that a server may silently reject any environment
+	// variable it does not accept.
+	rejectEnv bool
 }
 
 // sessionTestServer is an in-process SSH server with configurable session
@@ -142,6 +148,10 @@ func (s *sessionTestServer) serveSession(ch ssh.Channel, in <-chan *ssh.Request,
 	for req := range in {
 		switch req.Type {
 		case "env":
+			if opts.rejectEnv {
+				_ = req.Reply(false, nil)
+				continue
+			}
 			var payload struct{ Name, Value string }
 			if ssh.Unmarshal(req.Payload, &payload) == nil {
 				s.mu.Lock()
@@ -213,6 +223,32 @@ func TestConsole_EnvIsSentToRemoteSession(t *testing.T) {
 	}
 	if got["LANG"] != "C.UTF-8" {
 		t.Errorf("LANG = %q, want %q", got["LANG"], "C.UTF-8")
+	}
+}
+
+// TestConsole_EnvRejectionIsLoggedNotFatal verifies that a server rejecting
+// an environment variable (RFC 4254 6.4 permits this silently) does not fail
+// the console -- it is routine server policy, not a session-ending error --
+// but is still logged so the rejection is not silently invisible.
+func TestConsole_EnvRejectionIsLoggedNotFatal(t *testing.T) {
+	handler := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	srv := startSessionServer(t, sessionServerOptions{rejectEnv: true})
+
+	c, err := dialSessionServer(t, srv, Config{Env: map[string]string{"XKMS_CONSOLE": "1"}})
+	if !requireHandshake(t, err) {
+		return
+	}
+	defer func() { _ = c.Close() }()
+
+	if got := srv.recordedEnv(); len(got) != 0 {
+		t.Fatalf("expected the rejected env var not to be recorded, got %v", got)
+	}
+	if !handler.hasMessage("ssh/console: remote rejected an environment variable") {
+		t.Fatal("expected the env rejection to be logged")
 	}
 }
 

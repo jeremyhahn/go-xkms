@@ -159,6 +159,18 @@ func TestUnixPeerCredentials_ClientHandshakeUnsupported(t *testing.T) {
 	assert.True(t, ok, "expected ErrClientHandshakeUnsupported, got %T: %v", err, err)
 }
 
+// TestUnixPeerCredentials_Clone verifies Clone returns a working, equivalent
+// credential rather than a zero value or nil: unixPeerCredentials is
+// stateless, so the clone must behave identically to the original.
+func TestUnixPeerCredentials_Clone(t *testing.T) {
+	creds, err := NewUnixPeerCredentials()
+	require.NoError(t, err)
+
+	clone := creds.Clone()
+	require.NotNil(t, clone)
+	assert.Equal(t, creds.Info(), clone.Info())
+}
+
 // TestUnaryAuthorizationInterceptor_RealPeerCredentials_MapsConfiguredUID
 // exercises the full authentication path this interceptor is installed for:
 // real kernel-extracted credentials from an AF_UNIX socketpair, mapped by a

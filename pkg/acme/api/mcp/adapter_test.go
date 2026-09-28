@@ -2086,3 +2086,250 @@ func TestJSONRPCRequestResponse(t *testing.T) {
 		}
 	})
 }
+
+// TestAdapterAccountOperations exercises the ACME account admin operations
+// (ListAccounts, GetAccount, DisableAccount), which unlike the order and
+// tenant-CA operations below are real JSON-RPC calls rather than
+// REST-only stubs.
+func TestAdapterAccountOperations(t *testing.T) {
+	t.Run("ListAccounts success", func(t *testing.T) {
+		handler := newMockMCPHandler(t)
+		handler.responses["admin.listAccounts"] = map[string]interface{}{
+			"accounts": []*admin.AccountInfo{
+				{ID: 1, Status: "valid"},
+				{ID: 2, Status: "deactivated"},
+			},
+			"pagination": &admin.Pagination{Page: 1, PerPage: 10, Total: 2},
+		}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := strings.TrimPrefix(server.URL, "http://")
+		adapter, err := NewAdapter(&api.AdapterConfig{MCPAddr: addr})
+		if err != nil {
+			t.Fatalf("NewAdapter() failed: %v", err)
+		}
+		defer adapter.Close()
+
+		accounts, pagination, err := adapter.ListAccounts(context.Background(), &admin.ListAccountsRequest{Page: 1, PerPage: 10})
+		if err != nil {
+			t.Fatalf("ListAccounts() failed: %v", err)
+		}
+		if len(accounts) != 2 {
+			t.Errorf("Expected 2 accounts, got %d", len(accounts))
+		}
+		if pagination == nil {
+			t.Error("Expected pagination, got nil")
+		}
+	})
+
+	t.Run("ListAccounts error", func(t *testing.T) {
+		handler := newMockMCPHandler(t)
+		handler.errors["admin.listAccounts"] = &JSONRPCError{Code: -32000, Message: "database error"}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := strings.TrimPrefix(server.URL, "http://")
+		adapter, err := NewAdapter(&api.AdapterConfig{MCPAddr: addr})
+		if err != nil {
+			t.Fatalf("NewAdapter() failed: %v", err)
+		}
+		defer adapter.Close()
+
+		_, _, err = adapter.ListAccounts(context.Background(), &admin.ListAccountsRequest{})
+		if err == nil {
+			t.Error("Expected error for ListAccounts")
+		}
+	})
+
+	t.Run("GetAccount success", func(t *testing.T) {
+		handler := newMockMCPHandler(t)
+		handler.responses["admin.getAccount"] = admin.AccountInfo{ID: 42, Status: "valid"}
+		handler.validateParams = func(method string, params json.RawMessage) error {
+			if method == "admin.getAccount" {
+				var p map[string]uint64
+				json.Unmarshal(params, &p)
+				if p["account_id"] != 42 {
+					t.Errorf("Expected account_id 42, got %d", p["account_id"])
+				}
+			}
+			return nil
+		}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := strings.TrimPrefix(server.URL, "http://")
+		adapter, err := NewAdapter(&api.AdapterConfig{MCPAddr: addr})
+		if err != nil {
+			t.Fatalf("NewAdapter() failed: %v", err)
+		}
+		defer adapter.Close()
+
+		account, err := adapter.GetAccount(context.Background(), 42)
+		if err != nil {
+			t.Fatalf("GetAccount() failed: %v", err)
+		}
+		if account.ID != 42 {
+			t.Errorf("Expected account ID 42, got %d", account.ID)
+		}
+	})
+
+	t.Run("GetAccount not found", func(t *testing.T) {
+		handler := newMockMCPHandler(t)
+		handler.errors["admin.getAccount"] = &JSONRPCError{Code: -32001, Message: "account not found"}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := strings.TrimPrefix(server.URL, "http://")
+		adapter, err := NewAdapter(&api.AdapterConfig{MCPAddr: addr})
+		if err != nil {
+			t.Fatalf("NewAdapter() failed: %v", err)
+		}
+		defer adapter.Close()
+
+		_, err = adapter.GetAccount(context.Background(), 999)
+		if err == nil {
+			t.Error("Expected error for nonexistent account")
+		}
+	})
+
+	t.Run("DisableAccount success", func(t *testing.T) {
+		handler := newMockMCPHandler(t)
+		handler.responses["admin.disableAccount"] = nil
+		handler.validateParams = func(method string, params json.RawMessage) error {
+			if method == "admin.disableAccount" {
+				var p map[string]uint64
+				json.Unmarshal(params, &p)
+				if p["account_id"] != 7 {
+					t.Errorf("Expected account_id 7, got %d", p["account_id"])
+				}
+			}
+			return nil
+		}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := strings.TrimPrefix(server.URL, "http://")
+		adapter, err := NewAdapter(&api.AdapterConfig{MCPAddr: addr})
+		if err != nil {
+			t.Fatalf("NewAdapter() failed: %v", err)
+		}
+		defer adapter.Close()
+
+		if err := adapter.DisableAccount(context.Background(), 7); err != nil {
+			t.Fatalf("DisableAccount() failed: %v", err)
+		}
+	})
+
+	t.Run("DisableAccount error", func(t *testing.T) {
+		handler := newMockMCPHandler(t)
+		handler.errors["admin.disableAccount"] = &JSONRPCError{Code: -32000, Message: "already disabled"}
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := strings.TrimPrefix(server.URL, "http://")
+		adapter, err := NewAdapter(&api.AdapterConfig{MCPAddr: addr})
+		if err != nil {
+			t.Fatalf("NewAdapter() failed: %v", err)
+		}
+		defer adapter.Close()
+
+		if err := adapter.DisableAccount(context.Background(), 7); err == nil {
+			t.Error("Expected error for DisableAccount")
+		}
+	})
+}
+
+// TestAdapterRESTOnlyOperations covers the order and tenant-CA-hierarchy
+// methods the MCP adapter must implement to satisfy api.AdminAdapter, but
+// which are intentionally REST-only per RFC 8555 (ACME is HTTP-based) and
+// tenant CA hierarchy management. Each must refuse with admin.ErrRESTOnly
+// without making any network call, so the adapter under test never needs a
+// server.
+func TestAdapterRESTOnlyOperations(t *testing.T) {
+	adapter := &Adapter{}
+	ctx := context.Background()
+
+	t.Run("ListOrders", func(t *testing.T) {
+		orders, pagination, err := adapter.ListOrders(ctx, &admin.ListOrdersRequest{})
+		if !errors.Is(err, admin.ErrRESTOnly) {
+			t.Fatalf("ListOrders() err = %v, want %v", err, admin.ErrRESTOnly)
+		}
+		if orders != nil || pagination != nil {
+			t.Fatal("ListOrders() must return nil results alongside ErrRESTOnly")
+		}
+	})
+
+	t.Run("GetOrder", func(t *testing.T) {
+		order, err := adapter.GetOrder(ctx, 1, 2)
+		if !errors.Is(err, admin.ErrRESTOnly) {
+			t.Fatalf("GetOrder() err = %v, want %v", err, admin.ErrRESTOnly)
+		}
+		if order != nil {
+			t.Fatal("GetOrder() must return a nil result alongside ErrRESTOnly")
+		}
+	})
+
+	t.Run("UpdateTenantStatus", func(t *testing.T) {
+		if err := adapter.UpdateTenantStatus(ctx, "tenant-1", "disabled"); !errors.Is(err, admin.ErrRESTOnly) {
+			t.Fatalf("UpdateTenantStatus() err = %v, want %v", err, admin.ErrRESTOnly)
+		}
+	})
+
+	t.Run("CreateTenantRootCA", func(t *testing.T) {
+		ca, err := adapter.CreateTenantRootCA(ctx, "tenant-1", &admin.CreateTenantRootCARequest{})
+		if !errors.Is(err, admin.ErrRESTOnly) {
+			t.Fatalf("CreateTenantRootCA() err = %v, want %v", err, admin.ErrRESTOnly)
+		}
+		if ca != nil {
+			t.Fatal("CreateTenantRootCA() must return a nil result alongside ErrRESTOnly")
+		}
+	})
+
+	t.Run("GetTenantCAStatus", func(t *testing.T) {
+		status, err := adapter.GetTenantCAStatus(ctx, "tenant-1")
+		if !errors.Is(err, admin.ErrRESTOnly) {
+			t.Fatalf("GetTenantCAStatus() err = %v, want %v", err, admin.ErrRESTOnly)
+		}
+		if status != nil {
+			t.Fatal("GetTenantCAStatus() must return a nil result alongside ErrRESTOnly")
+		}
+	})
+
+	t.Run("CreateTenantIntermediateCA", func(t *testing.T) {
+		ca, err := adapter.CreateTenantIntermediateCA(ctx, "tenant-1", &admin.CreateTenantIntermediateCARequest{})
+		if !errors.Is(err, admin.ErrRESTOnly) {
+			t.Fatalf("CreateTenantIntermediateCA() err = %v, want %v", err, admin.ErrRESTOnly)
+		}
+		if ca != nil {
+			t.Fatal("CreateTenantIntermediateCA() must return a nil result alongside ErrRESTOnly")
+		}
+	})
+
+	t.Run("ListTenantIntermediateCAs", func(t *testing.T) {
+		cas, err := adapter.ListTenantIntermediateCAs(ctx, "tenant-1")
+		if !errors.Is(err, admin.ErrRESTOnly) {
+			t.Fatalf("ListTenantIntermediateCAs() err = %v, want %v", err, admin.ErrRESTOnly)
+		}
+		if cas != nil {
+			t.Fatal("ListTenantIntermediateCAs() must return a nil result alongside ErrRESTOnly")
+		}
+	})
+
+	t.Run("GetTenantIntermediateCA", func(t *testing.T) {
+		ca, err := adapter.GetTenantIntermediateCA(ctx, "tenant-1", "ca-1")
+		if !errors.Is(err, admin.ErrRESTOnly) {
+			t.Fatalf("GetTenantIntermediateCA() err = %v, want %v", err, admin.ErrRESTOnly)
+		}
+		if ca != nil {
+			t.Fatal("GetTenantIntermediateCA() must return a nil result alongside ErrRESTOnly")
+		}
+	})
+
+	t.Run("UpdateTenantIntermediateCAStatus", func(t *testing.T) {
+		err := adapter.UpdateTenantIntermediateCAStatus(ctx, "tenant-1", "ca-1", "revoked")
+		if !errors.Is(err, admin.ErrRESTOnly) {
+			t.Fatalf("UpdateTenantIntermediateCAStatus() err = %v, want %v", err, admin.ErrRESTOnly)
+		}
+	})
+}

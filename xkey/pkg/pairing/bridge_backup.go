@@ -18,14 +18,32 @@ import (
 	"encoding/json"
 )
 
-// handleCreateBackup handles remote.createBackup - the phone asks the laptop
-// to create an encrypted backup and return it.
+// The remote.*Backup* methods are unimplemented pending an architecture
+// decision this package cannot make on its own (go-xkms#690): backup.Service
+// encrypts every archive with a caller-supplied 32-byte key
+// (backup.Service.CreateBackup/DecryptBackup), and neither
+// RemoteCreateBackupParams/Result nor RemoteRestoreBackupParams carries one.
+// The phone-bridge wire protocol must not change to add one (out of scope for
+// this task), so the key has to come from somewhere the Bridge already
+// trusts on this host -- a passphrase or key file the CLI supplies when it
+// starts "xkey device listen", or a key derived from material the bridge
+// does not currently have access to. Either choice is a security-relevant
+// decision (what protects a backup blob a paired phone may retain
+// indefinitely) that needs the owner's sign-off, not a guess baked into a
+// handler.
 //
-// This is a placeholder implementation. The bridge will be connected to the
-// backup service in the CLI layer when the backup command is invoked. The
-// actual backup creation logic (key enumeration, encryption, packaging) will
-// be implemented in the backup service and wired in via functional options or
-// a setter on the Bridge.
+// remote.listBackups has the same open question one level further out:
+// enumerating "available backups" presumes a persistence location and an
+// ID/label scheme for backups created through this bridge, and no such
+// convention exists anywhere in this codebase today.
+//
+// Until that decision is made, all three handlers report the feature as
+// unconfigured rather than fabricating success or silently discarding the
+// phone's data.
+
+// handleCreateBackup handles remote.createBackup - the phone asks the laptop
+// to create an encrypted backup and return it. See the package-level note
+// above: this always reports ErrBackupNotConfigured.
 func (b *Bridge) handleCreateBackup(_ context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemoteCreateBackupParams
 	if err := unmarshalParams(params, &p); err != nil {
@@ -39,19 +57,12 @@ func (b *Bridge) handleCreateBackup(_ context.Context, params json.RawMessage) (
 		"includeCA", p.IncludeCA,
 		"label", p.Label)
 
-	return &RemoteCreateBackupResult{
-		BackupData: nil,
-		BackupID:   "",
-		ItemCount:  0,
-	}, nil
+	return nil, ErrBackupNotConfigured
 }
 
 // handleRestoreBackup handles remote.restoreBackup - the phone sends an
-// encrypted backup blob to the laptop for restoration.
-//
-// This is a placeholder implementation. The actual restore logic (decryption,
-// validation, item-by-item import) will be implemented in the backup service
-// and wired in when the restore command is invoked.
+// encrypted backup blob to the laptop for restoration. See the package-level
+// note above: this always reports ErrBackupNotConfigured.
 func (b *Bridge) handleRestoreBackup(_ context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemoteRestoreBackupParams
 	if err := unmarshalParams(params, &p); err != nil {
@@ -65,23 +76,14 @@ func (b *Bridge) handleRestoreBackup(_ context.Context, params json.RawMessage) 
 	b.logger.Info("backup restore requested",
 		"backupDataLen", len(p.BackupData))
 
-	return &RemoteRestoreBackupResult{
-		Success:  true,
-		Restored: []string{},
-		Message:  "backup received",
-	}, nil
+	return nil, ErrBackupNotConfigured
 }
 
 // handleListBackupsForRestore handles remote.listBackups - the phone asks the
-// laptop to enumerate available backups.
-//
-// This is a placeholder implementation. The actual listing logic (directory
-// enumeration, metadata parsing) will be implemented in the backup service
-// and wired in when the list command is invoked.
+// laptop to enumerate available backups. See the package-level note above:
+// this always reports ErrBackupNotConfigured.
 func (b *Bridge) handleListBackupsForRestore(_ context.Context, _ json.RawMessage) (interface{}, error) {
 	b.logger.Info("backup list requested")
 
-	return &RemoteListBackupsResult{
-		Backups: []BackupInfo{},
-	}, nil
+	return nil, ErrBackupNotConfigured
 }

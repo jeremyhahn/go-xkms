@@ -16,15 +16,20 @@ package pairing
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 )
 
 // handleOATHAdd handles remote.oathAdd - the phone sends an OATH credential
 // to the laptop for storage.
 //
-// This is a placeholder implementation. The bridge will be connected to the
-// OATH store in the CLI layer when the OATH command is invoked. The actual
-// credential storage logic will be implemented via a setter or functional
-// option on the Bridge.
+// The credential is stored through the Bridge's configured oath.Store (see
+// BridgeConfig.OATHStore), the same Store interface xkey's "oath" command
+// family and its file/composite stores implement. When no store is
+// configured, ErrOATHNotConfigured is returned rather than a fabricated
+// success.
 func (b *Bridge) handleOATHAdd(_ context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemoteOATHAddParams
 	if err := unmarshalParams(params, &p); err != nil {
@@ -39,24 +44,41 @@ func (b *Bridge) handleOATHAdd(_ context.Context, params json.RawMessage) (inter
 		return nil, ErrBridgeInvalidParams
 	}
 
+	if b.oathStore == nil {
+		return nil, ErrOATHNotConfigured
+	}
+
 	b.logger.Info("OATH credential add requested",
 		"name", p.Credential.Name,
 		"issuer", p.Credential.Issuer,
 		"type", p.Credential.Type)
 
+	cred, err := oathCredentialFromWire(&p.Credential)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreFailed, Cause: err}
+	}
+
+	if err := b.oathStore.Add(cred); err != nil {
+		if errors.Is(err, oath.ErrCredentialExists) {
+			return nil, ErrKeyExists
+		}
+		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreFailed, Cause: err}
+	}
+
 	return &RemoteOATHAddResult{
 		Success:      true,
-		CredentialID: "",
-		Message:      "credential received",
+		CredentialID: cred.ID,
+		Message:      "credential stored",
 	}, nil
 }
 
 // handleOATHGenerate handles remote.oathGenerate - the phone requests the
 // laptop to generate the current OTP code for a credential.
 //
-// This is a placeholder implementation. The actual OTP generation logic
-// (looking up the credential, computing TOTP/HOTP) will be implemented
-// via an OATH store and generator wired in when the feature is enabled.
+// The credential is looked up in the Bridge's configured oath.Store and the
+// code is produced by oath.Generator, the same generator the "oath" command
+// family uses. When no store is configured, ErrOATHNotConfigured is
+// returned.
 func (b *Bridge) handleOATHGenerate(_ context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemoteOATHGenerateParams
 	if err := unmarshalParams(params, &p); err != nil {
@@ -67,11 +89,82 @@ func (b *Bridge) handleOATHGenerate(_ context.Context, params json.RawMessage) (
 		return nil, ErrBridgeInvalidParams
 	}
 
+	if b.oathStore == nil {
+		return nil, ErrOATHNotConfigured
+	}
+
 	b.logger.Info("OATH code generation requested",
 		"credentialID", p.CredentialID)
 
+	cred, err := b.oathStore.Get(p.CredentialID)
+	if err != nil {
+		if errors.Is(err, oath.ErrCredentialNotFound) {
+			return nil, ErrOATHCredentialNotFound
+		}
+		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreFailed, Cause: err}
+	}
+
+	gen, err := oath.NewGenerator(cred)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrOATHGenerateFailed, Cause: err}
+	}
+
+	code, err := gen.Generate()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrOATHGenerateFailed, Cause: err}
+	}
+
+	var expiresIn int
+	if cred.Type == oath.TypeTOTP && cred.Period > 0 {
+		expiresIn = cred.Period - int(time.Now().Unix()%int64(cred.Period))
+	}
+
 	return &RemoteOATHGenerateResult{
-		Code:      "",
-		ExpiresIn: 0,
+		Code:      code,
+		ExpiresIn: expiresIn,
 	}, nil
+}
+
+// oathCredentialFromWire builds an oath.Credential from a phone-supplied
+// OATHCredentialInfo, applying the same defaults NewCredentialFromManualEntry
+// applies when the phone omits optional fields, and minting the ID with the
+// package's own GenerateCredentialID so it matches what every store already
+// keys entries by.
+func oathCredentialFromWire(info *OATHCredentialInfo) (*oath.Credential, error) {
+	accountForID := info.AccountName
+	if accountForID == "" {
+		accountForID = info.Name
+	}
+
+	cred := &oath.Credential{
+		ID:          oath.GenerateCredentialID(info.Issuer, accountForID),
+		Name:        info.Name,
+		Issuer:      info.Issuer,
+		AccountName: info.AccountName,
+		Type:        info.Type,
+		Algorithm:   info.Algorithm,
+		Digits:      info.Digits,
+		Period:      info.Period,
+		Counter:     info.Counter,
+		CreatedAt:   time.Now(),
+	}
+
+	if cred.Type == "" {
+		cred.Type = oath.TypeTOTP
+	}
+	if cred.Algorithm == "" {
+		cred.Algorithm = oath.DefaultAlgorithm
+	}
+	if cred.Digits == 0 {
+		cred.Digits = oath.DefaultDigits
+	}
+	if cred.Type == oath.TypeTOTP && cred.Period == 0 {
+		cred.Period = oath.DefaultPeriod
+	}
+
+	if err := cred.SetSecret(info.Secret); err != nil {
+		return nil, err
+	}
+
+	return cred, nil
 }

@@ -334,6 +334,72 @@ func TestFetchCertificateWithChain_WithAlternateChains(t *testing.T) {
 	assert.Equal(t, "Preferred Root", chain[0].Subject.CommonName)
 }
 
+// TestFetchCertificateWithChain_PreferredNotInAnyAlternateNoFallback covers
+// the terminal *caerrors.TrustedCAError branch of FetchCertificateWithChain:
+// fetchAlternateChains succeeds (unlike
+// TestFetchCertificateWithChain_PreferredNotFoundNoFallback, where it fails
+// outright because there is no Link header at all), but none of the returned
+// chains -- nor the default -- end with the preferred root, and
+// AllowFallback is false.
+func TestFetchCertificateWithChain_PreferredNotInAnyAlternateNoFallback(t *testing.T) {
+	defaultCertPEM, _ := createTestCertPEM(t, "Default Root")
+	altCertPEM, _ := createTestCertPEM(t, "Alternate Root")
+
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Replay-Nonce", "test-nonce")
+
+		switch r.URL.Path {
+		case "/directory":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"newNonce":   server.URL + "/new-nonce",
+				"newAccount": server.URL + "/new-account",
+				"newOrder":   server.URL + "/new-order",
+			})
+		case "/new-nonce":
+			w.WriteHeader(http.StatusNoContent)
+		case "/cert/1":
+			if r.Method == http.MethodHead {
+				w.Header().Set("Link", `<`+server.URL+`/cert/alt1>; rel="alternate"`)
+				return
+			}
+			w.Header().Set("Content-Type", "application/pem-certificate-chain")
+			w.Write(defaultCertPEM)
+		case "/cert/alt1":
+			w.Header().Set("Content-Type", "application/pem-certificate-chain")
+			w.Write(altCertPEM)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+
+	acmeClient := &acme.Client{
+		DirectoryURL: server.URL + "/directory",
+		Key:          key,
+		HTTPClient:   server.Client(),
+	}
+
+	client := &Client{
+		client:        acmeClient,
+		config:        &Config{DirectoryURL: server.URL + "/directory", Timeout: 30 * time.Second},
+		httpClient:    server.Client(),
+		logger:        slog.Default(),
+		accountSigner: key,
+	}
+
+	opts := &ChainOption{PreferredChain: "Nowhere Root", AllowFallback: false}
+	chain, err := client.FetchCertificateWithChain(context.Background(), server.URL+"/cert/1", opts)
+	require.Error(t, err)
+	assert.Nil(t, chain)
+	var caErr *caerrors.TrustedCAError
+	require.ErrorAs(t, err, &caErr)
+	assert.Equal(t, caerrors.NotFound, caErr.Type)
+}
+
 // TestGetAvailableChains_Success tests GetAvailableChains
 func TestGetAvailableChains_Success(t *testing.T) {
 	defaultCertPEM, _ := createTestCertPEM(t, "Default Root")

@@ -16,17 +16,44 @@ package pairing
 import (
 	"context"
 	"encoding/json"
+	"time"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
+
+// DefaultPIVBackend is the PIV backend name used when a request does not
+// name one, matching the "xkey piv" command family's own default.
+const DefaultPIVBackend = "software"
+
+// PIVStorageProvider resolves the certificate storage for a named PIV
+// backend (e.g. "software", "tpm2", "pkcs11") so the bridge can serve
+// remote.pivListSlots and remote.pivGetCert. The concrete storage
+// construction (file/tpm2/pkcs11 selection, paths, PKCS#11 session) lives in
+// the CLI layer, which already builds it for the "xkey piv" command family
+// (see cmd/xkey/cmd/piv.go's createPIVStorage). The bridge closes the
+// returned storage after each request.
+type PIVStorageProvider func(backend string) (xkms.PIVCertificateStorage, error)
+
+// pivBackendOrDefault returns backend, or DefaultPIVBackend when the phone
+// did not name one.
+func pivBackendOrDefault(backend string) string {
+	if backend == "" {
+		return DefaultPIVBackend
+	}
+	return backend
+}
 
 // handlePIVListSlots handles remote.pivListSlots - the phone asks the laptop
 // to enumerate its PIV slot contents.
 //
-// This is a placeholder implementation. The bridge will be connected to the
-// PIV service in the CLI layer when the PIV command is invoked. The actual
-// slot enumeration logic (reading key metadata, certificate info) will be
-// implemented in the PIV service and wired in via functional options or a
-// setter on the Bridge.
-func (b *Bridge) handlePIVListSlots(_ context.Context, params json.RawMessage) (interface{}, error) {
+// Slot/certificate metadata comes from the Bridge's configured
+// PIVStorageProvider (see BridgeConfig.PIVStorage). Whether a slot also has a
+// private key is answered by Client.ListKeys on the same backend, since PIV
+// keys are stored under KeyID == slot alongside every other key that backend
+// holds. When no storage provider is configured, ErrPIVNotConfigured is
+// returned.
+func (b *Bridge) handlePIVListSlots(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemotePIVListSlotsParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -34,21 +61,77 @@ func (b *Bridge) handlePIVListSlots(_ context.Context, params json.RawMessage) (
 		}
 	}
 
-	b.logger.Info("PIV list slots requested",
-		"backend", p.Backend)
+	backend := pivBackendOrDefault(p.Backend)
 
-	return &RemotePIVListSlotsResult{
-		Slots: []PIVSlotInfo{},
-	}, nil
+	b.logger.Info("PIV list slots requested",
+		"backend", backend)
+
+	if b.pivStorage == nil {
+		return nil, ErrPIVNotConfigured
+	}
+
+	storage, err := b.pivStorage(backend)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPIVNotConfigured, Cause: err}
+	}
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			b.logger.Warn("failed to close PIV storage", "backend", backend, "error", closeErr)
+		}
+	}()
+
+	slots, err := storage.List()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPIVSlotNotFound, Cause: err}
+	}
+
+	keysWithSlot := b.pivBackendKeyIDs(ctx, backend)
+
+	result := make([]PIVSlotInfo, 0, len(slots))
+	for _, slot := range slots {
+		_, hasKey := keysWithSlot[string(slot.Slot)]
+		result = append(result, PIVSlotInfo{
+			Slot:           string(slot.Slot),
+			Label:          xkms.PIVSlotName(slot.Slot),
+			Algorithm:      slot.Algorithm,
+			HasKey:         hasKey,
+			HasCertificate: true,
+			CertSubject:    slot.Subject,
+			CertExpiry:     slot.NotAfter,
+		})
+	}
+
+	return &RemotePIVListSlotsResult{Slots: result}, nil
+}
+
+// pivBackendKeyIDs returns the set of KeyIDs present in backend, via the same
+// Client.ListKeys the generic remote.listKeys method uses. A lookup failure
+// is logged and treated as "no keys known" rather than failing the whole
+// slot listing: certificate metadata is still useful to the phone even when
+// the key-presence hint cannot be computed.
+func (b *Bridge) pivBackendKeyIDs(ctx context.Context, backend string) map[string]struct{} {
+	ids := make(map[string]struct{})
+	resp, err := b.client.ListKeys(ctx, backend)
+	if err != nil || resp == nil {
+		if err != nil {
+			b.logger.Warn("failed to list keys for PIV slot key-presence check",
+				"backend", backend, "error", err)
+		}
+		return ids
+	}
+	for i := range resp.Keys {
+		ids[resp.Keys[i].KeyID] = struct{}{}
+	}
+	return ids
 }
 
 // handlePIVSign handles remote.pivSign - the phone requests the laptop to
 // sign data using a key in a PIV slot.
 //
-// This is a placeholder implementation. The actual signing logic (slot lookup,
-// key access, signature generation) will be implemented in the PIV service
-// and wired in when the PIV sign command is invoked.
-func (b *Bridge) handlePIVSign(_ context.Context, params json.RawMessage) (interface{}, error) {
+// PIV keys are stored under KeyID == slot in the named key backend, so
+// signing is served by Client.Sign exactly like remote.sign: no separate PIV
+// signer plumbing is needed on the bridge.
+func (b *Bridge) handlePIVSign(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemotePIVSignParams
 	if err := unmarshalParams(params, &p); err != nil {
 		return nil, ErrBridgeInvalidParams
@@ -61,24 +144,44 @@ func (b *Bridge) handlePIVSign(_ context.Context, params json.RawMessage) (inter
 		return nil, ErrBridgeInvalidParams
 	}
 
+	backend := pivBackendOrDefault(p.Backend)
+
+	if err := b.checkBackendAccess(backend); err != nil {
+		return nil, err
+	}
+
 	b.logger.Info("PIV sign requested",
 		"slot", p.Slot,
 		"dataLen", len(p.Data),
 		"algorithm", p.Algorithm,
-		"backend", p.Backend)
+		"backend", backend)
+
+	resp, err := b.client.Sign(ctx, &transport.SignRequest{
+		Backend: backend,
+		KeyID:   p.Slot,
+		Data:    p.Data,
+		Hash:    p.Algorithm,
+	})
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPIVSignFailed, Cause: err}
+	}
+
+	algorithm := resp.Algorithm
+	if algorithm == "" {
+		algorithm = p.Algorithm
+	}
 
 	return &RemotePIVSignResult{
-		Signature: nil,
-		Algorithm: p.Algorithm,
+		Signature: resp.Signature,
+		Algorithm: algorithm,
 	}, nil
 }
 
 // handlePIVGetCert handles remote.pivGetCert - the phone requests a
 // certificate from a PIV slot on the laptop.
 //
-// This is a placeholder implementation. The actual certificate retrieval
-// logic (slot lookup, certificate extraction) will be implemented in the
-// PIV service and wired in when the PIV get-cert command is invoked.
+// The certificate comes from the Bridge's configured PIVStorageProvider.
+// When no storage provider is configured, ErrPIVNotConfigured is returned.
 func (b *Bridge) handlePIVGetCert(_ context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemotePIVGetCertParams
 	if err := unmarshalParams(params, &p); err != nil {
@@ -89,11 +192,35 @@ func (b *Bridge) handlePIVGetCert(_ context.Context, params json.RawMessage) (in
 		return nil, ErrPIVInvalidSlot
 	}
 
+	backend := pivBackendOrDefault(p.Backend)
+
 	b.logger.Info("PIV get certificate requested",
 		"slot", p.Slot,
-		"backend", p.Backend)
+		"backend", backend)
+
+	if b.pivStorage == nil {
+		return nil, ErrPIVNotConfigured
+	}
+
+	storage, err := b.pivStorage(backend)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPIVNotConfigured, Cause: err}
+	}
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			b.logger.Warn("failed to close PIV storage", "backend", backend, "error", closeErr)
+		}
+	}()
+
+	cert, err := storage.Retrieve(xkms.PIVSlot(p.Slot))
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPIVSlotNotFound, Cause: err}
+	}
 
 	return &RemotePIVGetCertResult{
-		CertificateDER: nil,
+		CertificateDER: cert.Raw,
+		Subject:        cert.Subject.String(),
+		Issuer:         cert.Issuer.String(),
+		Expiry:         cert.NotAfter.UTC().Format(time.RFC3339),
 	}, nil
 }
