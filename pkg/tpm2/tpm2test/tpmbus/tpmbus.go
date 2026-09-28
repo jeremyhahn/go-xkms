@@ -189,6 +189,19 @@ func (c *Capture) RequireSaltedAuthorization(t testing.TB, cc tpm2.TPMCC) {
 	require.NotZerof(t, checked, "expected command 0x%x to be authorized by a session", uint32(cc))
 }
 
+// RequireParentHandle fails unless every command with code cc names want as
+// its first (parent) handle.
+func (c *Capture) RequireParentHandle(t testing.TB, cc tpm2.TPMCC, want tpm2.TPMHandle) {
+	t.Helper()
+	cmds := c.commands(cc)
+	require.NotEmptyf(t, cmds, "expected at least one command 0x%x", uint32(cc))
+	for _, cmd := range cmds {
+		got := binary.BigEndian.Uint32(cmd[10:14])
+		require.Equalf(t, uint32(want), got,
+			"command 0x%x is parented on 0x%x, want 0x%x", uint32(cc), got, uint32(want))
+	}
+}
+
 // walk calls visit, in recorded order, for every command with code cc not
 // addressed to the NULL hierarchy, together with whether each session live
 // at that point was started salted, and returns the number of commands

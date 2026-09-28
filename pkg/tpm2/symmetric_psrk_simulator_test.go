@@ -5,12 +5,12 @@ package tpm2
 
 import (
 	"crypto/x509"
-	"encoding/binary"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test/tpmbus"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -75,19 +75,6 @@ func resetDALockout(t *testing.T, h *simHarness) {
 	require.NoError(t, h.TPM.DictionaryAttackLockoutReset(nil))
 }
 
-// requireParentHandle fails unless every command with code cc names want as
-// its first (parent) handle.
-func (c *busCapture) requireParentHandle(t *testing.T, cc tpm2.TPMCC, want tpm2.TPMHandle) {
-	t.Helper()
-	cmds := c.commands(cc)
-	require.NotEmptyf(t, cmds, "expected at least one command 0x%x", uint32(cc))
-	for _, cmd := range cmds {
-		require.Equalf(t, uint32(want), binary.BigEndian.Uint32(cmd[10:14]),
-			"command 0x%x is parented on 0x%x, want the Platform SRK 0x%x",
-			uint32(cc), binary.BigEndian.Uint32(cmd[10:14]), uint32(want))
-	}
-}
-
 // TestSymmetricKeyPSRK_UserPIN seals a symmetric key under a Platform SRK
 // authorized by its USER PIN alone and proves that the key is created and
 // loaded under the Platform SRK, that it round-trips with the PIN, that it
@@ -107,15 +94,15 @@ func TestSymmetricKeyPSRK_UserPIN(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, material, 32)
 
-	bus.requireAbsent(t, "the AES key", material)
-	bus.requireAbsent(t, "the USER PIN", userPIN)
-	bus.requireParentHandle(t, tpm2.TPMCCCreate, platformSRKHandle(h.TPM.config))
-	bus.requireParentHandle(t, tpm2.TPMCCLoad, platformSRKHandle(h.TPM.config))
-	bus.requireSessionAttr(t, tpm2.TPMCCCreate, sessionAttrDecrypt)
-	bus.requireSessionAttr(t, tpm2.TPMCCUnseal, sessionAttrEncrypt)
-	bus.requireSaltedAuthorization(t, tpm2.TPMCCCreate)
-	bus.requireSaltedAuthorization(t, tpm2.TPMCCLoad)
-	bus.requireAllSessionsSalted(t)
+	bus.RequireAbsent(t, "the AES key", material)
+	bus.RequireAbsent(t, "the USER PIN", userPIN)
+	bus.RequireParentHandle(t, tpm2.TPMCCCreate, platformSRKHandle(h.TPM.config))
+	bus.RequireParentHandle(t, tpm2.TPMCCLoad, platformSRKHandle(h.TPM.config))
+	bus.RequireSessionAttr(t, tpm2.TPMCCCreate, tpmbus.SessionAttrDecrypt)
+	bus.RequireSessionAttr(t, tpm2.TPMCCUnseal, tpmbus.SessionAttrEncrypt)
+	bus.RequireSaltedAuthorization(t, tpm2.TPMCCCreate)
+	bus.RequireSaltedAuthorization(t, tpm2.TPMCCLoad)
+	bus.RequireAllSessionsSalted(t)
 
 	t.Run("the key object has DA protection", func(t *testing.T) {
 		pubBlob, err := h.Backend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
@@ -175,10 +162,10 @@ func TestSymmetricKeyPSRK_PlatformPolicy(t *testing.T) {
 	material, err := (&tpm2AESEncrypter{tpm: h.TPM, attrs: pcrBranch}).loadKeyMaterial()
 	require.NoError(t, err)
 
-	bus.requireAbsent(t, "the AES key", material)
-	bus.requireParentHandle(t, tpm2.TPMCCCreate, platformSRKHandle(h.TPM.config))
-	bus.requireParentHandle(t, tpm2.TPMCCLoad, platformSRKHandle(h.TPM.config))
-	bus.requireSessionAttr(t, tpm2.TPMCCUnseal, sessionAttrEncrypt)
+	bus.RequireAbsent(t, "the AES key", material)
+	bus.RequireParentHandle(t, tpm2.TPMCCCreate, platformSRKHandle(h.TPM.config))
+	bus.RequireParentHandle(t, tpm2.TPMCCLoad, platformSRKHandle(h.TPM.config))
+	bus.RequireSessionAttr(t, tpm2.TPMCCUnseal, tpmbus.SessionAttrEncrypt)
 
 	h.extendPlatformPCR(t, []byte("different boot measurement"))
 
