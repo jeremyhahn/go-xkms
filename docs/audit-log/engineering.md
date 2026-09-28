@@ -1,6 +1,6 @@
 # Audit Log — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115)
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1134)
 
 ## Exported surface — `pkg/audit`
 
@@ -65,6 +65,18 @@ type AuditService interface {
   which the server wires with the transports' Authorizer
   (`pkg/server/server.go:835`). Never let a transport pass a caller-chosen
   tenant to the audit client directly.
+- **An emitted event's tenant is normalized, never left empty.**
+  `toTransportEvent` (`pkg/audit/qrdb.go:84-98`) resolves the tenant from the
+  identity on the context, same as the query side, and folds it through
+  `qrdbsdk.NormalizeTenantID` before it is stored: no identity, or an identity
+  with an empty `TenantID`, becomes `system`. Both backends (`QRDBLogger`,
+  `ChainedFileLogger`) call this one function, so there is a single place the
+  fold has to hold. Without it, an event emitted off a background job or any
+  other identity-less path stored `""` — the query side's
+  match-everything filter — and was visible only to a caller holding
+  `audit:read:cross`; a system-scoped auditor without it, clamped to
+  `system`, never saw it (#1134). Events stored before the fix keep their
+  stored tenant; there is no rewrite of the existing chain.
 - **Concurrency.** Loggers are safe for concurrent use; both backends serialise
   their writes internally.
 
@@ -222,7 +234,13 @@ records after N days would be worse than one that grows.
   tenant callers with empty, foreign and system filters; a system Admin with
   `audit:read:cross`; a system Auditor without it; an Authorizer failure; no
   identity; and RBAC disabled. It decides from qrdb's real built-in grant table
-  through the SDK. There is one transport test per surface:
+  through the SDK. `TestQueryAudit_SystemAuditorSeesIdentityLessEvent` in the
+  same file is the #1134 round trip: it emits an event with no identity
+  through a real embedded node's `QRDBLogger` and proves a system Auditor
+  without `audit:read:cross` reads it back. `pkg/audit/qrdb_test.go`'s
+  `TestQRDBLogger_NoIdentityNormalizesToSystemTenant` and
+  `TestQRDBLogger_EmptyIdentityTenantNormalizesToSystemTenant` cover the
+  normalization itself. There is one transport test per surface:
   `pkg/api/rest/handlers_audit_tenant_test.go`,
   `pkg/api/grpc/service_audit_tenant_test.go` and
   `pkg/api/mcp/handlers_audit_tenant_test.go`.

@@ -111,6 +111,50 @@ func TestQRDBLogger_EmitQueryRoundTrip(t *testing.T) {
 	assert.Equal(t, "grpc", got.Attributes["transport"])
 }
 
+// TestQRDBLogger_NoIdentityNormalizesToSystemTenant proves #1134: an event
+// logged without an identity on the context (a background job, an internal
+// operation) lands in the chain tagged qrdbsdk.SystemTenantID, not "" — the
+// audit chain's match-everything filter — so a system-scoped auditor without
+// audit:read:cross (clamped to SystemTenantID, never querying with an empty
+// filter) can find it.
+func TestQRDBLogger_NoIdentityNormalizesToSystemTenant(t *testing.T) {
+	stub := &stubAuditClient{emitted: &qrdbtransport.AuditEvent{}}
+	logger := audit.NewQRDBLogger(stub)
+
+	ev := &audit.Event{
+		Timestamp: time.Now().UTC(),
+		Subject:   "system",
+		Action:    "seal_auto_unseal",
+		Resource:  "barrier",
+		Outcome:   audit.OutcomeAllow,
+	}
+	require.NoError(t, logger.Log(context.Background(), ev))
+
+	assert.Equal(t, qrdbsdk.SystemTenantID, stub.emitted.TenantID)
+}
+
+// TestQRDBLogger_EmptyIdentityTenantNormalizesToSystemTenant proves the same
+// fold applies when an identity IS present but its TenantID is the empty
+// string, not only when no identity is bound at all.
+func TestQRDBLogger_EmptyIdentityTenantNormalizesToSystemTenant(t *testing.T) {
+	stub := &stubAuditClient{emitted: &qrdbtransport.AuditEvent{}}
+	logger := audit.NewQRDBLogger(stub)
+
+	id := &auth.Identity{Subject: "svc", TenantID: ""}
+	emitCtx := auth.WithIdentity(context.Background(), id)
+
+	ev := &audit.Event{
+		Timestamp: time.Now().UTC(),
+		Subject:   "svc",
+		Action:    "rotate",
+		Resource:  "key",
+		Outcome:   audit.OutcomeAllow,
+	}
+	require.NoError(t, logger.Log(emitCtx, ev))
+
+	assert.Equal(t, qrdbsdk.SystemTenantID, stub.emitted.TenantID)
+}
+
 // TestQRDBLogger_NilEvent verifies the error path: a nil event is rejected with
 // ErrNilEvent and never reaches the audit subsystem.
 func TestQRDBLogger_NilEvent(t *testing.T) {
