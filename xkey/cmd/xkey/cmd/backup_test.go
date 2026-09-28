@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
