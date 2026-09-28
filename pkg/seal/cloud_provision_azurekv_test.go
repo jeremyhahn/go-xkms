@@ -87,20 +87,6 @@ func TestBuildCloudKMSStrategy_AzureKVBackend_CreatesKeyOnFirstProvisioning(t *t
 // a second barrier operation in the same process) resolves the symmetric
 // key SetSecret already created, through GetSymmetricKey, and does not call
 // SetSecret again.
-//
-// Unlike awskms's equivalent restart test
-// (TestBuildCloudKMSStrategy_AWSKMSBackend_RestartReusesPersistedKey in
-// cloud_provision_awskms_test.go), azurekv.Backend keeps its key metadata
-// only in an in-process map -- Config.KeyStorage/CertStorage are validated
-// as required (config.go Validate) but nothing in the package ever reads or
-// writes through them for key metadata, unlike awskms.Backend, which
-// persists every CreateKey/CreateSecretKey result there (go-xkms#839). A
-// genuinely restarted process (a new *azurekv.Backend over the same
-// storage.Backend) would see no metadata and EnsureSealKey would generate a
-// NEW seal key rather than reusing the first, orphaning data sealed under
-// it. That is a pre-existing gap unrelated to go-xkms#1090's Secrets API
-// seam; this test only proves reuse within one Backend's lifetime, which is
-// what the seam makes newly testable.
 func TestBuildCloudKMSStrategy_AzureKVBackend_SecondProvisioningReusesKey(t *testing.T) {
 	backend, secretsClient := newAzureKVMockBackend(t)
 	defer func() { _ = backend.Close() }()
@@ -115,6 +101,72 @@ func TestBuildCloudKMSStrategy_AzureKVBackend_SecondProvisioningReusesKey(t *tes
 	require.NotNil(t, strategy)
 	assert.Equal(t, 1, secretsClient.SetSecretCallCount(),
 		"second provisioning must reuse the persisted key, not call SetSecret again")
+}
+
+// TestBuildCloudKMSStrategy_AzureKVBackend_RestartReusesPersistedKey proves
+// the go-xkms#1098 persistence fix end-to-end, mirroring
+// TestBuildCloudKMSStrategy_AWSKMSBackend_RestartReusesPersistedKey in
+// cloud_provision_awskms_test.go (go-xkms#839): *azurekv.Backend keeps no
+// in-process key-metadata cache, so a second Backend built over the SAME
+// keyStorage/certStorage as the first -- simulating a process restart --
+// must resolve the symmetric key the first Backend's GenerateSymmetricKey
+// already created, through EnsureSealKey/GetSymmetricKey, without SetSecret
+// running again. The secretsClient (the mock vault itself) is also shared
+// across both backends, exactly as a real Key Vault instance would outlive
+// the process restart; only the in-process Backend state is discarded.
+// Without the Config.KeyStorage persistence fix, EnsureSealKey would
+// generate ANOTHER symmetric key on the second Backend (since it, too, sees
+// no metadata for the CN), orphaning the first and leaving data sealed under
+// it unreadable.
+func TestBuildCloudKMSStrategy_AzureKVBackend_RestartReusesPersistedKey(t *testing.T) {
+	keyStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+	certStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+
+	secretsClient := azurekv.NewMockSecretsClient()
+
+	config := &azurekv.Config{
+		VaultURL:    "https://mock-vault.vault.azure.net",
+		KeyStorage:  keyStorage,
+		CertStorage: certStorage,
+	}
+
+	ctx := context.Background()
+
+	// First "boot": build a Backend over the shared storage and secrets
+	// client, and provision the seal key.
+	backend1, err := azurekv.NewBackendWithClients(config, azurekv.NewMockKeyVaultClient(), secretsClient)
+	require.NoError(t, err)
+
+	strategy1, err := BuildCloudKMSStrategy(ctx, StrategyAzureKV, types.StoreAzureKV, backend1)
+	require.NoError(t, err)
+	require.Equal(t, 1, secretsClient.SetSecretCallCount(), "SetSecret must run once on first provisioning")
+
+	rootKey := []byte("0123456789abcdef0123456789abcdef")
+	sealed, err := strategy1.SealRootKey(ctx, rootKey, Credentials{})
+	require.NoError(t, err)
+
+	require.NoError(t, backend1.Close())
+
+	// "Restart": a brand-new Backend and a brand-new Key Vault client share
+	// only keyStorage/certStorage and the secretsClient (the vault) -- no
+	// other in-process state survives.
+	backend2, err := azurekv.NewBackendWithClients(config, azurekv.NewMockKeyVaultClient(), secretsClient)
+	require.NoError(t, err)
+	defer func() { _ = backend2.Close() }()
+
+	strategy2, err := BuildCloudKMSStrategy(ctx, StrategyAzureKV, types.StoreAzureKV, backend2)
+	require.NoError(t, err)
+	assert.Equal(t, 1, secretsClient.SetSecretCallCount(),
+		"the restarted backend must resolve the persisted key through GetSymmetricKey, not call SetSecret again")
+
+	// The root key sealed before the restart must unseal after it, through
+	// the same persisted key -- proving GetSymmetricKey on backend2 resolved
+	// the SAME secret GenerateSymmetricKey wrote on backend1, not a new one.
+	unsealed, err := strategy2.UnsealRootKey(ctx, sealed, Credentials{})
+	require.NoError(t, err)
+	require.Equal(t, rootKey, unsealed)
 }
 
 // TestBuildCloudKMSStrategy_AzureKVBackend_SetSecretError proves that a
