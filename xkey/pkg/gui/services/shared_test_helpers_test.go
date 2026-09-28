@@ -22,11 +22,30 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"strings"
+	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 )
+
+// freeLoopbackPort returns a loopback TCP port that is free at the moment of
+// the call. It is released before returning, so a caller that must occupy
+// the port itself (e.g. to provoke a "port already in use" error from
+// another component) needs to bind it again right away.
+func freeLoopbackPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve loopback port: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	if err := l.Close(); err != nil {
+		t.Fatalf("release reserved loopback port: %v", err)
+	}
+	return port
+}
 
 // Default PIN values for tests that need to pass mandatory validation.
 const (

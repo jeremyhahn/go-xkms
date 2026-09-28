@@ -1066,8 +1066,8 @@ func TestStartServer_ValidPort(t *testing.T) {
 	}
 	packedCSR := []byte("test-csr-data")
 
-	// Start on an available port using test helper
-	state := startTestServer("19911", mockTPMInst, packedCSR)
+	// Start on an OS-assigned port using test helper
+	state := startTestServer(t, mockTPMInst, packedCSR)
 	defer func() { _ = state.Shutdown() }()
 
 	// Give the server time to start
@@ -1079,7 +1079,7 @@ func TestStartServer_ValidPort(t *testing.T) {
 	}
 
 	// Make a request to verify it's working
-	resp, err := http.Get("http://localhost:19911" + challengePath + "test-token")
+	resp, err := http.Get("http://localhost:" + state.Port() + challengePath + "test-token")
 	if err != nil {
 		t.Logf("Server may not be fully started: %v", err)
 	} else {
@@ -1097,7 +1097,7 @@ func TestStartServer_ServerShutdownPath(t *testing.T) {
 	packedCSR := []byte("test-csr-data")
 
 	// Start the server using test helper
-	state := startTestServer("19912", mockTPMInst, packedCSR)
+	state := startTestServer(t, mockTPMInst, packedCSR)
 	time.Sleep(100 * time.Millisecond)
 
 	// Wait for server listener to be ready (poll instead of fixed sleep)
@@ -1122,16 +1122,15 @@ func TestStartServer_CreatesValidServer(t *testing.T) {
 		activateCredSecret: []byte("test-secret"),
 	}
 
-	// Use a high port to avoid conflicts
-	testPort := "19080"
-	state := startTestServer(testPort, mockTPMInst, packedCSR)
+	// Start on an OS-assigned port to avoid conflicts with concurrent tests.
+	state := startTestServer(t, mockTPMInst, packedCSR)
 	defer func() { _ = state.Shutdown() }()
 
 	// Give server time to start
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify server is running by making a request
-	url := fmt.Sprintf("http://localhost:%s%stest-token", testPort, challengePath)
+	url := fmt.Sprintf("http://localhost:%s%stest-token", state.Port(), challengePath)
 	resp, err := http.Get(url)
 	if err != nil {
 		t.Logf("Server may not have started (expected in some environments): %v", err)
@@ -1151,7 +1150,7 @@ func TestStartServer_HandlerSetup(t *testing.T) {
 	packedCSR := []byte("test-csr-data")
 
 	// Start the server using test helper
-	state := startTestServer("19916", mockTPMInst, packedCSR)
+	state := startTestServer(t, mockTPMInst, packedCSR)
 	defer func() { _ = state.Shutdown() }()
 	time.Sleep(100 * time.Millisecond)
 
@@ -1161,7 +1160,7 @@ func TestStartServer_HandlerSetup(t *testing.T) {
 	}
 
 	// Test challenge path
-	resp, err := http.Get("http://localhost:19916" + challengePath + "test-token")
+	resp, err := http.Get("http://localhost:" + state.Port() + challengePath + "test-token")
 	if err != nil {
 		t.Logf("Challenge request failed: %v", err)
 	} else {
@@ -1172,7 +1171,7 @@ func TestStartServer_HandlerSetup(t *testing.T) {
 	}
 
 	// Test secret path (wrong method should return 405)
-	resp, err = http.Get("http://localhost:19916" + secretPath + "test-token")
+	resp, err = http.Get("http://localhost:" + state.Port() + secretPath + "test-token")
 	if err != nil {
 		t.Logf("Secret request failed: %v", err)
 	} else {

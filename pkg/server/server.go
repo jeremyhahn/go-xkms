@@ -431,6 +431,15 @@ type Server struct {
 	// binding the configured port. Set via SetRESTListener.
 	restListener net.Listener
 
+	// metricsListener, when non-nil, is handed to the metrics HTTP server so
+	// it serves a pre-bound listener instead of binding the configured port.
+	// Set via SetMetricsListener; read back via MetricsAddr. Mirrors
+	// restListener/SetRESTListener for the metrics endpoint, which has no
+	// transport-level Config.Listener field to set the way rest.Config does
+	// -- the metrics server is a bare *http.Server built directly in
+	// startMetrics -- so the listener is injected here instead.
+	metricsListener net.Listener
+
 	// Lifecycle
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -451,6 +460,15 @@ func (s *Server) SetUIAssets(assets fs.FS) {
 // unreachable. Call before Start.
 func (s *Server) SetRESTListener(l net.Listener) {
 	s.restListener = l
+}
+
+// SetMetricsListener hands the metrics HTTP server a pre-bound listener to
+// serve instead of binding the configured Metrics.Port. A caller that must
+// not name a literal port -- most commonly a test avoiding a fixed-port bind
+// race -- binds 127.0.0.1:0 itself, passes the listener here, and reads the
+// actual bound address back afterward via MetricsAddr. Call before Start.
+func (s *Server) SetMetricsListener(l net.Listener) {
+	s.metricsListener = l
 }
 
 // ensureSSHClient lazily builds the shared SSH SDK client used by every
@@ -3201,14 +3219,35 @@ func (s *Server) startMetrics() {
 
 	// Publish the server so Shutdown can stop it. Guard against a Shutdown that
 	// already began (ctx cancelled): in that case do not start serving, so this
-	// goroutine returns promptly and releases its wg slot.
+	// goroutine returns promptly and releases its wg slot. A pre-bound listener
+	// (SetMetricsListener) is this goroutine's to close in that case: it is
+	// only registered with the stdlib http.Server's listener tracking -- which
+	// is what Shutdown closes -- once Serve/ListenAndServe below is called,
+	// mirroring how startREST handles an aborted startup against
+	// s.restListener.
 	s.mu.Lock()
 	if s.ctx.Err() != nil {
 		s.mu.Unlock()
+		if s.metricsListener != nil {
+			if cerr := s.metricsListener.Close(); cerr != nil {
+				s.logger.Warn("Failed to close pre-bound metrics listener during aborted startup", slog.Any("error", cerr))
+			}
+		}
 		return
 	}
 	s.metricsServer = server
 	s.mu.Unlock()
+
+	// A pre-bound listener takes precedence over binding the configured
+	// port, the same injected-listener-wins rule startREST follows for
+	// s.restListener.
+	if s.metricsListener != nil {
+		s.logger.Info("Starting metrics server", "address", s.metricsListener.Addr().String(), "path", s.config.Metrics.Path)
+		if err := server.Serve(s.metricsListener); err != nil && err != http.ErrServerClosed {
+			s.logger.Error("Metrics server error", slog.Any("error", err))
+		}
+		return
+	}
 
 	s.logger.Info("Starting metrics server", "address", addr, "path", s.config.Metrics.Path)
 
@@ -3902,6 +3941,20 @@ func (s *Server) RESTServer() *rest.Server {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.restServer
+}
+
+// MetricsAddr returns the address the metrics server is bound to. It only
+// reports a value when a listener was injected via SetMetricsListener --
+// the loopback :0 case a caller avoiding a fixed-port bind uses -- since
+// that is the only case with a net.Listener to ask; when the metrics
+// server bound its own configured port there is nothing to read it back
+// from. This mirrors rest.Server.Addr's identical pre-bound-listener-only
+// contract for the REST transport.
+func (s *Server) MetricsAddr() net.Addr {
+	if s.metricsListener != nil {
+		return s.metricsListener.Addr()
+	}
+	return nil
 }
 
 // MCPServer returns the MCP dispatch backend the unified server's module
