@@ -1436,7 +1436,10 @@ func TestCTAPHIDHandler_LargeResponseFragmentation(t *testing.T) {
 // Additional helper for testing decryptPIN edge cases
 // =============================================================================
 
-// TestDecryptPINNoNullTerminator tests PIN without null terminator.
+// TestDecryptPINNoNullTerminator tests that a PIN filling the entire padded
+// block with no 0x00 terminator is rejected as a policy violation: it has no
+// room left for a terminator, so the PIN it represents is 64 bytes long,
+// exceeding the 63-byte maximum by construction (go-xkms#1149).
 func TestDecryptPINNoNullTerminator(t *testing.T) {
 	sharedSecret := make([]byte, 32)
 	_, _ = rand.Read(sharedSecret)
@@ -1461,12 +1464,13 @@ func TestDecryptPINNoNullTerminator(t *testing.T) {
 	auth := createTestAuthenticatorWithPIN(t)
 	defer func() { _ = auth.Close() }()
 
-	decrypted, err := auth.decryptPIN(sharedSecret, PINProtocol1, encryptedPIN)
-	require.NoError(t, err)
-	require.Equal(t, 64, len(decrypted)) // Should use entire length
+	_, err = auth.decryptPIN(sharedSecret, PINProtocol1, encryptedPIN)
+	require.ErrorIs(t, err, ErrPINPolicyViolation)
 }
 
-// TestDecryptPINTooShort tests PIN that's too short.
+// TestDecryptPINTooShort tests that a newPinEnc shorter than the exact
+// protocol-1 length (64 bytes) is rejected before CryptBlocks runs, rather
+// than panicking on a partial final AES block (go-xkms#1149).
 func TestDecryptPINTooShort(t *testing.T) {
 	auth := createTestAuthenticatorWithPIN(t)
 	defer func() { _ = auth.Close() }()
@@ -1475,7 +1479,7 @@ func TestDecryptPINTooShort(t *testing.T) {
 	shortPIN := make([]byte, 32) // Less than 64 bytes
 
 	_, err := auth.decryptPIN(sharedSecret, PINProtocol1, shortPIN)
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrInvalidParameter)
 }
 
 // TestDecryptBlockWrongSize tests block decryption with wrong size.
@@ -1487,7 +1491,7 @@ func TestDecryptBlockWrongSize(t *testing.T) {
 	wrongSizeBlock := make([]byte, 32) // Should be 16 bytes
 
 	_, err := auth.decryptBlock(sharedSecret, PINProtocol1, wrongSizeBlock)
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrDecryptionFailed)
 }
 
 // TestClientPINToUint8InvalidTypes tests clientPINToUint8 with invalid types.

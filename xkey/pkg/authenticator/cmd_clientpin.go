@@ -26,6 +26,7 @@ import (
 	"io"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/jeremyhahn/go-enclave"
@@ -78,15 +79,27 @@ const (
 
 // PIN protocol constants.
 const (
-	PINProtocol1          = 1
-	PINProtocol2          = 2
-	PINMinLength          = 4
-	PINHashSize           = 16
-	PINAuthSizeV1         = 16
-	PINAuthSizeV2         = 32
-	PINTokenSize          = 32
-	AESBlockSize          = 16
+	PINProtocol1  = 1
+	PINProtocol2  = 2
+	PINMinLength  = 4
+	PINHashSize   = 16
+	PINAuthSizeV1 = 16
+	PINAuthSizeV2 = 32
+	PINTokenSize  = 32
+	AESBlockSize  = 16
+
+	// EncryptedPINMinLength is the size, in bytes, of the zero-padded PIN
+	// plaintext that decryptPIN produces and that encryptNewPIN/encryptNewPINV2
+	// build: CTAP 2.1 §6.5.6 pads newPin to exactly one AES block count (64
+	// bytes) regardless of protocol, so it is also the exact V1 newPinEnc
+	// length and the ciphertext length within a V2 newPinEnc.
 	EncryptedPINMinLength = 64
+
+	// PINMaxLength is the largest PIN, in bytes, CTAP 2.1 §6.5.5.5 step 5
+	// permits. A PIN filling all 64 padded bytes has no room for the 0x00
+	// terminator decryptPIN requires, so this is also the largest PIN that
+	// can round-trip through the padding scheme.
+	PINMaxLength = 63
 )
 
 // pinUvAuthToken lifetime limits from CTAP 2.1 §6.5.2.1. A token is minted by
@@ -567,15 +580,13 @@ func (a *Authenticator) handleChangePIN(req *ClientPINRequest) ([]byte, error) {
 		return nil, err
 	}
 
-	// Decrypt the new PIN.
+	// Decrypt the new PIN. decryptPIN already enforces the CTAP 2.1 §6.5.5.5
+	// step 5 length policy (non-empty, <= 63 bytes, >= a.config.PINMinLength
+	// Unicode code points) as part of extracting it from its padded form, so
+	// there is no separate length check to repeat here.
 	newPIN, err := a.decryptPIN(encKey, req.PinUvAuthProtocol, req.NewPinEnc)
 	if err != nil {
 		return nil, err
-	}
-
-	// Validate PIN length.
-	if len(newPIN) < a.config.PINMinLength {
-		return nil, ErrPINPolicyViolation
 	}
 
 	// Hash and store the new PIN. The retry budget was already reset and
@@ -1110,23 +1121,34 @@ func (a *Authenticator) verifyPinAuth(key []byte, protocol uint8, data, authPara
 	return hmac.Equal(expected[:PINAuthSizeV1], authParam)
 }
 
-// decryptPIN decrypts an encrypted PIN using AES-256-CBC.
-// For V1, a zero IV is used. For V2, the IV is extracted from the first 16 bytes of the ciphertext.
+// decryptPIN decrypts an encrypted PIN using AES-256-CBC and validates it
+// per CTAP 2.1 §6.5.5.5 (setPIN) / §6.5.5.6 (changePIN).
+//
+// encryptedPIN must be exactly EncryptedPINMinLength (64) bytes for
+// protocol 1, or exactly AESBlockSize+EncryptedPINMinLength (80: a 16-byte
+// IV followed by 64 bytes of ciphertext) for protocol 2. Any other length is
+// rejected with ErrInvalidParameter (CTAP1_ERR_INVALID_PARAMETER) before
+// CryptBlocks runs: CryptBlocks panics when its input is not a whole number
+// of AES blocks, and nothing on the CTAP/uhid path recovered from that
+// panic before dispatchCommand's recover boundary was added (go-xkms#1149).
+//
+// The decrypted buffer is then handed to extractPaddedPIN, which applies
+// the padding and length policy from CTAP 2.1 §6.5.5.5 step 5.
 func (a *Authenticator) decryptPIN(key []byte, protocol uint8, encryptedPIN []byte) ([]byte, error) {
 	var iv []byte
 	var ciphertext []byte
 
 	if protocol == PINProtocol2 {
-		// V2: first 16 bytes are IV, remainder is ciphertext.
-		if len(encryptedPIN) < AESBlockSize+EncryptedPINMinLength {
-			return nil, ErrDecryptionFailed
+		// V2: exactly a 16-byte IV followed by 64 bytes of ciphertext.
+		if len(encryptedPIN) != AESBlockSize+EncryptedPINMinLength {
+			return nil, ErrInvalidParameter
 		}
 		iv = encryptedPIN[:AESBlockSize]
 		ciphertext = encryptedPIN[AESBlockSize:]
 	} else {
-		// V1: zero IV, entire input is ciphertext.
-		if len(encryptedPIN) < EncryptedPINMinLength {
-			return nil, ErrDecryptionFailed
+		// V1: zero IV, ciphertext is exactly the 64-byte padded PIN.
+		if len(encryptedPIN) != EncryptedPINMinLength {
+			return nil, ErrInvalidParameter
 		}
 		iv = make([]byte, AESBlockSize)
 		ciphertext = encryptedPIN
@@ -1142,32 +1164,85 @@ func (a *Authenticator) decryptPIN(key []byte, protocol uint8, encryptedPIN []by
 	decrypted := make([]byte, len(ciphertext))
 	mode.CryptBlocks(decrypted, ciphertext)
 
-	// Remove padding (null-terminated PIN).
-	pinLen := 0
-	for i, b := range decrypted {
-		if b == 0 {
-			pinLen = i
+	return extractPaddedPIN(decrypted, a.config.PINMinLength)
+}
+
+// extractPaddedPIN validates and extracts a PIN from the zero-padded,
+// block-decrypted plaintext newPinEnc decrypts to, per CTAP 2.1 §6.5.5.5
+// step 5: the PIN is every byte before the first 0x00 terminator byte, and
+// every byte from the terminator onward must also be 0x00 -- a stray
+// non-zero byte after the terminator means the plaintext is not a validly
+// padded PIN (whether from a corrupted ceremony or an attempt to smuggle
+// data past the terminator), so it is rejected rather than silently
+// dropped. A buffer with no terminator at all is rejected too: it has no
+// room left for one, so the PIN it would represent is 64 bytes long,
+// exceeding the 63-byte maximum by construction.
+//
+// The extracted PIN is then checked against minLength (CTAP 2.1 §6.5.5.5
+// step 5's minPINLength, counted in Unicode code points since a PIN is
+// UTF-8 text) and the 63-byte maximum. Every violation -- no terminator, an
+// empty PIN, one under minLength, or one over 63 bytes -- reports the same
+// ErrPINPolicyViolation (CTAP2_ERR_PIN_POLICY_VIOLATION), so a platform
+// cannot use the error to distinguish a malformed ceremony from an
+// out-of-policy PIN.
+func extractPaddedPIN(padded []byte, minLength int) ([]byte, error) {
+	terminator := -1
+	for i, b := range padded {
+		if b == 0x00 {
+			terminator = i
 			break
 		}
 	}
-	if pinLen == 0 {
-		// No null terminator found, use entire decrypted data.
-		pinLen = len(decrypted)
+	if terminator == -1 {
+		return nil, ErrPINPolicyViolation
+	}
+	for _, b := range padded[terminator:] {
+		if b != 0x00 {
+			return nil, ErrPINPolicyViolation
+		}
 	}
 
-	return decrypted[:pinLen], nil
+	pin := padded[:terminator]
+	if err := validatePINLength(pin, minLength); err != nil {
+		return nil, err
+	}
+	return pin, nil
+}
+
+// validatePINLength enforces the CTAP 2.1 PIN length policy: non-empty, no
+// more than PINMaxLength (63) bytes, and at least minLength Unicode code
+// points (CTAP 2.1 §6.5.5.5 step 5, §6.4 minPINLength). A code-point count
+// rather than a byte count matters once a PIN contains multi-byte UTF-8
+// characters, where byte length overstates how many characters a user
+// actually entered.
+func validatePINLength(pin []byte, minLength int) error {
+	if len(pin) == 0 || len(pin) > PINMaxLength {
+		return ErrPINPolicyViolation
+	}
+	if utf8.RuneCount(pin) < minLength {
+		return ErrPINPolicyViolation
+	}
+	return nil
 }
 
 // decryptBlock decrypts a single AES block using AES-256-CBC.
 // For V1, expects exactly 16 bytes with a zero IV.
-// For V2, expects 32 bytes: 16-byte IV followed by 16-byte ciphertext.
+// For V2, expects exactly 32 bytes: 16-byte IV followed by 16-byte ciphertext.
+//
+// Both branches already sliced a fixed AESBlockSize/PINHashSize-sized window
+// out of encrypted rather than passing its full length to CryptBlocks, so
+// neither could panic on an oversized pinHashEnc even before this length
+// check existed. The V2 branch's bound is tightened from a minimum to an
+// exact match anyway, matching decryptPIN: CTAP 2.1 fixes pinHashEnc's
+// length per protocol, so trailing bytes past that length are malformed
+// input, not a length this authenticator should silently accept.
 func (a *Authenticator) decryptBlock(key []byte, protocol uint8, encrypted []byte) ([]byte, error) {
 	var iv []byte
 	var ciphertext []byte
 
 	if protocol == PINProtocol2 {
-		// V2: 16-byte IV + 16-byte ciphertext = 32 bytes minimum.
-		if len(encrypted) < AESBlockSize+PINHashSize {
+		// V2: exactly a 16-byte IV followed by 16-byte ciphertext.
+		if len(encrypted) != AESBlockSize+PINHashSize {
 			return nil, ErrDecryptionFailed
 		}
 		iv = encrypted[:AESBlockSize]
