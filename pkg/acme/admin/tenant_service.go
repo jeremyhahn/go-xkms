@@ -779,11 +779,17 @@ func (s *TenantAwareAdminService) CreateTenantIntermediateCA(ctx context.Context
 		parentSigner = entry.rootSigner
 		parentCert = entry.rootCA
 	} else {
-		// Use global CA as parent (default). Its error is no longer
-		// discarded: proceeding with a nil parentCert would sign the new
-		// intermediate CA without the parent chain data it needs, silently
-		// producing a certificate that cannot be chained back to a trusted
-		// root.
+		// Use global CA as parent (default). A nil CA (ACME disabled,
+		// go-xkms#1075) is reported through the same typed sentinel every
+		// other global-CA guard in this file uses, rather than dereferencing
+		// s.ca as a crypto.Signer below.
+		if s.AdminService == nil || s.ca == nil {
+			return nil, ErrCANotConfigured
+		}
+		// Its error is no longer discarded: proceeding with a nil parentCert
+		// would sign the new intermediate CA without the parent chain data
+		// it needs, silently producing a certificate that cannot be chained
+		// back to a trusted root.
 		root, err := s.ca.TrustedRoot()
 		if err != nil {
 			return nil, caerrors.Wrap(caerrors.StorageFailure, err, "admin: failed to load global CA trusted root: %s", err)
