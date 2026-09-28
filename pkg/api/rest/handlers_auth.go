@@ -361,8 +361,8 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 	if user.Email != "" {
 		identity.Metadata["email"] = user.Email
 	}
-	if user.Role != "" {
-		identity.Roles = []string{user.Role}
+	if len(user.Roles) > 0 {
+		identity.Roles = append([]string(nil), user.Roles...)
 	}
 
 	pair, err := s.tokenIssuer.Mint(r.Context(), identity)

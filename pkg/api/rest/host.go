@@ -532,7 +532,7 @@ func BuildAuthenticator(p AuthenticatorParams) (auth.Authenticator, error) {
 	}
 	if p.QRDBClient != nil {
 		chain = append(chain, auth.NewMTLSAuthenticator(&auth.MTLSConfig{
-			UserStore: auth.NewQRDBUserStore(p.QRDBClient.Users(), p.QRDBClient.Roles()),
+			UserStore: auth.NewQRDBUserStore(p.QRDBClient.Users()),
 		}))
 	}
 
@@ -726,7 +726,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 	}
 
 	if hc.QRDBClient != nil {
-		cfg.AuthUserStore = auth.NewQRDBUserStore(hc.QRDBClient.Users(), hc.QRDBClient.Roles())
+		cfg.AuthUserStore = auth.NewQRDBUserStore(hc.QRDBClient.Users())
 
 		if hc.WebAuthn != nil {
 			tenantID := hc.WebAuthnTenantID

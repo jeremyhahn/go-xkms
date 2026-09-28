@@ -263,7 +263,9 @@ resolution strategies, tried in order (`MTLSAuthenticator.buildIdentity`,
    with `qrdbsdk.ComputeSPKIThumbprint` and looked up against the user's cert
    bindings. When a match is found and the user is enabled, `Username` becomes
    the identity subject, the user's `TenantID` becomes the identity tenant, and
-   the user's `Role` becomes `Identity.Roles`. A matched but disabled user
+   every role the user holds becomes `Identity.Roles`, as the qrdb role IDs the
+   user record stores — the form go-qrdb's authorizer resolves permissions by
+   (`pkg/auth/qrdb_userstore.go`). A matched but disabled user
    yields `ErrUserDisabled`. Binding by public key rather than by certificate
    DER means a re-issued certificate for the same key still resolves.
 

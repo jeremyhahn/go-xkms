@@ -132,7 +132,7 @@ func TestPIVLogin_Success(t *testing.T) {
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{
 			Username:    "alice",
 			DisplayName: "Alice Admin",
-			Role:        "admin",
+			Roles:       []string{"admin"},
 			TenantID:    "system",
 			Enabled:     true,
 		}}
