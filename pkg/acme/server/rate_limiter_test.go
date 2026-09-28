@@ -108,11 +108,11 @@ func TestNewRateLimiter(t *testing.T) {
 	if rl.Interval != interval {
 		t.Errorf("Expected Interval to be %v, got %v", interval, rl.Interval)
 	}
-	if rl.Tokens == nil {
-		t.Error("Expected Tokens map to be initialized")
+	if rl.Len() != 0 {
+		t.Errorf("Expected a new limiter to track no clients, got %d", rl.Len())
 	}
-	if rl.LastRequest == nil {
-		t.Error("Expected LastRequest map to be initialized")
+	if !rl.Allow("client") {
+		t.Error("Expected the first request from a new client to be allowed")
 	}
 }
 
@@ -359,29 +359,37 @@ func TestRateLimiter_RetryAfterHeaderIsInteger(t *testing.T) {
 	}
 }
 
-func TestClientID_WithValidJWS(t *testing.T) {
-	// Create a minimal JWS structure with KID
+// TestClientID_IgnoresUnverifiedKID verifies ClientID never keys on a JWS
+// "kid" it has not seen verified, and never consumes the request body: a
+// body naming an arbitrary account still maps to the client IP.
+func TestClientID_IgnoresUnverifiedKID(t *testing.T) {
 	jwsPayload := `{"protected":"eyJhbGciOiJFUzI1NiIsImtpZCI6Imh0dHBzOi8vZXhhbXBsZS5jb20vYWNtZS9hY2N0LzEifQ","payload":"","signature":"test"}`
 
 	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewBufferString(jwsPayload))
-	clientID := ClientID(req)
+	req.RemoteAddr = "192.0.2.10:4444"
 
-	// Should parse the KID from the JWS
-	if !strings.Contains(clientID, "http") {
-		// If parsing fails, it should fall back to RemoteAddr
-		// This is expected for our minimal test JWS
-		if clientID == "" {
-			t.Error("Expected non-empty client ID")
-		}
+	if got := ClientID(req); got != "192.0.2.10" {
+		t.Errorf("Expected the client IP for an unverified kid, got %q", got)
 	}
 
-	// Verify body can still be read
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		t.Fatalf("Failed to read body after ClientID call: %v", err)
 	}
-	if len(body) == 0 {
-		t.Error("Body should be restorable after ClientID call")
+	if string(body) != jwsPayload {
+		t.Error("ClientID must not consume the request body")
+	}
+}
+
+// TestClientID_UsesVerifiedAccountID verifies ClientID keys on the account
+// a verifying middleware recorded with WithVerifiedAccountID.
+func TestClientID_UsesVerifiedAccountID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	req.RemoteAddr = "192.0.2.10:4444"
+	req = req.WithContext(WithVerifiedAccountID(req.Context(), 4242))
+
+	if got := ClientID(req); got != "4242" {
+		t.Errorf("Expected the verified account ID, got %q", got)
 	}
 }
 

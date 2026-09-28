@@ -18,6 +18,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -837,4 +838,53 @@ func TestNewOrderHandler_ContentType(t *testing.T) {
 
 	// Verify Content-Type header
 	require.Equal(t, "application/json", resp.Header().Get("Content-Type"))
+}
+
+// newOrderWithIdentifierCount posts a new-order request carrying n distinct
+// DNS identifiers and returns the recorded response.
+func newOrderWithIdentifierCount(t *testing.T, n int) *httptest.ResponseRecorder {
+	t.Helper()
+	service, _, cleanup := setupTestService(t)
+	t.Cleanup(cleanup)
+	service.challengeMap["dns-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
+		return nil
+	}
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	identifiers := make([]entities.ACMEIdentifier, n)
+	for i := range identifiers {
+		identifiers[i] = entities.ACMEIdentifier{Type: common.AuthzTypeDNS, Value: fmt.Sprintf("host%d.example.com", i)}
+	}
+
+	url := service.baseRESTURI + "/acme/new-order"
+	req := createJWSRequest(t, service, key, url, NewOrderRequest{Identifiers: identifiers}, true, account.ID)
+	resp := httptest.NewRecorder()
+	service.NewOrderHandler(resp, req)
+	return resp
+}
+
+// TestNewOrderHandler_RejectsTooManyIdentifiers proves an order one past
+// maxOrderIdentifiers is refused as malformed before any authorization is
+// created.
+func TestNewOrderHandler_RejectsTooManyIdentifiers(t *testing.T) {
+	resp := newOrderWithIdentifierCount(t, maxOrderIdentifiers+1)
+
+	require.Equal(t, http.StatusBadRequest, resp.Code)
+	var problem entities.Error
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&problem))
+	assert.Equal(t, "urn:ietf:params:acme:error:"+common.ErrTypeMalformedError, problem.Type)
+	assert.Contains(t, problem.Detail, "at most 100")
+}
+
+// TestNewOrderHandler_AcceptsIdentifierLimit proves an order with exactly
+// maxOrderIdentifiers identifiers is still accepted.
+func TestNewOrderHandler_AcceptsIdentifierLimit(t *testing.T) {
+	resp := newOrderWithIdentifierCount(t, maxOrderIdentifiers)
+
+	require.Equal(t, http.StatusCreated, resp.Code)
+	var order entities.ACMEOrder
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&order))
+	assert.Len(t, order.Authorizations, maxOrderIdentifiers)
 }

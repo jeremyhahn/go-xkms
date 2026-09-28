@@ -359,6 +359,50 @@ func TestBuildACMERouter_DirectoryEndpoint(t *testing.T) {
 	}
 }
 
+// TestBuildACMERouter_OversizedBodyIs413 verifies buildACMERouter mounts
+// acmeserver.RequestBodyMiddleware: a POST body one byte over
+// acmeserver.MaxRequestBodySize is refused with 413 and a "malformed"
+// problem before the handler runs, while a normal body still reaches it.
+func TestBuildACMERouter_OversizedBodyIs413(t *testing.T) {
+	svc := &stubRestService{}
+	ts := httptest.NewServer(buildACMERouter(svc, "/acme", nil, nil))
+	t.Cleanup(ts.Close)
+
+	oversized := strings.Repeat("a", int(acmeserver.MaxRequestBodySize)+1)
+	resp, err := http.Post(ts.URL+"/acme/new-order", "application/jose+json", strings.NewReader(oversized))
+	if err != nil {
+		t.Fatalf("POST /acme/new-order: %v", err)
+	}
+	var problem entities.Error
+	decodeErr := json.NewDecoder(resp.Body).Decode(&problem)
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		t.Fatalf("close response body: %v", closeErr)
+	}
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected HTTP 413, got %d", resp.StatusCode)
+	}
+	if decodeErr != nil {
+		t.Fatalf("decode problem: %v", decodeErr)
+	}
+	if problem.Type != "urn:ietf:params:acme:error:"+common.ErrTypeMalformedError {
+		t.Fatalf("expected a malformed problem, got %q", problem.Type)
+	}
+	if svc.newOrderCalled.Load() {
+		t.Fatal("an oversized request must not reach NewOrderHandler")
+	}
+
+	resp, err = http.Post(ts.URL+"/acme/new-order", "application/jose+json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST /acme/new-order: %v", err)
+	}
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		t.Fatalf("close response body: %v", closeErr)
+	}
+	if !svc.newOrderCalled.Load() {
+		t.Fatal("a normal-sized request must reach NewOrderHandler")
+	}
+}
+
 // TestBuildACMERouter_HealthEndpoint verifies that GET /acme/health routes
 // to HealthHandler, the resilience status endpoint added for #735.
 func TestBuildACMERouter_HealthEndpoint(t *testing.T) {

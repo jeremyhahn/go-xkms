@@ -15,6 +15,7 @@ package rfc8555
 
 import (
 	"crypto/rand"
+	"fmt"
 	"testing"
 	"time"
 
@@ -176,110 +177,57 @@ func TestNonce_BoundedMemoryUnderFlood(t *testing.T) {
 	assert.LessOrEqual(t, svc.UsedCount(), maxUsed)
 }
 
-// TestRateLimiter_AllowsWithinLimit tests rate limiting allows requests within limit
+// TestRateLimiter_AllowsWithinLimit verifies every request within the
+// budget is admitted.
 func TestRateLimiter_AllowsWithinLimit(t *testing.T) {
 	limiter := server.NewRateLimiter(5, time.Minute)
 
-	clientID := "test-client-123"
-
-	// Initialize tokens for client
-	limiter.Tokens[clientID] = 5
-	limiter.LastRequest[clientID] = time.Now()
-
-	// Should allow requests within limit
 	for i := 0; i < 5; i++ {
-		limiter.Tokens[clientID]--
-		assert.GreaterOrEqual(t, limiter.Tokens[clientID], 0)
+		assert.True(t, limiter.Allow("test-client-123"), "request %d is within the limit", i+1)
 	}
 }
 
-// TestRateLimiter_BlocksExcessRequests tests rate limiting blocks excess requests
+// TestRateLimiter_BlocksExcessRequests verifies the request after the budget
+// is exhausted is refused.
 func TestRateLimiter_BlocksExcessRequests(t *testing.T) {
 	limiter := server.NewRateLimiter(3, time.Minute)
 
-	clientID := "test-client-456"
-
-	// Initialize tokens
-	limiter.Tokens[clientID] = 3
-	limiter.LastRequest[clientID] = time.Now()
-
-	// Use all tokens
 	for i := 0; i < 3; i++ {
-		limiter.Tokens[clientID]--
+		require.True(t, limiter.Allow("test-client-456"))
 	}
-
-	// No tokens left
-	assert.Equal(t, 0, limiter.Tokens[clientID])
-
-	// Would need to wait for refill
-	hasTokens := limiter.Tokens[clientID] > 0
-	assert.False(t, hasTokens)
+	assert.False(t, limiter.Allow("test-client-456"))
 }
 
-// TestRateLimiter_TokenRefill tests token bucket refill over time
+// TestRateLimiter_TokenRefill verifies an exhausted bucket refills once an
+// interval has elapsed.
 func TestRateLimiter_TokenRefill(t *testing.T) {
-	limiter := server.NewRateLimiter(5, 100*time.Millisecond)
+	limiter := server.NewRateLimiter(1, 50*time.Millisecond)
 
-	clientID := "test-client-refill"
+	require.True(t, limiter.Allow("test-client-refill"))
+	require.False(t, limiter.Allow("test-client-refill"))
 
-	// Start with empty bucket
-	limiter.Tokens[clientID] = 0
-	limiter.LastRequest[clientID] = time.Now().Add(-200 * time.Millisecond)
-
-	// Calculate elapsed time
-	elapsed := time.Since(limiter.LastRequest[clientID])
-
-	// Calculate tokens to add based on elapsed time
-	tokensToAdd := int(elapsed.Seconds() / limiter.Interval.Seconds())
-
-	// Should have refilled
-	assert.Greater(t, tokensToAdd, 0)
+	assert.Eventually(t, func() bool {
+		return limiter.Allow("test-client-refill")
+	}, 2*time.Second, 60*time.Millisecond)
 }
 
-// TestRateLimiter_MultipleClients tests rate limiting tracks clients independently
+// TestRateLimiter_MultipleClients verifies clients are tracked independently.
 func TestRateLimiter_MultipleClients(t *testing.T) {
-	limiter := server.NewRateLimiter(5, time.Minute)
+	limiter := server.NewRateLimiter(1, time.Minute)
 
-	client1 := "client-1"
-	client2 := "client-2"
-
-	// Initialize both clients
-	limiter.Tokens[client1] = 5
-	limiter.Tokens[client2] = 5
-	now := time.Now()
-	limiter.LastRequest[client1] = now
-	limiter.LastRequest[client2] = now
-
-	// Use tokens from client1
-	limiter.Tokens[client1] = 0
-
-	// client2 should still have tokens
-	assert.Equal(t, 0, limiter.Tokens[client1])
-	assert.Equal(t, 5, limiter.Tokens[client2])
+	require.True(t, limiter.Allow("client-1"))
+	require.False(t, limiter.Allow("client-1"))
+	assert.True(t, limiter.Allow("client-2"), "client-2 has its own bucket")
+	assert.Equal(t, 2, limiter.Len())
 }
 
-// TestRateLimiter_MaxTokensCap tests that tokens don't exceed maximum
-func TestRateLimiter_MaxTokensCap(t *testing.T) {
-	maxRequests := 10
-	limiter := server.NewRateLimiter(maxRequests, time.Minute)
+// TestRateLimiter_BoundedUnderKeyFlood verifies the limiter's state stays
+// capped however many distinct keys it sees.
+func TestRateLimiter_BoundedUnderKeyFlood(t *testing.T) {
+	limiter := server.NewRateLimiter(10, time.Minute)
 
-	clientID := "test-client-cap"
-
-	// Try to add more tokens than max
-	limiter.Tokens[clientID] = 5
-	tokensToAdd := 20
-
-	// Apply cap
-	newTokens := min(maxRequests, limiter.Tokens[clientID]+tokensToAdd)
-
-	// Should be capped at max
-	assert.Equal(t, maxRequests, newTokens)
-}
-
-// Helper function for min comparison
-func min(a, b int) int {
-	if a < b {
-		return a
+	for i := 0; i < server.DefaultMaxEntries*2; i++ {
+		limiter.Allow(fmt.Sprintf("client-%d", i))
 	}
-	return b
+	assert.Equal(t, server.DefaultMaxEntries, limiter.Len())
 }

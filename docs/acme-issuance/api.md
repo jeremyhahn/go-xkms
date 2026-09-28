@@ -221,7 +221,9 @@ Errors are RFC 7807 problem documents with `urn:ietf:params:acme:error:*` types
 | nonce issued (`HEAD /acme/new-nonce`) | 200 with `Replay-Nonce` |
 | order still processing | 200 with `Retry-After` |
 | problem document | 4xx/5xx per the error table |
-| rate limited (xkmsd whenever `acme.rate_limit` is enabled, via `acmeserver.NewClientRateLimiterMiddleware` at `cmd/xkmsd/acme.go:280`; the standalone `TrustedCA` too; see [engineering.md](engineering.md) §Invariants) | 429 with `Retry-After` |
+| rate limited (xkmsd whenever `acme.rate_limit` is enabled, via `acmeserver.NewClientRateLimiterMiddleware` at `cmd/xkmsd/acme.go:281`; the standalone `TrustedCA` too; see [engineering.md](engineering.md) §Invariants) | 429 with `Retry-After` |
+| request body larger than 256 KiB (`server.MaxRequestBodySize`, `pkg/acme/server/request_body.go:38`) | 413, `malformed` problem |
+| new-order with more than 100 identifiers (`pkg/acme/server/handlers/new_order.go:36`) | 400, `malformed` problem |
 
 Every response carries a fresh `Replay-Nonce` header — a client that does not
 read it will fail its next POST with `badNonce`.

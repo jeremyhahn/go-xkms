@@ -82,7 +82,7 @@ Rejected alternatives:
 | Issuance | `pkg/acme/server/handlers.OrderFinalizeHandler` calls `s.ca` (`pkg/ca`) directly; `pkg/acme/issuance` is not on this path — see Data flow below |
 | Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
 | Identifier policy, CAA | `pkg/acme/policy`, `pkg/acme/server/caa.go` — both wired, see Trust boundaries |
-| Rate limits | `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` — wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`), keyed per client (JWS KID or IP); `tenant_rate_limiter.go` exists but is wired into neither; see Trust boundaries |
+| Rate limits, request body cap | `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` — wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`), keyed per client IP; the tenant and per-category limiters (`tenant_rate_limiter.go`) keyed on verified accounts; `pkg/acme/server/request_body.go`'s `RequestBodyMiddleware` reads every body once, capped at 256 KiB, ahead of all of them; see Trust boundaries |
 | Circuit breakers, degradation cache | `pkg/acme/server/circuitbreaker` (breakers, `Manager`, the HTTP middleware, and the `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators), `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` (the shared challenge-verifier wrapping helper), `pkg/acme/server/degradation` (the cache `GET /acme/directory` and `GET /acme/ca-bundle` fall back to) — wired into both xkmsd and the standalone `TrustedCA`; see Trust boundaries |
 | Certificate Transparency | `pkg/acme/ct` |
 | Admin plane | `pkg/acme/admin` |
@@ -164,7 +164,12 @@ through ACME against an existing node's directory.
   `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
   mounted on the whole ACME surface by both ACME server compositions
   (xkmsd's `cmd/xkmsd/acme.go`, the standalone `TrustedCA`), keying each
-  client by JWS KID or IP. The per-tenant overall quota and the RFC 8555
+  client by IP — never by an unverified JWS `kid`, which a client could vary
+  per request. Its lock covers only the token arithmetic, and its state is
+  bounded by a TTL and an entry cap. Ahead of it, `RequestBodyMiddleware`
+  reads each request body once, capped at 256 KiB, so no limiter or
+  handler ever reads the connection while holding shared state
+  (go-xkms#1171). The per-tenant overall quota and the RFC 8555
   Section 6.6 per-category limits (`tenant_rate_limiter.go`,
   `rate_limiter.go`) are wired into both compositions, keyed exclusively on
   a tenant `handlers.RestService.TenantAuthMiddleware` resolves from a fully

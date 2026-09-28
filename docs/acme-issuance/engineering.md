@@ -31,9 +31,10 @@
 - `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go` — request-rate
   enforcement. `rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
   wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA`
-  (`pkg/acme/client/trustedca.go:384-393`); the tenant limiter is
-  constructed nowhere outside its own file. See Invariants below and
-  go-xkms#882.
+  (`pkg/acme/client/trustedca.go`); the tenant limiters are wired by both
+  compositions too. See Invariants below and go-xkms#882, #886, #1171.
+- `pkg/acme/server/request_body.go` — the capped, read-once request body
+  (`RequestBodyMiddleware`, `RequestBody`); see Invariants below.
 - `pkg/acme/server/circuitbreaker` — the one circuit breaker implementation
   (`CircuitBreaker`, `Manager`, the `Middleware` HTTP wrapper, and the
   `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators;
@@ -214,14 +215,69 @@ once, to the externally visible base.
   parameter model. A DNS failure that prevents determining the RRset
   (SERVFAIL, timeout, any non-NXDOMAIN error) fails closed per RFC 8659
   Section 5.1: it denies issuance rather than "proceeding with caution".
+- **Every request body is read once, capped, before anything parses it
+  (go-xkms#1171).** `server.RequestBodyMiddleware`
+  (`pkg/acme/server/request_body.go:142`) is the first middleware after
+  metrics instrumentation on both compositions
+  (`cmd/xkmsd/acme.go:609`, `pkg/acme/client/trustedca.go:443`). It reads
+  the body through `http.MaxBytesReader` at `server.MaxRequestBodySize`
+  (256 KiB, `request_body.go:38`) and replaces `r.Body` with a buffered
+  copy; every later consumer — `TenantAuthMiddleware`
+  (`handlers/tenant_auth.go:114`), and `parseKID`/`parseJWS` through
+  `parseSignedRequest` (`handlers/service.go:1078`) — calls
+  `server.RequestBody` (`request_body.go:102`) and gets those bytes without
+  touching the connection. A failed read is remembered, so a second caller
+  gets the same `*server.RequestBodyError` rather than reading the rest of an
+  oversized body. An oversized body is `malformed` with HTTP 413; any other
+  read failure is `malformed` with 400 (`RequestBodyError.Problem`,
+  `request_body.go:70`). The cap is 256 KiB, not 64 KiB, because a finalize
+  carrying a TCG-CSR-IDEVID embeds the UEFI boot event log, and the JWS
+  double base64url encoding grows it by 16/9: the real 41,196-byte log in
+  `test/integration/tpm2/testdata` alone is ~72 KiB on the wire.
 - **Rate limiting is a per-client cap, enforced before RFC 8555 processing
   begins.** `acmeserver.NewClientRateLimiterMiddleware`
-  (`pkg/acme/server/rate_limiter.go`) is mounted on the whole ACME surface —
-  by the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`) and by
-  xkmsd's embedded listener (`cmd/xkmsd/acme.go`'s `buildACMERouter`) — and
-  keys each client by JWS KID once an account exists, falling back to the
-  client IP before one does (`server.ClientID`). Exceeding the cap refuses
-  the request with `rateLimited`; it does not queue it.
+  (`pkg/acme/server/rate_limiter.go:266`) is mounted on the whole ACME
+  surface — by the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`)
+  and by xkmsd's embedded listener (`cmd/xkmsd/acme.go`'s `buildACMERouter`)
+  — and keys each client by IP (`server.ClientIP`, which honours
+  `X-Forwarded-For`/`X-Real-IP` only from a `server.TrustedProxies` peer).
+  It runs before the JWS is verified, so it never keys on the `kid`: an
+  unverified `kid` is attacker-chosen, and keying on it let one client mint
+  a fresh bucket per request (go-xkms#1171). Exceeding the cap refuses the
+  request with `rateLimited`; it does not queue it.
+- **A per-account bucket is keyed on a verified account only.**
+  `server.ClientID` (`rate_limiter.go:576`) returns the decimal account ID
+  that `TenantAuthMiddleware` published with `server.WithVerifiedAccountID`
+  (`handlers/tenant_auth.go:131`) after `parseKID` verified the JWS, and the
+  client IP otherwise. It never reads the body and never parses a `kid`
+  itself.
+- **The limiter's lock covers only the bucket arithmetic.**
+  `RateLimiter.MiddlewareFunc` (`rate_limiter.go:311`) derives the key,
+  calls `RateLimiter.Allow` (`rate_limiter.go:198`) — the only code that
+  holds the mutex — and serves the request after the lock is released. A
+  slow body, a slow handler, or a synchronous challenge validation against a
+  slow target never delays another request.
+- **Limiter state is bounded.** A `RateLimiter` evicts a bucket once it has
+  been idle for its TTL — `MaxRequests` intervals, the time a drained bucket
+  takes to refill, so eviction never grants or withholds a token
+  (`RateLimiter.ttl`, `rate_limiter.go:171`) — in a sweep that runs at most
+  once per TTL or per minute, whichever is shorter
+  (`sweepExpiredLocked`, `rate_limiter.go:235`). It tracks at most
+  `server.DefaultMaxEntries` (10,000, `rate_limiter.go:101`) keys; when full
+  it refuses a new key with `rateLimited` until one expires, the same
+  fail-closed policy `TenantRateLimiter` applies per tenant with
+  `MaxEntriesPerTenant` (which now defaults to the same constant,
+  `tenant_rate_limiter.go:145`). Of xkmsd's five category limiters
+  (`buildACMERouterLimiters`, `cmd/xkmsd/acme.go:722`), new-account is a
+  `RateLimiter` and gets these bounds directly; tenant, new-order,
+  certificate and failed-validation are `TenantRateLimiter`s, already capped
+  per tenant and swept by their cleanup goroutine, and their tenants and
+  client keys now come only from verified accounts or the client IP.
+- **An order carries at most 100 identifiers.** `NewOrderHandler` refuses a
+  larger list with `malformed` (400) before creating any authorization
+  (`pkg/acme/server/handlers/new_order.go:36,68`). `malformed`, not
+  `rejectedIdentifier`: the request as a whole is refused, not any one
+  identifier in it.
 - **Tenant admission control is keyed exclusively from an authenticated JWS
   "kid", never from a client-asserted header, host, or path (go-xkms#886).**
   `handlers.RestService.TenantAuthMiddleware`
@@ -544,6 +600,8 @@ The mapping an implementer needs:
 | CAA forbids issuance | `caa` | 403 |
 | challenge validation failed | `incorrectResponse` / `connection` / `dns` | 403 |
 | rate limit exceeded | `rateLimited` | 429 |
+| request body over `MaxRequestBodySize` (256 KiB) | `malformed` | 413 |
+| more than 100 identifiers in one new-order | `malformed` | 400 |
 | order not ready to finalize | `orderNotReady` | 403 |
 | CSR does not match the order (`dns`/`ip` orders) | `badCSR` | 400 |
 | permanent-identifier CSR missing/malformed/extra otherName | `badCSR` | 400 |
