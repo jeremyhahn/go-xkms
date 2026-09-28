@@ -107,6 +107,9 @@ func TestRequestBodyMiddleware_ReadErrorIs400Problem(t *testing.T) {
 	assert.Equal(t, "urn:ietf:params:acme:error:"+common.ErrTypeMalformedError, problem.Type)
 }
 
+// derivedKey is the context key the test uses to derive a request.
+type derivedKey struct{}
+
 // TestRequestBody_ReadsConnectionOnce proves every consumer after the
 // middleware — including one on a request derived with WithContext — gets
 // the same bytes without another read of the connection, and that a reader
@@ -122,7 +125,7 @@ func TestRequestBody_ReadsConnectionOnce(t *testing.T) {
 		var err error
 		first, err = RequestBody(r)
 		require.NoError(t, err)
-		derived := r.WithContext(context.WithValue(r.Context(), struct{}{}, "v"))
+		derived := r.WithContext(context.WithValue(r.Context(), derivedKey{}, "v"))
 		second, err = RequestBody(derived)
 		require.NoError(t, err)
 		direct, err = io.ReadAll(r.Body)
