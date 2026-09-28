@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -27,6 +28,11 @@ import (
 )
 
 const (
+	// sudoRuntimeDirRoot holds the per-user runtime directories that
+	// systemd-logind creates, each named by uid; XDG_RUNTIME_DIR points into
+	// it for a logged-in user.
+	sudoRuntimeDirRoot = "/run/user"
+
 	socketDir      = "xkey"
 	socketName     = "xkey.sock"
 	instanceSubdir = "run"
@@ -119,7 +125,14 @@ func runtimeInstanceSocketPath(absHome string) string {
 // runtimeDir returns this process's per-user runtime directory; see
 // runtimeDirFor.
 func runtimeDir() (string, error) {
-	return runtimeDirFor(runtime.GOOS, os.Getenv, effectiveHomeDir)
+	return runtimeDirFor(runtime.GOOS, os.Getenv, effectiveHomeDir, sudoUID, os.Lstat)
+}
+
+// sudoUID returns the invoking user's uid when this process runs as root via
+// sudo; see sudoOwnership.
+func sudoUID() (int, bool) {
+	uid, _, ok := sudoOwnership()
+	return uid, ok
 }
 
 // runtimeDirFor chooses the per-user directory under which xkey places its
@@ -127,15 +140,32 @@ func runtimeDir() (string, error) {
 //
 //   - $XDG_RUNTIME_DIR, when set (Linux desktop sessions; the directory is
 //     created 0700 for the user by the session manager).
+//   - Under sudo (root with SUDO_UID set, as sudoUID reports):
+//     /run/user/$SUDO_UID, when it exists and passes the socket directory
+//     checks for that user alone (a real directory, owned by SUDO_UID, mode
+//     0700). sudo strips XDG_RUNTIME_DIR, but the invoking user's clients
+//     still have it and resolve $XDG_RUNTIME_DIR/xkey/xkey.sock; this is the
+//     directory logind gives them, so `sudo xkey fido2` and those clients
+//     meet at the same socket. A missing or unsafe directory falls through
+//     to the choices below.
 //   - macOS: $TMPDIR, which launchd sets to a per-user 0700 directory under
 //     /var/folders; otherwise ~/Library/Caches.
 //   - Everywhere else: ~/.xkey/run.
 //
-// It never returns a shared directory such as /tmp. getenv and home are
-// parameters so every branch is testable without touching the environment.
-func runtimeDirFor(goos string, getenv func(string) string, home func() (string, error)) (string, error) {
+// It never returns a shared directory such as /tmp. getenv, home, sudo and
+// lstat are parameters so every branch is testable without touching the
+// environment or the file system.
+func runtimeDirFor(goos string, getenv func(string) string, home func() (string, error), sudo func() (int, bool), lstat func(string) (fs.FileInfo, error)) (string, error) {
 	if dir := getenv("XDG_RUNTIME_DIR"); dir != "" {
 		return dir, nil
+	}
+	if uid, ok := sudo(); ok {
+		dir := filepath.Join(sudoRuntimeDirRoot, strconv.Itoa(uid))
+		// A failure is not an error here: it only means this directory is
+		// not a safe meeting point, and the fallbacks below are.
+		if validateSocketDirWith(lstat, dir, []int{uid}) == nil {
+			return dir, nil
+		}
 	}
 	if goos == "darwin" {
 		if dir := getenv("TMPDIR"); dir != "" {

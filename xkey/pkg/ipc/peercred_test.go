@@ -14,10 +14,16 @@
 package ipc
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -64,8 +70,16 @@ func TestPeerUID_ReportsListenerUID(t *testing.T) {
 }
 
 func TestVerifyPeer_AcceptsTrustedPeer(t *testing.T) {
-	client, _ := dialPair(t)
-	assert.NoError(t, verifyPeer(client, trustedUIDs()))
+	client, server := dialPair(t)
+
+	uid, err := verifyPeer(client, trustedUIDs())
+	require.NoError(t, err)
+	assert.Equal(t, os.Geteuid(), uid)
+
+	// The server end sees the client the same way.
+	uid, err = verifyPeer(server, trustedUIDs())
+	require.NoError(t, err)
+	assert.Equal(t, os.Geteuid(), uid)
 }
 
 func TestVerifyPeer_RefusesUntrustedPeer(t *testing.T) {
@@ -73,16 +87,18 @@ func TestVerifyPeer_RefusesUntrustedPeer(t *testing.T) {
 	// what a client sees when another user owns the listener.
 	client, _ := dialPair(t)
 
-	err := verifyPeer(client, foreignUIDs())
+	uid, err := verifyPeer(client, foreignUIDs())
 	require.ErrorIs(t, err, ErrPeerUntrusted)
 	assert.ErrorContains(t, err, "peer uid")
+	assert.Equal(t, os.Geteuid(), uid, "a refused peer's uid is reported so it can be logged")
 }
 
 func TestVerifyPeer_RefusesNonUnixConnection(t *testing.T) {
 	a, b := net.Pipe()
 	defer func() { _ = a.Close(); _ = b.Close() }()
 
-	assert.ErrorIs(t, verifyPeer(a, trustedUIDs()), ErrPeerCredentials)
+	_, err := verifyPeer(a, trustedUIDs())
+	assert.ErrorIs(t, err, ErrPeerCredentials)
 }
 
 // countingListener binds a raw listener and counts accepted connections, so a
@@ -174,4 +190,126 @@ func TestDial_AbsentSocketIsDaemonNotRunning(t *testing.T) {
 	conn, err := Dial(filepath.Join(privateDir(t), "absent.sock"), DefaultTimeout)
 	assert.Nil(t, conn)
 	assert.ErrorIs(t, err, ErrDaemonNotRunning)
+}
+
+// logRecord is one captured slog record, flattened for assertions.
+type logRecord struct {
+	level slog.Level
+	msg   string
+	attrs map[string]slog.Value
+}
+
+// recordingHandler is a slog.Handler that hands every record to a channel, so
+// a test can wait for a log line written by a server goroutine.
+type recordingHandler struct {
+	records chan logRecord
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	rec := logRecord{level: r.Level, msg: r.Message, attrs: map[string]slog.Value{}}
+	r.Attrs(func(a slog.Attr) bool {
+		rec.attrs[a.Key] = a.Value
+		return true
+	})
+	h.records <- rec
+	return nil
+}
+
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// servePeerTest starts a server in a private directory that trusts trusted
+// and returns its socket path, the log records it writes, and the handler it
+// dispatches to.
+func servePeerTest(t *testing.T, trusted []int) (string, <-chan logRecord, *mockHandler) {
+	t.Helper()
+	sockPath := filepath.Join(privateDir(t), "xkey.sock")
+	logs := &recordingHandler{records: make(chan logRecord, 16)}
+	handler := &mockHandler{statusResp: OKResponse(ActionDaemonReady)}
+
+	srv, err := NewServer(sockPath, handler, slog.New(logs))
+	require.NoError(t, err)
+	srv.trusted = trusted
+
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		assert.ErrorIs(t, <-served, ErrServerClosed)
+	})
+	return sockPath, logs.records, handler
+}
+
+func TestServer_ServesTrustedPeer(t *testing.T) {
+	sockPath, _, _ := servePeerTest(t, trustedUIDs())
+
+	resp, err := NewClient(sockPath).Status()
+	require.NoError(t, err)
+	assert.Equal(t, StatusOK, resp.Status)
+	assert.Equal(t, ActionDaemonReady, resp.Action)
+}
+
+func TestServer_DropsUntrustedPeerAndLogsUID(t *testing.T) {
+	// The test process is both ends; a server trusted set without its uid
+	// is exactly what the server sees when another local user connects.
+	sockPath, records, _ := servePeerTest(t, foreignUIDs())
+
+	// NewClient verifies the listener (this uid, trusted by the client) and
+	// sends the request; the server must close without answering.
+	resp, err := NewClient(sockPath).Status()
+	assert.Nil(t, resp)
+	require.Error(t, err)
+
+	select {
+	case rec := <-records:
+		assert.Equal(t, slog.LevelWarn, rec.level)
+		assert.Contains(t, rec.msg, "untrusted peer")
+		require.Contains(t, rec.attrs, "peer_uid")
+		assert.Equal(t, int64(os.Geteuid()), rec.attrs["peer_uid"].Int64())
+		errAttr, ok := rec.attrs["error"].Any().(error)
+		require.True(t, ok)
+		assert.ErrorIs(t, errAttr, ErrPeerUntrusted)
+	case <-time.After(DefaultTimeout):
+		t.Fatal("the server did not log the dropped peer")
+	}
+}
+
+func TestServer_DroppedPeerNeverReachesHandler(t *testing.T) {
+	sockPath, records, handler := servePeerTest(t, foreignUIDs())
+
+	conn, err := net.Dial("unix", sockPath)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	require.NoError(t, json.NewEncoder(conn).Encode(Message{Type: MessageTypeTypePassword, Name: "github"}))
+
+	// The server closes the connection without writing a response. The
+	// close arrives as EOF, or as a reset because the request was never
+	// read; either way nothing comes back.
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(DefaultTimeout)))
+	n, readErr := conn.Read(make([]byte, 1))
+	assert.Zero(t, n)
+	assert.True(t, errors.Is(readErr, io.EOF) || errors.Is(readErr, syscall.ECONNRESET), "want EOF or reset, got %v", readErr)
+
+	<-records
+	assert.Empty(t, handler.getLastName(), "a dropped peer's request must not be dispatched")
+}
+
+func TestServer_AdmitPeerRefusesUnverifiablePeer(t *testing.T) {
+	// Where peer credentials cannot be read the server fails closed, as the
+	// client does: a non-unix connection stands in for such a platform.
+	logs := &recordingHandler{records: make(chan logRecord, 1)}
+	srv := &Server{logger: slog.New(logs), trusted: trustedUIDs()}
+	a, b := net.Pipe()
+	defer func() { _ = a.Close(); _ = b.Close() }()
+
+	assert.False(t, srv.admitPeer(a))
+	rec := <-logs.records
+	assert.Equal(t, slog.LevelWarn, rec.level)
+	assert.NotContains(t, rec.attrs, "peer_uid", "no uid is known, so none is logged")
+	errAttr, ok := rec.attrs["error"].Any().(error)
+	require.True(t, ok)
+	assert.ErrorIs(t, errAttr, ErrPeerCredentials)
 }

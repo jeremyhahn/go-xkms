@@ -20,20 +20,28 @@ import (
 )
 
 // verifyPeer checks the kernel-reported uid of the process at the other end
-// of conn against trusted. The uid comes from the kernel's record of the
-// socket (SO_PEERCRED on Linux, LOCAL_PEERCRED on macOS and FreeBSD), so the
-// peer cannot forge it.
-func verifyPeer(conn net.Conn, trusted []int) error {
+// of conn against trusted and returns that uid. The uid comes from the
+// kernel's record of the socket (SO_PEERCRED on Linux, LOCAL_PEERCRED on
+// macOS and FreeBSD), so the peer cannot forge it.
+//
+// The client calls it on the connection to the listener before sending
+// anything, and the server calls it on every accepted connection before
+// reading anything (see Server.handleConnection). On a refused peer
+// (ErrPeerUntrusted) the returned uid is the peer's, so the caller can log
+// who was turned away; when the credentials cannot be read at all
+// (ErrPeerCredentials, ErrPeerCredentialsUnsupported) there is no uid and
+// the returned value is meaningless.
+func verifyPeer(conn net.Conn, trusted []int) (int, error) {
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {
-		return &DetailError{Err: ErrPeerCredentials, Detail: fmt.Sprintf(": %T is not a unix socket", conn)}
+		return 0, &DetailError{Err: ErrPeerCredentials, Detail: fmt.Sprintf(": %T is not a unix socket", conn)}
 	}
 	uid, err := peerUID(unixConn)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !slices.Contains(trusted, uid) {
-		return &DetailError{Err: ErrPeerUntrusted, Detail: fmt.Sprintf(": peer uid %d", uid)}
+		return uid, &DetailError{Err: ErrPeerUntrusted, Detail: fmt.Sprintf(": peer uid %d", uid)}
 	}
-	return nil
+	return uid, nil
 }

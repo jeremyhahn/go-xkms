@@ -459,7 +459,11 @@ type Server struct {
 	handler    Handler
 	logger     *slog.Logger
 	socketPath string
-	closed     atomic.Bool
+	// trusted is the set of uids whose processes may use the server (see
+	// trustedUIDs); every other peer is dropped before anything is read. It
+	// is a field so tests can exclude the test process's own uid.
+	trusted []int
+	closed  atomic.Bool
 	// shutdownMu serializes each accept loop iteration's "register with wg"
 	// decision against Close's shutdown sequence. Without it, wg.Add (in
 	// Serve) and wg.Wait (in Close) can transition the WaitGroup's counter
@@ -484,6 +488,10 @@ type Server struct {
 // When running as root via sudo, the directories it creates and the socket
 // are handed to the original user (from SUDO_UID/SUDO_GID) so that client
 // commands running as that user can connect.
+//
+// The socket's file mode is not the only gate: Serve checks the kernel-
+// reported uid of every client against trustedUIDs and drops any other user
+// before reading a byte (see handleConnection).
 func NewServer(socketPath string, handler Handler, logger *slog.Logger) (*Server, error) {
 	if socketPath == "" {
 		return nil, ErrSocketPathUnresolved
@@ -533,6 +541,7 @@ func NewServer(socketPath string, handler Handler, logger *slog.Logger) (*Server
 		handler:    handler,
 		logger:     logger,
 		socketPath: socketPath,
+		trusted:    trusted,
 	}, nil
 }
 
@@ -643,14 +652,19 @@ func (s *Server) Close() error {
 	return err
 }
 
-// handleConnection processes a single client connection: reads one JSON
-// message, dispatches to the appropriate handler, and writes the JSON response.
+// handleConnection processes a single client connection: verifies the
+// client's uid, reads one JSON message, dispatches to the appropriate
+// handler, and writes the JSON response.
 func (s *Server) handleConnection(conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			s.logger.Error("close connection failed", "error", err)
 		}
 	}()
+
+	if !s.admitPeer(conn) {
+		return
+	}
 
 	if err := conn.SetReadDeadline(time.Now().Add(readDeadline)); err != nil {
 		s.logger.Error("set read deadline failed", "error", err)
@@ -702,6 +716,24 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	auditLogFailure(s.logIPCEvent(audit.OpIPCMessageDispatched, true, nil, map[string]any{"message_type": msg.Type}))
 	s.writeResponse(conn, resp)
+}
+
+// admitPeer reports whether the process at the other end of conn runs as a
+// trusted user (see verifyPeer). Any other peer, and any peer whose
+// credentials cannot be read, is refused with a warning and gets no
+// response: the socket's 0600 mode and 0700 directory keep other users out
+// only while nothing loosens them, and this check does not depend on them.
+func (s *Server) admitPeer(conn net.Conn) bool {
+	uid, err := verifyPeer(conn, s.trusted)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, ErrPeerUntrusted) {
+		s.logger.Warn("ipc: dropped connection from untrusted peer", "peer_uid", uid, "error", err)
+		return false
+	}
+	s.logger.Warn("ipc: dropped connection with unverifiable peer", "error", err)
+	return false
 }
 
 // publicErrors are the handler error classes whose fixed sentinel text is

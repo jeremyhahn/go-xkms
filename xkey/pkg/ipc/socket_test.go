@@ -15,11 +15,14 @@ package ipc
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -175,6 +178,47 @@ func envMap(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
 }
 
+// notSudo is the sudo resolver of a process not running as root via sudo.
+func notSudo() (int, bool) { return 0, false }
+
+// sudoAs returns the sudo resolver of a root process started by uid.
+func sudoAs(uid int) func() (int, bool) {
+	return func() (int, bool) { return uid, true }
+}
+
+// noFiles is an lstat for an empty file system.
+func noFiles(name string) (fs.FileInfo, error) {
+	return nil, &fs.PathError{Op: "lstat", Path: name, Err: fs.ErrNotExist}
+}
+
+// fakeDir is an fs.FileInfo for a file owned by uid, carrying the
+// syscall.Stat_t that fileOwner reads.
+type fakeDir struct {
+	name string
+	mode fs.FileMode
+	uid  int
+}
+
+func (d fakeDir) Name() string       { return filepath.Base(d.name) }
+func (d fakeDir) Size() int64        { return 0 }
+func (d fakeDir) Mode() fs.FileMode  { return d.mode }
+func (d fakeDir) ModTime() time.Time { return time.Time{} }
+func (d fakeDir) IsDir() bool        { return d.mode.IsDir() }
+func (d fakeDir) Sys() any           { return &syscall.Stat_t{Uid: uint32(d.uid)} }
+
+// filesystem returns an lstat backed by entries; any other path does not
+// exist.
+func filesystem(entries ...fakeDir) func(string) (fs.FileInfo, error) {
+	return func(name string) (fs.FileInfo, error) {
+		for _, e := range entries {
+			if e.name == name {
+				return e, nil
+			}
+		}
+		return noFiles(name)
+	}
+}
+
 func TestRuntimeDirFor(t *testing.T) {
 	tests := []struct {
 		name string
@@ -192,23 +236,81 @@ func TestRuntimeDirFor(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := runtimeDirFor(tt.goos, envMap(tt.env), fixedHome("/home/alice"))
+			got, err := runtimeDirFor(tt.goos, envMap(tt.env), fixedHome("/home/alice"), notSudo, noFiles)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
+func TestRuntimeDirFor_SudoUsesInvokingUsersRunDir(t *testing.T) {
+	// sudo stripped XDG_RUNTIME_DIR; the invoking user's session still has
+	// /run/user/1000, which is where that user's clients look.
+	lstat := filesystem(fakeDir{name: "/run/user/1000", mode: fs.ModeDir | 0o700, uid: 1000})
+
+	for _, goos := range []string{"linux", "freebsd", "darwin"} {
+		t.Run(goos, func(t *testing.T) {
+			got, err := runtimeDirFor(goos, envMap(nil), fixedHome("/home/alice"), sudoAs(1000), lstat)
+			require.NoError(t, err)
+			assert.Equal(t, "/run/user/1000", got)
+		})
+	}
+}
+
+func TestRuntimeDirFor_SudoKeepsFallbackWhenRunDirUnusable(t *testing.T) {
+	tests := []struct {
+		name  string
+		lstat func(string) (fs.FileInfo, error)
+	}{
+		{"missing", noFiles},
+		{"owned by another user", filesystem(fakeDir{name: "/run/user/1000", mode: fs.ModeDir | 0o700, uid: 1001})},
+		// Root is trusted for a socket directory in general, but this one
+		// must belong to the invoking user or it is not that user's session
+		// directory.
+		{"owned by root", filesystem(fakeDir{name: "/run/user/1000", mode: fs.ModeDir | 0o700, uid: 0})},
+		{"group accessible", filesystem(fakeDir{name: "/run/user/1000", mode: fs.ModeDir | 0o750, uid: 1000})},
+		{"symbolic link", filesystem(fakeDir{name: "/run/user/1000", mode: fs.ModeSymlink | 0o777, uid: 1000})},
+		{"not a directory", filesystem(fakeDir{name: "/run/user/1000", mode: 0o700, uid: 1000})},
+		{"stat fails", func(string) (fs.FileInfo, error) { return nil, fs.ErrPermission }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := runtimeDirFor("linux", envMap(nil), fixedHome("/home/alice"), sudoAs(1000), tt.lstat)
+			require.NoError(t, err)
+			assert.Equal(t, "/home/alice/.xkey/run", got)
+		})
+	}
+}
+
+func TestRuntimeDirFor_XDGRuntimeDirWinsOverSudo(t *testing.T) {
+	lstat := filesystem(fakeDir{name: "/run/user/1000", mode: fs.ModeDir | 0o700, uid: 1000})
+	env := envMap(map[string]string{"XDG_RUNTIME_DIR": "/run/user/0"})
+
+	got, err := runtimeDirFor("linux", env, fixedHome("/home/alice"), sudoAs(1000), lstat)
+	require.NoError(t, err)
+	assert.Equal(t, "/run/user/0", got)
+}
+
+func TestRuntimeDirFor_NotSudoIgnoresRunUser(t *testing.T) {
+	// Without sudo there is no invoking user to serve: a valid
+	// /run/user/<uid> is not consulted and the home fallback stands.
+	lstat := filesystem(fakeDir{name: "/run/user/1000", mode: fs.ModeDir | 0o700, uid: 1000})
+
+	got, err := runtimeDirFor("linux", envMap(nil), fixedHome("/home/alice"), notSudo, lstat)
+	require.NoError(t, err)
+	assert.Equal(t, "/home/alice/.xkey/run", got)
+}
+
 func TestRuntimeDirFor_NoHomeIsRefused(t *testing.T) {
 	homeErr := errors.New("no home")
 	for _, goos := range []string{"linux", "darwin"} {
 		t.Run(goos+" error", func(t *testing.T) {
-			_, err := runtimeDirFor(goos, envMap(nil), func() (string, error) { return "", homeErr })
+			_, err := runtimeDirFor(goos, envMap(nil), func() (string, error) { return "", homeErr }, notSudo, noFiles)
 			assert.ErrorIs(t, err, ErrSocketPathUnresolved)
 			assert.ErrorIs(t, err, homeErr)
 		})
 		t.Run(goos+" empty", func(t *testing.T) {
-			_, err := runtimeDirFor(goos, envMap(nil), fixedHome(""))
+			_, err := runtimeDirFor(goos, envMap(nil), fixedHome(""), notSudo, noFiles)
 			assert.ErrorIs(t, err, ErrSocketPathUnresolved)
 		})
 	}

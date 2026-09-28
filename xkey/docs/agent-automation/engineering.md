@@ -439,25 +439,38 @@ in order:
 2. `<XKEY_HOME>/run/xkey.sock` when `XKEY_HOME` is set. If that path would exceed
    90 bytes (under the 104/108-byte `sun_path` limits), it uses a runtime-dir path
    keyed by a 12-hex SHA-256 of the absolute home.
-3. `<runtime dir>/xkey/xkey.sock`. `runtimeDirFor` (`socket.go:136`) picks
-   `$XDG_RUNTIME_DIR`; on macOS `$TMPDIR` (launchd's per-user `0700` directory),
-   then `~/Library/Caches`; elsewhere `~/.xkey/run`. Under `sudo` the home is the
-   invoking user's (`effectiveHomeDir`, `socket.go:162`), so `sudo xkey fido2` and
-   that user's clients resolve the same socket. With no home at all it returns
+3. `<runtime dir>/xkey/xkey.sock`. `runtimeDirFor` (`socket.go:158`) picks
+   `$XDG_RUNTIME_DIR`; then, under `sudo` (root with `SUDO_UID`), the invoking
+   user's `/run/user/$SUDO_UID` (`socket.go:162-169`); on macOS `$TMPDIR`
+   (launchd's per-user `0700` directory), then `~/Library/Caches`; elsewhere
+   `~/.xkey/run`. sudo strips `XDG_RUNTIME_DIR`, but that user's clients in a
+   desktop session still resolve `$XDG_RUNTIME_DIR/xkey/xkey.sock`, which is
+   under `/run/user/$SUDO_UID`; the sudo branch makes `sudo xkey fido2` land on
+   the same socket (#1138). It is taken only if it passes the socket-directory
+   checks for `SUDO_UID` alone (`validateSocketDirWith`, `socketdir.go:58`: not a
+   symlink, a directory, owned by `SUDO_UID` — not root — mode `0700`);
+   otherwise resolution falls through. On the home fallbacks the home under
+   `sudo` is the invoking user's (`effectiveHomeDir`, `socket.go:192`), so the
+   server and that user's clients still agree when neither side has a runtime
+   directory. `runtimeDirFor` is pure: the environment, home resolver, sudo uid
+   (`sudoUID`, `socket.go:133`) and `lstat` are injected by `runtimeDir`
+   (`socket.go:127`). With no home at all it returns
    `""`, which `NewServer` and `Dial` refuse with `ErrSocketPathUnresolved`. There
    is no `/tmp` fallback: a shared directory lets another local user create the
    directory first and receive the PIN (#1117).
 
 The socket directory is checked on both ends (`xkey/pkg/ipc/socketdir.go`):
 
-- `NewServer` (`server.go:487`) calls `ensureSocketDir` (`socketdir.go:93`),
+- `NewServer` (`server.go:495`) calls `ensureSocketDir` (`socketdir.go:100`),
   which creates each missing component with `Mkdir(0700)` and re-validates it
   immediately, so losing a creation race to another user is refused rather than
   trusted. An existing directory is validated, never chmoded or chowned. Only a
   component it created is handed to the `sudo` user.
 - `validateSocketDir` (`socketdir.go:51`) `Lstat`s the directory: not a symlink,
-  a directory, owned by a `trustedUIDs` member, `Perm() == 0700`.
-- A stale socket is unlinked only through `reclaimSocket` (`socketdir.go:140`):
+  a directory, owned by a `trustedUIDs` member, `Perm() == 0700`. The checks
+  live in `validateSocketDirWith` (`socketdir.go:58`), which takes the `lstat`
+  as a parameter so `runtimeDirFor` can reuse them without touching the disk.
+- A stale socket is unlinked only through `reclaimSocket` (`socketdir.go:147`):
   directory valid, file is a socket, owned by a trusted uid. A regular file at the
   socket path is never deleted. The GUI takes over a live socket
   (`xkey/pkg/gui/app.go:3330-3337`) only on `ErrSocketInUse` and only through
@@ -466,12 +479,23 @@ The socket directory is checked on both ends (`xkey/pkg/ipc/socketdir.go`):
   listener's uid with `peerUID` — `peercred_linux.go` (`SO_PEERCRED`),
   `peercred_xucred.go` (`LOCAL_PEERCRED`, macOS and FreeBSD), and
   `peercred_other.go`, which returns `ErrPeerCredentialsUnsupported` everywhere
-  else. The server does not check its clients' uids; the `0700` directory and
-  `0600` socket are its access control.
+  else. The check itself is `verifyPeer` (`peercred.go:34`), which returns the
+  peer's uid alongside the verdict.
+- The server checks its clients the same way (#1137). Every accepted connection
+  goes through `admitPeer` (`server.go:726`, called at `server.go:665` before
+  anything is read) against `Server.trusted`, which `NewServer` fills from
+  `trustedUIDs` (`server.go:544`). An untrusted client is closed unanswered with
+  a `Warn` carrying `peer_uid`; one whose credentials cannot be read — including
+  every connection on a platform without peer credentials — is closed with a
+  `Warn` and no uid. The `0700` directory and `0600` socket remain a first gate,
+  but access control no longer depends on nothing loosening them.
 
 Tests simulate "another user" without chown by passing a trusted-uid set that
 excludes the test's own uid (`socketdir_test.go` `foreignUIDs`, the
-`Client.trusted` field). `t.TempDir()` is `0777 &^ umask`, so tests that bind a
+`Client.trusted` and `Server.trusted` fields). The server-side tests run a real
+listener and a real client (`peercred_test.go:246-315`); the sudo resolution
+tests feed `runtimeDirFor` a fake `lstat` whose entries carry a
+`syscall.Stat_t` owner (`socket_test.go:246-304`). `t.TempDir()` is `0777 &^ umask`, so tests that bind a
 socket in it chmod it to `0700` first (`privateDir` / `privateTempDir`).
 
 `extension install chrome --profile-dir <dir>` writes the manifest into
