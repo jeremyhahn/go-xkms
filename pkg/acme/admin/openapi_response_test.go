@@ -126,7 +126,6 @@ func TestOpenAPIResponses_Certificates(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	cert := &CertificateInfo{
-		ID:           1,
 		SerialNumber: "1A2B3C4D5E6F",
 		Subject:      "CN=api.example.com",
 		Issuer:       "CN=ACME Corp Issuing CA",

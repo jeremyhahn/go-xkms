@@ -1,12 +1,13 @@
 # PIV Certificate Management — CLI
 
-> **Status: NORMATIVE** · Feature: `piv` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `piv` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
-Binary: `xkey`. Parent command: `xkey piv` (`PIVCmd`, `cmd/xkey/cmd/piv.go`).
+Binary: `xkey`. Parent command: `xkey piv` (`PIVCmd`, `cmd/xkey/cmd/piv.go:278`).
 
 ## Global (persistent) flags
 
-Inherited by every `piv` subcommand.
+Inherited by every `piv` subcommand (`list`, `show`, `store`, `delete`,
+`export`, `status`, `import`, `generate`, `csr`).
 
 | Flag | Default | Description |
 |---|---|---|
@@ -16,8 +17,8 @@ Inherited by every `piv` subcommand.
 | `--tpm-device` | `/dev/tpmrm0` | TPM device path |
 | `--pkcs11-library` | `/usr/lib/softhsm/libsofthsm2.so` | PKCS#11 library path |
 | `--pkcs11-token` | | PKCS#11 token label |
-| `--pkcs11-pin` | | PKCS#11 user PIN |
-| `--pkcs11-so-pin` | | PKCS#11 Security Officer PIN |
+| `--pkcs11-pin-stdin` | `false` | Read the PKCS#11 user PIN from standard input |
+| `--pkcs11-so-pin-stdin` | `false` | Read the PKCS#11 Security Officer PIN from standard input |
 
 Storage defaults to match the key backend (software→file, tpm2→tpm2,
 pkcs11→pkcs11); override with `--piv-storage`, e.g. TPM2 keys with
@@ -25,6 +26,42 @@ file-based certificate storage:
 
 ```
 xkey piv --backend tpm2 --piv-storage file list
+```
+
+## Configuration sources
+
+`--backend`, `--piv-storage`, `--storage-path`, `--tpm-device`,
+`--pkcs11-library` and `--pkcs11-token` can also be set via the xkey config
+file's `piv:` section or the matching `XKEY_PIV_*` environment variable
+(`XKEY_PIV_BACKEND`, `XKEY_PIV_STORAGE`, `XKEY_PIV_STORAGE_PATH`,
+`XKEY_PIV_TPM_DEVICE`, `XKEY_PIV_PKCS11_LIBRARY`, `XKEY_PIV_PKCS11_TOKEN`) —
+`xkeyconfig.PIVConfig`, `pkg/config/config.go:93-107`. A flag wins over the
+config/environment source, which wins over the backend-matched default;
+`buildPIVConfig`, `cmd/xkey/cmd/piv.go:603-639`, resolves all six the same
+way `resolveXKMSdURL` resolves the xkmsd endpoint
+(`cmd/xkey/cmd/xkmsd_client.go:181-192`).
+
+The PKCS#11 PIN and Security Officer PIN are **not** part of that config
+section and have no generic environment binding: there is no `--pkcs11-pin`
+value flag (a value on the command line is visible to every other process on
+the host via `ps`, the reason `--pin`/`--so-pin` value flags were removed for
+every other PIN in this CLI, go-xkms#272). They resolve only from
+`--pkcs11-pin-stdin`/`XKEY_PIV_PKCS11_PIN` and
+`--pkcs11-so-pin-stdin`/`XKEY_PIV_PKCS11_SO_PIN`, in that precedence order —
+the same stdin-then-dedicated-env-var convention `pin_input.go` established
+for the host PIN service's own PIN (`piv.go:57-69`). Commands outside the
+`piv` command tree that also build PIV storage (`cert request`/`show`/
+`export`, `device listen`, `provision`, `auth login --piv`) declare none of
+`piv`'s flags, so `--backend`/`--piv-storage`/etc. reach them only through
+the config file or environment on those commands, and the PKCS#11 PIN only
+through its environment variable — never `--pkcs11-pin-stdin`, which they do
+not declare.
+
+```bash
+export XKEY_PIV_BACKEND=pkcs11
+export XKEY_PIV_PKCS11_PIN=1234
+xkey piv list                       # env-sourced backend and PIN
+printf '1234' | xkey piv --backend pkcs11 --pkcs11-pin-stdin list   # stdin PIN
 ```
 
 ## `xkey piv store <slot> <cert-file>`

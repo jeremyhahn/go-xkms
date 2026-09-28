@@ -290,12 +290,12 @@ The device-attest-01 challenge is a custom ACME extension for remote attestation
 
 **References:**
 - [ACME Device Attestation Draft](https://datatracker.ietf.org/doc/draft-acme-device-attest)
-- [W3C WebAuthn TPM Attestation](https://www.w3.org/TR/webauthn/#sctn-tpm-attestation)
+- [W3C WebAuthn TPM Attestation, section 8.3](https://www.w3.org/TR/webauthn/#sctn-tpm-attestation)
 
 ### TPM Requirements
 
 - TPM 2.0 compliant hardware or software TPM
-- Initial Attestation Key (IAK) provisioned. Its certificate must be installed in the TPM with `ProvisionIAKCert` (`pkg/tpm2/cert_idevid.go:116`) and is read back with `IAKCertificate` (`cert_idevid.go:141`). enroll-01 issues this certificate and returns it to the caller, but does not install it
+- Initial Attestation Key (IAK) provisioned. Its certificate must be installed in the TPM with `ProvisionIAKCert` (`pkg/tpm2/cert_idevid.go:116`) and is read back with `IAKCertificate` (`cert_idevid.go:141`). enroll-01 issues this certificate and returns it to the caller, but does not install it. The certificate must meet WebAuthn Level 2 section 8.3.1 (`checkAIKCertificate`, `pkg/acme/challenges/device-attest-01/tpm.go:155`): X.509 v3, empty Subject, a subjectAltName naming the TPM manufacturer/model/version, `tcg-kp-AIKCertificate` extended key usage, and `CA:FALSE`
 - A Platform SRK, the parent of the certificate key
 - Support for TPM2_Certify (`CertifyKey`, `pkg/tpm2/attestation.go:76`)
 
@@ -365,6 +365,8 @@ The device serves JSON whose `attStmt` is the CBOR attestation object:
 | `certInfo` | The `TPM_ST_ATTEST_CERTIFY` TPMS_ATTEST. Its `extraData` is `TPMExtraData(alg, keyAuthorization)` (`tpm.go:205`) |
 | `pubArea` | The TPMT_PUBLIC of the certificate key |
 
+certInfo's `extraData` must equal `TPMExtraData(alg, keyAuth)` (`tpm.go:205`) exactly -- the hash of the ACME key authorization under the hash algorithm `alg` names -- compared in constant time. There is no substring, prefix or containment fallback: a value present anywhere else in `certInfo` does not satisfy the check. This exact-match requirement is enforced by `pkg/attestation.VerifyInvariants` (via `pkg/tpm2.VerifyCertify`'s `subtle.ConstantTimeCompare(attest.ExtraData.Buffer, opts.ExpectedQualifyingData)`), not by this package.
+
 ### Client
 
 `deviceattest01.Setup` (`pkg/acme/challenges/device-attest-01/setup.go:115`) builds the response for a key the TPM already holds. `TrustedPlatformModule` (`setup.go:65`) is the `IAKAttributes`/`IAKCertificate`/`CertifyKey` subset of `pkg/tpm2.TrustedPlatformModule`, so a go-xkms TPM is passed as it is:
@@ -393,12 +395,16 @@ cert, err := client.DeviceAttest(ctx, &acmeclient.EnrollmentConfig{
 
 `VerifyAttestation` (`pkg/acme/challenges/device-attest-01/deviceattest01.go:243`) anchors `x5c` through `AttestationVerifier.VerifyAKCertificateChain`. It then applies section 8.3 in `verifyTPMEvidence` (`tpm.go:65`) and returns a `VerifiedAttestation`. That record authorizes nothing until `BindCSRKey` (`binding.go:142`) has confirmed that the CSR's key is `pubArea`'s key. For this reason the one-shot `Verify` (`deviceattest01.go:223`) returns `ErrKeyBindingRequired` for this format.
 
+**AttestationVerifier Interface** (`pkg/acme/challenges/device-attest-01/deviceattest01.go:174`):
+
 ```go
 type AttestationVerifier interface {
     VerifyAttestationObject(obj *AttestationObject, expectedChallenge []byte) error
     VerifyAKCertificateChain(certs [][]byte) error
 }
 ```
+
+There is no `VerifyQuote` method: the TPM2_Certify binding (Name match, `extraData` match, signature verification) is made statelessly by `pkg/attestation.VerifyInvariants`/`pkg/tpm2.VerifyCertify` against the AIK certificate already anchored by `VerifyAKCertificateChain`, not by a round trip to the CA.
 
 ### Error Types
 

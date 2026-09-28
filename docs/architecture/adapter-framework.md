@@ -35,9 +35,11 @@ type Identity struct {
 }
 ```
 
-Helper methods:
-- `HasRole(role string) bool` - Check if identity has a specific role
-- `HasPermission(permission string) bool` - Check if identity has a permission
+Authorization is never decided from the identity's role strings: `Roles`
+holds qrdb role identifiers, so comparing it against a role name matches
+nothing real (go-xkms#1074). Use `auth.Authorizer` for a resource:action
+decision, or `auth.HoldsSystemRole` where the decision genuinely is role
+membership; see [`../rbac/engineering.md`](../rbac/engineering.md).
 
 ### Built-in Authenticators
 
@@ -388,7 +390,7 @@ func myHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    if !identity.HasRole("admin") {
+    if err := authorizer.Authorize(r.Context(), identity, auth.ResourceKeys, auth.ActionList); err != nil {
         http.Error(w, "Forbidden", http.StatusForbidden)
         return
     }

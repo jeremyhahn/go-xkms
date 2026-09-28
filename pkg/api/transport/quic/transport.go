@@ -2090,12 +2090,6 @@ func (t *Transport) PasswordGet(ctx context.Context, req *transport.PasswordGetR
 
 	path := fmt.Sprintf("/api/v1/passwords/%s", url.PathEscape(req.ID))
 	params := url.Values{}
-	if req.Decrypt {
-		params.Set("decrypt", "true")
-	}
-	if req.UserPIN != "" {
-		params.Set("user_pin", req.UserPIN)
-	}
 	if req.TenantID != "" {
 		params.Set("tenant_id", req.TenantID)
 	}

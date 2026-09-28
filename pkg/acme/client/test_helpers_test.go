@@ -165,8 +165,15 @@ func (m *mockCertStorage) SaveWithCondition(_ context.Context, _ *entities.ACMEC
 	panic("not implemented")
 }
 
-func (m *mockCertStorage) SaveIfAbsent(_ context.Context, _ *entities.ACMECertificate) (bool, error) {
-	panic("not implemented")
+func (m *mockCertStorage) SaveIfAbsent(_ context.Context, cert *entities.ACMECertificate) (bool, error) {
+	// Mirrors Save's simplified single-slot-at-key-1 model: this mock
+	// predates entity-ID-based keying and isn't used to exercise collision
+	// detection (see pkg/acme/storage's own tests for that).
+	if _, exists := m.certificates[1]; exists {
+		return false, nil
+	}
+	m.certificates[1] = cert
+	return true, nil
 }
 
 func (m *mockCertStorage) Get(_ context.Context, id uint64) (*entities.ACMECertificate, error) {

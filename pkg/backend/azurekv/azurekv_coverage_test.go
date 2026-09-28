@@ -119,9 +119,10 @@ func TestBackendDeleteKeyCtx(t *testing.T) {
 		t.Fatalf("DeleteKey() error = %v", err)
 	}
 
-	b.mu.RLock()
-	_, exists := b.metadata[attrs.CN]
-	b.mu.RUnlock()
+	exists, err := storage.KeyExists(context.Background(), b.config.KeyStorage, attrs.CN)
+	if err != nil {
+		t.Fatalf("storage.KeyExists() error = %v", err)
+	}
 	if exists {
 		t.Error("DeleteKey() did not remove metadata")
 	}

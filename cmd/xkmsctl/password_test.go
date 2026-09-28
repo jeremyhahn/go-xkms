@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -173,6 +174,36 @@ func TestPasswordAccessModeCmd_InvalidMode(t *testing.T) {
 	})
 	if code != 1 {
 		t.Errorf("expected exit code 1 for invalid mode, got %d", code)
+	}
+}
+
+// "password get" never had a working --decrypt/--user-pin: every store
+// reachable through the server returns an entry exactly as stored, so the
+// flags could never do what their help text promised (#1061). Both must now
+// be unknown flags rather than silently accepted and ignored.
+func TestPasswordGetCmd_DecryptFlagRemoved(t *testing.T) {
+	resetCmdFlags(t, passwordGetCmd)
+	t.Cleanup(func() { resetCmdFlags(t, passwordGetCmd) })
+
+	err := passwordGetCmd.Flags().Parse([]string{"--decrypt=true"})
+	if err == nil {
+		t.Fatal("expected an unknown-flag error for --decrypt, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("expected an unknown-flag error, got %q", err)
+	}
+}
+
+func TestPasswordGetCmd_UserPINFlagRemoved(t *testing.T) {
+	resetCmdFlags(t, passwordGetCmd)
+	t.Cleanup(func() { resetCmdFlags(t, passwordGetCmd) })
+
+	err := passwordGetCmd.Flags().Parse([]string{"--user-pin=1234"})
+	if err == nil {
+		t.Fatal("expected an unknown-flag error for --user-pin, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("expected an unknown-flag error, got %q", err)
 	}
 }
 

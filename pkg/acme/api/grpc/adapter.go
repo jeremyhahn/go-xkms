@@ -768,7 +768,6 @@ func pbToCertificateInfo(c *pb.CertificateInfo) *admin.CertificateInfo {
 		return nil
 	}
 	info := &admin.CertificateInfo{
-		ID:           c.Id,
 		SerialNumber: c.SerialNumber,
 		Subject:      c.Subject,
 		Issuer:       c.Issuer,

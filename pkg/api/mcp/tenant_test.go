@@ -112,16 +112,21 @@ func TestServerTenantAccess_SystemTenantID(t *testing.T) {
 	assert.Nil(t, auth.GetTenantBarrier(ctx))
 }
 
-func TestServerTenantAccess_SORole(t *testing.T) {
+// TestServerTenantAccess_SORoleNameGetsNoBypass is the go-xkms#1074
+// regression: a tenant identity whose Roles spell "so" -- the shape of an
+// unverified token claim -- used to skip tenant scoping. It is refused like
+// any other identity of an unregistered tenant.
+func TestServerTenantAccess_SORoleNameGetsNoBypass(t *testing.T) {
 	registry := tenantTestRegistry(t)
 	s := &Server{logger: tenantTestLogger(), barrierRegistry: registry}
 
 	identity := &auth.Identity{Subject: "so-admin", TenantID: "nonexistent-tenant", Roles: []string{"so"}}
 	ctx := auth.WithIdentity(context.Background(), identity)
 
-	ctx, err := s.tenantAccess(ctx, "xkms.listKeys")
-	require.NoError(t, err)
-	assert.Nil(t, auth.GetTenantBarrier(ctx))
+	_, err := s.tenantAccess(ctx, "xkms.listKeys")
+	var keyOpErr *KeyOpError
+	require.ErrorAs(t, err, &keyOpErr)
+	assert.Equal(t, ErrCodeForbidden, keyOpErr.Code)
 }
 
 func TestServerTenantAccess_NoRegistry(t *testing.T) {

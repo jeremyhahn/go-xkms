@@ -40,11 +40,12 @@ var frostSecretBackendNames = map[string]bool{
 // FrostConfig contains configuration for the FROST threshold-signing backend
 // (RFC 9591, pkg/keyprovider/frost). FROST separates a key's public group
 // components (group public key, verification shares, metadata) from each
-// participant's secret key share, so the secret can be held by a hardware- or
-// otherwise access-controlled backend while the public components sit in
-// ordinary storage; PublicPath and SecretBackend configure exactly that
-// split, matching pkg/keyprovider/frost.Config and the fileSecretBackend
-// abstraction cmd/xkmsctl/frost.go uses locally.
+// participant's secret key share, which is sealed (types.Sealer) under a
+// wrapping key native to SecretBackend -- TPM2 PCR-bound sealing, PKCS#11/
+// cloud KMS envelope encryption, or software/PKCS#8 HKDF-derived AES-GCM --
+// while the public components sit in ordinary storage; PublicPath and
+// SecretBackend configure exactly that split, matching
+// pkg/keyprovider/frost.Config.
 type FrostConfig struct {
 	// Enabled turns on the FROST backend.
 	Enabled bool `yaml:"enabled"`
