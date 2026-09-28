@@ -86,15 +86,10 @@ func (e *Error) Error() string {
 // Unwrap returns the underlying error.
 func (e *Error) Unwrap() error { return e.Err }
 
-// AddressNotPermittedError is returned by the dialer when the resolved
-// address is reserved and Config.AllowPrivateTargets is false.
-type AddressNotPermittedError struct {
-	Address string
-}
-
-func (e *AddressNotPermittedError) Error() string {
-	return "address not permitted: " + e.Address
-}
+// A refused dial target's error is *netguard.AddressNotPermittedError, and
+// an oversized response body's is *netguard.ResponseTooLargeError; both
+// wrap into Error.Err (KindTargetRefused, KindResponseTooLarge) rather than
+// being redeclared here.
 
 // InvalidPortError is returned when a target's port is not a TCP port.
 type InvalidPortError struct {
@@ -113,15 +108,6 @@ type StatusError struct {
 
 func (e *StatusError) Error() string {
 	return "HTTP status " + strconv.Itoa(e.StatusCode)
-}
-
-// ResponseTooLargeError is returned when a response body exceeds Limit bytes.
-type ResponseTooLargeError struct {
-	Limit int64
-}
-
-func (e *ResponseTooLargeError) Error() string {
-	return "response exceeds " + strconv.FormatInt(e.Limit, 10) + " bytes"
 }
 
 // RedirectError is returned when a redirect is refused.

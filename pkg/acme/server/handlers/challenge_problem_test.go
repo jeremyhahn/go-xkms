@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/netguard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +41,7 @@ func TestChallengeProblem(t *testing.T) {
 	}{
 		{
 			name:       "refused target reads as a connection failure",
-			err:        &validation.Error{Kind: validation.KindTargetRefused, Err: &validation.AddressNotPermittedError{Address: "10.20.30.40:8080"}},
+			err:        &validation.Error{Kind: validation.KindTargetRefused, Err: &netguard.AddressNotPermittedError{Address: "10.20.30.40:8080"}},
 			wantType:   common.ErrTypeConnectionError,
 			wantDetail: "Challenge validation failed: connection failed",
 		},

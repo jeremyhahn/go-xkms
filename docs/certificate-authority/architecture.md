@@ -231,14 +231,18 @@ enforces.
 - **AIA and CRL distribution point URLs are attacker-directed.** Whoever
   issued a certificate chose them, so `ImportIssuingCAs` and
   `ImportDistributionCRLs` fetch through one bounded path, `fetchPKIObject`
-  (`pkg/ca/pki_fetch.go:153`). It fetches only http and https URLs
-  (`checkFetchURL`, `pki_fetch.go:127`). Its client dials only public
-  unicast addresses; the check runs in the dialer's `Control` hook after
-  DNS resolution, so a rebinding hostname or a redirect cannot reach
-  loopback, private, link-local (including cloud metadata) or CGNAT
-  addresses (`pki_fetch.go:64-120`). Bodies are capped at 64 KiB for a
-  certificate and 32 MiB for a CRL. The AIA walk also verifies that each
-  fetched certificate signed the certificate that named it
+  (`pkg/ca/pki_fetch.go:112`). It fetches only http and https URLs
+  (`checkFetchURL`, `pki_fetch.go:86`). Its client is built by
+  `pkg/netguard.GuardedTransport` (`pki_fetch.go:63-81`), the same guarded
+  dialer the ACME challenge-validation client uses (see
+  [`../acme-issuance/architecture.md`](../acme-issuance/architecture.md)):
+  the dialer's `Control` hook refuses every `netguard.ReservedAddr` address
+  after DNS resolution, so a rebinding hostname or a redirect cannot reach
+  loopback, private, link-local (including cloud metadata), CGNAT, the
+  TEST-NETs, NAT64, 6to4 or the other special-purpose ranges. Bodies are
+  capped at 64 KiB for a certificate and 32 MiB for a CRL
+  (`netguard.ReadLimited`, `pki_fetch.go:137`). The AIA walk also verifies
+  that each fetched certificate signed the certificate that named it
   (`trust_chain_extensions.go:314`), ends on a repeated certificate
   (`:310`), and refuses a walk more than five issuers deep (`:295`), so an
   AIA URL can neither plant an unrelated certificate in the store nor loop

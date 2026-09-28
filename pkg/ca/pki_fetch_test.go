@@ -19,12 +19,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/netguard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +32,7 @@ import (
 // allowLoopbackFetch lets ca's PKI fetches reach an httptest server. Every
 // other limit of the production client still applies.
 func allowLoopbackFetch(ca *CA) {
-	ca.fetchClient = newPKIFetchClient(func(netip.Addr) bool { return true })
+	ca.fetchClient = newPKIFetchClient(netguard.AllowAll)
 }
 
 // countingServer serves body with status and counts the requests it gets.
@@ -46,38 +46,6 @@ func countingServer(t *testing.T, status int, body []byte) (*httptest.Server, *a
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &hits
-}
-
-func TestIsPublicAddress(t *testing.T) {
-	t.Parallel()
-	tests := map[string]bool{
-		"8.8.8.8":         true,
-		"2001:4860::8888": true,
-		"127.0.0.1":       false,
-		"::1":             false,
-		"10.1.2.3":        false,
-		"172.16.0.1":      false,
-		"192.168.1.1":     false,
-		"169.254.169.254": false, // cloud metadata endpoint
-		"fe80::1":         false,
-		"fd00::1":         false,
-		"100.64.0.1":      false,
-		"0.0.0.0":         false,
-		"224.0.0.1":       false,
-	}
-	for addr, want := range tests {
-		assert.Equal(t, want, isPublicAddress(netip.MustParseAddr(addr)), addr)
-	}
-}
-
-func TestCheckDialAddress(t *testing.T) {
-	t.Parallel()
-	require.NoError(t, checkDialAddress("8.8.8.8:80", isPublicAddress))
-	assert.ErrorIs(t, checkDialAddress("127.0.0.1:80", isPublicAddress), ErrPKIFetchRefused)
-	// An IPv4-mapped IPv6 loopback is still loopback.
-	assert.ErrorIs(t, checkDialAddress("[::ffff:127.0.0.1]:80", isPublicAddress), ErrPKIFetchRefused)
-	assert.ErrorIs(t, checkDialAddress("no-port", isPublicAddress), ErrPKIFetchRefused)
-	assert.ErrorIs(t, checkDialAddress("not-an-ip:80", isPublicAddress), ErrPKIFetchRefused)
 }
 
 func TestCheckFetchURL(t *testing.T) {

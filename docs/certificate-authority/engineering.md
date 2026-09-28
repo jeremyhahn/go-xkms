@@ -63,14 +63,17 @@ and the `…WithXSigner` variants.
 
 **`CAChainImporter`** — `ImportDistributionCRLs(cert)`,
 `ImportIssuingCAs(ctx, cert)`. This is the AIA walk.
-Both methods fetch through `fetchPKIObject` (`pkg/ca/pki_fetch.go:153`)
-under fixed limits: http and https only, public unicast destinations only
-(checked at dial time, after DNS resolution), at most 3 redirects, a
-30-second timeout, and a body cap of 64 KiB for a certificate or 32 MiB for
-a CRL (`pki_fetch.go:38-52`). `ImportIssuingCAs` also requires each fetched
-issuer to verify the child's signature and stops a walk that repeats a
-certificate or climbs more than 5 issuers (`trust_chain_extensions.go:278-328`).
-None of the limits is configurable.
+Both methods fetch through `fetchPKIObject` (`pkg/ca/pki_fetch.go:112`)
+under fixed limits: http and https only, destinations `pkg/netguard.ReservedAddr`
+does not refuse only (checked at dial time, after DNS resolution, by the
+`pkg/netguard.GuardedTransport` dialer both this client and the ACME
+challenge-validation client build on — see
+[`../acme-issuance/engineering.md`](../acme-issuance/engineering.md)), at
+most 3 redirects, a 30-second timeout, and a body cap of 64 KiB for a
+certificate or 32 MiB for a CRL (`pki_fetch.go:31-49`). `ImportIssuingCAs`
+also requires each fetched issuer to verify the child's signature and stops
+a walk that repeats a certificate or climbs more than 5 issuers
+(`trust_chain_extensions.go:278-328`). None of the limits is configurable.
 
 **`CACrossSigner`** — `ImportXSignedCertificate(issuerCN, cert)`,
 `XSignedCertificate(issuerCN, attrs)`, `XSignedRootCertificate(issuerCN, cert)`,
@@ -545,10 +548,11 @@ up.
   sign the child is refused and not stored; a loopback repository is
   refused by the production client without receiving a request; an
   oversized or unparseable response is refused. `pki_fetch_test.go` covers
-  the address classifier, the scheme filter, the body cap at and over the
-  limit, a hostname resolving to loopback, the metadata address, redirect
-  loops and redirects to a non-http scheme, and the CRL importer's
-  private-address, oversized and `ldap://` refusals.
+  the scheme filter, the body cap at and over the limit, a hostname
+  resolving to loopback, the metadata address, redirect loops and redirects
+  to a non-http scheme, and the CRL importer's private-address, oversized
+  and `ldap://` refusals; the reserved-address classification itself is
+  `pkg/netguard`'s (`reserved_test.go`, `dial_test.go`, `transport_test.go`).
 - **End to end** — `pkg/ca/issuance_e2e_test.go`,
   `pkg/api/rest/init_ceremony_e2e_test.go`.
 - **Integration** — `test/integration/certstore`, `test/integration/acme-tpm`,

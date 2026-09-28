@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/netguard"
 	"golang.org/x/net/dns/dnsmessage"
 )
 
@@ -72,9 +73,9 @@ func TestGet_RefusesReservedTargets(t *testing.T) {
 		t.Run(host, func(t *testing.T) {
 			_, err := client.Get(context.Background(), Target{Host: host, Port: "80", Path: "/"})
 			verr := requireKind(t, err, KindTargetRefused)
-			var refused *AddressNotPermittedError
+			var refused *netguard.AddressNotPermittedError
 			if !errors.As(verr, &refused) {
-				t.Fatalf("error = %v, want an *AddressNotPermittedError in the chain", err)
+				t.Fatalf("error = %v, want a *netguard.AddressNotPermittedError in the chain", err)
 			}
 		})
 	}
@@ -357,7 +358,7 @@ func TestGet_RedirectHopIsRecheckedByDialer(t *testing.T) {
 		if strings.HasSuffix(address, ":"+port) {
 			return nil
 		}
-		return &AddressNotPermittedError{Address: address}
+		return &netguard.AddressNotPermittedError{Address: address}
 	}
 	client := newClient(nil, permitPublicOnly)
 
@@ -372,23 +373,23 @@ func TestGet_NilClient(t *testing.T) {
 	}
 }
 
-func TestRefuseReservedAddress(t *testing.T) {
+// TestClientDialControl_MatchesNetguardDenyReserved proves NewClient wires
+// its production Control hook to netguard.DialControl(netguard.DenyReserved)
+// rather than a locally reimplemented check; the address classification
+// itself is covered exhaustively by pkg/netguard's own tests.
+func TestClientDialControl_MatchesNetguardDenyReserved(t *testing.T) {
+	control := netguard.DialControl(netguard.DenyReserved)
 	for _, tc := range []struct {
 		address string
 		refused bool
 	}{
 		{"127.0.0.1:80", true},
-		{"[::1]:80", true},
-		{"169.254.169.254:80", true},
-		{"10.0.0.1:80", true},
-		{"[fd00:ec2::254]:80", true}, // AWS IPv6 metadata
 		{"8.8.8.8:80", false},
-		{"[2606:4700:4700::1111]:443", false},
 		{"not-an-address", true},
 	} {
-		err := refuseReservedAddress("tcp", tc.address, nil)
+		err := control("tcp", tc.address, nil)
 		if got := err != nil; got != tc.refused {
-			t.Errorf("refuseReservedAddress(%q) refused = %v, want %v (err %v)", tc.address, got, tc.refused, err)
+			t.Errorf("control(%q) refused = %v, want %v (err %v)", tc.address, got, tc.refused, err)
 		}
 	}
 }

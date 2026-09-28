@@ -412,7 +412,7 @@ critical and holds only a `directoryName`, which `crypto/x509` reports in
 Every verifier that contacts a target the ACME client named -- `http-01`,
 `enroll-01` (both its GET of the TCG-CSR-IDEVID and its POST of the
 credential challenge), and `device-attest-01` -- does so through one
-`*validation.Client` (`pkg/acme/challenges/validation/client.go:98`). The
+`*validation.Client` (`pkg/acme/challenges/validation/client.go:94`). The
 target is attacker-chosen: a `permanent-identifier` is an opaque string, and
 before go-xkms#1172 `enroll-01` spliced it into
 `fmt.Sprintf("http://%s:%s%s%s", ...)`, so a value like
@@ -424,31 +424,38 @@ client.
 What the client guarantees:
 
 - **The URL is built, not formatted.** `Target.URL`
-  (`client.go:154`) requires `policy.ValidateNetworkTarget`
-  (`pkg/acme/policy/validator.go:376`) -- a bare RFC 1123 hostname or a
+  (`client.go:155`) requires `policy.ValidateNetworkTarget`
+  (`pkg/acme/policy/validator.go:346`) -- a bare RFC 1123 hostname or a
   canonical, zone-free IP literal -- and a TCP port, then assembles
   `url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: path}`.
   A host carrying `/ ? # @ :` or whitespace is `KindInvalidTarget` before any
   request.
 - **Reserved addresses are refused at dial time.** Unless
-  `acme.challenges.allow_private_targets` is set, the `net.Dialer.Control`
-  hook `refuseReservedAddress` (`client.go:262`) rejects any connection whose
-  resolved address satisfies `policy.IsReservedIP`
-  (`validator.go:355`): loopback, RFC 1918 / RFC 4193 private, link-local
-  (169.254/16 including the cloud metadata address, fe80::/10), multicast,
-  unspecified, CGNAT 100.64/10, the TEST-NETs, 240/4, NAT64, 6to4 and the
-  other special-purpose ranges, with IPv4-mapped IPv6 unmapped first. The
-  hook sees the address actually being connected to, after resolution, so a
-  public-looking name that resolves (or re-resolves, DNS rebinding) to an
-  internal address is refused. `IsReservedIP` is the same classification the
-  `rejectReservedIPs` identifier policy uses.
-- **No proxy.** The transport's `Proxy` is nil (`client.go:121`), so the
+  `acme.challenges.allow_private_targets` is set, `NewClient` wires the
+  `net.Dialer.Control` hook to `netguard.DialControl(netguard.DenyReserved)`
+  (`client.go:98-104`, `pkg/netguard/dial.go`), which rejects any connection
+  whose resolved address satisfies `netguard.ReservedAddr`
+  (`pkg/netguard/reserved.go`): loopback, RFC 1918 / RFC 4193 private,
+  link-local (169.254/16 including the cloud metadata address, fe80::/10),
+  multicast, unspecified, CGNAT 100.64/10, the TEST-NETs, 240/4, NAT64, 6to4
+  and the other special-purpose ranges, with IPv4-mapped IPv6 unmapped
+  first. The hook sees the address actually being connected to, after
+  resolution, so a public-looking name that resolves (or re-resolves, DNS
+  rebinding) to an internal address is refused. `netguard.ReservedAddr` is
+  the one reserved-address classification in go-xkms: the CA's AIA/CRL
+  fetch client (`pkg/ca/pki_fetch.go`, see
+  [`../certificate-authority/engineering.md`](../certificate-authority/engineering.md))
+  and the `rejectReservedIPs` identifier policy
+  (`policy.IsReservedIP`, `validator.go:336`, which delegates to it) both
+  use it, so an address one refuses is reserved for all three.
+- **No proxy.** The transport's `Proxy` is nil (`client.go:122`), so the
   address checked is the address dialed.
 - **Redirects.** `http-01` follows up to `MaxRedirects` (10) `http`/`https`
   redirects, RFC 8555 section 8.3; each hop dials through the same transport,
-  so the dial-time check re-runs per hop (`redirectPolicy`, `client.go:242`).
+  so the dial-time check re-runs per hop (`redirectPolicy`, `client.go:244`).
   `enroll-01` and `device-attest-01` refuse redirects.
-- **Bounded responses.** `readLimited` (`client.go:225`) reads through
+- **Bounded responses.** `readLimited` (`client.go:226`), built on
+  `netguard.ReadLimited` (`pkg/netguard/body.go`), reads through
   `io.LimitReader(limit+1)` and refuses -- does not truncate -- a body over
   the limit (`KindResponseTooLarge`). The default is `DefaultMaxResponseBytes`
   (64 KiB, `client.go:64`); `enroll-01` raises it for the CSR fetch to the

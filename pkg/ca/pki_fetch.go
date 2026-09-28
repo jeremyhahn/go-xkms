@@ -17,15 +17,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
-	"syscall"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/netguard"
 )
 
 // Limits on fetching the PKI objects certificate extensions point at. The
@@ -53,36 +50,27 @@ const (
 )
 
 // pkiFetchClient is the client every AIA and CRL distribution point fetch
-// uses unless a test injects CA.fetchClient. It dials only public unicast
-// addresses: the check runs in the dialer's Control hook, after DNS
-// resolution and on every connection, so neither a hostname that resolves
-// to a private address, a DNS rebind, nor a redirect reaches an internal
-// service.
-//
-// TODO(#1172): the ACME http-01/enroll-01 validators need the same dialer;
-// consolidate into one shared package when that lands.
-var pkiFetchClient = newPKIFetchClient(isPublicAddress)
+// uses unless a test injects CA.fetchClient. It dials only addresses
+// netguard.DenyReserved accepts: the check runs in the dialer's Control
+// hook, after DNS resolution and on every connection, so neither a
+// hostname that resolves to a reserved address, a DNS rebind, nor a
+// redirect reaches an internal service.
+var pkiFetchClient = newPKIFetchClient(nil)
 
-// newPKIFetchClient returns an HTTP client for PKI object fetches that dials
-// only addresses allowed accepts. It never uses a proxy: a proxy would dial
-// on the client's behalf and bypass the address check.
-func newPKIFetchClient(allowed func(netip.Addr) bool) *http.Client {
-	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
-		Control: func(_, address string, _ syscall.RawConn) error {
-			return checkDialAddress(address, allowed)
-		},
-	}
+// newPKIFetchClient returns an HTTP client for PKI object fetches whose
+// dialer accepts only addresses allow permits. A nil allow defaults to
+// netguard.DenyReserved.
+func newPKIFetchClient(allow netguard.AllowFunc) *http.Client {
 	return &http.Client{
 		Timeout: pkiFetchTimeout,
-		Transport: &http.Transport{
-			Proxy:                  nil,
-			DialContext:            dialer.DialContext,
+		Transport: netguard.GuardedTransport(netguard.TransportConfig{
+			Allow:                  allow,
+			DialTimeout:            10 * time.Second,
 			TLSHandshakeTimeout:    10 * time.Second,
 			ResponseHeaderTimeout:  15 * time.Second,
 			MaxResponseHeaderBytes: 64 << 10,
 			ForceAttemptHTTP2:      true,
-		},
+		}),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxPKIFetchRedirects {
 				return &errs.Detail{Err: ErrPKIFetchRefused, Detail: fmt.Sprintf("more than %d redirects", maxPKIFetchRedirects)}
@@ -90,35 +78,6 @@ func newPKIFetchClient(allowed func(netip.Addr) bool) *http.Client {
 			return checkFetchURL(req.URL)
 		},
 	}
-}
-
-// checkDialAddress refuses a dial to an address allowed rejects. address is
-// the resolved "ip:port" the dialer is about to connect to.
-func checkDialAddress(address string, allowed func(netip.Addr) bool) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return &errs.Detail{Err: ErrPKIFetchRefused, Detail: fmt.Sprintf("unparseable dial address %q", address)}
-	}
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
-		return &errs.Detail{Err: ErrPKIFetchRefused, Detail: fmt.Sprintf("unparseable dial address %q", address)}
-	}
-	if !allowed(addr.Unmap()) {
-		return &errs.Detail{Err: ErrPKIFetchRefused, Detail: fmt.Sprintf("address %s is not publicly routable", addr)}
-	}
-	return nil
-}
-
-// cgnatPrefix is the RFC 6598 shared address space, which netip does not
-// classify as private but which is never a public PKI endpoint.
-var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
-
-// isPublicAddress reports whether addr is a public unicast address. It
-// rejects loopback, RFC 1918 and ULA private ranges, link-local (including
-// the 169.254.169.254 cloud metadata endpoint), multicast, unspecified and
-// shared (CGNAT) addresses.
-func isPublicAddress(addr netip.Addr) bool {
-	return addr.IsGlobalUnicast() && !addr.IsPrivate() && !cgnatPrefix.Contains(addr)
 }
 
 // checkFetchURL refuses a URL that is not an absolute http or https URL
@@ -165,25 +124,30 @@ func (ca *CA) fetchPKIObject(ctx context.Context, rawURL string, limit int64) ([
 	}
 	resp, err := ca.httpFetchClient().Do(req)
 	if err != nil {
-		if errors.Is(err, ErrPKIFetchRefused) {
+		var refused *netguard.AddressNotPermittedError
+		if errors.As(err, &refused) || errors.Is(err, ErrPKIFetchRefused) {
 			return nil, &errs.Detail{Err: ErrPKIFetchRefused, Detail: fmt.Sprintf("%s: %v", rawURL, err)}
 		}
 		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to download %s: %v", rawURL, err)}
 	}
 
-	// Read one byte past the limit so an exactly-full body is accepted and
-	// anything longer is detected without buffering the rest.
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	// netguard.ReadLimited reads one byte past limit so an exactly-full
+	// body is accepted and anything longer is detected without buffering
+	// the rest.
+	body, readErr := netguard.ReadLimited(resp.Body, limit)
 	closeErr := resp.Body.Close()
 
 	var fetchErr error
 	switch {
 	case readErr != nil:
-		fetchErr = &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read %s: %v", rawURL, readErr)}
+		var tooLarge *netguard.ResponseTooLargeError
+		if errors.As(readErr, &tooLarge) {
+			fetchErr = &errs.Detail{Err: ErrPKIFetchTooLarge, Detail: fmt.Sprintf("%s exceeds %d bytes", rawURL, limit)}
+		} else {
+			fetchErr = &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read %s: %v", rawURL, readErr)}
+		}
 	case resp.StatusCode != http.StatusOK:
 		fetchErr = &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("download %s returned status %d", rawURL, resp.StatusCode)}
-	case int64(len(body)) > limit:
-		fetchErr = &errs.Detail{Err: ErrPKIFetchTooLarge, Detail: fmt.Sprintf("%s exceeds %d bytes", rawURL, limit)}
 	}
 	if fetchErr != nil {
 		return nil, errors.Join(fetchErr, closeErr)
