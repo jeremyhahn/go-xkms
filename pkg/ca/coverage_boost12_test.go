@@ -69,12 +69,12 @@ func TestCreateRootCertificate_WithCRLAndOCSP_B12(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — putRevocationBlob: revocationStore success path
-// (80% → covers 2 more statements: revocationStore.Put + return true)
+// ca_extensions.go — putRevocationBlobIfAbsent: revocationStore success path
+// (80% → covers 2 more statements: revocationStore.PutIfAbsent + return true)
 // =============================================================================
 
 // TestPutRevocationBlob_RevocationStore_B12 exercises the revocationStore path
-// in putRevocationBlob using the storage.Backend interface.
+// in putRevocationBlobIfAbsent using the storage.Backend interface.
 func TestPutRevocationBlob_RevocationStore_B12(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
@@ -86,7 +86,7 @@ func TestPutRevocationBlob_RevocationStore_B12(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Revoke: this calls recordRevocation → putRevocationBlob with revocationStore set.
+	// Revoke: this calls recordRevocation → putRevocationBlobIfAbsent with revocationStore set.
 	require.NoError(t, ca.Revoke(context.Background(), issued.Certificate.SerialNumber, 1))
 
 	// Confirm the blob was persisted to the revocation store.

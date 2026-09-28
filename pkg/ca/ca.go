@@ -908,9 +908,9 @@ func (ca *CA) Load(ctx context.Context) error {
 		}
 	}
 
-	// Replay any revocation records persisted to the object store. Missing
-	// or corrupt records are logged and skipped — a malformed record should
-	// not prevent the CA from loading.
+	// Replay the revocation records persisted to the revocation store. A
+	// corrupt record fails Load with ErrRevocationRecordCorrupt: skipping it
+	// would silently un-revoke the certificate it describes.
 	if err := ca.loadPersistedRevocations(ctx); err != nil {
 		return err
 	}
@@ -2138,9 +2138,15 @@ func (ca *CA) GenerateCRL(ctx context.Context) ([]byte, error) {
 // IsRevoked checks if a certificate serial number is revoked.
 //
 // Returns true if the certificate with the given serial number has been
-// revoked, false otherwise.
+// revoked, false otherwise. A serial missing from this instance's in-memory
+// map is read through to the replicated revocation store, so a revocation
+// recorded by any instance in the cluster is seen (go-xkms#1116).
 //
-// Returns ErrNotInitialized if the CA has not been initialized.
+// It fails closed: the result is false only when the store definitively
+// has no record for the serial. Returns:
+//   - ErrNotInitialized if the CA has not been initialized
+//   - ErrStorageError if the revocation store cannot be read
+//   - ErrRevocationRecordCorrupt if the serial's record cannot be decoded
 //
 // Thread-safe: Yes
 func (ca *CA) IsRevoked(serial *big.Int) (bool, error) {
@@ -2152,13 +2158,11 @@ func (ca *CA) IsRevoked(serial *big.Int) (bool, error) {
 		return false, nil
 	}
 
-	key := serial.Text(10)
-
-	ca.revocationsMutex.RLock()
-	_, revoked := ca.revocations[key]
-	ca.revocationsMutex.RUnlock()
-
-	return revoked, nil
+	info, err := ca.lookupRevocation(context.Background(), serial)
+	if err != nil {
+		return false, err
+	}
+	return info != nil, nil
 }
 
 // NOTE: TLS helper methods (TLSCertificate, TLSConfig, TLSConfigWithOptions,

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -32,6 +33,10 @@ type Client struct {
 	socketPath string
 	timeout    time.Duration
 	closed     atomic.Bool
+	// trusted is the set of uids allowed to own the socket directory and to
+	// be the listening peer (see trustedUIDs). It is a field so tests can
+	// stand in for "another user" without being able to chown.
+	trusted []int
 }
 
 // NewClient creates a new IPC client targeting the given socket path.
@@ -39,6 +44,7 @@ func NewClient(socketPath string) *Client {
 	return &Client{
 		socketPath: socketPath,
 		timeout:    DefaultTimeout,
+		trusted:    trustedUIDs(),
 	}
 }
 
@@ -219,13 +225,9 @@ func (c *Client) send(msg *Message) (response *Response, err error) {
 	if c.closed.Load() {
 		return nil, ErrClientClosed
 	}
-
-	conn, err := net.DialTimeout("unix", c.socketPath, c.timeout)
+	conn, err := dial(c.socketPath, c.timeout, c.trusted)
 	if err != nil {
-		if isDaemonNotRunning(err) {
-			return nil, ErrDaemonNotRunning
-		}
-		return nil, &SentinelCauseError{Sentinel: ErrConnectionFailed, Cause: err}
+		return nil, err
 	}
 	defer func() {
 		if closeErr := conn.Close(); closeErr != nil {
@@ -249,6 +251,52 @@ func (c *Client) send(msg *Message) (response *Response, err error) {
 	}
 
 	return &resp, nil
+}
+
+// Dial connects to the xkey IPC socket at socketPath and returns the
+// connection only after proving it reaches this user's own server:
+//
+//  1. The socket directory must be private to this user: not a symbolic
+//     link, owned by this user, root or the sudo user, with mode 0700 (see
+//     validateSocketDir). Otherwise another local user could have created
+//     it and be listening in it.
+//  2. After connecting, the kernel-reported uid of the listening process
+//     must be one of those same users (see verifyPeer). This closes any
+//     race with the directory check. Platforms without a peer-credential
+//     API are refused with ErrPeerCredentialsUnsupported.
+//
+// A missing socket or refused connection yields ErrDaemonNotRunning. Every
+// xkey IPC client — Client, the PKCS#11 module transport and the native
+// messaging host — dials through here, because each of them sends the
+// server something another user must not receive (a PIN, a password being
+// saved, data to sign) or trusts what it returns.
+func Dial(socketPath string, timeout time.Duration) (net.Conn, error) {
+	return dial(socketPath, timeout, trustedUIDs())
+}
+
+// dial implements Dial for an explicit trusted-uid set.
+func dial(socketPath string, timeout time.Duration, trusted []int) (net.Conn, error) {
+	if socketPath == "" {
+		return nil, ErrSocketPathUnresolved
+	}
+	if err := validateSocketDir(filepath.Dir(socketPath), trusted); err != nil {
+		if isDaemonNotRunning(err) {
+			return nil, &SentinelCauseError{Sentinel: ErrDaemonNotRunning, Cause: err}
+		}
+		return nil, err
+	}
+
+	conn, err := net.DialTimeout("unix", socketPath, timeout)
+	if err != nil {
+		if isDaemonNotRunning(err) {
+			return nil, &SentinelCauseError{Sentinel: ErrDaemonNotRunning, Cause: err}
+		}
+		return nil, &SentinelCauseError{Sentinel: ErrConnectionFailed, Cause: err}
+	}
+	if _, err := verifyPeer(conn, trusted); err != nil {
+		return nil, errors.Join(err, conn.Close())
+	}
+	return conn, nil
 }
 
 // isDaemonNotRunning returns true if the error indicates that the daemon is not

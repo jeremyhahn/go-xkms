@@ -459,7 +459,11 @@ type Server struct {
 	handler    Handler
 	logger     *slog.Logger
 	socketPath string
-	closed     atomic.Bool
+	// trusted is the set of uids whose processes may use the server (see
+	// trustedUIDs); every other peer is dropped before anything is read. It
+	// is a field so tests can exclude the test process's own uid.
+	trusted []int
+	closed  atomic.Bool
 	// shutdownMu serializes each accept loop iteration's "register with wg"
 	// decision against Close's shutdown sequence. Without it, wg.Add (in
 	// Serve) and wg.Wait (in Close) can transition the WaitGroup's counter
@@ -471,40 +475,46 @@ type Server struct {
 	auditLog   atomic.Pointer[audit.Logger]
 }
 
-// NewServer creates a new IPC server bound to the given socketPath. It creates
-// the socket directory (with mode 0700) and the socket file (with mode 0600),
-// removing any stale socket file that may exist from a previous run.
+// NewServer creates a new IPC server bound to the given socketPath.
 //
-// When running as root via sudo, ownership of the directory and socket is
-// transferred to the original user (from SUDO_UID/SUDO_GID) so that client
+// It creates the socket directory, and any missing parents, with mode 0700
+// and refuses to start if the directory already exists and is a symbolic
+// link, is owned by another user, or has any group or other permission bits
+// (ErrSocketDirInsecure); see ensureSocketDir. It then removes a stale socket
+// file left by a previous run — only a socket this user owns, see
+// ReclaimSocket — refuses to replace a live one (ErrSocketInUse), and binds
+// the socket file with mode 0600.
+//
+// When running as root via sudo, the directories it creates and the socket
+// are handed to the original user (from SUDO_UID/SUDO_GID) so that client
 // commands running as that user can connect.
+//
+// The socket's file mode is not the only gate: Serve checks the kernel-
+// reported uid of every client against trustedUIDs and drops any other user
+// before reading a byte (see handleConnection).
 func NewServer(socketPath string, handler Handler, logger *slog.Logger) (*Server, error) {
-	dir := filepath.Dir(socketPath)
-	if err := os.MkdirAll(dir, socketDirMode); err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrSocketCreateFailed, Cause: err}
+	if socketPath == "" {
+		return nil, ErrSocketPathUnresolved
 	}
-
-	// When running as root via sudo, chown the directory to the original user
-	// so that client commands (notifications, xkey touch) can access it.
-	if uid, gid, ok := sudoOwnership(); ok {
-		if err := os.Chown(dir, uid, gid); err != nil {
-			return nil, &DetailError{Err: ErrSocketCreateFailed, Detail: fmt.Sprintf(": chown directory: %v", err)}
-		}
+	trusted := trustedUIDs()
+	if err := ensureSocketDir(filepath.Dir(socketPath), trusted); err != nil {
+		return nil, err
 	}
 
 	// Check whether an existing socket is live before removing it.
 	// If a listener is active, refuse to steal the socket; if stale, remove it.
-	if _, statErr := os.Stat(socketPath); statErr == nil {
+	if _, statErr := os.Lstat(socketPath); statErr == nil {
 		probe, dialErr := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
 		if dialErr == nil {
 			if closeErr := probe.Close(); closeErr != nil {
 				logger.Warn("probe socket close failed", "error", closeErr)
 			}
-			return nil, &DetailError{Err: ErrSocketCreateFailed, Detail: fmt.Sprintf(": another IPC server is already listening on %s", socketPath)}
+			return nil, &SentinelCauseError{Sentinel: ErrSocketCreateFailed, Cause: &DetailError{Err: ErrSocketInUse, Detail: " on " + socketPath}}
 		}
-		// Socket file exists but nobody is listening — stale, safe to remove.
-		if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, &SentinelCauseError{Sentinel: ErrSocketCreateFailed, Cause: err}
+		// Socket file exists but nobody is listening — stale. Remove it only
+		// if it is a socket this user owns.
+		if err := reclaimSocket(socketPath, trusted); err != nil {
+			return nil, err
 		}
 	}
 
@@ -531,6 +541,7 @@ func NewServer(socketPath string, handler Handler, logger *slog.Logger) (*Server
 		handler:    handler,
 		logger:     logger,
 		socketPath: socketPath,
+		trusted:    trusted,
 	}, nil
 }
 
@@ -641,14 +652,19 @@ func (s *Server) Close() error {
 	return err
 }
 
-// handleConnection processes a single client connection: reads one JSON
-// message, dispatches to the appropriate handler, and writes the JSON response.
+// handleConnection processes a single client connection: verifies the
+// client's uid, reads one JSON message, dispatches to the appropriate
+// handler, and writes the JSON response.
 func (s *Server) handleConnection(conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			s.logger.Error("close connection failed", "error", err)
 		}
 	}()
+
+	if !s.admitPeer(conn) {
+		return
+	}
 
 	if err := conn.SetReadDeadline(time.Now().Add(readDeadline)); err != nil {
 		s.logger.Error("set read deadline failed", "error", err)
@@ -694,13 +710,53 @@ func (s *Server) handleConnection(conn net.Conn) {
 	if err != nil {
 		s.logger.Error("handler failed", "type", msg.Type, "error", err)
 		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type}))
-		s.writeResponse(conn, ErrorResponse(
-			fmt.Sprintf("%v: %v", ErrHandlerFailed, err)))
+		s.writeResponse(conn, ErrorResponse(clientErrorMessage(err)))
 		return
 	}
 
 	auditLogFailure(s.logIPCEvent(audit.OpIPCMessageDispatched, true, nil, map[string]any{"message_type": msg.Type}))
 	s.writeResponse(conn, resp)
+}
+
+// admitPeer reports whether the process at the other end of conn runs as a
+// trusted user (see verifyPeer). Any other peer, and any peer whose
+// credentials cannot be read, is refused with a warning and gets no
+// response: the socket's 0600 mode and 0700 directory keep other users out
+// only while nothing loosens them, and this check does not depend on them.
+func (s *Server) admitPeer(conn net.Conn) bool {
+	uid, err := verifyPeer(conn, s.trusted)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, ErrPeerUntrusted) {
+		s.logger.Warn("ipc: dropped connection from untrusted peer", "peer_uid", uid, "error", err)
+		return false
+	}
+	s.logger.Warn("ipc: dropped connection with unverifiable peer", "error", err)
+	return false
+}
+
+// publicErrors are the handler error classes whose fixed sentinel text is
+// safe and useful to show a client: they describe the request or a state the
+// user can act on, never internal detail.
+var publicErrors = []error{
+	ErrInvalidMessage,
+	ErrBarrierSealed,
+	ErrAutofillDisabled,
+}
+
+// clientErrorMessage returns the text sent to a client for a handler error.
+// The wrapped detail of a handler error can carry file paths, backend
+// messages or key identifiers, so it is logged (see handleConnection) and
+// never echoed: the client receives the sentinel text of a public error
+// class, or the fixed ErrHandlerFailed text for everything else.
+func clientErrorMessage(err error) string {
+	for _, public := range publicErrors {
+		if errors.Is(err, public) {
+			return public.Error()
+		}
+	}
+	return ErrHandlerFailed.Error()
 }
 
 // writeResponse encodes a JSON response to the connection.

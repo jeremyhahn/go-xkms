@@ -110,8 +110,10 @@ func TestTouchCLI_CommandAliases(t *testing.T) {
 func TestTouchCLI_InvalidSocketPath(t *testing.T) {
 	helper := NewTouchTestHelper(t)
 
-	// Use a path that definitely does not have a daemon listening.
-	result := helper.RunCommand("touch", "--socket", "/tmp/nonexistent-xkey-socket-12345.sock")
+	// The helper's socket lives in a private (0700) directory with no daemon
+	// listening. A path directly under /tmp would be refused as an insecure
+	// socket directory before the client ever looked for a daemon.
+	result := helper.RunCommand("touch", "--socket", helper.SocketPath())
 
 	assert.False(t, result.Success(), "should fail with invalid socket")
 	assert.True(t, result.OutputContains("daemon") || result.OutputContains("not running"),
@@ -124,7 +126,7 @@ func TestTouchCLI_PasswordType_InvalidSocketPath(t *testing.T) {
 	helper := NewTouchTestHelper(t)
 
 	result := helper.RunCommand("password", "type", "SomePassword",
-		"--socket", "/tmp/nonexistent-xkey-socket-67890.sock")
+		"--socket", helper.SocketPath())
 
 	assert.False(t, result.Success(), "should fail with invalid socket")
 	assert.True(t, result.OutputContains("daemon") || result.OutputContains("not running"),

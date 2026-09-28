@@ -18,9 +18,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -56,6 +59,46 @@ func minimalLoopbackConfig(t *testing.T) *config.Config {
 			},
 		},
 	}
+}
+
+// generateSelfSignedTLSCert writes a throwaway self-signed ECDSA certificate
+// and private key as PEM files, for a test that needs to enable
+// cfg.TLS.Enabled without a real CA: server.New's file-based TLS path
+// (pkg/server buildTLSConfig) loads these directly.
+func generateSelfSignedTLSCert(t *testing.T) (certPath, keyPath string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "127.0.0.1"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	dir := t.TempDir()
+	certPath = filepath.Join(dir, "tls-cert.pem")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	keyPath = filepath.Join(dir, "tls-key.pem")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	return certPath, keyPath
 }
 
 // generateJWTPublicKeyFile writes a throwaway ECDSA public key as a PEM file
@@ -207,6 +250,91 @@ func TestLaunch_BearerTokenEnforced(t *testing.T) {
 	}
 	if got := get(t, "Bearer "+inst.Token); got == http.StatusUnauthorized {
 		t.Errorf("correct per-launch bearer token: status = %d, must not be %d", got, http.StatusUnauthorized)
+	}
+}
+
+// TestLaunch_TLSEnabled_UsesHTTPSScheme proves the scheme branch Launch
+// computes from cfg.TLS.Enabled (loopback.go's "scheme := https / if
+// !cfg.TLS.Enabled { scheme = http }"): with TLS enabled and a self-signed
+// cert/key pair, BaseURL must report "https://" and the loopback listener
+// must actually answer TLS, not plaintext HTTP, on the reported port. Every
+// other Launch test in this file runs TLS disabled, so this is the one
+// exercise of the https branch.
+func TestLaunch_TLSEnabled_UsesHTTPSScheme(t *testing.T) {
+	certPath, keyPath := generateSelfSignedTLSCert(t)
+	cfg := minimalLoopbackConfig(t)
+	cfg.TLS.Enabled = true
+	cfg.TLS.CertFile = certPath
+	cfg.TLS.KeyFile = keyPath
+
+	inst, err := Launch(context.Background(), Options{Config: cfg})
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	t.Cleanup(func() { _ = inst.Close(context.Background()) })
+
+	if !strings.HasPrefix(inst.BaseURL, "https://127.0.0.1:") {
+		t.Fatalf("BaseURL = %q, want https://127.0.0.1:<port>", inst.BaseURL)
+	}
+
+	// Trust exactly the loopback listener's own self-signed certificate,
+	// which carries a 127.0.0.1 IP SAN, so the handshake is fully verified.
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read loopback cert: %v", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certPEM) {
+		t.Fatal("loopback cert PEM did not parse")
+	}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+		},
+	}
+	url := inst.BaseURL + "/api/v1/backends"
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+inst.Token)
+
+	var resp *http.Response
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, err = client.Do(req)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GET %s never became reachable over TLS: %v", url, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.TLS == nil {
+		t.Fatal("response carries no TLS connection state; loopback listener served plaintext")
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Errorf("GET with the correct per-launch token = %d, want an authenticated response", resp.StatusCode)
+	}
+
+	// A plain HTTP client dialing the same port must not get the normal
+	// authenticated response: the listener is wrapped in TLS, not left
+	// plaintext alongside it. Go's net/http server detects a client
+	// speaking HTTP over what it expects to be a TLS handshake and answers
+	// with its own plaintext 400 rather than erroring the connection, so
+	// the discriminator is the status code, not a dial/read failure.
+	plainClient := &http.Client{Timeout: 2 * time.Second}
+	plainURL := "http://127.0.0.1:" + itoa(inst.Port) + "/api/v1/backends"
+	plainResp, plainErr := plainClient.Get(plainURL)
+	if plainErr == nil {
+		defer func() { _ = plainResp.Body.Close() }()
+		if plainResp.StatusCode == http.StatusOK {
+			t.Fatalf("plaintext GET %s succeeded with 200; want the TLS-wrapped listener to refuse a non-TLS request", plainURL)
+		}
 	}
 }
 

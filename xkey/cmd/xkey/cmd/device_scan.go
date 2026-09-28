@@ -23,7 +23,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // deviceScanCmd scans for nearby xKey devices.
@@ -51,17 +50,21 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(deviceScanCmd)
 
-	// Scan flags
-	deviceScanCmd.Flags().Duration("timeout", defaultDeviceScanTimeout, "Scan timeout duration")
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("device.scan.timeout", deviceScanCmd.Flags().Lookup("timeout"))
+	// Scan flags. --timeout is shared with `device pair` and resolves
+	// through resolveDeviceScanTimeout (device.go): the flag when explicitly
+	// set, else device.scan_timeout from the unified config, else this
+	// registered default (go-xkms#1071).
+	deviceScanCmd.Flags().Duration("timeout", defaultDeviceScanTimeout,
+		"Scan timeout duration (default: device.scan_timeout, 30s)")
 }
 
 // runDeviceScan executes the phone scan command.
 func runDeviceScan(cmd *cobra.Command, args []string) (err error) {
 	logger := slog.Default()
-	scanTimeout, _ := cmd.Flags().GetDuration("timeout")
+	scanTimeout, err := resolveDeviceScanTimeout(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Create BLE transport for scanning
 	transport, err := phone.NewBLETransport(&phone.BLETransportConfig{

@@ -60,7 +60,7 @@ func (h *mockStateHandler) HandleStatePasswordList() (*PasswordListResult, error
 func startStateServer(t *testing.T, handler Handler) string {
 	t.Helper()
 
-	sockPath := filepath.Join(t.TempDir(), "xkey.sock")
+	sockPath := filepath.Join(privateDir(t), "xkey.sock")
 	srv, err := NewServer(sockPath, handler, testLogger())
 	require.NoError(t, err)
 
@@ -215,7 +215,7 @@ func TestServer_State_HandlerErrorIsReported(t *testing.T) {
 	assert.Equal(t, StatusError, resp.Status)
 	assert.NotEqual(t, ActionUnsupported, resp.Action,
 		"a real failure must not masquerade as an unsupported verb, which the client treats as a licence to fall back")
-	assert.Contains(t, resp.Error, "pin backend offline")
+	assertNotEchoed(t, resp.Error, "pin backend offline")
 }
 
 func TestServer_State_HandlerWithoutStateSupportRepliesUnsupported(t *testing.T) {
@@ -293,7 +293,7 @@ func TestClient_StateReportsUnsupportedDistinctlyFromNotRunning(t *testing.T) {
 	require.ErrorIs(t, err, ErrStateUnsupported)
 	assert.NotErrorIs(t, err, ErrDaemonNotRunning)
 
-	absent := NewClient(filepath.Join(t.TempDir(), "absent.sock"))
+	absent := NewClient(filepath.Join(privateDir(t), "absent.sock"))
 	defer func() { _ = absent.Close() }()
 
 	_, err = absent.StateBarrier()
@@ -312,11 +312,12 @@ func TestClient_StateSurfacesHandlerFailures(t *testing.T) {
 
 	_, err := client.StateBarrier()
 	require.ErrorIs(t, err, ErrStateOperation)
-	assert.Contains(t, err.Error(), "barrier subsystem offline")
+	assert.NotContains(t, err.Error(), "barrier subsystem offline")
+	assert.ErrorContains(t, err, ErrHandlerFailed.Error())
 }
 
 func TestClient_StateRejectsAClosedClient(t *testing.T) {
-	client := NewClient(filepath.Join(t.TempDir(), "absent.sock"))
+	client := NewClient(filepath.Join(privateDir(t), "absent.sock"))
 	require.NoError(t, client.Close())
 
 	_, err := client.StatePIN()

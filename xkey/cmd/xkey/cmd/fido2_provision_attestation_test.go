@@ -436,7 +436,7 @@ func resetProvisionAttestationFlags() {
 // resolves to "not running" without depending on what is running on the host.
 func absentSocketPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(t.TempDir(), "absent.sock")
+	return filepath.Join(privateTempDir(t), "absent.sock")
 }
 
 // runProvisionAttestation drives the real CLI against a socket no daemon is
@@ -1099,7 +1099,7 @@ func TestFIDO2DaemonRunning_AnUnanswerableProbeIsAnError(t *testing.T) {
 func startUnresponsiveFIDO2Daemon(t *testing.T) string {
 	t.Helper()
 
-	socketPath := filepath.Join(t.TempDir(), "xkey.sock")
+	socketPath := filepath.Join(privateTempDir(t), "xkey.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen on %s: %v", socketPath, err)
@@ -1130,7 +1130,7 @@ func startUnresponsiveFIDO2Daemon(t *testing.T) string {
 func startFakeFIDO2Daemon(t *testing.T) string {
 	t.Helper()
 
-	socketPath := filepath.Join(t.TempDir(), "xkey.sock")
+	socketPath := filepath.Join(privateTempDir(t), "xkey.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen on %s: %v", socketPath, err)

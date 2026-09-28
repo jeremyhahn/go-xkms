@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/ca`
 
@@ -166,13 +166,35 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
 - **The persisted CRL artifact is the source of truth; `certStore`'s
   `StoreCRL`/`GetCRL` is a cache, never authoritative.** `CA.CRL` checks the
   cache first, but a miss or a stale cached entry always falls through to
-  `ca.revocationStore` (or `ca.objectStore`) — never to signing without first
+  `ca.revocationStore` — never to signing without first
   checking there.
 - **CRL `Number` is monotonic per issuer, derived from the previously
   persisted artifact, not from wall-clock time.** Two regenerations inside
   the same clock tick — refresh-on-revoke firing twice in quick succession,
   or a test with a fixed injected clock — still produce strictly increasing
-  numbers.
+  numbers. Only `ErrCRLNotFound` starts the sequence at 1; a store fault or
+  an unparseable persisted number fails generation with `ErrStorageError`
+  (`nextCRLNumber`, `pkg/ca/crl_persistence.go:134`).
+- **Revocation reads fail closed (#1116).** `IsRevoked`, `Verify`,
+  `VerifyPeerCertificate`, OCSP, CRL generation and `Load` report "not
+  revoked" only for a definite `storage.ErrNotFound`. A store fault is
+  `ErrStorageError` with the storage cause kept in the chain
+  (`pkg/ca/ca_extensions.go:776`, `pkg/ca/crl_persistence.go:106`); a record
+  that does not decode, or names a serial other than the one its key is
+  for, is `ErrRevocationRecordCorrupt` naming the key
+  (`pkg/ca/ca_extensions.go:805`, `pkg/ca/errors.go:97`). `Load` refuses to
+  bring up a CA over a corrupt record rather than skip it.
+  `VerifyPeerCertificate` returns `ErrPeerVerificationFailed` joined with
+  the `IsRevoked` error (`pkg/ca/tls.go:508`, `:544`); OCSP answers
+  `ocsp.Unknown` with `ErrOCSPStorageError` joined with the cause
+  (`pkg/ca/ocsp.go:231`); CRL generation returns `ErrCRLGenerationFailed`
+  joined with the cause and publishes nothing.
+- **Cluster visibility.** A serial missing from the in-memory map is read
+  through to `revocationStore` (`lookupRevocation`,
+  `pkg/ca/ca_extensions.go:856`), and a CRL is built from the store's full
+  record set (`pkg/ca/crl_persistence.go:179`), so a revocation recorded on
+  any node is enforced and published by every node. Store hits are cached
+  (`cacheRevocation`, `pkg/ca/ca_extensions.go:831`); misses never are.
 - **Staleness is a read-time decision, not a write-time one.** There is no
   leader election and no background CRL scheduler; any instance may sign a
   refresh. A read past the persisted `NextUpdate` regenerates before
@@ -241,6 +263,8 @@ The lifecycle and validation errors named in the interface contract are
 `ErrAlreadyInitialized` and `ErrInvalidConfig`; key-layer failures surface as
 the keystore errors from `pkg/xkms/errors.go`
 (see [`../key-management/engineering.md`](../key-management/engineering.md)).
+`ErrRevocationRecordCorrupt` is the revocation readers' fail-closed error for
+a persisted record that cannot be decoded (#1116, see the invariant above).
 `ErrKeyRetrievalFailed` is `getOrGenerateCAKey`'s fail-closed error for a
 backend `GetKey` failure that is not a genuine not-found result (#801, see
 the invariant above).
@@ -341,9 +365,8 @@ store layout is internal, and a change to it needs a data migration.
 
 ### CRL persistence (#275)
 
-`pkg/ca/crl_persistence.go`. `ca.revocationStore` (preferred) or
-`ca.objectStore` (legacy fallback) — the same `storage.Backend` revocation
-records use, so a CRL artifact replicates under Raft exactly the way the
+`pkg/ca/crl_persistence.go`. `ca.revocationStore` — the sole persistence
+medium, the same `storage.Backend` revocation records use, so a CRL artifact replicates under Raft exactly the way the
 revocation state that produced it does. No separate storage wiring or server
 config exists for it.
 
@@ -351,6 +374,28 @@ config exists for it.
 |---|---|---|
 | `revocations/<serial-decimal>.json` | `persistedRevocation{Serial, Reason, RevokedAt, DeletedKeys}` | `recordRevocation` (`Revoke`, `RevokeCert`) |
 | `crl/<issuer-ski-hex>` | `persistedCRL{DER, Number, ThisUpdate, NextUpdate}` | `generateAndPersistCRL` (`GenerateCRL`, `CRL`, and the refresh-on-revoke hook in `recordRevocation`) |
+
+`recordRevocation` (`pkg/ca/ca_extensions.go:745`) persists before it
+caches (go-xkms#1131): it checks for a duplicate via `lookupRevocation` --
+the map, then the store, failing closed on a store read fault -- then
+writes the record with `putRevocationBlobIfAbsent`
+(`pkg/ca/ca_extensions.go:830`), and only caches the in-memory entry
+(`cacheRevocation`) once that write actually lands. A store write failure
+returns a typed `*errs.Joined` wrapping `ErrStorageError` and the
+underlying cause, and leaves the map untouched, so a caller can retry
+once the store recovers rather than have the retry rejected as a
+duplicate of a write that never persisted. The write uses `PutIfAbsent`,
+`storage.Backend`'s unconditional create-if-absent primitive (not the
+optional `CompareAndSwapper`/`CompareAndDeleter` capabilities) --
+replicated backends (every `go-qrdb`-backed `Backend` this package runs
+against) make it a linearizable cross-node compare-and-swap keyed on "no
+record exists yet" (`pkg/storage/qrdb/backend_putifabsent.go:53`), so two
+nodes racing to revoke the same serial can both attempt the write but
+only one succeeds; the loser observes `stored=false` and returns
+`ErrAlreadyRevoked` wrapped in `*errs.Detail` naming the winner's
+original reason and time (`alreadyRevokedError`,
+`pkg/ca/ca_extensions.go:814`), read back through the same
+`lookupRevocation` path, instead of silently overwriting it.
 
 The CRL key is the issuing certificate's Subject Key Identifier, hex-encoded
 — not its CN — because `crypto/x509.CreateRevocationList` requires the
@@ -450,7 +495,18 @@ up.
   `crl_persistence_test.go` (round trip across independent `*CA` instances
   sharing a backend, refresh-on-revoke, regenerate-on-read past/before
   `NextUpdate` via an injected `Clock`, force-regenerate),
-  `ocsp_revocationstore_test.go` (the OCSP cold-path fix), and
+  `ocsp_revocationstore_test.go` (the OCSP cold-path fix),
+  `revocation_cluster_test.go` (#1116: two `*CA` instances over one shared
+  in-memory revocation store — a revocation on A enforced by B's
+  `IsRevoked`, `Verify`, `VerifyPeerCertificate` and CRL — plus store-fault
+  and corrupt-record injection proving `IsRevoked`, OCSP, CRL listing, CRL
+  numbering, `Load` and `VerifyPeerCertificate` each fail closed),
+  `revocation_race_1131_test.go` (#1131, reusing that harness: a failed
+  `PutIfAbsent` leaves the in-memory map untouched and a retry after the
+  store recovers persists; two `*CA` instances racing to revoke the same
+  serial leave the loser with `ErrAlreadyRevoked` and the winner's reason
+  and time still on record; a store read fault during the duplicate check
+  fails closed before any write is attempted), and
   `revoke_delete_keys_test.go` (`RevokeCert(DeleteKeys)`: server-generated
   key + certificate deleted and subsequently not found, CSR-signed no-op,
   injected keystore/revocation-store failure propagation, and the

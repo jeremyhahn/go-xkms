@@ -17,7 +17,6 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // devicePairCmd handles pairing with a new phone device.
@@ -58,15 +57,14 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(devicePairCmd)
 
-	// Register flags even in stub mode for help text
+	// Register flags even in stub mode for help text. None of these reach
+	// runDevicePairStub, which always returns ErrDeviceBLEUnavailable before
+	// reading any of them, so no viper binding or config precedence applies
+	// here (go-xkms#1071).
 	devicePairCmd.Flags().String("device", "", "Specific device name or address to pair")
-	devicePairCmd.Flags().Duration("timeout", defaultDeviceScanTimeout, "Scan timeout duration")
+	devicePairCmd.Flags().Duration("timeout", defaultDeviceScanTimeout,
+		"Scan timeout duration (default: device.scan_timeout, 30s)")
 	devicePairCmd.Flags().Bool("force", false, "Force re-pairing even if already paired")
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("device.pair.device", devicePairCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.pair.timeout", devicePairCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("device.pair.force", devicePairCmd.Flags().Lookup("force"))
 }
 
 // runDevicePairStub returns an error indicating BLE support is not available.

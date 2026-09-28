@@ -366,9 +366,13 @@ func TestListKeys_StorageListError(t *testing.T) {
 }
 
 // TestGet_StorageGetError proves that Get's metadata/blob path surfaces
-// backend.ErrFileNotFound for a genuine storage failure exactly as it does
-// for a missing key -- both are "the caller cannot read this blob", which
-// matches storage.GetKey's own contract of not distinguishing the two.
+// ErrMetadataStorage -- not backend.ErrFileNotFound -- for a storage failure
+// that is NOT storage.ErrNotFound (go-xkms#1119). storage.GetKey does
+// distinguish the two, the same way every other call site in this package
+// (getKeyID, GetSymmetricKey, ListKeys) already branches on
+// errors.Is(err, storage.ErrNotFound); collapsing a real storage outage into
+// "file not found" here would conflate it with a genuinely absent record for
+// any caller that inspects the error.
 func TestGet_StorageGetError(t *testing.T) {
 	fs := newFailingStorage(t)
 	fs.getErr = errStorageUnavailable
@@ -384,10 +388,37 @@ func TestGet_StorageGetError(t *testing.T) {
 
 	attrs := &types.KeyAttributes{CN: "some-key", StoreType: backend.STORE_AWSKMS}
 
-	if _, err := b.Get(attrs, backend.FSEXT_PRIVATE_BLOB); err == nil {
+	_, gotErr := b.Get(attrs, backend.FSEXT_PRIVATE_BLOB)
+	if gotErr == nil {
 		t.Fatal("Get() with a failing underlying store must return an error")
-	} else if !errors.Is(err, backend.ErrFileNotFound) {
-		t.Errorf("Get() error = %v, want errors.Is(err, backend.ErrFileNotFound)", err)
+	}
+	if !errors.Is(gotErr, ErrMetadataStorage) {
+		t.Errorf("Get() error = %v, want errors.Is(err, ErrMetadataStorage)", gotErr)
+	}
+	if errors.Is(gotErr, backend.ErrFileNotFound) {
+		t.Errorf("Get() error = %v must NOT satisfy errors.Is(err, backend.ErrFileNotFound): a storage outage is not \"file not found\"", gotErr)
+	}
+}
+
+// TestGet_GenuineNotFound proves that Get's metadata/blob path still returns
+// backend.ErrFileNotFound when the metadata store genuinely has no record
+// for the CN (storage.ErrNotFound), so the go-xkms#1119 fix does not disturb
+// the ordinary "never written" case.
+func TestGet_GenuineNotFound(t *testing.T) {
+	b, err := NewBackendWithClient(&Config{
+		Region:      "us-east-1",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}, &MockKMSClient{})
+	if err != nil {
+		t.Fatalf("NewBackendWithClient() failed: %v", err)
+	}
+
+	attrs := &types.KeyAttributes{CN: "never-written", StoreType: backend.STORE_AWSKMS}
+
+	_, gotErr := b.Get(attrs, backend.FSEXT_PRIVATE_BLOB)
+	if !errors.Is(gotErr, backend.ErrFileNotFound) {
+		t.Errorf("Get() error = %v, want errors.Is(err, backend.ErrFileNotFound)", gotErr)
 	}
 }
 
@@ -528,5 +559,111 @@ func TestGetKeyID_MissingKeyIDField(t *testing.T) {
 	}
 	if !errors.Is(gotErr, ErrMetadataStorage) {
 		t.Errorf("getKeyID() error = %v, want errors.Is(err, ErrMetadataStorage)", gotErr)
+	}
+}
+
+// TestGetSymmetricKey_StorageGetError proves that a storage.GetKey failure
+// that is NOT storage.ErrNotFound surfaces as ErrMetadataStorage instead of
+// being collapsed into backend.ErrKeyNotFound (go-xkms#1119). Before this
+// fix, GetSymmetricKey mapped every metadata-read failure -- including a
+// storage outage -- to ErrKeyNotFound, which is indistinguishable from "no
+// seal key has ever been provisioned" to a caller like seal.EnsureSealKey
+// (go-xkms#1098).
+func TestGetSymmetricKey_StorageGetError(t *testing.T) {
+	fs := newFailingStorage(t)
+	fs.getErr = errStorageUnavailable
+
+	b, err := NewBackendWithClient(&Config{
+		Region:      "us-east-1",
+		KeyStorage:  fs,
+		CertStorage: storage.New(),
+	}, &MockKMSClient{})
+	if err != nil {
+		t.Fatalf("NewBackendWithClient() failed: %v", err)
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:                 "seal-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_AWSKMS,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, gotErr := b.GetSymmetricKey(context.Background(), attrs)
+	if gotErr == nil {
+		t.Fatal("GetSymmetricKey() with a failing metadata store must return an error")
+	}
+	if !errors.Is(gotErr, ErrMetadataStorage) {
+		t.Errorf("GetSymmetricKey() error = %v, want errors.Is(err, ErrMetadataStorage)", gotErr)
+	}
+	if errors.Is(gotErr, backend.ErrKeyNotFound) {
+		t.Errorf("GetSymmetricKey() error = %v must NOT satisfy errors.Is(err, backend.ErrKeyNotFound): a storage outage is not \"no key yet\"", gotErr)
+	}
+}
+
+// TestGetSymmetricKey_GenuineNotFound proves that a metadata store which
+// genuinely has no record for the CN (storage.ErrNotFound) still returns
+// backend.ErrKeyNotFound, so first-init provisioning is unaffected by the
+// go-xkms#1119 fix.
+func TestGetSymmetricKey_GenuineNotFound(t *testing.T) {
+	b, err := NewBackendWithClient(&Config{
+		Region:      "us-east-1",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}, &MockKMSClient{})
+	if err != nil {
+		t.Fatalf("NewBackendWithClient() failed: %v", err)
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:                 "never-provisioned",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_AWSKMS,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, gotErr := b.GetSymmetricKey(context.Background(), attrs)
+	if !errors.Is(gotErr, backend.ErrKeyNotFound) {
+		t.Errorf("GetSymmetricKey() error = %v, want errors.Is(err, backend.ErrKeyNotFound)", gotErr)
+	}
+}
+
+// TestListKeys_MetadataGetError proves that a storage.GetKey failure (not
+// storage.ErrNotFound) while reconstructing a listed key's attributes
+// surfaces as an error from ListKeys instead of silently dropping that key
+// from the result (go-xkms#1119, the same "misleading list" concern
+// TestListKeys_StorageListError proves for the enumeration call itself).
+func TestListKeys_MetadataGetError(t *testing.T) {
+	fs := newFailingStorage(t)
+
+	mock := &MockKMSClient{
+		CreateKeyFunc: func(_ context.Context, _ *kms.CreateKeyInput, _ ...func(*kms.Options)) (*kms.CreateKeyOutput, error) {
+			return &kms.CreateKeyOutput{KeyMetadata: &kmstypes.KeyMetadata{KeyId: aws.String("some-key-id")}}, nil
+		},
+		CreateAliasFunc: func(_ context.Context, _ *kms.CreateAliasInput, _ ...func(*kms.Options)) (*kms.CreateAliasOutput, error) {
+			return &kms.CreateAliasOutput{}, nil
+		},
+	}
+
+	b, err := NewBackendWithClient(&Config{
+		Region:      "us-east-1",
+		KeyStorage:  fs,
+		CertStorage: storage.New(),
+	}, mock)
+	if err != nil {
+		t.Fatalf("NewBackendWithClient() failed: %v", err)
+	}
+
+	attrs := &types.KeyAttributes{CN: "listed-key", KeyType: backend.KEY_TYPE_SIGNING, StoreType: backend.STORE_AWSKMS, KeyAlgorithm: x509.RSA}
+	if _, err := b.CreateKey(attrs); err != nil {
+		t.Fatalf("CreateKey() failed: %v", err)
+	}
+
+	fs.getErr = errStorageUnavailable
+
+	if _, err := b.ListKeys(context.Background()); err == nil {
+		t.Fatal("ListKeys() with a failing per-key metadata read must return an error, not a partial list")
+	} else if !errors.Is(err, ErrMetadataStorage) {
+		t.Errorf("ListKeys() error = %v, want errors.Is(err, ErrMetadataStorage)", err)
 	}
 }

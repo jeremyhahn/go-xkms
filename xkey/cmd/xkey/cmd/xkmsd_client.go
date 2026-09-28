@@ -243,6 +243,46 @@ func commandFlagBool(cmd *cobra.Command, name string) (bool, error) {
 	return false, nil
 }
 
+// commandFlagDuration reads a duration flag when the command declares one,
+// returning zero otherwise. It is the duration companion to commandFlagString
+// and commandFlagBool. cmd may be nil.
+func commandFlagDuration(cmd *cobra.Command, name string) (time.Duration, error) {
+	if cmd == nil {
+		return 0, nil
+	}
+	for _, flags := range []*pflag.FlagSet{cmd.Flags(), cmd.PersistentFlags()} {
+		if flags.Lookup(name) == nil {
+			continue
+		}
+		value, err := flags.GetDuration(name)
+		if err != nil {
+			return 0, &DetailError{Err: ErrCommandFlagInvalid, Detail: ": " + name + ": " + err.Error()}
+		}
+		return value, nil
+	}
+	return 0, nil
+}
+
+// commandFlagChanged reports whether the named flag exists on cmd -- its own
+// flag set or its persistent flag set -- and was explicitly set on the
+// command line. Checking both flag sets mirrors commandFlagString and
+// commandFlagBool, so Changed is read off whichever FlagSet actually
+// declared the flag: the executed sub-command's own set when the flag is
+// local, or its persistent set when an ancestor declared it and cobra has
+// not yet merged it into the child (a state unit tests construct directly
+// without a full cobra.Execute). cmd may be nil.
+func commandFlagChanged(cmd *cobra.Command, name string) bool {
+	if cmd == nil {
+		return false
+	}
+	for _, flags := range []*pflag.FlagSet{cmd.Flags(), cmd.PersistentFlags()} {
+		if flag := flags.Lookup(name); flag != nil {
+			return flag.Changed
+		}
+	}
+	return false
+}
+
 // Client constructs an SDK transport client for the endpoint. The URL scheme
 // selects the transport (http(s) → REST, grpc(s) → gRPC, unix → gRPC over a
 // Unix socket, quic → HTTP/3, mcp(s) → JSON-RPC). The client is not connected;

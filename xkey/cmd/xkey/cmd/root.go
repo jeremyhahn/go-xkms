@@ -240,7 +240,7 @@ func init() {
 	// defaults. resolvedSocketPath (state_source.go) is the one place that
 	// reads it back.
 	RootCmd.PersistentFlags().StringVar(&ipcSocketPath, socketFlagName, "",
-		"IPC socket path of the xkey instance to talk to (default: derived from XKEY_HOME, or $XDG_RUNTIME_DIR/xkey/xkey.sock)")
+		"IPC socket path of the xkey instance to talk to (default: derived from XKEY_HOME, or $XDG_RUNTIME_DIR/xkey/xkey.sock, or a per-user fallback: $TMPDIR or ~/Library/Caches on macOS, ~/.xkey/run elsewhere; the directory must be mode 0700 and owned by you)")
 
 	// Bind flags to viper for backward compatibility with code that still
 	// reads from the global viper instance. This will be phased out as

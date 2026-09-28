@@ -17,18 +17,22 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
-// socketBaseDir is the parent of the per-UID socket directory. Named rather
-// than inlined so filepath.Join receives no separator-bearing literal.
-const socketBaseDir = "/tmp"
-
 const (
+	// sudoRuntimeDirRoot holds the per-user runtime directories that
+	// systemd-logind creates, each named by uid; XDG_RUNTIME_DIR points into
+	// it for a logged-in user.
+	sudoRuntimeDirRoot = "/run/user"
+
 	socketDir      = "xkey"
 	socketName     = "xkey.sock"
 	instanceSubdir = "run"
@@ -59,8 +63,13 @@ const maxUnixSocketPathLen = 90
 //     buffer; otherwise a runtime-dir path keyed by a short hash of the
 //     home, so two long or colliding home paths still land on distinct
 //     sockets.
-//  3. $XDG_RUNTIME_DIR/xkey/xkey.sock, when XKEY_HOME is unset.
-//  4. /tmp/xkey-$UID/xkey.sock, the last-resort default.
+//  3. <runtime dir>/xkey/xkey.sock, where the runtime dir is the per-user
+//     directory runtimeDirFor chooses.
+//
+// It returns the empty string when no per-user location can be determined;
+// NewServer and the Client refuse an empty path with ErrSocketPathUnresolved.
+// There is no shared-directory fallback: a socket under /tmp can be
+// pre-empted by another local user (issue #1117).
 //
 // This is the single place that decides "which xkey instance does an
 // unqualified command talk to" — every command and the native messaging
@@ -73,10 +82,11 @@ func DefaultSocketPath() string {
 	if home := os.Getenv(xhome.EnvHome); home != "" {
 		return instanceSocketPath(home)
 	}
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return filepath.Join(dir, socketDir, socketName)
+	base, err := runtimeDir()
+	if err != nil {
+		return ""
 	}
-	return filepath.Join(socketBaseDir, fmt.Sprintf("xkey-%d", effectiveUID()), socketName)
+	return filepath.Join(base, socketDir, socketName)
 }
 
 // instanceSocketPath returns the per-instance socket derived from an xkey
@@ -102,17 +112,92 @@ func instanceSocketPath(home string) string {
 // for an xkey home whose direct <home>/run/xkey.sock path is too long for
 // AF_UNIX. It keys the path on a short hash of the home's absolute path
 // under the runtime directory, so distinct long-path instances still resolve
-// to distinct sockets.
+// to distinct sockets. It returns the empty string when no runtime directory
+// can be determined.
 func runtimeInstanceSocketPath(absHome string) string {
-	return filepath.Join(runtimeDir(), fmt.Sprintf("xkey-%s", shortHash(absHome)), socketName)
+	base, err := runtimeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, fmt.Sprintf("xkey-%s", shortHash(absHome)), socketName)
 }
 
-// runtimeDir returns $XDG_RUNTIME_DIR when set, otherwise socketBaseDir.
-func runtimeDir() string {
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return dir
+// runtimeDir returns this process's per-user runtime directory; see
+// runtimeDirFor.
+func runtimeDir() (string, error) {
+	return runtimeDirFor(runtime.GOOS, os.Getenv, effectiveHomeDir, sudoUID, os.Lstat)
+}
+
+// sudoUID returns the invoking user's uid when this process runs as root via
+// sudo; see sudoOwnership.
+func sudoUID() (int, bool) {
+	uid, _, ok := sudoOwnership()
+	return uid, ok
+}
+
+// runtimeDirFor chooses the per-user directory under which xkey places its
+// sockets, for the operating system goos:
+//
+//   - $XDG_RUNTIME_DIR, when set (Linux desktop sessions; the directory is
+//     created 0700 for the user by the session manager).
+//   - Under sudo (root with SUDO_UID set, as sudoUID reports):
+//     /run/user/$SUDO_UID, when it exists and passes the socket directory
+//     checks for that user alone (a real directory, owned by SUDO_UID, mode
+//     0700). sudo strips XDG_RUNTIME_DIR, but the invoking user's clients
+//     still have it and resolve $XDG_RUNTIME_DIR/xkey/xkey.sock; this is the
+//     directory logind gives them, so `sudo xkey fido2` and those clients
+//     meet at the same socket. A missing or unsafe directory falls through
+//     to the choices below.
+//   - macOS: $TMPDIR, which launchd sets to a per-user 0700 directory under
+//     /var/folders; otherwise ~/Library/Caches.
+//   - Everywhere else: ~/.xkey/run.
+//
+// It never returns a shared directory such as /tmp. getenv, home, sudo and
+// lstat are parameters so every branch is testable without touching the
+// environment or the file system.
+func runtimeDirFor(goos string, getenv func(string) string, home func() (string, error), sudo func() (int, bool), lstat func(string) (fs.FileInfo, error)) (string, error) {
+	if dir := getenv("XDG_RUNTIME_DIR"); dir != "" {
+		return dir, nil
 	}
-	return socketBaseDir
+	if uid, ok := sudo(); ok {
+		dir := filepath.Join(sudoRuntimeDirRoot, strconv.Itoa(uid))
+		// A failure is not an error here: it only means this directory is
+		// not a safe meeting point, and the fallbacks below are.
+		if validateSocketDirWith(lstat, dir, []int{uid}) == nil {
+			return dir, nil
+		}
+	}
+	if goos == "darwin" {
+		if dir := getenv("TMPDIR"); dir != "" {
+			return filepath.Clean(dir), nil
+		}
+	}
+	homeDir, err := home()
+	if err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrSocketPathUnresolved, Cause: err}
+	}
+	if homeDir == "" {
+		return "", ErrSocketPathUnresolved
+	}
+	if goos == "darwin" {
+		return filepath.Join(homeDir, "Library", "Caches"), nil
+	}
+	return filepath.Join(homeDir, ".xkey", instanceSubdir), nil
+}
+
+// effectiveHomeDir returns the home directory of the user the socket belongs
+// to. When running as root via sudo that is the invoking user (SUDO_UID), so
+// a daemon started with sudo and that user's own client commands resolve the
+// same socket; otherwise it is $HOME.
+func effectiveHomeDir() (string, error) {
+	if uid, _, ok := sudoOwnership(); ok {
+		u, err := user.LookupId(strconv.Itoa(uid))
+		if err != nil {
+			return "", err
+		}
+		return u.HomeDir, nil
+	}
+	return os.UserHomeDir()
 }
 
 // shortHash returns a short hex-encoded SHA-256 digest of s, long enough to
@@ -122,19 +207,4 @@ func runtimeDir() string {
 func shortHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])[:12]
-}
-
-// effectiveUID returns the UID to use for socket path construction. When
-// running as root via sudo, it returns the original user's UID from SUDO_UID
-// so that the daemon and client commands use the same socket path.
-func effectiveUID() int {
-	// If running as root via sudo, use the original user's UID
-	if os.Getuid() == 0 {
-		if sudoUID := os.Getenv("SUDO_UID"); sudoUID != "" {
-			if uid, err := strconv.Atoi(sudoUID); err == nil {
-				return uid
-			}
-		}
-	}
-	return os.Getuid()
 }

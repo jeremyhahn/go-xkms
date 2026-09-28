@@ -19,12 +19,14 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -503,38 +505,112 @@ func TestMTLSAuthenticator_WithUserStore_DisabledUser(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrUserDisabled))
 }
 
-func TestMTLSAuthenticator_WithUserStore_NotFound_FallsBack(t *testing.T) {
+// storeUnavailableError stands in for a qrdb store that cannot answer — a
+// sealed tenant barrier, a failed index read, an unreachable remote.
+type storeUnavailableError struct{}
+
+func (storeUnavailableError) Error() string { return "store unavailable" }
+
+// TestMTLSAuthenticator_WithUserStore_RefusesUnresolvedCert proves that once a
+// UserStore is configured, a certificate that does not resolve to a bound,
+// enabled user never authenticates, on either transport. An unbound
+// certificate is ErrCertNotBound; any other store error fails closed as a
+// *UserLookupError. Neither falls back to a certificate-derived identity,
+// whose caller-chosen CN and OU would otherwise become the Subject and
+// TenantID (go-xkms#1096).
+func TestMTLSAuthenticator_WithUserStore_RefusesUnresolvedCert(t *testing.T) {
 	ca, err := testutil.GenerateTestCA()
 	require.NoError(t, err)
-
-	clientCert, err := testutil.GenerateTestClientCert(ca, "unknown-client")
+	clientCert, err := testutil.GenerateTestClientCert(ca, "alice")
 	require.NoError(t, err)
 
-	store := &mockUserStore{
-		err: errors.New("not found"),
+	tests := []struct {
+		name     string
+		storeErr error
+		// wantUnbound selects the ErrCertNotBound outcome; otherwise the
+		// refusal must be a *UserLookupError wrapping storeErr.
+		wantUnbound bool
+	}{
+		{name: "unbound certificate", wantUnbound: true},
+		{name: "wrapped not-found", storeErr: fmt.Errorf("remote: %w", &qrdbsdk.UserNotFoundError{Lookup: "cert_spki/x"}), wantUnbound: true},
+		{name: "store unavailable", storeErr: storeUnavailableError{}},
+		{name: "deadline exceeded", storeErr: context.DeadlineExceeded},
+		{name: "user service not wired", storeErr: &qrdbtransport.NotImplementedError{Method: "GetUserByCertThumbprint"}},
 	}
 
-	auth := NewMTLSAuthenticator(&MTLSConfig{
-		UserStore: store,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			users := newFakeQRDBUserClient()
+			users.getErr = tt.storeErr
+			authn := NewMTLSAuthenticator(&MTLSConfig{UserStore: NewQRDBUserStore(users)})
+
+			httpIdentity, httpErr := authn.AuthenticateHTTP(&http.Request{
+				TLS: &tls.ConnectionState{PeerCertificates: []*x509.Certificate{clientCert.Cert}},
+			})
+			grpcCtx := peer.NewContext(context.Background(), &peer.Peer{
+				Addr: &net.TCPAddr{IP: net.ParseIP("10.0.0.4"), Port: 9090},
+				AuthInfo: credentials.TLSInfo{
+					State: tls.ConnectionState{PeerCertificates: []*x509.Certificate{clientCert.Cert}},
+				},
+			})
+			grpcIdentity, grpcErr := authn.AuthenticateGRPC(grpcCtx, metadata.MD{})
+
+			for transport, got := range map[string]struct {
+				identity *Identity
+				err      error
+			}{
+				"http": {httpIdentity, httpErr},
+				"grpc": {grpcIdentity, grpcErr},
+			} {
+				assert.Nil(t, got.identity, "%s: an unresolved certificate must not yield an identity", transport)
+				if tt.wantUnbound {
+					assert.ErrorIs(t, got.err, ErrCertNotBound, transport)
+					continue
+				}
+				var lookupErr *UserLookupError
+				require.ErrorAs(t, got.err, &lookupErr, transport)
+				assert.ErrorIs(t, got.err, tt.storeErr, "%s: the store's error must stay reachable", transport)
+				assert.NotErrorIs(t, got.err, ErrCertNotBound, "%s: an outage is not a definite not-found", transport)
+			}
+		})
+	}
+}
+
+// TestMTLSAuthenticator_WithUserStore_BoundUserThroughQRDBStore proves a bound,
+// enabled user still authenticates end to end through QRDBUserStore, with the
+// identity taken from the user record, not the certificate.
+func TestMTLSAuthenticator_WithUserStore_BoundUserThroughQRDBStore(t *testing.T) {
+	ca, err := testutil.GenerateTestCA()
+	require.NoError(t, err)
+	clientCert, err := testutil.GenerateTestClientCert(ca, "cert-cn-is-not-the-subject")
+	require.NoError(t, err)
+
+	users := newFakeQRDBUserClient()
+	users.byThumbprint[qrdbsdk.ComputeSPKIThumbprint(clientCert.Cert)] = &qrdbtransport.User{
+		Username:  "alice",
+		TenantID:  "tenant-a",
+		RoleIDs:   []string{"role-id-operator"},
+		Lifecycle: string(qrdbsdk.LifecycleActive),
+	}
+	authn := NewMTLSAuthenticator(&MTLSConfig{UserStore: NewQRDBUserStore(users)})
+
+	identity, err := authn.AuthenticateHTTP(&http.Request{
+		TLS: &tls.ConnectionState{PeerCertificates: []*x509.Certificate{clientCert.Cert}},
 	})
-
-	req := &http.Request{
-		TLS: &tls.ConnectionState{
-			PeerCertificates: []*x509.Certificate{clientCert.Cert},
-		},
-		RemoteAddr: "10.0.0.4:443",
-	}
-
-	identity, err := auth.AuthenticateHTTP(req)
 	require.NoError(t, err)
+	assert.Equal(t, "alice", identity.Subject)
+	assert.Equal(t, "tenant-a", identity.TenantID)
+	assert.Equal(t, []string{"role-id-operator"}, identity.Roles)
+	assert.Equal(t, qrdbsdk.ComputeSPKIThumbprint(clientCert.Cert), identity.Metadata["cert_fingerprint"])
+}
 
-	// Should fall back to certificate CN
-	assert.Equal(t, "unknown-client", identity.Subject)
-	assert.Equal(t, "mtls", identity.Metadata["auth_method"])
+func TestUserLookupError(t *testing.T) {
+	cause := storeUnavailableError{}
+	err := &UserLookupError{Err: cause}
 
-	// Should NOT have cert_fingerprint attribute when falling back
-	_, ok := identity.Metadata["cert_fingerprint"]
-	assert.False(t, ok, "cert_fingerprint should not be set when falling back to cert extraction")
+	assert.Equal(t, "mtls user lookup failed: store unavailable", err.Error())
+	assert.Equal(t, cause, err.Unwrap())
+	assert.ErrorIs(t, err, cause)
 }
 
 func TestMTLSAuthenticator_WithUserStore_NoRole(t *testing.T) {
