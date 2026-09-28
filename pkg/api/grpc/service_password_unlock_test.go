@@ -46,11 +46,6 @@ func TestMapPasswordError_UserPINSentinels(t *testing.T) {
 			err:  xkms.ErrPasswordStoreUserPINNotProvisioned,
 			want: codes.FailedPrecondition,
 		},
-		{
-			name: "decrypt not supported",
-			err:  xkms.ErrPasswordDecryptNotSupported,
-			want: codes.Unimplemented,
-		},
 	}
 
 	for _, tc := range cases {

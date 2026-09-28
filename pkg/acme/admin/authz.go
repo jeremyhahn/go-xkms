@@ -80,26 +80,40 @@ func (g *PermissionGate) Enforcing() bool {
 // when the request is allowed, auth.ErrUnauthenticated when no identity is
 // present, ErrGateNotConfigured for an unwired gate, and the qrdb authorizer's
 // denial otherwise. Every path other than an explicit allow is a denial.
-func (g *PermissionGate) Authorize(ctx context.Context, resource, action string) error {
+//
+// extra carries the caller's transport-specific context for the log line — the
+// gRPC full method, the HTTP method and path, or the MCP JSON-RPC method name —
+// so a denial can be traced to the request that caused it. The gate is the one
+// seam every admin transport (REST via Wrap, gRPC, MCP) calls to reach the
+// authorizer, so it is also the one place that logs a denial: callers pass
+// their transport's identifying attributes here instead of logging the same
+// denial a second time themselves. extra is never included in the client-facing
+// error; only the shape callers already return (401/403, PermissionDenied,
+// JSON-RPC "Forbidden") reaches the caller.
+func (g *PermissionGate) Authorize(ctx context.Context, resource, action string, extra ...slog.Attr) error {
 	if g == nil {
 		return ErrGateNotConfigured
 	}
 
 	identity := auth.GetIdentity(ctx)
 	if identity == nil {
-		g.logger.WarnContext(ctx, "ACME admin authorization failed: no identity on request",
+		args := append([]any{
 			slog.String("resource", resource),
-			slog.String("action", action))
+			slog.String("action", action),
+		}, attrsToArgs(extra)...)
+		g.logger.WarnContext(ctx, "ACME admin authorization failed: no identity on request", args...)
 		return auth.ErrUnauthenticated
 	}
 
 	if err := g.authorizer.Authorize(ctx, identity, resource, action); err != nil {
-		g.logger.WarnContext(ctx, "ACME admin authorization denied",
+		args := append([]any{
 			slog.String("subject", identity.Subject),
 			slog.String("tenant", identity.TenantID),
 			slog.String("resource", resource),
 			slog.String("action", action),
-			slog.String("error", err.Error()))
+			slog.String("error", err.Error()),
+		}, attrsToArgs(extra)...)
+		g.logger.WarnContext(ctx, "ACME admin authorization denied", args...)
 		return err
 	}
 
@@ -110,13 +124,26 @@ func (g *PermissionGate) Authorize(ctx context.Context, resource, action string)
 	return nil
 }
 
+// attrsToArgs widens extra to []any so it can be spread into a slog call
+// alongside key-value pairs built with slog.String. slog treats each Attr
+// element as-is rather than as a key awaiting a value.
+func attrsToArgs(extra []slog.Attr) []any {
+	args := make([]any, len(extra))
+	for i, a := range extra {
+		args[i] = a
+	}
+	return args
+}
+
 // Wrap returns an http.Handler that serves next only when the caller holds
 // resource:action. It is the route decorator every privileged ACME admin route
 // is registered with, so each route declares the exact qrdb grant it requires
 // at its registration site.
 func (g *PermissionGate) Wrap(resource, action string, next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		err := g.Authorize(r.Context(), resource, action)
+		err := g.Authorize(r.Context(), resource, action,
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path))
 		switch {
 		case err == nil:
 			next.ServeHTTP(w, r)

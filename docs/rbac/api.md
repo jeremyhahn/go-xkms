@@ -1,6 +1,6 @@
 # RBAC — API
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 RBAC is cross-cutting, not a capability with its own endpoint set: it is the
 authorization gate every other feature's REST route, gRPC RPC, and MCP tool
@@ -94,3 +94,12 @@ Same routes as REST — QUIC is HTTP/3 on the unified REST listener.
 | REST / QUIC | `401 Unauthorized` | `403 Forbidden` |
 | gRPC | `codes.Unauthenticated` | `codes.PermissionDenied` (via qrdb's authorizer) |
 | MCP | fails closed at server construction if RBAC is enabled with no usable authorizer; per-call denial follows the same allow/deny decision as the other transports | |
+
+Every denial body/message above is fixed and generic — REST's `"Authentication
+required"` / `"Access denied: insufficient permissions"`, gRPC's
+`"grpc: authentication required"` / `"grpc: access denied"` (and
+`"authentication failed"` from the authentication interceptors, one layer
+before `authorize` runs). None of them include the qrdb authorizer's or
+authenticator's own error text; that detail is not the caller's to see and
+stays server-side (audit event or `slog`) — see engineering.md's Error
+semantics and Observability (go-xkms#1103).

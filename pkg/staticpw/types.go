@@ -12,8 +12,9 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package staticpw provides static password management with pluggable
-// storage backends, multi-tenant support, and symmetric encryption via
-// the types.SymmetricEncrypter interface.
+// storage backends and multi-tenant support. Confidentiality at rest is
+// provided by the storage.Backend each store wraps (the tenant barrier);
+// this package does not implement its own cipher.
 package staticpw
 
 import (

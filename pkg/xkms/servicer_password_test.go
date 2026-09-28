@@ -12,6 +12,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1076,193 +1077,215 @@ func TestPasswordAdd_SharedPersonalIsolation(t *testing.T) {
 
 // --- checkSharedPasswordOwnership tests ---
 
+// sharedPasswordTenant is the tenant the ownership tests run in: the tenant
+// setupServiceWithPasswordManager registers a barrier for.
+const sharedPasswordTenant = "tenant-1"
+
+// seedPasswordRoles wires svc to a first-boot-seeded qrdb node on which
+// sharedPasswordTenant has been provisioned, and returns a function resolving
+// a built-in role name to the identifier that tenant's role is persisted
+// under -- exactly what a real user record carries in RoleIDs.
+func seedPasswordRoles(t *testing.T, svc *XKMSService) func(string) string {
+	t.Helper()
+	n, err := testutil.NewFirstBootNode(t)
+	require.NoError(t, err)
+	require.NoError(t, n.ProvisionTenant(sharedPasswordTenant))
+	svc.SetUserClients(n.Client().Users(), n.Client().Roles())
+	return func(roleName string) string {
+		id, err := n.RoleID(sharedPasswordTenant, roleName)
+		require.NoError(t, err)
+		return id
+	}
+}
+
+// sharedPasswordCtx returns a context whose identity is subject in
+// sharedPasswordTenant holding exactly roles.
+func sharedPasswordCtx(subject string, roles ...string) context.Context {
+	return auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject:  subject,
+		TenantID: sharedPasswordTenant,
+		Roles:    roles,
+	})
+}
+
+// alicesSharedPassword is a shared entry owned by alice.
+func alicesSharedPassword() *staticpw.StaticPassword {
+	return &staticpw.StaticPassword{OwnerID: "alice", Shared: true}
+}
+
 func TestCheckSharedPasswordOwnership_OwnerAllowed(t *testing.T) {
-	// Owner (alice) can modify her own shared password.
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "alice",
-		TenantID: "tenant-1",
-	})
-	pw := &staticpw.StaticPassword{
-		OwnerID: "alice",
-		Shared:  true,
-	}
-	err := checkSharedPasswordOwnership(ctx, pw)
+	svc := setupServiceWithPasswordStore(t)
+	err := svc.checkSharedPasswordOwnership(sharedPasswordCtx("alice"), alicesSharedPassword())
 	assert.NoError(t, err)
 }
 
-func TestCheckSharedPasswordOwnership_NonOwnerDenied(t *testing.T) {
-	// Non-owner (bob) cannot modify alice's shared password.
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "bob",
-		TenantID: "tenant-1",
-	})
-	pw := &staticpw.StaticPassword{
-		OwnerID: "alice",
-		Shared:  true,
+// TestCheckSharedPasswordOwnership_AdministratorRoleIDsAllowed proves a member
+// of the tenant's Admin or SO role -- identified by the role IDs the identity
+// actually carries -- may modify a shared password it does not own.
+func TestCheckSharedPasswordOwnership_AdministratorRoleIDsAllowed(t *testing.T) {
+	svc := setupServiceWithPasswordStore(t)
+	roleID := seedPasswordRoles(t, svc)
+
+	for _, roleName := range []string{qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameSO} {
+		ctx := sharedPasswordCtx("bob", roleID(qrdbsdk.RoleNameUser), roleID(roleName))
+		assert.NoError(t, svc.checkSharedPasswordOwnership(ctx, alicesSharedPassword()), roleName)
 	}
-	err := checkSharedPasswordOwnership(ctx, pw)
+}
+
+// TestCheckSharedPasswordOwnership_NonAdministratorDenied proves a non-owner
+// holding only non-administrator roles is refused.
+func TestCheckSharedPasswordOwnership_NonAdministratorDenied(t *testing.T) {
+	svc := setupServiceWithPasswordStore(t)
+	roleID := seedPasswordRoles(t, svc)
+
+	for _, roles := range [][]string{
+		nil,
+		{roleID(qrdbsdk.RoleNameUser)},
+		{roleID(qrdbsdk.RoleNameOperator)},
+		{roleID(qrdbsdk.RoleNameAuditor)},
+	} {
+		err := svc.checkSharedPasswordOwnership(sharedPasswordCtx("bob", roles...), alicesSharedPassword())
+		assert.ErrorIs(t, err, staticpw.ErrNotOwner, "roles %v", roles)
+	}
+}
+
+// TestCheckSharedPasswordOwnership_RoleNameConfersNothing is the #1074
+// regression: an identity whose Roles spell "admin" or "so" -- the shape an
+// unverified token claim produces -- used to take the administrator override.
+// Role names are not role identifiers and confer nothing.
+func TestCheckSharedPasswordOwnership_RoleNameConfersNothing(t *testing.T) {
+	svc := setupServiceWithPasswordStore(t)
+	seedPasswordRoles(t, svc)
+
+	for _, name := range []string{qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameSO} {
+		err := svc.checkSharedPasswordOwnership(sharedPasswordCtx("bob", name), alicesSharedPassword())
+		assert.ErrorIs(t, err, staticpw.ErrNotOwner, name)
+	}
+}
+
+// TestCheckSharedPasswordOwnership_OtherTenantsAdminDenied proves the override
+// is scoped to the caller's tenant: the system tenant's Admin ID does not make
+// a tenant identity an administrator of that tenant's vault.
+func TestCheckSharedPasswordOwnership_OtherTenantsAdminDenied(t *testing.T) {
+	svc := setupServiceWithPasswordStore(t)
+	n, err := testutil.NewFirstBootNode(t)
+	require.NoError(t, err)
+	require.NoError(t, n.ProvisionTenant(sharedPasswordTenant))
+	svc.SetUserClients(n.Client().Users(), n.Client().Roles())
+	systemAdminID, err := n.RoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
+	require.NoError(t, err)
+
+	err = svc.checkSharedPasswordOwnership(sharedPasswordCtx("bob", systemAdminID), alicesSharedPassword())
 	assert.ErrorIs(t, err, staticpw.ErrNotOwner)
-}
-
-func TestCheckSharedPasswordOwnership_AdminBypass(t *testing.T) {
-	// Admin can modify any shared password regardless of ownership.
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "bob",
-		TenantID: "tenant-1",
-		Roles:    []string{"admin"},
-	})
-	pw := &staticpw.StaticPassword{
-		OwnerID: "alice",
-		Shared:  true,
-	}
-	err := checkSharedPasswordOwnership(ctx, pw)
-	assert.NoError(t, err)
-}
-
-func TestCheckSharedPasswordOwnership_SOBypass(t *testing.T) {
-	// SO role can modify any shared password regardless of ownership.
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "bob",
-		TenantID: "tenant-1",
-		Roles:    []string{"so"},
-	})
-	pw := &staticpw.StaticPassword{
-		OwnerID: "alice",
-		Shared:  true,
-	}
-	err := checkSharedPasswordOwnership(ctx, pw)
-	assert.NoError(t, err)
 }
 
 func TestCheckSharedPasswordOwnership_PersonalSkipped(t *testing.T) {
 	// Personal passwords (Shared=false) skip ownership checks entirely.
-	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "bob",
-		TenantID: "tenant-1",
-	})
-	pw := &staticpw.StaticPassword{
-		OwnerID: "alice",
-		Shared:  false,
-	}
-	err := checkSharedPasswordOwnership(ctx, pw)
-	assert.NoError(t, err)
+	svc := setupServiceWithPasswordStore(t)
+	pw := &staticpw.StaticPassword{OwnerID: "alice", Shared: false}
+	assert.NoError(t, svc.checkSharedPasswordOwnership(sharedPasswordCtx("bob"), pw))
 }
 
 func TestCheckSharedPasswordOwnership_NilIdentity(t *testing.T) {
 	// No identity in context means the caller cannot modify a shared password.
-	ctx := context.Background()
-	pw := &staticpw.StaticPassword{
-		OwnerID: "alice",
-		Shared:  true,
-	}
-	err := checkSharedPasswordOwnership(ctx, pw)
+	svc := setupServiceWithPasswordStore(t)
+	err := svc.checkSharedPasswordOwnership(context.Background(), alicesSharedPassword())
 	assert.ErrorIs(t, err, staticpw.ErrNotOwner)
+}
+
+// TestCheckSharedPasswordOwnership_NoRoleClientDenied proves that without a
+// role store the override cannot be established, so a non-owner is refused
+// whatever it carries.
+func TestCheckSharedPasswordOwnership_NoRoleClientDenied(t *testing.T) {
+	svc := setupServiceWithPasswordStore(t)
+	n, err := testutil.NewFirstBootNode(t)
+	require.NoError(t, err)
+	adminID, err := n.RoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
+	require.NoError(t, err)
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "bob", TenantID: qrdbsdk.SystemTenantID, Roles: []string{adminID}})
+	err = svc.checkSharedPasswordOwnership(ctx, alicesSharedPassword())
+	assert.ErrorIs(t, err, staticpw.ErrNotOwner)
+}
+
+// TestCheckSharedPasswordOwnership_RoleResolutionFailure proves a role store
+// that cannot answer fails the request closed with the typed resolution error
+// rather than granting or silently refusing.
+func TestCheckSharedPasswordOwnership_RoleResolutionFailure(t *testing.T) {
+	svc, _, _ := setupServiceWithUserClients(t) // mockRoleClient answers GetRoleByName with (nil, nil)
+
+	err := svc.checkSharedPasswordOwnership(sharedPasswordCtx("bob", "some-role-id"), alicesSharedPassword())
+	var resErr *auth.RoleResolutionError
+	require.ErrorAs(t, err, &resErr)
+	assert.Equal(t, sharedPasswordTenant, resErr.TenantID)
 }
 
 // --- Shared password ownership enforcement in PasswordUpdate/PasswordDelete ---
 
-func TestPasswordUpdate_SharedOwnershipDenied(t *testing.T) {
-	svc, _ := setupServiceWithPasswordManager(t)
-
-	// Unlock the tenant.
-	unlockCtx := contextWithTenant("tenant-1")
-	err := svc.PasswordStoreUnlock(unlockCtx, unlockRequest())
-	require.NoError(t, err)
-
-	// Alice adds a shared password.
-	aliceCtx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "alice",
-		TenantID: "tenant-1",
-	})
-	addResp, err := svc.PasswordAdd(aliceCtx, &transport.PasswordAddRequest{
-		Name:     "Alice Shared Secret",
+// addAlicesSharedPassword unlocks sharedPasswordTenant's store and has alice
+// add a shared entry, returning its ID.
+func addAlicesSharedPassword(t *testing.T, svc *XKMSService, name string) string {
+	t.Helper()
+	require.NoError(t, svc.PasswordStoreUnlock(contextWithTenant(sharedPasswordTenant), unlockRequest()))
+	addResp, err := svc.PasswordAdd(sharedPasswordCtx("alice"), &transport.PasswordAddRequest{
+		Name:     name,
 		Password: "alice-pass",
 		Shared:   true,
 	})
 	require.NoError(t, err)
+	return addResp.ID
+}
 
-	// Bob (non-owner, no admin/SO role) tries to update it.
-	bobCtx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "bob",
-		TenantID: "tenant-1",
-	})
+func TestPasswordUpdate_SharedOwnershipDenied(t *testing.T) {
+	svc, _ := setupServiceWithPasswordManager(t)
+	roleID := seedPasswordRoles(t, svc)
+	id := addAlicesSharedPassword(t, svc, "Alice Shared Secret")
+
 	newName := "Hijacked"
-	err = svc.PasswordUpdate(bobCtx, &transport.PasswordUpdateRequest{
-		ID:   addResp.ID,
-		Name: &newName,
-	})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, staticpw.ErrNotOwner)
+	for _, roles := range [][]string{nil, {roleID(qrdbsdk.RoleNameOperator)}, {qrdbsdk.RoleNameAdmin}} {
+		err := svc.PasswordUpdate(sharedPasswordCtx("bob", roles...), &transport.PasswordUpdateRequest{ID: id, Name: &newName})
+		assert.ErrorIs(t, err, staticpw.ErrNotOwner, "roles %v", roles)
+	}
 }
 
 func TestPasswordDelete_SharedOwnershipDenied(t *testing.T) {
 	svc, _ := setupServiceWithPasswordManager(t)
+	roleID := seedPasswordRoles(t, svc)
+	id := addAlicesSharedPassword(t, svc, "Alice Shared DB Creds")
 
-	// Unlock the tenant.
-	unlockCtx := contextWithTenant("tenant-1")
-	err := svc.PasswordStoreUnlock(unlockCtx, unlockRequest())
-	require.NoError(t, err)
-
-	// Alice adds a shared password.
-	aliceCtx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "alice",
-		TenantID: "tenant-1",
-	})
-	addResp, err := svc.PasswordAdd(aliceCtx, &transport.PasswordAddRequest{
-		Name:     "Alice Shared DB Creds",
-		Password: "alice-db-pass",
-		Shared:   true,
-	})
-	require.NoError(t, err)
-
-	// Bob (non-owner, no admin/SO role) tries to delete it.
-	bobCtx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "bob",
-		TenantID: "tenant-1",
-	})
-	err = svc.PasswordDelete(bobCtx, &transport.PasswordDeleteRequest{ID: addResp.ID})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, staticpw.ErrNotOwner)
+	for _, roles := range [][]string{nil, {roleID(qrdbsdk.RoleNameOperator)}, {qrdbsdk.RoleNameSO}} {
+		err := svc.PasswordDelete(sharedPasswordCtx("bob", roles...), &transport.PasswordDeleteRequest{ID: id})
+		assert.ErrorIs(t, err, staticpw.ErrNotOwner, "roles %v", roles)
+	}
 }
 
 func TestPasswordUpdate_SharedOwnershipAllowedForAdmin(t *testing.T) {
 	svc, _ := setupServiceWithPasswordManager(t)
+	roleID := seedPasswordRoles(t, svc)
+	id := addAlicesSharedPassword(t, svc, "Alice Team Secret")
 
-	// Unlock the tenant.
-	unlockCtx := contextWithTenant("tenant-1")
-	err := svc.PasswordStoreUnlock(unlockCtx, unlockRequest())
-	require.NoError(t, err)
-
-	// Alice adds a shared password.
-	aliceCtx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "alice",
-		TenantID: "tenant-1",
-	})
-	addResp, err := svc.PasswordAdd(aliceCtx, &transport.PasswordAddRequest{
-		Name:     "Alice Team Secret",
-		Password: "alice-team-pass",
-		Shared:   true,
-	})
-	require.NoError(t, err)
-
-	// Admin user (bob with admin role) can update alice's shared password.
-	adminCtx := auth.WithIdentity(context.Background(), &auth.Identity{
-		Subject:  "bob",
-		TenantID: "tenant-1",
-		Roles:    []string{"admin"},
-	})
+	// bob holds the tenant's Admin role by ID, as a seeded user record does.
 	newName := "Admin Updated"
-	err = svc.PasswordUpdate(adminCtx, &transport.PasswordUpdateRequest{
-		ID:   addResp.ID,
+	err := svc.PasswordUpdate(sharedPasswordCtx("bob", roleID(qrdbsdk.RoleNameAdmin)), &transport.PasswordUpdateRequest{
+		ID:   id,
 		Name: &newName,
 	})
 	require.NoError(t, err)
 
 	// ID is deterministic from name+folder, so renaming changes the ID.
-	newID := staticpw.GenerateID("Admin Updated", "")
-	getResp, err := svc.PasswordGet(aliceCtx, &transport.PasswordGetRequest{ID: newID})
+	getResp, err := svc.PasswordGet(sharedPasswordCtx("alice"), &transport.PasswordGetRequest{ID: staticpw.GenerateID("Admin Updated", "")})
 	require.NoError(t, err)
 	assert.Equal(t, "Admin Updated", getResp.Name)
+}
+
+func TestPasswordDelete_SharedOwnershipAllowedForSO(t *testing.T) {
+	svc, _ := setupServiceWithPasswordManager(t)
+	roleID := seedPasswordRoles(t, svc)
+	id := addAlicesSharedPassword(t, svc, "Alice Retired Secret")
+
+	require.NoError(t, svc.PasswordDelete(sharedPasswordCtx("bob", roleID(qrdbsdk.RoleNameSO)), &transport.PasswordDeleteRequest{ID: id}))
+	_, err := svc.PasswordGet(sharedPasswordCtx("alice"), &transport.PasswordGetRequest{ID: id})
+	assert.Error(t, err)
 }
 
 // --- PasswordGenerate error coverage ---
@@ -1395,48 +1418,12 @@ func TestPasswordStoreUnlock_NilRequest(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilRequest)
 }
 
-// --- PasswordGet decrypt request handling ---
+// --- PasswordGet session state handling ---
 
-// Decrypt is not implementable against a barrier-backed store, so it is
-// reported instead of being silently dropped while ciphertext is returned.
-func TestPasswordGet_DecryptRequestedFailsClosed(t *testing.T) {
-	svc := setupServiceWithPasswordStore(t)
-	ctx := context.Background()
-
-	addResp, err := svc.PasswordAdd(ctx, &transport.PasswordAddRequest{
-		Name: "Decrypt Me", Username: "user", Password: "pass",
-	})
-	require.NoError(t, err)
-
-	_, err = svc.PasswordGet(ctx, &transport.PasswordGetRequest{
-		ID:      addResp.ID,
-		Decrypt: true,
-	})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrPasswordDecryptNotSupported)
-}
-
-// A user PIN on a get request only means "decrypt this for me", so it is
-// refused for the same reason.
-func TestPasswordGet_UserPINRequestedFailsClosed(t *testing.T) {
-	svc := setupServiceWithPasswordStore(t)
-	ctx := context.Background()
-
-	addResp, err := svc.PasswordAdd(ctx, &transport.PasswordAddRequest{
-		Name: "PIN Me", Username: "user", Password: "pass",
-	})
-	require.NoError(t, err)
-
-	_, err = svc.PasswordGet(ctx, &transport.PasswordGetRequest{
-		ID:      addResp.ID,
-		UserPIN: testPasswordStoreUserPIN,
-	})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrPasswordDecryptNotSupported)
-}
-
-// A plain get (no decrypt, no PIN) still returns the entry as stored.
-func TestPasswordGet_WithoutDecryptReturnsEntry(t *testing.T) {
+// On an unlocked session, Get returns the entry exactly as stored:
+// confidentiality at rest is provided by the tenant barrier, not by a
+// per-request decryption step.
+func TestPasswordGet_UnlockedSessionReturnsEntry(t *testing.T) {
 	svc := setupServiceWithPasswordStore(t)
 	ctx := context.Background()
 
@@ -1449,4 +1436,16 @@ func TestPasswordGet_WithoutDecryptReturnsEntry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "pass", getResp.Password)
 	assert.False(t, getResp.Encrypted)
+}
+
+// On a locked tenant session, Get fails with the same typed
+// staticpw.ErrStoreLocked as every other password operation --
+// resolvePasswordStore is shared, so Get has no special case.
+func TestPasswordGet_LockedSessionReturnsErrStoreLocked(t *testing.T) {
+	svc, _ := setupServiceWithPasswordManager(t)
+	ctx := contextWithTenant("tenant-1")
+
+	_, err := svc.PasswordGet(ctx, &transport.PasswordGetRequest{ID: "does-not-matter"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, staticpw.ErrStoreLocked)
 }

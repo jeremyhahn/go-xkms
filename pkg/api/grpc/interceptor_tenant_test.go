@@ -152,23 +152,27 @@ func TestTenantUnaryInterceptor_SystemTenantID(t *testing.T) {
 	})
 }
 
-func TestTenantUnaryInterceptor_SORolePassesThrough(t *testing.T) {
-	t.Run("SO role gets cross-tenant access", func(t *testing.T) {
-		registry := testTenantRegistry(t)
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(registry)
-		defer SetBarrierRegistry(old)
+// TestTenantUnaryInterceptor_SORoleNameGetsNoBypass is the go-xkms#1074
+// regression: a tenant identity whose Roles spell "so" -- the shape of an
+// unverified token claim -- used to skip tenant scoping. It is gated like any
+// other tenant identity (pkg/api/tenantgate).
+func TestTenantUnaryInterceptor_SORoleNameGetsNoBypass(t *testing.T) {
+	registry := testTenantRegistry(t)
+	old := GetBarrierRegistry()
+	SetBarrierRegistry(registry)
+	defer SetBarrierRegistry(old)
 
-		srv := &Server{logger: discardLogger()}
-		info := &grpc.UnaryServerInfo{FullMethod: "/test/Method"}
+	srv := &Server{logger: discardLogger()}
+	info := &grpc.UnaryServerInfo{FullMethod: "/test/Method"}
 
-		identity := &auth.Identity{Subject: "so-admin", TenantID: "any-tenant", Roles: []string{"so"}}
-		ctx := auth.WithIdentity(context.Background(), identity)
+	identity := &auth.Identity{Subject: "so-admin", TenantID: "any-tenant", Roles: []string{"so"}}
+	ctx := auth.WithIdentity(context.Background(), identity)
 
-		resp, err := srv.tenantUnaryInterceptor(ctx, "req", info, passthroughUnaryHandler)
-		require.NoError(t, err)
-		assert.Equal(t, "ok", resp)
-	})
+	resp, err := srv.tenantUnaryInterceptor(ctx, "req", info, passthroughUnaryHandler)
+	assert.Nil(t, resp)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.PermissionDenied, st.Code())
 }
 
 func TestTenantUnaryInterceptor_NoRegistry(t *testing.T) {
