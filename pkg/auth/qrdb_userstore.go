@@ -27,7 +27,8 @@ var _ UserStore = (*QRDBUserStore)(nil)
 // the single source of identity for the stack. It satisfies UserStore for the
 // MTLSAuthenticator: given a client certificate's SPKI thumbprint, it resolves
 // the bound qrdb user via the server-side secondary index and projects it
-// onto MTLSUser.
+// onto MTLSUser, carrying the user's permitted-method policy so the
+// authenticator can enforce it.
 //
 // The user's role assignments are carried as the qrdb role IDs the user record
 // holds, all of them, unmodified. That is go-qrdb's own identity contract: its
@@ -59,6 +60,7 @@ func (s *QRDBUserStore) GetByCertFingerprint(ctx context.Context, fingerprint st
 		Roles:    append([]string(nil), u.RoleIDs...),
 		TenantID: u.TenantID,
 		// Lifecycle is qrdb's only account state; only active authenticates.
-		Enabled: u.Lifecycle == string(qrdbsdk.LifecycleActive),
+		Enabled:     u.Lifecycle == string(qrdbsdk.LifecycleActive),
+		AuthMethods: u.AuthMethods,
 	}, nil
 }

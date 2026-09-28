@@ -210,6 +210,22 @@ specific permission before assuming a non-Admin role holds it.
   service derives the tenant from the identity, as `pkcs11StateScope` and
   `auditTenantFilter` do. A transport must not do this itself, and must not
   forward a request tenant unexamined.
+- **The mTLS authenticator enforces qrdb's permitted-method policy.** A
+  certificate that resolves to an active account is refused when the
+  account's `AuthMethods` (qrdb `User.AuthMethods`) is non-empty and does not
+  name `mtls` (`qrdbsdk.MethodMTLS`). `QRDBUserStore` projects the policy onto
+  `MTLSUser.AuthMethods` (`pkg/auth/qrdb_userstore.go:69`);
+  `MTLSAuthenticator.userIdentity` checks it after the enabled check
+  (`pkg/auth/mtls.go:247`) via `checkAuthMethod`
+  (`pkg/auth/authmethod.go:34`), which applies go-qrdb's
+  `auth/middleware` `checkAuthMethod` contract unchanged: an **empty policy
+  states no restriction**, the method name is normalized with
+  `qrdbsdk.NormalizeAuthMethods` and compared against the stored entries,
+  and a name that does not survive normalization is refused. A refused
+  account is never admitted through the certificate-field fallback that
+  serves certificates when no `UserStore` is configured — a `UserStore`
+  configuration never falls back to certificate fields at all, whether the
+  refusal is disablement, policy exclusion, or an unbound certificate.
 - **No authorization decision compares `Identity.Roles` against a role
   name.** Identities carry role identifiers, so a name comparison never
   matches a real grant and does match an unverified token claim
@@ -225,29 +241,31 @@ specific permission before assuming a non-Admin role holds it.
   (`pkg/api/tenantgate/tenantgate.go:107`).
 - **Role reassignment after user creation does not exist.** `roleNameToID`
   runs once, at `CreateUser`; there is no update path.
-- **With a `UserStore` configured, an mTLS identity is always a bound user's.**
-  `MTLSAuthenticator.userIdentity` (`pkg/auth/mtls.go:216`) builds the
-  identity only from a bound, enabled user record. An unbound certificate
-  (qrdb's typed `UserNotFoundError`) is refused with `ErrCertNotBound`
-  (`pkg/auth/mtls.go:224-226`). Any other store error (sealed tenant
-  barrier, failed index read, unreachable remote) fails closed as
-  `*UserLookupError` (`pkg/auth/mtls.go:228`). Neither falls back to the
-  certificate's fields. That identity would carry the caller-chosen CN as
-  `Subject` and first OU as `TenantID`. Handlers scope per-user state on
-  that pair (the password vault, `pkg/api/rest/password_handlers.go:95`),
-  and with RBAC disabled nothing else stands between it and the handler.
-  During an outage it would also admit an account the store would have
-  refused. Only an authenticator built without a store
-  (`pkg/auth/mtls.go:258`, used when no qrdb identity plane is hosted)
-  derives an identity from certificate fields.
+- **With a `UserStore` configured, an mTLS identity is always a bound,
+  enabled, permitted user's.** `MTLSAuthenticator.userIdentity`
+  (`pkg/auth/mtls.go:226`) builds the identity only from a user record that
+  is bound, enabled, and whose permitted-method policy allows `mtls`. An
+  unbound certificate (qrdb's typed `UserNotFoundError`) is refused with
+  `ErrCertNotBound` (`pkg/auth/mtls.go:234-236`). Any other store error
+  (sealed tenant barrier, failed index read, unreachable remote) fails
+  closed as `*UserLookupError` (`pkg/auth/mtls.go:238`). None of these falls
+  back to the certificate's fields. That identity would carry the
+  caller-chosen CN as `Subject` and first OU as `TenantID`. Handlers scope
+  per-user state on that pair (the password vault,
+  `pkg/api/rest/password_handlers.go:95`), and with RBAC disabled nothing
+  else stands between it and the handler. During an outage it would also
+  admit an account the store would have refused. Only an authenticator built
+  without a store (`pkg/auth/mtls.go:275`, used when no qrdb identity plane
+  is hosted) derives an identity from certificate fields.
 
 ## Error semantics
 
 | Error | Where | Meaning |
 |---|---|---|
 | `ErrUnauthenticated` | `pkg/auth/errors.go` | `Authorize` called with a nil identity while enabled |
-| `ErrCertNotBound` | `pkg/auth/errors.go:45` | mTLS authenticator with a `UserStore`: the client certificate's SPKI thumbprint is bound to no user. The request is unauthenticated (REST 401), and the gate never runs |
-| `*UserLookupError{Err}` | `pkg/auth/errors.go:54` | mTLS authenticator with a `UserStore`: the store failed for any reason other than a definite not-found. It fails closed, and `Err` carries the store's error |
+| `*AuthMethodNotPermittedError{Username, TenantID, Method, Permitted}` | `pkg/auth/errors.go:58` | the certificate resolved to an active account whose permitted-method policy excludes `mtls`; mirrors qrdb's `auth/middleware` error of the same name |
+| `ErrCertNotBound` | `pkg/auth/errors.go:48` | mTLS authenticator with a `UserStore`: the client certificate's SPKI thumbprint is bound to no user. The request is unauthenticated (REST 401), and the gate never runs |
+| `*UserLookupError{Err}` | `pkg/auth/errors.go:85` | mTLS authenticator with a `UserStore`: the store failed for any reason other than a definite not-found. It fails closed, and `Err` carries the store's error |
 | qrdb's `PermissionDeniedError` | returned by `rbac.Authorize` | grant missing, or tenant scope gate rejects the request |
 | `ErrAuthorizerRequired` | `pkg/api/rest/errors.go` | `rest.NewServer` refuses to construct when `EnableRBAC` is true but no usable authorizer was supplied — fails closed at construction, never falls back to allow-all |
 | `*ErrUnknownRole{Role}` | `pkg/xkms/errors.go` | `CreateUser`'s role name does not match any existing qrdb role, wrapped in `*ErrUserOperation{Operation: "resolve role"}` |
@@ -357,7 +375,9 @@ re-exported verbatim so a downstream consumer needs a single import.
 
 ## Test strategy
 
-- **Unit** — `pkg/auth` (authorizer, permissions); `pkg/apimodule/module_scopes_test.go`
+- **Unit** — `pkg/auth` (authorizer, permissions; `authmethod_test.go`
+  pins the permitted-method policy, including the empty-policy case, through
+  the production `QRDBUserStore` and `MTLSAuthenticator`); `pkg/apimodule/module_scopes_test.go`
   (`TestEveryModulePermissionDeclaresItsScope`, `TestModuleDeclaresOnlyItsOwnScopes`,
   `TestModuleScopeDeclarationsAreAllContributed`, `TestUndeclaredPermissionHasNoScope`).
 - **Vocabulary consistency** — `internal/authzscan` builds a checked-in
