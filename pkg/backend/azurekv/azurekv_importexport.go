@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -82,10 +83,14 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 	// This is stored temporarily until ImportKey is called
 	privateKeyBytes := x509.MarshalPKCS1PrivateKey(wrappingPrivateKey)
 
-	// Store the private key temporarily with a unique ID based on CN
+	// Store the private key temporarily with a unique ID based on CN. This
+	// is transient wrapping-key material for the in-flight import ceremony,
+	// never key metadata, so it stays in importTokens (process memory only)
+	// rather than Config.KeyStorage; see the Backend.importTokens doc
+	// comment in azurekv.go.
 	importTokenKey := fmt.Sprintf("import-token-%s", attrs.CN)
 	b.mu.Lock()
-	b.metadata[importTokenKey] = privateKeyBytes
+	b.importTokens[importTokenKey] = privateKeyBytes
 	b.mu.Unlock()
 
 	// Set expiration to 24 hours from now
@@ -367,14 +372,14 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 		return &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
-	b.mu.Lock()
-	b.metadata[attrs.CN] = metadataBytes
-	b.mu.Unlock()
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+		return &errs.Wrapped{Msg: "failed to store metadata", Err: err}
+	}
 
 	// Clean up the temporary import token
 	importTokenKey := fmt.Sprintf("import-token-%s", attrs.CN)
 	b.mu.Lock()
-	delete(b.metadata, importTokenKey)
+	delete(b.importTokens, importTokenKey)
 	b.mu.Unlock()
 
 	return nil
@@ -447,14 +452,14 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 		return &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
-	b.mu.Lock()
-	b.metadata[attrs.CN] = metadataBytes
-	b.mu.Unlock()
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+		return &errs.Wrapped{Msg: "failed to store metadata", Err: err}
+	}
 
 	// Clean up the temporary import token
 	importTokenKey := fmt.Sprintf("import-token-%s", attrs.CN)
 	b.mu.Lock()
-	delete(b.metadata, importTokenKey)
+	delete(b.importTokens, importTokenKey)
 	b.mu.Unlock()
 
 	return nil

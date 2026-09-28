@@ -466,6 +466,9 @@ func (ca *CA) MutualTLSConfig(ctx context.Context, attrs *types.KeyAttributes) (
 //   - ErrCertificateRevoked if any certificate in the chain is revoked
 //   - ErrCertificateNotYetValid if the certificate's NotBefore is in the future
 //   - ErrCertificateExpired if the certificate has expired
+//   - ErrPeerVerificationFailed, joined with the IsRevoked error, when the
+//     revocation status of any certificate in the chain cannot be
+//     determined (fail closed)
 //   - ErrPeerVerificationFailed for other verification errors
 //
 // Thread-safe: Yes
@@ -494,14 +497,17 @@ func (ca *CA) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.
 	)
 
 	// Check revocation status
+	// Fail closed: a certificate whose revocation status cannot be
+	// determined is refused, never accepted as "not revoked".
 	revoked, err := ca.IsRevoked(peerCert.SerialNumber)
 	if err != nil {
 		slog.Warn("TLS: failed to check revocation status",
 			"serial", peerCert.SerialNumber.String(),
 			"error", err,
 		)
-		// Continue with verification if revocation check fails
-	} else if revoked {
+		return &errs.Joined{Lead: ErrPeerVerificationFailed, Detail: fmt.Sprintf("revocation check for serial %s", peerCert.SerialNumber.String()), Cause: err}
+	}
+	if revoked {
 		slog.Warn("TLS: peer certificate is revoked",
 			"subject", peerCert.Subject.String(),
 			"serial", peerCert.SerialNumber.String(),
@@ -535,7 +541,9 @@ func (ca *CA) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.
 				"serial", intermediateCert.SerialNumber.String(),
 				"error", err,
 			)
-		} else if revoked {
+			return &errs.Joined{Lead: ErrPeerVerificationFailed, Detail: fmt.Sprintf("intermediate revocation check for serial %s", intermediateCert.SerialNumber.String()), Cause: err}
+		}
+		if revoked {
 			slog.Warn("TLS: intermediate certificate is revoked",
 				"subject", intermediateCert.Subject.String(),
 				"serial", intermediateCert.SerialNumber.String(),

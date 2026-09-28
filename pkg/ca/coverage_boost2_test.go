@@ -807,7 +807,7 @@ func TestExists_WrongAlgo(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — recordRevocation / putRevocationBlob (90%)
+// ca_extensions.go — recordRevocation / putRevocationBlobIfAbsent (90%)
 // =============================================================================
 
 func TestRecordRevocation_NilSerial(t *testing.T) {

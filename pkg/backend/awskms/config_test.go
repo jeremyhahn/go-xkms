@@ -148,6 +148,76 @@ func TestConfigValidate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "missing key storage",
+			config: &Config{
+				Region:      "us-east-1",
+				CertStorage: storage.New(),
+			},
+			wantErr: true,
+			errType: ErrInvalidConfig,
+		},
+		{
+			name: "missing cert storage",
+			config: &Config{
+				Region:     "us-east-1",
+				KeyStorage: storage.New(),
+			},
+			wantErr: true,
+			errType: ErrInvalidConfig,
+		},
+		{
+			name: "valid config with bare key ID",
+			config: &Config{
+				Region:      "us-east-1",
+				KeyID:       "1234abcd-12ab-34cd-56ef-1234567890ab",
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid config with alias name",
+			config: &Config{
+				Region:      "us-east-1",
+				KeyID:       "alias/my-seal-key",
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid config with alias ARN",
+			config: &Config{
+				Region:      "us-east-1",
+				KeyID:       "arn:aws:kms:us-east-1:123456789012:alias/my-seal-key",
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
+			},
+			wantErr: false,
+		},
+		{
+			name: "malformed key ID",
+			config: &Config{
+				Region:      "us-east-1",
+				KeyID:       "not-a-valid-key-identifier",
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
+			},
+			wantErr: true,
+			errType: ErrInvalidKeyID,
+		},
+		{
+			name: "malformed key ARN",
+			config: &Config{
+				Region:      "us-east-1",
+				KeyID:       "arn:aws:kms:us-east-1:not-an-account:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
+			},
+			wantErr: true,
+			errType: ErrInvalidKeyID,
+		},
 	}
 
 	for _, tt := range tests {
@@ -259,6 +329,25 @@ func TestConfigString(t *testing.T) {
 				"Debug: true",
 			},
 			dontWant: []string{},
+		},
+		{
+			// An access key of 4 characters or fewer takes the "mask
+			// entirely" branch rather than the "mask all but the last 4"
+			// branch, since there is nothing left to reveal.
+			name: "config with short access key",
+			config: &Config{
+				Region:      "us-east-1",
+				AccessKeyID: "abcd",
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
+			},
+			wantSubstrings: []string{
+				"us-east-1",
+				"AccessKeyID: ****,",
+			},
+			dontWant: []string{
+				"abcd",
+			},
 		},
 	}
 
@@ -397,6 +486,107 @@ func TestIsValidRegion(t *testing.T) {
 			got := isValidRegion(tt.region)
 			if got != tt.want {
 				t.Errorf("isValidRegion(%q) = %v, want %v", tt.region, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIsValidKeyID tests the isValidKeyID helper function against every
+// identifier form AWS KMS accepts (bare key ID, key ARN, alias name, alias
+// ARN) plus malformed input that must be rejected.
+func TestIsValidKeyID(t *testing.T) {
+	tests := []struct {
+		name  string
+		keyID string
+		want  bool
+	}{
+		{
+			name:  "valid bare key ID",
+			keyID: "1234abcd-12ab-34cd-56ef-1234567890ab",
+			want:  true,
+		},
+		{
+			name:  "valid multi-region key ID",
+			keyID: "mrk-1234abcd12ab34cd56ef1234567890ab",
+			want:  true,
+		},
+		{
+			name:  "valid key ARN",
+			keyID: "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+			want:  true,
+		},
+		{
+			name:  "valid multi-region key ARN",
+			keyID: "arn:aws:kms:us-east-1:123456789012:key/mrk-1234abcd12ab34cd56ef1234567890ab",
+			want:  true,
+		},
+		{
+			name:  "valid GovCloud key ARN",
+			keyID: "arn:aws-us-gov:kms:us-gov-west-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+			want:  true,
+		},
+		{
+			name:  "valid China partition key ARN",
+			keyID: "arn:aws-cn:kms:cn-north-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+			want:  true,
+		},
+		{
+			name:  "valid alias name",
+			keyID: "alias/my-seal-key",
+			want:  true,
+		},
+		{
+			name:  "valid alias ARN",
+			keyID: "arn:aws:kms:us-east-1:123456789012:alias/my-seal-key",
+			want:  true,
+		},
+		{
+			name:  "empty key ID",
+			keyID: "",
+			want:  false,
+		},
+		{
+			name:  "malformed free text",
+			keyID: "not-a-valid-key-identifier",
+			want:  false,
+		},
+		{
+			name:  "key ID missing hyphens",
+			keyID: "1234abcd12ab34cd56ef1234567890ab",
+			want:  false,
+		},
+		{
+			name:  "key ARN with non-numeric account ID",
+			keyID: "arn:aws:kms:us-east-1:not-an-account:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+			want:  false,
+		},
+		{
+			name:  "key ARN missing resource",
+			keyID: "arn:aws:kms:us-east-1:123456789012:key/",
+			want:  false,
+		},
+		{
+			name:  "alias missing prefix",
+			keyID: "my-seal-key",
+			want:  false,
+		},
+		{
+			name:  "alias name with invalid character",
+			keyID: "alias/my seal key",
+			want:  false,
+		},
+		{
+			name:  "arbitrary arn resource type",
+			keyID: "arn:aws:kms:us-east-1:123456789012:secret/1234abcd-12ab-34cd-56ef-1234567890ab",
+			want:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidKeyID(tt.keyID)
+			if got != tt.want {
+				t.Errorf("isValidKeyID(%q) = %v, want %v", tt.keyID, got, tt.want)
 			}
 		})
 	}

@@ -112,7 +112,7 @@ Examples:
   xkey extension serve --no-barrier
 
   # Custom socket path and log level
-  xkey extension serve --socket /tmp/xkey.sock --log-level debug
+  xkey extension serve --socket "$XDG_RUNTIME_DIR/xkey/xkey.sock" --log-level debug
 
   # Disable CTAP2 authentication (credentials returned without PIN/touch)
   xkey extension serve --no-barrier --no-auth

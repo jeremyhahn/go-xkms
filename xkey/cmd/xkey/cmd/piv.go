@@ -24,8 +24,8 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // PIV configuration constants.
@@ -43,16 +43,29 @@ const (
 	pivStorageFeature = "piv"
 )
 
-// PIV configuration keys for Viper.
-const (
-	viperKeyPIVBackend       = "piv.backend"
-	viperKeyPIVStorage       = "piv.storage"
-	viperKeyPIVStoragePath   = "piv.storage_path"
-	viperKeyPIVTPMDevice     = "piv.tpm_device"
-	viperKeyPIVPKCS11Library = "piv.pkcs11_library"
-	viperKeyPIVPKCS11Token   = "piv.pkcs11_token"
-	viperKeyPIVPKCS11PIN     = "piv.pkcs11_pin"
-	viperKeyPIVPKCS11SOPIN   = "piv.pkcs11_so_pin"
+// pivPKCS11PINSource and pivPKCS11SOPINSource are the PKCS#11 hardware
+// token's own user/Security Officer PIN -- a different secret from the xkey
+// host PIN service's PIN (pin_input.go). They follow the identical
+// stdin-flag-then-dedicated-environment-variable convention: there is no
+// "--pkcs11-pin" value flag, for the same reason there is no "--pin" one
+// (go-xkms#272) -- a value on the command line is visible to every other
+// process on the host via 'ps'. Declared with addPersistentFlags on PIVCmd,
+// so every "piv" subcommand inherits them; commands outside that tree (cert,
+// device listen, provision, auth login --piv) do not declare the flag and so
+// resolve the PIN from its environment variable only (go-xkms#871).
+var (
+	pivPKCS11PINSource = pinSource{
+		label:      "PKCS#11 PIN",
+		stdinFlag:  "pkcs11-pin-stdin",
+		envVar:     "XKEY_PIV_PKCS11_PIN",
+		stdinEmpty: ErrPIVPKCS11PINStdinEmpty,
+	}
+	pivPKCS11SOPINSource = pinSource{
+		label:      "PKCS#11 Security Officer PIN",
+		stdinFlag:  "pkcs11-so-pin-stdin",
+		envVar:     "XKEY_PIV_PKCS11_SO_PIN",
+		stdinEmpty: ErrPIVPKCS11SOPINStdinEmpty,
+	}
 )
 
 // PIV command errors.
@@ -113,6 +126,14 @@ var (
 
 	// ErrPIVPKCS11TokenRequired indicates PKCS#11 token label is required for pkcs11 storage.
 	ErrPIVPKCS11TokenRequired = errors.New("piv: PKCS#11 token label required for pkcs11 storage")
+
+	// ErrPIVPKCS11PINStdinEmpty indicates --pkcs11-pin-stdin was given but
+	// standard input carried no PKCS#11 PIN.
+	ErrPIVPKCS11PINStdinEmpty = errors.New("piv: --pkcs11-pin-stdin was given but standard input carried no PKCS#11 PIN")
+
+	// ErrPIVPKCS11SOPINStdinEmpty indicates --pkcs11-so-pin-stdin was given
+	// but standard input carried no PKCS#11 Security Officer PIN.
+	ErrPIVPKCS11SOPINStdinEmpty = errors.New("piv: --pkcs11-so-pin-stdin was given but standard input carried no PKCS#11 Security Officer PIN")
 )
 
 // PIVStorageType represents the certificate storage backend type.
@@ -454,20 +475,8 @@ func init() {
 		"PKCS#11 library path")
 	PIVCmd.PersistentFlags().String("pkcs11-token", "",
 		"PKCS#11 token label")
-	PIVCmd.PersistentFlags().String("pkcs11-pin", "",
-		"PKCS#11 user PIN")
-	PIVCmd.PersistentFlags().String("pkcs11-so-pin", "",
-		"PKCS#11 Security Officer PIN (required for key generation)")
-
-	// Bind PIV flags to viper
-	_ = viper.BindPFlag(viperKeyPIVBackend, PIVCmd.PersistentFlags().Lookup("backend"))
-	_ = viper.BindPFlag(viperKeyPIVStorage, PIVCmd.PersistentFlags().Lookup("piv-storage"))
-	_ = viper.BindPFlag(viperKeyPIVStoragePath, PIVCmd.PersistentFlags().Lookup("storage-path"))
-	_ = viper.BindPFlag(viperKeyPIVTPMDevice, PIVCmd.PersistentFlags().Lookup("tpm-device"))
-	_ = viper.BindPFlag(viperKeyPIVPKCS11Library, PIVCmd.PersistentFlags().Lookup("pkcs11-library"))
-	_ = viper.BindPFlag(viperKeyPIVPKCS11Token, PIVCmd.PersistentFlags().Lookup("pkcs11-token"))
-	_ = viper.BindPFlag(viperKeyPIVPKCS11PIN, PIVCmd.PersistentFlags().Lookup("pkcs11-pin"))
-	_ = viper.BindPFlag(viperKeyPIVPKCS11SOPIN, PIVCmd.PersistentFlags().Lookup("pkcs11-so-pin"))
+	pivPKCS11PINSource.addPersistentFlags(PIVCmd)
+	pivPKCS11SOPINSource.addPersistentFlags(PIVCmd)
 
 	// Export command specific flags
 	pivExportCmd.Flags().String("format", defaultPIVExportFormat,
@@ -497,26 +506,123 @@ func defaultPIVStorageTypeForBackend(backend PIVBackendType) PIVStorageType {
 	}
 }
 
-// buildPIVConfig creates a PIVConfig from Viper configuration.
-func buildPIVConfig() *PIVConfig {
-	backend := PIVBackendType(viper.GetString(viperKeyPIVBackend))
-	storageType := PIVStorageType(viper.GetString(viperKeyPIVStorage))
+// pivConfigString resolves one PIV setting with the same precedence
+// resolveXKMSdURL uses for the xkmsd endpoint (xkmsd_client.go): an explicit
+// flag on cmd beats the unified xkey config's piv.<field> value, which
+// already merges the XKEY_PIV_* environment variable and the config file's
+// piv: section -- every leaf pkg/config declares is registered for both by
+// registerConfigKeys (pkg/config/load.go). cmd may be nil.
+//
+// It reads the flag through commandFlagChangedString, not
+// commandFlagString: three of these settings (backend, tpm-device,
+// pkcs11-library) declare a non-empty flag default, and
+// commandFlagString's "current value" contract -- right for --tls-ca, whose
+// only meaningful states are "empty" and "set" -- would make that default
+// win over the config source on every invocation that does not pass the
+// flag, since an unset flag's "current value" is indistinguishable from an
+// explicitly-set one once the config already saw the same string. Only a
+// flag pflag itself marks Changed may out-rank the config/environment
+// source (go-xkms#871).
+func pivConfigString(cmd *cobra.Command, flagName, cfgValue string) string {
+	return firstNonEmpty(commandFlagChangedString(cmd, flagName), cfgValue)
+}
 
-	// If no storage override, default to match backend
+// commandFlagChangedString returns the flag's value only when it was
+// explicitly set on the command line (see commandFlagChanged), and "" otherwise.
+// cmd may be nil.
+func commandFlagChangedString(cmd *cobra.Command, name string) string {
+	if !commandFlagChanged(cmd, name) {
+		return ""
+	}
+	return commandFlagString(cmd, name)
+}
+
+// resolvePIVPKCS11Secret resolves source (the PKCS#11 PIN or Security
+// Officer PIN) the same way pin_input.go's pinSource.resolve does when cmd
+// declares the stdin flag, checked with commandFlagBool (xkmsd_client.go) so
+// this works whether cmd is the executed subcommand (the stdin flag arrives
+// merged into cmd.Flags() by cobra's own flag parsing) or PIVCmd itself
+// (which carries it directly on PersistentFlags() and is never executed with
+// a RunE of its own). Commands outside the "piv" tree (cert, device listen,
+// provision, auth login --piv) declare neither flag, so only the environment
+// variable is consulted there -- never a config file or a generic
+// environment binding, so the secret is never written to disk by "xkey
+// config init" and never appears in "xkey config show" (go-xkms#871). cmd
+// may be nil.
+func resolvePIVPKCS11Secret(cmd *cobra.Command, source pinSource) (string, error) {
+	fromStdin, err := commandFlagBool(cmd, source.stdinFlag)
+	if err != nil {
+		return "", err
+	}
+	if fromStdin {
+		data, readErr := stdinReader()
+		if readErr != nil {
+			return "", &SentinelCauseError{Sentinel: ErrPINInputStdinRead, Cause: readErr}
+		}
+		pin := strings.TrimRight(string(data), "\r\n")
+		if pin == "" {
+			return "", source.stdinEmpty
+		}
+		return pin, nil
+	}
+	return strings.TrimSpace(os.Getenv(source.envVar)), nil
+}
+
+// pivStorageOverride resolves the piv-storage setting (flag, then the
+// unified config's piv.storage) without the backend-matched default
+// buildPIVConfig applies for an unset one. It is shared with
+// listenPIVStorageProvider (device_listen.go), which recomputes the storage
+// type for a phone-requested backend unless the operator pinned one
+// explicitly -- the same "" check buildPIVConfig itself uses.
+func pivStorageOverride(cmd *cobra.Command) string {
+	var cfgPIV xkeyconfig.PIVConfig
+	if cfg := GetConfig(); cfg != nil {
+		cfgPIV = cfg.PIV
+	}
+	return pivConfigString(cmd, "piv-storage", cfgPIV.Storage)
+}
+
+// buildPIVConfig resolves the PIV certificate storage configuration for cmd:
+// an explicit flag beats the unified xkey config, which beats the
+// backend-matched storage default (go-xkms#871). cmd may be nil --
+// listenPIVStorageProvider builds one per phone request rather than per CLI
+// invocation -- in which case every flag resolves empty and the PKCS#11
+// secrets resolve from their environment variable only.
+func buildPIVConfig(cmd *cobra.Command) (*PIVConfig, error) {
+	var cfgPIV xkeyconfig.PIVConfig
+	if cfg := GetConfig(); cfg != nil {
+		cfgPIV = cfg.PIV
+	}
+
+	backend := PIVBackendType(pivConfigString(cmd, "backend", cfgPIV.Backend))
+	if backend == "" {
+		backend = PIVBackendSoftware
+	}
+
+	storageType := PIVStorageType(pivStorageOverride(cmd))
 	if storageType == "" {
 		storageType = defaultPIVStorageTypeForBackend(backend)
+	}
+
+	pkcs11PIN, err := resolvePIVPKCS11Secret(cmd, pivPKCS11PINSource)
+	if err != nil {
+		return nil, err
+	}
+	pkcs11SOPIN, err := resolvePIVPKCS11Secret(cmd, pivPKCS11SOPINSource)
+	if err != nil {
+		return nil, err
 	}
 
 	return &PIVConfig{
 		Backend:       backend,
 		StorageType:   storageType,
-		StoragePath:   viper.GetString(viperKeyPIVStoragePath),
-		TPMDevice:     viper.GetString(viperKeyPIVTPMDevice),
-		PKCS11Library: viper.GetString(viperKeyPIVPKCS11Library),
-		PKCS11Token:   viper.GetString(viperKeyPIVPKCS11Token),
-		PKCS11PIN:     viper.GetString(viperKeyPIVPKCS11PIN),
-		PKCS11SOPIN:   viper.GetString(viperKeyPIVPKCS11SOPIN),
-	}
+		StoragePath:   pivConfigString(cmd, "storage-path", cfgPIV.StoragePath),
+		TPMDevice:     pivConfigString(cmd, "tpm-device", cfgPIV.TPMDevice),
+		PKCS11Library: pivConfigString(cmd, "pkcs11-library", cfgPIV.PKCS11Library),
+		PKCS11Token:   pivConfigString(cmd, "pkcs11-token", cfgPIV.PKCS11Token),
+		PKCS11PIN:     pkcs11PIN,
+		PKCS11SOPIN:   pkcs11SOPIN,
+	}, nil
 }
 
 // resolvePIVStoragePath returns cfg.StoragePath if the operator set one
@@ -587,7 +693,10 @@ func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertificateS
 func runPIVList(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
-	cfg := buildPIVConfig()
+	cfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 
 	storage, err := createPIVStorage(cfg, logger)
 	if err != nil {
@@ -632,7 +741,10 @@ func runPIVList(cmd *cobra.Command, args []string) (err error) {
 func runPIVShow(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
-	cfg := buildPIVConfig()
+	cfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 
 	slot, err := validatePIVSlot(args[0])
 	if err != nil {
@@ -691,7 +803,10 @@ func runPIVShow(cmd *cobra.Command, args []string) (err error) {
 func runPIVStore(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
-	cfg := buildPIVConfig()
+	cfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 
 	slot, err := validatePIVSlot(args[0])
 	if err != nil {
@@ -739,7 +854,10 @@ func runPIVStore(cmd *cobra.Command, args []string) (err error) {
 func runPIVDelete(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
-	cfg := buildPIVConfig()
+	cfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 	force, _ := cmd.Flags().GetBool("force")
 
 	slot, err := validatePIVSlot(args[0])
@@ -794,7 +912,10 @@ func runPIVDelete(cmd *cobra.Command, args []string) (err error) {
 func runPIVExport(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
-	cfg := buildPIVConfig()
+	cfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 
 	slot, err := validatePIVSlot(args[0])
 	if err != nil {
@@ -853,7 +974,10 @@ func runPIVExport(cmd *cobra.Command, args []string) (err error) {
 func runPIVStatus(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
-	cfg := buildPIVConfig()
+	cfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 
 	_, _ = fmt.Fprintln(out, "PIV Certificate Storage Status")
 	_, _ = fmt.Fprintln(out, "==============================")

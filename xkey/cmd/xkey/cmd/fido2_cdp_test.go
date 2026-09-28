@@ -319,7 +319,7 @@ func TestRun_CDPMode_SkipsUHID(t *testing.T) {
 	// Point the IPC socket at a temp dir so the test never touches the host's
 	// default socket path; CDP host/port point at a closed port so NewClient
 	// fails fast and Run falls through to cdpLoop.
-	d.cfg.SocketPath = t.TempDir() + "/xkey-test.sock"
+	d.cfg.SocketPath = privateTempDir(t) + "/xkey-test.sock"
 	d.cfg.CDPHost = "127.0.0.1"
 	d.cfg.CDPPort = 1 // unused/closed port: NewClient fails, logged, continues
 

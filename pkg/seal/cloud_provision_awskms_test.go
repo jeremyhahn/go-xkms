@@ -252,7 +252,7 @@ func TestBuildCloudKMSStrategy_AWSKMSBackend_RestartReusesPersistedKey(t *testin
 // reused without ever calling CreateKey, and that Encrypt/Decrypt address
 // the configured ID -- not the seal key's CN.
 func TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyIsReused(t *testing.T) {
-	const operatorKeyID = "arn:aws:kms:us-east-1:123456789012:key/operator-cmk"
+	const operatorKeyID = "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
 
 	keyStorage, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
@@ -312,6 +312,50 @@ func TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyIsReused(t *te
 	require.Equal(t, rootKey, unsealed)
 }
 
+// TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyNotFound
+// proves that when the operator configures a CMK (Config.KeyID) that AWS KMS
+// reports does not exist, BuildCloudKMSStrategy fails closed with a typed
+// ErrOperatorSealKeyNotFound rather than silently provisioning a different,
+// unrequested CMK in its place (go-xkms#842).
+func TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyNotFound(t *testing.T) {
+	const operatorKeyID = "arn:aws:kms:us-east-1:123456789012:key/deadbeef-1234-5678-90ab-1234567890ab"
+
+	keyStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+	certStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+
+	createKeyCalls := 0
+	mock := &awskms.MockKMSClient{
+		DescribeKeyFunc: func(_ context.Context, _ *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+			return nil, &kmstypes.NotFoundException{Message: aws.String("key does not exist")}
+		},
+		CreateKeyFunc: func(_ context.Context, _ *kms.CreateKeyInput, _ ...func(*kms.Options)) (*kms.CreateKeyOutput, error) {
+			createKeyCalls++
+			return nil, errors.New("mock: CreateKey must not be called for a missing operator-configured CMK")
+		},
+	}
+
+	backend, err := awskms.NewBackendWithClient(&awskms.Config{
+		Region:      "us-east-1",
+		KeyID:       operatorKeyID,
+		KeyStorage:  keyStorage,
+		CertStorage: certStorage,
+	}, mock)
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+
+	ctx := context.Background()
+	_, err = BuildCloudKMSStrategy(ctx, StrategyAWSKMS, types.StoreAWSKMS, backend)
+	require.Error(t, err)
+	assert.Equal(t, 0, createKeyCalls, "a missing operator-configured CMK must never trigger CreateKey")
+
+	var notFound *ErrOperatorSealKeyNotFound
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, string(StrategyAWSKMS), notFound.Strategy)
+	assert.Equal(t, operatorKeyID, notFound.KeyID)
+}
+
 // TestBuildCloudKMSStrategy_AWSKMSBackend_MissingCredentials proves that a
 // backend which cannot reach AWS KMS at all (CreateKey fails, simulating
 // missing/invalid credentials) surfaces a real error from
@@ -346,4 +390,73 @@ func TestBuildCloudKMSStrategy_AWSKMSBackend_MissingCredentials(t *testing.T) {
 	ctx := context.Background()
 	_, err = BuildCloudKMSStrategy(ctx, StrategyAWSKMS, types.StoreAWSKMS, backend)
 	require.Error(t, err)
+}
+
+// failingGetStorage wraps a real storage.Backend and makes every Get fail
+// with getErr, promoting every other method from the embedded Backend
+// unchanged. It exists to simulate a metadata-storage outage independently
+// of AWS KMS itself being reachable.
+type failingGetStorage struct {
+	storage.Backend
+	getErr error
+}
+
+func (f *failingGetStorage) Get(ctx context.Context, key string) ([]byte, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.Backend.Get(ctx, key)
+}
+
+var _ storage.Backend = (*failingGetStorage)(nil)
+
+// TestEnsureSealKey_AWSKMSBackend_StorageOutageFailsClosed proves the
+// go-xkms#1119 fix at the decision point go-xkms#1098 found broken: when the
+// metadata store backing awskms.Backend is unavailable (not merely lacking a
+// record), EnsureSealKey must surface that failure and must NEVER fall
+// through to GenerateSymmetricKey/CreateKey, since doing so would mint a
+// brand-new CMK on every storage hiccup and orphan the seal key already
+// sealing data.
+func TestEnsureSealKey_AWSKMSBackend_StorageOutageFailsClosed(t *testing.T) {
+	realKeyStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+	certStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+
+	getErr := errors.New("storage: metadata backend unavailable")
+	keyStorage := &failingGetStorage{Backend: realKeyStorage, getErr: getErr}
+
+	createKeyCalls := 0
+	mock := &awskms.MockKMSClient{
+		DescribeKeyFunc: func(_ context.Context, params *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+			keyID := aws.ToString(params.KeyId)
+			if keyID != awsGeneratedKeyID {
+				return nil, fmt.Errorf("mock: key not found: %q", keyID)
+			}
+			return &kms.DescribeKeyOutput{
+				KeyMetadata: &kmstypes.KeyMetadata{KeyId: aws.String(keyID)},
+			}, nil
+		},
+		CreateKeyFunc: func(_ context.Context, _ *kms.CreateKeyInput, _ ...func(*kms.Options)) (*kms.CreateKeyOutput, error) {
+			createKeyCalls++
+			return &kms.CreateKeyOutput{
+				KeyMetadata: &kmstypes.KeyMetadata{KeyId: aws.String(awsGeneratedKeyID)},
+			}, nil
+		},
+	}
+
+	backend, err := awskms.NewBackendWithClient(&awskms.Config{
+		Region:      "us-east-1",
+		KeyStorage:  keyStorage,
+		CertStorage: certStorage,
+	}, mock)
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+
+	ctx := context.Background()
+	_, err = BuildCloudKMSStrategy(ctx, StrategyAWSKMS, types.StoreAWSKMS, backend)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, getErr), "EnsureSealKey's error must chain back to the storage failure, got %v", err)
+	assert.False(t, errors.Is(err, awskms.ErrKeyNotFound), "a storage outage must not be classified as backend.ErrKeyNotFound, got %v", err)
+	assert.Equal(t, 0, createKeyCalls, "a storage outage must never fall through to CreateKey/GenerateSymmetricKey")
 }

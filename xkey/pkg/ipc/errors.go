@@ -80,6 +80,43 @@ var (
 	// ErrStateOperation is returned when a live-state query fails inside the
 	// daemon.
 	ErrStateOperation = errors.New("ipc: state query failed")
+
+	// ErrSocketPathUnresolved is returned when no per-user socket location
+	// can be determined: XKEY_IPC_SOCKET, XKEY_HOME and XDG_RUNTIME_DIR are
+	// unset and the user's home directory cannot be resolved. xkey never
+	// falls back to a shared directory such as /tmp.
+	ErrSocketPathUnresolved = errors.New("ipc: no per-user socket location (set XKEY_IPC_SOCKET, XDG_RUNTIME_DIR or HOME)")
+
+	// ErrSocketDirInsecure is returned when the socket directory is a
+	// symbolic link, is not a directory, is owned by an untrusted user, or
+	// has any permission bits other than 0700. A directory another user can
+	// create or enter lets that user plant a listener that receives this
+	// user's PIN, so both the server and the client refuse it.
+	ErrSocketDirInsecure = errors.New("ipc: socket directory is not private to this user")
+
+	// ErrSocketInUse is returned by NewServer when a live server already
+	// listens on the socket path.
+	ErrSocketInUse = errors.New("ipc: another IPC server is already listening")
+
+	// ErrSocketNotOwned is returned by ReclaimSocket when the file at the
+	// socket path is not a socket owned by a trusted user.
+	ErrSocketNotOwned = errors.New("ipc: socket file is not a socket owned by this user")
+
+	// ErrPeerUntrusted is returned when the process at the other end of the
+	// socket runs as a user other than this user, root, or the sudo user.
+	// The client refuses such a listener and the server drops such a client.
+	ErrPeerUntrusted = errors.New("ipc: socket peer is not a trusted user")
+
+	// ErrPeerCredentials is returned when the kernel's record of the socket
+	// peer's credentials cannot be read.
+	ErrPeerCredentials = errors.New("ipc: cannot read socket peer credentials")
+
+	// ErrPeerCredentialsUnsupported is returned on platforms that expose no
+	// peer-credential API that xkey uses (anything other than Linux, macOS
+	// and FreeBSD). The client refuses to connect rather than send a PIN to
+	// an unverified listener, and the server drops every connection rather
+	// than serve an unverified client.
+	ErrPeerCredentialsUnsupported = errors.New("ipc: socket peer credential verification is not supported on this platform")
 )
 
 // DetailError appends detail text directly after a wrapped error while

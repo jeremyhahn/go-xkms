@@ -277,50 +277,56 @@ func configToData(cfg *GUIConfig) *services.GUIConfigData {
 	}
 }
 
-// dataToConfig converts services.GUIConfigData back to gui.GUIConfig.
-func dataToConfig(d *services.GUIConfigData) *GUIConfig {
-	return &GUIConfig{
-		AutoTray:                  d.AutoTray,
-		Theme:                     d.Theme,
-		StartMinimized:            d.StartMinimized,
-		Notifications:             d.Notifications,
-		WindowWidth:               d.WindowWidth,
-		WindowHeight:              d.WindowHeight,
-		RememberPosition:          d.RememberPosition,
-		WindowX:                   d.WindowX,
-		WindowY:                   d.WindowY,
-		ServerAddress:             d.ServerAddress,
-		ServerProtocol:            d.ServerProtocol,
-		ServerTLSEnabled:          d.ServerTLSEnabled,
-		ServerTLSSkipVerify:       d.ServerTLSSkipVerify,
-		ServerTLSCAFile:           d.ServerTLSCAFile,
-		ServerAutoConnect:         d.ServerAutoConnect,
-		AutoUnsealEnabled:         d.AutoUnsealEnabled,
-		AutoUnsealBlobID:          d.AutoUnsealBlobID,
-		AutoUnsealPCRs:            d.AutoUnsealPCRs,
-		AutoUnsealPCRBank:         d.AutoUnsealPCRBank,
-		AutoUnsealPolicyType:      d.AutoUnsealPolicyType,
-		AutoUnsealPolicyName:      d.AutoUnsealPolicyName,
-		AutoUnsealBackend:         d.AutoUnsealBackend,
-		FIDO2AuthenticatorEnabled: d.FIDO2AuthenticatorEnabled,
-		ClipboardTimeout:          d.ClipboardTimeout,
-		RequireAuth:               d.RequireAuth,
-		AppAutoLockMinutes:        d.AppAutoLockMinutes,
-		AppLockOnScreenLock:       d.AppLockOnScreenLock,
-		SetupComplete:             d.SetupComplete,
-		StorageType:               d.StorageType,
-		BarrierInitialized:        d.BarrierInitialized,
-		BarrierStrategy:           d.BarrierStrategy,
-		BarrierAutoUnsealBlobID:   d.BarrierAutoUnsealBlobID,
-		SealerBackend:             d.SealerBackend,
-		BarrierAutoUnsealEnabled:  d.BarrierAutoUnsealEnabled,
-		APIExplorerSandboxPolicy:  d.APIExplorerSandboxPolicy,
-		BrowserExtensionEnabled:   d.BrowserExtensionEnabled,
-		DeveloperTools:            d.DeveloperTools,
-		FIDO2RequireUserPresence:  d.FIDO2RequireUserPresence,
-		FIDO2UserIntentCheck:      d.FIDO2UserIntentCheck,
-		AutoFillPolicy:            d.AutoFillPolicy,
-	}
+// applyDataToConfig merges services.GUIConfigData onto a copy of base and
+// returns the result. Only the fields GUIConfigData carries are overwritten;
+// every other gui.GUIConfig field (e.g. ServerSPKIPin, FIDO2FirmwareVersion --
+// neither is editable from the GUI, see GUIConfigData's doc comment) is
+// preserved unchanged from base. This guarantees a save of one setting can
+// never silently wipe a field the DTO does not know about (go-xkms#1122).
+// See configToData for the inverse direction.
+func applyDataToConfig(base *GUIConfig, d *services.GUIConfigData) *GUIConfig {
+	cfg := *base
+	cfg.AutoTray = d.AutoTray
+	cfg.Theme = d.Theme
+	cfg.StartMinimized = d.StartMinimized
+	cfg.Notifications = d.Notifications
+	cfg.WindowWidth = d.WindowWidth
+	cfg.WindowHeight = d.WindowHeight
+	cfg.RememberPosition = d.RememberPosition
+	cfg.WindowX = d.WindowX
+	cfg.WindowY = d.WindowY
+	cfg.ServerAddress = d.ServerAddress
+	cfg.ServerProtocol = d.ServerProtocol
+	cfg.ServerTLSEnabled = d.ServerTLSEnabled
+	cfg.ServerTLSSkipVerify = d.ServerTLSSkipVerify
+	cfg.ServerTLSCAFile = d.ServerTLSCAFile
+	cfg.ServerAutoConnect = d.ServerAutoConnect
+	cfg.AutoUnsealEnabled = d.AutoUnsealEnabled
+	cfg.AutoUnsealBlobID = d.AutoUnsealBlobID
+	cfg.AutoUnsealPCRs = d.AutoUnsealPCRs
+	cfg.AutoUnsealPCRBank = d.AutoUnsealPCRBank
+	cfg.AutoUnsealPolicyType = d.AutoUnsealPolicyType
+	cfg.AutoUnsealPolicyName = d.AutoUnsealPolicyName
+	cfg.AutoUnsealBackend = d.AutoUnsealBackend
+	cfg.FIDO2AuthenticatorEnabled = d.FIDO2AuthenticatorEnabled
+	cfg.ClipboardTimeout = d.ClipboardTimeout
+	cfg.RequireAuth = d.RequireAuth
+	cfg.AppAutoLockMinutes = d.AppAutoLockMinutes
+	cfg.AppLockOnScreenLock = d.AppLockOnScreenLock
+	cfg.SetupComplete = d.SetupComplete
+	cfg.StorageType = d.StorageType
+	cfg.BarrierInitialized = d.BarrierInitialized
+	cfg.BarrierStrategy = d.BarrierStrategy
+	cfg.BarrierAutoUnsealBlobID = d.BarrierAutoUnsealBlobID
+	cfg.SealerBackend = d.SealerBackend
+	cfg.BarrierAutoUnsealEnabled = d.BarrierAutoUnsealEnabled
+	cfg.APIExplorerSandboxPolicy = d.APIExplorerSandboxPolicy
+	cfg.BrowserExtensionEnabled = d.BrowserExtensionEnabled
+	cfg.DeveloperTools = d.DeveloperTools
+	cfg.FIDO2RequireUserPresence = d.FIDO2RequireUserPresence
+	cfg.FIDO2UserIntentCheck = d.FIDO2UserIntentCheck
+	cfg.AutoFillPolicy = d.AutoFillPolicy
+	return &cfg
 }
 
 // dataDir returns the path to the xKey data directory via unified path
@@ -2399,7 +2405,7 @@ func NewApp(cfg *GUIConfig) *App {
 
 	// Wire callbacks to break the gui -> services -> gui import cycle.
 	appSvc.SetConfigUpdater(func(data *services.GUIConfigData) error {
-		guiCfg := dataToConfig(data)
+		guiCfg := applyDataToConfig(a.config, data)
 		if err := guiCfg.Validate(); err != nil {
 			return err
 		}
@@ -3320,13 +3326,17 @@ func (a *App) startIPCServer() {
 	if err != nil {
 		// If another IPC server is already listening on the socket, it is
 		// likely a stale process from a previous unclean shutdown. Since
-		// the current GUI instance is authoritative, forcefully remove the
-		// socket and retry. Any clients connected to the old socket will
-		// get connection errors and reconnect to the new instance.
-		if errors.Is(err, ipc.ErrSocketCreateFailed) {
+		// the current GUI instance is authoritative, remove the socket and
+		// retry. Any clients connected to the old socket will get
+		// connection errors and reconnect to the new instance.
+		//
+		// ReclaimSocket removes the socket only if its directory is private
+		// to this user and the socket itself is owned by this user: a
+		// socket another user planted is refused, never taken over.
+		if errors.Is(err, ipc.ErrSocketInUse) {
 			a.log.Warn("IPC socket held by another process, taking over", "socket", socketPath)
-			if removeErr := os.Remove(socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-				a.log.Error("failed to remove stale IPC socket", "error", removeErr)
+			if reclaimErr := ipc.ReclaimSocket(socketPath); reclaimErr != nil {
+				a.log.Error("refusing to take over IPC socket", "socket", socketPath, "error", reclaimErr)
 				return
 			}
 			srv, err = ipc.NewServer(socketPath, handler, a.log)

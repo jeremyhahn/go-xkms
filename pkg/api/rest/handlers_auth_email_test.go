@@ -104,7 +104,7 @@ func TestAuthMe_EmailRoundTripsFromCertificateLogin(t *testing.T) {
 		Username:    "alice",
 		Email:       "alice@example.com",
 		DisplayName: "Alice Admin",
-		Role:        "admin",
+		Roles:       []string{"admin"},
 		TenantID:    "system",
 		Enabled:     true,
 	})
@@ -143,7 +143,7 @@ func TestAuthMe_EmailRoundTripsFromCertificateLogin(t *testing.T) {
 func TestAuthMe_OmitsEmailForPrincipalWithoutOne(t *testing.T) {
 	server, _ := newSessionAuthServer(t, auth.MTLSUser{
 		Username: "svc-backup",
-		Role:     "operator",
+		Roles:    []string{"operator"},
 		TenantID: "system",
 		Enabled:  true,
 	})

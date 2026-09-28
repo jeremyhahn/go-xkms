@@ -15,16 +15,48 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
+
+// selectiveFailingStorageBackend wraps a mockStorageBackend and fails
+// Delete only for the exact key named by failKey, and Put only for the
+// exact key named by putFailKey (each empty disables its own check),
+// leaving every other operation and every other key to succeed normally.
+// It stands in for a backend that fails one specific stored component,
+// letting tests isolate StoreKeyPackage/DeleteKey's per-step resumability.
+type selectiveFailingStorageBackend struct {
+	*mockStorageBackend
+	failKey    string
+	putFailKey string
+}
+
+func newSelectiveFailingStorageBackend(failKey string) *selectiveFailingStorageBackend {
+	return &selectiveFailingStorageBackend{
+		mockStorageBackend: newMockStorageBackend(),
+		failKey:            failKey,
+	}
+}
+
+func (f *selectiveFailingStorageBackend) Delete(ctx context.Context, key string) error {
+	if f.failKey != "" && key == f.failKey {
+		return errors.New("storage error")
+	}
+	return f.mockStorageBackend.Delete(ctx, key)
+}
+
+func (f *selectiveFailingStorageBackend) Put(ctx context.Context, key string, value []byte) error {
+	if f.putFailKey != "" && key == f.putFailKey {
+		return errors.New("storage error")
+	}
+	return f.mockStorageBackend.Put(ctx, key, value)
+}
 
 func TestNewKeyStore(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
 
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	assert.NotNil(t, ks)
 	assert.Equal(t, publicStorage, ks.publicStorage)
@@ -34,7 +66,7 @@ func TestNewKeyStore(t *testing.T) {
 func TestKeyStore_StoreAndLoadKeyPackage(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	keyID := "test-key"
 	pkg := &KeyPackage{
@@ -86,7 +118,7 @@ func TestKeyStore_StoreAndLoadKeyPackage(t *testing.T) {
 func TestKeyStore_LoadKeyPackage_UseMetadataParticipantID(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	keyID := "test-key"
 	pkg := &KeyPackage{
@@ -123,7 +155,7 @@ func TestKeyStore_LoadKeyPackage_UseMetadataParticipantID(t *testing.T) {
 func TestKeyStore_LoadKeyPackage_NotFound(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	pkg, meta, err := ks.LoadKeyPackage(context.Background(), "nonexistent", 1)
 	require.Error(t, err)
@@ -135,7 +167,7 @@ func TestKeyStore_LoadKeyPackage_NotFound(t *testing.T) {
 func TestKeyStore_LoadPublicKeyPackage(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	keyID := "test-key"
 	pkg := &KeyPackage{
@@ -177,7 +209,7 @@ func TestKeyStore_LoadPublicKeyPackage(t *testing.T) {
 func TestKeyStore_LoadPublicKeyPackage_NotFound(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	pkg, meta, err := ks.LoadPublicKeyPackage(context.Background(), "nonexistent")
 	require.Error(t, err)
@@ -189,7 +221,7 @@ func TestKeyStore_LoadPublicKeyPackage_NotFound(t *testing.T) {
 func TestKeyStore_DeleteKey(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	keyID := "test-key"
 	pkg := &KeyPackage{
@@ -239,8 +271,8 @@ func TestKeyStore_DeleteKey(t *testing.T) {
 		assert.ErrorIs(t, err, storage.ErrNotFound)
 	}
 
-	_, err = secretBackend.GetKey(context.Background(), &types.KeyAttributes{CN: keyID})
-	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
+	_, err = publicStorage.Get(context.Background(), keyPath(keyID, secretShareFile))
+	assert.ErrorIs(t, err, storage.ErrNotFound)
 }
 
 // TestKeyStore_DeleteKey_MissingMetadata verifies that deleting a key whose
@@ -249,7 +281,7 @@ func TestKeyStore_DeleteKey(t *testing.T) {
 func TestKeyStore_DeleteKey_MissingMetadata(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	err := ks.DeleteKey(context.Background(), "nonexistent")
 	require.Error(t, err)
@@ -260,17 +292,18 @@ func TestKeyStore_DeleteKey_MissingMetadata(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrKeyNotFound))
 }
 
-// TestKeyStore_DeleteKey_SecretBackendFailure_LeavesMetadataForRetry proves
-// DeleteKey is resumable: when the secret backend fails to delete the
-// share, the error propagates and the metadata record is left in place (not
-// deleted), so a retried DeleteKey — once the secret backend recovers —
-// finds the key by its still-present metadata and finishes the delete.
-func TestKeyStore_DeleteKey_SecretBackendFailure_LeavesMetadataForRetry(t *testing.T) {
-	publicStorage := newMockStorageBackend()
-	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
-
+// TestKeyStore_DeleteKey_SecretShareFailure_LeavesMetadataForRetry proves
+// DeleteKey is resumable: when public storage fails to delete the sealed
+// secret share (the first step), the error propagates and the metadata
+// record is left in place (not deleted), so a retried DeleteKey — once
+// storage recovers — finds the key by its still-present metadata and
+// finishes the delete.
+func TestKeyStore_DeleteKey_SecretShareFailure_LeavesMetadataForRetry(t *testing.T) {
 	keyID := "retry-key"
+	failing := newSelectiveFailingStorageBackend(keyPath(keyID, secretShareFile))
+	secretBackend := newMockSecretBackend()
+	ks := NewKeyStore(failing, secretBackend, nil)
+
 	pkg := &KeyPackage{
 		ParticipantID:      1,
 		SecretShare:        &SecretKeyShare{Value: []byte{1, 2, 3}},
@@ -283,8 +316,7 @@ func TestKeyStore_DeleteKey_SecretBackendFailure_LeavesMetadataForRetry(t *testi
 	metadata := &KeyMetadata{KeyID: keyID, Algorithm: types.FrostAlgorithmEd25519, Threshold: 2, Total: 2}
 	require.NoError(t, ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata))
 
-	// First attempt: the secret backend fails to delete the share.
-	secretBackend.deleteErr = errors.New("secret backend unavailable")
+	// First attempt: public storage fails to delete the sealed secret share.
 	err := ks.DeleteKey(context.Background(), keyID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to delete secret share")
@@ -295,9 +327,9 @@ func TestKeyStore_DeleteKey_SecretBackendFailure_LeavesMetadataForRetry(t *testi
 	require.NoError(t, err)
 	assert.True(t, exists, "metadata must remain so a retry can find the key")
 
-	// Second attempt, secret backend recovered: the retry succeeds and
-	// finishes the delete.
-	secretBackend.deleteErr = nil
+	// Second attempt, storage recovered: the retry succeeds and finishes
+	// the delete.
+	failing.failKey = ""
 	require.NoError(t, ks.DeleteKey(context.Background(), keyID))
 
 	exists, err = ks.KeyExists(context.Background(), keyID)
@@ -309,11 +341,11 @@ func TestKeyStore_DeleteKey_SecretBackendFailure_LeavesMetadataForRetry(t *testi
 // failure deleting a public component (verification share or group public
 // key) is returned rather than swallowed.
 func TestKeyStore_DeleteKey_PublicStorageFailure_Propagates(t *testing.T) {
-	failing := newFailingStorageBackend("delete")
-	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(failing, secretBackend)
-
 	keyID := "propagate-key"
+	failing := newSelectiveFailingStorageBackend(keyPath(keyID, groupPublicKeyFile))
+	secretBackend := newMockSecretBackend()
+	ks := NewKeyStore(failing, secretBackend, nil)
+
 	pkg := &KeyPackage{
 		ParticipantID:      1,
 		SecretShare:        &SecretKeyShare{Value: []byte{1, 2, 3}},
@@ -324,8 +356,8 @@ func TestKeyStore_DeleteKey_PublicStorageFailure_Propagates(t *testing.T) {
 		Algorithm:          types.FrostAlgorithmEd25519,
 	}
 	metadata := &KeyMetadata{KeyID: keyID, Algorithm: types.FrostAlgorithmEd25519, Threshold: 2, Total: 1}
-	// failing only fails Delete, so StoreKeyPackage's own Put calls succeed
-	// normally through it.
+	// failing only fails Delete of the group public key, so StoreKeyPackage's
+	// own Put calls succeed normally through it.
 	require.NoError(t, ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata))
 
 	err := ks.DeleteKey(context.Background(), keyID)
@@ -333,14 +365,14 @@ func TestKeyStore_DeleteKey_PublicStorageFailure_Propagates(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to delete")
 
 	// The secret share was already deleted (it goes first, before the
-	// failing public-storage step) — this is real progress a retry does not
-	// need to redo, not evidence the failure was swallowed.
-	_, err = secretBackend.GetKey(context.Background(), &types.KeyAttributes{CN: keyID})
-	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
+	// failing group-public-key step) — this is real progress a retry does
+	// not need to redo, not evidence the failure was swallowed.
+	_, err = failing.Get(context.Background(), keyPath(keyID, secretShareFile))
+	assert.ErrorIs(t, err, storage.ErrNotFound)
 
 	// The metadata record must still be present: the public-storage failure
 	// happened before the metadata delete step.
-	exists, err := failing.mockStorageBackend.Exists(context.Background(), keyPath(keyID, metadataFile))
+	exists, err := failing.Exists(context.Background(), keyPath(keyID, metadataFile))
 	require.NoError(t, err)
 	assert.True(t, exists)
 }
@@ -348,7 +380,7 @@ func TestKeyStore_DeleteKey_PublicStorageFailure_Propagates(t *testing.T) {
 func TestKeyStore_KeyExists(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	// Should not exist initially
 	exists, err := ks.KeyExists(context.Background(), "test-key")
@@ -382,7 +414,7 @@ func TestKeyStore_KeyExists(t *testing.T) {
 func TestKeyStore_ListKeys(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	// Initially empty
 	keys, err := ks.ListKeys(context.Background())
@@ -421,7 +453,7 @@ func TestKeyStore_ListKeys(t *testing.T) {
 func TestKeyStore_ListKeysWithMetadata(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	// Store keys with different algorithms
 	for i, algo := range []types.FrostAlgorithm{types.FrostAlgorithmEd25519, types.FrostAlgorithmP256} {
@@ -504,7 +536,7 @@ func TestVerificationSharePath(t *testing.T) {
 func TestKeyStore_ListKeysWithMetadata_CorruptMetadata(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	// Store a valid key
 	pkg := &KeyPackage{
@@ -538,7 +570,7 @@ func TestKeyStore_ListKeysWithMetadata_CorruptMetadata(t *testing.T) {
 func TestKeyStore_LoadKeyPackage_InsufficientVerificationShares(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	// Store a key package
 	pkg := &KeyPackage{
@@ -571,7 +603,7 @@ func TestKeyStore_LoadKeyPackage_InsufficientVerificationShares(t *testing.T) {
 func TestKeyStore_LoadKeyPackage_MissingGroupPublicKey(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	// Store a key package
 	pkg := &KeyPackage{
@@ -604,7 +636,7 @@ func TestKeyStore_LoadKeyPackage_MissingGroupPublicKey(t *testing.T) {
 func TestKeyStore_LoadPublicKeyPackage_MissingGroupPublicKey(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	// Store a key package
 	pkg := &KeyPackage{
@@ -637,7 +669,7 @@ func TestKeyStore_LoadPublicKeyPackage_MissingGroupPublicKey(t *testing.T) {
 func TestKeyStore_LoadKeyPackage_CorruptMetadata(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	// Manually insert corrupt metadata
 	publicStorage.data["frost/keys/corrupt-key/metadata.json"] = []byte("not valid json")
@@ -650,7 +682,7 @@ func TestKeyStore_LoadKeyPackage_CorruptMetadata(t *testing.T) {
 func TestKeyStore_LoadPublicKeyPackage_CorruptMetadata(t *testing.T) {
 	publicStorage := newMockStorageBackend()
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	// Manually insert corrupt metadata
 	publicStorage.data["frost/keys/corrupt-key/metadata.json"] = []byte("not valid json")
@@ -663,7 +695,7 @@ func TestKeyStore_LoadPublicKeyPackage_CorruptMetadata(t *testing.T) {
 func TestKeyStore_ListKeys_Error(t *testing.T) {
 	publicStorage := newFailingStorageBackend("list")
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	_, err := ks.ListKeys(context.Background())
 	require.Error(t, err)
@@ -673,9 +705,70 @@ func TestKeyStore_ListKeys_Error(t *testing.T) {
 func TestKeyStore_ListKeysWithMetadata_ListError(t *testing.T) {
 	publicStorage := newFailingStorageBackend("list")
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
 
 	_, err := ks.ListKeysWithMetadata(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "storage error")
+}
+
+// TestKeyStore_StoreKeyPackage_SealFailure_CleansUpPublicComponents proves
+// that a Seal failure rolls back the public components (metadata, group
+// public key, verification shares) already written for this key, so a
+// failed StoreKeyPackage never leaves an orphaned, secret-less record
+// KeyExists would report as present.
+func TestKeyStore_StoreKeyPackage_SealFailure_CleansUpPublicComponents(t *testing.T) {
+	publicStorage := newMockStorageBackend()
+	secretBackend := &mockSecretBackend{canSeal: true, sealErr: errors.New("secret backend unavailable")}
+	ks := NewKeyStore(publicStorage, secretBackend, nil)
+
+	keyID := "seal-failure-key"
+	pkg := &KeyPackage{
+		ParticipantID:      1,
+		SecretShare:        &SecretKeyShare{Value: []byte{1, 2, 3}},
+		GroupPublicKey:     []byte{10, 20, 30},
+		VerificationShares: map[uint32][]byte{1: {100}, 2: {200}},
+		MinSigners:         2,
+		MaxSigners:         2,
+		Algorithm:          types.FrostAlgorithmEd25519,
+	}
+	metadata := &KeyMetadata{KeyID: keyID, Algorithm: types.FrostAlgorithmEd25519, Threshold: 2, Total: 2}
+
+	err := ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to seal secret share")
+
+	exists, err := ks.KeyExists(context.Background(), keyID)
+	require.NoError(t, err)
+	assert.False(t, exists, "a failed StoreKeyPackage must not leave a record KeyExists reports as present")
+}
+
+// TestKeyStore_StoreKeyPackage_PutSealedShareFailure_CleansUp proves that a
+// failure persisting the sealed secret-share envelope (after Seal itself
+// succeeded) also rolls back the public components already written.
+func TestKeyStore_StoreKeyPackage_PutSealedShareFailure_CleansUp(t *testing.T) {
+	keyID := "put-failure-key"
+	failing := newSelectiveFailingStorageBackend("")
+	failing.putFailKey = keyPath(keyID, secretShareFile)
+	secretBackend := newMockSecretBackend()
+	ks := NewKeyStore(failing, secretBackend, nil)
+
+	pkg := &KeyPackage{
+		ParticipantID:      1,
+		SecretShare:        &SecretKeyShare{Value: []byte{1, 2, 3}},
+		GroupPublicKey:     []byte{10, 20, 30},
+		VerificationShares: map[uint32][]byte{1: {100}, 2: {200}},
+		MinSigners:         2,
+		MaxSigners:         2,
+		Algorithm:          types.FrostAlgorithmEd25519,
+	}
+	metadata := &KeyMetadata{KeyID: keyID, Algorithm: types.FrostAlgorithmEd25519, Threshold: 2, Total: 2}
+
+	err := ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to store sealed secret share")
+
+	exists, err := ks.KeyExists(context.Background(), keyID)
+	require.NoError(t, err)
+	assert.False(t, exists, "a failed StoreKeyPackage must not leave a record KeyExists reports as present")
 }

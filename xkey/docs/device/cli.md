@@ -1,6 +1,6 @@
 # Device Pairing and Enrollment — CLI
 
-> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 Binary: `xkey`. Parent command: `xkey device` (also reachable as `xkey
 phone`, its cobra alias — `cmd/xkey/cmd/device.go:Aliases`).
@@ -24,7 +24,13 @@ verb catalog (`pair`, `scan`, `listen`, `attest`, `attest-device`,
 | `device connect <address>` | `--tls-cert`, `--tls-key`, `--tls-ca` |
 
 Persistent flag on the whole group: `--trust-new-devices` (allow connecting
-to a device with an empty Noise prologue).
+to a device with an empty Noise prologue). Resolution order: the flag when
+given, else `device.trust_new_devices` in the unified config (env
+`XKEY_DEVICE_TRUST_NEW_DEVICES`, then `~/.config/xkey/xkey.yaml`), else
+`false` (`GetTrustNewDevices`, `cmd/xkey/cmd/device.go`; see
+[engineering.md](engineering.md#configuration)). `device status --device`
+has no config-file source; it is read directly off the flag for that one
+invocation.
 
 ```
 xkey device list

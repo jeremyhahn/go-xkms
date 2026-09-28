@@ -18,53 +18,71 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 )
 
 func TestACMECertificate_EntityID(t *testing.T) {
-	tests := []struct {
-		name     string
-		id       uint64
-		expected uint64
-	}{
-		{
-			name:     "Zero ID",
-			id:       0,
-			expected: 0,
-		},
-		{
-			name:     "Positive ID",
-			id:       777,
-			expected: 777,
-		},
-		{
-			name:     "Max uint64",
-			id:       18446744073709551615,
-			expected: 18446744073709551615,
-		},
+	cert := &ACMECertificate{
+		Serial: "1a2b3c4d5e6f00112233445566778899",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cert := &ACMECertificate{}
-			cert.SetEntityID(tt.id)
+	id := cert.EntityID()
 
-			if got := cert.EntityID(); got != tt.expected {
-				t.Errorf("EntityID() = %v, want %v", got, tt.expected)
-			}
-		})
+	// Must match FNV-1a hash of the Serial string.
+	expected := StringToEntityID("1a2b3c4d5e6f00112233445566778899")
+	assert.Equal(t, expected, id)
+	assert.NotZero(t, id)
+}
+
+func TestACMECertificate_EntityID_CachedNumericID(t *testing.T) {
+	cachedID := uint64(77777)
+	cert := &ACMECertificate{
+		NumericID: cachedID,
+		Serial:    "1a2b3c4d5e6f00112233445566778899",
 	}
+
+	id := cert.EntityID()
+
+	// Must return the cached NumericID without recomputing from Serial.
+	assert.Equal(t, cachedID, id)
+}
+
+func TestACMECertificate_EntityID_EmptySerial(t *testing.T) {
+	cert := &ACMECertificate{}
+
+	id := cert.EntityID()
+
+	// Both NumericID and Serial are zero/empty, so EntityID returns 0.
+	assert.Zero(t, id)
 }
 
 func TestACMECertificate_SetEntityID(t *testing.T) {
-	cert := &ACMECertificate{ID: 100}
+	cert := &ACMECertificate{NumericID: 100}
 	newID := uint64(200)
 
 	cert.SetEntityID(newID)
 
-	if cert.ID != newID {
-		t.Errorf("SetEntityID() set ID = %v, want %v", cert.ID, newID)
+	if cert.NumericID != newID {
+		t.Errorf("SetEntityID() set NumericID = %v, want %v", cert.NumericID, newID)
 	}
+	// Subsequent EntityID() calls must return the set value without
+	// recomputing from Serial.
+	assert.Equal(t, newID, cert.EntityID())
+}
+
+func TestACMECertificate_EntityID_CollidingLowBits(t *testing.T) {
+	// Two distinct 128-bit serials that share the same low 64 bits must not
+	// collide once identity is keyed on the full Serial string. This is the
+	// regression this entity shape exists to close (go-xkms#744).
+	certA := &ACMECertificate{Serial: "ffeeddccbbaa99880000000000000001"}
+	certB := &ACMECertificate{Serial: "11223344556677880000000000000001"}
+
+	assert.NotEqual(t, certA.Serial, certB.Serial)
+	// A hash collision across two arbitrary distinct strings is
+	// astronomically unlikely with FNV-1a's 64-bit output space, unlike the
+	// deterministic collision produced by truncating to low 64 bits.
+	assert.NotEqual(t, certA.EntityID(), certB.EntityID())
 }
 
 func TestACMECertificate_JSONMarshaling(t *testing.T) {
@@ -79,8 +97,8 @@ func TestACMECertificate_JSONMarshaling(t *testing.T) {
 		{
 			name: "Valid certificate",
 			cert: &ACMECertificate{
-				ID:        1,
-				CertURL:   "https://example.com/cert/1",
+				Serial:    "1",
+				CertURL:   "https://example.com/acme/cert/1",
 				PEM:       "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
 				IssuedAt:  issuedAt,
 				Status:    "valid",
@@ -91,8 +109,8 @@ func TestACMECertificate_JSONMarshaling(t *testing.T) {
 		{
 			name: "Minimal certificate",
 			cert: &ACMECertificate{
-				ID:        2,
-				CertURL:   "https://example.com/cert/2",
+				Serial:    "2",
+				CertURL:   "https://example.com/acme/cert/2",
 				PEM:       "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
 				IssuedAt:  issuedAt,
 				Status:    "valid",
@@ -103,11 +121,23 @@ func TestACMECertificate_JSONMarshaling(t *testing.T) {
 		{
 			name: "Revoked certificate",
 			cert: &ACMECertificate{
-				ID:        3,
-				CertURL:   "https://example.com/cert/3",
+				Serial:    "3",
+				CertURL:   "https://example.com/acme/cert/3",
 				PEM:       "-----BEGIN CERTIFICATE-----\nREVOKED\n-----END CERTIFICATE-----",
 				IssuedAt:  issuedAt,
 				Status:    "revoked",
+				ExpiresAt: expiresAt,
+			},
+			wantErr: false,
+		},
+		{
+			name: "Full 128-bit serial",
+			cert: &ACMECertificate{
+				Serial:    "ff00000000000000ee00000000000000",
+				CertURL:   "https://example.com/acme/cert/ff00000000000000ee00000000000000",
+				PEM:       "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
+				IssuedAt:  issuedAt,
+				Status:    "valid",
 				ExpiresAt: expiresAt,
 			},
 			wantErr: false,
@@ -135,8 +165,8 @@ func TestACMECertificate_JSONMarshaling(t *testing.T) {
 			}
 
 			// Verify key fields
-			if unmarshaled.ID != tt.cert.ID {
-				t.Errorf("ID mismatch: got %v, want %v", unmarshaled.ID, tt.cert.ID)
+			if unmarshaled.Serial != tt.cert.Serial {
+				t.Errorf("Serial mismatch: got %v, want %v", unmarshaled.Serial, tt.cert.Serial)
 			}
 			if unmarshaled.CertURL != tt.cert.CertURL {
 				t.Errorf("CertURL mismatch: got %v, want %v", unmarshaled.CertURL, tt.cert.CertURL)
@@ -162,8 +192,8 @@ func TestACMECertificate_YAMLMarshaling(t *testing.T) {
 	expiresAt := time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)
 
 	cert := &ACMECertificate{
-		ID:        1,
-		CertURL:   "https://example.com/cert/1",
+		Serial:    "1",
+		CertURL:   "https://example.com/acme/cert/1",
 		PEM:       "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----",
 		IssuedAt:  issuedAt,
 		Status:    "valid",
@@ -183,8 +213,8 @@ func TestACMECertificate_YAMLMarshaling(t *testing.T) {
 	}
 
 	// Verify fields
-	if unmarshaled.ID != cert.ID {
-		t.Errorf("ID mismatch: got %v, want %v", unmarshaled.ID, cert.ID)
+	if unmarshaled.Serial != cert.Serial {
+		t.Errorf("Serial mismatch: got %v, want %v", unmarshaled.Serial, cert.Serial)
 	}
 	if unmarshaled.Status != cert.Status {
 		t.Errorf("Status mismatch: got %v, want %v", unmarshaled.Status, cert.Status)
@@ -199,8 +229,8 @@ func TestACMECertificate_TimeHandling(t *testing.T) {
 	future := now.Add(365 * 24 * time.Hour)
 
 	cert := &ACMECertificate{
-		ID:        1,
-		CertURL:   "https://example.com/cert/1",
+		Serial:    "1",
+		CertURL:   "https://example.com/acme/cert/1",
 		PEM:       "test-pem",
 		IssuedAt:  now,
 		Status:    "valid",
@@ -235,8 +265,8 @@ func TestACMECertificate_TimeHandling(t *testing.T) {
 func TestACMECertificate_ZeroValues(t *testing.T) {
 	cert := &ACMECertificate{}
 
-	if cert.ID != 0 {
-		t.Errorf("Expected zero ID, got %v", cert.ID)
+	if cert.Serial != "" {
+		t.Errorf("Expected empty Serial, got %v", cert.Serial)
 	}
 
 	if cert.Status != "" {

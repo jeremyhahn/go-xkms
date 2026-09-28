@@ -1,6 +1,6 @@
 # Device Pairing and Enrollment — Engineering
 
-> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 For the phone-pairing verbs (`pair`, `scan`, `listen`, `attest*`, `*-sync`,
 `share*`, `relay`'s Noise/barrier semantics) see
@@ -24,9 +24,24 @@ Types (`cmd/xkey/cmd/device.go`):
   field means).
 - `DevicesConfig` — `Devices []PairedDevice`, `DefaultDevice string`,
   `AttestationPolicy *AttestationPolicy`; this is the root of `devices.yaml`.
-- `GetTrustNewDevices(cmd *cobra.Command) bool` — reads the
-  `--trust-new-devices` persistent flag; exported so other command files
-  under `cmd/xkey/cmd` that build a phone key-backend config can read it.
+- `deviceConfig() xkeyconfig.DeviceConfig` — the `device` group's
+  configuration-layer accessor: `GetConfig().Device` when a configuration was
+  loaded, else `xkeyconfig.DefaultConfig().Device`
+  (`cmd/xkey/cmd/device.go:521`); the `device`-group counterpart to
+  `listenerConfig` (`cmd/xkey/cmd/listen_config.go:26`).
+- `GetTrustNewDevices(cmd *cobra.Command) (bool, error)` — resolves whether
+  device commands accept an unpaired device's empty Noise prologue:
+  `--trust-new-devices` when explicitly set, else `device.trust_new_devices`
+  from the unified config, else `false` (`cmd/xkey/cmd/device.go:536`);
+  exported so other command files under `cmd/xkey/cmd` that build a phone
+  key-backend config resolve the setting the same way. The error is
+  `ErrCommandFlagInvalid` from a flag declared with the wrong pflag type; it
+  is not a config-validation error (`xkeyconfig.Config.Validate` rejects a
+  malformed `device.trust_new_devices` before `GetConfig()` ever returns it).
+- `resolveDeviceScanTimeout(cmd *cobra.Command) (time.Duration, error)` —
+  resolves the BLE scan timeout `device pair` (auto-discovery) and `device
+  scan` share: `--timeout` when explicitly set, else `device.scan_timeout`
+  from the unified config, else `30s` (`cmd/xkey/cmd/device.go:548`).
 
 Sentinel errors (`cmd/xkey/cmd/device.go`): `ErrDeviceBLEUnavailable`,
 `ErrDeviceNoDevicesFound`, `ErrDevicePairingCancelled`, `ErrDeviceNotPaired`,
@@ -101,32 +116,86 @@ for the only mode with a shipped CLI verb today (`xkey oath scan`).
 
 ## Configuration
 
-`device.*` and `piv`-style persistent flags on `deviceCmd` and its
-subcommands are bound to the package-level `viper` singleton with
-`viper.BindPFlag` only (`device.trust_new_devices`, `device.pair.*`,
-`device.scan.timeout`, `device.status.device`, `device.listen.*`). **That
-singleton never calls `ReadInConfig` or `AutomaticEnv`** anywhere in
-`cmd/xkey/cmd`, so — unlike the flags below — none of these device flags is
-settable through `~/.config/xkey/config.yaml` or an environment variable;
-`viper.GetString`/`GetBool` on these keys only ever reflects the bound CLI
-flag.
+Two `device.*` settings have config-file/environment meaning and resolve
+through the real, layered config system (`xkey/pkg/config`, env prefix
+`XKEY_`), the same three-tier precedence `device relay --listen` already used
+(`configuredAddress`, `cmd/xkey/cmd/listen_config.go:38`): an explicitly-set
+flag, then the unified config (environment beats the config file inside
+`xkeyconfig.Load`), then a built-in default. `xkeyconfig.DeviceConfig`
+(`xkey/pkg/config/config.go`) is the typed home for both:
 
-The one exception is `device relay --listen`, which resolves through the
-real, layered config system (`xkey/pkg/config`, env prefix `XKEY_`):
-`relayListenAddress` (`cmd/xkey/cmd/listen_config.go:57`) reads `--listen`,
-then `phone.relay_listen_address` from `xkeyconfig` (env
-`XKEY_PHONE_RELAY_LISTEN_ADDRESS`), then the built-in default `:8444`
-(`xkeyconfig.DefaultConfig().Phone.RelayListenAddress`).
+| Setting | Flag | Config key | Env | Default | Resolver |
+|---|---|---|---|---|---|
+| Trust an unpaired device (empty Noise prologue) | `--trust-new-devices` (persistent, on `deviceCmd`) | `device.trust_new_devices` | `XKEY_DEVICE_TRUST_NEW_DEVICES` | `false` | `GetTrustNewDevices` |
+| BLE scan timeout, shared by `device pair` (auto-discovery) and `device scan` | `--timeout` (on `device pair` and `device scan`) | `device.scan_timeout` | `XKEY_DEVICE_SCAN_TIMEOUT` | `30s` | `resolveDeviceScanTimeout` |
+
+Both resolvers detect "explicitly set" with `commandFlagChanged`
+(`cmd/xkey/cmd/xkmsd_client.go`), which checks `pflag.Flag.Changed` on
+whichever of `cmd.Flags()`/`cmd.PersistentFlags()` declared the flag — not
+whether the flag's value is non-default — so `--trust-new-devices=false`
+still overrides a config file that turned the setting on
+(`TestGetTrustNewDevices_FlagBeatsConfiguration`,
+`cmd/xkey/cmd/device_config_test.go`). `xkeyconfig.Config.Validate` rejects a
+`device.scan_timeout` of zero or less, from any source, before `GetConfig()`
+can ever return it (`xkey/pkg/config/config.go`).
+
+Four other `device.*` settings are per-invocation choices with no
+config-file meaning and are read directly off the flag, with no viper
+binding of any kind: `device pair --device`/`--force`
+(`cmd/xkey/cmd/device_pair.go:runDevicePair`), and `device status --device`
+(`cmd/xkey/cmd/device.go:runDeviceStatus`). Before go-xkms#1071 these, plus
+`--trust-new-devices` and `--timeout` above, were bound to the package-level
+`viper` singleton with `viper.BindPFlag` only
+(`device.trust_new_devices`, `device.pair.*`, `device.scan.timeout`,
+`device.status.device`) — a singleton that never called `ReadInConfig` or
+`AutomaticEnv` anywhere in `cmd/xkey/cmd`, so the binding never gave any of
+them a config-file or environment source; it only made `viper.GetString`/
+`GetBool` on that key mirror the bound flag, and nothing ever called either.
+Every one of those bindings has been deleted (go-xkms#1071); a config file
+or `XKEY_DEVICE_PAIR_*`/`XKEY_DEVICE_STATUS_*` variable naming one of the
+four per-invocation settings is not read by anything and has no effect.
+
+`device listen`'s and `device sync`'s own `device.listen.*`/`device.sync*`
+viper bindings (`cmd/xkey/cmd/device_listen.go`, `device_sync.go`) are the
+same shape of defect but were out of go-xkms#1071's scope and remain
+unconverted; do not assume they resolve through configuration until they
+are.
 
 `devicesConfigFileName = "devices.yaml"` is the on-disk file name, resolved
 under the xkey home directory (`xkey/pkg/xhome`); see
-[architecture/xhome.md](../architecture/xhome.md).
+[architecture/xhome.md](../architecture/xhome.md). It is unrelated to
+`xkeyconfig.DeviceConfig` above: `devices.yaml` holds paired-device records
+(`DevicesConfig`), not settings.
+
+**`device listen` and `device sync`/`sync-push`/`sync-pull`/`sync-status`
+never bound their flags to viper at all**, despite appearing to
+(`device_listen.go`, `device_sync.go` pre-go-xkms#871): `runDeviceListen` and
+`runDeviceSyncMode`/`runDeviceSyncStatus` always read their flags directly
+via `cmd.Flags().GetString`/`GetBool`/`GetDuration`, so the
+`viper.BindPFlag("device.listen.*", ...)` and
+`viper.BindPFlag("device.sync*.*", ...)` calls that used to sit in each
+command's `init()` were dead code -- bound but never read back through
+`viper.Get*` anywhere -- and were deleted rather than wired up: `sync`'s
+`--trust-store`/`--oath`/`--passwords`/`--all`/`--dry-run` select what one
+invocation does and have no sensible config-file meaning, and `listen`'s
+settings had no config/environment claim to make true in the first place (its
+`--help` never mentioned one). Both remain CLI-flag-only, now honestly.
 
 ## Tests
 
 - `cmd/xkey/cmd/device_test.go`, `device_record_roundtrip_test.go` — the
   device-agnostic `list`/`unpair`/`status` verbs and `DevicesConfig`
   round-tripping.
+- `cmd/xkey/cmd/device_config_test.go` — the config-file/environment
+  precedence table above: `deviceConfig`, `GetTrustNewDevices`,
+  `resolveDeviceScanTimeout`, and that the four per-invocation flags no
+  longer mirror into the package-level `viper` singleton. Companion generic
+  tests for `commandFlagBool`/`commandFlagDuration`/`commandFlagChanged` live
+  in `cmd/xkey/cmd/xkmsd_client_test.go`, beside `commandFlagString`.
+- `xkey/pkg/config/config_test.go`, `load_test.go` — `DeviceConfig`'s
+  defaults, `Validate` rejecting a non-positive `scan_timeout`, and that
+  `XKEY_DEVICE_TRUST_NEW_DEVICES`/`XKEY_DEVICE_SCAN_TIMEOUT` win over the
+  config file the same way every other leaf does.
 - `cmd/xkey/cmd/device_enroll_test.go`, `device_enroll_phone_test.go`,
   `device_enroll_phone_ca_test.go` — the CSR/CA/probe flow with a fake
   `deviceEnrollCA` and a fake `deviceEnrollMasterProbe`.

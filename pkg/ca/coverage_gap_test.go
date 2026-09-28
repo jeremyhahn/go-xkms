@@ -318,19 +318,20 @@ func TestRevokeCert_NotInitialized(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — loadPersistedRevocations (70%) — corrupt record path
+// ca_extensions.go — loadPersistedRevocations — corrupt record path
 // =============================================================================
 
-// This exercises the corrupt-unmarshal branch by inserting a junk blob
-// directly into revocationStore, the sole persistence medium.
+// TestLoadPersistedRevocations_CorruptBlob proves a non-JSON record under the
+// revocation prefix fails the load with ErrRevocationRecordCorrupt naming
+// the key, rather than being skipped.
 func TestLoadPersistedRevocations_CorruptBlob(t *testing.T) {
 	ca := setupTestCA(t)
-	// Insert a non-JSON blob under the revocation key prefix.
 	key := revocationKeyPrefix + "badrecord.json"
 	require.NoError(t, ca.revocationStore.Put(context.Background(), key, []byte("not-json")))
-	// loadPersistedRevocations should log+skip, not return an error.
+
 	err := ca.loadPersistedRevocations(context.Background())
-	assert.NoError(t, err)
+	require.ErrorIs(t, err, ErrRevocationRecordCorrupt)
+	assert.Contains(t, err.Error(), key)
 }
 
 // stubReader is a minimal io.ReadCloser for injecting bytes into tests.
@@ -372,13 +373,15 @@ func TestListRevocationBlobs_EmptyStores(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — putRevocationBlob: revocationStore is the sole
+// ca_extensions.go — putRevocationBlobIfAbsent: revocationStore is the sole
 // persistence medium, whether or not an objectStore is also configured
 // =============================================================================
 
 func TestPutRevocationBlob_PersistsThroughRevocationStore(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	require.NoError(t, ca.putRevocationBlob(context.Background(), big.NewInt(88888), []byte(`{"serial":"88888"}`)))
+	stored, err := ca.putRevocationBlobIfAbsent(context.Background(), big.NewInt(88888), []byte(`{"serial":"88888"}`))
+	require.NoError(t, err)
+	assert.True(t, stored)
 	got, err := ca.revocationStore.Get(context.Background(), revocationKey(big.NewInt(88888))+".json")
 	require.NoError(t, err)
 	assert.Equal(t, []byte(`{"serial":"88888"}`), got)

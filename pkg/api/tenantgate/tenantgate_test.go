@@ -20,9 +20,12 @@ import (
 	"log/slog"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,11 +95,96 @@ func TestAccess_SystemTenantID(t *testing.T) {
 	assert.Nil(t, tb)
 }
 
-func TestAccess_SORolePassesThrough(t *testing.T) {
-	identity := &auth.Identity{Subject: "so-admin", TenantID: "nonexistent-tenant", Roles: []string{"so"}}
-	tb, err := Access(identity, testRegistry(t))
+// seededGateNode returns a first-boot-seeded qrdb node on which "tenant-a"
+// has been provisioned, so both the system tenant and tenant-a carry their
+// built-in roles under real identifiers.
+func seededGateNode(t *testing.T) *testutil.FirstBootNode {
+	t.Helper()
+	n, err := testutil.NewFirstBootNode(t)
 	require.NoError(t, err)
+	require.NoError(t, n.ProvisionTenant("tenant-a"))
+	return n
+}
+
+// seededRoleID resolves roleName in tenantID on n.
+func seededRoleID(t *testing.T, n *testutil.FirstBootNode, tenantID, roleName string) string {
+	t.Helper()
+	id, err := n.RoleID(tenantID, roleName)
+	require.NoError(t, err)
+	return id
+}
+
+// TestAccess_SystemTenantOfficersPass proves the system tenant's Security
+// Officer and Admin -- identified by the role IDs they actually carry -- are
+// cross-tenant scoped under qrdb's system-tenant rule, whatever the registry
+// holds.
+func TestAccess_SystemTenantOfficersPass(t *testing.T) {
+	n := seededGateNode(t)
+
+	for _, roleName := range []string{qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin} {
+		identity := &auth.Identity{
+			Subject:  "officer",
+			TenantID: qrdbsdk.SystemTenantID,
+			Roles:    []string{seededRoleID(t, n, qrdbsdk.SystemTenantID, roleName)},
+		}
+		tb, err := Access(identity, testRegistry(t))
+		require.NoError(t, err, roleName)
+		assert.Nil(t, tb)
+	}
+}
+
+// TestAccess_TenantLocalOfficerIsScoped proves a tenant-local Security Officer
+// or Admin gets no exemption: it is gated on its own tenant's barrier like
+// every other tenant identity -- refused while that tenant is unregistered or
+// sealed, and handed the tenant barrier once it is unsealed.
+func TestAccess_TenantLocalOfficerIsScoped(t *testing.T) {
+	n := seededGateNode(t)
+
+	for _, roleName := range []string{qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin} {
+		identity := &auth.Identity{
+			Subject:  "tenant-officer",
+			TenantID: "tenant-a",
+			Roles:    []string{seededRoleID(t, n, "tenant-a", roleName)},
+		}
+
+		registry := testRegistry(t)
+		_, err := Access(identity, registry)
+		var notFound *ErrTenantNotFound
+		require.ErrorAs(t, err, &notFound, roleName)
+
+		_, err = registry.RegisterTenant("tenant-a")
+		require.NoError(t, err)
+		_, err = Access(identity, registry)
+		var sealed *ErrTenantSealed
+		require.ErrorAs(t, err, &sealed, roleName)
+
+		unsealed := testRegistry(t)
+		testRegisteredTenant(t, unsealed, "tenant-a")
+		tb, err := Access(identity, unsealed)
+		require.NoError(t, err, roleName)
+		require.NotNil(t, tb)
+		assert.Equal(t, "tenant-a", tb.TenantID())
+	}
+}
+
+// TestAccess_SORoleNameConfersNothing is the #1074 regression: an identity
+// whose Roles spell "so" -- the shape of an unverified token claim -- used to
+// bypass the tenant-registered and tenant-sealed checks. It is now gated like
+// any other tenant identity.
+func TestAccess_SORoleNameConfersNothing(t *testing.T) {
+	identity := &auth.Identity{Subject: "so-admin", TenantID: "nonexistent-tenant", Roles: []string{qrdbsdk.RoleNameSO}}
+	tb, err := Access(identity, testRegistry(t))
 	assert.Nil(t, tb)
+	var notFound *ErrTenantNotFound
+	require.ErrorAs(t, err, &notFound)
+
+	registry := testRegistry(t)
+	_, err = registry.RegisterTenant("sealed-tenant")
+	require.NoError(t, err)
+	identity.TenantID = "sealed-tenant"
+	_, err = Access(identity, registry)
+	var sealed *ErrTenantSealed
+	require.ErrorAs(t, err, &sealed)
 }
 
 func TestAccess_NoRegistry(t *testing.T) {

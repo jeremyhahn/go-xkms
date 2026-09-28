@@ -29,12 +29,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
@@ -238,25 +238,24 @@ func TestRunAgentStatus_ListsEnrolledAgents(t *testing.T) {
 // ---------------------------------------------------------------
 
 // withFilePIVStorage points the PIV commands at a temporary file-backed
-// certificate store.
+// certificate store by injecting loadedConfig.PIV, the same package-level
+// unified-config variable xkmsd_client_test.go and auth_piv_test.go's
+// withPIVStoragePath inject into (go-xkms#871). Every command exercised
+// through runDetached below carries no PIV flags of its own, so
+// buildPIVConfig resolves entirely from loadedConfig.PIV here.
 func withFilePIVStorage(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
 
-	previousBackend := viper.Get(viperKeyPIVBackend)
-	previousStorage := viper.Get(viperKeyPIVStorage)
-	previousPath := viper.Get(viperKeyPIVStoragePath)
+	previous := loadedConfig
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.PIV.Backend = string(PIVBackendSoftware)
+	cfg.PIV.Storage = string(PIVStorageTypeFile)
+	cfg.PIV.StoragePath = dir
+	loadedConfig = cfg
 
-	viper.Set(viperKeyPIVBackend, string(PIVBackendSoftware))
-	viper.Set(viperKeyPIVStorage, string(PIVStorageTypeFile))
-	viper.Set(viperKeyPIVStoragePath, dir)
-
-	t.Cleanup(func() {
-		viper.Set(viperKeyPIVBackend, previousBackend)
-		viper.Set(viperKeyPIVStorage, previousStorage)
-		viper.Set(viperKeyPIVStoragePath, previousPath)
-	})
+	t.Cleanup(func() { loadedConfig = previous })
 
 	return dir
 }
@@ -286,12 +285,8 @@ func pivTestCert(t *testing.T, cn string) *x509.Certificate {
 }
 
 func TestBuildPIVConfig_StorageDefaultsFollowBackend(t *testing.T) {
-	previousBackend := viper.Get(viperKeyPIVBackend)
-	previousStorage := viper.Get(viperKeyPIVStorage)
-	t.Cleanup(func() {
-		viper.Set(viperKeyPIVBackend, previousBackend)
-		viper.Set(viperKeyPIVStorage, previousStorage)
-	})
+	previous := loadedConfig
+	t.Cleanup(func() { loadedConfig = previous })
 
 	tests := []struct {
 		backend string
@@ -305,24 +300,23 @@ func TestBuildPIVConfig_StorageDefaultsFollowBackend(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.backend, func(t *testing.T) {
-			viper.Set(viperKeyPIVBackend, tt.backend)
-			viper.Set(viperKeyPIVStorage, "")
-			assert.Equal(t, tt.want, buildPIVConfig().StorageType)
+			cfg := xkeyconfig.DefaultConfig()
+			cfg.PIV.Backend = tt.backend
+			loadedConfig = cfg
+			assert.Equal(t, tt.want, mustBuildPIVConfig(t, nil).StorageType)
 		})
 	}
 }
 
 func TestBuildPIVConfig_ExplicitStorageOverridesBackendDefault(t *testing.T) {
-	previousBackend := viper.Get(viperKeyPIVBackend)
-	previousStorage := viper.Get(viperKeyPIVStorage)
-	t.Cleanup(func() {
-		viper.Set(viperKeyPIVBackend, previousBackend)
-		viper.Set(viperKeyPIVStorage, previousStorage)
-	})
+	previous := loadedConfig
+	t.Cleanup(func() { loadedConfig = previous })
 
-	viper.Set(viperKeyPIVBackend, string(PIVBackendTPM2))
-	viper.Set(viperKeyPIVStorage, string(PIVStorageTypeFile))
-	assert.Equal(t, PIVStorageTypeFile, buildPIVConfig().StorageType)
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.PIV.Backend = string(PIVBackendTPM2)
+	cfg.PIV.Storage = string(PIVStorageTypeFile)
+	loadedConfig = cfg
+	assert.Equal(t, PIVStorageTypeFile, mustBuildPIVConfig(t, nil).StorageType)
 }
 
 func TestCreatePIVStorage_RejectsUnknownStorageType(t *testing.T) {
@@ -339,7 +333,7 @@ func TestCreatePIVStorage_RejectsUnknownStorageType(t *testing.T) {
 func TestCreatePIVStorage_FileBackendRoundTrip(t *testing.T) {
 	dir := withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	defer func() { _ = storage.Close() }()
 
@@ -366,7 +360,7 @@ func TestRunPIVList_EmptyStore(t *testing.T) {
 func TestRunPIVList_ShowsStoredCertificates(t *testing.T) {
 	withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "auth-cert")))
 	require.NoError(t, storage.Close())
@@ -396,7 +390,7 @@ func TestRunPIVShow_MissingCertificate(t *testing.T) {
 func TestRunPIVShow_PrintsCertificateDetails(t *testing.T) {
 	withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "shown-cert")))
 	require.NoError(t, storage.Close())
@@ -424,7 +418,7 @@ func newPIVDeleteTestCmd(t *testing.T, force bool) (*cobra.Command, *bytes.Buffe
 func TestRunPIVDelete_ForceRemovesCertificate(t *testing.T) {
 	withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "doomed")))
 	require.NoError(t, storage.Close())
@@ -441,7 +435,7 @@ func TestRunPIVDelete_ForceRemovesCertificate(t *testing.T) {
 func TestRunPIVDelete_DeclinedConfirmationKeepsCertificate(t *testing.T) {
 	withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "keeper")))
 	require.NoError(t, storage.Close())
@@ -462,7 +456,7 @@ func TestRunPIVDelete_DeclinedConfirmationKeepsCertificate(t *testing.T) {
 func TestRunPIVDelete_ConfirmedDeletionRemovesCertificate(t *testing.T) {
 	withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "doomed")))
 	require.NoError(t, storage.Close())
@@ -514,7 +508,7 @@ func TestRunPIVStore_StoresParsedCertificate(t *testing.T) {
 	assert.Contains(t, out, "Certificate stored in slot")
 	assert.Contains(t, out, "stored-cert")
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	defer func() { _ = storage.Close() }()
 
@@ -567,7 +561,7 @@ func newPIVExportTestCmd(t *testing.T, format, output string) *cobra.Command {
 func TestRunPIVExport_WritesPEMToOutputFile(t *testing.T) {
 	withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "exported-cert")))
 	require.NoError(t, storage.Close())
@@ -597,7 +591,7 @@ func TestRunPIVExport_MissingCertificateIsAnError(t *testing.T) {
 func TestRunPIVExport_RejectsInvalidFormat(t *testing.T) {
 	withFilePIVStorage(t)
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, pivTestCert(t, "irrelevant")))
 	require.NoError(t, storage.Close())
@@ -642,7 +636,7 @@ func TestRunPivGenerate_SelfSignedDefault(t *testing.T) {
 	assert.Contains(t, out, "Key generated in slot")
 	assert.Contains(t, out, "Public Key:")
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	defer func() { _ = storage.Close() }()
 	cert, err := storage.Retrieve(xkms.PIVSlotAuthentication)
@@ -761,7 +755,7 @@ func TestRunPivImport_MatchingKeySucceeds(t *testing.T) {
 	withFilePIVStorage(t)
 
 	cert := pivTestCert(t, "matching-cert")
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, storage.Store(xkms.PIVSlotAuthentication, cert))
 	require.NoError(t, storage.Close())
@@ -790,7 +784,7 @@ func TestRunPivImport_ForceOverridesVerificationFailure(t *testing.T) {
 
 	require.NoError(t, runPivImport(cmd, []string{string(xkms.PIVSlotAuthentication), certFile}))
 
-	storage, err := createPIVStorage(buildPIVConfig(), slog.Default())
+	storage, err := createPIVStorage(mustBuildPIVConfig(t, nil), slog.Default())
 	require.NoError(t, err)
 	defer func() { _ = storage.Close() }()
 	got, err := storage.Retrieve(xkms.PIVSlotAuthentication)

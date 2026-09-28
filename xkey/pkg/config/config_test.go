@@ -16,6 +16,7 @@ package config
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,10 +28,11 @@ func TestDefaultConfig(t *testing.T) {
 	require.NotNil(t, cfg)
 
 	// All top-level sections should be populated (non-zero where defaults exist).
+	// FIDO2.Storage and FIDO2.DeviceName are deliberately left empty by
+	// DefaultConfig -- see the FIDO2Config{} literal's comment -- so they are
+	// not asserted non-empty here.
 	assert.NotEmpty(t, cfg.Backend.Default)
-	assert.NotEmpty(t, cfg.FIDO2.Storage)
 	assert.NotEmpty(t, cfg.FIDO2.Attestation)
-	assert.NotEmpty(t, cfg.FIDO2.DeviceName)
 	assert.NotEmpty(t, cfg.TPM.Device)
 	assert.NotEmpty(t, cfg.Log.Level)
 	assert.NotEmpty(t, cfg.GUI.Theme)
@@ -56,15 +58,55 @@ func TestDefaultConfigFieldValues(t *testing.T) {
 	assert.Equal(t, 1024, cfg.GUI.WindowWidth)
 	assert.Equal(t, 768, cfg.GUI.WindowHeight)
 	assert.Equal(t, "info", cfg.Log.Level)
-	assert.Equal(t, "file", cfg.FIDO2.Storage)
+	assert.Empty(t, cfg.FIDO2.Storage)
 	assert.Equal(t, "packed", cfg.FIDO2.Attestation)
-	assert.Equal(t, "xKey", cfg.FIDO2.DeviceName)
+	assert.Empty(t, cfg.FIDO2.DeviceName)
+	assert.Equal(t, "software", cfg.PIV.Backend)
+	assert.Equal(t, "/dev/tpmrm0", cfg.PIV.TPMDevice)
+	assert.Equal(t, "/usr/lib/softhsm/libsofthsm2.so", cfg.PIV.PKCS11Library)
 	assert.Equal(t, "/dev/tpmrm0", cfg.TPM.Device)
 	assert.True(t, cfg.TPM.EncryptSessions)
 	assert.Equal(t, 30, cfg.GUI.ClipboardTimeout)
 	assert.True(t, cfg.GUI.Notifications)
 	assert.True(t, cfg.GUI.AutoTray)
 	assert.True(t, cfg.GUI.FIDO2AuthEnabled)
+	assert.False(t, cfg.Device.TrustNewDevices)
+	assert.Equal(t, 30*time.Second, cfg.Device.ScanTimeout)
+}
+
+// TestValidate_ZeroDeviceScanTimeout proves a zero device.scan_timeout is
+// rejected: a silently-zeroed scan bound would make `device pair` and
+// `device scan` fail every BLE operation instantly instead of waiting.
+func TestValidate_ZeroDeviceScanTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Device.ScanTimeout = 0
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid))
+	assert.Contains(t, err.Error(), "device.scan_timeout")
+}
+
+// TestValidate_NegativeDeviceScanTimeout proves a negative
+// device.scan_timeout is rejected the same way a zero one is.
+func TestValidate_NegativeDeviceScanTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Device.ScanTimeout = -5 * time.Second
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid))
+	assert.Contains(t, err.Error(), "device.scan_timeout")
+}
+
+// TestValidate_DeviceTrustNewDevicesTrue proves that turning on
+// trust_new_devices is, by itself, a valid configuration -- Validate rejects
+// malformed values, not this deliberately permissive one.
+func TestValidate_DeviceTrustNewDevicesTrue(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Device.TrustNewDevices = true
+
+	assert.NoError(t, cfg.Validate())
 }
 
 func TestValidate_ValidConfig(t *testing.T) {
@@ -91,6 +133,53 @@ func TestValidate_InvalidBackend(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrConfigInvalid))
 	assert.Contains(t, err.Error(), "backend.default")
+}
+
+func TestValidate_InvalidPIVBackend(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.PIV.Backend = "invalid"
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid))
+	assert.Contains(t, err.Error(), "piv.backend")
+}
+
+func TestValidate_EmptyPIVBackend(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.PIV.Backend = ""
+
+	assert.NoError(t, cfg.Validate())
+}
+
+func TestValidate_InvalidPIVStorage(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.PIV.Storage = "invalid"
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid))
+	assert.Contains(t, err.Error(), "piv.storage")
+}
+
+func TestValidate_AllValidPIVBackends(t *testing.T) {
+	for _, backend := range []string{"software", "tpm2", "pkcs11"} {
+		t.Run(backend, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.PIV.Backend = backend
+			assert.NoError(t, cfg.Validate())
+		})
+	}
+}
+
+func TestValidate_AllValidPIVStorageTypes(t *testing.T) {
+	for _, storage := range []string{"file", "tpm2", "pkcs11"} {
+		t.Run(storage, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.PIV.Storage = storage
+			assert.NoError(t, cfg.Validate())
+		})
+	}
 }
 
 func TestValidate_NegativeClipboardTimeout(t *testing.T) {

@@ -215,7 +215,10 @@ func TestServer_CreateCompositeAuthenticator_MTLSSuccess(t *testing.T) {
 	cfg.Auth.Composite = &config.CompositeAuthConfig{
 		Methods: []string{"mtls"},
 	}
+	certFile, keyFile, _ := createTestTLSFiles(t)
 	cfg.TLS.Enabled = true
+	cfg.TLS.CertFile = certFile
+	cfg.TLS.KeyFile = keyFile
 
 	server, err := New(cfg)
 	require.NoError(t, err)

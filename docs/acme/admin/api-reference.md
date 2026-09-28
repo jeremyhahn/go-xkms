@@ -56,7 +56,6 @@ curl -H "Authorization: Bearer $TOKEN" \
   "success": true,
   "data": [
     {
-      "id": 1,
       "serial_number": "123456789012345678901234567890",
       "subject": "CN=example.com,O=Example Corp",
       "issuer": "CN=Intermediate CA,O=Trusted CA",
@@ -130,7 +129,6 @@ curl -H "Authorization: Bearer $TOKEN" \
 {
   "success": true,
   "data": {
-    "id": 1,
     "serial_number": "123456789012345678901234567890",
     "subject": "CN=example.com,O=Example Corp",
     "issuer": "CN=Intermediate CA,O=Trusted CA",

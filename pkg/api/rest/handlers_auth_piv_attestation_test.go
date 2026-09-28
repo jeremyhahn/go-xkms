@@ -111,7 +111,7 @@ func newAttestedLoginServer(t *testing.T, authority *attestationAuthority, allow
 			AllowUnattested:  allowUnattested,
 		}
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{
-			Username: "alice", Role: "admin", TenantID: "system", Enabled: true,
+			Username: "alice", Roles: []string{"admin"}, TenantID: "system", Enabled: true,
 		}}
 	})
 }
