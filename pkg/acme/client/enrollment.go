@@ -172,13 +172,13 @@ func expandEnvVars(input string) (string, error) {
 // Returns an EnrollmentResult containing both the IAK and IDevID certificates.
 func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*EnrollmentResult, error) {
 	if err := config.Validate(); err != nil {
-		return nil, caerrors.MalformedError("invalid enrollment config: %v", err)
+		return nil, caerrors.Wrap(caerrors.Malformed, err, "invalid enrollment config")
 	}
 
 	// Expand environment variables in IP address
 	ipAddress, err := expandEnvVars(config.IPAddress)
 	if err != nil {
-		return nil, caerrors.MalformedError("failed to expand IP address: %v", err)
+		return nil, caerrors.Wrap(caerrors.Malformed, err, "failed to expand IP address")
 	}
 
 	c.logger.Info("starting device enrollment",
@@ -450,7 +450,7 @@ func (c *Client) startEnrollServer(config *EnrollmentConfig, idevidCSR *IDevIDCS
 // validates the request via EAB or server policy (the endorse-01 verifier returns nil).
 func (c *Client) RequestEndorsementKeyCertificate(ctx context.Context, config *EnrollmentConfig) (*x509.Certificate, error) {
 	if err := config.Validate(); err != nil {
-		return nil, caerrors.MalformedError("invalid enrollment config: %v", err)
+		return nil, caerrors.Wrap(caerrors.Malformed, err, "invalid enrollment config")
 	}
 
 	// Get EK public key directly from TPM
@@ -741,13 +741,13 @@ func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, tok
 // what lets the server bind the one to the other.
 func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x509.Certificate, error) {
 	if err := config.Validate(); err != nil {
-		return nil, caerrors.MalformedError("invalid enrollment config: %v", err)
+		return nil, caerrors.Wrap(caerrors.Malformed, err, "invalid enrollment config")
 	}
 
 	// Expand environment variables in IP address
 	ipAddress, err := expandEnvVars(config.IPAddress)
 	if err != nil {
-		return nil, caerrors.MalformedError("failed to expand IP address: %v", err)
+		return nil, caerrors.Wrap(caerrors.Malformed, err, "failed to expand IP address")
 	}
 
 	c.logger.Info("starting device attestation",

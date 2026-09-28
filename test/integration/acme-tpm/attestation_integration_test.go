@@ -227,12 +227,14 @@ func TestPCRValidationHook_WithRealTPMData(t *testing.T) {
 		require.NoError(t, err)
 
 		// Pack ProdCaData
-		prodCaData := &xkmssdk.ProdCaData{
-			Quoted:    quote.Quoted,
-			Signature: quote.Signature,
-			Nonce:     quote.Nonce,
-			PCRs:      quote.PCRs,
-		}
+		// NewProdCaData (not a bare struct literal) is required here: it is
+		// the only place that stamps Version = xkmssdk.ProdCaDataVersion and
+		// the four *Sz fields. A hand-built &xkmssdk.ProdCaData{} leaves
+		// Version at its zero value, which xkmssdk.UnpackProdCaData rejects
+		// outright as ErrInvalidProdCaData ("tpm: invalid ProdCaData
+		// structure") before it ever looks at the payload.
+		prodCaData, err := xkmssdk.NewProdCaData(&quote)
+		require.NoError(t, err)
 		packedProdCaData, err := xkmssdk.PackProdCaData(prodCaData)
 		require.NoError(t, err)
 
@@ -279,12 +281,14 @@ func TestPCRValidationHook_WithRealTPMData(t *testing.T) {
 		require.NoError(t, err)
 
 		// Pack ProdCaData
-		prodCaData := &xkmssdk.ProdCaData{
-			Quoted:    quote.Quoted,
-			Signature: quote.Signature,
-			Nonce:     quote.Nonce,
-			PCRs:      quote.PCRs,
-		}
+		// NewProdCaData (not a bare struct literal) is required here: it is
+		// the only place that stamps Version = xkmssdk.ProdCaDataVersion and
+		// the four *Sz fields. A hand-built &xkmssdk.ProdCaData{} leaves
+		// Version at its zero value, which xkmssdk.UnpackProdCaData rejects
+		// outright as ErrInvalidProdCaData ("tpm: invalid ProdCaData
+		// structure") before it ever looks at the payload.
+		prodCaData, err := xkmssdk.NewProdCaData(&quote)
+		require.NoError(t, err)
 		packedProdCaData, err := xkmssdk.PackProdCaData(prodCaData)
 		require.NoError(t, err)
 
@@ -361,12 +365,14 @@ func TestDeviceProfileValidation_WithRealTPMData(t *testing.T) {
 		quote, err := tpmModule.Quote(pcrs, nonce)
 		require.NoError(t, err)
 
-		prodCaData := &xkmssdk.ProdCaData{
-			Quoted:    quote.Quoted,
-			Signature: quote.Signature,
-			Nonce:     quote.Nonce,
-			PCRs:      quote.PCRs,
-		}
+		// NewProdCaData (not a bare struct literal) is required here: it is
+		// the only place that stamps Version = xkmssdk.ProdCaDataVersion and
+		// the four *Sz fields. A hand-built &xkmssdk.ProdCaData{} leaves
+		// Version at its zero value, which xkmssdk.UnpackProdCaData rejects
+		// outright as ErrInvalidProdCaData ("tpm: invalid ProdCaData
+		// structure") before it ever looks at the payload.
+		prodCaData, err := xkmssdk.NewProdCaData(&quote)
+		require.NoError(t, err)
 		packedProdCaData, err := xkmssdk.PackProdCaData(prodCaData)
 		require.NoError(t, err)
 

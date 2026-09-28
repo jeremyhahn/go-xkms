@@ -627,6 +627,16 @@ func TestEnrollment_Timeout(t *testing.T) {
 func createTestACMEClient(serverURL string, accountKey *ecdsa.PrivateKey, tpmAdapter *client.XKMSTPMAdapter) (*client.Client, error) {
 	config := client.DefaultConfig()
 	config.DirectoryURL = serverURL + "/acme/directory"
+	// The acme-server compose service presents a throwaway self-signed
+	// certificate (test/integration/acme-tpm/certgen); trust it explicitly
+	// via the same ACME_CA_CERT the raw-http helpers (getTLSConfig) already
+	// read, through pkg/acme/client's own supported TrustedRoots option --
+	// never InsecureSkipVerify. SystemCertPool stays false (isolated mode:
+	// DefaultConfig's documented posture for a private CA environment), so
+	// TrustedRoots is the entire trust store.
+	if pem := trustedRootPEM(); pem != "" {
+		config.TrustedRoots = []string{pem}
+	}
 
 	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	if err != nil {

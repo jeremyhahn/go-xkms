@@ -60,9 +60,18 @@ services:
     depends_on:
       acme-server:
         condition: service_healthy
+    volumes:
+      # Read-only, same reasoning as test/integration/acme-tpm/docker-compose.yml:
+      # acme-server has already generated /data/acme-tls/acme.crt by the time
+      # it reports healthy.
+      - acme-data:/data:ro
     environment:
       - CGO_ENABLED=1
       - ACME_SERVER_URL=https://acme-server:8443
+      # Trust the acme-server listener's self-signed certificate explicitly
+      # (test/integration/challenges/helpers.go's GetTLSConfig already reads
+      # this) rather than skip verification.
+      - ACME_CA_CERT=/data/acme-tls/acme.crt
     working_dir: /workspace
     command: >
       go test -v -tags=integration

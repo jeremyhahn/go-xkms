@@ -438,9 +438,17 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 	certStorageBackend, err := xkmssdk.NewMemoryBackend()
 	require.NoError(t, err)
 
-	// PKCS#8 provider wraps key storage.
+	// PKCS#8 provider wraps key storage. AllowPlaintextKeys is the documented
+	// test-fixture escape hatch (pkg/keyprovider/pkcs8/errors.go:
+	// ErrPlaintextKeyNotAllowed) for exactly this shape: an in-memory CA root
+	// key with no per-key password, matching the same fixture idiom used by
+	// pkg/keyprovider/pkcs8/pkcs8_test.go, test/integration/pkcs8, and
+	// test/integration/tpm2/capture_helper.go. Production CA key material
+	// still goes through the unmodified pkcs8 validation — this only opts in
+	// the throwaway keys this in-process test CA generates and discards.
 	pkcs8Backend, err := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{
-		KeyStorage: keyStorageBackend,
+		KeyStorage:         keyStorageBackend,
+		AllowPlaintextKeys: true,
 	})
 	require.NoError(t, err)
 

@@ -82,12 +82,27 @@ services:
         condition: service_healthy
       acme-server:
         condition: service_healthy
+    volumes:
+      # Read-only: the acme-server container generates
+      # /data/acme-tls/acme.crt (certgen/main.go) before it becomes healthy,
+      # so it already exists by the time this depends_on condition is met.
+      # Sharing the same named volume (rather than copying the file) means
+      # there is nothing to keep in sync if the cert is regenerated.
+      - acme-data:/data:ro
     environment:
       - CGO_ENABLED=1
       - ACME_SERVER_URL=https://acme-server:8443
       - ACME_TPM_HOST=tpm-simulator
       - TPM_SOCKET_HOST=tpm-simulator
       - TPM_SOCKET_PORT=2321
+      # The acme-server listener presents the throwaway self-signed cert
+      # certgen generates; trust it explicitly here (getTLSConfig in
+      # helpers_test.go, and createTestACMEClient via trustedRootPEM) rather
+      # than skip verification. It is the ACME server's own leaf certificate,
+      # self-signed, which is a valid (if unusual) x509.CertPool root entry:
+      # verification succeeds against it because Issuer == Subject and the
+      # presented chain is exactly that one certificate.
+      - ACME_CA_CERT=/data/acme-tls/acme.crt
       # The test runner serves its own enroll-01/endorse-01/device-attest-01
       # challenge-response HTTP endpoint (test/integration/acme-tpm's
       # startChallengeServer et al.), which the acme-server container must be

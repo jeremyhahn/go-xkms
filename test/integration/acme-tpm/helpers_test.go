@@ -87,6 +87,25 @@ func getServerURL() string {
 	return url
 }
 
+// trustedRootPEM returns the PEM-encoded contents of ACME_CA_CERT, the same
+// environment variable getTLSConfig reads, for callers that build their own
+// TLS trust store instead of a *tls.Config directly -- notably
+// pkg/acme/client.Config.TrustedRoots (see createTestACMEClient), which
+// takes PEM strings rather than a cert pool. Returns "" when the variable is
+// unset or the file cannot be read, so callers fail the same way
+// getTLSConfig does: an empty trust store, never InsecureSkipVerify.
+func trustedRootPEM() string {
+	caFile := os.Getenv("ACME_CA_CERT")
+	if caFile == "" {
+		return ""
+	}
+	pemBytes, err := os.ReadFile(caFile)
+	if err != nil {
+		return ""
+	}
+	return string(pemBytes)
+}
+
 func getTLSConfig() *tls.Config {
 	caFile := os.Getenv("ACME_CA_CERT")
 	if caFile != "" {
