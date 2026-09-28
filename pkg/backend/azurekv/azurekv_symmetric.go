@@ -170,9 +170,45 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 	return key.(*azureSymmetricKey), nil
 }
 
-// storeSymmetricKeySecret stores a symmetric key as an Azure Key Vault secret
-func (b *Backend) storeSymmetricKeySecret(ctx context.Context, name string, keyData []byte, attrs *types.KeyAttributes) error {
-	var secretsClient *azsecrets.Client
+// SecretsClient defines the interface for the Azure Key Vault secrets
+// operations GenerateSymmetricKey/GetSymmetricKey depend on. Standard-tier
+// Key Vault has no oct (symmetric) key type through the Keys API (see the
+// package comment above), so symmetric key material is generated locally
+// and persisted as a secret instead; this interface lists exactly the two
+// azsecrets.Client operations that path calls, mirroring KeyVaultClient's
+// role in azurekv.go so both clients can be swapped for a test double the
+// same way. *azsecrets.Client already implements this interface, so no
+// wrapper type is needed the way realKeyVaultClient wraps *azkeys.Client
+// for GetPublicKey.
+type SecretsClient interface {
+	SetSecret(ctx context.Context, name string, parameters azsecrets.SetSecretParameters, options *azsecrets.SetSecretOptions) (azsecrets.SetSecretResponse, error)
+	GetSecret(ctx context.Context, name string, version string, options *azsecrets.GetSecretOptions) (azsecrets.GetSecretResponse, error)
+}
+
+// initSecretsClient initializes the Azure Key Vault secrets client if not
+// already initialized. Mirrors initClient's double-checked locking pattern
+// (azurekv.go) so a client injected through NewBackendWithClients is never
+// overwritten and concurrent first callers of
+// GenerateSymmetricKey/GetSymmetricKey converge on a single real client.
+func (b *Backend) initSecretsClient(ctx context.Context) error {
+	// Fast path: check if the secrets client is already initialized with a
+	// read lock.
+	b.mu.RLock()
+	if b.secretsClient != nil {
+		b.mu.RUnlock()
+		return nil
+	}
+	b.mu.RUnlock()
+
+	// Slow path: acquire write lock and double-check.
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.secretsClient != nil {
+		return nil
+	}
+
+	var client *azsecrets.Client
 	var err error
 
 	if b.hasServicePrincipal() {
@@ -180,29 +216,35 @@ func (b *Backend) storeSymmetricKeySecret(ctx context.Context, name string, keyD
 		credOptions := &azidentity.ClientSecretCredentialOptions{
 			AdditionallyAllowedTenants: []string{"*"},
 		}
-		cred, err := b.newClientSecretCredential(credOptions)
-		if err != nil {
-			return &errs.Wrapped{Msg: "failed to create client secret credential", Err: err}
+		cred, credErr := b.newClientSecretCredential(credOptions)
+		if credErr != nil {
+			return &errs.Wrapped{Msg: "failed to create client secret credential", Err: credErr}
 		}
-
-		secretsClient, err = azsecrets.NewClient(b.config.VaultURL, cred, nil)
-		if err != nil {
-			return &errs.Wrapped{Msg: "failed to create secrets client", Err: err}
-		}
+		client, err = azsecrets.NewClient(b.config.VaultURL, cred, nil)
 	} else {
 		// Use DefaultAzureCredential for managed identity or other auth methods
 		credOptions := &azidentity.DefaultAzureCredentialOptions{
 			AdditionallyAllowedTenants: []string{"*"},
 		}
-		cred, err := azidentity.NewDefaultAzureCredential(credOptions)
-		if err != nil {
-			return &errs.Wrapped{Msg: "failed to create Azure credential", Err: err}
+		cred, credErr := azidentity.NewDefaultAzureCredential(credOptions)
+		if credErr != nil {
+			return &errs.Wrapped{Msg: "failed to create Azure credential", Err: credErr}
 		}
+		client, err = azsecrets.NewClient(b.config.VaultURL, cred, nil)
+	}
+	if err != nil {
+		return &errs.Wrapped{Msg: "failed to create secrets client", Err: err}
+	}
 
-		secretsClient, err = azsecrets.NewClient(b.config.VaultURL, cred, nil)
-		if err != nil {
-			return &errs.Wrapped{Msg: "failed to create secrets client", Err: err}
-		}
+	b.secretsClient = client
+
+	return nil
+}
+
+// storeSymmetricKeySecret stores a symmetric key as an Azure Key Vault secret
+func (b *Backend) storeSymmetricKeySecret(ctx context.Context, name string, keyData []byte, attrs *types.KeyAttributes) error {
+	if err := b.initSecretsClient(ctx); err != nil {
+		return err
 	}
 
 	// Encode key as base64
@@ -221,8 +263,7 @@ func (b *Backend) storeSymmetricKeySecret(ctx context.Context, name string, keyD
 		},
 	}
 
-	_, err = secretsClient.SetSecret(ctx, name, params, nil)
-	if err != nil {
+	if _, err := b.secretsClient.SetSecret(ctx, name, params, nil); err != nil {
 		return &errs.Wrapped{Msg: "failed to set secret", Err: err}
 	}
 
@@ -231,41 +272,12 @@ func (b *Backend) storeSymmetricKeySecret(ctx context.Context, name string, keyD
 
 // retrieveSymmetricKeySecret retrieves a symmetric key from Azure Key Vault secrets
 func (b *Backend) retrieveSymmetricKeySecret(ctx context.Context, name string) ([]byte, error) {
-	var secretsClient *azsecrets.Client
-	var err error
-
-	if b.hasServicePrincipal() {
-		// Use ClientSecretCredential for service principal authentication
-		credOptions := &azidentity.ClientSecretCredentialOptions{
-			AdditionallyAllowedTenants: []string{"*"},
-		}
-		cred, err := b.newClientSecretCredential(credOptions)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to create client secret credential", Err: err}
-		}
-
-		secretsClient, err = azsecrets.NewClient(b.config.VaultURL, cred, nil)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to create secrets client", Err: err}
-		}
-	} else {
-		// Use DefaultAzureCredential for managed identity or other auth methods
-		credOptions := &azidentity.DefaultAzureCredentialOptions{
-			AdditionallyAllowedTenants: []string{"*"},
-		}
-		cred, err := azidentity.NewDefaultAzureCredential(credOptions)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to create Azure credential", Err: err}
-		}
-
-		secretsClient, err = azsecrets.NewClient(b.config.VaultURL, cred, nil)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to create secrets client", Err: err}
-		}
+	if err := b.initSecretsClient(ctx); err != nil {
+		return nil, err
 	}
 
 	// Get the secret
-	resp, err := secretsClient.GetSecret(ctx, name, "", nil)
+	resp, err := b.secretsClient.GetSecret(ctx, name, "", nil)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get secret", Err: err}
 	}
