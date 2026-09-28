@@ -391,3 +391,72 @@ func TestBuildCloudKMSStrategy_AWSKMSBackend_MissingCredentials(t *testing.T) {
 	_, err = BuildCloudKMSStrategy(ctx, StrategyAWSKMS, types.StoreAWSKMS, backend)
 	require.Error(t, err)
 }
+
+// failingGetStorage wraps a real storage.Backend and makes every Get fail
+// with getErr, promoting every other method from the embedded Backend
+// unchanged. It exists to simulate a metadata-storage outage independently
+// of AWS KMS itself being reachable.
+type failingGetStorage struct {
+	storage.Backend
+	getErr error
+}
+
+func (f *failingGetStorage) Get(ctx context.Context, key string) ([]byte, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.Backend.Get(ctx, key)
+}
+
+var _ storage.Backend = (*failingGetStorage)(nil)
+
+// TestEnsureSealKey_AWSKMSBackend_StorageOutageFailsClosed proves the
+// go-xkms#1119 fix at the decision point go-xkms#1098 found broken: when the
+// metadata store backing awskms.Backend is unavailable (not merely lacking a
+// record), EnsureSealKey must surface that failure and must NEVER fall
+// through to GenerateSymmetricKey/CreateKey, since doing so would mint a
+// brand-new CMK on every storage hiccup and orphan the seal key already
+// sealing data.
+func TestEnsureSealKey_AWSKMSBackend_StorageOutageFailsClosed(t *testing.T) {
+	realKeyStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+	certStorage, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+
+	getErr := errors.New("storage: metadata backend unavailable")
+	keyStorage := &failingGetStorage{Backend: realKeyStorage, getErr: getErr}
+
+	createKeyCalls := 0
+	mock := &awskms.MockKMSClient{
+		DescribeKeyFunc: func(_ context.Context, params *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+			keyID := aws.ToString(params.KeyId)
+			if keyID != awsGeneratedKeyID {
+				return nil, fmt.Errorf("mock: key not found: %q", keyID)
+			}
+			return &kms.DescribeKeyOutput{
+				KeyMetadata: &kmstypes.KeyMetadata{KeyId: aws.String(keyID)},
+			}, nil
+		},
+		CreateKeyFunc: func(_ context.Context, _ *kms.CreateKeyInput, _ ...func(*kms.Options)) (*kms.CreateKeyOutput, error) {
+			createKeyCalls++
+			return &kms.CreateKeyOutput{
+				KeyMetadata: &kmstypes.KeyMetadata{KeyId: aws.String(awsGeneratedKeyID)},
+			}, nil
+		},
+	}
+
+	backend, err := awskms.NewBackendWithClient(&awskms.Config{
+		Region:      "us-east-1",
+		KeyStorage:  keyStorage,
+		CertStorage: certStorage,
+	}, mock)
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+
+	ctx := context.Background()
+	_, err = BuildCloudKMSStrategy(ctx, StrategyAWSKMS, types.StoreAWSKMS, backend)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, getErr), "EnsureSealKey's error must chain back to the storage failure, got %v", err)
+	assert.False(t, errors.Is(err, awskms.ErrKeyNotFound), "a storage outage must not be classified as backend.ErrKeyNotFound, got %v", err)
+	assert.Equal(t, 0, createKeyCalls, "a storage outage must never fall through to CreateKey/GenerateSymmetricKey")
+}
