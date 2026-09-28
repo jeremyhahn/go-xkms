@@ -20,6 +20,7 @@ import (
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // pkcs11StateServicer is the slice of the XKMSService the PKCS#11 remote-state
@@ -66,7 +67,11 @@ func (h *PKCS11StateHandlers) decode(w http.ResponseWriter, r *http.Request, dst
 
 func (h *PKCS11StateHandlers) respond(w http.ResponseWriter, resp interface{}, err error) {
 	if err != nil {
-		pkcs11StateWriteError(w, err.Error(), http.StatusInternalServerError)
+		code := http.StatusInternalServerError
+		if xkms.IsPKCS11StateRequestError(err) {
+			code = http.StatusBadRequest
+		}
+		pkcs11StateWriteError(w, err.Error(), code)
 		return
 	}
 	writeJSON(w, resp, http.StatusOK)
