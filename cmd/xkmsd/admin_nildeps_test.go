@@ -61,6 +61,7 @@ func newServerWithoutQRDB(t *testing.T) *server.Server {
 		Auth:    config.AuthConfig{Enabled: false},
 		Storage: config.StorageConfig{
 			Backend: "memory",
+			Path:    tempDir,
 		},
 		Default: config.DefaultConfig("software"),
 		Backends: config.BackendsConfig{
