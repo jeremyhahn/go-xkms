@@ -70,6 +70,11 @@ var ErrPINInvalid = errors.New("authenticator: PIN invalid")
 // ErrPINBlocked indicates the PIN has been blocked due to too many failed attempts.
 var ErrPINBlocked = errors.New("authenticator: PIN blocked")
 
+// ErrPINAuthBlocked indicates PINMaxConsecutiveFailures consecutive user PIN
+// mismatches within one power cycle. Attempts resume after the authenticator
+// restarts. CTAP 2.1 §6.5.5.5 (CTAP2_ERR_PIN_AUTH_BLOCKED).
+var ErrPINAuthBlocked = errors.New("authenticator: PIN attempts blocked until power cycle")
+
 // ErrPINAuthInvalid indicates PIN authentication failed (pinUvAuthToken invalid).
 var ErrPINAuthInvalid = errors.New("authenticator: PIN auth invalid")
 
@@ -86,6 +91,10 @@ var ErrNoCredentials = errors.New("authenticator: no credentials")
 
 // ErrUnsupportedExtension indicates the requested extension is not supported.
 var ErrUnsupportedExtension = errors.New("authenticator: unsupported extension")
+
+// ErrUnsupportedOption indicates the request combines an option with a
+// feature that does not support it (CTAP2_ERR_UNSUPPORTED_OPTION).
+var ErrUnsupportedOption = errors.New("authenticator: unsupported option")
 
 // ErrUserPresenceRequired indicates user presence verification is required but not satisfied.
 var ErrUserPresenceRequired = errors.New("authenticator: user presence required")

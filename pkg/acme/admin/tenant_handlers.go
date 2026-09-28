@@ -442,6 +442,9 @@ func (h *TenantHandlers) CreateTenantIntermediateCA(w http.ResponseWriter, r *ht
 
 	intCA, err := h.service.CreateTenantIntermediateCA(ctx, tenantID, req)
 	if err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return

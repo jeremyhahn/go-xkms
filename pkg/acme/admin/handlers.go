@@ -158,6 +158,9 @@ func (h *Handlers) ListCertificates(w http.ResponseWriter, r *http.Request) {
 
 	certs, pagination, err := h.service.ListCertificates(ctx, req)
 	if err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		h.logger.Error("failed to list certificates", slog.String("error", err.Error()))
 		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to list certificates")
 		return
@@ -177,6 +180,9 @@ func (h *Handlers) GetCertificate(w http.ResponseWriter, r *http.Request) {
 
 	cert, err := h.service.GetCertificate(ctx, serial)
 	if err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		if errors.Is(err, ErrCertificateNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Certificate not found")
 			return
@@ -202,6 +208,9 @@ func (h *Handlers) RevokeCertificate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.RevokeCertificate(ctx, serial, req.Reason); err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		if errors.Is(err, ErrCertificateNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Certificate not found")
 			return
@@ -226,6 +235,9 @@ func (h *Handlers) ListExpiringCertificates(w http.ResponseWriter, r *http.Reque
 
 	certs, pagination, err := h.service.ListExpiringCertificates(ctx, days, page, perPage)
 	if err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		h.logger.Error("failed to list expiring certificates", slog.String("error", err.Error()))
 		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to list expiring certificates")
 		return
@@ -251,6 +263,9 @@ func (h *Handlers) ListAccounts(w http.ResponseWriter, r *http.Request) {
 
 	accounts, pagination, err := h.service.ListAccounts(ctx, req)
 	if err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		h.logger.Error("failed to list accounts", slog.String("error", err.Error()))
 		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to list accounts")
 		return
@@ -274,6 +289,9 @@ func (h *Handlers) GetAccount(w http.ResponseWriter, r *http.Request) {
 
 	account, err := h.service.GetAccount(ctx, accountID)
 	if err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		if errors.Is(err, ErrAccountNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Account not found")
 			return
@@ -297,6 +315,9 @@ func (h *Handlers) DisableAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.DisableAccount(ctx, accountID); err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		if errors.Is(err, ErrAccountNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Account not found")
 			return
@@ -329,6 +350,9 @@ func (h *Handlers) ListOrders(w http.ResponseWriter, r *http.Request) {
 
 	orders, pagination, err := h.service.ListOrders(ctx, req)
 	if err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		h.logger.Error("failed to list orders", slog.String("error", err.Error()))
 		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to list orders")
 		return
@@ -360,6 +384,9 @@ func (h *Handlers) GetOrder(w http.ResponseWriter, r *http.Request) {
 
 	order, err := h.service.GetOrder(ctx, orderID, accountID)
 	if err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		if errors.Is(err, ErrOrderNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Order not found")
 			return
@@ -378,6 +405,9 @@ func (h *Handlers) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	status, err := h.service.GetStatus(ctx)
 	if err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		h.logger.Error("failed to get status", slog.String("error", err.Error()))
 		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to get status")
 		return
@@ -392,6 +422,9 @@ func (h *Handlers) GetStats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := h.service.GetStats(ctx)
 	if err != nil {
+		if writeUnavailableIfNotConfigured(w, err) {
+			return
+		}
 		h.logger.Error("failed to get stats", slog.String("error", err.Error()))
 		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to get stats")
 		return
@@ -523,6 +556,26 @@ func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 		// report this to the client, so it's only logged.
 		slog.Error("failed to write JSON response", slog.String("error", err.Error()))
 	}
+}
+
+// writeUnavailableIfNotConfigured answers ErrCANotConfigured and
+// ErrStorageNotConfigured with the same "not implemented" shape
+// ListAuditLogs already uses for a missing audit trail: the admin surface
+// is mounted (ACME may be disabled entirely), but this route has no backing
+// CA or storage to administer. It reports whether it wrote a response so
+// the caller can fall through to its ordinary error handling otherwise.
+func writeUnavailableIfNotConfigured(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, ErrCANotConfigured):
+		writeProblem(w, http.StatusNotImplemented, "urn:trusted-ca:error:not-implemented",
+			"Certificate administration is unavailable: this server has no ACME certificate authority configured")
+		return true
+	case errors.Is(err, ErrStorageNotConfigured):
+		writeProblem(w, http.StatusNotImplemented, "urn:trusted-ca:error:not-implemented",
+			"Certificate administration is unavailable: this server has no ACME storage configured")
+		return true
+	}
+	return false
 }
 
 // writeProblem writes an RFC 7807 Problem Details error response.

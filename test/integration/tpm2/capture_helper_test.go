@@ -16,7 +16,7 @@ import (
 )
 
 // setupTPM2WithCapture creates a TPM2 instance with traffic capture enabled
-func setupTPM2WithCapture(t *testing.T, encryptSession bool) (tpm2lib.TrustedPlatformModule, *TPMCapture, func()) {
+func setupTPM2WithCapture(t *testing.T) (tpm2lib.TrustedPlatformModule, *TPMCapture, func()) {
 	t.Helper()
 
 	// Connect to TPM simulator
@@ -49,11 +49,10 @@ func setupTPM2WithCapture(t *testing.T, encryptSession bool) (tpm2lib.TrustedPla
 	blobStore := storageFactory.BlobStore()
 	fileBackend := storageFactory.KeyBackend()
 
-	// Create TPM configuration with session encryption option
+	// Create TPM configuration
 	config := &tpm2lib.Config{
 		Device:          "", // Not using device, using custom transport
 		UseSimulator:    false,
-		EncryptSession:  encryptSession, // Control encryption for testing
 		Hash:            "SHA-256",
 		PlatformPCR:     16,
 		PlatformPCRBank: "sha256",

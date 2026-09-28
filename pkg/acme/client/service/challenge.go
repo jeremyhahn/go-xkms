@@ -272,12 +272,3 @@ func SetupDNS01Challenge(ctx context.Context, config *Config, logger *slog.Logge
 
 	return newDNS01Challenge(ctx, provider, domain, fqdn, dnsResponse, logger)
 }
-
-// SetupDeviceAttest01Challenge sets up a device-attest-01 challenge using TPM attestation.
-// This requires a configured TPM module to generate the attestation statement.
-func SetupDeviceAttest01Challenge(config *Config, logger *slog.Logger, token, keyAuth string, pcrSelection []int) ([]byte, error) {
-	logger.Warn("device-attest-01 challenge requires TPM module configuration",
-		slog.String("hint", "Use programmatic API with client.NewXKMSTPMAdapter()"))
-
-	return nil, ErrTPMModuleRequired{}
-}

@@ -79,6 +79,29 @@ func TestSetRESTListener(t *testing.T) {
 	require.Same(t, ln, s.restListener)
 }
 
+// TestSetMetricsListener proves SetMetricsListener stores the pre-bound
+// listener for the metrics server to serve instead of binding the
+// configured port (go-xkms#1142). The behavioral proof -- that startMetrics
+// actually serves on it and MetricsAddr reports it -- lives in
+// metrics_listener_test.go; this is the field-assignment counterpart to
+// TestSetRESTListener above.
+func TestSetMetricsListener(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	s, err := New(cfg)
+	require.NoError(t, err)
+	require.Nil(t, s.metricsListener)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = ln.Close() }()
+
+	s.SetMetricsListener(ln)
+	require.Same(t, ln, s.metricsListener)
+}
+
 // TestWithAuthenticatorDecorator proves the decorator option's return value
 // replaces the server's built authenticator, not merely gets invoked and
 // discarded.

@@ -61,7 +61,7 @@ func (m *mockKeyBackendForSession) Delete(keyAttrs *types.KeyAttributes) error {
 }
 
 func TestSaveKeyPairSuccess(t *testing.T) {
-	logger, tpm := createSim(false, false)
+	logger, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	backend := newMockKeyBackendForSession()
@@ -106,7 +106,7 @@ func TestSaveKeyPairSuccess(t *testing.T) {
 }
 
 func TestSaveKeyPairWithNilBackend(t *testing.T) {
-	logger, tpm := createSim(false, false)
+	logger, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	keyAttrs := &types.KeyAttributes{
@@ -133,7 +133,7 @@ func TestSaveKeyPairWithNilBackend(t *testing.T) {
 }
 
 func TestSaveKeyPairPrivateSaveError(t *testing.T) {
-	logger, tpm := createSim(false, false)
+	logger, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	backend := newMockKeyBackendForSession()
@@ -162,7 +162,7 @@ func TestSaveKeyPairPrivateSaveError(t *testing.T) {
 }
 
 func TestDeleteKeyPairSuccess(t *testing.T) {
-	logger, tpm := createSim(false, false)
+	logger, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	backend := newMockKeyBackendForSession()
@@ -188,7 +188,7 @@ func TestDeleteKeyPairSuccess(t *testing.T) {
 }
 
 func TestDeleteKeyPairWithNilBackend(t *testing.T) {
-	logger, tpm := createSim(false, false)
+	logger, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	keyAttrs := &types.KeyAttributes{
@@ -207,7 +207,7 @@ func TestDeleteKeyPairWithNilBackend(t *testing.T) {
 }
 
 func TestDeleteKeyPairError(t *testing.T) {
-	logger, tpm := createSim(false, false)
+	logger, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	backend := newMockKeyBackendForSession()
@@ -229,7 +229,7 @@ func TestDeleteKeyPairError(t *testing.T) {
 }
 
 func TestCreateKeySessionWithPlatformPolicy(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -254,7 +254,7 @@ func TestCreateKeySessionWithPlatformPolicy(t *testing.T) {
 }
 
 func TestCreateKeySessionWithPassword(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -289,7 +289,7 @@ func TestCreateKeySessionWithPassword(t *testing.T) {
 }
 
 func TestCreateKeySessionWithNilPassword(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -324,7 +324,7 @@ func TestCreateKeySessionWithNilPassword(t *testing.T) {
 }
 
 func TestCreateKeySessionPasswordError(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -363,7 +363,7 @@ func (p *errorPasswordForSession) Clear() {
 }
 
 func TestCreateSessionWithNilParent(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	tpmImpl := tpm.(*TPM2)
@@ -398,45 +398,8 @@ func TestCreateSessionWithNilParent(t *testing.T) {
 	}
 }
 
-func TestHMACSessionConfiguration(t *testing.T) {
-	// Test both encrypted and unencrypted paths
-	tests := []struct {
-		name         string
-		encrypted    bool
-		debugSecrets bool
-	}{
-		{
-			name:         "unencrypted session",
-			encrypted:    false,
-			debugSecrets: false,
-		},
-		{
-			name:         "unencrypted session with debug",
-			encrypted:    false,
-			debugSecrets: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, tpm := createSim(tt.encrypted, false)
-			defer func() { _ = tpm.Close() }()
-
-			tpmImpl := tpm.(*TPM2)
-
-			// Test HMAC (not HMACSession) which returns a session without transport
-			auth := []byte("test-auth")
-			session := tpmImpl.HMAC(auth)
-
-			if session == nil {
-				t.Error("HMAC() returned nil session")
-			}
-		})
-	}
-}
-
 func TestLoadKeyPairPrivateBlobError(t *testing.T) {
-	logger, tpm := createSim(false, false)
+	logger, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	backend := newMockKeyBackendForSession()
@@ -467,7 +430,7 @@ func TestLoadKeyPairPrivateBlobError(t *testing.T) {
 }
 
 func TestLoadKeyPairPublicBlobError(t *testing.T) {
-	logger, tpm := createSim(false, false)
+	logger, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	backend := newMockKeyBackendForSession()
@@ -500,7 +463,7 @@ func TestLoadKeyPairPublicBlobError(t *testing.T) {
 }
 
 func TestLoadKeyPairPasswordError(t *testing.T) {
-	logger, tpm := createSim(false, false)
+	logger, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	backend := newMockKeyBackendForSession()
@@ -654,53 +617,6 @@ func TestKeyAttributesPasswordExtraction(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestHMACEncryptedSession(t *testing.T) {
-	_, tpm := createSim(true, false) // Enable encryption
-	defer func() { _ = tpm.Close() }()
-
-	tpmImpl := tpm.(*TPM2)
-
-	auth := []byte("test-auth")
-	session := tpmImpl.HMAC(auth)
-
-	if session == nil {
-		t.Error("HMAC() returned nil session for encrypted mode")
-	}
-}
-
-func TestHMACUnencryptedSession(t *testing.T) {
-	_, tpm := createSim(false, false) // Disable encryption
-	defer func() { _ = tpm.Close() }()
-
-	tpmImpl := tpm.(*TPM2)
-
-	auth := []byte("test-auth")
-	session := tpmImpl.HMAC(auth)
-
-	if session == nil {
-		t.Error("HMAC() returned nil session for unencrypted mode")
-	}
-}
-
-func TestHMACWithEmptyAuth(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
-
-	tpmImpl := tpm.(*TPM2)
-
-	// Test with nil auth
-	session := tpmImpl.HMAC(nil)
-	if session == nil {
-		t.Error("HMAC() returned nil session for nil auth")
-	}
-
-	// Test with empty auth
-	session = tpmImpl.HMAC([]byte{})
-	if session == nil {
-		t.Error("HMAC() returned nil session for empty auth")
 	}
 }
 

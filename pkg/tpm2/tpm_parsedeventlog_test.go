@@ -49,7 +49,7 @@ func TestParsedEventLog_MissingMeasurementsFile(t *testing.T) {
 // session-encryption branches above the check run first but perform no TPM
 // I/O, so this is exercised without a transport.
 func TestReadChunk_RequestSizeExceedsUint16(t *testing.T) {
-	tpm := &TPM2{config: &Config{EncryptSession: false}}
+	tpm := &TPM2{config: &Config{}}
 	data := make([]byte, 1)
 
 	n, err := tpm.readChunk(data, math.MaxUint16+1)

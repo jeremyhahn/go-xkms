@@ -593,6 +593,16 @@ func (pks *PlatformKeyStore) SetAuthReady(ready bool) {
 	pks.authReady.Store(ready)
 }
 
+// platformSRKHandle returns the persistent handle of the Platform SRK:
+// PlatformSRKConfig.SRKHandle when set, otherwise the default tpSRKIndex
+// (0x81000002).
+func platformSRKHandle(config *Config) tpm2.TPMHandle {
+	if config != nil && config.PlatformSRK != nil && config.PlatformSRK.SRKHandle != 0 {
+		return tpm2.TPMHandle(config.PlatformSRK.SRKHandle)
+	}
+	return tpm2.TPMHandle(tpSRKIndex)
+}
+
 // PlatformSRKAttributesFromConfig creates Platform SRK key attributes from
 // the TPM Config. It uses the PlatformSRKConfig.SRKHandle if set, otherwise
 // falls back to the default tpSRKIndex (0x81000002).
@@ -622,13 +632,7 @@ func (pks *PlatformKeyStore) SetAuthReady(ready bool) {
 // cannot express a platform policy at all, and could not lend one to a key
 // it is not.
 func PlatformSRKAttributesFromConfig(config *Config) (*types.KeyAttributes, error) {
-	var srkHandle uint32
-
-	if config.PlatformSRK != nil && config.PlatformSRK.SRKHandle != 0 {
-		srkHandle = config.PlatformSRK.SRKHandle
-	} else {
-		srkHandle = tpSRKIndex
-	}
+	srkHandle := uint32(platformSRKHandle(config))
 
 	platformPolicy := platformPolicyEnabled(config)
 

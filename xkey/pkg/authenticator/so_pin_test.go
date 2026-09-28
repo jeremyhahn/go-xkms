@@ -341,7 +341,7 @@ func TestSOPINManager_RetryBudgetIsSpent(t *testing.T) {
 		for i := 0; i < DefaultSOPINMaxRetries; i++ {
 			// A power cycle between attempts clears only the consecutive
 			// counter, never the budget.
-			mgr.consecutiveFailures.Store(0)
+			mgr.consecutiveFailures.reset()
 
 			_, err := mgr.BeginVerify("wrongpin999")
 			require.NoError(t, err, "attempt %d must be admitted", i)
@@ -363,7 +363,7 @@ func TestSOPINManager_RetryBudgetIsSpent(t *testing.T) {
 		require.NoError(t, err)
 
 		var last error
-		for i := 0; i < SOPINMaxConsecutiveFailures; i++ {
+		for i := 0; i < PINMaxConsecutiveFailures; i++ {
 			_, err := mgr.BeginVerify("wrongpin999")
 			require.NoError(t, err)
 			last = mgr.RecordFailure()
@@ -386,7 +386,7 @@ func TestSOPINManager_RetryBudgetIsSpent(t *testing.T) {
 		_, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 
-		for i := 0; i < SOPINMaxConsecutiveFailures-1; i++ {
+		for i := 0; i < PINMaxConsecutiveFailures-1; i++ {
 			_, err := mgr.BeginVerify("wrongpin999")
 			require.NoError(t, err)
 			require.ErrorIs(t, mgr.RecordFailure(), ErrSOPINInvalid)
@@ -541,7 +541,7 @@ func TestSOPINManager_Retries(t *testing.T) {
 		mgr.SetRetries(5)
 
 		for i := 4; i >= 0; i-- {
-			mgr.consecutiveFailures.Store(0)
+			mgr.consecutiveFailures.reset()
 			_, err := mgr.BeginVerify("wrongpin999")
 			require.NoError(t, err)
 			require.Equal(t, i, mgr.Retries())

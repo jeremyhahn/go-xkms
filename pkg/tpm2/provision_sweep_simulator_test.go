@@ -66,7 +66,7 @@ func TestProvision_EveryCommandFailurePropagates(t *testing.T) {
 		// TestCreateIAK_EveryCommandFailurePropagates); like every other
 		// tpm.Flush call in this package it logs a failure instead of
 		// returning it, and a defer always runs last.
-		34)
+		71)
 }
 
 // TestInstall_EveryCommandFailurePropagates sweeps Install's full command
@@ -114,19 +114,18 @@ func TestInstall_EveryCommandFailurePropagates(t *testing.T) {
 		// CreateIAK's own deferred best-effort flush of its primary's
 		// transient handle -- the same single command
 		// TestCreateIAK_EveryCommandFailurePropagates already documents and
-		// tolerates at its position 4 -- reached here at absolute position
-		// 44 because IAK creation runs 41st (CreatePrimary), 42nd
-		// (EvictControl) and 43rd (CertifyCreation) in Install's full
-		// sequence.
-		44,
+		// tolerates at its position 9 -- reached here at absolute position
+		// 81 because IAK creation's CertifyCreation runs 80th in Install's
+		// full sequence.
+		81,
 		// Install's trailing "Retrieve the EK certificate or log warning if
 		// not available" block (provision.go): PlatformPolicyDigest's PCR
-		// read (45) and EKCertificate's two readEKCertFromNV NV_ReadPublic
-		// probes, RSA then EC index (46, 47). A manufacturer EK certificate
+		// read (82) and EKCertificate's two readEKCertFromNV NV_ReadPublic
+		// probes, RSA then EC index (83, 84). A manufacturer EK certificate
 		// is commonly absent -- this simulator never has one -- and
 		// EKCertificate returning any error here, not only "not found", is
 		// deliberately non-fatal: Install has already fully provisioned the
 		// EK, SSRK, platform policy and IAK by this point, and a device
 		// without a burned-in EK certificate still has a usable identity.
-		45, 46, 47)
+		82, 83, 84)
 }

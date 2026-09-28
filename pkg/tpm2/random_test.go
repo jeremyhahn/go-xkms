@@ -13,7 +13,7 @@ import (
 
 func TestRandBytes(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	randomBytes := make([]byte, 32)
@@ -26,7 +26,7 @@ func TestRandBytes(t *testing.T) {
 
 func TestRandBytesEncrypted(t *testing.T) {
 
-	_, tpm := createSim(true, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	randomBytes := make([]byte, 32)
@@ -41,7 +41,7 @@ func TestRandom(t *testing.T) {
 
 	logger := slog.Default()
 
-	_, tpm := createSim(false, false)
+	_, tpm := createSim(false)
 	defer func() { _ = tpm.Close() }()
 
 	random, err := tpm.Random()
@@ -56,7 +56,7 @@ func TestRandom(t *testing.T) {
 
 func TestRandomBytes_SmallChunk(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test reading less than maxRandomBytesPerRequest
@@ -67,7 +67,7 @@ func TestRandomBytes_SmallChunk(t *testing.T) {
 
 func TestRandomBytes_ExactChunkSize(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test reading exactly maxRandomBytesPerRequest
@@ -78,7 +78,7 @@ func TestRandomBytes_ExactChunkSize(t *testing.T) {
 
 func TestRandomBytes_MultipleChunks(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test reading more than maxRandomBytesPerRequest (requires chunking)
@@ -100,7 +100,7 @@ func TestRandomBytes_MultipleChunks(t *testing.T) {
 
 func TestRandomBytes_LargeRequest(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test a large request that requires many chunks
@@ -112,7 +112,7 @@ func TestRandomBytes_LargeRequest(t *testing.T) {
 
 func TestRandomBytes_VeryLargeRequest(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test a very large request
@@ -124,7 +124,7 @@ func TestRandomBytes_VeryLargeRequest(t *testing.T) {
 
 func TestRandomBytes_InvalidLength(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test with zero length
@@ -140,7 +140,7 @@ func TestRandomBytes_InvalidLength(t *testing.T) {
 
 func TestRandomHex_ValidLength(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test valid hex encoding
@@ -155,7 +155,7 @@ func TestRandomHex_ValidLength(t *testing.T) {
 
 func TestRandomHex_InvalidLength(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test with odd length (must be even)
@@ -176,7 +176,7 @@ func TestRandomHex_InvalidLength(t *testing.T) {
 
 func TestRandomBytes_Uniqueness(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test that multiple reads produce different results
@@ -192,7 +192,7 @@ func TestRandomBytes_Uniqueness(t *testing.T) {
 
 func TestRead_ChunkedBehavior(t *testing.T) {
 
-	_, tpm := createSim(false, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test that Read correctly fills buffer for sizes requiring multiple chunks
@@ -218,7 +218,7 @@ func TestRead_ChunkedBehavior(t *testing.T) {
 
 func TestRandomBytes_EncryptedSession(t *testing.T) {
 
-	_, tpm := createSim(true, true)
+	_, tpm := createSim(true)
 	defer func() { _ = tpm.Close() }()
 
 	// Test chunked reading with encrypted session

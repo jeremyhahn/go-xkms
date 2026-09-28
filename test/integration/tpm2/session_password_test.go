@@ -11,34 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHMACBasic tests basic unauthenticated HMAC session creation
-func TestHMACBasic(t *testing.T) {
-	tpmInstance, cleanup := setupTPM2(t)
-	defer cleanup()
-
-	t.Run("WithNilAuth", func(t *testing.T) {
-		session := tpmInstance.HMAC(nil)
-		require.NotNil(t, session)
-
-		// Verify session handle is valid (non-zero)
-		assert.NotEqual(t, tpm2.TPMHandle(0), session.Handle())
-	})
-
-	t.Run("WithEmptyAuth", func(t *testing.T) {
-		session := tpmInstance.HMAC([]byte{})
-		require.NotNil(t, session)
-
-		assert.NotEqual(t, tpm2.TPMHandle(0), session.Handle())
-	})
-
-	t.Run("WithPassword", func(t *testing.T) {
-		session := tpmInstance.HMAC([]byte("test-password"))
-		require.NotNil(t, session)
-
-		assert.NotEqual(t, tpm2.TPMHandle(0), session.Handle())
-	})
-}
-
 // TestHMACSession tests authenticated HMAC session with proper cleanup
 func TestHMACSession(t *testing.T) {
 	tpmInstance, cleanup := setupTPM2(t)

@@ -146,6 +146,14 @@ func TestPhoneKeyBackend_TypeAndCapabilities(t *testing.T) {
 
 	handle := &phoneKeyHandle{credentialID: []byte("id"), algorithm: pairing.COSEAlgES256}
 	assert.Equal(t, BackendTypePhone, handle.BackendID())
+
+	// #1162: the phone vouches for its own credentials only.
+	assert.True(t, backend.HandlesUserVerificationFor(handle.BackendID()))
+	assert.False(t, backend.HandlesUserVerificationFor(xkms.BackendTypeSoftware))
+	assert.False(t, backend.HandlesUserVerificationFor(""))
+	assert.True(t, backend.HandlesUserPresenceFor(handle.BackendID()))
+	assert.False(t, backend.HandlesUserPresenceFor(xkms.BackendTypeSoftware))
+	assert.False(t, backend.HandlesUserPresenceFor(""))
 }
 
 // ---------------------------------------------------------------------------

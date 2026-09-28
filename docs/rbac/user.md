@@ -1,6 +1,6 @@
 # RBAC — User Guide
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115)
 
 ## What RBAC controls
 
@@ -107,6 +107,15 @@ it.
 | an identity provider puts `admin` or `so` in the token's `roles`/`groups` claim, but the caller still gets `403` | xkms and qrdb match a role by its qrdb identifier, never by name: a claimed role name confers nothing | create the account in qrdb with the role (`xkmsctl user register --role ...`); authentication then carries the role's identifier |
 | a tenant's own Security Officer gets `403 tenant not found` or `503 tenant barrier is sealed` | only system-tenant identities are cross-tenant; a tenant officer is scoped to its tenant like any other tenant identity | register the tenant, or unseal its barrier, first |
 | an `admin` or `so` changes another user's shared vault entry, but an `operator` gets `not the owner` | only the owner, or a tenant Admin or SO, may change a shared entry | as designed |
+
+## Tenant admins stay in their tenant
+
+A tenant's Admin manages keys, users and audit for that tenant only. Naming
+another tenant in a request does not widen that. PKCS#11 token-state calls that
+name another tenant are refused. An audit query that names another tenant, or
+none, returns only your own tenant's events. Reading every tenant's audit
+events takes a platform (system-tenant) identity whose role holds
+`audit:read:cross`. The built-in Admin role has it and Auditor does not.
 
 ## Where to go next
 

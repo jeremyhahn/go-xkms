@@ -59,6 +59,13 @@ var (
 	ErrRegistrationChallengeMissing = errors.New("registration options missing challenge")
 	ErrRegistrationRPIDMissing      = errors.New("registration options missing rp.id")
 
+	// Relying party ID / origin binding errors, surfaced by ValidateRPID
+	// before any ceremony reaches the authenticator (WebAuthn L2 §5.1.3
+	// step 8, §5.1.4.1 step 7).
+	ErrOriginRequired     = errors.New("fido2: WebAuthn origin required")
+	ErrInvalidOrigin      = errors.New("fido2: malformed WebAuthn origin")
+	ErrRPIDOriginMismatch = errors.New("fido2: relying party ID is neither the origin's effective domain nor a registrable suffix of it")
+
 	// Authenticator data parsing errors, surfaced by
 	// ParseAuthDataExtensions when the authenticator data supplied by a
 	// device (or relayed by a client) does not conform to the structure

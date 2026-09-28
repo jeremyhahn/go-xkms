@@ -139,6 +139,14 @@ const (
 	ActionRead   = "read"
 	ActionUpdate = "update"
 
+	// ActionReadCross is the cross-tenant read, used as audit:read:cross.
+	// It mirrors go-qrdb permission.AuditReadCross verbatim; the qrdb SDK
+	// does not re-export that constant, so the string is restated here and
+	// pinned to qrdb's registry by TestActionReadCross_MatchesQRDBAuditReadCross.
+	// qrdb declares it ScopeCross, so only a system-tenant identity can hold
+	// it; its built-in Admin role carries it and its Auditor role does not.
+	ActionReadCross = "read:cross"
+
 	// ActionWrite is the coarse mutating action of the resource families that
 	// do not model create/update separately (piv:write, ssh:write,
 	// passwords:write).

@@ -434,6 +434,19 @@ func (b *PhoneKeyBackend) Type() xkms.BackendType {
 	return BackendTypePhone
 }
 
+// HandlesUserVerificationFor reports whether backendID names this backend: every
+// phone key operation is gated by the phone's biometric, so a credential this
+// backend owns is verified whenever it is used.
+func (b *PhoneKeyBackend) HandlesUserVerificationFor(backendID xkms.BackendType) bool {
+	return backendID == b.Type() && b.Capabilities().HandlesUserVerification
+}
+
+// HandlesUserPresenceFor reports whether backendID names this backend: the
+// phone's biometric prompt on every key operation is also the presence check.
+func (b *PhoneKeyBackend) HandlesUserPresenceFor(backendID xkms.BackendType) bool {
+	return backendID == b.Type() && b.Capabilities().HandlesUserPresence
+}
+
 // Capabilities returns the backend capabilities.
 func (b *PhoneKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilities {
 	return keybackend.FIDO2KeyCapabilities{
@@ -445,7 +458,9 @@ func (b *PhoneKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilities {
 		HandlesUserPresence:     true,  // Phone biometric IS the user presence check
 		HandlesUserVerification: true,  // Phone biometric IS the user verification
 		// The phone prompts for biometric during Sign/GenerateKey operations.
-		// This serves as both user presence (UP) and user verification (UV).
+		// This serves as both user presence (UP) and user verification (UV)
+		// for that operation only: there is no standalone "verify the user"
+		// RPC, so the authenticator mints no pinUvAuthToken from it (#1145).
 		// No separate desktop notification needed - similar to YubiKey where
 		// the touch is the only user interaction required.
 	}

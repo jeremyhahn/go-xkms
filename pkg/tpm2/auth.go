@@ -115,9 +115,10 @@ func authProbeTemplate() tpm2.TPM2BPublic {
 // other TPM rejection is wrapped in ErrAuthProbeRejected so callers can tell a
 // genuine wrong-PIN apart from a probe/transport fault.
 //
-// Session lifecycle: the auth-probe session is a real, caller-owned HMAC
-// session (started via TPM2_StartAuthSession up front, see TPM2.HMACSession)
-// rather than the one-shot, just-in-time session TPM2.HMAC builds. This is a
+// Session lifecycle: the auth-probe session is a real, caller-owned, salted
+// HMAC session (started via TPM2_StartAuthSession up front, see
+// TPM2.HMACSession) rather than a go-tpm one-shot, just-in-time session. The
+// salt keeps the probed auth value from being recovered from the bus. This is a
 // deliberate choice, not a style preference: go-tpm's one-shot session is
 // only flushed on the TPM's own initiative on success (when the command's
 // session attributes carry ContinueSession=false, TCG TPM 2.0 Part 1 Section
@@ -143,8 +144,8 @@ func (tpm *TPM2) VerifyAuth(handle tpm2.TPMHandle, authValue []byte) error {
 		return errors.Join(ErrAuthChangeKeyNotFound, err)
 	}
 
-	// Start a real HMAC session bound to the provided auth value. Unlike
-	// TPM2.HMAC's one-shot session, this issues TPM2_StartAuthSession
+	// Start a real HMAC session carrying the provided auth value. Unlike a
+	// go-tpm one-shot session, this issues TPM2_StartAuthSession
 	// immediately, so the session handle is known to us -- and therefore
 	// flushable by us -- before the probe command ever executes.
 	session, closeSession, err := tpm.HMACSession(authValue)
@@ -244,29 +245,19 @@ func (tpm *TPM2) ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte) 
 	}
 
 	// Evict the current persistent key.
-	_, err = tpm2.EvictControl{
-		Auth: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		ObjectHandle: &tpm2.NamedHandle{
-			Handle: handle,
-			Name:   name,
-		},
-		PersistentHandle: handle,
-	}.Execute(tpm.transport)
+	err = tpm.evictControl(hierarchy, nil, tpm2.NamedHandle{
+		Handle: handle,
+		Name:   name,
+	}, handle)
 	if err != nil {
 		return errors.Join(ErrAuthChangeRecreate, &errs.Wrapped{Msg: fmt.Sprintf("evict old handle 0x%x", handle), Err: err})
 	}
 
 	// Recreate the primary with the same template but new auth.
 	// Using the same template ensures deterministic key material
-	// (same hierarchy seed + same template = same key).
-	primaryKey, err := tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
+	// (same hierarchy seed + same template = same key). The new auth value
+	// is encrypted on its way into the TPM (see createPrimary).
+	primaryKey, err := tpm.createPrimary(hierarchy, nil, tpm2.CreatePrimary{
 		InPublic: tpm2.New2B(pub),
 		InSensitive: tpm2.TPM2BSensitiveCreate{
 			Sensitive: &tpm2.TPMSSensitiveCreate{
@@ -275,24 +266,17 @@ func (tpm *TPM2) ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte) 
 				},
 			},
 		},
-	}.Execute(tpm.transport)
+	})
 	if err != nil {
 		return errors.Join(ErrAuthChangeRecreate, &errs.Wrapped{Msg: "recreate primary", Err: err})
 	}
 	defer tpm.Flush(primaryKey.ObjectHandle)
 
 	// Persist the recreated key at the same handle.
-	_, err = tpm2.EvictControl{
-		Auth: tpm2.AuthHandle{
-			Handle: hierarchy,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		ObjectHandle: &tpm2.NamedHandle{
-			Handle: primaryKey.ObjectHandle,
-			Name:   primaryKey.Name,
-		},
-		PersistentHandle: handle,
-	}.Execute(tpm.transport)
+	err = tpm.evictControl(hierarchy, nil, tpm2.NamedHandle{
+		Handle: primaryKey.ObjectHandle,
+		Name:   primaryKey.Name,
+	}, handle)
 	if err != nil {
 		return errors.Join(ErrAuthChangeRecreate, &errs.Wrapped{Msg: fmt.Sprintf("persist new key at 0x%x", handle), Err: err})
 	}

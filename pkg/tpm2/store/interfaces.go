@@ -59,6 +59,15 @@ const (
 	// exactly the same lifetime. Objects created before the record existed
 	// simply have none; see PlatformPolicyPin for how they are handled.
 	FSEXT_PLATFORM_POLICY = ".policy"
+
+	// FSEXT_LEGACY_PRIVATE_BLOB is the private-blob extension symmetric keys
+	// were written with before go-xkms#1148 moved them onto the Platform SRK
+	// seal path. Those blobs hold an AES key sealed with no authorization
+	// under the Shared SRK -- effectively unprotected -- and are refused on
+	// load (ErrUnprotectedSymmetricKey), never written by current code. The
+	// constant exists solely so Delete can still find and remove the file
+	// and so refusal errors can name it.
+	FSEXT_LEGACY_PRIVATE_BLOB = ".priv"
 )
 
 // FSExtension is re-exported from types for compatibility

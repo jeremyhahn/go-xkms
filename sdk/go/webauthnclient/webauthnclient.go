@@ -117,6 +117,10 @@ var (
 
 	// NewHardwareAdapter opens the local CTAP2 authenticator over HID.
 	NewHardwareAdapter = pkgclient.NewHardwareAdapter
+
+	// OriginFromURL derives the WebAuthn origin (scheme and authority) from
+	// a server URL, or returns "" when none can be derived.
+	OriginFromURL = pkgclient.OriginFromURL
 )
 
 // Re-exported error sentinels.

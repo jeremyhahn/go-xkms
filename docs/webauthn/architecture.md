@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Architecture
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-04
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## The problem
 
@@ -136,8 +136,10 @@ that is what the credential-store decorator hooks
   explicitly false so a composer's default and an operator's decision do not
   collide silently. Under a composed host the host-projected value is
   authoritative.
-- **Signature counters are checked and updated.** A counter that goes backwards
-  is a cloned-authenticator signal.
+- **Signature counters are checked and updated.** A counter that does not
+  advance is a cloned-authenticator signal: it is logged and audited, and the
+  login proceeds. Refusing such a login is a relying-party policy decision this
+  feature leaves open.
 
 ## What this feature deliberately does not do
 

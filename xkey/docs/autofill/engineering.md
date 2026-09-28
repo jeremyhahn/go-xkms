@@ -1,6 +1,6 @@
 # Browser Extension AutoFill — Engineering
 
-> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 See [architecture.md](architecture.md) for the component map and data flow
 before reading this document.
@@ -204,6 +204,13 @@ Emits Wails events `extension:pairing_request` and `extension:paired`/
   audit checks in `GetCredential`/`SearchCredentials` all check the
   enterprise override after the user's own and let it force a stricter
   outcome, never a looser one.
+- **Pairing and identity-verification failures are durable.** Every
+  failure is persisted before the refusal is returned
+  (`recordLimitFailure`, `pairing_limits.go:88`); a failure that cannot be
+  persisted is returned as an error rather than as `ErrPairingInvalidCode`,
+  so a flaky store never grants a free guess. A new `PairingVerifier` over
+  the same state directory inherits the count and any lockout
+  (`lockedOut`, `pairing_limits.go:68`).
 - **A pairing-revoked extension is disconnected on its next message, not
   polled for.** `Host.relayLoop` reloads pairing state and checks
   `IsPairedForOrigin` before processing every incoming message.
@@ -255,6 +262,7 @@ interactively — see the doc comments at each sentinel in that file).
 | IPC socket | `--socket` (GUI: fixed path; headless: flag) → `ipc.DefaultSocketPath()` | Shared by the GUI and `xkey extension serve` |
 | Native messaging manifest | Installed by `xkey extension install`; browser launches the host via `os.Executable()`'s resolved path | See [cli.md](cli.md) |
 | Pairing state | `<data dir>/extension/pairing.json`, created only by `extension host`/`extension serve` (never by a read-only command) | `--no-pairing` skips identity verification (development only) |
+| Pairing rate limits | `<data dir>/extension/pairing-limits.json` (0600), derived from the pairing state path (`limitsPathFor`, `pairing_limits.go:62`); shared by the GUI and every native host instance | Deleting it by hand clears a lockout; a corrupt file refuses pairing until removed |
 | Autofill policy | In-memory (`atomic.Pointer`), persisted via `PolicyPersistFunc` to config; `EnterpriseExtensionPolicy` layered on top | See architecture.md |
 
 ## Tests
@@ -264,6 +272,7 @@ interactively — see the doc comments at each sentinel in that file).
 | `go-xkms/pkg/autofill/domain_test.go`, `policy_test.go`, `verifier_test.go` (root module) | (none) | Domain matching edge cases, policy validation, CTAP2 assertion verification (including replay/UV/signature failure) |
 | `xkey/pkg/gui/services/autofill_service_test.go` | (none) | Search/get/save/ignore flows, enterprise policy overrides, CTAP2 registration/auth, audit-on-deny |
 | `xkey/pkg/nativemsg/crypto_test.go`, `pairing_test.go`, `host_test.go`, `protocol_test.go`, `manifest_test.go` | (none) | ECDH handshake, pairing ceremony + lockouts + migration, host relay loop, wire framing, manifest install/status |
+| `xkey/pkg/nativemsg/pairing_limits_test.go` | (none) | Pairing/verify failures and lockouts survive a new host instance over the same state dir, 0600 mode, unpair does not clear a lockout, corrupt/unwritable limits fail closed |
 | `xkey/pkg/ipc/server_autofill_test.go`, `autofill_types_test.go` | (none) | IPC dispatch, payload validation |
 | `xkey/pkg/gui/services/pairing_service_test.go` | (none) | GUI pairing service, event emission |
 | `xkey/cmd/xkey/cmd/extension_test.go`, `extension_serve_test.go`, `extension_serve_policy_test.go`, `extension_agent_piv_test.go` | `ble codec_json` | CLI verbs, headless barrier-strategy handling, enterprise policy wiring |

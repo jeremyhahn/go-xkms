@@ -894,6 +894,27 @@ func TestTenantAwareAdminService_CreateTenantIntermediateCA_GlobalParentTrustedR
 	assert.ErrorIs(t, err, ca.ErrNotInitialized)
 }
 
+// TestTenantAwareAdminService_CreateTenantIntermediateCA_NilCANotConfigured
+// is the go-xkms#1075 regression: the global-parent branch (the default,
+// req.ParentType != "tenant") dereferenced s.ca as a crypto.Signer with no
+// nil guard, unlike every other s.ca access in this file. ACME disabled
+// (cmd/xkmsd/admin.go finalizeAdminModule passes a nil CA) plus a request
+// for the default global-parent intermediate CA must now answer the typed
+// ErrCANotConfigured instead of panicking.
+func TestTenantAwareAdminService_CreateTenantIntermediateCA_NilCANotConfigured(t *testing.T) {
+	logger := slog.Default()
+	qrdbSvc := newTestQRDB()
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
+
+	intCA, err := service.CreateTenantIntermediateCA(context.Background(), "tenant-nil-ca", CreateTenantIntermediateCARequest{
+		CommonName:   "Global Parent Intermediate CA",
+		KeyAlgorithm: "RSA",
+	})
+
+	require.ErrorIs(t, err, ErrCANotConfigured)
+	assert.Nil(t, intCA)
+}
+
 func TestTenantAwareAdminService_CreateTenantIntermediateCA_MissingCommonName(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := newTestQRDB()

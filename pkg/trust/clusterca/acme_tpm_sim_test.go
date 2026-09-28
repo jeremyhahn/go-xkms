@@ -25,6 +25,7 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -34,10 +35,13 @@ import (
 // provisioner type-asserts for exactly this shape to reach enroll-01 material.
 type tpmBackedBackend struct {
 	xkms.Backend
-	tpm pkgtpm2.TrustedPlatformModule
+	tpm  pkgtpm2.TrustedPlatformModule
+	keys store.KeyBackend
 }
 
 func (b *tpmBackedBackend) TPM() pkgtpm2.TrustedPlatformModule { return b.tpm }
+
+func (b *tpmBackedBackend) KeyBackend() store.KeyBackend { return b.keys }
 
 // newSimulatorTPMBackend builds a tpm2 backend over the in-process TPM
 // simulator. It never touches host TPM hardware (/dev/tpm*).
@@ -75,7 +79,7 @@ func TestAcmeNodeSigner_TPMWithoutProvisionedIDevIDFailsClosed(t *testing.T) {
 	opts := firstNodeOptions(t, t.TempDir(), softwareBackends(t))
 	opts.KeyBackend = "tpm2"
 	opts.Backends = func(string) (xkms.Backend, error) {
-		return &tpmBackedBackend{Backend: wrapped, tpm: tpmBackend.TPM()}, nil
+		return &tpmBackedBackend{Backend: wrapped, tpm: tpmBackend.TPM(), keys: tpmBackend.KeyBackend()}, nil
 	}
 
 	p, err := New(opts, testLogger())

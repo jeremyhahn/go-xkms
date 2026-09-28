@@ -693,6 +693,8 @@ func (s *stubFIDO2Backend) Type() xkms.BackendType { return s.bt }
 func (s *stubFIDO2Backend) Capabilities() keybackend.FIDO2KeyCapabilities {
 	return keybackend.FIDO2KeyCapabilities{}
 }
+func (s *stubFIDO2Backend) HandlesUserVerificationFor(xkms.BackendType) bool { return false }
+func (s *stubFIDO2Backend) HandlesUserPresenceFor(xkms.BackendType) bool     { return false }
 func (s *stubFIDO2Backend) GenerateCredentialKey(int, []byte) (keybackend.KeyHandle, []byte, error) {
 	return nil, nil, nil
 }

@@ -15,12 +15,12 @@ package main
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	acmemetrics "github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -57,7 +57,10 @@ func TestXkmsdMetrics_ACMERegistryReachesServerMetrics(t *testing.T) {
 
 	tempDir := t.TempDir()
 	cfg := &config.Config{
-		Server: config.ServerConfig{Host: "127.0.0.1", RESTPort: 18081},
+		// RESTPort is never bound here: Server.Start only serves REST on an
+		// injected listener (Server.SetRESTListener), which this test never
+		// calls, so 0 documents that rather than naming a port nothing binds.
+		Server: config.ServerConfig{Host: "127.0.0.1", RESTPort: 0},
 		Protocols: config.ProtocolsConfig{
 			Unix: true,
 		},
@@ -76,7 +79,6 @@ func TestXkmsdMetrics_ACMERegistryReachesServerMetrics(t *testing.T) {
 		},
 		Metrics: config.MetricsConfig{
 			Enabled: true,
-			Port:    19394,
 			Path:    "/metrics",
 		},
 	}
@@ -85,6 +87,18 @@ func TestXkmsdMetrics_ACMERegistryReachesServerMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
 	}
+
+	// Bind the metrics listener ourselves and inject it (go-xkms#1142):
+	// Metrics.Port above is deliberately left unset. Server.SetMetricsListener
+	// takes precedence over it (server.go: startMetrics), so this test never
+	// names a literal port that another package's test could already have
+	// bound in a parallel CI run, and MetricsAddr reports the real one back
+	// once Start has run.
+	metricsListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on an ephemeral loopback port: %v", err)
+	}
+	srv.SetMetricsListener(metricsListener)
 
 	// Mirrors startACMEServer's RegisterMetricsGatherer(acmemetrics.Registry)
 	// call: this is the one line under test in cmd/xkmsd/acme.go, exercised
@@ -100,11 +114,12 @@ func TestXkmsdMetrics_ACMERegistryReachesServerMetrics(t *testing.T) {
 		}
 	}()
 
-	// The metrics server starts in its own goroutine; give it a moment to
-	// bind before scraping, matching pkg/server's own startMetrics tests.
-	time.Sleep(100 * time.Millisecond)
+	metricsAddr := srv.MetricsAddr()
+	if metricsAddr == nil {
+		t.Fatal("server.MetricsAddr() = nil after Start with an injected listener")
+	}
 
-	metricsResp, err := http.Get("http://127.0.0.1:19394/metrics")
+	metricsResp, err := http.Get("http://" + metricsAddr.String() + "/metrics")
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}

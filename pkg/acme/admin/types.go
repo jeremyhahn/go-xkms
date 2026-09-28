@@ -37,6 +37,21 @@ var (
 	ErrAccountNotFound        = errors.New("admin: account not found")
 	ErrOrderNotFound          = errors.New("admin: order not found")
 	ErrRevocationFailed       = errors.New("admin: certificate revocation failed")
+	// ErrCANotConfigured is returned by AdminService methods that read from
+	// the ACME certificate authority (GetStatus, RevokeCertificate) when the
+	// service was constructed with a nil ca.TCGCA. This is the ordinary,
+	// non-error shape of an admin surface mounted with ACME disabled
+	// (cmd/xkmsd/admin.go finalizeAdminModule passes acme.CA(), which is nil
+	// for a nil *acmeServer) rather than a misconfiguration: the surface
+	// degrades the affected routes instead of failing to mount.
+	ErrCANotConfigured = errors.New("admin: certificate authority not configured")
+	// ErrStorageNotConfigured is returned by AdminService methods that read
+	// from the ACME storage factory (certificate, account, and order
+	// listing/lookup, and GetStats) when the service was constructed with a
+	// nil storage.Factory — the same ACME-disabled degradation as
+	// ErrCANotConfigured, for the storage-backed routes instead of the
+	// CA-backed ones.
+	ErrStorageNotConfigured = errors.New("admin: ACME storage not configured")
 	// ErrRESTOnly marks ACME admin operations that are intentionally exposed
 	// over REST only. ACME is an HTTP protocol (RFC 8555), so order management
 	// and tenant-CA administration are served exclusively over the REST surface;

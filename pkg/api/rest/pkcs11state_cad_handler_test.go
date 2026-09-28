@@ -86,7 +86,7 @@ func TestPKCS11StateCADHandler_RejectsBadInput(t *testing.T) {
 	missingToken, err := json.Marshal(transport.PKCS11StateCADRequest{Key: "pkcs11/markers/claim"})
 	require.NoError(t, err)
 	rec = postPKCS11StateCAD(t, h, missingToken)
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a missing token is a fault in the request")
 	assert.Contains(t, rec.Body.String(), xkms.ErrPKCS11StateTokenRequired.Error())
 
 	unwired := NewPKCS11StateHandlers(nil)

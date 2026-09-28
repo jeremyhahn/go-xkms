@@ -441,11 +441,11 @@ func TestServer_Shutdown_WithMetricsCollector(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Metrics.Enabled = true
-	cfg.Metrics.Port = 19501
 	cfg.Metrics.Path = "/metrics"
 
 	server, err := New(cfg)
 	require.NoError(t, err)
+	server.SetMetricsListener(newTestMetricsListener(t))
 
 	require.NoError(t, server.Start())
 	// Wait for startMetrics's goroutine to set the metrics server field

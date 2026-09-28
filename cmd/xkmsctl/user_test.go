@@ -164,6 +164,9 @@ func newUserRegisterCmd() *cobra.Command {
 	cmd.Flags().Duration("timeout", 30*time.Second, "")
 	cmd.Flags().String("device", "/nonexistent/fido2-device", "")
 	cmd.Flags().Bool("user-verification", false, "")
+	// These tests run over no http(s) --server, so the origin is supplied;
+	// TestResolveWebAuthnOrigin covers its derivation and absence.
+	cmd.Flags().String(originFlag, "https://kms.example.com", "")
 	addPINFlags(cmd)
 	return cmd
 }
@@ -173,6 +176,9 @@ func newUserLoginCmd() *cobra.Command {
 	cmd.Flags().Duration("timeout", 30*time.Second, "")
 	cmd.Flags().String("device", "/nonexistent/fido2-device", "")
 	cmd.Flags().Bool("user-verification", false, "")
+	// These tests run over no http(s) --server, so the origin is supplied;
+	// TestResolveWebAuthnOrigin covers its derivation and absence.
+	cmd.Flags().String(originFlag, "https://kms.example.com", "")
 	addPINFlags(cmd)
 	return cmd
 }

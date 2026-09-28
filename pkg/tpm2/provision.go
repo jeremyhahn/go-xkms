@@ -24,16 +24,10 @@ import (
 // This command clears Owner, Endorsement, and Lockout hierarchy auth values.
 // Authorization must be provided using either the Lockout or Platform hierarchy.
 func (tpm *TPM2) Clear(lockoutAuth []byte) error {
-	_, err := tpm2.Clear{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHLockout,
-			Auth:   tpm2.PasswordAuth(lockoutAuth),
-		},
-	}.Execute(tpm.transport)
-	if err != nil {
+	return tpm.withHierarchyAuth(tpm2.TPMRHLockout, lockoutAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
+		_, err := tpm2.Clear{AuthHandle: authHandle}.Execute(tpm.transport)
 		return err
-	}
-	return nil
+	})
 }
 
 // ppiRequestWriter is the seam through which ForceClear performs its single
@@ -276,17 +270,10 @@ func (tpm *TPM2) factoryResetInternal(ownerAuth []byte, attemptClear bool) error
 				continue
 			}
 
-			_, err = tpm2.EvictControl{
-				Auth: tpm2.AuthHandle{
-					Handle: tpm2.TPMRHOwner,
-					Auth:   tpm2.PasswordAuth(ownerAuth),
-				},
-				ObjectHandle: &tpm2.NamedHandle{
-					Handle: handle,
-					Name:   name,
-				},
-				PersistentHandle: handle,
-			}.Execute(tpm.transport)
+			err = tpm.evictControl(tpm2.TPMRHOwner, ownerAuth, tpm2.NamedHandle{
+				Handle: handle,
+				Name:   name,
+			}, handle)
 			if err != nil {
 				tpm.logger.Error("Failed to evict handle",
 					slog.String("handle", fmt.Sprintf("0x%08X", handle)),
@@ -325,16 +312,16 @@ func (tpm *TPM2) factoryResetInternal(ownerAuth []byte, attemptClear bool) error
 			continue // NV index doesn't exist, skip
 		}
 
-		_, err = tpm2.NVUndefineSpace{
-			AuthHandle: tpm2.AuthHandle{
-				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(ownerAuth),
-			},
-			NVIndex: tpm2.NamedHandle{
-				Handle: nvIndex,
-				Name:   readPubRsp.NVName,
-			},
-		}.Execute(tpm.transport)
+		err = tpm.withHierarchyAuth(tpm2.TPMRHOwner, ownerAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
+			_, err := tpm2.NVUndefineSpace{
+				AuthHandle: authHandle,
+				NVIndex: tpm2.NamedHandle{
+					Handle: nvIndex,
+					Name:   readPubRsp.NVName,
+				},
+			}.Execute(tpm.transport)
+			return err
+		})
 		if err != nil {
 			tpm.logger.Error("Failed to undefine NV index",
 				slog.String("index", fmt.Sprintf("0x%08X", nvIndex)),
@@ -798,11 +785,8 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 		return ErrNVCertTooLarge
 	}
 
+	hierarchy := ekAttrs.TPMAttributes.Hierarchy
 	defs := tpm2.NVDefineSpace{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: ekAttrs.TPMAttributes.Hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
 		PublicInfo: tpm2.New2B(
 			tpm2.TPMSNVPublic{
 				NVIndex: ekCertHandle,
@@ -821,7 +805,11 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 				DataSize: uint16(len(ekCertDER)), // #nosec G115 -- bounded by indexMax (uint16) above
 			}),
 	}
-	_, err = defs.Execute(tpm.transport)
+	err = tpm.withHierarchyAuth(hierarchy, hierarchyAuth, encryptIn, func(authHandle tpm2.AuthHandle) error {
+		defs.AuthHandle = authHandle
+		_, err := defs.Execute(tpm.transport)
+		return err
+	})
 	if err != nil {
 		tpm.logger.Error("NVDefineSpace failed", slog.String("error", err.Error()))
 		return err
@@ -839,21 +827,22 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 		return err
 	}
 
-	write := tpm2.NVWrite{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: ekAttrs.TPMAttributes.Hierarchy,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		NVIndex: tpm2.NamedHandle{
-			Handle: pub.NVIndex,
-			Name:   *nvName,
-		},
-		Data: tpm2.TPM2BMaxNVBuffer{
-			Buffer: ekCertDER,
-		},
-		Offset: 0,
-	}
-	if _, err := write.Execute(tpm.transport); err != nil {
+	// The EK certificate is public: only the hierarchy auth is protected.
+	err = tpm.withHierarchyAuth(hierarchy, hierarchyAuth, encryptNone, func(authHandle tpm2.AuthHandle) error {
+		_, err := tpm2.NVWrite{
+			AuthHandle: authHandle,
+			NVIndex: tpm2.NamedHandle{
+				Handle: pub.NVIndex,
+				Name:   *nvName,
+			},
+			Data: tpm2.TPM2BMaxNVBuffer{
+				Buffer: ekCertDER,
+			},
+			Offset: 0,
+		}.Execute(tpm.transport)
+		return err
+	})
+	if err != nil {
 		tpm.logger.Error("NVWrite failed", slog.String("error", err.Error()))
 		return err
 	}

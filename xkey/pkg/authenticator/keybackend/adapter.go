@@ -82,6 +82,20 @@ func (a *BackendAdapter) Type() xkms.BackendType {
 	return a.backendType
 }
 
+// HandlesUserVerificationFor reports whether backendID names this adapter and
+// its capabilities claim user verification. No go-xkms key provider verifies
+// the user inside its key operations, so an adapter reports false.
+func (a *BackendAdapter) HandlesUserVerificationFor(backendID xkms.BackendType) bool {
+	return backendID == a.backendType && a.Capabilities().HandlesUserVerification
+}
+
+// HandlesUserPresenceFor reports whether backendID names this adapter and its
+// capabilities claim user presence. No go-xkms key provider collects presence
+// inside its key operations, so an adapter reports false.
+func (a *BackendAdapter) HandlesUserPresenceFor(backendID xkms.BackendType) bool {
+	return backendID == a.backendType && a.Capabilities().HandlesUserPresence
+}
+
 // Capabilities maps the go-xkms provider capabilities to FIDO2KeyCapabilities.
 func (a *BackendAdapter) Capabilities() FIDO2KeyCapabilities {
 	caps := a.provider.Capabilities()

@@ -196,7 +196,6 @@ type AgentConfig struct {
 // TPMConfig holds direct TPM access parameters.
 type TPMConfig struct {
 	Device          string `yaml:"device" json:"device" mapstructure:"device"`
-	EncryptSessions bool   `yaml:"encrypt_sessions" json:"encrypt_sessions" mapstructure:"encrypt_sessions"`
 	PlatformPCRBank string `yaml:"platform_pcr_bank" json:"platform_pcr_bank" mapstructure:"platform_pcr_bank"`
 	SealPCRBank     string `yaml:"seal_pcr_bank" json:"seal_pcr_bank" mapstructure:"seal_pcr_bank"`
 	SRKHandle       uint32 `yaml:"srk_handle" json:"srk_handle" mapstructure:"srk_handle"`
@@ -424,7 +423,6 @@ func DefaultConfig() *Config {
 		},
 		TPM: TPMConfig{
 			Device:          "/dev/tpmrm0",
-			EncryptSessions: true,
 			PlatformPCRBank: "sha256",
 		},
 		OIDC: OIDCConfig{

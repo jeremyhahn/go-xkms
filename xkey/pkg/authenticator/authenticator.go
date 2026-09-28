@@ -1007,6 +1007,8 @@ func errorToStatus(err error) byte {
 		return StatusPINInvalid
 	case errors.Is(err, ErrPINBlocked):
 		return StatusPINBlocked
+	case errors.Is(err, ErrPINAuthBlocked):
+		return StatusPINAuthBlocked
 	case errors.Is(err, ErrPINAuthInvalid):
 		return StatusPINAuthInvalid
 	case errors.Is(err, ErrPINNotSet):
@@ -1062,6 +1064,8 @@ func errorToStatus(err error) byte {
 		return StatusCredentialExcluded
 	case errors.Is(err, ErrUnsupportedExtension):
 		return StatusUnsupportedExtension
+	case errors.Is(err, ErrUnsupportedOption):
+		return StatusUnsupportedOption
 	case errors.Is(err, ErrPolicyTampered):
 		return StatusIntegrityFailure
 	case errors.Is(err, ErrStorageClosed):

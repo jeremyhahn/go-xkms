@@ -261,13 +261,9 @@ func (tpm *TPM2) DefineDevIDPolicyNV(kind DevIDKeyKind, nameAlg tpm2.TPMAlgID, o
 	define := public
 	define.Attributes.Written = false
 
-	_, err = tpm2.NVDefineSpace{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(ownerAuth),
-		},
+	err = tpm.nvDefineSpace(tpm2.TPMRHOwner, ownerAuth, &tpm2.NVDefineSpace{
 		PublicInfo: tpm2.New2B(define),
-	}.Execute(tpm.transport)
+	})
 	if err != nil && !errors.Is(err, tpm2.TPMRCNVDefined) {
 		return &errs.Detail{Err: ErrDevIDDelegation, Detail: fmt.Sprintf("NV_DefineSpace 0x%08x: %v", uint32(public.NVIndex), err)}
 	}
@@ -357,14 +353,7 @@ func (tpm *TPM2) WriteDevIDDelegationPolicy(
 		}
 	}()
 
-	_, err = tpm2.PolicySecret{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHEndorsement,
-			Auth:   tpm2.PasswordAuth(endorsementAuth),
-		},
-		NonceTPM:      session.NonceTPM(),
-		PolicySession: session.Handle(),
-	}.Execute(tpm.transport)
+	err = tpm.policySecret(tpm2.TPMRHEndorsement, endorsementAuth, session)
 	if err != nil {
 		return &errs.Detail{Err: ErrDevIDDelegation, Detail: fmt.Sprintf("PolicySecret(endorsement): %v", err)}
 	}

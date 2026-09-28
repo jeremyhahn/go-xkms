@@ -63,7 +63,7 @@ func TestEnrollDevice_CompleteWorkflow(t *testing.T) {
 	require.NoError(t, err, "Failed to provision TPM")
 
 	// Create ACME client with TPM adapter
-	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule())
+	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule(), swtpm.GetKeyBackend())
 	defer tpmAdapter.Close()
 
 	accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -198,7 +198,7 @@ func TestEnrollDevice_EnvVarExpansion(t *testing.T) {
 	err = swtpm.Provision()
 	require.NoError(t, err, "Failed to provision TPM")
 
-	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule())
+	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule(), swtpm.GetKeyBackend())
 	defer tpmAdapter.Close()
 
 	// Configure enrollment with environment variable expansion
@@ -232,7 +232,7 @@ func TestEnrollDevice_MissingEnvVar(t *testing.T) {
 	err = swtpm.Provision()
 	require.NoError(t, err, "Failed to provision TPM")
 
-	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule())
+	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule(), swtpm.GetKeyBackend())
 	defer tpmAdapter.Close()
 
 	accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -284,7 +284,7 @@ func TestRequestEndorsementKeyCertificate_CompleteWorkflow(t *testing.T) {
 	err = swtpm.Provision()
 	require.NoError(t, err, "Failed to provision TPM")
 
-	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule())
+	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule(), swtpm.GetKeyBackend())
 	defer tpmAdapter.Close()
 
 	accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -356,12 +356,13 @@ func TestRequestEndorsementKeyCertificate_InvalidConfig(t *testing.T) {
 // Coverage target: startAttestServer (enrollment.go:837)
 //
 // This test validates:
-// - Creating an ACME order for device attestation
-// - Generating TPM quote over selected PCRs
-// - Setting up the device-attest-01 challenge with attestation statement
-// - Starting the HTTP server for challenge endpoint
-// - Processing authorization and quote verification
-// - Finalizing the order and receiving attestation certificate
+//   - Creating an ACME order for device attestation
+//   - Creating the certificate key under the Platform SRK and certifying it
+//     with the IAK (TPM2_Certify) over the key authorization
+//   - Setting up the device-attest-01 challenge with attestation statement
+//   - Starting the HTTP server for challenge endpoint
+//   - Processing authorization and certification verification
+//   - Finalizing the order and receiving attestation certificate
 func TestDeviceAttest_CompleteWorkflow(t *testing.T) {
 	RequireSwtpm(t)
 
@@ -378,7 +379,7 @@ func TestDeviceAttest_CompleteWorkflow(t *testing.T) {
 	err = swtpm.Provision()
 	require.NoError(t, err, "Failed to provision TPM")
 
-	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule())
+	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule(), swtpm.GetKeyBackend())
 	defer tpmAdapter.Close()
 
 	accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -391,23 +392,20 @@ func TestDeviceAttest_CompleteWorkflow(t *testing.T) {
 	_, err = acmeClient.RegisterAccount()
 	require.NoError(t, err, "Failed to register account")
 
-	// Configure device attestation with PCR selection
-	pcrSelection := []int{0, 1, 2, 3, 7}
 	attestConfig := &client.EnrollmentConfig{
-		Challenge:    string(client.ChallengeTypeDeviceAttest01),
-		IPAddress:    getClientHostnameEnv(),
-		TPMModule:    tpmAdapter,
-		Port:         getClientPortEnv(),
-		CommonName:   deviceID + "-attest",
-		PCRSelection: pcrSelection,
-		Timeout:      60 * time.Second,
+		Challenge:  string(client.ChallengeTypeDeviceAttest01),
+		IPAddress:  getClientHostnameEnv(),
+		TPMModule:  tpmAdapter,
+		Port:       getClientPortEnv(),
+		CommonName: deviceID + "-attest",
+		Timeout:    60 * time.Second,
 	}
 
 	// Execute device attestation
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	cert, err := acmeClient.DeviceAttest(ctx, attestConfig, pcrSelection)
+	cert, err := acmeClient.DeviceAttest(ctx, attestConfig)
 	require.NoError(t, err, "Device attestation should succeed")
 	require.NotNil(t, cert, "Certificate should not be nil")
 
@@ -419,84 +417,7 @@ func TestDeviceAttest_CompleteWorkflow(t *testing.T) {
 	t.Logf("Device attestation completed successfully")
 	t.Logf("  Subject: %s", cert.Subject.CommonName)
 	t.Logf("  Serial: %s", cert.SerialNumber)
-	t.Logf("  PCRs: %v", pcrSelection)
 	t.Logf("  Valid: %s - %s", cert.NotBefore, cert.NotAfter)
-}
-
-// TestDeviceAttest_MultiplePCRSelections tests attestation with various PCR selections.
-func TestDeviceAttest_MultiplePCRSelections(t *testing.T) {
-	RequireSwtpm(t)
-
-	serverURL := getServerURL()
-
-	testCases := []struct {
-		name         string
-		pcrSelection []int
-	}{
-		{
-			name:         "boot PCRs",
-			pcrSelection: []int{0, 1, 2, 3},
-		},
-		{
-			name:         "boot and config PCRs",
-			pcrSelection: []int{0, 1, 2, 3, 4, 5, 6, 7},
-		},
-		{
-			name:         "single PCR",
-			pcrSelection: []int{0},
-		},
-		{
-			name:         "non-contiguous PCRs",
-			pcrSelection: []int{0, 2, 5, 7},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			deviceID := fmt.Sprintf("device-attest-%s-%d.example.com", tc.name, time.Now().Unix())
-
-			swtpm := NewSwtpmConnection(t, deviceID)
-			defer swtpm.Close()
-
-			err := swtpm.InitializeTPM()
-			require.NoError(t, err, "Failed to initialize TPM")
-
-			err = swtpm.Provision()
-			require.NoError(t, err, "Failed to provision TPM")
-
-			tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule())
-			defer tpmAdapter.Close()
-
-			accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			require.NoError(t, err, "Failed to generate account key")
-
-			acmeClient, err := createTestACMEClient(serverURL, accountKey, tpmAdapter)
-			require.NoError(t, err, "Failed to create ACME client")
-
-			// Register account with ACME server
-			_, err = acmeClient.RegisterAccount()
-			require.NoError(t, err, "Failed to register account")
-
-			attestConfig := &client.EnrollmentConfig{
-				Challenge:    string(client.ChallengeTypeDeviceAttest01),
-				IPAddress:    getClientHostnameEnv(),
-				TPMModule:    tpmAdapter,
-				Port:         getClientPortEnv(),
-				CommonName:   deviceID,
-				PCRSelection: tc.pcrSelection,
-				Timeout:      60 * time.Second,
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-			defer cancel()
-
-			cert, err := acmeClient.DeviceAttest(ctx, attestConfig, tc.pcrSelection)
-			require.NoError(t, err, "Device attestation should succeed with PCR selection %v", tc.pcrSelection)
-			require.NotNil(t, cert, "Certificate should not be nil")
-
-			t.Logf("Attestation with %d PCRs successful: %v", len(tc.pcrSelection), tc.pcrSelection)
-		})
-	}
 }
 
 // TestDeviceAttest_InvalidConfig tests error handling for invalid attestation config.
@@ -519,7 +440,7 @@ func TestDeviceAttest_InvalidConfig(t *testing.T) {
 		CommonName: "test-device-attest",
 	}
 
-	_, err = acmeClient.DeviceAttest(ctx, attestConfig, []int{0, 1, 2})
+	_, err = acmeClient.DeviceAttest(ctx, attestConfig)
 	assert.ErrorIs(t, err, client.ErrMissingTPMModule, "Should return missing TPM module error")
 }
 
@@ -604,7 +525,7 @@ func TestEnrollment_ConcurrentRequests(t *testing.T) {
 				return
 			}
 
-			tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule())
+			tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule(), swtpm.GetKeyBackend())
 			defer tpmAdapter.Close()
 
 			accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -668,7 +589,7 @@ func TestEnrollment_Timeout(t *testing.T) {
 	err = swtpm.Provision()
 	require.NoError(t, err, "Failed to provision TPM")
 
-	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule())
+	tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule(), swtpm.GetKeyBackend())
 	defer tpmAdapter.Close()
 
 	accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

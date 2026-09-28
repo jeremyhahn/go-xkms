@@ -24,6 +24,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,17 @@ func createMinimalConfig(t *testing.T) *config.Config {
 			},
 		},
 	}
+}
+
+// newTestMetricsListener binds an OS-assigned loopback port for
+// Server.SetMetricsListener, so metrics-enabled tests never name a literal
+// port that another package's test could already have bound in a parallel
+// CI run (go-xkms#1142).
+func newTestMetricsListener(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	return ln
 }
 
 // Test helpers for TLS testing
@@ -531,12 +543,12 @@ func TestServer_ShutdownWithMetrics(t *testing.T) {
 	cfg.Protocols.QUIC = false
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = true
-	cfg.Metrics.Port = 19100
 	cfg.Metrics.Path = "/metrics"
 
 	server, err := New(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
+	server.SetMetricsListener(newTestMetricsListener(t))
 
 	// Start server with metrics
 	err = server.Start()
@@ -1676,12 +1688,12 @@ func TestServer_Start_MetricsInitialization(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Metrics.Enabled = true
-	cfg.Metrics.Port = 19400
 	cfg.Metrics.Path = "/metrics"
 
 	server, err := New(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
+	server.SetMetricsListener(newTestMetricsListener(t))
 	defer func() { _ = server.Shutdown() }()
 
 	// Start should initialize metrics and start metrics server
@@ -2576,12 +2588,12 @@ func TestServer_Start_MetricsEnabledMultipleTimes(t *testing.T) {
 	cfg.Protocols.QUIC = false
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = true
-	cfg.Metrics.Port = 19999
 	cfg.Metrics.Path = "/metrics"
 
 	server, err := New(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
+	server.SetMetricsListener(newTestMetricsListener(t))
 
 	// Start server multiple times (should be idempotent)
 	err = server.Start()
@@ -2688,12 +2700,12 @@ func TestServer_StartMetrics_Success(t *testing.T) {
 	cfg.Protocols.QUIC = false
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = true
-	cfg.Metrics.Port = 19393
 	cfg.Metrics.Path = "/metrics"
 
 	server, err := New(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
+	server.SetMetricsListener(newTestMetricsListener(t))
 
 	// Start server with metrics
 	err = server.Start()

@@ -33,6 +33,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -345,6 +346,10 @@ type WebAuthnServiceParams struct {
 
 	// Logger receives construction diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
+
+	// AuditLogger receives the relying party's security audit events
+	// (webauthn.CloneWarningAuditAction). Nil records none.
+	AuditLogger audit.Logger
 }
 
 // WebAuthnServiceBuildError reports a WebAuthn service construction failure
@@ -410,6 +415,7 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		SessionStore:    webauthn.NewMemorySessionStore(),
 		CredentialStore: credentialStore,
 		Logger:          logger,
+		AuditLogger:     p.AuditLogger,
 	}
 	if p.TokenIssuer != nil {
 		params.JWTGenerator = NewWebAuthnTokenAdapter(p.TokenIssuer, tenantID)

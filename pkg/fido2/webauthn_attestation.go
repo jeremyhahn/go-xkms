@@ -274,11 +274,10 @@ func (h *FIDO2Handler) BindDevice(path string) {
 // parseRequestOptions on the assertion side.
 //
 // The origin is NOT carried in the options - a browser supplies it from its
-// security context - so the caller provides it. When origin is empty, the
-// WebAuthn-standard same-origin default "https://<rpId>" is used; this is
-// correct whenever the relying party origin host equals the RP ID. Callers
-// whose origin host differs from the RP ID (a registrable-suffix RP ID) must
-// pass the explicit origin.
+// security context - so the caller provides it, and the server's rp.id must be
+// the origin's effective domain or a registrable suffix of it (ValidateRPID).
+// An empty origin is refused: it is never derived from the server-supplied
+// rp.id.
 func ParseWebAuthnRegistrationOptions(optionsJSON []byte, origin string) (WebAuthnRegistrationOptions, error) {
 	if len(optionsJSON) == 0 {
 		return WebAuthnRegistrationOptions{}, &errs.Wrapped{Msg: "fido2", Err: ErrRegistrationOptionsRequired}
@@ -312,9 +311,8 @@ func ParseWebAuthnRegistrationOptions(optionsJSON []byte, origin string) (WebAut
 		return WebAuthnRegistrationOptions{}, &errs.Wrapped{Msg: "fido2: failed to decode user handle", Err: err}
 	}
 
-	resolvedOrigin := origin
-	if resolvedOrigin == "" {
-		resolvedOrigin = "https://" + opts.RelyingParty.ID
+	if err := ValidateRPID(opts.RelyingParty.ID, origin); err != nil {
+		return WebAuthnRegistrationOptions{}, err
 	}
 
 	challenge := make([]byte, len(opts.Challenge))
@@ -322,7 +320,7 @@ func ParseWebAuthnRegistrationOptions(optionsJSON []byte, origin string) (WebAut
 
 	return WebAuthnRegistrationOptions{
 		Challenge:               challenge,
-		Origin:                  resolvedOrigin,
+		Origin:                  origin,
 		RPID:                    opts.RelyingParty.ID,
 		RPName:                  opts.RelyingParty.Name,
 		UserID:                  userID,
@@ -359,8 +357,8 @@ func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebA
 	if len(opts.Challenge) == 0 {
 		return nil, &errs.Message{Msg: "fido2: registration challenge required"}
 	}
-	if opts.Origin == "" {
-		return nil, &errs.Message{Msg: "fido2: registration origin required"}
+	if err := ValidateRPID(opts.RPID, opts.Origin); err != nil {
+		return nil, err
 	}
 
 	// Build clientDataJSON and derive the clientDataHash the authenticator signs.
