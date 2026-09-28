@@ -505,29 +505,6 @@ func TestCreatePlatformModelExtension_EmptyString(t *testing.T) {
 	requireStringExtensionValue(t, ext.Value, "")
 }
 
-func TestCreatePlatformVersionExtension_Success(t *testing.T) {
-	t.Parallel()
-
-	ext, err := CreatePlatformVersionExtension("1.0.3")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	requireValidExtension(t, ext, OIDTCGAttributePlatformVersion)
-	requireStringExtensionValue(t, ext.Value, "1.0.3")
-}
-
-func TestCreatePlatformVersionExtension_EmptyString(t *testing.T) {
-	t.Parallel()
-
-	ext, err := CreatePlatformVersionExtension("")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	requireValidExtension(t, ext, OIDTCGAttributePlatformVersion)
-	requireStringExtensionValue(t, ext.Value, "")
-}
-
 // =============================================================================
 // Create Extension Tests - TPM Specification
 // =============================================================================
@@ -1142,7 +1119,6 @@ func TestAllCreateExtensions_AreNonCritical(t *testing.T) {
 		{name: "TPMSpecification", builder: func() (pkix.Extension, error) { return CreateTPMSpecificationExtension(spec) }},
 		{name: "PlatformManufacturer", builder: func() (pkix.Extension, error) { return CreatePlatformManufacturerExtension("Dell") }},
 		{name: "PlatformModel", builder: func() (pkix.Extension, error) { return CreatePlatformModelExtension("R750") }},
-		{name: "PlatformVersion", builder: func() (pkix.Extension, error) { return CreatePlatformVersionExtension("1.0") }},
 		{name: "TPKeyStore", builder: func() (pkix.Extension, error) { return CreateTPKeyStoreExtension("TPM2") }},
 		{name: "TPIssuerKeyStore", builder: func() (pkix.Extension, error) { return CreateTPIssuerKeyStoreExtension("PKCS11") }},
 		{name: "TPFIPS140", builder: func() (pkix.Extension, error) { return CreateTPFIPS140Extension(true) }},
@@ -1194,8 +1170,6 @@ func TestAllCreateExtensions_HaveDistinctOIDs(t *testing.T) {
 	addExt("PlatformManufacturer", ext, err)
 	ext, err = CreatePlatformModelExtension("R750")
 	addExt("PlatformModel", ext, err)
-	ext, err = CreatePlatformVersionExtension("1.0")
-	addExt("PlatformVersion", ext, err)
 	ext, err = CreateTPKeyStoreExtension("TPM2")
 	addExt("TPKeyStore", ext, err)
 	ext, err = CreateTPIssuerKeyStoreExtension("PKCS11")

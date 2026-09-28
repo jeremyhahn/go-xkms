@@ -280,7 +280,6 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 
 	t.Run("IAK TPM Extensions", func(t *testing.T) {
 		hasTPMModel := false
-		hasTPMVersion := false
 		hasTPKeyStore := false
 
 		// tcg-kp-AIKCertificate (2.23.133.8.3) is an Extended Key Usage
@@ -298,7 +297,13 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 		// tcg-at-platformModel (2.23.133.2.5), never tcg-at-tpmModel
 		// (2.23.133.2.2) -- see the identical note in
 		// attestation_integration_test.go's "Certificates Have TPM Model
-		// Extension" subtest.
+		// Extension" subtest. There is no TPM version extension to check:
+		// the TCG-CSR-IDEVID carries no version field at all (only
+		// ProdModel and ProdSerial, pkg/tpm2/types.go), and pkg/ca/tcg.go's
+		// own comment documents that the device serial was once written
+		// under tcg-at-tpmVersion (2.23.133.2.3) by mistake and that this
+		// was deliberately stopped -- the serial is asserted via
+		// Subject.SerialNumber below instead.
 		for _, ext := range iakCert.Extensions {
 			switch {
 			case ext.Id.Equal(ca.OIDTCGAttributePlatformModel):
@@ -307,12 +312,6 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 				_, err := asn1.Unmarshal(ext.Value, &model)
 				assert.NoError(t, err, "TPM model should be valid ASN.1")
 				t.Logf("TPM Model: %s", model)
-			case ext.Id.Equal(ca.OIDTCGAttributeTPMVersion):
-				hasTPMVersion = true
-				var version string
-				_, err := asn1.Unmarshal(ext.Value, &version)
-				assert.NoError(t, err, "TPM version should be valid ASN.1")
-				t.Logf("TPM Version: %s", version)
 			case ext.Id.Equal(ca.OIDTPKeyStore):
 				hasTPKeyStore = true
 				var keyStore string
@@ -324,8 +323,11 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 
 		assert.True(t, hasAIKMarker, "IAK should have AIK Certificate extended key usage")
 		assert.True(t, hasTPMModel, "IAK should have TPM model extension")
-		assert.True(t, hasTPMVersion, "IAK should have TPM version extension")
 		assert.True(t, hasTPKeyStore, "IAK should have TPKeyStore extension")
+		// pkg/ca/tcg.go's applyDeviceSerialNumber writes the CSR's
+		// ProdSerial into the certificate's Subject.SerialNumber DN
+		// attribute (RFC 5280), not a TCG extension.
+		assert.Equal(t, deviceID, iakCert.Subject.SerialNumber, "IAK subject should carry the device serial number")
 
 		assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMResidency), "IAK should have VerifiedTPMResidency policy")
 		// pkg/ca/profiles.go's NewTCGInitialAttestationKeyProfile stamps
@@ -341,16 +343,15 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 
 	t.Run("IDevID TPM Extensions", func(t *testing.T) {
 		hasTPMModel := false
-		hasTPMVersion := false
 		hasPermanentID := false
 		hasTPKeyStore := false
 
+		// No TPM version extension to check here either -- see the "IAK TPM
+		// Extensions" subtest's comment above.
 		for _, ext := range idevidCert.Extensions {
 			switch {
 			case ext.Id.Equal(ca.OIDTCGAttributePlatformModel):
 				hasTPMModel = true
-			case ext.Id.Equal(ca.OIDTCGAttributeTPMVersion):
-				hasTPMVersion = true
 			case ext.Id.Equal(ca.OIDPermanentIdentifier):
 				hasPermanentID = true
 				t.Logf("IDevID has Permanent Identifier extension")
@@ -360,9 +361,9 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 		}
 
 		assert.True(t, hasTPMModel, "IDevID should have TPM model extension")
-		assert.True(t, hasTPMVersion, "IDevID should have TPM version extension")
 		assert.True(t, hasPermanentID, "IDevID should have Permanent Identifier extension")
 		assert.True(t, hasTPKeyStore, "IDevID should have TPKeyStore extension")
+		assert.Equal(t, deviceID, idevidCert.Subject.SerialNumber, "IDevID subject should carry the device serial number")
 
 		assert.True(t, hasPolicyIdentifier(idevidCert, ca.OIDTCGVerifiedTPMResidency), "IDevID should have VerifiedTPMResidency policy")
 		assert.True(t, hasPolicyIdentifier(idevidCert, ca.OIDTCGVerifiedTPMFixed), "IDevID should have VerifiedTPMFixed policy")
