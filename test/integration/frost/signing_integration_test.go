@@ -9,7 +9,6 @@ package frost_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
@@ -54,44 +53,37 @@ func createMultiParticipantSetup(t *testing.T, keyID string, threshold, total in
 		publicStore, err := storage.NewMemoryBackend()
 		require.NoError(t, err)
 
-		secretBackend := newTestSecretBackend()
+		secretBackend, sealAttrs := newSoftwareFrostSecretBackend(t)
 
 		backendConfig := &frost.Config{
-			PublicStorage:       publicStore,
-			SecretBackend:       secretBackend,
-			Algorithm:           algorithm,
-			DefaultThreshold:    threshold,
-			DefaultTotal:        total,
-			ParticipantID:       participantID,
-			EnableNonceTracking: true,
+			PublicStorage:           publicStore,
+			SecretBackend:           secretBackend,
+			SecretSealKeyAttributes: sealAttrs,
+			Algorithm:               algorithm,
+			DefaultThreshold:        threshold,
+			DefaultTotal:            total,
+			ParticipantID:           participantID,
+			EnableNonceTracking:     true,
 		}
 
 		backend, err := frost.NewBackend(backendConfig)
 		require.NoError(t, err)
 		backends[i] = backend
 
-		// Store the key package for this participant
+		// Store this participant's key package through the backend's own
+		// KeyStore -- the same production path FrostBackend.GenerateKey
+		// uses -- so the secret share is sealed by secretBackend rather
+		// than written to storage in the clear.
 		pkg := packages[i]
-
-		// Store public components (metadata, group public key, verification shares)
-		err = publicStore.Put(ctx, "frost/keys/"+keyID+"/metadata.json",
-			[]byte(fmt.Sprintf(`{"key_id":"%s","algorithm":"%s","threshold":%d,"total":%d,"participant_id":%d,"created_at":0,"secret_backend_type":"pkcs8"}`,
-				keyID, algorithm, threshold, total, participantID)))
-		require.NoError(t, err)
-
-		err = publicStore.Put(ctx, "frost/keys/"+keyID+"/group_public.bin", pkg.GroupPublicKey)
-		require.NoError(t, err)
-
-		// Store verification shares for all participants
-		for pid, vs := range pkg.VerificationShares {
-			path := fmt.Sprintf("frost/keys/%s/verification_shares/%d.bin", keyID, pid)
-			err = publicStore.Put(ctx, path, vs)
-			require.NoError(t, err)
+		metadata := &frost.KeyMetadata{
+			KeyID:             keyID,
+			Algorithm:         algorithm,
+			Threshold:         threshold,
+			Total:             total,
+			ParticipantID:     participantID,
+			SecretBackendType: types.BackendTypeSoftware,
 		}
-
-		// Store secret share
-		err = secretBackend.Storage().Put(ctx, "frost/secrets/"+keyID+".secret", pkg.SecretShare.Value)
-		require.NoError(t, err)
+		require.NoError(t, backend.KeyStore().StoreKeyPackage(ctx, keyID, pkg, metadata))
 	}
 
 	return &multiParticipantSetup{
@@ -114,93 +106,17 @@ func (s *multiParticipantSetup) Close() {
 // This test properly sets up two separate backends (one per participant) and
 // distributes key packages to simulate a real distributed signing scenario.
 func TestFrostSigning_MinimalThreshold(t *testing.T) {
-	keyID := "minimal-threshold-key"
 	threshold := 2
 	total := 2
 
-	ctx := context.Background()
+	// Create properly distributed 2-of-2 setup: each participant gets its
+	// own backend, backed by its own real (sealing) secret backend, with
+	// its key package stored through that backend's KeyStore.
+	setup := createMultiParticipantSetup(t, "minimal-threshold-key", threshold, total, types.FrostAlgorithmEd25519)
+	defer setup.Close()
 
-	// Generate all key packages using TrustedDealer directly
-	td := frost.NewTrustedDealer()
-	config := frost.FrostConfig{
-		Threshold:     threshold,
-		Total:         total,
-		Algorithm:     types.FrostAlgorithmEd25519,
-		ParticipantID: 1,
-	}
-
-	packages, _, err := td.Generate(config)
-	require.NoError(t, err)
-	require.Len(t, packages, total)
-
-	// Create backends for each participant and store their key packages
-	backends := make([]*frost.FrostBackend, total)
-	for i := 0; i < total; i++ {
-		participantID := uint32(i + 1)
-
-		publicStore, err := storage.NewMemoryBackend()
-		require.NoError(t, err)
-
-		secretBackend := newTestSecretBackend()
-
-		backendConfig := &frost.Config{
-			PublicStorage:       publicStore,
-			SecretBackend:       secretBackend,
-			Algorithm:           types.FrostAlgorithmEd25519,
-			DefaultThreshold:    threshold,
-			DefaultTotal:        total,
-			ParticipantID:       participantID,
-			EnableNonceTracking: true,
-		}
-
-		backend, err := frost.NewBackend(backendConfig)
-		require.NoError(t, err)
-		backends[i] = backend
-
-		// Store the key package for this participant using the backend's internal KeyStore
-		pkg := packages[i]
-		metadata := &frost.KeyMetadata{
-			KeyID:             keyID,
-			Algorithm:         types.FrostAlgorithmEd25519,
-			Threshold:         threshold,
-			Total:             total,
-			ParticipantID:     participantID,
-			CreatedAt:         0,
-			SecretBackendType: types.BackendTypeSoftware,
-		}
-
-		// Store public components
-		err = publicStore.Put(ctx, "frost/keys/"+keyID+"/metadata.json",
-			[]byte(fmt.Sprintf(`{"key_id":"%s","algorithm":"%s","threshold":%d,"total":%d,"participant_id":%d,"created_at":0,"secret_backend_type":"pkcs8"}`,
-				keyID, types.FrostAlgorithmEd25519, threshold, total, participantID)))
-		require.NoError(t, err)
-
-		err = publicStore.Put(ctx, "frost/keys/"+keyID+"/group_public.bin", pkg.GroupPublicKey)
-		require.NoError(t, err)
-
-		// Store verification shares for all participants
-		for pid, vs := range pkg.VerificationShares {
-			path := fmt.Sprintf("frost/keys/%s/verification_shares/%d.bin", keyID, pid)
-			err = publicStore.Put(ctx, path, vs)
-			require.NoError(t, err)
-		}
-
-		// Store secret share
-		err = secretBackend.Storage().Put(ctx, "frost/secrets/"+keyID+".secret", pkg.SecretShare.Value)
-		require.NoError(t, err)
-
-		t.Logf("Stored key package for participant %d", participantID)
-		_ = metadata // used in setup
-	}
-
-	// Clean up all backends at the end
-	defer func() {
-		for _, b := range backends {
-			if b != nil {
-				_ = b.Close()
-			}
-		}
-	}()
+	backends := setup.Backends
+	keyID := setup.KeyID
 
 	// Round 1: Each participant generates their nonces
 	noncePackages := make([]*frost.NoncePackage, total)

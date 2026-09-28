@@ -258,7 +258,7 @@ func (s *Server) authenticationUnaryInterceptor(
 		s.logger.Warn("Authentication failed",
 			slog.String("method", info.FullMethod),
 			slog.String("error", err.Error()))
-		return nil, status.Errorf(codes.Unauthenticated, "authentication failed: %v", err)
+		return nil, status.Error(codes.Unauthenticated, errAuthenticationFailed)
 	}
 
 	// Store identity in context
@@ -286,7 +286,7 @@ func (s *Server) authenticationStreamInterceptor(
 		s.logger.Warn("Authentication failed",
 			slog.String("method", info.FullMethod),
 			slog.String("error", err.Error()))
-		return status.Errorf(codes.Unauthenticated, "authentication failed: %v", err)
+		return status.Error(codes.Unauthenticated, errAuthenticationFailed)
 	}
 
 	// Store identity in context and wrap the stream

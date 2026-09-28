@@ -137,3 +137,11 @@ The withheld error is logged, never dropped:
 registry lookup failure it wraps stays reachable through `Unwrap` for logs and
 `errors.Is`, never in the message (`pkg/api/tenantgate/tenantgate.go:68`).
 
+Every denial body/message above is fixed and generic — REST's `"Authentication
+required"` / `"Access denied: insufficient permissions"`, gRPC's
+`"grpc: authentication required"` / `"grpc: access denied"` (and
+`"authentication failed"` from the authentication interceptors, one layer
+before `authorize` runs). None of them include the qrdb authorizer's or
+authenticator's own error text; that detail is not the caller's to see and
+stays server-side (audit event or `slog`) — see engineering.md's Error
+semantics and Observability (go-xkms#1103).

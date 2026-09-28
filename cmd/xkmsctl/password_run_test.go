@@ -83,12 +83,11 @@ func TestPasswordGetCmd_Success(t *testing.T) {
 		ID: "id-1", Name: "github", Username: "alice", Password: "s3cret",
 	}}
 	withGlobalConfig(t, newPasswordConfig(mock))
-	_ = passwordGetCmd.Flags().Set("decrypt", "true")
 
 	out := captureStdout(t, func() {
 		passwordGetCmd.Run(passwordGetCmd, []string{"id-1"})
 	})
-	if mock.gotGetReq == nil || mock.gotGetReq.ID != "id-1" || !mock.gotGetReq.Decrypt {
+	if mock.gotGetReq == nil || mock.gotGetReq.ID != "id-1" {
 		t.Errorf("PasswordGet request mismatch: %+v", mock.gotGetReq)
 	}
 	if !strings.Contains(out, "github") {

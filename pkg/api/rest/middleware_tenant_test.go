@@ -165,51 +165,30 @@ func TestTenantMiddleware_SystemTenantID(t *testing.T) {
 	})
 }
 
-func TestTenantMiddleware_SORole(t *testing.T) {
-	t.Run("SO role gets cross-tenant access", func(t *testing.T) {
+// TestTenantMiddleware_SORoleNameGetsNoBypass is the go-xkms#1074
+// regression: a tenant identity whose Roles spell "so" -- alone or alongside
+// "admin", the shape of an unverified token claim -- used to pass with
+// cross-tenant access. It is refused like any other identity of an
+// unregistered tenant.
+func TestTenantMiddleware_SORoleNameGetsNoBypass(t *testing.T) {
+	for _, roles := range [][]string{{"so"}, {"so", "admin"}} {
 		registry := testTenantMiddlewareRegistry(t)
 		s := newTenantMiddlewareServer(registry)
-
 		middleware := s.TenantMiddleware()(tenantTestOKHandler)
 
-		// SO identity with a tenant ID should still pass through
 		identity := &auth.Identity{
 			Subject:  "security-officer",
 			TenantID: "nonexistent-tenant",
-			Roles:    []string{"so"},
+			Roles:    roles,
 		}
-		ctx := auth.WithIdentity(context.Background(), identity)
-
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
-		req = req.WithContext(ctx)
+		req = req.WithContext(auth.WithIdentity(context.Background(), identity))
 		w := httptest.NewRecorder()
 
 		middleware.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-
-	t.Run("SO role with interface slice claims passes through", func(t *testing.T) {
-		registry := testTenantMiddlewareRegistry(t)
-		s := newTenantMiddlewareServer(registry)
-
-		middleware := s.TenantMiddleware()(tenantTestOKHandler)
-
-		identity := &auth.Identity{
-			Subject:  "security-officer",
-			TenantID: "any-tenant",
-			Roles:    []string{"so", "admin"},
-		}
-		ctx := auth.WithIdentity(context.Background(), identity)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
-		req = req.WithContext(ctx)
-		w := httptest.NewRecorder()
-
-		middleware.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
+		assert.Equal(t, http.StatusForbidden, w.Code, "roles %v", roles)
+	}
 }
 
 func TestTenantMiddleware_TenantNotFound(t *testing.T) {
@@ -376,8 +355,8 @@ func TestTenantMiddleware_IdentityWithNoRoles(t *testing.T) {
 		s := newTenantMiddlewareServer(registry)
 		middleware := s.TenantMiddleware()(tenantTestOKHandler)
 
-		// Identity with no claims (nil) -- HasRole returns false,
-		// but tenant exists and is unsealed so it passes.
+		// Identity with no roles: the tenant exists and is unsealed, so it
+		// passes.
 		identity := &auth.Identity{
 			Subject:  "basic-user",
 			TenantID: "valid-tenant",

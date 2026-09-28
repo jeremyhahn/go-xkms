@@ -50,12 +50,10 @@ func TestBackend_GetKey_NotFound(t *testing.T) {
 		StoreType:    backend.STORE_AZUREKV,
 		KeyAlgorithm: 0,
 	}
-	// GetKey checks local metadata before calling the Key Vault client's
+	// GetKey checks persisted metadata before calling the Key Vault client's
 	// GetKey; seed it so the test exercises the HTTP-status classification,
-	// not the earlier "no local record" gate.
-	b.mu.Lock()
-	b.metadata[attrs.CN] = []byte(`{}`)
-	b.mu.Unlock()
+	// not the earlier "no persisted record" gate.
+	require.NoError(t, storage.SaveKey(context.Background(), config.KeyStorage, attrs.CN, []byte(`{}`)))
 
 	_, err = b.GetKey(context.Background(), attrs)
 	require.Error(t, err)
@@ -86,9 +84,7 @@ func TestBackend_GetKey_RetrievalError(t *testing.T) {
 		StoreType:    backend.STORE_AZUREKV,
 		KeyAlgorithm: 0,
 	}
-	b.mu.Lock()
-	b.metadata[attrs.CN] = []byte(`{}`)
-	b.mu.Unlock()
+	require.NoError(t, storage.SaveKey(context.Background(), config.KeyStorage, attrs.CN, []byte(`{}`)))
 
 	_, err = b.GetKey(context.Background(), attrs)
 	require.Error(t, err)

@@ -22,8 +22,11 @@
 package xkms
 
 import (
+	"context"
+
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -42,19 +45,32 @@ func init() {
 func newFROSTKeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
 	// Create a software PKCS#8 backend for secret key storage
 	secretStorage := storage.New()
-	secretBackend, err := pkcs8.NewBackend(&pkcs8.Config{
+	provider, err := pkcs8.NewBackend(&pkcs8.Config{
 		KeyStorage: secretStorage,
 	})
 	if err != nil {
 		return nil, err
 	}
+	secretBackend, ok := provider.(types.SealingKeyProvider)
+	if !ok {
+		return nil, &frost.ConfigError{Field: "SecretBackend", Message: "PKCS#8 backend does not implement types.SealingKeyProvider"}
+	}
+
+	// Provision (idempotently) the Ed25519 private key the PKCS#8 backend's
+	// Sealer derives an AES-256-GCM wrapping key from (HKDF), mirroring
+	// pkg/server's ensureFrostSecretSealKey for the "pkcs8" secret_backend.
+	sealKeyAttrs := frost.AsymmetricSecretSealKeyAttributes(types.StoreSoftware)
+	if err := seal.EnsurePrivateSealKey(context.Background(), provider, sealKeyAttrs); err != nil {
+		return nil, err
+	}
 
 	frostConfig := &frost.Config{
-		PublicStorage:    storage.New(),
-		SecretBackend:    secretBackend,
-		DefaultThreshold: 2,
-		DefaultTotal:     3,
-		ParticipantID:    1,
+		PublicStorage:           storage.New(),
+		SecretBackend:           secretBackend,
+		SecretSealKeyAttributes: sealKeyAttrs,
+		DefaultThreshold:        2,
+		DefaultTotal:            3,
+		ParticipantID:           1,
 	}
 
 	if threshold, ok := config["threshold"].(int); ok {

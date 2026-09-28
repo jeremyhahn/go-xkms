@@ -98,57 +98,6 @@ func (m *RBACMiddleware) RequirePermission(resource, action string) func(http.Ha
 	}
 }
 
-// RequireRole returns middleware that requires the identity to hold a
-// specific role. Roles are read directly from the authenticated identity
-// resolved from the qrdb identity plane.
-func (m *RBACMiddleware) RequireRole(roleName string) func(http.Handler) http.Handler {
-	return m.RequireAnyRole(roleName)
-}
-
-// RequireAnyRole returns middleware that requires the identity to hold at
-// least one of the specified roles.
-func (m *RBACMiddleware) RequireAnyRole(roleNames ...string) func(http.Handler) http.Handler {
-	required := make(map[string]struct{}, len(roleNames))
-	for _, n := range roleNames {
-		required[n] = struct{}{}
-	}
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-
-			identity := auth.GetIdentity(ctx)
-			if identity == nil {
-				m.logger.Warn("RBAC role check failed: no identity in context",
-					slog.String("method", r.Method),
-					slog.String("path", r.URL.Path))
-				writeErrorWithMessage(w, ErrUnauthorized, "Authentication required", http.StatusUnauthorized)
-				return
-			}
-
-			hasRole := false
-			for _, role := range identity.Roles {
-				if _, ok := required[role]; ok {
-					hasRole = true
-					break
-				}
-			}
-
-			if !hasRole {
-				m.logger.Warn("RBAC access denied: missing required role",
-					slog.String("subject", identity.Subject),
-					slog.Any("required_roles", roleNames),
-					slog.String("method", r.Method),
-					slog.String("path", r.URL.Path))
-				writeErrorWithMessage(w, ErrForbidden, "Access denied: insufficient role", http.StatusForbidden)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 // userRoleContextKey is a context key for storing the user's role.
 type userRoleContextKey struct{}
 

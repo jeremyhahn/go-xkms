@@ -19,8 +19,6 @@
 //
 //   - a cross-tenant-scoped caller (auth.IsCrossTenant: nil identity, empty
 //     TenantID, or the reserved system tenant) passes with no barrier
-//   - the Security Officer role passes with cross-tenant access regardless
-//     of TenantID, per the FIPS 140-2/3 separation-of-duties model
 //   - no registry configured means tenant enforcement is disabled for this
 //     deployment; every caller passes
 //   - the caller's tenant is not registered: ErrTenantNotFound
@@ -40,6 +38,20 @@
 // pkg/api/initgate is the transport-neutral seam for the init-ceremony
 // public-method table. Every pkg/api/* transport may import it; pkg/auth and
 // pkg/seal never import it back.
+//
+// # Cross-tenant scope is qrdb's system-tenant rule, and nothing else
+//
+// Whether a caller escapes tenant scoping is decided by auth.IsCrossTenant,
+// which delegates to go-qrdb's system-tenant rule: cross-tenant power comes
+// from a role grant in the reserved system tenant. There is deliberately no
+// role-based exemption. One existed -- a Security Officer bypass that compared
+// the identity's roles against the NAME "so" -- and it never matched a real
+// grant, because identities carry role IDENTIFIERS; it only matched an
+// identity whose roles came from an unverified token claim spelling "so",
+// which it then let past the tenant-registered and tenant-sealed checks
+// (go-xkms#1074). The system tenant's own Security Officer is already
+// cross-tenant under the rule above; a tenant-local officer is confined to
+// its tenant exactly as qrdb's authorizer confines it.
 //
 // Each transport maps the returned error onto its own wire shape (REST 403 /
 // 503, gRPC PermissionDenied / Unavailable, QUIC 403 / 503, MCP JSON-RPC
@@ -91,18 +103,12 @@ func (e *ErrTenantSealed) Error() string {
 //
 // A nil *seal.TenantBarrier with a nil error means the caller passes without
 // tenant scoping applied — either because the caller is cross-tenant scoped
-// (system tenant, empty TenantID, or a nil identity), holds the "so" role, or
-// no registry is configured. The caller must not assume a non-nil barrier: a
+// (system tenant, empty TenantID, or a nil identity) or no registry is
+// configured. The caller must not assume a non-nil barrier: a
 // nil barrier and nil error is the common "no enforcement needed" case, not a
 // failure.
 func Access(identity *auth.Identity, registry *seal.BarrierRegistry) (*seal.TenantBarrier, error) {
 	if auth.IsCrossTenant(identity) {
-		return nil, nil
-	}
-
-	// Security Officer role gets cross-tenant access per the FIPS 140-2/3
-	// separation-of-duties model, regardless of the identity's own TenantID.
-	if identity.HasRole("so") {
 		return nil, nil
 	}
 
