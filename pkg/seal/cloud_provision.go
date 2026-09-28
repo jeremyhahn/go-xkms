@@ -100,6 +100,29 @@ func (e *ErrNotCloudSealStrategy) Error() string {
 	return fmt.Sprintf("seal: %q is not a cloud KMS strategy", e.Strategy)
 }
 
+// ErrOperatorSealKeyNotFound indicates the operator configured an existing
+// key (SealOperatorKeyProvider.OperatorSealKeyID, backed by Config.KeyID) for
+// the named strategy, but the backend reports no such key exists. This is
+// never treated as "no key yet": EnsureSealKey must not paper over an
+// operator's typo or a since-deleted CMK by silently provisioning a
+// different key in its place.
+type ErrOperatorSealKeyNotFound struct {
+	Strategy string
+	KeyID    string
+	Err      error
+}
+
+// Error returns the error message.
+func (e *ErrOperatorSealKeyNotFound) Error() string {
+	return fmt.Sprintf("seal: operator-configured %s seal key %q not found: %v", e.Strategy, e.KeyID, e.Err)
+}
+
+// Unwrap returns the underlying backend error (e.g. backend.ErrKeyNotFound),
+// so errors.Is(err, backend.ErrKeyNotFound) still matches through this type.
+func (e *ErrOperatorSealKeyNotFound) Unwrap() error {
+	return e.Err
+}
+
 // IsCloudSealStrategy reports whether id is one of the cloud KMS strategies
 // BuildCloudKMSStrategy composes (StrategyAWSKMS, StrategyGCPKMS,
 // StrategyAzureKV, StrategyVault).
@@ -128,7 +151,9 @@ func IsCloudSealStrategy(id StrategyID) bool {
 //     which calls AWS KMS's CreateKey and persists the ID AWS assigns it.
 //   - Every backend then check-and-skips: GetSymmetricKey reuses an existing
 //     key, and only a genuine not-found triggers GenerateSymmetricKey (first
-//     init).
+//     init) -- UNLESS the operator configured a specific key: a not-found for
+//     an operator-named key is never papered over by silently provisioning a
+//     different one, so it fails closed with ErrOperatorSealKeyNotFound.
 //
 // The operation is idempotent: an existing key is detected and reused
 // unchanged, so previously-sealed data unseals after a restart, as long as
@@ -156,9 +181,10 @@ func EnsureSealKey(
 	// GetSymmetricKey can resolve it. A backend with no operator-configured
 	// key seeds nothing here, so the check-and-skip below falls through to
 	// GenerateSymmetricKey and creates one.
+	var operatorKeyID string
 	if id == StrategyAWSKMS {
 		if opProvider, ok := provider.(SealOperatorKeyProvider); ok {
-			if operatorKeyID := opProvider.OperatorSealKeyID(); operatorKeyID != "" {
+			if operatorKeyID = opProvider.OperatorSealKeyID(); operatorKeyID != "" {
 				saver, ok := provider.(SealMetadataSaver)
 				if !ok {
 					return &ErrSealBackendUnavailable{Strategy: string(id), Purpose: "operator-configured seal key metadata"}
@@ -179,6 +205,12 @@ func EnsureSealKey(
 	} else if !errors.Is(err, backend.ErrKeyNotFound) &&
 		!errors.Is(err, backend.ErrKeyAlreadyExists) {
 		return err
+	} else if operatorKeyID != "" && errors.Is(err, backend.ErrKeyNotFound) {
+		// The operator named a specific, already-existing key. A not-found
+		// here means that key does not exist (never created, deleted, wrong
+		// account/region) -- not "first init" -- so it must fail closed
+		// rather than fall through and provision an unrelated replacement.
+		return &ErrOperatorSealKeyNotFound{Strategy: string(id), KeyID: operatorKeyID, Err: err}
 	}
 
 	if _, err := symProvider.GenerateSymmetricKey(ctx, keyAttrs); err != nil &&

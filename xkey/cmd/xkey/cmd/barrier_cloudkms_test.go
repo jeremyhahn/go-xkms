@@ -110,11 +110,13 @@ func TestPersistBarrierCloudKMSConfig_AWSKMS(t *testing.T) {
 		loadedConfig = savedCfg
 		barrierAWSRegion = ""
 		barrierAWSEndpoint = ""
+		barrierAWSKeyID = ""
 	}()
 
 	loadedConfig = config.DefaultConfig()
 	barrierAWSRegion = "us-west-2"
 	barrierAWSEndpoint = "https://kms.example.test"
+	barrierAWSKeyID = "arn:aws:kms:us-west-2:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
 
 	err := persistBarrierCloudKMSConfig("aws_kms")
 	require.NoError(t, err)
@@ -124,6 +126,16 @@ func TestPersistBarrierCloudKMSConfig_AWSKMS(t *testing.T) {
 	require.NotNil(t, loaded.Barrier.CloudKMS.AWSKMS)
 	assert.Equal(t, "us-west-2", loaded.Barrier.CloudKMS.AWSKMS.Region)
 	assert.Equal(t, "https://kms.example.test", loaded.Barrier.CloudKMS.AWSKMS.Endpoint)
+	assert.Equal(t, barrierAWSKeyID, loaded.Barrier.CloudKMS.AWSKMS.KeyID)
+}
+
+// TestBarrierInitCmd_AWSKeyIDFlagRegistered proves --aws-key-id is
+// registered on the `barrier init` command alongside the other aws_kms
+// connection flags (go-xkms#842).
+func TestBarrierInitCmd_AWSKeyIDFlagRegistered(t *testing.T) {
+	flag := barrierInitCmd.Flags().Lookup("aws-key-id")
+	require.NotNil(t, flag, "--aws-key-id must be registered on barrier init")
+	assert.Equal(t, "", flag.DefValue)
 }
 
 // TestPersistBarrierCloudKMSConfig_AWSKMSInvalid proves a missing required

@@ -1120,6 +1120,13 @@ type AWSKMSConfig struct {
 	// plain Go string. See types.SecretValue and types.SecretValueBytes.
 	SecretKey *types.SecretValue `yaml:"secret_key"`
 	Endpoint  string             `yaml:"endpoint"`
+
+	// KeyID is the operator-supplied identifier of an existing AWS KMS
+	// customer master key to use as the barrier's seal key, instead of one
+	// xkmsd provisions itself on first init. Accepts a key ID, a key ARN, an
+	// alias name, or an alias ARN. Optional -- when empty, xkmsd creates and
+	// persists a new CMK (go-xkms#839, go-xkms#842).
+	KeyID string `yaml:"key_id,omitempty"`
 }
 
 // GCPKMSConfig contains GCP KMS backend settings
