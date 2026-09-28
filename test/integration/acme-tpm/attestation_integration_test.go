@@ -579,9 +579,17 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 	})
 
 	t.Run("IDevID Has Permanent Identifier", func(t *testing.T) {
+		// The RFC 4043 permanentIdentifier is an otherName GeneralName
+		// inside the subjectAltName extension (pkg/ca/tcg.go), not a
+		// standalone extension under OIDPermanentIdentifier's own Id --
+		// ca.ParseOtherNames decodes the SAN extension's otherName entries,
+		// the same helper pkg/ca's own tcg_conformance_test.go uses.
+		others, err := ca.ParseOtherNames(idevidCert.Extensions)
+		require.NoError(t, err, "decode subjectAltName otherNames")
+
 		hasPermanentID := false
-		for _, ext := range idevidCert.Extensions {
-			if ext.Id.Equal(ca.OIDPermanentIdentifier) {
+		for _, other := range others {
+			if other.TypeID.Equal(ca.OIDPermanentIdentifier) {
 				hasPermanentID = true
 				t.Log("IDevID has Permanent Identifier extension")
 				break

@@ -233,6 +233,14 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 	iakConfig.KeyAlgorithm = "ECDSA"
 	iakConfig.SignatureAlgorithm = "ECDSA-SHA256"
 	iakConfig.RSAConfig = nil
+	// ECCConfig must be set explicitly, not left nil: pkg/tpm2's own
+	// TestVerifyTCG_CSR_IAK_Stateless_ECDSAKey_Succeeds (the one other place
+	// in this repo that provisions an ECDSA IAK) sets exactly this, and
+	// without it TPM2_Certify's signature over the IDevID key fails to
+	// verify (ErrCertifySignature) even though key creation itself succeeds
+	// silently -- the template's own "nil curve defaults to P-256" fallback
+	// (pkg/tpm2/devid_template.go) is not enough on its own here.
+	iakConfig.ECCConfig = &xkmssdk.ECCConfig{Curve: "P-256"}
 	config.IAK = &iakConfig
 
 	// Configure IDevID for enrollment with ECDSA

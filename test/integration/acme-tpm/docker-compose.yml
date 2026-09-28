@@ -67,6 +67,14 @@ services:
       timeout: 2s
       retries: 30
       start_period: 10s
+    # Resolve the "test" service via a static /etc/hosts entry instead of
+    # Docker's embedded DNS -- see the "test" service's ipv4_address comment
+    # below for why. Every callback this container makes to the device under
+    # test (enroll-01/endorse-01/device-attest-01 challenge fetches) goes
+    # through CHALLENGE_CLIENT_HOSTNAME=test, so this is the one name that
+    # matters here.
+    extra_hosts:
+      - "test:172.28.90.10"
     networks:
       - acme-tpm-network
 
@@ -106,11 +114,10 @@ services:
       # The test runner serves its own enroll-01/endorse-01/device-attest-01
       # challenge-response HTTP endpoint (test/integration/acme-tpm's
       # startChallengeServer et al.), which the acme-server container must be
-      # able to reach back by this hostname:port. The compose network already
-      # resolves the service name "test", named explicitly here so the value
-      # matches pkg/acme/server/handlers/challenge.go's 8080 default for
-      # enrollment-type challenges rather than the test helpers' bare 8888
-      # fallback (which nothing server-side would ever dial).
+      # able to reach back by this hostname:port, named explicitly so the
+      # value matches pkg/acme/server/handlers/challenge.go's 8080 default
+      # for enrollment-type challenges rather than the test helpers' bare
+      # 8888 fallback (which nothing server-side would ever dial).
       - CHALLENGE_CLIENT_HOSTNAME=test
       - CHALLENGE_CLIENT_PORT=8080
     working_dir: /workspace
@@ -118,11 +125,25 @@ services:
       go test -v -tags='integration,tpm2,codec_cbor,codec_json,codec_msgpack,gms_pure_go'
       ./test/integration/acme-tpm/... -timeout 20m
     networks:
-      - acme-tpm-network
+      acme-tpm-network:
+        # Static IP, not the compose-assigned DNS name: acme-server's
+        # callback to CHALLENGE_CLIENT_HOSTNAME=test repeatedly failed with
+        # "dial tcp: lookup test on 127.0.0.11:53: server misbehaving" --
+        # Docker's embedded DNS proxy returning SERVFAIL for a sibling
+        # service's own name, observed often enough in one run (every
+        # concurrent-enrollment test, plus the resulting cascade below) to
+        # be a real reliability gap, not a one-off. A fixed address removes
+        # the embedded resolver from this specific lookup entirely; every
+        # other cross-container name in this stack (acme-server,
+        # tpm-simulator) keeps using normal compose DNS.
+        ipv4_address: 172.28.90.10
 
 networks:
   acme-tpm-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.90.0/24
 
 volumes:
   swtpm-data:

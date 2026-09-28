@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -372,11 +373,26 @@ func TestEndorse01Challenge(t *testing.T) {
 		// ekPublicKey was already obtained in Step 0
 		require.NotNil(t, ekPublicKey, "EK public key should have been obtained in Step 0")
 
+		// pkg/acme/server/handlers/order_finalize.go's endorse01TPMManufacturer
+		// refuses finalize with BadCSR unless the CSR itself asserts the TPM's
+		// manufacturer code (tcg-at-tpmManufacturer, read from the CSR's own
+		// Subject DN or subjectAltName -- pkg/ca/tcg_devid_name.go's
+		// manufacturerFromNames checks the Subject first). Without it, finalize
+		// is rejected but sendJWSRequest only surfaces transport errors, not
+		// ACME problem documents, so the order silently stayed "ready" forever
+		// instead of progressing -- the missing attribute, not a key mismatch,
+		// is why finalize never reached "valid".
+		props, err := swtpm.GetTPMModule().FixedProperties()
+		require.NoError(t, err, "Failed to read TPM fixed properties")
+
 		// Create CSR template with the EK public key
 		csrTemplate := &x509.CertificateRequest{
 			Subject: pkix.Name{
 				CommonName:   deviceIdentifier,
 				Organization: []string{"Test Organization"},
+				ExtraNames: []pkix.AttributeTypeAndValue{
+					{Type: ca.OIDTCGAttributeTPMManufacturer, Value: props.ManufacturerCode},
+				},
 			},
 		}
 
