@@ -293,7 +293,7 @@ func dial(socketPath string, timeout time.Duration, trusted []int) (net.Conn, er
 		}
 		return nil, &SentinelCauseError{Sentinel: ErrConnectionFailed, Cause: err}
 	}
-	if err := verifyPeer(conn, trusted); err != nil {
+	if _, err := verifyPeer(conn, trusted); err != nil {
 		return nil, errors.Join(err, conn.Close())
 	}
 	return conn, nil

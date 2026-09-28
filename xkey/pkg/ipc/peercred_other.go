@@ -18,8 +18,10 @@ package ipc
 import "net"
 
 // peerUID refuses on platforms where xkey reads no peer credentials (the
-// other BSDs, illumos, Windows): an unverified peer might be another user's
-// listener, and the client is about to hand it a PIN.
+// other BSDs, illumos, Windows), so both ends fail closed: to a client an
+// unverified peer might be another user's listener about to receive a PIN,
+// and to the server it might be another user's process about to ask for a
+// signature or a stored password.
 func peerUID(_ *net.UnixConn) (int, error) {
 	return 0, ErrPeerCredentialsUnsupported
 }

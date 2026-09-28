@@ -104,6 +104,7 @@ var (
 
 	// ErrPeerUntrusted is returned when the process at the other end of the
 	// socket runs as a user other than this user, root, or the sudo user.
+	// The client refuses such a listener and the server drops such a client.
 	ErrPeerUntrusted = errors.New("ipc: socket peer is not a trusted user")
 
 	// ErrPeerCredentials is returned when the kernel's record of the socket
@@ -113,7 +114,8 @@ var (
 	// ErrPeerCredentialsUnsupported is returned on platforms that expose no
 	// peer-credential API that xkey uses (anything other than Linux, macOS
 	// and FreeBSD). The client refuses to connect rather than send a PIN to
-	// an unverified peer.
+	// an unverified listener, and the server drops every connection rather
+	// than serve an unverified client.
 	ErrPeerCredentialsUnsupported = errors.New("ipc: socket peer credential verification is not supported on this platform")
 )
 

@@ -49,7 +49,14 @@ func trustedUIDs() []int {
 // changes the directory: a directory that fails is refused, not repaired,
 // because repairing it would mean trusting whoever created it.
 func validateSocketDir(dir string, trusted []int) error {
-	info, err := os.Lstat(dir)
+	return validateSocketDirWith(os.Lstat, dir, trusted)
+}
+
+// validateSocketDirWith implements validateSocketDir with lstat standing in
+// for os.Lstat, so a caller that must stay free of file-system access (see
+// runtimeDirFor) can inject it.
+func validateSocketDirWith(lstat func(string) (fs.FileInfo, error), dir string, trusted []int) error {
+	info, err := lstat(dir)
 	if err != nil {
 		return &WrappedError{Msg: "ipc: stat socket directory " + dir, Err: err}
 	}
