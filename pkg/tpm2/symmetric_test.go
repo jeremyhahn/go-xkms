@@ -788,5 +788,8 @@ func createSimWithTracker(entropy bool) (*slog.Logger, TrustedPlatformModule) {
 		}
 	}
 
+	// Symmetric keys are sealed under the Platform SRK only.
+	enrollSimPlatformSRK(logger, tpmInst.(*TPM2), config)
+
 	return logger, tpmInst
 }

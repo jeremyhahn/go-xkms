@@ -947,7 +947,10 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, ErrInvalidKeyAttributes
 	}
 
-	// Set parent to SRK if not specified
+	// The key is sealed under the Platform SRK: b.srkAttrs carries its USER
+	// PIN when the PlatformKeyStore has one, otherwise creation is authorized
+	// through its platform PCR policy. pkg/tpm2 refuses any other parent
+	// (ErrSymmetricKeyParent).
 	if attrs.Parent == nil {
 		attrs.Parent = b.srkAttrs
 	}
@@ -992,6 +995,8 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 		return nil, ErrInvalidKeyAttributes
 	}
 
+	// Every Encrypt and Decrypt loads the sealed key under this parent, the
+	// Platform SRK, with its USER PIN or platform PCR policy.
 	if attrs.Parent == nil {
 		attrs.Parent = b.srkAttrs
 	}

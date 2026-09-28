@@ -427,11 +427,7 @@ func (tpm *TPM2) PlatformSRKAttributes() (*types.KeyAttributes, error) {
 		if tpm.config.PlatformSRK == nil {
 			return nil, ErrInvalidPlatformSRKConfiguration
 		}
-		srkHandle := tpm2.TPMHandle(tpm.config.PlatformSRK.SRKHandle)
-		if srkHandle == 0 {
-			srkHandle = tpm2.TPMHandle(tpSRKIndex)
-		}
-		srkAttrs, err := tpm.KeyAttributes(srkHandle)
+		srkAttrs, err := tpm.KeyAttributes(platformSRKHandle(tpm.config))
 		if err != nil {
 			return nil, err
 		}

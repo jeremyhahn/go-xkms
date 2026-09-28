@@ -289,8 +289,8 @@ session.
 | `TPM2_NV_Write` (`NVWrite`) | sealed data; hierarchy auth | salted bound session, encrypt in | `nvram.go:117` |
 | `TPM2_NV_Read` (`NVRead`) | sealed data | extra session, encrypt out | `nvram.go:310` |
 | `TPM2_NV_Increment`, `TPM2_NV_Extend`, `TPM2_NV_UndefineSpace`, NV reads under owner auth | hierarchy auth | salted bound session | `nvram.go:539`, `:638`, `:864`, `nvReadAuthorization` `:911` |
-| `TPM2_Create` / `TPM2_CreateLoaded` (seal, RSA, ECDSA, secret, symmetric) | sealed data, key `userAuth` | extra session, encrypt in | `seal.go:140`, `rsa.go:124`, `ecdsa.go:123`, `secretkey.go:86`, `symmetric.go:155` |
-| `TPM2_Unseal` | sealed data (the auto-unsealed PKCS#11 PIN) | extra session, encrypt out | `seal.go:317`, `seal.go:426`, `symmetric.go:604` |
+| `TPM2_Create` / `TPM2_CreateLoaded` (seal, RSA, ECDSA, secret, symmetric) | sealed data (symmetric keys included), key `userAuth` | extra session, encrypt in | `seal.go:145`, `rsa.go:124`, `ecdsa.go:123`, `secretkey.go:86` |
+| `TPM2_Unseal` | sealed data (the auto-unsealed PKCS#11 PIN, symmetric key material) | extra session, encrypt out | `seal.go:322`, `seal.go:431` |
 | `TPM2_RSA_Decrypt`, `TPM2_ECDH_ZGen` | plaintext, shared secret | extra session, encrypt out | `rsa.go:307`, `ecdh.go:112` |
 | `TPM2_ActivateCredential` | recovered credential | extra session, encrypt out | `attestation.go:614` |
 | `TPM2_GetRandom` | key material | extra session, encrypt out | `random.go:88` |
@@ -307,6 +307,72 @@ Not covered: callers that drive go-tpm directly rather than through
 `pkg/tpm2` — `pkg/luks`, `pkg/storage/hardware`, and `pkg/backend/tpm2`'s
 import path.
 
+## Symmetric keys
+
+`GenerateSymmetricKey`, `GetSymmetricKey` and `SymmetricEncrypter`
+(`pkg/tpm2/symmetric.go:98`, `:211`, `:278`) back the `types.SymmetricKeyProvider`
+of `pkg/backend/tpm2` (`backend.go:960`, `:1006`) and the PKCS#11 `C_DeriveKey`
+path (`pkg/tpm2/kdf.go:57`). The AES key (128 or 256 bits) is generated in Go,
+sealed in the TPM as a keyed-hash object, and unsealed for every `Encrypt`,
+`Decrypt` and derivation; AES-GCM itself runs in Go (`pkg/crypto/aead`).
+
+**Storage is the seal path.** A symmetric key is created by `sealKeyInternal`
+(`seal.go:24`) and unsealed by `unsealKeyInternal` (`seal.go:250`), the path
+every other secret sealed under the Platform SRK takes; `symmetric.go` adds no
+session or policy code of its own:
+
+- **Parent: the Platform SRK, only.** `symmetricSealAttrs`
+  (`symmetric.go:169`) takes `attrs.Parent`, or the Platform SRK's own
+  attributes when none is named, and refuses any parent whose handle is not
+  `platformSRKHandle` (`platform_keystore.go:599`) with
+  `ErrSymmetricKeyParent`. The Shared SRK is never a parent.
+- **Parent authorization: USER PIN or platform policy.** `TPM2_Create` and
+  `TPM2_Load` are authorized by `CreateSession` (`session.go:523`): with
+  `Parent.Password` set, the salted USER PIN session (the `PolicyAuthValue`
+  branch when the Platform SRK carries the platform policy); without it, the
+  PCR branch. Nobody without the PIN, or without the measured platform state,
+  can load the key.
+- **Object authorization, as for every sealed object.** The object's
+  `userAuth` is `attrs.Password` (`seal.go:55`); with `attrs.PlatformPolicy`
+  its `authPolicy` is the platform policy digest and the policy pin is
+  recorded beside it (`seal.go:100`, `:236`). `TPM2_Unseal` is authorized by
+  `createKeySession` (`session.go:711`). The template is always
+  `KeyedHashTemplate` (`types.go:735`); a caller's `TPMAttributes` is dropped.
+- **DA protection.** `NoDA` is clear, as on every sealed object and on the
+  Platform SRK itself (`enableDAOnSRK`, `platform_keystore.go:652`): a wrong
+  object password advances the lockout counter.
+- **Bus.** The key material enters under an `encryptIn` session
+  (`seal.go:138`) and leaves under an `encryptOut` session (`seal.go:315`),
+  both salted. It never crosses the TPM bus in plaintext.
+
+Blobs are `<CN>.blob`, `<CN>.pub` and, for a platform-policy key,
+`<CN>.policy`, the same files `DeleteKey` removes.
+
+**Keys written before this rule.** Earlier releases parented symmetric keys
+on the Shared SRK with no authorization and `NoDA` set, and stored them as
+`<CN>.priv` plus a size-prefixed `<CN>.pub`. They are not migrated.
+`GetSymmetricKey` recognises that public area (`unprotectedSymmetricKeyBlob`,
+`symmetric.go:552`) and returns `ErrUnprotectedSymmetricKey`; delete the key
+(and its `<CN>.priv`, which `DeleteKey` does not know) and generate a new one.
+
+**Why not `TPM2_EncryptDecrypt2`.** A TPM-resident `TPM_ALG_SYMCIPHER` key
+would never leave the TPM, but the command offers CFB, CBC, ECB, CTR and OFB
+only; no mode is authenticated. GCM could be composed from TPM CTR plus a Go
+GHASH, at the cost of exposing the hash subkey `H` to the host, of a
+composition that is not a FIPS-validated GCM, and of a TPM round trip per
+1 KiB (`MAX_DIGEST_BUFFER`). The command is also optional in the PC Client
+profile and absent on some firmware TPMs. It is feasible later as an opt-in
+for small payloads, behind a `TPM2_GetCapability(TPM_CAP_COMMANDS)` check,
+not as the default.
+
+Tests: `symmetric_psrk_simulator_test.go` covers the USER PIN round trip, a
+missing or wrong PIN (`TPM_RC_AUTH_FAIL`), both platform-policy branches (a
+moved PCR refuses the PCR branch with `TPM_RC_POLICY_FAIL`; the PIN branch
+survives), the object's own password, the Platform SRK as the parent handle
+of every `TPM2_Create` and `TPM2_Load`, the refusal of a Shared SRK parent and
+of a pre-rule blob. The #1147 bus recorder asserts that neither the AES key
+nor the PIN appears in any command or response.
+
 ## Error semantics
 
 Typed errors throughout; `pkg/attestation/errors.go` holds the verification
@@ -322,6 +388,8 @@ vocabulary. The categories that need distinguishing:
 | EK chain does not verify | the manufacturer root is not trusted |
 | AK certification invalid | the AK is not bound to that EK |
 | quote signature or nonce invalid | the evidence is not fresh or not from that AK |
+| `ErrSymmetricKeyParent` | a symmetric key was asked to live under a parent other than the Platform SRK, or no Platform SRK is available. Nothing is created or loaded |
+| `ErrUnprotectedSymmetricKey` | the stored symmetric key predates the Platform SRK rule (Shared SRK parent, no authorization, `NoDA`). It is refused, never loaded; delete and regenerate it |
 | `ErrECCPublicArea` | the ECC public area does not yield a valid public key: bad parameters, an unknown curve, or a point that is not on the curve. On the `TPM2_Certify` path it is wrapped as `ErrCertifyMalformed`; the underlying `ecpoint.ErrInvalidPoint` stays reachable through `errors.Is` |
 | `ErrAdminWithPolicyNoAuthPolicy` | the template about to be created from sets `adminWithPolicy` while naming no `authPolicy`, so the object's ADMIN role would be unauthorizable by anything. Raised by `assertAdminAuthorizable` before `TPM2_CreatePrimary`; nothing is created |
 | `ErrDevIDTemplateNonConformant` | the IDevID or IAK template about to be created from departs from TCG Templates H-0 through H-4 in an attribute, its `authPolicy`, its `unique` string, its scheme, its symmetric definition, its exponent, its KDF or its curve. Raised by `assertDevIDTemplateConformant` before `TPM2_CreatePrimary`; nothing is created |

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -114,6 +115,10 @@ func (tpm *TPM2) sealKeyInternal(
 			return nil, store.ErrInvalidKeyedHashSecret
 		}
 	}
+	// secretBytes is this function's own copy -- SealData.Bytes copies, and
+	// the generated secret is copied into keyAttrs.SealData -- so it is wiped
+	// once the object is created rather than left in the heap.
+	defer enclave.Wipe(secretBytes)
 
 	if tpm.debugSecrets {
 		tpm.logger.Debug("tpm: sealing HMAC secret",
