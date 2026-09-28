@@ -3027,10 +3027,6 @@ components:
     CertificateInfo:
       type: object
       properties:
-        id:
-          type: integer
-          format: int64
-          example: 12345
         serial_number:
           type: string
           description: Certificate serial number (hex)

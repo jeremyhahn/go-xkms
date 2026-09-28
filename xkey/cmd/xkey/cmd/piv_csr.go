@@ -120,7 +120,10 @@ func runPivCSR(cmd *cobra.Command, args []string) error {
 	locality, _ := cmd.Flags().GetString("locality")
 
 	// Get configuration
-	cfg := buildPIVConfig()
+	cfg, err := buildPIVConfig(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Ensure PIV manager is initialized with file storage.
 	if err := ensurePIVInitialized(cfg, logger); err != nil {

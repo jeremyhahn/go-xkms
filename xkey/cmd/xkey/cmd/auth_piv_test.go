@@ -20,31 +20,34 @@ import (
 	"testing"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // withPIVStoragePath points the "piv" command group's file storage at a
-// temporary directory for the duration of the test, restoring the prior
-// value on cleanup so other tests in this package keep their own storage
-// path. It never touches the real ~/.xkey or ./data/piv locations a bare
-// `go test` run must not write to.
+// temporary directory for the duration of the test by injecting it into
+// loadedConfig.PIV.StoragePath -- the same package-level unified-config
+// variable xkmsd_client_test.go and listen_config_test.go inject into,
+// restoring the prior value on cleanup so other tests in this package keep
+// their own configuration. It never touches the real ~/.xkey or ./data/piv
+// locations a bare `go test` run must not write to.
 func withPIVStoragePath(t *testing.T) string {
 	t.Helper()
 	tmpDir := t.TempDir()
-	original := viper.GetString(viperKeyPIVStoragePath)
-	viper.Set(viperKeyPIVStoragePath, tmpDir)
-	t.Cleanup(func() { viper.Set(viperKeyPIVStoragePath, original) })
+	previous := loadedConfig
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.PIV.StoragePath = tmpDir
+	loadedConfig = cfg
+	t.Cleanup(func() { loadedConfig = previous })
 	return tmpDir
 }
 
 // storeTestPIVCertificate stores a self-signed test certificate in slot
-// under the "software" file backend, using whatever storage path Viper
-// currently resolves (see withPIVStoragePath). It returns the stored
-// certificate.
+// under the "software" file backend, using whatever storage path
+// withPIVStoragePath configured. It returns the stored certificate.
 func storeTestPIVCertificate(t *testing.T, slot xkms.PIVSlot) *x509.Certificate {
 	t.Helper()
 	cert := generateTestCertificate(t)
@@ -52,7 +55,7 @@ func storeTestPIVCertificate(t *testing.T, slot xkms.PIVSlot) *x509.Certificate 
 	cfg := &PIVConfig{
 		Backend:     PIVBackendSoftware,
 		StorageType: PIVStorageTypeFile,
-		StoragePath: viper.GetString(viperKeyPIVStoragePath),
+		StoragePath: GetConfig().PIV.StoragePath,
 	}
 	storage, err := createPIVStorage(cfg, slog.Default())
 	require.NoError(t, err)
@@ -134,14 +137,29 @@ func TestRunAuthLoginPIV_ConnectionRefused(t *testing.T) {
 
 func TestBuildAuthPIVConfig_DefaultsToSoftware(t *testing.T) {
 	cmd := authPIVCmd("9a", "")
-	cfg := buildAuthPIVConfig(cmd)
+	cfg, err := buildAuthPIVConfig(cmd)
+	require.NoError(t, err)
 	assert.Equal(t, PIVBackendSoftware, cfg.Backend)
 	assert.Equal(t, PIVStorageTypeFile, cfg.StorageType)
 }
 
 func TestBuildAuthPIVConfig_ExplicitBackend(t *testing.T) {
 	cmd := authPIVCmd("9a", "pkcs11")
-	cfg := buildAuthPIVConfig(cmd)
+	cfg, err := buildAuthPIVConfig(cmd)
+	require.NoError(t, err)
 	assert.Equal(t, PIVBackendPKCS11, cfg.Backend)
 	assert.Equal(t, PIVStorageTypePKCS11, cfg.StorageType)
+}
+
+// TestBuildAuthPIVConfig_PKCS11PINFromEnv proves the PKCS#11 PIN reaches
+// "auth login --piv" through its dedicated environment variable even though
+// the command declares no --pkcs11-pin-stdin flag of its own (go-xkms#871).
+func TestBuildAuthPIVConfig_PKCS11PINFromEnv(t *testing.T) {
+	t.Setenv("XKEY_PIV_PKCS11_PIN", "env-pin")
+	t.Setenv("XKEY_PIV_PKCS11_SO_PIN", "env-so-pin")
+
+	cfg, err := buildAuthPIVConfig(authPIVCmd("9a", "pkcs11"))
+	require.NoError(t, err)
+	assert.Equal(t, "env-pin", cfg.PKCS11PIN)
+	assert.Equal(t, "env-so-pin", cfg.PKCS11SOPIN)
 }

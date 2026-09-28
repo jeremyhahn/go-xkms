@@ -344,7 +344,6 @@ func TestServer_Start_TLSCABundlerFromFile(t *testing.T) {
 	certFile, keyFile, caFile := createTestTLSFiles(t)
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -373,7 +372,6 @@ func TestServer_Start_TLSCABundlerFromInstance(t *testing.T) {
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -442,7 +440,6 @@ func TestServer_Shutdown_WithMetricsCollector(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Metrics.Enabled = true
 	cfg.Metrics.Port = 19501
 	cfg.Metrics.Path = "/metrics"
@@ -1997,23 +1994,17 @@ func TestServer_WaitForShutdown_UnblocksAfterShutdown(t *testing.T) {
 // Tests — startREST TLS build error path (REST_not_started when TLS fails)
 // ============================================================================
 
+// config.Validate now requires tls.cert_file/key_file (or a CA) whenever TLS
+// is enabled on a config that is not network-serving, so a bare
+// TLS.Enabled=true with no cert material cannot reach here through New();
+// this constructs the server directly with newMinimalServer instead, the
+// same seam the startUnix-internals tests above use for the same reason.
 func TestServer_StartREST_TLSBuildError(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.Protocols.REST = false // do not start in Start(); call directly
 	cfg.TLS.Enabled = true
 	// No CertFile/KeyFile and no CA — buildTLSConfig will fail (no cert)
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
+	server := newMinimalServer(t, cfg)
 
 	// startREST should return quickly when TLS config build fails.
 	server.wg.Add(1)
@@ -2280,23 +2271,17 @@ func TestInitializePINManager_UnknownStrategy(t *testing.T) {
 
 // TestServer_StartUnix_UnknownProtocolVariant exercises the default branch of
 // the protocol switch in startUnix with a value not tested elsewhere.
+//
+// config.Validate rejects an unrecognized unix.protocol, so this cannot reach
+// here through New(); it constructs the server directly with newMinimalServer
+// and calls startUnix, the seam other startUnix/startREST-internals tests
+// (e.g. TestStartUnix_UnknownProtocol) already use for the same reason.
 func TestServer_StartUnix_UnknownProtocolVariant(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
 	cfg.Unix.SocketPath = filepath.Join(t.TempDir(), "test2.sock")
 	cfg.Unix.Protocol = "thrift-not-supported"
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
+	server := newMinimalServer(t, cfg)
 
 	server.wg.Add(1)
 	done := make(chan struct{})
@@ -2466,7 +2451,6 @@ func TestServer_StartMetrics_BindError(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -2740,24 +2724,32 @@ func TestNew_WithCredentialsDefaultStrategy(t *testing.T) {
 // interface isn't easily injectable. Instead, we test the ErrNoKeystoresInitialized
 // path which is equivalent and already tested above. We add the default backend
 // fallback path test:
+//
+// config.Validate requires default_backend to be set, so an empty Default
+// cannot reach here through New() -- this exercises initializeKeyStore
+// directly, the same seam TestInitializeKeyStore_DefaultBackendIsDeterministic
+// uses, to pin the fallback resolution xkms.ResolveDefaultBackend still
+// performs for any caller that builds a *Server without New() (there are
+// none in this codebase today, but the rule the resolver enforces --
+// deterministic, not merely non-empty -- is the thing under test).
 func TestInitializeKeyStore_DefaultBackendFallback(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
+	t.Cleanup(func() { xkms.Reset() })
 
-	cfg := createMinimalConfig(t)
-	// Default is empty → code falls back to first available backend.
-	cfg.Default = ""
+	s := newMinimalServer(t, &config.Config{
+		Storage: config.StorageConfig{Backend: "memory"},
+		// Default is empty → code falls back to the one available backend.
+	})
+	s.keyProviders = map[string]types.KeyProvider{"software": &nonSealerProvider{}}
+	s.backends = map[string]xkms.Backend{}
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
+	require.NoError(t, s.initializeKeyStore())
 	// Default was resolved to the software backend. The assertion is the
 	// resolved name, not merely that some backend loaded: the minimal config
 	// carries one backend, so this pins the empty-default path, and
 	// TestInitializeKeyStore_DefaultBackendIsDeterministic covers the case
 	// where several backends make the choice observable.
-	assert.NotEmpty(t, server.backends)
-	assert.Equal(t, "software", server.defaultBackendName)
+	assert.NotEmpty(t, s.backends)
+	assert.Equal(t, "software", s.defaultBackendName)
 }
 
 // ============================================================================
@@ -2954,6 +2946,14 @@ func (p *awsKMSProvider) GetSymmetricKey(_ context.Context, _ *types.KeyAttribut
 	if p.getKeyErr != nil {
 		return nil, p.getKeyErr
 	}
+	if p.saveCalled {
+		// Save just seeded the metadata store with the operator's real key
+		// ID (ensureSealKey's AWS KMS branch runs Save before this call), so
+		// a real awskms.Backend would now resolve it successfully -- mirror
+		// that instead of reporting not-found for a key that was just
+		// configured.
+		return nil, nil
+	}
 	return nil, backend.ErrKeyNotFound
 }
 
@@ -3021,6 +3021,28 @@ func TestEnsureSealKey_AWSKMSNoOperatorKeyCreatesOne(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, prov.saveCalled, "no metadata should be pre-seeded without an operator-configured key")
 	assert.True(t, prov.generateCalled, "GenerateSymmetricKey must run to create the seal key")
+}
+
+// TestEnsureSealKey_AWSKMSOperatorKeyNotFoundFailsClosed verifies that when
+// the operator-configured CMK (OperatorSealKeyID) does not exist -- the
+// provider reports backend.ErrKeyNotFound even after the metadata seed --
+// ensureSealKey fails closed with a typed error instead of falling through
+// to GenerateSymmetricKey and provisioning an unrelated CMK (go-xkms#842).
+func TestEnsureSealKey_AWSKMSOperatorKeyNotFoundFailsClosed(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{})
+	prov := &awsKMSProvider{
+		operatorKeyID: "arn:aws:kms:us-east-1:123456789012:key/deadbeef-1234-5678-90ab-1234567890ab",
+		getKeyErr:     backend.ErrKeyNotFound,
+	}
+	keyAttrs := sealKeyAttributesFor(types.StoreAWSKMS)
+	err := s.ensureSealKey(seal.StrategyAWSKMS, prov, keyAttrs)
+	require.Error(t, err)
+	assert.True(t, prov.saveCalled, "the operator key ID is still seeded before resolution is attempted")
+	assert.False(t, prov.generateCalled, "GenerateSymmetricKey must never run for a missing operator-configured CMK")
+
+	var notFound *seal.ErrOperatorSealKeyNotFound
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, prov.operatorKeyID, notFound.KeyID)
 }
 
 // ============================================================================
@@ -3132,15 +3154,24 @@ func TestServer_Shutdown_WithNoiseServer(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
+	// Allocate a free port and release it so the Noise bootstrap server can
+	// bind it. config.Validate requires a real 1-65535 port for any enabled
+	// protocol (0 is not a documented "let the OS choose" value for
+	// server.noise_port), so this cannot use 0 the way it did before
+	// go-xkms#666.
+	freeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	freePort := freeLn.Addr().(*net.TCPAddr).Port
+	require.NoError(t, freeLn.Close())
+
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Noise = true // enable noise so Start() launches it
-	cfg.Server.NoisePort = 0
+	cfg.Server.NoisePort = freePort
 	cfg.Server.Host = "127.0.0.1"
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
 	cfg.Protocols.MCP = false
-	cfg.Protocols.Unix = false
 	cfg.Metrics.Enabled = false
 
 	server, err := New(cfg)
@@ -3170,7 +3201,6 @@ func TestServer_StartUnix_EmptyProtocolDefaultsToGRPC(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false // call startUnix manually
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -3376,7 +3406,6 @@ func TestServer_Shutdown_BackendCloseError(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -3410,7 +3439,6 @@ func TestServer_StartREST_NoBackends(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.REST = false // call startREST manually
-	cfg.Protocols.Unix = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
 	cfg.Protocols.MCP = false
@@ -3810,7 +3838,6 @@ func TestStart_TLSBundlerFileNotFound(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -3895,7 +3922,6 @@ func TestShutdown_AuditLoggerCloseError(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -3919,23 +3945,16 @@ func TestShutdown_AuditLoggerCloseError(t *testing.T) {
 
 // TestStartUnix_UnknownProtocol verifies that startUnix logs an error and
 // returns immediately when the Unix socket protocol is not recognized.
+//
+// config.Validate rejects an unrecognized unix.protocol, so this cannot reach
+// here through New(); see TestServer_StartUnix_UnknownProtocolVariant for the
+// same reasoning.
 func TestStartUnix_UnknownProtocol(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false // call startUnix manually
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
 	cfg.Unix.SocketPath = filepath.Join(t.TempDir(), "unknown-proto.sock")
 	cfg.Unix.Protocol = "badproto" // triggers default: logger.Error + return
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
+	server := newMinimalServer(t, cfg)
 
 	server.wg.Add(1)
 	done := make(chan struct{})
@@ -4911,7 +4930,6 @@ func TestStartREST_WithCA(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.REST = false // manual
-	cfg.Protocols.Unix = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
 	cfg.Protocols.MCP = false
@@ -5126,7 +5144,6 @@ func TestStart_CABundlerInstanceError(t *testing.T) {
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
 	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 	cfg.Protocols.QUIC = false
@@ -5199,10 +5216,12 @@ func TestInitializeBarrier_SealStrategyBuildError(t *testing.T) {
 // TestServer_StartREST_TLSBuildError that uses a dynamically allocated port to
 // guarantee the test reaches the TLS build-error branch independent of any
 // parallel test that might occupy the default REST port 18080.
+//
+// config.Validate now requires tls.cert_file/key_file (or a CA) whenever TLS
+// is enabled on a config that is not network-serving, so this cannot reach
+// here through New(); it uses newMinimalServer, the same seam
+// TestServer_StartREST_TLSBuildError uses for the same reason.
 func TestServer_StartREST_TLSBuildError_FreePort(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
 	// Allocate a free port and release it so the REST server can bind it.
 	freeLn, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -5211,18 +5230,10 @@ func TestServer_StartREST_TLSBuildError_FreePort(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Server.RESTPort = freePort
-	cfg.Protocols.Unix = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.Protocols.REST = false // call startREST directly
 	cfg.TLS.Enabled = true
 	// No CertFile/KeyFile and no CA — buildTLSConfig will fail.
 
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
+	server := newMinimalServer(t, cfg)
 
 	server.wg.Add(1)
 	done := make(chan struct{})

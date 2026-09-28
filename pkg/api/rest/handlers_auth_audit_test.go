@@ -85,7 +85,7 @@ func TestPIVLogin_EmitsAuditEvent_OnSuccess(t *testing.T) {
 	server := newAuthTestServer(t, func(c *Config) {
 		c.PIVLogin = &PIVLoginOptions{Enabled: true, AllowUnattested: true}
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{
-			Username: "alice", Role: "admin", TenantID: "system", Enabled: true,
+			Username: "alice", Roles: []string{"admin"}, TenantID: "system", Enabled: true,
 		}}
 		c.AuditLogger = auditLog
 	})
@@ -110,7 +110,7 @@ func TestPIVLogin_AuditWriteFailure_FailsLoginAndReturnsNoToken(t *testing.T) {
 	server := newAuthTestServer(t, func(c *Config) {
 		c.PIVLogin = &PIVLoginOptions{Enabled: true, AllowUnattested: true}
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{
-			Username: "alice", Role: "admin", TenantID: "system", Enabled: true,
+			Username: "alice", Roles: []string{"admin"}, TenantID: "system", Enabled: true,
 		}}
 		c.AuditLogger = &failingAuthAuditLogger{err: auditErr}
 	})

@@ -607,12 +607,23 @@ func TestValidate_Backends(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name: "TPM2 enabled without device path",
+			name: "TPM2 enabled without device path (hardware)",
 			backends: BackendsConfig{
 				TPM2: &TPM2Config{Enabled: true, DevicePath: ""},
 			},
 			wantError: true,
 			errorMsg:  "TPM2 device_path is required",
+		},
+		{
+			// UseSimulator selects the in-process/TCP TPM simulator instead
+			// of a hardware device, so it needs no device_path (go-xkms#666
+			// follow-up: New() now always runs Validate(), so this exemption
+			// must be correct here rather than worked around in a caller).
+			name: "TPM2 simulator without device path",
+			backends: BackendsConfig{
+				TPM2: &TPM2Config{Enabled: true, UseSimulator: true, DevicePath: ""},
+			},
+			wantError: false,
 		},
 		{
 			name: "valid PKCS11 backend",

@@ -1218,7 +1218,6 @@ func TestListCertificates_Success(t *testing.T) {
 			return &pb.ListCertificatesResponse{
 				Certificates: []*pb.CertificateInfo{
 					{
-						Id:           1,
 						SerialNumber: "1234567890ABCDEF",
 						Subject:      "CN=test.example.com",
 						Issuer:       "CN=Test CA",
@@ -1229,7 +1228,6 @@ func TestListCertificates_Success(t *testing.T) {
 						CertUrl:      "https://ca.example.com/certs/123",
 					},
 					{
-						Id:           2,
 						SerialNumber: "FEDCBA0987654321",
 						Subject:      "CN=test2.example.com",
 						Issuer:       "CN=Test CA",
@@ -1282,7 +1280,6 @@ func TestGetCertificate_Success(t *testing.T) {
 		getCertificateFunc: func(ctx context.Context, in *pb.GetCertificateRequest, opts ...grpc.CallOption) (*pb.CertificateInfo, error) {
 			assert.Equal(t, "1234567890ABCDEF", in.Serial)
 			return &pb.CertificateInfo{
-				Id:           1,
 				SerialNumber: in.Serial,
 				Subject:      "CN=test.example.com",
 				Issuer:       "CN=Test CA",

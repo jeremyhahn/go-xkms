@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	adminv1 "github.com/jeremyhahn/go-xkms/api/proto/admin/v1"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -102,16 +103,36 @@ func okHandler(ran *bool) grpc.UnaryHandler {
 // build time.
 func TestMethodPermissions_CoversEveryAdminServiceMethod(t *testing.T) {
 	expected := []string{
-		"CreateTenant", "UpdateTenant", "DeleteTenant", "GetTenant", "ListTenants",
-		"CreateEAB", "DeleteEAB", "GetEAB", "ListEABs",
-		"CreateTenantRole", "UpdateTenantRole", "DeleteTenantRole", "GetTenantRole", "ListTenantRoles",
-		"CreateTenantUser", "UpdateTenantUser", "DeleteTenantUser", "GetTenantUser", "ListTenantUsers",
-		"RevokeCertificate", "GetCertificate", "ListCertificates",
-		"GetStatus", "GetStats",
+		adminv1.AdminService_CreateTenant_FullMethodName,
+		adminv1.AdminService_UpdateTenant_FullMethodName,
+		adminv1.AdminService_DeleteTenant_FullMethodName,
+		adminv1.AdminService_GetTenant_FullMethodName,
+		adminv1.AdminService_ListTenants_FullMethodName,
+		adminv1.AdminService_CreateEAB_FullMethodName,
+		adminv1.AdminService_DeleteEAB_FullMethodName,
+		adminv1.AdminService_GetEAB_FullMethodName,
+		adminv1.AdminService_ListEABs_FullMethodName,
+		adminv1.AdminService_CreateTenantRole_FullMethodName,
+		adminv1.AdminService_UpdateTenantRole_FullMethodName,
+		adminv1.AdminService_DeleteTenantRole_FullMethodName,
+		adminv1.AdminService_GetTenantRole_FullMethodName,
+		adminv1.AdminService_ListTenantRoles_FullMethodName,
+		adminv1.AdminService_CreateTenantUser_FullMethodName,
+		adminv1.AdminService_UpdateTenantUser_FullMethodName,
+		adminv1.AdminService_DeleteTenantUser_FullMethodName,
+		adminv1.AdminService_GetTenantUser_FullMethodName,
+		adminv1.AdminService_ListTenantUsers_FullMethodName,
+		adminv1.AdminService_RevokeCertificate_FullMethodName,
+		adminv1.AdminService_GetCertificate_FullMethodName,
+		adminv1.AdminService_ListCertificates_FullMethodName,
+		adminv1.AdminService_ListAccounts_FullMethodName,
+		adminv1.AdminService_GetAccount_FullMethodName,
+		adminv1.AdminService_DisableAccount_FullMethodName,
+		adminv1.AdminService_GetStatus_FullMethodName,
+		adminv1.AdminService_GetStats_FullMethodName,
 	}
 
-	for _, name := range expected {
-		full := "/admin.v1.AdminService/" + name
+	for _, full := range expected {
 		perm, ok := MethodPermissions[full]
 		require.True(t, ok, "method %s has no permission mapping", full)
 		assert.NotEmpty(t, perm.Resource, "method %s has an empty resource", full)
@@ -119,6 +140,38 @@ func TestMethodPermissions_CoversEveryAdminServiceMethod(t *testing.T) {
 	}
 
 	assert.Len(t, MethodPermissions, len(expected))
+}
+
+// TestMethodPermissions_MatchesServiceDescriptorExactly verifies
+// MethodPermissions has an entry for every method and stream the generated
+// AdminService_ServiceDesc actually dispatches, and no entry for anything
+// else. This is the completeness guarantee TestMethodPermissions_
+// CoversEveryAdminServiceMethod cannot give on its own: that test only checks
+// a hand-maintained list is present, so a new proto RPC added to the service
+// without a corresponding permission entry — the ListAccounts / GetAccount /
+// DisableAccount gap this test caught — would pass it silently.
+func TestMethodPermissions_MatchesServiceDescriptorExactly(t *testing.T) {
+	serviceName := adminv1.AdminService_ServiceDesc.ServiceName
+
+	declared := make(map[string]struct{})
+	for _, m := range adminv1.AdminService_ServiceDesc.Methods {
+		declared["/"+serviceName+"/"+m.MethodName] = struct{}{}
+	}
+	for _, s := range adminv1.AdminService_ServiceDesc.Streams {
+		declared["/"+serviceName+"/"+s.StreamName] = struct{}{}
+	}
+	require.NotEmpty(t, declared, "service descriptor must declare at least one method")
+
+	for full := range declared {
+		perm, ok := MethodPermissions[full]
+		assert.True(t, ok, "service method %s has no entry in MethodPermissions", full)
+		assert.NotEmpty(t, perm.Resource, "method %s has an empty resource", full)
+		assert.NotEmpty(t, perm.Action, "method %s has an empty action", full)
+	}
+
+	for full := range MethodPermissions {
+		assert.Contains(t, declared, full, "MethodPermissions has an entry for %s, which the service descriptor does not declare", full)
+	}
 }
 
 // grpcAuthzCase pairs a gRPC method with the grant it must request and with a
@@ -132,35 +185,39 @@ type grpcAuthzCase struct {
 }
 
 var grpcAuthzCases = []grpcAuthzCase{
-	{"/admin.v1.AdminService/CreateTenant", auth.ResourceTenants, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
-	{"/admin.v1.AdminService/UpdateTenant", auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
-	{"/admin.v1.AdminService/DeleteTenant", auth.ResourceTenants, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
-	{"/admin.v1.AdminService/GetTenant", auth.ResourceTenants, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
-	{"/admin.v1.AdminService/ListTenants", auth.ResourceTenants, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_CreateTenant_FullMethodName, auth.ResourceTenants, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{adminv1.AdminService_UpdateTenant_FullMethodName, auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{adminv1.AdminService_DeleteTenant_FullMethodName, auth.ResourceTenants, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+	{adminv1.AdminService_GetTenant_FullMethodName, auth.ResourceTenants, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_ListTenants_FullMethodName, auth.ResourceTenants, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
 
-	{"/admin.v1.AdminService/CreateEAB", auth.ResourceACMEEAB, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
-	{"/admin.v1.AdminService/DeleteEAB", auth.ResourceACMEEAB, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
-	{"/admin.v1.AdminService/GetEAB", auth.ResourceACMEEAB, auth.ActionRead, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
-	{"/admin.v1.AdminService/ListEABs", auth.ResourceACMEEAB, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_CreateEAB_FullMethodName, auth.ResourceACMEEAB, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+	{adminv1.AdminService_DeleteEAB_FullMethodName, auth.ResourceACMEEAB, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+	{adminv1.AdminService_GetEAB_FullMethodName, auth.ResourceACMEEAB, auth.ActionRead, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_ListEABs_FullMethodName, auth.ResourceACMEEAB, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
 
-	{"/admin.v1.AdminService/CreateTenantRole", auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
-	{"/admin.v1.AdminService/UpdateTenantRole", auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
-	{"/admin.v1.AdminService/DeleteTenantRole", auth.ResourceRoles, auth.ActionDelete, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
-	{"/admin.v1.AdminService/GetTenantRole", auth.ResourceRoles, auth.ActionRead, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
-	{"/admin.v1.AdminService/ListTenantRoles", auth.ResourceRoles, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_CreateTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{adminv1.AdminService_UpdateTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{adminv1.AdminService_DeleteTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionDelete, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{adminv1.AdminService_GetTenantRole_FullMethodName, auth.ResourceRoles, auth.ActionRead, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_ListTenantRoles_FullMethodName, auth.ResourceRoles, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
 
-	{"/admin.v1.AdminService/CreateTenantUser", auth.ResourceUsers, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
-	{"/admin.v1.AdminService/UpdateTenantUser", auth.ResourceUsers, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
-	{"/admin.v1.AdminService/DeleteTenantUser", auth.ResourceUsers, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
-	{"/admin.v1.AdminService/GetTenantUser", auth.ResourceUsers, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
-	{"/admin.v1.AdminService/ListTenantUsers", auth.ResourceUsers, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_CreateTenantUser_FullMethodName, auth.ResourceUsers, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{adminv1.AdminService_UpdateTenantUser_FullMethodName, auth.ResourceUsers, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{adminv1.AdminService_DeleteTenantUser_FullMethodName, auth.ResourceUsers, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+	{adminv1.AdminService_GetTenantUser_FullMethodName, auth.ResourceUsers, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_ListTenantUsers_FullMethodName, auth.ResourceUsers, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
 
-	{"/admin.v1.AdminService/RevokeCertificate", auth.ResourceCerts, auth.ActionRevoke, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
-	{"/admin.v1.AdminService/GetCertificate", auth.ResourceCerts, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
-	{"/admin.v1.AdminService/ListCertificates", auth.ResourceCerts, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_RevokeCertificate_FullMethodName, auth.ResourceCerts, auth.ActionRevoke, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{adminv1.AdminService_GetCertificate_FullMethodName, auth.ResourceCerts, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_ListCertificates_FullMethodName, auth.ResourceCerts, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
 
-	{"/admin.v1.AdminService/GetStatus", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
-	{"/admin.v1.AdminService/GetStats", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
+	{adminv1.AdminService_ListAccounts_FullMethodName, auth.ResourceACMEAccounts, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_GetAccount_FullMethodName, auth.ResourceACMEAccounts, auth.ActionRead, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
+	{adminv1.AdminService_DisableAccount_FullMethodName, auth.ResourceACMEAccounts, auth.ActionDisable, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+
+	{adminv1.AdminService_GetStatus_FullMethodName, auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
+	{adminv1.AdminService_GetStats_FullMethodName, auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
 }
 
 // TestUnaryAuthorizationInterceptor_RequestsExactPermission verifies each method
@@ -218,10 +275,10 @@ func TestUnaryAuthorizationInterceptor_TCPWithoutIdentityIsDenied(t *testing.T) 
 	interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
 
 	for _, method := range []string{
-		"/admin.v1.AdminService/DeleteTenant",
-		"/admin.v1.AdminService/RevokeCertificate",
-		"/admin.v1.AdminService/CreateTenantUser",
-		"/admin.v1.AdminService/ListCertificates",
+		adminv1.AdminService_DeleteTenant_FullMethodName,
+		adminv1.AdminService_RevokeCertificate_FullMethodName,
+		adminv1.AdminService_CreateTenantUser_FullMethodName,
+		adminv1.AdminService_ListCertificates_FullMethodName,
 	} {
 		t.Run(method, func(t *testing.T) {
 			ran := false
@@ -248,7 +305,7 @@ func TestUnaryAuthorizationInterceptor_UnixPeerCredentialsResolveIdentity(t *tes
 
 	ran := false
 	_, err := interceptor(ctx, nil,
-		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/RevokeCertificate"}, okHandler(&ran))
+		&grpc.UnaryServerInfo{FullMethod: adminv1.AdminService_RevokeCertificate_FullMethodName}, okHandler(&ran))
 
 	require.NoError(t, err)
 	assert.True(t, ran)
@@ -266,7 +323,7 @@ func TestUnaryAuthorizationInterceptor_UnmappedPeerIsDenied(t *testing.T) {
 
 	ran := false
 	_, err := interceptor(ctx, nil,
-		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/ListCertificates"}, okHandler(&ran))
+		&grpc.UnaryServerInfo{FullMethod: adminv1.AdminService_ListCertificates_FullMethodName}, okHandler(&ran))
 
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -295,6 +352,59 @@ func TestUnaryAuthorizationInterceptor_UnmappedMethodIsDenied(t *testing.T) {
 	assert.Empty(t, client.requested, "an unmapped method must not reach the authorizer")
 }
 
+// TestUnaryAuthorizationInterceptor_RealFullMethodIsAuthorized is the go-xkms#743
+// regression: MethodPermissions used to be keyed by "/admin.v1.AdminService/..."
+// literals, but the FullMethod a real gRPC call carries is
+// "/trustedca.admin.v1.AdminService/..." (the generated
+// adminv1.AdminService_RevokeCertificate_FullMethodName). With the stale
+// literal keys every admin gRPC call was denied regardless of the caller's
+// role, because info.FullMethod never matched a table entry. This test drives
+// the interceptor with the actual generated constant, not a hand-typed
+// string, so a regression to the wrong key space fails here.
+func TestUnaryAuthorizationInterceptor_RealFullMethodIsAuthorized(t *testing.T) {
+	const wrongLegacyKey = "/admin.v1.AdminService/RevokeCertificate"
+	require.NotEqual(t, wrongLegacyKey, adminv1.AdminService_RevokeCertificate_FullMethodName,
+		"the generated FullMethodName must differ from the retired literal key space")
+
+	gate, client := newTestGate()
+	interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "tester", TenantID: "t1", Roles: []string{qrdbsdk.RoleNameAdmin},
+	})
+
+	ran := false
+	_, err := interceptor(ctx, nil,
+		&grpc.UnaryServerInfo{FullMethod: adminv1.AdminService_RevokeCertificate_FullMethodName}, okHandler(&ran))
+
+	require.NoError(t, err)
+	assert.True(t, ran)
+	assert.Equal(t, []string{"certs:revoke"}, client.requested)
+}
+
+// TestUnaryAuthorizationInterceptor_RealServiceUnknownMethodIsDenied verifies
+// that a FullMethod on the real "trustedca.admin.v1.AdminService" service
+// name, but naming a method the service does not implement, is still denied
+// rather than admitted.
+func TestUnaryAuthorizationInterceptor_RealServiceUnknownMethodIsDenied(t *testing.T) {
+	gate, client := newTestGate()
+	interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "root", TenantID: "", Roles: []string{qrdbsdk.RoleNameAdmin},
+	})
+
+	ran := false
+	_, err := interceptor(ctx, nil,
+		&grpc.UnaryServerInfo{FullMethod: "/trustedca.admin.v1.AdminService/SomeFutureMethod"}, okHandler(&ran))
+
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Contains(t, err.Error(), admin.ErrOperationUnmapped.Error())
+	assert.False(t, ran)
+	assert.Empty(t, client.requested, "an unmapped method must not reach the authorizer")
+}
+
 // TestUnaryAuthorizationInterceptor_NilRoleMappingUsesDefaults verifies the
 // constructor substitutes the default mapping rather than leaving a nil deref
 // or an implicit allow.
@@ -307,7 +417,7 @@ func TestUnaryAuthorizationInterceptor_NilRoleMappingUsesDefaults(t *testing.T) 
 
 	ran := false
 	_, err := interceptor(ctx, nil,
-		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/ListCertificates"}, okHandler(&ran))
+		&grpc.UnaryServerInfo{FullMethod: adminv1.AdminService_ListCertificates_FullMethodName}, okHandler(&ran))
 
 	require.NoError(t, err)
 	assert.True(t, ran)
@@ -324,7 +434,7 @@ func TestUnaryAuthorizationInterceptor_NilGateDenies(t *testing.T) {
 
 	ran := false
 	_, err := interceptor(ctx, nil,
-		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/ListCertificates"}, okHandler(&ran))
+		&grpc.UnaryServerInfo{FullMethod: adminv1.AdminService_ListCertificates_FullMethodName}, okHandler(&ran))
 
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -343,7 +453,7 @@ func TestUnaryAuthorizationInterceptor_HandlerErrorPropagates(t *testing.T) {
 
 	sentinel := errors.New("handler failed")
 	_, err := interceptor(ctx, nil,
-		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/ListCertificates"},
+		&grpc.UnaryServerInfo{FullMethod: adminv1.AdminService_ListCertificates_FullMethodName},
 		func(context.Context, interface{}) (interface{}, error) { return nil, sentinel })
 
 	require.ErrorIs(t, err, sentinel)
@@ -356,9 +466,9 @@ func TestUnaryAuthorizationInterceptor_HandlerErrorPropagates(t *testing.T) {
 func TestUnaryAuthorizationInterceptor_QRDBAdminReachesGRPCSurface(t *testing.T) {
 	// SO-exclusive role mutation stays with the Security Officer.
 	soOnly := map[string]bool{
-		"/admin.v1.AdminService/CreateTenantRole": true,
-		"/admin.v1.AdminService/UpdateTenantRole": true,
-		"/admin.v1.AdminService/DeleteTenantRole": true,
+		adminv1.AdminService_CreateTenantRole_FullMethodName: true,
+		adminv1.AdminService_UpdateTenantRole_FullMethodName: true,
+		adminv1.AdminService_DeleteTenantRole_FullMethodName: true,
 	}
 
 	for method := range MethodPermissions {

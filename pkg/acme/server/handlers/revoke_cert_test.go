@@ -72,7 +72,7 @@ func createTestCertificateWithSerial(t *testing.T, service *RestService, account
 	// fixture with an empty PEM would make every revocation attempt fail as
 	// an unauthorized mismatch regardless of what the test intends to check.
 	acmeCert := &entities.ACMECertificate{
-		ID:        serialNumber.Uint64(),
+		Serial:    serialNumber.Text(16),
 		CertURL:   "",
 		PEM:       string(encodeCertificatePEM(certDER)),
 		IssuedAt:  time.Now(),
@@ -123,7 +123,7 @@ func createTestCertificateWithAuthorization(t *testing.T, service *RestService, 
 	// Create ACME certificate entity with the stored PEM matching the
 	// certificate under test (see createTestCertificateWithSerial for why).
 	acmeCert := &entities.ACMECertificate{
-		ID:        serialNumber.Uint64(),
+		Serial:    serialNumber.Text(16),
 		CertURL:   "",
 		PEM:       string(encodeCertificatePEM(certDER)),
 		IssuedAt:  time.Now(),
@@ -191,7 +191,7 @@ func TestRevokeCertHandler_Success(t *testing.T) {
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
 
-	updatedCert, err := certificateDAO.Get(ctx, acmeCert.ID)
+	updatedCert, err := certificateDAO.Get(ctx, acmeCert.EntityID())
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusRevoked, updatedCert.Status)
 }
@@ -231,7 +231,7 @@ func TestRevokeCertHandler_SuccessWithoutReason(t *testing.T) {
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
 
-	updatedCert, err := certificateDAO.Get(ctx, acmeCert.ID)
+	updatedCert, err := certificateDAO.Get(ctx, acmeCert.EntityID())
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusRevoked, updatedCert.Status)
 }
@@ -283,7 +283,7 @@ func TestRevokeCertHandler_AllValidReasons(t *testing.T) {
 			certificateDAO, err := service.storageFactory.CertificateDAO()
 			require.NoError(t, err)
 
-			updatedCert, err := certificateDAO.Get(ctx, acmeCert.ID)
+			updatedCert, err := certificateDAO.Get(ctx, acmeCert.EntityID())
 			require.NoError(t, err)
 			assert.Equal(t, common.StatusRevoked, updatedCert.Status)
 		})
@@ -461,7 +461,7 @@ func TestRevokeCertHandler_AlreadyRevokedCertificate(t *testing.T) {
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
 
-	updatedCert, err := certificateDAO.Get(ctx, acmeCert.ID)
+	updatedCert, err := certificateDAO.Get(ctx, acmeCert.EntityID())
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusRevoked, updatedCert.Status)
 
@@ -699,7 +699,7 @@ func TestRevokeCertHandler_ForgedCertificateWithVictimSerial(t *testing.T) {
 	ctx := context.Background()
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
-	stored, err := certificateDAO.Get(ctx, acmeCert.ID)
+	stored, err := certificateDAO.Get(ctx, acmeCert.EntityID())
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusValid, stored.Status)
 }
@@ -733,7 +733,7 @@ func TestRevokeCertHandler_StoredCertificateWithNoIdentifiers(t *testing.T) {
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
 	acmeCert := &entities.ACMECertificate{
-		ID:        serialNumber.Uint64(),
+		Serial:    serialNumber.Text(16),
 		PEM:       string(encodeCertificatePEM(certDER)),
 		IssuedAt:  time.Now(),
 		Status:    common.StatusValid,
@@ -787,7 +787,7 @@ func TestRevokeCertHandler_InvokesCARevocation(t *testing.T) {
 	ctx := context.Background()
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
-	stored, err := certificateDAO.Get(ctx, acmeCert.ID)
+	stored, err := certificateDAO.Get(ctx, acmeCert.EntityID())
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusRevoked, stored.Status)
 }
@@ -823,7 +823,7 @@ func TestRevokeCertHandler_CARevocationFailureBlocksACMERecord(t *testing.T) {
 	ctx := context.Background()
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
-	stored, err := certificateDAO.Get(ctx, acmeCert.ID)
+	stored, err := certificateDAO.Get(ctx, acmeCert.EntityID())
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusValid, stored.Status)
 }
@@ -858,9 +858,66 @@ func TestRevokeCertHandler_CAAlreadyRevokedIsSuccess(t *testing.T) {
 	ctx := context.Background()
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
-	stored, err := certificateDAO.Get(ctx, acmeCert.ID)
+	stored, err := certificateDAO.Get(ctx, acmeCert.EntityID())
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusRevoked, stored.Status)
+}
+
+// TestRevokeCertHandler_HashCollisionRefuses verifies that when the DAO row
+// a requested serial's EntityID hashes to (entities.StringToEntityID, a
+// 64-bit FNV-1a hash) actually holds a DIFFERENT certificate - simulating a
+// genuine hash collision, which this test substitutes directly since one
+// cannot be manufactured cheaply - RevokeCertHandler refuses with "not
+// found" and never calls the CA to revoke the wrong certificate.
+func TestRevokeCertHandler_HashCollisionRefuses(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	mockCA := &mockRevokeCA{}
+	service.ca = mockCA
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	// The certificate the client is trying to revoke.
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber:          serialNumber,
+		Subject:               pkix.Name{CommonName: "victim.example.com"},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, key.PublicKey, key.PrivateKey)
+	require.NoError(t, err)
+
+	// The row this serial's EntityID hashes to belongs to a DIFFERENT
+	// certificate.
+	otherCert := &entities.ACMECertificate{
+		Serial: "deadbeef",
+		PEM:    string(encodeCertificatePEM([]byte("not-the-requested-cert"))),
+		Status: common.StatusValid,
+	}
+	service.storageFactory = &collidingCertificateFactory{
+		Factory:   service.storageFactory,
+		otherCert: otherCert,
+	}
+
+	payload := RevokeCertRequest{
+		Certificate: base64.RawURLEncoding.EncodeToString(certDER),
+		Reason:      RevocationReasonKeyCompromise,
+	}
+	url := service.baseRESTURI + "/acme/revoke-cert"
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.RevokeCertHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
+	assert.False(t, mockCA.revokeCertCalled, "CA RevokeCert must never be called on a storage row collision")
+	assert.NotEqual(t, common.StatusRevoked, otherCert.Status, "the other certificate must never be revoked either")
 }
 
 // Helper function to convert reason code to string for test names

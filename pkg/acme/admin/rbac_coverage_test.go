@@ -863,7 +863,8 @@ func TestAdminService_GetCertificate_InvalidPEM(t *testing.T) {
 
 	// Save a certificate with invalid PEM to exercise the "continue" branch in GetCertificate
 	badCert := &entities.ACMECertificate{
-		ID:        99,
+		NumericID: 99,
+		Serial:    "99",
 		PEM:       "not-valid-pem",
 		Status:    "valid",
 		IssuedAt:  time.Now(),
@@ -887,7 +888,8 @@ func TestAdminService_RevokeCertificate_InvalidPEMCertSkipped(t *testing.T) {
 
 	// Save a certificate with invalid PEM
 	badCert := &entities.ACMECertificate{
-		ID:        99,
+		NumericID: 99,
+		Serial:    "99",
 		PEM:       "invalid-pem-data",
 		Status:    "valid",
 		IssuedAt:  time.Now(),
@@ -1077,9 +1079,10 @@ func TestAdminService_ConvertToCertificateInfo_InvalidPEM(t *testing.T) {
 	defer cleanup()
 
 	cert := &entities.ACMECertificate{
-		ID:     1,
-		PEM:    "not-valid-pem",
-		Status: "valid",
+		NumericID: 1,
+		Serial:    "1",
+		PEM:       "not-valid-pem",
+		Status:    "valid",
 	}
 
 	_, err := service.convertToCertificateInfo(cert)
@@ -1096,7 +1099,8 @@ func TestAdminService_ListCertificates_WithConvertError(t *testing.T) {
 
 	// Save a certificate with invalid PEM to exercise the "continue" in convertToCertificateInfo error path
 	badCert := &entities.ACMECertificate{
-		ID:        1,
+		NumericID: 1,
+		Serial:    "1",
 		PEM:       "bad-pem-data",
 		Status:    "valid",
 		IssuedAt:  time.Now(),
@@ -1128,7 +1132,8 @@ func TestAdminService_ListCertificates_SubjectFilter_InvalidPEM(t *testing.T) {
 	// Save a cert with invalid PEM - when Subject filter is set, parsePEMCertificate
 	// fails and the cert should still be included (the filter skips on parse error)
 	badCert := &entities.ACMECertificate{
-		ID:        1,
+		NumericID: 1,
+		Serial:    "1",
 		PEM:       "bad-pem",
 		Status:    "valid",
 		IssuedAt:  time.Now(),

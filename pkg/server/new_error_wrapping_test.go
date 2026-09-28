@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -65,9 +64,15 @@ func TestNew_NodeSealFailure_WrapsAsErrServiceInit(t *testing.T) {
 }
 
 // TestNew_QRDBStorageFailure_WrapsAsErrServiceInit proves an unrecognized
-// qrdb storage transport fails New as *ErrServiceInit{Service: "qrdb
-// storage"} wrapping *ErrUnsupportedStorageBackend, rather than the daemon
-// discovering the typo only once it tries to actually reach the transport.
+// qrdb storage transport fails New as *ErrServiceInit{Service:
+// "configuration"} wrapping config.Validate's own typed error, rather than
+// the daemon discovering the typo only once it tries to actually reach the
+// transport: since go-xkms#666, New() calls Validate() before touching
+// storage, and Validate already rejects an unrecognized
+// storage.qrdb.transport (config.go's "invalid qrdb transport" check), so
+// initializeQRDBStorage's own *ErrUnsupportedStorageBackend wrapping for this
+// same typo is now unreachable through New() -- see
+// TestInitializeQRDBStorage_InvalidTransport for that stage tested directly.
 func TestNew_QRDBStorageFailure_WrapsAsErrServiceInit(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
@@ -85,19 +90,20 @@ func TestNew_QRDBStorageFailure_WrapsAsErrServiceInit(t *testing.T) {
 
 	var svcErr *ErrServiceInit
 	require.True(t, errors.As(err, &svcErr), "error must unwrap to *ErrServiceInit, got %T", err)
-	assert.Equal(t, "qrdb storage", svcErr.Service)
-
-	var backendErr *ErrUnsupportedStorageBackend
-	assert.True(t, errors.As(err, &backendErr), "error must unwrap to *ErrUnsupportedStorageBackend, got %T", err)
+	assert.Equal(t, "configuration", svcErr.Service)
+	assert.Contains(t, err.Error(), "invalid qrdb transport")
 }
 
 // TestNew_CredentialServiceFailure_WrapsAsErrServiceInit proves that
 // credentials.seal_strategy: "barrier" fails New as *ErrServiceInit{Service:
-// "credential service"} wrapping credentialspkg.ErrNilBarrier: the
-// credential service initializes before initializeBarrier runs (see New's
-// ordering comment), so a "barrier" strategy can never be satisfied and must
-// be refused there instead of taking down whichever caller reaches the
-// credential service first.
+// "configuration"} wrapping config.Validate's own typed error: since
+// go-xkms#666, New() calls Validate() before touching storage, and Validate
+// already refuses "barrier" outside the one supported shape
+// (CredentialsBarrierStrategySupported), so initializeCredentialService's own
+// credentialspkg.ErrNilBarrier for this same misconfiguration is now
+// unreachable through New() -- see
+// TestNew_CredentialBarrierStrategy_UnsupportedConfigurationRefusedCleanly
+// for that stage tested directly.
 func TestNew_CredentialServiceFailure_WrapsAsErrServiceInit(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
@@ -111,9 +117,8 @@ func TestNew_CredentialServiceFailure_WrapsAsErrServiceInit(t *testing.T) {
 
 	var svcErr *ErrServiceInit
 	require.True(t, errors.As(err, &svcErr), "error must unwrap to *ErrServiceInit, got %T", err)
-	assert.Equal(t, "credential service", svcErr.Service)
-	assert.True(t, errors.Is(err, credentialspkg.ErrNilBarrier),
-		"error must unwrap to credentialspkg.ErrNilBarrier, got %v", err)
+	assert.Equal(t, "configuration", svcErr.Service)
+	assert.Contains(t, err.Error(), "credentials.seal_strategy \"barrier\"")
 }
 
 // TestNew_ConfigSecretResolutionFailure_WrapsAsErrServiceInit proves a

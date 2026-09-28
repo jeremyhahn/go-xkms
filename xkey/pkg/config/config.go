@@ -30,6 +30,7 @@ type Config struct {
 	Backend            BackendConfig            `yaml:"backend" json:"backend" mapstructure:"backend"`
 	Backends           BackendsConfig           `yaml:"backends,omitempty" json:"backends,omitempty" mapstructure:"backends"`
 	FIDO2              FIDO2Config              `yaml:"fido2" json:"fido2" mapstructure:"fido2"`
+	PIV                PIVConfig                `yaml:"piv" json:"piv" mapstructure:"piv"`
 	OATH               OATHConfig               `yaml:"oath" json:"oath" mapstructure:"oath"`
 	Phone              PhoneConfig              `yaml:"phone" json:"phone" mapstructure:"phone"`
 	XKMSD              XKMSDConfig              `yaml:"xkmsd" json:"xkmsd" mapstructure:"xkmsd"`
@@ -78,6 +79,31 @@ type FIDO2Config struct {
 	ResidentKey     bool            `yaml:"resident_key" json:"resident_key" mapstructure:"resident_key"`
 	ConformanceMode bool            `yaml:"conformance_mode" json:"conformance_mode" mapstructure:"conformance_mode"`
 	Extensions      map[string]bool `yaml:"extensions" json:"extensions" mapstructure:"extensions"`
+}
+
+// PIVConfig holds settings for the "xkey piv" certificate storage command
+// group, plus the sibling commands (cert, device listen, provision) that open
+// the same storage. It deliberately carries no PKCS#11 PIN or Security
+// Officer PIN field: those two secrets follow the same stdin-flag-then-
+// dedicated-environment-variable convention pin_input.go established for the
+// host PIN service's own PIN (--pkcs11-pin-stdin/XKEY_PIV_PKCS11_PIN and
+// --pkcs11-so-pin-stdin/XKEY_PIV_PKCS11_SO_PIN, piv.go), never a config file
+// or the generic per-leaf-key environment binding this section registers for
+// its other fields (go-xkms#871).
+type PIVConfig struct {
+	// Backend is the key backend: software, tpm2, or pkcs11.
+	Backend string `yaml:"backend" json:"backend" mapstructure:"backend"`
+	// Storage overrides the certificate storage type (file, tpm2, pkcs11).
+	// Empty defaults to match Backend.
+	Storage string `yaml:"storage" json:"storage" mapstructure:"storage"`
+	// StoragePath is the path for file storage.
+	StoragePath string `yaml:"storage_path" json:"storage_path" mapstructure:"storage_path"`
+	// TPMDevice is the TPM device path for the tpm2 backend/storage.
+	TPMDevice string `yaml:"tpm_device" json:"tpm_device" mapstructure:"tpm_device"`
+	// PKCS11Library is the PKCS#11 library path.
+	PKCS11Library string `yaml:"pkcs11_library" json:"pkcs11_library" mapstructure:"pkcs11_library"`
+	// PKCS11Token is the PKCS#11 token label.
+	PKCS11Token string `yaml:"pkcs11_token" json:"pkcs11_token" mapstructure:"pkcs11_token"`
 }
 
 // OATHConfig holds settings for the OATH TOTP/HOTP module.
@@ -315,6 +341,20 @@ var validModes = map[string]struct{}{
 	"enterprise": {},
 }
 
+// validPIVBackends is the set of accepted piv.backend identifiers.
+var validPIVBackends = map[string]struct{}{
+	"software": {},
+	"tpm2":     {},
+	"pkcs11":   {},
+}
+
+// validPIVStorageTypes is the set of accepted piv.storage identifiers.
+var validPIVStorageTypes = map[string]struct{}{
+	"file":   {},
+	"tpm2":   {},
+	"pkcs11": {},
+}
+
 // validRemoteProtocols is the set of accepted remote backend protocols.
 var validRemoteProtocols = map[string]struct{}{
 	"rest": {},
@@ -338,9 +378,25 @@ func DefaultConfig() *Config {
 			},
 		},
 		FIDO2: FIDO2Config{
-			Storage:     "file",
+			// Attestation is the one FIDO2 default this Config bakes in: three
+			// call sites (xkey/cmd/xkey/cmd/fido2.go, extension_serve.go,
+			// pkg/gui/app.go) already treat "packed" as the app-wide default,
+			// overriding the "xkey fido2" command's own more conservative
+			// --attestation flag default ("none") when neither a flag, an
+			// XKEY_FIDO2_ATTESTATION variable nor a config file names one.
+			// Storage and DeviceName have no such established consumer, so
+			// they are left empty here rather than baking in a second,
+			// conflicting default ("file"/"xKey" vs. the command's own
+			// "memory"/"xKey (go-xkms)"): an unconfigured install keeps the
+			// command's existing behavior, and an explicit
+			// XKEY_FIDO2_STORAGE/config-file value still overrides it
+			// (go-xkms#871).
 			Attestation: "packed",
-			DeviceName:  "xKey",
+		},
+		PIV: PIVConfig{
+			Backend:       "software",
+			TPMDevice:     "/dev/tpmrm0",
+			PKCS11Library: "/usr/lib/softhsm/libsofthsm2.so",
 		},
 		TPM: TPMConfig{
 			Device:          "/dev/tpmrm0",
@@ -455,6 +511,17 @@ func (c *Config) Validate() error {
 	if c.Backend.Default != "" {
 		if _, ok := validBackends[c.Backend.Default]; !ok {
 			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backend.default %q is not one of software, tpm2, pkcs11, phone", c.Backend.Default)}
+		}
+	}
+
+	if c.PIV.Backend != "" {
+		if _, ok := validPIVBackends[c.PIV.Backend]; !ok {
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": piv.backend %q is not one of software, tpm2, pkcs11", c.PIV.Backend)}
+		}
+	}
+	if c.PIV.Storage != "" {
+		if _, ok := validPIVStorageTypes[c.PIV.Storage]; !ok {
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": piv.storage %q is not one of file, tpm2, pkcs11", c.PIV.Storage)}
 		}
 	}
 
