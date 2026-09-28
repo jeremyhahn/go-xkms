@@ -259,6 +259,21 @@ specific permission before assuming a non-Admin role holds it.
   (`pkg/api/tenantgate/tenantgate.go:107`).
 - **Role reassignment after user creation does not exist.** `roleNameToID`
   runs once, at `CreateUser`; there is no update path.
+- **With a `UserStore` configured, an mTLS identity is always a bound user's.**
+  `MTLSAuthenticator.userIdentity` (`pkg/auth/mtls.go:216`) builds the
+  identity only from a bound, enabled user record. An unbound certificate
+  (qrdb's typed `UserNotFoundError`) is refused with `ErrCertNotBound`
+  (`pkg/auth/mtls.go:224-226`). Any other store error (sealed tenant
+  barrier, failed index read, unreachable remote) fails closed as
+  `*UserLookupError` (`pkg/auth/mtls.go:228`). Neither falls back to the
+  certificate's fields. That identity would carry the caller-chosen CN as
+  `Subject` and first OU as `TenantID`. Handlers scope per-user state on
+  that pair (the password vault, `pkg/api/rest/password_handlers.go:95`),
+  and with RBAC disabled nothing else stands between it and the handler.
+  During an outage it would also admit an account the store would have
+  refused. Only an authenticator built without a store
+  (`pkg/auth/mtls.go:258`, used when no qrdb identity plane is hosted)
+  derives an identity from certificate fields.
 
 ## Error semantics
 
@@ -266,6 +281,8 @@ specific permission before assuming a non-Admin role holds it.
 |---|---|---|
 | `ErrUnauthenticated` | `pkg/auth/errors.go` | `Authorize` called with a nil identity while enabled |
 | `*xkms.TenantBindingError` | `pkg/xkms/tenant_binding.go:34` | a tenant-scoped caller named another tenant (or the system scope), or asked for a plan change; unwraps to `qrdbsdk.ErrTenantMissing` and renders as not-found on every transport |
+| `ErrCertNotBound` | `pkg/auth/errors.go:45` | mTLS authenticator with a `UserStore`: the client certificate's SPKI thumbprint is bound to no user. The request is unauthenticated (REST 401), and the gate never runs |
+| `*UserLookupError{Err}` | `pkg/auth/errors.go:54` | mTLS authenticator with a `UserStore`: the store failed for any reason other than a definite not-found. It fails closed, and `Err` carries the store's error |
 | qrdb's `PermissionDeniedError` | returned by `rbac.Authorize` | grant missing, or tenant scope gate rejects the request |
 | `ErrAuthorizerRequired` | `pkg/api/rest/errors.go` | `rest.NewServer` refuses to construct when `EnableRBAC` is true but no usable authorizer was supplied — fails closed at construction, never falls back to allow-all |
 | `*ErrUnknownRole{Role}` | `pkg/xkms/errors.go` | `CreateUser`'s role name does not match any existing qrdb role, wrapped in `*ErrUserOperation{Operation: "resolve role"}` |

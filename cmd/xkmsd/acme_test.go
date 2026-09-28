@@ -694,3 +694,71 @@ func TestBuildClusterPreSignHooks_Enabled(t *testing.T) {
 		t.Errorf("registry.Count() = %d, want 1", got)
 	}
 }
+
+// TestBuildClusterPreSignHooks_RegisteredHookStampsSPIFFEURI executes the
+// registered SPIFFE URI-SAN hook (rather than only counting it, as
+// TestBuildClusterPreSignHooks_Enabled does) against a synthetic
+// TCG-CSR-IDEVID order carrying a permanent identifier, and proves the
+// resulting extension embeds clusterenroll.NodeURI's
+// spiffe://<trustDomain>/node/<permanentID> URI -- the actual mapping
+// go-xkms#705's earlier batches left unexercised.
+func TestBuildClusterPreSignHooks_RegisteredHookStampsSPIFFEURI(t *testing.T) {
+	cfg := &config.Config{Cluster: config.ClusterConfig{
+		Enabled: true,
+		RaftEnrollment: config.RaftEnrollmentConfig{
+			TrustDomain: "cluster.example.org",
+			ACME:        config.RaftACMEEnrollmentConfig{Enabled: true},
+		},
+	}}
+	registry := buildClusterPreSignHooks(cfg)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "node-raft-1"},
+		},
+	}
+	exts, err := registry.Execute(&handlers.OrderPreSignHookContext{
+		Context:  context.Background(),
+		Order:    order,
+		IsTCGCSR: true,
+	})
+	if err != nil {
+		t.Fatalf("registry.Execute: %v", err)
+	}
+	if len(exts) != 1 {
+		t.Fatalf("registry.Execute returned %d extensions, want 1", len(exts))
+	}
+	wantURI := "spiffe://cluster.example.org/node/node-raft-1"
+	if !strings.Contains(string(exts[0].Value), wantURI) {
+		t.Errorf("extension value = %x, want it to embed URI %q", exts[0].Value, wantURI)
+	}
+
+	// A non-TCG-CSR order (standard PKCS#10 issuance) must not be touched:
+	// the hook returns no extensions rather than misapplying a SPIFFE URI
+	// SAN meant only for cluster node enrollment.
+	exts, err = registry.Execute(&handlers.OrderPreSignHookContext{
+		Context:  context.Background(),
+		Order:    order,
+		IsTCGCSR: false,
+	})
+	if err != nil {
+		t.Fatalf("registry.Execute (non-TCG order): %v", err)
+	}
+	if len(exts) != 0 {
+		t.Errorf("registry.Execute (non-TCG order) returned %d extensions, want 0", len(exts))
+	}
+
+	// A TCG-CSR order with no permanent-identifier is equally a no-op: the
+	// hook has nothing to derive a node URI from.
+	exts, err = registry.Execute(&handlers.OrderPreSignHookContext{
+		Context:  context.Background(),
+		Order:    &entities.ACMEOrder{},
+		IsTCGCSR: true,
+	})
+	if err != nil {
+		t.Fatalf("registry.Execute (no permanent identifier): %v", err)
+	}
+	if len(exts) != 0 {
+		t.Errorf("registry.Execute (no permanent identifier) returned %d extensions, want 0", len(exts))
+	}
+}

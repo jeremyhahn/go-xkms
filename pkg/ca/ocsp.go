@@ -23,7 +23,6 @@ import (
 	"crypto"
 	"crypto/fips140"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -224,49 +223,20 @@ func (o *OCSPResponder) createResponse(ctx context.Context, req *ocsp.Request) (
 }
 
 // checkCertificateStatus reports whether the given serial number is revoked.
-// Storage lookups first consult the in-memory revocation map (always
-// populated for recent revocations) and fall back to the durable revocation
-// store so revocations persisted before the current process started, or
-// written by another instance in the cluster, are visible.
+// It reads through CA.lookupRevocation, the same path IsRevoked uses: the
+// in-memory map first, then the replicated revocation store, so a
+// revocation written by another instance in the cluster is visible. Only a
+// definite miss answers ocsp.Good; a store fault or corrupt record answers
+// ocsp.Unknown with ErrOCSPStorageError joined to the underlying cause.
 func (o *OCSPResponder) checkCertificateStatus(ctx context.Context, serial *big.Int) (int, time.Time, int, error) {
-	// Hot path: in-memory check — RevokeCert and Revoke both update this map.
-	o.ca.revocationsMutex.RLock()
-	info, revoked := o.ca.revocations[serial.Text(10)]
-	o.ca.revocationsMutex.RUnlock()
-	if revoked {
-		return ocsp.Revoked, info.RevocationTime, info.Reason, nil
-	}
-
-	// Cold path: consult the durable revocation store, preferring the
-	// datastore-backed revocationStore (replicated under Raft) and falling
-	// back to the legacy object store -- the same preference order
-	// putRevocationBlob/listRevocationBlobs use. Load() normally populates
-	// the in-memory map, but a fresh CA that hasn't been reloaded since
-	// another instance wrote a revocation still needs to read through.
-	rec, err := o.loadRevocationFromStore(ctx, serial)
+	info, err := o.ca.lookupRevocation(ctx, serial)
 	if err != nil {
-		if errors.Is(err, ErrCRLNotFound) {
-			return ocsp.Good, time.Time{}, 0, nil
-		}
-		return ocsp.Unknown, time.Time{}, 0, &errs.Detail{Err: ErrOCSPStorageError, Detail: fmt.Sprintf("%v", err)}
+		return ocsp.Unknown, time.Time{}, 0, &errs.Joined{Lead: ErrOCSPStorageError, Cause: err}
 	}
-	return ocsp.Revoked, rec.RevokedAt, rec.Reason, nil
-}
-
-// loadRevocationFromStore reads a single persistedRevocation, preferring the
-// datastore-backed revocation store and falling back to the legacy object
-// store. Returns ErrCRLNotFound when no record exists for serial or neither
-// store is configured.
-func (o *OCSPResponder) loadRevocationFromStore(ctx context.Context, serial *big.Int) (*persistedRevocation, error) {
-	data, err := o.ca.getRevocationBlob(ctx, serial)
-	if err != nil {
-		return nil, err
+	if info == nil {
+		return ocsp.Good, time.Time{}, 0, nil
 	}
-	var rec persistedRevocation
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return nil, &errs.Detail{Err: ErrOCSPStorageError, Detail: fmt.Sprintf("%v", err)}
-	}
-	return &rec, nil
+	return ocsp.Revoked, info.RevocationTime, info.Reason, nil
 }
 
 // =============================================================================

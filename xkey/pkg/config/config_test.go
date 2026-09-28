@@ -16,6 +16,7 @@ package config
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,6 +70,43 @@ func TestDefaultConfigFieldValues(t *testing.T) {
 	assert.True(t, cfg.GUI.Notifications)
 	assert.True(t, cfg.GUI.AutoTray)
 	assert.True(t, cfg.GUI.FIDO2AuthEnabled)
+	assert.False(t, cfg.Device.TrustNewDevices)
+	assert.Equal(t, 30*time.Second, cfg.Device.ScanTimeout)
+}
+
+// TestValidate_ZeroDeviceScanTimeout proves a zero device.scan_timeout is
+// rejected: a silently-zeroed scan bound would make `device pair` and
+// `device scan` fail every BLE operation instantly instead of waiting.
+func TestValidate_ZeroDeviceScanTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Device.ScanTimeout = 0
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid))
+	assert.Contains(t, err.Error(), "device.scan_timeout")
+}
+
+// TestValidate_NegativeDeviceScanTimeout proves a negative
+// device.scan_timeout is rejected the same way a zero one is.
+func TestValidate_NegativeDeviceScanTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Device.ScanTimeout = -5 * time.Second
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrConfigInvalid))
+	assert.Contains(t, err.Error(), "device.scan_timeout")
+}
+
+// TestValidate_DeviceTrustNewDevicesTrue proves that turning on
+// trust_new_devices is, by itself, a valid configuration -- Validate rejects
+// malformed values, not this deliberately permissive one.
+func TestValidate_DeviceTrustNewDevicesTrue(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Device.TrustNewDevices = true
+
+	assert.NoError(t, cfg.Validate())
 }
 
 func TestValidate_ValidConfig(t *testing.T) {

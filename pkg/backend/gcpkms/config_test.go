@@ -213,6 +213,28 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "missing key storage",
+			config: &Config{
+				ProjectID:   "test-project",
+				LocationID:  "us-central1",
+				KeyRingID:   "test-keyring",
+				CertStorage: storage.New(),
+			},
+			wantErr: true,
+			errType: ErrInvalidConfig,
+		},
+		{
+			name: "missing cert storage",
+			config: &Config{
+				ProjectID:  "test-project",
+				LocationID: "us-central1",
+				KeyRingID:  "test-keyring",
+				KeyStorage: storage.New(),
+			},
+			wantErr: true,
+			errType: ErrInvalidConfig,
+		},
 	}
 
 	for _, tt := range tests {

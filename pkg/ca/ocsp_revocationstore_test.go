@@ -27,7 +27,8 @@ import (
 // state regression guard for go-xkms#275: before this fix,
 // checkCertificateStatus's cold path only consulted ca.objectStore, so a CA
 // configured with only the datastore-backed revocationStore (the preferred,
-// replicated store -- see putRevocationBlob) never saw a revocation written
+// replicated store -- see putRevocationBlobIfAbsent) never saw a revocation
+// written
 // by another process/instance once its in-memory map was reset. This models
 // exactly that: a fresh in-memory map over a revocationStore that already
 // holds the record.

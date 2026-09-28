@@ -71,7 +71,28 @@ func testLogger() *slog.Logger {
 
 func testSocketPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(t.TempDir(), "test.sock")
+	return filepath.Join(privateDir(t), "test.sock")
+}
+
+// privateDir returns a fresh temporary directory with mode 0700. t.TempDir
+// creates its directory 0777 &^ umask — 0755 under the usual umask — which
+// the socket directory checks correctly refuse, so tests that bind a socket
+// directly in a temp directory tighten it first.
+func privateDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, socketDirMode))
+	return dir
+}
+
+// staleSocket leaves a socket file at path with nobody listening on it, as a
+// crashed server would.
+func staleSocket(t *testing.T, path string) {
+	t.Helper()
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	require.NoError(t, err)
+	listener.SetUnlinkOnClose(false)
+	require.NoError(t, listener.Close())
 }
 
 func TestNewServer_CreatesSocketFile(t *testing.T) {
@@ -120,10 +141,13 @@ func TestNewServer_CreatesSocketDirectory(t *testing.T) {
 	require.NoError(t, err)
 	defer srv.Close()
 
-	// Verify the nested directories were created.
-	info, err := os.Stat(filepath.Dir(sockPath))
-	require.NoError(t, err)
-	assert.True(t, info.IsDir())
+	// Every component NewServer created is private to this user.
+	for _, created := range []string{filepath.Join(dir, "nested"), filepath.Dir(sockPath)} {
+		info, err := os.Lstat(created)
+		require.NoError(t, err)
+		assert.True(t, info.IsDir())
+		assert.Equal(t, os.FileMode(socketDirMode), info.Mode().Perm(), created)
+	}
 }
 
 func TestNewServer_InvalidPath_ReturnsError(t *testing.T) {
@@ -142,7 +166,7 @@ func TestNewServer_InvalidPath_ReturnsError(t *testing.T) {
 func TestNewServer_SocketPathTooLong_ReturnsError(t *testing.T) {
 	// Unix domain socket paths are limited to 108 bytes on Linux.
 	// Generate a path that exceeds this limit to trigger a net.Listen failure.
-	dir := t.TempDir()
+	dir := privateDir(t)
 	longName := strings.Repeat("x", 200)
 	sockPath := filepath.Join(dir, longName+".sock")
 	handler := &mockHandler{
@@ -499,10 +523,7 @@ func TestServer_EmptyMessageType_ReturnsError(t *testing.T) {
 func TestServer_RemovesStaleSocketOnStartup(t *testing.T) {
 	sockPath := testSocketPath(t)
 
-	// Create a stale socket file.
-	dir := filepath.Dir(sockPath)
-	require.NoError(t, os.MkdirAll(dir, 0700))
-	require.NoError(t, os.WriteFile(sockPath, []byte("stale"), 0600))
+	staleSocket(t, sockPath)
 
 	handler := &mockHandler{
 		statusResp: OKResponse(ActionDaemonReady),
@@ -693,7 +714,7 @@ func TestNewServer_DuplicateSocket_RejectsLiveSocket(t *testing.T) {
 	_, err = NewServer(sockPath, handler, testLogger())
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrSocketCreateFailed))
-	assert.Contains(t, err.Error(), "another IPC server is already listening")
+	assert.ErrorIs(t, err, ErrSocketInUse)
 }
 
 func TestNewServer_DuplicateSocket_ReplacesStaleSocket(t *testing.T) {
@@ -755,29 +776,19 @@ func TestServer_TypePasswordMissingName_ReturnsError(t *testing.T) {
 	srv.Close()
 }
 
-func TestNewServer_RemoveStaleSocket_PermissionDenied(t *testing.T) {
-	// Create a directory where the socket file cannot be removed.
-	dir := t.TempDir()
-	sockDir := filepath.Join(dir, "protected")
-	sockPath := filepath.Join(sockDir, "test.sock")
+func TestNewServer_StaleNonSocketFile_IsNotRemoved(t *testing.T) {
+	// A --socket path that names a regular file must never be deleted to
+	// make room for the listener.
+	sockPath := testSocketPath(t)
+	require.NoError(t, os.WriteFile(sockPath, []byte("not a socket"), 0600))
 
-	// Create the directory and a socket file.
-	require.NoError(t, os.MkdirAll(sockDir, 0700))
-	require.NoError(t, os.WriteFile(sockPath, []byte("stale"), 0600))
-
-	// Make the directory read-only so the socket file cannot be removed.
-	require.NoError(t, os.Chmod(sockDir, 0500))
-	defer os.Chmod(sockDir, 0700) // Restore for cleanup.
-
-	handler := &mockHandler{
-		statusResp: OKResponse(ActionDaemonReady),
-	}
-
-	srv, err := NewServer(sockPath, handler, testLogger())
+	srv, err := NewServer(sockPath, &mockHandler{}, testLogger())
 	assert.Nil(t, srv)
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrSocketCreateFailed),
-		"expected ErrSocketCreateFailed, got: %v", err)
+	assert.ErrorIs(t, err, ErrSocketNotOwned)
+
+	data, readErr := os.ReadFile(sockPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, "not a socket", string(data))
 }
 
 func TestNewServer_ChmodFails_ReturnsSocketPermissionError(t *testing.T) {
@@ -985,4 +996,23 @@ func TestSudoOwnership_InvalidSUDO_GID(t *testing.T) {
 
 	_, _, ok := sudoOwnership()
 	assert.False(t, ok)
+}
+
+func TestClientErrorMessage_NeverEchoesDetail(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"internal error", &DetailError{Err: ErrPKCS11Operation, Detail: ": open /secret/key.pem: permission denied"}, ErrHandlerFailed.Error()},
+		{"plain error", errors.New("backend at 10.0.0.1 unreachable"), ErrHandlerFailed.Error()},
+		{"barrier sealed", &DetailError{Err: ErrBarrierSealed, Detail: ": seal key id 42"}, ErrBarrierSealed.Error()},
+		{"autofill disabled", &SentinelCauseError{Sentinel: ErrAutofillDisabled, Cause: errors.New("config /home/a/x")}, ErrAutofillDisabled.Error()},
+		{"invalid message", &DetailError{Err: ErrInvalidMessage, Detail: ": unknown pkcs11 action \"x\""}, ErrInvalidMessage.Error()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, clientErrorMessage(tt.err))
+		})
+	}
 }

@@ -515,3 +515,14 @@ func TestMarshalUnmarshalSealedData(t *testing.T) {
 		t.Errorf("KeyID mismatch: got %s, want %s", restored.KeyID, original.KeyID)
 	}
 }
+
+// TestUnmarshalSealedData_MalformedJSON proves a corrupted sealed-data blob
+// (e.g. truncated storage, a bit flip) is reported as an error rather than
+// silently producing a zero-value SealedData that Unseal would then try, and
+// fail, to decrypt with a confusing downstream error.
+func TestUnmarshalSealedData_MalformedJSON(t *testing.T) {
+	_, err := UnmarshalSealedData([]byte("{not valid json"))
+	if err == nil {
+		t.Fatal("UnmarshalSealedData() with malformed JSON: expected error, got nil")
+	}
+}

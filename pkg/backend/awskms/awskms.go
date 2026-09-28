@@ -180,11 +180,17 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 		return nil, err
 	}
 
-	// For metadata/blob extensions, return stored metadata
+	// For metadata/blob extensions, return stored metadata. Only a genuine
+	// storage.ErrNotFound is reported as ErrFileNotFound; any other failure
+	// from the metadata store must not be conflated with "no record yet"
+	// (go-xkms#1119, matching getKeyID's classification below).
 	if extension == backend.FSEXT_PRIVATE_BLOB || extension == backend.FSEXT_PUBLIC_BLOB {
 		data, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 		if err != nil {
-			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			if errors.Is(err, storage.ErrNotFound) {
+				return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			}
+			return nil, &errs.Joined{Lead: ErrMetadataStorage, Detail: fmt.Sprintf("failed to read metadata for %s", attrs.CN), Cause: err}
 		}
 		return data, nil
 	}
@@ -695,11 +701,18 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
-	// Reconstruct KeyAttributes from each key's metadata.
+	// Reconstruct KeyAttributes from each key's metadata. Only a genuine
+	// storage.ErrNotFound is treated as the benign List/Get race the comment
+	// below describes; any other failure must not be silently dropped from
+	// the result, which would return an incomplete list with nothing to say
+	// so (go-xkms#1119).
 	for _, cn := range cns {
 		metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, cn)
 		if err != nil {
-			continue // Skip a CN whose metadata disappeared between List and Get
+			if errors.Is(err, storage.ErrNotFound) {
+				continue // Skip a CN whose metadata disappeared between List and Get
+			}
+			return nil, &errs.Joined{Lead: ErrMetadataStorage, Detail: fmt.Sprintf("failed to read key metadata for %s", cn), Cause: err}
 		}
 
 		var metadata map[string]interface{}

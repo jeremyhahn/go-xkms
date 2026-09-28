@@ -293,7 +293,7 @@ Examples:
   xkey password type "DatabaseProd"
 
   # Custom socket path
-  xkey password type "DatabaseProd" --socket /tmp/xkey.sock`,
+  xkey password type "DatabaseProd" --socket "$XDG_RUNTIME_DIR/xkey/xkey.sock"`,
 	RunE: runPasswordType,
 }
 
