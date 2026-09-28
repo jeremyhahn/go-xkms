@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Exported surface
 
@@ -263,7 +263,10 @@ first run and the wrong one for daily use.
   the ceremony carried a verified PIN or the key backend verified a human
   itself; `getInfo` reports `uv=false` where a PIN is the verification method
   so a browser collects it. No flag or setting reports verification the
-  authenticator did not do.
+  authenticator did not do. A backend that verifies inside its own key
+  operation never mints a `pinUvAuthToken`: subcommand `0x06` is refused
+  (#1145; see
+  [`fido2/engineering.md`](../fido2/engineering.md#minting-a-pinuvauthtoken-pin-only-go-xkms1145)).
 - **The relying party cannot distinguish backends.** `software`, `tpm2` and
   `phone` present identically over CTAP2, so the strength claim is the
   operator's to make honestly.

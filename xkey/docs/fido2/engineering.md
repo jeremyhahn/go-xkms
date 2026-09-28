@@ -188,6 +188,38 @@ the platform must obtain a fresh token for the next one. A silent assertion
 (`up=false`) spends nothing, which is what lets conditional UI keep
 discovering credentials on one token.
 
+### Minting a pinUvAuthToken: PIN only (go-xkms#1145)
+
+A token comes from exactly one place, `getPinUvAuthTokenUsingPinWithPermissions`
+(subcommand `0x09`, `cmd_clientpin.go:725`), and every mint goes through
+`beginUsingPinUvAuthTokenLocked` (`cmd_clientpin.go:1286`), which sets the
+token's `userVerified` flag.
+
+`getPinUvAuthTokenUsingUvWithPermissions` (subcommand `0x06`) is refused with
+`CTAP2_ERR_INVALID_SUBCOMMAND` for every backend (`cmd_clientpin.go:278`). It
+used to treat a backend's `HandlesUserVerification` capability as an implicit
+successful verification. The phone backend reports that capability
+(`pkg/phone/phone.go:446`), so any local HID client could mint a `cm`, `acfg`
+or `lbw` token without anyone being verified, then enumerate or delete
+resident credentials or change configuration. The capability means the backend
+verifies the user *inside its own key operation*: the phone's biometric gates
+`Sign` and `GenerateCredentialKey`. It is not a verification that can be run
+on demand (`keybackend/keybackend.go:55`), and the pairing protocol has no
+biometric-gated "verify user" call whose result the authenticator could check.
+Until one exists, the capability sets the UV flag on the `makeCredential` or
+`getAssertion` whose signature the phone produced (`cmd_makecredential.go:963`,
+`cmd_getassertion.go:970`) and nothing else.
+
+`getInfo` keeps the two consistent. `supportsPinUvAuthToken`
+(`cmd_getinfo.go:320`) gates `FIDO_2_1`, `credMgmt` and `pinUvAuthToken` on the
+PIN alone. `uv=true` is advertised for a verifying backend only when there is no
+`pinUvAuthToken` surface (`cmd_getinfo.go:230`), because CTAP 2.1 §6.4 reads
+`uv=true` next to `pinUvAuthToken=true` as a promise that subcommand `0x06`
+works. `xkey fido2` always enables credential management, which forces the PIN
+on (`config.go:594`), so the phone daemon reports `uv=false`,
+`pinUvAuthToken=true`: the browser collects the PIN, and the phone still asks
+for the biometric on every signature.
+
 ### Brute-force PIN retry ordering (go-xkms#686)
 
 `changePIN`, `getPinToken` and `getPinUvAuthTokenUsingPinWithPermissions` all

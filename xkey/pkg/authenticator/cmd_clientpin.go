@@ -289,7 +289,18 @@ func (a *Authenticator) handleClientPIN(data []byte) ([]byte, error) {
 		return a.handleGetPINToken(req)
 
 	case ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions:
-		return a.handleGetPinUvAuthTokenUsingUvWithPermissions(req)
+		// Unsupported, deliberately (#1145). Minting a token here requires a
+		// standalone built-in user verification ceremony whose success the
+		// authenticator can check (CTAP 2.1 §6.5.5.7.3), and no key backend
+		// offers one. keybackend.FIDO2KeyCapabilities.HandlesUserVerification
+		// means verification happens INSIDE the backend's own key operation
+		// (a phone biometric gating Sign), not that a user can be verified on
+		// demand, so it can never authorize a token that later drives
+		// credential management or authenticatorConfig. getOptions keeps the
+		// uv option off whenever pinUvAuthToken is advertised, so a
+		// conforming platform never sends this subcommand; the PIN path
+		// (subcommand 0x09) is the one way to obtain a pinUvAuthToken.
+		return nil, ErrInvalidSubcommand
 
 	case ClientPINSubCmdGetPinUvAuthTokenUsingPinWithPermissions:
 		return a.handleGetPinUvAuthTokenUsingPinWithPermissions(req)
@@ -444,11 +455,12 @@ func (a *Authenticator) establishPINLocked(newPIN []byte) error {
 	a.state.SetPINRetries(a.config.PINMaxRetries)
 
 	// CTAP 2.1 §6.5.2.1: a pinUvAuthToken must not outlive the PIN state it
-	// was minted under. This path runs only when no PIN was set, but a token
-	// can still be outstanding: getPinUvAuthTokenUsingUvWithPermissions mints
-	// one against the authenticator's built-in user verification and never
-	// asks whether a PIN exists. Establishing a PIN must not leave that token
-	// usable.
+	// was minted under. This path runs only when no PIN was set, and today
+	// every minting path requires a PIN (getPinUvAuthTokenUsingUv is refused,
+	// #1145), so no token should be outstanding here. The invalidation stays
+	// so that guarantee does not depend on every future minting path
+	// remembering to check for a PIN: establishing a PIN must never leave a
+	// token minted without one usable.
 	//
 	// Placed after the new PIN is accepted into a.state and before it is
 	// persisted, so a storage failure cannot leave a live token behind a PIN
@@ -698,96 +710,6 @@ func (a *Authenticator) handleGetPINToken(req *ClientPINRequest) ([]byte, error)
 	a.beginUsingPinUvAuthTokenLocked(pinToken, PINPermissionMakeCredential|PINPermissionGetAssertion, "")
 
 	// Encrypt the PIN token.
-	encryptedToken, err := a.encryptData(encKey, req.PinUvAuthProtocol, pinToken)
-	if err != nil {
-		return nil, err
-	}
-
-	// Save state.
-	if err := a.storage.SaveState(a.state); err != nil {
-		return nil, ErrStorageError
-	}
-
-	response := map[int]interface{}{
-		clientPINResponseKeyPinUvAuthToken: encryptedToken,
-	}
-
-	data, err := encodeCBOR(response)
-	if err != nil {
-		return nil, err
-	}
-
-	return a.successResponse(data), nil
-}
-
-// handleGetPinUvAuthTokenUsingUvWithPermissions generates a pinUvAuthToken using
-// built-in user verification (UV) instead of PIN verification. This is used when
-// the authenticator reports uv=true in GetInfo and the platform sends subCommand 0x06.
-// The flow is identical to the PIN-with-permissions variant except PIN hash
-// verification is skipped entirely -- the key backend's built-in UV (e.g.,
-// biometric on a phone) is considered sufficient.
-func (a *Authenticator) handleGetPinUvAuthTokenUsingUvWithPermissions(req *ClientPINRequest) ([]byte, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	// The backend must support built-in user verification.
-	if a.keyBackend == nil || !a.keyBackend.Capabilities().HandlesUserVerification {
-		return nil, ErrInvalidSubcommand
-	}
-
-	// Validate permissions are non-zero.
-	if req.Permissions == 0 {
-		return nil, ErrInvalidParameter
-	}
-
-	// Initialize PIN protocol if needed.
-	if err := a.initPINProtocol(); err != nil {
-		return nil, err
-	}
-
-	// Verify platform key agreement is provided.
-	if len(req.KeyAgreement) == 0 {
-		return nil, ErrMissingKeyAgreement
-	}
-
-	// Derive shared secret.
-	sharedSecret, err := a.deriveSharedSecret(req.KeyAgreement, req.PinUvAuthProtocol)
-	if err != nil {
-		return nil, err
-	}
-	a.pinState.protocol.sharedSecret = sharedSecret
-
-	// Determine encryption key based on protocol version.
-	encKey := sharedSecret
-	if req.PinUvAuthProtocol == PINProtocol2 {
-		encKey = a.pinState.protocol.aesKey
-	}
-
-	// Check UV retries.
-	if a.state.UVRetries() <= 0 {
-		return nil, ErrUVBlocked
-	}
-
-	slog.Debug("[CTAP2] getPinUvAuthTokenUsingUvWithPermissions",
-		"protocol", req.PinUvAuthProtocol,
-		"permissions", req.Permissions,
-		"rpID", req.RPID,
-	)
-
-	// Built-in UV is handled by the key backend; when HandlesUserVerification
-	// is true the backend performs UV as part of its operations (e.g., biometric
-	// prompt on a phone). We treat the capability as implicit success.
-	// Reset UV retries on success.
-	a.state.SetUVRetries(DefaultUVRetries)
-
-	// Generate a new PIN/UV auth token with permissions.
-	pinToken := make([]byte, PINTokenSize)
-	if _, err := rand.Read(pinToken); err != nil {
-		return nil, ErrCryptoError
-	}
-	a.beginUsingPinUvAuthTokenLocked(pinToken, req.Permissions, req.RPID)
-
-	// Encrypt the token.
 	encryptedToken, err := a.encryptData(encKey, req.PinUvAuthProtocol, pinToken)
 	if err != nil {
 		return nil, err

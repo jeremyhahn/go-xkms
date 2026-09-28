@@ -952,7 +952,7 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 	case pinAuthValid:
 		flags |= FlagUV
 		debugLog("UV flag set (pinUvAuthParam verified), flags now: 0x%02x", byte(flags))
-	case a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification:
+	case a.backendHandlesUserVerification():
 		flags |= FlagUV
 		debugLog("UV flag set (key backend handles verification), flags now: 0x%02x", byte(flags))
 	}

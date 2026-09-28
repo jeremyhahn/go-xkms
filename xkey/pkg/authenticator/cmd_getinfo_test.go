@@ -815,8 +815,8 @@ func TestGetInfoChromeCTAP21Compliance(t *testing.T) {
 	require.Greater(t, maxMsgSize, uint64(0))
 }
 
-func TestHasUserVerification(t *testing.T) {
-	t.Run("true when PIN enabled", func(t *testing.T) {
+func TestSupportsPinUvAuthToken(t *testing.T) {
+	t.Run("true when PIN and credential management enabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
 		config.UserPresenceHandler = NewAutoGrantHandler()
@@ -827,7 +827,7 @@ func TestHasUserVerification(t *testing.T) {
 		require.NoError(t, err)
 		defer func() { _ = auth.Close() }()
 
-		require.True(t, auth.hasUserVerification())
+		require.True(t, auth.supportsPinUvAuthToken())
 	})
 
 	t.Run("false when PIN disabled and no key backend", func(t *testing.T) {
@@ -842,7 +842,27 @@ func TestHasUserVerification(t *testing.T) {
 		require.NoError(t, err)
 		defer func() { _ = auth.Close() }()
 
-		require.False(t, auth.hasUserVerification())
+		require.False(t, auth.supportsPinUvAuthToken())
+	})
+
+	// #1145: a backend that verifies the user inside its own key operations
+	// cannot mint a token, so it must not stand in for the PIN.
+	t.Run("false when only the key backend handles user verification", func(t *testing.T) {
+		auth, err := NewAuthenticator(&Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
+			Storage:             NewMemoryStorage(),
+			SupportedAlgorithms: []int{COSEAlgES256},
+			KeyBackend:          &mockUVKeyBackend{handlesUV: true},
+		})
+		require.NoError(t, err)
+		defer func() { _ = auth.Close() }()
+
+		// Force credential management on after SetDefaults, which would
+		// otherwise have forced the PIN on with it.
+		auth.config.EnableCredentialManagement = true
+
+		require.False(t, auth.supportsPinUvAuthToken())
+		require.NotContains(t, auth.getVersions(), "FIDO_2_1")
 	})
 
 	t.Run("FIDO_2_1 not advertised without user verification", func(t *testing.T) {
@@ -1142,4 +1162,84 @@ func interfaceSliceToStringSlice(slice []interface{}) []string {
 		}
 	}
 	return result
+}
+
+// TestGetInfo_BackendUVNeverPromisesUvToken is the getInfo half of #1145.
+// uv=true next to pinUvAuthToken=true promises
+// getPinUvAuthTokenUsingUvWithPermissions (CTAP 2.1 §6.4), which is refused,
+// so the two must never be advertised together. A backend that verifies
+// inside its own key operations still advertises uv=true when there is no
+// token surface, the CTAP 2.0 form of built-in UV that makeCredential and
+// getAssertion honour.
+func TestGetInfo_BackendUVNeverPromisesUvToken(t *testing.T) {
+	tests := []struct {
+		name          string
+		handlesUV     bool
+		enablePIN     bool
+		credMgmt      bool
+		wantUV        interface{} // nil means the option is absent
+		wantToken     bool
+		wantFIDO21    bool
+		wantClientPin bool
+	}{
+		{name: "phone daemon: backend UV, PIN, credMgmt", handlesUV: true, enablePIN: true, credMgmt: true,
+			wantUV: false, wantToken: true, wantFIDO21: true, wantClientPin: true},
+		{name: "backend UV, PIN, no credMgmt", handlesUV: true, enablePIN: true,
+			wantUV: true, wantClientPin: true},
+		{name: "backend UV only", handlesUV: true,
+			wantUV: true},
+		{name: "no backend UV, PIN, credMgmt", enablePIN: true, credMgmt: true,
+			wantUV: false, wantToken: true, wantFIDO21: true, wantClientPin: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auth, err := NewAuthenticator(&Config{
+				UserPresenceHandler:        NewAutoGrantHandler(),
+				Storage:                    NewMemoryStorage(),
+				EnablePIN:                  tt.enablePIN,
+				EnableCredentialManagement: tt.credMgmt,
+				PINMinLength:               4,
+				PINMaxRetries:              8,
+				SupportedAlgorithms:        []int{COSEAlgES256},
+				KeyBackend:                 &mockUVKeyBackend{handlesUV: tt.handlesUV},
+			})
+			require.NoError(t, err)
+			defer func() { _ = auth.Close() }()
+
+			resp, err := auth.ProcessCBOR(CmdGetInfo, nil)
+			require.NoError(t, err)
+			require.Equal(t, byte(StatusOK), resp[0])
+			var info map[int]interface{}
+			require.NoError(t, cbor.Unmarshal(resp[1:], &info))
+			options, ok := info[getInfoKeyOptions].(map[interface{}]interface{})
+			require.True(t, ok)
+
+			uv, hasUV := options["uv"]
+			if tt.wantUV == nil {
+				require.False(t, hasUV, "uv must be absent")
+			} else {
+				require.Equal(t, tt.wantUV, uv)
+			}
+
+			token, hasToken := options["pinUvAuthToken"]
+			require.Equal(t, tt.wantToken, hasToken && token == true)
+			require.False(t, uv == true && token == true,
+				"uv=true with pinUvAuthToken=true promises a UV-minted token that is refused")
+
+			credMgmt, hasCredMgmt := options["credMgmt"]
+			require.Equal(t, tt.wantToken, hasCredMgmt && credMgmt == true)
+
+			_, hasClientPin := options["clientPin"]
+			require.Equal(t, tt.wantClientPin, hasClientPin)
+
+			versions, ok := info[getInfoKeyVersions].([]interface{})
+			require.True(t, ok)
+			if tt.wantFIDO21 {
+				require.Contains(t, versions, "FIDO_2_1")
+			} else {
+				require.Equal(t, []interface{}{"FIDO_2_0"}, versions)
+			}
+		})
+	}
 }
