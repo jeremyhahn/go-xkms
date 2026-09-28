@@ -2119,7 +2119,6 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 
 	tpm.logger.Debug("reading PCR values across all supported banks")
 
-	maxPCR := uint(23)
 	banks := make([]PCRBank, 0)
 
 	// Ordered, not a map. Ranging over a map randomizes the order of the
@@ -2149,7 +2148,7 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 		}
 		bankUnsupported := false
 		for _, pcr := range pcrList {
-			if pcr > maxPCR {
+			if pcr > maxPCRIndex {
 				tpm.logger.Error("invalid PCR index",
 					slog.String("bank", strings.ToLower(name)),
 					slog.Uint64("pcr", uint64(pcr)))

@@ -317,6 +317,12 @@ specific permission before assuming a non-Admin role holds it.
   without a store (`pkg/auth/mtls.go:275`, used when no qrdb identity plane
   is hosted) derives an identity from certificate fields.
 
+- **The OIDC authenticator bounds what it reads from the identity
+  provider.** The discovery document, the JWKS and the userinfo response are
+  each read through `readOIDCResponse` (`pkg/auth/oidc.go:50`), which
+  refuses a body over 1 MiB (`maxOIDCResponseBytes`, `oidc.go:46`) with
+  `ErrOIDCResponseTooLarge` (`oidc.go:94`) instead of buffering it.
+
 ## Error semantics
 
 | Error | Where | Meaning |

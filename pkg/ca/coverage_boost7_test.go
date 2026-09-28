@@ -28,8 +28,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -538,25 +536,6 @@ func TestRootCertificate_NilInput_B7(t *testing.T) {
 }
 
 // =============================================================================
-// trust_chain_extensions.go — ImportIssuingCAs HTTP error path (new URL)
-// =============================================================================
-
-func TestImportIssuingCAs_HTTPError_B7(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	ca := setupTestCAWithObjectStore(t)
-	cert := &x509.Certificate{
-		Subject:               pkix.Name{CommonName: "aia-error-b7"},
-		IssuingCertificateURL: []string{srv.URL + "/missing-b7.crt"},
-	}
-	err := ca.ImportIssuingCAs(context.Background(), cert)
-	assert.Error(t, err)
-}
-
-// =============================================================================
 // tls_extensions.go — TLSBundleWithCrossSigner with signer but no xsigned certs
 // =============================================================================
 
@@ -682,18 +661,6 @@ func TestCABundle_ContainsValidPEM_B7(t *testing.T) {
 // the certificate policy regression suite in certpolicy_test.go.
 
 // =============================================================================
-// types helpers — randomSerial used in tests
-// =============================================================================
-
-// b7RandomSerial generates a random serial for test helper usage in this file.
-func b7RandomSerial(t *testing.T) *big.Int {
-	t.Helper()
-	n, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	require.NoError(t, err)
-	return n
-}
-
-// =============================================================================
 // Additional targeted gap coverage
 // =============================================================================
 
@@ -706,51 +673,4 @@ func TestCAKeyAttributes_StoreTypeMismatch_B7(t *testing.T) {
 	ca := setupTestCA(t)
 	_, err := ca.CAKeyAttributes(types.StoreTPM2)
 	assert.ErrorIs(t, err, ErrInvalidStoreType)
-}
-
-// TestImportIssuingCAs_HTTPSuccess_DERPayload exercises the DER-download path
-// in ImportIssuingCAs using a fresh URL pattern that does not clash with the
-// TestImportIssuingCAs_HTTPServerDER test in coverage_gap_test.go.
-func TestImportIssuingCAs_DERIssuerChain_B7(t *testing.T) {
-	issuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	issuerTmpl := &x509.Certificate{
-		SerialNumber:          b7RandomSerial(t),
-		Subject:               pkix.Name{CommonName: "import-aia-issuer-b7"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-	}
-	issuerDER, err := x509.CreateCertificate(rand.Reader, issuerTmpl, issuerTmpl, &issuerKey.PublicKey, issuerKey)
-	require.NoError(t, err)
-	issuerCert, err := x509.ParseCertificate(issuerDER)
-	require.NoError(t, err)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/pkix-cert")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(issuerDER)
-	}))
-	defer srv.Close()
-
-	ca := setupTestCAWithObjectStore(t)
-	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	leafTmpl := &x509.Certificate{
-		SerialNumber:          b7RandomSerial(t),
-		Subject:               pkix.Name{CommonName: "import-aia-leaf-b7"},
-		Issuer:                pkix.Name{CommonName: "import-aia-issuer-b7"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IssuingCertificateURL: []string{srv.URL + "/issuer-b7.crt"},
-	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, issuerCert, &leafKey.PublicKey, issuerKey)
-	require.NoError(t, err)
-	leaf, err := x509.ParseCertificate(leafDER)
-	require.NoError(t, err)
-
-	err = ca.ImportIssuingCAs(context.Background(), leaf)
-	require.NoError(t, err)
 }

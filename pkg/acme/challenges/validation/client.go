@@ -24,7 +24,7 @@
 //     and net.JoinHostPort, never by string formatting, so a target cannot
 //     add a path, query, fragment, userinfo or port;
 //   - the dialer's Control hook refuses every reserved address
-//     (policy.IsReservedIP: loopback, private, link-local and cloud
+//     (netguard.ReservedAddr: loopback, private, link-local and cloud
 //     metadata, multicast, unspecified, special-purpose). It runs on the
 //     address actually being connected to, after DNS resolution, so a name
 //     that resolves -- or re-resolves -- to an internal address is refused,
@@ -48,13 +48,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/policy"
+	"github.com/jeremyhahn/go-xkms/pkg/netguard"
 )
 
 const (
@@ -76,9 +76,10 @@ const (
 // Config configures a Client.
 type Config struct {
 	// AllowPrivateTargets permits connections to reserved addresses
-	// (policy.IsReservedIP): loopback, private, link-local, metadata and the
-	// other special-purpose ranges. It exists for tests and lab deployments
-	// whose devices are on a private network; production leaves it false.
+	// (netguard.ReservedAddr): loopback, private, link-local, metadata and
+	// the other special-purpose ranges. It exists for tests and lab
+	// deployments whose devices are on a private network; production
+	// leaves it false.
 	AllowPrivateTargets bool
 
 	// Resolver resolves target host names. Nil uses net.DefaultResolver.
@@ -98,7 +99,7 @@ type Client struct {
 func NewClient(cfg Config) *Client {
 	var control dialControl
 	if !cfg.AllowPrivateTargets {
-		control = refuseReservedAddress
+		control = netguard.DialControl(netguard.DenyReserved)
 	}
 	return newClient(cfg.Resolver, control)
 }
@@ -226,12 +227,13 @@ func readLimited(r io.Reader, limit int64) ([]byte, error) {
 	if limit <= 0 {
 		limit = DefaultMaxResponseBytes
 	}
-	body, err := io.ReadAll(io.LimitReader(r, limit+1))
+	body, err := netguard.ReadLimited(r, limit)
 	if err != nil {
+		var tooLarge *netguard.ResponseTooLargeError
+		if errors.As(err, &tooLarge) {
+			return nil, &Error{Kind: KindResponseTooLarge, Err: err}
+		}
 		return nil, &Error{Kind: KindConnection, Err: err}
-	}
-	if int64(len(body)) > limit {
-		return nil, &Error{Kind: KindResponseTooLarge, Err: &ResponseTooLargeError{Limit: limit}}
 	}
 	return body, nil
 }
@@ -257,22 +259,9 @@ func redirectPolicy(follow bool) func(*http.Request, []*http.Request) error {
 	}
 }
 
-// refuseReservedAddress is the dialer Control hook. address is the
-// resolved ip:port being connected to.
-func refuseReservedAddress(network, address string, _ syscall.RawConn) error {
-	addrPort, err := netip.ParseAddrPort(address)
-	if err != nil {
-		return &AddressNotPermittedError{Address: address}
-	}
-	if policy.IsReservedIP(addrPort.Addr()) {
-		return &AddressNotPermittedError{Address: address}
-	}
-	return nil
-}
-
 // classifyTransportError maps an error from http.Client.Do onto an *Error.
 func classifyTransportError(err error) error {
-	var refused *AddressNotPermittedError
+	var refused *netguard.AddressNotPermittedError
 	if errors.As(err, &refused) {
 		return &Error{Kind: KindTargetRefused, Err: err}
 	}

@@ -20,6 +20,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/jeremyhahn/go-xkms/pkg/netguard"
 	"github.com/weppos/publicsuffix-go/publicsuffix"
 	"golang.org/x/net/idna"
 	"golang.org/x/text/unicode/norm"
@@ -318,53 +319,22 @@ func ValidateIPWithReservedCheck(ip string) error {
 	return nil
 }
 
-// reservedPrefixes are the special-purpose ranges (RFC 6890 and its IANA
-// registries) that IsReservedIP treats as reserved in addition to the
-// netip classifications it checks directly: loopback, private (RFC 1918 and
-// RFC 4193), link-local, multicast and unspecified.
-var reservedPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),       // "this network" (RFC 791)
-	netip.MustParsePrefix("100.64.0.0/10"),   // shared address space, CGNAT (RFC 6598)
-	netip.MustParsePrefix("192.0.0.0/24"),    // IETF protocol assignments (RFC 6890)
-	netip.MustParsePrefix("192.0.2.0/24"),    // TEST-NET-1 (RFC 5737)
-	netip.MustParsePrefix("198.18.0.0/15"),   // benchmarking (RFC 2544)
-	netip.MustParsePrefix("198.51.100.0/24"), // TEST-NET-2 (RFC 5737)
-	netip.MustParsePrefix("203.0.113.0/24"),  // TEST-NET-3 (RFC 5737)
-	netip.MustParsePrefix("240.0.0.0/4"),     // reserved, and limited broadcast (RFC 1112, RFC 919)
-	netip.MustParsePrefix("64:ff9b::/96"),    // NAT64 well-known prefix (RFC 6052)
-	netip.MustParsePrefix("64:ff9b:1::/48"),  // local-use NAT64 (RFC 8215)
-	netip.MustParsePrefix("100::/64"),        // discard-only (RFC 6666)
-	netip.MustParsePrefix("2001::/23"),       // IETF protocol assignments, incl. Teredo (RFC 2928)
-	netip.MustParsePrefix("2001:db8::/32"),   // documentation (RFC 3849)
-	netip.MustParsePrefix("2002::/16"),       // 6to4, which embeds an arbitrary IPv4 address (RFC 3056)
-	netip.MustParsePrefix("fec0::/10"),       // deprecated site-local (RFC 3879)
-}
-
 // IsReservedIP reports whether ip is in a reserved or special-purpose range:
 // loopback, private (RFC 1918, RFC 4193), link-local (which holds the
 // 169.254.169.254 cloud metadata address), multicast, unspecified, or one of
-// the special-purpose ranges in reservedPrefixes. An IPv4-mapped IPv6
+// the special-purpose ranges CGNAT, the TEST-NETs, benchmarking, NAT64,
+// 6to4, documentation and the rest of RFC 6890 cover. An IPv4-mapped IPv6
 // address is classified by the IPv4 address it carries, so ::ffff:127.0.0.1
 // is loopback.
 //
-// It is the one reserved-address classification in the ACME server: the
-// reserved-IP identifier policy (ValidateIPWithReservedCheck) and the
-// challenge-validation dialer (pkg/acme/challenges/validation) both use it,
-// so an address the policy calls reserved is an address validation will not
-// connect to.
+// It delegates to netguard.ReservedAddr, the one reserved-address
+// classification in go-xkms: the reserved-IP identifier policy
+// (ValidateIPWithReservedCheck) and the challenge-validation dialer
+// (pkg/acme/challenges/validation) both refuse exactly the addresses it
+// reports, so an address the policy calls reserved is an address validation
+// will not connect to.
 func IsReservedIP(ip netip.Addr) bool {
-	ip = ip.Unmap()
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsMulticast() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsUnspecified() {
-		return true
-	}
-	for _, prefix := range reservedPrefixes {
-		if prefix.Contains(ip) {
-			return true
-		}
-	}
-	return false
+	return netguard.ReservedAddr(ip)
 }
 
 // ValidateNetworkTarget validates host as a bare network target: a
