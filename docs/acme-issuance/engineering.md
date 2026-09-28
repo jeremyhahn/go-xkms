@@ -577,6 +577,35 @@ calls it after selecting verifiers from `acme.challenges`; `TrustedCA.Serve`
 calls it on whatever map a caller supplied through `WithChallengeMap`. A nil
 `Manager` (resilience not wired) or nil map returns the input unchanged.
 
+**Refused targets do not count toward a challenge breaker** (go-xkms#1181).
+The `http01` breaker is one breaker for the whole server, and the target it
+guards is chosen by the ACME client. `WrapChallengeVerifier`
+(`pkg/acme/server/circuitbreaker/decorators.go:41`) therefore runs the
+verifier through the breaker's unexported `execute`
+(`circuitbreaker.go:214`) with `validation.IsTargetRejected`
+(`pkg/acme/challenges/validation/errors.go:99`) as its exclusion predicate
+(`decorators.go:48`). A `*validation.Error` of `KindInvalidTarget` or
+`KindTargetRefused` -- a failure the validation client decided without
+contacting the target -- is returned to the verifier's caller unchanged but
+is not recorded (`circuitbreaker.go:242`): it is neither a failure nor a
+success, so it cannot open the breaker and cannot reset its failure count
+either. `releaseAdmission` (`circuitbreaker.go:258`) gives back a half-open
+slot such a call held, under the same generation rule as `afterRequest`.
+Before this, any account could open the breaker, and stall every `http-01`
+validation on the server, by requesting challenges against loopback or
+metadata addresses. Everything else still counts: `KindConnection` (a target
+that was contacted and could not be reached), the breaker's own timeout,
+`KindStatus`, `KindRedirect`, `KindResponseTooLarge` and a key-authorization
+mismatch.
+
+The breaker stays global, not per target host. What is left of the
+account-trippable surface -- an account naming a public host that drops
+connections, or answers 404 -- is the reason a per-host breaker would help,
+but it is not a small change: the `Manager` has no eviction, so one breaker
+per client-chosen host name is unbounded memory an account controls, and
+`GET /acme/health` reports breakers by name, so it would stop reporting a
+single `http01`. It is recorded as a follow-up, not done here.
+
 `storage` here is **not** the go-qrdb-backed ACME protocol state
 (`pkg/acme/storage` → `go-qrdb/sdk/go`, accounts/orders/authorizations/
 challenges/nonces). That storage is not wrapped in a circuit breaker: its
@@ -1052,7 +1081,16 @@ storage. Changing the storage layout requires a data migration step.
   dependency decorators (`decorators_test.go`:
   `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService`, each exercised
   closed, open-fails-fast-without-calling-the-inner-dependency, and
-  half-open-probe-closes). `pkg/acme/server/handlers/resilience_test.go`
+  half-open-probe-closes). `exclusion_test.go` covers the exclusion
+  predicate (an excluded failure is returned but not recorded, does not
+  reset the failure count, releases a half-open slot; a failure the
+  predicate does not exclude, and the breaker's own timeout, are recorded),
+  and `decorators_test.go:132`/`:159`/`:179` drive `WrapChallengeVerifier`
+  with a real `validation.Client`: fifty refused or invalid targets leave a
+  `MaxFailures: 1` breaker closed, connections to a closed `127.0.0.1:0`
+  port (`AllowPrivateTargets`) open it, and refusals interleaved with those
+  failures do not hold it closed (go-xkms#1181).
+  `pkg/acme/server/handlers/resilience_test.go`
   covers the degradation-cache path end to end against the real
   `CABundleHandler`/`DirectoryHandler` code (fresh-serves-live,
   breaker-trips-on-failure, open-serves-stale-cache-degraded,

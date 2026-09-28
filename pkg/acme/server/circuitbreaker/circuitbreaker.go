@@ -198,6 +198,20 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 
 // ExecuteContext executes the given function with circuit breaker protection and context.
 func (cb *CircuitBreaker) ExecuteContext(ctx context.Context, fn func() error) error {
+	return cb.execute(ctx, fn, nil)
+}
+
+// execute is ExecuteContext with an exclusion predicate. When fn fails with
+// an error for which excluded reports true, the error is returned to the
+// caller but is not recorded: it is not evidence about the protected
+// dependency, so it neither counts toward opening the breaker nor, as a
+// success would, resets the failure count or closes a half-open breaker.
+// The admission is released without an outcome (releaseAdmission). A nil
+// excluded records every outcome.
+//
+// It is unexported because only this package's decorators know which of
+// their dependency's errors say nothing about its health.
+func (cb *CircuitBreaker) execute(ctx context.Context, fn func() error, excluded func(error) bool) error {
 	// Check if we should allow the request. The admission records what was
 	// granted, so afterRequest can settle exactly what this call took rather
 	// than guessing from whatever state the breaker is in by then.
@@ -225,10 +239,28 @@ func (cb *CircuitBreaker) ExecuteContext(ctx context.Context, fn func() error) e
 	case err = <-resultCh:
 	}
 
+	if err != nil && excluded != nil && excluded(err) {
+		cb.releaseAdmission(adm)
+		return err
+	}
+
 	// Record the result
 	cb.afterRequest(adm, err)
 
 	return err
+}
+
+// releaseAdmission settles adm without recording an outcome: no metric, no
+// failure or success count, no state change. It gives back the half-open
+// slot adm holds, under the same ownership and generation rules as
+// afterRequest, so an excluded probe cannot leave the half-open limit
+// permanently consumed.
+func (cb *CircuitBreaker) releaseAdmission(adm admission) {
+	cb.mu.Lock()
+	if adm.heldHalfOpenSlot && adm.generation == cb.generation.Load() {
+		cb.halfOpenRequests.Add(^uint32(0)) // Decrement
+	}
+	cb.mu.Unlock()
 }
 
 // Admission is what Allow granted a single call. Complete must be called
