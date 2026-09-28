@@ -239,7 +239,14 @@ func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey
 	pub, err := tpmPublic.Contents()
 	if err != nil {
 		if unprotectedSymmetricKeyBlob(publicBlob) {
-			return nil, &errs.Detail{Err: ErrUnprotectedSymmetricKey, Detail: attrs.CN}
+			// Name the file to delete: DeleteKey cannot unseal a
+			// pre-#1148 blob to authorize its own removal, so this
+			// message is the only place an operator learns which file
+			// on disk still holds the unprotected key (go-xkms#1168).
+			return nil, &errs.Detail{
+				Err:    ErrUnprotectedSymmetricKey,
+				Detail: fmt.Sprintf("%s: delete %s%s from the TPM2 key directory", attrs.CN, attrs.CN, store.FSEXT_LEGACY_PRIVATE_BLOB),
+			}
 		}
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to get public contents", Err: err}
 	}

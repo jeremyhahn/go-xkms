@@ -93,12 +93,17 @@ func (fb *FileBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.F
 
 // Delete removes key files from storage
 func (fb *FileBackend) Delete(attrs *types.KeyAttributes) error {
-	// Delete all possible extensions for this key
+	// Delete all possible extensions for this key, including
+	// FSEXT_LEGACY_PRIVATE_BLOB: symmetric keys written before go-xkms#1148
+	// hold their (unprotected) private blob there instead of
+	// FSEXT_PRIVATE_BLOB, and deleting a key must not leave it behind
+	// (go-xkms#1168).
 	extensions := []string{
 		FSEXT_PRIVATE_BLOB,
 		FSEXT_PUBLIC_BLOB,
 		FSEXT_TPM_CONTEXT,
 		FSEXT_PLATFORM_POLICY,
+		FSEXT_LEGACY_PRIVATE_BLOB,
 	}
 
 	var lastErr error

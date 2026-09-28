@@ -352,8 +352,23 @@ Blobs are `<CN>.blob`, `<CN>.pub` and, for a platform-policy key,
 on the Shared SRK with no authorization and `NoDA` set, and stored them as
 `<CN>.priv` plus a size-prefixed `<CN>.pub`. They are not migrated.
 `GetSymmetricKey` recognises that public area (`unprotectedSymmetricKeyBlob`,
-`symmetric.go:552`) and returns `ErrUnprotectedSymmetricKey`; delete the key
-(and its `<CN>.priv`, which `DeleteKey` does not know) and generate a new one.
+`symmetric.go:552`) and returns `ErrUnprotectedSymmetricKey`, whose detail
+names the exact `<CN>.priv` file to remove (`symmetric.go:241`).
+
+`FileBackend.Delete` (`store/file_backend.go:95`) includes
+`FSEXT_LEGACY_PRIVATE_BLOB` (`.priv`, `store/interfaces.go:51`) in the
+extensions it removes, so a `<CN>.priv` blob is cleaned up whenever `Delete`
+runs for that CN. It cannot run there on its own: `DeleteKey` for a sealed
+object first calls `UnsealKey` to prove the caller owns the key
+(`key.go:1775`), and `UnsealKey` loads the private blob from
+`FSEXT_PRIVATE_BLOB` (`.blob`) — a pre-#1148 key has no such file, so the
+load fails before `DeleteKey` ever reaches the delete step. A pre-#1148 key
+is therefore never removable through `DeleteKey`/`DeleteKeyPair`; an operator
+who hits `ErrUnprotectedSymmetricKey` deletes the named `<CN>.priv` (and its
+`<CN>.pub`) from the TPM2 key directory by hand — see
+[`user.md`](user.md)'s "Legacy symmetric key cleanup" for the exact steps.
+There is no scanning command that finds these files automatically; adding
+one is a future decision, not part of this fix (go-xkms#1168).
 
 **Why not `TPM2_EncryptDecrypt2`.** A TPM-resident `TPM_ALG_SYMCIPHER` key
 would never leave the TPM, but the command offers CFB, CBC, ECB, CTR and OFB
