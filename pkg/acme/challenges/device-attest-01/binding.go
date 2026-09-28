@@ -29,11 +29,17 @@ import (
 // is being enrolled, so the CSR's SubjectPublicKeyInfo must be the alias
 // certificate's SubjectPublicKeyInfo and nothing else.
 //
-// pkg/attestation declares that binding for the dice format -- bindLeafSPKI in
-// the profile table -- and is the one implementation of it in this repository,
-// shared with the TCG and SignCSR carriers. This file is how the ACME carrier
-// reaches it: the verified leaf is carried from challenge to finalization, and
-// BindCSRKey applies the gate.
+// A TPM device is bound the same way through a different container. Its
+// evidence is a TPM2_Certify of pubArea by the AIK in x5c[0] (WebAuthn Level 2
+// section 8.3), and the CSR's key must be pubArea's key: the ACME counterpart
+// of section 8.3's "the public key in pubArea is identical to the
+// credentialPublicKey".
+//
+// pkg/attestation declares both bindings -- bindLeafSPKI and bindTPMCertify in
+// its profile table -- and is the one implementation of them in this
+// repository, shared with the TCG and SignCSR carriers. This file is how the
+// ACME carrier reaches it: the verified evidence is carried from challenge to
+// finalization, and BindCSRKey applies the gate.
 //
 // Attestation chains are not secret. They travel with every enrollment, so
 // without this comparison anyone who has seen one genuine device's answer can
@@ -61,7 +67,9 @@ type VerifiedAttestation struct {
 
 	// Leaf is the certificate whose evidence was verified: for FormatDICE the
 	// alias certificate the device minted for this exchange, whose subject key
-	// is the attested key. Nil for a format that certifies no such leaf.
+	// is the attested key; for FormatTPM the AIK certificate (x5c[0]) whose key
+	// signed CertInfo, and whose subject key is NOT the attested key -- that
+	// is PubArea's.
 	Leaf *x509.Certificate
 
 	// LeafDER is the same certificate as the device sent it.
@@ -72,12 +80,43 @@ type VerifiedAttestation struct {
 	// certificate does not survive that trip and a re-encoded one is a
 	// different document, so the bytes travel and BindCSRKey parses them back.
 	LeafDER []byte
+
+	// Algorithm is the FormatTPM statement's alg: the COSE algorithm Signature
+	// was made with, whose hash also formed the extraData the certification
+	// carries. Zero for FormatDICE.
+	Algorithm int64
+
+	// CertInfo, Signature and PubArea are the FormatTPM statement's certInfo,
+	// sig and pubArea as the device sent them: the TPM2_Certify structure, the
+	// AIK's signature over it, and the TPMT_PUBLIC of the key it certifies.
+	// They are kept as bytes for the same reason LeafDER is, and BindCSRKey
+	// verifies them again rather than trusting that they were verified. Nil
+	// for FormatDICE.
+	CertInfo  []byte
+	Signature []byte
+	PubArea   []byte
+}
+
+// csrEvidence builds the evidence the binding gate judges for one format,
+// given the certificate request whose key must be the attested key.
+type csrEvidence func(*VerifiedAttestation, *x509.CertificateRequest) (*attestation.Evidence, error)
+
+// csrBindings maps each format whose key binding completes against the CSR to
+// the evidence it hands the gate. A format absent from it has no binding this
+// carrier can express, and BindCSRKey says so rather than passing.
+var csrBindings = map[AttestationFormat]csrEvidence{
+	FormatDICE: diceCSREvidence,
+	FormatTPM:  tpmCSREvidence,
 }
 
 // bindsThroughTheCSR reports whether this format's key binding can only be
 // completed against the CSR, which is to say later than the challenge.
 func (v *VerifiedAttestation) bindsThroughTheCSR() bool {
-	return v != nil && v.Format == FormatDICE
+	if v == nil {
+		return false
+	}
+	_, binds := csrBindings[v.Format]
+	return binds
 }
 
 // BindCSRKey checks that the CSR asks the CA to certify the attested key.
@@ -88,14 +127,18 @@ func (v *VerifiedAttestation) bindsThroughTheCSR() bool {
 //  1. The requester holds the private half of the key in the CSR. A PKCS#10 is
 //     self-signed by the key it names, so an invalid signature means binding it
 //     to attested hardware would certify a key nobody demonstrated control of.
-//  2. The CSR's SubjectPublicKeyInfo is the leaf's SubjectPublicKeyInfo, and
-//     the leaf still carries the nonce this exchange issued. Both are applied
-//     by pkg/attestation's gate rather than open-coded here, so the ACME
-//     carrier and the SignCSR carrier cannot drift into two different ideas of
-//     what binding means.
+//  2. The CSR's key is the attested key, and the evidence still carries the
+//     challenge this exchange issued. For FormatDICE the key is the alias
+//     leaf's SubjectPublicKeyInfo and the challenge its eat_nonce; for
+//     FormatTPM the key is PubArea's, re-verified as certified by the AIK
+//     under the TPM2_Certify checks, and the challenge the certification's
+//     extraData. Both are applied by pkg/attestation's gate rather than
+//     open-coded here, so the ACME carrier and the SignCSR carrier cannot
+//     drift into two different ideas of what binding means.
 //
 // Freshness is re-checked rather than assumed, and it is a nonce, never a
-// clock: a DICE device has no clock, so nothing here reads a timestamp.
+// clock: a DICE device has no clock, and a TPM's clockInfo is not signed
+// against anything this server chose, so nothing here reads a timestamp.
 func (v *VerifiedAttestation) BindCSRKey(csr *x509.CertificateRequest) error {
 	if v == nil {
 		return ErrNoVerifiedAttestation
@@ -103,13 +146,14 @@ func (v *VerifiedAttestation) BindCSRKey(csr *x509.CertificateRequest) error {
 	if csr == nil {
 		return &errs.Detail{Err: ErrKeyBindingUnavailable, Detail: "no certificate request to bind to"}
 	}
-	if !v.bindsThroughTheCSR() {
+	evidenceFor, binds := csrBindings[v.Format]
+	if !binds {
 		return &errs.Detail{
 			Err:    ErrKeyBindingUnavailable,
 			Detail: string(v.Format) + " does not bind the attested key through the CSR",
 		}
 	}
-	leaf, err := v.verifiedLeaf()
+	evidence, err := evidenceFor(v, csr)
 	if err != nil {
 		return err
 	}
@@ -121,12 +165,33 @@ func (v *VerifiedAttestation) BindCSRKey(csr *x509.CertificateRequest) error {
 		}
 	}
 
-	return attestation.VerifyInvariants(&attestation.Evidence{
+	return attestation.VerifyInvariants(evidence)
+}
+
+// diceCSREvidence is the binding evidence for FormatDICE: the alias leaf must
+// certify the CSR's key and still carry this exchange's nonce.
+func diceCSREvidence(v *VerifiedAttestation, csr *x509.CertificateRequest) (*attestation.Evidence, error) {
+	leaf, err := v.verifiedLeaf()
+	if err != nil {
+		return nil, err
+	}
+	return &attestation.Evidence{
 		Format:            attestation.FormatDICE,
 		Leaf:              leaf,
 		SubjectSPKI:       csr.RawSubjectPublicKeyInfo,
 		ExpectedChallenge: DICENonce(v.KeyAuthorization),
-	})
+	}, nil
+}
+
+// tpmCSREvidence is the binding evidence for FormatTPM: the certification the
+// challenge verified, now with the CSR's key, which must be PubArea's.
+func tpmCSREvidence(v *VerifiedAttestation, csr *x509.CertificateRequest) (*attestation.Evidence, error) {
+	evidence, err := v.tpmEvidence()
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrKeyBindingUnavailable, Detail: "the recorded tpm evidence is incomplete", Cause: err}
+	}
+	evidence.SubjectSPKI = csr.RawSubjectPublicKeyInfo
+	return evidence, nil
 }
 
 // verifiedLeaf returns the certificate the binding is made against.
