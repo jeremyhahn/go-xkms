@@ -1995,8 +1995,8 @@ func TestListCertificates(t *testing.T) {
 			statusCode: http.StatusOK,
 			response: map[string]interface{}{
 				"items": []*admin.CertificateInfo{
-					{ID: 1, SerialNumber: "abc123", Subject: "CN=test1"},
-					{ID: 2, SerialNumber: "def456", Subject: "CN=test2"},
+					{SerialNumber: "abc123", Subject: "CN=test1"},
+					{SerialNumber: "def456", Subject: "CN=test2"},
 				},
 				"total":    2,
 				"page":     1,
@@ -2086,7 +2086,6 @@ func TestGetCertificate(t *testing.T) {
 			serial:     "abc123",
 			statusCode: http.StatusOK,
 			response: &admin.CertificateInfo{
-				ID:           1,
 				SerialNumber: "abc123",
 				Subject:      "CN=test",
 				Status:       "valid",

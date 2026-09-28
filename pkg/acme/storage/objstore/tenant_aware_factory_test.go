@@ -471,15 +471,16 @@ func TestTenantScopedFactory_AllDAOs_SaveAndGet(t *testing.T) {
 		require.NoError(t, err)
 
 		cert := &entities.ACMECertificate{
-			ID:     10,
-			Status: "valid",
+			NumericID: 10,
+			Serial:    "cert-test-serial",
+			Status:    "valid",
 		}
 		err = d.Save(ctx, cert)
 		require.NoError(t, err)
 
 		got, err := d.Get(ctx, 10)
 		require.NoError(t, err)
-		assert.Equal(t, cert.ID, got.ID)
+		assert.Equal(t, cert.Serial, got.Serial)
 	})
 
 	t.Run("NonceDAO", func(t *testing.T) {
@@ -724,9 +725,10 @@ func TestTenantScopedFactory_DataIsolation_Certificates(t *testing.T) {
 	require.NoError(t, err)
 
 	certA := &entities.ACMECertificate{
-		ID:     1,
-		PEM:    "-----BEGIN CERTIFICATE-----\nalpha\n-----END CERTIFICATE-----",
-		Status: "valid",
+		NumericID: 1,
+		Serial:    "alpha-serial",
+		PEM:       "-----BEGIN CERTIFICATE-----\nalpha\n-----END CERTIFICATE-----",
+		Status:    "valid",
 	}
 	err = certDaoA.Save(ctx, certA)
 	require.NoError(t, err)
@@ -897,9 +899,10 @@ func TestFactory_CertificateDAO_SaveAndGet(t *testing.T) {
 
 	ctx := context.Background()
 	cert := &entities.ACMECertificate{
-		ID:     1,
-		PEM:    "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
-		Status: "valid",
+		NumericID: 1,
+		Serial:    "test-serial",
+		PEM:       "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
+		Status:    "valid",
 	}
 
 	err = d.Save(ctx, cert)

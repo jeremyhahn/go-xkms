@@ -813,7 +813,6 @@ func convertAdminCertToProto(c *admin.CertificateInfo) *adminv1.CertificateInfo 
 	}
 
 	info := &adminv1.CertificateInfo{
-		Id:           c.ID,
 		SerialNumber: c.SerialNumber,
 		Subject:      c.Subject,
 		Issuer:       c.Issuer,

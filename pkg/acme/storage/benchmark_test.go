@@ -304,7 +304,7 @@ func BenchmarkGetCertificate(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err := dao.Get(ctx, cert.ID)
+		_, err := dao.Get(ctx, cert.EntityID())
 		if err != nil {
 			b.Fatalf("failed to get certificate: %v", err)
 		}
@@ -502,9 +502,10 @@ func createBenchmarkCertificateEntity(b *testing.B, id uint64) *entities.ACMECer
 		Bytes: certDER,
 	})
 
+	serial := template.SerialNumber.Text(16)
 	return &entities.ACMECertificate{
-		ID:        id,
-		CertURL:   fmt.Sprintf("/acme/cert/%d", id),
+		Serial:    serial,
+		CertURL:   fmt.Sprintf("/acme/cert/%s", serial),
 		PEM:       string(certPEM),
 		Status:    common.StatusValid,
 		IssuedAt:  time.Now(),
