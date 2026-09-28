@@ -47,6 +47,7 @@ type SwtpmConnection struct {
 	conn        net.Conn
 	transport   transport.TPM
 	tpmModule   xkmssdk.TrustedPlatformModule
+	tpmConfig   *xkmssdk.TPMConfig
 	keys        xkmssdk.TPMKeyBackend
 	deviceID    string
 	ekCert      *x509.Certificate
@@ -168,6 +169,7 @@ func (s *SwtpmConnection) InitializeTPM() error {
 	}
 
 	s.tpmModule = tpmModule
+	s.tpmConfig = &config
 	s.keys = backend
 	return nil
 }
@@ -246,14 +248,30 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 	}
 
 	s.tpmModule = tpmModule
+	s.tpmConfig = &config
 	s.keys = backend
 	return nil
 }
 
-// Provision provisions the TPM with EK, SRK, IAK keys
+// Provision provisions the TPM with EK, SRK, IAK keys, then enrolls the
+// Platform SRK and installs a throwaway IAK certificate: TPM2.Provision is
+// TCG-only (EK + Shared SRK + IAK) and never creates either. Both are
+// required by the certify model device-attest-01 uses
+// (client.XKMSTPMAdapter.CreateAttestedKey parents the certificate key under
+// the Platform SRK; deviceattest01.Setup reads the IAK certificate for the
+// statement's x5c[0]), the same way pkg/acme/client/service.openDeviceTPM
+// provisions the in-process TPM simulator for the same challenge.
 func (s *SwtpmConnection) Provision() error {
 	if err := s.tpmModule.Provision(nil); err != nil {
 		return caerrors.TPMErr("failed to provision TPM: %v", err)
+	}
+
+	if err := xkmssdk.EnrollSimulatorPlatformSRK(s.tpmModule, s.tpmConfig); err != nil {
+		return caerrors.TPMErr("failed to enroll platform SRK: %v", err)
+	}
+
+	if err := xkmssdk.ProvisionSimulatorIAKCertificate(s.tpmModule); err != nil {
+		return caerrors.TPMErr("failed to provision IAK certificate: %v", err)
 	}
 
 	// Get or generate EK certificate

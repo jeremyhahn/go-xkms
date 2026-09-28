@@ -607,28 +607,6 @@ func TestBuildDNS01ProviderConfig_UnsupportedProvider(t *testing.T) {
 	assert.Equal(t, "unknown-dns-provider", unsupportedErr.Provider)
 }
 
-// TestSetupDeviceAttest01Challenge verifies that SetupDeviceAttest01Challenge
-// always returns ErrTPMModuleRequired.
-func TestSetupDeviceAttest01Challenge(t *testing.T) {
-	config := &Config{}
-	_, err := SetupDeviceAttest01Challenge(config, testLogger(), "tok", "ka", []int{0, 1, 7})
-
-	require.Error(t, err)
-	var tpmErr ErrTPMModuleRequired
-	assert.ErrorAs(t, err, &tpmErr)
-}
-
-// TestSetupDeviceAttest01Challenge_EmptyPCRs verifies error with empty PCR list.
-func TestSetupDeviceAttest01Challenge_EmptyPCRs(t *testing.T) {
-	config := &Config{}
-	result, err := SetupDeviceAttest01Challenge(config, testLogger(), "tok", "ka", nil)
-
-	assert.Nil(t, result)
-	require.Error(t, err)
-	var tpmErr ErrTPMModuleRequired
-	assert.ErrorAs(t, err, &tpmErr)
-}
-
 // TestChallengeServer_ConcurrentRequests verifies the server handles
 // concurrent requests correctly.
 func TestChallengeServer_ConcurrentRequests(t *testing.T) {

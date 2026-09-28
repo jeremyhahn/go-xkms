@@ -35,11 +35,6 @@ func TestErrUnsupportedChallengeType(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported")
 }
 
-func TestErrTPMModuleRequired(t *testing.T) {
-	err := ErrTPMModuleRequired{}
-	assert.Contains(t, err.Error(), "TPM")
-}
-
 func TestErrMissingEmail(t *testing.T) {
 	err := ErrMissingEmail{}
 	assert.Contains(t, err.Error(), "email")
