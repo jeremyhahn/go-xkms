@@ -313,7 +313,9 @@ type ACMERateLimiter = acmeserver.RateLimiter
 // NewACMERateLimiter creates a new rate limiter with the specified limits.
 var NewACMERateLimiter = acmeserver.NewRateLimiter
 
-// ACMEClientID extracts a client identifier from an HTTP request for rate limiting.
+// ACMEClientID returns the rate-limiting key for an HTTP request: the verified
+// account ID when one was recorded on the request context, otherwise the
+// client IP. It never trusts an unverified JWS "kid".
 var ACMEClientID = acmeserver.ClientID
 
 // =============================================================================

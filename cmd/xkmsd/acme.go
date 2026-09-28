@@ -571,6 +571,9 @@ const defaultClusterTrustDomain = "xkms.cluster"
 // under the given directory path prefix. The route layout follows
 // RFC 8555 Section 7.1.
 //
+// Every route reads its request body through acmeserver.RequestBodyMiddleware,
+// mounted ahead of every other middleware except metrics instrumentation.
+//
 // rateLimitMiddleware, when non-nil, is applied to every route on the
 // returned router (including any handler a caller mounts on it afterward,
 // e.g. the cluster secret-delivery endpoint in startACMEServer) via
@@ -597,6 +600,13 @@ func buildACMERouter(svc handlers.RestServicer, directoryPath string, rateLimitM
 	// rate-limited (429) request is still recorded.
 	acmemetrics.Mount(r)
 
+	// RequestBodyMiddleware is the outermost middleware that touches the
+	// request: it reads every body once, capped at
+	// acmeserver.MaxRequestBodySize (an oversized body is a 413 problem), so
+	// nothing below it — rate limiters, TenantAuthMiddleware, handlers —
+	// ever reads the connection or holds shared state while a slow client
+	// trickles its body in.
+	r.Use(acmeserver.RequestBodyMiddleware)
 	if rateLimitMiddleware != nil {
 		r.Use(rateLimitMiddleware)
 	}

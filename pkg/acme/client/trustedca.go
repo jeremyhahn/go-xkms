@@ -436,6 +436,11 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	// the Go/process runtime collectors registered here.
 	metrics.Mount(acmeRouter)
 	metrics.RegisterRuntimeCollectors()
+	// server.RequestBodyMiddleware is the outermost middleware that touches
+	// the request: it reads every body once, capped at
+	// server.MaxRequestBodySize (an oversized body is a 413 problem), so
+	// nothing below it ever reads the connection again.
+	acmeRouter.Use(server.RequestBodyMiddleware)
 	acmeRouter.Use(rateLimitMiddleware)
 
 	// Tenant-aware admission control (#886): TenantAuthMiddleware resolves

@@ -76,7 +76,7 @@ type TenantRateLimiterConfig struct {
 
 	// MaxEntriesPerTenant is the maximum number of rate limit entries per tenant.
 	// Prevents memory exhaustion from too many unique clients.
-	// Default is 10000 if not set.
+	// Default is DefaultMaxEntries if not set.
 	MaxEntriesPerTenant int
 
 	// MetricsEnabled enables Prometheus metrics collection.
@@ -142,7 +142,7 @@ func NewTenantRateLimiter(
 	}
 
 	if config.MaxEntriesPerTenant == 0 {
-		config.MaxEntriesPerTenant = 10000
+		config.MaxEntriesPerTenant = DefaultMaxEntries
 	}
 
 	trl := &TenantRateLimiter{
