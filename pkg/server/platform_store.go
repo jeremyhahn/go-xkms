@@ -231,15 +231,17 @@ func (s *Server) buildTPM2PlatformSealer() (types.Sealer, error) {
 				"-- underlying error: " + err.Error(),
 		}
 	}
-	// PlatformSRKAttributes() reads the live public area off the TPM, which
-	// carries no signal of whether an AuthPolicy is baked in -- .KeyAttributes
-	// (pkg/tpm2/key.go) never sets PlatformPolicy. A go-xkms Platform SRK
-	// always carries one (its DefaultConfig sets PlatformSRK.PlatformPolicy:
-	// true, and CreateSRK bakes the AuthPolicy in at enrollment), so this is
-	// set explicitly rather than trusting a zero value that would select the
-	// wrong (plain password) session branch for a policy-gated parent.
-	psrkAttrs.PlatformPolicy = true
-
+	// PlatformSRKAttributes() already resolves PlatformPolicy from
+	// configuration (pkg/tpm2/key.go), the same PlatformSRKAttributesFromConfig
+	// a go-xkms Platform SRK is always created from -- both this backend's
+	// autodetected Platform SRK (pkg/backend/tpm2/config.go's ToTPMConfig) and
+	// the one PlatformKeyStore.Initialize/EnrollPlatformSRK enrolls now set
+	// PlatformSRK.PlatformPolicy: true unconditionally, per the go-xkms#677
+	// design (authValue = user PIN, authPolicy = platform PCR policy). Forcing
+	// it true here regardless of that resolved value was itself the
+	// go-xkms#997 defect: it let this sealer report a policy-gated PSRK even
+	// when the object was created without one, hiding a real shape mismatch
+	// instead of surfacing it.
 	return &platformPolicySealer{
 		inner:          backend,
 		cn:             platformStoreSealCN,
