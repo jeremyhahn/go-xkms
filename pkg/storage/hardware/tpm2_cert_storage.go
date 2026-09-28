@@ -28,6 +28,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 const (
@@ -670,8 +671,29 @@ func isMissingNVIndex(err error) bool {
 	return errors.Is(rc, tpm2.TPMRCHandle) || errors.Is(rc, tpm2.TPMRCValue)
 }
 
+// ownerAuthSession returns the owner hierarchy authorization for one NV
+// operation. The owner auth -- the SO PIN -- never crosses the TPM bus: a
+// non-empty value is proven through a salted HMAC session bound to the owner
+// hierarchy, from pkg/tpm2's transport-level session layer
+// (pkgtpm2.HierarchyAuthSession). The session encrypts no parameter: the NV
+// indices hold certificates, which are public, and are defined with an empty
+// authValue. The caller must invoke the returned closer.
+func (t *TPM2CertStorage) ownerAuthSession() (tpm2.Session, func() error, error) {
+	return pkgtpm2.HierarchyAuthSession(t.tpm, tpm2.TPMRHOwner, t.ownerAuth)
+}
+
+// closeOwnerAuthSession runs the closer of an ownerAuthSession session and
+// joins a failure into *err, the result of the NV operation it authorized: a
+// TPM that cannot flush a session is faulting, and the session slot it holds
+// stays occupied until the transport closes.
+func closeOwnerAuthSession(closer func() error, err *error) {
+	if closeErr := closer(); closeErr != nil {
+		*err = errors.Join(*err, NewOperationError("flush owner authorization session", closeErr))
+	}
+}
+
 // readNVIndex reads data from an NV index with authorization.
-func (t *TPM2CertStorage) readNVIndex(index uint32) ([]byte, error) {
+func (t *TPM2CertStorage) readNVIndex(index uint32) (_ []byte, err error) {
 	// Read NV public to get size
 	readPubResp, err := tpm2.NVReadPublic{
 		NVIndex: tpm2.TPMHandle(index),
@@ -689,6 +711,12 @@ func (t *TPM2CertStorage) readNVIndex(index uint32) ([]byte, error) {
 		return nil, NewOperationError("get NV public contents", err)
 	}
 
+	auth, closeAuth, err := t.ownerAuthSession()
+	if err != nil {
+		return nil, NewOperationError("NV read authorization", err)
+	}
+	defer closeOwnerAuthSession(closeAuth, &err)
+
 	// Read data in chunks (TPM has max read size limits)
 	const maxChunkSize = 1024
 	totalSize := int(nvPublic.DataSize)
@@ -704,7 +732,7 @@ func (t *TPM2CertStorage) readNVIndex(index uint32) ([]byte, error) {
 		readResp, err := tpm2.NVRead{
 			AuthHandle: tpm2.AuthHandle{
 				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(t.ownerAuth),
+				Auth:   auth,
 			},
 			NVIndex: tpm2.NamedHandle{
 				Handle: tpm2.TPMHandle(index),
@@ -726,7 +754,7 @@ func (t *TPM2CertStorage) readNVIndex(index uint32) ([]byte, error) {
 }
 
 // writeNVIndex writes data to an NV index, creating if necessary.
-func (t *TPM2CertStorage) writeNVIndex(index uint32, data []byte) error {
+func (t *TPM2CertStorage) writeNVIndex(index uint32, data []byte) (err error) {
 	// Check if index exists
 	readPubResp, err := tpm2.NVReadPublic{
 		NVIndex: tpm2.TPMHandle(index),
@@ -774,6 +802,12 @@ func (t *TPM2CertStorage) writeNVIndex(index uint32, data []byte) error {
 		}
 	}
 
+	auth, closeAuth, err := t.ownerAuthSession()
+	if err != nil {
+		return NewOperationError("NV write authorization", err)
+	}
+	defer closeOwnerAuthSession(closeAuth, &err)
+
 	// Write data in chunks (TPM has max write size limits)
 	// Typical max: 1024 bytes per write
 	const maxChunkSize = 1024
@@ -790,7 +824,7 @@ func (t *TPM2CertStorage) writeNVIndex(index uint32, data []byte) error {
 		_, err = tpm2.NVWrite{
 			AuthHandle: tpm2.AuthHandle{
 				Handle: tpm2.TPMRHOwner,
-				Auth:   tpm2.PasswordAuth(t.ownerAuth),
+				Auth:   auth,
 			},
 			NVIndex: tpm2.NamedHandle{
 				Handle: tpm2.TPMHandle(index),
@@ -813,7 +847,7 @@ func (t *TPM2CertStorage) writeNVIndex(index uint32, data []byte) error {
 }
 
 // defineNVIndex creates a new NV index with the specified size.
-func (t *TPM2CertStorage) defineNVIndex(index uint32, size int) error {
+func (t *TPM2CertStorage) defineNVIndex(index uint32, size int) (err error) {
 	// Define NV index with appropriate attributes
 	nvPublic := tpm2.TPMSNVPublic{
 		NVIndex: tpm2.TPMHandle(index),
@@ -829,10 +863,16 @@ func (t *TPM2CertStorage) defineNVIndex(index uint32, size int) error {
 		DataSize: uint16(size),
 	}
 
-	_, err := tpm2.NVDefineSpace{
+	auth, closeAuth, err := t.ownerAuthSession()
+	if err != nil {
+		return NewOperationError("NV define authorization", err)
+	}
+	defer closeOwnerAuthSession(closeAuth, &err)
+
+	_, err = tpm2.NVDefineSpace{
 		AuthHandle: tpm2.AuthHandle{
 			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(t.ownerAuth),
+			Auth:   auth,
 		},
 		PublicInfo: tpm2.New2B(nvPublic),
 	}.Execute(t.tpm)
@@ -845,7 +885,7 @@ func (t *TPM2CertStorage) defineNVIndex(index uint32, size int) error {
 }
 
 // deleteNVIndex undefines an NV index to free NV RAM.
-func (t *TPM2CertStorage) deleteNVIndex(index uint32) error {
+func (t *TPM2CertStorage) deleteNVIndex(index uint32) (err error) {
 	// Read public to get name
 	readPubResp, err := tpm2.NVReadPublic{
 		NVIndex: tpm2.TPMHandle(index),
@@ -859,11 +899,17 @@ func (t *TPM2CertStorage) deleteNVIndex(index uint32) error {
 		return NewOperationError("read NV public before undefine", err)
 	}
 
+	auth, closeAuth, err := t.ownerAuthSession()
+	if err != nil {
+		return NewOperationError("NV undefine authorization", err)
+	}
+	defer closeOwnerAuthSession(closeAuth, &err)
+
 	// Undefine the index
 	_, err = tpm2.NVUndefineSpace{
 		AuthHandle: tpm2.AuthHandle{
 			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(t.ownerAuth),
+			Auth:   auth,
 		},
 		NVIndex: tpm2.NamedHandle{
 			Handle: tpm2.TPMHandle(index),

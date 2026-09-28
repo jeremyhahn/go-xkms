@@ -199,17 +199,17 @@ between the CPU and the TPM is protected unconditionally; the former
 - **Salted sessions.** Every session that carries a secret is salted against
   the persistent EK, which is only read, never modified. Before an EK exists
   (between `TPM2_Clear` and EK creation) an ephemeral NULL-hierarchy ECC P-256
-  key is used and flushed immediately (`saltKey`, `pkg/tpm2/session.go:93`).
+  key is used and flushed immediately (`saltKey`, `pkg/tpm2/session.go:94`).
 - **No password sessions for secrets.** A non-empty auth value — the SO PIN as
   hierarchy authorization, the USER PIN as the Platform SRK's auth value, key
   passwords — is proven through a salted HMAC session and never sent
-  (`objectAuthSession` `session.go:194`, `hierarchyAuthSession`
-  `session.go:211`). The `PolicyAuthValue` (PIN) branch of the platform policy
-  is salted too (`platformPolicySession`, `session.go:345`).
+  (`objectAuthSession` `session.go:261`, `hierarchyAuthSession`
+  `session.go:272`). The `PolicyAuthValue` (PIN) branch of the platform policy
+  is salted too (`platformPolicySession`, `session.go:442`).
 - **Parameter encryption.** AES-128-CFB on the secret parameter, in the
   direction it travels: sensitive areas and new auth values into the TPM,
   unsealed data, NV contents, decrypted plaintext, ECDH shared secrets and
-  random bytes out of it (`paramEncryption`, `session.go:49`).
+  random bytes out of it (`paramEncryption`, `session.go:50`).
 
 The full command inventory is in
 [`../tpm2/engineering.md`](../tpm2/engineering.md) §"Bus protection".
