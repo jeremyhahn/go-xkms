@@ -94,8 +94,7 @@ func (s *Service) PasswordGet(ctx context.Context, req *pb.PasswordGetRequest) (
 	}
 
 	transportReq := &transport.PasswordGetRequest{
-		ID:      req.Id,
-		Decrypt: req.Decrypt,
+		ID: req.Id,
 	}
 
 	resp, getErr := svc.PasswordGet(ctx, transportReq)
@@ -534,8 +533,6 @@ func mapPasswordError(err error) error {
 		return status.Error(codes.InvalidArgument, xkms.ErrPasswordStoreUserPINRequired.Error())
 	case errors.Is(err, xkms.ErrPasswordStoreUserPINNotProvisioned):
 		return status.Error(codes.FailedPrecondition, xkms.ErrPasswordStoreUserPINNotProvisioned.Error())
-	case errors.Is(err, xkms.ErrPasswordDecryptNotSupported):
-		return status.Error(codes.Unimplemented, xkms.ErrPasswordDecryptNotSupported.Error())
 
 	default:
 		// Check for error message patterns for errors that may be wrapped

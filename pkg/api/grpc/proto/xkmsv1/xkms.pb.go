@@ -15725,7 +15725,6 @@ func (x *PasswordAddResponse) GetCreatedAt() string {
 type PasswordGetRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Decrypt       bool                   `protobuf:"varint,2,opt,name=decrypt,proto3" json:"decrypt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -15765,13 +15764,6 @@ func (x *PasswordGetRequest) GetId() string {
 		return x.Id
 	}
 	return ""
-}
-
-func (x *PasswordGetRequest) GetDecrypt() bool {
-	if x != nil {
-		return x.Decrypt
-	}
-	return false
 }
 
 // PasswordGetResponse contains the password entry.
@@ -21885,10 +21877,9 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x03 \x01(\tR\tcreatedAt\">\n" +
+	"created_at\x18\x03 \x01(\tR\tcreatedAt\"3\n" +
 	"\x12PasswordGetRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
-	"\adecrypt\x18\x02 \x01(\bR\adecrypt\"C\n" +
+	"\x02id\x18\x01 \x01(\tR\x02idJ\x04\b\x02\x10\x03R\adecrypt\"C\n" +
 	"\x13PasswordGetResponse\x12,\n" +
 	"\x05entry\x18\x01 \x01(\v2\x16.xkms.v1.PasswordEntryR\x05entry\"L\n" +
 	"\x13PasswordListRequest\x12\x1f\n" +
