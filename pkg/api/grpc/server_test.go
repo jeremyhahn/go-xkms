@@ -14,11 +14,13 @@
 package grpc
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -40,6 +42,14 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
 		Level: slog.LevelError,
 	}))
+}
+
+// capturingLogger returns a logger whose output lands in buf, for tests that
+// assert the underlying cause of an authentication/authorization failure was
+// logged server-side (go-xkms#1103) rather than only being visible on the
+// client response.
+func capturingLogger(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(buf, nil))
 }
 
 // setupXKMSForTest initializes the global xkms service for tests
@@ -213,6 +223,27 @@ func (a *mockFailingAuthenticator) AuthenticateGRPC(ctx context.Context, md meta
 	return nil, errors.New("authentication failed")
 }
 
+// authFailureMarker is a distinctive string standing in for internal
+// authentication-failure detail (a user-store or barrier error, or why a
+// certificate was rejected) that must never reach the gRPC client response
+// (go-xkms#1103).
+const authFailureMarker = "internal-marker: user-store dial tcp 10.0.0.5:5432: connection refused"
+
+// mockMarkerFailingAuthenticator always fails AuthenticateGRPC with an error
+// carrying authFailureMarker, so tests can assert the interceptors never echo
+// it to the caller.
+type mockMarkerFailingAuthenticator struct{}
+
+func (a *mockMarkerFailingAuthenticator) Name() string { return "mock-marker-failing" }
+
+func (a *mockMarkerFailingAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
+	return nil, errors.New(authFailureMarker)
+}
+
+func (a *mockMarkerFailingAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*auth.Identity, error) {
+	return nil, errors.New(authFailureMarker)
+}
+
 func TestAuthenticationUnaryInterceptor(t *testing.T) {
 	setupXKMSForTest(t)
 	defer xkms.Reset()
@@ -295,6 +326,57 @@ func TestAuthenticationUnaryInterceptor(t *testing.T) {
 		}
 		if st.Code() != codes.Unauthenticated {
 			t.Errorf("Expected Unauthenticated code, got %v", st.Code())
+		}
+	})
+
+	t.Run("does not leak internal error text to the client", func(t *testing.T) {
+		// go-xkms#1103: the authenticator's error text (which can carry
+		// user-store/barrier detail or why a certificate was rejected) must
+		// never reach the client; it must be logged server-side instead.
+		var logBuf bytes.Buffer
+		cfg := &ServerConfig{
+			Port:          0,
+			Authenticator: &mockMarkerFailingAuthenticator{},
+			Logger:        capturingLogger(&logBuf),
+		}
+
+		server, err := NewServer(cfg)
+		if err != nil {
+			t.Fatalf("NewServer failed: %v", err)
+		}
+
+		ctx := context.Background()
+		md := metadata.New(nil)
+		ctx = metadata.NewIncomingContext(ctx, md)
+
+		info := &grpc.UnaryServerInfo{
+			FullMethod: "/test.Service/Method",
+		}
+
+		handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+			return "response", nil
+		}
+
+		_, err = server.authenticationUnaryInterceptor(ctx, nil, info, handler)
+		if err == nil {
+			t.Fatal("Expected error")
+		}
+
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatal("Expected gRPC status error")
+		}
+		if st.Code() != codes.Unauthenticated {
+			t.Errorf("Expected Unauthenticated code, got %v", st.Code())
+		}
+		if st.Message() != errAuthenticationFailed {
+			t.Errorf("Expected generic message %q, got %q", errAuthenticationFailed, st.Message())
+		}
+		if strings.Contains(st.Message(), authFailureMarker) {
+			t.Errorf("Client-facing message leaked internal error text: %q", st.Message())
+		}
+		if !strings.Contains(logBuf.String(), authFailureMarker) {
+			t.Errorf("Expected server-side log to capture the cause, got: %s", logBuf.String())
 		}
 	})
 
@@ -425,6 +507,56 @@ func TestAuthenticationStreamInterceptor(t *testing.T) {
 		}
 		if st.Code() != codes.Unauthenticated {
 			t.Errorf("Expected Unauthenticated code, got %v", st.Code())
+		}
+	})
+
+	// go-xkms#1103: same leak, streaming path.
+	t.Run("does not leak internal error text to the client", func(t *testing.T) {
+		var logBuf bytes.Buffer
+		cfg := &ServerConfig{
+			Port:          0,
+			Authenticator: &mockMarkerFailingAuthenticator{},
+			Logger:        capturingLogger(&logBuf),
+		}
+
+		server, err := NewServer(cfg)
+		if err != nil {
+			t.Fatalf("NewServer failed: %v", err)
+		}
+
+		ctx := context.Background()
+		md := metadata.New(nil)
+		ctx = metadata.NewIncomingContext(ctx, md)
+
+		stream := &mockServerStream{ctx: ctx}
+		info := &grpc.StreamServerInfo{
+			FullMethod: "/test.Service/Method",
+		}
+
+		handler := func(srv interface{}, ss grpc.ServerStream) error {
+			return nil
+		}
+
+		err = server.authenticationStreamInterceptor(nil, stream, info, handler)
+		if err == nil {
+			t.Fatal("Expected error")
+		}
+
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatal("Expected gRPC status error")
+		}
+		if st.Code() != codes.Unauthenticated {
+			t.Errorf("Expected Unauthenticated code, got %v", st.Code())
+		}
+		if st.Message() != errAuthenticationFailed {
+			t.Errorf("Expected generic message %q, got %q", errAuthenticationFailed, st.Message())
+		}
+		if strings.Contains(st.Message(), authFailureMarker) {
+			t.Errorf("Client-facing message leaked internal error text: %q", st.Message())
+		}
+		if !strings.Contains(logBuf.String(), authFailureMarker) {
+			t.Errorf("Expected server-side log to capture the cause, got: %s", logBuf.String())
 		}
 	})
 }

@@ -40,15 +40,32 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
-// freePort returns a TCP port that is currently available.
-func freePort(t *testing.T) string {
+// occupyPort binds and holds a loopback listener so a test can pass its port
+// to a second bind attempt that must fail. The listener stays open for the
+// life of the test (closed via t.Cleanup), so unlike a "reserve, release,
+// rebind" helper there is no window in which another process can steal the
+// port: the same listener that reserved it is still holding it when the
+// code under test tries to bind.
+func occupyPort(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer l.Close()
+	t.Cleanup(func() { _ = l.Close() })
 	_, port, err := net.SplitHostPort(l.Addr().String())
 	require.NoError(t, err)
 	return port
+}
+
+// challengeServerPort starts cs and returns the port the kernel assigned it.
+// cs must have been constructed with port "0" so Start asks the kernel for
+// an unused port directly instead of a helper pre-allocating one and
+// releasing it for Start to race against.
+func challengeServerPort(t *testing.T, cs *ChallengeServer) string {
+	t.Helper()
+	require.NoError(t, cs.Start())
+	addr, ok := cs.Addr().(*net.TCPAddr)
+	require.True(t, ok, "ChallengeServer.Addr() must return a *net.TCPAddr after Start")
+	return fmt.Sprintf("%d", addr.Port)
 }
 
 // TestNewChallengeServer verifies that a ChallengeServer is constructed with
@@ -79,8 +96,7 @@ func TestNewChallengeServer_EmptyFields(t *testing.T) {
 // TestChallengeServer_StartAndShutdown verifies the server starts on a free
 // port and shuts down cleanly.
 func TestChallengeServer_StartAndShutdown(t *testing.T) {
-	port := freePort(t)
-	cs := NewChallengeServer("", port, "tok", "keyauth", testLogger())
+	cs := NewChallengeServer("", "0", "tok", "keyauth", testLogger())
 
 	err := cs.Start()
 	require.NoError(t, err)
@@ -94,15 +110,10 @@ func TestChallengeServer_StartAndShutdown(t *testing.T) {
 // TestChallengeServer_Start_PortInUse verifies that Start returns an error
 // when the port is already bound.
 func TestChallengeServer_Start_PortInUse(t *testing.T) {
-	port := freePort(t)
-
-	// Occupy the port
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
-	require.NoError(t, err)
-	defer listener.Close()
+	port := occupyPort(t)
 
 	cs := NewChallengeServer("", port, "tok", "ka", testLogger())
-	err = cs.Start()
+	err := cs.Start()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to listen")
 }
@@ -110,12 +121,11 @@ func TestChallengeServer_Start_PortInUse(t *testing.T) {
 // TestChallengeServer_HandleChallenge_Success verifies that the server
 // responds with the key authorization for a matching token request.
 func TestChallengeServer_HandleChallenge_Success(t *testing.T) {
-	port := freePort(t)
 	token := "challenge-token-abc"
 	keyAuth := "challenge-token-abc.thumbprint123"
 
-	cs := NewChallengeServer("", port, token, keyAuth, testLogger())
-	require.NoError(t, cs.Start())
+	cs := NewChallengeServer("", "0", token, keyAuth, testLogger())
+	port := challengeServerPort(t, cs)
 	defer cs.Shutdown()
 
 	url := fmt.Sprintf("http://127.0.0.1:%s/.well-known/acme-challenge/%s", port, token)
@@ -134,9 +144,8 @@ func TestChallengeServer_HandleChallenge_Success(t *testing.T) {
 // TestChallengeServer_HandleChallenge_WrongToken verifies that requesting
 // a non-matching token returns 404.
 func TestChallengeServer_HandleChallenge_WrongToken(t *testing.T) {
-	port := freePort(t)
-	cs := NewChallengeServer("", port, "expected-token", "ka", testLogger())
-	require.NoError(t, cs.Start())
+	cs := NewChallengeServer("", "0", "expected-token", "ka", testLogger())
+	port := challengeServerPort(t, cs)
 	defer cs.Shutdown()
 
 	url := fmt.Sprintf("http://127.0.0.1:%s/.well-known/acme-challenge/wrong-token", port)
@@ -238,11 +247,10 @@ func TestComputeDNS01Response_EmptyInput(t *testing.T) {
 // TestSetupHTTP01Challenge_ServerMode verifies that SetupHTTP01Challenge starts
 // an HTTP server when no webroot is configured.
 func TestSetupHTTP01Challenge_ServerMode(t *testing.T) {
-	port := freePort(t)
 	config := &Config{
 		Challenge: ChallengeConfig{
 			HTTP01: HTTP01Config{
-				Port: port,
+				Port: "0",
 			},
 		},
 	}
@@ -299,12 +307,7 @@ func TestSetupHTTP01Challenge_DefaultPort(t *testing.T) {
 // TestSetupHTTP01Challenge_PortInUse verifies that SetupHTTP01Challenge returns
 // an ErrChallengeSetupFailed when the port is occupied.
 func TestSetupHTTP01Challenge_PortInUse(t *testing.T) {
-	port := freePort(t)
-
-	// Occupy the port
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
-	require.NoError(t, err)
-	defer listener.Close()
+	port := occupyPort(t)
 
 	config := &Config{
 		Challenge: ChallengeConfig{
@@ -632,12 +635,11 @@ func TestSetupDeviceAttest01Challenge_EmptyPCRs(t *testing.T) {
 // TestChallengeServer_ConcurrentRequests verifies the server handles
 // concurrent requests correctly.
 func TestChallengeServer_ConcurrentRequests(t *testing.T) {
-	port := freePort(t)
 	token := "concurrent-token"
 	keyAuth := "concurrent-ka"
 
-	cs := NewChallengeServer("", port, token, keyAuth, testLogger())
-	require.NoError(t, cs.Start())
+	cs := NewChallengeServer("", "0", token, keyAuth, testLogger())
+	port := challengeServerPort(t, cs)
 	defer cs.Shutdown()
 
 	// Allow server to fully start
@@ -672,12 +674,15 @@ func TestChallengeServer_ConcurrentRequests(t *testing.T) {
 // address was ":"+port for every configuration, the wildcard decision the
 // owner ruling of 2026-08-26 forbids as a literal (go-xkms#140).
 func TestChallengeServer_BindsConfiguredHost(t *testing.T) {
-	port := freePort(t)
-	cs := NewChallengeServer("127.0.0.1", port, "tok", "ka", testLogger())
-	require.NoError(t, cs.Start())
+	cs := NewChallengeServer("127.0.0.1", "0", "tok", "ka", testLogger())
+	port := challengeServerPort(t, cs)
 	defer cs.Shutdown()
 
-	assert.Equal(t, net.JoinHostPort("127.0.0.1", port), cs.server.Addr)
+	assert.Equal(t, net.JoinHostPort("127.0.0.1", "0"), cs.server.Addr)
+
+	tcpAddr, ok := cs.Addr().(*net.TCPAddr)
+	require.True(t, ok, "ChallengeServer.Addr() must return a *net.TCPAddr")
+	assert.Equal(t, "127.0.0.1", tcpAddr.IP.String(), "the listener must bind the configured host, not the wildcard")
 
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%s/.well-known/acme-challenge/tok", port)) // nolint:gosec
 	require.NoError(t, err)
@@ -688,10 +693,9 @@ func TestChallengeServer_BindsConfiguredHost(t *testing.T) {
 // TestSetupHTTP01Challenge_UsesConfiguredHost pins the config-to-listener
 // path: challenge.http01.host is what the started server binds.
 func TestSetupHTTP01Challenge_UsesConfiguredHost(t *testing.T) {
-	port := freePort(t)
 	cfg := DefaultConfig()
 	cfg.Challenge.HTTP01.Host = "127.0.0.1"
-	cfg.Challenge.HTTP01.Port = port
+	cfg.Challenge.HTTP01.Port = "0"
 
 	srv, err := SetupHTTP01Challenge(cfg, testLogger(), "tok", "ka")
 	require.NoError(t, err)
@@ -699,5 +703,9 @@ func TestSetupHTTP01Challenge_UsesConfiguredHost(t *testing.T) {
 	defer srv.Shutdown()
 
 	assert.Equal(t, "127.0.0.1", srv.host)
-	assert.Equal(t, net.JoinHostPort("127.0.0.1", port), srv.server.Addr)
+	assert.Equal(t, net.JoinHostPort("127.0.0.1", "0"), srv.server.Addr)
+
+	tcpAddr, ok := srv.Addr().(*net.TCPAddr)
+	require.True(t, ok, "ChallengeServer.Addr() must return a *net.TCPAddr")
+	assert.Equal(t, "127.0.0.1", tcpAddr.IP.String())
 }

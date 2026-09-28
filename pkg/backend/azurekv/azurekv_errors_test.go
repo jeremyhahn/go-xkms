@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -144,9 +145,10 @@ func TestDelete_ClientErrorStillClearsMetadata(t *testing.T) {
 		t.Errorf("Delete() unexpected error = %v", err)
 	}
 
-	b.mu.RLock()
-	_, exists := b.metadata[attrs.CN]
-	b.mu.RUnlock()
+	exists, err := storage.KeyExists(context.Background(), b.config.KeyStorage, attrs.CN)
+	if err != nil {
+		t.Fatalf("storage.KeyExists() error = %v", err)
+	}
 	if exists {
 		t.Error("Delete() did not remove metadata despite client error")
 	}

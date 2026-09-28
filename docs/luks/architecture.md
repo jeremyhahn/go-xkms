@@ -1,6 +1,6 @@
 # LUKS (root module) — Architecture
 
-> **Status: NORMATIVE** · Feature: `luks` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `luks` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Scope
 
@@ -34,45 +34,69 @@ the root module.
 
 ## Volume lifecycle: `Manager` + `Executor`
 
-`Manager` (`pkg/luks/manager.go:48-137`) tracks mount/unlock state with
+`Manager` (`pkg/luks/manager.go:52-183`) tracks mount/unlock state with
 `sync/atomic` (`mounted`, `unlocked` fields, lock-free reads via `IsMounted`/
-`IsUnlocked`) and validates every request before it reaches disk:
+`IsUnlocked`) and validates every request against that state before it
+reaches disk (go-xkms#917):
 
 - `Create` rejects `sizeBytes <= 0` (`ErrInvalidSize`) and an empty
   passphrase (`ErrEmptyPassphrase`) before calling the executor
-  (`pkg/luks/manager.go:86-97`).
-- `Unlock` rejects an empty passphrase the same way
-  (`pkg/luks/manager.go:101-110`).
-- `Lock` always clears both `unlocked` and `mounted` state, even though
-  volumes in this package are never marked mounted by `Manager` itself — see
-  "What `Manager` does not do" below (`pkg/luks/manager.go:112-120`).
+  (`pkg/luks/manager.go:92-103`).
+- `Unlock` rejects an empty passphrase, and `ErrAlreadyUnlocked` if the
+  volume is already unlocked, before calling the executor
+  (`pkg/luks/manager.go:108-120`).
+- `Lock` rejects with `ErrNotUnlocked` if the volume is not currently
+  unlocked, then clears both `unlocked` and `mounted` state on success
+  (`pkg/luks/manager.go:124-134`).
+- `Mount` rejects with `ErrNotUnlocked` if the volume is not unlocked and
+  `ErrAlreadyMounted` if it is already mounted, then sets `mounted` on
+  success (`pkg/luks/manager.go:139-151`).
+- `Unmount` rejects with `ErrNotMounted` if the volume is not currently
+  mounted, then clears `mounted` on success
+  (`pkg/luks/manager.go:156-165`).
 
-`Executor` (`pkg/luks/manager.go:23-44`) is the seam: "Production
+`Executor` (`pkg/luks/manager.go:26-50`) is the seam: "Production
 implementations call cryptsetup, dmsetup, and mount; test code supplies
-lightweight mocks." Every `Executor` method receives the full `*VolumeConfig`,
-which is how a `cryptsetup`-backed implementation is expected to translate
-`VolumeConfig.KDF` into `cryptsetup luksFormat --pbkdf` and
-`VolumeConfig.PBKDFIterTime` into `--iter-time` — `pkg/luks` defines the
-contract but performs none of that translation itself.
+lightweight mocks." It declares `Create`, `Unlock`, `Lock`, `Mount`,
+`Unmount`, `IsMounted`, `IsUnlocked`. Every `Executor` method receives the
+full `*VolumeConfig`, which is how a `cryptsetup`-backed implementation is
+expected to translate `VolumeConfig.KDF` into `cryptsetup luksFormat --pbkdf`
+and `VolumeConfig.PBKDFIterTime` into `--iter-time` — `pkg/luks` defines the
+contract but performs none of that translation itself. `Executor.IsMounted`/
+`IsUnlocked` are live queries an implementation can use to reconcile state;
+`Manager` does not call them itself — see "What `Manager` does not do" below.
 
 **No concrete `Executor` implementation exists in this repository.** This was
 verified by searching both the root module and the `xkey` module for anything
-implementing `Create`/`Unlock`/`Lock`/`IsMounted`/`IsUnlocked` against
-`*luks.VolumeConfig`; the only types satisfying the interface are the mocks in
-`pkg/luks/manager_test.go`. `xkey`'s own LUKS2 volume code
-(`xkey/pkg/luks`, driving `xkey luks2 *`) is a separate, self-contained
-implementation built on `github.com/jeremyhahn/go-luks2` — it does not
-implement `luks.Executor` and does not construct a `luks.Manager`. See
-"Neighboring packages named luks" below.
+implementing the full method set against `*luks.VolumeConfig`; the only types
+satisfying the interface are the mocks in `pkg/luks/manager_test.go`. `xkey`'s
+own LUKS2 volume code (`xkey/pkg/luks`, driving `xkey luks2 *`) is a separate,
+self-contained implementation built on `github.com/jeremyhahn/go-luks2` (see
+`xkey/go.mod`, pinned at `v0.2.0-alpha`) — it does not implement
+`luks.Executor` and does not construct a `luks.Manager`. See "Neighboring
+packages named luks" below.
+
+`github.com/jeremyhahn/go-luks2` is a pure-Go LUKS2 implementation — no
+`cryptsetup` subprocess — already vetted and in production use by `xkey`
+in this same repository, and is the library go-xkms#917's triage identified
+for a `pkg/luks` production `Executor`. It is not yet a dependency of the
+root `go-xkms` module (only of the `xkey` nested module), so adding it here
+is an explicit, separate decision pending owner approval; wiring an
+`Executor` implementation on top of it is tracked under go-xkms#917 rather
+than done in the same change that wired the state machine below.
 
 ### What `Manager` does not do
 
-`Manager.IsMounted` reports internal state only — the `mounted` field is
-never set to `true` anywhere in `pkg/luks` (grep-verified: no assignment to
-`m.mounted` other than the `false` reset in `Lock`). Mount tracking is a
-placeholder in the current package; only `unlocked` state is actually driven
-by `Unlock`/`Lock`. A caller relying on `Manager.IsMounted()` today is relying
-on a field that this package never sets.
+`Manager.IsMounted` and `Manager.IsUnlocked` report internal `atomic.Bool`
+state only, driven exclusively by `Mount`/`Unmount`/`Unlock`/`Lock`
+succeeding — never by asking the executor or the OS. `Manager` never calls
+`Executor.IsMounted`/`Executor.IsUnlocked`; those two `Executor` methods
+exist for an implementation's own reconciliation use, not for `Manager`'s
+state machine. A caller relying on `Manager.IsMounted()`/`IsUnlocked()` is
+relying on this package's own bookkeeping, which is only as accurate as the
+sequence of `Mount`/`Unmount`/`Unlock`/`Lock` calls that produced it — there
+is still no concrete `Executor`, so nothing in this repository exercises
+that bookkeeping against a real LUKS volume today.
 
 ### FIPS-aware KDF selection
 

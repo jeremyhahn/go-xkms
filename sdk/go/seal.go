@@ -65,6 +65,20 @@ var SealKeyAttributes = seal.SealKeyAttributes
 // SealKeyCN is the canonical common name of that symmetric wrapping key.
 const SealKeyCN = seal.SealKeyCN
 
+// EnsurePrivateSealKey guarantees the private key identified by keyAttrs
+// exists on provider, generating it on first use and reusing it thereafter.
+// It is the asymmetric counterpart to EnsureSealKey (below), for backends
+// (software, PKCS#8) whose Sealer derives its wrapping key from an existing
+// private key rather than a dedicated symmetric primitive.
+var EnsurePrivateSealKey = seal.EnsurePrivateSealKey
+
+// EnsureSealKey guarantees the symmetric wrapping key identified by keyAttrs
+// is resolvable by provider, creating it on first use (PKCS#11 login, AWS
+// KMS operator-key metadata seeding, then idempotent
+// GetSymmetricKey/GenerateSymmetricKey check-and-skip) and reusing it
+// thereafter.
+var EnsureSealKey = seal.EnsureSealKey
+
 // ErrSealBackendUnavailable indicates a hardware/cloud backend does not
 // implement the interface (Sealer / SymmetricKeyProvider) a seal strategy
 // requires.

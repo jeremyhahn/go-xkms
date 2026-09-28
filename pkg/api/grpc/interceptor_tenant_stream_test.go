@@ -90,27 +90,24 @@ func TestTenantStreamInterceptor_EmptyTenantID(t *testing.T) {
 	})
 }
 
-func TestTenantStreamInterceptor_SORolePassesThrough(t *testing.T) {
-	t.Run("SO role gets cross-tenant access", func(t *testing.T) {
-		registry := testTenantRegistry(t)
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(registry)
-		defer SetBarrierRegistry(old)
+// TestTenantStreamInterceptor_SORoleNameGetsNoBypass is the go-xkms#1074
+// regression on the streaming path: a role NAME confers no tenant bypass.
+func TestTenantStreamInterceptor_SORoleNameGetsNoBypass(t *testing.T) {
+	registry := testTenantRegistry(t)
+	old := GetBarrierRegistry()
+	SetBarrierRegistry(registry)
+	defer SetBarrierRegistry(old)
 
-		srv := &Server{logger: discardLogger()}
-		info := &grpc.StreamServerInfo{FullMethod: "/test/Stream"}
+	srv := &Server{logger: discardLogger()}
+	info := &grpc.StreamServerInfo{FullMethod: "/test/Stream"}
 
-		identity := &auth.Identity{
-			Subject:  "so-admin",
-			TenantID: "any-tenant",
-			Roles:    []string{"so"},
-		}
-		ctx := auth.WithIdentity(context.Background(), identity)
-		stream := &fakeServerStream{ctx: ctx}
+	identity := &auth.Identity{Subject: "so-admin", TenantID: "any-tenant", Roles: []string{"so"}}
+	stream := &fakeServerStream{ctx: auth.WithIdentity(context.Background(), identity)}
 
-		err := srv.tenantStreamInterceptor("srv", stream, info, passthroughStreamHandler)
-		require.NoError(t, err)
-	})
+	err := srv.tenantStreamInterceptor("srv", stream, info, passthroughStreamHandler)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.PermissionDenied, st.Code())
 }
 
 func TestTenantStreamInterceptor_NoRegistry(t *testing.T) {

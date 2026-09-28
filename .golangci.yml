@@ -81,6 +81,8 @@ linters:
   enable:
     - misspell
     - gocritic
+    # forbidigo carries exactly one rule, for go-xkms#1074: see its settings.
+    - forbidigo
     # err113 was evaluated for #700 (the typed-error migration) and is NOT
     # enabled repo-wide yet: golangci-lint v2.13.2's err113, run with every
     # other setting in this file unchanged, reports 107 pre-existing findings
@@ -101,6 +103,17 @@ linters:
     # a follow-up issue clears the backlog -- see docs/ pointer in the #700
     # PR description for the full file list.
   settings:
+    forbidigo:
+      forbid:
+        # Identity.HasRole is go-qrdb's, so it cannot be removed here. It
+        # compares a role NAME against Identity.Roles, which holds role
+        # IDENTIFIERS on every authenticated identity: it never matches a
+        # real grant and does match an unverified token claim that spells the
+        # name (go-xkms#1074). Authorize a resource:action through
+        # auth.Authorizer; where the decision genuinely is role membership,
+        # use auth.HoldsSystemRole.
+        - pattern: '\.HasRole$'
+          msg: "compares a role name against role identifiers (go-xkms#1074); use auth.Authorizer, or auth.HoldsSystemRole for role membership"
     gocritic:
       # Diagnostics and performance only. The style and opinionated tags flag
       # rewrites rather than defects, and at this codebase's size they would
