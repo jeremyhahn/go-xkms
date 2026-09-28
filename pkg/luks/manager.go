@@ -35,6 +35,12 @@ type Executor interface {
 	// Lock closes the mapped LUKS device.
 	Lock(ctx context.Context, config *VolumeConfig) error
 
+	// Mount mounts the device mapper entry at the configured mount point.
+	Mount(ctx context.Context, config *VolumeConfig) error
+
+	// Unmount unmounts the volume from the configured mount point.
+	Unmount(ctx context.Context, config *VolumeConfig) error
+
 	// IsMounted reports whether the volume is currently mounted at the
 	// configured mount point.
 	IsMounted(config *VolumeConfig) bool
@@ -97,10 +103,14 @@ func (m *Manager) Create(ctx context.Context, sizeBytes int64, passphrase string
 }
 
 // Unlock opens the LUKS container with the given passphrase and updates
-// internal state. It validates the passphrase before delegating.
+// internal state. It validates the passphrase before delegating. It returns
+// ErrAlreadyUnlocked if the volume is already unlocked.
 func (m *Manager) Unlock(ctx context.Context, passphrase string) error {
 	if passphrase == "" {
 		return ErrEmptyPassphrase
+	}
+	if m.unlocked.Load() {
+		return ErrAlreadyUnlocked
 	}
 	if err := m.executor.Unlock(ctx, m.config, passphrase); err != nil {
 		return &errs.Joined{Lead: ErrOperationFailed, Cause: err}
@@ -109,8 +119,12 @@ func (m *Manager) Unlock(ctx context.Context, passphrase string) error {
 	return nil
 }
 
-// Lock closes the LUKS device mapper entry and updates internal state.
+// Lock closes the LUKS device mapper entry and updates internal state. It
+// returns ErrNotUnlocked if the volume is not currently unlocked.
 func (m *Manager) Lock(ctx context.Context) error {
+	if !m.unlocked.Load() {
+		return ErrNotUnlocked
+	}
 	if err := m.executor.Lock(ctx, m.config); err != nil {
 		return &errs.Joined{Lead: ErrOperationFailed, Cause: err}
 	}
@@ -119,8 +133,40 @@ func (m *Manager) Lock(ctx context.Context) error {
 	return nil
 }
 
+// Mount mounts the unlocked volume at its configured mount point and
+// updates internal state. It returns ErrNotUnlocked if the volume is not
+// currently unlocked, and ErrAlreadyMounted if it is already mounted.
+func (m *Manager) Mount(ctx context.Context) error {
+	if !m.unlocked.Load() {
+		return ErrNotUnlocked
+	}
+	if m.mounted.Load() {
+		return ErrAlreadyMounted
+	}
+	if err := m.executor.Mount(ctx, m.config); err != nil {
+		return &errs.Joined{Lead: ErrOperationFailed, Cause: err}
+	}
+	m.mounted.Store(true)
+	return nil
+}
+
+// Unmount unmounts the volume from its configured mount point and updates
+// internal state. It returns ErrNotMounted if the volume is not currently
+// mounted.
+func (m *Manager) Unmount(ctx context.Context) error {
+	if !m.mounted.Load() {
+		return ErrNotMounted
+	}
+	if err := m.executor.Unmount(ctx, m.config); err != nil {
+		return &errs.Joined{Lead: ErrOperationFailed, Cause: err}
+	}
+	m.mounted.Store(false)
+	return nil
+}
+
 // IsMounted reports whether the volume is currently mounted according to
-// internal state tracking.
+// internal state tracking. The flag is set by a successful Mount and cleared
+// by a successful Unmount or Lock.
 func (m *Manager) IsMounted() bool {
 	return m.mounted.Load()
 }
