@@ -241,27 +241,31 @@ plaintext, and nothing about that is configurable.
 **Salt key.** Every session that carries a secret is salted: its session key
 comes from a random salt encrypted to a TPM-resident key, so a capture neither
 decrypts its parameters nor lets the auth value behind its HMAC be brute
-forced offline. `saltKey` (`pkg/tpm2/session.go:93`) uses the persistent EK at
+forced offline. `saltKey` (`pkg/tpm2/session.go:94`) uses the persistent EK at
 `ek.handle`, which it only reads (`TPM2_ReadPublic`) and never modifies. When
 no EK is resident — between `TPM2_Clear` and `CreateEK` during provisioning,
-or on a TPM whose EK was never persisted — it creates an ephemeral ECC P-256
-key in the NULL hierarchy from go-tpm's `ECCSRKTemplate` (`session.go:105`)
-and flushes it as soon as `TPM2_StartAuthSession` returns. Any other lookup
-failure is `ErrSaltKey`; it is never answered with an unsalted session.
+or on a TPM whose EK was never persisted — `nullSaltKey` (`session.go:115`)
+creates an ephemeral ECC P-256 key in the NULL hierarchy from go-tpm's
+`ECCSRKTemplate` (`session.go:122`), and `startSaltedSession`
+(`session.go:181`) flushes it as soon as `TPM2_StartAuthSession` returns. A
+failure to flush it does not fail the command the session serves — the
+session no longer needs it — but is returned by the session's closer, the
+teardown channel every caller already handles. Any other lookup failure is
+`ErrSaltKey`; it is never answered with an unsalted session.
 
 **Auth values.** A non-empty auth value is proven through a salted HMAC
 session, never a `TPM_RS_PW` password session, which would put the value on
 the bus verbatim:
 
-- objects and NV indexes — `objectAuthSession` (`session.go:194`);
-- hierarchies (the SO PIN) — `hierarchyAuthSession` (`session.go:211`), bound
+- objects and NV indexes — `objectAuthSession` (`session.go:261`);
+- hierarchies (the SO PIN) — `hierarchyAuthSession` (`session.go:272`), bound
   to the hierarchy. `TPM2_HierarchyChangeAuth` and `TPM2_Clear` change the
   hierarchy's own auth, and the TPM computes their response HMAC with the new
   value; a bound session authorizing its bind entity leaves the auth value out
   of the HMAC key, so the response verifies. `withHierarchyAuth`
-  (`session.go:227`) wraps a command in one;
+  (`session.go:324`) wraps a command in one;
 - the PIN branch of the platform policy — `platformPolicySession`
-  (`session.go:345`) salts the `PolicyAuthValue` session. Unsalted, its HMAC
+  (`session.go:442`) salts the `PolicyAuthValue` session. Unsalted, its HMAC
   key is the PIN alone.
 
 An empty auth value with nothing to encrypt stays a zero-round-trip empty
@@ -269,13 +273,13 @@ password session.
 
 **Parameter encryption.** AES-128-CFB on the first command or response
 parameter, in the direction the secret travels (`paramEncryption`,
-`session.go:49`): the TPM refuses the attribute with `TPM_RC_ATTRIBUTES` on a
+`session.go:50`): the TPM refuses the attribute with `TPM_RC_ATTRIBUTES` on a
 command whose first parameter is not a TPM2B, so it is set per command, never
 blanket. Where the package builds the authorization itself the same session
 encrypts; where the authorization comes from `CreateSession` /
 `CreateKeySession` — a policy session may answer the PCR branch, which cannot
 encrypt because the TPM mixes the entity's auth value into the key — a
-separate `encryptionSession` (`session.go:183`) is attached as an extra
+separate `encryptionSession` (`session.go:250`) is attached as an extra
 session.
 
 | Command | Secret | Protection | Site |
@@ -284,7 +288,7 @@ session.
 | `TPM2_EvictControl` | hierarchy auth | salted bound session | `evictControl`, `key.go:570` |
 | `TPM2_HierarchyChangeAuth` | old and new hierarchy auth | salted bound session, encrypt in | `hierarchyChangeAuth`, `tpm.go:1154` |
 | `TPM2_Clear` | lockout auth | salted bound session | `Clear`, `provision.go:26` |
-| `TPM2_PolicySecret` (endorsement) | endorsement auth | salted bound session | `policySecret`, `session.go:246` |
+| `TPM2_PolicySecret` (endorsement) | endorsement auth | salted bound session | `policySecret`, `session.go:343` |
 | `TPM2_NV_DefineSpace` | hierarchy auth, index auth | salted bound session, encrypt in | `nvDefineSpace`, `nvram.go:888` |
 | `TPM2_NV_Write` (`NVWrite`) | sealed data; hierarchy auth | salted bound session, encrypt in | `nvram.go:117` |
 | `TPM2_NV_Read` (`NVRead`) | sealed data | extra session, encrypt out | `nvram.go:310` |
@@ -294,7 +298,7 @@ session.
 | `TPM2_RSA_Decrypt`, `TPM2_ECDH_ZGen` | plaintext, shared secret | extra session, encrypt out | `rsa.go:307`, `ecdh.go:112` |
 | `TPM2_ActivateCredential` | recovered credential | extra session, encrypt out | `attestation.go:614` |
 | `TPM2_GetRandom` | key material | extra session, encrypt out | `random.go:88` |
-| `TPM2_Sign`, `TPM2_Quote`, `TPM2_Certify`, `TPM2_CertifyCreation`, `TPM2_Load` | key or parent auth | salted HMAC or policy session | `CreateSession` `session.go:523`, `createKeySession` `session.go:711` |
+| `TPM2_Sign`, `TPM2_Quote`, `TPM2_Certify`, `TPM2_CertifyCreation`, `TPM2_Load` | key or parent auth | salted HMAC or policy session | `CreateSession` `session.go:620`, `createKeySession` `session.go:808` |
 
 `TPM2_NV_Extend` is not in go-tpm; `nvExtendExecute` (`nv_extend.go:38`)
 marshals it by hand but computes and verifies its authorization through the
@@ -303,9 +307,31 @@ go-tpm `Session`, so it takes the same salted sessions as every other command.
 value: the ticket's hierarchy needs no authorization, and go-tpm cannot attach
 a session to `TPM2_HashSequenceStart` (its response handle is untagged).
 
-Not covered: callers that drive go-tpm directly rather than through
-`pkg/tpm2` — `pkg/luks`, `pkg/storage/hardware`, and `pkg/backend/tpm2`'s
-import path.
+**Callers on a raw transport.** Three callers drive go-tpm on a transport of
+their own rather than through a `TPM2`. They take the same session layer
+through its transport-level entry points, which salt against the ephemeral
+NULL-hierarchy key (a bare transport carries no EK configuration) and never
+touch the EK or any SRK:
+
+- `HierarchyAuthSession(t, hierarchy, auth)` (`session.go:291`) — the salted
+  bound hierarchy session of `hierarchyAuthSession`, encrypting nothing; an
+  empty auth is the empty password session.
+- `CommandEncryptionSession(t)` (`session.go:306`) and
+  `ResponseEncryptionSession(t)` (`session.go:317`) — the extra session of
+  `encryptionSession`, encrypting the command's or the response's first
+  parameter.
+
+| Caller | Command | Secret | Protection | Site |
+|---|---|---|---|---|
+| `pkg/luks` `SealPassphrase` | `TPM2_Create` under the sealing parent | LUKS passphrase | extra session, encrypt in | `pkg/luks/tpm.go:241` |
+| `pkg/luks` `UnsealPassphrase` | `TPM2_Unseal` (PCR policy session) | LUKS passphrase | extra session, encrypt out | `pkg/luks/tpm.go:355` |
+| `pkg/storage/hardware` `TPM2CertStorage` | `TPM2_NV_DefineSpace`, `TPM2_NV_Write`, `TPM2_NV_Read`, `TPM2_NV_UndefineSpace` | owner auth (SO PIN) | salted bound session | `ownerAuthSession`, `pkg/storage/hardware/tpm2_cert_storage.go:681` |
+| `pkg/backend/tpm2` `UnwrapKey` | `TPM2_Unseal` of the imported object | unwrapped key material | extra session, encrypt out | `pkg/backend/tpm2/importexport.go:423` |
+
+`pkg/luks` opens its own transport per operation (`TPMOpener`) and hands it
+to the entry points; its sealing parent and PCR policy are unchanged. The
+certificate NV indexes hold public certificates under an empty index auth,
+so their data is not encrypted — only the SO PIN needed protecting.
 
 ## Error semantics
 
@@ -508,6 +534,13 @@ The suite is unusually large and deliberately structured:
   copies each command before forwarding it: the in-process simulator decrypts
   an encrypted parameter in place, in the buffer it is handed. The same file
   covers `saltKey` with no EK resident and with a failing transport. The
+  recorder is `pkg/tpm2/tpm2test/tpmbus`, which imports nothing from go-xkms
+  so the raw-transport callers use it too:
+  `session_transport_simulator_test.go` (the transport-level entry points,
+  including a salt key the TPM refuses to flush),
+  `pkg/luks/tpm_bus_simulator_test.go`,
+  `pkg/storage/hardware/tpm2_cert_storage_bus_test.go` and
+  `pkg/backend/tpm2/importexport_bus_sim_test.go`. The
   integration counterpart, `test/integration/tpm2/capture_test.go`, runs the
   same kind of capture against the devcontainer's networked simulator
   (`make test-tpm2-encryption`, or `make test-tpm2-encryption-local` against a

@@ -9,6 +9,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -74,6 +75,10 @@ var paramEncryptionOptions = map[paramEncryption]tpm2.AuthOption{
 // noopCloser is the closer handed back with a session that needs no flush.
 func noopCloser() error { return nil }
 
+// saltKeyFunc resolves the loaded key a session is salted against, together
+// with a release function the caller runs once the session has started.
+type saltKeyFunc func() (tpm2.TPMHandle, tpm2.TPMTPublic, func() error, error)
+
 // saltKey returns the loaded key a session is salted against, together with
 // a release function the caller runs once the session has started.
 //
@@ -85,11 +90,7 @@ func noopCloser() error { return nil }
 // The persistent Endorsement Key is used whenever it is resident. It is only
 // read here -- TPM2_ReadPublic -- and never modified. Before it exists (between
 // TPM2_Clear and CreateEK during provisioning, or on a TPM whose EK was never
-// persisted) an ephemeral ECC P-256 storage key is created in the NULL
-// hierarchy from go-tpm's TCG SRK template. The NULL hierarchy needs no
-// authorization, so creating it discloses nothing; release flushes it. The
-// salt key is only needed by TPM2_StartAuthSession, so releasing it
-// immediately afterwards does not affect the session.
+// persisted) the ephemeral NULL-hierarchy key of nullSaltKey is used instead.
 func (tpm *TPM2) saltKey() (tpm2.TPMHandle, tpm2.TPMTPublic, func() error, error) {
 	if tpm.config.EK != nil && tpm.config.EK.Handle != 0 {
 		ekHandle := tpm2.TPMHandle(tpm.config.EK.Handle)
@@ -101,29 +102,42 @@ func (tpm *TPM2) saltKey() (tpm2.TPMHandle, tpm2.TPMTPublic, func() error, error
 			return 0, tpm2.TPMTPublic{}, noopCloser, &errs.Joined{Lead: ErrSaltKey, Detail: "read EK public", Cause: err}
 		}
 	}
+	return nullSaltKey(tpm.transport)()
+}
 
-	primary, err := tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHNull,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		InPublic: tpm2.New2B(tpm2.ECCSRKTemplate),
-	}.Execute(tpm.transport)
-	if err != nil {
-		return 0, tpm2.TPMTPublic{}, noopCloser, &errs.Joined{Lead: ErrSaltKey, Detail: "create NULL hierarchy salt key", Cause: err}
-	}
-	release := func() error {
-		_, err := tpm2.FlushContext{FlushHandle: primary.ObjectHandle}.Execute(tpm.transport)
-		return err
-	}
-	pub, err := primary.OutPublic.Contents()
-	if err != nil {
-		if releaseErr := release(); releaseErr != nil {
-			tpm.logger.Error("tpm: failed to flush NULL hierarchy salt key", slog.String("error", releaseErr.Error()))
+// nullSaltKey returns a saltKeyFunc that creates an ephemeral ECC P-256
+// storage key in the NULL hierarchy of the TPM behind t, from go-tpm's TCG
+// SRK template, and whose release function flushes it. The NULL hierarchy
+// needs no authorization, so creating the key discloses nothing, and it
+// touches no persistent object: neither the EK nor any SRK. The salt key is
+// only needed by TPM2_StartAuthSession, so releasing it immediately
+// afterwards does not affect the session.
+func nullSaltKey(t transport.TPM) saltKeyFunc {
+	return func() (tpm2.TPMHandle, tpm2.TPMTPublic, func() error, error) {
+		primary, err := tpm2.CreatePrimary{
+			PrimaryHandle: tpm2.AuthHandle{
+				Handle: tpm2.TPMRHNull,
+				Auth:   tpm2.PasswordAuth(nil),
+			},
+			InPublic: tpm2.New2B(tpm2.ECCSRKTemplate),
+		}.Execute(t)
+		if err != nil {
+			return 0, tpm2.TPMTPublic{}, noopCloser, &errs.Joined{Lead: ErrSaltKey, Detail: "create NULL hierarchy salt key", Cause: err}
 		}
-		return 0, tpm2.TPMTPublic{}, noopCloser, &errs.Joined{Lead: ErrSaltKey, Detail: "NULL hierarchy salt key public", Cause: err}
+		release := func() error {
+			_, err := tpm2.FlushContext{FlushHandle: primary.ObjectHandle}.Execute(t)
+			return err
+		}
+		pub, err := primary.OutPublic.Contents()
+		if err != nil {
+			return 0, tpm2.TPMTPublic{}, noopCloser, &errs.Joined{
+				Lead:   ErrSaltKey,
+				Detail: "NULL hierarchy salt key public",
+				Cause:  errors.Join(err, release()),
+			}
+		}
+		return primary.ObjectHandle, *pub, release, nil
 	}
-	return primary.ObjectHandle, *pub, release, nil
 }
 
 // isAbsentHandle reports whether err is the TPM's answer to reading an
@@ -133,10 +147,11 @@ func isAbsentHandle(err error) bool {
 	return errors.Is(err, tpmRCHandle) || errors.Is(err, tpm2.TPMRC(0x184))
 }
 
-// startHMACSession starts a reusable HMAC session salted against the loaded
-// key at saltHandle, encrypting the parameter dir names. opts carry the auth
-// value and binding. The session's closer flushes it.
-func (tpm *TPM2) startHMACSession(
+// startHMACSession starts a reusable HMAC session on t, salted against the
+// loaded key at saltHandle and encrypting the parameter dir names. opts carry
+// the auth value and binding. The session's closer flushes it.
+func startHMACSession(
+	t transport.TPM,
 	saltHandle tpm2.TPMHandle,
 	saltPub tpm2.TPMTPublic,
 	dir paramEncryption,
@@ -147,30 +162,82 @@ func (tpm *TPM2) startHMACSession(
 		sessionOpts = append(sessionOpts, encryption)
 	}
 	session, closer, err := tpm2.HMACSession(
-		tpm.transport, tpm2.TPMAlgSHA256, sessionNonceSize, sessionOpts...)
+		t, tpm2.TPMAlgSHA256, sessionNonceSize, sessionOpts...)
 	if err != nil {
 		return nil, noopCloser, &errs.Joined{Lead: ErrSaltedSession, Cause: err}
 	}
 	return session, closer, nil
 }
 
-// saltedSession starts a reusable HMAC session salted against saltKey,
-// encrypting the parameter dir names. opts carry the auth value and binding.
+// startSaltedSession starts a reusable HMAC session on t, salted against the
+// key saltKey resolves and encrypting the parameter dir names. opts carry the
+// auth value and binding. The session's closer flushes it.
+//
+// The salt key is released as soon as the session has started. The session
+// no longer needs it, so a release failure does not fail the command the
+// session serves: it is reported by the session's closer, the teardown
+// channel every caller already handles, alongside any failure to flush the
+// session itself.
+func startSaltedSession(
+	t transport.TPM,
+	saltKey saltKeyFunc,
+	dir paramEncryption,
+	opts ...tpm2.AuthOption) (tpm2.Session, func() error, error) {
+
+	saltHandle, saltPub, release, err := saltKey()
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	session, closer, err := startHMACSession(t, saltHandle, saltPub, dir, opts...)
+	releaseErr := release()
+	if releaseErr != nil {
+		releaseErr = &errs.Joined{Lead: ErrSaltKey, Detail: "release salt key", Cause: releaseErr}
+	}
+	if err != nil {
+		return nil, noopCloser, errors.Join(err, releaseErr)
+	}
+	if releaseErr == nil {
+		return session, closer, nil
+	}
+	return session, func() error { return errors.Join(releaseErr, closer()) }, nil
+}
+
+// startHierarchySession returns the authorization for hierarchy on t, whose
+// authorization value is auth, encrypting the parameter dir names and salted
+// against the key saltKey resolves.
+//
+// A non-empty hierarchy auth -- the SO PIN -- is proven through a salted HMAC
+// session bound to the hierarchy. The binding matters for the commands that
+// change the hierarchy's own authorization (TPM2_HierarchyChangeAuth,
+// TPM2_Clear): the TPM computes their response HMAC with the new value, and a
+// bound session authorizing its bind entity leaves the authValue out of the
+// HMAC key altogether (TCG TPM 2.0 Part 1, section 19.6.5), so the response
+// verifies under the session key alone. An empty auth with nothing to encrypt
+// has no secret to protect and is answered with a zero-round-trip empty
+// password session.
+func startHierarchySession(
+	t transport.TPM,
+	saltKey saltKeyFunc,
+	hierarchy tpm2.TPMHandle,
+	auth []byte,
+	dir paramEncryption) (tpm2.Session, func() error, error) {
+
+	if len(auth) == 0 && dir == encryptNone {
+		return tpm2.PasswordAuth(nil), noopCloser, nil
+	}
+	return startSaltedSession(t, saltKey, dir,
+		tpm2.Auth(auth),
+		tpm2.Bound(hierarchy, tpm2.HandleName(hierarchy), auth))
+}
+
+// saltedSession starts a reusable HMAC session salted against the key saltKey
+// resolves, encrypting the parameter dir names. opts carry the auth value and binding.
 // The session's closer flushes it.
 func (tpm *TPM2) saltedSession(
 	dir paramEncryption,
 	opts ...tpm2.AuthOption) (tpm2.Session, func() error, error) {
 
-	saltHandle, saltPub, release, err := tpm.saltKey()
-	if err != nil {
-		return nil, noopCloser, err
-	}
-	session, closer, err := tpm.startHMACSession(saltHandle, saltPub, dir, opts...)
-	tpm.closeSession(release, "salt key")
-	if err != nil {
-		return nil, noopCloser, err
-	}
-	return session, closer, nil
+	return startSaltedSession(tpm.transport, tpm.saltKey, dir, opts...)
 }
 
 // encryptionSession starts a salted session that authorizes nothing and
@@ -199,26 +266,56 @@ func (tpm *TPM2) objectAuthSession(auth []byte, dir paramEncryption) (tpm2.Sessi
 }
 
 // hierarchyAuthSession returns the authorization for a hierarchy whose
-// authorization value is auth, encrypting the parameter dir names.
-//
-// A non-empty hierarchy auth -- the SO PIN -- is proven through a salted HMAC
-// session bound to the hierarchy. The binding matters for the commands that
-// change the hierarchy's own authorization (TPM2_HierarchyChangeAuth,
-// TPM2_Clear): the TPM computes their response HMAC with the new value, and a
-// bound session authorizing its bind entity leaves the authValue out of the
-// HMAC key altogether (TCG TPM 2.0 Part 1, section 19.6.5), so the response
-// verifies under the session key alone.
+// authorization value is auth, encrypting the parameter dir names (see
+// startHierarchySession). A salted session is salted against the key saltKey
+// resolves.
 func (tpm *TPM2) hierarchyAuthSession(
 	hierarchy tpm2.TPMHandle,
 	auth []byte,
 	dir paramEncryption) (tpm2.Session, func() error, error) {
 
-	if len(auth) == 0 && dir == encryptNone {
-		return tpm2.PasswordAuth(nil), noopCloser, nil
-	}
-	return tpm.saltedSession(dir,
-		tpm2.Auth(auth),
-		tpm2.Bound(hierarchy, tpm2.HandleName(hierarchy), auth))
+	return startHierarchySession(tpm.transport, tpm.saltKey, hierarchy, auth, dir)
+}
+
+// HierarchyAuthSession returns the authorization for hierarchy on the raw
+// transport t, proving its authorization value auth -- the SO PIN for the
+// owner hierarchy -- without auth ever crossing the TPM bus: a non-empty auth
+// is proven through an HMAC session bound to the hierarchy and salted against
+// an ephemeral NULL-hierarchy key (see startHierarchySession). The session
+// encrypts no parameter. An empty auth is answered with the empty password
+// session, which has nothing to protect.
+//
+// It serves code that drives go-tpm on a transport of its own rather than
+// through a TPM2; a TPM2 salts its sessions against the Endorsement Key
+// instead. The caller must invoke the returned closer to flush the session.
+func HierarchyAuthSession(
+	t transport.TPM,
+	hierarchy tpm2.TPMHandle,
+	auth []byte) (tpm2.Session, func() error, error) {
+
+	return startHierarchySession(t, nullSaltKey(t), hierarchy, auth, encryptNone)
+}
+
+// CommandEncryptionSession starts a session on the raw transport t that
+// authorizes nothing and encrypts the first parameter of the command it is
+// attached to, as an extra session after the command's authorization: the
+// sensitive area of a TPM2_Create, for example. It is salted against an
+// ephemeral NULL-hierarchy key (see nullSaltKey), so the parameter cannot be
+// recovered from the bus. The caller must invoke the returned closer to
+// flush the session.
+func CommandEncryptionSession(t transport.TPM) (tpm2.Session, func() error, error) {
+	return startSaltedSession(t, nullSaltKey(t), encryptIn)
+}
+
+// ResponseEncryptionSession starts a session on the raw transport t that
+// authorizes nothing and encrypts the first parameter of the response to the
+// command it is attached to, as an extra session after the command's
+// authorization: the data a TPM2_Unseal returns, for example. It is salted
+// against an ephemeral NULL-hierarchy key (see nullSaltKey), so the parameter
+// cannot be recovered from the bus. The caller must invoke the returned
+// closer to flush the session.
+func ResponseEncryptionSession(t transport.TPM) (tpm2.Session, func() error, error) {
+	return startSaltedSession(t, nullSaltKey(t), encryptOut)
 }
 
 // withHierarchyAuth runs execute with an authorization handle for hierarchy
@@ -287,7 +384,7 @@ func (tpm *TPM2) HMACSaltedSession(
 
 	tpm.logger.Debug("tpm: creating salted HMAC session",
 		slog.String("salt_handle", fmt.Sprintf("0x%x", handle)))
-	return tpm.startHMACSession(handle, pub, encryptNone, tpm2.Auth(auth))
+	return startHMACSession(tpm.transport, handle, pub, encryptNone, tpm2.Auth(auth))
 }
 
 // PlatformPolicySession creates a PolicyOR session supporting both PCR-based

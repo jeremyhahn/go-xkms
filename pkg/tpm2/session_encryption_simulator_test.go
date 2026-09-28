@@ -4,228 +4,19 @@
 package tpm2
 
 import (
-	"bytes"
-	"encoding/binary"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/google/go-tpm/tpm2/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test/tpmbus"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
-// TPMA_SESSION bits (TCG TPM 2.0 Part 2, section 8.4).
-const (
-	sessionAttrDecrypt = byte(0x20)
-	sessionAttrEncrypt = byte(0x40)
-)
-
-// tpmRSPW is TPM_RS_PW, the handle of a password pseudo-session.
-const tpmRSPW = uint32(0x40000009)
-
-// busExchange is one command and its response as they crossed the transport.
-type busExchange struct {
-	cmd []byte
-	rsp []byte
-}
-
-// busCapture records every command and response a TPM2 sends through it: the
-// bytes a passive observer of the TPM bus would see.
-type busCapture struct {
-	inner     transport.TPM
-	exchanges []busExchange
-}
-
-// Send records cmd before forwarding it: the in-process simulator decrypts
-// an encrypted parameter in place, in the very buffer it is handed, so a copy
-// taken afterwards would show the TPM's view rather than the bus's.
-func (c *busCapture) Send(cmd []byte) ([]byte, error) {
-	sent := bytes.Clone(cmd)
-	rsp, err := c.inner.Send(cmd)
-	c.exchanges = append(c.exchanges, busExchange{
-		cmd: sent,
-		rsp: bytes.Clone(rsp),
-	})
-	return rsp, err
-}
-
-// capture routes h's TPM through a new busCapture.
-func capture(h *simHarness) *busCapture {
-	c := &busCapture{inner: h.TPM.transport}
+// capture routes h's TPM through a new bus capture.
+func capture(h *simHarness) *tpmbus.Capture {
+	c := tpmbus.New(h.TPM.transport)
 	h.TPM.transport = c
 	return c
-}
-
-// requireAbsent fails if secret appears anywhere in the captured traffic.
-func (c *busCapture) requireAbsent(t *testing.T, name string, secret []byte) {
-	t.Helper()
-	require.NotEmpty(t, c.exchanges, "the operation must have talked to the TPM")
-	for i, ex := range c.exchanges {
-		require.Falsef(t, bytes.Contains(ex.cmd, secret),
-			"%s crossed the bus in plaintext in command %d (cc 0x%x)", name, i, commandCode(ex.cmd))
-		require.Falsef(t, bytes.Contains(ex.rsp, secret),
-			"%s crossed the bus in plaintext in the response to command %d (cc 0x%x)", name, i, commandCode(ex.cmd))
-	}
-}
-
-// commands returns every captured command with code cc, leaving out those
-// addressed to the NULL hierarchy: its authorization is always empty, and
-// the only such command this package issues is the creation of the ephemeral
-// salt key, which carries no secret.
-func (c *busCapture) commands(cc tpm2.TPMCC) [][]byte {
-	var out [][]byte
-	for _, ex := range c.exchanges {
-		if commandCode(ex.cmd) != cc {
-			continue
-		}
-		if len(ex.cmd) >= 14 && binary.BigEndian.Uint32(ex.cmd[10:14]) == uint32(tpm2.TPMRHNull) &&
-			cc != tpm2.TPMCCStartAuthSession {
-			continue
-		}
-		out = append(out, ex.cmd)
-	}
-	return out
-}
-
-func commandCode(cmd []byte) tpm2.TPMCC {
-	if len(cmd) < 10 {
-		return 0
-	}
-	return tpm2.TPMCC(binary.BigEndian.Uint32(cmd[6:10]))
-}
-
-// commandHandles is the number of handles in the handle area of each command
-// these tests inspect (TCG TPM 2.0 Part 3).
-var commandHandles = map[tpm2.TPMCC]int{
-	tpm2.TPMCCCreate:              1,
-	tpm2.TPMCCCreatePrimary:       1,
-	tpm2.TPMCCEvictControl:        2,
-	tpm2.TPMCCGetRandom:           0,
-	tpm2.TPMCCHierarchyChanegAuth: 1,
-	tpm2.TPMCCLoad:                1,
-	tpm2.TPMCCNVDefineSpace:       1,
-	tpm2.TPMCCNVRead:              2,
-	tpm2.TPMCCNVWrite:             2,
-	tpm2.TPMCCStartAuthSession:    2,
-	tpm2.TPMCCUnseal:              1,
-}
-
-// capturedSession is one session of a command's authorization area.
-type capturedSession struct {
-	handle uint32
-	attrs  byte
-}
-
-// commandSessions parses the authorization area of cmd.
-func commandSessions(t *testing.T, cmd []byte) []capturedSession {
-	t.Helper()
-	handles, ok := commandHandles[commandCode(cmd)]
-	require.Truef(t, ok, "no handle count for cc 0x%x", commandCode(cmd))
-	if binary.BigEndian.Uint16(cmd[0:2]) != tpmSTSessions {
-		return nil
-	}
-	buf := bytes.NewReader(cmd[10+4*handles:])
-	var authSize uint32
-	require.NoError(t, binary.Read(buf, binary.BigEndian, &authSize))
-	area := make([]byte, authSize)
-	_, err := buf.Read(area)
-	require.NoError(t, err)
-
-	var sessions []capturedSession
-	r := bytes.NewReader(area)
-	for r.Len() > 0 {
-		var s capturedSession
-		var size uint16
-		require.NoError(t, binary.Read(r, binary.BigEndian, &s.handle))
-		require.NoError(t, binary.Read(r, binary.BigEndian, &size))
-		_, err := r.Seek(int64(size), 1)
-		require.NoError(t, err)
-		s.attrs, err = r.ReadByte()
-		require.NoError(t, err)
-		require.NoError(t, binary.Read(r, binary.BigEndian, &size))
-		_, err = r.Seek(int64(size), 1)
-		require.NoError(t, err)
-		sessions = append(sessions, s)
-	}
-	return sessions
-}
-
-// requireSessionAttr fails unless every command with code cc carries a
-// session with attr set.
-func (c *busCapture) requireSessionAttr(t *testing.T, cc tpm2.TPMCC, attr byte) {
-	t.Helper()
-	cmds := c.commands(cc)
-	require.NotEmptyf(t, cmds, "expected at least one command 0x%x", uint32(cc))
-	for _, cmd := range cmds {
-		found := false
-		for _, s := range commandSessions(t, cmd) {
-			if s.attrs&attr != 0 {
-				found = true
-			}
-		}
-		require.Truef(t, found, "command 0x%x carries no session with attribute 0x%x", uint32(cc), attr)
-	}
-}
-
-// requireNoPasswordSession fails if any command with code cc proves an auth
-// value through a password session: its authorization would be the value
-// itself, in plaintext.
-func (c *busCapture) requireNoPasswordSession(t *testing.T, cc tpm2.TPMCC) {
-	t.Helper()
-	cmds := c.commands(cc)
-	require.NotEmptyf(t, cmds, "expected at least one command 0x%x", uint32(cc))
-	for _, cmd := range cmds {
-		for _, s := range commandSessions(t, cmd) {
-			require.NotEqualf(t, tpmRSPW, s.handle,
-				"command 0x%x proves its authorization with a password session", uint32(cc))
-		}
-	}
-}
-
-// requireAllSessionsSalted fails if any session started in the captured
-// traffic is unsalted (tpmKey TPM_RH_NULL). An unsalted session's key is
-// derived from public nonces alone, so it neither hides the parameters it
-// encrypts nor keeps the auth value behind its HMAC from an offline brute
-// force.
-func (c *busCapture) requireAllSessionsSalted(t *testing.T) {
-	t.Helper()
-	starts := c.commands(tpm2.TPMCCStartAuthSession)
-	require.NotEmpty(t, starts, "expected sessions to be started")
-	for _, cmd := range starts {
-		tpmKey := binary.BigEndian.Uint32(cmd[10:14])
-		require.NotEqual(t, uint32(tpm2.TPMRHNull), tpmKey, "a session was started unsalted")
-	}
-}
-
-// requireSaltedAuthorization fails unless every session authorizing a
-// command with code cc was started salted. Session handles are recycled once
-// flushed, so each is resolved against the StartAuthSession that most
-// recently returned it.
-func (c *busCapture) requireSaltedAuthorization(t *testing.T, cc tpm2.TPMCC) {
-	t.Helper()
-	salted := make(map[uint32]bool)
-	checked := 0
-	for _, ex := range c.exchanges {
-		switch commandCode(ex.cmd) {
-		case tpm2.TPMCCStartAuthSession:
-			if len(ex.rsp) >= 14 && binary.BigEndian.Uint32(ex.rsp[6:10]) == 0 {
-				tpmKey := binary.BigEndian.Uint32(ex.cmd[10:14])
-				salted[binary.BigEndian.Uint32(ex.rsp[10:14])] = tpmKey != uint32(tpm2.TPMRHNull)
-			}
-		case cc:
-			if len(ex.cmd) >= 14 && binary.BigEndian.Uint32(ex.cmd[10:14]) == uint32(tpm2.TPMRHNull) {
-				continue
-			}
-			for _, s := range commandSessions(t, ex.cmd) {
-				require.NotEqualf(t, tpmRSPW, s.handle,
-					"command 0x%x proves its authorization with a password session", uint32(cc))
-				require.Truef(t, salted[s.handle],
-					"command 0x%x is authorized by unsalted session 0x%x", uint32(cc), s.handle)
-				checked++
-			}
-		}
-	}
-	require.NotZerof(t, checked, "expected command 0x%x to be authorized by a session", uint32(cc))
 }
 
 // createPSRK creates a Platform SRK whose authValue is userPIN under an owner
@@ -257,12 +48,12 @@ func TestSessionEncryption_SOPINNeverCrossesTheBus(t *testing.T) {
 
 	require.NoError(t, h.TPM.Provision(mustPassword(soPIN)))
 
-	bus.requireAbsent(t, "the SO PIN", soPIN)
-	bus.requireSessionAttr(t, tpm2.TPMCCHierarchyChanegAuth, sessionAttrDecrypt)
-	bus.requireSessionAttr(t, tpm2.TPMCCCreatePrimary, sessionAttrDecrypt)
-	bus.requireSaltedAuthorization(t, tpm2.TPMCCHierarchyChanegAuth)
-	bus.requireSaltedAuthorization(t, tpm2.TPMCCCreatePrimary)
-	bus.requireSaltedAuthorization(t, tpm2.TPMCCEvictControl)
+	bus.RequireAbsent(t, "the SO PIN", soPIN)
+	bus.RequireSessionAttr(t, tpm2.TPMCCHierarchyChanegAuth, tpmbus.SessionAttrDecrypt)
+	bus.RequireSessionAttr(t, tpm2.TPMCCCreatePrimary, tpmbus.SessionAttrDecrypt)
+	bus.RequireSaltedAuthorization(t, tpm2.TPMCCHierarchyChanegAuth)
+	bus.RequireSaltedAuthorization(t, tpm2.TPMCCCreatePrimary)
+	bus.RequireSaltedAuthorization(t, tpm2.TPMCCEvictControl)
 }
 
 // TestSessionEncryption_PSRKCreationProtectsBothPINs proves that creating the
@@ -276,12 +67,12 @@ func TestSessionEncryption_PSRKCreationProtectsBothPINs(t *testing.T) {
 
 	createPSRK(t, h, soPIN, userPIN)
 
-	bus.requireAbsent(t, "the SO PIN", soPIN)
-	bus.requireAbsent(t, "the USER PIN", userPIN)
-	bus.requireSessionAttr(t, tpm2.TPMCCCreatePrimary, sessionAttrDecrypt)
-	bus.requireNoPasswordSession(t, tpm2.TPMCCCreatePrimary)
-	bus.requireNoPasswordSession(t, tpm2.TPMCCEvictControl)
-	bus.requireAllSessionsSalted(t)
+	bus.RequireAbsent(t, "the SO PIN", soPIN)
+	bus.RequireAbsent(t, "the USER PIN", userPIN)
+	bus.RequireSessionAttr(t, tpm2.TPMCCCreatePrimary, tpmbus.SessionAttrDecrypt)
+	bus.RequireNoPasswordSession(t, tpm2.TPMCCCreatePrimary)
+	bus.RequireNoPasswordSession(t, tpm2.TPMCCEvictControl)
+	bus.RequireAllSessionsSalted(t)
 }
 
 // TestSessionEncryption_SealUnderPSRKWithPINs seals a secret under the
@@ -313,12 +104,12 @@ func TestSessionEncryption_SealUnderPSRKWithPINs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, secret, unsealed)
 
-	bus.requireAbsent(t, "the sealed secret", secret)
-	bus.requireAbsent(t, "the USER PIN", userPIN)
-	bus.requireAbsent(t, "the object PIN", objectPIN)
-	bus.requireSessionAttr(t, tpm2.TPMCCCreate, sessionAttrDecrypt)
-	bus.requireSessionAttr(t, tpm2.TPMCCUnseal, sessionAttrEncrypt)
-	bus.requireAllSessionsSalted(t)
+	bus.RequireAbsent(t, "the sealed secret", secret)
+	bus.RequireAbsent(t, "the USER PIN", userPIN)
+	bus.RequireAbsent(t, "the object PIN", objectPIN)
+	bus.RequireSessionAttr(t, tpm2.TPMCCCreate, tpmbus.SessionAttrDecrypt)
+	bus.RequireSessionAttr(t, tpm2.TPMCCUnseal, tpmbus.SessionAttrEncrypt)
+	bus.RequireAllSessionsSalted(t)
 }
 
 // TestSessionEncryption_AutoUnsealThroughPCRBranch reproduces the auto-unseal
@@ -352,9 +143,9 @@ func TestSessionEncryption_AutoUnsealThroughPCRBranch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, secret, unsealed)
 
-	bus.requireAbsent(t, "the auto-unsealed secret", secret)
-	bus.requireSessionAttr(t, tpm2.TPMCCCreate, sessionAttrDecrypt)
-	bus.requireSessionAttr(t, tpm2.TPMCCUnseal, sessionAttrEncrypt)
+	bus.RequireAbsent(t, "the auto-unsealed secret", secret)
+	bus.RequireSessionAttr(t, tpm2.TPMCCCreate, tpmbus.SessionAttrDecrypt)
+	bus.RequireSessionAttr(t, tpm2.TPMCCUnseal, tpmbus.SessionAttrEncrypt)
 }
 
 // TestSessionEncryption_NVSecretUnderOwnerAuth writes a secret to an NV index
@@ -390,12 +181,12 @@ func TestSessionEncryption_NVSecretUnderOwnerAuth(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, secret, got)
 
-	bus.requireAbsent(t, "the NV secret", secret)
-	bus.requireAbsent(t, "the SO PIN", soPIN)
-	bus.requireSessionAttr(t, tpm2.TPMCCNVDefineSpace, sessionAttrDecrypt)
-	bus.requireSessionAttr(t, tpm2.TPMCCNVWrite, sessionAttrDecrypt)
-	bus.requireSessionAttr(t, tpm2.TPMCCNVRead, sessionAttrEncrypt)
-	bus.requireNoPasswordSession(t, tpm2.TPMCCNVWrite)
+	bus.RequireAbsent(t, "the NV secret", secret)
+	bus.RequireAbsent(t, "the SO PIN", soPIN)
+	bus.RequireSessionAttr(t, tpm2.TPMCCNVDefineSpace, tpmbus.SessionAttrDecrypt)
+	bus.RequireSessionAttr(t, tpm2.TPMCCNVWrite, tpmbus.SessionAttrDecrypt)
+	bus.RequireSessionAttr(t, tpm2.TPMCCNVRead, tpmbus.SessionAttrEncrypt)
+	bus.RequireNoPasswordSession(t, tpm2.TPMCCNVWrite)
 }
 
 // TestSessionEncryption_GetRandomEncrypted proves random bytes drawn from the
@@ -410,9 +201,9 @@ func TestSessionEncryption_GetRandomEncrypted(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, len(random), n)
 
-	bus.requireAbsent(t, "the random bytes", random)
-	bus.requireSessionAttr(t, tpm2.TPMCCGetRandom, sessionAttrEncrypt)
-	bus.requireAllSessionsSalted(t)
+	bus.RequireAbsent(t, "the random bytes", random)
+	bus.RequireSessionAttr(t, tpm2.TPMCCGetRandom, tpmbus.SessionAttrEncrypt)
+	bus.RequireAllSessionsSalted(t)
 }
 
 // TestSessionEncryption_SaltKeyWithoutEK proves saltKey falls back to an
