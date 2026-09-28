@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -243,6 +242,14 @@ func (h *HandlerContext) GetBackendHandler(w http.ResponseWriter, r *http.Reques
 }
 
 // GenerateKeyHandler handles POST /api/v1/keys requests.
+//
+// Generation belongs to the service layer, which owns backend resolution,
+// the algorithm and key-purpose vocabularies, the symmetric/asymmetric
+// split, curve and RSA-size validation (including the 2048-bit floor,
+// go-xkms#1204), and the exportability contract
+// (pkg/xkms/servicer_key.go's buildKeyAttributes). This handler used to
+// reimplement all of that so it could drift from gRPC, MCP and the embedded
+// transport's own copies (go-xkms#1214).
 func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Request) {
 	var req GenerateKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -267,7 +274,10 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Validate backend name
+	// Validate backend name. This stays here, ahead of the service call,
+	// because xkms.ErrBackendNameValidation is not one of mapKeyOpError's
+	// mapped sentinels: a malformed name must fail closed as 400 rather than
+	// fall through to mapKeyOpError's 500 catch-all.
 	if err := validation.ValidateBackendName(req.Backend); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
@@ -282,150 +292,30 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get the backend (this also validates it exists)
-	ks, err := h.lookupBackend(req.Backend)
+	resp, err := h.xkmsService.GenerateKey(r.Context(), &transport.GenerateKeyRequest{
+		KeyID:      req.KeyID,
+		Backend:    req.Backend,
+		KeyType:    req.KeyType,
+		KeySize:    req.KeySize,
+		Curve:      req.Curve,
+		Hash:       req.Hash,
+		Algorithm:  req.Algorithm,
+		Exportable: req.Exportable,
+		Sensitive:  req.Sensitive,
+		Partition:  req.Partition,
+		TenantID:   callerTenantID(r.Context()),
+	})
 	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+		mapKeyOpError(w, err)
 		return
 	}
 
-	// Parse key algorithm.
-	// Support both direct algorithm names (aes-256-gcm) and simple types (aes).
-	algorithmStr := req.Algorithm
-	keyType := strings.ToLower(algorithmStr)
-	var keyAlgorithm x509.PublicKeyAlgorithm
-	var symmetricAlgorithm types.SymmetricAlgorithm
-
-	// The literal "symmetric" algorithm names no specific cipher: default to
-	// AES-256-GCM.
-	if keyType == "symmetric" {
-		symmetricAlgorithm = types.SymmetricAES256GCM
-	} else {
-		// Try parsing as asymmetric algorithm
-		keyAlgorithm, _ = types.ParseKeyAlgorithm(algorithmStr)
-		if keyAlgorithm == x509.UnknownPublicKeyAlgorithm {
-			// Try as symmetric algorithm
-			symmetricAlgorithm = types.SymmetricAlgorithm(keyType)
-		}
-	}
-
-	// Parse key purpose type from request (e.g., "tls", "signing", "encryption")
-	keyPurposeType := types.ParseKeyType(req.KeyType)
-	// Default to KeyTypeSigning if the parsed key purpose type is invalid
-	// (e.g., when req.KeyType is an algorithm name like "rsa", "ecdsa", "ed25519")
-	if keyPurposeType == 0 {
-		keyPurposeType = types.KeyTypeSigning
-	}
-
-	// Build key attributes
-	attrs := &types.KeyAttributes{
-		CN:                 req.KeyID,
-		KeyType:            keyPurposeType,
-		StoreType:          types.StoreSoftware, // Will be updated based on backend
-		KeyAlgorithm:       keyAlgorithm,
-		SymmetricAlgorithm: symmetricAlgorithm,
-		Exportable:         req.Exportable,
-		Sensitive:          req.Sensitive,
-		Partition:          types.Partition(req.Partition),
-	}
-
-	// Resolve the hash algorithm. An absent name selects SHA-256; a name the
-	// caller did supply that does not resolve is a client error, never a
-	// substitution — a key created under a digest the caller did not choose is
-	// indistinguishable, in the response, from the one it asked for.
-	hashAlg, hashErr := resolveHashForHandler(req.Hash)
-	if hashErr != nil {
-		mapKeyOpError(w, hashErr)
-		return
-	}
-	attrs.Hash = hashAlg
-
-	// Set algorithm-specific attributes
-	var privKey crypto.PrivateKey
-	var isSymmetric bool
-
-	if symmetricAlgorithm != "" {
-		// Symmetric key generation
-		isSymmetric = true
-		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
-
-		// Check if backend supports symmetric operations
-		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
-		if !ok {
-			writeError(w, &errs.Message{Msg: "backend does not support symmetric key generation"}, http.StatusBadRequest)
-			return
-		}
-
-		_, err = symBackend.GenerateSymmetricKey(r.Context(), attrs)
-	} else {
-		// Asymmetric key generation
-		switch keyAlgorithm {
-		case x509.RSA:
-			keySize := req.KeySize
-			if keySize == 0 {
-				keySize = 2048 // Default RSA key size
-			}
-			attrs.RSAAttributes = &types.RSAAttributes{
-				KeySize: keySize,
-			}
-			privKey, err = ks.GenerateRSA(r.Context(), attrs)
-
-		case x509.ECDSA:
-			curve := req.Curve
-			if curve == "" {
-				curve = "P256" // Default ECDSA curve
-			}
-			// ParseCurve's error names the curve the caller actually sent.
-			// Discarding it left Curve nil, and the backend's own nil guard
-			// then reported "curve is required" -- blaming the caller for
-			// omitting a field they had supplied, with the offending value
-			// gone (go-xkms#153).
-			parsedCurve, curveErr := types.ParseCurve(curve)
-			if curveErr != nil {
-				writeError(w, curveErr, http.StatusBadRequest)
-				return
-			}
-			attrs.ECCAttributes = &types.ECCAttributes{
-				Curve: parsedCurve,
-			}
-			privKey, err = ks.GenerateECDSA(r.Context(), attrs)
-
-		case x509.Ed25519:
-			privKey, err = ks.GenerateEd25519(r.Context(), attrs)
-
-		default:
-			writeError(w, ErrInvalidKeyType, http.StatusBadRequest)
-			return
-		}
-	}
-
-	if err != nil {
-		log.Printf("Failed to generate key: %v", err)
-		handleError(w, err)
-		return
-	}
-
-	// Build response
-	resp := GenerateKeyResponse{
-		KeyID:   req.KeyID,
-		KeyType: req.KeyType,
-		Message: fmt.Sprintf("Key %s generated successfully", req.KeyID),
-	}
-
-	// Add public key PEM for asymmetric keys only
-	if !isSymmetric && privKey != nil {
-		pubKey := getPublicKey(privKey)
-		if pubKey != nil {
-			pubKeyPEM, err := encoding.EncodePublicKeyPEM(pubKey)
-			if err != nil {
-				log.Printf("Failed to encode public key: %v", err)
-			} else {
-				resp.PublicKeyPEM = string(pubKeyPEM)
-			}
-		}
-	}
-
-	writeJSON(w, resp, http.StatusCreated)
+	writeJSON(w, GenerateKeyResponse{
+		KeyID:        resp.KeyID,
+		KeyType:      req.KeyType,
+		PublicKeyPEM: resp.PublicKeyPEM,
+		Message:      fmt.Sprintf("Key %s generated successfully", resp.KeyID),
+	}, http.StatusCreated)
 }
 
 // ListKeysHandler handles GET /api/v1/keys requests.
@@ -1432,6 +1322,19 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// The service layer's buildKeyAttributes runs this same check
+	// (pkg/xkms/servicer_key.go's validateKeyAttributes) as the last step
+	// before generation or import, enforcing the 2048-bit RSA floor
+	// (go-xkms#1204) among other invariants. This ceremony negotiates the
+	// parameters for a key of the same shape ImportKeyHandler will later be
+	// asked to store, so it must refuse an undersized request just as early
+	// rather than hand back working import parameters for a key the import
+	// step will refuse anyway (go-xkms#1214).
+	if err := attrs.Validate(); err != nil {
+		writeError(w, &errs.Wrapped{Msg: "invalid key attributes", Err: err}, http.StatusBadRequest)
+		return
+	}
+
 	// Parse wrapping algorithm
 	wrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
 
@@ -1727,6 +1630,18 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	xkms.ApplyImportExportability(attrs, req.Exportable, req.Sensitive)
 	attrs.Partition = types.Partition(req.Partition)
 
+	// The service layer's buildKeyAttributes runs this same check
+	// (pkg/xkms/servicer_key.go's validateKeyAttributes) as the last step
+	// before generation or import, enforcing the 2048-bit RSA floor
+	// (go-xkms#1204) among other invariants. This path used to call
+	// importBackend.ImportKey directly from attributes that had never been
+	// through it, so an RSA-1024 import reached the backend unchecked while
+	// the same request to GenerateKey was refused (go-xkms#1214).
+	if err := attrs.Validate(); err != nil {
+		writeError(w, &errs.Wrapped{Msg: "invalid key attributes", Err: err}, http.StatusBadRequest)
+		return
+	}
+
 	wrapped := &backend.WrappedKeyMaterial{
 		WrappedKey:  req.WrappedKey,
 		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
@@ -1962,6 +1877,13 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	destAttrs, hashErr := buildKeyAttributes(req.DestKeyID, req.KeyType, req.KeySize, req.Curve, req.Hash, req.AESKeySize)
 	if hashErr != nil {
 		mapKeyOpError(w, hashErr)
+		return
+	}
+
+	// See ImportKeyHandler: the same floor (go-xkms#1204) applies to the key
+	// attributes this ceremony imports the source's material under.
+	if err := destAttrs.Validate(); err != nil {
+		writeError(w, &errs.Wrapped{Msg: "invalid key attributes", Err: err}, http.StatusBadRequest)
 		return
 	}
 

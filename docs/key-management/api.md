@@ -1,6 +1,6 @@
 # Key Management — API
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## How the six transports are shaped
 
@@ -139,6 +139,18 @@ under an identifier that does not describe it.
 
 Do not confuse it with `algorithm`, which on every import request names the
 **wrapping** algorithm the material arrived under.
+
+REST's and gRPC's `ImportKey` and `GetImportParameters` handlers build their
+own `types.KeyAttributes` from these fields rather than calling
+`XKMSService.ImportKey` / `.GetImportParameters` — unlike `GenerateKey`,
+which delegates to the service on every transport as of go-xkms#1214 — because
+the service's import/export capability check requires a backend to support
+export as well as import, which an AWS-KMS-shaped import-only backend does
+not. Both handlers still call `types.KeyAttributes.Validate()` directly on
+the attributes they build, so the same 2048-bit RSA floor `GenerateKey`
+enforces (go-xkms#1204) applies here too. See
+[engineering.md § Import and `GetImportParameters` stay transport-level](engineering.md#import-and-getimportparameters-stay-transport-level-go-xkms1214)
+for the capability-resolution detail and the follow-up it names.
 
 | Transport | field |
 |---|---|

@@ -271,28 +271,83 @@ the RPC service is not the only caller of any of these:
 - **Composite Backend.** `compositeBackend.GenerateRSA`
   (`pkg/xkms/composite_keys.go:34`) is the one `xkms.Backend` implementation
   every caller in this module reaches before a concrete backend ever sees a
-  request — not just the RPC service's `buildKeyAttributes`, but also the
-  REST and gRPC transport handlers that build `types.KeyAttributes`
-  independently of it (`pkg/api/rest/handlers.go`'s `GenerateKeyHandler`,
-  `pkg/api/grpc/service.go`'s `GenerateKey`), and the CA and PIV
-  key-generation helpers (`pkg/ca/ca.go`, `pkg/xkms/piv_keygen_backend.go`).
-  It refuses an explicitly-requested undersized modulus and leaves
-  `RSAAttributes == nil` or `KeySize == 0` alone, since resolving that to the
-  default is the concrete backend's job, not this layer's.
+  request, and the CA and PIV key-generation helpers (`pkg/ca/ca.go`,
+  `pkg/xkms/piv_keygen_backend.go`) reach it the same way. It refuses an
+  explicitly-requested undersized modulus and leaves `RSAAttributes == nil`
+  or `KeySize == 0` alone, since resolving that to the default is the
+  concrete backend's job, not this layer's.
 
-**What is not yet covered.** `pkg/api/rest/handlers.go`'s `ImportKeyHandler`
-and `GetImportParametersHandler`, and `pkg/api/grpc/service.go`'s
-`ImportKey`, each build their own `types.KeyAttributes` for the import
-ceremony independently of `pkg/xkms/servicer_key.go`'s `buildImportKeyAttributes`
-/ `applyKeyTemplate`, and neither transport's copy runs
-`KeyAttributes.Validate` before calling the backend's `ImportKey`. There is
-no `compositeBackend`-equivalent choke point for import the way there is for
-generation, because `ImportKey` is a `backend.ImportBackend` method called
-directly on the concrete backend. This is pre-existing duplication (the same
-three RPCs — `GenerateKey`, `ImportKey`, `GetImportParameters` — have an
-independent implementation in each of `pkg/api/rest/handlers.go`,
-`pkg/api/grpc/service.go` and `pkg/xkms/servicer_key.go`), not introduced by
-this fix, and is filed as a follow-up rather than folded into this change.
+**go-xkms#1214 closed the transport-level half of this gap.**
+`pkg/api/rest/handlers.go`'s `GenerateKeyHandler` and `pkg/api/grpc/service.go`'s
+`GenerateKey` no longer build their own `types.KeyAttributes`: both now call
+`XKMSService.GenerateKey` directly, so `buildKeyAttributes`'s
+`validateKeyAttributes` step is the only place either transport's generate
+path can reach a backend from. `ImportKeyHandler`, `GetImportParametersHandler`
+(REST) and `ImportKey`, `GetImportParameters` (gRPC) still build their own
+`types.KeyAttributes` — see "Import and GetImportParameters stay
+transport-level" below for why — but each now calls
+`types.KeyAttributes.Validate()` directly on the attributes it built, before
+calling the backend, closing the specific gap this section used to document:
+an RSA-1024 `ImportKeyRequest` or `GetImportParametersRequest` is refused
+with 400 / `InvalidArgument` on every transport, the same as `GenerateKey`.
+REST's `CopyKeyHandler` (`pkg/api/rest/handlers.go`) gained the same call for
+its destination attributes, since it builds them from caller-supplied
+`key_type`/`key_size`/`curve` fields exactly as `ImportKeyHandler` does.
+
+## Import and `GetImportParameters` stay transport-level (go-xkms#1214)
+
+`ImportKeyHandler`, `GetImportParametersHandler` (REST) and `ImportKey`,
+`GetImportParameters` (gRPC) were evaluated for the same service-layer
+delegation `GenerateKey` received, and deliberately were not converted: the
+service's import/export capability resolution is a stricter check than the
+one these four handlers assert, and delegating would silently narrow which
+backends each RPC can reach.
+
+`pkg/xkms/backend_importexport.go`'s `importExportFor` (line 81) resolves a
+`Backend` to `ImportExporter` (line 34), which is the *union* of
+`backend.ImportBackend` and `backend.ExportBackend` — every method both
+interfaces declare — via a single type assertion against
+`backend.ImportExportBackend`. `pkg/xkms/servicer_key.go`'s `ImportKey` (line
+288) and `GetImportParameters` (line 447) both resolve their backend through
+it. A backend that implements only `backend.ImportBackend` — AWS KMS's real
+shape, which cannot export by hardware design — fails that assertion, so
+`XKMSService.ImportKey` and `XKMSService.GetImportParameters` refuse it with
+`ErrOperationNotSupported` even though the import half works.
+
+Every transport handler in this file asserts the narrower interface each
+call actually needs instead: `ks.KeyProvider().(backend.ImportBackend)` for
+REST's `ImportKeyHandler` (`pkg/api/rest/handlers.go:1612`) and
+`GetImportParametersHandler` (`pkg/api/rest/handlers.go:1312`), and the
+equivalent `backendImpl.(backend.ImportBackend)` for gRPC's `ImportKey`
+(`pkg/api/grpc/service.go:1423`) and `GetImportParameters`
+(`pkg/api/grpc/service.go:1133`), each with a comment tracing the rule to the
+AWS KMS shape it exists for. `pkg/api/rest/importexport_capability_split_test.go`'s
+`TestImportKeyHandler_ReachableWithoutExportSupport` is the regression test:
+an `importOnlyProvider` that satisfies `backend.ImportBackend` and
+deliberately does not satisfy `backend.ExportBackend` or
+`backend.ImportExportBackend` must still succeed an import. Routing
+`ImportKeyHandler` through `XKMSService.ImportKey` as written would fail
+that test, and the embedded transport and MCP already inherit this same
+narrowing — `pkg/api/transport/embedded/transport.go`'s `ImportKey` and
+`GetImportParameters` call `t.service.ImportKey` / `.GetImportParameters`
+directly, and `pkg/api/mcp/handlers.go`'s `handleImportKeyMaterial` and
+`handleGetImportParameters` do the same — so an AWS-KMS-shaped backend is
+reachable for import over REST and gRPC today but not over embedded or MCP.
+
+Closing this requires `importExportFor` (and the `ImportExporter` type it
+returns) to expose an import-only and an export-only resolution path
+alongside the existing union one, which `TenantScopedBackend`
+(`pkg/xkms/backend_tenant.go:248`) and `pkg/xkms/piv_keygen_backend.go:221`
+also resolve through — roughly twenty call sites across `pkg/xkms/service.go`
+and `pkg/xkms/servicer_key.go` in total (`WrapKey`, `UnwrapKey`, `ExportKey`,
+`CopyKey`, `WrapKeyByID`/`UnwrapKeyByID`'s `importKeyMaterial` helper among
+them). That is a service-layer capability-resolution change, not a transport
+adapter rewrite, so it is filed as a follow-up (see the go-xkms#1214 PR
+description) rather than folded into this one. `WrapKeyHandler` and
+`UnwrapKeyHandler` on both transports have carried their own "the service
+layer's version drops fields this ceremony needs" comment since before
+go-xkms#1214 for the same underlying reason and are left exactly as they
+were.
 
 ## Error semantics
 
