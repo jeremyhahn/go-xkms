@@ -528,6 +528,18 @@ CA on this release still enrolls a device on the previous one.
 - **Session encryption** — not configurable. Every secret crosses the TPM bus
   encrypted, always; the `encrypt-sessions` / `EncryptSession` switch was
   removed (#1147). See [Bus protection](#bus-protection).
+- **`Debug`** (`EKConfig`, `IAKConfig`, `IDevIDConfig`, `SRKConfig` — each
+  carries its own field) — defaults to `false` for every key type
+  (`pkg/tpm2/config.go:91,109,120,141`). It gates non-secret diagnostic
+  logging only: `PlatformPassword.Bytes`'s cache-hit/unseal-attempt log
+  lines (`pkg/tpm2/password.go:121,168`) and
+  `store.DebugKeyAttributes`'s attribute dump
+  (`pkg/tpm2/store/helpers.go:65-78`), neither of which ever logs a secret
+  value. Before the 2026-09-28 crypto audit it also defaulted to `true` for
+  EK/IAK/IDevID/SSRK and gated a "Secrets" block in
+  `types.KeyAttributes.String()` that printed `Password` and `SealData`
+  verbatim; that block is gone regardless of `Debug` — see
+  `docs/key-management/engineering.md`.
 - **`ek.cert-download`** (`EKConfig.CertDownload`, default `false`) — opts in
   to downloading the EK certificate from the TPM manufacturer's EK
   certificate service (`https://ekop.intel.com/ekcertservice/` by default)

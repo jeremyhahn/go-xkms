@@ -29,6 +29,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -3121,6 +3122,13 @@ func TestAuthzDeny_PINMethods(t *testing.T) {
 // instead of AEAD. The distinguishing evidence is the shape of the result —
 // a single RSA modulus-sized block with none of the AEAD fields set.
 func TestEncrypt_WithAsymmetricKey(t *testing.T) {
+	// Encrypt's asymmetric fallback is PKCS#1 v1.5 and is refused unless
+	// crypto.allow_legacy_key_wrap is set (pkg/xkms/servicer_crypto.go
+	// Encrypt); this test's whole premise is exercising that construction.
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(true)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
 	svc := setupServiceTest(t)
 	defer xkms.Reset()
 
@@ -3138,11 +3146,11 @@ func TestEncrypt_WithAsymmetricKey(t *testing.T) {
 		Plaintext: []byte("data"),
 	})
 	if fips140.Enforced() {
-		// This RPC's asymmetric fallback deliberately mirrors PKCS#11's
-		// CKM_RSA_PKCS mechanism -- raw PKCS#1 v1.5 encryption, no OAEP
-		// digest involved -- for the local-fallback KEK-wrap path (see
-		// servicer_crypto.go's Encrypt). rsa.EncryptPKCS1v15 refuses that
-		// construction outright under GODEBUG=fips140=only.
+		// SetAllowLegacyKeyWrap(true) above is a deliberate no-op under
+		// GODEBUG=fips140=only (pkg/types/wrappolicy.go), so the service
+		// layer's crypto.allow_legacy_key_wrap gate still refuses PKCS#1
+		// v1.5 in this mode, before rsa.EncryptPKCS1v15 (which also refuses
+		// it under FIPS) is ever reached.
 		require.Error(t, err)
 		return
 	}

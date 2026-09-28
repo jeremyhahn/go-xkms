@@ -217,6 +217,12 @@ Emits Wails events `extension:pairing_request` and `extension:paired`/
 - **Password values are never included in an `AutofillResult` except inside
   `AutofillFillResult` at fill time**, and only after any required CTAP2
   authentication succeeds.
+- **`SessionCrypto.Decrypt` never advances `recvNonce` until the GCM tag has
+  verified** (`pkg/nativemsg/crypto.go:176-218`). A forged frame with a
+  high counter but an invalid tag is rejected by `gcm.Open` before the
+  replay window is touched, so it cannot desynchronize the receiver and
+  DoS every later legitimate frame — the ordering the 2026-09-28 crypto
+  audit's low findings fixed (go-xkms#1205).
 
 ## Errors
 

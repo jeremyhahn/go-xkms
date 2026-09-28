@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -121,6 +121,17 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
 - **Wrap/unwrap by ID never materialises plaintext outside the service.**
   `WrapKeyByID` reads the KEK and the target inside the process and returns
   only ciphertext.
+- **`KeyAttributes.String()` never renders `Password` or `SealData`,
+  regardless of `Debug`.** (`pkg/types/types.go:1223-1256`). Before the
+  2026-09-28 crypto audit a `Debug`-gated "Secrets" block printed both
+  verbatim; `Debug` also defaulted to `true` for TPM2 EK/IAK/IDevID/SSRK
+  keys (`pkg/tpm2/config.go`, see `docs/tpm2/engineering.md`
+  "Configuration"), so any future `%v` or `slog.Any` over a `KeyAttributes`
+  value would have leaked them by default. `String()` has no way to know
+  whether its caller is a trusted diagnostic path or an untrusted sink (an
+  error message, a log line), so the block is gone unconditionally — a
+  caller that genuinely needs the secret value reads `attrs.Password` or
+  `attrs.SealData` directly.
 - **Rotation preserves the key ID.** Callers keep referring to the same
   identifier; the backend decides how versions are represented.
 - **Concurrency.** The composite is safe for concurrent use. Ordering across
