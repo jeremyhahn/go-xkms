@@ -1064,7 +1064,7 @@ func TestHandleVendorGetTokenInfo(t *testing.T) {
 		auth := createTestConfigAuthenticatorWithSOPIN(t)
 		defer func() { _ = auth.Close() }()
 
-		for i := 0; i < SOPINMaxConsecutiveFailures; i++ {
+		for i := 0; i < PINMaxConsecutiveFailures; i++ {
 			auth.keyManager.Lock()
 			require.Error(t, auth.keyManager.UnlockWithSOPIN("wrongpin999"))
 		}

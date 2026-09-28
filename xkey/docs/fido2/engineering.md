@@ -333,8 +333,22 @@ caller that crashes or never reports back cannot obtain a free attempt.
 | Control | Value | Behavior |
 |---|---|---|
 | Total retry budget | 8 (`DefaultSOPINMaxRetries`) | Exhausted → `ErrSOPINBlocked`, terminal until `authenticatorReset` |
-| Consecutive failures per power cycle | 3 (`SOPINMaxConsecutiveFailures`) | Reached → `ErrSOPINAuthBlocked`; resumes only after a restart |
+| Consecutive failures per power cycle | 3 (`PINMaxConsecutiveFailures`) | Reached → `ErrSOPINAuthBlocked`; resumes only after a restart |
 | Persistence | Budget persisted; consecutive counter not | A restart clears the power-cycle block, never the budget |
+
+The user PIN applies the same consecutive-failure rule (CTAP 2.1 §6.5.5.5)
+through the same counter type, `pinMismatchGuard` (`pin_mismatch.go:24,72`),
+which `SOPINManager` also uses. Every `pinHashEnc` check — `changePIN`,
+`getPinToken`, `getPinUvAuthTokenUsingPinWithPermissions` — goes through
+`verifyPinHashAndConsumeRetryLocked` (`cmd_clientpin.go:969`):
+
+| Control | Behavior |
+|---|---|
+| Retry budget | Spent and persisted before the comparison; exhausted → `ErrPINBlocked` (`CTAP2_ERR_PIN_BLOCKED`) |
+| Mismatch | Regenerates the keyAgreement key (`regenerateKeyAgreementLocked`, `cmd_clientpin.go:1045`), so the platform must run key agreement again; an existing pinUvAuthToken is kept |
+| 3 consecutive mismatches | `ErrPINAuthBlocked` (`CTAP2_ERR_PIN_AUTH_BLOCKED`) even with retries left; every further attempt is refused without spending a retry, and `getPINRetries` reports `powerCycleState: true` (`cmd_clientpin.go:310`) |
+| Correct PIN | Clears the consecutive count and restores the budget |
+| Restart / `authenticatorReset` | Clears the consecutive count (it lives in `authenticatorPINState`, `cmd_clientpin.go:230`, never persisted) |
 
 `authenticatorConfig` (`0x0D`) carries the vendor-prototype subcommand
 `AuthConfigCmdVendorPrototype` (`0x80`); the operation is then selected by a

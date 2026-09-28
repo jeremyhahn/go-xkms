@@ -1,6 +1,6 @@
 # Browser Extension AutoFill — Architecture
 
-> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `autofill` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Scope
 
@@ -139,7 +139,15 @@ Two independent layers, both required before autofill traffic flows:
    key so the host can verify *this* session belongs to the paired
    extension, not just any process that knows the pairing code once did.
    Repeated pairing-code or identity-signature failures lock out for 15 and
-   5 minutes respectively (`maxPairingFailures`/`maxVerifyFailures`).
+   5 minutes respectively (`maxPairingFailures`/`maxVerifyFailures`). The
+   failure counters and lockout deadlines are durable, kept in
+   `<data dir>/extension/pairing-limits.json` (0600) beside the pairing
+   state (`pairing_limits.go:47,62`) and re-read on every check
+   (`pairing_limits.go:120`): the browser launches a fresh native host per
+   connection, so an in-memory counter would reset on every relaunch. They
+   live in their own file so unpairing cannot clear a lockout, and an
+   unreadable or corrupt file fails pairing closed. The pairing code is
+   compared in constant time (`pairing.go:261`).
    `--no-pairing` on `extension host`/`extension serve` skips identity
    verification entirely (development only). `VerifyParentProcess` is an
    additional, non-authoritative check (reads `/proc/$PPID/exe` on Linux)

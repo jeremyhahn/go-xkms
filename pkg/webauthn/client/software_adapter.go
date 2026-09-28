@@ -26,6 +26,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 
 	softwarebackend "github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
@@ -111,8 +112,8 @@ func (a *SoftwareAdapter) MakeCredential(_ context.Context, ceremonyOpts *Ceremo
 	}
 
 	origin := ceremonyOpts.Origin
-	if origin == "" {
-		origin = "https://" + rpID
+	if err := fido2.ValidateRPID(rpID, origin); err != nil {
+		return nil, err
 	}
 
 	challenge, err := base64.RawURLEncoding.DecodeString(opts.PublicKey.Challenge)
@@ -249,8 +250,8 @@ func (a *SoftwareAdapter) GetAssertion(_ context.Context, ceremonyOpts *Ceremony
 	}
 
 	origin := ceremonyOpts.Origin
-	if origin == "" {
-		origin = "https://" + rpID
+	if err := fido2.ValidateRPID(rpID, origin); err != nil {
+		return nil, err
 	}
 
 	challenge, err := base64.RawURLEncoding.DecodeString(opts.PublicKey.Challenge)

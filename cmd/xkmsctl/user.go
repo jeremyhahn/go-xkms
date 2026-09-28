@@ -106,8 +106,8 @@ func webAuthnRegistration(
 	}
 
 	// Run the local CTAP2 authenticator against the server's challenge. The
-	// adapter parses the options JSON itself (fido2.ParseWebAuthnRegistrationOptions),
-	// falling back to the WebAuthn same-origin default when origin is empty.
+	// adapter parses the options JSON itself (fido2.ParseWebAuthnRegistrationOptions)
+	// and refuses an rp.id the origin does not cover (fido2.ValidateRPID).
 	attestation, err := adapter.MakeCredential(ctx, &webauthnclient.CeremonyOptions{
 		OptionsJSON: []byte(beginResp.OptionsJSON),
 		Origin:      origin,
@@ -228,6 +228,11 @@ Example:
 			handleError(err)
 			return
 		}
+		origin, err := resolveWebAuthnOrigin(cmd, cfg.Server)
+		if err != nil {
+			handleError(err)
+			return
+		}
 
 		// Connect to the xkms service.
 		cl, err := cfg.CreateClient()
@@ -300,7 +305,7 @@ Example:
 			return
 		}
 
-		attestation, err := webAuthnRegistration(ctx, cl, newAdapter, printer, username, email, displayName, role, "", pin)
+		attestation, err := webAuthnRegistration(ctx, cl, newAdapter, printer, username, email, displayName, role, origin, pin)
 		if err != nil {
 			handleError(err)
 			return
@@ -434,6 +439,11 @@ Example:
 			handleError(err)
 			return
 		}
+		origin, err := resolveWebAuthnOrigin(cmd, cfg.Server)
+		if err != nil {
+			handleError(err)
+			return
+		}
 
 		// Connect to the xkms service.
 		cl, err := cfg.CreateClient()
@@ -483,8 +493,8 @@ Example:
 
 		// Step 3: Drive the local authenticator against the server's
 		// PublicKeyCredentialRequestOptions. The adapter parses the options
-		// JSON itself (falling back to the WebAuthn same-origin default).
-		assertion, err := loginAssertion(ctx, adapter, []byte(beginResp.OptionsJSON), "", pin)
+		// JSON itself and refuses an rpId the origin does not cover.
+		assertion, err := loginAssertion(ctx, adapter, []byte(beginResp.OptionsJSON), origin, pin)
 		if err != nil {
 			handleError(err)
 			return
@@ -1194,6 +1204,7 @@ func init() {
 	userRegisterCmd.Flags().String("device", "", "specific FIDO2 device path to use")
 	userRegisterCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
 	addPINFlags(userRegisterCmd)
+	addOriginFlag(userRegisterCmd)
 
 	// login flags. The server supplies the credential allow-list during the
 	// authentication ceremony, so no credential-id/salt flags are needed.
@@ -1201,6 +1212,7 @@ func init() {
 	userLoginCmd.Flags().String("device", "", "specific FIDO2 device path to use")
 	userLoginCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
 	addPINFlags(userLoginCmd)
+	addOriginFlag(userLoginCmd)
 
 	// update flags
 	userUpdateCmd.Flags().Bool("enable", false, "enable the user account")

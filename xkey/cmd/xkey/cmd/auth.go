@@ -28,6 +28,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 	"github.com/spf13/cobra"
@@ -670,7 +671,7 @@ func runAuthRegister(cmd *cobra.Command, args []string) (err error) {
 
 	attestation, err := ceremony.Register(ctx, CeremonyRequest{
 		OptionsJSON: []byte(begin.OptionsJSON),
-		Origin:      webauthnOrigin(serverURL),
+		Origin:      webauthnclient.OriginFromURL(serverURL),
 		PIN:         ceremonyPIN,
 	})
 	if err != nil {
@@ -806,7 +807,7 @@ func runAuthLogin(cmd *cobra.Command, args []string) (err error) {
 
 	assertion, err := ceremony.Assert(ctx, CeremonyRequest{
 		OptionsJSON: []byte(begin.OptionsJSON),
-		Origin:      webauthnOrigin(serverEntry.URL),
+		Origin:      webauthnclient.OriginFromURL(serverEntry.URL),
 		PIN:         ceremonyPIN,
 	})
 	if err != nil {

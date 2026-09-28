@@ -723,6 +723,14 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "authentication", Err: err}
 	}
 
+	// Initialize audit logger. Must precede the WebAuthn service, which
+	// audits logins with a possibly cloned credential.
+	if err := s.initializeAuditLogger(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "audit logger", Err: err}
+	}
+
 	// Initialize the shared WebAuthn relying-party service (when enabled). This
 	// single instance is wired into both the XKMSService (SDK ceremony) and the
 	// REST server (browser ceremony) so sessions and credentials live in one
@@ -738,13 +746,6 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		cancel()
 		s.closeBackends()
 		return nil, &ErrServiceInit{Service: "authorization", Err: err}
-	}
-
-	// Initialize audit logger
-	if err := s.initializeAuditLogger(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "audit logger", Err: err}
 	}
 
 	// Initialize barrier (seal/unseal)
@@ -1463,6 +1464,7 @@ func (s *Server) initializeWebAuthnService() error {
 			TenantID:    webAuthnSystemTenant,
 			TokenIssuer: s.tokenIssuer,
 			Logger:      s.logger,
+			AuditLogger: s.auditLogger,
 		})
 		if err != nil {
 			return &ErrServiceInit{Service: "webauthn service", Err: err}
@@ -1487,6 +1489,7 @@ func (s *Server) initializeWebAuthnService() error {
 		SessionStore:    webauthn.NewMemorySessionStore(),
 		CredentialStore: webauthn.NewBackendCredentialStore(waStore),
 		Logger:          s.logger,
+		AuditLogger:     s.auditLogger,
 	}
 
 	// Wire the session-token issuer so ceremony completion mints verifiable

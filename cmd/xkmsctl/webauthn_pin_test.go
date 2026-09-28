@@ -136,7 +136,7 @@ func registerPINCeremony(t *testing.T, adapter webauthnclient.AuthenticatorAdapt
 		&pinDirectoryClient{},
 		func() (webauthnclient.AuthenticatorAdapter, error) { return adapter, nil },
 		NewPrinter("text", io.Discard),
-		"admin", "admin@example.com", "Admin", string(RoleAdmin), "",
+		"admin", "admin@example.com", "Admin", string(RoleAdmin), "https://"+testRPID,
 		testPINSecret(t, pin),
 	)
 }
@@ -234,7 +234,7 @@ func TestLoginAssertion_CarriesPINToTheAuthenticator(t *testing.T) {
 	adapter := newVirtualPINAdapter(t, testPIN)
 	credentialID := registerCredentialForLogin(t, adapter, testPIN)
 
-	assertion, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, true), "", testPINSecret(t, testPIN))
+	assertion, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, true), "https://"+testRPID, testPINSecret(t, testPIN))
 	if err != nil {
 		t.Fatalf("login against a PIN-protected authenticator must succeed with the PIN: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestLoginAssertion_MissingPINIsNamed(t *testing.T) {
 	adapter := newVirtualPINAdapter(t, testPIN)
 	credentialID := registerCredentialForLogin(t, adapter, testPIN)
 
-	_, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, true), "", testPINSecret(t, ""))
+	_, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, true), "https://"+testRPID, testPINSecret(t, ""))
 	if err == nil {
 		t.Fatal("a PIN-protected authenticator must refuse the assertion without a PIN")
 	}
@@ -268,7 +268,7 @@ func TestLoginAssertion_WrongPINReportsRemainingAttempts(t *testing.T) {
 	adapter := newVirtualPINAdapter(t, testPIN)
 	credentialID := registerCredentialForLogin(t, adapter, testPIN)
 
-	_, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, true), "", testPINSecret(t, testWrongPIN))
+	_, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, true), "https://"+testRPID, testPINSecret(t, testWrongPIN))
 	if err == nil {
 		t.Fatal("a wrong PIN must fail the assertion")
 	}
@@ -289,7 +289,7 @@ func TestLoginAssertion_NoPINAuthenticatorNeedsNone(t *testing.T) {
 	adapter := newVirtualPINAdapter(t, "")
 	credentialID := registerCredentialForLogin(t, adapter, "")
 
-	assertion, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, false), "", testPINSecret(t, ""))
+	assertion, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, false), "https://"+testRPID, testPINSecret(t, ""))
 	if err != nil {
 		t.Fatalf("an authenticator with no PIN configured needs none: %v", err)
 	}

@@ -255,6 +255,7 @@ func TestE2E_TransportRelyingParty_Register_RPRejection(t *testing.T) {
 
 	c, err := NewClient(&Config{
 		RelyingParty:         rp,
+		Origin:               "https://localhost",
 		AuthenticatorAdapter: NewSoftwareAdapter(),
 	})
 	require.NoError(t, err)
@@ -274,12 +275,12 @@ func TestE2E_TransportRelyingParty_Login_AuthenticatorFailure(t *testing.T) {
 	rp, err := NewTransportRelyingParty(tr)
 	require.NoError(t, err)
 
-	registerClient, err := NewClient(&Config{RelyingParty: rp, AuthenticatorAdapter: software})
+	registerClient, err := NewClient(&Config{RelyingParty: rp, Origin: "https://localhost", AuthenticatorAdapter: software})
 	require.NoError(t, err)
 	_, err = registerClient.Register(context.Background(), &RegistrationRequest{Username: "erin@example.com"})
 	require.NoError(t, err)
 
-	loginClient, err := NewClient(&Config{RelyingParty: rp, AuthenticatorAdapter: &failingAdapter{}})
+	loginClient, err := NewClient(&Config{RelyingParty: rp, Origin: "https://localhost", AuthenticatorAdapter: &failingAdapter{}})
 	require.NoError(t, err)
 
 	_, err = loginClient.Login(context.Background(), &AuthenticationRequest{Username: "erin@example.com"})

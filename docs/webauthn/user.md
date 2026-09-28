@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — User Guide
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## What this is
 
@@ -102,7 +102,7 @@ xkmsctl user get alice
 | the authenticator never prompts | `user_verification` or `authenticator_attachment` excludes it | relax the policy, or use a matching authenticator |
 | 401 with no detail | intentional — the server does not tell clients why | read the server log; it has the real reason |
 | 429 | login rate limiter | back off |
-| worked, then failed after restoring a backup of the key | the signature counter went backwards | this is the clone check firing; investigate rather than bypass |
+| server log warns "the authenticator may be cloned" and the audit log has `auth.webauthn.clone_warning` | the credential's signature counter did not advance — a restored backup, or a copied key | the login was allowed; investigate the credential, and delete it if you cannot account for the copy |
 
 The uniform, detail-free 401 is deliberate: distinguishable failures would let
 anyone enumerate users and probe which authenticator each holds. When you are

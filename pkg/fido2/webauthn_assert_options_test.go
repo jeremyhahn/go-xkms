@@ -77,12 +77,12 @@ func newMockAssertHandler(t *testing.T) *FIDO2Handler {
 }
 
 // TestAssertWithOptions_DrivesAuthenticatorAndProducesAssertion is the load-bearing
-// proof: given a realistic server-issued options JSON, AssertWithOptions parses it,
+// proof: given a realistic server-issued options JSON, AssertWithOptionsAndOrigin parses it,
 // drives the (mock) CTAP2 authenticator, and produces a well-formed WebAuthn
 // PublicKeyCredential assertion JSON. The decisive check is that the server's own
 // parser (protocol.ParseCredentialRequestResponseBody, the parser
 // FinishAuthentication uses) accepts the output, and that the embedded
-// clientDataJSON binds the supplied challenge + the derived origin + type
+// clientDataJSON binds the supplied challenge + the caller's origin + type
 // "webauthn.get".
 func TestAssertWithOptions_DrivesAuthenticatorAndProducesAssertion(t *testing.T) {
 	handler := newMockAssertHandler(t)
@@ -101,12 +101,12 @@ func TestAssertWithOptions_DrivesAuthenticatorAndProducesAssertion(t *testing.T)
 
 	optionsJSON := buildRequestOptionsJSON(t, challenge, rpID, allow, protocol.VerificationPreferred)
 
-	assertionJSON, err := handler.AssertWithOptions(context.Background(), optionsJSON)
+	assertionJSON, err := handler.AssertWithOptionsAndOrigin(context.Background(), optionsJSON, "https://"+rpID)
 	if err != nil {
-		t.Fatalf("AssertWithOptions: %v", err)
+		t.Fatalf("AssertWithOptionsAndOrigin: %v", err)
 	}
 	if len(assertionJSON) == 0 {
-		t.Fatal("AssertWithOptions returned empty assertion JSON")
+		t.Fatal("AssertWithOptionsAndOrigin returned empty assertion JSON")
 	}
 
 	// The server's parser must accept the assertion document.
@@ -129,8 +129,8 @@ func TestAssertWithOptions_DrivesAuthenticatorAndProducesAssertion(t *testing.T)
 		t.Error("assertion missing signature")
 	}
 
-	// The clientDataJSON must bind the assertion type, the derived same-origin
-	// default, and the exact server challenge (base64url, no padding).
+	// The clientDataJSON must bind the assertion type, the caller's origin,
+	// and the exact server challenge (base64url, no padding).
 	cd := parsed.Response.CollectedClientData
 	if cd.Type != "webauthn.get" {
 		t.Errorf("clientData type: got %q want webauthn.get", cd.Type)
@@ -144,9 +144,9 @@ func TestAssertWithOptions_DrivesAuthenticatorAndProducesAssertion(t *testing.T)
 	}
 }
 
-// TestAssertWithOptionsAndOrigin_ExplicitOrigin proves an explicit origin (one
-// that differs from "https://<rpId>", e.g. a registrable-suffix RP ID) is bound
-// into the clientDataJSON instead of the derived default.
+// TestAssertWithOptionsAndOrigin_ExplicitOrigin proves an origin whose host
+// differs from the rpId (a registrable-suffix RP ID) is accepted and bound into
+// the clientDataJSON.
 func TestAssertWithOptionsAndOrigin_ExplicitOrigin(t *testing.T) {
 	handler := newMockAssertHandler(t)
 	defer func() { _ = handler.Close() }()
@@ -195,9 +195,9 @@ func TestAssertWithOptions_AcceptsBareRequestOptions(t *testing.T) {
 		t.Fatalf("marshal bare options: %v", err)
 	}
 
-	assertionJSON, err := handler.AssertWithOptions(context.Background(), optionsJSON)
+	assertionJSON, err := handler.AssertWithOptionsAndOrigin(context.Background(), optionsJSON, "https://"+rpID)
 	if err != nil {
-		t.Fatalf("AssertWithOptions (bare): %v", err)
+		t.Fatalf("AssertWithOptionsAndOrigin (bare): %v", err)
 	}
 
 	parsed, err := protocol.ParseCredentialRequestResponseBody(bytes.NewReader(assertionJSON))
@@ -253,7 +253,7 @@ func TestParseRequestOptions_Errors(t *testing.T) {
 }
 
 // TestParseRequestOptions_MapsFields proves the parser maps every server field
-// into the device-driver options: challenge, rpId, derived/explicit origin, the
+// into the device-driver options: challenge, rpId, the caller's origin, the
 // allow-list, the user-verification requirement, and the timeout.
 func TestParseRequestOptions_MapsFields(t *testing.T) {
 	challenge := []byte{0xDE, 0xAD, 0xBE, 0xEF}
@@ -262,7 +262,7 @@ func TestParseRequestOptions_MapsFields(t *testing.T) {
 
 	optionsJSON := buildRequestOptionsJSON(t, challenge, rpID, allow, protocol.VerificationRequired)
 
-	opts, err := parseRequestOptions(optionsJSON, "")
+	opts, err := parseRequestOptions(optionsJSON, "https://"+rpID)
 	if err != nil {
 		t.Fatalf("parseRequestOptions: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestAssertWithOptions_ContextCancelled(t *testing.T) {
 
 	optionsJSON := buildRequestOptionsJSON(t, []byte{0x01, 0x02, 0x03}, "rp", [][]byte{{0x01}}, protocol.VerificationPreferred)
 
-	if _, err := handler.AssertWithOptions(ctx, optionsJSON); !errors.Is(err, context.Canceled) {
+	if _, err := handler.AssertWithOptionsAndOrigin(ctx, optionsJSON, "https://rp"); !errors.Is(err, context.Canceled) {
 		t.Errorf("cancelled context: got %v want context.Canceled", err)
 	}
 }

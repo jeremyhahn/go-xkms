@@ -218,17 +218,17 @@ func TestAssertPINErrors(t *testing.T) {
 	})
 }
 
-// TestAssertShorthandsDelegate proves the two PIN-less shorthands still reach
-// the same code path — the property that keeps them from drifting into a second
+// TestAssertShorthandsDelegate proves the PIN-less shorthand still reaches the
+// same code path — the property that keeps it from drifting into a second
 // assertion implementation.
 func TestAssertShorthandsDelegate(t *testing.T) {
 	optionsJSON := buildRequestOptionsJSON(t,
-		[]byte("server-issued-challenge-value-32"), "xkms.example.com", nil, protocol.VerificationPreferred)
+		[]byte("server-issued-challenge-value-32"), "example.com", nil, protocol.VerificationPreferred)
 
-	t.Run("AssertWithOptions on a PIN-protected key reports the missing PIN", func(t *testing.T) {
+	t.Run("AssertWithOptionsAndOrigin on a PIN-protected key reports the missing PIN", func(t *testing.T) {
 		handler := newPINProtectedHandler(t, "123456")
 
-		if _, err := handler.AssertWithOptions(context.Background(), optionsJSON); !errors.Is(err, ErrPINRequired) {
+		if _, err := handler.AssertWithOptionsAndOrigin(context.Background(), optionsJSON, "https://example.com"); !errors.Is(err, ErrPINRequired) {
 			t.Fatalf("want ErrPINRequired, got %v", err)
 		}
 	})

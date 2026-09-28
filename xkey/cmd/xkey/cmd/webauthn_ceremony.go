@@ -16,8 +16,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"net/url"
-	"strings"
 	"time"
 
 	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
@@ -214,16 +212,4 @@ func (c *fido2Ceremony) Close() error {
 		return nil
 	}
 	return c.adapter.Close()
-}
-
-// webauthnOrigin derives the WebAuthn origin from a server URL: the scheme
-// and authority with no path, which is what a browser would report. An
-// unparsable or scheme-less URL yields an empty string, letting the caller
-// fall back to the same-origin default.
-func webauthnOrigin(serverURL string) string {
-	parsed, err := url.Parse(strings.TrimSpace(serverURL))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return ""
-	}
-	return parsed.Scheme + "://" + parsed.Host
 }
