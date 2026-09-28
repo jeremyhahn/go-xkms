@@ -530,11 +530,15 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 	})
 
 	t.Run("Certificates Have TCG Policy Identifiers", func(t *testing.T) {
-		// Check IAK policies
+		// Check IAK policies. pkg/ca/profiles.go's
+		// NewTCGInitialAttestationKeyProfile stamps tcgAttestationPolicies()
+		// on the IAK -- Residency + Restricted, never Fixed, which is
+		// reserved for the IDevID identity key (tcgIdentityPolicies) and
+		// which the spec says MUST NOT combine with Restricted.
 		assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMResidency),
 			"IAK should have VerifiedTPMResidency policy")
-		assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMFixed),
-			"IAK should have VerifiedTPMFixed policy")
+		assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMRestricted),
+			"IAK should have VerifiedTPMRestricted policy")
 
 		// Check IDevID policies
 		assert.True(t, hasPolicyIdentifier(idevidCert, ca.OIDTCGVerifiedTPMResidency),
@@ -547,8 +551,14 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 		hasTPMModelIAK := false
 		hasTPMModelIDevID := false
 
+		// pkg/ca/tcg.go writes the TCG-CSR-IDEVID's ProdModel field under
+		// tcg-at-platformModel (2.23.133.2.5, CreatePlatformModelExtension),
+		// never tcg-at-tpmModel (2.23.133.2.2): the two are different TCG
+		// attributes (the platform/device the TPM is embedded in, vs. the
+		// TPM chip's own model), and only the platform one is wired into
+		// certificate issuance.
 		for _, ext := range iakCert.Extensions {
-			if ext.Id.Equal(ca.OIDTCGAttributeTPMModel) {
+			if ext.Id.Equal(ca.OIDTCGAttributePlatformModel) {
 				hasTPMModelIAK = true
 				var model string
 				_, err := asn1.Unmarshal(ext.Value, &model)
@@ -559,7 +569,7 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 		}
 
 		for _, ext := range idevidCert.Extensions {
-			if ext.Id.Equal(ca.OIDTCGAttributeTPMModel) {
+			if ext.Id.Equal(ca.OIDTCGAttributePlatformModel) {
 				hasTPMModelIDevID = true
 			}
 		}

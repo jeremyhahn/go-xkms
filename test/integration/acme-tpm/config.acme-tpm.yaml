@@ -152,6 +152,19 @@ acme:
   challenges:
     enroll01: true
     endorse01: true
+    # test/integration/challenges/{enroll01,endorse01} create orders for
+    # "dns"-type identifiers to check challenge-availability behavior (they
+    # never complete a challenge, only inspect what an authorization offers).
+    # pkg/acme/policy's default DNS candidates are http-01/dns-01/tls-alpn-01/
+    # device-attest-01/dns-account-01; with only enroll01/endorse01 enabled
+    # above (neither is ever a DNS candidate), createChallenges intersects
+    # policy candidates with registered verifiers (cmd/xkmsd/acme.go's
+    # buildChallengeMap) down to zero and new-order fails 500 ("Failed to
+    # create authorization challenge") before either test gets to look at
+    # anything. http01 is enough to give a DNS identifier at least one
+    # available challenge; dns-01/tls-alpn-01 would need DNS/ALPN
+    # infrastructure this lane doesn't stand up.
+    http01: true
   enrollment:
     # The challenge client hostname the test runner registers as its
     # permanent-identifier (CHALLENGE_CLIENT_HOSTNAME) is a docker-compose
@@ -166,13 +179,34 @@ acme:
   # (pkg/config/acme.go), so this suite hit 429s well before finishing. Every
   # value below is still a genuine, enforced cap -- just one this lane can
   # actually run under -- never "no limit".
+  #
+  # Every limiter cmd/xkmsd/acme.go's buildACMERouterLimiters constructs
+  # (grepped, none hardcoded) is raised here, not only new_account/new_order:
+  # `tenant` in particular is mounted router-wide (r.Use(...) in
+  # buildACMERouter, ahead of every route including /authz and /challenge,
+  # not just new-account/new-order/finalize) and keyed by a SHARED,
+  # request-independent client key (tenantSharedClientKey always returns
+  # ""), so every request this whole lane makes -- across every test,
+  # concurrently -- draws from the one bucket at the default 20/s
+  # (DefaultACMETenantRateLimitMaxRequests). That is what was actually
+  # tripping "authorization failed: 429" and TestEnrollment_ConcurrentRequests,
+  # not the account/order categories raised in an earlier pass.
   rate_limit:
     max_requests: 1000
     interval: 1s
+    tenant:
+      max_requests: 1000
+      interval: 1s
     new_account:
       max_requests: 1000
       interval: 1m
     new_order:
+      max_requests: 1000
+      interval: 1m
+    certificate:
+      max_requests: 1000
+      interval: 1m
+    failed_validation:
       max_requests: 1000
       interval: 1m
   # policy.blocklist.use_defaults seeds RFC 2606/6761 reserved names

@@ -139,19 +139,27 @@ func TestFinalizeTCGCSR_Success(t *testing.T) {
 	iakCert := parsedCerts[0]
 	idevidCert := parsedCerts[1]
 
-	// Both IAK and IDevID certificates have the same Common Name (device identifier)
-	// They are distinguished by their X.509 extensions (IAK has tcg-kp-AIKCertificate)
+	// The IAK and IDevID certificates are issued for the same device but are
+	// NOT the same Common Name: pkg/ca prefixes the IAK's with "iak-" so two
+	// certificates under the same issuing hierarchy never share a Subject
+	// (confirmed against the actual issued certificates, not assumed).
 	expectedCN := fmt.Sprintf("TEST-MODEL-%s", deviceID)
-	assert.Equal(t, expectedCN, iakCert.Subject.CommonName, "IAK cert should have device identifier CN")
+	assert.Equal(t, "iak-"+expectedCN, iakCert.Subject.CommonName, "IAK cert should have device identifier CN")
 	assert.Equal(t, expectedCN, idevidCert.Subject.CommonName, "IDevID cert should have device identifier CN")
 
 	t.Logf("IAK Certificate: CN=%s", iakCert.Subject.CommonName)
 	t.Logf("IDevID Certificate: CN=%s", idevidCert.Subject.CommonName)
 
-	// Verify IAK has the AIK Certificate marker extension (OID 2.23.133.8.3)
+	// Verify IAK has the AIK Certificate marker extension (tcg-kp-AIKCertificate,
+	// OID 2.23.133.8.3). This purpose lives inside the standard extKeyUsage
+	// extension's SEQUENCE OF OIDs (as UnknownExtKeyUsage, since Go's x509
+	// package has no named constant for it) -- it is not a standalone
+	// extension of its own, so iakCert.Extensions never contains an entry
+	// whose Id equals it. attestation_integration_test.go's "IAK Certificate
+	// Has TCG AIK Marker" subtest checks the right field; this mirrors it.
 	hasAIKMarker := false
-	for _, ext := range iakCert.Extensions {
-		if ext.Id.String() == "2.23.133.8.3" {
+	for _, oid := range iakCert.UnknownExtKeyUsage {
+		if oid.Equal(ca.OIDTCGKpAIKCertificate) {
 			hasAIKMarker = true
 			break
 		}

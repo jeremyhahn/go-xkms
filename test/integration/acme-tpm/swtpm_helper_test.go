@@ -220,6 +220,21 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 	// Use cert store instead of TPM NVRAM
 	config.EK.CertHandle = 0
 
+	// Configure the IAK for ECDSA too: xkmssdk.DefaultTPMConfig.IAK is a
+	// shared *IAKConfig (pkg/tpm2/config.go's package-level DefaultConfig),
+	// so `config := xkmssdk.DefaultTPMConfig` only copies the outer struct --
+	// config.IAK still points at that same shared RSA-default instance.
+	// TestSignTCGCSRIDevID_ValidECDSAEnrollment asserts BOTH the IAK and the
+	// IDevID public keys are ECDSA; leaving this unset left the IAK issued
+	// as RSA (the shared default) while only IDevID actually became ECDSA.
+	// Copying the struct before mutating it keeps the shared package default
+	// untouched for every other test.
+	iakConfig := *xkmssdk.DefaultTPMConfig.IAK
+	iakConfig.KeyAlgorithm = "ECDSA"
+	iakConfig.SignatureAlgorithm = "ECDSA-SHA256"
+	iakConfig.RSAConfig = nil
+	config.IAK = &iakConfig
+
 	// Configure IDevID for enrollment with ECDSA
 	config.IDevID = &xkmssdk.IDevIDConfig{
 		CertHandle:         0, // Use cert store

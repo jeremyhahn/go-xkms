@@ -120,7 +120,7 @@ func (ec *EnrollmentConfig) Validate() error {
 	}
 
 	if !validChallenges[ec.Challenge] {
-		return caerrors.MalformedError("invalid challenge type: %s", ec.Challenge)
+		return caerrors.Wrap(caerrors.Malformed, ErrInvalidChallenge, "invalid challenge type: %s", ec.Challenge)
 	}
 
 	if ec.TPMModule == nil {
@@ -159,7 +159,7 @@ func expandEnvVars(input string) (string, error) {
 		varValue := os.Getenv(varName)
 
 		if varValue == "" {
-			return "", caerrors.MalformedError("environment variable not found: %s", varName)
+			return "", caerrors.Wrap(caerrors.Malformed, ErrEnvVarNotFound, "environment variable not found: %s", varName)
 		}
 
 		result = strings.ReplaceAll(result, match[0], varValue)

@@ -115,7 +115,13 @@ func TestSignTCGCSRIDevID_ValidRSAEnrollment(t *testing.T) {
 	iakCert, err := x509.ParseCertificate(iakDER)
 	require.NoError(t, err, "Failed to parse IAK certificate")
 
-	assert.Equal(t, certRequest.Subject.CommonName, iakCert.Subject.CommonName)
+	// pkg/ca/tcg.go's IAKCommonName ("iak-<model>-<serial>") is the IAK's
+	// subject regardless of certRequest.Subject.CommonName: unlike the
+	// IDevID (which does carry the caller's subject, see below), the IAK's
+	// identity is derived from the CSR's own attested ProdModel/ProdSerial
+	// so it can never collide with the IDevID cert in the same certificate
+	// store (both are keyed by common name).
+	assert.Equal(t, ca.IAKCommonName("TEST-MODEL", deviceID), iakCert.Subject.CommonName)
 	assert.Equal(t, x509.KeyUsageDigitalSignature, iakCert.KeyUsage&x509.KeyUsageDigitalSignature)
 	assert.Contains(t, iakCert.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
 	assert.Contains(t, iakCert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
@@ -133,14 +139,28 @@ func TestSignTCGCSRIDevID_ValidRSAEnrollment(t *testing.T) {
 	assert.True(t, hasAIKMarker, "IAK certificate should have TCG AIK Certificate extended key usage")
 
 	assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMResidency), "IAK should have VerifiedTPMResidency policy")
-	assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMFixed), "IAK should have VerifiedTPMFixed policy")
+	// pkg/ca/profiles.go's NewTCGInitialAttestationKeyProfile stamps
+	// tcgAttestationPolicies() on the IAK: Residency + Restricted, never
+	// Fixed -- Fixed is reserved for the IDevID identity key
+	// (tcgIdentityPolicies, see NewTCGDeviceIdentityProfile). Per the TCG
+	// spec citation on tcgAttestationPolicies: "MUST NOT be combined with
+	// TCG-CE-FixedTPM[-RestrictedKey]" -- Restricted already states the CA
+	// verified both the fixedTPM and Restricted bits, so asserting Fixed too
+	// on the IAK would assert a combination the spec forbids.
+	assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMRestricted), "IAK should have VerifiedTPMRestricted policy")
 
 	idevidCert, err := x509.ParseCertificate(idevidDER)
 	require.NoError(t, err, "Failed to parse IDevID certificate")
 
 	assert.Equal(t, certRequest.Subject.CommonName, idevidCert.Subject.CommonName)
-	assert.Equal(t, x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment,
-		idevidCert.KeyUsage&(x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment))
+	// pkg/ca/profiles.go's NewTCGDeviceIdentityProfile: "digitalSignature
+	// (only) is RECOMMENDED" (TCG DevID v1 r12 Table 22) for a non-Combined
+	// IDevID key -- this swtpm fixture's key has no TPM Decrypt attribute,
+	// so the CA never adds keyEncipherment (asserting it "would advertise a
+	// capability the key does not have"). certRequest.KeyUsage above
+	// requests both bits, but IDevID key usage is derived from the key's
+	// own TPM attributes, not honored verbatim from the request.
+	assert.Equal(t, x509.KeyUsageDigitalSignature, idevidCert.KeyUsage&x509.KeyUsageDigitalSignature)
 	assert.Contains(t, idevidCert.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
 	assert.Contains(t, idevidCert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
 
@@ -274,9 +294,14 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 			}
 		}
 
+		// pkg/ca/tcg.go writes the CSR's ProdModel field under
+		// tcg-at-platformModel (2.23.133.2.5), never tcg-at-tpmModel
+		// (2.23.133.2.2) -- see the identical note in
+		// attestation_integration_test.go's "Certificates Have TPM Model
+		// Extension" subtest.
 		for _, ext := range iakCert.Extensions {
 			switch {
-			case ext.Id.Equal(ca.OIDTCGAttributeTPMModel):
+			case ext.Id.Equal(ca.OIDTCGAttributePlatformModel):
 				hasTPMModel = true
 				var model string
 				_, err := asn1.Unmarshal(ext.Value, &model)
@@ -303,7 +328,15 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 		assert.True(t, hasTPKeyStore, "IAK should have TPKeyStore extension")
 
 		assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMResidency), "IAK should have VerifiedTPMResidency policy")
-		assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMFixed), "IAK should have VerifiedTPMFixed policy")
+		// pkg/ca/profiles.go's NewTCGInitialAttestationKeyProfile stamps
+		// tcgAttestationPolicies() on the IAK: Residency + Restricted, never
+		// Fixed -- Fixed is reserved for the IDevID identity key
+		// (tcgIdentityPolicies, see NewTCGDeviceIdentityProfile). Per the TCG
+		// spec citation on tcgAttestationPolicies: "MUST NOT be combined with
+		// TCG-CE-FixedTPM[-RestrictedKey]" -- Restricted already states the CA
+		// verified both the fixedTPM and Restricted bits, so asserting Fixed too
+		// on the IAK would assert a combination the spec forbids.
+		assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMRestricted), "IAK should have VerifiedTPMRestricted policy")
 	})
 
 	t.Run("IDevID TPM Extensions", func(t *testing.T) {
@@ -314,7 +347,7 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 
 		for _, ext := range idevidCert.Extensions {
 			switch {
-			case ext.Id.Equal(ca.OIDTCGAttributeTPMModel):
+			case ext.Id.Equal(ca.OIDTCGAttributePlatformModel):
 				hasTPMModel = true
 			case ext.Id.Equal(ca.OIDTCGAttributeTPMVersion):
 				hasTPMVersion = true

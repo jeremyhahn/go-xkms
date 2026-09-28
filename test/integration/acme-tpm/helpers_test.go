@@ -137,6 +137,17 @@ func fetchNonce(client *http.Client, serverURL string) (string, error) {
 	}
 	defer resp.Body.Close()
 
+	// Check the status before the header: a 429 (or any non-2xx) response
+	// carries no Replay-Nonce header either, and reading only the header
+	// turned a rate-limit error into the uninformative "no nonce in
+	// response" -- the same failure text regardless of cause. Surfacing the
+	// status and body here means the next person sees the real problem
+	// document instead of having to re-derive it from server-side logs.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", caerrors.ConnectionFailureError("unexpected status code %d fetching nonce: %s", resp.StatusCode, string(body))
+	}
+
 	nonce := resp.Header.Get("Replay-Nonce")
 	if nonce == "" {
 		return "", caerrors.MalformedError("no nonce in response")
