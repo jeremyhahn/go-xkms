@@ -134,7 +134,7 @@ func (s *AdminService) ListCertificates(ctx context.Context, req ListCertificate
 	for _, cert := range filteredCerts[start:end] {
 		certInfo, err := s.convertToCertificateInfo(cert)
 		if err != nil {
-			s.logger.Warn("failed to convert certificate", slog.Uint64("id", cert.ID), slog.String("error", err.Error()))
+			s.logger.Warn("failed to convert certificate", slog.String("serial", cert.Serial), slog.String("error", err.Error()))
 			continue
 		}
 		result = append(result, certInfo)
@@ -649,7 +649,6 @@ func (s *AdminService) convertToCertificateInfo(cert *entities.ACMECertificate) 
 	}
 
 	return &CertificateInfo{
-		ID:           cert.ID,
 		SerialNumber: x509Cert.SerialNumber.String(),
 		Subject:      x509Cert.Subject.String(),
 		Issuer:       x509Cert.Issuer.String(),

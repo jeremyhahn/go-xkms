@@ -163,7 +163,7 @@ func TestAuditTrail_TPMEnrollmentIsRecorded(t *testing.T) {
 
 	serialNumber, pemBytes, err := service.finalizeTCGCSR("198.51.100.20:4444", csrDER, req, account, order)
 	require.NoError(t, err)
-	require.Equal(t, idevidSerial.Uint64(), serialNumber)
+	require.Equal(t, idevidSerial.Text(16), serialNumber)
 	require.NotEmpty(t, pemBytes)
 
 	enrollment := trail.expectEvents(t, "event_type=TPM_ENROLLMENT", 1)

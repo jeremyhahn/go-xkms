@@ -95,8 +95,21 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, common.ServerInternal("Failed to create certificate DAO"))
 		return
 	}
-	entity, err := certificateDAO.Get(ctx, cert.SerialNumber.Uint64())
+	requestedSerial := cert.SerialNumber.Text(16)
+	entity, err := certificateDAO.Get(ctx, entities.StringToEntityID(requestedSerial))
 	if err != nil {
+		writeError(w, common.MalformedError("Certificate not found", nil))
+		return
+	}
+
+	// The DAO row is keyed by a 64-bit hash of the serial (entities.StringToEntityID),
+	// not the serial itself, so an astronomically unlikely hash collision
+	// between two different certificates would otherwise let this revoke the
+	// WRONG certificate instead of reporting not-found.
+	if entity.Serial != requestedSerial {
+		s.logger.Error("Certificate storage row collision on revoke",
+			slog.String("requested_serial", requestedSerial),
+			slog.String("stored_serial", entity.Serial))
 		writeError(w, common.MalformedError("Certificate not found", nil))
 		return
 	}

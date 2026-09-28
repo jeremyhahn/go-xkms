@@ -159,6 +159,8 @@ once, to the externally visible base.
 - **`enroll-01` succeeds only if the TPM can activate the credential.** The
   server never accepts a secret it did not itself protect with
   `TPM2_MakeCredential` against the verified EK.
+- **A `device-attest-01` attestation authorizes nothing until the CSR's key is
+  bound to the attested key.** See device-attest-01 key binding below.
 - **Every identifier is checked against the issuance policy engine before
   its authorization is created.** `NewOrderHandler`
   (`pkg/acme/server/handlers/new_order.go`) runs each identifier through
@@ -311,6 +313,31 @@ once, to the externally visible base.
   `EndorseEABValidator.BoundTPMManufacturer`). Before this the handler passed
   none, and every enroll-01 of an endorsed TPM failed with a bare
   `Failed to sign TCG-CSR-IDEVID`; that failure now logs the CA's error.
+- **A certificate's identity is its full serial number, hex-encoded, never
+  truncated.** `entities.ACMECertificate.Serial` holds the complete X.509
+  serial number (up to 20 octets per RFC 5280 Section 4.1.2.2) as a lowercase
+  hex string; it is what the "id" segment of the `/acme/cert/{id}` URL
+  carries and what certificate fetch, revocation, and admin lookups key on.
+  The DAO's own numeric row key (`NumericID`) is an FNV-1a hash of Serial,
+  kept only to satisfy the generic DAO's `uint64` entity-ID contract - it is
+  never a certificate's public identity. Before go-xkms#744, the ID was the
+  serial's low 64 bits, so two certificates whose 128-bit serials happened to
+  share those bits collided in storage.
+- **A 64-bit hash still leaves a residual collision risk, and it is
+  handled, not assumed away.** `CertificateHandler` and `RevokeCertHandler`
+  compare the fetched row's `Serial` against the requested serial and treat
+  a mismatch as not-found - a hash collision can only ever produce a 404,
+  never the wrong certificate. `storage.SaveCertificateNoCollision` (used
+  by both `OrderFinalizeHandler` and the ACME client's local certificate
+  cache) refuses to let a save silently overwrite a different certificate
+  at the same row, returning `*storage.CertificateSerialCollisionError`;
+  it uses `GenericDAO.SaveIfAbsent` atomically when the backing KVStore
+  supports it (see pkg/storage/kvadapter), and falls back to a
+  Get-then-Save sequence otherwise - a fallback that is NOT atomic against
+  a second, concurrent writer racing to the same row, because sdk/go does
+  not re-export a sentinel this package could use to positively confirm
+  "no atomic support" versus some other `SaveIfAbsent` failure without
+  reaching past the SDK boundary into `go-qrdb/pkg/dao` directly.
 - **Revocation requires byte-equality with the stored certificate.** The
   submitted certificate's serial number is looked up, but because the returned
   record's identities must authorize the revocation and the submitted bytes are
@@ -329,6 +356,55 @@ once, to the externally visible base.
   response, not after. A non-atomic path where validation completes first leaves
   a window in which two concurrent finish requests can both validate the same
   challenge and both succeed.
+
+## device-attest-01 key binding
+
+The challenge verifies the evidence; finalization binds it to the CSR. Both
+formats (`tpm`, `dice`) bind through the CSR, so `Verify` returns
+`ErrKeyBindingRequired` for both (`deviceattest01.go:274`) and a server holds
+the `VerifiedAttestation` between the two requests
+(`pkg/acme/challenges/device-attest-01/binding.go`).
+
+**`tpm` at the challenge** — `verifyTPMEvidence` (`tpm.go:65`) applies WebAuthn
+Level 2 §8.3, after `VerifyAttestation` has anchored every `x5c` entry through
+`AttestationVerifier.VerifyAKCertificateChain` (`deviceattest01.go:352`; an
+entry that is not a byte string refuses the chain rather than being dropped):
+
+| Check | Where |
+|---|---|
+| `ver` is `"2.0"`; `x5c` present; `x5c[0]` parses | `tpm.go:65` |
+| `x5c[0]` meets §8.3.1: version 3, empty subject, TCG SAN naming manufacturer/model/version (EK Credential Profile §3.2.9), not a CA | `checkAIKCertificate`, `tpm.go:155` |
+| `x5c[0]` carries EKU `tcg-kp-AIKCertificate` (2.23.133.8.3) — the certificate-side stand-in for "restricted signing key" | `certifiesAttestationKey`, `pkg/tpm2/certify_verify.go:238` |
+| `sig` verifies over `certInfo` under `x5c[0]` with `alg` (WebAuthn L2 §6.5.6 encoding: DER for ECDSA) | `VerifyCertifyByCertificate`, `pkg/tpm2/certify_verify.go:199` |
+| `certInfo` magic is `TPM_GENERATED_VALUE`, type `TPM_ST_ATTEST_CERTIFY`, attested Name = Name(`pubArea`) under `pubArea`'s nameAlg | `verifyCertifiedObject`, `pkg/tpm2/certify_verify.go:250` |
+| `extraData` equals `TPMExtraData(alg, keyAuthorization)` — the `alg` hash of the key authorization; a mismatch is `ErrStaleEvidence` | `tpm.go:205`; `pkg/attestation/invariants.go:304` |
+
+`TPMExtraData` is the key authorization hashed with `alg`'s hash: §8.3's
+`extraData = H_alg(attToBeSigned)`, with `attToBeSigned` the key authorization
+because draft-ietf-acme-device-attest's attestation carries no authenticator
+data. For the SHA-256 algorithms it equals `DICENonce`. An unknown `alg` is
+refused, never defaulted.
+
+**`tpm` at finalization** — `BindCSRKey` (`binding.go:142`) checks the CSR
+self-signature, then `tpmCSREvidence` (`binding.go:188`) re-submits the
+recorded `certInfo`/`sig`/`pubArea`/`x5c[0]` to the gate with the CSR's
+SubjectPublicKeyInfo. `verifyTPMCertifyBinding` (`invariants.go:304`) repeats
+every certification check and then requires `pubArea`'s key to equal the CSR's
+key, compared as keys rather than encodings (`verifyCertifiedKeyIsSubjectKey`,
+`invariants.go:373`). The record carries only bytes (`LeafDER`, `CertInfo`,
+`Signature`, `PubArea`, `Algorithm`), so it survives storage between the two
+requests.
+
+**One gate.** The TPM2 profile identifies its attester by public area
+(TCG-CSR-IDEVID) or by certificate (`Evidence.AttesterCertificate`, this
+format) — never both — and reads its challenge from the certification's
+`extraData` (`challengeInCertify`, `invariants.go:167`). A TCG-CSR caller that
+supplies no `SubjectSPKI` and no challenge is checked exactly as before.
+
+**What an anchoring implementation must know.** An AIK certificate's SAN is
+critical and holds only a `directoryName`, which `crypto/x509` reports in
+`UnhandledCriticalExtensions`; `checkAIKCertificate` reads it, so the
+`AttestationVerifier` must treat it as handled when it verifies the chain.
 
 ## Circuit breakers and degradation
 
@@ -849,6 +925,18 @@ storage. Changing the storage layout requires a data migration step.
 - **TCG / attestation** — `test/integration/acme-tpm` plus
   `pkg/acme/server/handlers/audit_tcg_test.go`,
   `compliance_attestation_test.go`.
+- **device-attest-01 `tpm` binding** —
+  `pkg/acme/challenges/device-attest-01/tpm_simulator_test.go` (build tag
+  `tpm_simulator`) produces real TPM2_Certify and TPM2_Quote output with the
+  in-process TPM simulator and signs the CSR with the TPM-resident key. It
+  accepts the device's own key and refuses a software key, a sibling TPM key,
+  a quote, another key's `pubArea`, the key authorization or its digest
+  anywhere but as `extraData`, another challenge's `extraData`, a signature by
+  a second AIK, an AIK certificate without `tcg-kp-AIKCertificate`, and an
+  `x5c` not anchored to the roots. `tpm_test.go` covers §8.3.1 and malformed
+  statements; `pkg/attestation/invariants_tpm_test.go` and
+  `pkg/tpm2/certify_verify_certificate_test.go` cover the gate and the
+  certificate-attester verifier.
 - **Cross-repo** — `pkg/acme/server/handlers/cluster_issuer_test.go` covers the
   Raft enrollment path.
 

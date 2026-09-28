@@ -21,9 +21,10 @@ import (
 // cloud-KMS-backed sealing strategies (aws_kms, gcp_kms, azure_kv, vault).
 // The symmetric key each provider seals the barrier root key under is
 // resolved and, on first use, created automatically by go-xkms under a
-// fixed, well-known name (sdk/go's SealKeyCN) -- there is no per-key
-// identifier to configure here, only where the key lives and how to
-// authenticate to it.
+// fixed, well-known name (sdk/go's SealKeyCN) when the operator configures
+// no key identifier of their own. aws_kms is the one strategy that also
+// accepts an operator-supplied key identifier (BarrierAWSKMSConfig.KeyID) to
+// seal under an existing CMK instead.
 //
 // Ambient credentials (the AWS SDK's default credential chain, GCP
 // Application Default Credentials, Azure's DefaultAzureCredential, Vault's
@@ -50,6 +51,17 @@ type BarrierAWSKMSConfig struct {
 	SecretAccessKey *xkms.SecretValue `yaml:"secret_access_key,omitempty" json:"secret_access_key,omitempty" mapstructure:"secret_access_key"`
 	SessionToken    *xkms.SecretValue `yaml:"session_token,omitempty" json:"session_token,omitempty" mapstructure:"session_token"`
 	Endpoint        string            `yaml:"endpoint,omitempty" json:"endpoint,omitempty" mapstructure:"endpoint"`
+
+	// KeyID is the operator-supplied identifier of an existing AWS KMS
+	// customer master key to seal the barrier root key under, instead of one
+	// xkey provisions itself on first use. Accepts a key ID, a key ARN, an
+	// alias name, or an alias ARN. Optional -- when empty, the barrier
+	// creates and persists a new CMK under sdk/go's fixed SealKeyCN
+	// (go-xkms#842). Format is validated where the backend is constructed
+	// (sdk/go.AWSKMSBackendConfig.KeyID, via awskms.Config.Validate);
+	// existence is checked against the live AWS KMS API at that same point
+	// (DescribeKey).
+	KeyID string `yaml:"key_id,omitempty" json:"key_id,omitempty" mapstructure:"key_id"`
 }
 
 // Validate checks that c holds a usable aws_kms barrier configuration.

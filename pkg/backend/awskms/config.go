@@ -17,6 +17,7 @@ package awskms
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -108,7 +109,62 @@ func (c *Config) Validate() error {
 		return &errs.Detail{Err: ErrInvalidConfig, Detail: "cert storage is required"}
 	}
 
+	// KeyID, when the operator supplies one, must be a syntactically valid
+	// AWS KMS key ID, key ARN, alias name, or alias ARN. Existence is not
+	// checked here -- that happens against the live AWS KMS API the first
+	// time the barrier resolves the key (DescribeKey in GetSymmetricKey).
+	if c.KeyID != "" && !isValidKeyID(c.KeyID) {
+		return &errs.Detail{Err: ErrInvalidKeyID, Detail: c.KeyID}
+	}
+
 	return nil
+}
+
+// awsAccountID matches a 12-digit AWS account ID, as used in ARNs.
+const awsAccountID = `\d{12}`
+
+// awsPartition matches the "aws" partition segment of an ARN, including the
+// aws-cn and aws-us-gov partitions used by the China and GovCloud regions.
+const awsPartition = `aws(-cn|-us-gov)?`
+
+// awsKMSKeyUUID matches an AWS KMS key identifier's unique-ID component:
+// either the standard hyphenated UUID form, or the 32 hex characters AWS
+// packs (with no hyphens) after the "mrk-" prefix it uses for multi-Region
+// keys.
+const awsKMSKeyUUID = `(mrk-[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`
+
+// awsAliasName matches the segment of a KMS alias name or alias ARN that
+// follows "alias/": letters, digits, and /_- (AWS's own alias character set).
+const awsAliasName = `[a-zA-Z0-9/_-]+`
+
+var (
+	// keyIDPattern matches a bare AWS KMS key ID, e.g.
+	// "1234abcd-12ab-34cd-56ef-1234567890ab" or a multi-Region
+	// "mrk-1234abcd12ab34cd56ef1234567890ab".
+	keyIDPattern = regexp.MustCompile(`^` + awsKMSKeyUUID + `$`)
+
+	// keyARNPattern matches a full AWS KMS key ARN, e.g.
+	// "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab".
+	keyARNPattern = regexp.MustCompile(`^arn:` + awsPartition + `:kms:[a-z0-9-]+:` + awsAccountID + `:key/` + awsKMSKeyUUID + `$`)
+
+	// aliasNamePattern matches a bare AWS KMS alias name, e.g. "alias/my-key".
+	aliasNamePattern = regexp.MustCompile(`^alias/` + awsAliasName + `$`)
+
+	// aliasARNPattern matches a full AWS KMS alias ARN, e.g.
+	// "arn:aws:kms:us-east-1:123456789012:alias/my-key".
+	aliasARNPattern = regexp.MustCompile(`^arn:` + awsPartition + `:kms:[a-z0-9-]+:` + awsAccountID + `:alias/` + awsAliasName + `$`)
+)
+
+// isValidKeyID reports whether keyID is syntactically one of the four
+// identifier forms AWS KMS accepts for an existing customer master key: a
+// bare key ID, a key ARN, a bare alias name, or an alias ARN. See
+// https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id
+// for the reference formats.
+func isValidKeyID(keyID string) bool {
+	return keyIDPattern.MatchString(keyID) ||
+		keyARNPattern.MatchString(keyID) ||
+		aliasNamePattern.MatchString(keyID) ||
+		aliasARNPattern.MatchString(keyID)
 }
 
 // String returns a string representation of the config with sensitive data masked.

@@ -2363,7 +2363,6 @@ func (x *ListTenantUsersResponse) GetHasMore() bool {
 
 type CertificateInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	SerialNumber  string                 `protobuf:"bytes,2,opt,name=serial_number,json=serialNumber,proto3" json:"serial_number,omitempty"`
 	Subject       string                 `protobuf:"bytes,3,opt,name=subject,proto3" json:"subject,omitempty"`
 	Issuer        string                 `protobuf:"bytes,4,opt,name=issuer,proto3" json:"issuer,omitempty"`
@@ -2404,13 +2403,6 @@ func (x *CertificateInfo) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CertificateInfo.ProtoReflect.Descriptor instead.
 func (*CertificateInfo) Descriptor() ([]byte, []int) {
 	return file_api_proto_admin_proto_rawDescGZIP(), []int{33}
-}
-
-func (x *CertificateInfo) GetId() uint64 {
-	if x != nil {
-		return x.Id
-	}
-	return 0
 }
 
 func (x *CertificateInfo) GetSerialNumber() string {
@@ -3410,9 +3402,8 @@ const file_api_proto_admin_proto_rawDesc = "" +
 	"\x17ListTenantUsersResponse\x12.\n" +
 	"\x05users\x18\x01 \x03(\v2\x18.trustedca.admin.v1.UserR\x05users\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x19\n" +
-	"\bhas_more\x18\x03 \x01(\bR\ahasMore\"\xd8\x02\n" +
-	"\x0fCertificateInfo\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x04R\x02id\x12#\n" +
+	"\bhas_more\x18\x03 \x01(\bR\ahasMore\"\xd2\x02\n" +
+	"\x0fCertificateInfo\x12#\n" +
 	"\rserial_number\x18\x02 \x01(\tR\fserialNumber\x12\x18\n" +
 	"\asubject\x18\x03 \x01(\tR\asubject\x12\x16\n" +
 	"\x06issuer\x18\x04 \x01(\tR\x06issuer\x129\n" +
@@ -3421,7 +3412,7 @@ const file_api_proto_admin_proto_rawDesc = "" +
 	"\tnot_after\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\x12\x16\n" +
 	"\x06status\x18\a \x01(\tR\x06status\x127\n" +
 	"\tissued_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x12\x19\n" +
-	"\bcert_url\x18\t \x01(\tR\acertUrl\"\x9d\x01\n" +
+	"\bcert_url\x18\t \x01(\tR\acertUrlJ\x04\b\x01\x10\x02R\x02id\"\x9d\x01\n" +
 	"\x17ListCertificatesRequest\x12\x12\n" +
 	"\x04page\x18\x01 \x01(\x05R\x04page\x12\x19\n" +
 	"\bper_page\x18\x02 \x01(\x05R\aperPage\x12\x16\n" +

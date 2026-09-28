@@ -38,6 +38,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 )
 
 var (
@@ -921,13 +922,14 @@ func (c *Client) RequestCertificate(ctx context.Context, req *CertificateRequest
 			Bytes: orderCertChain[0],
 		})
 		certEntity := &entities.ACMECertificate{
+			Serial:    cert.SerialNumber.Text(16),
 			CertURL:   certURL,
 			PEM:       string(certPEM),
 			IssuedAt:  time.Now(),
 			Status:    "valid",
 			ExpiresAt: cert.NotAfter,
 		}
-		if err := c.certificateStorage.Save(context.Background(), certEntity); err != nil {
+		if err := storage.SaveCertificateNoCollision(context.Background(), c.certificateStorage, certEntity); err != nil {
 			c.logger.Warn("failed to save certificate to storage", slog.String("error", err.Error()))
 		}
 	}

@@ -188,7 +188,7 @@ func TestListCertificates_Success(t *testing.T) {
 	service := &mockService{
 		listCertificatesFunc: func(ctx context.Context, req ListCertificatesRequest) ([]*CertificateInfo, *Pagination, error) {
 			return []*CertificateInfo{
-				{ID: 1, SerialNumber: "1234"},
+				{SerialNumber: "1234"},
 			}, &Pagination{Page: 1, PerPage: 20, Total: 1}, nil
 		},
 	}
@@ -221,7 +221,7 @@ func TestListCertificates_Error(t *testing.T) {
 func TestGetCertificate_Success(t *testing.T) {
 	service := &mockService{
 		getCertificateFunc: func(ctx context.Context, serial string) (*CertificateInfo, error) {
-			return &CertificateInfo{ID: 1, SerialNumber: serial}, nil
+			return &CertificateInfo{SerialNumber: serial}, nil
 		},
 	}
 	handlers := NewHandlers(service, slog.Default())
@@ -361,7 +361,7 @@ func TestListExpiringCertificates_Success(t *testing.T) {
 	service := &mockService{
 		listExpiringCertificatesFunc: func(ctx context.Context, days, page, perPage int) ([]*CertificateInfo, *Pagination, error) {
 			return []*CertificateInfo{
-				{ID: 1, SerialNumber: "1234"},
+				{SerialNumber: "1234"},
 			}, &Pagination{Page: 1, PerPage: 20, Total: 1}, nil
 		},
 	}

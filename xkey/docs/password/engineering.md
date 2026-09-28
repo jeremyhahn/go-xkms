@@ -1,6 +1,6 @@
 # Static Passwords — Engineering
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 See [architecture.md](architecture.md) for the store hierarchy and the
 "store location vs. session state" split before reading this document.
@@ -140,10 +140,12 @@ type constants shared with the extension protocol.
   asking the daemon when `--show-passwords` is set
   (`password.go`, `resolvePasswordList`); only the on-disk path
   (`--source disk`) can reveal a value.
-- **`EncryptedStore`/`PINAccessStore`/`SessionStore` are not reachable from
-  `xkey`.** They are complete, tested root-module types, but no CLI command
-  or GUI service constructs one — see architecture.md. Do not assume a
-  field-level `ENC:` prefix appears in an `xkey`-written entry.
+- **`pkg/staticpw` has no field-level encryption or store-level session
+  type.** `EncryptedStore`, `PINAccessStore`, and `SessionStore` were removed
+  from the root module (go-xkms#864) — see architecture.md. Do not assume a
+  field-level `ENC:` prefix appears in an `xkey`-written entry; a written
+  entry's `Password` field is plaintext JSON unless the underlying
+  `storage.Backend` itself encrypts (the barrier).
 - **A read of a listed password's plaintext is defused after display.**
   The CLI wraps each on-disk value in a `*secure.Secret` and calls
   `entry.Password.Destroy()` immediately after writing it
@@ -198,7 +200,7 @@ type constants shared with the extension protocol.
 
 | File | Tags | Covers |
 |---|---|---|
-| `go-xkms/pkg/staticpw/*_test.go` (root module) | (none) | `StaticPassword` validation, `BackendStore`/`EncryptedStore`/`PINAccessStore`/`SessionStore`/team/tenant behavior |
+| `go-xkms/pkg/staticpw/*_test.go` (root module) | (none) | `StaticPassword` validation, `BackendStore`/scoped/team/tenant behavior, `TenantPasswordStoreManager` session-lock state |
 | `xkey/cmd/xkey/cmd/password_test.go`, `password_ssh_cert_test.go` | `ble codec_json` | CLI verbs, `--source` resolution, IPC-vs-disk list/status behavior |
 | `xkey/cmd/xkey/cmd/touch_test.go` | `ble codec_json` | `xkey touch` IPC round-trip |
 | `xkey/pkg/gui/services/staticpw_service_test.go` | (none) | GUI CRUD, folders, backup/restore, import, session verbs |

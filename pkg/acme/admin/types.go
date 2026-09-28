@@ -126,9 +126,12 @@ type Pagination struct {
 	Total   int `json:"total"`
 }
 
-// CertificateInfo represents certificate information for admin responses
+// CertificateInfo represents certificate information for admin responses.
+// SerialNumber is the certificate's identity: use it for any certificate
+// lookup, fetch, or revocation. There is no separate numeric ID - the DAO's
+// own row key is an internal storage detail (an FNV-1a hash of the serial;
+// see entities.ACMECertificate.EntityID) that this response never exposes.
 type CertificateInfo struct {
-	ID           uint64    `json:"id"`
 	SerialNumber string    `json:"serial_number"`
 	Subject      string    `json:"subject"`
 	Issuer       string    `json:"issuer"`

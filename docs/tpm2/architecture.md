@@ -1,6 +1,6 @@
 # TPM 2.0 — Architecture
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## The problem
 
@@ -264,6 +264,29 @@ configuration shape, configured independently
   `pkg/tpm2/platform_keystore_enroll_simulator_test.go`
   (`TestEnrollPlatformSRK_DefaultSealUnseal_PCRBranchUnattended`,
   `TestEnrollPlatformSRK_DefaultSealUnseal_PINBranchViaPlatformKeyStore`).
+- **Every caller that builds a `Config` for this library must set
+  `PlatformSRK.PlatformPolicy: true`, unconditionally** — there is no
+  plain-password shape for the Platform SRK (go-xkms#677: `authValue` = user
+  PIN, `authPolicy` = platform PCR policy). Two callers violated this and
+  disagreed with each other until go-xkms#997: `pkg/backend/tpm2`'s
+  `Config.ToTPMConfig` (`pkg/backend/tpm2/config.go:211-213`) hardcoded
+  `PlatformPolicy: false` into the `PlatformSRKConfig` it built, so a Platform
+  SRK created by that backend's simulator first-boot recipe
+  (`provisionSimulatorEKSRK`, `pkg/backend/tpm2/backend.go:264-299`) carried
+  no `AuthPolicy` in its template at all, while `pkg/tpm2.DefaultConfig` and
+  every enrollment path already set it. `pkg/server/platform_store.go`'s
+  `buildTPM2PlatformSealer` then directly violated the "configuration is the
+  source of truth" invariant above: rather than trusting what
+  `PlatformSRKAttributes()` resolved, it force-set the returned
+  `KeyAttributes.PlatformPolicy` to `true` unconditionally
+  (formerly at `pkg/server/platform_store.go:241`, removed by #997), which hid
+  the mismatch instead of surfacing it — a Platform SRK autodetected this way
+  reported `PlatformPolicy: true` no matter what the underlying TPM object
+  actually was. The fix set `ToTPMConfig`'s `PlatformSRKConfig` to
+  `PlatformPolicy: true` (`pkg/backend/tpm2/config.go:211-213`) and deleted the
+  override (`pkg/server/platform_store.go:224-234`), so `buildTPM2PlatformSealer`
+  now reports exactly what `PlatformSRKAttributes()` resolves, same as every
+  other caller.
 
 ## What this feature deliberately does not do
 

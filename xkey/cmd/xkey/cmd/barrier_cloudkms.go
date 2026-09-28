@@ -32,6 +32,7 @@ import (
 var (
 	barrierAWSRegion   string
 	barrierAWSEndpoint string
+	barrierAWSKeyID    string
 
 	barrierGCPProjectID       string
 	barrierGCPLocationID      string
@@ -50,6 +51,8 @@ func init() {
 		"AWS region for the aws_kms barrier strategy")
 	barrierInitCmd.Flags().StringVar(&barrierAWSEndpoint, "aws-endpoint", "",
 		"Custom AWS KMS endpoint (optional; for testing against an emulator)")
+	barrierInitCmd.Flags().StringVar(&barrierAWSKeyID, "aws-key-id", "",
+		"Existing AWS KMS key ID, ARN, alias, or alias ARN to seal under (optional; a CMK is created and persisted when unset)")
 
 	barrierInitCmd.Flags().StringVar(&barrierGCPProjectID, "gcp-project-id", "",
 		"GCP project ID for the gcp_kms barrier strategy")

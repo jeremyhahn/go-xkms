@@ -53,6 +53,7 @@ func (s *Server) buildAWSKMSPlatformSealer() (types.Sealer, error) {
 	backend, err := awskms.NewBackend(&awskms.Config{
 		Region:      s.config.Backends.AWSKMS.Region,
 		Endpoint:    s.config.Backends.AWSKMS.Endpoint,
+		KeyID:       s.config.Backends.AWSKMS.KeyID,
 		KeyStorage:  metadataStorage,
 		CertStorage: metadataStorage,
 	})

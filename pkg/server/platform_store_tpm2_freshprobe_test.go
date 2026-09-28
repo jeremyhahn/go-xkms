@@ -16,6 +16,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,6 +39,21 @@ import (
 // fresh probe here always finds an enrolled Platform SRK and succeeds end
 // to end -- unlike a real device, which requires a separate enrollment
 // ceremony.
+//
+// This test also performs a Seal/Unseal round trip through the sealer this
+// exact fresh-probe path returns -- go-xkms#997's verification. Before that
+// fix, this was the one path that could disagree with itself: the simulator
+// first-boot recipe (pkg/backend/tpm2's provisionSimulatorEKSRK) created the
+// Platform SRK from ToTPMConfig's PlatformSRKConfig, which hardcoded
+// PlatformPolicy: false, while buildTPM2PlatformSealer separately forced the
+// KeyAttributes it returned to PlatformPolicy: true regardless of what
+// PlatformSRKAttributes() actually reported. Nothing in this file's
+// TestBuildTPM2PlatformSealer_FreshProbeOpensAndEnrolls -- nor
+// platform_store_simulator_test.go's tpm2EnrolledServer-based tests, which
+// enroll the Platform SRK by hand with an explicit, already-correct
+// PlatformPolicy: true -- ever actually called Seal/Unseal through this
+// specific probe-and-autodetect path, so the shape mismatch went unnoticed
+// by the test suite. A round trip here closes that gap.
 func TestBuildTPM2PlatformSealer_FreshProbeOpensAndEnrolls(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
 		Storage: config.StorageConfig{Backend: "file", Path: t.TempDir()},
@@ -59,11 +75,16 @@ func TestBuildTPM2PlatformSealer_FreshProbeOpensAndEnrolls(t *testing.T) {
 	_, ok := s.platformStoreTPM.(*tpm2backend.Backend)
 	assert.True(t, ok, "s.platformStoreTPM must hold the concrete *tpm2backend.Backend the probe opened")
 
-	// The Seal/Unseal round trip through platformPolicySealer is already
-	// proven by platform_store_simulator_test.go's tpm2EnrolledServer-based
-	// tests (which pin an exact PlatformPCR/bank at enrollment); this test's
-	// job is the fresh-probe wiring above (autodetect, Close tracking, the
-	// concrete backend type), not re-proving that round trip.
+	ctx := context.Background()
+	plaintext := []byte("fresh-probe-psrk-round-trip")
+
+	sealed, err := sealer.Seal(ctx, plaintext, nil)
+	require.NoError(t, err, "Seal must succeed against the fresh-probe Platform SRK")
+	require.NotNil(t, sealed)
+
+	got, err := sealer.Unseal(ctx, sealed, nil)
+	require.NoError(t, err, "Unseal must succeed against the same fresh-probe Platform SRK Seal used")
+	assert.Equal(t, plaintext, got)
 }
 
 // TestBuildTPM2PlatformSealer_NotConfiguredFailsClosed proves the

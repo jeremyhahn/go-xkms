@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — Engineering
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 See [architecture.md](architecture.md) for the two-layer shape (Barrier vs.
 the legacy sealed-blob store) and the auto-unseal decision order before
@@ -51,8 +51,8 @@ type BarrierCloudKMSConfig struct {
 	Vault   *BarrierVaultConfig
 }
 type BarrierAWSKMSConfig struct {
-	Region, AccessKeyID, Endpoint string
-	SecretAccessKey, SessionToken *xkms.SecretValue
+	Region, AccessKeyID, Endpoint, KeyID string
+	SecretAccessKey, SessionToken        *xkms.SecretValue
 }
 type BarrierGCPKMSConfig struct {
 	ProjectID, LocationID, KeyRingID, CredentialsFile string
@@ -83,6 +83,16 @@ never inspects whether a `*SecretValue` resolves. Every error is
 field. `Config.Barrier.CloudKMS` (`BarrierSection`, `config.go`) is the
 persisted location `xkey barrier init` writes to and `xkey barrier
 unseal`/`extension serve` read from.
+
+`BarrierAWSKMSConfig.KeyID` (go-xkms#842) is the one field `Validate` does
+NOT format-check: an existing CMK's key ID, key ARN, alias, or alias ARN to
+seal under instead of letting the barrier provision one. Deliberately so —
+`awskms.Config.Validate` (`pkg/backend/awskms`, the root module) is the one
+place that check lives, reached when `buildAWSKMSBarrierStrategy` constructs
+the backend via `sdk/go.NewAWSKMSBackend`; duplicating the AWS ID/ARN/alias
+regex here would be a second copy that drifts. Left empty (the default), the
+barrier creates and persists a new CMK under `sdk/go.SealKeyCN` the same way
+it always has.
 
 `cmd/xkey/cmd` (production code, gated as noted):
 
@@ -321,10 +331,11 @@ Legacy sealed-blob store (`SealService`/`PlatformPolicyService`/
 | `xkey/cmd/xkey/cmd/barrier_cli_test.go`, `policy_test.go`, `extension_serve_test.go`, `fido2_*_test.go` | `ble codec_json` | CLI flag parsing, non-TPM barrier/policy flows, extension-serve/fido2 wiring |
 | `xkey/pkg/config/barrier_cloud_test.go` | `ble codec_json` | `BarrierAWSKMSConfig`/`BarrierGCPKMSConfig`/`BarrierAzureKVConfig`/`BarrierVaultConfig.Validate()` — required fields, credential-field pairing; `TestBarrierCloudKMSConfig_SecretValueRoundTrip` — a `*SecretValue` reference survives `Save`→`Load` intact |
 | `xkey/pkg/config/load_test.go`, `load_partial_test.go`, `save_test.go` | `ble codec_json` | Pre-existing config-loader suite, re-run by this feature: `secretValueDecodeHookFunc`/`stringToWeakSliceHookFunc` (`load.go`) must not regress a `*SecretValue`-free `Load()`/`Save()` round trip or an env-var slice override (`TestLoadFromPath_EnvOverride`'s `XKEY_GUI_AUTO_UNSEAL_PCRS`) |
-| `xkey/cmd/xkey/cmd/barrier_cloudkms_test.go` | `ble codec_json` | `resolveBarrierCloudSecrets` (nil field skipped, unclaimed reference fails), `buildCloudKMSBarrierStrategy`'s "not compiled in" error, `persistBarrierCloudKMSConfig` (no-op for non-cloud strategies, missing-config error, a full init→save→reload round trip) |
+| `xkey/cmd/xkey/cmd/barrier_cloudkms_test.go` | `ble codec_json` | `resolveBarrierCloudSecrets` (nil field skipped, unclaimed reference fails), `buildCloudKMSBarrierStrategy`'s "not compiled in" error, `persistBarrierCloudKMSConfig` (no-op for non-cloud strategies, missing-config error, a full init→save→reload round trip including `KeyID`), `--aws-key-id` flag registration |
+| `xkey/pkg/config/barrier_cloud_test.go` | `ble codec_json` | (also) `TestBarrierAWSKMSConfig_KeyIDRoundTrip` — `KeyID` survives `Save`→`Load` intact; `TestBarrierAWSKMSConfig_Validate_KeyIDNotCheckedHere` — `Validate` accepts any `KeyID` value, format checking is `awskms.Config.Validate`'s job |
 | `xkey/pkg/gui/services/barrier_cloudkms_test.go` | `ble codec_json tpm_simulator` | `assembleStrategy`'s cloud KMS branch: unavailable without `SetCloudKMSStrategyFunc`, a full Initialize→Seal→Unseal round trip via `sdk/go.NewCloudKMSStrategy` over a mock sealer, injected-function error propagation |
-| `pkg/seal/cloud_provision_test.go` (root module) | `awskms gcpkms azurekv vault` | `EnsureSealKey`/`BuildCloudKMSStrategy` against a generic mock `types.KeyProvider`, all four strategy IDs |
-| `pkg/seal/cloud_provision_awskms_test.go` (root module) | `awskms` | `BuildCloudKMSStrategy` against the real `*awskms.Backend` and its own `MockKMSClient`: init→seal→unseal round trip, and a missing-credentials failure surfacing from `SealRootKey` (see that file's doc comment for why `EnsureSealKey`'s AWS KMS branch never reaches a real `CreateKey` call on this path — a pre-existing property of the shared provisioning recipe, not new here) |
+| `pkg/seal/cloud_provision_test.go` (root module) | `awskms gcpkms azurekv vault` | `EnsureSealKey`/`BuildCloudKMSStrategy` against a generic mock `types.KeyProvider`, all four strategy IDs; `TestEnsureSealKey_AWSKMSOperatorKeyNotFoundFailsClosed` (go-xkms#842) — an operator-configured key that resolves not-found fails closed with `ErrOperatorSealKeyNotFound` instead of falling through to `GenerateSymmetricKey` |
+| `pkg/seal/cloud_provision_awskms_test.go` (root module) | `awskms` | `BuildCloudKMSStrategy` against the real `*awskms.Backend` and its own `MockKMSClient`: init→seal→unseal round trip, a missing-credentials failure surfacing from `SealRootKey`, an operator-configured `Config.KeyID` reused without ever calling `CreateKey` (see that file's doc comment for why `EnsureSealKey`'s AWS KMS branch never reaches a real `CreateKey` call on this path — a pre-existing property of the shared provisioning recipe, not new here), and (go-xkms#842) `TestBuildCloudKMSStrategy_AWSKMSBackend_OperatorConfiguredKeyNotFound` — a configured `KeyID` `DescribeKey` reports as not found fails closed with `ErrOperatorSealKeyNotFound`, `CreateKey` never called |
 
 Run the auto-unseal-specific tests:
 

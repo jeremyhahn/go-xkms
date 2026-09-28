@@ -1,8 +1,19 @@
 # Static Password Store
 
+> **Superseded by [Password Vault](../password-vault/)** — see
+> [architecture.md](../password-vault/architecture.md),
+> [engineering.md](../password-vault/engineering.md),
+> [cli.md](../password-vault/cli.md), [api.md](../password-vault/api.md), and
+> [user.md](../password-vault/user.md) for the actively-maintained
+> documentation of this feature. This file is retained only for detail the
+> feature folder has not yet absorbed; where the two disagree, the feature
+> folder wins. It was corrected (go-xkms#864) to remove `EncryptedStore`,
+> `PINAccessStore`, and `SessionStore`, which no longer exist in
+> `pkg/staticpw`.
+
 ## Overview
 
-The `staticpw` package provides a password manager for static credentials (login usernames, passwords, URLs, and notes). It supports multi-tenant isolation, hierarchical folder organization, case-insensitive name lookups, optional symmetric encryption, and two access control modes.
+The `staticpw` package provides a password manager for static credentials (login usernames, passwords, URLs, and notes). It supports multi-tenant isolation, hierarchical folder organization, case-insensitive name lookups, and a session-based access-control mode. Encryption at rest is a property of whichever `storage.Backend` the store is constructed with, not of `pkg/staticpw` itself — see "Encryption" below.
 
 **Package**: `github.com/jeremyhahn/go-xkms/pkg/staticpw`
 
@@ -10,42 +21,41 @@ The `staticpw` package provides a password manager for static credentials (login
 
 ```mermaid
 graph TD
-    A[Application] --> B{Access Mode}
-    B -->|PINPerOperation| C[PINAccessStore]
-    B -->|SessionBased| D[SessionStore]
-    C --> E[EncryptedStore]
-    D --> E
-    E -->|Encrypt / Decrypt| F[types.SymmetricEncrypter]
-    E --> G[BackendStore]
-    G -->|JSON persistence| H[storage.Backend]
-    H --> I[File / Memory / Sealed]
+    A[Application] --> B[BackendStore / ScopedStore / TeamScopedStore]
+    B -->|JSON persistence| C[storage.Backend]
+    C --> D[File / Memory backend: plaintext]
+    C --> E[seal.BarrierBackend: AES-256-GCM, barrier-managed]
 ```
 
-The store is composed as a layered decorator chain:
+The store has one concrete implementation and no decorator chain:
 
-1. **BackendStore** -- core CRUD over `storage.Backend`, handles JSON serialization, folder operations, tenant prefixes
-2. **EncryptedStore** -- wraps BackendStore, transparently encrypts the `Password` field on write via `types.SymmetricEncrypter`
-3. **PINAccessStore** or **SessionStore** -- adds PIN-based access control on top of EncryptedStore
+1. **BackendStore** (`store.go:107`) -- core CRUD over `storage.Backend`, handles JSON serialization, folder operations, and tenant/scope key prefixes. It has no encryption or access-control logic of its own.
+2. **ScopedStore** (`scoped_store.go`) and **TeamScopedStore** (`team_scoped_store.go`) each compose two `BackendStore`s to route personal/shared or team/tenant reads and writes; they do not add encryption or PIN/session gating either.
 
 ## Data Model
 
 ```go
 type StaticPassword struct {
-    ID         string    // deterministic, derived from Name + FolderPath
-    Name       string    // human-readable label (required)
-    Title      string    // optional display title, falls back to Name
-    Username   string    // optional login username
-    Password   string    // the stored password (required)
-    URL        string    // optional service URL
-    Notes      string    // optional user notes
-    FolderPath string    // hierarchical folder (e.g. "Work/Email")
-    BackendID  string    // which encryption backend encrypted this entry
-    ExpiresAt  time.Time // optional expiration (zero = no expiry)
-    CreatedAt  time.Time // creation timestamp
-    UpdatedAt  time.Time // last modification timestamp
-    ReadOnly   bool      // auto-generated entries that cannot be modified
+    ID            string            // deterministic, derived from Name + FolderPath
+    Name          string            // human-readable label (required)
+    Title         string            // optional display title, falls back to Name
+    Username      string            // optional login username
+    Password      string            // the stored password (required)
+    URL           string            // optional service URL
+    MatchPatterns []string          // optional glob patterns for browser-extension URL matching
+    Notes         string            // optional user notes
+    FolderPath    string            // hierarchical folder (e.g. "Work/Email")
+    ExpiresAt     time.Time         // optional expiration (zero = no expiry)
+    CreatedAt     time.Time         // creation timestamp
+    UpdatedAt     time.Time         // last modification timestamp
+    ReadOnly      bool              // auto-generated entries that cannot be modified
+    OwnerID       string            // creator, stamped automatically by ScopedStore
+    Shared        bool              // tenant-wide (true) vs. personal (false, default)
+    Attributes    map[string]string // caller-defined metadata, not interpreted by staticpw
 }
 ```
+
+(`pkg/staticpw/types.go:28`)
 
 IDs are deterministic: `strings.ToLower(folderPath + "/" + name)` (or just `strings.ToLower(name)` for root-level entries).
 
@@ -83,59 +93,38 @@ Tenant IDs must be 1-64 characters, start with an alphanumeric character, and co
 
 ## Encryption
 
-`EncryptedStore` wraps any `Store` and encrypts the `Password` field using a `types.SymmetricEncrypter`:
+`pkg/staticpw` has no field-level encryption of its own: there is no `EncryptedStore` type in this package, and `BackendStore.Add`/`Update` write the whole `StaticPassword` entry as plain JSON (`store.go:211`, `json.Marshal(pw)`) to whatever `storage.Backend` it was constructed with:
 
 ```go
-encStore, err := staticpw.NewEncryptedStore(backendStore, myAESEncrypter)
+// Not encrypted at rest: a File or Memory backend stores the JSON as-is.
+store := staticpw.NewStore(fileBackend)
 
-// Add -- password field is encrypted before storage
-err = encStore.Add(&staticpw.StaticPassword{
-    Name:     "GitHub",
-    Password: "s3cret",
-    URL:      "https://github.com",
-})
-
-// Get -- returns entry with password still encrypted
-entry, err := encStore.Get("GitHub")
-
-// GetDecrypted -- decrypts the password field on demand
-entry, err := encStore.GetDecrypted("GitHub")
+// Encrypted at rest: a tenant barrier, wrapped as a storage.Backend,
+// transparently encrypts every Put/Get.
+backend := seal.NewBarrierBackend(tenantBarrier.Barrier())
+store, err := staticpw.NewSharedTenantStore(backend, "org-42")
 ```
 
-Encrypted passwords are stored as `ENC:<base64(json(EncryptedData))>`. A stored value without the `ENC:` prefix predates encryption and is refused: `GetDecrypted` returns `ErrPasswordNotEncrypted` rather than returning it as plaintext. There is no migration path between the two forms; a rejected entry must be deleted and re-added through `EncryptedStore` so it is written back out encrypted.
+This is exactly how `TenantPasswordStoreManager` builds its per-tenant stores (`tenant_store_manager.go:176`, `seal.NewBarrierBackend(tb.Barrier())`). Encryption, key management, and seal/unseal state belong entirely to the barrier (owned by go-qrdb, composed here through `pkg/seal`) — see [Sealing and Barrier](../sealing-and-barrier/architecture.md). `Get`/`List` return entries exactly as stored; there is no `GetDecrypted` call and no `ENC:`-prefixed value to reason about.
 
 ## Access Modes
 
-### PINPerOperation
+`AccessMode` (`access.go:29`) names two policies, but only one is a reachable code path (`access.go:16-28`):
 
-Requires a user PIN for every decryption. Non-decrypting operations (Add, List, etc.) proceed without PIN verification.
-
-```go
-pinStore, err := staticpw.NewPINAccessStore(encStore, pinManager)
-
-// Listing works without PIN
-entries, err := pinStore.List()
-
-// Decryption requires PIN each time
-entry, err := pinStore.GetDecrypted("GitHub", "1234")
-```
-
-### SessionBased
-
-Requires a single `Unlock` call with a valid PIN. Once unlocked, all decryption operations succeed until `Lock` is called. Uses `atomic.Bool` for lock-free state checks.
+- **`AccessSessionBased`** (`access.go:37`) is the only mode actually implemented. `TenantPasswordStoreManager.UnlockTenant`/`LockTenant` (`tenant_store_manager.go:162`, `:143`) hold a per-tenant `atomic.Bool` session lock, gated on the tenant barrier being unsealed. The PIN itself is verified one layer up, by `XKMSService.verifyPasswordStoreUserPIN` (`pkg/xkms/servicer_password.go:361`), before `UnlockTenant` is called, so there is exactly one credential check.
+- **`AccessPINPerOperation`** (`access.go:33`) is defined as a constant but has no store implementation — `pkg/staticpw` ships no per-operation PIN-gated store.
 
 ```go
-sessionStore, err := staticpw.NewSessionStore(encStore, pinManager)
+manager, err := staticpw.NewTenantPasswordStoreManager(barrierRegistry, systemStore)
 
-// Unlock the session
-err = sessionStore.Unlock("1234")
+err = manager.UnlockTenant("org-42")   // requires the tenant barrier unsealed
+store, err := manager.ResolveStore("org-42")
+entries, err := store.List()           // works once unlocked
 
-// Decryption works without re-entering PIN
-entry, err := sessionStore.GetDecrypted("GitHub")
-
-// Lock when done
-err = sessionStore.Lock()
+err = manager.LockTenant("org-42")     // always permitted; no credential needed
 ```
+
+There is no `Unlock`/`Lock` method on `Store` or `BackendStore` themselves, and no `GetDecrypted(id, pin)` call: session state lives in `TenantPasswordStoreManager`, one level above the store.
 
 ## Folder Organization
 
@@ -197,13 +186,10 @@ All errors are declared as typed package-level variables:
 | `ErrPasswordExists` | Duplicate entry detected |
 | `ErrPasswordReadOnly` | Cannot modify auto-generated entry |
 | `ErrStoreClosed` | Store has been closed |
-| `ErrStoreLocked` | Session store is locked |
+| `ErrStoreLocked` | Session is locked (`TenantPasswordStoreManager`) |
 | `ErrInvalidTenantID` | Invalid tenant identifier |
-| `ErrEncryptFailed` | Password encryption failed |
-| `ErrDecryptFailed` | Password decryption failed |
-| `ErrPasswordNotEncrypted` | Stored password has no `ENC:` prefix; predates encryption and cannot be decrypted |
-| `ErrStoreNotLocked` | Unlock called when already unlocked |
-| `ErrStoreAlreadyLocked` | Lock called when already locked |
+| `ErrStoreNotLocked` | `UnlockTenant` called when already unlocked |
+| `ErrStoreAlreadyLocked` | `LockTenant` called when already locked |
 | `ErrNilBarrierRegistry` | Barrier registry is nil |
 | `ErrNotConfigured` | Password store not configured |
 
@@ -379,9 +365,10 @@ transport can open a tenant vault without one:
 | Missing `user_pin` | `ErrPasswordStoreUserPINRequired`, store stays locked |
 | No PIN backend (`pin.enabled: false`) or user PIN never set | `ErrPasswordStoreUserPINNotProvisioned`, store stays locked |
 
-The PIN is verified with `PINBackend.VerifyUserPIN`, the same call
-`SessionStore.Unlock` makes, so there is exactly one credential path. Locking
-needs no credential: it only removes access.
+The PIN is verified with `PINBackend.VerifyUserPIN`
+(`pkg/xkms/servicer_password.go:361`) before `UnlockTenant` is ever called, so
+there is exactly one credential path. Locking needs no credential: it only
+removes access.
 
 `XKMSService.PasswordGet` refuses `decrypt` / `user_pin`
 (`ErrPasswordDecryptNotSupported`): the barrier-backed stores reachable from
@@ -413,10 +400,10 @@ answered with the stored value.
 
 ## Thread Safety
 
-`BackendStore` uses a `sync.RWMutex` for all operations. `SessionStore` uses `atomic.Bool` for lock-free session state transitions. `TenantPasswordStoreManager` uses `sync.Map` and `atomic.Bool` for lock-free concurrent access across tenants.
+`BackendStore` uses a `sync.RWMutex` for all operations. `TenantPasswordStoreManager` uses `sync.Map` and `atomic.Bool` for lock-free session-lock and tenant-state transitions across tenants.
 
 ## See Also
 
-- [Architecture: Storage](../architecture/storage.md) -- storage interface hierarchy
-- [Sealed Storage](../sealed-storage/README.md) -- encrypted backend for underlying storage
-- [PlatformStore](../platform-store/README.md) -- platform credential store
+- [Password Vault](../password-vault/) -- the actively-maintained feature folder that supersedes this document
+- [Sealing and Barrier](../sealing-and-barrier/) -- the barrier that encrypts a `storage.Backend` at rest
+- [Multi-Tenancy](../multi-tenancy/) -- tenant isolation and tenant barriers
