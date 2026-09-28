@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
@@ -106,11 +108,24 @@ func scopedTenantIDFromContext(ctx context.Context) string {
 	return identity.TenantID
 }
 
+// sharedPasswordAdministratorRoles are the qrdb built-in roles whose members
+// may modify a shared password they do not own.
+var sharedPasswordAdministratorRoles = []string{qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameSO}
+
 // checkSharedPasswordOwnership verifies that the caller is authorized to
 // modify a shared password. Shared passwords can only be modified by their
-// owner, or by users with admin or SO roles. Personal passwords (Shared=false)
-// are not checked -- they are inherently scoped to their owner by key prefix.
-func checkSharedPasswordOwnership(ctx context.Context, pw *staticpw.StaticPassword) error {
+// owner, or by a member of the Admin or SO built-in role of the caller's
+// tenant. Personal passwords (Shared=false) are not checked -- they are
+// inherently scoped to their owner by key prefix.
+//
+// The override is a role-membership decision, not a resource:action one: the
+// transports already required passwords:write or passwords:delete, which the
+// Operator role holds exactly as Admin does, so no permission separates the
+// administrator from any other vault writer. Membership is resolved through
+// auth.HoldsSystemRole against the role identifiers the identity carries; a
+// role NAME on the identity confers nothing (go-xkms#1074). Without a role
+// client membership cannot be established and a non-owner is refused.
+func (s *XKMSService) checkSharedPasswordOwnership(ctx context.Context, pw *staticpw.StaticPassword) error {
 	if !pw.Shared {
 		return nil // personal passwords are scoped by key prefix
 	}
@@ -122,9 +137,17 @@ func checkSharedPasswordOwnership(ctx context.Context, pw *staticpw.StaticPasswo
 	if identity.Subject == pw.OwnerID {
 		return nil
 	}
-	// Admin and SO roles can modify any shared password.
-	if identity.HasRole("admin") || identity.HasRole("so") {
-		return nil
+	if s.roles == nil {
+		return staticpw.ErrNotOwner
+	}
+	for _, roleName := range sharedPasswordAdministratorRoles {
+		held, err := auth.HoldsSystemRole(ctx, s.roles, identity, roleName)
+		if err != nil {
+			return err
+		}
+		if held {
+			return nil
+		}
 	}
 	return staticpw.ErrNotOwner
 }
@@ -257,7 +280,7 @@ func (s *XKMSService) PasswordUpdate(ctx context.Context, req *transport.Passwor
 		return err
 	}
 
-	if err := checkSharedPasswordOwnership(ctx, existing); err != nil {
+	if err := s.checkSharedPasswordOwnership(ctx, existing); err != nil {
 		return err
 	}
 
@@ -309,7 +332,7 @@ func (s *XKMSService) PasswordDelete(ctx context.Context, req *transport.Passwor
 		return err
 	}
 
-	if err := checkSharedPasswordOwnership(ctx, existing); err != nil {
+	if err := s.checkSharedPasswordOwnership(ctx, existing); err != nil {
 		return err
 	}
 

@@ -123,7 +123,6 @@ Behavior:
 |-----------------------------|-------------------------------------------|
 | No identity (unauthenticated) | Pass through (auth middleware handles rejection) |
 | Cross-tenant-scoped TenantID (`""` or the reserved `system` tenant) | Pass through (system-level or bootstrap operation) |
-| SO role (Security Officer) | Pass through (cross-tenant access allowed)        |
 | No barrier registry        | Pass through (tenant enforcement disabled)        |
 | Tenant not in registry     | Return 403 Forbidden                              |
 | Tenant barrier sealed      | Return 503 Service Unavailable                    |
@@ -202,11 +201,15 @@ func IsCrossTenant(id *Identity) bool {
     return id.TenantID == qrdbsdk.SystemTenantID || id.TenantID == ""
 }
 
-// HasRole reports whether id carries role. tenantgate.Access uses it
-// (identity.HasRole("so")) to give the Security Officer role cross-tenant
-// access regardless of its own TenantID.
-func (id *Identity) HasRole(role string) bool
 ```
+
+There is no role-based exemption from tenant scoping. Cross-tenant scope is
+qrdb's system-tenant rule alone: the system tenant's Security Officer is
+cross-tenant because it is a system-tenant identity, and a tenant-local
+officer is confined to its tenant. A former `identity.HasRole("so")` bypass
+compared a role name against the role identifiers identities carry, so it
+matched only unverified token claims (go-xkms#1074); see
+[`../rbac/architecture.md`](../rbac/architecture.md).
 
 ### JWT Extraction
 
@@ -322,5 +325,5 @@ if err == staticpw.ErrTenantBarrierUnavailable {
 3. **Invalidate cache after seal** - call `factory.InvalidateTenant(tenantID)`
 4. **Log tenant IDs** - aids debugging and compliance audits
 5. **Fail closed on seal** - return 503, don't fall back to system store
-6. **SO role exceptions** - document cross-tenant operations
+6. **No role-based tenant exemptions** - cross-tenant scope comes only from the system tenant
 7. **Test isolation** - create separate test tenants, don't share data
