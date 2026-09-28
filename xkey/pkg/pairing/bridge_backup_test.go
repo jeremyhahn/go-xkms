@@ -53,7 +53,12 @@ func TestBridge_DispatchMap_TotalHandlerCount_WithBackup(t *testing.T) {
 
 // --- handleCreateBackup tests ---
 
-func TestBridge_HandleCreateBackup_Success(t *testing.T) {
+// TestBridge_HandleCreateBackup_NotConfigured verifies that remote.createBackup
+// reports the feature as unconfigured (go-xkms#690: backup encryption key
+// sourcing and persistence for phone-initiated backups is an open
+// architecture question, see bridge_backup.go) rather than fabricating a
+// successful, empty backup.
+func TestBridge_HandleCreateBackup_NotConfigured(t *testing.T) {
 	client := &mockTransportClient{}
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
@@ -66,11 +71,7 @@ func TestBridge_HandleCreateBackup_Success(t *testing.T) {
 		Label:             "test-backup",
 	})
 	resp := b.HandleRequest(context.Background(), req)
-
-	result := decodeResult[RemoteCreateBackupResult](t, resp)
-	assert.Nil(t, result.BackupData)
-	assert.Empty(t, result.BackupID)
-	assert.Equal(t, 0, result.ItemCount)
+	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
 }
 
 func TestBridge_HandleCreateBackup_InvalidParams(t *testing.T) {
@@ -89,17 +90,19 @@ func TestBridge_HandleCreateBackup_MinimalParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	// All booleans false, no label - minimal valid params.
+	// All booleans false, no label - minimal valid params, still reports
+	// unconfigured rather than an empty success.
 	req := newRemoteRequest(MethodRemoteCreateBackup, RemoteCreateBackupParams{})
 	resp := b.HandleRequest(context.Background(), req)
-
-	result := decodeResult[RemoteCreateBackupResult](t, resp)
-	assert.Nil(t, result.BackupData)
+	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
 }
 
 // --- handleRestoreBackup tests ---
 
-func TestBridge_HandleRestoreBackup_Success(t *testing.T) {
+// TestBridge_HandleRestoreBackup_NotConfigured verifies that remote.restoreBackup
+// reports the feature as unconfigured rather than discarding the phone's
+// backup data while claiming success.
+func TestBridge_HandleRestoreBackup_NotConfigured(t *testing.T) {
 	client := &mockTransportClient{}
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
@@ -108,11 +111,7 @@ func TestBridge_HandleRestoreBackup_Success(t *testing.T) {
 		BackupData: []byte{0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE},
 	})
 	resp := b.HandleRequest(context.Background(), req)
-
-	result := decodeResult[RemoteRestoreBackupResult](t, resp)
-	assert.True(t, result.Success)
-	assert.Equal(t, "backup received", result.Message)
-	assert.Empty(t, result.Restored)
+	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
 }
 
 func TestBridge_HandleRestoreBackup_InvalidParams(t *testing.T) {
@@ -152,16 +151,18 @@ func TestBridge_HandleRestoreBackup_NilBackupData(t *testing.T) {
 
 // --- handleListBackupsForRestore tests ---
 
-func TestBridge_HandleListBackups_Success(t *testing.T) {
+// TestBridge_HandleListBackups_NotConfigured verifies that remote.listBackups
+// reports the feature as unconfigured rather than an empty-but-successful
+// list, since no persistence/ID convention exists for phone-initiated
+// backups yet (see bridge_backup.go).
+func TestBridge_HandleListBackups_NotConfigured(t *testing.T) {
 	client := &mockTransportClient{}
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
 	req := newRemoteRequest(MethodRemoteListBackups, RemoteListBackupsParams{})
 	resp := b.HandleRequest(context.Background(), req)
-
-	result := decodeResult[RemoteListBackupsResult](t, resp)
-	assert.Empty(t, result.Backups)
+	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
 }
 
 func TestBridge_HandleListBackups_NilParams(t *testing.T) {
@@ -169,14 +170,10 @@ func TestBridge_HandleListBackups_NilParams(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	// ListBackups does not require params, should still succeed.
+	// ListBackups does not require params; it still reports unconfigured.
 	req := newRemoteRequest(MethodRemoteListBackups, nil)
 	resp := b.HandleRequest(context.Background(), req)
-
-	// The handler ignores params, so nil is fine.
-	require.Nil(t, resp.Error, "expected success but got error: %v", resp.Error)
-	result := decodeResult[RemoteListBackupsResult](t, resp)
-	assert.Empty(t, result.Backups)
+	assertErrorResponse(t, resp, req.ID, ErrorCodeFeatureUnavailable)
 }
 
 // --- Error mapping tests ---

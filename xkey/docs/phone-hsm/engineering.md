@@ -1,6 +1,6 @@
 # Phone as HSM — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 ## Exported surface — `xkey/pkg/pairing`
 
@@ -35,6 +35,62 @@ Supporting: `device.go`, `attestation.go`, `bridge_attestation.go`,
 `device_enrollment_policy.go`, `fragmentation.go`, `handshake_common.go`,
 `message_loop.go`, `sharing_policy.go`, `tcp_transport.go`, `tpm_enroller.go`,
 `transport.go`, `constants.go`, `errors.go`.
+
+### Bridge collaborators are optional, and say so honestly
+
+`remote.oathAdd`/`remote.oathGenerate`, `remote.pivListSlots`/`pivGetCert`, and
+`remote.syncTrustStore`/`syncOATH`/`syncPasswords`/`syncAll` each delegate to a
+real xkey service the CLI layer wires into `BridgeConfig` when it constructs
+the `Bridge`, the same pattern `BridgeConfig.TPM` already established for TCG
+enrollment:
+
+| Method family | `BridgeConfig` field | Delegates to |
+|---|---|---|
+| `remote.oath*` | `OATHStore oath.Store` | `xkey/pkg/oath` (`Store.Add`/`Get`, `Generator`) |
+| `remote.pivListSlots`, `remote.pivGetCert` | `PIVStorage PIVStorageProvider` | `xkms.PIVCertificateStorage` for the named backend |
+| `remote.pivSign` | *(none — see below)* | `Client.Sign`, the same generic key-signing path `remote.sign` uses |
+| `remote.sync*` | `SyncService *sync.Service` | `xkey/pkg/sync` (`ApplyXDelta`/`ComputeLocalXDelta`) |
+
+`remote.pivSign` needs no PIV-specific collaborator: a PIV slot's private key
+is stored under `KeyID == slot` in the same key backend every other key
+lives in, so signing reaches it through `Client.Sign` exactly like
+`remote.sign` does. Only certificate storage (list/get-cert) is PIV-specific,
+because `Client` (the generic `transport.Client`) has no certificate-storage
+verbs.
+
+Every field above is optional. When one is `nil`, its methods answer with a
+typed "not configured" sentinel (`ErrOATHNotConfigured`, `ErrPIVNotConfigured`,
+`ErrSyncNotConfigured`, all mapped to JSON-RPC `ErrorCodeFeatureUnavailable`)
+instead of a fabricated empty success — the same "unavailable here, not
+broken" distinction `ErrTPMNotConfigured` already draws for a host with no
+TPM. `remote.syncStatus` is the one exception: with no `SyncService` it
+reports an empty status (nothing has been synced yet) rather than an error,
+since that is a legitimate status, not a missing feature.
+
+`cmd/xkey/cmd/device_listen.go`'s `buildListenBridgeConfig` is the one place
+that wires all three: it opens the OATH store through `openOATHStore` and the
+sync service through `openSyncService` — the exact constructors `xkey oath`
+and `xkey device sync` themselves call — and builds the PIV storage provider
+from the same `createPIVStorage` construction `xkey piv` uses, so a
+credential, certificate, or trust store entry the phone reaches through the
+bridge is the same one those commands read and write. A collaborator that
+fails to open there (no barrier password reachable, a missing PKCS#11
+library, ...) is logged and left `nil` rather than aborting the daemon: the
+host still pairs and serves every other method, with only that one method
+family reporting itself unconfigured.
+
+**`remote.createBackup`/`restoreBackup`/`listBackups` are unimplemented**
+(go-xkms#690) pending an owner decision `bridge_backup.go` documents in
+detail: `backup.Service` encrypts every archive with a caller-supplied
+32-byte key, and neither the wire params nor the wire results for these three
+methods carry one, so the key has to come from a source the bridge does not
+yet have (a passphrase/key file the CLI supplies at `xkey device listen`
+start, or something derived from material the bridge does not currently
+hold) — and `remote.listBackups` additionally presumes a persistence
+location and ID/label scheme for phone-initiated backups that has no
+convention anywhere in this codebase yet. All three handlers return
+`ErrBackupNotConfigured` until that is decided; they never fabricate success
+or silently discard the phone's data.
 
 ### USB transport — `go-xkms/pkg/api/transport/usb`
 

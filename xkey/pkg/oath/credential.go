@@ -747,6 +747,16 @@ func canonicalizeSecretBytes(secret []byte) []byte {
 	return secret
 }
 
+// GenerateCredentialID returns the same ID a newly created credential would
+// receive for the given issuer and account name. It is exported so a caller
+// outside this package that builds a Credential from data with no ID of its
+// own (e.g. the pairing bridge, assembling a Credential from an OATH
+// credential handed over by a paired phone) mints IDs using the exact scheme
+// every store already keys its entries by, instead of inventing a second one.
+func GenerateCredentialID(issuer, accountName string) string {
+	return generateCredentialID(issuer, accountName)
+}
+
 // generateCredentialID creates a unique ID from issuer and account name.
 func generateCredentialID(issuer, accountName string) string {
 	if issuer != "" && accountName != "" {

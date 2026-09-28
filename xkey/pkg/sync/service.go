@@ -555,6 +555,16 @@ func computeChecksum(data []byte) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// Checksum returns the hex-encoded SHA-256 checksum of data. It is exported
+// so a caller reporting a store's checksum outside this package (the pairing
+// bridge's remote.syncStatus handler, answering the same question
+// local.syncStatus answers from the phone side) uses the identical algorithm
+// this package's own state tracking is built on, rather than a second one
+// that could disagree on what "the same data" hashes to.
+func Checksum(data []byte) string {
+	return computeChecksum(data)
+}
+
 // certFingerprint returns the hex-encoded SHA-256 fingerprint of a
 // certificate's raw DER bytes.
 func certFingerprint(cert *x509.Certificate) string {

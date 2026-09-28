@@ -29,6 +29,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
@@ -283,7 +284,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 
 	// Wire the xkmsd bridge so the phone's full remote.* method set is served,
 	// not just ping and attestation.
-	bridgeClient, bridge, err := connectListenBridge(logger, enroller, enrollerErr)
+	bridgeClient, bridge, collaborators, err := connectListenBridge(cmd, logger, enroller, enrollerErr)
 	if err != nil {
 		return err
 	}
@@ -294,6 +295,10 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 			}
 		}()
 	}
+	// Closes the OATH store and sync data sources connectListenBridge opened
+	// for the life of this daemon. A nil receiver (no bridge, or a
+	// collaborator that failed to open) is a safe no-op.
+	defer collaborators.Close()
 
 	// Create the request handler that processes phone requests
 	handler, err := newListenRequestHandler(logger, tpmModule, attestMode, bridge)
@@ -491,39 +496,148 @@ func resolveListenEnroller(
 	return enroller, enroller, nil
 }
 
+// listenBridgeCollaborators holds the long-lived Bridge collaborators
+// connectListenBridge opens so the phone's remote.oath* and remote.sync*
+// methods reach real xkey data instead of reporting the feature
+// unconfigured. Unlike the PIV storage provider (opened fresh per request by
+// the bridge itself), these are opened once, for the life of the daemon, and
+// must be closed at shutdown.
+type listenBridgeCollaborators struct {
+	oathStore   oath.Store
+	syncSources *backupSources
+}
+
+// Close releases every collaborator resource this holds. A nil receiver is a
+// safe no-op (no bridge was built, or nothing opened successfully). Errors
+// are logged rather than returned: every call site is an unconditional
+// deferred teardown with no error path of its own, matching
+// backupSources.Close's own contract.
+func (c *listenBridgeCollaborators) Close() {
+	if c == nil {
+		return
+	}
+	if c.oathStore != nil {
+		if err := c.oathStore.Close(); err != nil {
+			slog.Default().Warn("failed to close OATH store", slog.String("error", err.Error()))
+		}
+	}
+	if c.syncSources != nil {
+		c.syncSources.Close()
+	}
+}
+
+// listenPIVStorageProvider returns a pairing.PIVStorageProvider that builds
+// PIV certificate storage for a named backend using the exact same
+// createPIVStorage construction "xkey piv" uses (piv.go), over the same
+// viper-bound configuration (--backend, --piv-storage, --storage-path,
+// --tpm-device, --pkcs11-*): a certificate stored via "xkey piv store" is the
+// certificate the phone sees through remote.pivGetCert/pivListSlots. Storage
+// is opened fresh per request and closed by the bridge afterward
+// (bridge_piv.go), matching how "xkey piv" itself opens storage once per
+// invocation rather than holding a long-lived session.
+func listenPIVStorageProvider(logger *slog.Logger) pairing.PIVStorageProvider {
+	return func(backend string) (xkms.PIVCertificateStorage, error) {
+		cfg := buildPIVConfig()
+		cfg.Backend = PIVBackendType(backend)
+		// Re-derive the storage type for the requested backend unless the
+		// operator pinned one explicitly, matching buildPIVConfig's own
+		// precedence (an explicit --piv-storage/config override always wins).
+		if viper.GetString(viperKeyPIVStorage) == "" {
+			cfg.StorageType = defaultPIVStorageTypeForBackend(cfg.Backend)
+		}
+		return createPIVStorage(cfg, logger)
+	}
+}
+
+// buildListenBridgeConfig assembles the BridgeConfig connectListenBridge
+// hands to pairing.NewBridge, opening every collaborator that config needs.
+// Split out from connectListenBridge so the wiring can be exercised without
+// an xkmsd connection: it takes no transport.Client and dials nothing.
+//
+// The OATH store and sync service are opened through the exact constructors
+// "xkey oath" (openOATHStore, oath.go) and "xkey device sync"
+// (openSyncService, device_sync.go) already use, reading cmd's
+// --barrier-password/--barrier-password-file flags (registered by
+// addDeviceBarrierFlags on this same command) the same way those commands
+// do. The PIV certificate storage provider builds on the exact
+// createPIVStorage construction "xkey piv" uses. A collaborator that fails to
+// open is logged and left nil rather than aborting the daemon: the bridge
+// already treats a nil collaborator as "feature unconfigured" for exactly
+// this reason (go-xkms#690), and a host with, say, no OATH store yet should
+// still pair, sync its trust store, and serve PIV and every other method.
+//
+// The returned collaborators must be closed at shutdown by the caller
+// (listenBridgeCollaborators.Close); connectListenBridge does this via
+// defer, matching every other resource runDeviceListen owns.
+func buildListenBridgeConfig(
+	cmd *cobra.Command,
+	logger *slog.Logger,
+	xkmsdCfg *XKMSdBridgeConfig,
+	enroller pairing.TPMEnroller,
+	enrollerErr error,
+) (*pairing.BridgeConfig, *listenBridgeCollaborators) {
+	collaborators := &listenBridgeCollaborators{}
+
+	if oathStore, oathErr := openOATHStore(cmd, ""); oathErr != nil {
+		logger.Warn("OATH store unavailable; remote.oath* will report unconfigured",
+			slog.String("error", oathErr.Error()))
+	} else {
+		collaborators.oathStore = oathStore
+	}
+
+	syncService, syncSources, syncErr := openSyncService(cmd)
+	if syncErr != nil {
+		logger.Warn("sync service unavailable; remote.sync* will report unconfigured",
+			slog.String("error", syncErr.Error()))
+	} else {
+		collaborators.syncSources = syncSources
+	}
+
+	bridgeCfg := &pairing.BridgeConfig{
+		AllowedBackends: xkmsdCfg.AllowedBackends,
+		DeniedBackends:  xkmsdCfg.DeniedBackends,
+		RequestTimeout:  xkmsdCfg.RequestTimeout,
+		Logger:          logger,
+		TPM:             enroller,
+		TPMOpenErr:      enrollerErr,
+		OATHStore:       collaborators.oathStore,
+		PIVStorage:      listenPIVStorageProvider(logger),
+		SyncService:     syncService,
+	}
+
+	return bridgeCfg, collaborators
+}
+
 // connectListenBridge creates the xkmsd bridge that serves the phone's
 // remote.* requests while this laptop is listening. It returns a nil client
 // and bridge when xkmsd is not enabled, in which case only the locally
 // handled methods are served. The enroller, when non-nil, is the TPM the
 // bridge answers the TCG/IDevID enrollment methods from.
 func connectListenBridge(
+	cmd *cobra.Command,
 	logger *slog.Logger,
 	enroller pairing.TPMEnroller,
 	enrollerErr error,
-) (transport.Client, *pairing.Bridge, error) {
+) (transport.Client, *pairing.Bridge, *listenBridgeCollaborators, error) {
 	cfg := loadXKMSdBridgeConfig()
 	if !cfg.Enabled {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	client, err := dialXKMSd(cfg, logger)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	bridge, err := pairing.NewBridge(client, &pairing.BridgeConfig{
-		AllowedBackends: cfg.AllowedBackends,
-		DeniedBackends:  cfg.DeniedBackends,
-		RequestTimeout:  cfg.RequestTimeout,
-		Logger:          logger,
-		TPM:             enroller,
-		TPMOpenErr:      enrollerErr,
-	})
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, enroller, enrollerErr)
+
+	bridge, err := pairing.NewBridge(client, bridgeCfg)
 	if err != nil {
-		return nil, nil, errors.Join(ErrXKMSdBridgeCreationFailed, err, client.Close())
+		collaborators.Close()
+		return nil, nil, nil, errors.Join(ErrXKMSdBridgeCreationFailed, err, client.Close())
 	}
 
-	return client, bridge, nil
+	return client, bridge, collaborators, nil
 }
 
 // listenRequestHandler handles incoming requests from the phone.

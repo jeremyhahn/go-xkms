@@ -1,0 +1,7 @@
+- **The phone bridge's OATH, PIV and sync methods now do real work, instead of reporting success and doing nothing** (#690). Of the 13 `remote.*` bridge handlers that were placeholders:
+  - `remote.oathAdd`/`oathGenerate` now use the configured `oath.Store` and generator;
+  - `remote.pivListSlots`/`pivGetCert` use the per-backend `xkms.PIVCertificateStorage`;
+  - `remote.pivSign` signs with the slot's key through the ordinary key backend;
+  - the five `remote.sync*` methods use `sync.Service`: union-merge for the trust store, last-modified-wins for OATH and passwords.
+
+  `xkey device listen` wires these to the same stores `xkey oath`, `xkey piv` and `xkey device sync` use (`buildListenBridgeConfig`). A handler without its service now answers `ErrorCodeFeatureUnavailable` (-32035). The three `remote.*Backup` methods now return that error too, instead of a fake success, until the backup key source is decided. The server now maps `ErrKeyExists` to its RPC code; before, it fell through to Internal. Files: `xkey/pkg/pairing/bridge_{oath,piv,sync,backup}.go`, `bridge.go`, `errors.go`, `protocol.go`, `xkey/cmd/xkey/cmd/device_listen.go`; `oath.GenerateCredentialID` and `sync.Checksum` are exported. Verified by per-method round trips through `Bridge.HandleRequest`, and by `device_listen_collaborators_test.go`, where an OATH add and a trust-store sync through the listen-built bridge persist to the real on-disk stores.
