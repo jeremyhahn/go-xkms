@@ -37,11 +37,13 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
@@ -511,6 +513,17 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 		},
 		Config: &ca.CAConfig{
 			DefaultCertValidityDays: ca.DefaultCertValidityDays,
+			// The device-attestation tests present an EK certificate signed
+			// by swtpmTestEKIssuer (see swtpm_helper_test.go's
+			// generateEKCertificate); without a configured trust anchor,
+			// pkg/ca/tcg_ek_trust.go's ekRootPool refuses every EK
+			// certificate with ErrTCGEKCertUntrusted ("no ek trust anchors
+			// configured") — there is deliberately no "skip the check" path.
+			TCGConfig: &ca.TCGConfig{
+				TrustAnchors: &truststore.Config{
+					ExternalRootPaths: []string{writeSwtpmTestEKRootPEM(t)},
+				},
+			},
 		},
 		KeyStore:  keyStore,
 		CertStore: certStore,
@@ -519,6 +532,12 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 			return keyStore, nil
 		},
 		RevocationStore: xkmsstorage.NewMemory(),
+		// pkg/ca/attestation.go's local-attestation import (exercised by
+		// TestCAImportLocalAttestation*) persists evidence through the
+		// object store and refuses with ErrObjectStoreRequired when none is
+		// configured; objmemory.New() is the same in-memory implementation
+		// pkg/ca's own tests use (e.g. coverage_boost10_test.go).
+		ObjectStore: objmemory.New(),
 	}
 
 	ctx := context.Background()

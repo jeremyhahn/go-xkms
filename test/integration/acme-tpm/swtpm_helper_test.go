@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -29,6 +30,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,6 +39,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/local"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 )
@@ -362,7 +365,84 @@ func (s *SwtpmConnection) Close() {
 	}
 }
 
-// generateEKCertificate creates a self-signed EK certificate for swtpm testing
+// swtpmTestEKIssuer is the shared, fixed signing key/certificate every
+// generateEKCertificate call signs a test device's EK certificate with, so
+// every EK certificate this test binary generates chains to ONE reusable
+// root -- SwtpmTestEKRootPEM / writeSwtpmTestEKRootPEM expose it for
+// newTestCA (handlers_tcgcsr_integration_test.go) to configure as a
+// pkg/ca TCGConfig trust anchor. Lazily created once via
+// swtpmTestEKIssuerOnce.
+//
+// Before this, each call minted a fresh ECDSA key, signed with it, and then
+// discarded it -- the certificate embedded the EK's own public key but was
+// signed by a key nothing else ever saw again, so no caller could construct
+// a matching root to verify it against. A shared, retrievable issuer is
+// required for chain verification to be possible at all, not merely
+// convenient.
+var (
+	swtpmTestEKIssuerOnce sync.Once
+	swtpmTestEKIssuerKey  *ecdsa.PrivateKey
+	swtpmTestEKIssuerCert *x509.Certificate
+)
+
+func swtpmTestEKIssuer() (*ecdsa.PrivateKey, *x509.Certificate) {
+	swtpmTestEKIssuerOnce.Do(func() {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to generate issuer key: %v", err))
+		}
+		serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+		if err != nil {
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to generate issuer serial: %v", err))
+		}
+		template := &x509.Certificate{
+			SerialNumber: serial,
+			Subject: pkix.Name{
+				CommonName:   "swtpm Test EK CA",
+				Organization: []string{"swtpm-test"},
+			},
+			NotBefore:             time.Now().Add(-time.Hour),
+			NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+			KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+			BasicConstraintsValid: true,
+			IsCA:                  true,
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+		if err != nil {
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to create issuer certificate: %v", err))
+		}
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to parse issuer certificate: %v", err))
+		}
+		swtpmTestEKIssuerKey, swtpmTestEKIssuerCert = key, cert
+	})
+	return swtpmTestEKIssuerKey, swtpmTestEKIssuerCert
+}
+
+// SwtpmTestEKRootPEM returns the PEM encoding of the shared swtpm test EK
+// issuer certificate (see swtpmTestEKIssuer).
+func SwtpmTestEKRootPEM() []byte {
+	_, cert := swtpmTestEKIssuer()
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+}
+
+// writeSwtpmTestEKRootPEM writes SwtpmTestEKRootPEM to a file under t's
+// temporary directory and returns its path, for
+// truststore.Config.ExternalRootPaths (pkg/attestation/truststore has no
+// inline-PEM option).
+func writeSwtpmTestEKRootPEM(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "swtpm-test-ek-root.pem")
+	require.NoError(t, os.WriteFile(path, SwtpmTestEKRootPEM(), 0o600))
+	return path
+}
+
+// generateEKCertificate creates an EK certificate for swtpm testing, signed
+// by the shared swtpmTestEKIssuer and carrying the tcg-kp-EKCertificate
+// extended key usage (2.23.133.8.1) the TCG EK Credential Profile defines --
+// pkg/ca/tcg_ek_trust.go's requireTCGEKCertificateEKU refuses any EK
+// certificate without it, a real manufacturer certificate included.
 func (s *SwtpmConnection) generateEKCertificate() ([]byte, error) {
 	// Get EK attributes to access the public key
 	ekAttrs, err := s.tpmModule.EKAttributes()
@@ -388,25 +468,21 @@ func (s *SwtpmConnection) generateEKCertificate() ([]byte, error) {
 			CommonName:   s.deviceID,
 			Organization: []string{"swtpm-test"},
 		},
-		Issuer: pkix.Name{
-			CommonName:   "swtpm Test EK CA",
-			Organization: []string{"swtpm-test"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDataEncipherment,
+		NotBefore: time.Now(),
+		NotAfter:  time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:  x509.KeyUsageKeyEncipherment | x509.KeyUsageDataEncipherment,
+		// tcg-kp-EKCertificate: see the function doc comment above.
+		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{ca.OIDTCGKpEKCertificate},
 		BasicConstraintsValid: true,
 		IsCA:                  false,
 	}
 
-	// Generate a temporary signing key for the self-signed certificate
-	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, caerrors.KeyGenerationFailureError("failed to generate signing key: %v", err)
-	}
+	issuerKey, issuerCert := swtpmTestEKIssuer()
 
-	// Create the certificate with the EK public key
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, ekPublicKey, signingKey)
+	// Sign with the shared issuer (see swtpmTestEKIssuer's doc comment) --
+	// the certificate's Issuer field is derived from issuerCert.Subject by
+	// x509.CreateCertificate, not from this template.
+	certDER, err := x509.CreateCertificate(rand.Reader, template, issuerCert, ekPublicKey, issuerKey)
 	if err != nil {
 		return nil, caerrors.SigningFailureError("failed to create certificate: %v", err)
 	}
