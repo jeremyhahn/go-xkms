@@ -48,6 +48,11 @@ services:
     volumes:
       - ./config.acme-tpm.yaml:/etc/xkms/xkmsd.yaml
       - acme-data:/data
+      # The fixed EK issuer trust anchor config.acme-tpm.yaml's
+      # ca.tcg-config.trust-anchors points at -- see that file's comment,
+      # and swtpm_helper_test.go's swtpmTestEKIssuer, for why this is a
+      # committed file rather than something generated at runtime.
+      - ./testdata:/testdata:ro
     environment:
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data

@@ -18,7 +18,6 @@ package tpm_test
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -392,9 +391,9 @@ func (s *SwtpmConnection) Close() {
 // generateEKCertificate call signs a test device's EK certificate with, so
 // every EK certificate this test binary generates chains to ONE reusable
 // root -- SwtpmTestEKRootPEM / writeSwtpmTestEKRootPEM expose it for
-// newTestCA (handlers_tcgcsr_integration_test.go) to configure as a
-// pkg/ca TCGConfig trust anchor. Lazily created once via
-// swtpmTestEKIssuerOnce.
+// newTestCA (handlers_tcgcsr_integration_test.go) to configure as a pkg/ca
+// TCGConfig trust anchor. Lazily loaded once via swtpmTestEKIssuerOnce, from
+// the fixed key/cert committed at testdata/swtpm-test-ek-root.{crt,key}.
 //
 // Before this, each call minted a fresh ECDSA key, signed with it, and then
 // discarded it -- the certificate embedded the EK's own public key but was
@@ -402,6 +401,18 @@ func (s *SwtpmConnection) Close() {
 // a matching root to verify it against. A shared, retrievable issuer is
 // required for chain verification to be possible at all, not merely
 // convenient.
+//
+// It must additionally be FIXED, not generated fresh per test-binary run
+// (as an earlier version of this helper did): the acme-tpm lane's real ACME
+// server (test/integration/acme-tpm/config.acme-tpm.yaml, a separate
+// process in the acme-server container) verifies device EK certificates
+// against its own configured trust anchors too, and can only be given a
+// trust anchor that exists before it starts -- config.acme-tpm.yaml's
+// `ca.tcg-config.trust-anchors` points at the same committed
+// testdata/swtpm-test-ek-root.crt (bind-mounted read-only into that
+// container by docker-compose.yml), so the two processes agree on the
+// issuer without either needing to know anything about the other's runtime
+// state.
 var (
 	swtpmTestEKIssuerOnce sync.Once
 	swtpmTestEKIssuerKey  *ecdsa.PrivateKey
@@ -410,34 +421,32 @@ var (
 
 func swtpmTestEKIssuer() (*ecdsa.PrivateKey, *x509.Certificate) {
 	swtpmTestEKIssuerOnce.Do(func() {
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		certPEM, err := os.ReadFile("testdata/swtpm-test-ek-root.crt")
 		if err != nil {
-			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to generate issuer key: %v", err))
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to read issuer certificate: %v", err))
 		}
-		serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
-		if err != nil {
-			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to generate issuer serial: %v", err))
+		certBlock, _ := pem.Decode(certPEM)
+		if certBlock == nil {
+			panic("swtpmTestEKIssuer: testdata/swtpm-test-ek-root.crt has no PEM block")
 		}
-		template := &x509.Certificate{
-			SerialNumber: serial,
-			Subject: pkix.Name{
-				CommonName:   "swtpm Test EK CA",
-				Organization: []string{"swtpm-test"},
-			},
-			NotBefore:             time.Now().Add(-time.Hour),
-			NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
-			KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-			BasicConstraintsValid: true,
-			IsCA:                  true,
-		}
-		der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-		if err != nil {
-			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to create issuer certificate: %v", err))
-		}
-		cert, err := x509.ParseCertificate(der)
+		cert, err := x509.ParseCertificate(certBlock.Bytes)
 		if err != nil {
 			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to parse issuer certificate: %v", err))
 		}
+
+		keyPEM, err := os.ReadFile("testdata/swtpm-test-ek-root.key")
+		if err != nil {
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to read issuer key: %v", err))
+		}
+		keyBlock, _ := pem.Decode(keyPEM)
+		if keyBlock == nil {
+			panic("swtpmTestEKIssuer: testdata/swtpm-test-ek-root.key has no PEM block")
+		}
+		key, err := x509.ParseECPrivateKey(keyBlock.Bytes)
+		if err != nil {
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to parse issuer key: %v", err))
+		}
+
 		swtpmTestEKIssuerKey, swtpmTestEKIssuerCert = key, cert
 	})
 	return swtpmTestEKIssuerKey, swtpmTestEKIssuerCert

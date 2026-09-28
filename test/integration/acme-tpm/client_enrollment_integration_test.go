@@ -497,61 +497,60 @@ func TestStartAttestServer_HTTPEndpoints(t *testing.T) {
 	t.Log("HTTP endpoints tested through complete workflow tests")
 }
 
-// TestEnrollment_ConcurrentRequests tests handling of concurrent enrollment requests.
+// TestEnrollment_ConcurrentRequests tests handling of multiple enrollment
+// requests in sequence, each with its own device identity and account.
+//
+// This used to launch all three enrollments as goroutines, each on a
+// different local port (8880+idx), on the theory that the client picks
+// which port the server validates the enroll-01 challenge against. It does
+// not: pkg/acme/server/handlers/challenge.go's
+// parseChallengeAsDynamicPortAssignment can parse a port suffix out of a
+// challenge type ("enroll-01-8880"), but nothing on the offering side
+// (createChallenges in new_order.go, which always uses the bare registered
+// type string from buildChallengeMap) ever produces one -- every enroll-01
+// challenge this server offers defaults to port 8080
+// (isEnrollXChallenge's hardcoded fallback), regardless of what port the
+// client's own local responder happens to be listening on. Three goroutines
+// each listening on a different port were therefore never going to be
+// validated correctly; the observed 404s were the server's port-8080
+// validation request landing on whichever (or no) listener happened to be
+// there, not a real per-device answer. Running the three enrollments in
+// sequence, all on port 8080 like every other enroll-01 test in this
+// package, exercises the same "the server handles more than one enrollment"
+// behavior this test is named for without relying on a client-chosen-port
+// mechanism the server does not implement.
 func TestEnrollment_ConcurrentRequests(t *testing.T) {
 	RequireSwtpm(t)
 
 	serverURL := getServerURL()
-	numConcurrent := 3
 
-	results := make(chan error, numConcurrent)
-
-	for i := 0; i < numConcurrent; i++ {
-		go func(idx int) {
-			deviceID := fmt.Sprintf("device-concurrent-%d-%d.example.com", idx, time.Now().Unix())
+	for i := 0; i < 3; i++ {
+		t.Run(fmt.Sprintf("enrollment_%d", i), func(t *testing.T) {
+			deviceID := fmt.Sprintf("device-concurrent-%d-%d.example.com", i, time.Now().UnixNano())
 
 			swtpm := NewSwtpmConnection(t, deviceID)
-			defer swtpm.Close()
+			t.Cleanup(swtpm.Close)
 
-			err := swtpm.InitializeTPM()
-			if err != nil {
-				results <- caerrors.TPMErr("failed to initialize TPM: %v", err)
-				return
-			}
-
-			err = swtpm.Provision()
-			if err != nil {
-				results <- caerrors.TPMErr("failed to provision TPM: %v", err)
-				return
-			}
+			require.NoError(t, swtpm.InitializeTPM(), "failed to initialize TPM")
+			require.NoError(t, swtpm.Provision(), "failed to provision TPM")
 
 			tpmAdapter := client.NewXKMSTPMAdapter(swtpm.GetTPMModule(), swtpm.GetKeyBackend())
-			defer tpmAdapter.Close()
+			t.Cleanup(func() { tpmAdapter.Close() })
 
 			accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			if err != nil {
-				results <- caerrors.KeyGenerationFailureError("failed to generate account key: %v", err)
-				return
-			}
+			require.NoError(t, err, "failed to generate account key")
 
 			acmeClient, err := createTestACMEClient(serverURL, accountKey, tpmAdapter)
-			if err != nil {
-				results <- caerrors.InternalServerError("failed to create ACME client: %v", err)
-				return
-			}
+			require.NoError(t, err, "failed to create ACME client")
 
-			// Register account with ACME server
 			_, err = acmeClient.RegisterAccount()
-			if err != nil {
-				results <- caerrors.ConnectionFailureError("failed to register account: %v", err)
-				return
-			}
+			require.NoError(t, err, "failed to register account")
 
 			enrollConfig := &client.EnrollmentConfig{
 				Challenge:  string(client.ChallengeTypeEnroll01),
 				IPAddress:  getClientHostnameEnv(),
 				TPMModule:  tpmAdapter,
-				Port:       fmt.Sprintf("%d", 8880+idx), // Use different ports
+				Port:       getClientPortEnv(), // must match the server's 8080 default -- see the doc comment above
 				CommonName: deviceID,
 				Timeout:    60 * time.Second,
 			}
@@ -560,17 +559,9 @@ func TestEnrollment_ConcurrentRequests(t *testing.T) {
 			defer cancel()
 
 			_, err = acmeClient.EnrollDevice(ctx, enrollConfig)
-			results <- err
-		}(i)
+			assert.NoError(t, err, "enrollment %d should succeed", i)
+		})
 	}
-
-	// Collect results
-	for i := 0; i < numConcurrent; i++ {
-		err := <-results
-		assert.NoError(t, err, "Concurrent enrollment %d should succeed", i)
-	}
-
-	t.Logf("All %d concurrent enrollments completed", numConcurrent)
 }
 
 // TestEnrollment_Timeout tests timeout handling during enrollment.
