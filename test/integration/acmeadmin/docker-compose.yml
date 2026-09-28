@@ -1,0 +1,100 @@
+services:
+  # xkmsd with the ACME (RFC 8555) server and its admin plane enabled
+  # (xkmsd.yaml). The ACME admin REST routes ("xkmsctl acme ...") and the
+  # tenant control-plane routes ("xkmsctl tenant ...") are both served on
+  # the unified listener, server.rest_port (8443).
+  xkmsd:
+    build:
+      context: ../../..
+      # Dockerfile.xkmsd, not the root Dockerfile: this lane's storage.backend
+      # is qrdb, and the ACME admin plane's DAOs need a codec_* build tag the
+      # root Dockerfile does not carry — see Dockerfile.xkmsd's header comment
+      # for the full explanation and test/integration/cluster/Dockerfile.xkmsd
+      # for the identical precedent.
+      dockerfile: test/integration/acmeadmin/Dockerfile.xkmsd
+      secrets:
+        - gomodauth
+    image: go-xkms-acmeadmin:${XKMS_IMAGE_TAG:-latest}
+    volumes:
+      - xkmsd-data:/data
+      - xkmsd-certs:/etc/xkms/certs
+      - ./xkmsd.yaml:/etc/xkms/xkmsd.yaml:ro
+      - ./scripts:/scripts:ro
+    environment:
+      - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
+      - XKMS_LOGGING_LEVEL=debug
+    healthcheck:
+      # No --ca-certificate: the unified listener self-issues its
+      # certificate from the embedded CA (xkmsd.yaml's top comment), which
+      # this in-container probe has no independent copy of. It is a
+      # liveness check, not a trust decision.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--no-check-certificate", "https://localhost:8443/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 15s
+    networks:
+      - acmeadmin-net
+    user: root
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /etc/xkms/certs /data
+        echo "Generating TLS certificates..."
+        /scripts/generate-test-certs.sh
+        echo "Starting xkmsd..."
+        exec /app/xkmsd
+
+  # Integration test runner: builds xkmsctl and runs the CLI-driven ACME
+  # admin suite against the xkmsd service above.
+  test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/acmeadmin/Dockerfile.test
+      secrets:
+        - gomodauth
+    depends_on:
+      xkmsd:
+        condition: service_healthy
+    volumes:
+      # Read-only, same mount point as the xkmsd service: main_test.go
+      # (TestMain) waits for and reads the qrdb first-boot administrator's
+      # mTLS credential at /data/storage/admin-{cert,key}.pem, written by
+      # pkg/server/firstboot.go on the xkmsd side of this same volume.
+      - xkmsd-data:/data:ro
+      - go-build-cache:/root/.cache/go-build
+    environment:
+      - CGO_ENABLED=1
+      - XKMSCTL_ACME_SERVER=https://xkmsd:8443
+      - XKMSCTL_ACME_TRANSPORT=rest
+      - XKMSCTL_SERVER=https://xkmsd:8443
+      - XKMSCTL_TRANSPORT=rest
+      # No XKMSCTL_TLS_CERT/KEY/CA here on purpose: main_test.go's TestMain
+      # fetches the CA over TOFU and waits for the first-boot admin
+      # credential, then sets all three before any test runs.
+      - XKMSCTL_ADMIN_CRED_DIR=/data/storage
+      - XKMSCTL_BINARY=/usr/local/bin/xkmsctl
+    working_dir: /workspace
+    networks:
+      - acmeadmin-net
+    command: >
+      sh -c "
+      go test -v -tags='integration' ./test/integration/acmeadmin/... -timeout 10m
+      "
+
+volumes:
+  xkmsd-data:
+    driver: local
+  xkmsd-certs:
+    driver: local
+  go-build-cache:
+    driver: local
+
+networks:
+  acmeadmin-net:
+    driver: bridge
+
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env

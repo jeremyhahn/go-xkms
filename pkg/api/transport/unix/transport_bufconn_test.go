@@ -1462,7 +1462,7 @@ func TestPasswordGet_Connected(t *testing.T) {
 	tr, cleanup := newBufconnTransport(t)
 	defer cleanup()
 
-	resp, err := tr.PasswordGet(context.Background(), &transport.PasswordGetRequest{ID: "pw-1", Decrypt: true})
+	resp, err := tr.PasswordGet(context.Background(), &transport.PasswordGetRequest{ID: "pw-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "pw-1", resp.ID)
 	assert.Equal(t, "secret", resp.Password)

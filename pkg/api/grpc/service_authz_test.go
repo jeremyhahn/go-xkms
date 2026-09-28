@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -246,10 +247,16 @@ func TestAuthz_AuthorizeAllowed(t *testing.T) {
 	}
 }
 
+// TestAuthz_AuthorizeDenied verifies the go-xkms#1103 fix: a PermissionDenied
+// carries the fixed, generic ErrAccessDenied message, never the RBAC
+// backend's own denial text (which can carry internal detail an
+// unauthorized caller has no business seeing). The denial reason is
+// recorded server-side in the audit event instead.
 func TestAuthz_AuthorizeDenied(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer, _ := denyAuthorizer("insufficient privileges")
+	const denyReason = "insufficient privileges: role lacks keys:create on tenant-internal-shard-3"
+	authorizer, _ := denyAuthorizer(denyReason)
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
@@ -270,11 +277,14 @@ func TestAuthz_AuthorizeDenied(t *testing.T) {
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("Expected PermissionDenied, got %s", st.Code())
 	}
-	if st.Message() != "insufficient privileges" {
-		t.Errorf("Expected 'insufficient privileges', got '%s'", st.Message())
+	if st.Message() != ErrAccessDenied.Error() {
+		t.Errorf("Expected '%s', got '%s'", ErrAccessDenied.Error(), st.Message())
+	}
+	if strings.Contains(st.Message(), denyReason) {
+		t.Errorf("Client-facing message leaked the internal denial reason: %q", st.Message())
 	}
 
-	// Verify audit log records deny.
+	// Verify audit log records deny, with the reason kept server-side.
 	event := auditLog.LastEvent()
 	if event == nil {
 		t.Fatal("Expected audit event, got nil")
@@ -282,8 +292,16 @@ func TestAuthz_AuthorizeDenied(t *testing.T) {
 	if event.Outcome != audit.OutcomeDeny {
 		t.Errorf("Expected outcome 'deny', got '%s'", event.Outcome)
 	}
+	if event.Details["reason"] != denyReason {
+		t.Errorf("Expected audit reason %q, got %q", denyReason, event.Details["reason"])
+	}
 }
 
+// TestAuthz_AuthorizeUnauthenticated verifies the go-xkms#1103 fix: an
+// Unauthenticated denial carries the fixed, generic
+// ErrAuthenticationRequired message, never the underlying auth.ErrUnauthenticated
+// error text directly (auth.Authorize is a stable sentinel today, but
+// authorize must not depend on that never changing).
 func TestAuthz_AuthorizeUnauthenticated(t *testing.T) {
 	defer xkms.Reset()
 
@@ -305,14 +323,21 @@ func TestAuthz_AuthorizeUnauthenticated(t *testing.T) {
 	if st.Code() != codes.Unauthenticated {
 		t.Errorf("Expected Unauthenticated, got %s", st.Code())
 	}
+	if st.Message() != ErrAuthenticationRequired.Error() {
+		t.Errorf("Expected '%s', got '%s'", ErrAuthenticationRequired.Error(), st.Message())
+	}
 
-	// Verify audit log records deny on missing identity.
+	// Verify audit log records deny on missing identity, with the reason
+	// captured server-side.
 	event := auditLog.LastEvent()
 	if event == nil {
 		t.Fatal("Expected audit event, got nil")
 	}
 	if event.Outcome != audit.OutcomeDeny {
 		t.Errorf("Expected outcome 'deny', got '%s'", event.Outcome)
+	}
+	if event.Details["reason"] != auth.ErrUnauthenticated.Error() {
+		t.Errorf("Expected audit reason %q, got %q", auth.ErrUnauthenticated.Error(), event.Details["reason"])
 	}
 }
 
@@ -580,6 +605,9 @@ func TestAuthz_ListBackendsDenied(t *testing.T) {
 	}
 }
 
+// TestAuthz_GenerateKeyDenied verifies the go-xkms#1103 fix: the denial
+// reason configured on the fake RBAC client never reaches the client
+// response, only the fixed, generic ErrAccessDenied message.
 func TestAuthz_GenerateKeyDenied(t *testing.T) {
 	defer xkms.Reset()
 
@@ -599,8 +627,8 @@ func TestAuthz_GenerateKeyDenied(t *testing.T) {
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("Expected PermissionDenied, got %s", st.Code())
 	}
-	if st.Message() != "no write access" {
-		t.Errorf("Expected reason 'no write access', got '%s'", st.Message())
+	if st.Message() != ErrAccessDenied.Error() {
+		t.Errorf("Expected '%s', got '%s'", ErrAccessDenied.Error(), st.Message())
 	}
 }
 

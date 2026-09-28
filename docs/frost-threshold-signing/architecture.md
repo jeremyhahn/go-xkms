@@ -1,6 +1,6 @@
 # FROST Threshold Signing — Architecture
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## The problem
 
@@ -122,11 +122,18 @@ handles, matching the pattern used by `pkg/share-custody` and the sealing
 strategies:
 
 - `PublicStorage storage.Backend` — group public key, verification shares,
-  per-key metadata. Not sensitive; any `storage.Backend` will do.
-- `SecretBackend types.KeyProvider` — this participant's secret share.
-  Production deployments should back this with a hardware `types.KeyProvider`
-  (TPM 2.0, PKCS#11, cloud KMS); `xkmsctl` and the daemon factory both
-  default to a software `pkcs8` backend.
+  per-key metadata, and (go-xkms#841) the *sealed* secret-share envelope
+  (`types.SealedData`, JSON). Sealing is what makes storing the last one
+  here safe; the payload is opaque ciphertext, not the share in the clear.
+- `SecretBackend types.SealingKeyProvider` — seals and unseals this
+  participant's secret share with its own native mechanism: TPM 2.0
+  PCR-bound sealing under the Platform SRK, PKCS#11/cloud KMS AES-256-GCM
+  envelope encryption under a provisioned wrapping key, or software/PKCS#8
+  HKDF-derived AES-GCM from a provisioned Ed25519 key. `xkmsctl` seals
+  through a local `software` backend; the daemon factory
+  (`pkg/xkms/register_frost.go`) seals through a local `pkcs8` backend. See
+  [`engineering.md`](engineering.md)'s "Secret share sealing" section for
+  the full per-backend wrapping-key contract.
 
 ## Key generation: trusted dealer only
 

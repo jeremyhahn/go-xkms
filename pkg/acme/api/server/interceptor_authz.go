@@ -130,7 +130,8 @@ func UnaryAuthorizationInterceptor(roleMapping *RoleMapping, gate *admin.Permiss
 
 		ctx = withResolvedIdentity(ctx, roleMapping)
 
-		if err := gate.Authorize(ctx, perm.Resource, perm.Action); err != nil {
+		if err := gate.Authorize(ctx, perm.Resource, perm.Action,
+			slog.String("method", info.FullMethod)); err != nil {
 			if errors.Is(err, auth.ErrUnauthenticated) {
 				return nil, status.Errorf(codes.Unauthenticated,
 					"authentication required for %s", info.FullMethod)

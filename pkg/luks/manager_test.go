@@ -32,12 +32,16 @@ type mockExecutor struct {
 	createErr  error
 	unlockErr  error
 	lockErr    error
+	mountErr   error
+	unmountErr error
 	isMounted  bool
 	isUnlocked bool
 
 	createCalled  bool
 	unlockCalled  bool
 	lockCalled    bool
+	mountCalled   bool
+	unmountCalled bool
 	lastSizeBytes int64
 }
 
@@ -55,6 +59,16 @@ func (m *mockExecutor) Unlock(_ context.Context, _ *VolumeConfig, _ string) erro
 func (m *mockExecutor) Lock(_ context.Context, _ *VolumeConfig) error {
 	m.lockCalled = true
 	return m.lockErr
+}
+
+func (m *mockExecutor) Mount(_ context.Context, _ *VolumeConfig) error {
+	m.mountCalled = true
+	return m.mountErr
+}
+
+func (m *mockExecutor) Unmount(_ context.Context, _ *VolumeConfig) error {
+	m.unmountCalled = true
+	return m.unmountErr
 }
 
 func (m *mockExecutor) IsMounted(_ *VolumeConfig) bool {
@@ -259,6 +273,21 @@ func TestUnlock_ExecutorError(t *testing.T) {
 		"state must not be set when executor fails")
 }
 
+func TestUnlock_AlreadyUnlocked(t *testing.T) {
+	exec := &mockExecutor{}
+	mgr, err := NewManager(validConfig(), exec)
+	require.NoError(t, err)
+
+	require.NoError(t, mgr.Unlock(context.Background(), "passphrase"))
+	exec.unlockCalled = false // reset to prove the second call short-circuits
+
+	err = mgr.Unlock(context.Background(), "passphrase")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAlreadyUnlocked)
+	assert.False(t, exec.unlockCalled,
+		"executor must not be invoked when already unlocked")
+}
+
 // --- Lock ---
 
 func TestLock_Success(t *testing.T) {
@@ -283,11 +312,132 @@ func TestLock_ExecutorError(t *testing.T) {
 	mgr, err := NewManager(validConfig(), exec)
 	require.NoError(t, err)
 
+	require.NoError(t, mgr.Unlock(context.Background(), "passphrase"))
+
 	err = mgr.Lock(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrOperationFailed)
 	assert.ErrorIs(t, err, execErr)
 	assert.True(t, exec.lockCalled)
+}
+
+func TestLock_NotUnlocked(t *testing.T) {
+	exec := &mockExecutor{}
+	mgr, err := NewManager(validConfig(), exec)
+	require.NoError(t, err)
+
+	err = mgr.Lock(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotUnlocked)
+	assert.False(t, exec.lockCalled,
+		"executor must not be invoked when not unlocked")
+}
+
+// --- Mount ---
+
+func TestMount_Success(t *testing.T) {
+	exec := &mockExecutor{}
+	mgr, err := NewManager(validConfig(), exec)
+	require.NoError(t, err)
+
+	require.NoError(t, mgr.Unlock(context.Background(), "passphrase"))
+
+	err = mgr.Mount(context.Background())
+	require.NoError(t, err)
+	assert.True(t, exec.mountCalled)
+	assert.True(t, mgr.IsMounted())
+}
+
+func TestMount_NotUnlocked(t *testing.T) {
+	exec := &mockExecutor{}
+	mgr, err := NewManager(validConfig(), exec)
+	require.NoError(t, err)
+
+	err = mgr.Mount(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotUnlocked)
+	assert.False(t, exec.mountCalled,
+		"executor must not be invoked when not unlocked")
+	assert.False(t, mgr.IsMounted())
+}
+
+func TestMount_AlreadyMounted(t *testing.T) {
+	exec := &mockExecutor{}
+	mgr, err := NewManager(validConfig(), exec)
+	require.NoError(t, err)
+
+	require.NoError(t, mgr.Unlock(context.Background(), "passphrase"))
+	require.NoError(t, mgr.Mount(context.Background()))
+	exec.mountCalled = false // reset to prove the second call short-circuits
+
+	err = mgr.Mount(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAlreadyMounted)
+	assert.False(t, exec.mountCalled,
+		"executor must not be invoked when already mounted")
+}
+
+func TestMount_ExecutorError(t *testing.T) {
+	execErr := errors.New("mount: no such filesystem")
+	exec := &mockExecutor{mountErr: execErr}
+	mgr, err := NewManager(validConfig(), exec)
+	require.NoError(t, err)
+
+	require.NoError(t, mgr.Unlock(context.Background(), "passphrase"))
+
+	err = mgr.Mount(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOperationFailed)
+	assert.ErrorIs(t, err, execErr)
+	assert.True(t, exec.mountCalled)
+	assert.False(t, mgr.IsMounted(),
+		"state must not be set when executor fails")
+}
+
+// --- Unmount ---
+
+func TestUnmount_Success(t *testing.T) {
+	exec := &mockExecutor{}
+	mgr, err := NewManager(validConfig(), exec)
+	require.NoError(t, err)
+
+	require.NoError(t, mgr.Unlock(context.Background(), "passphrase"))
+	require.NoError(t, mgr.Mount(context.Background()))
+
+	err = mgr.Unmount(context.Background())
+	require.NoError(t, err)
+	assert.True(t, exec.unmountCalled)
+	assert.False(t, mgr.IsMounted())
+}
+
+func TestUnmount_NotMounted(t *testing.T) {
+	exec := &mockExecutor{}
+	mgr, err := NewManager(validConfig(), exec)
+	require.NoError(t, err)
+
+	err = mgr.Unmount(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotMounted)
+	assert.False(t, exec.unmountCalled,
+		"executor must not be invoked when not mounted")
+}
+
+func TestUnmount_ExecutorError(t *testing.T) {
+	execErr := errors.New("umount: target is busy")
+	exec := &mockExecutor{unmountErr: execErr}
+	mgr, err := NewManager(validConfig(), exec)
+	require.NoError(t, err)
+
+	require.NoError(t, mgr.Unlock(context.Background(), "passphrase"))
+	require.NoError(t, mgr.Mount(context.Background()))
+
+	err = mgr.Unmount(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOperationFailed)
+	assert.ErrorIs(t, err, execErr)
+	assert.True(t, exec.unmountCalled)
+	assert.True(t, mgr.IsMounted(),
+		"state must not be cleared when executor fails")
 }
 
 // --- State accessors ---
@@ -314,6 +464,12 @@ func TestIsMounted_IsUnlocked_StateTracking(t *testing.T) {
 
 	require.NoError(t, mgr.Unlock(context.Background(), "pass"))
 	assert.True(t, mgr.IsUnlocked())
+
+	require.NoError(t, mgr.Mount(context.Background()))
+	assert.True(t, mgr.IsMounted())
+
+	require.NoError(t, mgr.Unmount(context.Background()))
+	assert.False(t, mgr.IsMounted())
 
 	require.NoError(t, mgr.Lock(context.Background()))
 	assert.False(t, mgr.IsUnlocked())

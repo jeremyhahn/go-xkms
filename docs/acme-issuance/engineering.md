@@ -145,6 +145,21 @@ once, to the externally visible base.
   ACME disabled and proves every route answers without panicking, that
   the CA/storage-backed routes answer 501, and that a nil qrdb client is
   refused at construction.
+- **`PermissionGate.Authorize` (`pkg/acme/admin/authz.go:93`) is the one place
+  that logs an admin authorization denial, for every transport.** REST
+  (`Wrap`, `authz.go:142-156`), gRPC (`UnaryAuthorizationInterceptor`,
+  `pkg/acme/api/server/interceptor_authz.go:133-140`) and MCP
+  (`authorizeMCPMethod`, `pkg/acme/api/server/mcp_authz.go:95`) all resolve
+  their decision through this one gate, so a `slog.Warn` there — subject,
+  tenant, resource, action, the transport's method/route (an `extra
+  ...slog.Attr` each caller passes: HTTP method+path, gRPC full method, or the
+  MCP JSON-RPC method name), and the authorizer's cause — covers every
+  transport without a duplicate log call in each one (go-xkms#1110). The
+  cause never reaches the client: REST answers the fixed
+  `"Access denied: insufficient permissions"` detail, gRPC the fixed
+  `"permission denied: %s requires %s:%s"` message, and MCP's JSON-RPC
+  `Forbidden`/`Unauthorized` codes are unchanged by this — only the
+  server-side log gained the cause.
 - **Every POST carries a fresh nonce, and a nonce is consumed exactly once.**
   Replaying a nonce is rejected, not tolerated.
 - **Every POST is JWS-signed by the account key** (or, for `new-account`, by the
@@ -921,7 +936,10 @@ storage. Changing the storage layout requires a data migration step.
 - **RFC conformance** — `test/integration/rfc8555`.
 - **Integration** — `test/integration/acme-server`, `acme-client`,
   `acme-admin`, `acme-multiprotocol`, `acme-tpm`, `acmeclient`, `acmeserver`,
-  `challenges`. Compose file: `test/integration/acme-docker-compose.integration.yml`.
+  `challenges`. The ACME admin plane's CLI coverage is
+  `test/integration/acmeadmin` (`xkmsctl acme`/`xkmsctl tenant` against a
+  real `xkmsd`), with its own compose file:
+  `test/integration/acmeadmin/docker-compose.yml`.
 - **TCG / attestation** — `test/integration/acme-tpm` plus
   `pkg/acme/server/handlers/audit_tcg_test.go`,
   `compliance_attestation_test.go`.
