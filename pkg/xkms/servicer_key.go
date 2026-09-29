@@ -1407,6 +1407,25 @@ func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string, s
 
 	// Check for symmetric algorithms first
 	if symAlgo := ParseSymmetricAlgorithm(algorithm); symAlgo != "" {
+		// A bare "symmetric" or "secret" name selects no cipher of its own;
+		// the key size chooses one. A request that named its cipher outright
+		// (e.g. "aes-128-gcm") keeps it: the size is already implied by the
+		// name, and an explicit KeySize here would either repeat or silently
+		// override it. Before this, {algorithm: "symmetric", key_size: 128}
+		// always produced an AES-256-GCM key here while the gRPC transport's
+		// own duplicate of this function chose AES-128-GCM, and an
+		// unrecognised size (512) was silently widened to the default rather
+		// than refused -- the exact drift go-xkms#1214 unifies.
+		if isBareSymmetricName(algorithm) && req.KeySize != 0 {
+			sized, ok := unwrapSymmetricAlgorithms[req.KeySize]
+			if !ok {
+				return nil, &ErrValidation{
+					Sentinel: ErrInvalidKeyAttributes,
+					Detail:   fmt.Sprintf("invalid key size for symmetric key: %d (must be 128, 192, or 256)", req.KeySize),
+				}
+			}
+			symAlgo = sized
+		}
 		attrs.SymmetricAlgorithm = symAlgo
 		attrs.KeyType = types.KeyTypeSecret
 		if err := validateKeyAttributes(attrs); err != nil {
@@ -1566,6 +1585,18 @@ func ParseSymmetricAlgorithm(algo string) types.SymmetricAlgorithm {
 		return types.SymmetricAES256GCM
 	}
 	return ""
+}
+
+// isBareSymmetricName reports whether algorithm names symmetric material
+// generically ("symmetric", "secret") rather than a specific cipher
+// ("aes-256-gcm", "chacha20-poly1305"). It is GenerateKey's own vocabulary
+// for "the caller named no cipher, so the key size picks one"; the import
+// ceremony's equivalent bare-name vocabulary is isSymmetricKeyTypeName,
+// which additionally accepts "aes" because that is what ImportKeyRequest and
+// GetImportParametersRequest's key_type field has always sent for it.
+func isBareSymmetricName(algorithm string) bool {
+	lower := strings.ToLower(algorithm)
+	return lower == "symmetric" || lower == "secret"
 }
 
 // attrsToKeyInfoList converts a slice of KeyAttributes to transport.KeyInfo slice.

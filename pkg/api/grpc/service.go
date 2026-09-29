@@ -370,6 +370,15 @@ func (s *Service) GetBackendInfo(ctx context.Context, req *pb.GetBackendInfoRequ
 }
 
 // GenerateKey generates a new cryptographic key
+// GenerateKey generates a new key.
+//
+// Generation belongs to the service layer, which owns backend resolution,
+// the algorithm and key-purpose vocabularies, the symmetric/asymmetric
+// split, curve and RSA-size validation (including the 2048-bit floor,
+// go-xkms#1204), and the exportability contract
+// (pkg/xkms/servicer_key.go's buildKeyAttributes). This handler used to
+// reimplement all of that so it could drift from REST, MCP and the embedded
+// transport's own copies (go-xkms#1214).
 func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (*pb.GenerateKeyResponse, error) {
 	// Validate request
 	if req.KeyId == "" {
@@ -389,152 +398,30 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		return nil, err
 	}
 
-	// Get keystore
-	ks, err := s.lookupBackend(req.Backend)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
-	}
-
-	// Parse key type
-	keyType := types.ParseKeyType(req.KeyType)
-	// Default to KeyTypeSigning if the parsed key type is invalid
-	// (e.g., when req.KeyType is an algorithm name like "rsa", "ecdsa", "ed25519")
-	if keyType == 0 {
-		keyType = types.KeyTypeSigning
-	}
-
-	hashAlg, hashErr := parseHashAlgorithm(req.Hash)
-	if hashErr != nil {
-		return nil, mapKeyOpError(ctx, s.xkmsService, hashErr)
-	}
-
-	// Build key attributes
-	attrs := &types.KeyAttributes{
-		CN:         req.KeyId,
-		KeyType:    keyType,
-		StoreType:  types.StoreType(req.Backend),
-		Hash:       hashAlg,
-		Partition:  types.Partition(req.Partition),
+	resp, err := s.xkmsService.GenerateKey(ctx, &transport.GenerateKeyRequest{
+		KeyID:      req.KeyId,
+		Backend:    req.Backend,
+		KeyType:    req.KeyType,
+		KeySize:    int(req.KeySize),
+		Curve:      req.Curve,
+		Hash:       req.Hash,
+		Algorithm:  req.Algorithm,
 		Exportable: req.Exportable,
 		Sensitive:  req.GetSensitive(),
-	}
-
-	// Set algorithm-specific attributes
-	var privKey crypto.PrivateKey
-	algorithm := req.Algorithm
-	switch {
-	case types.AlgorithmRSA.Equals(algorithm):
-		keySize := int(req.KeySize)
-		if keySize == 0 {
-			keySize = types.RSAKeySize2048 // Default
-		}
-		attrs.KeyAlgorithm = x509.RSA
-		attrs.RSAAttributes = &types.RSAAttributes{
-			KeySize: keySize,
-		}
-		privKey, err = ks.GenerateRSA(ctx, attrs)
-
-	case types.AlgorithmECDSA.Equals(algorithm):
-		curve := req.Curve
-		if curve == "" {
-			curve = string(types.CurveP256) // Default
-		}
-		attrs.KeyAlgorithm = x509.ECDSA
-		parsedCurve, curveErr := types.ParseCurve(curve)
-		if curveErr != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid curve: %v", curveErr)
-		}
-		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: parsedCurve,
-		}
-		privKey, err = ks.GenerateECDSA(ctx, attrs)
-
-	case types.AlgorithmEd25519.Equals(algorithm):
-		attrs.KeyAlgorithm = x509.Ed25519
-		privKey, err = ks.GenerateEd25519(ctx, attrs)
-
-	case symmetricAlgorithm(algorithm) != "":
-		// Handle symmetric key generation
-		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
-		if !ok {
-			return nil, status.Error(codes.Unimplemented, "backend does not support symmetric key generation")
-		}
-
-		symAlgorithm := symmetricAlgorithm(algorithm)
-
-		// A bare "symmetric" or "secret" names no cipher, so the key size
-		// selects one. A request that named its cipher outright keeps it: the
-		// size is already implied by the name, and overriding it here would
-		// generate a key the caller did not ask for.
-		if types.AlgorithmSymmetric.Equals(algorithm) || types.KeyTypeStringSecret.Equals(algorithm) {
-			switch int(req.KeySize) {
-			case 128:
-				symAlgorithm = types.SymmetricAES128GCM
-			case 192:
-				symAlgorithm = types.SymmetricAES192GCM
-			case 256, 0:
-				symAlgorithm = types.SymmetricAES256GCM
-			default:
-				return nil, status.Errorf(codes.InvalidArgument, "invalid key size for symmetric key: %d", req.KeySize)
-			}
-		}
-
-		attrs.SymmetricAlgorithm = symAlgorithm
-		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
-
-		_, err = symBackend.GenerateSymmetricKey(ctx, attrs)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to generate symmetric key: %v", err)
-		}
-
-		// Symmetric keys have no public key
-		return &pb.GenerateKeyResponse{
-			KeyId:     req.KeyId,
-			Backend:   req.Backend,
-			KeyType:   req.KeyType,
-			CreatedAt: timestamppb.Now(),
-		}, nil
-
-	default:
-		return nil, status.Errorf(codes.InvalidArgument, "unsupported algorithm: %s", algorithm)
-	}
-
+		Partition:  req.Partition,
+		TenantID:   callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, wrapWriteError(ctx, s.xkmsService, err, codes.Internal, "failed to generate key: %v", err)
-	}
-
-	// Extract public key PEM
-	publicKeyPem, err := extractPublicKeyPEM(privKey)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to extract public key: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.GenerateKeyResponse{
 		KeyId:        req.KeyId,
 		Backend:      req.Backend,
 		KeyType:      req.KeyType,
-		PublicKeyPem: publicKeyPem,
+		PublicKeyPem: resp.PublicKeyPEM,
 		CreatedAt:    timestamppb.Now(),
 	}, nil
-}
-
-// symmetricAlgorithm resolves an algorithm name to the symmetric cipher it
-// selects, or "" when the name is not a symmetric one.
-//
-// It mirrors the service layer's own parsing (xkms's parseSymmetricAlgorithm,
-// which is unexported): every spelling types.ParseAEADAlgorithm accepts, plus
-// the two bare names that mean "a symmetric key, you pick the cipher". This
-// transport used to match the literal "symmetric" and nothing else, so a
-// request naming its cipher outright -- "aes-256-gcm", "chacha20-poly1305" --
-// was refused as an unsupported algorithm even though the service accepts it.
-func symmetricAlgorithm(algorithm string) types.SymmetricAlgorithm {
-	if sym := types.ParseAEADAlgorithm(algorithm).ToSymmetricAlgorithm(); sym != "" {
-		return sym
-	}
-	if types.AlgorithmSymmetric.Equals(algorithm) || types.KeyTypeStringSecret.Equals(algorithm) {
-		return types.SymmetricAES256GCM
-	}
-	return ""
 }
 
 // ListKeys lists all keys in the specified backend
@@ -1262,13 +1149,20 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		Partition: types.Partition(req.Partition),
 	}
 
-	// Set algorithm-specific attributes based on key_type field (expected to be algorithm name)
+	// Set algorithm-specific attributes based on key_type field (expected to
+	// be algorithm name). KeyType (the purpose enum, not the wire field of
+	// the same name) is set in every branch, matching ImportKey's own
+	// switch: without it attrs.Validate() below refused every request here,
+	// asymmetric and symmetric alike, with "key type is required" -- the
+	// attributes this ceremony negotiated a wrapping key for never actually
+	// named a purpose.
 	switch {
 	case types.AlgorithmRSA.Equals(req.KeyType):
 		keySize := int(req.KeySize)
 		if keySize == 0 {
 			keySize = types.RSAKeySize2048 // Default
 		}
+		attrs.KeyType = types.KeyTypeSigning
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: keySize,
@@ -1278,6 +1172,7 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		if curve == "" {
 			curve = string(types.CurveP256) // Default
 		}
+		attrs.KeyType = types.KeyTypeSigning
 		attrs.KeyAlgorithm = x509.ECDSA
 		parsedCurve, curveErr := types.ParseCurve(curve)
 		if curveErr != nil {
@@ -1287,8 +1182,10 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 			Curve: parsedCurve,
 		}
 	case types.AlgorithmEd25519.Equals(req.KeyType):
+		attrs.KeyType = types.KeyTypeSigning
 		attrs.KeyAlgorithm = x509.Ed25519
 	case types.AlgorithmSymmetric.Equals(req.KeyType):
+		attrs.KeyType = types.KeyTypeSecret
 		// For symmetric keys, set algorithm based on key size
 		switch req.KeySize {
 		case 128:
@@ -1302,6 +1199,18 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		}
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported key type: %s", req.KeyType)
+	}
+
+	// The service layer's buildKeyAttributes runs this same check
+	// (pkg/xkms/servicer_key.go's validateKeyAttributes) as the last step
+	// before generation or import, enforcing the 2048-bit RSA floor
+	// (go-xkms#1204) among other invariants. This ceremony negotiates the
+	// parameters for a key of the same shape ImportKey will later be asked to
+	// store, so it must refuse an undersized request just as early rather
+	// than hand back working import parameters for a key the import step
+	// will refuse anyway (go-xkms#1214).
+	if err := attrs.Validate(); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid key attributes: %v", err)
 	}
 
 	// Parse wrapping algorithm
@@ -1597,6 +1506,17 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 	// says nothing. This used to be hardcoded true for symmetric material,
 	// so no caller could import a non-extractable secret key.
 	xkms.ApplyImportExportability(attrs, req.Exportable, req.Sensitive)
+
+	// The service layer's buildKeyAttributes runs this same check
+	// (pkg/xkms/servicer_key.go's validateKeyAttributes) as the last step
+	// before generation or import, enforcing the 2048-bit RSA floor
+	// (go-xkms#1204) among other invariants. This path used to call
+	// importBackend.ImportKey directly from attributes that had never been
+	// through it, so an RSA-1024 import reached the backend unchecked while
+	// the same request to GenerateKey was refused (go-xkms#1214).
+	if err := attrs.Validate(); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid key attributes: %v", err)
+	}
 
 	// Create wrapped key material
 	wrapped := &backend.WrappedKeyMaterial{
