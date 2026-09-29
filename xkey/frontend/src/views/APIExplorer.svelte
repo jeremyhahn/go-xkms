@@ -13,6 +13,7 @@
   import type { AvailableToken, GUIConfig } from '$lib/api/backend';
   import { isEnterpriseMode, enterprisePolicy } from '$lib/stores/auth';
   import { clickOutside } from '$lib/actions/clickOutside';
+  import { validateSandboxPolicy, SAFE_DEFAULT_SANDBOX_POLICY } from '$lib/utils/sandboxPolicy';
 
   /** Request shape matching Go ExplorerRequest. */
   interface ExplorerRequest {
@@ -62,8 +63,10 @@
   let showTokenPicker = false;
   let tokenPickerLoading = false;
 
-  // Sandbox policy (loaded from config, may be overridden by enterprise policy)
-  let sandboxPolicy = 'allow-same-origin allow-scripts allow-forms allow-popups';
+  // Sandbox policy (loaded from config, may be overridden by enterprise policy).
+  // Never defaults to allow-same-origin + allow-scripts together: see
+  // validateSandboxPolicy in $lib/utils/sandboxPolicy.
+  let sandboxPolicy = SAFE_DEFAULT_SANDBOX_POLICY;
 
   $: showBodyInput = METHODS_WITH_BODY.includes(selectedMethod);
 
@@ -72,16 +75,31 @@
     responseTab = ct.includes('text/html') ? 'preview' : 'raw';
   }
 
+  /**
+   * Validates a candidate sandbox policy before it is used to render the
+   * preview iframe. Invalid policies (see validateSandboxPolicy) fall back
+   * to the safe default and surface a visible notice, since the preview
+   * renders arbitrary fetched HTML that must never be able to reach the
+   * app's own Wails bindings.
+   */
+  function applySandboxPolicy(candidate: string, source: string): void {
+    const result = validateSandboxPolicy(candidate);
+    sandboxPolicy = result.policy;
+    if (!result.valid) {
+      addNotification('warning', `${source} sandbox policy rejected: ${result.reason}`);
+    }
+  }
+
   onMount(async () => {
     loadHistory();
     // Load sandbox policy from user config, respecting enterprise override.
     const cfg = await callBackend<GUIConfig>('AppService', 'GetConfig');
     if (cfg?.api_explorer_sandbox_policy) {
-      sandboxPolicy = cfg.api_explorer_sandbox_policy;
+      applySandboxPolicy(cfg.api_explorer_sandbox_policy, 'Configured');
     }
     // Enterprise policy override takes precedence.
     if ($isEnterpriseMode && $enterprisePolicy?.api_explorer_sandbox_policy) {
-      sandboxPolicy = $enterprisePolicy.api_explorer_sandbox_policy as string;
+      applySandboxPolicy($enterprisePolicy.api_explorer_sandbox_policy as string, 'Enterprise');
     }
   });
 

@@ -548,6 +548,15 @@ func (c *Config) Validate() error {
 			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": piv.backend %q is not one of software, tpm2, pkcs11", c.PIV.Backend)}
 		}
 	}
+
+	// The enterprise policy plane is opt-in (DefaultPolicy leaves this field
+	// empty) and security-authoritative, so a dangerous or forbidden value
+	// fails the config outright rather than being silently normalized; see
+	// gui.GUIConfig.Validate for the separate, self-healing treatment of the
+	// much more widely persisted user-config field of the same name.
+	if err := ValidateAPIExplorerSandboxPolicy(c.Policy.APIExplorerSandboxPolicy); err != nil {
+		return &DetailError{Err: ErrConfigInvalid, Detail: ": policy.api_explorer_sandbox_policy " + err.Error()}
+	}
 	if c.PIV.Storage != "" {
 		if _, ok := validPIVStorageTypes[c.PIV.Storage]; !ok {
 			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": piv.storage %q is not one of file, tpm2, pkcs11", c.PIV.Storage)}
