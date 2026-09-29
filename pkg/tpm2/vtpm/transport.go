@@ -50,11 +50,47 @@ type socketTransport struct {
 // Compile-time interface check.
 var _ transport.TPMCloser = (*socketTransport)(nil)
 
-// Send writes one TPM command and returns its complete response.
+// maxCommandRetries bounds how often Send resends one command the vTPM
+// declined with a retry warning.
+const maxCommandRetries = 8
+
+// retryResponseCodes are the warnings with which a TPM declines to start a
+// command and asks the caller to send it again (TCG TPM 2.0 Part 2, section
+// 6.6.3): the command was not executed, so resending it is safe. swtpm
+// answers the first use of an algorithm this way while it self-tests it;
+// the Linux TPM driver retries these for a hardware TPM, but a vTPM's socket
+// has no such layer.
+var retryResponseCodes = map[uint32]struct{}{
+	0x00000922: {}, // TPM_RC_RETRY
+	0x00000908: {}, // TPM_RC_YIELDED
+	0x0000090A: {}, // TPM_RC_TESTING
+}
+
+// isRetryResponse reports whether rsp carries a retry warning.
+func isRetryResponse(rsp []byte) bool {
+	if len(rsp) < tpmHeaderSize {
+		return false
+	}
+	_, ok := retryResponseCodes[binary.BigEndian.Uint32(rsp[6:10])]
+	return ok
+}
+
+// Send writes one TPM command and returns its complete response, resending
+// it while the vTPM answers with a retry warning.
 func (t *socketTransport) Send(input []byte) ([]byte, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	for attempt := 0; ; attempt++ {
+		rsp, err := t.sendOnce(input)
+		if err != nil || attempt == maxCommandRetries || !isRetryResponse(rsp) {
+			return rsp, err
+		}
+	}
+}
+
+// sendOnce writes one command and reads its response. The caller holds mu.
+func (t *socketTransport) sendOnce(input []byte) ([]byte, error) {
 	if err := t.write(input); err != nil {
 		if dropErr := t.drop(); dropErr != nil {
 			return nil, errors.Join(err, dropErr)

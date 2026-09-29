@@ -32,7 +32,7 @@
 // (/tmp/swtpm/swtpm.sock, started once per container by
 // .devcontainer/scripts/post-start.sh): this test's xkmsd subprocesses
 // provision themselves on first use through pkg/backend/tpm2/backend.go's
-// provisionSimulatorEKSRK, entered only when the backend config's
+// pkg/tpm2.ProvisionFresh, entered only when the backend config's
 // UseSimulator is true, which does nothing but ADD an EK and SRK to a blank
 // TPM -- safe against a scratch instance nobody else touches. Full TCG
 // provisioning (pkg/tpm2.(*TPM2).Provision) is a different, heavier
@@ -102,7 +102,7 @@ func launchSwtpm(t *testing.T) (int, error) {
 		return 0, fmt.Errorf("swtpm state dir: %w", err)
 	}
 
-	// No --create-ek-cert/--create-platform-cert: provisionSimulatorEKSRK
+	// No --create-ek-cert/--create-platform-cert: pkg/tpm2.ProvisionFresh
 	// only ever calls CreateEK/CreateSRK, neither of which reads or
 	// validates a manufacturer EK certificate.
 	setup := exec.Command("swtpm_setup",

@@ -43,7 +43,7 @@ import (
 // This test also performs a Seal/Unseal round trip through the sealer this
 // exact fresh-probe path returns -- go-xkms#997's verification. Before that
 // fix, this was the one path that could disagree with itself: the simulator
-// first-boot recipe (pkg/backend/tpm2's provisionSimulatorEKSRK) created the
+// first-boot recipe (pkg/tpm2.ProvisionFresh) created the
 // Platform SRK from ToTPMConfig's PlatformSRKConfig, which hardcoded
 // PlatformPolicy: false, while buildTPM2PlatformSealer separately forced the
 // KeyAttributes it returned to PlatformPolicy: true regardless of what

@@ -189,7 +189,7 @@ func NewBackend(config *Config) (*Backend, error) {
 		// is NEVER auto-provisioned — boot-time provisioning of physical TPMs
 		// is an operator action (`xkmsd init`).
 		if errors.Is(err, pkgtpm2.ErrNotInitialized) && config.UseSimulator && tpm != nil {
-			if perr := provisionSimulatorEKSRK(tpm, tpmConfig); perr != nil {
+			if perr := pkgtpm2.ProvisionFresh(tpm, tpmConfig); perr != nil {
 				closeErr := tpm.Close()
 				return nil, &errs.Joined{Lead: ErrNotInitialized, Detail: "simulator provisioning failed", Cause: errors.Join(perr, closeErr)}
 			}
@@ -245,57 +245,6 @@ func resolveSRKAttributes(tpm pkgtpm2.TrustedPlatformModule) (*types.KeyAttribut
 		return nil, &errs.Wrapped{Msg: "Platform SRK unavailable", Err: err}
 	}
 	return srkAttrs, nil
-}
-
-// provisionSimulatorEKSRK provisions the endorsement key, the TCG-standard
-// Shared SRK and the Platform SRK on a freshly-reset TPM simulator. It
-// mirrors the proven first-boot recipe used by the sshbackend/fido2
-// integration suites and the go-quicbaas seal factory: EKAttributesFromConfig
-// → CreateEK → SRKAttributesFromConfig (parented to the EK) → CreateSRK for
-// the SSRK, then PlatformSRKAttributesFromConfig → CreateSRK for the Platform
-// SRK this backend actually uses (see NewBackend). Callers must only invoke
-// this for simulator-backed configs; physical TPMs are provisioned by an
-// operator.
-//
-// The simulator is freshly reset, so the Owner hierarchy carries empty auth
-// at this point regardless of what either SRK config declares -- neither
-// SRKAttributesFromConfig nor PlatformSRKAttributesFromConfig is asked to
-// authorize anything else here.
-func provisionSimulatorEKSRK(tpm pkgtpm2.TrustedPlatformModule, cfg *pkgtpm2.Config) error {
-	if cfg.EK == nil || cfg.SSRK == nil || cfg.PlatformSRK == nil {
-		return &errs.Detail{Err: ErrInvalidConfig, Detail: "simulator provisioning requires EK, SSRK and PlatformSRK configs"}
-	}
-	ekAttrs, err := pkgtpm2.EKAttributesFromConfig(*cfg.EK, nil, nil)
-	if err != nil {
-		return &errs.Wrapped{Msg: "EK attributes", Err: err}
-	}
-	if err := tpm.CreateEK(ekAttrs); err != nil {
-		return &errs.Wrapped{Msg: "create EK", Err: err}
-	}
-
-	// The TCG-standard Shared SRK, provisioned per spec even though this
-	// backend does not use it for its own key operations: other TCG-aware
-	// software sharing this TPM expects it at its well-known handle.
-	ssrkAttrs, err := pkgtpm2.SRKAttributesFromConfig(*cfg.SSRK)
-	if err != nil {
-		return &errs.Wrapped{Msg: "SSRK attributes", Err: err}
-	}
-	ssrkAttrs.Parent = ekAttrs
-	if err := tpm.CreateSRK(ssrkAttrs); err != nil {
-		return &errs.Wrapped{Msg: "create SSRK", Err: err}
-	}
-
-	// The Platform SRK is this backend's own storage parent (see NewBackend).
-	platformSRKAttrs, err := pkgtpm2.PlatformSRKAttributesFromConfig(cfg)
-	if err != nil {
-		return &errs.Wrapped{Msg: "Platform SRK attributes", Err: err}
-	}
-	platformSRKAttrs.Parent = ekAttrs
-	if err := tpm.CreateSRK(platformSRKAttrs); err != nil {
-		return &errs.Wrapped{Msg: "create Platform SRK", Err: err}
-	}
-
-	return nil
 }
 
 // Type returns the backend type (TPM2).

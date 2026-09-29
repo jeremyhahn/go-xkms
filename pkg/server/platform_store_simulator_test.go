@@ -205,7 +205,7 @@ func TestCredentialService_TPM2Strategy_StoresAndLoadsThroughPlatformStore(t *te
 // New(cfg) succeeds here, not fails closed: the flip's autodetect
 // (resolveNodeSeal) opens the TPM through the same tpm2backend.NewBackend
 // every simulator-backed open in this codebase goes through, and NewBackend's
-// first-boot path (pkg/backend/tpm2/backend.go's provisionSimulatorEKSRK,
+// first-boot path (pkg/tpm2.ProvisionFresh,
 // added by go-xkms#681 -- "seal only under the Platform SRK") provisions the
 // EK, SSRK AND Platform SRK together on a fresh simulator, deliberately, so
 // every simulator-backed test in this codebase gets a seal-capable device

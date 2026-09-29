@@ -33,7 +33,7 @@ import (
 // go-xkms#997: the Platform SRK is the single storage parent go-xkms ever
 // seals or signs under (go-xkms#677: authValue = user PIN, authPolicy =
 // platform PCR policy), so every path that can create one -- this backend's
-// simulator first-boot autodetect (provisionSimulatorEKSRK) and the
+// simulator first-boot autodetect (pkg/tpm2.ProvisionFresh) and the
 // operator-facing enrollment ceremony (pkg/tpm2's
 // PlatformKeyStore.EnrollPlatformSRK) -- must derive the exact same shape.
 // Before the fix, ToTPMConfig hardcoded PlatformPolicy: false into the
@@ -58,7 +58,7 @@ var psrkShapeTestBank = pkgtpm2.PCRBankSHA256
 
 // autodetectedPlatformSRKAuthPolicy provisions a fresh simulator through
 // exactly the code path go-xkms#997 fixed -- NewBackend's first-boot
-// simulator recipe (provisionSimulatorEKSRK) -- and returns the resulting
+// simulator recipe (pkg/tpm2.ProvisionFresh) -- and returns the resulting
 // Platform SRK's AuthPolicy digest as persisted on the TPM. The simulator is
 // closed before returning: go-tpm-tools' simulator is a single process-wide
 // singleton, so only one may be open at a time.

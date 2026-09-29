@@ -44,7 +44,7 @@ import (
 // s.buildTPM2PlatformSealer's standalone/autodetect path
 // (seal.BuildBestStrategy -> pkg/backend/tpm2's NewBackend) always reaches
 // NewBackend's first-boot recipe on a fresh in-memory simulator, and that
-// recipe (provisionSimulatorEKSRK, added by go-xkms#681 "seal only under the
+// recipe (pkg/tpm2.ProvisionFresh, added by go-xkms#681 "seal only under the
 // Platform SRK") provisions the EK, SSRK AND Platform SRK together as a
 // deliberate simulator-only test convenience (see that function's doc
 // comment -- a physical TPM is never auto-provisioned this way). A bare

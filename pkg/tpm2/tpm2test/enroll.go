@@ -27,7 +27,7 @@ import (
 
 // EnrollPlatformSRK creates xkms's own Platform SRK on tpm if one does not
 // already exist, using config's PlatformSRK/SSRK/EK sections exactly the way
-// pkg/backend/tpm2.provisionSimulatorEKSRK provisions it on the simulator
+// pkg/tpm2.ProvisionFresh provisions it on the simulator
 // first-boot path. It is idempotent: if the Platform SRK is already present
 // (TPM2.PlatformSRKAttributes resolves it), EnrollPlatformSRK returns nil
 // without touching the TPM.
@@ -44,7 +44,7 @@ import (
 // or a bare TPM_RC_HANDLE for every one of those calls.
 //
 // This creates the Platform SRK with no password (an empty auth value),
-// matching provisionSimulatorEKSRK: a test that specifically needs the
+// matching ProvisionFresh: a test that specifically needs the
 // operator-PIN-bound form exercised by production first-boot enrollment
 // should use pkg/tpm2.PlatformKeyStore.Initialize/EnrollPlatformSRK
 // directly instead, as pkg/tpm2's own simulator suite does.

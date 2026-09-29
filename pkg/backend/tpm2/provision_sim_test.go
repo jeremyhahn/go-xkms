@@ -21,7 +21,6 @@ import (
 	"crypto/x509"
 	"testing"
 
-	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -62,14 +61,5 @@ func TestNewBackend_SimulatorAutoProvisions(t *testing.T) {
 	}
 	if _, err := backend.GenerateKey(context.Background(), attrs); err != nil {
 		t.Fatalf("GenerateKey on auto-provisioned simulator: %v", err)
-	}
-}
-
-// TestProvisionSimulatorEKSRK_MissingConfigs verifies the error path: the
-// provisioning helper refuses configs without EK/SSRK sections instead of
-// dereferencing nil.
-func TestProvisionSimulatorEKSRK_MissingConfigs(t *testing.T) {
-	if err := provisionSimulatorEKSRK(nil, &pkgtpm2.Config{}); err == nil {
-		t.Fatal("expected error for missing EK/SSRK configs, got nil")
 	}
 }

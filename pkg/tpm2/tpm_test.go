@@ -264,7 +264,7 @@ func enrollSimPlatformSRK(logger *slog.Logger, tpm *TPM2, config *Config) {
 	// own sealing (defaultSealKeyAttributes/defaultUnsealKeyAttributes) always
 	// uses the Platform SRK and never falls back to the Shared SRK, so this
 	// helper enrolls it too -- mirroring the Platform SRK creation
-	// pkg/backend/tpm2.provisionSimulatorEKSRK performs on the same simulator
+	// pkg/tpm2.ProvisionFresh performs on the same simulator
 	// first-boot path -- whenever it is not already present.
 	//
 	// This duplicates pkg/tpm2/tpm2test.EnrollPlatformSRK's logic rather than
