@@ -102,6 +102,13 @@ func (k *errorKV) CompareAndSwap(ctx context.Context, key string, expected, next
 	return k.guardedMemoryKV.CompareAndSwap(ctx, key, expected, next)
 }
 
+func (k *errorKV) Scan(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) (map[string][]byte, error) {
+	if k.failOp == "scan" {
+		return nil, errKVOutage
+	}
+	return k.guardedMemoryKV.Scan(ctx, prefix, opts...)
+}
+
 func newQRDBStore(t *testing.T, kv qrdbtransport.KVClient) *QRDBRefreshStore {
 	t.Helper()
 	store, err := NewQRDBRefreshStore(kv)
@@ -230,6 +237,43 @@ func TestQRDBRefreshStore_RevokeFamily_DeleteError(t *testing.T) {
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "delete", se.Op)
+}
+
+func TestQRDBRefreshStore_RevokeBySubject_ScanError(t *testing.T) {
+	store := newQRDBStore(t, newErrorKV("scan"))
+	err := store.RevokeBySubject(context.Background(), "alice")
+	var se *StoreError
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, "scan", se.Op)
+}
+
+func TestQRDBRefreshStore_RevokeBySubject_DecodeErrorSurfaces(t *testing.T) {
+	kv := newGuardedMemoryKV()
+	// A malformed value under the refresh prefix must surface as a typed
+	// decode failure, not be silently skipped -- an undecodable record could
+	// be exactly the family a lifecycle change was trying to revoke.
+	require.NoError(t, kv.Put(context.Background(), refreshKey("f1", "j1"), []byte("not json")))
+	store := newQRDBStore(t, kv)
+
+	err := store.RevokeBySubject(context.Background(), "alice")
+	var se *StoreError
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, "decode", se.Op)
+}
+
+func TestQRDBRefreshStore_RevokeBySubject_RevokeFamilyErrorPropagates(t *testing.T) {
+	kv := newErrorKV("")
+	store := newQRDBStore(t, kv)
+	ctx := context.Background()
+	require.NoError(t, store.Save(ctx, &Record{
+		JTI: "j1", Family: "f1", Subject: "alice", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}))
+	kv.failOp = "putifabsent"
+
+	err := store.RevokeBySubject(ctx, "alice")
+	var se *StoreError
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, "put-if-absent", se.Op)
 }
 
 func TestQRDBRefreshStore_FamilyRevoked_GetErrorPropagates(t *testing.T) {

@@ -65,6 +65,25 @@ func (e *RefreshRevokedError) Error() string {
 	return "auth/token: refresh token revoked or unknown"
 }
 
+// UserRecheckFailedError is returned when Refresh's UserResolver refuses a
+// refresh: the account behind the token's subject is disabled, deleted, no
+// longer resolves, or the resolver otherwise could not currently vouch for
+// it. It wraps the resolver's own error for logging, but every transport
+// maps it to the same generic 401 response as RefreshRevokedError -- a
+// presented refresh token must not reveal whether it was refused because it
+// was revoked or because the account behind it no longer may authenticate.
+type UserRecheckFailedError struct {
+	Err error
+}
+
+// Error implements the error interface.
+func (e *UserRecheckFailedError) Error() string {
+	return "auth/token: refresh refused: user re-check failed: " + e.Err.Error()
+}
+
+// Unwrap returns the resolver's error.
+func (e *UserRecheckFailedError) Unwrap() error { return e.Err }
+
 // RefreshRaceLostError is returned when an atomic rotation lost its race: a
 // concurrent exchange of the same refresh token rotated the record first, so
 // this caller must not receive a successor.

@@ -57,6 +57,39 @@ func newTestTokenIssuer(t *testing.T) *token.Issuer {
 	return issuer
 }
 
+// newTestTokenIssuerWithResolver builds a token issuer over a fresh
+// software ECDSA key, an in-memory refresh store, and the given
+// UserResolver, so a test can drive the refresh-time re-check
+// (go-xkms#1297) without standing up a qrdb identity plane.
+func newTestTokenIssuerWithResolver(t *testing.T, resolver token.UserResolver) *token.Issuer {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	issuer, err := token.NewIssuer(&token.Config{
+		Signer: key,
+		KeyAttributes: &types.KeyAttributes{
+			KeyAlgorithm:       x509.ECDSA,
+			SignatureAlgorithm: x509.ECDSAWithSHA256,
+			Hash:               stdcrypto.SHA256,
+		},
+		RefreshStore: token.NewMemoryRefreshStore(),
+		UserResolver: resolver,
+	})
+	require.NoError(t, err)
+	return issuer
+}
+
+// fakeUserResolver is a scripted token.UserResolver.
+type fakeUserResolver struct {
+	resolve func(ctx context.Context, id *auth.Identity) (*auth.Identity, error)
+}
+
+func (f *fakeUserResolver) ResolveUser(ctx context.Context, id *auth.Identity) (*auth.Identity, error) {
+	return f.resolve(ctx, id)
+}
+
 // fakeAuthUserStore maps every fingerprint to one configured user.
 type fakeAuthUserStore struct {
 	user auth.MTLSUser
@@ -153,6 +186,8 @@ func TestPIVLogin_Success(t *testing.T) {
 	assert.Positive(t, resp.ExpiresIn)
 	assert.Equal(t, PIVAttestLevelUnattested, accessClaims(t, resp.AccessToken)["attest_level"],
 		"an accepted login that proved no hardware must say so on the token")
+	assert.Equal(t, auth.SubjectKindUsername, accessClaims(t, resp.AccessToken)["sub_kind"],
+		"a PIV/mTLS login must declare its subject as a username (go-xkms#1297 review)")
 }
 
 func TestPIVLogin_DisabledUserRejected(t *testing.T) {
@@ -237,6 +272,83 @@ func TestAuthRefresh_ReuseRevokesFamily(t *testing.T) {
 	// Replay of the rotated token fails and kills the successor too.
 	assert.Equal(t, http.StatusUnauthorized, send(pair.RefreshToken).Code)
 	assert.Equal(t, http.StatusUnauthorized, send(rotated.RefreshToken).Code)
+}
+
+// TestAuthRefresh_UserResolver_DisabledAccountRefused proves the REST
+// refresh endpoint refuses a refresh once the account behind the token is
+// disabled, even though the refresh token itself is still valid and
+// unrotated (go-xkms#1297).
+func TestAuthRefresh_UserResolver_DisabledAccountRefused(t *testing.T) {
+	resolver := &fakeUserResolver{
+		resolve: func(context.Context, *auth.Identity) (*auth.Identity, error) {
+			return nil, auth.ErrUserDisabled
+		},
+	}
+	server := newAuthTestServer(t, func(c *Config) {
+		c.TokenIssuer = newTestTokenIssuerWithResolver(t, resolver)
+	})
+
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
+	require.NoError(t, err)
+
+	body, err := json.Marshal(authRefreshRequest{RefreshToken: pair.RefreshToken})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
+
+	w := doAuthRequest(t, server, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
+}
+
+// TestAuthRefresh_UserResolver_DeletedAccountRefused mirrors the disabled
+// case for a deleted account: the resolver reports the subject as gone.
+func TestAuthRefresh_UserResolver_DeletedAccountRefused(t *testing.T) {
+	resolver := &fakeUserResolver{
+		resolve: func(context.Context, *auth.Identity) (*auth.Identity, error) {
+			return nil, auth.ErrRefreshSubjectNotFound
+		},
+	}
+	server := newAuthTestServer(t, func(c *Config) {
+		c.TokenIssuer = newTestTokenIssuerWithResolver(t, resolver)
+	})
+
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
+	require.NoError(t, err)
+
+	body, err := json.Marshal(authRefreshRequest{RefreshToken: pair.RefreshToken})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
+
+	w := doAuthRequest(t, server, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
+}
+
+// TestAuthRefresh_UserResolver_RoleChangeReflected proves a role granted
+// after login reaches the very next refreshed access token.
+func TestAuthRefresh_UserResolver_RoleChangeReflected(t *testing.T) {
+	resolver := &fakeUserResolver{
+		resolve: func(_ context.Context, id *auth.Identity) (*auth.Identity, error) {
+			fresh := *id
+			fresh.Roles = []string{"promoted-role"}
+			return &fresh, nil
+		},
+	}
+	server := newAuthTestServer(t, func(c *Config) {
+		c.TokenIssuer = newTestTokenIssuerWithResolver(t, resolver)
+	})
+
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice", Roles: []string{"stale-role"}})
+	require.NoError(t, err)
+
+	body, err := json.Marshal(authRefreshRequest{RefreshToken: pair.RefreshToken})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
+
+	w := doAuthRequest(t, server, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp authTokenResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, []interface{}{"promoted-role"}, accessClaims(t, resp.AccessToken)["roles"])
 }
 
 func TestAuthMe_ReturnsIdentityPermissionsCapabilities(t *testing.T) {
