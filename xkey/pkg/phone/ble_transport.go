@@ -113,6 +113,16 @@ type BLETransport struct {
 	responseChan chan []byte
 	statusChan   chan []byte
 
+	// done is closed exactly once, by Close, and never otherwise. Receivers
+	// that block on responseChan/statusChan select on done as well so Close
+	// wakes them up. responseChan and statusChan themselves are never closed:
+	// notification handlers run on BlueZ goroutines and can keep delivering
+	// after Close begins (see the connEpoch note above), and closing a
+	// channel a concurrent goroutine might still send on is a send-after-close
+	// panic waiting to happen. Leaving the channels open and gating consumers
+	// on done avoids that race entirely.
+	done chan struct{}
+
 	connected        atomic.Bool
 	closed           atomic.Bool
 	connectedAddress atomic.Value // stores the actual connected address (string)
@@ -149,6 +159,7 @@ func NewBLETransport(cfg *BLETransportConfig) (*BLETransport, error) {
 		reassembler:  pairing.NewReassembler(),
 		responseChan: make(chan []byte, 16),
 		statusChan:   make(chan []byte, 16),
+		done:         make(chan struct{}),
 	}, nil
 }
 
@@ -626,7 +637,7 @@ func (t *BLETransport) ConnectWithBondedAddress(ctx context.Context, address, bo
 // handleResponseNotification processes incoming response fragments.
 func (t *BLETransport) handleResponseNotification(data []byte) {
 	if t.closed.Load() {
-		return // transport closed, channel is closed
+		return // transport closed, nothing left to deliver to
 	}
 
 	t.log.Debug("BLE notification received",
@@ -678,7 +689,7 @@ func (t *BLETransport) handleResponseNotification(data []byte) {
 // handleStatusNotification processes incoming status updates.
 func (t *BLETransport) handleStatusNotification(data []byte) {
 	if t.closed.Load() {
-		return // transport closed, channel is closed
+		return // transport closed, nothing left to deliver to
 	}
 	select {
 	case t.statusChan <- data:
@@ -777,6 +788,9 @@ func (t *BLETransport) Receive(ctx context.Context) ([]byte, error) {
 	case msg := <-t.responseChan:
 		t.log.Debug("Receive got response", "size", len(msg))
 		return msg, nil
+	case <-t.done:
+		t.log.Debug("Receive aborted, transport closed")
+		return nil, ErrBackendClosed
 	case <-ctx.Done():
 		t.log.Error("Receive timeout waiting for response")
 		return nil, ErrTimeout
@@ -965,21 +979,22 @@ func (t *BLETransport) Close() (err error) {
 		return nil // Already closed
 	}
 
+	// Wake up anything blocked in Receive (or selecting on StatusChannel)
+	// before disconnecting. responseChan and statusChan are deliberately
+	// never closed; see the done field comment.
+	close(t.done)
+
 	if disconnectErr := t.Disconnect(); disconnectErr != nil {
 		err = disconnectErr
-	}
-
-	if t.responseChan != nil {
-		close(t.responseChan)
-	}
-	if t.statusChan != nil {
-		close(t.statusChan)
 	}
 
 	return err
 }
 
-// StatusChannel returns the channel for status updates.
+// StatusChannel returns the channel for status updates. The channel is never
+// closed, including by Close: callers that range over or select on it must
+// also select on a cancellation signal of their own (or poll IsConnected) to
+// notice that the transport has closed.
 func (t *BLETransport) StatusChannel() <-chan []byte {
 	return t.statusChan
 }

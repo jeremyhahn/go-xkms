@@ -184,9 +184,6 @@ type ACMEEnrollmentConfig = acmeclient.EnrollmentConfig
 // ACMEClient.EnrollDevice: the issued IAK and IDevID certificate chain.
 type ACMEEnrollmentResult = acmeclient.EnrollmentResult
 
-// ACMERenewalConfig holds configuration for certificate renewal via ACME ARI.
-type ACMERenewalConfig = acmeclient.RenewalConfig
-
 // ACMERenewalInfo contains renewal information from ARI.
 type ACMERenewalInfo = acmeclient.RenewalInfo
 
