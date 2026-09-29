@@ -291,6 +291,29 @@ func TestEmbeddedTransport_EncryptDecrypt(t *testing.T) {
 			t.Errorf("Decrypt(nil) error = %v, want ErrNilRequest", err)
 		}
 	})
+
+	t.Run("encrypt key not found", func(t *testing.T) {
+		_, err := tr.Encrypt(ctx, &transport.EncryptRequest{
+			Backend: deriveBackend, KeyID: "no-such-key", Plaintext: []byte("data"),
+		})
+		if !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("Encrypt() error = %v, want ErrKeyNotFound", err)
+		}
+	})
+
+	t.Run("decrypt backend not found", func(t *testing.T) {
+		_, err := tr.Decrypt(ctx, &transport.DecryptRequest{Backend: "does-not-exist", KeyID: "encrypt-key"})
+		if !errors.Is(err, ErrBackendNotFound) {
+			t.Fatalf("Decrypt() error = %v, want ErrBackendNotFound", err)
+		}
+	})
+
+	t.Run("decrypt key not found", func(t *testing.T) {
+		_, err := tr.Decrypt(ctx, &transport.DecryptRequest{Backend: deriveBackend, KeyID: "no-such-key"})
+		if !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("Decrypt() error = %v, want ErrKeyNotFound", err)
+		}
+	})
 }
 
 // TestEmbeddedTransport_EncryptAsym covers the RSA-OAEP path, including the
@@ -343,6 +366,36 @@ func TestEmbeddedTransport_EncryptAsym(t *testing.T) {
 	t.Run("nil request", func(t *testing.T) {
 		if _, err := tr.EncryptAsym(ctx, nil); !errors.Is(err, ErrNilRequest) {
 			t.Errorf("EncryptAsym(nil) error = %v, want ErrNilRequest", err)
+		}
+	})
+
+	t.Run("backend not found", func(t *testing.T) {
+		_, err := tr.EncryptAsym(ctx, &transport.EncryptAsymRequest{
+			Backend: "does-not-exist", KeyID: "oaep-rsa", Plaintext: []byte("x"),
+		})
+		if !errors.Is(err, ErrBackendNotFound) {
+			t.Fatalf("EncryptAsym() error = %v, want ErrBackendNotFound", err)
+		}
+	})
+
+	t.Run("weak OAEP hash is refused", func(t *testing.T) {
+		_, err := tr.EncryptAsym(ctx, &transport.EncryptAsymRequest{
+			Backend: deriveBackend, KeyID: "oaep-rsa", Plaintext: []byte("wrap me"), Hash: "SHA1",
+		})
+		if !errors.Is(err, xkms.ErrWeakOAEPHash) {
+			t.Fatalf("EncryptAsym(SHA1) error = %v, want ErrWeakOAEPHash", err)
+		}
+	})
+
+	t.Run("plaintext too long for the key size", func(t *testing.T) {
+		// RSA-2048 OAEP/SHA-256 tops out at 190 bytes of message
+		// (2048/8 - 2*32 - 2); this plaintext deliberately overflows it so
+		// rsa.EncryptOAEP itself reports the failure.
+		_, err := tr.EncryptAsym(ctx, &transport.EncryptAsymRequest{
+			Backend: deriveBackend, KeyID: "oaep-rsa", Plaintext: make([]byte, 512), Hash: "SHA256",
+		})
+		if !errors.Is(err, ErrEncryptionFailed) {
+			t.Fatalf("EncryptAsym(oversized plaintext) error = %v, want ErrEncryptionFailed", err)
 		}
 	})
 }
@@ -435,6 +488,16 @@ func TestEmbeddedTransport_GetImportParameters(t *testing.T) {
 	t.Run("nil request", func(t *testing.T) {
 		if _, err := tr.GetImportParameters(ctx, nil); !errors.Is(err, ErrNilRequest) {
 			t.Errorf("GetImportParameters(nil) error = %v, want ErrNilRequest", err)
+		}
+	})
+
+	t.Run("backend not found", func(t *testing.T) {
+		_, err := tr.GetImportParameters(ctx, &transport.GetImportParametersRequest{
+			Backend: "does-not-exist", KeyID: "import-target", KeyType: "RSA", KeySize: 2048,
+			Algorithm: string(xkms.WrappingAlgorithmRSAES_OAEP_SHA_256),
+		})
+		if !errors.Is(err, ErrGetImportParamsFailed) {
+			t.Fatalf("GetImportParameters() error = %v, want ErrGetImportParamsFailed", err)
 		}
 	})
 }
@@ -534,6 +597,16 @@ func TestVerifySignatureHelper(t *testing.T) {
 		// An RSA-shaped verification against an ECDSA public key must fail
 		// closed (type assertion miss), not panic.
 		if verifySignature(&priv.PublicKey, data, []byte("sig"), "SHA256", x509.RSA) {
+			t.Error("verifySignature() = true for a type mismatch, want false")
+		}
+	})
+
+	t.Run("ecdsa-shaped verification against a non-ECDSA key", func(t *testing.T) {
+		edPub, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("ed25519.GenerateKey() error = %v", err)
+		}
+		if verifySignature(edPub, data, []byte("sig"), "SHA256", x509.ECDSA) {
 			t.Error("verifySignature() = true for a type mismatch, want false")
 		}
 	})
@@ -747,4 +820,33 @@ func TestEmbeddedTransport_ImportKey_RoundTrip(t *testing.T) {
 	if err := rsa.VerifyPKCS1v15(&extKey.PublicKey, crypto.SHA256, digest[:], signResp.Signature); err != nil {
 		t.Errorf("the imported key signed with a different key than was exported: %v", err)
 	}
+}
+
+// TestEmbeddedTransport_ImportKey_ErrorPaths covers the template-validation
+// failure ImportKey shares with GetImportParameters and the backend's own
+// rejection of an import that never went through a genuine wrap ceremony.
+func TestEmbeddedTransport_ImportKey_ErrorPaths(t *testing.T) {
+	tr := newDeriveTestTransport(t)
+	ctx := context.Background()
+
+	t.Run("unsupported key template", func(t *testing.T) {
+		_, err := tr.ImportKey(ctx, &transport.ImportKeyRequest{
+			Backend: deriveBackend, KeyID: "bad-template", KeyType: "not-an-algorithm",
+		})
+		if !errors.Is(err, ErrImportTemplateUnsupported) {
+			t.Fatalf("ImportKey() error = %v, want ErrImportTemplateUnsupported", err)
+		}
+	})
+
+	t.Run("import fails without a matching wrap ceremony", func(t *testing.T) {
+		_, err := tr.ImportKey(ctx, &transport.ImportKeyRequest{
+			Backend: deriveBackend, KeyID: "unceremonious-import", KeyType: "RSA", KeySize: 2048,
+			WrappedKeyMaterial: []byte("not actually wrapped"),
+			Algorithm:          string(xkms.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256),
+			ImportToken:        []byte("no-such-token"),
+		})
+		if !errors.Is(err, ErrImportKeyFailed) {
+			t.Fatalf("ImportKey() error = %v, want ErrImportKeyFailed", err)
+		}
+	})
 }

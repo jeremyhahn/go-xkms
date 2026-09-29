@@ -283,15 +283,25 @@ func TestServer_DroppedPeerNeverReachesHandler(t *testing.T) {
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
 	defer func() { _ = conn.Close() }()
-	require.NoError(t, json.NewEncoder(conn).Encode(Message{Type: MessageTypeTypePassword, Name: "github"}))
 
-	// The server closes the connection without writing a response. The
-	// close arrives as EOF, or as a reset because the request was never
-	// read; either way nothing comes back.
-	require.NoError(t, conn.SetReadDeadline(time.Now().Add(DefaultTimeout)))
-	n, readErr := conn.Read(make([]byte, 1))
-	assert.Zero(t, n)
-	assert.True(t, errors.Is(readErr, io.EOF) || errors.Is(readErr, syscall.ECONNRESET), "want EOF or reset, got %v", readErr)
+	// admitPeer runs immediately after Accept, so the server may close the
+	// connection before the client finishes writing its request. A write
+	// failure from that race (broken pipe or reset) is an acceptable
+	// outcome, not a bug: the invariant under test is that the request
+	// never reaches the handler, not that the write itself succeeds.
+	if writeErr := json.NewEncoder(conn).Encode(Message{Type: MessageTypeTypePassword, Name: "github"}); writeErr != nil {
+		assert.True(t, errors.Is(writeErr, syscall.EPIPE) || errors.Is(writeErr, syscall.ECONNRESET),
+			"want broken pipe or reset from a dropped peer, got %v", writeErr)
+	} else {
+		// The write beat the close. The server still closes the connection
+		// without writing a response. The close arrives as EOF, or as a
+		// reset because the request was never read; either way nothing
+		// comes back.
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(DefaultTimeout)))
+		n, readErr := conn.Read(make([]byte, 1))
+		assert.Zero(t, n)
+		assert.True(t, errors.Is(readErr, io.EOF) || errors.Is(readErr, syscall.ECONNRESET), "want EOF or reset, got %v", readErr)
+	}
 
 	<-records
 	assert.Empty(t, handler.getLastName(), "a dropped peer's request must not be dispatched")
