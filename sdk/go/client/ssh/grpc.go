@@ -74,7 +74,8 @@ func NewGRPC(opts GRPCOptions) (Client, error) {
 		}
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	} else {
-		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// opts.TLSEnabled=false is the caller's own explicit GRPCOptions choice.
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials())) // insecure-ok: explicit-config transport. Allowlisted in Makefile check-insecure-tls.
 	}
 	dialOpts = append(dialOpts, opts.DialOptions...)
 

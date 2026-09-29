@@ -91,7 +91,8 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 // redial a redirected leader with the identical credentials.
 func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
 	if !t.config.TLSEnabled {
-		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
+		// TLSEnabled=false is the caller's own explicit transport.Config choice.
+		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil // insecure-ok: explicit-config transport. Allowlisted in Makefile check-insecure-tls.
 	}
 
 	tlsConfig := &tls.Config{

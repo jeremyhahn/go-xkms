@@ -205,7 +205,8 @@ func (c *Client) buildDialOptions() ([]grpc.DialOption, error) {
 		}
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	} else {
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// Missing TLSCertFile/TLSKeyFile is the caller's own explicit ClientConfig choice.
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials())) // insecure-ok: explicit-config transport. Allowlisted in Makefile check-insecure-tls.
 	}
 
 	return opts, nil
