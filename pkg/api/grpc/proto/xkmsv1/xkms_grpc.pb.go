@@ -183,6 +183,10 @@ const (
 	KeystoreService_FinishRegistration_FullMethodName          = "/xkms.v1.KeystoreService/FinishRegistration"
 	KeystoreService_BeginAuthentication_FullMethodName         = "/xkms.v1.KeystoreService/BeginAuthentication"
 	KeystoreService_FinishAuthentication_FullMethodName        = "/xkms.v1.KeystoreService/FinishAuthentication"
+	KeystoreService_GetInvite_FullMethodName                   = "/xkms.v1.KeystoreService/GetInvite"
+	KeystoreService_BeginInviteRegistration_FullMethodName     = "/xkms.v1.KeystoreService/BeginInviteRegistration"
+	KeystoreService_FinishInviteRegistration_FullMethodName    = "/xkms.v1.KeystoreService/FinishInviteRegistration"
+	KeystoreService_ActivateInvitePIV_FullMethodName           = "/xkms.v1.KeystoreService/ActivateInvitePIV"
 	KeystoreService_SSHGenerateKey_FullMethodName              = "/xkms.v1.KeystoreService/SSHGenerateKey"
 	KeystoreService_SSHImportKey_FullMethodName                = "/xkms.v1.KeystoreService/SSHImportKey"
 	KeystoreService_SSHListKeys_FullMethodName                 = "/xkms.v1.KeystoreService/SSHListKeys"
@@ -561,6 +565,14 @@ type KeystoreServiceClient interface {
 	// FinishAuthentication together with the assertion JSON.
 	BeginAuthentication(ctx context.Context, in *BeginAuthenticationRequest, opts ...grpc.CallOption) (*BeginAuthenticationResponse, error)
 	FinishAuthentication(ctx context.Context, in *FinishAuthenticationRequest, opts ...grpc.CallOption) (*FinishAuthenticationResponse, error)
+	// Invitation redemption (go-xkms#1294 part B): how an account CreateUser
+	// provisioned with zero credentials enrolls its first one. Deliberately
+	// ungated, for the same reason the ceremony RPCs above are: there is no
+	// credential yet to authenticate a request with.
+	GetInvite(ctx context.Context, in *GetInviteRequest, opts ...grpc.CallOption) (*GetInviteResponse, error)
+	BeginInviteRegistration(ctx context.Context, in *BeginInviteRegistrationRequest, opts ...grpc.CallOption) (*BeginInviteRegistrationResponse, error)
+	FinishInviteRegistration(ctx context.Context, in *FinishInviteRegistrationRequest, opts ...grpc.CallOption) (*FinishInviteRegistrationResponse, error)
+	ActivateInvitePIV(ctx context.Context, in *ActivateInvitePIVRequest, opts ...grpc.CallOption) (*ActivateInvitePIVResponse, error)
 	// SSHGenerateKey generates a new SSH key. When backend is set the key is
 	// created on that crypto backend (private key never leaves a hardware
 	// backend); otherwise a software key is generated server-side.
@@ -2205,6 +2217,46 @@ func (c *keystoreServiceClient) FinishAuthentication(ctx context.Context, in *Fi
 	return out, nil
 }
 
+func (c *keystoreServiceClient) GetInvite(ctx context.Context, in *GetInviteRequest, opts ...grpc.CallOption) (*GetInviteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetInviteResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GetInvite_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) BeginInviteRegistration(ctx context.Context, in *BeginInviteRegistrationRequest, opts ...grpc.CallOption) (*BeginInviteRegistrationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BeginInviteRegistrationResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_BeginInviteRegistration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) FinishInviteRegistration(ctx context.Context, in *FinishInviteRegistrationRequest, opts ...grpc.CallOption) (*FinishInviteRegistrationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FinishInviteRegistrationResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_FinishInviteRegistration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) ActivateInvitePIV(ctx context.Context, in *ActivateInvitePIVRequest, opts ...grpc.CallOption) (*ActivateInvitePIVResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ActivateInvitePIVResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_ActivateInvitePIV_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) SSHGenerateKey(ctx context.Context, in *SSHGenerateKeyRequest, opts ...grpc.CallOption) (*SSHKeyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SSHKeyResponse)
@@ -2707,6 +2759,14 @@ type KeystoreServiceServer interface {
 	// FinishAuthentication together with the assertion JSON.
 	BeginAuthentication(context.Context, *BeginAuthenticationRequest) (*BeginAuthenticationResponse, error)
 	FinishAuthentication(context.Context, *FinishAuthenticationRequest) (*FinishAuthenticationResponse, error)
+	// Invitation redemption (go-xkms#1294 part B): how an account CreateUser
+	// provisioned with zero credentials enrolls its first one. Deliberately
+	// ungated, for the same reason the ceremony RPCs above are: there is no
+	// credential yet to authenticate a request with.
+	GetInvite(context.Context, *GetInviteRequest) (*GetInviteResponse, error)
+	BeginInviteRegistration(context.Context, *BeginInviteRegistrationRequest) (*BeginInviteRegistrationResponse, error)
+	FinishInviteRegistration(context.Context, *FinishInviteRegistrationRequest) (*FinishInviteRegistrationResponse, error)
+	ActivateInvitePIV(context.Context, *ActivateInvitePIVRequest) (*ActivateInvitePIVResponse, error)
 	// SSHGenerateKey generates a new SSH key. When backend is set the key is
 	// created on that crypto backend (private key never leaves a hardware
 	// backend); otherwise a software key is generated server-side.
@@ -3230,6 +3290,18 @@ func (UnimplementedKeystoreServiceServer) BeginAuthentication(context.Context, *
 }
 func (UnimplementedKeystoreServiceServer) FinishAuthentication(context.Context, *FinishAuthenticationRequest) (*FinishAuthenticationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FinishAuthentication not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetInvite(context.Context, *GetInviteRequest) (*GetInviteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetInvite not implemented")
+}
+func (UnimplementedKeystoreServiceServer) BeginInviteRegistration(context.Context, *BeginInviteRegistrationRequest) (*BeginInviteRegistrationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BeginInviteRegistration not implemented")
+}
+func (UnimplementedKeystoreServiceServer) FinishInviteRegistration(context.Context, *FinishInviteRegistrationRequest) (*FinishInviteRegistrationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FinishInviteRegistration not implemented")
+}
+func (UnimplementedKeystoreServiceServer) ActivateInvitePIV(context.Context, *ActivateInvitePIVRequest) (*ActivateInvitePIVResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ActivateInvitePIV not implemented")
 }
 func (UnimplementedKeystoreServiceServer) SSHGenerateKey(context.Context, *SSHGenerateKeyRequest) (*SSHKeyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SSHGenerateKey not implemented")
@@ -6174,6 +6246,78 @@ func _KeystoreService_FinishAuthentication_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_GetInvite_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetInviteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetInvite(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetInvite_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetInvite(ctx, req.(*GetInviteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_BeginInviteRegistration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BeginInviteRegistrationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).BeginInviteRegistration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_BeginInviteRegistration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).BeginInviteRegistration(ctx, req.(*BeginInviteRegistrationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_FinishInviteRegistration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FinishInviteRegistrationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).FinishInviteRegistration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_FinishInviteRegistration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).FinishInviteRegistration(ctx, req.(*FinishInviteRegistrationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_ActivateInvitePIV_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ActivateInvitePIVRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).ActivateInvitePIV(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_ActivateInvitePIV_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).ActivateInvitePIV(ctx, req.(*ActivateInvitePIVRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_SSHGenerateKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SSHGenerateKeyRequest)
 	if err := dec(in); err != nil {
@@ -7072,6 +7216,22 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FinishAuthentication",
 			Handler:    _KeystoreService_FinishAuthentication_Handler,
+		},
+		{
+			MethodName: "GetInvite",
+			Handler:    _KeystoreService_GetInvite_Handler,
+		},
+		{
+			MethodName: "BeginInviteRegistration",
+			Handler:    _KeystoreService_BeginInviteRegistration_Handler,
+		},
+		{
+			MethodName: "FinishInviteRegistration",
+			Handler:    _KeystoreService_FinishInviteRegistration_Handler,
+		},
+		{
+			MethodName: "ActivateInvitePIV",
+			Handler:    _KeystoreService_ActivateInvitePIV_Handler,
 		},
 		{
 			MethodName: "SSHGenerateKey",

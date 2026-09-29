@@ -16,7 +16,6 @@ package main
 import (
 	"context"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -24,8 +23,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
-	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 	"github.com/spf13/cobra"
 )
 
@@ -55,21 +52,18 @@ var adminCreateCmd = &cobra.Command{
 All administrators have the admin role and full access to manage the xkms.
 
 The FIDO2 method requires --email: WebAuthn resolves the account by its
-canonical email login key. The mTLS method does not, because that admin is
-resolved by its certificate SPKI thumbprint and is created with no login key.
+canonical email login key. It creates the account PENDING and prints a
+one-time activation invitation (go-xkms#1294 part B) rather than enrolling a
+passkey inline: an admin cannot enroll a credential on an invitee's behalf,
+so redeem the invitation (from the machine holding the security key) with
+'xkmsctl user invite redeem'.
 
-An authenticator with a CTAP2 PIN set refuses the FIDO2 ceremony unless the
-request carries the PIN. An authenticator with no PIN configured needs none.
-The mTLS method takes no PIN: possession of the certificate key is the
-credential.
-
-` + pinUsage + `
+The mTLS method does not require --email, because that admin is resolved by
+its certificate SPKI thumbprint and is created active with no login key and
+no invitation: possession of the certificate key is the credential.
 
 Example (FIDO2):
   xkmsctl admin create admin --email admin@example.com --display-name "Admin User"
-
-  # Enroll against a PIN-protected authenticator, with no PIN in the process list
-  printf '%s' "$PIN" | xkmsctl admin create admin --pin-stdin --email admin@example.com
 
 Example (mTLS with certificate file):
   xkmsctl admin create admin --method mtls --cert-file /path/to/client.pem
@@ -105,16 +99,17 @@ Example (mTLS with PKCS#11 token):
 	},
 }
 
-// enrollFIDO2Admin performs FIDO2-based admin enrollment by driving the
-// server-side WebAuthn registration ceremony through the SDK. The admin role is
+// enrollFIDO2Admin creates a pending administrator account through
+// CreateUser, which mints a one-time activation invitation in the same call
+// (go-xkms#1294 part B). It no longer drives a local FIDO2 ceremony inline:
+// an admin cannot enroll a passkey on an invitee's behalf, so enrolling the
+// account's first credential is authorized by the invitation, redeemed
+// separately (see createInvitedUser's doc comment). The admin role is
 // always assigned.
 func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer *Printer, storagePath string) error {
 	fr := newFlagReader(cmd)
 	email := fr.String("email")
 	displayName := fr.String("display-name")
-	devicePath := fr.String("device")
-	timeout := fr.Duration("timeout")
-	requireUV := fr.Bool("user-verification")
 	if err := fr.Err(); err != nil {
 		return err
 	}
@@ -122,18 +117,8 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	if displayName == "" {
 		displayName = username
 	}
-
-	// Resolve the authenticator PIN before anything reaches the network: bad
-	// PIN input is operator input to correct, and correcting it should not
-	// first cost a server round trip or a half-finished enrollment. An empty
-	// PIN is what an authenticator with no PIN configured needs.
-	pin, err := resolvePINInput(cmd)
-	if err != nil {
-		return err
-	}
-	origin, err := resolveWebAuthnOrigin(cmd, cfg.Server)
-	if err != nil {
-		return err
+	if email == "" {
+		return ErrEmailRequired
 	}
 
 	// Connect to the xkms service.
@@ -149,60 +134,36 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	}
 	printVerbose("Connected to xkms service")
 
-	// The hardware CTAP2 authenticator adapter is opened lazily by
-	// webAuthnRegistration, only after CreateUser and BeginRegistration have
-	// already succeeded server-side.
-	fidoConfig := fido2.DefaultConfig
-	fidoConfig.DevicePath = devicePath
-	fidoConfig.RequireUserVerification = requireUV
-	fidoConfig.UserPresenceTimeout = timeout
-	enumerator := cfg.HIDDeviceEnumerator()
-
-	newAdapter := func() (webauthnclient.AuthenticatorAdapter, error) {
-		return webauthnclient.NewHardwareAdapter(&fidoConfig, enumerator)
-	}
-
 	if err := printer.PrintMessage("Creating administrator account..."); err != nil {
 		return err
 	}
-
 	if err := printer.PrintMessage(fmt.Sprintf("Username: %s", username)); err != nil {
 		return err
 	}
-
 	if err := printer.PrintMessage(fmt.Sprintf("Display Name: %s", displayName)); err != nil {
 		return err
 	}
 
-	if email == "" {
-		return ErrEmailRequired
-	}
-
-	attestation, err := webAuthnRegistration(ctx, cl, newAdapter, printer, username, email, displayName, string(RoleAdmin), origin, pin)
+	resp, err := createInvitedUser(ctx, cl, username, email, displayName, string(RoleAdmin))
 	if err != nil {
 		return err
 	}
 
-	credentialID, err := extractWebAuthnCredentialID(attestation)
-	if err != nil {
+	if err := printer.PrintSuccess("\nAdministrator account created; activation is pending."); err != nil {
 		return err
 	}
-
-	printVerbose("FIDO2 credential registered successfully")
-
-	if err := printer.PrintSuccess("\nAdministrator created successfully!"); err != nil {
+	if err := printInvite(printer, cfg, resp.Invite); err != nil {
 		return err
 	}
 
 	// Print summary
 	if cfg.OutputFormat == "json" {
 		summary := map[string]interface{}{
-			"success":       true,
-			"username":      username,
-			"display_name":  displayName,
-			"role":          "admin",
-			"auth_method":   "fido2",
-			"credential_id": base64.URLEncoding.EncodeToString(credentialID),
+			"success":      true,
+			"username":     username,
+			"display_name": displayName,
+			"role":         "admin",
+			"pending":      true,
 		}
 		if err := printer.PrintJSON(summary); err != nil {
 			return err
@@ -210,8 +171,6 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	} else {
 		fmt.Printf("\nUsername: %s\n", username)
 		fmt.Printf("Role: %s\n", string(RoleAdmin))
-		fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(credentialID))
-		fmt.Printf("\nYou can now use this security key to authenticate to the xkms web UI.\n")
 	}
 
 	return nil
@@ -773,13 +732,6 @@ func init() {
 	// create flags
 	adminCreateCmd.Flags().String("email", "", "canonical login key for the admin (REQUIRED for the fido2 method)")
 	adminCreateCmd.Flags().String("display-name", "", "admin display name (defaults to username)")
-	adminCreateCmd.Flags().String("rp-id", "go-xkms", "relying party ID")
-	adminCreateCmd.Flags().String("rp-name", "Go xKMS", "relying party name")
-	adminCreateCmd.Flags().Duration("timeout", 30*time.Second, "timeout for user presence")
-	adminCreateCmd.Flags().String("device", "", "specific FIDO2 device path to use")
-	adminCreateCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
-	addPINFlags(adminCreateCmd)
-	addOriginFlag(adminCreateCmd)
 
 	// Authentication method flag (read at runtime via cmd.Flags().GetString("method"))
 	adminCreateCmd.Flags().String("method", "fido2",

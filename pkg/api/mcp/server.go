@@ -420,6 +420,13 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"user.bindCert":        (*Server).handleBindUserCert,
 	"user.listCredentials": (*Server).handleListUserCredentials,
 
+	// Invitation redemption (go-xkms#1294 part B). The FIDO2 half
+	// (Begin/FinishInviteRegistration) is a named exclusion — see
+	// handlers_invite.go's package comment — matching the existing
+	// WebAuthn registration/authentication exclusion.
+	"invite.get":         (*Server).handleGetInvite,
+	"invite.pivActivate": (*Server).handleActivateInvitePIV,
+
 	// Password store operations
 	"password.add":           (*Server).handlePasswordAdd,
 	"password.get":           (*Server).handlePasswordGet,

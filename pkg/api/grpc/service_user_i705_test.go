@@ -58,9 +58,13 @@ func (f *grpcFakeUserClient) CreateUser(_ context.Context, req *qrdbtransport.Cr
 		return nil, &qrdbtransport.UserExistsError{Username: req.Username}
 	}
 	f.nextID++
+	lifecycle := qrdbsdk.LifecycleActive
+	if req.Pending || req.Lifecycle == string(qrdbsdk.LifecyclePending) {
+		lifecycle = qrdbsdk.LifecyclePending
+	}
 	u := &qrdbtransport.User{
 		ID: f.nextID, Username: req.Username, Email: req.Email, Name: req.Name,
-		TenantID: req.TenantID, RoleIDs: req.RoleIDs, Lifecycle: string(qrdbsdk.LifecycleActive),
+		TenantID: req.TenantID, RoleIDs: req.RoleIDs, Lifecycle: string(lifecycle),
 	}
 	f.byUsername[req.Username] = u
 	f.byID[u.ID] = u
@@ -191,12 +195,27 @@ func (f *grpcFakeRoleClient) ReconcileBuiltInRoles(context.Context, *qrdbtranspo
 
 // newUserGRPCService wires a fresh XKMSService with in-memory user/role
 // clients and returns the gRPC Service in front of it.
+// grpcSingleStoreResolver resolves every tenant to the same backing
+// KVStore — enough for a unit test's invite store, which does not exercise
+// per-tenant routing or barrier isolation.
+type grpcSingleStoreResolver struct{ store qrdbsdk.KVStore }
+
+func (r grpcSingleStoreResolver) Resolve(context.Context, string) (qrdbsdk.KVStore, error) {
+	return r.store, nil
+}
+
 func newUserGRPCService(t *testing.T) (*Service, *grpcFakeUserClient) {
 	t.Helper()
 	users := newGRPCFakeUserClient()
 	roles := &grpcFakeRoleClient{roles: []*qrdbtransport.Role{{ID: "role-operator", Name: "operator"}}}
 	xkmsSvc := &xkms.XKMSService{}
 	xkmsSvc.SetUserClients(users, roles)
+	// CreateUser mints an invitation for every account created with an
+	// email login key (go-xkms#1294 part B); wire the real qrdb invite
+	// store over an in-memory KV store so that path is reachable here.
+	inviteStore, err := qrdbsdk.NewTenantInviteStore(grpcSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	require.NoError(t, err)
+	xkmsSvc.SetInviteStore(inviteStore)
 	return NewService(nil, nil, xkmsSvc), users
 }
 
@@ -210,7 +229,13 @@ func TestServiceCreateUser_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "alice", resp.User.Username)
 	assert.Equal(t, "alice@example.com", resp.User.Email)
-	assert.True(t, resp.User.Enabled)
+	// An email-login-key account is created PENDING, not active: it holds no
+	// credential yet and activates only through invite redemption
+	// (go-xkms#1294 part B). CreateUser mints the one-time activation
+	// invitation in the same call.
+	assert.False(t, resp.User.Enabled)
+	require.NotNil(t, resp.Invite)
+	assert.NotEmpty(t, resp.Invite.Token)
 }
 
 func TestServiceCreateUser_MissingUsername(t *testing.T) {

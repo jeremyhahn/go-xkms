@@ -201,6 +201,22 @@ func (m *mockCAClient) FinishAuthentication(_ context.Context, _ *transport.Fini
 	return nil, nil
 }
 
+func (m *mockCAClient) GetInvite(_ context.Context, _ *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) BeginInviteRegistration(_ context.Context, _ *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) FinishInviteRegistration(_ context.Context, _ *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) ActivateInvitePIV(_ context.Context, _ *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	return nil, nil
+}
+
 // CA-specific methods that the mock implements.
 func (m *mockCAClient) GetCABundle(_ context.Context, _ *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	return m.getCABundleResp, m.getCABundleErr

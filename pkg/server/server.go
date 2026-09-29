@@ -908,6 +908,18 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.tenantService != nil {
 			svc.SetTenantService(s.tenantService)
 		}
+		// The enrollment-invitation store (go-xkms#1294 part B) is built and
+		// wired through composedStores()/compose.Stores.Wire above, the same
+		// one construction path (pkg/compose.BuildInviteStore) an embedding
+		// host takes — see composedStores' doc comment. Only the operator
+		// TTL/link config, which is not a store, is wired here.
+		if s.config.Invite != nil {
+			inviteCfg, inviteErr := xkmsInviteConfigFromOperator(s.config.Invite)
+			if inviteErr != nil {
+				return nil, inviteErr
+			}
+			svc.SetInviteConfig(inviteCfg)
+		}
 		if s.ceremonyService != nil {
 			svc.SetCeremonyService(initialize.NewCeremonyAdapter(s.ceremonyService))
 		}
@@ -935,7 +947,11 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 // too. xkmsd builds each store at its own point of the start-up sequence;
 // the per-tenant password manager, which needs both the password store and
 // the barrier registry, is built here, once both exist, and kept on the
-// server so the REST surface routes through the same instance.
+// server so the REST surface routes through the same instance. The
+// enrollment-invitation store (go-xkms#1294 part B) needs only storage, so
+// it is built here too, through compose.BuildInviteStore(s.createStorage)
+// — the one construction path an embedding host's module also takes, never
+// a separate block wiring a server-local type.
 func (s *Server) composedStores() *compose.Stores {
 	if s.passwordStore != nil && s.barrierRegistry != nil {
 		manager, err := compose.BuildTenantPasswordManager(s.barrierRegistry, s.passwordStore)
@@ -959,6 +975,11 @@ func (s *Server) composedStores() *compose.Stores {
 	if s.qrdbClient != nil {
 		stores.Custodians = s.qrdbClient.CustodianGroups()
 		stores.Shares = s.qrdbClient.Shares()
+	}
+	if invite, err := compose.BuildInviteStore(s.createStorage); err != nil {
+		s.logger.Warn("Invite store is off", "error", err)
+	} else {
+		stores.Invite = invite
 	}
 	return stores
 }

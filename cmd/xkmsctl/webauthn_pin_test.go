@@ -18,7 +18,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 
@@ -90,27 +89,6 @@ func newVirtualPINAdapter(t *testing.T, pin string) webauthnclient.Authenticator
 	return adapter
 }
 
-// pinDirectoryClient answers a full registration ceremony so the local
-// authenticator half runs to completion.
-type pinDirectoryClient struct {
-	mockBackendsClient
-}
-
-func (c *pinDirectoryClient) CreateUser(context.Context, *client.CreateUserRequest) (*client.GetUserResponse, error) {
-	return &client.GetUserResponse{}, nil
-}
-
-func (c *pinDirectoryClient) BeginRegistration(context.Context, *client.BeginRegistrationRequest) (*client.BeginRegistrationResponse, error) {
-	return &client.BeginRegistrationResponse{
-		SessionID:   "sess-pin",
-		OptionsJSON: validRegistrationOptionsJSON(),
-	}, nil
-}
-
-func (c *pinDirectoryClient) FinishRegistration(context.Context, *client.FinishRegistrationRequest) (*client.FinishRegistrationResponse, error) {
-	return &client.FinishRegistrationResponse{Success: true, CredentialID: "cred-pin"}, nil
-}
-
 // testPINSecret seals a test PIN string into protected memory, mirroring
 // what resolvePINInput hands the ceremony. An empty pin returns nil, the
 // zero value for "no PIN configured".
@@ -127,18 +105,26 @@ func testPINSecret(t *testing.T, pin string) *secure.Secret {
 	return secret
 }
 
-// registerPINCeremony runs webAuthnRegistration with the given adapter and PIN.
+// registerPINCeremony drives adapter.MakeCredential directly against a
+// fixed, valid set of registration options, with the given PIN. It no
+// longer goes through CreateUser/BeginRegistration/FinishRegistration
+// (go-xkms#1294 part B removed that inline server round trip from user
+// registration); what these tests cover — the resolved PIN reaching the
+// CTAP2 ceremony — lives entirely in the adapter, so driving it directly is
+// both simpler and a more direct assertion of the property under test.
 func registerPINCeremony(t *testing.T, adapter webauthnclient.AuthenticatorAdapter, pin string) ([]byte, error) {
 	t.Helper()
 
-	return webAuthnRegistration(
-		context.Background(),
-		&pinDirectoryClient{},
-		func() (webauthnclient.AuthenticatorAdapter, error) { return adapter, nil },
-		NewPrinter("text", io.Discard),
-		"admin", "admin@example.com", "Admin", string(RoleAdmin), "https://"+testRPID,
-		testPINSecret(t, pin),
-	)
+	pinSecret := testPINSecret(t, pin)
+	att, err := adapter.MakeCredential(context.Background(), &webauthnclient.CeremonyOptions{
+		OptionsJSON: []byte(validRegistrationOptionsJSON()),
+		Origin:      "https://" + testRPID,
+		PIN:         pinSecret,
+	})
+	if err != nil {
+		return nil, ceremonyFailure(ErrRegisterCredentialFailed, pinSecret, err)
+	}
+	return att, nil
 }
 
 // TestWebAuthnRegistration_CarriesPINToTheAuthenticator is the register half
@@ -337,34 +323,6 @@ func TestUserLoginCmd_RejectsEmptyStdinPINBeforeTheNetwork(t *testing.T) {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
 	if mock.beginAuthCalled {
-		t.Error("no ceremony may be begun on unusable PIN input")
-	}
-}
-
-// TestUserRegisterCmd_RejectsEmptyStdinPINBeforeTheNetwork is the register
-// half of the same guard: nothing may be created server-side on PIN input the
-// operator has to redo anyway.
-func TestUserRegisterCmd_RejectsEmptyStdinPINBeforeTheNetwork(t *testing.T) {
-	stubPINStdin(t, "\r\n")
-
-	mock := &mockUserClient{}
-	withGlobalConfig(t, newUserTestConfig("text", mock))
-
-	cmd := newUserRegisterCmd()
-	if err := cmd.Flags().Set(pinFlagStdin, "true"); err != nil {
-		t.Fatalf("set %s: %v", pinFlagStdin, err)
-	}
-
-	code := captureExit(t, func() {
-		userRegisterCmd.Run(cmd, []string{"alice"})
-	})
-	if code != 1 {
-		t.Fatalf("expected exit code 1, got %d", code)
-	}
-	if mock.gotCreateUser != nil {
-		t.Error("no account may be created on unusable PIN input")
-	}
-	if mock.gotBeginReg != nil {
 		t.Error("no ceremony may be begun on unusable PIN input")
 	}
 }

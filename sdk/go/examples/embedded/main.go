@@ -198,6 +198,22 @@ func (m *MockXKMSService) FinishAuthentication(ctx context.Context, req *xkms.Fi
 	}, nil
 }
 
+func (m *MockXKMSService) GetInvite(ctx context.Context, req *xkms.GetInviteRequest) (*xkms.GetInviteResponse, error) {
+	return nil, xkms.ErrNotSupported
+}
+
+func (m *MockXKMSService) BeginInviteRegistration(ctx context.Context, req *xkms.BeginInviteRegistrationRequest) (*xkms.BeginInviteRegistrationResponse, error) {
+	return nil, xkms.ErrNotSupported
+}
+
+func (m *MockXKMSService) FinishInviteRegistration(ctx context.Context, req *xkms.FinishInviteRegistrationRequest) (*xkms.FinishInviteRegistrationResponse, error) {
+	return nil, xkms.ErrNotSupported
+}
+
+func (m *MockXKMSService) ActivateInvitePIV(ctx context.Context, req *xkms.ActivateInvitePIVRequest) (*xkms.ActivateInvitePIVResponse, error) {
+	return nil, xkms.ErrNotSupported
+}
+
 func (m *MockXKMSService) DeriveKey(ctx context.Context, req *transport.DeriveKeyRequest) (*transport.DeriveKeyResponse, error) {
 	return &transport.DeriveKeyResponse{
 		DerivedKey: []byte("mock-derived-key"),

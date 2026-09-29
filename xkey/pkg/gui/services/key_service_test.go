@@ -257,6 +257,18 @@ func (m *mockClient) BeginAuthentication(context.Context, *transport.BeginAuthen
 func (m *mockClient) FinishAuthentication(context.Context, *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
 	panic("not implemented")
 }
+func (m *mockClient) GetInvite(context.Context, *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	panic("not implemented")
+}
+func (m *mockClient) BeginInviteRegistration(context.Context, *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	panic("not implemented")
+}
+func (m *mockClient) FinishInviteRegistration(context.Context, *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	panic("not implemented")
+}
+func (m *mockClient) ActivateInvitePIV(context.Context, *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	panic("not implemented")
+}
 func (m *mockClient) GetCABundle(context.Context, *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	panic("not implemented")
 }

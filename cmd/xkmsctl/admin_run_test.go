@@ -29,10 +29,22 @@ import (
 	"time"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
-	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 	"github.com/spf13/cobra"
 )
+
+// noHIDEnumerator finds no authenticator, whatever is attached to the host,
+// so a command driven with it fails closed at discovery. Shared by
+// TestConfig_HIDDeviceEnumerator_ReturnsTheInjectedEnumerator
+// (config_test.go) and the FIDO2 admin-enrollment tests below.
+type noHIDEnumerator struct{}
+
+func (noHIDEnumerator) Enumerate(_, _ uint16) ([]fido2.HIDDevice, error) { return nil, nil }
+
+func (noHIDEnumerator) Open(string) (fido2.HIDDevice, error) {
+	return nil, errors.New("no authenticator attached")
+}
 
 // mockAdminCRUDClient implements client.Client for the adminList/Get/Delete/
 // Disable/Enable/Status command tree.
@@ -506,13 +518,12 @@ func TestEnrollFIDO2Admin_ConnectError(t *testing.T) {
 	}
 }
 
-// TestEnrollFIDO2Admin_ReachesDevice drives enrollment through the mock
-// client to the authenticator step, with an injected enumerator that finds no
-// authenticator, so the outcome never depends on the FIDO2 devices attached
-// to the host running the test. The hardware CTAP2 adapter is opened lazily,
-// after CreateUser and BeginRegistration have already succeeded against the
-// mock client, and fails closed at discovery.
-func TestEnrollFIDO2Admin_ReachesDevice(t *testing.T) {
+// TestEnrollFIDO2Admin_CreatesInvitedAccount is the go-xkms#1294 part B
+// regression guard: enrollFIDO2Admin creates the account and stops — it no
+// longer drives a local FIDO2 ceremony inline (an admin cannot enroll a
+// credential on an invitee's behalf), so it succeeds off the mock's
+// CreateUser alone, with no FIDO2 device involved at all.
+func TestEnrollFIDO2Admin_CreatesInvitedAccount(t *testing.T) {
 	mock := &mockAdminClient{}
 	cfg := &Config{
 		OutputFormat: "text",
@@ -524,15 +535,9 @@ func TestEnrollFIDO2Admin_ReachesDevice(t *testing.T) {
 	cmd := newAdminCreateCmdCopy()
 	printer := NewPrinter("text", io.Discard)
 
-	captureStdout(t, func() {
-		err := enrollFIDO2Admin(cmd, "root", cfg, printer, "")
-		if !errors.Is(err, ErrCreateFIDO2HandlerFailed) {
-			t.Fatalf("error = %v, want %v", err, ErrCreateFIDO2HandlerFailed)
-		}
-		if !errors.Is(err, webauthnclient.ErrAuthenticatorNotFound) {
-			t.Errorf("error = %v, want it to wrap %v", err, webauthnclient.ErrAuthenticatorNotFound)
-		}
-	})
+	if err := enrollFIDO2Admin(cmd, "root", cfg, printer, ""); err != nil {
+		t.Fatalf("expected success (no local ceremony is attempted): %v", err)
+	}
 }
 
 // FIDO2 admin enrollment must refuse to run without the canonical login key.

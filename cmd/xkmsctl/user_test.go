@@ -131,8 +131,8 @@ func b64url(s string) string {
 }
 
 // validRegistrationOptionsJSON returns a minimal, valid JSON encoding of a
-// protocol.CredentialCreation so json.Unmarshal in webAuthnRegistration
-// succeeds and execution proceeds to the local FIDO2 device lookup.
+// protocol.CredentialCreation, usable anywhere a test needs registration
+// options an authenticator adapter can parse.
 func validRegistrationOptionsJSON() string {
 	return `{"publicKey":{"rp":{"id":"xkms.example.com","name":"xkms"},` +
 		`"user":{"id":"` + b64url("user-1") + `","name":"alice","displayName":"Alice"},` +
@@ -237,24 +237,29 @@ func TestUserRegisterCmd_ListUsersError(t *testing.T) {
 	}
 }
 
-func TestUserRegisterCmd_FirstUserReachesFIDO2Device(t *testing.T) {
+// TestUserRegisterCmd_FirstUserCreatesInvitedAccount is the go-xkms#1294
+// part B regression guard: userRegisterCmd creates the account and stops —
+// it no longer drives a local FIDO2 ceremony inline (enrolling the first
+// user's own passkey is authorized by the invitation CreateUser mints, not
+// by having just created the account), so it succeeds off CreateUser alone,
+// with no FIDO2 device involved.
+func TestUserRegisterCmd_FirstUserCreatesInvitedAccount(t *testing.T) {
 	mock := &mockUserClient{
 		listUsersResp: &transport.ListUsersResponse{Users: nil},
-		beginRegResp: &client.BeginRegistrationResponse{
-			SessionID:   "sess-1",
-			OptionsJSON: validRegistrationOptionsJSON(),
-		},
 	}
 	withGlobalConfig(t, newUserTestConfig("text", mock))
 
-	// The nonexistent --device path forces a fast, deterministic failure
-	// inside webAuthnRegistration's call to handler.RegisterWebAuthn,
-	// well after CreateUser/BeginRegistration/JSON-parse have all run.
 	code := captureExit(t, func() {
 		userRegisterCmd.Run(newUserRegisterCmd(), []string{"alice"})
 	})
-	if code != 1 {
-		t.Errorf("expected exit code 1 (no real FIDO2 device present), got %d", code)
+	if code != -1 {
+		t.Errorf("expected success (no exit), got exit code %d", code)
+	}
+	if mock.gotCreateUser == nil {
+		t.Fatal("expected CreateUser to be called")
+	}
+	if mock.gotCreateUser.Role != string(RoleAdmin) {
+		t.Errorf("the first user must be created admin, got role %q", mock.gotCreateUser.Role)
 	}
 }
 
@@ -777,23 +782,16 @@ func TestUserRegisterCmd_EmailRequired(t *testing.T) {
 
 // The ceremony must be driven by the EMAIL, not the username, when they differ.
 //
-// Before --email existed the positional argument WAS the email, so passing the
-// username to BeginRegistration worked by coincidence. The service resolves
-// with GetByEmail (Service.BeginRegistration's own signature is
-// `(ctx, email, displayName)`), so once the two identifiers can differ, the old
-// call looked up "alice" as an email: with closed registration the account just
-// created is not found, and with public registration a SECOND principal is
-// created and the credential is bound to the wrong one (Codex, go-xkms #190).
-//
-// This asserts on the request the client actually received. The mock discarded
-// it until now, which is precisely why nothing caught the defect.
-func TestUserRegisterCmd_CeremonyUsesEmailNotUsername(t *testing.T) {
+// TestUserRegisterCmd_CreateUserSendsUsernameAndEmail pins the two
+// identifiers CreateUser sends: the username the operator named and the
+// canonical email login key, as distinct fields (Codex, go-xkms #190 —
+// conflating them, or sending only one, left the account unreachable by
+// WebAuthn). go-xkms#1294 part B removed the inline BeginRegistration call
+// this test used to also cover; that ceremony is now reached only through
+// invite redemption (BeginInviteRegistration), tested in pkg/xkms.
+func TestUserRegisterCmd_CreateUserSendsUsernameAndEmail(t *testing.T) {
 	mock := &mockUserClient{
 		listUsersResp: &transport.ListUsersResponse{Users: nil},
-		beginRegResp: &client.BeginRegistrationResponse{
-			SessionID:   "sess-1",
-			OptionsJSON: validRegistrationOptionsJSON(),
-		},
 	}
 	withGlobalConfig(t, newUserTestConfig("text", mock))
 
@@ -802,8 +800,6 @@ func TestUserRegisterCmd_CeremonyUsesEmailNotUsername(t *testing.T) {
 		t.Fatalf("set email: %v", err)
 	}
 
-	// The nonexistent --device path fails deterministically inside the FIDO2
-	// handler, well after CreateUser and BeginRegistration have both run.
 	captureExit(t, func() {
 		userRegisterCmd.Run(cmd, []string{"alice"})
 	})
@@ -816,17 +812,6 @@ func TestUserRegisterCmd_CeremonyUsesEmailNotUsername(t *testing.T) {
 	}
 	if mock.gotCreateUser.Email != "alice@example.com" {
 		t.Errorf("CreateUser email = %q, want %q", mock.gotCreateUser.Email, "alice@example.com")
-	}
-
-	if mock.gotBeginReg == nil {
-		t.Fatal("BeginRegistration was never called")
-	}
-	// The service resolves the ceremony's account with GetByEmail, so the
-	// email belongs here, not the username.
-	if mock.gotBeginReg.Email != "alice@example.com" {
-		t.Errorf("the ceremony resolved by %q; it must use the canonical email login key %q, "+
-			"or it enrols a credential against the wrong principal",
-			mock.gotBeginReg.Email, "alice@example.com")
 	}
 }
 

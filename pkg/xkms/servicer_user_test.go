@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -47,6 +48,7 @@ import (
 
 type mockUserClient struct {
 	createUser        func(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error)
+	getUser           func(ctx context.Context, id uint64) (*qrdbtransport.User, error)
 	getUserByUsername func(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error)
 	getUserByEmail    func(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error)
 	listUsers         func(ctx context.Context, req *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error)
@@ -54,6 +56,7 @@ type mockUserClient struct {
 	enableUser        func(ctx context.Context, id uint64) error
 	disableUser       func(ctx context.Context, id uint64) error
 	addCertBinding    func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
+	updateUser        func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
 }
 
 var _ qrdbtransport.UserClient = (*mockUserClient)(nil)
@@ -63,6 +66,9 @@ func (m *mockUserClient) CreateUser(ctx context.Context, req *qrdbtransport.Crea
 }
 
 func (m *mockUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+	if m.getUser != nil {
+		return m.getUser(ctx, id)
+	}
 	return nil, errors.New("not used")
 }
 
@@ -90,6 +96,9 @@ func (m *mockUserClient) RemoveCertBinding(ctx context.Context, userID uint64, t
 }
 
 func (m *mockUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	if m.updateUser != nil {
+		return m.updateUser(ctx, req)
+	}
 	return nil, errors.New("not used")
 }
 
@@ -162,9 +171,24 @@ func (m *mockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtra
 	return nil, errors.New("not used")
 }
 
-// setupServiceWithUserClients wires mock user/role clients into a fresh
-// service and returns the service plus the mocks so individual tests can
-// program per-call behavior.
+// singleStoreResolver resolves every tenant to the same backing KVStore —
+// enough for a unit test's invite store, which does not exercise the
+// per-tenant routing or barrier isolation qrdb's own tests already cover.
+type singleStoreResolver struct{ store qrdbsdk.KVStore }
+
+func (r singleStoreResolver) Resolve(context.Context, string) (qrdbsdk.KVStore, error) {
+	return r.store, nil
+}
+
+// setupServiceWithUserClients wires mock user/role clients, plus a real
+// (in-memory) invite store, into a fresh service and returns the service
+// plus the mocks so individual tests can program per-call behavior.
+//
+// The invite store is qrdb's own canonical implementation over
+// qrdbsdk.NewMemoryKVStore, not a mock: CreateUser's invite-minting behavior
+// (go-xkms#1294 part B) is exercised against the real single-use/atomic-write
+// semantics, which is the property that matters and a hand-rolled fake could
+// get subtly wrong.
 func setupServiceWithUserClients(t *testing.T) (*XKMSService, *mockUserClient, *mockRoleClient) {
 	t.Helper()
 	setupService(t)
@@ -174,6 +198,11 @@ func setupServiceWithUserClients(t *testing.T) (*XKMSService, *mockUserClient, *
 	users := &mockUserClient{}
 	roles := &mockRoleClient{}
 	svc.SetUserClients(users, roles)
+
+	inviteStore, err := qrdbsdk.NewTenantInviteStore(singleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	require.NoError(t, err)
+	svc.SetInviteStore(inviteStore)
+
 	return svc, users, roles
 }
 
@@ -373,6 +402,101 @@ func TestCreateUser_NotConfigured(t *testing.T) {
 
 	_, err = svc.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "x"})
 	assert.ErrorIs(t, err, ErrNotConfigured)
+}
+
+// TestCreateUser_MintsInviteForEmailAccount is go-xkms#1294 part B: an
+// account created with an email login key is created PENDING and mints a
+// single-use activation invitation in the same call, returned exactly once.
+func TestCreateUser_MintsInviteForEmailAccount(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+
+	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		assert.True(t, req.Pending, "an email-login-key account must be created pending")
+		return &qrdbtransport.User{
+			ID: 7, Username: "erin", Email: req.Email, Name: req.Name,
+			Lifecycle: string(qrdbsdk.LifecyclePending),
+		}, nil
+	}
+
+	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "erin", Email: "erin@example.com",
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.User.Enabled, "a pending account is not yet enabled")
+	require.NotNil(t, resp.Invite)
+	assert.NotEmpty(t, resp.Invite.Token)
+	assert.WithinDuration(t, time.Now().Add(qrdbsdk.DefaultInviteTTL), resp.Invite.ExpiresAt, time.Minute)
+}
+
+// TestCreateUser_WithoutEmailLoginKeyMintsNoInvite pins the one exception:
+// a certificate-only/bootstrap identity has no email an invitation could be
+// sent to, so it is created active with no invitation, exactly as before
+// go-xkms#1294 part B.
+func TestCreateUser_WithoutEmailLoginKeyMintsNoInvite(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+
+	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		assert.False(t, req.Pending)
+		return &qrdbtransport.User{ID: 8, Username: "bootstrap", Lifecycle: string(qrdbsdk.LifecycleActive)}, nil
+	}
+
+	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "bootstrap", WithoutEmailLoginKey: true,
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.User.Enabled)
+	assert.Nil(t, resp.Invite)
+}
+
+// TestCreateUser_InviteStoreNotConfigured fails closed BEFORE creating
+// anything: an invited account this build cannot mint an invitation for is
+// a pending account nothing can ever activate.
+func TestCreateUser_InviteStoreNotConfigured(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+	users := &mockUserClient{
+		createUser: func(context.Context, *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+			t.Fatal("CreateUser must not reach the store when no invite store is configured")
+			return nil, nil
+		},
+	}
+	svc.SetUserClients(users, &mockRoleClient{})
+
+	_, err = svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "x", Email: "x@example.com",
+	})
+	require.ErrorIs(t, err, ErrNotConfigured)
+}
+
+// TestCreateUser_RollsBackOnInviteMintFailure proves the create is atomic: a
+// user this build minted no invitation for is rolled back rather than left
+// pending with nothing that can ever activate it.
+func TestCreateUser_RollsBackOnInviteMintFailure(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+
+	// The service's invite store is real (setupServiceWithUserClients wires
+	// it); force a mint failure the way an exhausted tenant store would, by
+	// replacing it with one whose backing KVStore is nil.
+	brokenStore, err := qrdbsdk.NewTenantInviteStore(singleStoreResolver{store: nil})
+	require.NoError(t, err)
+	svc.SetInviteStore(brokenStore)
+
+	deleted := false
+	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 9, Username: "frank", Email: req.Email, Lifecycle: string(qrdbsdk.LifecyclePending)}, nil
+	}
+	users.deleteUser = func(_ context.Context, id uint64) error {
+		assert.Equal(t, uint64(9), id)
+		deleted = true
+		return nil
+	}
+
+	_, err = svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "frank", Email: "frank@example.com",
+	})
+	require.Error(t, err)
+	assert.True(t, deleted, "the pending account must be rolled back when no invitation could be minted")
 }
 
 // ============================================================================

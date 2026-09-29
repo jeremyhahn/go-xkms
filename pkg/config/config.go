@@ -67,6 +67,13 @@ type Config struct {
 	// nil, trust resolution falls back to the OS system trust store.
 	Trust *resolver.Config `yaml:"trust,omitempty"`
 
+	// Invite configures administrator-issued user enrollment invitations
+	// (go-xkms#1294 part B). When nil, invitations use qrdb's own defaults
+	// and the invite link is built from an empty public base URL, which is
+	// never useful in production — an operator serving invitations over the
+	// network must set PublicBaseURL.
+	Invite *InviteConfig `yaml:"invite,omitempty"`
+
 	// LoopbackDesktop marks this Config as backing the in-process loopback
 	// desktop engine (pkg/server/loopback), not a network-facing deployment.
 	// desktopConfig forces Protocols.REST on so the SPA can reach the engine
@@ -582,6 +589,32 @@ type WebAuthnConfig struct {
 	JWTIssuer    string   `yaml:"jwt_issuer"`     // JWT issuer claim
 	JWTAudience  []string `yaml:"jwt_audience"`   // JWT audience claim
 	JWTExpiresIn string   `yaml:"jwt_expires_in"` // JWT expiration duration (e.g., "24h")
+}
+
+// InviteConfig controls administrator-issued user enrollment invitations
+// (go-xkms#1294 part B): an admin creates a PENDING user, xkms mints a
+// single-use invitation through qrdb's canonical invite store, and the
+// invitee redeems it to enroll their first WebAuthn passkey or PIV
+// credential, which activates the account.
+type InviteConfig struct {
+	// PublicBaseURL is the externally reachable origin (and any UI path
+	// prefix) the invitation link is built from, e.g.
+	// "https://kms.example.com/ui". It is a configured value, NEVER derived
+	// from a request's Host header: the WebAuthn ceremony's RP ID must stay
+	// the fixed value the operator configured for WebAuthnConfig.RPOrigins,
+	// and an admin's own client address must not leak into a link mailed to
+	// someone else. Empty produces a link with no origin, which is only
+	// useful for tests that inspect the token directly.
+	PublicBaseURL string `yaml:"public_base_url"`
+
+	// DefaultTTL is how long an invitation stays redeemable when the caller
+	// does not specify one, as a Go duration string (e.g. "24h"). Empty
+	// defaults to qrdb's own DefaultInviteTTL (24h).
+	DefaultTTL string `yaml:"default_ttl"`
+
+	// MaxTTL caps an operator-requested TTL, as a Go duration string. Empty
+	// defaults to 7 days. A request above the cap is clamped, not refused.
+	MaxTTL string `yaml:"max_ttl"`
 }
 
 // JWTConfig controls JWT authentication

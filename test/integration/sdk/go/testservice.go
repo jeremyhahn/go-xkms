@@ -773,6 +773,30 @@ func (s *TestXKMSService) FinishAuthentication(ctx context.Context, req *xkms.Fi
 	}, nil
 }
 
+// Enrollment-invitation redemption (go-xkms#1294 part B). This test double
+// creates every account active (see CreateUser) and models no invitation
+// lifecycle, so there is nothing for these to delegate to.
+
+// GetInvite resolves invitation metadata.
+func (s *TestXKMSService) GetInvite(ctx context.Context, req *xkms.GetInviteRequest) (*xkms.GetInviteResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+// BeginInviteRegistration opens the invite-authorized WebAuthn registration ceremony.
+func (s *TestXKMSService) BeginInviteRegistration(ctx context.Context, req *xkms.BeginInviteRegistrationRequest) (*xkms.BeginInviteRegistrationResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+// FinishInviteRegistration completes the invite-authorized WebAuthn registration ceremony.
+func (s *TestXKMSService) FinishInviteRegistration(ctx context.Context, req *xkms.FinishInviteRegistrationRequest) (*xkms.FinishInviteRegistrationResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+// ActivateInvitePIV activates an invited account with a presented PIV certificate.
+func (s *TestXKMSService) ActivateInvitePIV(ctx context.Context, req *xkms.ActivateInvitePIVRequest) (*xkms.ActivateInvitePIVResponse, error) {
+	return nil, ErrNotImplemented
+}
+
 // BindUserCert binds an mTLS certificate SPKI thumbprint to a user. The test
 // double records nothing and reports success.
 func (s *TestXKMSService) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {

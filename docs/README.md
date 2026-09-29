@@ -53,6 +53,7 @@ the folder in the same commit that changes the behavior.
 | [symmetric-aead](symmetric-aead/) | AES-GCM / ChaCha20-Poly1305 / AES-CBC / AES-ECB, the AEAD safety tracker, GCM nonce modes under FIPS |
 | [tpm2](tpm2/) | EK/SRK lifecycle, IDevID/LDevID, PCR policy, attestation, sealed objects |
 | [trust-bootstrap](trust-bootstrap/) | The DANE / Noise / SPKI / Direct / Auto mode-dispatch library |
+| [user-onboarding](user-onboarding/) | Administrator-issued account-activation invitations, redeemed through the WebAuthn/PIV ceremonies to enroll the first credential (go-xkms#1294 part B) |
 | [web-console](web-console/) | The Svelte SPA console served by `xkmsd` at `/ui/` and by the `xkms-console` Wails desktop shell (remote and standalone loopback modes) — distinct from the xkey GUI |
 | [webauthn](webauthn/) | The canonical WebAuthn relying party |
 | [xkmsd-configuration](xkmsd-configuration/) | How the daemon resolves its configuration: defaults, file, `XKMS_*` environment, flags, and the listeners that consume the result |
@@ -134,6 +135,7 @@ by five and reports unconverted folders as converted.
 | [luks](luks/) | — |
 | [signing](signing/) | `verification/` — **absorbed and deleted** (its `ChecksumProvider` was never wired to a live verifier; superseded by `types.ChecksumProvider`) |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
+| [user-onboarding](user-onboarding/) | — (new surface; supersedes nothing) |
 | [host-embedding](host-embedding/) | — (new surface; `architecture/server-architecture.md` §"Unified API Server" points here for host mode) |
 | [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
 | [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — **absorbed and deleted**. The legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions described a proxy plane that was since deleted; `ca-key-custody.md` is retained as a companion deep-dive, now [`clustering/ca-key-custody.md`](clustering/ca-key-custody.md), linked from [`clustering/architecture.md`](clustering/architecture.md). A separate `docs/cluster/` five-file folder landed briefly (go-xkms#847, the read-only REST cluster status/membership surface for the web console) and duplicated this one; it was merged into `clustering/` in the same pass rather than kept as two folders for one feature. |

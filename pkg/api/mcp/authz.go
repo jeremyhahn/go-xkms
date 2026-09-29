@@ -67,6 +67,14 @@ var publicMethods = map[string]struct{}{
 	// authenticated /api/v1 group), so gating it here would make the same
 	// question answerable on one transport and not another.
 	"xkms.algorithms": {},
+
+	// Invitation redemption (go-xkms#1294 part B): there is no credential
+	// yet to authenticate a request with. REST serves the same two methods
+	// (GetInvite, ActivateInvitePIV) unauthenticated
+	// (pkg/api/rest/handlers_invite.go, GroupInvite), so the transports
+	// agree.
+	"invite.get":         {},
+	"invite.pivActivate": {},
 }
 
 // methodPermissions maps every privileged JSON-RPC method to the qrdb

@@ -170,6 +170,22 @@ func (m *mockService) FinishAuthentication(ctx context.Context, req *FinishAuthe
 	return nil, nil
 }
 
+func (m *mockService) GetInvite(ctx context.Context, req *GetInviteRequest) (*GetInviteResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) BeginInviteRegistration(ctx context.Context, req *BeginInviteRegistrationRequest) (*BeginInviteRegistrationResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) FinishInviteRegistration(ctx context.Context, req *FinishInviteRegistrationRequest) (*FinishInviteRegistrationResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ActivateInvitePIV(ctx context.Context, req *ActivateInvitePIVRequest) (*ActivateInvitePIVResponse, error) {
+	return nil, nil
+}
+
 func (m *mockService) DeriveKey(ctx context.Context, req *DeriveKeyRequest) (*DeriveKeyResponse, error) {
 	return nil, nil
 }
