@@ -1,3 +1,0 @@
-- **The per-package coverage gate now combines merged coverage runs instead of double-counting them** (#706). `scripts/check-coverage.sh` added a block's statements once for every profile it appeared in, so merging an extra run (the tpm2 simulator run, pkcs11-tagged, or a second GODEBUG state) inflated the package total and could lower the reported percentage. Each block is now counted once, and it is covered if any run hit it.
-  - `coverage-packages` also merges `coverage-fips` (default plus `GODEBUG=fips140=on`), so `pkg/crypto/fips`'s FIPS-mode branches count toward its 90% gate: 85.0% before, 95.0% after.
-  - Files: `scripts/check-coverage.sh`, `Makefile`.

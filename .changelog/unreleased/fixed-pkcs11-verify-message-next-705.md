@@ -1,3 +1,0 @@
-- **A multi-part `C_VerifyMessageNext(final)` no longer ends the whole `C_MessageVerifyInit` operation** (#705). `Module.VerifyMessageNext` finalized the verify operation on a message's last part and never re-established it, which its sibling `VerifyMessage` already does. A second message under the same init then failed with `CKR_OPERATION_NOT_INITIALIZED`, whether or not the first signature was valid. That violates PKCS#11 v3.2 §5.16.2. It now captures and restores the message operation (`messageOperationBinding` / `restoreMessageOperation`), as `VerifyMessage` does.
-  - File: `pkg/pkcs11/module/module.go`.
-  - Verified by `cmd/pkcs11-module/exports_message_roundtrip_test.go`, which runs two consecutive multi-part messages under one init.
