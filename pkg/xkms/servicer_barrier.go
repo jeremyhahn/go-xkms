@@ -86,13 +86,14 @@ func (s *XKMSService) BarrierInitialize(ctx context.Context, req *transport.Barr
 // The system barrier is platform-global: only a cross-tenant identity may
 // operate it (requirePlatformScope).
 func (s *XKMSService) BarrierInitializeWithCredentials(ctx context.Context, creds seal.Credentials) error {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier initialize", ""); err != nil {
 		return err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return ErrNotConfigured
 	}
-	return s.barrier.Initialize(ctx, creds)
+	return barrier.Initialize(ctx, creds)
 }
 
 // BarrierUnseal unseals the encryption barrier using a secret.
@@ -114,35 +115,38 @@ func (s *XKMSService) BarrierUnseal(ctx context.Context, req *transport.BarrierU
 // the caller already holds in protected memory; see
 // BarrierInitializeWithCredentials. The caller keeps ownership of creds.
 func (s *XKMSService) BarrierUnsealWithCredentials(ctx context.Context, creds seal.Credentials) error {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier unseal", ""); err != nil {
 		return err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return ErrNotConfigured
 	}
-	return s.barrier.Unseal(ctx, creds)
+	return barrier.Unseal(ctx, creds)
 }
 
 // BarrierSeal seals the encryption barrier, re-encrypting all data at rest.
 func (s *XKMSService) BarrierSeal(ctx context.Context) error {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier seal", ""); err != nil {
 		return err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return ErrNotConfigured
 	}
-	return s.barrier.Seal()
+	return barrier.Seal()
 }
 
 // BarrierStatus returns the current barrier status including seal state and strategy.
 func (s *XKMSService) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier status", ""); err != nil {
 		return nil, err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return nil, ErrNotConfigured
 	}
-	status := s.barrier.Status()
+	status := barrier.Status()
 	resp := &transport.BarrierStatusResponse{
 		Sealed:         status.Sealed,
 		Strategy:       string(status.Strategy),
@@ -167,17 +171,18 @@ func (s *XKMSService) BarrierStatus(ctx context.Context) (*transport.BarrierStat
 // officers claim their shares individually using their mTLS certificate. Only
 // the threshold/total metadata is reported.
 func (s *XKMSService) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier initialize shamir", ""); err != nil {
 		return nil, err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
 		return nil, ErrNilRequest
 	}
 	if req.Threshold != 0 || req.TotalShares != 0 {
-		s.barrier.SetShamirConfig(&seal.ShamirConfig{
+		barrier.SetShamirConfig(&seal.ShamirConfig{
 			Threshold:   req.Threshold,
 			TotalShares: req.TotalShares,
 		})
@@ -189,7 +194,7 @@ func (s *XKMSService) BarrierInitializeShamir(ctx context.Context, req *transpor
 		return nil, err
 	}
 	defer creds.Secret.Destroy()
-	result, err := s.barrier.InitializeShamir(ctx, creds)
+	result, err := barrier.InitializeShamir(ctx, creds)
 	if err != nil {
 		return nil, err
 	}
@@ -202,16 +207,17 @@ func (s *XKMSService) BarrierInitializeShamir(ctx context.Context, req *transpor
 
 // BarrierUnsealWithShare submits a single Shamir share for quorum-based unsealing.
 func (s *XKMSService) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier unseal share", ""); err != nil {
 		return nil, err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	progress, err := s.barrier.UnsealWithShare(ctx, req.Share)
+	progress, err := barrier.UnsealWithShare(ctx, req.Share)
 	if err != nil {
 		// Return progress alongside the error when available so the
 		// caller can see quorum state even on duplicate share, etc.
@@ -233,16 +239,17 @@ func (s *XKMSService) BarrierUnsealWithShare(ctx context.Context, req *transport
 
 // BarrierUnsealWithShares submits all Shamir shares at once for batch unsealing.
 func (s *XKMSService) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier unseal shares", ""); err != nil {
 		return err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return ErrNotConfigured
 	}
 	if req == nil {
 		return ErrNilRequest
 	}
-	return s.barrier.UnsealWithShares(ctx, req.Shares)
+	return barrier.UnsealWithShares(ctx, req.Shares)
 }
 
 // BarrierRekey generates new Shamir shares with a new threshold configuration.
@@ -250,16 +257,17 @@ func (s *XKMSService) BarrierUnsealWithShares(ctx context.Context, req *transpor
 // CeremonyDistributor and are never returned; only the threshold/total
 // metadata is reported.
 func (s *XKMSService) BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier rekey", ""); err != nil {
 		return nil, err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	result, err := s.barrier.Rekey(ctx, req.Threshold, req.Total)
+	result, err := barrier.Rekey(ctx, req.Threshold, req.Total)
 	if err != nil {
 		return nil, err
 	}
@@ -275,16 +283,17 @@ func (s *XKMSService) BarrierRekey(ctx context.Context, req *transport.BarrierRe
 // CeremonyDistributor and are never returned; only the threshold/total
 // metadata is reported.
 func (s *XKMSService) BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier generate recovery keys", ""); err != nil {
 		return nil, err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	result, err := s.barrier.GenerateRecoveryKeys(ctx, req.Threshold, req.Total)
+	result, err := barrier.GenerateRecoveryKeys(ctx, req.Threshold, req.Total)
 	if err != nil {
 		return nil, err
 	}
@@ -297,38 +306,41 @@ func (s *XKMSService) BarrierGenerateRecoveryKeys(ctx context.Context, req *tran
 
 // BarrierRecoverWithKeys performs disaster recovery using recovery keys.
 func (s *XKMSService) BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier recover with keys", ""); err != nil {
 		return err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return ErrNotConfigured
 	}
 	if req == nil {
 		return ErrNilRequest
 	}
-	return s.barrier.RecoverWithKeys(ctx, req.Keys)
+	return barrier.RecoverWithKeys(ctx, req.Keys)
 }
 
 // BarrierDeleteRecoveryKeys deletes all stored recovery keys.
 func (s *XKMSService) BarrierDeleteRecoveryKeys(ctx context.Context) error {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier delete recovery keys", ""); err != nil {
 		return err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return ErrNotConfigured
 	}
-	return s.barrier.DeleteRecoveryKeys(ctx)
+	return barrier.DeleteRecoveryKeys(ctx)
 }
 
 // BarrierHasRecoveryKeys checks whether recovery keys have been generated.
 func (s *XKMSService) BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier has recovery keys", ""); err != nil {
 		return nil, err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return nil, ErrNotConfigured
 	}
-	hasKeys, err := s.barrier.HasRecoveryKeys(ctx)
+	hasKeys, err := barrier.HasRecoveryKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -339,16 +351,17 @@ func (s *XKMSService) BarrierHasRecoveryKeys(ctx context.Context) (*transport.Ba
 
 // BarrierGenerateRootToken generates a root token using Shamir shares.
 func (s *XKMSService) BarrierGenerateRootToken(ctx context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
+	barrier := s.barrier.load()
 	if err := requirePlatformScope(ctx, "barrier generate root token", ""); err != nil {
 		return nil, err
 	}
-	if s.barrier == nil {
+	if barrier == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	token, err := s.barrier.GenerateRootToken(ctx, req.Shares)
+	token, err := barrier.GenerateRootToken(ctx, req.Shares)
 	if err != nil {
 		return nil, err
 	}

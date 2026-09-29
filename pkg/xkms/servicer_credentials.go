@@ -29,10 +29,11 @@ import (
 // a tenant-scoped caller is refused with a *TenantBindingError that reads as
 // not-found.
 func (s *XKMSService) SubmitCredential(ctx context.Context, req *transport.CredentialSubmitRequest) (*transport.CredentialSubmitResponse, error) {
+	credentialService := s.credentialService.load()
 	if err := requirePlatformScope(ctx, "submit credential", ""); err != nil {
 		return nil, err
 	}
-	if s.credentialService == nil {
+	if credentialService == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
@@ -44,7 +45,7 @@ func (s *XKMSService) SubmitCredential(ctx context.Context, req *transport.Crede
 		return nil, ErrInvalidEncoding
 	}
 
-	if err := s.credentialService.SubmitCredential(ctx, req.Name, value); err != nil {
+	if err := credentialService.SubmitCredential(ctx, req.Name, value); err != nil {
 		return nil, err
 	}
 
@@ -56,13 +57,14 @@ func (s *XKMSService) SubmitCredential(ctx context.Context, req *transport.Crede
 // GetCredentialStrategy returns the configured credential strategy.
 // Returns ErrNotConfigured if the credential service is not wired.
 func (s *XKMSService) GetCredentialStrategy(ctx context.Context) (*transport.CredentialStrategyResponse, error) {
-	if s.credentialService == nil {
+	credentialService := s.credentialService.load()
+	if credentialService == nil {
 		return nil, ErrNotConfigured
 	}
 
 	return &transport.CredentialStrategyResponse{
-		Strategy:   s.credentialService.Strategy(),
-		AutoUnseal: s.credentialService.AutoUnsealAvailable(),
+		Strategy:   credentialService.Strategy(),
+		AutoUnseal: credentialService.AutoUnsealAvailable(),
 	}, nil
 }
 
@@ -70,11 +72,12 @@ func (s *XKMSService) GetCredentialStrategy(ctx context.Context) (*transport.Cre
 // credentials. Values are never returned. Like SubmitCredential it is
 // platform-scoped: the names describe the platform's own backends.
 func (s *XKMSService) ListCredentials(ctx context.Context) ([]string, error) {
+	credentialService := s.credentialService.load()
 	if err := requirePlatformScope(ctx, "list credentials", ""); err != nil {
 		return nil, err
 	}
-	if s.credentialService == nil {
+	if credentialService == nil {
 		return nil, ErrNotConfigured
 	}
-	return s.credentialService.ListCredentials(ctx)
+	return credentialService.ListCredentials(ctx)
 }

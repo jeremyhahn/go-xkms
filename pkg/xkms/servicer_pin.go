@@ -40,79 +40,86 @@ type PINServicer interface {
 
 // SetSOPIN sets the Security Officer PIN.
 func (s *XKMSService) SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest) error {
+	pinManager := s.pinManager.load()
 	if err := requirePlatformScope(ctx, "set SO PIN", ""); err != nil {
 		return err
 	}
-	if s.pinManager == nil {
+	if pinManager == nil {
 		return ErrNotConfigured
 	}
-	return s.pinManager.SetSOPIN(req.CurrentSOPIN, req.NewSOPIN)
+	return pinManager.SetSOPIN(req.CurrentSOPIN, req.NewSOPIN)
 }
 
 // SetUserPIN sets the User PIN using the Security Officer PIN for authorization.
 func (s *XKMSService) SetUserPIN(ctx context.Context, req *transport.SetUserPINRequest) error {
+	pinManager := s.pinManager.load()
 	if err := requirePlatformScope(ctx, "set user PIN", ""); err != nil {
 		return err
 	}
-	if s.pinManager == nil {
+	if pinManager == nil {
 		return ErrNotConfigured
 	}
-	return s.pinManager.SetUserPIN(req.SOPIN, req.NewUserPIN)
+	return pinManager.SetUserPIN(req.SOPIN, req.NewUserPIN)
 }
 
 // ChangeSOPIN changes the Security Officer PIN.
 func (s *XKMSService) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPINRequest) error {
+	pinManager := s.pinManager.load()
 	if err := requirePlatformScope(ctx, "change SO PIN", ""); err != nil {
 		return err
 	}
-	if s.pinManager == nil {
+	if pinManager == nil {
 		return ErrNotConfigured
 	}
-	return s.pinManager.ChangeSOPIN(req.CurrentSOPIN, req.NewSOPIN)
+	return pinManager.ChangeSOPIN(req.CurrentSOPIN, req.NewSOPIN)
 }
 
 // ChangeUserPIN changes the User PIN.
 func (s *XKMSService) ChangeUserPIN(ctx context.Context, req *transport.ChangeUserPINRequest) error {
+	pinManager := s.pinManager.load()
 	if err := requirePlatformScope(ctx, "change user PIN", ""); err != nil {
 		return err
 	}
-	if s.pinManager == nil {
+	if pinManager == nil {
 		return ErrNotConfigured
 	}
-	return s.pinManager.ChangeUserPIN(req.CurrentUserPIN, req.NewUserPIN)
+	return pinManager.ChangeUserPIN(req.CurrentUserPIN, req.NewUserPIN)
 }
 
 // VerifySOPIN verifies the Security Officer PIN.
 func (s *XKMSService) VerifySOPIN(ctx context.Context, req *transport.VerifySOPINRequest) error {
+	pinManager := s.pinManager.load()
 	if err := requirePlatformScope(ctx, "verify SO PIN", ""); err != nil {
 		return err
 	}
-	if s.pinManager == nil {
+	if pinManager == nil {
 		return ErrNotConfigured
 	}
-	return s.pinManager.VerifySOPIN(req.SOPIN)
+	return pinManager.VerifySOPIN(req.SOPIN)
 }
 
 // VerifyUserPIN verifies the User PIN.
 func (s *XKMSService) VerifyUserPIN(ctx context.Context, req *transport.VerifyUserPINRequest) error {
+	pinManager := s.pinManager.load()
 	if err := requirePlatformScope(ctx, "verify user PIN", ""); err != nil {
 		return err
 	}
-	if s.pinManager == nil {
+	if pinManager == nil {
 		return ErrNotConfigured
 	}
-	return s.pinManager.VerifyUserPIN(req.UserPIN)
+	return pinManager.VerifyUserPIN(req.UserPIN)
 }
 
 // GetLockoutStatus returns the current PIN lockout status.
 func (s *XKMSService) GetLockoutStatus(ctx context.Context) (*transport.LockoutStatusResponse, error) {
+	pinManager := s.pinManager.load()
 	if err := requirePlatformScope(ctx, "PIN lockout status", ""); err != nil {
 		return nil, err
 	}
-	if s.pinManager == nil {
+	if pinManager == nil {
 		return nil, ErrNotConfigured
 	}
-	status := s.pinManager.GetLockoutStatus()
+	status := pinManager.GetLockoutStatus()
 	if status == nil {
 		// A backend that does not track lockout (the software backend)
 		// reports none: no failed attempts, nothing locked.
@@ -133,11 +140,12 @@ func (s *XKMSService) GetLockoutStatus(ctx context.Context) (*transport.LockoutS
 
 // ResetLockout resets the PIN lockout counter using the Security Officer PIN.
 func (s *XKMSService) ResetLockout(ctx context.Context, req *transport.ResetLockoutRequest) error {
+	pinManager := s.pinManager.load()
 	if err := requirePlatformScope(ctx, "reset PIN lockout", ""); err != nil {
 		return err
 	}
-	if s.pinManager == nil {
+	if pinManager == nil {
 		return ErrNotConfigured
 	}
-	return s.pinManager.ResetLockout(req.SOPIN)
+	return pinManager.ResetLockout(req.SOPIN)
 }

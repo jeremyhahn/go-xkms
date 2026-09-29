@@ -457,3 +457,7 @@ func (custodians) ListCustodianGroups(context.Context) (*qrdbtransport.ListCusto
 type shares struct {
 	qrdbtransport.ShareClient
 }
+
+func (shares) ListShares(context.Context) (*qrdbtransport.ListSharesResponse, error) {
+	return &qrdbtransport.ListSharesResponse{}, nil
+}
