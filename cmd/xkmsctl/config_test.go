@@ -14,10 +14,12 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 )
 
 func TestNewConfig_Defaults(t *testing.T) {
@@ -681,5 +683,23 @@ func TestConfig_createXKMSService_DifferentBackendNames(t *testing.T) {
 				t.Fatal("createXKMSService() returned nil service")
 			}
 		})
+	}
+}
+
+func TestConfig_HIDDeviceEnumerator_ReturnsTheInjectedEnumerator(t *testing.T) {
+	injected := noHIDEnumerator{}
+	cfg := &Config{HIDEnumerator: injected}
+	if got := cfg.HIDDeviceEnumerator(); got != injected {
+		t.Errorf("HIDDeviceEnumerator() = %#v, want the injected %#v", got, injected)
+	}
+}
+
+// With nothing injected the platform enumerator is used. Only its type is
+// compared: enumerating would read the host's HID devices.
+func TestConfig_HIDDeviceEnumerator_DefaultsToThePlatformEnumerator(t *testing.T) {
+	cfg := &Config{}
+	got, want := cfg.HIDDeviceEnumerator(), fido2.NewDefaultEnumerator()
+	if reflect.TypeOf(got) != reflect.TypeOf(want) {
+		t.Errorf("HIDDeviceEnumerator() is a %T, want the platform %T", got, want)
 	}
 }

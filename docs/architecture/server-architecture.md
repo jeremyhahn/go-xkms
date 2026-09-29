@@ -191,18 +191,15 @@ type Server struct {
 
 ### Subsystem Wiring
 
-After `xkms.Initialize()` creates the `XKMSService` singleton with backends, the server wires additional subsystems via setter methods. This approach is necessary because subsystems (barrier, PIN, users, etc.) are initialized *after* `xkms.Initialize()`:
+After `xkms.Initialize()` creates the `XKMSService` singleton with backends, the server wires additional subsystems via setter methods. This approach is necessary because subsystems (barrier, PIN, users, etc.) are initialized *after* `xkms.Initialize()`. The store-backed subsystems are built by `pkg/compose`'s `Build*` functions and published with `compose.Stores.Wire` — the same path an embedding host's module takes ([`../host-embedding/`](../host-embedding/)):
 
 ```go
-// In server.go, after each subsystem is initialized:
+// In server.go, once every subsystem is initialized:
 svc, _ := xkms.Get()
-if s.barrier != nil       { svc.SetBarrier(s.barrier) }
-if s.pinManager != nil    { svc.SetPINManager(s.pinManager) }
-if s.userStore != nil     { svc.SetUserStore(s.userStore) }
-if s.passwordStore != nil { svc.SetPasswordStore(s.passwordStore) }
-if s.platformStore != nil { svc.SetPlatformStore(s.platformStore) }
-if s.policyManager != nil { svc.SetPolicyManager(s.policyManager) }
-// ... etc.
+stores := s.composedStores() // password store + tenant manager, PIN, platform store,
+                             // credentials, CA, policies, barrier, custody clients
+stores.Wire(svc)
+// ... then the non-store wiring (WebAuthn, users, audit, cluster, ...).
 ```
 
 Once all subsystems are wired, the `XKMSService` satisfies the full `XKMSServicer` interface and can be used with the embedded SDK transport (`sdk.NewEmbedded(svc)`) for in-process clients like the xkey GUI.
@@ -288,6 +285,13 @@ The module now carries all three unified-server surfaces:
   via `pkg/server.ModuleMCPServer()`. At go-qrdb v0.3.0-alpha module tools
   are fail-closed under qrdb's auth middleware until qrdb exports a module
   tool-permission registry hook.
+
+**Host mode.** A host that embeds a qrdb node mounts the same module
+without a REST resolver; the module then self-builds its surface and
+composes the store-backed features (Password Manager, SSH, CA, platform
+store, credentials, PCR policies) from host-supplied dependencies through
+`pkg/compose` — the path xkmsd builds them through. See
+[`../host-embedding/`](../host-embedding/).
 
 **Network serving IS the unified server (Phase 4 complete)**: enabling any
 network protocol (`rest`, `grpc`, `quic`, `mcp`) requires

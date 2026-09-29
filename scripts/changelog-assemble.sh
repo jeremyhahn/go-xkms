@@ -89,26 +89,28 @@ assemble() {
 		fi
 	done
 
-	# The assembled block reaches awk through a FILE, read with getline. Not
-	# `-v`: it processes C-style escapes, so an entry containing a literal
-	# backslash (code snippets, markdown escapes like `\*`) would be silently
-	# mangled, breaking the "spliced verbatim" contract. Not the environment:
-	# Linux caps a single environment string at 128 KiB (MAX_ARG_STRLEN), so a
-	# large release failed with "Argument list too long".
-	local tmp block
+	# The assembled block reaches awk through a FILE, read line by line with
+	# getline. Not `-v`: it processes C-style escapes, so an entry containing a
+	# literal backslash (code snippets, markdown escapes like `\*`) would be
+	# silently mangled, breaking the "spliced verbatim" contract. Not the
+	# environment either: Linux caps one environment string at 128 KiB
+	# (MAX_ARG_STRLEN), and a release with many entries exceeds it, failing
+	# exec with "Argument list too long". A file has neither limit.
+	local tmp blockfile
 	tmp=$(mktemp) || return 1
-	block=$(mktemp) || { rm -f "$tmp"; return 1; }
-	printf '%s\n' "$body" > "$block" || { rm -f "$tmp" "$block"; return 1; }
-	awk -v blockfile="$block" '
-		{ print }
-		/^## \[Unreleased\]/ && !done {
-			print ""
-			while ((getline line < blockfile) > 0) print line
+	blockfile=$(mktemp) || { rm -f "$tmp"; return 1; }
+	printf '%s\n' "$body" > "$blockfile" || { rm -f "$tmp" "$blockfile"; return 1; }
+	awk -v blockfile="$blockfile" '
+		BEGIN {
+			while ((getline line < blockfile) > 0) {
+				block = (n++ ? block "\n" : "") line
+			}
 			close(blockfile)
-			done = 1
 		}
-	' "$changelog" > "$tmp" || { rm -f "$tmp" "$block"; return 1; }
-	rm -f "$block"
+		{ print }
+		/^## \[Unreleased\]/ && !done { print ""; print block; done = 1 }
+	' "$changelog" > "$tmp" || { rm -f "$tmp" "$blockfile"; return 1; }
+	rm -f "$blockfile"
 	mv "$tmp" "$changelog" || return 1
 
 	printf '%s\n' "${files[@]}"
