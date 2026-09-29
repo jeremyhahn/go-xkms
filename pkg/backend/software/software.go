@@ -25,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -89,7 +88,6 @@ type SoftwareBackend struct {
 type importTokenData struct {
 	wrappingKey *importtoken.SealedRSAKey
 	algorithm   backend.WrappingAlgorithm
-	expiresAt   time.Time
 	keySpec     string
 }
 
