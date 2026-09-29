@@ -629,11 +629,13 @@ Usage: `xkey device listen [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--allow-sync` | bool | false | Allow this session to export the password vault and OATH secrets to the phone via remote.sync* |
 | `--attestation-mode` | string | auto | Attestation mode: auto, tpm2, software |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
 | `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Specific paired device to accept connections from |
 | `--name` | string |  | Advertised device name (default: hostname) |
+| `--so-pin-stdin` | bool | false | Read the SO PIN from standard input |
 | `--timeout` | duration | 0s | Listen timeout (0 for indefinite) |
 | `--tpm-device` | string |  | TPM2 device path (default: /dev/tpmrm0) |
 | `--tpm-enrollment` | bool | false | Serve TCG-CSR-IDEVID device enrollment from this host's TPM |
@@ -656,14 +658,24 @@ Usage: `xkey device pair [flags]`
 
 ## xkey device relay
 
-Start TCP pairing relay server
+Serve a paired phone's session over TCP instead of BLE
 
 Usage: `xkey device relay [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--listen` | string |  | TCP listen address as host:port (default: phone.relay_listen_address, :8444) |
-| `--qr` | bool | false | Show QR code for pairing |
+| `--allow-sync` | bool | false | Allow this session to export the password vault and OATH secrets to the phone via remote.sync* |
+| `--attestation-mode` | string | auto | Attestation mode: auto, tpm2, software |
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
+| `--device` | string |  | Specific paired device to accept connections from |
+| `--listen` | string |  | TCP listen address as host:port (default: phone.relay_listen_address, 127.0.0.1:8444) |
+| `--name` | string |  | Advertised device name (default: hostname) |
+| `--so-pin-stdin` | bool | false | Read the SO PIN from standard input |
+| `--timeout` | duration | 0s | Listen timeout (0 for indefinite) |
+| `--tpm-device` | string |  | TPM2 device path (default: /dev/tpmrm0) |
+| `--tpm-enrollment` | bool | false | Serve TCG-CSR-IDEVID device enrollment from this host's TPM |
+| `--tpm-pcr-bank` | string |  | PCR bank for the platform policy digest (default: SHA-256); set only if this TPM's SHA-256 bank is not allocated |
 
 ## xkey device scan
 
