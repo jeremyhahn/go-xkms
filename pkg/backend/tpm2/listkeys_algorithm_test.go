@@ -106,7 +106,7 @@ func TestListKeys_RecoversECDSAAlgorithmAndPIVSlot(t *testing.T) {
 		t.Fatalf("write private blob error = %v", err)
 	}
 
-	b := &Backend{config: &Config{KeyDir: tmpDir}, keyBackend: kb}
+	b := &Backend{keyDir: tmpDir, keyBackend: kb}
 	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListKeys() error = %v", err)
@@ -144,7 +144,7 @@ func TestListKeys_MissingOrMalformedPublicBlobIsBestEffort(t *testing.T) {
 			t.Fatalf("write private blob error = %v", err)
 		}
 
-		b := &Backend{config: &Config{KeyDir: tmpDir}, keyBackend: kb}
+		b := &Backend{keyDir: tmpDir, keyBackend: kb}
 		keys, err := b.ListKeys(context.Background())
 		if err != nil {
 			t.Fatalf("ListKeys() error = %v", err)
@@ -172,7 +172,7 @@ func TestListKeys_MissingOrMalformedPublicBlobIsBestEffort(t *testing.T) {
 			t.Fatalf("write private blob error = %v", err)
 		}
 
-		b := &Backend{config: &Config{KeyDir: tmpDir}, keyBackend: kb}
+		b := &Backend{keyDir: tmpDir, keyBackend: kb}
 		keys, err := b.ListKeys(context.Background())
 		if err != nil {
 			t.Fatalf("ListKeys() error = %v", err)

@@ -28,6 +28,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -158,7 +159,7 @@ func TestResolveNodeSeal_DisabledForRemoteDatastore(t *testing.T) {
 		Strategy: "passphrase",
 	}
 
-	res, err := ResolveNodeSeal(cfg, setupLogger(config.LoggingConfig{Level: "error", Format: "json"}))
+	res, err := embeddednode.ResolveNodeSeal(cfg, setupLogger(config.LoggingConfig{Level: "error", Format: "json"}))
 	require.NoError(t, err)
 	assert.False(t, res.Enabled, "the flip only applies to a standalone-hosted datastore")
 }
@@ -223,12 +224,11 @@ func TestResolveNodeSeal_TPM2EmptyStoragePathFailsClosed(t *testing.T) {
 	require.Error(t, sealErr)
 	assert.False(t, s.nodeSealEnabled)
 
-	var nodeErr *NodeSealError
-	require.True(t, errors.As(sealErr, &nodeErr), "error must unwrap to *NodeSealError, got %v", sealErr)
+	var nodeErr *embeddednode.NodeSealError
+	require.True(t, errors.As(sealErr, &nodeErr), "error must unwrap to *embeddednode.NodeSealError, got %v", sealErr)
 
-	var cfgErr *ErrConfigRequired
-	require.True(t, errors.As(sealErr, &cfgErr), "error must unwrap to *ErrConfigRequired, got %v", sealErr)
-	assert.Equal(t, "datastore.path", cfgErr.Field)
+	var pathErr *embeddednode.ErrDatastorePathRequired
+	require.True(t, errors.As(sealErr, &pathErr), "error must unwrap to *embeddednode.ErrDatastorePathRequired, got %v", sealErr)
 
 	_, statErr = os.Stat(filepath.Join(wd, "tpm2-keys"))
 	assert.True(t, os.IsNotExist(statErr), "resolving the node seal must never create tpm2-keys under the working directory")
@@ -256,6 +256,6 @@ func TestResolveNodeSeal_TPM2NoBackendConfigFailsClosed(t *testing.T) {
 	require.Error(t, sealErr)
 	assert.False(t, s.nodeSealEnabled)
 
-	var nodeErr *NodeSealError
-	require.True(t, errors.As(sealErr, &nodeErr), "error must unwrap to *NodeSealError, got %v", sealErr)
+	var nodeErr *embeddednode.NodeSealError
+	require.True(t, errors.As(sealErr, &nodeErr), "error must unwrap to *embeddednode.NodeSealError, got %v", sealErr)
 }

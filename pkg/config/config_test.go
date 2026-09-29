@@ -537,8 +537,17 @@ func TestValidate_Datastore(t *testing.T) {
 			wantError: true,
 		},
 		{
-			name:      "memory engine does not require a path",
+			// go-qrdb roots the standalone node's on-disk state (its
+			// vector-storage subsystem in particular) under one data
+			// directory regardless of the primary KV engine, so "memory"
+			// requires a path exactly like "file"/"pebble" do.
+			name:      "memory engine still requires a path for standalone mode",
 			datastore: DatastoreConfig{Engine: "memory"},
+			wantError: true,
+		},
+		{
+			name:      "memory engine with a path is valid",
+			datastore: DatastoreConfig{Engine: "memory", Path: "/data"},
 			wantError: false,
 		},
 		{

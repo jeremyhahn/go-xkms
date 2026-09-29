@@ -40,8 +40,10 @@ type DatastoreConfig struct {
   per-database engine vocabulary (`qrdbsdk.DaemonDatabaseConfig.Backend`,
   itself `"memory" | "file" | "pebble"`) — xkms never invents a parallel
   engine enum, and never selects an engine anywhere except through this one
-  field (`pkg/server/embedded_node.go`'s `EmbeddedNodeStorageConfig`). Only
-  meaningful when `Mode` is `"standalone"`.
+  field (`pkg/embeddednode/embedded_node.go`'s `EmbeddedNodeStorageConfig`).
+  Only meaningful when `Mode` is `"standalone"`. `Path` is required for
+  every `Engine`, `"memory"` included — see `Path` below; this is go-qrdb's
+  own contract, adopted exactly, not an xkms-invented requirement.
 - **`Mode`** selects the datastore's topology:
   - `"standalone"` (default) hosts the qrdb engine in this process — the
     single core that also serves identity, bootstrap, and (optionally, via
@@ -75,10 +77,12 @@ datastore.mode: "remote"
 | `storage.Backend` interface, guarded-write capability interfaces | `pkg/storage/interface.go`, `guardedwrites.go` | go-xkms |
 | `config.DatastoreConfig` / `DatastoreRemoteConfig` (the `datastore:` section) | `pkg/config/config.go` | go-xkms |
 | `Server.createStorage` / `createStorageAt` — ALWAYS a prefixed view over the one shared datastore, never a private engine | `pkg/server/storage_factory.go` | go-xkms |
-| `Server.initializeQRDBStorage` — builds the one shared datastore (standalone or remote) | `pkg/server/qrdb_storage.go` | go-xkms |
-| `EmbeddedNodeStorageConfig` — maps `Datastore.Engine`/`Path` onto the qrdb node's own daemon config | `pkg/server/embedded_node.go` | go-xkms |
+| `Server.initializeQRDBStorage` — builds the one shared datastore (standalone or remote) for an xkmsd-hosted deployment | `pkg/server/qrdb_storage.go` | go-xkms |
+| `datastore.Open` / `datastore.DialRemote` — the Server-independent counterpart for callers without a `*Server` (the SDK/library composition path); `Server.initializeQRDBStorage`'s own remote branch calls `DialRemote` too, so there is exactly one remote-dial implementation | `pkg/datastore/` | go-xkms |
+| `embeddednode.OpenEmbeddedNode` / `EmbeddedNodeStorageConfig` — maps `Datastore.Engine`/`Path` onto the qrdb node's own daemon config; the shared embedded-node builder `pkg/server` and `pkg/datastore` both build on | `pkg/embeddednode/` | go-xkms |
 | The embedded qrdb node itself, its local engines, and all clustering | go-qrdb SDK, `pkg/server/qrdb_node*.go`, `pkg/daemon` | go-xkms composes; go-qrdb implements — see [`../clustering/architecture.md`](../clustering/architecture.md) |
 | Prefix / namespace / sealed adapter views over a `Backend` | `pkg/storage/prefix.go`, `namespace.go`, `pkg/storage/sealed` | go-xkms |
+| `pkg/xkms.AutoConfig.Datastore` / `register_*` factories' `"key_storage"` key — the SDK/library composition path's own storage seam, fed a `storage.Backend` handle (e.g. from `pkg/datastore.Open`) by its caller | `pkg/xkms/auto.go`, `register_*.go` | go-xkms |
 
 ## Data flow
 
@@ -113,7 +117,12 @@ backend name anymore — there is nothing left to switch on. An invalid
   protects them regardless of engine.
 - **`memory` is non-durable by design** and every key, user, and certificate
   in it disappears on process exit — appropriate for tests, never for a
-  deployment that must survive a restart.
+  deployment that must survive a restart. `Path` is still required with
+  `engine: memory` (see above): go-qrdb roots the node's on-disk state under
+  it regardless of the primary KV engine, so a memory-engine deployment
+  still resolves `Path`, points it at a real (typically ephemeral, e.g.
+  `t.TempDir()`) directory, and gets non-durable KV data with that
+  directory as the only trace left behind.
 - **Network protocols and RBAC no longer require a specific engine or
   mode combination the way the old `"qrdb"` backend did — they require the
   datastore to be hosted in this process.** REST/gRPC/QUIC/MCP require
@@ -145,8 +154,13 @@ backend name anymore — there is nothing left to switch on. An invalid
   `Datastore.Path` — they exist *before* the datastore they eventually
   promote into is available to open, by construction, not by choice. See
   engineering.md's "Genuinely pre-datastore material" section.
-- **It does not (yet) migrate the SDK/library composition path
-  (`pkg/xkms/register_*.go`, `pkg/xkms/auto.go`) off `pkg/storage/file.New`.**
-  That path builds a standalone `*xkms.XKMSService` without a `*Server` at
-  all, so it never reaches `createStorage`; unifying it onto one configurable
-  datastore is tracked as follow-up work, not part of this feature.
+- **The SDK/library composition path (`pkg/xkms/register_*.go`,
+  `pkg/xkms/auto.go`) is unified onto the same shared datastore as of
+  go-xkms#1345 batch 2** — but through a `storage.Backend` handle
+  (`AutoConfig.Datastore`), not a `config.DatastoreConfig` parameter: that
+  path builds a standalone `*xkms.XKMSService` without a `*Server`, and
+  `pkg/xkms` cannot import `pkg/config` (which already transitively imports
+  `pkg/xkms` via `pkg/ca`) or `pkg/server` (which imports `pkg/xkms`
+  directly). The caller opens the datastore (`pkg/datastore.Open`, or
+  `sdk/go`'s `OpenDatastore` re-export) and hands over the resulting handle;
+  see engineering.md's "The SDK/library composition path" section.

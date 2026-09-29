@@ -14,25 +14,11 @@
 package server
 
 import (
-	"context"
 	"strings"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-	qrdbgrpc "github.com/jeremyhahn/go-qrdb/sdk/go/transport/grpc"
-	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
-
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 )
-
-// remoteTransportFactory provides O(1) qrdb-transport dispatch for remote
-// (clustered) qrdb storage. Each constructor builds a transport.Transport
-// from the supplied options.
-var remoteTransportFactory = map[string]func(...qrdbtransport.Option) (qrdbtransport.Transport, error){
-	"rest": func(opts ...qrdbtransport.Option) (qrdbtransport.Transport, error) { return qrdbrest.New(opts...) },
-	"grpc": func(opts ...qrdbtransport.Option) (qrdbtransport.Transport, error) { return qrdbgrpc.New(opts...) },
-}
 
 // initializeQRDBStorage builds the single shared datastore backend every
 // subsystem stores through (see createStorage/createStorageAt). It must be
@@ -49,6 +35,13 @@ var remoteTransportFactory = map[string]func(...qrdbtransport.Option) (qrdbtrans
 //	                Datastore.Remote.Transport (rest or grpc) with the
 //	                configured TLS. Writes go through Raft consensus on the
 //	                remote cluster; this process hosts no local engine.
+//
+// The standalone path is Server-specific (the unified API server, its
+// modules, TLS, and node-barrier adoption -- initEmbeddedQRDBNode); the
+// remote path dials via datastore.DialRemote, the SAME Server-independent
+// implementation pkg/datastore.Open uses for callers without a *Server (the
+// SDK/library composition path) -- there is exactly one remote-dial
+// implementation (go-xkms#1345 batch 2).
 //
 // The resulting backend is stored on s.qrdbStorage and is owned by the server:
 // only Shutdown closes it. Per-subdir storage views are key-prefixed views over
@@ -73,90 +66,18 @@ func (s *Server) initializeQRDBStorage() error {
 		return nil
 
 	case "remote":
-		transport := strings.ToLower(strings.TrimSpace(s.config.Datastore.Remote.Transport))
-		backend, err := s.newRemoteQRDBStorage(transport)
+		backend, err := datastore.DialRemote(s.ctx, s.config.Datastore.Remote)
 		if err != nil {
 			return &ErrStorageCreate{Resource: "remote datastore", Err: err}
 		}
 		s.qrdbStorage = backend
 		s.logger.Info("Initialized remote datastore",
-			"transport", transport, "address", s.config.Datastore.Remote.Address)
+			"transport", s.config.Datastore.Remote.Transport, "address", s.config.Datastore.Remote.Address)
 		return nil
 
 	default:
-		return &ErrUnsupportedDatastoreMode{Mode: s.config.Datastore.Mode}
+		return &datastore.ErrUnsupportedDatastoreMode{Mode: s.config.Datastore.Mode}
 	}
-}
-
-// newRemoteQRDBStorage dials a remote qrdb cluster over the given transport and
-// wraps the resulting KV client as a storage.Backend. The backend does not own
-// the dialed client lifecycle through qrdbstorage.NewBackend, so the client is
-// retained on a closer and torn down in Shutdown via the server-owned wrapper.
-func (s *Server) newRemoteQRDBStorage(transport string) (storage.Backend, error) {
-	constructor, ok := remoteTransportFactory[transport]
-	if !ok {
-		return nil, &ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}
-	}
-
-	opts := s.qrdbTransportOptions()
-
-	rt, err := constructor(opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := qrdbsdk.NewClient(rt)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := client.Connect(context.Background()); err != nil {
-		return nil, err
-	}
-
-	// NewBackend wraps the KV client without owning its lifecycle, so wrap it
-	// in a server-owned backend whose Close tears down the SDK client (which in
-	// turn closes the transport).
-	return &ownedRemoteBackend{
-		Backend: qrdbstorage.NewBackend(client.KV()),
-		client:  client,
-	}, nil
-}
-
-// qrdbTransportOptions builds the qrdb transport options from the datastore
-// remote config: address plus TLS when a CA file is configured.
-func (s *Server) qrdbTransportOptions() []qrdbtransport.Option {
-	qcfg := s.config.Datastore.Remote
-	opts := make([]qrdbtransport.Option, 0, 3)
-
-	if qcfg.Address != "" {
-		opts = append(opts, qrdbtransport.WithAddress(qcfg.Address))
-	}
-
-	if qcfg.TLS.Enabled && qcfg.TLS.CAFile != "" {
-		opts = append(opts, qrdbtransport.WithTLS(
-			qcfg.TLS.CertFile,
-			qcfg.TLS.KeyFile,
-			qcfg.TLS.CAFile,
-		))
-	}
-
-	return opts
-}
-
-// ownedRemoteBackend wraps a remote qrdb storage.Backend together with the SDK
-// client that backs it so the server can close both in one step during
-// Shutdown. The embedded *qrdbstorage.Backend provides all storage operations.
-type ownedRemoteBackend struct {
-	*qrdbstorage.Backend
-	client *qrdbsdk.Client
-}
-
-// Close tears down the SDK client (and its transport) backing this remote
-// storage. The embedded backend's own Close is a no-op for externally-provided
-// clients, so closing the client is sufficient.
-func (b *ownedRemoteBackend) Close() error {
-	return b.client.Close()
 }
 
 // closeQRDBStorage closes the shared qrdb storage backend if one was created

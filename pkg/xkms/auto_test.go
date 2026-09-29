@@ -21,11 +21,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 // TestAutoInitialize_NoDataDirNeverWritesTPM2KeysInCWD is the regression test
-// for #926: AutoInitialize with no DataDir (and no BackendConfigs override)
-// never sets a "key_dir" for the tpm2 backend, so the tpm2 backend factory
+// for #926: AutoInitialize with no Datastore (and no BackendConfigs override)
+// never sets "key_storage" for the tpm2 backend, so the tpm2 backend factory
 // must fail closed (tpm2.ErrKeyDirRequired) rather than defaulting to a
 // tpm2-keys directory resolved relative to the process's working directory.
 // AutoInitialize tolerates the failure -- tpm2 is skipped with a warning,
@@ -141,7 +144,7 @@ func TestAutoInitialize_WithBackendConfigs(t *testing.T) {
 	err := AutoInitialize(&AutoConfig{
 		BackendConfigs: map[BackendType]map[string]interface{}{
 			BackendSoftware: {
-				"key_dir": "memory",
+				"key_storage": storage.New(),
 			},
 		},
 	})
@@ -154,13 +157,19 @@ func TestAutoInitialize_WithBackendConfigs(t *testing.T) {
 	assert.NotNil(t, b)
 }
 
-func TestAutoInitialize_WithDataDir(t *testing.T) {
+// TestAutoInitialize_WithDatastore proves a caller-supplied Datastore handle
+// (e.g. pkg/datastore.Open, or -- as here -- any storage.Backend, standing in
+// for one) is what every backend's key storage is created from: not a
+// resolved directory this package opens itself.
+func TestAutoInitialize_WithDatastore(t *testing.T) {
 	t.Cleanup(func() { Reset() })
 
 	tmpDir := t.TempDir()
+	ds, err := file.New(tmpDir)
+	require.NoError(t, err)
 
-	err := AutoInitialize(&AutoConfig{
-		DataDir:        tmpDir,
+	err = AutoInitialize(&AutoConfig{
+		Datastore:      ds,
 		DefaultBackend: string(BackendSoftware),
 	})
 	require.NoError(t, err)
@@ -197,10 +206,10 @@ func TestAutoInitialize_BackendConfigOverrides(t *testing.T) {
 	err := AutoInitialize(&AutoConfig{
 		BackendConfigs: map[BackendType]map[string]interface{}{
 			BackendSymmetric: {
-				"key_dir": "memory",
+				"key_storage": storage.New(),
 			},
 			BackendPKCS8: {
-				"key_dir": "memory",
+				"key_storage": storage.New(),
 			},
 		},
 	})
@@ -219,7 +228,7 @@ func TestAutoInitialize_BackendConfigOverrides(t *testing.T) {
 func TestAutoConfig_DefaultValues(t *testing.T) {
 	config := &AutoConfig{}
 
-	assert.Equal(t, "", config.DataDir)
+	assert.Nil(t, config.Datastore)
 	assert.Equal(t, "", config.DefaultBackend)
 	assert.Nil(t, config.BackendConfigs)
 }
@@ -283,29 +292,35 @@ func TestResolveDefaultBackend_EmptyBackends(t *testing.T) {
 
 func TestResolveBackendConfig_EmptyDefaults(t *testing.T) {
 	config := &AutoConfig{}
-	result := resolveBackendConfig(config, BackendSoftware)
+	result, err := resolveBackendConfig(config, BackendSoftware)
+	require.NoError(t, err)
 	assert.Empty(t, result)
 }
 
-func TestResolveBackendConfig_WithDataDir(t *testing.T) {
+func TestResolveBackendConfig_WithDatastore(t *testing.T) {
 	config := &AutoConfig{
-		DataDir: "/tmp/xkms",
+		Datastore: storage.New(),
 	}
-	result := resolveBackendConfig(config, BackendSoftware)
-	assert.Equal(t, "/tmp/xkms/software", result["key_dir"])
+	result, err := resolveBackendConfig(config, BackendSoftware)
+	require.NoError(t, err)
+	ks, ok := result["key_storage"].(storage.Backend)
+	require.True(t, ok, "key_storage must be a storage.Backend, got %T", result["key_storage"])
+	assert.NotNil(t, ks)
 }
 
 func TestResolveBackendConfig_UserOverrideTakesPrecedence(t *testing.T) {
+	custom := storage.New()
 	config := &AutoConfig{
-		DataDir: "/tmp/xkms",
+		Datastore: storage.New(),
 		BackendConfigs: map[BackendType]map[string]interface{}{
 			BackendSoftware: {
-				"key_dir": "/custom/path",
+				"key_storage": custom,
 			},
 		},
 	}
-	result := resolveBackendConfig(config, BackendSoftware)
-	assert.Equal(t, "/custom/path", result["key_dir"])
+	result, err := resolveBackendConfig(config, BackendSoftware)
+	require.NoError(t, err)
+	assert.Same(t, custom, result["key_storage"])
 }
 
 func TestResolveBackendConfig_MergesUserConfigKeys(t *testing.T) {
@@ -316,19 +331,19 @@ func TestResolveBackendConfig_MergesUserConfigKeys(t *testing.T) {
 			},
 		},
 	}
-	result := resolveBackendConfig(config, BackendSoftware)
+	result, err := resolveBackendConfig(config, BackendSoftware)
+	require.NoError(t, err)
 	assert.Equal(t, "custom_value", result["custom_key"])
 }
 
 func TestCreateCertStorage_InMemory(t *testing.T) {
-	cs, err := createCertStorage("")
+	cs, err := createCertStorage(nil)
 	require.NoError(t, err)
 	assert.NotNil(t, cs)
 }
 
-func TestCreateCertStorage_FileBased(t *testing.T) {
-	tmpDir := t.TempDir()
-	cs, err := createCertStorage(tmpDir)
+func TestCreateCertStorage_PrefixedOverDatastore(t *testing.T) {
+	cs, err := createCertStorage(storage.New())
 	require.NoError(t, err)
 	assert.NotNil(t, cs)
 }

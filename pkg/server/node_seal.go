@@ -13,25 +13,7 @@
 
 package server
 
-// NodeSealError is returned when the node barrier is configured to encrypt the
-// data plane but the required auto-unseal material cannot be resolved.
-type NodeSealError struct {
-	// Reason describes the failure.
-	Reason string
-	// Err is the underlying error, when one exists. Nil for a NodeSealError
-	// raised without an underlying cause.
-	Err error
-}
-
-// Error implements the error interface.
-func (e *NodeSealError) Error() string {
-	return "server: node barrier seal: " + e.Reason
-}
-
-// Unwrap exposes Err so errors.Is/errors.As can reach it.
-func (e *NodeSealError) Unwrap() error {
-	return e.Err
-}
+import "github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 
 // allowNodeLocalPlaintextKeys reports whether a node-local key provider (e.g.
 // the pkcs8 backend) may persist unencrypted PKCS#8 DER. Under the seal model
@@ -98,7 +80,7 @@ func (s *Server) allowNodeLocalPlaintextKeys() bool {
 // documented on NodeFlipWired. Remote-datastore deployments are unaffected
 // either way: the flip only ever applies to Datastore.Mode=="standalone".
 func (s *Server) resolveNodeSeal() error {
-	res, err := ResolveNodeSeal(s.config, s.logger)
+	res, err := embeddednode.ResolveNodeSeal(s.config, s.logger)
 	if err != nil {
 		return err
 	}

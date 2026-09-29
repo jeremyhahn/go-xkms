@@ -21,6 +21,7 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	xkmsserver "github.com/jeremyhahn/go-xkms/pkg/server"
 )
@@ -29,10 +30,10 @@ import (
 // from the same data directory, so that admin login factors enrolled during
 // `xkmsd init` are written to the store the running server authenticates
 // against, not to a throwaway one. Node construction itself goes through
-// pkg/server.OpenEmbeddedNode -- the single shared entry point xkmsd run's
-// (*server.Server).initEmbeddedQRDBNode also uses -- so the two opens of one
-// Pebble directory can never disagree about the database engine or the
-// barrier/seal/encryption-at-rest configuration.
+// pkg/embeddednode.OpenEmbeddedNode -- the single shared, Server-independent
+// entry point xkmsd run's (*server.Server).initEmbeddedQRDBNode also builds
+// on -- so the two opens of one Pebble directory can never disagree about
+// the database engine or the barrier/seal/encryption-at-rest configuration.
 
 // Node-open error types.
 var (
@@ -112,16 +113,26 @@ func resolveInitNodeConfig(cfg *config.Config, flags *initFlags, dataDir string)
 // factors (and, on the single-admin path, first-boot identity) are persisted
 // into. It is a standalone node: `xkmsd init` is a one-shot, single-process
 // bootstrap ceremony and is never a cluster member.
-func openDurableInitNode(ctx context.Context, nodeCfg *config.Config, logger *slog.Logger) (*qrdbnode.Node, xkmsserver.ResolvedNodeSeal, error) {
+func openDurableInitNode(ctx context.Context, nodeCfg *config.Config, logger *slog.Logger) (*qrdbnode.Node, embeddednode.ResolvedNodeSeal, error) {
 	if nodeCfg == nil || nodeCfg.Datastore.Path == "" {
-		return nil, xkmsserver.ResolvedNodeSeal{}, ErrNodeConfigRequired
+		return nil, embeddednode.ResolvedNodeSeal{}, ErrNodeConfigRequired
 	}
-	node, sealRes, err := xkmsserver.OpenEmbeddedNode(ctx, xkmsserver.EmbeddedNodeOptions{
-		Config: nodeCfg,
-		Logger: logger,
+	// xkmsd init runs a real custodian-enrollment ceremony, so it always
+	// builds and injects a factor registry explicitly -- OpenEmbeddedNode
+	// itself no longer defaults one (that default pulled in pkg/factor,
+	// which pkg/xkms's SDK/library composition path -- the other caller of
+	// pkg/embeddednode, via pkg/datastore -- cannot depend on).
+	registry, err := xkmsserver.NewNodeFactorRegistry()
+	if err != nil {
+		return nil, embeddednode.ResolvedNodeSeal{}, &WrappedError{Sentinel: ErrNodeOpenFailed, Err: err}
+	}
+	node, sealRes, err := embeddednode.OpenEmbeddedNode(ctx, embeddednode.EmbeddedNodeOptions{
+		Config:         nodeCfg,
+		Logger:         logger,
+		FactorRegistry: registry,
 	})
 	if err != nil {
-		return nil, xkmsserver.ResolvedNodeSeal{}, &WrappedError{Sentinel: ErrNodeOpenFailed, Err: err}
+		return nil, embeddednode.ResolvedNodeSeal{}, &WrappedError{Sentinel: ErrNodeOpenFailed, Err: err}
 	}
 	return node, sealRes, nil
 }
@@ -144,7 +155,7 @@ func openDurableInitNode(ctx context.Context, nodeCfg *config.Config, logger *sl
 // multi-officer ceremony this function does not drive (see the sentinel's
 // doc comment), and calling node.Unseal with a bare passphrase credential
 // against a shamir-strategy barrier would not complete it.
-func unsealDurableInitNode(ctx context.Context, node *qrdbnode.Node, sealRes xkmsserver.ResolvedNodeSeal, strategy string, soPin []byte) error {
+func unsealDurableInitNode(ctx context.Context, node *qrdbnode.Node, sealRes embeddednode.ResolvedNodeSeal, strategy string, soPin []byte) error {
 	if !sealRes.Enabled || !node.IsSealed() {
 		return nil
 	}

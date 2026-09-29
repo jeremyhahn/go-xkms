@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -38,19 +39,17 @@ func TestResolveTPM2KeyDir_EmptyStoragePath(t *testing.T) {
 
 	wd, err := os.Getwd()
 	require.NoError(t, err)
-	_, statErr := os.Stat(filepath.Join(wd, tpm2KeyDirSubdir))
+	_, statErr := os.Stat(filepath.Join(wd, embeddednode.KeyDirSubdir))
 	require.True(t, os.IsNotExist(statErr), "precondition: no stray tpm2-keys dir in the working directory")
 
 	dir, err := s.resolveTPM2KeyDir()
 	require.Error(t, err)
 	assert.Empty(t, dir)
 
-	var cfgErr *ErrConfigRequired
-	require.True(t, errors.As(err, &cfgErr), "error must unwrap to *ErrConfigRequired, got %v", err)
-	assert.Equal(t, "datastore.path", cfgErr.Field)
-	assert.Equal(t, "tpm2", cfgErr.Backend)
+	var pathErr *embeddednode.ErrDatastorePathRequired
+	require.True(t, errors.As(err, &pathErr), "error must unwrap to *embeddednode.ErrDatastorePathRequired, got %v", err)
 
-	_, statErr = os.Stat(filepath.Join(wd, tpm2KeyDirSubdir))
+	_, statErr = os.Stat(filepath.Join(wd, embeddednode.KeyDirSubdir))
 	assert.True(t, os.IsNotExist(statErr), "resolving the key directory must never create it under the working directory")
 }
 
@@ -89,7 +88,6 @@ func TestInitTPM2Backend_EmptyStoragePath(t *testing.T) {
 	var createErr *ErrBackendCreate
 	require.True(t, errors.As(err, &createErr), "error must unwrap to *ErrBackendCreate, got %v", err)
 
-	var cfgErr *ErrConfigRequired
-	require.True(t, errors.As(err, &cfgErr), "error must unwrap to *ErrConfigRequired, got %v", err)
-	assert.Equal(t, "datastore.path", cfgErr.Field)
+	var pathErr *embeddednode.ErrDatastorePathRequired
+	require.True(t, errors.As(err, &pathErr), "error must unwrap to *embeddednode.ErrDatastorePathRequired, got %v", err)
 }

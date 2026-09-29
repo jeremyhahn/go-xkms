@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -57,8 +58,8 @@ func TestNew_NodeSealFailure_WrapsAsErrServiceInit(t *testing.T) {
 	require.True(t, errors.As(err, &svcErr), "error must unwrap to *ErrServiceInit, got %T", err)
 	assert.Equal(t, "node seal", svcErr.Service)
 
-	var sealErr *NodeSealError
-	assert.True(t, errors.As(err, &sealErr), "error must unwrap to *NodeSealError, got %T", err)
+	var sealErr *embeddednode.NodeSealError
+	assert.True(t, errors.As(err, &sealErr), "error must unwrap to *embeddednode.NodeSealError, got %T", err)
 }
 
 // TestNew_QRDBStorageFailure_WrapsAsErrServiceInit proves an unrecognized

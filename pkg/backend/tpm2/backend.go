@@ -45,7 +45,8 @@ type Backend struct {
 	config      *Config
 	tpm         pkgtpm2.TrustedPlatformModule
 	keyBackend  store.KeyBackend
-	keyDir      string // directory holding key blobs; used by ListKeys for enumeration
+	keyStorage  storage.Backend // the storage.Backend key blobs are persisted through; used by ListKeys for enumeration (NewBackend path)
+	keyDir      string          // directory holding key blobs; used by ListKeys for enumeration (NewBackendWithTPM/ExternalTPMConfig path only)
 	logger      *slog.Logger
 	srkAttrs    *types.KeyAttributes
 	tracker     types.AEADSafetyTracker
@@ -164,11 +165,11 @@ func NewBackend(config *Config) (*Backend, error) {
 		tracker = backend.NewMemoryAEADTracker()
 	}
 
-	// Create file-based key backend for storing TPM key blobs
-	keyBackend, err := NewFileKeyBackend(log, config.KeyDir)
-	if err != nil {
-		return nil, err
-	}
+	// Create the key backend storing TPM key blobs: Config.Validate already
+	// required config.KeyStorage above, so this is the ONLY storage path --
+	// never a private, directory-based engine this package opens for
+	// itself.
+	keyBackend := store.NewFileBackend(log, config.KeyStorage)
 
 	// Create TPM2 configuration
 	tpmConfig := config.ToTPMConfig()
@@ -221,7 +222,7 @@ func NewBackend(config *Config) (*Backend, error) {
 		config:     config,
 		tpm:        tpm,
 		keyBackend: keyBackend,
-		keyDir:     config.KeyDir,
+		keyStorage: config.KeyStorage,
 		logger:     log,
 		srkAttrs:   srkAttrs,
 		tracker:    tracker,
@@ -460,6 +461,16 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 }
 
 // ListKeys returns attributes for all keys managed by this backend.
+//
+// Enumeration is storage-backed (keyStorage.List, set by NewBackend) --
+// there is no private, directory-based engine this package opens for
+// itself. The sole exception is keyDir (set only by NewBackendWithTPM /
+// ExternalTPMConfig, sharing an already-open TPM connection with the
+// node-barrier seal strategy or the platform store): that key material is
+// genuinely pre-datastore (see docs/datastore/architecture.md) and stays a
+// real directory, so enumeration there is still a directory listing. A
+// backend with neither (created with an external TPM and no KeyDir) reports
+// no keys rather than failing -- enumeration is simply unavailable.
 func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -468,20 +479,40 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		return nil, ErrNotInitialized
 	}
 
-	// List files in the key directory with .blob extension (private blobs).
-	// Prefer the keyDir field (set by both constructors); fall back to the
-	// config for backends built directly with a Config. When a backend is
-	// created with an external TPM and no KeyDir, enumeration is unavailable
-	// (the KeyBackend interface exposes no List operation), so report no keys
-	// rather than dereferencing a nil config.
-	keyDir := b.keyDir
-	if keyDir == "" && b.config != nil {
-		keyDir = b.config.KeyDir
-	}
-	if keyDir == "" {
+	switch {
+	case b.keyStorage != nil:
+		return b.listKeysFromStorage(ctx)
+	case b.keyDir != "":
+		return b.listKeysFromDir(b.keyDir)
+	default:
 		return []*types.KeyAttributes{}, nil
 	}
-	entries, err := os.ReadDir(keyDir)
+}
+
+// listKeysFromStorage enumerates private-blob keys (FSEXT_PRIVATE_BLOB) via
+// keyStorage.List, the storage.Backend key blobs are persisted through.
+func (b *Backend) listKeysFromStorage(ctx context.Context) ([]*types.KeyAttributes, error) {
+	names, err := b.keyStorage.List(ctx, "")
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to list key storage", Err: err}
+	}
+
+	var keys []*types.KeyAttributes
+	for _, name := range names {
+		if !strings.HasSuffix(name, store.FSEXT_PRIVATE_BLOB) {
+			continue
+		}
+		cn := name[:len(name)-len(store.FSEXT_PRIVATE_BLOB)]
+		keys = append(keys, b.keyAttributesForCN(cn))
+	}
+	return keys, nil
+}
+
+// listKeysFromDir enumerates private-blob key files (FSEXT_PRIVATE_BLOB)
+// directly under dir -- the ExternalTPMConfig/NewBackendWithTPM path's
+// genuinely pre-datastore key directory (see ListKeys).
+func (b *Backend) listKeysFromDir(dir string) ([]*types.KeyAttributes, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []*types.KeyAttributes{}, nil
@@ -495,60 +526,63 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 			continue
 		}
 		name := entry.Name()
-		// Look for private blob files
 		if ext := filepath.Ext(name); ext == store.FSEXT_PRIVATE_BLOB {
 			cn := name[:len(name)-len(ext)]
-			attrs := &types.KeyAttributes{
-				CN:        cn,
-				StoreType: types.StoreTPM2,
-
-				// Exportable is unconditionally false and Sensitive is
-				// unconditionally true for every key this backend enumerates,
-				// truthfully reporting what this backend's API surface can
-				// ever do rather than echoing whatever policy a caller once
-				// asked for at creation (go-xkms#932).
-				//
-				// GenerateKey builds every key from KeyTemplateSpec.Template
-				// (pkg/tpm2/template.go), which sets FixedTPM=true and
-				// FixedParent=true unconditionally -- TCG TPM 2.0 Library
-				// Part 2 12.2.3.5's flags for "may never leave this TPM" and
-				// "may never leave this parent" -- so a generated key is
-				// hardware-non-duplicable regardless of what attrs.Exportable
-				// the caller requested. ImportKey's sealed-keyedhash objects
-				// (buildSealedDuplicate) are built without those flags and so
-				// are duplicable at the TPM level, but ExportKey
-				// (importexport.go) refuses every key unconditionally with
-				// ErrExportNotSupported once the Exportable policy check
-				// passes -- there is no code path through this backend's API
-				// that ever returns key material for any key, generated or
-				// imported. Exportable=true would therefore be a promise this
-				// backend cannot keep for any key it manages.
-				//
-				// Sensitive=true mirrors the same fact from the other
-				// direction: ExportKeyMaterial (importexport.go) refuses
-				// every key unconditionally too, so plaintext is never
-				// released through this backend's API for any key.
-				Exportable: false,
-				Sensitive:  true,
-			}
-			// Recover the key algorithm from the persisted public blob so that
-			// downstream consumers (e.g. DeleteKey, which branches on
-			// KeyAlgorithm to choose the load-vs-unseal delete path) operate on
-			// the correct key type. This is best-effort: a missing or malformed
-			// public blob, or a sealed/keyedhash object, leaves KeyAlgorithm
-			// unset and must not fail enumeration.
-			if algo, ok := b.keyAlgorithmFromPublicBlob(cn); ok {
-				attrs.KeyAlgorithm = algo
-			}
-			// Recover the PIV slot from the "piv-<slot>" CN convention.
-			if strings.HasPrefix(cn, pivCNPrefix) {
-				attrs.PIVSlot = cn[len(pivCNPrefix):]
-			}
-			keys = append(keys, attrs)
+			keys = append(keys, b.keyAttributesForCN(cn))
 		}
 	}
-
 	return keys, nil
+}
+
+// keyAttributesForCN builds the KeyAttributes ListKeys reports for a private
+// blob's Common Name, common to both enumeration sources.
+func (b *Backend) keyAttributesForCN(cn string) *types.KeyAttributes {
+	attrs := &types.KeyAttributes{
+		CN:        cn,
+		StoreType: types.StoreTPM2,
+
+		// Exportable is unconditionally false and Sensitive is
+		// unconditionally true for every key this backend enumerates,
+		// truthfully reporting what this backend's API surface can ever do
+		// rather than echoing whatever policy a caller once asked for at
+		// creation (go-xkms#932).
+		//
+		// GenerateKey builds every key from KeyTemplateSpec.Template
+		// (pkg/tpm2/template.go), which sets FixedTPM=true and
+		// FixedParent=true unconditionally -- TCG TPM 2.0 Library Part 2
+		// 12.2.3.5's flags for "may never leave this TPM" and "may never
+		// leave this parent" -- so a generated key is hardware-non-
+		// duplicable regardless of what attrs.Exportable the caller
+		// requested. ImportKey's sealed-keyedhash objects
+		// (buildSealedDuplicate) are built without those flags and so are
+		// duplicable at the TPM level, but ExportKey (importexport.go)
+		// refuses every key unconditionally with ErrExportNotSupported once
+		// the Exportable policy check passes -- there is no code path
+		// through this backend's API that ever returns key material for any
+		// key, generated or imported. Exportable=true would therefore be a
+		// promise this backend cannot keep for any key it manages.
+		//
+		// Sensitive=true mirrors the same fact from the other direction:
+		// ExportKeyMaterial (importexport.go) refuses every key
+		// unconditionally too, so plaintext is never released through this
+		// backend's API for any key.
+		Exportable: false,
+		Sensitive:  true,
+	}
+	// Recover the key algorithm from the persisted public blob so that
+	// downstream consumers (e.g. DeleteKey, which branches on KeyAlgorithm
+	// to choose the load-vs-unseal delete path) operate on the correct key
+	// type. This is best-effort: a missing or malformed public blob, or a
+	// sealed/keyedhash object, leaves KeyAlgorithm unset and must not fail
+	// enumeration.
+	if algo, ok := b.keyAlgorithmFromPublicBlob(cn); ok {
+		attrs.KeyAlgorithm = algo
+	}
+	// Recover the PIV slot from the "piv-<slot>" CN convention.
+	if strings.HasPrefix(cn, pivCNPrefix) {
+		attrs.PIVSlot = cn[len(pivCNPrefix):]
+	}
+	return attrs
 }
 
 // pivCNPrefix is the common-name prefix used for TPM2-backed PIV keys. The

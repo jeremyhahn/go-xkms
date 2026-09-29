@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/webui"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -54,7 +55,7 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	// Storage.VolumePools) comes from the shared, Server-independent builder
 	// so this deployment's config resolves the SAME shape xkmsd init resolves
 	// from the same *config.Config -- see embedded_node.go.
-	qcfg := EmbeddedNodeStorageConfig(s.config, ResolvedNodeSeal{
+	qcfg := embeddednode.EmbeddedNodeStorageConfig(s.config, embeddednode.ResolvedNodeSeal{
 		Enabled:  s.nodeSealEnabled,
 		Strategy: s.nodeSealStrategy,
 		TPM:      s.nodeSealTPM,
@@ -118,7 +119,7 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 // (embedded_node.go). The returned sink is retained on s.qrdbAuditSink and
 // closed during Shutdown.
 func (s *Server) newQRDBAuditSink() (qrdbsdk.NodeAuditLogger, error) {
-	return NewEmbeddedAuditSink(s.config, s.logger)
+	return embeddednode.NewEmbeddedAuditSink(s.config, s.logger)
 }
 
 // initEmbeddedQRDBNode constructs the in-process qrdb standalone node that is
@@ -286,7 +287,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 			return &QRDBNodeError{Stage: "sealed window", Err: err}
 		}
 		if node.IsSealed() {
-			return &QRDBNodeError{Stage: "node barrier auto-unseal", Err: &NodeSealError{
+			return &QRDBNodeError{Stage: "node barrier auto-unseal", Err: &embeddednode.NodeSealError{
 				Reason: "barrier did not auto-unseal with the supplied credentials (check the TPM PCR state)"}}
 		}
 		if inner := node.BarrierRegistry(); inner != nil {

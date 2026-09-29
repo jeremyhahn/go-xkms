@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -34,7 +35,7 @@ import (
 func TestNewBackend_SimulatorAutoProvisions(t *testing.T) {
 	config := &Config{
 		UseSimulator: true,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 		CN:           "autoprov-test",
 	}
 

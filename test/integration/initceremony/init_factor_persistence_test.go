@@ -132,7 +132,7 @@ func freePort(t *testing.T) int {
 // posture, not something init's ceremony will provision. Of the strategies
 // init does accept, "tpm2" is the one that ALSO auto-unseals unattended on
 // every `xkmsd run`, init included (cmd/xkmsd/init_node.go's
-// unsealDurableInitNode and pkg/server/embedded_node.go's ResolveNodeSeal /
+// unsealDurableInitNode and pkg/embeddednode/embedded_node.go's ResolveNodeSeal /
 // OpenEmbeddedNode), so it needs no operator step between the two `xkmsd
 // run` invocations this test drives -- exactly what a restart-driven test
 // needs, and a strictly stronger regression check than "none" would have

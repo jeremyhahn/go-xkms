@@ -59,6 +59,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
+	"github.com/jeremyhahn/go-xkms/pkg/factor"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
@@ -1964,6 +1965,21 @@ func (s *Server) initializeFactorRegistry() error {
 	s.factorRegistry = registry
 	s.logger.Info("Auth-factor registry initialized", "factors", registry.List())
 	return nil
+}
+
+// NewNodeFactorRegistry builds the plain hardware auth-factor registry the
+// embedded qrdb node uses to verify hardware factor challenges (custodian
+// enrollment, Shamir unseal). It carries no PIV/FIDO2 hardware handlers --
+// those belong to the CLI-driven admin-enrollment ceremony
+// (pkg/init.NewAdminFactorRegistry) -- this is the always-available baseline
+// the node itself is constructed with. Kept in pkg/server (rather than
+// pkg/embeddednode) because pkg/factor imports pkg/xkms, and pkg/embeddednode
+// must stay free of that dependency so pkg/datastore (imported by pkg/xkms)
+// can use it without an import cycle; a caller of embeddednode.OpenEmbeddedNode
+// that wants a factor registry (xkmsd init, xkmsd run) builds one explicitly
+// with this function and passes it via EmbeddedNodeOptions.FactorRegistry.
+func NewNodeFactorRegistry() (*qrdbsdk.AuthFactorRegistry, error) {
+	return factor.NewDefaultRegistry(factor.Config{})
 }
 
 // FactorRegistry returns the hardware auth-factor registry.

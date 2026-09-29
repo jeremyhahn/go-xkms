@@ -36,6 +36,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -230,22 +231,6 @@ func TestServer_CloseBackends_EmptyKeyProviders(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — ownedRemoteBackend.Close
-// ============================================================================
-
-// TestOwnedRemoteBackend_CloseNilClient exercises the Close path with a struct
-// that holds a nil inner backend and no live client. We test the type itself
-// rather than triggering a real network dial.
-func TestOwnedRemoteBackend_CloseNilClient(t *testing.T) {
-	// We can't easily test ownedRemoteBackend.Close without a real SDK client,
-	// but we can verify the struct satisfies the storage.Backend interface at
-	// compile time — the compile-time check is in qrdb_storage.go via the
-	// *ownedRemoteBackend returned from newRemoteQRDBStorage.
-	// This test documents the non-exercisability boundary.
-	t.Log("ownedRemoteBackend.Close requires a live SDK client; boundary documented")
-}
-
-// ============================================================================
 // Tests — getBuildVersion branches
 // ============================================================================
 
@@ -279,7 +264,7 @@ func TestInitializeQRDBStorage_QRDBEmptyTransportIsEmbedded(t *testing.T) {
 	// the unsupported-transport error is NOT returned.
 	err := s.initializeQRDBStorage()
 	if err != nil {
-		var unsup *ErrUnsupportedStorageBackend
+		var unsup *datastore.ErrUnsupportedStorageBackend
 		assert.False(t, errors.As(err, &unsup), "should not be unsupported transport for empty/embedded")
 	}
 }

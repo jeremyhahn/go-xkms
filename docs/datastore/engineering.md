@@ -74,19 +74,23 @@ Switches on `config.Datastore.Mode` (defaulted by `config.Validate`):
   process (identity, bootstrap, barrier, optional Raft clustering) and
   `s.qrdbStorage` wraps the node's own KV client
   (`qrdbstorage.NewBackend(s.qrdbClient.KV())`).
-- `"remote"` → `newRemoteQRDBStorage(transport)` dials
-  `Datastore.Remote.Address` over `Datastore.Remote.Transport` (`rest` or
-  `grpc`) with `Datastore.Remote.TLS`, and `s.qrdbStorage` wraps the remote
-  KV client. An unrecognized transport returns
-  `*ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}`.
-- anything else → `*ErrUnsupportedDatastoreMode{Mode}` — unreachable through
-  `config.Validate`, defense-in-depth for an embedded caller that constructs
-  a `*config.Config` without validating it.
+- `"remote"` → `datastore.DialRemote(s.ctx, s.config.Datastore.Remote)`
+  (`pkg/datastore/remote.go`) dials `Datastore.Remote.Address` over
+  `Datastore.Remote.Transport` (`rest` or `grpc`) with `Datastore.Remote.TLS`,
+  and `s.qrdbStorage` wraps the remote KV client. An unrecognized transport
+  returns `*datastore.ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}`.
+  `DialRemote` is the single remote-dial implementation in the stack: the
+  SDK/library composition path's `pkg/datastore.Open` calls the SAME
+  function for its own `"remote"` case.
+- anything else → `*datastore.ErrUnsupportedDatastoreMode{Mode}` —
+  unreachable through `config.Validate`, defense-in-depth for an embedded
+  caller that constructs a `*config.Config` without validating it.
 
-### `pkg/server/embedded_node.go` — mapping the datastore onto go-qrdb's own config
+### `pkg/embeddednode` — mapping the datastore onto go-qrdb's own config
 
 ```go
 func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qrdbsdk.DaemonConfig
+func OpenEmbeddedNode(ctx context.Context, opts EmbeddedNodeOptions) (*qrdbnode.Node, ResolvedNodeSeal, error)
 ```
 
 The single place `Datastore.Engine`/`Datastore.Path` become go-qrdb's own
@@ -99,11 +103,15 @@ qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 }
 ```
 
-Both `(*Server).initEmbeddedQRDBNode` (`xkmsd run`) and `xkmsd init`'s
-`openDurableInitNode` derive their qrdb daemon config through this one
-function (`ResolveNodeSeal` + `EmbeddedNodeStorageConfig` +
-`daemon.NewNode`), so the two opens of one on-disk datastore can never
-disagree about the database engine or the seal strategy.
+`(*Server).initEmbeddedQRDBNode` (`xkmsd run`), `xkmsd init`'s
+`openDurableInitNode`, and `pkg/datastore.Open`'s `"standalone"` case all
+derive their qrdb daemon config through this one package (`ResolveNodeSeal`
++ `EmbeddedNodeStorageConfig`, and for the latter two, `OpenEmbeddedNode` +
+`daemon.NewNode`), so the different opens of one on-disk datastore can never
+disagree about the database engine or the seal strategy. `pkg/embeddednode`
+was split out of `pkg/server` in go-xkms#1345 batch 2 specifically so
+`pkg/datastore` (which `pkg/server` also imports, for `DialRemote`) could
+reach it without an import cycle back through `pkg/server`.
 
 ### `pkg/storage/qrdb` — the shared datastore's `storage.Backend` wrapper
 
@@ -137,9 +145,10 @@ execute against this client.
   `createStorage` — `Datastore.Engine` and `Datastore.Mode` are validated
   exhaustively at config-parse time: `memory | file | pebble` for `Engine`,
   `standalone | remote` for `Mode`, with mode-specific requirements
-  (`standalone` needs `Path` unless `Engine == "memory"`; `remote` needs
-  `Remote.Address` and a `Remote.Transport` of `rest` or `grpc`). A config
-  that parses is now a config that will open its datastore.
+  (`standalone` needs `Path`, unconditionally -- every `Engine` including
+  `"memory"`; `remote` needs `Remote.Address` and a `Remote.Transport` of
+  `rest` or `grpc`). A config that parses is now a config that will open its
+  datastore.
 - **Guarded writes are advertised, not assumed.** A caller performing a
   cross-node-safe compare-and-swap must type-assert for `CompareAndSwapper`
   and handle its absence, never assume every `Backend` has it.
@@ -148,9 +157,13 @@ execute against this client.
 
 | Error | Where | Meaning |
 |---|---|---|
-| `*errs.Message` from `config.Validate` | `pkg/config/config.go` | `datastore.engine` not one of memory/file/pebble, `datastore.mode` not one of standalone/remote, or a mode-specific requirement (path, remote address/transport) unmet |
-| `*ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}` | `pkg/server/errors.go`, `qrdb_storage.go` | `datastore.remote.transport` names a transport `newRemoteQRDBStorage` does not implement (only reachable by bypassing `config.Validate`) |
-| `*ErrUnsupportedDatastoreMode{Mode}` | `pkg/server/errors.go`, `qrdb_storage.go` | `datastore.mode` is neither `standalone` nor `remote` (only reachable by bypassing `config.Validate`) |
+| `*errs.Message` from `config.Validate` | `pkg/config/config.go` | `datastore.engine` not one of memory/file/pebble, `datastore.mode` not one of standalone/remote, `datastore.path` unset for `mode: standalone` (every engine, `memory` included -- go-qrdb roots the node's on-disk state under it regardless of the primary KV engine, so there is no engine choice that waives this), or a `mode: remote` requirement (address, transport) unmet |
+| `*datastore.ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}` | `pkg/datastore/remote.go`, used by both `pkg/server/qrdb_storage.go` and `pkg/datastore.Open` | `datastore.remote.transport` names a transport `DialRemote` does not implement (only reachable by bypassing `config.Validate`) |
+| `*datastore.ErrUnsupportedDatastoreMode{Mode}` | `pkg/datastore/errors.go` | `datastore.mode` is neither `standalone` nor `remote` (only reachable by bypassing `config.Validate`) |
+| `*datastore.ErrOpenDatastore{Mode, Err}` | `pkg/datastore/datastore.go` | `Open` (the SDK/library path) failed to build the datastore in the named mode; `Err` is the underlying cause |
+| `*embeddednode.NodeSealError{Reason, Err}` | `pkg/embeddednode/errors.go` | the node barrier is configured to encrypt the data plane but the required auto-unseal material cannot be resolved |
+| `*embeddednode.ErrDatastorePathRequired{Reason}` | `pkg/embeddednode/errors.go` | `Datastore.Path` is unset for a standalone datastore -- either generally (`Open`'s own check, `Reason: "the standalone datastore"`) or specifically to derive the TPM2 node-barrier seal strategy's key directory (`Reason: "the TPM2 seal key directory"`) |
+| go-qrdb's `lifecycle.EmptyVectorDataDirError` | go-qrdb `pkg/server/lifecycle` (not an xkms type; this repository never constructs or catches it directly) | the underlying go-qrdb failure `datastore.path` being required prevents: go-qrdb's node builder unconditionally roots its vector-storage subsystem under the node's data directory regardless of the primary KV engine, so an empty directory fails the node build outright. `config.Validate` and `pkg/datastore.Open` both refuse an empty `Datastore.Path` for `mode: standalone` before this can be reached, adopting the constraint rather than working around it -- see "Configuration" below |
 | `ErrNotFound` | `pkg/storage/errors.go` | `Get`/`Delete` against an absent key |
 | `ErrClosed` | `pkg/storage/errors.go` | an operation reached a closed go-qrdb engine |
 
@@ -178,7 +191,16 @@ check reads an already-defaulted `Datastore`):
 - An empty `Engine` defaults to `"pebble"` — production paths must never
   silently fall back to a non-durable store.
 - An empty `Mode` defaults to `"standalone"`.
-- `Mode == "standalone"`: `Path` is required unless `Engine == "memory"`.
+- `Mode == "standalone"`: `Path` is required for every `Engine`, `"memory"`
+  included. go-qrdb roots the node's on-disk state (its vector-storage
+  subsystem in particular) under this directory regardless of the primary
+  KV engine, so there is no engine choice that lets a standalone node run
+  with no directory at all — this adopts that go-qrdb contract exactly
+  rather than working around it (e.g. with an xkms-managed temp directory).
+  A deployment that wants ephemeral state still names a real directory
+  (a temp directory it owns and cleans up itself, or `t.TempDir()` in
+  tests) with `engine: memory`, which still leaves the primary KV data
+  non-durable.
 - `Mode == "remote"`: `Remote.Address` is required, and `Remote.Transport`
   must be `"rest"` or `"grpc"`.
 - Any other `Engine` or `Mode` value is a hard error naming the field and
@@ -216,8 +238,8 @@ datastore:
 ```
 
 There is **no built-in default for `Datastore.Path`** (`Defaults()` in
-`pkg/config/load.go` does not set it); a `"standalone"` deployment with a
-non-`"memory"` engine requires it explicitly, from the file,
+`pkg/config/load.go` does not set it); every `"standalone"` deployment, for
+every `Engine` including `"memory"`, requires it explicitly, from the file,
 `XKMS_DATASTORE_PATH`, or (for `xkmsd init` specifically) the `--data-dir`
 flag (`cmd/xkmsd/init_node.go`).
 
@@ -232,35 +254,144 @@ to open, and stays outside it by construction, not by omission:
 | TPM-sealed pre-barrier blobs (PKCS#11 PIN, cluster CA signing key) | `pkg/trust/clusterca`, under `Datastore.Path` | Sealed before the barrier exists, so they can unseal it or the node that hosts it; they promote into the replicated datastore once it is up (go-xkms#677) |
 | Bootstrap TLS certificate cache | `pkg/server/unified_tls.go`, under `Datastore.Path` | Served before the CA (which lives in the datastore) has composed, so the unified API server has *something* to present |
 | First-boot administrator credential | `pkg/server/firstboot.go`, under `Datastore.Path` | Persisted by `xkmsd init`, a one-shot ceremony that runs before `xkmsd run` ever opens the datastore for API traffic |
+| TPM2 node-barrier seal strategy's own key | `embeddednode.KeyDirSubdir` ("tpm2-keys"), under `Datastore.Path` (`embeddednode.ResolveTPM2KeyDir`); also `pkg/seal/autodetect.go`'s `TPM2ProbeConfig.KeyDir` for the same strategy's autodetect probe (xkey, cluster CA key protection, quicbaas) | This key seals (and can unseal) the datastore's own barrier; it cannot itself live inside the store it protects |
 
 All four resolve their root from `cfg.Datastore.Path`, not a separate
 configuration knob — there is still exactly one path an operator names.
 
-## What is explicitly OUT of scope for this feature (tracked as follow-up)
+## The SDK/library composition path (`pkg/xkms`, `pkg/datastore`, `pkg/embeddednode`)
 
-The SDK/library composition path builds a standalone `*xkms.XKMSService`
-without a `*Server`, so it never reaches `createStorage`, and still
-hardcodes `pkg/storage/file.New` directly:
+`pkg/xkms`'s `AutoInitialize`/`register_*` backend factories build a
+standalone `*xkms.XKMSService` without a `*Server`, so they never reach
+`createStorage`. They take their storage from a caller-supplied handle
+instead, and never resolve a directory or open a file/memory engine
+themselves:
 
-- `pkg/xkms/register_pkcs8.go`, `register_software.go`,
-  `register_symmetric.go`, `register_tpm2.go`
-- `pkg/xkms/auto.go` (`AutoInitialize`)
+```go
+type AutoConfig struct {
+	Datastore      storage.Backend // nil = in-memory for every backend
+	DefaultBackend string
+	BackendConfigs map[BackendType]map[string]interface{}
+}
+```
 
-Unifying these onto the one configurable datastore needs an API these
-callers can receive a `storage.Backend`/KV-store handle through — most
-naturally, a `datastore.Backend` (or similar) parameter threaded into
-`AutoInitialize`/the `register_*` constructors, sourced from the same
-`config.DatastoreConfig` this feature defines, so a library consumer gets
-the identical engine/mode choice an `xkmsd`-hosted deployment gets. That is
-a signature change to a public constructor surface and is left to a
-follow-up batch.
+(`pkg/xkms/auto.go`.) `AutoInitialize` derives each backend's storage as a
+key-prefixed view over `Datastore` (`storage.NewPrefixBackend(config.Datastore,
+"<backend>/")`, mirroring `createStorage`) and passes it to the backend's
+factory as `config["key_storage"]` (a `storage.Backend`) — the SDK-facing
+equivalent of `"key_dir"` before this batch, which every `register_*.go`
+factory (`register_pkcs8`, `register_software`, `register_symmetric`,
+`register_tpm2`) now reads instead. `pkg/backend/tpm2.Config` has exactly
+ONE storage path: `KeyStorage storage.Backend` (required; `Validate` returns
+`ErrKeyStorageRequired` when nil), not a `KeyDir` string this package
+resolves a private, directory-based engine from itself. `pkg/server`'s TPM2
+crypto-backend wiring (`initTPM2Backend`, `backend_tpm2.go`) passes a
+`createStorage("tpm2")` view as `KeyStorage`, so this backend's key blobs
+are a key-prefixed view over the SAME shared datastore every other
+subsystem uses, not a second, private engine. `Backend.ListKeys` enumerates
+via `KeyStorage.List` accordingly. The sole exception is
+`NewBackendWithTPM`/`ExternalTPMConfig` (sharing an already-open TPM
+connection with the node-barrier seal strategy or the platform store):
+`ExternalTPMConfig.KeyDir` stays a real, optional directory hint for
+enumeration, because that key material is genuinely pre-datastore (the
+node-barrier seal strategy's own key, which must exist before -- and can
+seal -- the datastore it protects; see "Genuinely pre-datastore material"
+above and `pkg/seal/autodetect.go`'s `openTPM2Backend`, which resolves that
+directory to a file-based `storage.Backend` before handing it to `Config`
+as `KeyStorage`). `pkg/tpm2/store.NewFactory(logger, backend)` builds a
+`StorageFactory` over any `storage.Backend` (`NewStorageFactory`/
+`NewMemoryStorageFactory` now call it internally instead of duplicating the
+blob/key-backend wiring).
+
+`pkg/xkms` cannot import `pkg/config`, `pkg/datastore` or `pkg/server`
+directly (`pkg/config` already transitively imports `pkg/xkms` via
+`pkg/ca`, and `pkg/server` imports `pkg/xkms` directly) — this is why the
+seam is a plain `storage.Backend` handle, not a `config.DatastoreConfig`
+parameter: the caller (`pkg/server`, `sdk/go`, `xkey`, `cmd/xkmsd`) opens the
+datastore and hands over the resulting handle.
+
+```go
+func Open(ctx context.Context, cfg *config.Config, logger *slog.Logger) (storage.Backend, error)
+```
+
+(`pkg/datastore/datastore.go`.) The Server-independent counterpart to
+`Server.initializeQRDBStorage` for exactly this caller-without-a-`*Server`
+case: `"standalone"` hosts an embedded qrdb node via
+`embeddednode.OpenEmbeddedNode`; `"remote"` dials via `datastore.DialRemote`
+— the SAME function `Server.initializeQRDBStorage`'s own remote branch now
+calls, so there is exactly one remote-dial implementation. `"standalone"`
+requires `cfg.Datastore.Path` (adopting go-qrdb's own data-directory
+contract exactly rather than working around it — see "Error semantics"
+above): `Open` refuses an empty `Path` itself, with
+`*embeddednode.ErrDatastorePathRequired`, before calling
+`embeddednode.OpenEmbeddedNode` at all. A caller that only wants an
+ephemeral node (unit tests) still names a real, typically temporary
+directory (`t.TempDir()`) — `Open` never creates or manages one on the
+caller's behalf.
+
+```go
+func OpenEmbeddedNode(ctx context.Context, opts EmbeddedNodeOptions) (*qrdbnode.Node, ResolvedNodeSeal, error)
+func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qrdbsdk.DaemonConfig
+func ResolveNodeSeal(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal, error)
+```
+
+(`pkg/embeddednode/embedded_node.go`, moved out of `pkg/server` in this
+batch.) The shared, Server-independent embedded-qrdb-node builder both
+`pkg/server` (`xkmsd run`'s heavier node with modules/TLS/cluster/barrier
+adoption, and `xkmsd init`, both via `qrdb_node.go`/`cmd/xkmsd/init_node.go`)
+and `pkg/datastore` build on, so the engine-mapping and seal-resolution logic
+has exactly one implementation. It has no dependency on `pkg/factor` (which
+imports `pkg/xkms`): `EmbeddedNodeOptions.FactorRegistry` is nil by default
+(no factor registry — fine for a caller that only wants a KV store); a
+caller running a real ceremony builds one explicitly via
+`pkg/server.NewNodeFactorRegistry` (kept in `pkg/server`, the only caller
+that both needs it and can afford the `pkg/factor` dependency) and passes it
+through.
+
+`sdk/go` re-exports `OpenDatastore(ctx, DatastoreConfig, logger)
+(StorageBackend, error)` (`sdk/go/datastore.go`) and `NewTPMFactory =
+store.NewFactory` (`sdk/go/tpm.go`) so an embedder configures the identical
+datastore an `xkmsd`-hosted deployment uses without importing `pkg/config`/
+`pkg/datastore` directly; `AutoConfig`/`AutoInitialize` already aliased
+`pkg/xkms`'s types, so `Datastore` needed no SDK-side change.
+
+xkey's `initLocalKeyStore` (`xkey/pkg/gui/app.go`) sources every backend's
+key storage from the same barrier-backed `storage.Backend`
+(`barrierService.GetBackend()`, under `"keys/"`) every other xkey subsystem
+already used (oath, FIDO2, static-password, trust store, OIDC, shares,
+sealed blobs, SSH) — not a private file store under the data directory. With
+no barrier active, key storage is in-memory/session-only, matching
+`AutoInitialize`'s own default, rather than a persisted plaintext fallback.
+`registerPKCS11XKMSBackend` (the dynamic PKCS#11 registration path) follows
+the identical rule for both its key and certificate storage: the
+barrier-backed store when a barrier is active, in-memory/session-only
+otherwise — never a dataDir file path either way, so there is no
+unencrypted-on-disk fallback anywhere in this function.
+
+The `xkey fido2` CLI's software backend under `--storage barrier`
+(`createFIDO2XKMSSoftwareKeyBackend`, `xkey/cmd/xkey/cmd/fido2.go`) opens
+the SAME barrier via `openBarrierBackend` (`barrier_store.go`) — the one
+low-level unseal every barrier-aware CLI command shares (`oath`, `backup`,
+`device oath-sync`, `xkey fido2 ... --storage barrier` itself for its
+credential store, via `createBarrierStorage`) — and derives its key storage
+from it the same way the GUI does (`"keys/"` prefix). This function is only
+reached when the operator explicitly selected barrier storage, so there is
+no barrier-absent case to handle: `--storage memory`/`--storage file`
+(`createFIDO2SoftwareKeyBackend`'s other branch) already uses a plain
+in-memory `storage.Backend` for the non-barrier cases, independent of
+`AutoInitialize`.
 
 ## Test strategy
 
 - **Unit** — `pkg/config/config_test.go` (`TestValidate_Datastore`,
   `TestDatastoreConfig_Remote`), `pkg/server/storage_factory_qrdb_test.go`,
   `pkg/server/server_coverage_test.go`
-  (`TestServer_CreateStorage_DistinctPrefixesOverOneStore`).
+  (`TestServer_CreateStorage_DistinctPrefixesOverOneStore`);
+  `pkg/embeddednode/embedded_node_test.go`; `pkg/datastore/datastore_test.go`
+  (`TestOpen_StandaloneMemoryEngine`, remote-dial and unsupported-mode
+  cases); `pkg/xkms/auto_test.go` (`TestAutoInitialize_WithDatastore`,
+  `TestResolveBackendConfig_WithDatastore`); `pkg/tpm2/store/store_test.go`
+  (`TestStorageFactory_NewFactory`); `sdk/go/datastore_test.go`.
 - **Integration** (`test/integration/storage/`) — `file_storage_integration_test.go`,
   `memory_storage_integration_test.go`, and the hardware-adapter suites that
   exercise `pkg/storage/hardware` — a distinct certificate-storage adapter,

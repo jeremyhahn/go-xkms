@@ -423,11 +423,11 @@ func TestConfig_Validate(t *testing.T) {
 		config  *Config
 		wantErr bool
 	}{
-		{"ValidConfigWithDevice", &Config{Device: "/dev/null", KeyDir: t.TempDir(), SRKHandle: 0x81000001}, false},
-		{"ValidConfigWithSimulator", &Config{UseSimulator: true, KeyDir: t.TempDir()}, false},
-		{"DefaultValues", &Config{Device: "/dev/null", KeyDir: t.TempDir()}, false},
-		{"MissingKeyDir", &Config{Device: "/dev/null"}, true},
-		{"NonExistentDevice", &Config{Device: "/dev/nonexistent-tpm-device-xyz", KeyDir: t.TempDir()}, true},
+		{"ValidConfigWithDevice", &Config{Device: "/dev/null", KeyStorage: storage.NewMemory(), SRKHandle: 0x81000001}, false},
+		{"ValidConfigWithSimulator", &Config{UseSimulator: true, KeyStorage: storage.NewMemory()}, false},
+		{"DefaultValues", &Config{Device: "/dev/null", KeyStorage: storage.NewMemory()}, false},
+		{"MissingKeyStorage", &Config{Device: "/dev/null"}, true},
+		{"NonExistentDevice", &Config{Device: "/dev/nonexistent-tpm-device-xyz", KeyStorage: storage.NewMemory()}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -439,27 +439,38 @@ func TestConfig_Validate(t *testing.T) {
 	}
 }
 
-// TestConfig_Validate_MissingKeyDir verifies Validate returns a typed,
-// wrapped ErrKeyDirRequired when KeyDir is unset rather than defaulting to a
-// directory resolved relative to the process's working directory (issue
-// #926).
-func TestConfig_Validate_MissingKeyDir(t *testing.T) {
+// TestConfig_Validate_MissingKeyStorage verifies Validate returns a typed,
+// wrapped ErrKeyStorageRequired when KeyStorage is unset rather than
+// defaulting to a private storage engine of its own (issue #926, extended by
+// go-xkms#1345 batch 2: this package never opens one).
+func TestConfig_Validate_MissingKeyStorage(t *testing.T) {
 	config := &Config{UseSimulator: true}
 
 	err := config.Validate()
 	if err == nil {
-		t.Fatal("Validate() error = nil, want ErrKeyDirRequired")
+		t.Fatal("Validate() error = nil, want ErrKeyStorageRequired")
 	}
-	if !errors.Is(err, ErrKeyDirRequired) {
-		t.Errorf("Validate() error = %v, want it to wrap ErrKeyDirRequired", err)
+	if !errors.Is(err, ErrKeyStorageRequired) {
+		t.Errorf("Validate() error = %v, want it to wrap ErrKeyStorageRequired", err)
 	}
-	if config.KeyDir != "" {
-		t.Errorf("KeyDir: expected to remain empty on validation failure, got %q", config.KeyDir)
+	if config.KeyStorage != nil {
+		t.Errorf("KeyStorage: expected to remain nil on validation failure, got %v", config.KeyStorage)
+	}
+}
+
+// TestConfig_Validate_KeyStorageSatisfiesRequirement proves a pre-built
+// storage.Backend (e.g. a key-prefixed view of the caller's shared
+// datastore) satisfies Validate's KeyStorage requirement.
+func TestConfig_Validate_KeyStorageSatisfiesRequirement(t *testing.T) {
+	config := &Config{UseSimulator: true, KeyStorage: storage.NewMemory()}
+
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want nil with KeyStorage set", err)
 	}
 }
 
 func TestConfig_Validate_DefaultValues(t *testing.T) {
-	config := &Config{UseSimulator: true, KeyDir: t.TempDir()}
+	config := &Config{UseSimulator: true, KeyStorage: storage.NewMemory()}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
@@ -481,7 +492,7 @@ func TestConfig_Validate_DefaultValues(t *testing.T) {
 }
 
 func TestConfig_ToTPMConfig(t *testing.T) {
-	config := &Config{Device: "/dev/tpmrm0", KeyDir: "/tmp/tpm-keys", UseSimulator: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPolicy: true, PlatformPCR: 7, PlatformPCRBank: "SHA256"}
+	config := &Config{Device: "/dev/tpmrm0", KeyStorage: storage.NewMemory(), UseSimulator: true, SRKHandle: 0x81000001, EKHandle: 0x81010001, Hash: "SHA-256", PlatformPolicy: true, PlatformPCR: 7, PlatformPCRBank: "SHA256"}
 	tpmConfig := config.ToTPMConfig()
 	if tpmConfig == nil {
 		t.Fatal("ToTPMConfig returned nil")
@@ -534,7 +545,7 @@ func TestCapabilities(t *testing.T) {
 }
 
 func TestNewBackend_InvalidConfig(t *testing.T) {
-	_, err := NewBackend(&Config{Device: "/dev/nonexistent-tpm-xyz123", KeyDir: t.TempDir()})
+	_, err := NewBackend(&Config{Device: "/dev/nonexistent-tpm-xyz123", KeyStorage: storage.NewMemory()})
 	if err == nil {
 		t.Error("Expected error for non-existent device")
 	}
@@ -595,7 +606,7 @@ func TestBackend_DoubleClose(t *testing.T) {
 
 func TestBackend_ListKeys_EmptyDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	b := &Backend{closed: false, config: &Config{KeyDir: tmpDir}}
+	b := &Backend{closed: false, keyDir: tmpDir}
 	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Errorf("ListKeys() error = %v", err)
@@ -606,7 +617,7 @@ func TestBackend_ListKeys_EmptyDir(t *testing.T) {
 }
 
 func TestBackend_ListKeys_NonExistentDir(t *testing.T) {
-	b := &Backend{closed: false, config: &Config{KeyDir: "/nonexistent/path/xyz123"}}
+	b := &Backend{closed: false, keyDir: "/nonexistent/path/xyz123"}
 	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Errorf("ListKeys() error = %v", err)
@@ -679,7 +690,7 @@ func TestBackend_ListKeys_WithFiles(t *testing.T) {
 	if err := os.Mkdir(subDir, 0700); err != nil {
 		t.Fatalf("Failed to create subdirectory: %v", err)
 	}
-	b := &Backend{closed: false, config: &Config{KeyDir: tmpDir}}
+	b := &Backend{closed: false, keyDir: tmpDir}
 	keys, err := b.ListKeys(context.Background())
 	if err != nil {
 		t.Errorf("ListKeys() error = %v", err)
@@ -701,10 +712,71 @@ func TestBackend_ListKeys_WithFiles(t *testing.T) {
 	}
 }
 
+// TestBackend_ListKeys_FromStorage proves ListKeys enumerates via
+// keyStorage.List (the NewBackend path -- the ONE storage path this package
+// uses; go-xkms#1345 batch 2), not just the ExternalTPMConfig/keyDir
+// directory-listing path TestBackend_ListKeys_WithFiles exercises.
+func TestBackend_ListKeys_FromStorage(t *testing.T) {
+	ks := storage.NewMemory()
+	keyNames := []string{"key1", "key2", "key3"}
+	for _, name := range keyNames {
+		if err := ks.Put(context.Background(), name+store.FSEXT_PRIVATE_BLOB, []byte("mock blob data")); err != nil {
+			t.Fatalf("failed to seed key storage: %v", err)
+		}
+	}
+	for _, name := range []string{"notakey.txt", "another.pub"} {
+		if err := ks.Put(context.Background(), name, []byte("ignored")); err != nil {
+			t.Fatalf("failed to seed key storage: %v", err)
+		}
+	}
+
+	b := &Backend{closed: false, keyStorage: ks}
+	keys, err := b.ListKeys(context.Background())
+	if err != nil {
+		t.Errorf("ListKeys() error = %v", err)
+	}
+	if len(keys) != len(keyNames) {
+		t.Errorf("Expected %d keys, got %d", len(keyNames), len(keys))
+	}
+	foundKeys := make(map[string]bool)
+	for _, k := range keys {
+		foundKeys[k.CN] = true
+		if k.StoreType != types.StoreTPM2 {
+			t.Errorf("Expected StoreType %v, got %v", types.StoreTPM2, k.StoreType)
+		}
+	}
+	for _, name := range keyNames {
+		if !foundKeys[name] {
+			t.Errorf("Expected to find key %q", name)
+		}
+	}
+}
+
+// TestBackend_ListKeys_FromStorage_Error proves a keyStorage.List failure
+// surfaces as a wrapped error rather than being swallowed.
+func TestBackend_ListKeys_FromStorage_Error(t *testing.T) {
+	b := &Backend{closed: false, keyStorage: &erroringListBackend{err: errors.New("list failed")}}
+	_, err := b.ListKeys(context.Background())
+	if err == nil {
+		t.Fatal("expected an error from a failing List, got nil")
+	}
+}
+
+// erroringListBackend is a minimal storage.Backend whose List always fails,
+// used to exercise ListKeys' error path.
+type erroringListBackend struct {
+	storage.Backend
+	err error
+}
+
+func (e *erroringListBackend) List(ctx context.Context, prefix string) ([]string, error) {
+	return nil, e.err
+}
+
 // TestBackend_ListKeys_ExternalTPM_NilConfig is the regression test for a crash
 // where a backend created via NewBackendWithTPM (config == nil, external TPM)
-// panicked in ListKeys on b.config.KeyDir. ListKeys must use the keyDir field
-// and degrade gracefully when it is unset, never dereferencing a nil config.
+// panicked dereferencing a nil config. ListKeys must use the keyDir field
+// directly and degrade gracefully when it is unset, never touching config.
 func TestBackend_ListKeys_ExternalTPM_NilConfig(t *testing.T) {
 	// External-TPM backend with no key directory: must return empty, not panic.
 	b := &Backend{closed: false, externalTPM: true, config: nil, keyDir: ""}
@@ -798,7 +870,7 @@ func TestBackend_GenerateKey_UnsupportedAlgorithm(t *testing.T) {
 }
 
 func TestConfig_Validate_DeviceDoesNotExist(t *testing.T) {
-	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: false, KeyDir: t.TempDir()}
+	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: false, KeyStorage: storage.NewMemory()}
 	err := config.Validate()
 	if err == nil {
 		t.Error("Expected error for non-existent device")
@@ -809,7 +881,7 @@ func TestConfig_Validate_DeviceDoesNotExist(t *testing.T) {
 }
 
 func TestConfig_Validate_SimulatorSkipsDeviceCheck(t *testing.T) {
-	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: true, KeyDir: t.TempDir()}
+	config := &Config{Device: "/dev/tpm-that-does-not-exist-xyz123", UseSimulator: true, KeyStorage: storage.NewMemory()}
 	if err := config.Validate(); err != nil {
 		t.Errorf("Expected no error when using simulator, got %v", err)
 	}
@@ -1477,7 +1549,7 @@ func TestBackend_Decrypter_GetKeyError(t *testing.T) {
 }
 
 func TestConfig_Validate_ExistingDevice(t *testing.T) {
-	config := &Config{Device: "/dev/null", UseSimulator: false, KeyDir: t.TempDir()}
+	config := &Config{Device: "/dev/null", UseSimulator: false, KeyStorage: storage.NewMemory()}
 	err := config.Validate()
 	if err != nil {
 		t.Errorf("Expected no error for existing device, got %v", err)
@@ -1489,16 +1561,17 @@ func TestBackend_ListKeys_ReadDirError(t *testing.T) {
 	if err := os.WriteFile(tmpFile, []byte("data"), 0600); err != nil {
 		t.Fatalf("Failed to create file: %v", err)
 	}
-	// Point KeyDir at a file (not a directory) to trigger read error
-	b := &Backend{closed: false, config: &Config{KeyDir: tmpFile}}
+	// Point keyDir at a file (not a directory) to trigger read error -- the
+	// ExternalTPMConfig/NewBackendWithTPM path's directory listing.
+	b := &Backend{closed: false, keyDir: tmpFile}
 	_, err := b.ListKeys(context.Background())
 	if err == nil {
-		t.Error("Expected error when KeyDir is not a directory")
+		t.Error("Expected error when keyDir is not a directory")
 	}
 }
 
 func TestConfig_Validate_EmptyDeviceSimulator(t *testing.T) {
-	config := &Config{Device: "", UseSimulator: true, KeyDir: t.TempDir()}
+	config := &Config{Device: "", UseSimulator: true, KeyStorage: storage.NewMemory()}
 	err := config.Validate()
 	if err != nil {
 		t.Errorf("Expected no error with empty device and simulator, got %v", err)
@@ -1667,39 +1740,12 @@ func TestTPM2Decrypter_Public(t *testing.T) {
 // NewBackend Tests - Testing the full backend creation path
 // =============================================================================
 
-// TestNewBackend_KeyDirCreationError tests that NewBackend fails when key directory cannot be created
-func TestNewBackend_KeyDirCreationError(t *testing.T) {
-	// Create a file that will prevent directory creation
-	tmpDir := t.TempDir()
-	blockingFile := filepath.Join(tmpDir, "blocking")
-	if err := os.WriteFile(blockingFile, []byte("data"), 0600); err != nil {
-		t.Fatalf("Failed to create blocking file: %v", err)
-	}
-
-	// Try to create a backend with a key directory that cannot be created
-	// because there's a file in the way
-	config := &Config{
-		UseSimulator: true,
-		KeyDir:       filepath.Join(blockingFile, "subdir"), // This should fail
-	}
-
-	_, err := NewBackend(config)
-	if err == nil {
-		t.Error("Expected error when key directory cannot be created")
-	}
-	// Check that error message mentions key directory
-	if err != nil && !errors.Is(err, ErrInvalidConfig) {
-		// The error should be about directory creation, not config validation
-		t.Logf("Got expected error: %v", err)
-	}
-}
-
 // TestNewBackend_DefaultLoggerAndTracker tests that NewBackend sets default logger and tracker
 func TestNewBackend_DefaultLoggerAndTracker(t *testing.T) {
 	// We can only test the config preparation parts without a real TPM
 	config := &Config{
 		UseSimulator: true,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 	}
 
 	// Validate config manually to see defaults are set
@@ -1708,8 +1754,8 @@ func TestNewBackend_DefaultLoggerAndTracker(t *testing.T) {
 	}
 
 	// Check defaults were set
-	if config.KeyDir == "" {
-		t.Error("Expected KeyDir to be set")
+	if config.KeyStorage == nil {
+		t.Error("Expected KeyStorage to be set")
 	}
 	if config.SRKHandle == 0 {
 		t.Error("Expected SRKHandle to have default value")
@@ -1730,7 +1776,7 @@ func TestNewBackend_ConfigValidationError(t *testing.T) {
 			config: &Config{
 				Device:       "/dev/nonexistent-tpm-device-12345",
 				UseSimulator: false,
-				KeyDir:       t.TempDir(),
+				KeyStorage:   storage.NewMemory(),
 			},
 		},
 	}
@@ -1750,13 +1796,12 @@ func TestNewBackend_ConfigValidationError(t *testing.T) {
 
 // TestNewBackend_WithProvidedLoggerAndTracker tests config with provided logger and tracker
 func TestNewBackend_WithProvidedLoggerAndTracker(t *testing.T) {
-	tmpDir := t.TempDir()
 	logger := slog.Default()
 	tracker := backend.NewMemoryAEADTracker()
 
 	config := &Config{
 		UseSimulator: true,
-		KeyDir:       tmpDir,
+		KeyStorage:   storage.NewMemory(),
 		Logger:       logger,
 		Tracker:      tracker,
 	}
@@ -1772,26 +1817,6 @@ func TestNewBackend_WithProvidedLoggerAndTracker(t *testing.T) {
 	}
 	if config.Tracker != tracker {
 		t.Error("Tracker should be preserved")
-	}
-}
-
-// TestNewBackend_StorageBackendCreation tests that storage backend is properly created
-func TestNewBackend_StorageBackendCreation(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// This tests the directory creation portion of NewBackend
-	config := &Config{
-		UseSimulator: true,
-		KeyDir:       tmpDir,
-	}
-
-	if err := config.Validate(); err != nil {
-		t.Fatalf("Config validation failed: %v", err)
-	}
-
-	// Verify the key directory would be valid for storage backend creation
-	if _, err := os.Stat(tmpDir); os.IsNotExist(err) {
-		t.Errorf("Key directory does not exist: %s", tmpDir)
 	}
 }
 
@@ -1877,7 +1902,7 @@ func TestNewBackend_ConfigWithPresetTPMConfig(t *testing.T) {
 func TestNewBackend_VerifyConfigDefaults(t *testing.T) {
 	config := &Config{
 		UseSimulator: true,
-		KeyDir:       t.TempDir(),
+		KeyStorage:   storage.NewMemory(),
 	}
 
 	if err := config.Validate(); err != nil {

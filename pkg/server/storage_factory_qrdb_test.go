@@ -215,7 +215,7 @@ func TestCreateStorageAt_QRDBDerivesPrefixFromBase(t *testing.T) {
 // initializeQRDBStorage always builds the one shared datastore now, in
 // either "standalone" or "remote" mode (go-xkms#1345). The remaining,
 // reachable transport-rejection path is exercised directly by
-// TestNewRemoteQRDBStorage_UnsupportedTransport (qrdb_storage_i705_test.go)
+// TestDialRemote_UnsupportedTransport (pkg/datastore/datastore_test.go)
 // and end to end by TestInitializeQRDBStorage_InvalidTransport
 // (server_extra_test.go).
 

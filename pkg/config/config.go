@@ -700,8 +700,12 @@ type DatastoreConfig struct {
 	// for the small set of genuinely pre-datastore material that must exist
 	// before the datastore itself (the node's own Raft data directory,
 	// TPM-sealed pre-barrier blobs, the bootstrap TLS certificate cache --
-	// see docs/datastore/architecture.md). Not used for engine "memory" or
-	// datastore mode "remote".
+	// see docs/datastore/architecture.md). Required whenever Mode is
+	// "standalone", for every Engine including "memory": go-qrdb roots the
+	// node's on-disk state (its vector-storage subsystem in particular)
+	// under this directory regardless of the primary KV engine, so there is
+	// no engine choice that lets a standalone node run with no directory at
+	// all. Not used for datastore mode "remote".
 	Path string `yaml:"path"`
 
 	// Mode selects the datastore topology: "standalone" (default) hosts the
@@ -1492,11 +1496,16 @@ func (c *Config) Validate() error {
 	}
 	switch strings.ToLower(c.Datastore.Mode) {
 	case "standalone":
-		// A standalone datastore hosts the qrdb engine in this process and
-		// persists it under the datastore path, so a path is required
-		// unless the engine is the non-durable in-memory one.
-		if c.Datastore.Path == "" && !strings.EqualFold(c.Datastore.Engine, "memory") {
-			return &errs.Message{Msg: fmt.Sprintf("datastore.path must be specified for datastore.engine %q", c.Datastore.Engine)}
+		// A standalone datastore hosts the embedded qrdb node in this
+		// process, and go-qrdb roots the node's on-disk state (including its
+		// vector-storage subsystem) under one data directory regardless of
+		// the primary KV engine -- there is no engine choice, "memory"
+		// included, that lets a standalone node run with no directory at
+		// all. Adopting that contract exactly (rather than working around
+		// it) means datastore.path is unconditionally required for
+		// datastore.mode "standalone".
+		if c.Datastore.Path == "" {
+			return &errs.Message{Msg: fmt.Sprintf("datastore.path must be specified for datastore.mode \"standalone\" (required for every datastore.engine, including %q: go-qrdb roots the node's on-disk state under it regardless of the primary KV engine)", c.Datastore.Engine)}
 		}
 	case "remote":
 		// A remote datastore dials an already-running qrdb cluster instead

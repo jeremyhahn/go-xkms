@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -225,58 +226,6 @@ func TestLoadNoiseStaticKey_FromPersistedFile_ReadError(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — qrdbTransportOptions
-// ============================================================================
-
-func TestQRDBTransportOptions_Empty(t *testing.T) {
-	cfg := &config.Config{
-		Datastore: config.DatastoreConfig{
-			Remote: config.DatastoreRemoteConfig{
-				Address: "",
-				TLS:     config.TLSConfig{Enabled: false},
-			},
-		},
-	}
-	s := newMinimalServer(t, cfg)
-	opts := s.qrdbTransportOptions()
-	assert.Empty(t, opts)
-}
-
-func TestQRDBTransportOptions_WithAddress(t *testing.T) {
-	cfg := &config.Config{
-		Datastore: config.DatastoreConfig{
-			Remote: config.DatastoreRemoteConfig{
-				Address: "localhost:63002",
-				TLS:     config.TLSConfig{Enabled: false},
-			},
-		},
-	}
-	s := newMinimalServer(t, cfg)
-	opts := s.qrdbTransportOptions()
-	assert.Len(t, opts, 1)
-}
-
-func TestQRDBTransportOptions_WithAddressAndTLS(t *testing.T) {
-	cfg := &config.Config{
-		Datastore: config.DatastoreConfig{
-			Remote: config.DatastoreRemoteConfig{
-				Address: "localhost:63002",
-				TLS: config.TLSConfig{
-					Enabled:  true,
-					CAFile:   "/path/to/ca.pem",
-					CertFile: "/path/to/cert.pem",
-					KeyFile:  "/path/to/key.pem",
-				},
-			},
-		},
-	}
-	s := newMinimalServer(t, cfg)
-	opts := s.qrdbTransportOptions()
-	// address + TLS = 2 options
-	assert.Len(t, opts, 2)
-}
-
-// ============================================================================
 // Tests — initializeQRDBStorage default/invalid transport
 // ============================================================================
 
@@ -285,7 +234,10 @@ func TestQRDBTransportOptions_WithAddressAndTLS(t *testing.T) {
 // New() with "ftp" any more -- see TestNew_QRDBStorageFailure_WrapsAsErrServiceInit
 // for that Validate-level rejection. This exercises initializeQRDBStorage's
 // own remote-transport-dispatch error directly, using newMinimalServer to
-// construct the server without going through New()/Validate.
+// construct the server without going through New()/Validate. The dispatch
+// itself is datastore.DialRemote's (pkg/datastore), exercised directly (and
+// qrdbTransportOptions, now datastore.TransportOptions) in
+// pkg/datastore/datastore_test.go.
 func TestInitializeQRDBStorage_InvalidTransport(t *testing.T) {
 	cfg := &config.Config{
 		Datastore: config.DatastoreConfig{
@@ -297,8 +249,8 @@ func TestInitializeQRDBStorage_InvalidTransport(t *testing.T) {
 
 	err := s.initializeQRDBStorage()
 	require.Error(t, err)
-	var backendErr *ErrUnsupportedStorageBackend
-	require.True(t, errors.As(err, &backendErr), "error must unwrap to *ErrUnsupportedStorageBackend, got %T", err)
+	var backendErr *datastore.ErrUnsupportedStorageBackend
+	require.True(t, errors.As(err, &backendErr), "error must unwrap to *datastore.ErrUnsupportedStorageBackend, got %T", err)
 }
 
 // ============================================================================

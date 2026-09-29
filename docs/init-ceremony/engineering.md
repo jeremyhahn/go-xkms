@@ -120,9 +120,10 @@ On the single-admin path (the ceremony reaches `StateOperational`),
 `executeCeremony` (`cmd/xkmsd/init_ceremony.go`) calls `bootstrapDurableAdmin`,
 which:
 
-1. Opens the durable qrdb node via `pkg/server.OpenEmbeddedNode`, resolving an
-   identical storage+seal shape to the one `xkmsd run` will resolve from the
-   same config (`pkg/server.ResolveNodeSeal` / `EmbeddedNodeStorageConfig`).
+1. Opens the durable qrdb node via `pkg/embeddednode.OpenEmbeddedNode`,
+   resolving an identical storage+seal shape to the one `xkmsd run` will
+   resolve from the same config (`pkg/embeddednode.ResolveNodeSeal` /
+   `EmbeddedNodeStorageConfig`).
 2. Completes the node's own barrier when the resolved strategy leaves it
    sealed (`unsealDurableInitNode`): `none` and a provisioned `tpm2`
    auto-unseal at construction; `passphrase` is completed directly with
