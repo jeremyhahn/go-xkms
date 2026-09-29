@@ -89,17 +89,28 @@ assemble() {
 		fi
 	done
 
-	# The assembled block reaches awk through the ENVIRONMENT, not `-v`: `-v`
-	# processes C-style escapes, so an entry containing a literal backslash
-	# (code snippets, markdown escapes like `\*`) would be silently mangled,
-	# breaking the "spliced verbatim" contract. ENVIRON is passed byte-for-byte.
-	local tmp
+	# The assembled block reaches awk through a FILE, read line by line with
+	# getline. Not `-v`: it processes C-style escapes, so an entry containing a
+	# literal backslash (code snippets, markdown escapes like `\*`) would be
+	# silently mangled, breaking the "spliced verbatim" contract. Not the
+	# environment either: Linux caps one environment string at 128 KiB
+	# (MAX_ARG_STRLEN), and a release with many entries exceeds it, failing
+	# exec with "Argument list too long". A file has neither limit.
+	local tmp blockfile
 	tmp=$(mktemp) || return 1
-	CHANGELOG_BLOCK="$body" awk '
-		BEGIN { block = ENVIRON["CHANGELOG_BLOCK"] }
+	blockfile=$(mktemp) || { rm -f "$tmp"; return 1; }
+	printf '%s\n' "$body" > "$blockfile" || { rm -f "$tmp" "$blockfile"; return 1; }
+	awk -v blockfile="$blockfile" '
+		BEGIN {
+			while ((getline line < blockfile) > 0) {
+				block = (n++ ? block "\n" : "") line
+			}
+			close(blockfile)
+		}
 		{ print }
 		/^## \[Unreleased\]/ && !done { print ""; print block; done = 1 }
-	' "$changelog" > "$tmp" || { rm -f "$tmp"; return 1; }
+	' "$changelog" > "$tmp" || { rm -f "$tmp" "$blockfile"; return 1; }
+	rm -f "$blockfile"
 	mv "$tmp" "$changelog" || return 1
 
 	printf '%s\n' "${files[@]}"
