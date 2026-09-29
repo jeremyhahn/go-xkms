@@ -26,6 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	pkgwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
@@ -311,8 +312,11 @@ func TestHandleSDKFinishAuthentication_BadJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
+// TestHandleSDKFinishAuthentication_ParseError is go-xkms#1310: a malformed
+// assertion is a login-finish failure like any other, so it gets the same
+// fixed 401 verification_failed response as a wrong-but-well-formed
+// assertion, not a distinct 400 that would set it apart from that case.
 func TestHandleSDKFinishAuthentication_ParseError(t *testing.T) {
-	// Valid request JSON but unparseable assertion => service error => 400.
 	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
 
 	body, _ := json.Marshal(transport.FinishAuthenticationRequest{
@@ -323,7 +327,11 @@ func TestHandleSDKFinishAuthentication_ParseError(t *testing.T) {
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/finish", bytes.NewReader(body)))
 
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&errResp))
+	assert.Equal(t, webauthnhttp.ErrorCodeVerificationFailed, errResp.Error)
+	assert.Equal(t, "verification failed", errResp.Message)
 }
 
 func TestHandleSDKFinishAuthentication_NotConfigured(t *testing.T) {

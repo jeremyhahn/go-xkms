@@ -16,10 +16,12 @@ package grpc
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -159,7 +161,10 @@ func (s *Service) FinishAuthentication(ctx context.Context, req *pb.FinishAuthen
 		AssertionJSON: req.AssertionJson,
 	})
 	if cErr != nil {
-		return nil, status.Error(codes.InvalidArgument, cErr.Error())
+		if errors.Is(cErr, xkms.ErrNotConfigured) {
+			return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+		}
+		return nil, loginFinishStatusError(cErr)
 	}
 	return &pb.FinishAuthenticationResponse{
 		Success:  resp.Success,
@@ -167,4 +172,28 @@ func (s *Service) FinishAuthentication(ctx context.Context, req *pb.FinishAuthen
 		Username: resp.Username,
 		Message:  resp.Message,
 	}, nil
+}
+
+// loginFinishStatusError maps a WebAuthn login-finish failure to the fixed
+// gRPC response go-xkms#1310 requires: every failure except a missing or
+// expired session gets codes.Unauthenticated with the same "verification
+// failed" text the browser route's verification failure carries, so a decoy
+// ceremony cannot be told apart from a wrong assertion against a real
+// account over gRPC. SDK REST (pkg/api/rest) and the browser route
+// (pkg/webauthn/http) classify the same error through
+// webauthn.ClassifyLoginFinish, so all three transports agree. The real
+// cause is logged server-side at Warn, never returned to the caller.
+func loginFinishStatusError(err error) error {
+	slog.Default().Warn("webauthn: login finish failed", "error", err)
+
+	switch webauthn.ClassifyLoginFinish(err) {
+	case webauthn.LoginFinishSessionNotFound:
+		return status.Error(codes.InvalidArgument, "session not found")
+	case webauthn.LoginFinishSessionExpired:
+		return status.Error(codes.InvalidArgument, "session expired")
+	case webauthn.LoginFinishFailed:
+		return status.Error(codes.Unauthenticated, "verification failed")
+	default:
+		return status.Error(codes.Internal, "internal error")
+	}
 }

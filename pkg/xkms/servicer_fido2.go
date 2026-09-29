@@ -155,7 +155,12 @@ func (s *XKMSService) FinishAuthentication(ctx context.Context, req *transport.F
 
 	parsed, err := protocol.ParseCredentialRequestResponseBody(strings.NewReader(req.AssertionJSON))
 	if err != nil {
-		return nil, &ErrWebAuthnCeremony{Operation: "parse assertion", Err: err}
+		// Classified as a verification failure, not wrapped bare: a malformed
+		// assertion is a login-finish failure like any other, and every
+		// transport (pkg/api/grpc, pkg/api/rest) must fold it into the same
+		// fixed response a wrong-but-well-formed assertion gets, so it
+		// carries no more detail than that (go-xkms#1310).
+		return nil, &ErrWebAuthnCeremony{Operation: "parse assertion", Err: xkmswebauthn.NewVerificationError("parse assertion", err)}
 	}
 
 	// The session begun by BeginAuthentication records the account; the
