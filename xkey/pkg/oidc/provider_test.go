@@ -103,17 +103,22 @@ func TestProviderConfig_EffectiveScopes(t *testing.T) {
 func createMockOIDCServer() *httptest.Server {
 	mux := http.NewServeMux()
 
-	// Discovery endpoint
+	// Discovery endpoint. The base URL is derived from the incoming
+	// request's Host header rather than a placeholder string: httptest
+	// always serves plain http on 127.0.0.1, so the resulting endpoints are
+	// real, loopback URLs that satisfy the https-or-loopback discovery
+	// validation the same way a real-but-local IdP would.
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		base := "http://" + r.Host
 		metadata := map[string]interface{}{
-			"issuer":                                "ISSUER_PLACEHOLDER",
-			"authorization_endpoint":                "ISSUER_PLACEHOLDER/authorize",
-			"token_endpoint":                        "ISSUER_PLACEHOLDER/token",
-			"userinfo_endpoint":                     "ISSUER_PLACEHOLDER/userinfo",
-			"jwks_uri":                              "ISSUER_PLACEHOLDER/jwks",
-			"registration_endpoint":                 "ISSUER_PLACEHOLDER/register",
-			"revocation_endpoint":                   "ISSUER_PLACEHOLDER/revoke",
-			"end_session_endpoint":                  "ISSUER_PLACEHOLDER/logout",
+			"issuer":                                base,
+			"authorization_endpoint":                base + "/authorize",
+			"token_endpoint":                        base + "/token",
+			"userinfo_endpoint":                     base + "/userinfo",
+			"jwks_uri":                              base + "/jwks",
+			"registration_endpoint":                 base + "/register",
+			"revocation_endpoint":                   base + "/revoke",
+			"end_session_endpoint":                  base + "/logout",
 			"scopes_supported":                      []string{"openid", "profile", "email"},
 			"response_types_supported":              []string{"code", "token", "id_token"},
 			"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
@@ -252,6 +257,112 @@ func TestProvider_Discover(t *testing.T) {
 		assert.NotEmpty(t, provider.TokenEndpoint)
 		assert.NotEmpty(t, provider.JwksURI)
 		assert.NotEmpty(t, provider.UserinfoEndpoint)
+	})
+
+	t.Run("rejects a plain-http authorization endpoint on a non-loopback host", func(t *testing.T) {
+		// A compromised or spoofed IdP could point the browser-bound
+		// authorization_endpoint at an insecure, attacker-controlled host
+		// (go-xkms#1275); Discover must refuse it rather than pass it
+		// through to whatever opens it in the user's browser.
+		mux := http.NewServeMux()
+		mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"issuer":                 "https://example.com",
+				"authorization_endpoint": "http://evil.example.com/authorize",
+				"token_endpoint":         "https://example.com/token",
+				"jwks_uri":               "https://example.com/jwks",
+			})
+		})
+		testServer := httptest.NewServer(mux)
+		defer testServer.Close()
+
+		provider := &Provider{
+			Issuer:     testServer.URL,
+			httpClient: &http.Client{Timeout: 5 * time.Second},
+			jwksCache:  &JWKSCache{},
+		}
+
+		err := provider.Discover(context.Background())
+		assert.ErrorIs(t, err, ErrInsecureEndpoint)
+	})
+
+	t.Run("rejects a plain-http token endpoint even when the authorization endpoint is https", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"issuer":                 "https://example.com",
+				"authorization_endpoint": "https://example.com/authorize",
+				"token_endpoint":         "http://evil.example.com/token",
+				"jwks_uri":               "https://example.com/jwks",
+			})
+		})
+		testServer := httptest.NewServer(mux)
+		defer testServer.Close()
+
+		provider := &Provider{
+			Issuer:     testServer.URL,
+			httpClient: &http.Client{Timeout: 5 * time.Second},
+			jwksCache:  &JWKSCache{},
+		}
+
+		err := provider.Discover(context.Background())
+		assert.ErrorIs(t, err, ErrInsecureEndpoint)
+	})
+
+	t.Run("accepts https endpoints on a non-loopback host", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"issuer":                 "https://example.com",
+				"authorization_endpoint": "https://example.com/authorize",
+				"token_endpoint":         "https://example.com/token",
+				"jwks_uri":               "https://example.com/jwks",
+			})
+		})
+		testServer := httptest.NewServer(mux)
+		defer testServer.Close()
+
+		provider := &Provider{
+			Issuer:     testServer.URL,
+			httpClient: &http.Client{Timeout: 5 * time.Second},
+			jwksCache:  &JWKSCache{},
+		}
+
+		err := provider.Discover(context.Background())
+		require.NoError(t, err)
+	})
+
+	t.Run("accepts a plain-http authorization endpoint on loopback", func(t *testing.T) {
+		// Development IdPs commonly run unencrypted on the loopback
+		// interface; createMockOIDCServer's endpoints already exercise
+		// this (they're http://127.0.0.1:<port>/...), so this documents
+		// the rule explicitly against 127.0.0.1 rather than relying on
+		// that implicit coverage alone.
+		mux := http.NewServeMux()
+		mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+			base := "http://" + r.Host
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"issuer":                 base,
+				"authorization_endpoint": base + "/authorize",
+				"token_endpoint":         base + "/token",
+				"jwks_uri":               base + "/jwks",
+			})
+		})
+		testServer := httptest.NewServer(mux)
+		defer testServer.Close()
+
+		provider := &Provider{
+			Issuer:     testServer.URL,
+			httpClient: &http.Client{Timeout: 5 * time.Second},
+			jwksCache:  &JWKSCache{},
+		}
+
+		err := provider.Discover(context.Background())
+		require.NoError(t, err)
 	})
 
 	t.Run("fails with missing authorization endpoint", func(t *testing.T) {

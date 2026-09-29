@@ -153,6 +153,39 @@ func TestOIDCErrors(t *testing.T) {
 	}
 }
 
+// TestOpenLaunchURL_RejectsInvalidURL verifies that every "xkey oidc"
+// browser launch site (openLaunchURL wraps them all) refuses a URL that
+// fails launch validation before it would ever reach browser.OpenURL and
+// the platform's URL launcher (go-xkms#1275).
+func TestOpenLaunchURL_RejectsInvalidURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "javascript scheme", url: "javascript:alert(document.cookie)"},
+		{name: "file scheme", url: "file:///etc/passwd"},
+		{name: "windows ms-msdt handler", url: "ms-msdt:/id PCWDiagnostic"},
+		{name: "windows search-ms handler", url: "search-ms:query=x"},
+		{name: "data scheme", url: "data:text/html,<script>alert(1)</script>"},
+		{name: "leading dash", url: "-x"},
+		{name: "no host", url: "https:///path"},
+		{name: "control character", url: "https://example.com/\x00"},
+		{name: "empty URL", url: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := openLaunchURL(tt.url)
+			if err == nil {
+				t.Fatalf("openLaunchURL(%q) succeeded, want an error", tt.url)
+			}
+			if !errors.Is(err, ErrOIDCInvalidLaunchURL) {
+				t.Errorf("openLaunchURL(%q) error = %v, want ErrOIDCInvalidLaunchURL", tt.url, err)
+			}
+		})
+	}
+}
+
 func TestGenerateCodeVerifier(t *testing.T) {
 	verifier, err := generateCodeVerifier()
 	if err != nil {

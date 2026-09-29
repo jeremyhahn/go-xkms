@@ -181,6 +181,17 @@ var (
 	// ErrInvalidTokenEncoding is returned when a ProviderConfig's
 	// TokenEncoding is set to a value other than "form" or "json".
 	ErrInvalidTokenEncoding = errors.New("oidc: invalid token encoding")
+
+	// ErrInsecureEndpoint is returned when a discovery-supplied endpoint
+	// (authorization_endpoint, token_endpoint, jwks_uri, or any other
+	// endpoint returned by the provider's discovery document) uses a
+	// scheme other than https, on a host other than the loopback
+	// interface. The provider's discovery response is remote,
+	// attacker-influenceable content -- accepting an insecure endpoint
+	// from it would let a compromised or spoofed IdP redirect the user's
+	// browser, or xkey's own token/JWKS requests, to a plaintext or
+	// spoofable destination.
+	ErrInsecureEndpoint = errors.New("oidc: discovery endpoint must use https (http is only allowed on loopback)")
 )
 
 // DetailError appends detail text directly after a wrapped error while
