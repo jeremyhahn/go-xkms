@@ -61,10 +61,11 @@ var (
 
 // getCA returns the typed CA provider. Returns ErrNotConfigured if no CA is wired.
 func (s *XKMSService) getCA() (provider.CA, error) {
-	if s.ca == nil {
+	ca := s.ca.load()
+	if ca == nil {
 		return nil, ErrNotConfigured
 	}
-	return s.ca, nil
+	return ca, nil
 }
 
 // GetCABundle retrieves the CA certificate bundle.

@@ -156,7 +156,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	fidoConfig.DevicePath = devicePath
 	fidoConfig.RequireUserVerification = requireUV
 	fidoConfig.UserPresenceTimeout = timeout
-	enumerator := fido2.NewDefaultEnumerator()
+	enumerator := cfg.HIDDeviceEnumerator()
 
 	newAdapter := func() (webauthnclient.AuthenticatorAdapter, error) {
 		return webauthnclient.NewHardwareAdapter(&fidoConfig, enumerator)

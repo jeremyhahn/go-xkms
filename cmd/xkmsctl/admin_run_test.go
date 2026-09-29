@@ -30,6 +30,7 @@ import (
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 	"github.com/spf13/cobra"
 )
 
@@ -505,6 +506,12 @@ func TestEnrollFIDO2Admin_ConnectError(t *testing.T) {
 	}
 }
 
+// TestEnrollFIDO2Admin_ReachesDevice drives enrollment through the mock
+// client to the authenticator step, with an injected enumerator that finds no
+// authenticator, so the outcome never depends on the FIDO2 devices attached
+// to the host running the test. The hardware CTAP2 adapter is opened lazily,
+// after CreateUser and BeginRegistration have already succeeded against the
+// mock client, and fails closed at discovery.
 func TestEnrollFIDO2Admin_ReachesDevice(t *testing.T) {
 	mock := &mockAdminClient{}
 	cfg := &Config{
@@ -512,24 +519,20 @@ func TestEnrollFIDO2Admin_ReachesDevice(t *testing.T) {
 		ClientFactory: func(*Config) (client.Client, error) {
 			return mock, nil
 		},
+		HIDEnumerator: noHIDEnumerator{},
 	}
 	cmd := newAdminCreateCmdCopy()
 	printer := NewPrinter("text", io.Discard)
 
-	out := captureStdout(t, func() {
+	captureStdout(t, func() {
 		err := enrollFIDO2Admin(cmd, "root", cfg, printer, "")
-		if err == nil {
-			t.Fatal("expected error (no real FIDO2 device present)")
+		if !errors.Is(err, ErrCreateFIDO2HandlerFailed) {
+			t.Fatalf("error = %v, want %v", err, ErrCreateFIDO2HandlerFailed)
 		}
-		// The hardware CTAP2 authenticator adapter is opened lazily, after
-		// CreateUser and BeginRegistration have already succeeded against the
-		// mock client, and fails closed here because this test environment has
-		// no attached FIDO2 device.
-		if !strings.Contains(err.Error(), "failed to create FIDO2 handler") {
-			t.Errorf("error %q does not mention the authenticator step", err.Error())
+		if !errors.Is(err, webauthnclient.ErrAuthenticatorNotFound) {
+			t.Errorf("error = %v, want it to wrap %v", err, webauthnclient.ErrAuthenticatorNotFound)
 		}
 	})
-	_ = out
 }
 
 // FIDO2 admin enrollment must refuse to run without the canonical login key.
