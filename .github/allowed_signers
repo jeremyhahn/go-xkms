@@ -1,7 +1,0 @@
-# SSH public key allowlist for verifying signed git tags
-# Format: email namespaces="git" pubkey-type pubkey
-#
-# Release tags are signed by the agent key; this key authorizes all signatures
-# created with software/scripts/agent-git.sh -sign-tag or git tag -s under
-# agent-go-xkms configuration (user.signingkey set to the agent key).
-agent-go-xkms@example.internal namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIByzMRxVogH5Vz8QPh5gS0ODyStQBygWto56GGIFjjRh agent-go-xkms@example.internal

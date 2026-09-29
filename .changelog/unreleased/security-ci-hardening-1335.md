@@ -1,12 +1,7 @@
----
-area: ci
-scope: github-actions
----
-
-# GitHub Actions Security Hardening
-
-- Pin all third-party GitHub Actions to full 40-character commit SHAs instead of version tags
-- Add top-level `permissions: contents: read` to CI workflow with granular job-level overrides
-- Add `persist-credentials: false` to all `actions/checkout` steps to reduce credential exposure
-- Pass workflow outputs through environment variables instead of direct template interpolation to prevent injection attacks
-- Pin container images by digest for build stages and security scanning tools
+- **CI workflows are hardened (#1335).**
+  - Third-party actions are pinned to full commit SHAs.
+  - `ci.yml` defaults to `permissions: contents: read`, with per-job overrides.
+  - Every checkout sets `persist-credentials: false`.
+  - Workflow outputs reach scripts through environment variables, not template interpolation.
+  - Build and scan images are pinned by digest.
+  - Release-process changes (#1334) are left out on the owner's instruction.
