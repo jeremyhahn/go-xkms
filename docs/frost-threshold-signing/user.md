@@ -1,6 +1,6 @@
 # FROST Threshold Signing — User Guide
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1231)
 
 ## What this is for
 
@@ -10,12 +10,18 @@ signing time. Use it when a single signing key would be too sensitive to
 trust to one machine or one operator: a code-signing root, a treasury key,
 a CA intermediate.
 
-**This is a local, operator-run tool today.** Everything in this guide runs
+**This guide covers the local, operator-run tool.** Everything in it runs
 on your own machine and stores key material under a local `--key-dir`. It
-does not talk to a remote `xkms` server — see
-[`architecture.md`](architecture.md) if you were expecting the network API
-your `xkmsd` exposes to work out of the box; it currently has no supported
-way to be turned on.
+does not talk to a remote `xkms` server. The network API (REST, gRPC, MCP)
+answers only when `xkmsd` has `backends.frost.enabled` set — see
+[`architecture.md`](architecture.md).
+
+**On a server, FROST keys belong to your tenant.** Keys you generate or
+import over the network API are stored in your tenant, and every call that
+names a key looks for it only there. Other tenants cannot list, read, delete
+or sign with your key shares, and you cannot see theirs: naming another
+tenant's key gets the same "not found" as naming a key that does not exist.
+Two tenants may each use the same key ID.
 
 ## Prerequisites
 
