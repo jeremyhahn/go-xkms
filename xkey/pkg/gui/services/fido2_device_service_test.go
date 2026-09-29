@@ -19,10 +19,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -749,4 +751,147 @@ func TestFIDO2DeviceService_Stop_WithAuditLogger_NotRunning(t *testing.T) {
 	err := svc.Stop()
 	assert.Error(t, err)
 	assert.Empty(t, logger.entries)
+}
+
+// ---------------------------------------------------------------------------
+// Stop / Start lifecycle race safety (issue #1256)
+//
+// Wails dispatches bound method calls on separate goroutines, so two
+// concurrent Stop calls -- or a toggle racing app shutdown -- can both
+// observe a stale "running" check. These tests prime the service into a
+// running state directly (the same seam the DoubleStart/DoubleStop tests
+// above use) rather than going through a real Start, because a real Start
+// opens /dev/uhid and would create a kernel-level HID device, which unit
+// tests must never do.
+// ---------------------------------------------------------------------------
+
+// newRunningFIDO2DeviceService returns a service primed into the running
+// state without going through Start, so Stop has a live stopCh to close.
+func newRunningFIDO2DeviceService(t *testing.T) *FIDO2DeviceService {
+	t.Helper()
+	svc := NewFIDO2DeviceService(slog.Default())
+	svc.running.Store(true)
+	svc.stopCh = make(chan struct{})
+	return svc
+}
+
+func TestFIDO2DeviceService_Stop_ConcurrentCalls_ExactlyOneSucceeds(t *testing.T) {
+	svc := newRunningFIDO2DeviceService(t)
+
+	const callers = 20
+	results := make([]error, callers)
+
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			results[i] = svc.Stop()
+		}(i)
+	}
+	wg.Wait()
+
+	var successes, alreadyStopped int
+	for _, err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrFIDO2DeviceNotRunning):
+			alreadyStopped++
+		default:
+			t.Errorf("unexpected error from Stop: %v", err)
+		}
+	}
+
+	assert.Equal(t, 1, successes, "exactly one concurrent Stop call must succeed")
+	assert.Equal(t, callers-1, alreadyStopped, "every other concurrent Stop call must report not-running")
+	assert.False(t, svc.IsRunning())
+}
+
+func TestFIDO2DeviceService_Stop_ClosesDeviceExactlyOnce(t *testing.T) {
+	device, err := virtualdevice.NewNativeVirtualDevice(&virtualdevice.NativeVirtualDeviceConfig{
+		Storage: authenticator.NewMemoryStorage(),
+	})
+	require.NoError(t, err)
+
+	svc := newRunningFIDO2DeviceService(t)
+	svc.device = device
+
+	err = svc.Stop()
+	require.NoError(t, err)
+
+	// Stop clears the field once it has closed the device, so cleanup's
+	// nil check skips it and the device is never closed a second time.
+	assert.Nil(t, svc.device)
+
+	// Calling cleanup again (as would happen if a future change re-added a
+	// redundant call) must be a safe no-op against the already-nil field.
+	assert.NotPanics(t, func() { svc.cleanup() })
+	assert.Nil(t, svc.device)
+}
+
+func TestFIDO2DeviceService_Stop_ConcurrentCalls_ClosesDeviceExactlyOnce(t *testing.T) {
+	device, err := virtualdevice.NewNativeVirtualDevice(&virtualdevice.NativeVirtualDeviceConfig{
+		Storage: authenticator.NewMemoryStorage(),
+	})
+	require.NoError(t, err)
+
+	svc := newRunningFIDO2DeviceService(t)
+	svc.device = device
+
+	const callers = 20
+	results := make([]error, callers)
+
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			results[i] = svc.Stop()
+		}(i)
+	}
+	wg.Wait()
+
+	var successes int
+	for _, err := range results {
+		if err == nil {
+			successes++
+		} else {
+			assert.ErrorIs(t, err, ErrFIDO2DeviceNotRunning)
+		}
+	}
+
+	assert.Equal(t, 1, successes, "exactly one concurrent Stop call must succeed")
+	assert.Nil(t, svc.device, "the device must be cleared after the winning Stop call")
+}
+
+func TestFIDO2DeviceService_Start_ConcurrentCalls_WhenRunning_AllFail(t *testing.T) {
+	svc := NewFIDO2DeviceService(slog.Default())
+	// Prime the running gate directly, mirroring how Stop is tested above,
+	// so concurrent Start calls exercise the CompareAndSwap gate without
+	// any of them reaching the real device/UHID creation path.
+	svc.running.Store(true)
+
+	const callers = 20
+	results := make([]error, callers)
+
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			results[i] = svc.Start(authenticator.NewMemoryStorage(), nil)
+		}(i)
+	}
+	wg.Wait()
+
+	for _, err := range results {
+		assert.ErrorIs(t, err, ErrFIDO2DeviceAlreadyRunning)
+	}
+
+	// No caller should have gotten far enough to allocate any lifecycle state.
+	assert.Nil(t, svc.device)
+	assert.Nil(t, svc.uhidDev)
+	assert.Nil(t, svc.stopCh)
+	assert.True(t, svc.IsRunning())
 }
