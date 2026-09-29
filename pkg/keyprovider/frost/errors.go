@@ -51,12 +51,6 @@ var (
 	// ErrInvalidShare indicates malformed signature share.
 	ErrInvalidShare = errors.New("frost: invalid signature share")
 
-	// ErrSessionNotFound indicates the signing session doesn't exist.
-	ErrSessionNotFound = errors.New("frost: session not found")
-
-	// ErrSessionExpired indicates the signing session has expired.
-	ErrSessionExpired = errors.New("frost: session expired")
-
 	// ErrThresholdSigningNotSupported indicates a crypto.Signer was
 	// requested for a key whose threshold requires more than one
 	// participant. A crypto.Signer performs one synchronous Sign call and

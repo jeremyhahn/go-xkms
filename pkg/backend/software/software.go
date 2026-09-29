@@ -25,12 +25,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/importtoken"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
@@ -72,44 +72,34 @@ type SoftwareBackend struct {
 	closed           bool
 	mu               sync.RWMutex
 
-	// Import/export state
-	importTokens map[string]*importTokenData // Map of import token UUID to wrapping key data
-	importMu     sync.RWMutex                // Separate mutex for import token operations
+	// Import/export state: a bounded, TTL-enforced, single-use store for
+	// the wrapping keypair each in-progress import ceremony holds between
+	// GetImportParameters and UnwrapKey (go-xkms#1261). See
+	// importtoken.Store's doc comment for why it is bounded and swept
+	// rather than a plain map.
+	importTokens *importtoken.Store[*importTokenData]
 }
 
 // importTokenData holds the ephemeral wrapping key pair for an
-// in-progress import ceremony.
-//
-// privateKey is the PKCS#8 DER of the RSA wrapping private key, sealed
-// inside a *secure.Secret. Every consumer opens this, parses the DER
-// inside a Buffer, performs its crypto in that scope, and destroys the
-// Buffer before returning — the plaintext private key never outlives a
-// single stack frame.
-//
-// publicKey is kept in a plain pointer because RSA public keys are
-// non-sensitive and callers need cheap repeated access (e.g., to
-// populate ImportParameters).
+// in-progress import ceremony, plus the metadata GetImportParameters
+// generated it with. The keypair itself is a *importtoken.SealedRSAKey,
+// which keeps the private half sealed inside a *secure.Secret for its
+// entire TTL; only Use opens it, and only for the duration of one call.
 type importTokenData struct {
-	privateKey *secure.Secret
-	publicKey  *rsa.PublicKey
-	algorithm  backend.WrappingAlgorithm
-	expiresAt  time.Time
-	keySpec    string
+	wrappingKey *importtoken.SealedRSAKey
+	algorithm   backend.WrappingAlgorithm
+	keySpec     string
 }
 
-// destroy wipes the enclave holding the wrapping private key. Safe to
-// call on a nil receiver. Invoked when a token expires or on backend
-// Close so the 24-hour-TTL material doesn't linger across shutdowns.
+// destroy releases the sealed wrapping keypair. Safe to call on a nil
+// receiver or the zero value. It is the importTokens Store's destroy
+// callback, so it runs on every eviction path: sweep, Take, Delete, and
+// Close.
 func (t *importTokenData) destroy() {
 	if t == nil {
 		return
 	}
-	if t.privateKey != nil {
-		t.privateKey.Destroy()
-		t.privateKey = nil
-	}
-	// publicKey is non-sensitive; dropping the reference is sufficient.
-	t.publicKey = nil
+	t.wrappingKey.Destroy()
 }
 
 // SoftwareBackendWithKeyAgreement extends the software backend with KeyAgreement capabilities.
@@ -203,7 +193,7 @@ func NewBackend(config *Config) (types.SymmetricKeyProvider, error) {
 		quantumBackend:   quantumBackend,
 		storage:          config.KeyStorage,
 		closed:           false,
-		importTokens:     make(map[string]*importTokenData),
+		importTokens:     importtoken.New[*importTokenData](0, 0, (*importTokenData).destroy),
 	}, nil
 }
 
@@ -408,12 +398,7 @@ func (b *SoftwareBackend) Close() error {
 
 	// Destroy any pending import-token enclaves before releasing
 	// storage so leftover wrapping keys cannot survive a shutdown.
-	b.importMu.Lock()
-	for _, td := range b.importTokens {
-		td.destroy()
-	}
-	b.importTokens = nil
-	b.importMu.Unlock()
+	b.importTokens.Close()
 
 	// Close both backends (but only close storage once)
 	// Note: Both backends share the same storage, so we only need to close
@@ -498,17 +483,19 @@ func (b *SoftwareBackend) SymmetricEncrypter(ctx context.Context, attrs *types.K
 // GetImportParameters generates a wrapping key pair and returns the public key
 // along with an import token for later import operations.
 //
-// For the software backend, we generate a 2048-bit RSA key pair, marshal
-// the private key into PKCS#8 DER, and seal the DER bytes into a
-// *secure.Secret. Only the public key pointer is retained in plaintext.
-// The import token is a UUID that identifies this wrapping key pair.
-// The ceremony expires in 24 hours; on expiry (or on Close), the
-// enclave is destroyed.
+// For the software backend, we generate a 2048-bit RSA key pair and seal
+// it into a *importtoken.SealedRSAKey; only the public key stays in
+// plaintext. The import token is a UUID that identifies this wrapping key
+// pair. b.importTokens (a *importtoken.Store) enforces the ceremony's
+// 24-hour TTL and a hard cap on how many ceremonies can be in flight at
+// once, sweeping expired ones on every Put; UnwrapKey consumes the token
+// (single use), and on expiry, on eviction, or on backend Close, the
+// enclave is destroyed rather than left to linger (go-xkms#1261).
 func (b *SoftwareBackend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
-	b.importMu.Lock()
-	defer b.importMu.Unlock()
-
-	if b.closed {
+	b.mu.RLock()
+	closed := b.closed
+	b.mu.RUnlock()
+	if closed {
 		return nil, ErrStorageClosed
 	}
 
@@ -523,46 +510,31 @@ func (b *SoftwareBackend) GetImportParameters(ctx context.Context, attrs *types.
 		return nil, &errs.Wrapped{Msg: "failed to generate wrapping key", Err: err}
 	}
 
-	// Marshal the private key into PKCS#8 DER and seal it. We wipe the
-	// intermediate slice after sealing as belt-and-suspenders; NewSecret
-	// also wipes its input.
-	der, marshalErr := x509.MarshalPKCS8PrivateKey(privateKey)
-	if marshalErr != nil {
-		return nil, &errs.Wrapped{Msg: "failed to marshal wrapping key", Err: marshalErr}
+	// Seal the private key; only the public key stays in plaintext. See
+	// importtoken.SealedRSAKey for the seal/open/destroy handling.
+	wrappingKey, err := importtoken.NewSealedRSAKey(privateKey)
+	if err != nil {
+		return nil, err
 	}
-	publicKey := &privateKey.PublicKey
-	// Best-effort: zero out the live *rsa.PrivateKey fields so it
-	// doesn't sit on the heap next to our enclaved copy. crypto/rsa's
-	// PrecomputedValues aren't safely zeroable without invalidating
-	// the key, so we settle for dropping the reference. After this
-	// function returns, GC is the only mechanism for reclaiming the
-	// privateKey heap allocation; the authoritative copy of the key
-	// material now lives inside the enclave.
-	_ = privateKey
-	sealed, sealErr := secure.NewSecret(der)
-	if sealErr != nil {
-		return nil, &errs.Wrapped{Msg: "failed to seal wrapping key", Err: sealErr}
-	}
-	// NewSecret wipes `der` on entry; this is defense in depth.
-	secure.Wipe(der)
+	publicKey := wrappingKey.PublicKey()
 
 	// Generate import token (UUID)
 	tokenUUID := uuid.New().String()
 	importToken := []byte(tokenUUID)
 
-	// Set expiration to 24 hours from now
-	expiresAt := time.Now().Add(24 * time.Hour)
-
 	// Determine key spec based on key attributes
 	keySpec := determineKeySpec(attrs)
 
-	// Store the sealed private key and metadata.
-	b.importTokens[tokenUUID] = &importTokenData{
-		privateKey: sealed,
-		publicKey:  publicKey,
-		algorithm:  algorithm,
-		expiresAt:  expiresAt,
-		keySpec:    keySpec,
+	// Store the sealed private key and metadata. Put enforces the
+	// store's TTL and hard cap (go-xkms#1261) and sweeps expired
+	// ceremonies before inserting this one.
+	expiresAt, err := b.importTokens.Put(tokenUUID, &importTokenData{
+		wrappingKey: wrappingKey,
+		algorithm:   algorithm,
+		keySpec:     keySpec,
+	})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to store import token", Err: err}
 	}
 
 	return &backend.ImportParameters{
@@ -619,10 +591,18 @@ func (b *SoftwareBackend) WrapKey(ctx context.Context, keyMaterial []byte, param
 // For the software backend, we can perform unwrapping since we have
 // access to the sealed wrapping private key.
 //
-// Flow: look up the token → open the Secret into a Buffer → parse the
+// The import token is single-use: a successful call, whether made
+// directly or as part of ImportKey, consumes it via the importTokens
+// Store's Take, so it cannot be replayed against a second (or
+// concurrent) wrap of different key material. A failed unwrap — wrong
+// algorithm, corrupted payload — also consumes it rather than leaving it
+// live for another guess, because the wrapping key was already opened to
+// discover the failure (go-xkms#1261).
+//
+// Flow: take the token → open the Secret into a Buffer → parse the
 // PKCS#8 DER into an ephemeral *rsa.PrivateKey → call the wrapping
-// library → destroy the Buffer. The parsed *rsa.PrivateKey is only
-// referenced inside this function's stack frame.
+// library → destroy the Buffer and the sealed key. The parsed
+// *rsa.PrivateKey is only referenced inside this function's stack frame.
 func (b *SoftwareBackend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapped key material cannot be nil"}
@@ -631,67 +611,66 @@ func (b *SoftwareBackend) UnwrapKey(ctx context.Context, wrapped *backend.Wrappe
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import parameters cannot be nil"}
 	}
 
-	b.importMu.RLock()
-	defer b.importMu.RUnlock()
-
-	if b.closed {
+	b.mu.RLock()
+	closed := b.closed
+	b.mu.RUnlock()
+	if closed {
 		return nil, ErrStorageClosed
 	}
 
+	return b.unwrapKey(wrapped)
+}
+
+// unwrapKey is UnwrapKey's token-consuming core, without the closed check.
+// ImportKey calls it directly rather than calling UnwrapKey, because
+// ImportKey already checked b.closed under its own b.mu.Lock(); UnwrapKey's
+// closed check takes b.mu.RLock(), and sync.RWMutex is not reentrant, so
+// calling UnwrapKey from inside an already-held b.mu.Lock() would deadlock.
+func (b *SoftwareBackend) unwrapKey(wrapped *backend.WrappedKeyMaterial) ([]byte, error) {
 	// Get the import token UUID
 	tokenUUID := string(wrapped.ImportToken)
 	if tokenUUID == "" {
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import token cannot be empty"}
 	}
 
-	// Look up the stored private key
-	tokenData, ok := b.importTokens[tokenUUID]
-	if !ok {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "invalid import token"}
+	// Take the stored wrapping key: unknown, already-consumed, and
+	// expired tokens are indistinguishable, and this call owns
+	// destroying whatever it took.
+	tokenData, err := b.importTokens.Take(tokenUUID)
+	if err != nil {
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "invalid or expired import token"}
 	}
-
-	// Check expiration
-	if time.Now().After(tokenData.expiresAt) {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "import token has expired"}
-	}
+	defer tokenData.destroy()
 
 	// Verify algorithm matches
 	if wrapped.Algorithm != tokenData.algorithm {
 		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("wrapped with %s but token expects %s", wrapped.Algorithm, tokenData.algorithm)}
 	}
 
-	// Open the enclaved wrapping private key into a Buffer, parse the
-	// DER, run the unwrap, destroy the Buffer.
-	privBuf, openErr := tokenData.privateKey.Open()
-	if openErr != nil {
-		return nil, &errs.Wrapped{Msg: "failed to open wrapping key enclave", Err: openErr}
-	}
-	defer privBuf.Destroy()
-
-	parsed, parseErr := x509.ParsePKCS8PrivateKey(privBuf.Bytes())
-	if parseErr != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse wrapping key", Err: parseErr}
-	}
-	privateKey, rsaOK := parsed.(*rsa.PrivateKey)
-	if !rsaOK {
-		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "wrapping key is not RSA"}
-	}
-
 	var unwrapped []byte
-	var err error
-
-	// Unwrap using the appropriate algorithm
-	switch wrapped.Algorithm {
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1, backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
-		unwrapped, err = wrapping.UnwrapRSAOAEP(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
-	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
-		unwrapped, err = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
-	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: wrapped.Algorithm.String()}
-	}
-
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to unwrap key", Err: err}
+	useErr := tokenData.wrappingKey.Use(func(privateKey *rsa.PrivateKey) error {
+		var unwrapErr error
+		switch wrapped.Algorithm {
+		case backend.WrappingAlgorithmRSAES_OAEP_SHA_1, backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
+			unwrapped, unwrapErr = wrapping.UnwrapRSAOAEP(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
+		case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
+			unwrapped, unwrapErr = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
+		default:
+			return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: wrapped.Algorithm.String()}
+		}
+		return unwrapErr
+	})
+	if useErr != nil {
+		// SealedRSAKey.Use reports a non-RSA enclave generically, since
+		// every ImportBackend using it holds an RSA wrapping key by
+		// construction; translate it to this package's own sentinel so
+		// UnwrapKey's error contract is unchanged for callers checking
+		// errors.Is(err, backend.ErrInvalidKeyType).
+		var notRSA *importtoken.NotRSAKeyError
+		if errors.As(useErr, &notRSA) {
+			return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "wrapping key is not RSA"}
+		}
+		return nil, &errs.Wrapped{Msg: "failed to unwrap key", Err: useErr}
 	}
 
 	return unwrapped, nil
@@ -721,40 +700,11 @@ func (b *SoftwareBackend) ImportKey(ctx context.Context, attrs *types.KeyAttribu
 		return ErrStorageClosed
 	}
 
-	// Get the import parameters to unwrap the key
-	tokenUUID := string(wrapped.ImportToken)
-	if tokenUUID == "" {
-		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import token cannot be empty"}
-	}
-
-	// Look up the stored token metadata (with read lock). The private
-	// key itself stays inside its enclave — UnwrapKey is the only
-	// codepath that opens it.
-	b.importMu.RLock()
-	tokenData, ok := b.importTokens[tokenUUID]
-	b.importMu.RUnlock()
-
-	if !ok {
-		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "invalid import token"}
-	}
-
-	// Check expiration
-	if time.Now().After(tokenData.expiresAt) {
-		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "import token has expired"}
-	}
-
-	// Create import parameters for unwrapping. The public key is
-	// non-sensitive so we expose it directly.
-	params := &backend.ImportParameters{
-		WrappingPublicKey: tokenData.publicKey,
-		ImportToken:       wrapped.ImportToken,
-		Algorithm:         tokenData.algorithm,
-		ExpiresAt:         &tokenData.expiresAt,
-		KeySpec:           tokenData.keySpec,
-	}
-
-	// Unwrap the key material
-	keyMaterial, err := b.UnwrapKey(ctx, wrapped, params)
+	// Unwrap the key material. This calls the token-consuming core
+	// directly, not the public UnwrapKey, since UnwrapKey's own closed
+	// check would re-take b.mu.RLock() while this call already holds
+	// b.mu.Lock() -- see unwrapKey's doc comment.
+	keyMaterial, err := b.unwrapKey(wrapped)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
 	}

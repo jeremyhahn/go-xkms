@@ -39,8 +39,10 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/importtoken"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // KeyVaultClient defines the interface for Azure Key Vault operations.
@@ -157,10 +159,15 @@ type Backend struct {
 	// Config.KeyStorage: it is private key material, not key metadata, and
 	// the ceremony is expected to complete within one process's uptime --
 	// unlike the CN -> key descriptor records above, nothing relies on it
-	// surviving a restart.
-	importTokens map[string][]byte
+	// surviving a restart. It is a bounded, TTL-enforced store rather than
+	// a plain map (go-xkms#1261): a caller that requests import parameters
+	// and never completes the ceremony must not be able to grow this
+	// state without limit, and the key bytes it holds must be zeroized
+	// when they are no longer needed rather than left for the garbage
+	// collector.
+	importTokens *importtoken.Store[[]byte]
 	tracker      types.AEADSafetyTracker
-	mu           sync.RWMutex // guards client/secretsClient initialization and importTokens
+	mu           sync.RWMutex // guards client/secretsClient initialization
 }
 
 // NewBackend creates a new Azure Key Vault backend instance.
@@ -178,7 +185,7 @@ func NewBackend(config *Config) (*Backend, error) {
 
 	b := &Backend{
 		config:       config,
-		importTokens: make(map[string][]byte),
+		importTokens: importtoken.New[[]byte](0, 0, secure.Wipe),
 		tracker:      tracker,
 	}
 
@@ -201,7 +208,7 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 	b := &Backend{
 		config:       config,
 		client:       client,
-		importTokens: make(map[string][]byte),
+		importTokens: importtoken.New[[]byte](0, 0, secure.Wipe),
 		tracker:      tracker,
 	}
 
@@ -427,7 +434,7 @@ func (b *Backend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.importTokens = make(map[string][]byte)
+	b.importTokens.Close()
 	if b.client != nil {
 		if err := b.client.Close(); err != nil {
 			return err

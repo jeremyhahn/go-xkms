@@ -52,15 +52,11 @@ The main backend implementation that satisfies the `types.Backend` interface.
 ```go
 type FrostBackend struct {
     config       *Config
-    service      *frost.FrostService    // go-frost service layer
-    keystore     KeyStore               // Key package storage
+    keystore     *KeyStore              // Key package storage
     nonceTracker *NonceTracker          // Nonce reuse prevention
+    keyGenerator KeyGenerator
     closed       bool
     mu           sync.RWMutex
-
-    // Session state for multi-round signing
-    sessions     map[string]*SigningSession
-    sessionsMu   sync.RWMutex
 }
 ```
 
@@ -69,7 +65,12 @@ type FrostBackend struct {
 - Manages key generation via `KeyGenerator` interface
 - Coordinates signing operations (both modes)
 - Handles nonce tracking for security
-- Manages session state for explicit round signing
+
+The backend keeps no server-side signing session between rounds. Round 1
+(`GenerateNonces`) returns a `NoncePackage` — including the secret nonces —
+directly to the caller, who holds it and passes it back to `SignRound` for
+Round 2. `EnableNonceTracking` (default on) still rejects reuse of any
+commitment across signing attempts, regardless of who holds the nonces.
 
 ### KeyGenerator Interface
 
@@ -102,11 +103,8 @@ type KeyGenerator interface {
 │  │  │       ├── {participant_1}                              │  │
 │  │  │       ├── {participant_2}                              │  │
 │  │  │       └── ...                                          │  │
-│  │  ├── nonces/{keyID}/                                      │  │
-│  │  │   └── {commitment_hash}     # Used nonce markers       │  │
-│  │  └── sessions/{sessionID}/                                │  │
-│  │      ├── state.json            # Session metadata         │  │
-│  │      └── commitments/          # Collected commitments    │  │
+│  │  └── nonces/{keyID}/                                      │  │
+│  │      └── {commitment_hash}     # Used nonce markers       │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │                                                                  │
 │  SecretBackend (types.Backend)                                  │
@@ -280,8 +278,7 @@ Simple O(1) storage-based nonce tracking to prevent catastrophic nonce reuse:
 │  │  1. Load key package from storage                                     │ │
 │  │  2. Generate random nonces (hiding_nonce, binding_nonce)              │ │
 │  │  3. Compute commitments                                               │ │
-│  │  4. Store nonces in session (ephemeral, in-memory)                   │ │
-│  │  5. Return NoncePackage with commitments (public)                    │ │
+│  │  4. Return NoncePackage to the caller (no server-side session)      │ │
 │  └───────────────────────────────────────────────────────────────────────┘ │
 │                                                                             │
 └────────────────────────────────────────────────────────────────────────────┘

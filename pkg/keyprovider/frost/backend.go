@@ -37,34 +37,6 @@ type FrostBackend struct {
 	keyGenerator KeyGenerator
 	closed       bool
 	mu           sync.RWMutex
-
-	// Session state for multi-round signing
-	sessions   map[string]*SigningSession
-	sessionsMu sync.RWMutex
-}
-
-// SigningSession tracks state for a multi-round signing operation.
-type SigningSession struct {
-	// SessionID uniquely identifies this session
-	SessionID string
-
-	// KeyID identifies the key being used
-	KeyID string
-
-	// ParticipantID identifies this participant
-	ParticipantID uint32
-
-	// Nonces is this participant's nonce package
-	Nonces *NoncePackage
-
-	// CollectedCommitments are commitments from other participants
-	CollectedCommitments []*Commitment
-
-	// CreatedAt is when the session was created
-	CreatedAt time.Time
-
-	// ExpiresAt is when the session expires
-	ExpiresAt time.Time
 }
 
 // NewBackend creates a new FROST backend with the given configuration.
@@ -92,7 +64,6 @@ func NewBackend(config *Config) (*FrostBackend, error) {
 		keystore:     keystore,
 		nonceTracker: nonceTracker,
 		keyGenerator: keyGenerator,
-		sessions:     make(map[string]*SigningSession),
 	}, nil
 }
 
@@ -535,16 +506,6 @@ func (b *FrostBackend) Close() error {
 	}
 
 	b.closed = true
-
-	// Clear sessions
-	b.sessionsMu.Lock()
-	for sessionID, session := range b.sessions {
-		if session.Nonces != nil && session.Nonces.Nonces != nil {
-			session.Nonces.Nonces.Zeroize()
-		}
-		delete(b.sessions, sessionID)
-	}
-	b.sessionsMu.Unlock()
 
 	return nil
 }
