@@ -66,8 +66,27 @@ The binding is applied once, in `XKMSService`, and no transport repeats it:
 | `TenantBarrierStatus` | `bindTenantTarget` | `pkg/xkms/servicer_tenant.go:283` |
 | `UpdateTenantEntitlements` | `requirePlatformScope` | `pkg/xkms/servicer_tenant.go:313` |
 | `UpdateTenantQuotas` | `requirePlatformScope` | `pkg/xkms/servicer_tenant.go:340` |
-| `BarrierEnableEncryption` | `bindTenantTarget` (empty `TenantID` = system barrier) | `pkg/xkms/servicer_barrier.go:310` |
-| `SignCSR` | `bindTenantTarget` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:178` |
+| `BarrierEnableEncryption` | `bindTenantTarget` (empty `TenantID` = system barrier) | `pkg/xkms/servicer_barrier.go:377` |
+| `SignCSR` | `bindTenantTarget` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:147` |
+| `SealStorePut` / `Get` / `Delete` / `List` / `Reseal` / `Status` | `requirePlatformScope` (#1226) | `pkg/xkms/servicer_seal_store.go:40,54,75,89,106,120` |
+| `SubmitCredential`, `ListCredentials` | `requirePlatformScope` (#1226) | `pkg/xkms/servicer_credentials.go:32,73` |
+| system barrier: `BarrierInitialize[WithCredentials]`, `BarrierUnseal[WithCredentials]`, `BarrierSeal`, `BarrierStatus`, `BarrierInitializeShamir`, `BarrierUnsealWithShare(s)`, `BarrierRekey`, `BarrierGenerateRecoveryKeys`, `BarrierRecoverWithKeys`, `BarrierDeleteRecoveryKeys`, `BarrierHasRecoveryKeys`, `BarrierGenerateRootToken` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_barrier.go:89,117,128,139,170,205,236,253,278,300,314,325,342` |
+| `SetSOPIN`, `SetUserPIN`, `ChangeSOPIN`, `ChangeUserPIN`, `VerifySOPIN`, `VerifyUserPIN`, `GetLockoutStatus`, `ResetLockout` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136` |
+| `ListPIVSlots`, `GetPIVCertificate`, `StorePIVCertificate`, `DeletePIVCertificate`, `GeneratePIVKey`, `ImportPIVCertificate`, `ExportPIVCertificate`, `GeneratePIVCSR` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_piv.go:31,40,49,58,67,76,85,94` |
+| `PolicyCreate` / `Get` / `List` / `Delete` / `Refresh` / `Verify` / `Export` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_policy.go:42,66,84,106,120,138,160` |
+
+The platform-scoped rows are reached on every transport only through the
+service: the REST handlers (`pkg/api/rest/seal_store_handlers.go`,
+`handlers_credentials.go`, `handlers_barrier_pin.go`,
+`handlers_barrier_shamir.go`, `handlers_piv.go`, `policy_handlers.go`), the
+gRPC/Unix handlers (`pkg/api/grpc/service_seal_store.go`,
+`service_barrier_pin.go`, `service_barrier_shamir.go`, `service_piv.go`,
+`service_policy.go`) and the MCP handlers (`pkg/api/mcp/handlers_seal_store.go`,
+`handlers_init_credentials.go`, `handlers_barrier_shamir.go`,
+`handlers_pin.go`, `handlers_piv.go`, `handlers_policy.go`) hold the
+`XKMSService` and never the store, barrier, PIN backend, policy manager,
+credential service or package-level PIV functions. `rest.Config` and
+`mcp.Config` no longer carry those subsystems at all.
 
 SSH assets take the same rule one level down, in the SSH service rather than
 `XKMSService` (go-xkms#1230). Their address is `(scope, owner, name)`, and
@@ -93,39 +112,7 @@ orders by the caller's tenant, and binds the caller's tenant as the qrdb
 context tenant at its authentication boundary (`pkg/acme/admin/auth.go:101`).
 The full contract is in
 [`../acme-issuance/engineering.md`](../acme-issuance/engineering.md#invariants).
-| `BarrierEnableEncryption` | `bindTenantTarget` (empty `TenantID` = system barrier) | `pkg/xkms/servicer_barrier.go:384` |
-| `SignCSR` | `bindTenantTarget` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:172` |
-| `SealStorePut` / `Get` / `Delete` / `List` / `Reseal` / `Status` | `requirePlatformScope` (#1226) | `pkg/xkms/servicer_seal_store.go:40,54,75,89,106,120` |
-| `SubmitCredential`, `ListCredentials` | `requirePlatformScope` (#1226) | `pkg/xkms/servicer_credentials.go:32,73` |
-| system barrier: `BarrierInitialize[WithCredentials]`, `BarrierUnseal[WithCredentials]`, `BarrierSeal`, `BarrierStatus`, `BarrierInitializeShamir`, `BarrierUnsealWithShare(s)`, `BarrierRekey`, `BarrierGenerateRecoveryKeys`, `BarrierRecoverWithKeys`, `BarrierDeleteRecoveryKeys`, `BarrierHasRecoveryKeys`, `BarrierGenerateRootToken` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_barrier.go:89,117,128,139,170,205,236,253,278,300,314,325,342` |
-| `SetSOPIN`, `SetUserPIN`, `ChangeSOPIN`, `ChangeUserPIN`, `VerifySOPIN`, `VerifyUserPIN`, `GetLockoutStatus`, `ResetLockout` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136` |
-| `ListPIVSlots`, `GetPIVCertificate`, `StorePIVCertificate`, `DeletePIVCertificate`, `GeneratePIVKey`, `ImportPIVCertificate`, `ExportPIVCertificate`, `GeneratePIVCSR` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_piv.go:31,40,49,58,67,76,85,94` |
-| `PolicyCreate` / `Get` / `List` / `Delete` / `Refresh` / `Verify` / `Export` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_policy.go:42,66,84,106,120,138,160` |
 
-The platform-scoped rows are reached on every transport only through the
-service: the REST handlers (`pkg/api/rest/seal_store_handlers.go`,
-`handlers_credentials.go`, `handlers_barrier_pin.go`,
-`handlers_barrier_shamir.go`, `handlers_piv.go`, `policy_handlers.go`), the
-gRPC/Unix handlers (`pkg/api/grpc/service_seal_store.go`,
-`service_barrier_pin.go`, `service_barrier_shamir.go`, `service_piv.go`,
-`service_policy.go`) and the MCP handlers (`pkg/api/mcp/handlers_seal_store.go`,
-`handlers_init_credentials.go`, `handlers_barrier_shamir.go`,
-`handlers_pin.go`, `handlers_piv.go`, `handlers_policy.go`) hold the
-`XKMSService` and never the store, barrier, PIN backend, policy manager,
-credential service or package-level PIV functions. `rest.Config` and
-`mcp.Config` no longer carry those subsystems at all.
-
-The ACME admin plane (`pkg/acme/admin`) is served by its own service, not
-`XKMSService`, and carries its own binding with the same convention
-(go-xkms#1225): `bindTenantTarget` and `requirePlatformScope`
-(`pkg/acme/admin/tenant_binding.go:103`, `:113`), whose
-`*TenantBindingError` unwraps to that package's `ErrTenantNotFound` and reads
-as a missing tenant. It also checks that a role or user belongs to the tenant
-the path names before touching it, scopes ACME certificates, accounts and
-orders by the caller's tenant, and binds the caller's tenant as the qrdb
-context tenant at its authentication boundary (`pkg/acme/admin/auth.go:101`).
-The full contract is in
-[`../acme-issuance/engineering.md`](../acme-issuance/engineering.md#invariants).
 
 ### `pkg/auth/rolemembership.go` — role membership
 
