@@ -74,6 +74,8 @@ func TestReload_RunningListenerPicksUpNewAuthenticator(t *testing.T) {
 	tightened.Auth.Type = "jwt"
 	tightened.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
+		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 
 	require.NoError(t, server.Reload(tightened))

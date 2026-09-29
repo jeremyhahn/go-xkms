@@ -2036,6 +2036,9 @@ func (s *Server) createJWTAuthenticator() (*auth.JWTAuthenticator, error) {
 		if err != nil {
 			return nil, &ErrTLSCertOp{Operation: "parse public key", Err: err}
 		}
+		if s.config.Auth.JWT.Issuer == "" || len(s.config.Auth.JWT.Audience) == 0 {
+			return nil, ErrJWTKeyFileIssuerAudienceRequired
+		}
 		pubKey = parsed
 		issuer = s.config.Auth.JWT.Issuer
 		audience = s.config.Auth.JWT.Audience
