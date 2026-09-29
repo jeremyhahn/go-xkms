@@ -234,7 +234,7 @@ func TestFIDO2Config_ValidateWithNewFields(t *testing.T) {
 				StorageType:       FIDO2StorageTypeMemory,
 				Backend:           "software",
 				AttestationFormat: "none",
-				NotifyCommand:     "notify-send Xkey '%o'",
+				NotifyCommand:     "notify-send Xkey",
 			},
 			wantErr: nil,
 		},
@@ -412,7 +412,10 @@ func TestCreateNotifier_EmptyCommand(t *testing.T) {
 		NotifyCommand: "",
 	}
 
-	notifier := createNotifier(cfg, logger)
+	notifier, err := createNotifier(cfg, logger)
+	if err != nil {
+		t.Fatalf("createNotifier: %v", err)
+	}
 	if notifier == nil {
 		t.Fatal("createNotifier returned nil")
 	}
@@ -424,7 +427,7 @@ func TestCreateNotifier_EmptyCommand(t *testing.T) {
 	}
 
 	// Should not panic and should be closeable
-	err := multi.Close()
+	err = multi.Close()
 	if err != nil {
 		t.Errorf("MultiNotifier.Close() returned error: %v", err)
 	}
@@ -433,10 +436,13 @@ func TestCreateNotifier_EmptyCommand(t *testing.T) {
 func TestCreateNotifier_WithCommand(t *testing.T) {
 	logger := slog.Default()
 	cfg := &FIDO2Config{
-		NotifyCommand: "echo 'touch for %r'",
+		NotifyCommand: "sh -c 'echo touch for $XKEY_RP_ID'",
 	}
 
-	notifier := createNotifier(cfg, logger)
+	notifier, err := createNotifier(cfg, logger)
+	if err != nil {
+		t.Fatalf("createNotifier: %v", err)
+	}
 	if notifier == nil {
 		t.Fatal("createNotifier returned nil")
 	}
@@ -446,32 +452,46 @@ func TestCreateNotifier_WithCommand(t *testing.T) {
 		t.Fatalf("createNotifier returned %T, want *notify.MultiNotifier", notifier)
 	}
 
-	err := multi.Close()
+	err = multi.Close()
 	if err != nil {
 		t.Errorf("MultiNotifier.Close() returned error: %v", err)
 	}
 }
 
 func TestCreateNotifier_InvalidCommand(t *testing.T) {
-	logger := slog.Default()
 	cfg := &FIDO2Config{
 		NotifyCommand: "   ", // whitespace-only is invalid
 	}
 
-	notifier := createNotifier(cfg, logger)
-	if notifier == nil {
-		t.Fatal("createNotifier returned nil for invalid command")
+	notifier, err := createNotifier(cfg, slog.Default())
+	if notifier != nil {
+		t.Fatalf("createNotifier returned %T for an invalid command, want nil", notifier)
 	}
-
-	// Should still return a valid notifier (falls back to log-only)
-	multi, ok := notifier.(*notify.MultiNotifier)
-	if !ok {
-		t.Fatalf("createNotifier returned %T, want *notify.MultiNotifier", notifier)
+	if !errors.Is(err, ErrFIDO2InvalidNotifyCommand) {
+		t.Fatalf("err = %v, want ErrFIDO2InvalidNotifyCommand", err)
 	}
+	if !errors.Is(err, notify.ErrInvalidCommand) {
+		t.Fatalf("err = %v, want notify.ErrInvalidCommand", err)
+	}
+}
 
-	err := multi.Close()
-	if err != nil {
-		t.Errorf("MultiNotifier.Close() returned error: %v", err)
+// TestCreateNotifier_CommandWithPlaceholder_Refused verifies that a
+// notify_command still using the removed %o/%r/%n/%u placeholders stops
+// startup with ErrFIDO2InvalidNotifyCommand (wrapping
+// notify.ErrTemplatePlaceholder) instead of running without touch
+// notifications.
+func TestCreateNotifier_CommandWithPlaceholder_Refused(t *testing.T) {
+	cfg := &FIDO2Config{NotifyCommand: "notify-send xKey %u"}
+
+	notifier, err := createNotifier(cfg, slog.Default())
+	if notifier != nil {
+		t.Fatalf("createNotifier returned %T, want nil", notifier)
+	}
+	if !errors.Is(err, ErrFIDO2InvalidNotifyCommand) {
+		t.Fatalf("err = %v, want ErrFIDO2InvalidNotifyCommand", err)
+	}
+	if !errors.Is(err, notify.ErrTemplatePlaceholder) {
+		t.Fatalf("err = %v, want notify.ErrTemplatePlaceholder", err)
 	}
 }
 

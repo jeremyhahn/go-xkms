@@ -1,6 +1,6 @@
 # Static Passwords — CLI
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 Every flag below is read from `cmd/xkey/cmd/password.go`/`touch.go`'s
 `init()` and matches `xkey password <verb> --help`/`xkey touch --help`
@@ -179,5 +179,5 @@ tracked in #871; until it lands, set these via flags:
 | `--password-store` | `~/.xkey/data/staticpw` | Path to the static password store |
 | `--socket` | `$XDG_RUNTIME_DIR/xkey/xkey.sock` | IPC socket path |
 | `--default-password` | (none) | Password name typed on a bare `xkey touch` |
-| `--notify-command` | (none) | Custom notification command; template vars `%o` `%r` `%n` `%u` |
+| `--notify-command` | (none) | Custom notification command (argv only, no shell); request data via `XKEY_OPERATION`/`XKEY_RP_ID`/`XKEY_RP_NAME`/`XKEY_USER_NAME` env vars |
 | `--notify` | `dialog` | `dialog`, `passive`, `log`, or `none` |
