@@ -398,6 +398,10 @@ func FrostCommands() []CommandDefinition {
 			RequiresServer: false,
 			RequiresLocal:  true,
 			BuildTags:      []string{"frost"},
+			// Every package is encrypted to a participant recipient key
+			// (--recipient), which `frost recipient` must create first:
+			// exercised by frost_parity_test.go's dealer workflows.
+			RequiresSetup: true,
 			RequiredArgs: []ArgDefinition{
 				{Flag: "key-id", Value: "frost-dealer-key", Description: "Key ID"},
 				{Flag: "threshold", Value: "2", Description: "Threshold"},

@@ -1,6 +1,6 @@
 # FROST Threshold Signing — CLI
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1324)
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1337)
 
 `xkmsctl frost` requires a binary built with `-tags frost`
 (`go build -tags frost ./cmd/xkmsctl`); without the tag, every subcommand
@@ -20,7 +20,7 @@ platform namespace the server keeps apart from every tenant's keys (see
 
 ## Local storage and the FROST passphrase
 
-`frostStoreDirs` (`cmd/xkmsctl/frost.go:1167`) creates `<key-dir>` (when
+`frostStoreDirs` (`cmd/xkmsctl/frost.go:1305`) creates `<key-dir>` (when
 absent), `<key-dir>/frost`, `<key-dir>/frost/public` and
 `<key-dir>/frost/secrets` with mode `0700`, and re-modes the three FROST
 directories to `0700` if they already exist.
@@ -28,17 +28,19 @@ directories to `0700` if they already exist.
 - `<key-dir>/frost/public` holds the group public key, verification shares,
   metadata and each key's **sealed** secret share (AES-256-GCM under a key
   HKDF-derived from the wrapping key).
-- `<key-dir>/frost/secrets` holds that Ed25519 wrapping key as **encrypted
-  PKCS#8** (PBES2, PBKDF2 + AES-256-CBC) under the FROST passphrase. The
-  PKCS#8 backend holding it runs with `AllowPlaintextKeys` false, so it
-  refuses to write the key unencrypted.
+- `<key-dir>/frost/secrets` holds that Ed25519 wrapping key and, once
+  `frost recipient` has run, the ECDSA P-256 recipient key that dealer
+  packages are encrypted to. Both are **encrypted PKCS#8** (PBES2, PBKDF2 +
+  AES-256-CBC) under the FROST passphrase. The PKCS#8 backend holding them
+  runs with `AllowPlaintextKeys` false, so it refuses to write a key
+  unencrypted.
 
 Read access to `--key-dir` therefore yields neither a share nor the key that
 seals it without the passphrase.
 
-The verbs that seal or unseal a share — `keygen` in participant mode,
+The verbs that use those keys — `keygen` in participant mode, `recipient`,
 `import`, `round1`, `round2` — require the passphrase
-(`openFrostShareBackend`, `frost.go:1218`). `list`, `info`, `delete`,
+(`openFrostLocalStore`, `frost.go:1363`). `list`, `info`, `delete`,
 `aggregate` and `verify` touch only public material and never ask for it.
 The passphrase is taken from exactly one source, in precedence order
 (`cmd/xkmsctl/frost_passphrase.go:81`); it is never accepted as a flag value:
@@ -58,7 +60,7 @@ the passphrase it is given; every later run must supply the same one.
 | `ErrFrostPassphraseRequired` | No source supplied. xkmsctl has no local hardware backend for the wrapping key, so it refuses to run. |
 | `ErrFrostPassphraseEmpty` | The chosen source is empty. |
 | `ErrReadFrostPassphraseFailed` | Stdin or the file could not be read. |
-| `ErrFrostPassphraseRejected` | The stored wrapping key does not decrypt under the passphrase: wrong passphrase, a store written before #1324, or corruption. |
+| `ErrFrostPassphraseRejected` | The stored wrapping key or recipient key does not decrypt under the passphrase: wrong passphrase, a store written before #1324, or corruption. |
 | `ErrFrostWrapBackendUnsupported` | `--backend` is anything but `software`. The local store cannot hold its wrapping key in a TPM or HSM, so it refuses instead of ignoring the flag. |
 
 ```bash
@@ -72,7 +74,7 @@ printf '%s' "$FROST_PASSPHRASE" | xkmsctl frost round1 --key-id demo --output r1
 ## `xkmsctl frost keygen`
 
 Generate FROST key packages using the trusted-dealer model
-(`cmd/xkmsctl/frost.go:160`).
+(`cmd/xkmsctl/frost.go:167`).
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -83,6 +85,7 @@ Generate FROST key packages using the trusted-dealer model
 | `--key-id` | auto (`frost-key-<unixnano>`) | Custom key identifier. |
 | `--participant-id` | `0` | This participant's ID, `1..total`. `0` selects dealer mode. |
 | `--export-dir` | — | Export every participant's package to this directory (dealer mode). |
+| `--recipient` | — | Dealer mode: `<participant-id>=<public-key-file>`, the recipient key that participant's package is encrypted to. One per participant, repeatable or comma-separated. |
 | `--passphrase-stdin` / `--passphrase-file` | — | FROST passphrase source; participant mode only (see above). |
 
 Two modes, selected by the flags above:
@@ -90,31 +93,77 @@ Two modes, selected by the flags above:
 - **Dealer mode** (`--participant-id 0` or `--export-dir` set) — generates
   all N packages and writes one JSON file per participant to `--export-dir`
   (`participant_<id>.json`, or `<name>_participant_<id>.json` when
-  `--participants` is given). Requires `--export-dir`; its absence is
-  `ErrDealerModeExportDirRequired`.
+  `--participants` is given), mode `0600` in a `0700` directory. Requires
+  `--export-dir`; its absence is `ErrDealerModeExportDirRequired`. Each file
+  is encrypted to its participant's recipient key (see
+  [`frost recipient`](#xkmsctl-frost-recipient)), so dealer mode needs a
+  `--recipient` for every participant and no passphrase. Every recipient key
+  is read and checked before anything is generated.
 - **Participant mode** (`--participant-id N`, `1 <= N <= total`) — generates
   the full dealer output in memory, keeps only participant N's package, and
   stores it locally via a `client.FrostBackend` under `--key-dir`. Requires
   the FROST passphrase.
 
+| Error (`cmd/xkmsctl/errors.go`) | When |
+|---|---|
+| `*FrostRecipientMissingError` | Dealer mode has no `--recipient` for participant `ID`. |
+| `ErrFrostRecipientSpecInvalid` | A `--recipient` is not `<id>=<file>`, or its ID is outside `1..--total`. |
+| `ErrFrostRecipientDuplicate` | Two `--recipient` values name the same participant. |
+| `ErrFrostRecipientReused` | Two participants are given the same public key. One holder would get two shares, lowering the number of people needed to sign. |
+| `ErrFrostRecipientKeyInvalid` | The file is unreadable or is not a PEM ECDSA P-256 public key. |
+| `ErrFrostRecipientParticipantMode` | `--recipient` given in participant mode, which exports nothing. |
+
 ```bash
-# Dealer mode: generate and export all packages
-xkmsctl frost keygen --key-id mykey --threshold 2 --total 3 --export-dir ./packages
+# Dealer mode: generate all packages, each encrypted to its participant
+xkmsctl frost keygen --key-id mykey --threshold 2 --total 3 --export-dir ./packages \
+  --recipient 1=alice.pem --recipient 2=bob.pem --recipient 3=carol.pem
 
 # Participant mode: generate and store locally (participant 1)
 xkmsctl frost keygen --key-id mykey --threshold 2 --total 3 --participant-id 1 \
   --passphrase-file ./frost.passphrase
 ```
 
+## `xkmsctl frost recipient`
+
+Create, on first use, the recipient key that the dealer encrypts this
+participant's package to, and print its public half (`frost.go:558`). The
+private key is stored in `<key-dir>/frost/secrets` as encrypted PKCS#8
+under the FROST passphrase and is used only by `import`. Running it again
+prints the same key.
+
+| Flag | Meaning |
+|---|---|
+| `--public-key-file` | Also write the public key, PEM (PKIX), to this file (mode `0644`). |
+| `--passphrase-stdin` / `--passphrase-file` | FROST passphrase source (see above). |
+
+The output carries `public_key` (PEM) and `recipient_id`, the RFC 7638
+SHA-256 JWK thumbprint of the key. Read `recipient_id` to the dealer over a
+channel other than the one that carried the file: a dealer given a
+substituted key encrypts your share to whoever substituted it.
+
+```bash
+xkmsctl frost recipient --public-key-file alice.pem --passphrase-file ./frost.passphrase
+```
+
 ## `xkmsctl frost import`
 
-Import a key package file received from a dealer (`frost.go:385`). Seals
-the share, so it requires the FROST passphrase.
+Import a key package file received from a dealer (`frost.go:426`). Decrypts
+the package with this `--key-dir`'s recipient key and seals the share, so it
+requires the FROST passphrase. Nothing is stored until the package has
+decrypted.
 
 | Flag | Meaning |
 |---|---|
 | `--package` | Path to the exported package JSON (required). |
 | `--passphrase-stdin` / `--passphrase-file` | FROST passphrase source (see above). |
+
+| Error (`cmd/xkmsctl/errors.go`) | When |
+|---|---|
+| `ErrFrostRecipientKeyMissing` | This `--key-dir` has no recipient key: `frost recipient` was never run here. |
+| `ErrFrostPackageRecipientMismatch` | The package is encrypted to a different recipient key: another participant's package, or another `--key-dir`. |
+| `ErrFrostPackageDecryptFailed` | The package names this recipient key but fails authenticated decryption: modified or corrupt. |
+| `ErrFrostPackageNotEncrypted` | The file has no encrypted package, for example a plaintext export from an earlier build. The dealer must re-export it with `--recipient`. |
+| `ErrFrostPassphraseRejected` | The recipient key does not decrypt under the passphrase. |
 
 ```bash
 xkmsctl frost import --package ./alice_participant_1.json --passphrase-file ./frost.passphrase
@@ -122,7 +171,7 @@ xkmsctl frost import --package ./alice_participant_1.json --passphrase-file ./fr
 
 ## `xkmsctl frost list`
 
-List FROST keys stored under `--key-dir` (`frost.go:496`).
+List FROST keys stored under `--key-dir` (`frost.go:634`).
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -130,7 +179,7 @@ List FROST keys stored under `--key-dir` (`frost.go:496`).
 
 ## `xkmsctl frost info <key-id>`
 
-Show details for one key (`frost.go:553`). Reads only the public key
+Show details for one key (`frost.go:691`). Reads only the public key
 package and metadata; it never unseals the share.
 
 | Flag | Default | Meaning |
@@ -140,12 +189,12 @@ package and metadata; it never unseals the share.
 
 ## `xkmsctl frost delete <key-id>`
 
-Delete a key and its local data (`frost.go:607`). Prompts for confirmation
+Delete a key and its local data (`frost.go:745`). Prompts for confirmation
 unless `-f, --force` is set.
 
 ## `xkmsctl frost round1`
 
-Generate this participant's nonces and commitments (`frost.go:674`).
+Generate this participant's nonces and commitments (`frost.go:812`).
 Unseals the share, so it requires the FROST passphrase.
 
 | Flag | Meaning |
@@ -156,7 +205,7 @@ Unseals the share, so it requires the FROST passphrase.
 
 ## `xkmsctl frost round2`
 
-Generate this participant's signature share (`frost.go:757`). Unseals the
+Generate this participant's signature share (`frost.go:895`). Unseals the
 share, so it requires the FROST passphrase.
 
 | Flag | Meaning |
@@ -170,7 +219,7 @@ share, so it requires the FROST passphrase.
 
 ## `xkmsctl frost aggregate`
 
-Combine signature shares into the final signature (`frost.go:899`).
+Combine signature shares into the final signature (`frost.go:1037`).
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -184,7 +233,7 @@ Combine signature shares into the final signature (`frost.go:899`).
 
 ## `xkmsctl frost verify`
 
-Verify a signature against the stored group public key (`frost.go:1032`).
+Verify a signature against the stored group public key (`frost.go:1170`).
 
 | Flag | Meaning |
 |---|---|
@@ -194,7 +243,7 @@ Verify a signature against the stored group public key (`frost.go:1032`).
 
 ## Message input (`round2`, `aggregate`, `verify`)
 
-`getMessage` (`frost.go:1106`) resolves the signed payload from exactly one
+`getMessage` (`frost.go:1244`) resolves the signed payload from exactly one
 of:
 
 - `-m, --message <string>` — used verbatim as bytes.
@@ -207,13 +256,18 @@ Supplying none is `ErrMessageInputRequired`.
 ## Worked M-of-3 example (single operator, illustrative)
 
 ```bash
-# Dealer generates and exports three packages
-xkmsctl frost keygen --key-id demo --threshold 2 --total 3 \
-  --participants alice,bob,charlie --export-dir ./packages
-
-# Each participant imports their own package (run once per identity/key-dir);
-# the share verbs below read the passphrase from the environment
+# Each participant creates a recipient key in their own key-dir and sends
+# the public key to the dealer; the verbs below read the passphrase from
+# the environment
 read -rs XKMS_FROST_PASSPHRASE && export XKMS_FROST_PASSPHRASE
+xkmsctl frost recipient --public-key-file alice.pem
+
+# Dealer generates three packages, each encrypted to its participant
+xkmsctl frost keygen --key-id demo --threshold 2 --total 3 \
+  --participants alice,bob,charlie --export-dir ./packages \
+  --recipient 1=alice.pem --recipient 2=bob.pem --recipient 3=charlie.pem
+
+# Each participant imports their own package into the same key-dir
 xkmsctl frost import --package ./packages/alice_participant_1.json
 
 # Two of the three run round1

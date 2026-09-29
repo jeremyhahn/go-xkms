@@ -1,6 +1,6 @@
 # FROST Threshold Signing — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1324)
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1337)
 
 All symbols below require `-tags frost` unless noted. See
 [`architecture.md`](architecture.md) for why the CLI and network-API surfaces
@@ -112,15 +112,46 @@ of hardware protecting the wrapping key (go-xkms#1324):
 
 | Step | Code | Behaviour |
 |---|---|---|
-| Directories | `frostStoreDirs` (`frost.go:1167`) | `MkdirAll` of `<key-dir>/frost/{public,secrets}` with `0700`, then `Chmod 0700` on the three FROST directories. `<key-dir>` is only created, never re-moded. |
-| Backend check | `openFrostShareBackend` (`frost.go:1218`) | `--backend` must be `software`; anything else is `ErrFrostWrapBackendUnsupported`. |
+| Directories | `frostStoreDirs` (`frost.go:1305`) | `MkdirAll` of `<key-dir>/frost/{public,secrets}` with `0700`, then `Chmod 0700` on the three FROST directories. `<key-dir>` is only created, never re-moded. |
+| Backend check | `openFrostLocalStore` (`frost.go:1363`) | `--backend` must be `software`; anything else is `ErrFrostWrapBackendUnsupported`. |
 | Passphrase | `resolveFrostPassphrase` (`frost_passphrase.go:65`) | `--passphrase-stdin`, then `--passphrase-file`, then `XKMS_FROST_PASSPHRASE`; one trailing line ending trimmed; held as a `client.Password` (memguard enclave); raw bytes wiped. No flag accepts the value. |
-| Wrapping-key backend | `newFrostWrapKeyProvider` (`frost.go:1248`) | `client.NewPKCS8Backend` over `<key-dir>/frost/secrets` with `AllowPlaintextKeys` false. |
-| Wrapping key | `ensureFrostWrapKey` (`frost.go:1270`) | `AsymmetricSecretSealKeyAttributes(StoreSoftware)` with `Password` set, provisioned by `EnsurePrivateSealKey`, so the key is written as encrypted PKCS#8 (PBES2). A decode failure (`client.ErrPKCS8KeyDecodingFailed`) is `ErrFrostPassphraseRejected`; any other failure is `ErrProvisionFrostSealKeyFailed`. |
-| Public verbs | `openFrostPublicBackend` (`frost.go:1195`) | Same PKCS#8 backend, no passphrase, no provisioning: a seal or unseal through it fails to decode the wrapping key. `info` reads `PublicKeyPackage` rather than unsealing. |
+| Wrapping-key backend | `newFrostWrapKeyProvider` (`frost.go:1412`) | `client.NewPKCS8Backend` over `<key-dir>/frost/secrets` with `AllowPlaintextKeys` false. |
+| Wrapping key | `ensureFrostWrapKey` (`frost.go:1434`) | `AsymmetricSecretSealKeyAttributes(StoreSoftware)` with `Password` set, provisioned by `EnsurePrivateSealKey`, so the key is written as encrypted PKCS#8 (PBES2). A decode failure (`client.ErrPKCS8KeyDecodingFailed`) is `ErrFrostPassphraseRejected`; any other failure is `ErrProvisionFrostSealKeyFailed`. |
+| Public verbs | `openFrostPublicBackend` (`frost.go:1333`) | Same PKCS#8 backend, no passphrase, no provisioning: a seal or unseal through it fails to decode the wrapping key. `info` reads `PublicKeyPackage` rather than unsealing. |
 
 `import` stores through `FrostBackend.ImportKeyPackage`, so it shares this
 wiring rather than building its own `KeyStore`.
+
+### Dealer package encryption (`cmd/xkmsctl/frost_export.go`, go-xkms#1337)
+
+Dealer-mode `keygen` encrypts each participant's package to a recipient key
+that participant created, so only they can import it. The package is a JWE
+(RFC 7516) built with the SDK's existing `NewJWEEncrypter`/`NewJWEDecrypter`
+(`pkg/encoding/jwe`): `ECDH-ES+A256KW` key management to an ECDSA P-256
+recipient key and `A256GCM` content encryption. All four primitives (P-256
+ECDH, the RFC 7518 Concat KDF over SHA-256, AES Key Wrap, AES-GCM) are FIPS
+140-3 approved, so the export works under `GODEBUG=fips140=only`; an
+X25519/age-style box would not.
+
+| Step | Code | Behaviour |
+|---|---|---|
+| Recipient key | `frostRecipientKeyAttributes`, `ensureFrostRecipientKey`, `loadFrostRecipientKey` (`frost_export.go:66`, `:79`, `:94`) | ECDSA P-256, CN `frost-share-recipient`, `KeyTypeEncryption`, `StoreSoftware`, `Password` = the FROST passphrase, in the same PKCS#8 backend as the wrapping key. `ensure` provisions via `EnsurePrivateSealKey`; `load` never creates (`ErrFrostRecipientKeyMissing`). A decode failure is `ErrFrostPassphraseRejected`. |
+| Recipient ID | `frostRecipientID` (`frost_export.go:123`) | RFC 7638 SHA-256 JWK thumbprint (`client.JWKThumbprintSHA256`). It is the JWE `kid` and what `frost recipient` prints for out-of-band confirmation. |
+| Dealer input | `parseFrostRecipients` (`frost_export.go:149`) | `--recipient <id>=<pem>` for every ID `1..total`. Refuses a bad spec, an out-of-range, duplicate or missing ID, a non-P-256 key, and one key given for two participants. Runs before generation. |
+| Encrypt | `encryptKeyPackageExport` (`frost_export.go:193`) | JSON-encodes the `KeyPackageExport` (unchanged inner format), encrypts it with `kid` in the protected header, wipes the plaintext buffer. |
+| Decrypt | `decryptKeyPackageExport` (`frost_export.go:226`) | Empty `package` is `ErrFrostPackageNotEncrypted`; a `kid` other than this store's recipient ID is `ErrFrostPackageRecipientMismatch`; a failed GCM open is `ErrFrostPackageDecryptFailed`. |
+| Import | `readFrostPackage` (`frost.go:541`) | Reads the file, loads the recipient key, decrypts. `import` stores nothing until this succeeds. |
+
+The exported file is `EncryptedKeyPackageExport`: `key_id`, `participant_id`
+and `participant_name` in the clear as routing labels, and `package`, the
+JWE compact serialization. `import` reads every stored value from the
+decrypted package, never from the clear labels. The protected header,
+including `kid`, is authenticated as GCM additional data.
+
+The recipient's public key must reach the dealer with integrity. JWE
+provides confidentiality to whichever key the dealer was given; confirming
+`recipient_id` over a second channel is the operator's control against a
+substituted key.
 
 ## Ciphersuites (`pkg/keyprovider/frost/ciphersuite.go`)
 
@@ -279,6 +310,14 @@ ID: they are platform keys, invisible to every tenant. There is no migration.
   `0700`, including pre-existing `0755` ones; the public backend reads
   public material but cannot unseal; passphrase source precedence, empty
   and unreadable sources, and flag mutual exclusion.
+- `cmd/xkmsctl/frost_export_test.go` (`-tags frost`) covers dealer package
+  encryption: the recipient key is stable across runs and stored as PBES2
+  encrypted PKCS#8; an exported file contains the share in no encoding (hex,
+  raw, base64) and has no `secret_share` field; a real dealer package
+  round-trips through `readFrostPackage` and `ImportKeyPackage`; another
+  participant's key, a wrong passphrase, a store with no recipient key, a
+  tampered ciphertext and a plaintext package are each refused with their
+  typed error; and every `--recipient` refusal in `parseFrostRecipients`.
 - `pkg/xkms/register_frost_test.go` covers the `newFROSTKeyProvider` factory
   itself: fails closed with `pkcs8.ErrPlaintextKeyNotAllowed` on a nil or
   empty config (go-xkms#1237's reproduction); with

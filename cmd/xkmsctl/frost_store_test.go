@@ -192,24 +192,29 @@ func TestFrostShareBackend_WrappingKeyIsEncryptedPKCS8(t *testing.T) {
 	if len(keyBlobs) != 1 {
 		t.Fatalf("secrets directory holds %d key blobs, want exactly the wrapping key", len(keyBlobs))
 	}
-	der := keyBlobs[0]
+	requireEncryptedPKCS8(t, "wrapping key", keyBlobs[0])
+}
 
+// requireEncryptedPKCS8 fails the test unless der is a PBES2-encrypted
+// PKCS#8 EncryptedPrivateKeyInfo, never plaintext PKCS#8.
+func requireEncryptedPKCS8(t *testing.T, name string, der []byte) {
+	t.Helper()
 	if _, err := x509.ParsePKCS8PrivateKey(der); err == nil {
-		t.Fatal("wrapping key parses as plaintext PKCS#8; it must be encrypted")
+		t.Fatalf("%s parses as plaintext PKCS#8; it must be encrypted", name)
 	}
 	var info encryptedPrivateKeyInfo
 	rest, err := asn1.Unmarshal(der, &info)
 	if err != nil {
-		t.Fatalf("wrapping key is not an EncryptedPrivateKeyInfo: %v", err)
+		t.Fatalf("%s is not an EncryptedPrivateKeyInfo: %v", name, err)
 	}
 	if len(rest) != 0 {
-		t.Fatalf("wrapping key has %d trailing bytes", len(rest))
+		t.Fatalf("%s has %d trailing bytes", name, len(rest))
 	}
 	if !info.Algorithm.Algorithm.Equal(oidPBES2) {
-		t.Fatalf("wrapping key encryption algorithm = %v, want PBES2 %v", info.Algorithm.Algorithm, oidPBES2)
+		t.Fatalf("%s encryption algorithm = %v, want PBES2 %v", name, info.Algorithm.Algorithm, oidPBES2)
 	}
 	if len(info.EncryptedData) == 0 {
-		t.Fatal("wrapping key has no encrypted payload")
+		t.Fatalf("%s has no encrypted payload", name)
 	}
 }
 
