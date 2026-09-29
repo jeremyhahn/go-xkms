@@ -13,16 +13,20 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
-import type { AuthMeResponse, UserInfo, CreateUserRequest, UpdateUserRequest } from "@go-xkms/sdk";
+import type { AuthMeResponse, UserInfo, CreateUserRequest } from "@go-xkms/sdk";
 
 const authMe = vi.fn<() => Promise<AuthMeResponse>>();
 const list = vi.fn<() => Promise<{ users: UserInfo[]; page: number; page_size: number; total: number; has_more: boolean }>>();
 const create = vi.fn<(req: CreateUserRequest) => Promise<UserInfo>>();
-const update = vi.fn<(username: string, req: UpdateUserRequest) => Promise<UserInfo>>();
+const enableUser = vi.fn<(username: string) => Promise<UserInfo>>();
+const disableUser = vi.fn<(username: string) => Promise<UserInfo>>();
 const del = vi.fn();
 
 vi.mock("../src/stores/sdkClient.ts", () => ({
-  getSDKClient: () => ({ auth: { me: authMe }, users: { list, create, update, delete: del } }),
+  getSDKClient: () => ({
+    auth: { me: authMe },
+    users: { list, create, enable: enableUser, disable: disableUser, delete: del },
+  }),
   resetSDKClient: () => {},
 }));
 
@@ -99,8 +103,8 @@ describe("UsersView", () => {
     expect(await screen.findByText("user directory unavailable")).toBeInTheDocument();
   });
 
-  it("hides create/update/delete controls without the matching permission", async () => {
-    await withPermissions({ "users:create": false, "users:update": false, "users:delete": false });
+  it("hides create/disable/delete controls without the matching permission", async () => {
+    await withPermissions({ "users:create": false, "users:disable": false, "users:delete": false });
     list.mockResolvedValue({ users: [user()], page: 1, page_size: 50, total: 1, has_more: false });
 
     render(UsersView);
@@ -111,8 +115,8 @@ describe("UsersView", () => {
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
   });
 
-  it("shows create/update/delete controls with the matching permission", async () => {
-    await withPermissions({ "users:create": true, "users:update": true, "users:delete": true });
+  it("shows create/disable/delete controls with the matching permission", async () => {
+    await withPermissions({ "users:create": true, "users:disable": true, "users:delete": true });
     list.mockResolvedValue({ users: [user()], page: 1, page_size: 50, total: 1, has_more: false });
 
     render(UsersView);
@@ -160,40 +164,40 @@ describe("UsersView", () => {
     expect(await screen.findByText("username already taken")).toBeInTheDocument();
   });
 
-  it("disables an enabled user through UpdateUserRequest{enabled}", async () => {
-    await withPermissions({ "users:update": true });
+  it("disables an enabled user through POST .../disable", async () => {
+    await withPermissions({ "users:disable": true });
     list.mockResolvedValue({ users: [user({ enabled: true })], page: 1, page_size: 50, total: 1, has_more: false });
-    update.mockResolvedValue(user({ enabled: false }));
+    disableUser.mockResolvedValue(user({ enabled: false }));
 
     render(UsersView);
     await screen.findByText("alice");
 
     await fireEvent.click(screen.getByRole("button", { name: "Disable" }));
 
-    await waitFor(() => expect(update).toHaveBeenCalledOnce());
-    expect(update.mock.calls[0]![0]).toBe("alice");
-    // The update DTO carries only `enabled` — the toggled value.
-    expect(update.mock.calls[0]![1]).toEqual({ enabled: false });
+    await waitFor(() => expect(disableUser).toHaveBeenCalledOnce());
+    expect(disableUser.mock.calls[0]![0]).toBe("alice");
+    expect(enableUser).not.toHaveBeenCalled();
   });
 
-  it("enables a disabled user through UpdateUserRequest{enabled}", async () => {
-    await withPermissions({ "users:update": true });
+  it("enables a disabled user through POST .../enable", async () => {
+    await withPermissions({ "users:enable": true });
     list.mockResolvedValue({ users: [user({ enabled: false })], page: 1, page_size: 50, total: 1, has_more: false });
-    update.mockResolvedValue(user({ enabled: true }));
+    enableUser.mockResolvedValue(user({ enabled: true }));
 
     render(UsersView);
     await screen.findByText("alice");
 
     await fireEvent.click(screen.getByRole("button", { name: "Enable" }));
 
-    await waitFor(() => expect(update).toHaveBeenCalledOnce());
-    expect(update.mock.calls[0]![1]).toEqual({ enabled: true });
+    await waitFor(() => expect(enableUser).toHaveBeenCalledOnce());
+    expect(enableUser.mock.calls[0]![0]).toBe("alice");
+    expect(disableUser).not.toHaveBeenCalled();
   });
 
   it("surfaces a toggle failure via toast", async () => {
-    await withPermissions({ "users:update": true });
+    await withPermissions({ "users:disable": true });
     list.mockResolvedValue({ users: [user({ enabled: true })], page: 1, page_size: 50, total: 1, has_more: false });
-    update.mockRejectedValue(new Error("cannot disable the last admin"));
+    disableUser.mockRejectedValue(new Error("cannot disable the last admin"));
 
     render(UsersView);
     await screen.findByText("alice");

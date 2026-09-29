@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — API
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 Transport shapes are described once in
 [`../key-management/api.md`](../key-management/api.md) §"How the six
@@ -35,19 +35,24 @@ Request (`pkg/api/rest/types.go:159-181`, `EncryptRequest`):
 `tag_size` is the AEAD tag length in bytes (0 selects the cipher's
 full-length tag; AES-GCM admits 12-16 bytes per NIST SP 800-38D §5.2.1.2).
 
-`nonce` may be used once per key per server process. A second encryption
-under the same key and nonce is refused, including a nonce the server
-generated for an earlier response and a nonce used by an AES-GCM wrap under
-that key. The error wraps `aead.ErrNonceReuse` and is reported as `409
-Conflict` (gRPC `AlreadyExists`, the MCP JSON-RPC duplicate code) through the
-shared `apierrors.AEADSentinelClasses` table (`pkg/api/apierrors/tables.go`)
-every transport's `mapKeyOpError` consults (go-xkms#1223); it used to fall
-through to the catch-all `500`. A bounded nonce tracker that has reached
-capacity wraps `aead.ErrNonceTrackerFull` and is reported as `503 Service
-Unavailable` (gRPC `ResourceExhausted`) through the same table. Leave `nonce`
-empty unless a protocol requires it. See [`architecture.md`](architecture.md)
-§"Caller-supplied nonces" for the limits: the record does not survive a
-restart and is not shared between cluster nodes.
+`nonce` may be used once per key, for the life of the deployment. A second
+encryption under the same key and nonce is refused, including a nonce the
+server generated for an earlier response and a nonce used by an AES-GCM wrap
+under that key. The refusal survives a server restart, and — when
+`Storage.Backend` is `qrdb` — is enforced across every node in the cluster,
+not only the node that saw the first request (go-xkms#1201). The error wraps
+`aead.ErrNonceReuse` and is reported as `409 Conflict` (gRPC `AlreadyExists`,
+the MCP JSON-RPC duplicate code) through the shared
+`apierrors.AEADSentinelClasses` table (`pkg/api/apierrors/tables.go`) every
+transport's `mapKeyOpError` consults (go-xkms#1223); it used to fall through
+to the catch-all `500`. A bounded nonce tracker that has reached capacity
+wraps `aead.ErrNonceTrackerFull` and is reported as `503 Service Unavailable`
+(gRPC `ResourceExhausted`) through the same table — that bound is on the
+in-memory tracker's own entry count, not on the persistent store. Leave
+`nonce` empty unless a protocol requires it. See
+[`architecture.md`](architecture.md) §"Persistence: a durable claim, not
+process memory alone" for how the durability is implemented, and §"Caller-supplied
+nonces" for the guard's identity and scope.
 
 A caller-supplied `nonce` against AWS KMS, GCP KMS, Vault Transit or a paired
 phone's symmetric backend is refused outright with

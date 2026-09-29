@@ -132,10 +132,10 @@ consumer  →  libxkms_pkcs11.so  (XKMS_PKCS11_MODE=local)
 ### Rejected: taking the tenant from the request body
 
 Earlier servers used the body's `tenant_id` as the key prefix, so any caller
-holding `keys:get` or `keys:write` could read, overwrite, swap or delete another
-tenant's token records and lockout counters. The route permission is
-self-scope and is always resolved against the caller's own tenant, so it could
-not catch this.
+holding a `keys:*` state-store permission — `get`, `create`, `update`, or
+`delete` — could read, overwrite, swap or delete another tenant's token
+records and lockout counters. The route permission is self-scope and is
+always resolved against the caller's own tenant, so it could not catch this.
 
 We also considered accepting only an empty `tenant_id`, the rule the key-op
 transports apply (`tenantForRequest`). It was rejected because the module sends

@@ -187,9 +187,9 @@ func (s *Server) handleDeleteUser(ctx context.Context, req *JSONRPCRequest) (int
 }
 
 // handleEnableUser handles the user.enable method. It mirrors the REST
-// transport's PUT /api/v1/users/{username}: apply the mutation, then read
-// the user back so the caller sees the effective state rather than a bare
-// acknowledgement.
+// transport's POST /api/v1/users/{username}/enable: apply the mutation,
+// then read the user back so the caller sees the effective state rather
+// than a bare acknowledgement.
 func (s *Server) handleEnableUser(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UserUsernameParams
 	if err := decodeParams(req, &params); err != nil {

@@ -1250,24 +1250,64 @@ func isRetryable(err error) bool {
 
 ### Bring Your Own Key (BYOK)
 
-Import your own key material:
+The azurekv backend implements Azure Key Vault's native BYOK flow end to
+end through the `backend.ImportExportBackend` interface
+(`GetImportParameters` / `WrapKey` / `ImportKey`). The target key's
+plaintext never exists inside xkms at any point in the ceremony:
+
+1. **`GetImportParameters`** ensures a vault-scoped RSA-HSM
+   key-encryption key (KEK) exists -- created once, with the `import` key
+   operation, and reused by every later ceremony against the same vault --
+   and returns its public half. The call is bound to a fresh, random,
+   single-use import token that records the KEK's `kid` and the wrapping
+   algorithm, with a bounded TTL (`pkg/backend/importtoken`).
+2. **`WrapKey`** wraps the caller's key material client-side against the
+   KEK's public key using `CKM_RSA_AES_KEY_WRAP` -- RSA-OAEP-256 wraps an
+   ephemeral AES-256 key, which wraps the target key material with
+   AES-KWP -- the wire format Azure Key Vault's `key_hsm` field requires.
+   Only this ciphertext is ever transmitted.
+3. **`ImportKey`** sends the wrapped blob to Azure Key Vault as the JWK
+   `key_hsm` field (`T`) with `HSM: true`, after checking the import
+   token is unexpired, unused, and was issued for the same wrapping
+   algorithm and the same KEK `kid` still current in the vault. Azure's
+   HSM performs the corresponding unwrap itself, using the KEK's private
+   half, which never leaves the HSM boundary.
+
+`UnwrapKey` is intentionally unsupported (`backend.ErrNotSupported`) for
+this backend: there is no local unwrap step for native BYOK, and this
+process never holds the KEK's private half to perform one.
+
+```go
+importExportBackend := backend.(backend.ImportExportBackend)
+
+// 1. Obtain the KEK's public key and a single-use import token.
+params, err := importExportBackend.GetImportParameters(ctx, attrs,
+    backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+
+// 2. Wrap the key material client-side. keyMaterial never leaves this
+//    process in plaintext after this call.
+wrapped, err := importExportBackend.WrapKey(ctx, keyMaterial, params)
+
+// 3. Send the wrapped blob to Azure Key Vault; Azure's HSM unwraps it.
+err = importExportBackend.ImportKey(ctx, attrs, wrapped)
+```
+
+Equivalent `az` CLI reference for a KEK and BYOK import created outside
+xkms:
 
 ```bash
-# Generate key locally
-openssl genrsa -out mykey.pem 2048
-
 # Create key exchange key
 az keyvault key create --vault-name myVault \
-  --name KEK --kty RSA-HSM --size 2048 --protection hsm
+  --name KEK --kty RSA-HSM --size 2048 --protection hsm --ops import
 
 # Download public key
 az keyvault key download --vault-name myVault \
   --name KEK --file kek_public.pem
 
-# Wrap your key (requires Azure Key Vault Key Encryptioni Toolkit)
-# Import wrapped key
+# Wrap your key with CKM_RSA_AES_KEY_WRAP against kek_public.pem, then
+# import the resulting blob as key_hsm:
 az keyvault key import --vault-name myVault \
-  --name imported-key --pem-file mykey.pem --protection hsm
+  --name imported-key --byok-file wrapped-key.byok --protection hsm
 ```
 
 ### Automated Key Rotation

@@ -272,6 +272,33 @@ type pkcs11SymmetricEncrypter struct {
 	handle  pkcs11.ObjectHandle
 }
 
+// claimNonce atomically claims (this key, nonce) against the shared,
+// optionally-persistent aead.KeyNonceGuard, in one step, replacing the old
+// STEP 3 check / STEP 5 record pair the per-backend AEADSafetyTracker used
+// to perform non-atomically (go-xkms#1201).
+//
+// A PKCS#11 key's material never leaves the token -- backend.ErrNotSupported
+// is passed literally rather than obtained from a Raw() call, since none
+// exists for this backend -- so the claim identifies the key by
+// e.attrs.ID() instead, which already encodes the tenant, partition, backend
+// (StoreType), key type, common name and algorithm.
+//
+// wasCallerSupplied distinguishes a nonce the caller of Encrypt provided
+// (opts.Nonce != nil) from one this encrypter generated itself: a generated
+// nonce still encrypts once the guard's bounded in-memory tracker is full,
+// because it is fresh by construction and cannot itself be a repeat; see
+// backend.ClaimGeneratedAEADNonce.
+func (e *pkcs11SymmetricEncrypter) claimNonce(wasCallerSupplied bool, nonce []byte) error {
+	claim := backend.ClaimGeneratedAEADNonce
+	if wasCallerSupplied {
+		claim = backend.ClaimAEADNonce
+	}
+	if err := claim(context.Background(), nil, backend.ErrNotSupported, e.attrs.ID(), nonce); err != nil {
+		return &errs.Wrapped{Msg: "AEAD safety check failed", Err: err}
+	}
+	return nil
+}
+
 // Encrypt encrypts plaintext using the symmetric key on the HSM.
 // For AES-GCM, this provides authenticated encryption with additional data support.
 func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions) (encrypted *types.EncryptedData, err error) {
@@ -368,11 +395,9 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		}
 	}
 
-	// STEP 3: Check nonce uniqueness BEFORE encryption
-	if e.backend.tracker != nil {
-		if err := e.backend.tracker.CheckNonce(label, nonce); err != nil {
-			return nil, &errs.Wrapped{Msg: "AEAD safety check failed", Err: err}
-		}
+	// STEP 3: Claim (key, nonce) uniqueness BEFORE encryption
+	if err := e.claimNonce(opts.Nonce != nil, nonce); err != nil {
+		return nil, err
 	}
 
 	// Set up GCM parameters
@@ -450,13 +475,6 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 
 	tag := ciphertext[len(ciphertext)-tagSize:]
 	ciphertextOnly := ciphertext[:len(ciphertext)-tagSize]
-
-	// STEP 5: Record nonce after successful encryption
-	if e.backend.tracker != nil {
-		if err := e.backend.tracker.RecordNonce(label, nonce); err != nil {
-			fmt.Printf("warning: failed to record nonce: %v\n", err)
-		}
-	}
 
 	return &types.EncryptedData{
 		Ciphertext: ciphertextOnly,

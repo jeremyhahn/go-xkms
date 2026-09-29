@@ -58,9 +58,14 @@ type AndroidSecurityLevel = android.SecurityLevel
 // and signing certificate digests) that requested an attested key.
 type AndroidAttestationApplicationID = android.AttestationApplicationID
 
-// AndroidAttestationExtensionOptions carries the teeEnforced
-// AuthorizationList claims a fixture can assert beyond RootOfTrust: Origin
-// and Purpose (go-xkms#132). It exists on the SDK surface for the same
+// AndroidAttestationPackageInfo is one package entry (name and version code)
+// inside an AndroidAttestationApplicationID.
+type AndroidAttestationPackageInfo = android.AttestationPackageInfo
+
+// AndroidAttestationExtensionOptions carries the AuthorizationList claims a
+// fixture can assert beyond RootOfTrust: the teeEnforced Origin and Purpose
+// (go-xkms#132) and the softwareEnforced attestationApplicationId
+// (go-xkms#1305). It exists on the SDK surface for the same
 // reason BuildAndroidAttestationExtension does: a consumer that cannot build
 // a synthetic attestation extension can only test its verifier against
 // fixtures borrowed from elsewhere, or reach past sdk/go into

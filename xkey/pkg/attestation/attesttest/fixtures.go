@@ -35,6 +35,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"math/big"
 	"testing"
 	"time"
@@ -103,9 +104,36 @@ func AttestedBootState() *xkms.AndroidRootOfTrust {
 // generates its attestation key under.
 func GenesisChallenge() []byte { return []byte(pairing.AttestGenesisChallenge) }
 
-// DeviceKeyClaims is the TEE-enforced Origin and Purpose a contract-faithful
-// device's attestation carries: the key was GENERATED inside secure hardware
-// and is authorized to SIGN (go-xkms#132).
+// AppPackage is the package name the fixture application attests under.
+const AppPackage = "com.automatethethings.xkey"
+
+// AppSigningDigest is the SHA-256 signing-certificate digest the fixture
+// application attests under.
+func AppSigningDigest() []byte { return FixedBytes(0x5a, 32) }
+
+// AttestedApplication is the attestationApplicationId the fixture application
+// presents: AppPackage signed by AppSigningDigest. A test proving the #1305
+// refusal replaces it on DeviceKeyClaims() to vary the package or the signer.
+func AttestedApplication() *xkms.AndroidAttestationApplicationID {
+	return &xkms.AndroidAttestationApplicationID{
+		Packages:         []xkms.AndroidAttestationPackageInfo{{Name: AppPackage, Version: 1}},
+		SignatureDigests: [][]byte{AppSigningDigest()},
+	}
+}
+
+// Applications is the allow-list that accepts AttestedApplication(), and only
+// it: the policy a verifier configured for the fixture application holds.
+func Applications() pairing.ApplicationPolicy {
+	return pairing.ApplicationPolicy{AllowedApplications: []pairing.AllowedApplication{{
+		PackageName:    AppPackage,
+		SigningDigests: []string{hex.EncodeToString(AppSigningDigest())},
+	}}}
+}
+
+// DeviceKeyClaims is the claims a contract-faithful device's attestation
+// carries: the TEE-enforced key was GENERATED inside secure hardware and is
+// authorized to SIGN (go-xkms#132), and the softwareEnforced
+// attestationApplicationId names the fixture application (go-xkms#1305).
 //
 // AttestedLeafDER and NewDAK default to this, because it is what every
 // SUCCEED fixture needs and what a real device answers. A test proving the
@@ -114,9 +142,10 @@ func GenesisChallenge() []byte { return []byte(pairing.AttestGenesisChallenge) }
 // already uses for boot state.
 func DeviceKeyClaims() *xkms.AndroidAttestationExtensionOptions {
 	return &xkms.AndroidAttestationExtensionOptions{
-		HasOrigin: true,
-		Origin:    xkms.AndroidOriginGenerated,
-		Purpose:   []int{xkms.AndroidPurposeSign},
+		HasOrigin:     true,
+		Origin:        xkms.AndroidOriginGenerated,
+		Purpose:       []int{xkms.AndroidPurposeSign},
+		ApplicationID: AttestedApplication(),
 	}
 }
 

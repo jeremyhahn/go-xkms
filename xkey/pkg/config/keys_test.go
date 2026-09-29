@@ -97,7 +97,9 @@ func TestRegisterConfigKeys_EveryScalarLeafReadsItsEnvironmentVariable(t *testin
 		t.Setenv("XKEY_"+strings.ToUpper(strings.ReplaceAll(key, ".", "_")), "probe-"+key)
 	}
 	require.Greater(t, scalar, 50, "the walk found too few scalar leaves")
-	require.Equal(t, 4, composite, "composite leaves: backends.local, backends.remote, backends.defaults, fido2.extensions")
+	require.Equal(t, 5, composite,
+		"composite leaves: backends.local, backends.remote, backends.defaults, fido2.extensions, "+
+			"policy.pairing_allowed_applications")
 
 	v := newViperInstance()
 	for key, typ := range leaves {

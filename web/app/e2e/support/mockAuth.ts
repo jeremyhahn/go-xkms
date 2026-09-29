@@ -61,6 +61,8 @@ export const ALL_PERMISSIONS: Record<string, boolean> = {
   'users:read': true,
   'users:create': true,
   'users:update': true,
+  'users:enable': true,
+  'users:disable': true,
   'users:delete': true,
   'audit:read': true,
   'tenants:list': true,

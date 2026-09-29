@@ -192,15 +192,14 @@ func setupUserHandlerTest(t *testing.T, users qrdbtransport.UserClient, roles qr
 		r.Post("/", s.handleCreateUser)
 		r.Get("/", s.handleListUsers)
 		r.Get("/{username}", s.handleGetUser)
-		r.Put("/{username}", s.handleUpdateUser)
+		r.Post("/{username}/enable", s.handleEnableUser)
+		r.Post("/{username}/disable", s.handleDisableUser)
 		r.Delete("/{username}", s.handleDeleteUser)
 		r.Post("/{username}/cert-bindings", s.handleBindUserCert)
 		r.Get("/{username}/credentials", s.handleListUserCredentials)
 	})
 	return r
 }
-
-func boolPtr(b bool) *bool { return &b }
 
 // ============================================================================
 // handleListUsers
@@ -314,10 +313,10 @@ func TestHandleListUserCredentials_ServiceNotInitialized(t *testing.T) {
 }
 
 // ============================================================================
-// handleUpdateUser
+// handleEnableUser / handleDisableUser
 // ============================================================================
 
-func TestHandleUpdateUser_Enable(t *testing.T) {
+func TestHandleEnableUser_Success(t *testing.T) {
 	enabled := false
 	users := &restMockUserClient{
 		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
@@ -330,9 +329,8 @@ func TestHandleUpdateUser_Enable(t *testing.T) {
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
 	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewReader(body)))
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/alice/enable", nil))
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.True(t, enabled)
@@ -341,7 +339,7 @@ func TestHandleUpdateUser_Enable(t *testing.T) {
 	assert.Equal(t, "alice", info["username"])
 }
 
-func TestHandleUpdateUser_Disable(t *testing.T) {
+func TestHandleDisableUser_Success(t *testing.T) {
 	users := &restMockUserClient{
 		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
 			return &qrdbtransport.User{ID: 4, Username: username, Lifecycle: string(qrdbsdk.LifecycleDisabled)}, nil
@@ -350,33 +348,13 @@ func TestHandleUpdateUser_Disable(t *testing.T) {
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(false)})
 	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/bob", bytes.NewReader(body)))
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/bob/disable", nil))
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
-func TestHandleUpdateUser_BadJSON(t *testing.T) {
-	r := setupUserHandlerTest(t, &restMockUserClient{}, &restMockRoleClient{})
-
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewBufferString("{not json")))
-
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-}
-
-func TestHandleUpdateUser_MissingEnabledField(t *testing.T) {
-	r := setupUserHandlerTest(t, &restMockUserClient{}, &restMockRoleClient{})
-
-	rr := httptest.NewRecorder()
-	// Valid JSON but no "enabled" key => body.Enabled stays nil => 400.
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewBufferString("{}")))
-
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-}
-
-func TestHandleUpdateUser_EnableError(t *testing.T) {
+func TestHandleEnableUser_EnableError(t *testing.T) {
 	users := &restMockUserClient{
 		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
 			return &qrdbtransport.User{ID: 5, Username: username}, nil
@@ -385,14 +363,13 @@ func TestHandleUpdateUser_EnableError(t *testing.T) {
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
 	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewReader(body)))
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/alice/enable", nil))
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-func TestHandleUpdateUser_GetAfterUpdateError(t *testing.T) {
+func TestHandleEnableUser_GetAfterUpdateError(t *testing.T) {
 	// Enable succeeds, but the follow-up GetUser fails => 500.
 	calls := 0
 	users := &restMockUserClient{
@@ -407,21 +384,30 @@ func TestHandleUpdateUser_GetAfterUpdateError(t *testing.T) {
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
 	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewReader(body)))
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/alice/enable", nil))
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-func TestHandleUpdateUser_ServiceNotInitialized(t *testing.T) {
+func TestHandleEnableUser_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	t.Cleanup(func() { xkms.Reset() })
 
 	s := &Server{}
-	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
 	rr := httptest.NewRecorder()
-	s.handleUpdateUser(rr, httptest.NewRequest(http.MethodPut, "/users/x", bytes.NewReader(body)))
+	s.handleEnableUser(rr, httptest.NewRequest(http.MethodPost, "/users/x/enable", nil))
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+}
+
+func TestHandleDisableUser_ServiceNotInitialized(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(func() { xkms.Reset() })
+
+	s := &Server{}
+	rr := httptest.NewRecorder()
+	s.handleDisableUser(rr, httptest.NewRequest(http.MethodPost, "/users/x/disable", nil))
 
 	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
 }

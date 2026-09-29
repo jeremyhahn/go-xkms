@@ -1099,3 +1099,87 @@ func (ca *CA) deleteIssuedKeyRecord(ctx context.Context, serial *big.Int) error 
 	}
 	return nil
 }
+
+// =============================================================================
+// Certificate Tenant Persistence Helpers
+// =============================================================================
+
+// certTenantPrefix is the object-store key prefix for the tenant recorded
+// against a certificate at issuance, a sibling of revocationKeyPrefix and
+// issuedKeyPrefix in the same store (ca.revocationStore): key state lives
+// under "cert-tenant/<serial-decimal>.json".
+const certTenantPrefix = "cert-tenant/"
+
+// persistedCertTenant is the on-disk form of a certificate's issuing-tenant
+// record. Kept separate from any in-memory type for the same reason as
+// persistedRevocation and persistedIssuedKey: stable JSON regardless of
+// future additions elsewhere.
+type persistedCertTenant struct {
+	Serial   string `json:"serial"`
+	TenantID string `json:"tenant_id,omitempty"`
+}
+
+// certTenantStorageKey returns the object-store key for a given serial
+// number's issuing-tenant record.
+func certTenantStorageKey(serial *big.Int) string {
+	return certTenantPrefix + serial.Text(10) + ".json"
+}
+
+// recordCertTenant persists tenantID (empty for the system/platform scope)
+// as the issuing tenant of the certificate identified by serial. signCSR
+// calls this for every certificate it issues -- both direct CSR signing
+// (SignCSR/SignCSRWithSPIFFE) and keypair issuance
+// (IssueCertificate/IssueCertificateWithProfile, which routes through
+// signCSR) -- so every certificate this CA issues through its end-entity
+// path has an owning tenant on record before it is handed to the caller.
+// RevokeCertificate (pkg/xkms/servicer_ca.go) reads the record back via
+// CertificateTenant to refuse a revoke request from a caller bound to a
+// different tenant (go-xkms#1229).
+//
+// TCG device-identity certificates (EK/AK/IDevID) and the CA's own
+// root/intermediate certificates do not go through signCSR and so carry no
+// record; CertificateTenant reports the system/platform scope for them,
+// which only a cross-tenant (system) caller may address.
+func (ca *CA) recordCertTenant(ctx context.Context, serial *big.Int, tenantID string) error {
+	if serial == nil {
+		return ErrInvalidCertificate
+	}
+	rec := persistedCertTenant{
+		Serial:   serial.Text(10),
+		TenantID: tenantID,
+	}
+	buf, err := json.Marshal(rec)
+	if err != nil {
+		return &errs.Wrapped{Msg: "ca: marshal cert tenant", Err: err}
+	}
+	if err := ca.revocationStore.Put(ctx, certTenantStorageKey(serial), buf); err != nil {
+		return &errs.Wrapped{Msg: "ca: persist cert tenant", Err: err}
+	}
+	return nil
+}
+
+// CertificateTenant returns the tenant recorded at issuance for the
+// certificate identified by serial, or the system/platform scope ("") when
+// no record exists -- either because the certificate was issued through a
+// path that does not record one (TCG device identity, CA hierarchy) or
+// because it predates this recording. Either way, only a cross-tenant caller
+// may then act on it; see recordCertTenant.
+//
+// Thread-safe: Yes
+func (ca *CA) CertificateTenant(ctx context.Context, serial *big.Int) (string, error) {
+	if serial == nil {
+		return "", ErrInvalidCertificate
+	}
+	data, err := ca.revocationStore.Get(ctx, certTenantStorageKey(serial))
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return "", nil
+		}
+		return "", &errs.Wrapped{Msg: "ca: get cert tenant", Err: err}
+	}
+	var rec persistedCertTenant
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return "", &errs.Wrapped{Msg: "ca: unmarshal cert tenant", Err: err}
+	}
+	return rec.TenantID, nil
+}

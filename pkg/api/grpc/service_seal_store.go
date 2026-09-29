@@ -35,7 +35,7 @@ func (s *Service) SealStorePut(ctx context.Context, req *pb.SealStorePutRequest)
 	if req == nil || req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionWrite, req.Name); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionCreate, req.Name); err != nil {
 		return nil, err
 	}
 	if s.xkmsService == nil {
@@ -55,7 +55,7 @@ func (s *Service) SealStoreGet(ctx context.Context, req *pb.SealStoreGetRequest)
 	if req == nil || req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionRead, req.Name); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionGet, req.Name); err != nil {
 		return nil, err
 	}
 	if s.xkmsService == nil {
@@ -105,7 +105,7 @@ func (s *Service) SealStoreReseal(ctx context.Context, req *pb.SealStoreResealRe
 	if req == nil || req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionWrite, req.Name); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionUpdate, req.Name); err != nil {
 		return nil, err
 	}
 	if s.xkmsService == nil {
@@ -119,7 +119,7 @@ func (s *Service) SealStoreReseal(ctx context.Context, req *pb.SealStoreResealRe
 
 // SealStoreStatus returns the platform-sealed store status.
 func (s *Service) SealStoreStatus(ctx context.Context, _ *pb.SealStoreStatusRequest) (*pb.SealStoreStatusResponse, error) {
-	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionRead, ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionGet, ""); err != nil {
 		return nil, err
 	}
 	if s.xkmsService == nil {

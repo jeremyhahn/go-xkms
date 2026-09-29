@@ -16,6 +16,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // TestAllowUnattestablePairingResolvesTheTwoPlanes exercises the whole
@@ -120,4 +121,89 @@ func TestAllowUnattestablePairingResolvesTheTwoPlanes(t *testing.T) {
 func TestAllowUnattestablePairingDefaultsToRefuseOnAZeroPolicySection(t *testing.T) {
 	require.False(t, attestation.AllowUnattestablePairing(false, &config.VerifiedPolicy{}),
 		"a zero PolicySection must read as unlocked and disallowed")
+}
+
+// TestResolveApplicationPolicyResolvesTheTwoPlanes exercises the owner ruling
+// of 2026-09-29 on #1305: while the enterprise/SO section locks the
+// attested-application allow-list, it governs outright -- never merged with
+// the user's devices.yaml entries -- and while it does not, the user's plane
+// governs, the same shape AllowUnattestablePairing resolves for the
+// unattestable-pairing setting.
+func TestResolveApplicationPolicyResolvesTheTwoPlanes(t *testing.T) {
+	userPolicy := pairing.ApplicationPolicy{
+		AllowedApplications: []pairing.AllowedApplication{{PackageName: "com.example.usersowndebugbuild"}},
+	}
+	enterprisePolicy := pairing.ApplicationPolicy{
+		AllowedApplications: []pairing.AllowedApplication{{
+			PackageName:    "com.automatethethings.xkey",
+			SigningDigests: []string{"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"},
+		}},
+		AllowUnpinnedSignatures: true,
+	}
+
+	tests := []struct {
+		name       string
+		enterprise *config.PolicySection
+		want       pairing.ApplicationPolicy
+		why        string
+	}{
+		{
+			name: "no enterprise plane at all", enterprise: nil, want: userPolicy,
+			why: "there is nothing enterprise to lock with, so the user's plane governs",
+		},
+		{
+			name:       "enterprise present but not locked",
+			enterprise: &config.PolicySection{PairingAllowedApplications: enterprisePolicy.AllowedApplications},
+			want:       userPolicy,
+			why:        "an unlocked enterprise allow-list must not override the user's own",
+		},
+		{
+			name: "enterprise present and locked",
+			enterprise: &config.PolicySection{
+				LockPairingApplicationPolicy:   true,
+				PairingAllowedApplications:     enterprisePolicy.AllowedApplications,
+				PairingAllowUnpinnedSignatures: true,
+			},
+			want: enterprisePolicy,
+			why:  "this is the case the lock exists for: the enterprise allow-list governs outright",
+		},
+		{
+			name:       "zero-value enterprise section",
+			enterprise: &config.PolicySection{},
+			want:       userPolicy,
+			why:        "a zero PolicySection must read as unlocked, same as no policy at all",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := attestation.ResolveApplicationPolicy(userPolicy, tc.enterprise)
+			require.Equal(t, tc.want, got, tc.why)
+		})
+	}
+}
+
+// TestResolveApplicationPolicyLockedDoesNotMergeUserEntries pins the "outright,
+// never merged" half of the contract on its own: a locked deployment cannot
+// be widened by an operator appending an entry to devices.yaml, because the
+// resolved policy carries ONLY the enterprise entries.
+func TestResolveApplicationPolicyLockedDoesNotMergeUserEntries(t *testing.T) {
+	userPolicy := pairing.ApplicationPolicy{
+		AllowedApplications: []pairing.AllowedApplication{{PackageName: "com.attacker.widens.the.fleet"}},
+	}
+	enterprise := &config.PolicySection{
+		LockPairingApplicationPolicy: true,
+		PairingAllowedApplications: []pairing.AllowedApplication{{
+			PackageName: "com.automatethethings.xkey",
+		}},
+	}
+
+	got := attestation.ResolveApplicationPolicy(userPolicy, enterprise)
+
+	require.Len(t, got.AllowedApplications, 1)
+	require.Equal(t, "com.automatethethings.xkey", got.AllowedApplications[0].PackageName)
+	for _, app := range got.AllowedApplications {
+		require.NotEqual(t, "com.attacker.widens.the.fleet", app.PackageName,
+			"a locked enterprise allow-list must never carry the user's own entries")
+	}
 }

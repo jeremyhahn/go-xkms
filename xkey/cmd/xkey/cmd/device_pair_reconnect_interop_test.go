@@ -72,7 +72,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
-	trust := &attestation.Trust{Pool: ca.Pool()}
+	trust := &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}
 
 	// The phone: one persistent StrongBox-backed attested key, attested once at
 	// first run under the contract's genesis challenge, AND one persistent
@@ -258,7 +258,7 @@ func TestReconnectRefusesADeviceThatCannotProveLiveness(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
-	trust := &attestation.Trust{Pool: ca.Pool()}
+	trust := &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}
 
 	genuine := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	impostor := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
@@ -448,7 +448,7 @@ func runReattestAgainst(
 		ExpectedDeviceFingerprint: expected,
 	}), "every check that existed before #129 must still pass; that is the point")
 
-	reattestErr := attestation.VerifyReattestation(ctx, init, session, attestation.DeviceBindingFor(*record), &attestation.Trust{Pool: ca.Pool()}, logger)
+	reattestErr := attestation.VerifyReattestation(ctx, init, session, attestation.DeviceBindingFor(*record), &attestation.Trust{Pool: ca.Pool(), Applications: attesttest.Applications()}, logger)
 
 	return reattestErr
 }

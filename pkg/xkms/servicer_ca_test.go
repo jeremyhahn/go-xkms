@@ -54,7 +54,14 @@ type mockCA struct {
 	issueKeyPEM   []byte
 	issueSerial   string
 	issueErr      error
-	revokeErr     error
+	// issueTenant records the tenantID IssueCertificateRaw was asked to
+	// stamp.
+	issueTenant string
+	revokeErr   error
+	// certTenant and certTenantErr are what CertificateTenant returns for
+	// the RevokeCertificate ownership check.
+	certTenant    string
+	certTenantErr error
 	crlDER        []byte
 	crlErr        error
 	crlReadDER    []byte
@@ -74,15 +81,19 @@ func (m *mockCA) SignCSRWithSPIFFE(_ context.Context, csrPEM []byte, profile str
 	m.signCSRTenant = tenantID
 	return m.signCSRCert, m.signCSRErr
 }
-func (m *mockCA) IssueCertificateRaw(_ context.Context, commonName, organization string, sans []string, validityDays int, profile, algorithm string) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error) {
+func (m *mockCA) IssueCertificateRaw(_ context.Context, commonName, organization string, sans []string, validityDays int, profile, algorithm, tenantID string) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error) {
+	m.issueTenant = tenantID
 	return m.issueCertPEM, m.issueChainPEM, m.issueKeyPEM, m.issueSerial, m.issueErr
 }
 func (m *mockCA) Revoke(_ context.Context, serial *big.Int, reason int) error { return m.revokeErr }
-func (m *mockCA) GenerateCRL(_ context.Context) ([]byte, error)               { return m.crlDER, m.crlErr }
-func (m *mockCA) CRL(_ context.Context) ([]byte, error)                       { return m.crlReadDER, m.crlReadErr }
-func (m *mockCA) IsRevoked(serial *big.Int) (bool, error)                     { return m.isRevoked, m.isRevokedErr }
-func (m *mockCA) Identity() string                                            { return m.identity }
-func (m *mockCA) IsInitialized() bool                                         { return m.initialized }
+func (m *mockCA) CertificateTenant(_ context.Context, serial *big.Int) (string, error) {
+	return m.certTenant, m.certTenantErr
+}
+func (m *mockCA) GenerateCRL(_ context.Context) ([]byte, error) { return m.crlDER, m.crlErr }
+func (m *mockCA) CRL(_ context.Context) ([]byte, error)         { return m.crlReadDER, m.crlReadErr }
+func (m *mockCA) IsRevoked(serial *big.Int) (bool, error)       { return m.isRevoked, m.isRevokedErr }
+func (m *mockCA) Identity() string                              { return m.identity }
+func (m *mockCA) IsInitialized() bool                           { return m.initialized }
 
 // createSelfSignedCert generates a self-signed CA certificate for testing.
 func createSelfSignedCert(t *testing.T) *x509.Certificate {
@@ -583,6 +594,121 @@ func TestRevokeCertificate_CAError(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, caErr)
 	assert.Contains(t, err.Error(), "ca: revoke")
+}
+
+// ========================================================================
+// RevokeCertificate / IssueCertificate ownership (go-xkms#1229)
+//
+// RevokeCertificate's permission, certs:revoke, is enforced by the
+// transports before dispatch, exactly like SignCSR's certs:generate (see
+// "SignCSR authorization" above); pkg/api/grpc/service_authz_deny_test.go
+// drives the permission-denial path. These tests drive the ownership check
+// the servicer itself makes: the certificate's issuing tenant, recorded at
+// issuance, against the caller's own tenant.
+// ========================================================================
+
+// TestRevokeCertificate_ForeignTenantRefused is the go-xkms#1229 exploit: a
+// tenant-scoped caller could revoke a certificate issued for a different
+// tenant. It must now be refused exactly like naming a foreign tenant
+// anywhere else in this service (requireBindingRefusal), and the CA's
+// Revoke must never be reached.
+func TestRevokeCertificate_ForeignTenantRefused(t *testing.T) {
+	ca := &mockCA{certTenant: "tenant-b", revokeErr: errors.New("must not be called")}
+	svc := setupServiceWithCA(t, ca)
+	ctx := tenantCtx("tenant-a")
+
+	resp, err := svc.RevokeCertificate(ctx, &transport.RevokeCertificateRequest{
+		SerialNumber: "abcdef01",
+		Reason:       1,
+	})
+	assert.Nil(t, resp)
+	requireBindingRefusal(t, err, "revoke certificate")
+}
+
+// TestRevokeCertificate_OwnTenantAllowed is the mirror: a tenant-scoped
+// caller may revoke a certificate its own tenant owns.
+func TestRevokeCertificate_OwnTenantAllowed(t *testing.T) {
+	ca := &mockCA{certTenant: "tenant-a"}
+	svc := setupServiceWithCA(t, ca)
+	ctx := tenantCtx("tenant-a")
+
+	resp, err := svc.RevokeCertificate(ctx, &transport.RevokeCertificateRequest{
+		SerialNumber: "abcdef01",
+		Reason:       1,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.True(t, resp.Success)
+}
+
+// TestRevokeCertificate_SystemAdminRevokesAnyTenant proves a cross-tenant
+// (system) caller may revoke a certificate belonging to any tenant,
+// including the system/platform scope's own certificates.
+func TestRevokeCertificate_SystemAdminRevokesAnyTenant(t *testing.T) {
+	for _, certTenant := range []string{"", "tenant-a", "tenant-b"} {
+		ca := &mockCA{certTenant: certTenant}
+		svc := setupServiceWithCA(t, ca)
+		ctx := systemCtx()
+
+		resp, err := svc.RevokeCertificate(ctx, &transport.RevokeCertificateRequest{
+			SerialNumber: "abcdef01",
+			Reason:       1,
+		})
+		require.NoError(t, err, "cert tenant %q", certTenant)
+		require.NotNil(t, resp, "cert tenant %q", certTenant)
+		assert.True(t, resp.Success, "cert tenant %q", certTenant)
+	}
+}
+
+// TestRevokeCertificate_CertificateTenantError proves a storage fault
+// resolving the issuing tenant aborts the revoke rather than being treated
+// as an unowned (system-scope) certificate.
+func TestRevokeCertificate_CertificateTenantError(t *testing.T) {
+	lookupErr := errors.New("ca: storage fault")
+	ca := &mockCA{certTenantErr: lookupErr, revokeErr: errors.New("must not be called")}
+	svc := setupServiceWithCA(t, ca)
+	ctx := tenantCtx("tenant-a")
+
+	resp, err := svc.RevokeCertificate(ctx, &transport.RevokeCertificateRequest{
+		SerialNumber: "abcdef01",
+		Reason:       1,
+	})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, lookupErr)
+}
+
+// TestIssueCertificate_ForeignTenantRefused proves a tenant-scoped caller
+// cannot mint a certificate attributed to a different tenant, mirroring
+// SignCSR's tenant binding.
+func TestIssueCertificate_ForeignTenantRefused(t *testing.T) {
+	ca := &mockCA{issueErr: errors.New("must not be called")}
+	svc := setupServiceWithCA(t, ca)
+	ctx := tenantCtx("tenant-a")
+
+	resp, err := svc.IssueCertificate(ctx, &transport.IssueCertificateRequest{
+		CommonName: "test.example.com",
+		TenantID:   "tenant-b",
+	})
+	assert.Nil(t, resp)
+	requireBindingRefusal(t, err, "issue certificate")
+}
+
+// TestIssueCertificate_OwnTenantRecorded proves a tenant-scoped caller may
+// issue a certificate for its own tenant, and that the tenant is forwarded
+// to the CA so it is recorded against the certificate's serial.
+func TestIssueCertificate_OwnTenantRecorded(t *testing.T) {
+	ca := &mockCA{issueSerial: "abcdef01"}
+	svc := setupServiceWithCA(t, ca)
+	ctx := tenantCtx("tenant-a")
+
+	resp, err := svc.IssueCertificate(ctx, &transport.IssueCertificateRequest{
+		CommonName: "test.example.com",
+		TenantID:   "tenant-a",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "tenant-a", ca.issueTenant)
 }
 
 // ========================================================================

@@ -22,7 +22,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // TestAllowUnattestablePairing_ProjectsTheUserPlane pins what is genuinely
@@ -193,6 +195,147 @@ func TestResolvePairingPolicy_EmptyStdinIsReported(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, policy)
 	require.ErrorIs(t, err, ErrSOPINInputStdinEmpty)
+}
+
+// applicationLockedConfig is the policy a fleet that locks the attested-
+// application allow-list would seal (#1305): a narrower list than whatever an
+// operator might write into devices.yaml.
+func applicationLockedConfig() *xkeyconfig.Config {
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.Policy.LockPairingApplicationPolicy = true
+	cfg.Policy.PairingAllowedApplications = []pairing.AllowedApplication{{
+		PackageName:    "com.automatethethings.xkey",
+		SigningDigests: []string{"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"},
+	}}
+	return cfg
+}
+
+// sealPolicyFixtureNoCommand seals cfg's policy under soPIN into a fresh
+// config directory and points the config package at it, with no
+// *cobra.Command: resolveEnterpriseApplicationPolicy reads XKEY_SO_PIN
+// directly, the same env-only path a deep re-attestation call graph with no
+// command in hand must use (unlike newPairingPolicyFixture above, which
+// exists to drive --so-pin-stdin too).
+func sealPolicyFixtureNoCommand(t *testing.T, cfg *xkeyconfig.Config, soPIN string) {
+	t.Helper()
+	configDir := t.TempDir()
+	xkeyconfig.SetConfigDir(configDir)
+	t.Cleanup(xkeyconfig.ResetConfigDir)
+	if soPIN != "" {
+		require.NoError(t, xkeyconfig.WritePolicyHMAC(&cfg.Policy, soPIN, xkeyconfig.PolicyHMACPath(configDir)))
+	}
+}
+
+// TestResolveEnterpriseApplicationPolicy_NilConfigUnsealedIsNotConsulted
+// covers a caller with no loaded config at all -- loadPairingAttestationTrust's
+// own unit tests, chiefly, which never run through RootCmd's initConfig --
+// against an unsealed (personal-mode) config directory. There is no
+// enterprise plane to verify in the first place, so a nil config is not
+// reported as one of LoadVerifiedPolicy's own "config is nil" errors.
+func TestResolveEnterpriseApplicationPolicy_NilConfigUnsealedIsNotConsulted(t *testing.T) {
+	sealPolicyFixtureNoCommand(t, applicationLockedConfig(), "") // no HMAC file: personal mode
+
+	enterprise, err := resolveEnterpriseApplicationPolicy(nil)
+	require.NoError(t, err)
+	require.Nil(t, enterprise)
+}
+
+// TestResolveEnterpriseApplicationPolicy_NilConfigSealedRefuses is the same
+// nil-config caller, but against a SEALED directory: the plane exists and a
+// nil config cannot verify it, so this must refuse exactly like any other
+// unverifiable case -- never silently read as "no plane at all" just because
+// nothing was loaded.
+func TestResolveEnterpriseApplicationPolicy_NilConfigSealedRefuses(t *testing.T) {
+	sealPolicyFixtureNoCommand(t, applicationLockedConfig(), testSOPIN)
+
+	enterprise, err := resolveEnterpriseApplicationPolicy(nil)
+	require.Error(t, err)
+	require.Nil(t, enterprise)
+	require.ErrorIs(t, err, attestation.ErrApplicationPolicyUnverifiable)
+}
+
+// TestResolveEnterpriseApplicationPolicy_SealedNoEnvPINRefuses is the fix for
+// the bypass a lock exists to prevent: a sealed section with no XKEY_SO_PIN
+// in the environment must refuse outright, and the caller
+// (loadPairingAttestationTrust) must never reach devices.yaml as a result --
+// a user (or attacker) able to write devices.yaml but not produce the SO PIN
+// must not be able to widen a locked deployment simply by omitting the
+// environment variable.
+func TestResolveEnterpriseApplicationPolicy_SealedNoEnvPINRefuses(t *testing.T) {
+	cfg := applicationLockedConfig()
+	sealPolicyFixtureNoCommand(t, cfg, testSOPIN)
+	// XKEY_SO_PIN intentionally left unset.
+
+	enterprise, err := resolveEnterpriseApplicationPolicy(cfg)
+	require.Error(t, err)
+	require.Nil(t, enterprise)
+	require.ErrorIs(t, err, attestation.ErrApplicationPolicyUnverifiable)
+}
+
+// TestResolveEnterpriseApplicationPolicy_SealedCorrectEnvPINLocks is the case
+// the lock exists for: XKEY_SO_PIN verifies the sealed section, and the
+// resulting policy overrides devices.yaml outright through
+// attestation.ResolveApplicationPolicy.
+func TestResolveEnterpriseApplicationPolicy_SealedCorrectEnvPINLocks(t *testing.T) {
+	cfg := applicationLockedConfig()
+	sealPolicyFixtureNoCommand(t, cfg, testSOPIN)
+	t.Setenv(soPINEnvVar, testSOPIN)
+
+	enterprise, err := resolveEnterpriseApplicationPolicy(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, enterprise)
+	require.True(t, enterprise.LockPairingApplicationPolicy)
+	require.Equal(t, cfg.Policy.PairingAllowedApplications, enterprise.PairingAllowedApplications)
+
+	apps := attestation.ResolveApplicationPolicy(testUserApplicationPolicy(), enterprise)
+	require.Equal(t, cfg.Policy.PairingAllowedApplications, apps.AllowedApplications,
+		"a locked enterprise allow-list must govern outright over devices.yaml")
+}
+
+// TestResolveEnterpriseApplicationPolicy_SealedWrongEnvPINRefuses is #118
+// applied to this plane: a PIN that does NOT verify the sealed section is
+// refused outright rather than silently falling back to devices.yaml.
+func TestResolveEnterpriseApplicationPolicy_SealedWrongEnvPINRefuses(t *testing.T) {
+	cfg := applicationLockedConfig()
+	sealPolicyFixtureNoCommand(t, cfg, testSOPIN)
+	t.Setenv(soPINEnvVar, "not-the-so-pin")
+
+	enterprise, err := resolveEnterpriseApplicationPolicy(cfg)
+	require.Error(t, err)
+	require.Nil(t, enterprise)
+	require.ErrorIs(t, err, attestation.ErrApplicationPolicyUnverifiable)
+	require.ErrorIs(t, err, xkeyconfig.ErrPolicyHMACMismatch)
+}
+
+// TestResolveEnterpriseApplicationPolicy_UnsealedUsesUserList is personal
+// mode: the config directory carries no HMAC file, so there is no enterprise
+// plane to verify at all, and devices.yaml's own allow-list governs with no
+// PIN required -- even when the (here, irrelevant) unified config's policy
+// section itself happens to say "locked", since in personal mode that
+// section is just the user's own file, never consulted as an enterprise
+// override.
+func TestResolveEnterpriseApplicationPolicy_UnsealedUsesUserList(t *testing.T) {
+	cfg := applicationLockedConfig()
+	sealPolicyFixtureNoCommand(t, cfg, "") // no HMAC file written: personal mode
+
+	enterprise, err := resolveEnterpriseApplicationPolicy(cfg)
+	require.NoError(t, err)
+	require.Nil(t, enterprise, "an unsealed directory has no enterprise plane to consult")
+
+	userPolicy := testUserApplicationPolicy()
+	apps := attestation.ResolveApplicationPolicy(userPolicy, enterprise)
+	require.Equal(t, userPolicy.AllowedApplications, apps.AllowedApplications,
+		"personal mode: devices.yaml's own allow-list governs")
+}
+
+// testUserApplicationPolicy is devices.yaml's allow-list as
+// loadPairingAttestationTrust would read it: some build the operator
+// trusts, distinct from applicationLockedConfig's enterprise list so a test
+// asserting "the enterprise list governs" cannot pass by coincidence.
+func testUserApplicationPolicy() pairing.ApplicationPolicy {
+	return pairing.ApplicationPolicy{AllowedApplications: []pairing.AllowedApplication{
+		{PackageName: "com.example.usersowndebugbuild"},
+	}}
 }
 
 // TestNewPairedDeviceRecord_WritesNoAttestationClaimWhenThereIsNone is the

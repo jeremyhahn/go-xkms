@@ -118,7 +118,8 @@ func TestPairRefusesNameCollisionWithDifferentDevice(t *testing.T) {
     local_noise_private_key: "irrelevant"
     paired_at: 2024-01-01T00:00:00Z
 default_device: "Pixel 9"
-`)
+attestation_policy:
+` + fixtureAllowListYAML)
 
 	device := attesttest.NewPhone(t, healthyDAK(t, ca))
 	device.Name = "Pixel 9" // a different physical phone, same confirmed name
@@ -144,6 +145,7 @@ func TestPairReplacesStaleRecordAcrossAddressRotation(t *testing.T) {
 	h := newPairingHarness(t)
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
 	h.trust(ca)
+	h.allowFixtureApplication()
 	device := attesttest.NewPhone(t, healthyDAK(t, ca))
 	device.Name = "Pixel 9"
 

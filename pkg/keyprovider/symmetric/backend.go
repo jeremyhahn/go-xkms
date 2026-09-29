@@ -548,6 +548,27 @@ type softwareSymmetricEncrypter struct {
 	rng     cryptorand.Resolver
 }
 
+// claimNonce atomically claims (keyBytes, nonce) against the shared,
+// optionally-persistent aead.KeyNonceGuard, in one step, replacing the old
+// STEP 3 check / STEP 5 record pair the per-backend AEADSafetyTracker used
+// to perform non-atomically (go-xkms#1201).
+//
+// wasCallerSupplied distinguishes a nonce the immediate caller of Encrypt
+// provided (opts.Nonce != nil) from one this encrypter generated itself: a
+// generated nonce still encrypts once the guard's bounded in-memory tracker
+// is full, because it is fresh by construction and cannot itself be a
+// repeat; see backend.ClaimGeneratedAEADNonce.
+func (e *softwareSymmetricEncrypter) claimNonce(wasCallerSupplied bool, keyBytes, nonce []byte) error {
+	claim := backend.ClaimGeneratedAEADNonce
+	if wasCallerSupplied {
+		claim = backend.ClaimAEADNonce
+	}
+	if err := claim(context.Background(), keyBytes, nil, e.attrs.ID(), nonce); err != nil {
+		return &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
+	}
+	return nil
+}
+
 // Encrypt encrypts plaintext using AES-GCM or ChaCha20-Poly1305 with the symmetric key.
 // Returns EncryptedData containing ciphertext, nonce, and authentication tag.
 //
@@ -632,11 +653,9 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 			}
 		}
 
-		// STEP 3: Check nonce uniqueness before encryption
-		if e.tracker != nil {
-			if err := e.tracker.CheckNonce(keyID, nonce); err != nil {
-				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
-			}
+		// STEP 3: Claim (key, nonce) uniqueness before encryption
+		if err := e.claimNonce(opts.Nonce != nil, keyBytes, nonce); err != nil {
+			return nil, err
 		}
 
 		// STEP 4: Perform encryption using ChaCha20 AEAD interface
@@ -675,14 +694,14 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 				return nil, &errs.Wrapped{Msg: "failed to split random-nonce GCM output", Err: err}
 			}
 
-			// STEP 3: Check nonce uniqueness. Unlike the explicit-nonce
-			// path, the nonce cannot be checked before Seal produces it;
+			// STEP 3: Claim nonce uniqueness. Unlike the explicit-nonce
+			// path, the nonce cannot be claimed before Seal produces it;
 			// the ciphertext above is simply discarded if the process's
-			// own random generator collided.
-			if e.tracker != nil {
-				if err := e.tracker.CheckNonce(keyID, nonce); err != nil {
-					return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
-				}
+			// own random generator collided. opts.Nonce is nil on this
+			// branch by construction (randomNonce requires it), so the
+			// claim always tolerates a full guard; see claimNonce.
+			if err := e.claimNonce(false, keyBytes, nonce); err != nil {
+				return nil, err
 			}
 		} else {
 			nonceSize := gcm.NonceSize()
@@ -701,11 +720,9 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 				}
 			}
 
-			// STEP 3: Check nonce uniqueness before encryption
-			if e.tracker != nil {
-				if err := e.tracker.CheckNonce(keyID, nonce); err != nil {
-					return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
-				}
+			// STEP 3: Claim (key, nonce) uniqueness before encryption
+			if err := e.claimNonce(opts.Nonce != nil, keyBytes, nonce); err != nil {
+				return nil, err
 			}
 
 			// STEP 4: Perform encryption with authentication
@@ -732,15 +749,6 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 			Tag:          tag,
 			Algorithm:    e.key.Algorithm(),
 			GCMNonceMode: nonceMode,
-		}
-	}
-
-	// STEP 5: Record nonce after successful encryption
-	if e.tracker != nil {
-		if err := e.tracker.RecordNonce(keyID, encrypted.Nonce); err != nil {
-			// Log this error but don't fail the encryption since it already succeeded
-			// In a production system, you might want to handle this differently
-			fmt.Printf("Warning: failed to record nonce: %v\n", err)
 		}
 	}
 

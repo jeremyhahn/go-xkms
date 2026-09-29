@@ -92,13 +92,17 @@ func TestMapKeyOpError_Nil(t *testing.T) {
 }
 
 // TestMapKeyOpError_AEADNonceSentinels pins go-xkms#1223: a reused AEAD
-// nonce and a full nonce tracker reach mapKeyOpError wrapped exactly as
-// pkg/xkms's claimAEADNonce / claimGeneratedAEADNonce actually wrap them
-// (*xkms.ErrKeyOperation), from both the generic Encrypt RPC and
-// WrapKeyByID's AES-GCM wrap path, and must render as the JSON-RPC duplicate
-// code and the internal-error floor respectively (JSON-RPC has no dedicated
-// ResourceExhausted member), with Classified set so the resource-exhausted
-// case's text is not withheld the way a genuinely unclassified fault's is.
+// nonce and a full nonce tracker reach mapKeyOpError classified via
+// apierrors.AEADSentinelClasses regardless of which wrapper carries the
+// sentinel -- ClassOf uses errors.Is, so it sees through both
+// *xkms.ErrKeyOperation, the shape WrapKeyByID's AES-GCM wrap still
+// produces, and *xkms.ErrOperationWrap, the shape the generic Encrypt RPC
+// produces since go-xkms#1201 moved the claim into the backend's own
+// Encrypt (pkg/backend's ClaimAEADNonce/ClaimGeneratedAEADNonce). Both must
+// render as the JSON-RPC duplicate code and the internal-error floor
+// respectively (JSON-RPC has no dedicated ResourceExhausted member), with
+// Classified set so the resource-exhausted case's text is not withheld the
+// way a genuinely unclassified fault's is.
 func TestMapKeyOpError_AEADNonceSentinels(t *testing.T) {
 	tests := []struct {
 		name string

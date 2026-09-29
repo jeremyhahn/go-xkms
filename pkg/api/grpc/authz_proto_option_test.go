@@ -31,23 +31,17 @@ import (
 const keystoreServiceFullName = "xkms.v1.KeystoreService"
 
 // goldenProtoPermissions expands the golden gate table onto proto RPC names.
-// The table keys gates by the method that HOLDS the authorize call, and
-// setUserEnabled is the shared helper gating both the EnableUser and
-// DisableUser RPCs — so that one key fans out to two annotated RPCs. Every
-// other key is the RPC name itself.
+// The table keys gates by the method that HOLDS the authorize call, which is
+// the RPC name itself for every entry (go-xkms#1249 removed the last
+// exception, the shared setUserEnabled helper, by giving EnableUser and
+// DisableUser their own authorize call sites and their own qrdb-native
+// permissions).
 func goldenProtoPermissions(t *testing.T) map[string]string {
 	t.Helper()
-	expanded := make(map[string]string, len(goldenRPCPermissions)+1)
+	expanded := make(map[string]string, len(goldenRPCPermissions))
 	for method, perm := range goldenRPCPermissions {
-		if method == "setUserEnabled" {
-			expanded["EnableUser"] = perm
-			expanded["DisableUser"] = perm
-			continue
-		}
 		expanded[method] = perm
 	}
-	require.Len(t, expanded, len(goldenRPCPermissions)+1,
-		"setUserEnabled must expand onto exactly EnableUser and DisableUser")
 	return expanded
 }
 
