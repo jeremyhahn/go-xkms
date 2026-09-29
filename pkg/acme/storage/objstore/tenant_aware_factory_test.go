@@ -119,6 +119,29 @@ func TestTenantAwareFactory_ForTenant_EmptyID(t *testing.T) {
 	assert.Equal(t, "tenantID", cfgErr.Field)
 }
 
+// TestTenantAwareFactory_ForTenant_InvalidID verifies ForTenant refuses tenant
+// IDs that would let the key-prefix namespace escape "acme/tenants/<id>" —
+// path separators and ".." — by delegating to xkmsstorage.ValidateTenantID.
+func TestTenantAwareFactory_ForTenant_InvalidID(t *testing.T) {
+	tests := []string{
+		"../other-tenant",
+		"tenant/../escape",
+		"a/b",
+	}
+	for _, tenantID := range tests {
+		t.Run(tenantID, func(t *testing.T) {
+			factory := newTestTenantAwareFactory(t)
+
+			scoped, err := factory.ForTenant(tenantID)
+			require.Error(t, err)
+			assert.Nil(t, scoped)
+			var cfgErr qrdbsdk.DAOInvalidConfigError
+			assert.True(t, errors.As(err, &cfgErr))
+			assert.Equal(t, "tenantID", cfgErr.Field)
+		})
+	}
+}
+
 // TestTenantScopedFactory_AccountDAO verifies tenant-scoped AccountDAO creation.
 func TestTenantScopedFactory_AccountDAO(t *testing.T) {
 	factory := newTestTenantAwareFactory(t)

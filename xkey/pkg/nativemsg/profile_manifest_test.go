@@ -104,6 +104,40 @@ func TestGenerateLauncherScript_ExecPinsXKEYHome(t *testing.T) {
 	assert.Contains(t, string(out), "ARGS=extension host")
 }
 
+// TestGenerateLauncherScript_ExecWithShellMetacharactersInPath proves the
+// generated launcher quotes home.Root and the binary path safely for POSIX
+// sh. Go's fmt "%q" verb — the launcher's previous quoting scheme — escapes
+// for a Go string literal, not a shell one: "$" and backticks pass through
+// unescaped, so a path containing either is still subject to shell
+// expansion inside the double-quoted string %q produces. This test plants a
+// directory whose name carries a "$HOME" substring, a backtick pair, a
+// literal single quote, and a space, then runs the actual generated script
+// and asserts the child process sees the literal path rather than an
+// expanded or corrupted one.
+func TestGenerateLauncherScript_ExecWithShellMetacharactersInPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("launcher scripts are POSIX shell, not exercised on windows")
+	}
+
+	oddDirName := `weird $HOME ` + "`id`" + ` it's got spaces`
+	root := filepath.Join(t.TempDir(), oddDirName)
+	require.NoError(t, os.MkdirAll(root, 0755))
+	home := &xhome.Home{Root: root}
+
+	fakeBinary := filepath.Join(root, "fake-xkey")
+	fakeScript := "#!/bin/sh\necho \"HOME=$XKEY_HOME ARGS=$*\"\n"
+	require.NoError(t, os.WriteFile(fakeBinary, []byte(fakeScript), 0755))
+
+	launcherPath, err := GenerateLauncherScript(home, fakeBinary)
+	require.NoError(t, err)
+
+	out, runErr := exec.Command(launcherPath).Output()
+	require.NoError(t, runErr)
+
+	assert.Contains(t, string(out), "HOME="+root,
+		"the literal path, including its shell metacharacters, must reach the child process unexpanded")
+}
+
 // --- InstallProfileManifest ---
 
 func TestInstallProfileManifest_WritesManifestUnderProfileDir(t *testing.T) {

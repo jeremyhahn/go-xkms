@@ -21,6 +21,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/shellquote"
 )
 
 // Extension import is a Chrome-only, isolated-mode capability that copies
@@ -415,14 +417,8 @@ func nmhWrapperName(manifestFile string) string {
 // user HOME and execs the original host binary, forwarding all arguments.
 func buildNMHWrapperScript(realHome, hostPath string) string {
 	return "#!/bin/sh\n" +
-		"export HOME=" + shellSingleQuote(realHome) + "\n" +
-		"exec " + shellSingleQuote(hostPath) + " \"$@\"\n"
-}
-
-// shellSingleQuote returns s wrapped in single quotes, safe for POSIX shells,
-// escaping any embedded single quotes.
-func shellSingleQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		"export HOME=" + shellquote.SingleQuote(realHome) + "\n" +
+		"exec " + shellquote.SingleQuote(hostPath) + " \"$@\"\n"
 }
 
 // loadExtensionSettings reads the extensions.settings.<id> registration map
