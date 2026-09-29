@@ -90,6 +90,14 @@ const adminUIPrefix = "/admin-ui"
 // registered as public routes on the unified server's qrdb module boundary
 // (apimodule.AdminModule) because the admin package authenticates and
 // authorizes every request itself — see admin_router_state below.
+//
+// Public routes get no tenant binding from qrdb's middleware, so the admin
+// package binds it: its authentication boundary binds the caller's tenant as
+// the context's qrdb tenant (pkg/acme/admin withUser), which confines every
+// identity-plane call the admin service makes through the embedded client,
+// and its service binds every tenant, role, user, account and certificate the
+// request names to that tenant (pkg/acme/admin tenant_binding.go,
+// go-xkms#1225).
 var adminAPIPrefixes = []string{"/admin", "/api/v1/tenants"}
 
 // adminRouterState holds the ACME admin surface's fully-assembled,

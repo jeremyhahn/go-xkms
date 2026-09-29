@@ -370,8 +370,8 @@ func TestHandlers_GetAccount(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// Handler returns 500 when account not found (internal server error)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A missing account is ErrAccountNotFound, answered 404.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestHandlers_DisableAccount_AllowedForAdmin(t *testing.T) {
@@ -392,8 +392,8 @@ func TestHandlers_DisableAccount_AllowedForAdmin(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// Handler returns 500 when account not found (internal server error)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A missing account is ErrAccountNotFound, answered 404.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestHandlers_GetOrder(t *testing.T) {

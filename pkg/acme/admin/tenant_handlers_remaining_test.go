@@ -44,7 +44,7 @@ func TestGetTenantEABHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestGetTenantEABHandler_Forbidden(t *testing.T) {
+func TestGetTenantEABHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/other-tenant/eab/kid-123", nil)
@@ -54,7 +54,7 @@ func TestGetTenantEABHandler_Forbidden(t *testing.T) {
 
 	handlers.GetTenantEAB(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestGetTenantEABHandler_TenantNotFound(t *testing.T) {
@@ -106,7 +106,7 @@ func TestDeleteTenantEABHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestDeleteTenantEABHandler_Forbidden(t *testing.T) {
+func TestDeleteTenantEABHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants/other-tenant/eab/kid-123", nil)
@@ -116,7 +116,7 @@ func TestDeleteTenantEABHandler_Forbidden(t *testing.T) {
 
 	handlers.DeleteTenantEAB(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestDeleteTenantEABHandler_TenantNotFound(t *testing.T) {
@@ -186,7 +186,7 @@ func TestListTenantEABsHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestListTenantEABsHandler_Forbidden(t *testing.T) {
+func TestListTenantEABsHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/other-tenant/eab", nil)
@@ -196,7 +196,7 @@ func TestListTenantEABsHandler_Forbidden(t *testing.T) {
 
 	handlers.ListTenantEABs(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestListTenantEABsHandler_TenantNotFound(t *testing.T) {
@@ -274,7 +274,7 @@ func TestCreateTenantRootCAHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestCreateTenantRootCAHandler_Forbidden(t *testing.T) {
+func TestCreateTenantRootCAHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("POST", "/api/v1/tenants/other-tenant/root-ca", bytes.NewBufferString("{}"))
@@ -284,7 +284,7 @@ func TestCreateTenantRootCAHandler_Forbidden(t *testing.T) {
 
 	handlers.CreateTenantRootCA(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestCreateTenantRootCAHandler_InvalidJSON(t *testing.T) {
@@ -413,7 +413,7 @@ func TestGetTenantCAStatusHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestGetTenantCAStatusHandler_Forbidden(t *testing.T) {
+func TestGetTenantCAStatusHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/other-tenant/ca-status", nil)
@@ -423,7 +423,7 @@ func TestGetTenantCAStatusHandler_Forbidden(t *testing.T) {
 
 	handlers.GetTenantCAStatus(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestGetTenantCAStatusHandler_TenantNotFound(t *testing.T) {
@@ -500,7 +500,7 @@ func TestUpdateTenantIntermediateCAStatusHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestUpdateTenantIntermediateCAStatusHandler_Forbidden(t *testing.T) {
+func TestUpdateTenantIntermediateCAStatusHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	body := `{"status": "active"}`
@@ -511,7 +511,7 @@ func TestUpdateTenantIntermediateCAStatusHandler_Forbidden(t *testing.T) {
 
 	handlers.UpdateTenantIntermediateCAStatus(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestUpdateTenantIntermediateCAStatusHandler_InvalidJSON(t *testing.T) {
@@ -633,7 +633,7 @@ func TestSetTenantDefaultIntermediateCAHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestSetTenantDefaultIntermediateCAHandler_Forbidden(t *testing.T) {
+func TestSetTenantDefaultIntermediateCAHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	body := `{"intermediate_ca_id": "ca-1"}`
@@ -644,7 +644,7 @@ func TestSetTenantDefaultIntermediateCAHandler_Forbidden(t *testing.T) {
 
 	handlers.SetTenantDefaultIntermediateCA(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestSetTenantDefaultIntermediateCAHandler_InvalidJSON(t *testing.T) {
@@ -1026,7 +1026,7 @@ func TestListTenantIntermediateCAsHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestListTenantIntermediateCAsHandler_Forbidden(t *testing.T) {
+func TestListTenantIntermediateCAsHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/other-tenant/intermediate-cas", nil)
@@ -1036,7 +1036,7 @@ func TestListTenantIntermediateCAsHandler_Forbidden(t *testing.T) {
 
 	handlers.ListTenantIntermediateCAs(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // Additional CreateTenantIntermediateCA handler tests
@@ -1055,7 +1055,7 @@ func TestCreateTenantIntermediateCAHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestCreateTenantIntermediateCAHandler_Forbidden(t *testing.T) {
+func TestCreateTenantIntermediateCAHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	body := `{"common_name": "Test Int CA", "key_algorithm": "RSA-2048", "parent_type": "tenant", "validity_years": 5}`
@@ -1066,7 +1066,7 @@ func TestCreateTenantIntermediateCAHandler_Forbidden(t *testing.T) {
 
 	handlers.CreateTenantIntermediateCA(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestCreateTenantIntermediateCAHandler_InvalidJSON(t *testing.T) {
@@ -1112,7 +1112,7 @@ func TestGetTenantIntermediateCAHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestGetTenantIntermediateCAHandler_Forbidden(t *testing.T) {
+func TestGetTenantIntermediateCAHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/other-tenant/intermediate-cas/ca-1", nil)
@@ -1122,7 +1122,7 @@ func TestGetTenantIntermediateCAHandler_Forbidden(t *testing.T) {
 
 	handlers.GetTenantIntermediateCA(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // Additional CreateTenantEAB handler tests
@@ -1141,7 +1141,7 @@ func TestCreateTenantEABHandler_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestCreateTenantEABHandler_Forbidden(t *testing.T) {
+func TestCreateTenantEABHandler_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	body := `{"purpose": "account-binding"}`
@@ -1152,7 +1152,7 @@ func TestCreateTenantEABHandler_Forbidden(t *testing.T) {
 
 	handlers.CreateTenantEAB(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestCreateTenantEABHandler_InvalidJSON(t *testing.T) {
