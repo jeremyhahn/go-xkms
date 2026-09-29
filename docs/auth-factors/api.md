@@ -37,7 +37,7 @@ take one from the response.
 |---|---|---|
 | `piv` | `enrolled_cert_pem` (enrolled certificate, PEM), `slot`, `algorithm` | `Value`: DER ECDSA signature over SHA-256(nonce) |
 | `pkcs11` | `enrolled_public_key_der` (enrolled PKIX key, standard base64), `mechanism`, `algorithm`, `key_id` | `Value`: DER ECDSA or PKCS#1 v1.5 RSA signature over SHA-256(nonce) |
-| `fido2` | `enrolled_cose_public_key` (enrolled COSE key, standard base64), `rp_id`, `credential_id`, `challenge_base64` | `Value`: assertion signature; `Metadata`: `authenticator_data`, `client_data` (base64) |
+| `fido2` | `enrolled_cose_public_key` (enrolled COSE key, standard base64), `rp_id`, `origins` (`[]string`), `require_uv` (`bool`), `credential_id`, `challenge_base64` | `Value`: assertion signature; `Metadata`: `authenticator_data`, `client_data` (base64) |
 | `mtls` | `enrolled_cert_pem`, `cert_spki_thumbprint`, `cert_cn` | `Value`: ECDSA or RSA signature over SHA-256(nonce), or Ed25519 over the nonce |
 
 A response carries **no public key**. Verification uses only the key in the

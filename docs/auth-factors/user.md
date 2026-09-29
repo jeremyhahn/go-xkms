@@ -1,6 +1,6 @@
 # Auth Factors — User Guide
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## What a "factor" is here
 
@@ -71,6 +71,13 @@ have.
 
 **The relying-party id is baked into every FIDO2 enrollment.** If it changes,
 existing credentials stop working and every user re-enrolls. Decide it once.
+The expected origin(s) and the user-verification requirement are baked in the
+same way, for the same reason.
+
+**FIDO2 requires user verification by default, not just a touch.** Your key
+must confirm it is you — a PIN or biometric — not merely that someone touched
+it. If your authenticator has no PIN or biometric set, set one; a key
+enrolled without the ability to verify its user cannot satisfy this factor.
 
 **Challenges expire in five minutes by default.** If your users are timing out,
 that is the window — and lengthening it lengthens the replay window too.
