@@ -450,11 +450,7 @@ func (s *Server) errorHandlingUnaryInterceptor(
 		if translated, ok := notLeaderStatus(ctx, s.service.xkmsService, err); ok {
 			return resp, translated
 		}
-		// Ensure error is a proper gRPC status error
-		if _, ok := status.FromError(err); !ok {
-			// Convert non-gRPC errors to Internal errors
-			err = status.Errorf(codes.Internal, "internal error: %v", err)
-		}
+		err = s.scrubInternalError(err, info.FullMethod)
 	}
 
 	return resp, err
@@ -476,12 +472,51 @@ func (s *Server) errorHandlingStreamInterceptor(
 		if translated, ok := notLeaderStatus(ss.Context(), s.service.xkmsService, err); ok {
 			return translated
 		}
-		// Ensure error is a proper gRPC status error
-		if _, ok := status.FromError(err); !ok {
-			// Convert non-gRPC errors to Internal errors
-			err = status.Errorf(codes.Internal, "internal error: %v", err)
-		}
+		err = s.scrubInternalError(err, info.FullMethod)
 	}
 
 	return err
+}
+
+// scrubbedErrorMessage is the fixed text a client receives in place of an
+// internal error's own message. It mirrors REST's ErrInternalError wire text
+// (pkg/api/rest/errors.go) so both transports report the same signal to a
+// caller when the server withholds detail.
+const scrubbedErrorMessage = "internal error"
+
+// scrubInternalError withholds internal detail from a gRPC error response.
+// A non-status error -- a handler or a lower layer returned a plain Go error
+// instead of a *status.Status -- is converted to codes.Internal, matching
+// this interceptor's previous behavior. A status error whose code is
+// codes.Internal or codes.Unknown has its message replaced, keeping its
+// original code; every RPC handler in this package that builds
+// status.Errorf(codes.Internal, "...: %v", err) (mapBarrierError,
+// mapPINError, mapKeyOpError's floor, and the rest) is scrubbed here, in one
+// place, rather than at each of those call sites. A status error carrying a
+// client-facing code (InvalidArgument, NotFound, PermissionDenied, and so on)
+// is returned unchanged: those messages are written for the caller.
+//
+// Either way the original err is logged at Error level with the RPC's full
+// method name, so the detail a storage path, a backend message, a barrier
+// state reaches the operator through s.logger and never the client
+// (go-xkms#1258, mirroring pkg/api/rest/errors.go's clientErrorText and
+// pkg/api/mcp/errors_keyops.go's ClientError).
+func (s *Server) scrubInternalError(err error, method string) error {
+	st, ok := status.FromError(err)
+	if ok && st.Code() != codes.Internal && st.Code() != codes.Unknown {
+		return err
+	}
+
+	logger := s.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Error("grpc: internal error withheld from client",
+		slog.String("method", method),
+		slog.Any("error", err))
+
+	if !ok {
+		return status.Error(codes.Internal, scrubbedErrorMessage)
+	}
+	return status.Error(st.Code(), scrubbedErrorMessage)
 }

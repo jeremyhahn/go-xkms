@@ -611,15 +611,31 @@ const (
 	RSAKeySize4096 = 4096
 )
 
-// RSAKeySizeError reports that a requested RSA modulus size falls below the
-// minimum this project permits any backend to generate or import.
+// RSAKeySizeError reports that a requested RSA modulus size falls outside
+// the range this project permits any backend to generate or import.
 //
 // NIST SP 800-131A Rev. 2 and the CA/Browser Forum Baseline Requirements
 // both retire RSA moduli under 2048 bits, so RSAKeySize2048 is the floor
-// every code path in go-xkms enforces. ValidateRSAKeySize is the one place
-// that floor is written down (go-xkms#1204): KeyAttributes.Validate, the
-// PKCS#11 and TPM backends' own RSA generation, and the composite Backend's
-// GenerateRSA all call it instead of each repeating the literal 2048.
+// every code path in go-xkms enforces.
+//
+// RSAKeySize4096 is the ceiling. It is not an arbitrary "safe-looking"
+// number: it is the largest modulus every backend this project actually
+// ships will generate. AWS KMS, Azure Key Vault and GCP Cloud KMS each cap
+// asymmetric RSA CMKs at 4096 bits; a TPM 2.0 device generates at most
+// 2048 or 3072 bits in practice; and the PKCS#11 module's own
+// CKM_RSA_PKCS_KEY_PAIR_GEN advertises 4096 as ulMaxKeySize
+// (pkg/pkcs11/module/mechanism.go's rsaModulusBitsMax) after a prior 16384
+// advertisement let a single C_GenerateKeyPair call exhaust the daemon's
+// memory. rsa.GenerateKey's cost grows with the cube of the modulus and
+// offers no cancellation, so an unbounded caller-chosen size let one
+// request pin a CPU core for minutes to hours (go-xkms#1260); the ceiling
+// is set to the largest size this stack's backends actually produce rather
+// than a larger value nothing here can use.
+//
+// ValidateRSAKeySize is the one place both bounds are written down
+// (go-xkms#1204, go-xkms#1260): KeyAttributes.Validate, the PKCS#11 and TPM
+// backends' own RSA generation, and the composite Backend's GenerateRSA all
+// call it instead of each repeating the literal 2048 or 4096.
 type RSAKeySizeError struct {
 	// Requested is the modulus size in bits the caller asked for.
 	Requested int
@@ -627,19 +643,28 @@ type RSAKeySizeError struct {
 
 // Error implements the error interface.
 func (e *RSAKeySizeError) Error() string {
+	if e.Requested > RSAKeySize4096 {
+		return fmt.Sprintf("types: RSA key size must be at most %d bits, got %d", RSAKeySize4096, e.Requested)
+	}
 	return fmt.Sprintf("types: RSA key size must be at least %d bits, got %d", RSAKeySize2048, e.Requested)
 }
 
-// ValidateRSAKeySize refuses an RSA modulus size smaller than RSAKeySize2048.
+// ValidateRSAKeySize refuses an RSA modulus size outside
+// [RSAKeySize2048, RSAKeySize4096].
 //
 // It performs no substitution: a zero size (meaning "the caller named
-// none") is refused exactly like any other undersized value. A call site
+// none") is refused exactly like any other out-of-range value. A call site
 // that wants zero to select the RSAKeySize2048 default resolves that itself
 // before calling ValidateRSAKeySize, the way applyAsymmetricAlgorithm
 // already does for the RPC surface -- this function's only job is judging
 // the size that is actually about to be used.
+//
+// The ceiling matters as much as the floor: rsa.GenerateKey cannot be
+// cancelled and its cost grows with the cube of the modulus size, so
+// admitting an oversized request (e.g. 65536 bits) lets one caller pin a
+// CPU core for minutes to hours (go-xkms#1260).
 func ValidateRSAKeySize(bits int) error {
-	if bits < RSAKeySize2048 {
+	if bits < RSAKeySize2048 || bits > RSAKeySize4096 {
 		return &RSAKeySizeError{Requested: bits}
 	}
 	return nil

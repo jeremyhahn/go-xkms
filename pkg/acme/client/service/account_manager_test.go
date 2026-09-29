@@ -22,6 +22,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -376,6 +377,29 @@ func TestGenerateSigner_RSA_4096(t *testing.T) {
 	key, ok := signer.(*rsa.PrivateKey)
 	require.True(t, ok, "expected *rsa.PrivateKey")
 	assert.Equal(t, 4096, key.N.BitLen())
+}
+
+// TestGenerateSigner_RSA_RefusesOversizedKey proves generateSigner refuses
+// an RSA key size above the project's RSAKeySize4096 ceiling before
+// rsa.GenerateKey ever runs. rsa.GenerateKey cannot be cancelled and its
+// cost grows with the cube of the modulus size, so an unvalidated
+// account/certificate KeyConfig let a single request pin a CPU core for
+// minutes to hours (go-xkms#1260).
+func TestGenerateSigner_RSA_RefusesOversizedKey(t *testing.T) {
+	keyCfg := &KeyConfig{
+		Algorithm: "RSA",
+		Store:     "software",
+		RSA:       &RSAConfig{KeySize: 65536},
+	}
+	_, err := generateSigner(keyCfg)
+	require.Error(t, err)
+
+	var keyGenErr ErrKeyGeneration
+	require.True(t, errors.As(err, &keyGenErr), "expected ErrKeyGeneration, got %T: %v", err, err)
+
+	var sizeErr *types.RSAKeySizeError
+	require.True(t, errors.As(err, &sizeErr), "expected *types.RSAKeySizeError, got %T: %v", err, err)
+	assert.Equal(t, 65536, sizeErr.Requested)
 }
 
 // TestGenerateSigner_Ed25519 verifies that Ed25519 produces a valid

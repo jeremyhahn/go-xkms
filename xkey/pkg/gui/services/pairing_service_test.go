@@ -719,3 +719,20 @@ func TestPairingService_MultiBrowserStatus(t *testing.T) {
 	assert.True(t, origins[originA], "chrome origin should be in full status")
 	assert.True(t, origins[originB], "firefox origin should be in full status")
 }
+
+// TestPairingService_InstallManifest_SingleBrowserWriteFailure exercises the
+// non-"all" failure branch of InstallManifest: HOME points at a regular
+// file, so nativemsg's directory creation fails and InstallManifest returns
+// ErrManifestInstallFailed instead of writing to the host.
+func TestPairingService_InstallManifest_SingleBrowserWriteFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	blocker := filepath.Join(tmpDir, "not-a-directory")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+	t.Setenv("HOME", blocker)
+
+	svc := NewPairingService(slog.Default())
+
+	err := svc.InstallManifest("chrome")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrManifestInstallFailed)
+}

@@ -76,7 +76,41 @@ var (
 	// because every KDF in this package will happily derive from zero bytes
 	// and return a well-formed, entirely predictable key.
 	ErrEmptyKeyMaterial = errors.New("key derivation requires non-empty input keying material")
+
+	// ErrKeyLengthTooLarge indicates the caller asked a KDF to produce more
+	// than MaxDerivedKeyLength bytes of output.
+	//
+	// It exists because none of the constructions pkg/crypto/kdf implements
+	// refuses a large caller-chosen length on its own: the ANSI X9.63 and
+	// NIST SP 800-56A concatenation KDFs accept requests up to 2^32 hash
+	// blocks and preallocate reps*hash.Size() before deriving a single byte,
+	// and the NIST SP 800-108 modes accept requests up to roughly 512 MiB.
+	// A single DeriveKey or DeriveKeyECDH request naming an unbounded
+	// key_length could therefore task the server with a multi-gigabyte
+	// allocation before any of those adapters run (go-xkms#1259). Checked at
+	// every derivation entry point -- KDFParams.Derive and
+	// DeriveFromKeyMaterial -- so no caller of either can reach an adapter
+	// with a length neither of them has already refused.
+	ErrKeyLengthTooLarge = errors.New("requested key length exceeds the maximum derived key length")
 )
+
+// MaxDerivedKeyLength is the largest output, in bytes, that a key derivation
+// function invoked through this package may produce.
+//
+// It is the single length ceiling for every KDF this service exposes --
+// HKDF, the SP 800-108r1 modes, the ANSI X9.63 / SP 800-56A concatenation
+// KDFs, and the raw (CKD_NULL) pass-through -- checked once, in
+// KDFParams.Derive and DeriveFromKeyMaterial, rather than reimplemented by
+// each adapter in pkg/crypto/kdf. Those adapters keep their own
+// construction-specific ceilings (2^32 hash blocks for the concatenation
+// KDFs, ~512 MiB for SP 800-108, RFC 5869's 255*HashLen for HKDF): those are
+// correctness bounds tied to each wire format's own counter or length field,
+// not a capacity policy, and every one of them is far larger than any key or
+// MAC this service ever derives. 1024 bytes covers the largest output this
+// service actually produces -- a 512-bit (64-byte) symmetric key or HMAC key
+// -- with generous headroom for algorithms added later, while remaining far
+// below a size that could pressure server memory from a single request.
+const MaxDerivedKeyLength = 1024
 
 // SymmetricKeyDeriver extends SymmetricKeyProvider with derivation from a key
 // the backend already holds, named only by its attributes.
@@ -138,6 +172,16 @@ func DeriveFromKeyMaterial(ikm []byte, params *kdf.KDFParams) ([]byte, error) {
 	}
 	if len(ikm) == 0 {
 		return nil, ErrEmptyKeyMaterial
+	}
+	// Refused before NewAdapter/DeriveKey run: this is the one entry point
+	// DeriveKey's raw-input-key-material and stored-symmetric-key paths both
+	// call, and none of the adapters below bounds a caller-chosen KeyLength
+	// on its own. See ErrKeyLengthTooLarge.
+	if params.KeyLength > MaxDerivedKeyLength {
+		return nil, &errs.Detail{
+			Err:    ErrKeyLengthTooLarge,
+			Detail: fmt.Sprintf("requested %d bytes, maximum is %d bytes", params.KeyLength, MaxDerivedKeyLength),
+		}
 	}
 
 	adapter, err := kdf.NewAdapter(params.Algorithm)
@@ -293,6 +337,12 @@ func (b kdfAlgorithmBridge) hash(name string) (crypto.Hash, bool) {
 // Validate defaults, and callers that skip Validate get the errors below
 // rather than a silently defaulted key.
 //
+// KeyLength is checked against MaxDerivedKeyLength here regardless, before
+// either the raw pass-through or a kdf.KDFAdapter runs, rather than trusted
+// to Validate: this is the one entry point every backend's DeriveKeyECDH
+// calls, and a caller-chosen KeyLength that reached the adapters below
+// unbounded could preallocate gigabytes (go-xkms#1259).
+//
 // Parameter applicability is enforced, not ignored. Each algorithm consumes a
 // specific subset of KDFParams; supplying a field outside that subset returns
 // ErrKDFParamNotApplicable:
@@ -316,6 +366,12 @@ func (b kdfAlgorithmBridge) hash(name string) (crypto.Hash, bool) {
 func (p *KDFParams) Derive(sharedSecret []byte) ([]byte, error) {
 	if p == nil {
 		return nil, &errs.Detail{Err: ErrUnsupportedKDFAlgorithm, Detail: "nil KDF parameters"}
+	}
+	if p.KeyLength > MaxDerivedKeyLength {
+		return nil, &errs.Detail{
+			Err:    ErrKeyLengthTooLarge,
+			Detail: fmt.Sprintf("requested %d bytes, maximum is %d bytes", p.KeyLength, MaxDerivedKeyLength),
+		}
 	}
 
 	if p.Algorithm == KDFAlgorithmRaw {
@@ -414,6 +470,13 @@ func (p *KDFParams) rawKDFApplicable() error {
 // and, if it has one and the key type supports it, the CKA_VALUE_LEN attribute
 // of the template. (The truncation removes bytes from the leading end of the
 // secret value.)" -- so a shorter key is the tail of the secret, not its head.
+//
+// KeyLength's upper bound is Derive's, checked before this method is ever
+// reached; it is not repeated here because this method's own bound --
+// KeyLength must not exceed len(sharedSecret) -- is always tighter (an ECDH
+// shared secret is at most a few hundred bytes), so nothing this function
+// does can allocate more than MaxDerivedKeyLength bytes even without
+// repeating the check.
 func (p *KDFParams) deriveRaw(sharedSecret []byte) ([]byte, error) {
 	if len(sharedSecret) == 0 {
 		return nil, ErrEmptyKeyMaterial

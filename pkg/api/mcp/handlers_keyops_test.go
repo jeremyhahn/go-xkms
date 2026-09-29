@@ -367,6 +367,27 @@ func TestHandler_DeriveKeyECDH_ValidationError(t *testing.T) {
 	assert.Contains(t, resp.Error.Message, "peer_public_key is required")
 }
 
+// TestHandler_DeriveKeyECDH_KeyLengthExceedsMaximum proves an oversized
+// key_length is refused before any backend or key lookup, so it surfaces as
+// Invalid params on this transport too, matching REST and gRPC
+// (go-xkms#1259).
+func TestHandler_DeriveKeyECDH_KeyLengthExceedsMaximum(t *testing.T) {
+	server := createTestServer(t)
+
+	paramsJSON, err := json.Marshal(&transport.DeriveKeyECDHRequest{
+		KeyID:         "k",
+		Backend:       "software",
+		PeerPublicKey: []byte("peer-public-key"),
+		KeyLength:     types.MaxDerivedKeyLength + 1,
+	})
+	require.NoError(t, err)
+
+	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.deriveKeyECDH", Params: paramsJSON, ID: 1}
+	resp := invokeRequest(server, context.Background(), req)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
+}
+
 func TestHandler_DeriveKeyECDH_MalformedParams(t *testing.T) {
 	server := createTestServer(t)
 

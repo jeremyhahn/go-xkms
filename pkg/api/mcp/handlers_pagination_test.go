@@ -78,3 +78,75 @@ func TestListHandlers_OmittedPaginationParamsStillWork(t *testing.T) {
 		})
 	}
 }
+
+// TestListHandlers_NegativePaginationParamsRejected proves go-xkms#1262:
+// unlike the REST and QUIC transports, these handlers decode a PageRequest
+// directly from JSON-RPC params rather than through PageRequestFromQuery, so
+// they used to hand a negative Page straight to ApplyPagination. ApplyPagination
+// no longer panics on that input (see pagination_test.go), but a caller
+// sending a negative page or page_size should still be told the request was
+// invalid rather than have it silently reinterpreted, exactly like the REST
+// transport's 400. transport.ValidatePageRequest is what gives all three
+// handlers that same rejection.
+func TestListHandlers_NegativePaginationParamsRejected(t *testing.T) {
+	server := createTestServer(t)
+	defer cleanupXKMS()
+
+	handlers := map[string]func(context.Context, *JSONRPCRequest) (interface{}, error){
+		"xkms.listBackends": server.handleListBackends,
+		"xkms.listKeys":     server.handleListKeys,
+		"xkms.listCerts":    server.handleListCerts,
+	}
+
+	for _, tc := range []struct {
+		name   string
+		params string
+	}{
+		{"negative page", `{"page": -1}`},
+		{"negative page_size", `{"page": 1, "page_size": -1}`},
+	} {
+		for method, handler := range handlers {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				_, err := handler(context.Background(), &JSONRPCRequest{
+					JSONRPC: "2.0",
+					Method:  method,
+					Params:  json.RawMessage(tc.params),
+					ID:      1,
+				})
+
+				require.Error(t, err)
+				var keyOp *KeyOpError
+				require.True(t, errors.As(err, &keyOp), "%s: %T is not a KeyOpError", method, err)
+				assert.Equal(t, ErrCodeInvalidParams, keyOp.Code)
+			})
+		}
+	}
+}
+
+// TestListHandlers_HugePaginationParamsDoNotPanic proves the overflow
+// combination the issue reported does not reach a panic through this
+// transport either: a huge page combined with a huge page_size is valid
+// input (ValidatePageRequest only rejects negative values), so it must
+// reach ApplyPagination's own overflow handling instead of a 500.
+func TestListHandlers_HugePaginationParamsDoNotPanic(t *testing.T) {
+	server := createTestServer(t)
+	defer cleanupXKMS()
+
+	handlers := map[string]func(context.Context, *JSONRPCRequest) (interface{}, error){
+		"xkms.listBackends": server.handleListBackends,
+		"xkms.listKeys":     server.handleListKeys,
+		"xkms.listCerts":    server.handleListCerts,
+	}
+
+	for method, handler := range handlers {
+		t.Run(method, func(t *testing.T) {
+			_, err := handler(context.Background(), &JSONRPCRequest{
+				JSONRPC: "2.0",
+				Method:  method,
+				Params:  json.RawMessage(`{"page": 9223372036854775807, "page_size": 9223372036854775807}`),
+				ID:      1,
+			})
+			require.NoError(t, err)
+		})
+	}
+}

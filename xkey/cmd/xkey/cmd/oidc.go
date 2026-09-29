@@ -823,9 +823,9 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 			_, _ = fmt.Fprintf(out, "Refresh Token: %s\n", token.RefreshToken())
 		}
 	} else {
-		_, _ = fmt.Fprintf(out, "Access Token:  %s... (truncated)\n", truncateToken(token.AccessToken(), 40))
+		_, _ = fmt.Fprintf(out, "Access Token:  %s\n", truncateToken(token.AccessToken()))
 		if token.IDToken() != "" {
-			_, _ = fmt.Fprintf(out, "ID Token:      %s... (truncated)\n", truncateToken(token.IDToken(), 40))
+			_, _ = fmt.Fprintf(out, "ID Token:      %s\n", truncateToken(token.IDToken()))
 		}
 	}
 
@@ -1597,12 +1597,23 @@ func saveOIDCConfig(path string, config OIDCConfig) error {
 	return os.WriteFile(path, data, 0600)
 }
 
-// truncateToken truncates a token for display.
-func truncateToken(token string, maxLen int) string {
-	if len(token) <= maxLen {
-		return token
+// truncateTokenPrefixLen is the maximum number of leading token characters
+// truncateToken ever reveals.
+const truncateTokenPrefixLen = 8
+
+// truncateToken formats a token for display without --full. It never prints
+// a full token, however short: the result is at most an 8-character prefix
+// followed by the token's total length, e.g. "abcd1234… (1234 chars)". An
+// empty token formats as "(0 chars)".
+func truncateToken(token string) string {
+	prefix := token
+	if len(prefix) > truncateTokenPrefixLen {
+		prefix = prefix[:truncateTokenPrefixLen]
 	}
-	return token[:maxLen]
+	if prefix == "" {
+		return fmt.Sprintf("(%d chars)", len(token))
+	}
+	return fmt.Sprintf("%s… (%d chars)", prefix, len(token))
 }
 
 // formatDuration formats a duration for human-readable display.

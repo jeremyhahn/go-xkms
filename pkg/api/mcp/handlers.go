@@ -146,6 +146,9 @@ func (s *Server) handleListBackends(ctx context.Context, req *JSONRPCRequest) (i
 			return nil, err
 		}
 	}
+	if err := transport.ValidatePageRequest(pr); err != nil {
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	}
 	paginatedBackends, pageResp := transport.ApplyPagination(backends, pr)
 
 	return ListBackendsResult{
@@ -383,6 +386,9 @@ func (s *Server) handleListKeys(ctx context.Context, req *JSONRPCRequest) (inter
 		if err := decodeParams(req, &pr); err != nil {
 			return nil, err
 		}
+	}
+	if err := transport.ValidatePageRequest(pr); err != nil {
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
 	}
 	paginatedKeys, pageResp := transport.ApplyPagination(keys, pr)
 
@@ -803,6 +809,9 @@ func (s *Server) handleListCerts(ctx context.Context, req *JSONRPCRequest) (inte
 		if err := decodeParams(req, &pr); err != nil {
 			return nil, err
 		}
+	}
+	if err := transport.ValidatePageRequest(pr); err != nil {
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
 	}
 
 	listed, err := s.xkmsService.ListCertificates(ctx, "", transport.WithPageRequest(pr))

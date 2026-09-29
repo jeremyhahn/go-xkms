@@ -635,8 +635,13 @@ func (b *PKCS8Backend) generateRSAKey(attrs *types.RSAAttributes) (*rsa.PrivateK
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "RSA attributes are required"}
 	}
 
-	if attrs.KeySize < 2048 {
-		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "RSA key size must be at least 2048 bits"}
+	// types.ValidateRSAKeySize is the one place the project's RSA modulus
+	// floor and ceiling are written down; a local "< 2048" check here had no
+	// ceiling at all, so a caller-supplied size (e.g. 65536) reached
+	// rsa.GenerateKey uncancellably and pinned a CPU core for minutes to
+	// hours (go-xkms#1260).
+	if err := types.ValidateRSAKeySize(attrs.KeySize); err != nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: err.Error()}
 	}
 
 	return rsa.GenerateKey(rand.Reader, attrs.KeySize)
