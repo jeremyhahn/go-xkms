@@ -136,6 +136,16 @@ func (unresponsiveHIDEnumerator) Open(path string) (fido2.HIDDevice, error) {
 	return &unresponsiveHIDDevice{path: path}, nil
 }
 
+// noHIDEnumerator finds no authenticator, whatever is attached to the host,
+// so a command driven with it fails closed at discovery.
+type noHIDEnumerator struct{}
+
+func (noHIDEnumerator) Enumerate(_, _ uint16) ([]fido2.HIDDevice, error) { return nil, nil }
+
+func (noHIDEnumerator) Open(string) (fido2.HIDDevice, error) {
+	return nil, errors.New("no authenticator attached")
+}
+
 // newDeviceLessAdapter builds the same hardware authenticator adapter the
 // commands build, aimed at a device that enumerates but never responds.
 // Construction succeeds and the ceremony fails deterministically at the
