@@ -1361,6 +1361,11 @@ func TestGenerateKeyPairEdgeCases(t *testing.T) {
 		{"ecdsa P-384", "ecdsa", 384, false},
 		{"ecdsa P-521", "ecdsa", 521, false},
 		{"ec alias", "ec", 0, false},
+		{"rsa 4096 ok", "rsa", 4096, false},
+		// go-xkms#1260: rsa.GenerateKey cannot be cancelled and its cost
+		// grows with the cube of the modulus size, so an oversized
+		// --key-size must be refused rather than generated.
+		{"rsa oversized refused", "rsa", 65536, true},
 	}
 
 	for _, tt := range tests {

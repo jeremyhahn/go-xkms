@@ -55,7 +55,7 @@ func (e *UnsupportedAlgorithmError) Error() string {
 
 // InvalidKeySizeError is returned when a key-generation request
 // specifies a size that is not valid for the chosen algorithm (e.g.,
-// RSA < 2048 bits).
+// RSA outside [types.RSAKeySize2048, types.RSAKeySize4096]).
 type InvalidKeySizeError struct {
 	Algorithm string
 	Size      int

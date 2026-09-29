@@ -1990,8 +1990,11 @@ func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize in
 	// Set algorithm-specific attributes
 	switch ka {
 	case x509.RSA:
-		if keySize < 2048 {
+		if keySize < client.RSAKeySize2048 {
 			return nil, ErrRSAKeySizeTooSmall
+		}
+		if keySize > client.RSAKeySize4096 {
+			return nil, ErrRSAKeySizeTooLarge
 		}
 		attrs.RSAAttributes = &client.RSAAttributes{
 			KeySize: keySize,

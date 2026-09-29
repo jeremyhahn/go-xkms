@@ -2492,6 +2492,21 @@ func TestBuildKeyAttributesFromFlags_RSA_4096(t *testing.T) {
 	}
 }
 
+// TestBuildKeyAttributesFromFlags_RSA_OversizedKeySize proves the CLI refuses
+// an RSA --key-size above the documented 4096-bit ceiling before it ever
+// reaches the server: go-xkms#1260 refuses this everywhere, and refusing it
+// here too gives the operator a fast, local error instead of waiting on a
+// round trip.
+func TestBuildKeyAttributesFromFlags_RSA_OversizedKeySize(t *testing.T) {
+	_, err := buildKeyAttributesFromFlags("test-key", "tls", "rsa", 65536, "", false)
+	if err == nil {
+		t.Error("buildKeyAttributesFromFlags should return error for RSA key size > 4096")
+	}
+	if !errors.Is(err, ErrRSAKeySizeTooLarge) {
+		t.Errorf("buildKeyAttributesFromFlags error = %v, want ErrRSAKeySizeTooLarge", err)
+	}
+}
+
 // Test buildSymmetricKeyAttributes helper
 func TestBuildSymmetricKeyAttributes_AES128(t *testing.T) {
 	attrs, err := buildSymmetricKeyAttributes("test-key", "", 128)
