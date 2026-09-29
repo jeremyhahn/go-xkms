@@ -70,11 +70,11 @@ got=$(awk '/^- \*\*esc\*\*/{print; exit}' "$T/CHANGELOG.md")
 check "$got" "$want" "backslash sequences spliced verbatim (no C-escape interpretation)"
 
 # --- assemble: a block over 128 KiB (Linux MAX_ARG_STRLEN) still splices --
-mkcl; mkdir -p "$T/e6"
+mkcl; mkdir -p "$T/e7"
 for i in $(seq 1 40); do
-	{ printf -- '- **big %s**' "$i"; head -c 4000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$T/e6/fixed-big-$i.md"
+	{ printf -- '- **big %s**' "$i"; head -c 4000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$T/e7/fixed-big-$i.md"
 done
-assemble "$T/CHANGELOG.md" "$T/e6" "0.2.0" "2026-09-05" >/dev/null; rc=$?
+assemble "$T/CHANGELOG.md" "$T/e7" "0.2.0" "2026-09-05" >/dev/null; rc=$?
 check "$rc" "0" "oversized block rc"
 check "$(grep -c '^- \*\*big ' "$T/CHANGELOG.md")" "40" "oversized block entries all spliced"
 
