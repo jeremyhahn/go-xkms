@@ -1,6 +1,6 @@
 # OIDC — User Guide
 
-Status: current. Last verified: 2026-09-22.
+Status: current. Last verified: 2026-09-29.
 
 ## Log in to a standard OIDC provider
 
@@ -92,9 +92,12 @@ environment variables (`OIDC_ACCESS_TOKEN`, `OIDC_REFRESH_TOKEN`,
 ## AWS Console login
 
 `xkey oidc aws` is a separate, DPoP-based flow for AWS Console native login;
-it keeps its own session store (`--session-store`, default
-`~/.xkey/aws-session.json`) that is not affected by the barrier behavior
-above. See [cli.md](cli.md#xkey-oidc-aws).
+it keeps its own session store (`--session-store`) holding the DPoP private
+key and refresh token, but follows the identical barrier-or-fallback
+behavior described above: barrier-encrypted when `xkey barrier init` has
+been run, an unencrypted file with one warning otherwise, and an explicit
+`--session-store <path>` bypassing the barrier entirely. See
+[cli.md](cli.md#xkey-oidc-aws).
 
 ## Using a specific file instead of the barrier
 

@@ -134,15 +134,6 @@ var (
 	// ErrTokenNotFound is returned when a token is not found in the store.
 	ErrTokenNotFound = errors.New("oidc: token not found")
 
-	// ErrEncryptionFailed is returned when token encryption fails.
-	ErrEncryptionFailed = errors.New("oidc: encryption failed")
-
-	// ErrDecryptionFailed is returned when token decryption fails.
-	ErrDecryptionFailed = errors.New("oidc: decryption failed")
-
-	// ErrInvalidEncryptionKey is returned when the encryption key is invalid.
-	ErrInvalidEncryptionKey = errors.New("oidc: invalid encryption key")
-
 	// ErrMissingRefreshToken is returned when a refresh token is required but not present.
 	ErrMissingRefreshToken = errors.New("oidc: missing refresh token")
 
