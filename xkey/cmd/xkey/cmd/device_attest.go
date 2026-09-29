@@ -156,7 +156,10 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select the device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
@@ -332,7 +335,11 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 }
 
 // selectDevice picks a device from config by name, or returns the default.
-func selectDevice(cfg *DevicesConfig, deviceName string) *PairedDevice {
+//
+// It returns a non-nil error, wrapping ErrDeviceNameAmbiguous, when
+// deviceName (or, absent that, DefaultDevice) matches more than one paired
+// device record; see findDeviceByName.
+func selectDevice(cfg *DevicesConfig, deviceName string) (*PairedDevice, error) {
 	if deviceName != "" {
 		return findDeviceByName(cfg, deviceName)
 	}
@@ -340,9 +347,9 @@ func selectDevice(cfg *DevicesConfig, deviceName string) *PairedDevice {
 		return findDeviceByName(cfg, cfg.DefaultDevice)
 	}
 	if len(cfg.Devices) > 0 {
-		return &cfg.Devices[0]
+		return &cfg.Devices[0], nil
 	}
-	return nil
+	return nil, nil
 }
 
 // nonceMatches compares sent and received nonces using constant-time comparison.

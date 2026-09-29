@@ -220,6 +220,28 @@ func TestRunDeviceAttestDevice_RefusesWithWrongBarrierPassword(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDeviceBarrierUnsealFailed)
 }
 
+// TestRunDeviceAttestDevice_RefusesAmbiguousDeviceName pins #1315: two
+// paired records sharing a name must refuse `device attest-device` instead
+// of silently attesting whichever record's key happens to be first in the
+// file.
+func TestRunDeviceAttestDevice_RefusesAmbiguousDeviceName(t *testing.T) {
+	isolateDeviceBarrierHome(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "A", Address: "11:22:33:44:55:66"},
+			{Name: "A", Address: "AA:BB:CC:DD:EE:FF"},
+		},
+	}))
+
+	cmd := attestDeviceCommand(t)
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "device", "A"))
+
+	err := runDeviceAttestDevice(cmd, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNameAmbiguous)
+}
+
 // TestRunDeviceListen_ProceedsWithoutABarrier mirrors
 // TestRunDeviceAttestDevice_ProceedsWithoutABarrier for `device listen`.
 func TestRunDeviceListen_ProceedsWithoutABarrier(t *testing.T) {

@@ -50,11 +50,6 @@ var (
 	// ErrTPM2InitFailed indicates TPM2 initialization failed.
 	ErrTPM2InitFailed = errors.New("device: TPM2 initialization failed")
 
-	// ErrDeviceNameAmbiguous indicates more than one paired device shares
-	// the requested name, so listen cannot choose which pinned key to
-	// trust. See pairing.FindPairedDeviceByName.
-	ErrDeviceNameAmbiguous = errors.New("device: more than one paired device has this name; re-pair or remove the duplicate")
-
 	// ErrDevicePinInvalid indicates the paired device record has no usable
 	// pinned Noise static key -- empty or the wrong length -- so the
 	// peripheral would otherwise be built with nothing to pin, silently
@@ -181,26 +176,25 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 		return ErrDeviceNotPaired
 	}
 
-	// Find the target device. Looked up through pairing.FindPairedDeviceByName
-	// directly, not the cmd-local findDeviceByName, so an ambiguous name (more
-	// than one record) is refused instead of resolved by taking the first
-	// match -- the phone's advertised name is untrusted input, and a lookup by
-	// name is how this command picks which pinned key to trust for the whole
-	// listening session (#1307).
+	// Find the target device. findDeviceByName refuses an ambiguous name
+	// (more than one record) instead of resolving it by taking the first
+	// match -- the phone's advertised name is untrusted input, and a lookup
+	// by name is how this command picks which pinned key to trust for the
+	// whole listening session (#1307).
 	var targetDevice *PairedDevice
 	switch {
 	case deviceFilter != "":
-		targetDevice, err = pairing.FindPairedDeviceByName(cfg.Devices, deviceFilter)
+		targetDevice, err = findDeviceByName(cfg, deviceFilter)
 		if err != nil {
-			return &SentinelCauseError{Sentinel: ErrDeviceNameAmbiguous, Cause: err}
+			return err
 		}
 		if targetDevice == nil {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceFilter)}
 		}
 	case cfg.DefaultDevice != "":
-		targetDevice, err = pairing.FindPairedDeviceByName(cfg.Devices, cfg.DefaultDevice)
+		targetDevice, err = findDeviceByName(cfg, cfg.DefaultDevice)
 		if err != nil {
-			return &SentinelCauseError{Sentinel: ErrDeviceNameAmbiguous, Cause: err}
+			return err
 		}
 		if targetDevice == nil {
 			return ErrDeviceNoDefaultDevice

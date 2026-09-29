@@ -154,7 +154,10 @@ func runDeviceShare(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
@@ -395,7 +398,10 @@ func runDeviceImport(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
