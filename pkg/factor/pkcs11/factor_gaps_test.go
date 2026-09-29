@@ -23,7 +23,6 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"encoding/base64"
-	"encoding/pem"
 	"errors"
 	"math/big"
 	"strings"
@@ -289,9 +288,10 @@ func TestStringParam(t *testing.T) {
 	}
 }
 
-// TestVerify_AcceptsPEMPublicKey covers the PEM fallback in the response
-// metadata, used by CLI callers that paste a PEM block instead of base64 DER.
-func TestVerify_AcceptsPEMPublicKey(t *testing.T) {
+// TestVerify_RejectsBadEnrolledKeyMaterial covers each way the challenge's
+// enrolled key can be absent or unusable. Every one must fail closed with a
+// verification error, and none may fall back to key material in the response.
+func TestVerify_RejectsBadEnrolledKeyMaterial(t *testing.T) {
 	key, der := ecP256(t)
 	f := New(Config{})
 	ctx := context.Background()
@@ -303,79 +303,37 @@ func TestVerify_AcceptsPEMPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
-	challenge, err := f.Challenge(ctx, enrollment)
-	if err != nil {
-		t.Fatalf("Challenge: %v", err)
-	}
-
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
-	response := &qrdbsdk.AuthFactorResponse{
-		Value:    signNonce(t, key, challenge.Nonce),
-		Metadata: map[string]string{"public_key_pem": string(pemBytes)},
-	}
-	if err := f.Verify(ctx, challenge, response); err != nil {
-		t.Fatalf("Verify with a PEM public key: %v", err)
-	}
-
-	// The same PEM must not verify a signature over a different nonce.
-	other := &qrdbsdk.AuthFactorResponse{
-		Value:    signNonce(t, key, []byte("a different nonce entirely")),
-		Metadata: map[string]string{"public_key_pem": string(pemBytes)},
-	}
-	if err := f.Verify(ctx, challenge, other); err == nil {
-		t.Fatal("Verify accepted a signature over a different nonce")
-	}
-}
-
-// TestVerify_RejectsBadPublicKeyMaterial covers each way the response's key
-// material can be unusable. Every one must fail closed with a verification
-// error — a permissive branch here would let an attacker choose the key that
-// checks their own signature.
-func TestVerify_RejectsBadPublicKeyMaterial(t *testing.T) {
-	key, der := ecP256(t)
-	f := New(Config{})
-	ctx := context.Background()
-
-	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
-		UserID:       "user-1",
-		MethodParams: map[string]any{"public_key_der": der},
-	})
-	if err != nil {
-		t.Fatalf("Enroll: %v", err)
-	}
-	challenge, err := f.Challenge(ctx, enrollment)
-	if err != nil {
-		t.Fatalf("Challenge: %v", err)
-	}
-	sig := signNonce(t, key, challenge.Nonce)
 
 	cases := []struct {
 		name       string
-		metadata   map[string]string
+		enrolled   any
 		wantReason string
 	}{
-		{"no key material at all", map[string]string{}, "missing from response metadata"},
-		{"nil metadata", nil, "missing from response metadata"},
-		{"empty der", map[string]string{"public_key_der": ""}, "missing from response metadata"},
-		{"der not base64", map[string]string{"public_key_der": "%%%"}, "decode public_key_der"},
-		{"der is not PKIX", map[string]string{"public_key_der": base64.StdEncoding.EncodeToString([]byte("nope"))}, "parse public key"},
-		{"pem is not a PEM block", map[string]string{"public_key_pem": "-----nope-----"}, "not a PUBLIC KEY block"},
-		{"pem has the wrong block type", map[string]string{
-			"public_key_pem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
-		}, "not a PUBLIC KEY block"},
-		{"pem body is not PKIX", map[string]string{
-			"public_key_pem": string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: []byte("nope")})),
-		}, "parse public key"},
+		{"absent", nil, "missing from challenge MethodData"},
+		{"not a string", der, "missing from challenge MethodData"},
+		{"empty", "", "missing from challenge MethodData"},
+		{"not base64", "%%%", "decode " + methodDataEnrolledKey},
+		{"not PKIX", base64.StdEncoding.EncodeToString([]byte("nope")), "parse public key"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-				Value:    sig,
-				Metadata: tc.metadata,
+			challenge, err := f.Challenge(ctx, enrollment)
+			if err != nil {
+				t.Fatalf("Challenge: %v", err)
+			}
+			delete(challenge.MethodData, methodDataEnrolledKey)
+			if tc.enrolled != nil {
+				challenge.MethodData[methodDataEnrolledKey] = tc.enrolled
+			}
+
+			// The response offers the genuine key; it must not be consulted.
+			err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+				Value:    signNonce(t, key, challenge.Nonce),
+				Metadata: map[string]string{"public_key_der": base64.StdEncoding.EncodeToString(der)},
 			})
 			if err == nil {
-				t.Fatal("Verify accepted an unusable public key")
+				t.Fatal("Verify accepted an unusable enrolled key")
 			}
 			var failed *qrdbsdk.AuthFactorVerificationFailedError
 			if !errors.As(err, &failed) {
@@ -393,8 +351,8 @@ func TestVerify_RejectsBadPublicKeyMaterial(t *testing.T) {
 
 // TestVerify_RejectsUnsupportedKeyType covers the type switch's default arm.
 // An Ed25519 key cannot reach this path through Enroll (it is rejected there),
-// but a response supplies its own key material, so the verifier must refuse it
-// independently rather than falling through to a "verified" result.
+// but Verify parses whatever the challenge carries, so it must refuse an
+// unsupported key independently rather than falling through to "verified".
 func TestVerify_RejectsUnsupportedKeyType(t *testing.T) {
 	key, der := ecP256(t)
 	f := New(Config{})
@@ -420,10 +378,10 @@ func TestVerify_RejectsUnsupportedKeyType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalPKIXPublicKey: %v", err)
 	}
+	challenge.MethodData[methodDataEnrolledKey] = base64.StdEncoding.EncodeToString(edDER)
 
 	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value:    signNonce(t, key, challenge.Nonce),
-		Metadata: map[string]string{"public_key_der": base64.StdEncoding.EncodeToString(edDER)},
+		Value: signNonce(t, key, challenge.Nonce),
 	})
 	if err == nil {
 		t.Fatal("Verify accepted an Ed25519 public key")

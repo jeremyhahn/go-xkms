@@ -60,6 +60,11 @@ const (
 	defaultAlgorithm           = "ecdsap256"
 	defaultValidityDays        = 365 * 10
 	nonceLength                = 32
+
+	// methodDataEnrolledCert is the challenge MethodData key carrying the
+	// enrolled certificate PEM. Verify reads the verification key from here
+	// and nowhere else, so a response can never substitute its own key.
+	methodDataEnrolledCert = "enrolled_cert_pem"
 )
 
 // Config configures a PIV Factor. The zero value is valid: a software-only
@@ -178,7 +183,9 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 }
 
 // Challenge produces a 32-byte random nonce the custodian must sign with
-// the private key in their PIV slot.
+// the private key in their PIV slot. The enrolled certificate PEM is carried
+// in MethodData["enrolled_cert_pem"] so Verify authenticates against the
+// server-held enrollment rather than anything the response supplies.
 func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnrollment) (*qrdbsdk.AuthFactorChallenge, error) {
 	if enrollment == nil {
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "enrollment must not be nil"}
@@ -202,15 +209,19 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 		Nonce:        nonce,
 		ExpiresAt:    time.Now().UTC().Add(time.Duration(ttl) * time.Second),
 		MethodData: map[string]any{
-			"slot":      enrollment.Metadata["slot"],
-			"algorithm": enrollment.Metadata["algorithm"],
+			methodDataEnrolledCert: string(enrollment.PublicKey),
+			"slot":                 enrollment.Metadata["slot"],
+			"algorithm":            enrollment.Metadata["algorithm"],
 		},
 	}, nil
 }
 
-// Verify parses the PEM certificate from response.Metadata["public_key_pem"]
-// and verifies the DER-encoded ECDSA signature in response.Value against
-// the challenge nonce.
+// Verify checks that response.Value is a DER-encoded ECDSA signature over
+// SHA-256 of the challenge nonce, produced by the key in the enrolled
+// certificate. The certificate is read from
+// challenge.MethodData["enrolled_cert_pem"] — never from the response — so an
+// attacker cannot pass verification by signing with a key of their own and
+// presenting it alongside the signature.
 func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChallenge, response *qrdbsdk.AuthFactorResponse) error {
 	if challenge == nil {
 		return &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "challenge must not be nil"}
@@ -221,20 +232,20 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 	if challenge.Expired() {
 		return &qrdbsdk.AuthFactorChallengeExpiredError{ChallengeID: challenge.ChallengeID}
 	}
-	pubPEM, ok := response.Metadata["public_key_pem"]
-	if !ok {
+	enrolledPEM, ok := challenge.MethodData[methodDataEnrolledCert].(string)
+	if !ok || enrolledPEM == "" {
 		return &qrdbsdk.AuthFactorVerificationFailedError{
 			FactorName: FactorName,
-			Reason:     "public_key_pem missing from response metadata",
+			Reason:     methodDataEnrolledCert + " missing from challenge MethodData",
 		}
 	}
-	pub, err := parsePublicKeyFromPEM([]byte(pubPEM))
+	pub, err := parsePublicKeyFromPEM([]byte(enrolledPEM))
 	if err != nil {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "parse public key: " + err.Error()}
+		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "parse enrolled certificate: " + err.Error()}
 	}
 	ecPub, ok := pub.(*ecdsa.PublicKey)
 	if !ok {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "public key is not ECDSA"}
+		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "enrolled public key is not ECDSA"}
 	}
 	return verifyECDSA(ecPub, challenge.Nonce, response.Value)
 }
@@ -261,8 +272,8 @@ func (f *Factor) SignNonce(_ context.Context, slot pivcert.PIVSlot, nonce []byte
 // selfSignedProfile is the certificate profile for a PIV factor's enrollment
 // certificate: a digital-signature-only end-entity certificate proving
 // possession of the enrolled slot's key. It carries no extended key usage —
-// this certificate exists to be re-presented as a challenge-response public
-// key during Verify, not to authenticate a TLS session.
+// this certificate is the enrolled verification key that each challenge
+// carries to Verify, not a credential for authenticating a TLS session.
 func selfSignedProfile() ca.ProfileProvider {
 	return ca.NewProfileBuilder("piv-factor-self-signed").
 		WithKeyUsage(x509.KeyUsageDigitalSignature).

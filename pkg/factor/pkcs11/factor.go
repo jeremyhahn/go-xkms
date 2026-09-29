@@ -46,7 +46,6 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"encoding/base64"
-	"encoding/pem"
 	"math/big"
 	"strconv"
 	"time"
@@ -61,6 +60,12 @@ const (
 	defaultChallengeTTLSeconds = 5 * 60
 	defaultMechanism           = "CKM_ECDSA_SHA256"
 	nonceLength                = 32
+
+	// methodDataEnrolledKey is the challenge MethodData key carrying the
+	// enrolled PKIX public key, standard-base64 DER. Verify reads the
+	// verification key from here and nowhere else, so a response can never
+	// substitute its own key.
+	methodDataEnrolledKey = "enrolled_public_key_der"
 )
 
 // Config configures a PKCS#11 Factor. The zero value is valid.
@@ -160,7 +165,10 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 }
 
 // Challenge produces a 32-byte random nonce the custodian must sign with the
-// private key on their PKCS#11 token.
+// private key on their PKCS#11 token. The enrolled public key is carried in
+// MethodData["enrolled_public_key_der"] (standard base64 of the PKIX DER) so
+// Verify authenticates against the server-held enrollment rather than
+// anything the response supplies.
 func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnrollment) (*qrdbsdk.AuthFactorChallenge, error) {
 	if enrollment == nil {
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "enrollment must not be nil"}
@@ -184,19 +192,20 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 		Nonce:        nonce,
 		ExpiresAt:    time.Now().UTC().Add(time.Duration(ttl) * time.Second),
 		MethodData: map[string]any{
-			"mechanism": enrollment.Metadata["mechanism"],
-			"algorithm": enrollment.Metadata["algorithm"],
-			"key_id":    enrollment.Metadata["key_id"],
+			methodDataEnrolledKey: base64.StdEncoding.EncodeToString(enrollment.PublicKey),
+			"mechanism":           enrollment.Metadata["mechanism"],
+			"algorithm":           enrollment.Metadata["algorithm"],
+			"key_id":              enrollment.Metadata["key_id"],
 		},
 	}, nil
 }
 
-// Verify checks the DER-encoded signature in response.Value against the
-// challenge nonce using the enrolled public key. The enrolled public key is
-// taken from response.Metadata["public_key_der"] (base64 DER) when present,
-// otherwise the verifier must be given the enrollment's PublicKey out of band;
-// callers that hold the enrollment should set this field. ECDSA signatures are
-// ASN.1 DER (r,s); RSA signatures are PKCS#1 v1.5 over SHA-256 of the nonce.
+// Verify checks the signature in response.Value against the challenge nonce
+// using the enrolled public key. The key is read from
+// challenge.MethodData["enrolled_public_key_der"] — never from the response —
+// so an attacker cannot pass verification by signing with a key of their own
+// and presenting it alongside the signature. ECDSA signatures are ASN.1 DER
+// (r,s); RSA signatures are PKCS#1 v1.5; both are over SHA-256 of the nonce.
 func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChallenge, response *qrdbsdk.AuthFactorResponse) error {
 	if challenge == nil {
 		return &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "challenge must not be nil"}
@@ -208,9 +217,16 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 		return &qrdbsdk.AuthFactorChallengeExpiredError{ChallengeID: challenge.ChallengeID}
 	}
 
-	der, err := publicKeyDERFromResponse(response)
+	encoded, ok := challenge.MethodData[methodDataEnrolledKey].(string)
+	if !ok || encoded == "" {
+		return &qrdbsdk.AuthFactorVerificationFailedError{
+			FactorName: FactorName,
+			Reason:     methodDataEnrolledKey + " missing from challenge MethodData",
+		}
+	}
+	der, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: err.Error()}
+		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "decode " + methodDataEnrolledKey + ": " + err.Error()}
 	}
 	pub, err := x509.ParsePKIXPublicKey(der)
 	if err != nil {
@@ -229,28 +245,6 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 	default:
 		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "unsupported public key type"}
 	}
-}
-
-// publicKeyDERFromResponse resolves the enrolled DER public key. It prefers an
-// explicit base64 value in the response metadata (the verifier echoes the
-// enrolled key there) and falls back to a PEM PUBLIC KEY block for callers that
-// supply PEM.
-func publicKeyDERFromResponse(response *qrdbsdk.AuthFactorResponse) ([]byte, error) {
-	if v, ok := response.Metadata["public_key_der"]; ok && v != "" {
-		der, err := base64.StdEncoding.DecodeString(v)
-		if err != nil {
-			return nil, &derDecodeError{reason: "decode public_key_der: " + err.Error()}
-		}
-		return der, nil
-	}
-	if v, ok := response.Metadata["public_key_pem"]; ok && v != "" {
-		block, _ := pem.Decode([]byte(v))
-		if block == nil || block.Type != "PUBLIC KEY" {
-			return nil, &derDecodeError{reason: "public_key_pem is not a PUBLIC KEY block"}
-		}
-		return block.Bytes, nil
-	}
-	return nil, &derDecodeError{reason: "public_key_der missing from response metadata"}
 }
 
 // verifyECDSA verifies an ASN.1 DER (r,s) ECDSA signature over the pre-hashed
