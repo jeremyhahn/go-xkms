@@ -138,6 +138,19 @@ mechanism differs by backend (TPM PCR-bound sealing, HSM/KMS envelope
 encryption, or the software HKDF+AES-GCM path this CLI uses), but every
 `secret_backend` protects the share the same way — none stores it verbatim.
 
+If you are embedding go-xkms directly in a Go program instead of using
+`xkmsctl` — `xkms.AutoInitialize` with `BackendConfigs[xkms.BackendFROST]`,
+rather than the CLI's own `createFrostBackend`
+(`cmd/xkmsctl/frost.go:1146`), which xkmsctl uses instead and is unaffected
+— the same fail-closed rule applies one level lower: its internal `pkcs8`
+secret store refuses to persist the wrapping key at all unless you set
+`"allow_plaintext_keys": true` in that backend's config
+(`pkg/xkms/register_frost.go:53`), and you accept that this in-memory,
+per-process store has no other encryption-at-rest layer underneath it (see
+[`engineering.md`](engineering.md)'s "Daemon backend registration" section).
+There is no way to make it silently store the wrapping key in the clear —
+go-xkms#1237.
+
 ## Things that will surprise you
 
 - **Never reuse a `round1` nonce file.** FROST nonce reuse is catastrophic —

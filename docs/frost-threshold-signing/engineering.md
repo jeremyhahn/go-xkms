@@ -142,16 +142,36 @@ value.
 
 `init()` calls `RegisterBackend(BackendFROST)` and
 `RegisterBackendFactory(BackendFROST, newFROSTKeyProvider)`. The factory
-(`register_frost.go:42`) builds a software-backed `frost.Config` (a `pkcs8`
+(`register_frost.go:53`) builds a software-backed `frost.Config` (a `pkcs8`
 `SecretBackend`, an in-memory `PublicStorage`) from a
-`map[string]interface{}` with three optional keys: `"threshold"` (int),
-`"total"` (int), `"participant_id"` (int). It provisions the `pkcs8`
-backend's Ed25519 wrapping key with `seal.EnsurePrivateSealKey` before
-constructing `frost.Config`, mirroring `pkg/server`'s composition. This
-factory is reachable only through `xkms.AutoInitialize`/direct library
-embedding — **`xkmsd` never calls it**; `pkg/server/backend_frost.go`'s
+`map[string]interface{}` with four optional keys: `"threshold"` (int),
+`"total"` (int), `"participant_id"` (int), and `"allow_plaintext_keys"`
+(bool, default `false`). It provisions the `pkcs8` backend's Ed25519
+wrapping key with `seal.EnsurePrivateSealKey` before constructing
+`frost.Config`, mirroring `pkg/server`'s composition. This factory is
+reachable only through `xkms.AutoInitialize`/direct library embedding —
+**`xkmsd` never calls it**; `pkg/server/backend_frost.go`'s
 `Server.initFrostBackend` (called from `server.go:1084`) is the config-driven
 wiring `xkmsd` actually uses, and it is independent of this factory.
+
+**`allow_plaintext_keys` (go-xkms#1237).** Before this flag existed, the
+factory built its internal `pkcs8.Config` with no way to ever set
+`AllowPlaintextKeys` (`register_frost.go:53-65`), so `seal.EnsurePrivateSealKey`
+always failed with `pkcs8.ErrPlaintextKeyNotAllowed` — the factory could
+never produce a working backend at all. It now threads
+`config["allow_plaintext_keys"]` straight through to `pkcs8.Config`, the same
+knob and the same fail-closed default `newPKCS8KeyProvider`
+(`register_pkcs8.go:40-58`) already exposes for the standalone `pkcs8`
+backend: `false` unless the caller opts in, because this in-memory,
+per-process secret store has no other encryption-at-rest layer to fall back
+on (unlike `pkg/server`'s `pkcs8` backend, whose plaintext permission is
+derived from whether the node barrier or storage layer already encrypts the
+data — see "Provisioning" above). A caller of `xkms.AutoInitialize` that
+wants a durable, working FROST backend from this factory must set
+`allow_plaintext_keys: true` in `BackendConfigs[xkms.BackendFROST]` and
+accept that the wrapping key is only as protected as the process's own
+memory and the medium `PublicStorage`/`SecretBackend`'s `KeyStorage`
+ultimately write to.
 
 ## SDK re-exports (`sdk/go/frost.go`, `-tags frost`)
 
@@ -198,6 +218,19 @@ itself.
   comment), so the full FROST+`azurekv` round trip is exercised by the
   emulator-backed integration suite (`test/integration/azurekv`), not a unit
   test, consistent with that package's own existing boundary.
+- `pkg/xkms/register_frost_test.go` covers the `newFROSTKeyProvider` factory
+  itself: fails closed with `pkcs8.ErrPlaintextKeyNotAllowed` on a nil or
+  empty config (go-xkms#1237's reproduction); with
+  `"allow_plaintext_keys": true`, two providers built through the factory
+  (one per participant) complete a full 2-of-2 trusted-dealer keygen, nonce
+  generation, signing, aggregation and verification round trip.
+  `pkg/server/backend_frost_test.go`'s
+  `TestInitializeBackends_FrostWithPKCS8SecretBackend_StartsCleanly` drives
+  the real `Server.initializeBackends` (the same call `Server.New` makes)
+  with `backends.pkcs8` and `backends.frost` both enabled and
+  `secret_backend: pkcs8`, proving `xkmsd`'s own config-driven wiring starts
+  cleanly with FROST enabled — independent of the factory fix above, since
+  `initFrostBackend` never called that factory.
 - Integration: `test/integration/frost/{backend,signing}_integration_test.go`
   construct a `frost.Backend` directly, in-process — they do not stand up an
   `xkmsd` with a configured FROST backend (there is no config surface to do
