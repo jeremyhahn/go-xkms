@@ -90,7 +90,7 @@ func (b *Backend) Unlock(passphrase string) error {
 	if err != nil {
 		// Best-effort rollback: lock the volume again since we cannot
 		// create the delegate storage.
-		b.volume.Lock() //nolint:errcheck
+		b.volume.Lock() //nolint:errcheck // best-effort rollback after the delegate failed to open; the function already returns ErrDelegateCreateFailed regardless of this outcome
 		return ErrDelegateCreateFailed
 	}
 
@@ -157,7 +157,7 @@ func (b *Backend) Lock() error {
 	b.mu.Unlock()
 
 	if delegate != nil {
-		delegate.Close() //nolint:errcheck
+		delegate.Close() //nolint:errcheck // best-effort close before locking the volume; a Close failure here does not affect the lock outcome, which is checked below
 	}
 
 	if err := b.volume.Lock(); err != nil {

@@ -177,9 +177,9 @@ func NewBackend(ctx context.Context, config *Config) (*Backend, error) {
 
 	// Add credentials if provided
 	if len(config.CredentialsJSON) > 0 {
-		opts = append(opts, option.WithCredentialsJSON(config.CredentialsJSON))
+		opts = append(opts, option.WithCredentialsJSON(config.CredentialsJSON)) //nolint:staticcheck // SA1019: Config.CredentialsJSON is a supported knob of this backend's own API; switching the underlying client-auth mechanism is a separate, behavior-sensitive change
 	} else if config.CredentialsFile != "" {
-		opts = append(opts, option.WithCredentialsFile(config.CredentialsFile))
+		opts = append(opts, option.WithCredentialsFile(config.CredentialsFile)) //nolint:staticcheck // SA1019: Config.CredentialsFile is a supported knob of this backend's own API; see CredentialsJSON above
 	}
 
 	// Add custom endpoint if provided (for testing with emulator)
@@ -385,7 +385,7 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 	case x509.ECDSA:
 		_, err = b.GenerateECDSA(ctx, attrs)
 	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: attrs.KeyAlgorithm.String()}
 	}
 
 	if err != nil {
@@ -880,10 +880,10 @@ func (b *Backend) signWithVersion(ctx context.Context, keyName string, digest []
 		Digest: digestMsg,
 	}
 
-	// Add digest CRC32C checksum for data integrity
-	if digestMsg != nil {
-		req.DigestCrc32C = wrapperspb.Int64(int64(crc32c(digest)))
-	}
+	// Add digest CRC32C checksum for data integrity. digestMsg is always
+	// non-nil here: every path through the switch above either sets it or
+	// returns (SA4031).
+	req.DigestCrc32C = wrapperspb.Int64(int64(crc32c(digest)))
 
 	resp, err := b.client.AsymmetricSign(ctx, req)
 	if err != nil {
@@ -984,7 +984,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
-				return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+				return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 			}
 			return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 		}
@@ -1055,12 +1055,10 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 		return backend.ErrInvalidAttributes
 	}
 
-	// Remove metadata
+	// Remove metadata. Best-effort: the key may not have metadata stored,
+	// and Delete below is the operation that must succeed.
 	if b.config.KeyStorage != nil {
-		if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil {
-			// Continue even if metadata deletion fails
-			// The key may not have metadata stored
-		}
+		_ = storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN) // best-effort metadata cleanup; see comment above -- the explicit `_ =` already satisfies errcheck
 	}
 
 	// Delegate to existing Delete method

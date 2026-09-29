@@ -329,7 +329,7 @@ func (s *QRDBRefreshStore) load(ctx context.Context, family, jti string) (*Recor
 	if expired(&rec) {
 		// Lazy TTL: drop the tombstone; deletion failure is non-fatal because
 		// the record is already treated as absent by every reader.
-		_ = s.kv.Delete(ctx, refreshKey(family, jti)) //nolint:errcheck // best-effort cleanup of an already-expired record
+		_ = s.kv.Delete(ctx, refreshKey(family, jti)) // best-effort cleanup of an already-expired record; the explicit `_ =` already satisfies errcheck
 		return nil, nil, nil
 	}
 	return &rec, data, nil
@@ -413,7 +413,7 @@ func (s *QRDBRefreshStore) familyRevoked(ctx context.Context, family string) (bo
 	if time.Now().Unix() >= rev.ExpiresAt {
 		// No token of this family can still be presented, so the tombstone has
 		// nothing left to guard. Cleanup failure is non-fatal.
-		_ = s.kv.Delete(ctx, revokedKey(family)) //nolint:errcheck // best-effort cleanup of an already-expired tombstone
+		_ = s.kv.Delete(ctx, revokedKey(family)) // best-effort cleanup of an already-expired tombstone; the explicit `_ =` already satisfies errcheck
 		return false, nil
 	}
 	return true, nil

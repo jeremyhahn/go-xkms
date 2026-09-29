@@ -452,7 +452,7 @@ func TestSC_UserOnboarding_ConfigSaveFails(t *testing.T) {
 	))
 	// Make the config dir read-only so Save() cannot create temp files.
 	require.NoError(t, os.Chmod(configDir, 0500))
-	defer os.Chmod(configDir, 0700) //nolint:errcheck
+	defer os.Chmod(configDir, 0700)
 
 	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())

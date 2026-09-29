@@ -153,8 +153,13 @@ func (b *Backend) DeriveKeyECDH(
 	peerPublicKey []byte,
 	kdfParams *types.KDFParams,
 ) (derivedKeyOut []byte, err error) {
-	if ctx == nil {
-		ctx = context.Background()
+	// A cancelled caller gets no token work done on its behalf. The check is
+	// nil tolerant, matching Backend.AttestKey, so a caller that forgot the
+	// context still gets the derivation rather than a panic.
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, &errs.Wrapped{Msg: "pkcs11: ECDH derivation cancelled", Err: err}
+		}
 	}
 
 	// Validate inputs
@@ -289,7 +294,7 @@ func (b *Backend) findPrivateKeyHandle(session pkcs11.SessionHandle, attrs *type
 	}
 
 	if len(handles) == 0 {
-		return 0, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return 0, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	return handles[0], nil
@@ -391,7 +396,10 @@ func (b *Backend) deriveECDH(
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "ECDH derivation failed", Err: err}
 	}
-	defer b.p11ctx.DestroyObject(session, derivedHandle)
+	// Best-effort: this is a session object (CKA_TOKEN=false), which the
+	// token already destroys when the session closes; an early-destroy
+	// failure here has no separate consequence.
+	defer func() { _ = b.p11ctx.DestroyObject(session, derivedHandle) }()
 
 	// Extract the shared secret value
 	secretAttrs, err := b.p11ctx.GetAttributeValue(session, derivedHandle, []*pkcs11.Attribute{
@@ -434,7 +442,7 @@ func uncompressedPoint(candidate []byte) ([]byte, elliptic.Curve, error) {
 	// Unmarshal rejects points that are not on the curve, which is what stops
 	// an invalid-curve attack: a peer that submits a point on a weaker curve
 	// can otherwise recover the private key from a sequence of derivations.
-	if x, _ := elliptic.Unmarshal(curve, candidate); x == nil {
+	if x, _ := elliptic.Unmarshal(curve, candidate); x == nil { //nolint:staticcheck // SA1019: this on-curve validation is the reason for the call, not the deprecated behavior; crypto/ecdh migration is a separate, behavior-sensitive change
 		return nil, nil, &errs.Message{Msg: "invalid EC point: not on curve"}
 	}
 
@@ -466,7 +474,7 @@ func parsePeerPublicKey(pubKeyBytes []byte) ([]byte, elliptic.Curve, error) {
 		if !ok {
 			return nil, nil, &errs.Detail{Err: ErrInvalidPeerPublicKey, Detail: "public key is not an ECDSA key"}
 		}
-		return elliptic.Marshal(ecdsaPub.Curve, ecdsaPub.X, ecdsaPub.Y), ecdsaPub.Curve, nil
+		return elliptic.Marshal(ecdsaPub.Curve, ecdsaPub.X, ecdsaPub.Y), ecdsaPub.Curve, nil //nolint:staticcheck // SA1019: re-encoding the parsed SPKI key as the uncompressed-point wire format this function returns; crypto/ecdh migration is a separate, behavior-sensitive change
 	}
 
 	// Bare uncompressed point.

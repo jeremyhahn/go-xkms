@@ -340,7 +340,7 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 	if extension == backend.FSEXT_PRIVATE_BLOB || extension == backend.FSEXT_PUBLIC_BLOB {
 		data, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 		if err != nil {
-			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: attrs.CN}
 		}
 		return data, nil
 	}
@@ -376,7 +376,7 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 			return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 		}
 		if exists {
-			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: attrs.CN}
 		}
 	}
 
@@ -522,7 +522,7 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte) ([]byte, error
 
 	// Get signing algorithm (use attrs.Hash as default, no PSS)
 	var opts crypto.SignerOpts = attrs.Hash
-	if opts == nil || opts.HashFunc() == 0 {
+	if opts.HashFunc() == 0 { // opts holds a crypto.Hash value, so it can never itself be nil (SA4023)
 		opts = crypto.SHA256
 	}
 	algorithm, err := b.getSigningAlgorithm(attrs, opts)
@@ -585,7 +585,7 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 
 	// Get signing algorithm (use attrs.Hash as default, no PSS)
 	var opts crypto.SignerOpts = attrs.Hash
-	if opts == nil || opts.HashFunc() == 0 {
+	if opts.HashFunc() == 0 { // opts holds a crypto.Hash value, so it can never itself be nil (SA4023)
 		opts = crypto.SHA256
 	}
 	algorithm, err := b.getSigningAlgorithm(attrs, opts)
@@ -647,7 +647,7 @@ func (b *Backend) getKeyParameters(attrs *types.KeyAttributes) (azkeys.CreateKey
 		}
 
 	default:
-		return params, &errs.Detail{Err: ErrUnsupportedKeyType, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return params, &errs.Detail{Err: ErrUnsupportedKeyType, Detail: attrs.KeyAlgorithm.String()}
 	}
 
 	return params, nil
@@ -701,7 +701,7 @@ func (b *Backend) getSigningAlgorithm(attrs *types.KeyAttributes, opts crypto.Si
 		}
 		return azkeys.SignatureAlgorithmES256, nil // Default to ES256
 	default:
-		return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
 }
 
@@ -832,7 +832,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if !exists {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	// Verify key exists in Azure Key Vault. Only an HTTP 404 -- Key Vault's
@@ -1267,8 +1267,8 @@ func jwkToPublicKey(jwk *azkeys.JSONWebKey) (crypto.PublicKey, error) {
 
 		pubKey := &ecdsa.PublicKey{
 			Curve: curve,
-			X:     new(big.Int).SetBytes(jwk.X),
-			Y:     new(big.Int).SetBytes(jwk.Y),
+			X:     new(big.Int).SetBytes(jwk.X), //nolint:staticcheck // SA1019: jwk.X/Y are Azure Key Vault's JWK wire coordinates; crypto/ecdh migration is a separate, behavior-sensitive change
+			Y:     new(big.Int).SetBytes(jwk.Y), //nolint:staticcheck // SA1019: see X above
 		}
 
 		return pubKey, nil

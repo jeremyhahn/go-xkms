@@ -58,9 +58,14 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 
 	// Call GetSlotList to activate slots in this context
 	// This is required by some PKCS#11 implementations (e.g., YubiKey)
+	// Every cleanup call below unwinds a partially-initialized context after
+	// a failure that is already being reported through the returned error;
+	// its own failure would not change the outcome, so it is a best-effort
+	// discard (the explicit `_ =` is what satisfies errcheck, matching the
+	// same idiom already used in pkg/auth/token/store.go).
 	_, err = ctx.GetSlotList(true)
 	if err != nil {
-		ctx.Finalize()
+		_ = ctx.Finalize()
 		ctx.Destroy()
 		return nil, &errs.Wrapped{Msg: "failed to get PKCS#11 slot list", Err: err}
 	}
@@ -68,7 +73,7 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 	// Open session
 	session, err := ctx.OpenSession(config.SlotID, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
 	if err != nil {
-		ctx.Finalize()
+		_ = ctx.Finalize()
 		ctx.Destroy()
 		return nil, &errs.Wrapped{Msg: "failed to open PKCS#11 session", Err: err}
 	}
@@ -77,8 +82,8 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 	if config.PINRequired && config.PIN != nil {
 		buf, openErr := config.PIN.Open()
 		if openErr != nil {
-			ctx.CloseSession(session)
-			ctx.Finalize()
+			_ = ctx.CloseSession(session)
+			_ = ctx.Finalize()
 			ctx.Destroy()
 			return nil, &errs.Wrapped{Msg: "failed to open PKCS#11 PIN", Err: openErr}
 		}
@@ -88,8 +93,8 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 		loginErr := ctx.Login(session, pkcs11.CKU_USER, string(buf.Bytes()))
 		buf.Destroy()
 		if loginErr != nil {
-			ctx.CloseSession(session)
-			ctx.Finalize()
+			_ = ctx.CloseSession(session)
+			_ = ctx.Finalize()
 			ctx.Destroy()
 			return nil, &errs.Wrapped{Msg: "failed to authenticate with PKCS#11", Err: loginErr}
 		}
@@ -151,11 +156,14 @@ func (p *pkcs11Resolver) Close() error {
 	defer p.mu.Unlock()
 
 	if p.ctx != nil {
+		// Best-effort teardown: Close always returns nil below, so a
+		// Logout/CloseSession/Finalize failure here has nowhere to
+		// propagate to, and Destroy releases the module regardless.
 		if p.config.PINRequired {
-			p.ctx.Logout(p.session)
+			_ = p.ctx.Logout(p.session)
 		}
-		p.ctx.CloseSession(p.session)
-		p.ctx.Finalize()
+		_ = p.ctx.CloseSession(p.session)
+		_ = p.ctx.Finalize()
 		p.ctx.Destroy()
 		p.ctx = nil
 	}

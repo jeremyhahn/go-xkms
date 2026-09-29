@@ -214,7 +214,7 @@ func (m *PIVSlotModel) enumeratePrivateKeys() (map[pivcert.PIVSlot]keyInfo, erro
 		if err := m.pool.Ctx().FindObjectsInit(session, template); err != nil {
 			return &errs.Wrapped{Msg: "FindObjectsInit(CKO_PRIVATE_KEY)", Err: err}
 		}
-		defer m.pool.Ctx().FindObjectsFinal(session)
+		defer func() { _ = m.pool.Ctx().FindObjectsFinal(session) }() // best-effort: ends the find-objects operation for this session; scan already completed or failed above
 
 		for {
 			handles, _, findErr := m.pool.Ctx().FindObjects(session, 100)
@@ -251,7 +251,7 @@ func (m *PIVSlotModel) enumerateCertificates() (map[pivcert.PIVSlot]struct{}, er
 		if err := m.pool.Ctx().FindObjectsInit(session, template); err != nil {
 			return &errs.Wrapped{Msg: "FindObjectsInit(CKO_CERTIFICATE)", Err: err}
 		}
-		defer m.pool.Ctx().FindObjectsFinal(session)
+		defer func() { _ = m.pool.Ctx().FindObjectsFinal(session) }() // best-effort: ends the find-objects operation for this session; scan already completed or failed above
 
 		for {
 			handles, _, findErr := m.pool.Ctx().FindObjects(session, 100)

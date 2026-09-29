@@ -484,12 +484,12 @@ func TestRefresh_RacingRevokeFamilyLeavesNoUsableSuccessor(t *testing.T) {
 				go func() {
 					defer done.Done()
 					start.Wait()
-					successor, _ = issuer.Refresh(ctx, original.RefreshToken) //nolint:errcheck // the race outcome is the assertion below
+					successor, _ = issuer.Refresh(ctx, original.RefreshToken) // the race outcome is the assertion below
 				}()
 				go func() {
 					defer done.Done()
 					start.Wait()
-					_ = issuer.Revoke(ctx, original.RefreshToken) //nolint:errcheck // revoke is idempotent; the assertion is on the successor
+					_ = issuer.Revoke(ctx, original.RefreshToken) // revoke is idempotent; the assertion is on the successor
 				}()
 				start.Done()
 				done.Wait()

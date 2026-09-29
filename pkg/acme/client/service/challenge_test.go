@@ -129,7 +129,7 @@ func TestChallengeServer_HandleChallenge_Success(t *testing.T) {
 	defer cs.Shutdown()
 
 	url := fmt.Sprintf("http://127.0.0.1:%s/.well-known/acme-challenge/%s", port, token)
-	resp, err := http.Get(url) // nolint:gosec
+	resp, err := http.Get(url) //nolint:gosec // G107: URL targets this test's own 127.0.0.1 challenge server, not attacker-controlled input
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -149,7 +149,7 @@ func TestChallengeServer_HandleChallenge_WrongToken(t *testing.T) {
 	defer cs.Shutdown()
 
 	url := fmt.Sprintf("http://127.0.0.1:%s/.well-known/acme-challenge/wrong-token", port)
-	resp, err := http.Get(url) // nolint:gosec
+	resp, err := http.Get(url) //nolint:gosec // G107: URL targets this test's own 127.0.0.1 challenge server, not attacker-controlled input
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -629,7 +629,7 @@ func TestChallengeServer_ConcurrentRequests(t *testing.T) {
 			defer func() { done <- struct{}{} }()
 
 			url := fmt.Sprintf("http://127.0.0.1:%s/.well-known/acme-challenge/%s", port, token)
-			resp, err := http.Get(url) // nolint:gosec
+			resp, err := http.Get(url) //nolint:gosec // G107: URL targets this test's own 127.0.0.1 challenge server, not attacker-controlled input
 			if err != nil {
 				return
 			}
@@ -662,7 +662,7 @@ func TestChallengeServer_BindsConfiguredHost(t *testing.T) {
 	require.True(t, ok, "ChallengeServer.Addr() must return a *net.TCPAddr")
 	assert.Equal(t, "127.0.0.1", tcpAddr.IP.String(), "the listener must bind the configured host, not the wildcard")
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%s/.well-known/acme-challenge/tok", port)) // nolint:gosec
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%s/.well-known/acme-challenge/tok", port)) //nolint:gosec // G107: URL targets this test's own 127.0.0.1 challenge server, not attacker-controlled input
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

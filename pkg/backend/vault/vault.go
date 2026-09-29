@@ -261,7 +261,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 		}
 		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
@@ -323,8 +323,10 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 	}
 	_, err := logical.WriteWithContext(ctx, configPath, configData)
 	if err != nil {
-		// If config update fails, log but continue to try deletion anyway
-		// (key might already have deletion enabled)
+		// Non-fatal: the key might already have deletion enabled, so
+		// deletion is still attempted below.
+		slog.Warn("vault: failed to enable key deletion; attempting delete anyway",
+			"key", keyName, "error", err)
 	}
 
 	// Delete from Vault
@@ -464,7 +466,7 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 		}
 		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
@@ -499,7 +501,7 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 		}
 		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
@@ -536,7 +538,7 @@ func (b *Backend) Encrypt(ctx context.Context, attrs *types.KeyAttributes, plain
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 		}
 		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
@@ -719,7 +721,7 @@ func (b *Backend) getPublicKeyVersion(ctx context.Context, keyName string, attrs
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyName)}
+		return nil, "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyName}
 	}
 
 	// Get the latest key version

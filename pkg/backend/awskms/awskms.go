@@ -188,7 +188,7 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 		data, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
-				return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+				return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: attrs.CN}
 			}
 			return nil, &errs.Joined{Lead: ErrMetadataStorage, Detail: fmt.Sprintf("failed to read metadata for %s", attrs.CN), Cause: err}
 		}
@@ -232,7 +232,7 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 			return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 		}
 		if exists {
-			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: attrs.CN}
 		}
 	}
 
@@ -508,7 +508,7 @@ func (b *Backend) getKeySpec(attrs *types.KeyAttributes) (awstypes.KeySpec, erro
 		// Default to ECC_NIST_P256 if not specified
 		return awstypes.KeySpecEccNistP256, nil
 	default:
-		return "", &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return "", &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: attrs.KeyAlgorithm.String()}
 	}
 }
 
@@ -557,7 +557,7 @@ func (b *Backend) getSigningAlgorithm(attrs *types.KeyAttributes) (awstypes.Sign
 			return "", &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported hash algorithm for ECDSA: %s", hash)}
 		}
 	default:
-		return "", &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", attrs.KeyAlgorithm)}
+		return "", &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
 }
 
@@ -617,7 +617,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
 	}
 	if !exists {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	// Verify key exists in KMS. Only a genuine NotFoundException -- KMS's
@@ -976,7 +976,7 @@ func awsSigningAlgorithm(keyAlgorithm x509.PublicKeyAlgorithm, opts crypto.Signe
 			return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("AWS KMS does not support ECDSA with hash %s", opts.HashFunc())}
 		}
 	default:
-		return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", keyAlgorithm)}
+		return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: keyAlgorithm.String()}
 	}
 }
 
@@ -993,14 +993,20 @@ func (d *kmsDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.De
 		return nil, err
 	}
 
-	// Determine encryption algorithm based on opts
-	var encryptionAlgorithm awstypes.EncryptionAlgorithmSpec
-	if opts != nil {
-		// Default to RSAES_OAEP_SHA_256 for RSA-OAEP
-		encryptionAlgorithm = awstypes.EncryptionAlgorithmSpecRsaesOaepSha256
-	} else {
-		// Default algorithm
-		encryptionAlgorithm = awstypes.EncryptionAlgorithmSpecRsaesOaepSha256
+	// Determine encryption algorithm based on opts. AWS KMS only offers two
+	// asymmetric decrypt algorithms (no PKCS#1 v1.5 option, unlike Azure Key
+	// Vault's azurekvDecrypter.Decrypt): default to RSAES_OAEP_SHA_256, and
+	// honor an explicit SHA-1 request via *rsa.OAEPOptions.
+	encryptionAlgorithm := awstypes.EncryptionAlgorithmSpecRsaesOaepSha256
+	if oaepOpts, ok := opts.(*rsa.OAEPOptions); ok && oaepOpts != nil {
+		switch oaepOpts.Hash {
+		case crypto.SHA1:
+			encryptionAlgorithm = awstypes.EncryptionAlgorithmSpecRsaesOaepSha1
+		case crypto.SHA256:
+			encryptionAlgorithm = awstypes.EncryptionAlgorithmSpecRsaesOaepSha256
+		default:
+			return nil, &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("AWS KMS does not support OAEP hash %s", oaepOpts.Hash)}
+		}
 	}
 
 	output, err := d.backend.client.Decrypt(ctx, &kms.DecryptInput{
@@ -1068,9 +1074,10 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 
 	// Determine key spec from attributes
 	keySpec := ""
-	if attrs.KeyAlgorithm == x509.RSA {
+	switch attrs.KeyAlgorithm {
+	case x509.RSA:
 		keySpec = "RSA_2048" // Default, could be adjusted based on key size
-	} else if attrs.KeyAlgorithm == x509.ECDSA {
+	case x509.ECDSA:
 		keySpec = "ECC_NIST_P256" // Default
 	}
 
@@ -1123,7 +1130,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		wrappedKey, err = wrapping.WrapRSAAES(keyMaterial, rsaPubKey, params.Algorithm)
 
 	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: params.Algorithm.String()}
 	}
 
 	if err != nil {
