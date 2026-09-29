@@ -540,11 +540,12 @@ var (
 	// could not be read.
 	ErrReadFrostPassphraseFailed = errors.New("failed to read FROST passphrase")
 
-	// ErrFrostPassphraseRejected is returned when the FROST wrapping key on
-	// disk cannot be decrypted with the supplied passphrase: either the
+	// ErrFrostPassphraseRejected is returned when a key in the local FROST
+	// store -- the share wrapping key or the package recipient key --
+	// cannot be decrypted with the supplied passphrase: either the
 	// passphrase is wrong, or the key was not written under a passphrase
 	// (a key store created before go-xkms#1324) or is corrupt.
-	ErrFrostPassphraseRejected = errors.New("FROST passphrase rejected: the wrapping key could not be decrypted with it")
+	ErrFrostPassphraseRejected = errors.New("FROST passphrase rejected: the local FROST key store could not be decrypted with it")
 
 	// ErrFrostWrapBackendUnsupported is returned when --backend names a
 	// backend that the local xkmsctl FROST store cannot hold its wrapping
@@ -555,6 +556,65 @@ var (
 	// ErrRestrictFrostDirectoryFailed is the sentinel error "failed to
 	// restrict FROST directory to owner-only access".
 	ErrRestrictFrostDirectoryFailed = errors.New("failed to restrict FROST directory to owner-only access")
+
+	// ErrFrostRecipientSpecInvalid is returned when a keygen --recipient
+	// value is not of the form <participant-id>=<public-key-file>, or names
+	// a participant ID outside 1..--total.
+	ErrFrostRecipientSpecInvalid = errors.New("invalid --recipient: expected <participant-id>=<public-key-file> with an ID from 1 to --total")
+
+	// ErrFrostRecipientDuplicate is returned when keygen is given more than
+	// one --recipient for the same participant ID.
+	ErrFrostRecipientDuplicate = errors.New("duplicate --recipient for participant")
+
+	// ErrFrostRecipientReused is returned when keygen is given the same
+	// recipient public key for two participants. One holder would receive
+	// two shares, which lowers the number of people needed to sign.
+	ErrFrostRecipientReused = errors.New("the same recipient public key is given for two participants")
+
+	// ErrFrostRecipientKeyInvalid is returned when a --recipient file does
+	// not hold a PEM-encoded ECDSA P-256 public key.
+	ErrFrostRecipientKeyInvalid = errors.New("recipient public key must be a PEM-encoded ECDSA P-256 public key")
+
+	// ErrFrostRecipientParticipantMode is returned when --recipient is given
+	// to keygen in participant mode, which exports nothing. The flag is
+	// refused rather than silently ignored.
+	ErrFrostRecipientParticipantMode = errors.New("--recipient applies only to dealer mode (--export-dir)")
+
+	// ErrFrostRecipientKeyMissing is returned by frost import when the key
+	// directory holds no recipient key. The participant creates one with
+	// `xkmsctl frost recipient` and gives its public key to the dealer
+	// before the dealer runs keygen.
+	ErrFrostRecipientKeyMissing = errors.New("no FROST recipient key in this --key-dir: run `xkmsctl frost recipient` and send its public key to the dealer")
+
+	// ErrProvisionFrostRecipientKeyFailed is the sentinel error "failed to
+	// provision FROST recipient key", returned when the passphrase-encrypted
+	// P-256 recipient key could not be generated or read for a reason other
+	// than a rejected passphrase.
+	ErrProvisionFrostRecipientKeyFailed = errors.New("failed to provision FROST recipient key")
+
+	// ErrWriteRecipientKeyFailed is the sentinel error "failed to write
+	// recipient public key".
+	ErrWriteRecipientKeyFailed = errors.New("failed to write recipient public key")
+
+	// ErrEncryptPackageFailed is the sentinel error "failed to encrypt key
+	// package", returned when dealer keygen cannot encrypt a participant's
+	// package to that participant's recipient key.
+	ErrEncryptPackageFailed = errors.New("failed to encrypt key package")
+
+	// ErrFrostPackageNotEncrypted is returned by frost import for a package
+	// file that carries no encrypted package: a plaintext export written by
+	// an earlier build, or not a dealer export at all.
+	ErrFrostPackageNotEncrypted = errors.New("key package is not encrypted to a recipient key: ask the dealer to re-export it with --recipient")
+
+	// ErrFrostPackageRecipientMismatch is returned by frost import when the
+	// package was encrypted to a recipient key other than the one in this
+	// --key-dir: it belongs to another participant.
+	ErrFrostPackageRecipientMismatch = errors.New("key package is encrypted to a different recipient key")
+
+	// ErrFrostPackageDecryptFailed is returned by frost import when the
+	// package names this key directory's recipient key but does not decrypt
+	// under it: the file was modified or corrupted.
+	ErrFrostPackageDecryptFailed = errors.New("key package failed to decrypt")
 
 	// ErrGenerateCAFailed is the sentinel error "failed to generate CA".
 	ErrGenerateCAFailed = errors.New("failed to generate CA")
@@ -1675,6 +1735,19 @@ type ParticipantIDRangeError struct {
 // Error returns a human-readable description.
 func (e *ParticipantIDRangeError) Error() string {
 	return fmt.Sprintf("participant-id must be between 1 and %d", e.Total)
+}
+
+// FrostRecipientMissingError is returned when dealer keygen has no
+// --recipient for a participant. Every exported package is encrypted to its
+// participant's recipient key, so each one must be given.
+type FrostRecipientMissingError struct {
+	// ID is the participant ID with no recipient key.
+	ID uint32
+}
+
+// Error returns a human-readable description.
+func (e *FrostRecipientMissingError) Error() string {
+	return fmt.Sprintf("dealer mode needs --recipient %d=<public-key-file>: each package is encrypted to its participant's recipient key", e.ID)
 }
 
 // ParticipantPackageNotFoundError is returned when no generated FROST key

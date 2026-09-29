@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -39,6 +40,7 @@ func init() {
 	// Add subcommands
 	frostCmd.AddCommand(frostKeygenCmd)
 	frostCmd.AddCommand(frostImportCmd)
+	frostCmd.AddCommand(frostRecipientCmd)
 	frostCmd.AddCommand(frostListCmd)
 	frostCmd.AddCommand(frostInfoCmd)
 	frostCmd.AddCommand(frostDeleteCmd)
@@ -55,7 +57,12 @@ func init() {
 	frostKeygenCmd.Flags().String("key-id", "", "Custom key identifier (auto-generated if not set)")
 	frostKeygenCmd.Flags().Uint32("participant-id", 0, "This participant's ID (1 to total); 0 = dealer mode")
 	frostKeygenCmd.Flags().String("export-dir", "", "Export all packages to directory (dealer mode)")
+	frostKeygenCmd.Flags().StringSlice("recipient", nil, "Dealer mode: <participant-id>=<public-key-file> naming the recipient key each package is encrypted to; one per participant (repeatable)")
 	addFrostPassphraseFlags(frostKeygenCmd)
+
+	// recipient flags
+	frostRecipientCmd.Flags().String("public-key-file", "", "Also write the recipient public key (PEM) to this file")
+	addFrostPassphraseFlags(frostRecipientCmd)
 
 	// import flags
 	frostImportCmd.Flags().String("package", "", "Path to key package file (required)")
@@ -163,14 +170,20 @@ var frostKeygenCmd = &cobra.Command{
 	Long: `Generate new FROST key packages using the trusted dealer model.
 
 In dealer mode (--participant-id=0 or --export-dir specified), generates all
-participant key packages and exports them to files for secure distribution.
+participant key packages and exports each one to a file encrypted to that
+participant's recipient key. Each participant first runs 'xkmsctl frost
+recipient' and sends the dealer the public key it prints; the dealer passes
+one --recipient <participant-id>=<public-key-file> per participant. Only the
+holder of the matching recipient key can import a package. Dealer mode needs
+no passphrase.
 
 In participant mode (--participant-id=N), generates and stores only this
 participant's key package locally.
 
 Examples:
-  # Dealer mode: generate and export all packages
-  xkmsctl frost keygen --key-id mykey --threshold 2 --total 3 --export-dir ./packages
+  # Dealer mode: generate all packages, each encrypted to its participant
+  xkmsctl frost keygen --key-id mykey --threshold 2 --total 3 --export-dir ./packages \
+    --recipient 1=alice.pem --recipient 2=bob.pem --recipient 3=carol.pem
 
   # Participant mode: generate and store locally (participant 1)
   xkmsctl frost keygen --key-id mykey --threshold 2 --total 3 --participant-id 1 \
@@ -189,6 +202,7 @@ Participant mode seals the share locally. ` + frostPassphraseUsage,
 		keyID := fr.String("key-id")
 		participantID := fr.Uint32("participant-id")
 		exportDir := fr.String("export-dir")
+		recipientSpecs := fr.StringSlice("recipient")
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
@@ -220,6 +234,22 @@ Participant mode seals the share locally. ` + frostPassphraseUsage,
 		if isDealerMode && exportDir == "" {
 			handleError(ErrDealerModeExportDirRequired)
 			return
+		}
+		if !isDealerMode && len(recipientSpecs) > 0 {
+			handleError(ErrFrostRecipientParticipantMode)
+			return
+		}
+
+		// Resolve every recipient key before generating anything, so a
+		// missing or malformed one fails before a share exists.
+		var recipients map[uint32]*ecdsa.PublicKey
+		if isDealerMode {
+			var err error
+			recipients, err = parseFrostRecipients(recipientSpecs, total)
+			if err != nil {
+				handleError(err)
+				return
+			}
 		}
 
 		printVerbose("Generating FROST key: %s (algorithm=%s, threshold=%d/%d, dealer=%v)",
@@ -261,6 +291,12 @@ Participant mode seals the share locally. ` + frostPassphraseUsage,
 					participantName = participants[i]
 				}
 
+				recipient, ok := recipients[pkg.ParticipantID]
+				if !ok {
+					handleError(&FrostRecipientMissingError{ID: pkg.ParticipantID})
+					return
+				}
+
 				export := &KeyPackageExport{
 					KeyID:              keyID,
 					Algorithm:          algorithm,
@@ -280,7 +316,12 @@ Participant mode seals the share locally. ` + frostPassphraseUsage,
 				}
 				filePath := filepath.Join(exportDir, fileName)
 
-				data, err := json.MarshalIndent(export, "", "  ")
+				encrypted, err := encryptKeyPackageExport(export, recipient)
+				if err != nil {
+					handleError(err)
+					return
+				}
+				data, err := json.MarshalIndent(encrypted, "", "  ")
 				if err != nil {
 					handleError(&WrappedError{Sentinel: ErrMarshalPackageFailed, Err: err})
 					return
@@ -390,6 +431,10 @@ var frostImportCmd = &cobra.Command{
 Each participant imports their key package file (received from the trusted dealer)
 to enable their participation in threshold signing.
 
+The package is encrypted to this --key-dir's recipient key (see 'xkmsctl
+frost recipient'), which is decrypted with the FROST passphrase. A package
+encrypted to another participant's key is refused.
+
 Example:
   xkmsctl frost import --package ./alice_participant_1.json --passphrase-stdin < frost.passphrase
 
@@ -405,16 +450,15 @@ Example:
 			return
 		}
 
-		// Read package file
-		data, err := os.ReadFile(packagePath)
+		store, err := openFrostLocalStore(cmd, cfg)
 		if err != nil {
-			handleError(&WrappedError{Sentinel: ErrReadPackageFileFailed, Err: err})
+			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
 		}
 
-		var pkg KeyPackageExport
-		if err := json.Unmarshal(data, &pkg); err != nil {
-			handleError(&WrappedError{Sentinel: ErrParsePackageFileFailed, Err: err})
+		pkg, err := readFrostPackage(cmd.Context(), store, packagePath)
+		if err != nil {
+			handleError(err)
 			return
 		}
 
@@ -444,7 +488,7 @@ Example:
 			verificationShares[id] = vs
 		}
 
-		be, err := openFrostShareBackend(cmd, cfg, client.FrostAlgorithm(pkg.Algorithm), pkg.ParticipantID, pkg.Threshold, pkg.Total, nil)
+		be, err := store.shareBackend(cmd.Context(), client.FrostAlgorithm(pkg.Algorithm), pkg.ParticipantID, pkg.Threshold, pkg.Total, nil)
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err})
 			return
@@ -490,6 +534,100 @@ Example:
 			handleError(err)
 		}
 	},
+}
+
+// readFrostPackage reads the dealer package file at path and decrypts it
+// with the store's recipient key.
+func readFrostPackage(ctx context.Context, store *frostLocalStore, path string) (*KeyPackageExport, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrReadPackageFileFailed, Err: err}
+	}
+	var encrypted EncryptedKeyPackageExport
+	if err := json.Unmarshal(data, &encrypted); err != nil {
+		return nil, &WrappedError{Sentinel: ErrParsePackageFileFailed, Err: err}
+	}
+	recipientKey, err := loadFrostRecipientKey(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	return decryptKeyPackageExport(&encrypted, recipientKey)
+}
+
+// frostRecipientCmd creates and prints this participant's recipient key.
+var frostRecipientCmd = &cobra.Command{
+	Use:   "recipient",
+	Short: "Create and print this participant's package recipient key",
+	Long: `Create (on first use) and print the public half of the recipient key that
+the trusted dealer encrypts this participant's key package to.
+
+The private key stays in <key-dir>/frost/secrets, encrypted under the FROST
+passphrase, and is used only by 'xkmsctl frost import'. Send the public key
+to the dealer, who passes it to keygen as --recipient <participant-id>=<file>.
+Confirm recipient_id with the dealer over a separate channel: a dealer given
+a substituted public key would encrypt your share to someone else.
+
+Running it again prints the same key.
+
+Example:
+  xkmsctl frost recipient --public-key-file alice.pem --passphrase-file ./frost.passphrase
+
+` + frostPassphraseUsage,
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		fr := newFlagReader(cmd)
+		publicKeyFile := fr.String("public-key-file")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
+
+		result, err := runFrostRecipient(cmd, cfg, publicKeyFile)
+		if err != nil {
+			handleError(err)
+			return
+		}
+		if err := printer.PrintJSON(result); err != nil {
+			handleError(err)
+		}
+	},
+}
+
+// runFrostRecipient ensures the store's recipient key exists and returns
+// its PEM public key and thumbprint, also writing the PEM to publicKeyFile
+// when it is not empty.
+func runFrostRecipient(cmd *cobra.Command, cfg *Config, publicKeyFile string) (map[string]interface{}, error) {
+	store, err := openFrostLocalStore(cmd, cfg)
+	if err != nil {
+		return nil, err
+	}
+	publicKey, err := ensureFrostRecipientKey(cmd.Context(), store)
+	if err != nil {
+		return nil, err
+	}
+	publicKeyPEM, err := client.EncodePublicKeyPEM(publicKey)
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrProvisionFrostRecipientKeyFailed, Err: err}
+	}
+	recipientID, err := frostRecipientID(publicKey)
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrProvisionFrostRecipientKeyFailed, Err: err}
+	}
+
+	result := map[string]interface{}{
+		"recipient_id": recipientID,
+		"public_key":   string(publicKeyPEM),
+	}
+	if publicKeyFile != "" {
+		// A public key: readable by whoever carries it to the dealer.
+		if err := os.WriteFile(publicKeyFile, publicKeyPEM, 0o644); err != nil {
+			return nil, &WrappedError{Sentinel: ErrWriteRecipientKeyFailed, Err: err}
+		}
+		result["public_key_file"] = publicKeyFile
+	}
+	return result, nil
 }
 
 // frostListCmd lists FROST keys
@@ -1205,17 +1343,24 @@ func openFrostPublicBackend(cfg *Config) (*client.FrostBackend, error) {
 	return newFrostBackend(publicDir, provider, sealKeyAttrs, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 }
 
-// openFrostShareBackend opens the local FROST store for the verbs that seal
-// or unseal this participant's secret share -- keygen in participant mode,
-// import, round1 and round2 -- with the wrapping key decrypted under the
-// passphrase cmd supplies (see resolveFrostPassphrase).
+// frostLocalStore is the local FROST store opened with the operator's
+// passphrase: the public directory, and the PKCS#8 backend holding the keys
+// that are encrypted under the passphrase -- the share wrapping key and the
+// recipient key dealer packages are encrypted to.
+type frostLocalStore struct {
+	publicDir  string
+	provider   client.SealingKeyProvider
+	passphrase client.Password
+}
+
+// openFrostLocalStore opens the local FROST store for the verbs that use
+// its passphrase-protected keys: keygen in participant mode, import,
+// recipient, round1 and round2.
 //
 // It refuses with ErrFrostWrapBackendUnsupported when --backend names a
-// backend the store cannot hold its wrapping key in, with
-// ErrFrostPassphraseRequired when no passphrase was supplied, and with
-// ErrFrostPassphraseRejected when the wrapping key on disk does not decrypt
-// under the passphrase.
-func openFrostShareBackend(cmd *cobra.Command, cfg *Config, algorithm client.FrostAlgorithm, participantID uint32, threshold, total int, participants []string) (*client.FrostBackend, error) {
+// backend the store cannot hold its keys in, and with
+// ErrFrostPassphraseRequired when no passphrase was supplied.
+func openFrostLocalStore(cmd *cobra.Command, cfg *Config) (*frostLocalStore, error) {
 	if cfg.Backend != frostWrapBackend {
 		return nil, &WrappedDetailError{Sentinel: ErrFrostWrapBackendUnsupported, Detail: cfg.Backend}
 	}
@@ -1232,11 +1377,30 @@ func openFrostShareBackend(cmd *cobra.Command, cfg *Config, algorithm client.Fro
 	if err != nil {
 		return nil, err
 	}
-	sealKeyAttrs, err := ensureFrostWrapKey(cmd.Context(), provider, passphrase)
+	return &frostLocalStore{publicDir: publicDir, provider: provider, passphrase: passphrase}, nil
+}
+
+// shareBackend returns the FROST backend that seals and unseals this
+// participant's secret share under the store's wrapping key, provisioning
+// the key on first use. A wrapping key that does not decrypt under the
+// passphrase is reported as ErrFrostPassphraseRejected.
+func (s *frostLocalStore) shareBackend(ctx context.Context, algorithm client.FrostAlgorithm, participantID uint32, threshold, total int, participants []string) (*client.FrostBackend, error) {
+	sealKeyAttrs, err := ensureFrostWrapKey(ctx, s.provider, s.passphrase)
 	if err != nil {
 		return nil, err
 	}
-	return newFrostBackend(publicDir, provider, sealKeyAttrs, algorithm, participantID, threshold, total, participants)
+	return newFrostBackend(s.publicDir, s.provider, sealKeyAttrs, algorithm, participantID, threshold, total, participants)
+}
+
+// openFrostShareBackend opens the local FROST store (openFrostLocalStore) and
+// returns its share backend (frostLocalStore.shareBackend), for the verbs
+// that seal or unseal this participant's secret share.
+func openFrostShareBackend(cmd *cobra.Command, cfg *Config, algorithm client.FrostAlgorithm, participantID uint32, threshold, total int, participants []string) (*client.FrostBackend, error) {
+	store, err := openFrostLocalStore(cmd, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return store.shareBackend(cmd.Context(), algorithm, participantID, threshold, total, participants)
 }
 
 // newFrostWrapKeyProvider builds the backend that holds the local FROST

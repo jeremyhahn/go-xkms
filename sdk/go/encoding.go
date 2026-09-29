@@ -16,6 +16,7 @@ package xkms
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwe"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
 )
 
@@ -94,6 +95,11 @@ var (
 
 	// ExtractJWEKID extracts the Key ID (kid) from a JWE header without decrypting.
 	ExtractJWEKID = jwe.ExtractKID
+
+	// JWKThumbprintSHA256 computes the RFC 7638 SHA-256 JWK thumbprint of a
+	// public key, base64url-encoded: the conventional "kid" naming the
+	// recipient key of a JWE.
+	JWKThumbprintSHA256 = jwk.ThumbprintSHA256
 )
 
 // JWT types re-exported from pkg/encoding/jwt.
