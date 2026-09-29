@@ -27,8 +27,6 @@ func TestSentinelErrors(t *testing.T) {
 		ErrInvalidSignature,
 		ErrInvalidCommitment,
 		ErrInvalidShare,
-		ErrSessionNotFound,
-		ErrSessionExpired,
 		ErrThresholdSigningNotSupported,
 		ErrInvalidConfig,
 		ErrInvalidAttributes,

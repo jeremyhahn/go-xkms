@@ -87,14 +87,19 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 	// is transient wrapping-key material for the in-flight import ceremony,
 	// never key metadata, so it stays in importTokens (process memory only)
 	// rather than Config.KeyStorage; see the Backend.importTokens doc
-	// comment in azurekv.go.
+	// comment in azurekv.go. importTokens keeps its own copy of the bytes,
+	// not privateKeyBytes itself: privateKeyBytes is also returned below as
+	// ImportParameters.ImportToken, and importTokens.Put's destroy callback
+	// (secure.Wipe) zeroes its argument's backing array in place on
+	// eviction -- sharing one slice between the two would let a later
+	// sweep or Close silently zero the bytes a caller still holds.
 	importTokenKey := fmt.Sprintf("import-token-%s", attrs.CN)
-	b.mu.Lock()
-	b.importTokens[importTokenKey] = privateKeyBytes
-	b.mu.Unlock()
-
-	// Set expiration to 24 hours from now
-	expiresAt := time.Now().Add(24 * time.Hour)
+	storedKeyBytes := make([]byte, len(privateKeyBytes))
+	copy(storedKeyBytes, privateKeyBytes)
+	expiresAt, putErr := b.importTokens.Put(importTokenKey, storedKeyBytes)
+	if putErr != nil {
+		return nil, &errs.Wrapped{Msg: "failed to store import token", Err: putErr}
+	}
 
 	// Determine key spec from attributes
 	keySpec := ""
@@ -378,9 +383,7 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 
 	// Clean up the temporary import token
 	importTokenKey := fmt.Sprintf("import-token-%s", attrs.CN)
-	b.mu.Lock()
-	delete(b.importTokens, importTokenKey)
-	b.mu.Unlock()
+	b.importTokens.Delete(importTokenKey)
 
 	return nil
 }
@@ -458,9 +461,7 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 
 	// Clean up the temporary import token
 	importTokenKey := fmt.Sprintf("import-token-%s", attrs.CN)
-	b.mu.Lock()
-	delete(b.importTokens, importTokenKey)
-	b.mu.Unlock()
+	b.importTokens.Delete(importTokenKey)
 
 	return nil
 }

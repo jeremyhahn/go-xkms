@@ -312,9 +312,8 @@ func TestImportKey_RSA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("storage.KeyExists() error = %v", err)
 	}
-	b.mu.RLock()
-	_, hasImportToken := b.importTokens["import-token-"+attrs.CN]
-	b.mu.RUnlock()
+	_, peekErr := b.importTokens.Peek("import-token-" + attrs.CN)
+	hasImportToken := peekErr == nil
 	if !hasMetadata {
 		t.Error("ImportKey() did not store metadata")
 	}

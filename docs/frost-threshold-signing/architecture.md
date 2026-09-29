@@ -191,11 +191,15 @@ for — it is only reachable by constructing `frost.Config` directly.
 
 ## Sessions
 
-An explicit-round signing session is created by `SignRound`'s first call for
-a given `(keyID, message)` pair and expires after
-`DefaultSessionTimeout = 5 * time.Minute` (`pkg/keyprovider/frost/rounds.go:44`).
-An expired session surfaces as `ErrSessionExpired`; an unknown one as
-`ErrSessionNotFound`.
+`FrostBackend` keeps no server-side signing session between rounds
+(go-xkms#1261). `GenerateNonces` returns a `NoncePackage` -- the participant's
+secret Round-1 nonces plus its public commitments -- directly to the caller,
+who holds it and passes it back to `SignRound` for Round 2; the caller is
+responsible for completing the round promptly and zeroizing the nonces once
+used (`docs/frost/security.md`). `EnableNonceTracking` (default `true`) still
+rejects reuse of any commitment across signing attempts regardless of who
+holds the nonces, which is what actually prevents the catastrophic case this
+section used to describe as session expiry.
 
 ## Rejected alternative: reusing the Shamir share-custody plane
 
