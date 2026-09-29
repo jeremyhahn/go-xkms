@@ -60,6 +60,13 @@ env:
   #
   # Unpin with ci.yml in the Go 1.27.0 wave (company task #121).
   GO_VERSION: '1.27.0'
+  # GOLANG_DIGEST and GO_VERSION must be bumped together (see build-binaries job).
+  # Resolved from golang:${GO_VERSION}-bookworm image digest.
+  GOLANG_DIGEST: 'sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452'
+  # DEBIAN_DIGEST: debian:bookworm-slim digest (stable across rebuilds)
+  DEBIAN_DIGEST: 'sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251'
+  # TRIVY_DIGEST: aquasec/trivy:0.74.0 digest
+  TRIVY_DIGEST: 'sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969'
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
   IMAGE_NAME_CLI: jeremyhahn/xkms-cli
@@ -133,8 +140,9 @@ jobs:
       # fetch-depth: 0 -- the cross-pin step reads the tag namespace to decide
       # which nested modules are released, and a shallow clone has no tags.
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
           ref: ${{ env.RELEASE_TAG }}
 
@@ -148,7 +156,7 @@ jobs:
       # defect is the job environment and not the script: a host with Go on
       # PATH cannot see it. Do not remove this step to "simplify" the job.
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -226,7 +234,38 @@ jobs:
           done < <(find . -name go.mod -not -path './vendor/*' -not -path '*/testdata/*' | sort)
           if [ "$rc" -eq 0 ]; then echo "OK: every released cross-pin equals v$VERSION"; fi
           exit $rc
-          exit $rc
+
+      - name: Verify release tag signature
+        run: |
+          set -euo pipefail
+
+          # Check if allowed_signers file has actual keys (not just comments/empty)
+          if ! grep -q '^[^ #]' .github/allowed_signers 2>/dev/null; then
+            echo "::error::Release tag signature verification is not configured."
+            echo "::error::The .github/allowed_signers file must contain SSH public keys."
+            echo "::error::See .github/allowed_signers for instructions."
+            exit 1
+          fi
+
+          # Verify the tag signature using git verify-tag with SSH configuration
+          # The tag must be fetched (checkout with fetch-depth: 0 above does this)
+          if ! git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=.github/allowed_signers \
+            verify-tag --format='%(objecttype) %(refname:short) signed by %(taggeremail)' "${{ env.RELEASE_TAG }}" 2>&1; then
+            echo "::error::Failed to verify signature on tag ${{ env.RELEASE_TAG }}"
+            echo "::error::Ensure the tag is signed by an authorized key listed in .github/allowed_signers"
+            exit 1
+          fi
+
+          echo "OK: Release tag ${{ env.RELEASE_TAG }} has a valid signature"
+
+      - name: Refuse workflow_dispatch unless on main
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::workflow_dispatch is only allowed on the main branch"
+            echo "::error::Current ref: ${{ github.ref }}"
+            exit 1
+          fi
 
   create-release:
     name: Create Release
@@ -243,8 +282,9 @@ jobs:
       commit: ${{ steps.get_version.outputs.commit }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
           ref: ${{ env.RELEASE_TAG }}
 
@@ -318,7 +358,7 @@ jobs:
           cat CHANGELOG.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           body_path: CHANGELOG.md
@@ -384,8 +424,9 @@ jobs:
             fips: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
       # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
@@ -395,8 +436,9 @@ jobs:
       # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
       # "scripts/retry.sh: No such file or directory").
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: scripts
@@ -588,6 +630,14 @@ jobs:
           # not a marketplace retry action: 3 attempts, linear backoff, and a
           # failed attempt's container is torn down before the next one
           # starts so a retry never inherits a half-built /src/dist.
+
+          # Pull image by digest to ensure exact version
+          if [ -z "${{ env.GOLANG_DIGEST }}" ]; then
+            echo "::error::GOLANG_DIGEST is not set. GO_VERSION and GOLANG_DIGEST must be bumped together."
+            exit 1
+          fi
+          docker pull "golang:${{ env.GO_VERSION }}-bookworm@${{ env.GOLANG_DIGEST }}"
+
           attempt=0
           max_attempts=3
           while :; do
@@ -606,7 +656,7 @@ jobs:
                  -e GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-}" \
                  -e GIT_CONFIG_KEY_0="${GIT_CONFIG_KEY_0:-}" \
                  -e GIT_CONFIG_VALUE_0="${GIT_CONFIG_VALUE_0:-}" \
-                 golang:${{ env.GO_VERSION }}-bookworm \
+                 "golang:${{ env.GO_VERSION }}-bookworm@${{ env.GOLANG_DIGEST }}" \
                  bash /src/build.sh) \
                && docker cp . "$CID":/src \
                && docker start -a "$CID" \
@@ -711,8 +761,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
       # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
@@ -722,8 +773,9 @@ jobs:
       # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
       # "scripts/retry.sh: No such file or directory").
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: scripts
@@ -743,12 +795,12 @@ jobs:
       # regardless of platform.
       - name: Set up QEMU
         if: github.server_url == 'https://github.com'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           cache-image: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # ghcr.io is GitHub's registry. On Gitea, secrets.GITHUB_TOKEN is the
       # LOCAL Gitea Actions token -- it authenticates to nothing on ghcr.io
@@ -759,7 +811,7 @@ jobs:
       # working on Gitea while skipping what only GitHub can do.
       - name: Log in to GitHub Container Registry
         if: github.server_url == 'https://github.com'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -767,7 +819,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SERVER }}
           tags: |
@@ -779,10 +831,16 @@ jobs:
       - name: Create Dockerfile for server
         run: |
           # Create a production Dockerfile for the multi-protocol server
+          # Fail if GOLANG_DIGEST not set (see build-binaries job check)
+          if [ -z "${{ env.GOLANG_DIGEST }}" ]; then
+            echo "::error::GOLANG_DIGEST is not set"
+            exit 1
+          fi
+
           cat > Dockerfile.release << 'EOF'
           # Multi-stage Dockerfile for xkms production deployment
           # Stage 1: Builder
-          FROM golang:${{ env.GO_VERSION }}-bookworm AS builder
+          FROM golang:${{ env.GO_VERSION }}-bookworm@${{ env.GOLANG_DIGEST }} AS builder
 
           ENV GOTOOLCHAIN=auto
 
@@ -838,7 +896,7 @@ jobs:
               ./cmd/xkmsd
 
           # Stage 2: Runtime
-          FROM debian:bookworm-slim
+          FROM debian:bookworm-slim@${{ env.DEBIAN_DIGEST }}
 
           # Install runtime dependencies.
           #
@@ -967,7 +1025,7 @@ jobs:
       # skip the push there rather than fail after a successful scan.
       - name: Build and push Docker image
         if: github.server_url == 'https://github.com'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: Dockerfile.release
@@ -991,8 +1049,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
       # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
@@ -1002,8 +1061,9 @@ jobs:
       # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
       # "scripts/retry.sh: No such file or directory").
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: scripts
@@ -1012,18 +1072,18 @@ jobs:
       # multi-arch push step below, which never runs on Gitea.
       - name: Set up QEMU
         if: github.server_url == 'https://github.com'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           cache-image: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # See the server-image job's comment: ghcr.io login always fails on
       # Gitea (no valid credential), so it's guarded to GitHub only.
       - name: Log in to GitHub Container Registry
         if: github.server_url == 'https://github.com'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -1031,7 +1091,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_CLI }}
           tags: |
@@ -1104,7 +1164,7 @@ jobs:
       # No credentials to push with on Gitea (see the login step above).
       - name: Build and push CLI Docker image
         if: github.server_url == 'https://github.com'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: Dockerfile.cli
@@ -1158,8 +1218,9 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
       # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
@@ -1169,8 +1230,9 @@ jobs:
       # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
       # "scripts/retry.sh: No such file or directory").
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: scripts
@@ -1194,22 +1256,103 @@ jobs:
       - name: Upload master checksums to release
         run: .release-tools/scripts/release-assets.sh upload checksums.txt
 
+  generate-sbom:
+    name: Generate Software Bill of Materials
+    needs: [create-release, create-checksums]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RELEASE_API: ${{ github.server_url }}/api/v1
+      RELEASE_REPO: ${{ github.repository }}
+      RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SYFT_VERSION: 'v1.3.0'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Checkout release tooling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts
+
+      - name: Download and verify syft
+        run: |
+          set -euo pipefail
+          base="https://github.com/anchore/syft/releases/download/${SYFT_VERSION}"
+          binary="syft_Linux_x86_64"
+          checksums="syft_${SYFT_VERSION#v}_checksums.txt"
+          tmp="$(mktemp -d)"
+
+          # Download binary
+          curl -sfL --retry 3 --retry-delay 5 -o "$tmp/$binary" "$base/$binary"
+          chmod +x "$tmp/$binary"
+
+          # Download checksums
+          curl -sfL --retry 3 --retry-delay 5 -o "$tmp/$checksums" "$base/$checksums"
+
+          # Verify checksum
+          (cd "$tmp" && grep " ${binary}\$" "$checksums" | sha256sum -c -)
+
+          # Move to PATH
+          sudo mv "$tmp/$binary" /usr/local/bin/syft
+          syft version
+
+      - name: Download release binaries
+        run: .release-tools/scripts/release-assets.sh download binaries '*.sha256' 'xkmsctl-*' 'xkmsd-*' 'xkey-*'
+
+      - name: Generate SBOMs for release binaries
+        run: |
+          set -euo pipefail
+          V="${{ needs.create-release.outputs.version }}"
+
+          # Generate SBOM for each binary
+          for binary in binaries/xkmsctl-*-linux-* binaries/xkmsd-*-linux-* binaries/xkey-*-linux-*; do
+            [ -f "$binary" ] || continue
+            name=$(basename "$binary")
+
+            # Generate SBOM in SPDX JSON format
+            syft -o spdx-json "$binary" > "${name}.sbom.json"
+
+            # Also generate in CycloneDX format for broader tool support
+            syft -o cyclonedx-json "$binary" > "${name}.sbom.cyclonedx.json"
+
+            echo "Generated SBOM for $name"
+          done
+
+      - name: Upload SBOMs to release
+        env:
+          RELEASE_API: ${{ github.server_url }}/api/v1
+          RELEASE_REPO: ${{ github.repository }}
+          RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for sbom in *.sbom.*.json; do
+            [ -f "$sbom" ] || continue
+            .release-tools/scripts/release-assets.sh upload "$sbom"
+            echo "Uploaded $sbom"
+          done
+
   announce-release:
     name: Announce Release
     # Gated on the checksums job rather than on this run's build matrix, so
     # a recovery run whose only job was the flaked leg still announces once
     # the release is verified complete (#447).
-    needs: [create-release, create-checksums, build-docker, build-docker-cli]
+    needs: [create-release, create-checksums, generate-sbom, build-docker, build-docker-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: >-
       always() &&
       needs.create-checksums.result == 'success' &&
+      needs.generate-sbom.result == 'success' &&
       needs.build-docker.result == 'success' &&
       needs.build-docker-cli.result == 'success'
     steps:
       - name: Update release notes
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -1313,8 +1456,9 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
       # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
@@ -1324,8 +1468,9 @@ jobs:
       # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
       # "scripts/retry.sh: No such file or directory").
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: scripts
