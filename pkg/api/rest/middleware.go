@@ -96,16 +96,15 @@ func (s *Server) LoggingMiddleware() func(http.Handler) http.Handler {
 
 // corsAllowHeaders lists the request headers a cross-origin browser may send.
 // The WebAuthn RP correlates its begin/finish ceremonies through the
-// X-Session-Id (and, for login, X-User-Id) request headers, so they must be
-// permitted or the preflight for /api/v1/webauthn/*/finish fails.
-const corsAllowHeaders = "Content-Type, Authorization, " +
-	webauthnhttp.HeaderSessionID + ", " + webauthnhttp.HeaderUserID
+// X-Session-Id request header, so it must be permitted or the preflight for
+// /api/v1/webauthn/*/finish fails.
+const corsAllowHeaders = "Content-Type, Authorization, " + webauthnhttp.HeaderSessionID
 
 // corsExposeHeaders lists the response headers a cross-origin browser may read.
-// The WebAuthn RP returns the session correlation identifiers on its begin
-// responses; without exposing them a cross-origin client cannot complete the
+// The WebAuthn RP returns the session correlation identifier on its begin
+// responses; without exposing it a cross-origin client cannot complete the
 // ceremony.
-const corsExposeHeaders = webauthnhttp.HeaderSessionID + ", " + webauthnhttp.HeaderUserID
+const corsExposeHeaders = webauthnhttp.HeaderSessionID
 
 // CORSOptions configures cross-origin resource sharing for the REST router.
 // A nil options value — or one with an empty AllowedOrigins list — disables

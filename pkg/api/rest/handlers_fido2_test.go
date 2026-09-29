@@ -142,9 +142,9 @@ func TestHandleSDKBeginRegistration_RegistrationClosed(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rr.Code, "body: %s", rr.Body.String())
 	var errResp ErrorResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &errResp))
-	assert.Equal(t, "registration_disabled", errResp.Error,
+	assert.Equal(t, "registration_refused", errResp.Error,
 		"the machine-readable code must match the browser route's documented contract")
-	assert.Equal(t, "public registration is disabled", errResp.Message)
+	assert.Equal(t, pkgwebauthn.ErrRegistrationRefused.Error(), errResp.Message)
 }
 
 func TestHandleSDKBeginRegistration_BadJSON(t *testing.T) {
@@ -245,21 +245,27 @@ func TestHandleSDKBeginAuthentication_BadJSON(t *testing.T) {
 }
 
 func TestHandleSDKBeginAuthentication_UnknownUser(t *testing.T) {
-	// Real service, but the user was never registered => resolve-user error => 500.
+	// Real service, but the user was never registered: answered with decoy
+	// options, exactly like a known account, so the SDK route does not
+	// reveal whether the account exists (go-xkms#1296).
 	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
 
 	body, _ := json.Marshal(transport.BeginAuthenticationRequest{Email: "nobody@example.com"})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/begin", bytes.NewReader(body)))
 
-	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	var resp transport.BeginAuthenticationResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp.SessionID)
+	assert.Contains(t, resp.OptionsJSON, "allowCredentials")
 }
 
 // TestHandleSDKBeginAuthentication_UsernameKeyNotRecognized verifies the SDK
 // route reads the login key from "email" only: a body that carries the
 // address solely under the removed "username" wire key resolves an empty
-// login key, not the address, and so is reported as the same unknown-account
-// error an empty Email always produces (owner rule 2026-09-22, PR 2).
+// login key, not the address, and so is refused as the same malformed
+// request an empty Email always produces (owner rule 2026-09-22, PR 2).
 func TestHandleSDKBeginAuthentication_UsernameKeyNotRecognized(t *testing.T) {
 	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
 

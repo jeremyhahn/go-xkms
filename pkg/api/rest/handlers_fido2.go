@@ -48,13 +48,15 @@ func (s *Server) handleSDKBeginRegistration(w http.ResponseWriter, r *http.Reque
 
 	resp, err := svc.BeginRegistration(r.Context(), &req)
 	if err != nil {
-		if errors.Is(err, webauthn.ErrPublicRegistrationDisabled) {
+		if errors.Is(err, webauthn.ErrRegistrationRefused) {
 			// Same machine-readable contract as the browser ceremony route
-			// (pkg/webauthn/http ErrorCodeRegistrationDisabled), so SDK
+			// (pkg/webauthn/http ErrorCodeRegistrationRefused), so SDK
 			// clients branch on the documented code, not on message text.
+			// One code and one message for every refusal, so the response
+			// does not reveal whether the account exists (go-xkms#1296).
 			writeJSON(w, ErrorResponse{
-				Error:   webauthnhttp.ErrorCodeRegistrationDisabled,
-				Message: "public registration is disabled",
+				Error:   webauthnhttp.ErrorCodeRegistrationRefused,
+				Message: webauthn.ErrRegistrationRefused.Error(),
 				Code:    http.StatusForbidden,
 			}, http.StatusForbidden)
 			return

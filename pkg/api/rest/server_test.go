@@ -420,7 +420,7 @@ func TestSetupRouter_WebAuthnRoutes(t *testing.T) {
 	}{
 		{http.MethodPost, "/api/v1/webauthn/registration/begin"},
 		{http.MethodPost, "/api/v1/webauthn/registration/finish"},
-		{http.MethodGet, "/api/v1/webauthn/registration/status"},
+		{http.MethodPost, "/api/v1/webauthn/credentials/begin"},
 		{http.MethodPost, "/api/v1/webauthn/login/begin"},
 		{http.MethodPost, "/api/v1/webauthn/login/finish"},
 	}
@@ -700,55 +700,6 @@ func TestWebAuthnRoutes_BeginRegistration(t *testing.T) {
 	})
 }
 
-// TestWebAuthnRoutes_RegistrationStatus tests the registration status endpoint
-func TestWebAuthnRoutes_RegistrationStatus(t *testing.T) {
-	ks := newMockKeyStore()
-
-	cfg := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Backends: map[string]xkms.Backend{
-			"test": ks,
-		},
-		WebAuthnConfig: &webauthn.Config{
-			RPID:          "localhost",
-			RPDisplayName: "Test App",
-			RPOrigins:     []string{"https://localhost"},
-		},
-		Logger: testLogger(),
-	}
-
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	t.Run("Check unregistered user", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/webauthn/registration/status?email=unknown@example.com", nil)
-		w := httptest.NewRecorder()
-
-		server.server.Handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var response map[string]interface{}
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
-		assert.Equal(t, false, response["registered"])
-	})
-
-	t.Run("No user identifier", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/webauthn/registration/status", nil)
-		w := httptest.NewRecorder()
-
-		server.server.Handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var response map[string]interface{}
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		require.NoError(t, err)
-		assert.Equal(t, false, response["registered"])
-	})
-}
-
 // TestWebAuthnRoutes_BeginLogin tests the login begin endpoint
 func TestWebAuthnRoutes_BeginLogin(t *testing.T) {
 	ks := newMockKeyStore()
@@ -785,6 +736,8 @@ func TestWebAuthnRoutes_BeginLogin(t *testing.T) {
 	})
 
 	t.Run("Unknown user email", func(t *testing.T) {
+		// Decoy options, not 404: the route must not reveal whether the
+		// account exists (go-xkms#1296).
 		body := `{"email": "unknown@example.com"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/login/begin", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -792,7 +745,8 @@ func TestWebAuthnRoutes_BeginLogin(t *testing.T) {
 
 		server.server.Handler.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.NotEmpty(t, w.Header().Get("X-Session-Id"))
 	})
 }
 

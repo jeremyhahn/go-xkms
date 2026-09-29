@@ -49,8 +49,8 @@ func (s *Service) BeginRegistration(ctx context.Context, req *pb.BeginRegistrati
 		DisplayName: req.DisplayName,
 	})
 	if cErr != nil {
-		if errors.Is(cErr, webauthn.ErrPublicRegistrationDisabled) {
-			return nil, status.Error(codes.PermissionDenied, "public registration is disabled")
+		if errors.Is(cErr, webauthn.ErrRegistrationRefused) {
+			return nil, status.Error(codes.PermissionDenied, webauthn.ErrRegistrationRefused.Error())
 		}
 		if webauthn.IsSessionLimit(cErr) {
 			return nil, status.Error(codes.ResourceExhausted, "too many unfinished ceremonies; retry later")

@@ -48,6 +48,27 @@ func (f *faultyKV) Put(ctx context.Context, key string, value []byte, opts ...qr
 	return f.inner.Put(ctx, key, value, opts...)
 }
 
+func (f *faultyKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if f.putErr != nil {
+		return false, f.putErr
+	}
+	return f.inner.PutIfAbsent(ctx, key, value)
+}
+
+func (f *faultyKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if f.deleteErr != nil {
+		return false, f.deleteErr
+	}
+	return f.inner.CompareAndDelete(ctx, key, expected)
+}
+
+func (f *faultyKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	if f.putErr != nil {
+		return false, f.putErr
+	}
+	return f.inner.CompareAndSwap(ctx, key, expected, next)
+}
+
 func (f *faultyKV) Get(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) ([]byte, error) {
 	if f.getErr != nil {
 		if f.getFaultKeyPrefix == "" || hasPrefix(key, f.getFaultKeyPrefix) {
@@ -541,13 +562,26 @@ func TestQRDBAdapter_Update_PutError(t *testing.T) {
 	}
 }
 
-// updatePutFailKV serves Get from a shared fakeKV but always fails Put.
+// updatePutFailKV serves Get from a shared fakeKV but always fails every
+// write (Put and the guarded verbs).
 type updatePutFailKV struct {
 	inner *fakeKV
 }
 
 func (f *updatePutFailKV) Put(ctx context.Context, key string, value []byte, opts ...qrdbtransport.WriteOption) error {
 	return errKVFault
+}
+
+func (f *updatePutFailKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return false, errKVFault
+}
+
+func (f *updatePutFailKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return f.inner.CompareAndDelete(ctx, key, expected)
+}
+
+func (f *updatePutFailKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	return false, errKVFault
 }
 
 func (f *updatePutFailKV) Get(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) ([]byte, error) {

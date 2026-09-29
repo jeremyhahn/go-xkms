@@ -58,7 +58,10 @@ func TestMountChi(t *testing.T) {
 	}{
 		{http.MethodPost, "/api/v1/webauthn/registration/begin", `{"email":"test@example.com"}`, http.StatusOK},
 		{http.MethodPost, "/api/v1/webauthn/registration/finish", "{}", http.StatusBadRequest},
-		{http.MethodGet, "/api/v1/webauthn/registration/status", "", http.StatusOK},
+		// Deleted with go-xkms#1296; the session-only add-passkey route is
+		// never part of the public mount.
+		{http.MethodGet, "/api/v1/webauthn/registration/status", "", http.StatusNotFound},
+		{http.MethodPost, "/api/v1/webauthn/credentials/begin", "", http.StatusNotFound},
 		{http.MethodPost, "/api/v1/webauthn/login/begin", "{}", http.StatusOK},
 		{http.MethodPost, "/api/v1/webauthn/login/finish", "{}", http.StatusBadRequest},
 	}
@@ -117,11 +120,11 @@ func TestMountMux(t *testing.T) {
 	expectedRoutes := []string{
 		"/registration/begin",
 		"/registration/finish",
-		"/registration/status",
 		"/login/begin",
 		"/login/finish",
 	}
 
+	assert.Len(t, r.routes, len(expectedRoutes))
 	for _, path := range expectedRoutes {
 		route, ok := r.routes[path]
 		assert.True(t, ok, "route %s should be registered", path)
@@ -144,7 +147,10 @@ func TestMountStdlib(t *testing.T) {
 	}{
 		{http.MethodPost, "/api/v1/webauthn/registration/begin", `{"email":"test@example.com"}`, http.StatusOK},
 		{http.MethodPost, "/api/v1/webauthn/registration/finish", "{}", http.StatusBadRequest},
-		{http.MethodGet, "/api/v1/webauthn/registration/status", "", http.StatusOK},
+		// Deleted with go-xkms#1296; the session-only add-passkey route is
+		// never part of the public mount.
+		{http.MethodGet, "/api/v1/webauthn/registration/status", "", http.StatusNotFound},
+		{http.MethodPost, "/api/v1/webauthn/credentials/begin", "", http.StatusNotFound},
 		{http.MethodPost, "/api/v1/webauthn/login/begin", "{}", http.StatusOK},
 		{http.MethodPost, "/api/v1/webauthn/login/finish", "{}", http.StatusBadRequest},
 	}
@@ -172,12 +178,11 @@ func TestHandler_Routes(t *testing.T) {
 
 	routes := h.Routes()
 
-	assert.Len(t, routes, 5)
+	assert.Len(t, routes, 4)
 
 	expectedRoutes := map[string]string{
 		"/registration/begin":  "POST",
 		"/registration/finish": "POST",
-		"/registration/status": "GET",
 		"/login/begin":         "POST",
 		"/login/finish":        "POST",
 	}
@@ -204,7 +209,8 @@ func TestHandler_HandlerFunc(t *testing.T) {
 	}{
 		{"/registration/begin", http.MethodPost, `{"email":"test@example.com"}`, http.StatusOK},
 		{"/registration/finish", http.MethodPost, "{}", http.StatusBadRequest},
-		{"/registration/status", http.MethodGet, "", http.StatusOK},
+		{"/registration/status", http.MethodGet, "", http.StatusNotFound},
+		{"/credentials/begin", http.MethodPost, "", http.StatusNotFound},
 		{"/login/begin", http.MethodPost, "{}", http.StatusOK},
 		{"/login/finish", http.MethodPost, "{}", http.StatusBadRequest},
 		{"/unknown", http.MethodGet, "", http.StatusNotFound},

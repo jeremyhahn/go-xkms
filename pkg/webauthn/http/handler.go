@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -56,6 +57,12 @@ func (h *Handler) WithLogger(logger *slog.Logger) *Handler {
 //
 // Response: WebAuthn PublicKeyCredentialCreationOptions
 // Header: X-Session-Id (session identifier for FinishRegistration)
+//
+// This is the unauthenticated ceremony: it enrolls the FIRST passkey of an
+// account. An account that already has a passkey, and (with public
+// registration off) an email that names no account, are both refused with
+// 403 registration_refused. Adding a passkey to an existing account is
+// BeginAddCredential.
 func (h *Handler) BeginRegistration(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, ErrorCodeInvalidRequest, "method not allowed")
@@ -79,6 +86,49 @@ func (h *Handler) BeginRegistration(w http.ResponseWriter, r *http.Request) {
 	}
 
 	options, sessionID, err := h.service.BeginRegistration(r.Context(), req.Email, displayName)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	w.Header().Set(HeaderSessionID, sessionID)
+	h.writeJSON(w, http.StatusOK, options)
+}
+
+// BeginAddCredential handles POST /credentials/begin: it starts a
+// registration ceremony that adds a passkey to the account the caller's
+// authenticated session belongs to. The account comes from the session
+// identity (auth.GetIdentity), never from the request, so a session can only
+// add a passkey to its own account. The ceremony is completed through
+// FinishRegistration with the returned X-Session-Id.
+//
+// This handler MUST be mounted behind authentication middleware; the public
+// mount helpers (MountChi, MountMux, MountStdlib, Routes, HandlerFunc) do not
+// include it. Without an authenticated identity it answers 401, and with an
+// identity that does not name a WebAuthn account 403
+// session_account_mismatch.
+//
+// Response: WebAuthn PublicKeyCredentialCreationOptions
+// Header: X-Session-Id (session identifier for FinishRegistration)
+func (h *Handler) BeginAddCredential(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, ErrorCodeInvalidRequest, "method not allowed")
+		return
+	}
+
+	identity := auth.GetIdentity(r.Context())
+	if identity == nil {
+		h.writeError(w, http.StatusUnauthorized, ErrorCodeUnauthenticated, "authentication required")
+		return
+	}
+
+	acct, err := webauthn.SessionAccountFromIdentity(identity)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	options, sessionID, err := h.service.BeginAddCredential(r.Context(), acct)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -137,7 +187,11 @@ func (h *Handler) FinishRegistration(w http.ResponseWriter, r *http.Request) {
 // If neither user_id nor email is provided, uses discoverable credentials flow.
 // Response: WebAuthn PublicKeyCredentialRequestOptions
 // Header: X-Session-Id (session identifier for FinishLogin)
-// Header: X-User-Id (if user was identified)
+//
+// The response never reveals whether the account exists: an unknown email or
+// user ID, or an account without credentials, is answered with well-formed
+// decoy options (webauthn.Service.BeginLoginForEmail). The user ID is
+// returned only by a successful FinishLogin.
 func (h *Handler) BeginLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, ErrorCodeInvalidRequest, "method not allowed")
@@ -150,46 +204,36 @@ func (h *Handler) BeginLogin(w http.ResponseWriter, r *http.Request) {
 		req = BeginLoginRequest{}
 	}
 
-	var userID []byte
-	var err error
-
-	// Try to resolve user ID
-	if req.UserID != "" {
-		userID, err = base64.RawURLEncoding.DecodeString(req.UserID)
-		if err != nil {
+	var (
+		options   *protocol.CredentialAssertion
+		sessionID string
+		err       error
+	)
+	switch {
+	case req.UserID != "":
+		userID, decodeErr := base64.RawURLEncoding.DecodeString(req.UserID)
+		if decodeErr != nil {
 			h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid user ID encoding")
 			return
 		}
-	} else if req.Email != "" {
-		user, userErr := h.service.GetUserByEmail(r.Context(), req.Email)
-		if userErr != nil {
-			if webauthn.IsUserNotFound(userErr) {
-				h.writeError(w, http.StatusNotFound, ErrorCodeUserNotFound, "user not found")
-				return
-			}
-			h.handleServiceError(w, userErr)
-			return
-		}
-		userID = user.WebAuthnID()
+		options, sessionID, err = h.service.BeginLoginForHandle(r.Context(), userID)
+	case req.Email != "":
+		options, sessionID, err = h.service.BeginLoginForEmail(r.Context(), req.Email)
+	default:
+		options, sessionID, err = h.service.BeginLogin(r.Context(), nil)
 	}
-
-	options, sessionID, err := h.service.BeginLogin(r.Context(), userID)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
 	}
 
 	w.Header().Set(HeaderSessionID, sessionID)
-	if userID != nil {
-		w.Header().Set(HeaderUserID, base64.RawURLEncoding.EncodeToString(userID))
-	}
 	h.writeJSON(w, http.StatusOK, options)
 }
 
 // FinishLogin handles POST /login/finish
 //
 // Header: X-Session-Id (from BeginLogin)
-// Header: X-User-Id (optional, for non-discoverable flow)
 // Request body: Assertion response from authenticator
 // Response: AuthResponse with token and user ID
 func (h *Handler) FinishLogin(w http.ResponseWriter, r *http.Request) {
@@ -204,17 +248,6 @@ func (h *Handler) FinishLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get optional user ID
-	var userID []byte
-	if userIDStr := r.Header.Get(HeaderUserID); userIDStr != "" {
-		var err error
-		userID, err = base64.RawURLEncoding.DecodeString(userIDStr)
-		if err != nil {
-			h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid user ID encoding")
-			return
-		}
-	}
-
 	// Parse the assertion response
 	response, err := protocol.ParseCredentialRequestResponseBody(r.Body)
 	if err != nil {
@@ -222,7 +255,10 @@ func (h *Handler) FinishLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, user, err := h.service.FinishLoginPair(r.Context(), sessionID, userID, response)
+	// The session records whether the ceremony is discoverable or
+	// user-identified, and which account it is for; no caller-supplied user
+	// ID is consulted.
+	pair, user, err := h.service.FinishLoginPair(r.Context(), sessionID, nil, response)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -233,57 +269,6 @@ func (h *Handler) FinishLogin(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: pair.RefreshToken,
 		UserID:       base64.RawURLEncoding.EncodeToString(user.WebAuthnID()),
 	})
-}
-
-// RegistrationStatus handles GET /registration/status
-//
-// Query param or header: user_id (optional)
-// Response: {"registered": true/false}
-func (h *Handler) RegistrationStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.writeError(w, http.StatusMethodNotAllowed, ErrorCodeInvalidRequest, "method not allowed")
-		return
-	}
-
-	// Get user ID from header or query param
-	userIDStr := r.Header.Get(HeaderUserID)
-	if userIDStr == "" {
-		userIDStr = r.URL.Query().Get("user_id")
-	}
-
-	if userIDStr == "" {
-		// No user ID - check if email is provided
-		email := r.URL.Query().Get("email")
-		if email != "" {
-			user, err := h.service.GetUserByEmail(r.Context(), email)
-			if err != nil {
-				if webauthn.IsUserNotFound(err) {
-					h.writeJSON(w, http.StatusOK, RegistrationStatusResponse{Registered: false})
-					return
-				}
-				h.handleServiceError(w, err)
-				return
-			}
-			userIDStr = base64.RawURLEncoding.EncodeToString(user.WebAuthnID())
-		} else {
-			h.writeJSON(w, http.StatusOK, RegistrationStatusResponse{Registered: false})
-			return
-		}
-	}
-
-	userID, err := base64.RawURLEncoding.DecodeString(userIDStr)
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid user ID encoding")
-		return
-	}
-
-	registered, err := h.service.IsRegistered(r.Context(), userID)
-	if err != nil {
-		h.handleServiceError(w, err)
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, RegistrationStatusResponse{Registered: registered})
 }
 
 // handleServiceError maps service errors to HTTP responses.
@@ -310,8 +295,12 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
 		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, err.Error())
 	case errors.Is(err, webauthn.ErrInvalidResponse):
 		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid authenticator response")
-	case errors.Is(err, webauthn.ErrPublicRegistrationDisabled):
-		h.writeError(w, http.StatusForbidden, ErrorCodeRegistrationDisabled, "public registration is disabled")
+	case errors.Is(err, webauthn.ErrRegistrationRefused):
+		h.writeError(w, http.StatusForbidden, ErrorCodeRegistrationRefused, webauthn.ErrRegistrationRefused.Error())
+	case errors.Is(err, webauthn.ErrSessionAccountMismatch):
+		h.writeError(w, http.StatusForbidden, ErrorCodeSessionAccountMismatch, "the session does not identify a webauthn account")
+	case errors.Is(err, webauthn.ErrCredentialAlreadyExists):
+		h.writeError(w, http.StatusConflict, ErrorCodeCredentialExists, "credential is already registered")
 	case webauthn.IsSessionLimit(err):
 		h.writeError(w, http.StatusServiceUnavailable, ErrorCodeSessionLimit, "too many unfinished ceremonies; retry later")
 	default:

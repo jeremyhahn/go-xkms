@@ -142,7 +142,7 @@ describe("RegisterView", () => {
     expect(mockWebAuthnRegisterBegin.mock.calls[0]![0]).toEqual({ email: "bob@example.com", display_name: "Bob" });
   });
 
-  it("surfaces the self-service-disabled message on a 403 without running the ceremony", async () => {
+  it("surfaces the registration-refused message on a 403 without running the ceremony", async () => {
     const forbidden = Object.assign(new Error("forbidden"), { status: 403 });
     mockWebAuthnRegisterBegin.mockRejectedValue(forbidden);
 
@@ -153,7 +153,7 @@ describe("RegisterView", () => {
 
     expect(
       await screen.findByText(
-        "Self-service registration is not enabled on this server. Ask your admin for an invite.",
+        "Registration is not available for this address. If you already have a passkey, sign in and add another from your account; otherwise ask your admin.",
       ),
     ).toBeInTheDocument();
     expect(mockCreateCredential).not.toHaveBeenCalled();

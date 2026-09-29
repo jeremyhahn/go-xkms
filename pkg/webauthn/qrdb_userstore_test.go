@@ -14,6 +14,7 @@
 package webauthn
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strconv"
@@ -277,6 +278,40 @@ func (f *fakeKV) Exists(ctx context.Context, key string, opts ...qrdbtransport.R
 	return ok, nil
 }
 
+// PutIfAbsent, CompareAndDelete and CompareAndSwap make the stub a
+// qrdbtransport.GuardedKVClient, which the adapter requires.
+func (f *fakeKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.m[key]; ok {
+		return false, nil
+	}
+	f.m[key] = bytes.Clone(value)
+	return true, nil
+}
+
+func (f *fakeKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.m[key]
+	if !ok || !bytes.Equal(v, expected) {
+		return false, nil
+	}
+	delete(f.m, key)
+	return true, nil
+}
+
+func (f *fakeKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.m[key]
+	if !ok || !bytes.Equal(v, expected) {
+		return false, nil
+	}
+	f.m[key] = bytes.Clone(next)
+	return true, nil
+}
+
 // ----- adapter tests -----
 
 func newTestAdapter(t *testing.T) (UserStore, CredentialStore, *fakeUserClient, *fakeKV) {
@@ -411,9 +446,10 @@ func TestQRDBAdapter_CredentialSaveDuplicate(t *testing.T) {
 	if err := cs.Save(ctx, cred); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
-	// Saving the same id again should be a no-op (not an error).
-	if err := cs.Save(ctx, cred); err != nil {
-		t.Fatalf("dup Save: %v", err)
+	// Saving the same id again is refused: Save creates, Update edits
+	// (go-xkms#1295).
+	if err := cs.Save(ctx, cred); !errors.Is(err, ErrCredentialAlreadyExists) {
+		t.Fatalf("dup Save = %v, want ErrCredentialAlreadyExists", err)
 	}
 	creds, _ := cs.GetByUserID(ctx, user.WebAuthnID())
 	if len(creds) != 1 {

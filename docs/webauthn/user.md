@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — User Guide
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## What this is
 
@@ -56,7 +56,7 @@ The rest are policy:
   default off). To open self-service sign-up, set it to `true` explicitly.
   Accounts provisioned by an administrator still enrol their first passkey
   through the same endpoint either way — only implicit account creation for
-  unknown emails is withheld, answered with `403 registration_disabled`.
+  unknown emails is withheld, answered with `403 registration_refused`.
 
   When xkms runs embedded as a ServiceModule under go-quicbaas, the host's
   registration flag is authoritative: the host projects its decision into
@@ -85,6 +85,14 @@ xkey auth register --server https://kms.example.com:8443 --email alice@example.c
 xkey auth login --server https://kms.example.com:8443 --email alice@example.com
 ```
 
+The unauthenticated registration begin enrols an account's **first** passkey
+only. To add a second passkey, sign in first and start the ceremony from your
+session: `POST /api/v1/webauthn/credentials/begin` with your bearer token
+(`auth.webAuthnAddCredentialBegin()` in the TypeScript SDK), then finish with
+`registration/finish` as usual. The passkey always goes to the account you are
+signed in as. Running `xkey auth register` again for an account that already
+has a passkey is refused with 403.
+
 Check who you are:
 
 ```
@@ -106,6 +114,9 @@ xkmsctl user get alice
 | 429 for every user behind one load balancer | the limiter sees the balancer as the client | list the balancer in `server.trusted_proxies` |
 | 503 `session_limit` on begin | too many ceremonies were begun and not finished | retry shortly; abandoned sessions expire within about three minutes |
 | 413 | request body over 1 MiB | a ceremony body is a few KiB; check the client |
+| 403 `registration_refused` on registration begin | the account already has a passkey, or sign-up is closed and there is no such account; the server does not say which | sign in and add the passkey from your session, or ask an administrator to provision the account |
+| 409 `credential_exists` on registration finish | that authenticator's credential is already registered | use a different authenticator, or remove the old registration first |
+| login begin succeeds for an email with no account | intentional: the server answers with decoy options so it cannot be used to discover accounts | check the email; the ceremony will fail at the authenticator or at finish |
 | worked, then failed after restoring a backup of the key | the signature counter went backwards | this is the clone check firing; investigate rather than bypass |
 
 The uniform, detail-free 401 is deliberate: distinguishable failures would let
