@@ -40,7 +40,7 @@ func TestNewSealedRSAKey_Success(t *testing.T) {
 	defer sealed.Destroy()
 
 	require.NotNil(t, sealed.PublicKey())
-	assert.Equal(t, priv.PublicKey.N, sealed.PublicKey().N)
+	assert.Equal(t, priv.N, sealed.PublicKey().N)
 
 	var recovered *rsa.PrivateKey
 	err = sealed.Use(func(k *rsa.PrivateKey) error {
