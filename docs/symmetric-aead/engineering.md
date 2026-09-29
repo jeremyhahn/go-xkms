@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## Exported surface — `pkg/keyprovider/symmetric`
 
@@ -167,17 +167,35 @@ recognizes exactly one configuration key, `"key_dir"` (string): empty or
 
 ## What is absent, half-built, or misdescribed
 
-- **The Encrypt/wrap nonce guard is per-process.** `aead.SharedAEADNonceGuard`
-  lives in memory with a per-process salt. It forgets every claim on restart
-  and is not shared between cluster nodes. A persistent guard is awaiting an
-  owner ruling on issue #1201.
-- **No persistent `AEADSafetyTracker`.** Every deployment that constructs a
-  `symmetric.Backend` (or `quantum.QuantumBackend`) without supplying its own
-  `types.AEADSafetyTracker` implementation loses all nonce-reuse history and
-  byte counters on process restart. `NewMemoryAEADTracker`'s own doc comment
-  recommends a persistent implementation "for production systems"; none is
-  shipped, and `grep -rln AEADSafetyTracker` across the repository (excluding
-  tests) turns up no second implementation.
+- **Resolved (go-xkms#1201): the Encrypt/wrap nonce guard is now durable.**
+  `aead.SharedAEADNonceGuard`'s own tracker is still per-process memory with a
+  per-process salt, but `pkg/server`'s `initializeAEADNonceStore` attaches a
+  `pkg/aeadnonce.Store` to it at startup, and `KeyNonceGuard.UseContext` (what
+  `claimAEADNonceIn` calls for both `Encrypt` and the AES-GCM wrap) claims
+  through that store as well as the in-memory tracker. A claim now survives a
+  restart, and — when `Storage.Backend` is `qrdb` — is visible to every node
+  in the cluster. See [`architecture.md`](architecture.md)'s "Persistence: a
+  durable claim, not process memory alone" for the spec citations behind the
+  design and why a caller-supplied nonce is still admitted rather than
+  refused outright.
+- **No persistent `AEADSafetyTracker`.** This is a separate, narrower gap from
+  the one above: `types.AEADSafetyTracker` is the PROVIDER-level tracker each
+  `symmetric.Backend` (or `quantum.QuantumBackend`) instance optionally keeps
+  for itself (`CheckNonce`/`RecordNonce`, plus the unrelated byte-limit
+  counters `IncrementBytes` tracks) — defense in depth for a caller that
+  embeds a backend directly rather than reaching it through `XKMSService`,
+  which cannot see the service-layer guard above at all. Every deployment that
+  constructs a `symmetric.Backend` (or `quantum.QuantumBackend`) without
+  supplying its own `types.AEADSafetyTracker` implementation loses all
+  nonce-reuse history and byte counters on process restart.
+  `NewMemoryAEADTracker`'s own doc comment recommends a persistent
+  implementation "for production systems"; none is shipped, and
+  `grep -rln AEADSafetyTracker` across the repository (excluding tests) turns
+  up no second implementation. Left in place rather than removed as dead code:
+  it is not dead (every symmetric/quantum backend still calls it on its own
+  Encrypt/Decrypt path), and go-xkms#1201's own attack — an RPC caller
+  choosing the nonce — is fully closed by the service-layer guard above
+  regardless of this tracker's state.
 - **`pkg/crypto/aead`'s CPU/hardware-aware `SelectOptimal` is not called by
   `GenerateSymmetricKey`.** The auto-selection logic exists and is exported,
   but key generation takes the algorithm directly from

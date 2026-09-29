@@ -98,8 +98,13 @@ func aeadKeyIdentity(ctx context.Context, b Backend, attrs *types.KeyAttributes,
 // sees neither a second instance of the same backend, nor one key material
 // reachable under two ids, nor a key created before the process started.
 //
-// The guard is process memory. A restart forgets every claim, and a second
-// process never sees them; see docs/symmetric-aead/architecture.md.
+// The guard's in-memory tracker alone would forget every claim on restart and
+// never see another process's claims. Production wiring closes that gap by
+// attaching a PersistentNonceStore to the shared guard at startup
+// (pkg/server's initializeAEADNonceStore), so the claim this function makes
+// (through UseContext) survives a restart and is visible to every node
+// sharing the configured storage backend; see
+// docs/symmetric-aead/architecture.md.
 func claimAEADNonce(ctx context.Context, b Backend, attrs *types.KeyAttributes, operation string, nonce []byte) error {
 	guard, err := aead.SharedAEADNonceGuard()
 	if err != nil {
@@ -118,7 +123,14 @@ func claimAEADNonceIn(ctx context.Context, guard *aead.KeyNonceGuard, b Backend,
 	}
 	defer release()
 
-	if err := guard.Use(identity, nonce); err != nil {
+	// UseContext, not Use: this is the service-layer claim, so it also
+	// claims through any PersistentNonceStore attached to guard (production
+	// wiring: pkg/server's initializeAEADNonceStore, on the shared guard
+	// every call here resolves through claimAEADNonce/claimGeneratedAEADNonce).
+	// That durability is what closes go-xkms#1201 -- an in-memory-only claim
+	// forgets every reuse across a restart, which is exactly the gap the
+	// issue reported.
+	if err := guard.UseContext(ctx, identity, nonce); err != nil {
 		return &ErrKeyOperation{Operation: operation, KeyID: attrs.CN, Err: err}
 	}
 	return nil

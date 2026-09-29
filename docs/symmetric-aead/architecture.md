@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — Architecture
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## The problem
 
@@ -135,10 +135,42 @@ succeeds exactly once per IV. The module's claim stops a repeat in that
 process, and the service's claim stops a repeat across module processes and
 direct REST/gRPC/MCP callers.
 
-**Limit: the guard is per-process memory.** Its salt is drawn at first use and
-its entries die with the process. A restart forgets every claim, and a second
-`xkmsd` node in a cluster never sees another node's claims. A persistent,
-cluster-wide guard is awaiting an owner ruling on go-xkms issue #1201.
+**Persistence: a durable claim, not process memory alone.** The guard's own
+tracker is process memory — its salt is drawn at first use and its entries die
+with the process — but `pkg/server`'s `initializeAEADNonceStore` attaches a
+`pkg/aeadnonce.Store` to `aead.SharedAEADNonceGuard` at startup, built over the
+same `createStorage` seam every other durable subsystem in this server uses
+(`pkg/pkcs11state`, `pkg/staticpw`). `KeyNonceGuard.UseContext` — what
+`claimAEADNonceIn` calls, so both `Encrypt` and the AES-GCM key wrap use it —
+claims through that store in addition to the in-memory tracker, via
+`storage.Backend.PutIfAbsent`, so the atomic claim-then-seal property holds
+whether the check is the first one in the process or the millionth one after a
+restart. The store's key is `persistentEntry`, a fixed-domain HMAC over the
+key material (deliberately NOT salted with the guard's own per-process random
+salt, which would make the same pair derive a different identity after every
+restart and defeat the whole point); see `pkg/crypto/aead/key_nonce_guard.go`.
+When `Storage.Backend` is `qrdb`, the claim is replicated to every node in the
+cluster through the embedded qrdb node, exactly as `pkg/pkcs11state`'s and
+`pkg/staticpw`'s records are; with the (also supported) `pebble`/`file`/`memory`
+backends the claim is durable per node but not shared across a cluster. See
+[go-xkms#1201](https://github.com/jeremyhahn/go-xkms/issues/1201) for the
+spec grounding this rests on: PKCS#11 v3.2 §6.13.1–§6.13.2 (`CK_GCM_PARAMS`
+always takes a caller-supplied `pIv`; `CK_GCM_MESSAGE_PARAMS`'s `ivGenerator`
+makes `CKG_GENERATE` (module-generated) mandatory and `CKG_NO_GENERATE`
+(caller-supplied) optional but explicitly supported) and KMIP v1.4 §3.6 /
+§4.29 (`Random IV` is an opt-in server-generation request; otherwise "the
+IV/Counter/Nonce" travels in the client's request, and "the server does not
+store or otherwise manage" it) both permit a caller-supplied nonce as the
+default case, so the fix is a durable, atomic guard over that case rather than
+removing it.
+
+`pkg/pkcs11/module`'s own in-process claim (`guardGCMNonce`, above) is
+unaffected: it calls the plain `Use`, not `UseContext`, because it sits behind
+a C ABI with no `context.Context` to thread through and has no reason to carry
+a storage dependency into a cgo-loaded client library. Its guarantee is
+unchanged — it stops a repeat within its own process — and the service's
+persistent claim is what stops one across a restart, across module processes,
+and across direct REST/gRPC/MCP callers.
 
 ## GCM nonce modes and FIPS
 

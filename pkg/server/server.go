@@ -44,6 +44,7 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
+	"github.com/jeremyhahn/go-xkms/pkg/aeadnonce"
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
@@ -56,6 +57,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
@@ -310,6 +312,16 @@ type Server struct {
 	// PKCS#11 remote-state store — persists a remote-mode PKCS#11 module's token
 	// and object state in the embedded qrdb node. Nil unless enabled.
 	pkcs11StateStore *pkcs11state.Store
+
+	// aeadNonceStoreAttached records whether this server attached its
+	// aeadnonce.Store to the process-wide AEAD nonce guard
+	// (aead.SharedAEADNonceGuard), so shutdown() knows whether to detach it.
+	// The guard is process-wide, not per-server, so leaving a store attached
+	// past this server's Close would point every future claim -- including
+	// one made by an unrelated *Server built later in the same process, a
+	// real case in this package's own tests -- at a storage.Backend this
+	// server may have already closed.
+	aeadNonceStoreAttached bool
 
 	// Platform store
 	platformStore seal.PlatformStore
@@ -781,6 +793,14 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		cancel()
 		s.closeBackends()
 		return nil, &ErrServiceInit{Service: "pkcs11 state store", Err: err}
+	}
+
+	// Initialize the AEAD nonce guard's persistent backing, so a caller
+	// claim survives a restart (go-xkms#1201).
+	if err := s.initializeAEADNonceStore(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "AEAD nonce guard store", Err: err}
 	}
 
 	// Initialize policy manager
@@ -1888,6 +1908,56 @@ func (s *Server) initializePKCS11StateStore() error {
 	s.pkcs11StateStore = store
 	s.logger.Info("PKCS#11 remote-state store initialized")
 	return nil
+}
+
+// initializeAEADNonceStore builds the durable backing for the process-wide
+// AEAD (key, nonce) guard (pkg/crypto/aead.KeyNonceGuard) and attaches it to
+// the shared instance every AEAD path that accepts a caller-supplied or
+// provider-generated nonce claims through -- the Encrypt RPC and the AES-GCM
+// key wrap alike (pkg/xkms/aead_nonce_guard.go). Without it a claim is
+// in-memory only and a restart forgets every one it made, which is the gap
+// go-xkms#1201 reported. It uses the same createStorage seam every other
+// durable subsystem does, so the claims inherit the configured storage
+// backend's durability and, when that backend is the embedded qrdb node,
+// its cluster-wide replication.
+func (s *Server) initializeAEADNonceStore() error {
+	backend, err := s.createStorage("aeadnonce")
+	if err != nil {
+		return &ErrStorageCreate{Resource: "AEAD nonce guard storage", Err: err}
+	}
+	store, err := aeadnonce.NewStore(backend)
+	if err != nil {
+		return &ErrStorageCreate{Resource: "AEAD nonce guard storage", Err: err}
+	}
+	guard, err := aead.SharedAEADNonceGuard()
+	if err != nil {
+		return &ErrStorageCreate{Resource: "AEAD nonce guard storage", Err: err}
+	}
+	guard.SetPersistentStore(store)
+	s.aeadNonceStoreAttached = true
+	s.logger.Info("AEAD nonce guard persistence initialized")
+	return nil
+}
+
+// detachAEADNonceStore removes this server's aeadnonce.Store from the
+// process-wide AEAD nonce guard, when initializeAEADNonceStore attached one.
+// It is idempotent, so shutdown() may call it on any path without
+// double-detach concerns.
+//
+// The guard is a package singleton shared with any other *Server in this
+// process -- this package's own tests build several sequentially -- so a
+// server that closed its storage without detaching would leave the guard
+// pointed at storage the NEXT server built in this process never owned,
+// turning every one of its claims into a storage error instead of the
+// refusal or success a genuine reuse check produces.
+func (s *Server) detachAEADNonceStore() {
+	if !s.aeadNonceStoreAttached {
+		return
+	}
+	if guard, err := aead.SharedAEADNonceGuard(); err == nil {
+		guard.SetPersistentStore(nil)
+	}
+	s.aeadNonceStoreAttached = false
 }
 
 // initializeCredentialService initializes the credential management service
@@ -3892,6 +3962,10 @@ func (s *Server) shutdown() error {
 			s.logger.Error("Error closing backend", slog.Any("error", err), "backend", name)
 		}
 	}
+
+	// Detach this server's store from the process-wide AEAD nonce guard
+	// before closing the storage it is built over.
+	s.detachAEADNonceStore()
 
 	// Close all key providers
 	s.closeBackends()
