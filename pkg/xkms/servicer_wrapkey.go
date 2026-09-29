@@ -81,6 +81,9 @@ const (
 	kindRSAPKCS1v15
 )
 
+// gcmWrapOperation names an AES-GCM key wrap in the errors it returns.
+const gcmWrapOperation = "aes-gcm wrap"
+
 // wrapMechanism is the normalized form of a requested algorithm: which
 // construction to use, and (for OAEP) which digest. Dispatch happens on this
 // rather than on strings, so a digest is chosen once, where the algorithm is
@@ -509,18 +512,15 @@ func wrapAESGCM(ctx context.Context, b Backend, attrs *types.KeyAttributes, para
 		return nil, &ErrKeyOperation{Operation: "get symmetric wrapping encrypter", KeyID: attrs.CN, Err: err}
 	}
 
-	// The (wrapping key, IV) pair is claimed here: after every check above --
-	// the tag length, the IV length, and the backend's own resolution of the
-	// key -- and immediately before the AEAD call. Claiming any earlier would
-	// burn the IV of a wrap that was going to be refused anyway, and the
-	// caller's corrected retry with that same IV would then be refused as a
-	// reuse of a wrap that never happened.
-	if len(params.iv) > 0 {
-		if err := claimAEADNonce(ctx, b, attrs, gcmWrapOperation, params.iv); err != nil {
-			return nil, err
-		}
-	}
-
+	// The (wrapping key, IV) pair is claimed inside encrypter.Encrypt itself,
+	// atomically, against the shared aead.KeyNonceGuard -- see
+	// backend.ClaimAEADNonce/ClaimGeneratedAEADNonce (go-xkms#1201). That is
+	// the one and only claim: this call is the lowest layer common to a wrap
+	// that arrives through XKMSService and one that reaches a Backend
+	// directly (sdk/go, xkey), so claiming here too would claim the same
+	// pair twice for this path and refuse the first request as a false
+	// reuse.
+	//
 	// A caller-supplied nonce reaches the provider verbatim; an empty one asks
 	// it to generate one. Either way the nonce comes back on the result and is
 	// prefixed to the blob, so a token-generated nonce is never lost.
@@ -538,18 +538,6 @@ func wrapAESGCM(ctx context.Context, b Backend, attrs *types.KeyAttributes, para
 			Operation: gcmWrapOperation,
 			KeyID:     attrs.CN,
 			Err:       ErrOperationFailed,
-		}
-	}
-
-	// A nonce the provider generated is claimed too, once it is known. The
-	// guard exists to catch a repeat whatever produced it, and a provider whose
-	// RNG has stopped producing fresh values is precisely the failure that
-	// makes a generated IV unsafe. The blob is withheld when the claim fails:
-	// the encryption has already happened by then, so the one thing still worth
-	// preventing is the second ciphertext under that pair reaching anybody.
-	if len(params.iv) == 0 {
-		if err := claimAEADNonce(ctx, b, attrs, gcmWrapOperation, encrypted.Nonce); err != nil {
-			return nil, err
 		}
 	}
 

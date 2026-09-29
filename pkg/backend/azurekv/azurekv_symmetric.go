@@ -302,6 +302,27 @@ type azureSymmetricKey struct {
 	keyData   []byte
 }
 
+// claimNonce atomically claims (k.keyData, nonce) against the shared,
+// optionally-persistent aead.KeyNonceGuard, in one step, replacing the old
+// STEP 3 check / STEP 5 record pair the per-backend AEADSafetyTracker used
+// to perform non-atomically (go-xkms#1201).
+//
+// wasCallerSupplied distinguishes a nonce the immediate caller of Encrypt
+// provided (opts.Nonce != nil) from one this key generated itself: a
+// generated nonce still encrypts once the guard's bounded in-memory tracker
+// is full, because it is fresh by construction and cannot itself be a
+// repeat; see backend.ClaimGeneratedAEADNonce.
+func (k *azureSymmetricKey) claimNonce(wasCallerSupplied bool, nonce []byte) error {
+	claim := backend.ClaimGeneratedAEADNonce
+	if wasCallerSupplied {
+		claim = backend.ClaimAEADNonce
+	}
+	if err := claim(context.Background(), k.keyData, nil, k.attrs.ID(), nonce); err != nil {
+		return &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
+	}
+	return nil
+}
+
 // Algorithm returns the symmetric algorithm
 func (k *azureSymmetricKey) Algorithm() string {
 	return k.algorithm
@@ -373,12 +394,12 @@ func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions
 			return nil, &errs.Wrapped{Msg: "failed to split random-nonce GCM output", Err: err}
 		}
 
-		// STEP 3: Check nonce uniqueness. Unlike the explicit-nonce path,
-		// the nonce cannot be checked before Seal produces it.
-		if k.backend.tracker != nil {
-			if err := k.backend.tracker.CheckNonce(keyID, nonce); err != nil {
-				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
-			}
+		// STEP 3: Claim nonce uniqueness. Unlike the explicit-nonce path,
+		// the nonce cannot be claimed before Seal produces it. opts.Nonce
+		// is nil on this branch by construction (randomNonce requires it),
+		// so the claim always tolerates a full guard; see claimNonce.
+		if err := k.claimNonce(false, nonce); err != nil {
+			return nil, err
 		}
 	} else {
 		// STEP 2: Generate or use provided nonce
@@ -394,11 +415,9 @@ func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions
 			}
 		}
 
-		// STEP 3: Check nonce uniqueness before encryption
-		if k.backend.tracker != nil {
-			if err := k.backend.tracker.CheckNonce(keyID, nonce); err != nil {
-				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
-			}
+		// STEP 3: Claim (key, nonce) uniqueness before encryption
+		if err := k.claimNonce(opts.Nonce != nil, nonce); err != nil {
+			return nil, err
 		}
 
 		// STEP 4: Encrypt (GCM appends the tag to the ciphertext)
@@ -409,14 +428,6 @@ func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions
 		tagSize := gcm.Overhead()
 		ciphertext = ciphertextWithTag[:len(ciphertextWithTag)-tagSize]
 		tag = ciphertextWithTag[len(ciphertextWithTag)-tagSize:]
-	}
-
-	// STEP 5: Record nonce after successful encryption
-	if k.backend.tracker != nil {
-		if err := k.backend.tracker.RecordNonce(keyID, nonce); err != nil {
-			// Log warning but return successful encryption
-			fmt.Printf("warning: failed to record nonce: %v\n", err)
-		}
 	}
 
 	nonceMode := types.GCMNonceModeExplicit

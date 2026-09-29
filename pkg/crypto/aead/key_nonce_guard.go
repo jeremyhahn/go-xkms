@@ -81,8 +81,8 @@ type KeyNonceGuard struct {
 // directly, so this package -- shared by the PKCS#11 module, a cgo-loaded
 // client library with no reason to carry a storage or qrdb dependency --
 // stays free of both. pkg/aeadnonce implements this interface over
-// storage.Backend for the server side; see pkg/xkms/aead_nonce_guard.go for
-// where it is attached.
+// storage.Backend for the server side; see pkg/server's
+// initializeAEADNonceStore for where it is attached.
 type PersistentNonceStore interface {
 	// ClaimNonce atomically records entry as consumed, reporting
 	// claimed=false when it was already recorded -- by this process, an
@@ -302,10 +302,13 @@ var sharedAEADNonceGuard = sync.OnceValues(func() (*KeyNonceGuard, error) {
 // one process lifetime and nothing across a restart or between two processes.
 // pkg/server attaches a PersistentNonceStore to this shared instance at
 // startup (initializeAEADNonceStore, go-xkms#1201), so UseContext -- which
-// every service-layer caller uses -- also survives a restart and is visible
-// to every node sharing the configured storage backend; only a caller using
-// the plain Use method, such as the PKCS#11 module's own in-process guard,
-// is limited to the in-memory tracker's lifetime.
+// every backend's Encrypt path uses, through pkg/backend's
+// ClaimAEADNonce/ClaimGeneratedAEADNonce, whether reached through
+// XKMSService or by a caller holding a Backend directly -- also survives a
+// restart and is visible to every node sharing the configured storage
+// backend; only a caller using the plain Use method, such as the PKCS#11
+// module's own in-process guard, is limited to the in-memory tracker's
+// lifetime.
 //
 // The error is the one from reading the guard's salt out of the system RNG.
 // It is returned rather than panicked on so that a caller can refuse the

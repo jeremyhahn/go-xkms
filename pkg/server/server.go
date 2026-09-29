@@ -1912,14 +1912,16 @@ func (s *Server) initializePKCS11StateStore() error {
 
 // initializeAEADNonceStore builds the durable backing for the process-wide
 // AEAD (key, nonce) guard (pkg/crypto/aead.KeyNonceGuard) and attaches it to
-// the shared instance every AEAD path that accepts a caller-supplied or
-// provider-generated nonce claims through -- the Encrypt RPC and the AES-GCM
-// key wrap alike (pkg/xkms/aead_nonce_guard.go). Without it a claim is
-// in-memory only and a restart forgets every one it made, which is the gap
-// go-xkms#1201 reported. It uses the same createStorage seam every other
-// durable subsystem does, so the claims inherit the configured storage
-// backend's durability and, when that backend is the embedded qrdb node,
-// its cluster-wide replication.
+// the shared instance every backend's AEAD Encrypt path claims through --
+// software symmetric, Azure Key Vault, PKCS#11, TPM2, and the quantum KEM
+// hybrid encrypter alike (pkg/backend/aead_nonce.go's
+// ClaimAEADNonce/ClaimGeneratedAEADNonce), reached equally by a request that
+// arrives through XKMSService and one that holds a Backend directly
+// (sdk/go, xkey). Without it a claim is in-memory only and a restart
+// forgets every one it made, which is the gap go-xkms#1201 reported. It
+// uses the same createStorage seam every other durable subsystem does, so
+// the claims inherit the configured storage backend's durability and, when
+// that backend is the embedded qrdb node, its cluster-wide replication.
 func (s *Server) initializeAEADNonceStore() error {
 	backend, err := s.createStorage("aeadnonce")
 	if err != nil {

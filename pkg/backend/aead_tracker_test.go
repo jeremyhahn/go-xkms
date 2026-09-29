@@ -14,7 +14,6 @@
 package backend
 
 import (
-	"crypto/rand"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -100,82 +99,12 @@ func TestAEADOptionsValidate(t *testing.T) {
 	}
 }
 
-func TestMemoryAEADTracker_NonceTracking(t *testing.T) {
-	tracker := NewMemoryAEADTracker()
-	keyID := "test:key:1"
-
-	// Set up tracking options
-	opts := types.DefaultAEADOptions()
-	err := tracker.SetAEADOptions(keyID, opts)
-	if err != nil {
-		t.Fatalf("Failed to set AEAD options: %v", err)
-	}
-
-	// Generate a random nonce
-	nonce := make([]byte, 12)
-	if _, err := rand.Read(nonce); err != nil {
-		t.Fatalf("Failed to generate nonce: %v", err)
-	}
-
-	// First use should succeed
-	err = tracker.CheckNonce(keyID, nonce)
-	if err != nil {
-		t.Errorf("CheckNonce() failed on first use: %v", err)
-	}
-
-	// Record the nonce
-	err = tracker.RecordNonce(keyID, nonce)
-	if err != nil {
-		t.Fatalf("RecordNonce() failed: %v", err)
-	}
-
-	// Second use should fail (nonce reuse)
-	err = tracker.CheckNonce(keyID, nonce)
-	if err != ErrNonceReused {
-		t.Errorf("CheckNonce() should return ErrNonceReused, got: %v", err)
-	}
-}
-
-func TestMemoryAEADTracker_NonceTrackingDisabled(t *testing.T) {
-	tracker := NewMemoryAEADTracker()
-	keyID := "test:key:2"
-
-	// Set up tracking options with nonce tracking disabled
-	opts := &types.AEADOptions{
-		NonceTracking:      false,
-		BytesTracking:      false,
-		BytesTrackingLimit: 0,
-		NonceSize:          12,
-	}
-	err := tracker.SetAEADOptions(keyID, opts)
-	if err != nil {
-		t.Fatalf("Failed to set AEAD options: %v", err)
-	}
-
-	// Generate a random nonce
-	nonce := make([]byte, 12)
-	if _, err := rand.Read(nonce); err != nil {
-		t.Fatalf("Failed to generate nonce: %v", err)
-	}
-
-	// Check should always succeed when tracking is disabled
-	err = tracker.CheckNonce(keyID, nonce)
-	if err != nil {
-		t.Errorf("CheckNonce() should succeed when tracking disabled: %v", err)
-	}
-
-	// Record (should be no-op)
-	err = tracker.RecordNonce(keyID, nonce)
-	if err != nil {
-		t.Errorf("RecordNonce() should succeed when tracking disabled: %v", err)
-	}
-
-	// Check again - should still succeed
-	err = tracker.CheckNonce(keyID, nonce)
-	if err != nil {
-		t.Errorf("CheckNonce() should succeed when tracking disabled: %v", err)
-	}
-}
+// Nonce-reuse tracking is no longer part of memoryAEADTracker: go-xkms#1201
+// moved it to the single, atomic, optionally-persistent aead.KeyNonceGuard
+// every backend's Encrypt path claims through (see ClaimAEADNonce in
+// aead_nonce.go and its tests in aead_nonce_test.go). The tests below cover
+// this tracker's remaining responsibility, the NIST SP 800-38D
+// bytes-encrypted budget.
 
 func TestMemoryAEADTracker_BytesTracking(t *testing.T) {
 	tracker := NewMemoryAEADTracker()
@@ -273,19 +202,8 @@ func TestMemoryAEADTracker_ResetTracking(t *testing.T) {
 	}
 
 	// Record some state
-	nonce := make([]byte, 12)
-	_, _ = rand.Read(nonce)
-	if err := tracker.RecordNonce(keyID, nonce); err != nil {
-		t.Fatal(err)
-	}
 	if err := tracker.IncrementBytes(keyID, 1000); err != nil {
 		t.Fatal(err)
-	}
-
-	// Verify state exists
-	err = tracker.CheckNonce(keyID, nonce)
-	if err != ErrNonceReused {
-		t.Error("Expected nonce to be recorded")
 	}
 
 	total, _ := tracker.GetBytesEncrypted(keyID)
@@ -297,12 +215,6 @@ func TestMemoryAEADTracker_ResetTracking(t *testing.T) {
 	err = tracker.ResetTracking(keyID)
 	if err != nil {
 		t.Fatalf("ResetTracking() failed: %v", err)
-	}
-
-	// Verify state was cleared
-	err = tracker.CheckNonce(keyID, nonce)
-	if err != nil {
-		t.Error("Nonce should not be recorded after reset")
 	}
 
 	total, _ = tracker.GetBytesEncrypted(keyID)
@@ -420,27 +332,6 @@ func TestMemoryAEADTracker_MultipleKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Use different nonces for each key
-	nonce1 := make([]byte, 12)
-	nonce2 := make([]byte, 12)
-	_, _ = rand.Read(nonce1)
-	_, _ = rand.Read(nonce2)
-
-	// Record nonce for key1
-	if err := tracker.RecordNonce(key1, nonce1); err != nil {
-		t.Fatal(err)
-	}
-
-	// key1 should detect reuse
-	if err := tracker.CheckNonce(key1, nonce1); err != ErrNonceReused {
-		t.Error("key1 should detect nonce reuse")
-	}
-
-	// key2 should not detect reuse (different key)
-	if err := tracker.CheckNonce(key2, nonce1); err != nil {
-		t.Error("key2 should not detect nonce reuse from key1")
-	}
-
 	// Encrypt bytes for each key
 	if err := tracker.IncrementBytes(key1, 500); err != nil {
 		t.Fatal(err)
@@ -474,51 +365,6 @@ func TestMemoryAEADTracker_MultipleKeys(t *testing.T) {
 	// key2 can encrypt 500 more (limit 2000)
 	if err := tracker.IncrementBytes(key2, 500); err != nil {
 		t.Errorf("key2 should be able to encrypt 500 more bytes: %v", err)
-	}
-}
-
-func BenchmarkMemoryAEADTracker_CheckNonce(b *testing.B) {
-	tracker := NewMemoryAEADTracker()
-	keyID := "bench:key:1"
-
-	opts := types.DefaultAEADOptions()
-	_ = tracker.SetAEADOptions(keyID, opts)
-
-	// Pre-record some nonces to simulate real-world scenario
-	for i := 0; i < 1000; i++ {
-		nonce := make([]byte, 12)
-		_, _ = rand.Read(nonce)
-		if err := tracker.RecordNonce(keyID, nonce); err != nil {
-			b.Fatal(err)
-		}
-	}
-
-	// Benchmark checking a new nonce
-	nonce := make([]byte, 12)
-	_, _ = rand.Read(nonce)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = tracker.CheckNonce(keyID, nonce)
-	}
-}
-
-func BenchmarkMemoryAEADTracker_RecordNonce(b *testing.B) {
-	tracker := NewMemoryAEADTracker()
-	keyID := "bench:key:2"
-
-	opts := types.DefaultAEADOptions()
-	_ = tracker.SetAEADOptions(keyID, opts)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		nonce := make([]byte, 12)
-		if _, err := rand.Read(nonce); err != nil {
-			b.Fatal(err)
-		}
-		if err := tracker.RecordNonce(keyID, nonce); err != nil {
-			b.Fatal(err)
-		}
 	}
 }
 

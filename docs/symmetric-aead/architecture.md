@@ -63,27 +63,36 @@ ECB) no IV; supplying any of those to the CBC/ECB path is a typed error
 `ErrIVNotSupported`) rather than a silently ignored parameter
 (`backend.go:929-937`, `:1005-1013`).
 
-## AEAD safety tracking: a seam every AEAD path calls through, one implementation
+## AEAD safety tracking: a bytes-budget seam, and a separate nonce guard
 
-`types.AEADSafetyTracker` (`pkg/types/types.go:2751-2779`) is a five-method
-interface — `CheckNonce`, `RecordNonce`, `IncrementBytes`,
-`GetBytesEncrypted`, `GetAEADOptions`/`SetAEADOptions`, `ResetTracking` — that
-every AEAD encryption call in this backend goes through in the same order:
-check the bytes limit, generate or accept a nonce, check the nonce hasn't
-been used, encrypt, record the nonce
-(`backend.go:551-737` documents the five steps explicitly in-line). The same
-sequence is reused verbatim by
-[`../post-quantum/architecture.md`](../post-quantum/architecture.md)'s
+`types.AEADSafetyTracker` (`pkg/types/types.go:2802-2822`) is now a
+five-method interface covering only the NIST SP 800-38D bytes-encrypted
+budget — `IncrementBytes`, `GetBytesEncrypted`, `GetAEADOptions`/
+`SetAEADOptions`, `ResetTracking` — that every AEAD encryption call in this
+backend still checks first (`backend.go:585-590`). Nonce-reuse used to be
+part of this interface too (`CheckNonce`/`RecordNonce`); go-xkms#1201 removed
+it, because that design checked and recorded in two separate, non-atomic
+steps (a TOCTOU race two concurrent callers could both win), was scoped per
+backend *instance*, so a second instance over the same storage — the shape a
+restart takes — never saw a key the first instance generated, and covered
+only callers reaching a key through `XKMSService`: a caller holding a
+`symmetric.Backend`/`quantum.QuantumBackend` directly got no nonce-reuse
+protection at all. See "One process-wide claim, made inside `Encrypt`
+itself" below for what replaced it. The same bytes-budget sequence is reused
+verbatim by [`../post-quantum/architecture.md`](../post-quantum/architecture.md)'s
 `MLKEMPrivateKey.Encrypt` for the AES-256-GCM layer over an ML-KEM shared
-secret (`pkg/keyprovider/quantum/signer.go:379-423`) — one tracker interface,
-two independent call sites.
+secret (`pkg/keyprovider/quantum/signer.go`) — one tracker interface, two
+independent call sites.
 
 There is exactly one implementation of `AEADSafetyTracker` in this
 repository: `backend.NewMemoryAEADTracker`
-(`pkg/backend/aead_tracker.go:29-56`), in-memory, with its own doc comment
+(`pkg/backend/aead_tracker.go:51`), in-memory, with its own doc comment
 stating "Production systems should use persistent storage (file-based or
-database)." None exists. See [`engineering.md`](engineering.md) §"What is
-absent" for what this means operationally.
+database)." None exists for the bytes budget; see
+[`engineering.md`](engineering.md) §"What is absent" for what this means
+operationally. This gap no longer applies to nonce-reuse protection, which
+the guard below makes durable and process-independent regardless of this
+tracker's state.
 
 `types.DefaultAEADOptions()` (`pkg/types/types.go:499-506`) is
 `NonceTracking: true, BytesTracking: true, BytesTrackingLimit: 350GB,
@@ -91,49 +100,82 @@ NonceSize: 12` — the 350GB figure is this project's own choice of headroom
 under the NIST SP 800-38D AES-GCM safety bound, not a value SP 800-38D itself
 names.
 
-## Caller-supplied nonces: one process-wide claim-then-seal guard
+## Caller-supplied nonces: one process-wide claim, made inside `Encrypt` itself
 
-The provider tracker above does not stop nonce reuse on the RPC path. Its
-`CheckNonce` and `RecordNonce` are separate steps around the seal, so two
-concurrent callers with one nonce both pass. It only tracks keys whose options
-were registered by `GenerateSymmetricKey` in the current process
-(`pkg/backend/aead_tracker.go:59-83`). And it is per backend instance and keyed
-by key id, so one key reached under two names is two keys to it.
+go-xkms#1201 was reported and fixed in two halves. The first gave the
+service-layer guard a durable, persistent backing (see below). The second
+— this section — closed a gap that remained even after that: the claim lived
+in `XKMSService.Encrypt`/`wrapAESGCM`, so it protected a caller that reached a
+key through `XKMSService`, but a caller holding a
+`symmetric.Backend`/`azurekv.Backend`/`pkcs11.Backend`/`tpm2.TPM2`/
+`quantum.QuantumBackend` directly (`sdk/go`, `xkey`) bypassed it entirely and
+had only the old, non-atomic, per-instance `AEADSafetyTracker` described
+above — or, for PKCS#11/TPM2/cloud-KMS backends, no nonce tracking at all.
 
-`XKMSService.Encrypt` therefore claims every AEAD nonce itself, in the same
-guard the AES-GCM wrap uses (`pkg/xkms/servicer_crypto.go:645-677`):
+The claim now lives at the one layer both callers pass through: inside each
+backend's own `Encrypt` implementation, immediately before `Seal`.
+`pkg/backend`'s `ClaimAEADNonce`/`ClaimGeneratedAEADNonce`
+(`aead_nonce.go:75`, `:112`) are the single point every AEAD `Encrypt` path
+calls — the software symmetric backend (`pkg/keyprovider/symmetric/
+backend.go:561` `claimNonce`), Azure Key Vault
+(`pkg/backend/azurekv/azurekv_symmetric.go`), PKCS#11
+(`pkg/backend/pkcs11/pkcs11_symmetric.go`), TPM2 (`pkg/tpm2/symmetric.go`),
+and the quantum KEM hybrid encrypter (`pkg/keyprovider/quantum/signer.go`,
+`encryptWithAESGCM`) alike:
 
-- **Caller-supplied nonce, empty `Mode` (AES-GCM or ChaCha20-Poly1305):**
-  claimed before the seal (`:650-655`). A failed claim returns an
-  `*ErrKeyOperation` wrapping `aead.ErrNonceReuse` or
-  `aead.ErrNonceTrackerFull`, and no ciphertext is produced.
-- **Provider-generated nonce:** claimed after the seal (`:673-677`), so an
-  encrypt-only principal cannot copy a victim's nonce off its ciphertext and
-  encrypt chosen plaintext under it. A repeat withholds the ciphertext. A full
-  guard does not refuse this path (`pkg/xkms/aead_nonce_guard.go:127-160`): a
-  generated nonce is fresh by construction, and once the guard is full every
-  caller-supplied nonce is refused on every path, so the unrecorded nonce
-  cannot be replayed through the service.
+- **Caller-supplied nonce (`opts.Nonce != nil`):** claimed with
+  `ClaimAEADNonce`, which refuses outright once the guard's bounded
+  in-memory tracker is full (`aead.ErrNonceTrackerFull`) — the guard can no
+  longer promise it would notice a repeat, so a caller-chosen nonce is not
+  vouched for.
+- **Backend-generated nonce (`opts.Nonce == nil`):** claimed with
+  `ClaimGeneratedAEADNonce`, which tolerates a full guard: a generated nonce
+  is fresh by construction (NIST SP 800-38D §8.2.2), so its own ciphertext is
+  safe regardless of whether the guard has room to record it, and once the
+  guard is full every caller-supplied nonce is already refused, so an
+  unrecorded generated nonce cannot be replayed either. A genuine repeat —
+  full guard or not — is still refused (`aead.ErrNonceReuse`).
 - **CBC/ECB:** not claimed. They take an IV, not an AEAD nonce.
 
-The claim is `claimAEADNonce` (`aead_nonce_guard.go:103-125`), shared with
-`wrapAESGCM` (`servicer_wrapkey.go:519`, `:551`), over
-`aead.SharedAEADNonceGuard` (`pkg/crypto/aead/key_nonce_guard.go:141-173`).
-`KeyNonceGuard.Use` checks and records under one lock
-(`key_nonce_guard.go:89`, `nonce_tracker.go:133-156`). The key identity is
-`aeadKeyIdentity` (`aead_nonce_guard.go:67-81`): the key's material where the
-backend releases it (software symmetric, Azure Key Vault), so aliases collide;
-otherwise `sealedKeyGuardDomain + attrs.ID()` for keys whose `Raw` reports
-`backend.ErrNotSupported` (PKCS#11, TPM 2.0, AWS/GCP KMS, Vault, paired phone).
-Any other failure to resolve the key refuses the request.
+`XKMSService.Encrypt` and `wrapAESGCM` no longer claim anything themselves
+(`pkg/xkms/servicer_crypto.go:653`, `pkg/xkms/servicer_wrapkey.go:532`): they
+call `encrypter.Encrypt` exactly as before, and the backend's own claim is
+now the only one made for that request. Claiming at both layers, as the
+first half of go-xkms#1201 left it, would claim the same pair twice for a
+request that arrives through the service — refusing the very first call as a
+false reuse — so the old `pkg/xkms/aead_nonce_guard.go` (`claimAEADNonce`,
+`claimGeneratedAEADNonce`, `aeadKeyIdentity`) was deleted rather than kept
+alongside the new backend-layer claim.
+
+Both claim functions resolve the key identity through `aeadNonceIdentity`
+(`aead_nonce.go:133`): the key's own material, passed in by the caller
+exactly as the backend already has it in hand for the encryption itself (the
+software symmetric backend's `keyBytes`, Azure Key Vault's locally-generated
+`keyData`, TPM2's `loadKeyMaterial` result — unsealed into process memory for
+this call even though the backend's public `SymmetricKey.Raw` still refuses
+to release it), so the same physical key reached under two names or two
+backend instances collides on one guard entry; or, when no in-process
+material exists at all (PKCS#11, whose key never leaves the token),
+`sealedAEADKeyDomain + sealedID`, where `sealedID` is `attrs.ID()` — already
+encoding tenant, partition, backend, key type, common name and algorithm.
+Neither function takes ownership of or wipes the caller's key material: it
+is only read, the same way `KeyNonceGuard`'s own HMAC derivation reads it.
+
+Both resolve to `aead.SharedAEADNonceGuard`
+(`pkg/crypto/aead/key_nonce_guard.go`). `KeyNonceGuard.UseContext` checks and
+records under one lock, then claims through any attached
+`PersistentNonceStore` too (`key_nonce_guard.go:89`,
+`nonce_tracker.go:133-156`).
 
 The PKCS#11 module claims a `C_EncryptInit` caller IV in its own process under
 `remoteKeyGuardDomain + backend + key id`
-(`pkg/pkcs11/module/crypto.go:1948`, `:1987`) before sending the request. The
-two identities are domain-separated and never collide, so a module call
-succeeds exactly once per IV. The module's claim stops a repeat in that
-process, and the service's claim stops a repeat across module processes and
-direct REST/gRPC/MCP callers.
+(`pkg/pkcs11/module/crypto.go:1948`, `:1987`) before sending the request. That
+identity and `aeadNonceIdentity`'s sealed-key identity are domain-separated
+and never collide, so a module call succeeds exactly once per IV. The
+module's claim stops a repeat in that process, and the PKCS#11 backend's own
+claim (reached once the module's request lands, whether directly or through
+`XKMSService`) stops a repeat across module processes and every other
+caller.
 
 **Persistence: a durable claim, not process memory alone.** The guard's own
 tracker is process memory — its salt is drawn at first use and its entries die
@@ -141,8 +183,9 @@ with the process — but `pkg/server`'s `initializeAEADNonceStore` attaches a
 `pkg/aeadnonce.Store` to `aead.SharedAEADNonceGuard` at startup, built over the
 same `createStorage` seam every other durable subsystem in this server uses
 (`pkg/pkcs11state`, `pkg/staticpw`). `KeyNonceGuard.UseContext` — what
-`claimAEADNonceIn` calls, so both `Encrypt` and the AES-GCM key wrap use it —
-claims through that store in addition to the in-memory tracker, via
+`ClaimAEADNonceIn`/`ClaimGeneratedAEADNonceIn` call, so every backend's
+`Encrypt` uses it, whether reached through `XKMSService` or directly — claims
+through that store in addition to the in-memory tracker, via
 `storage.Backend.PutIfAbsent`, so the atomic claim-then-seal property holds
 whether the check is the first one in the process or the millionth one after a
 restart. The store's key is `persistentEntry`, a fixed-domain HMAC over the
@@ -251,3 +294,22 @@ auto-selecting one; see [`engineering.md`](engineering.md).
   Rejected: the interface already exists in `pkg/types` for the whole
   project; `pkg/keyprovider/symmetric` and `pkg/keyprovider/quantum` share it
   rather than each keeping its own bookkeeping.
+- **Keeping the service-layer claim (`pkg/xkms/aead_nonce_guard.go`)
+  alongside the new backend-layer claim, so both `XKMSService` and a direct
+  `Backend` caller were covered.** Rejected: `XKMSService.Encrypt` and
+  `wrapAESGCM` both reach the guarded pair through `encrypter.Encrypt`, so a
+  second claim at the service layer would claim the same pair twice for
+  every request that arrives through the service, refusing the first,
+  legitimate call as a false reuse. Backend `Encrypt` is the lowest layer
+  common to both callers, so it is the only place that can claim once for
+  both; go-xkms#1201.
+- **Identifying every backend's key by `attrs.ID()` alone, including the
+  ones that hold material in process (software symmetric, Azure Key Vault,
+  TPM2).** Rejected: `KeyNonceGuard`'s whole premise is that the safety
+  property belongs to the key's bytes, not to whatever name currently
+  addresses them (see `pkg/crypto/aead/key_nonce_guard.go`'s own doc
+  comment) — an identifier-keyed guard cannot see one key reachable under
+  two names, two backend instances, or a restart, which is exactly the
+  aliasing go-xkms#1201 also needed closed. `aeadNonceIdentity` therefore
+  prefers material wherever a backend has it in process, and falls back to
+  `attrs.ID()` only for PKCS#11, whose key never leaves the token at all.
