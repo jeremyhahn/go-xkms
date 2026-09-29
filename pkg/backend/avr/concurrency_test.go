@@ -115,6 +115,59 @@ func TestConcurrentCallsDoNotConsumeEachOthersReplies(t *testing.T) {
 	}
 }
 
+// TestRequestTimeoutExcludesQueueing pins what Backend's per-call deadline
+// bounds: the call's OWN exchange with the device, not the time it spent
+// waiting for another caller to finish with the wire first.
+//
+// The link here costs perCall on every write, and enough callers are fired at
+// once that the LAST one to reach the wire waits longer than RequestTimeout
+// before its own exchange even starts -- while perCall itself, the only thing
+// RequestTimeout is supposed to bound, comfortably fits inside it. A backend
+// that started the deadline before Lock would fail every caller the queue
+// delayed past RequestTimeout; this asserts every one still succeeds.
+func TestRequestTimeoutExcludesQueueing(t *testing.T) {
+	const (
+		perCall        = 15 * time.Millisecond
+		callers        = 6
+		requestTimeout = 25 * time.Millisecond
+	)
+	// The queue a caller can be made to wait behind is longer than
+	// requestTimeout, but no single exchange is: that gap is exactly what a
+	// deadline started before the wire is acquired would collapse.
+	require.Greater(t, time.Duration(callers-1)*perCall, requestTimeout)
+	require.Less(t, perCall, requestTimeout)
+
+	link := &delayedLink{
+		fakeLink: secureElementLink().
+			answer(aggeneric.CmdSysInfo, sysInfoPayload(90*time.Second, 512, aggeneric.ResetPowerOn)),
+		delay: perCall,
+	}
+
+	config := testConfig()
+	config.RequestTimeout = requestTimeout
+
+	b, err := NewBackend(context.Background(), config, aggeneric.New(link))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := b.Health(context.Background())
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.NoError(t, err, "queueing behind other callers must not count against RequestTimeout")
+	}
+}
+
 // testMismatch reports a call that returned the wrong device's answer.
 type testMismatch struct{ what string }
 

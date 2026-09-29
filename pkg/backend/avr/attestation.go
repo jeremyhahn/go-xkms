@@ -151,15 +151,19 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 		return nil, ErrNoDeviceKey
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
-	defer cancel()
-
 	// Held across the WHOLE of AttestCert, which is several Do calls: the
 	// device regenerates its pages for each nonce and keeps no copy, so a
 	// second attestation interleaved between two page reads would splice two
 	// certificates together.
+	//
+	// The deadline is set AFTER the wire is acquired, not before: see the
+	// comment in Backend.Identity. It matters more here than anywhere else,
+	// because AttestCert is the multi-frame exchange every other caller is
+	// queued behind.
 	b.wire.Lock()
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	der, err := b.device.AttestCert(ctx, nonce)
+	cancel()
 	b.wire.Unlock()
 	if err != nil {
 		return nil, deviceError(err)
