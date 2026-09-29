@@ -168,24 +168,6 @@ func TestSyncCADelta_CAAndChainAreQuarantined(t *testing.T) {
 	assert.Empty(t, roots)
 }
 
-// TestTrustStoreAdapter_AddPEMStillAutoClassifies pins that the operator's
-// own import path is unchanged: AddPEM (backup restore) auto-classifies, so a
-// self-signed CA the operator restores is still a user CA.
-func TestTrustStoreAdapter_AddPEMStillAutoClassifies(t *testing.T) {
-	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: t.TempDir()})
-	require.NoError(t, err)
-	defer func() { assert.NoError(t, store.Close()) }()
-
-	ca := newQuarantineCA(t, pkix.Name{CommonName: "Operator CA", Organization: []string{"Operator"}})
-	added, err := (&trustStoreAdapter{store: store}).AddPEM([]byte(pemOf(ca.cert)))
-	require.NoError(t, err)
-	require.Equal(t, 1, added)
-
-	meta, err := store.Metadata(truststore.Fingerprint(ca.cert))
-	require.NoError(t, err)
-	assert.Equal(t, truststore.PurposeUserCA, meta.Purpose)
-}
-
 // TestTrustStoreAdapter_ImportPEMRejectsInvalidPEM pins that the sync write
 // path surfaces a bundle with no certificate as an error instead of reporting
 // an empty success.

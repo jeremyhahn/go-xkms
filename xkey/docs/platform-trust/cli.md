@@ -21,6 +21,11 @@ see [`../../../docs/trust-bootstrap/cli.md`](../../../docs/trust-bootstrap/cli.m
 for what each one anchors on. `direct` trusts the public web PKI and verifies
 nothing else.
 
+Every fetched certificate is filed under `bootstrap-ca` with source
+`platform:<host>` (the host of `trust.bootstrap.server_url`, or the Noise
+address when only Noise is configured), exactly as `trust fetch` and the GUI's
+trust-strap import file it. It is never auto-classified.
+
 ## `xkey trust fetch <url>` (SPKI-pinned direct fetch)
 
 `xkey trust fetch` and `xkey trust import-platform` (below) go through a
@@ -34,7 +39,7 @@ DANE/Noise/SPKI/Direct dispatch chain `trust bootstrap` does
 |---|---|---|---|
 | `--spki-pin` | string | — | **Required.** 64-char hex SHA-256 of the server's leaf certificate SPKI. Obtain out-of-band. |
 | `--purpose` | string | `bootstrap-ca` | Certificate purpose recorded for every certificate added (`truststore.PurposeBootstrapCA`, `xkey/pkg/truststore/types.go`) |
-| `--source` | string | `bundle.Source` (`platform:<host:port>`) | Recorded provenance string, overrides the fetcher's own `platform:<host>` label |
+| `--source` | string | `platform:<host:port>` of the URL | Recorded provenance string, overrides the default `platform:<host>` label |
 | `--install-system` | bool | `false` | After adding to the xKey trust store, install any self-signed root certificates in the bundle to the OS trust store |
 | `--timeout` | duration | `30s` (`xkms.TrustFetcherDefaultTimeout`) | HTTP transaction timeout |
 
@@ -196,7 +201,6 @@ afterwards, not just xkey. `uninstall` reverses it, and removing xkey does not.
 ```
 xkey trust bootstrap --method spki --timeout 60s
 xkey trust list -o json
-xkey trust classify <fingerprint> --purpose bootstrap-ca
 xkey trust install <fingerprint>
 ```
 
@@ -205,8 +209,10 @@ Or, given a pin obtained out-of-band instead of a truststrap configuration:
 ```
 xkey trust import-platform kms.example.com:8443 --spki-pin <hex> --install-system
 xkey trust list -o json
-xkey trust classify <fingerprint> --purpose bootstrap-ca
 ```
+
+Both already file the bundle under `bootstrap-ca`; `trust classify` is only
+needed to give a certificate a different purpose.
 
 `import-platform --install-system` already installs any self-signed root in
 the bundle to the OS trust store as part of the fetch, so a first run through

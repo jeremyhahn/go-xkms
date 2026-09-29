@@ -19,7 +19,8 @@
 //
 // These tests exercise the upper-most facade (TrustService) per the
 // xkey integration test convention, verifying the full fetch → parse →
-// AddPEM → notifyMutate flow against a live bootstrap endpoint.
+// ImportPEM (filed under bootstrap-ca) → notifyMutate flow against a live
+// bootstrap endpoint.
 //
 // Required environment variables (set by the bootstrap docker-compose
 // stack; tests skip when unset so the file can also be run locally):

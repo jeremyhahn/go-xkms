@@ -88,6 +88,16 @@ func newTestCertificatePEM(t *testing.T, commonName string) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
+// seededTrustOptions is the metadata seedBackupStores files its certificate
+// under.
+func seededTrustOptions() *truststore.AddCertificateOptions {
+	return &truststore.AddCertificateOptions{
+		Purpose: truststore.PurposeSynced,
+		Source:  "backup-seed",
+		Tags:    []string{"seed"},
+	}
+}
+
 // seedBackupStores writes one certificate, one OATH credential, and one
 // static password into the default stores beneath the isolated home.
 func seedBackupStores(t *testing.T, home string) {
@@ -99,9 +109,12 @@ func seedBackupStores(t *testing.T, home string) {
 		BaseDir: filepath.Join(dataDir, trustDataSubdir),
 	})
 	require.NoError(t, err)
-	added, err := trustStore.AddPEM(newTestCertificatePEM(t, "backup-unit-test-ca"))
+	// Filed under a purpose auto-classification would never choose for a
+	// self-signed CA (it would pick user-ca), so a restore that re-classified
+	// instead of honouring the recorded purpose is caught (#1312).
+	imported, err := trustStore.ImportPEM(newTestCertificatePEM(t, "backup-unit-test-ca"), seededTrustOptions())
 	require.NoError(t, err)
-	require.Equal(t, 1, added)
+	require.Equal(t, 1, imported.Added)
 	require.NoError(t, trustStore.Close())
 
 	oathStore, err := oath.NewFileStore(filepath.Join(dataDir, oathStoreFilename))
@@ -656,9 +669,10 @@ func TestTrustStoreAdapter_ReadsMetadata(t *testing.T) {
 
 	adapter := &trustStoreAdapter{store: store, path: dir}
 
-	added, err := adapter.AddPEM(newTestCertificatePEM(t, "adapter-ca"))
+	imported, err := adapter.ImportPEM(newTestCertificatePEM(t, "adapter-ca"),
+		&truststore.AddCertificateOptions{Purpose: truststore.PurposeBootstrapCA, Source: "adapter-test"})
 	require.NoError(t, err)
-	require.Equal(t, 1, added)
+	require.Equal(t, 1, imported.Added)
 
 	certs, err := adapter.Certificates()
 	require.NoError(t, err)
@@ -668,7 +682,8 @@ func TestTrustStoreAdapter_ReadsMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 	assert.Equal(t, certFingerprintHex(certs[0].Raw), meta.Fingerprint)
-	assert.NotEmpty(t, meta.Purpose)
+	assert.Equal(t, string(truststore.PurposeBootstrapCA), meta.Purpose)
+	assert.Equal(t, "adapter-test", meta.Source)
 }
 
 func TestTrustStoreAdapter_MetadataUnknownFingerprint(t *testing.T) {
@@ -774,9 +789,9 @@ func TestTrustStoreAdapter_Contains(t *testing.T) {
 
 	adapter := &trustStoreAdapter{store: store, path: dir}
 
-	added, err := adapter.AddPEM(newTestCertificatePEM(t, "contains-ca"))
+	imported, err := adapter.ImportPEM(newTestCertificatePEM(t, "contains-ca"), seededTrustOptions())
 	require.NoError(t, err)
-	require.Equal(t, 1, added)
+	require.Equal(t, 1, imported.Added)
 
 	certs, err := adapter.Certificates()
 	require.NoError(t, err)
@@ -1077,6 +1092,15 @@ func TestBackupLifecycle_CreateContentsRestore(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, certs, 1)
 	assert.Equal(t, "backup-unit-test-ca", certs[0].Subject.CommonName)
+
+	// The certificate is restored under the metadata it was backed up with,
+	// not re-classified (#1312).
+	meta, err := restoredTrust.Metadata(truststore.Fingerprint(certs[0]))
+	require.NoError(t, err)
+	want := seededTrustOptions()
+	assert.Equal(t, want.Purpose, meta.Purpose)
+	assert.Equal(t, want.Source, meta.Source)
+	assert.Equal(t, want.Tags, meta.Tags)
 }
 
 func TestBackupRestore_WrongPasswordFails(t *testing.T) {
