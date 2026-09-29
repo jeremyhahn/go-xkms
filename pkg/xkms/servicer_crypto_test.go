@@ -942,6 +942,42 @@ func TestDeriveKeyECDH_RawRefusesInputsItCannotConsume(t *testing.T) {
 	require.Error(t, err, "RAW cannot stretch a 32-byte shared secret to 64 bytes")
 }
 
+// TestDeriveKeyECDH_KeyLengthExceedsMaximum proves a caller-chosen key_length
+// above types.MaxDerivedKeyLength is refused as request validation before any
+// backend or key lookup runs -- neither the named backend nor the named key
+// need exist for this to be refused, which is itself part of what the fix
+// proves: the request is rejected before ECDH or a KDF adapter ever sees it
+// (go-xkms#1259).
+func TestDeriveKeyECDH_KeyLengthExceedsMaximum(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	t.Run("one byte over the maximum", func(t *testing.T) {
+		_, err := svc.DeriveKeyECDH(context.Background(), &transport.DeriveKeyECDHRequest{
+			Backend:       "software",
+			KeyID:         "nonexistent-key",
+			PeerPublicKey: []byte("not-a-real-point"),
+			KeyLength:     types.MaxDerivedKeyLength + 1,
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidKeyAttributes))
+		var validation *ErrValidation
+		require.True(t, errors.As(err, &validation), "want *ErrValidation, got %T", err)
+	})
+
+	t.Run("the go-xkms#1259 report's own value", func(t *testing.T) {
+		_, err := svc.DeriveKeyECDH(context.Background(), &transport.DeriveKeyECDHRequest{
+			Backend:       "software",
+			KeyID:         "nonexistent-key",
+			PeerPublicKey: []byte("not-a-real-point"),
+			KeyLength:     100_000_000_000,
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidKeyAttributes))
+	})
+}
+
 // --- DeriveKey ---
 
 func TestDeriveKey_HKDF_Success(t *testing.T) {
@@ -1038,6 +1074,41 @@ func TestDeriveKey_SP800108Counter(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Len(t, resp.DerivedKey, 32)
+}
+
+// TestDeriveKey_KeyLengthExceedsMaximum proves a caller-chosen key_length
+// above types.MaxDerivedKeyLength is refused as request validation before
+// any KDF parameter assembly or base-key resolution, matching the classic
+// go-xkms#1259 report: an unbounded key_length must never reach a
+// pkg/crypto/kdf adapter, which would preallocate on the caller's behalf.
+func TestDeriveKey_KeyLengthExceedsMaximum(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	t.Run("one byte over the maximum", func(t *testing.T) {
+		_, err := svc.DeriveKey(context.Background(), &transport.DeriveKeyRequest{
+			Algorithm:        "hkdf",
+			InputKeyMaterial: []byte("secret-input-key-material-32byte"),
+			KeyLength:        types.MaxDerivedKeyLength + 1,
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidKeyAttributes))
+		var validation *ErrValidation
+		require.True(t, errors.As(err, &validation), "want *ErrValidation, got %T", err)
+	})
+
+	t.Run("the go-xkms#1259 report's own value", func(t *testing.T) {
+		_, err := svc.DeriveKey(context.Background(), &transport.DeriveKeyRequest{
+			Algorithm:        "sp800-108-counter",
+			InputKeyMaterial: []byte("secret-input-key-material-32byte"),
+			Label:            []byte("test-label"),
+			Context:          []byte("test-context"),
+			KeyLength:        100_000_000_000,
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidKeyAttributes))
+	})
 }
 
 // --- Stub operations ---

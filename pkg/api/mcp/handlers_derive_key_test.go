@@ -27,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // newDeriveKeyServer returns an MCP server backed by the standard test XKMS
@@ -107,6 +108,25 @@ func TestHandleDeriveKey_InvalidParams(t *testing.T) {
 	require.Error(t, err)
 	var keyOpErr *KeyOpError
 	require.True(t, errors.As(err, &keyOpErr), "decode failure must be a *KeyOpError")
+	assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
+}
+
+// TestHandleDeriveKey_KeyLengthExceedsMaximum proves an oversized key_length
+// is refused with the wire's Invalid params code rather than reaching
+// pkg/crypto/kdf's adapters, which do not bound a caller-chosen length on
+// their own (go-xkms#1259).
+func TestHandleDeriveKey_KeyLengthExceedsMaximum(t *testing.T) {
+	server := newDeriveKeyServer(t)
+
+	_, err := server.handleDeriveKey(context.Background(), deriveKeyRequest(t, transport.DeriveKeyRequest{
+		Algorithm:        "HKDF",
+		InputKeyMaterial: []byte("a-32-byte-or-longer-base-secret"),
+		KeyLength:        types.MaxDerivedKeyLength + 1,
+	}))
+
+	require.Error(t, err)
+	var keyOpErr *KeyOpError
+	require.True(t, errors.As(err, &keyOpErr), "want *KeyOpError, got %T", err)
 	assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
 }
 
