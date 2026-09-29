@@ -58,6 +58,9 @@ var (
 
 	// ErrFIDO2InvalidBackend indicates an unsupported key backend was specified.
 	ErrFIDO2InvalidBackend = errors.New("fido2: invalid backend type (must be 'software', 'tpm2', or 'phone')")
+	// ErrFIDO2InvalidNotifyCommand is returned when notify_command cannot be
+	// used; startup stops rather than running without touch notifications.
+	ErrFIDO2InvalidNotifyCommand = errors.New("fido2: invalid notify command")
 
 	// ErrFIDO2InvalidAttestationFormat indicates an unsupported attestation format.
 	ErrFIDO2InvalidAttestationFormat = errors.New("fido2: invalid attestation format (must be 'none', 'packed', or 'tpm')")
@@ -353,8 +356,8 @@ Examples:
   # Run with a default password for bare touch
   sudo xkey fido2 --default-password "DatabaseProd"
 
-  # Run with custom notification command
-  sudo xkey fido2 --notify-command "notify-send xKey '%o for %r'"
+  # Run with custom notification command (request data via XKEY_* env vars)
+  sudo xkey fido2 --notify-command 'sh -c "notify-send xKey \"$XKEY_RP_ID\""'
 
 Only --storage, --storage-path, --name and --attestation can also be set via
 the xkey config file's fido2: section or the environment variables
@@ -415,7 +418,11 @@ func init() {
 	fido2Cmd.Flags().String("default-password", "",
 		"Password name to type on bare touch")
 	fido2Cmd.Flags().String("notify-command", "",
-		"Custom notification command (overrides built-in notifications)")
+		"Custom notification command (overrides built-in notifications). Split into argv on whitespace "+
+			"(quote with ' or \" to include a space in one argument); run exactly as given, never through a "+
+			"shell, and never modified. Request data (operation, RP ID, RP name, user name) reaches the "+
+			"command only via the XKEY_OPERATION/XKEY_RP_ID/XKEY_RP_NAME/XKEY_USER_NAME environment "+
+			"variables, for example: sh -c 'notify-send \"Touch required\" \"$XKEY_RP_ID\"'")
 	fido2Cmd.Flags().String("notify", "dialog",
 		"Notification type: dialog (interactive), passive (desktop notification), log (log-only), or none")
 
@@ -1655,7 +1662,10 @@ func createFIDO2UserPresenceHandler(cfg *FIDO2Config, logger *slog.Logger) (auth
 
 	// Default: socket-based handler for daemon mode
 	logger.Info("using socket-based user presence handler")
-	notifier := createNotifier(cfg, logger)
+	notifier, err := createNotifier(cfg, logger)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	socketHandler := authenticator.NewSocketHandler(notifier, logger)
 	return socketHandler, socketHandler, notifier, nil
 }
@@ -1670,19 +1680,19 @@ func createFIDO2UserPresenceHandler(cfg *FIDO2Config, logger *slog.Logger) (auth
 //
 // When running as root via sudo, notifications are sent as the original user.
 // The --notify-command flag overrides all built-in notification types.
-func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
+func createNotifier(cfg *FIDO2Config, logger *slog.Logger) (notify.Notifier, error) {
 	var notifiers []notify.Notifier
 
 	// Handle "none" - no notifications at all
 	if cfg.NotifyType == "none" {
 		logger.Info("notifications disabled")
-		return notify.NewMultiNotifier() // Empty notifier
+		return notify.NewMultiNotifier(), nil // Empty notifier
 	}
 
 	// Always add log notifier for "log" type or as fallback
 	if cfg.NotifyType == "log" {
 		logger.Info("using log-only notifications")
-		return notify.NewLogNotifier(logger)
+		return notify.NewLogNotifier(logger), nil
 	}
 
 	// Add log notifier as baseline for other types
@@ -1691,14 +1701,12 @@ func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
 	// Custom command overrides everything
 	if cfg.NotifyCommand != "" {
 		cmdNotifier, err := notify.NewCommandNotifier(cfg.NotifyCommand, logger)
-		if err == nil {
-			logger.Info("using custom notification command")
-			notifiers = append(notifiers, cmdNotifier)
-		} else {
-			logger.Warn("invalid notify command, using log-only",
-				slog.String("error", err.Error()))
+		if err != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrFIDO2InvalidNotifyCommand, Cause: err}
 		}
-		return notify.NewMultiNotifier(notifiers...)
+		logger.Info("using custom notification command")
+		notifiers = append(notifiers, cmdNotifier)
+		return notify.NewMultiNotifier(notifiers...), nil
 	}
 
 	// Determine if running as root via sudo
@@ -1720,19 +1728,15 @@ func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
 	switch cfg.NotifyType {
 	case "dialog":
 		if isRootViaSudo {
-			// Interactive zenity dialog that uses xkey touch command (no external dependencies)
-			notifyCmd := fmt.Sprintf(
-				`su -c 'DISPLAY=:0 zenity --question --icon-name=security-high --title="xKey: Touch Required" --text="<b>%%o</b> request from <b>%%r</b>\n\nUser: %%u\n\nClick Approve to authorize this action." --ok-label="✓ Approve" --cancel-label="✗ Deny" --width=350 --timeout=30 && %s touch --socket %s' %s`,
-				execPath, socketPath, sudoUser,
-			)
+			// Interactive zenity dialog that runs the xkey touch command on
+			// approval. Both steps run directly via runuser -- neither is
+			// ever handed to a shell, so nothing in the request (operation,
+			// RP ID, user name) can be interpreted as shell syntax. See
+			// sudoDialogNotifier and buildSudoDialogArgv.
 			logger.Info("using zenity dialog notifications (root via sudo)",
 				slog.String("sudo_user", sudoUser),
 				slog.String("socket_path", socketPath))
-
-			cmdNotifier, err := notify.NewCommandNotifier(notifyCmd, logger)
-			if err == nil {
-				notifiers = append(notifiers, cmdNotifier)
-			}
+			notifiers = append(notifiers, newSudoDialogNotifier(sudoUser, execPath, socketPath, defaultFIDO2Timeout, logger))
 		} else {
 			// Non-root: try D-Bus, fall back to zenity
 			dbusNotifier, err := notify.NewDBusNotifier(logger)
@@ -1747,18 +1751,12 @@ func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
 
 	case "passive":
 		if isRootViaSudo {
-			// Passive notification via notify-send (no interaction)
-			notifyCmd := fmt.Sprintf(
-				`su -c 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/%s/bus" notify-send -u critical "xKey: Touch Required" "%%o request from %%r\nUser: %%u\nRun: xkey touch"' %s`,
-				sudoUID, sudoUser,
-			)
+			// Passive notification via notify-send (no interaction), run
+			// directly via runuser -- no shell is involved. See
+			// sudoPassiveNotifier and buildSudoPassiveArgv.
 			logger.Info("using notify-send notifications (root via sudo)",
 				slog.String("sudo_user", sudoUser))
-
-			cmdNotifier, err := notify.NewCommandNotifier(notifyCmd, logger)
-			if err == nil {
-				notifiers = append(notifiers, cmdNotifier)
-			}
+			notifiers = append(notifiers, newSudoPassiveNotifier(sudoUser, sudoUID, logger))
 		} else {
 			// Non-root: use D-Bus directly
 			dbusNotifier, err := notify.NewDBusNotifier(logger)
@@ -1776,7 +1774,7 @@ func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
 			slog.String("notify_type", cfg.NotifyType))
 	}
 
-	return notify.NewMultiNotifier(notifiers...)
+	return notify.NewMultiNotifier(notifiers...), nil
 }
 
 // createFIDO2KeyBackend creates the appropriate key backend based on config.
