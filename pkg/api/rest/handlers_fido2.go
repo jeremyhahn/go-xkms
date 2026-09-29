@@ -16,6 +16,7 @@ package rest
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -148,9 +149,52 @@ func (s *Server) handleSDKFinishAuthentication(w http.ResponseWriter, r *http.Re
 
 	resp, err := svc.FinishAuthentication(r.Context(), &req)
 	if err != nil {
-		writeError(w, err, http.StatusBadRequest)
+		if errors.Is(err, xkms.ErrNotConfigured) {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		s.writeLoginFinishError(w, r, err)
 		return
 	}
 
 	writeJSON(w, resp, http.StatusOK)
+}
+
+// writeLoginFinishError answers a WebAuthn login-finish failure with the
+// fixed response go-xkms#1310 requires: every failure except a missing or
+// expired session gets 401 verification_failed, the same code and text the
+// browser route's verification failure carries (pkg/webauthn/http Handler.
+// handleLoginFinishError), so a decoy ceremony cannot be told apart from a
+// wrong assertion against a real account over the SDK REST transport. gRPC
+// (pkg/api/grpc) classifies the same error the same way. The real cause is
+// logged server-side at Warn, never returned to the caller.
+func (s *Server) writeLoginFinishError(w http.ResponseWriter, r *http.Request, err error) {
+	logger := s.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.WarnContext(r.Context(), "webauthn: login finish failed", "error", err)
+
+	switch webauthn.ClassifyLoginFinish(err) {
+	case webauthn.LoginFinishSessionNotFound:
+		writeJSON(w, ErrorResponse{
+			Error:   webauthnhttp.ErrorCodeInvalidSession,
+			Message: "session not found",
+			Code:    http.StatusBadRequest,
+		}, http.StatusBadRequest)
+	case webauthn.LoginFinishSessionExpired:
+		writeJSON(w, ErrorResponse{
+			Error:   webauthnhttp.ErrorCodeSessionExpired,
+			Message: "session expired",
+			Code:    http.StatusBadRequest,
+		}, http.StatusBadRequest)
+	case webauthn.LoginFinishFailed:
+		writeJSON(w, ErrorResponse{
+			Error:   webauthnhttp.ErrorCodeVerificationFailed,
+			Message: "verification failed",
+			Code:    http.StatusUnauthorized,
+		}, http.StatusUnauthorized)
+	default:
+		writeError(w, ErrInternalError, http.StatusInternalServerError)
+	}
 }

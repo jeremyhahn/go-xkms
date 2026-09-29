@@ -167,9 +167,10 @@ is minted onto both halves of a token pair, so it survives a refresh.
 |---|---|---|
 | ceremony options issued | 200 | `OK` |
 | registration or login succeeded | 200 with token(s) | `OK` |
-| unknown or expired session | 401 | `Unauthenticated` |
-| origin or RP id mismatch | 401 | `Unauthenticated` |
-| invalid attestation or assertion | 401 | `Unauthenticated` |
+| login finish: missing or already-consumed session | 400, code `invalid_session` | `InvalidArgument` |
+| login finish: expired session | 400, code `session_expired` | `InvalidArgument` |
+| login finish failed for any other reason: wrong assertion, unknown or refused account, account not in standing, unknown credential, or a malformed assertion | 401, code `verification_failed`, text "verification failed" | `Unauthenticated`, text "verification failed" |
+| registration: invalid attestation, or origin/RP id mismatch | 401 | `Unauthenticated` |
 | non-increasing signature counter | 401 | `Unauthenticated` |
 | registration refused: the account already has a passkey, or (public registration off) no such account | 403, code `registration_refused` | `PermissionDenied` |
 | add-passkey without a session | 401 | — |
@@ -198,6 +199,20 @@ proxy listed in `server.trusted_proxies`; see
 wire they are indistinguishable, so a caller cannot use failure shapes to
 enumerate users or probe which authenticator a user holds. The detail stays in
 the server log.
+
+**All three login-finish transports classify the same way.** The browser
+route (`Handler.handleLoginFinishError`, `pkg/webauthn/http/handler.go`),
+gRPC (`loginFinishStatusError`, `pkg/api/grpc/service_fido2.go`) and the SDK
+REST route (`Server.writeLoginFinishError`, `pkg/api/rest/handlers_fido2.go`)
+all call `webauthn.ClassifyLoginFinish` — the one place that decides whether
+an error is a missing/expired session or the uniform failure — so a decoy
+finish and a wrong-assertion finish against a real account produce
+byte-identical responses on every transport, not only the browser route
+(go-xkms#1310). Before that fix, gRPC and the SDK REST route each echoed the
+raw error text (`status.Error(codes.InvalidArgument, err.Error())` and an
+equivalent REST 400), which let a caller distinguish "no such account" from
+"wrong assertion" on either transport even though the browser route already
+hid it.
 
 ## Pagination
 

@@ -260,7 +260,7 @@ func (h *Handler) FinishLogin(w http.ResponseWriter, r *http.Request) {
 	// ID is consulted.
 	pair, user, err := h.service.FinishLoginPair(r.Context(), sessionID, nil, response)
 	if err != nil {
-		h.handleServiceError(w, err)
+		h.handleLoginFinishError(w, err)
 		return
 	}
 
@@ -269,6 +269,29 @@ func (h *Handler) FinishLogin(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: pair.RefreshToken,
 		UserID:       base64.RawURLEncoding.EncodeToString(user.WebAuthnID()),
 	})
+}
+
+// handleLoginFinishError maps a WebAuthn login-finish failure to the fixed
+// response go-xkms#1310 requires: every failure except a missing or expired
+// session gets the identical 401 verification_failed, so a decoy ceremony's
+// failure cannot be told apart from a wrong assertion against a real
+// account. gRPC (pkg/api/grpc) and SDK REST (pkg/api/rest) classify the same
+// error through webauthn.ClassifyLoginFinish, so all three transports agree.
+// The real cause is logged server-side at Warn -- never returned to the
+// caller -- since it is often a legitimate probe, not a server fault.
+func (h *Handler) handleLoginFinishError(w http.ResponseWriter, err error) {
+	h.logger.Warn("webauthn: login finish failed", "error", err)
+
+	switch webauthn.ClassifyLoginFinish(err) {
+	case webauthn.LoginFinishSessionNotFound:
+		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidSession, "session not found")
+	case webauthn.LoginFinishSessionExpired:
+		h.writeError(w, http.StatusBadRequest, ErrorCodeSessionExpired, "session expired")
+	case webauthn.LoginFinishFailed:
+		h.writeError(w, http.StatusUnauthorized, ErrorCodeVerificationFailed, "verification failed")
+	default:
+		h.writeError(w, http.StatusInternalServerError, ErrorCodeInternalError, "internal server error")
+	}
 }
 
 // handleServiceError maps service errors to HTTP responses.
