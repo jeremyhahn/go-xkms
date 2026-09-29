@@ -349,6 +349,16 @@ func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*E
 		return nil, caerrors.MalformedError("enrollment failed: failed to parse IDevID certificate: %v", err)
 	}
 
+	// Install the issued IAK certificate so a later device-attest-01
+	// challenge (deviceattest01.Setup) can read it back via IAKCertificate
+	// for the statement's x5c[0] -- without this, a device that enrolls and
+	// attests in separate processes (the normal case on real hardware) has
+	// no certificate to answer with, even though enrollment succeeded
+	// (go-xkms#1100).
+	if err := config.TPMModule.ProvisionIAKCert(iakCert); err != nil {
+		return nil, caerrors.Wrap(caerrors.InternalServer, err, "enrollment failed: failed to install IAK certificate")
+	}
+
 	chain, err := parseIssuingChain(certChain[2:])
 	if err != nil {
 		return nil, err

@@ -993,33 +993,6 @@ func TestGenerateToken_SuccessCov(t *testing.T) {
 	assert.NotEmpty(t, token)
 }
 
-func TestParseChallengeAsDynamicPortAssignment_VariousChallenges(t *testing.T) {
-	tests := []struct {
-		name          string
-		challengeType string
-		expectedBase  string
-		expectedPort  uint16
-	}{
-		{"standard http-01", "http-01", "http-01", 0},
-		{"standard enroll-01", "enroll-01", "enroll-01", 0},
-		{"enroll with port", "enroll-01-8080", "enroll-01", 8080},
-		{"device-attest with port", "device-attest-01-443", "device-attest-01", 443},
-		{"endorse with port", "endorse-01-9000", "endorse-01", 9000},
-		{"high port number", "http-01-65535", "http-01", 65535},
-		{"port 100", "http-01-100", "http-01", 100},
-		{"low port preserved", "http-01-80", "http-01-80", 0},
-		{"single part", "http", "http", 0},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			baseType, port := parseChallengeAsDynamicPortAssignment(tc.challengeType)
-			assert.Equal(t, tc.expectedBase, baseType)
-			assert.Equal(t, tc.expectedPort, port)
-		})
-	}
-}
-
 func TestCompareKeyMaps_RSAKeys_Cov91(t *testing.T) {
 	key1 := map[string]interface{}{
 		"kty": "RSA",

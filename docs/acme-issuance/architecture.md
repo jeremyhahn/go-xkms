@@ -1,6 +1,6 @@
 # ACME Issuance — Architecture
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## The problem
 
@@ -83,7 +83,7 @@ Rejected alternatives:
 | Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
 | Identifier policy, CAA | `pkg/acme/policy`, `pkg/acme/server/caa.go` — both wired, see Trust boundaries |
 | Rate limits, request body cap | `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` — wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`), keyed per client IP; the tenant and per-category limiters (`tenant_rate_limiter.go`) keyed on verified accounts; `pkg/acme/server/request_body.go`'s `RequestBodyMiddleware` reads every body once, capped at 256 KiB, ahead of all of them; see Trust boundaries |
-| Circuit breakers, degradation cache | `pkg/acme/server/circuitbreaker` (breakers, `Manager`, the HTTP middleware, and the `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators), `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` (the shared challenge-verifier wrapping helper), `pkg/acme/server/degradation` (the cache `GET /acme/directory` and `GET /acme/ca-bundle` fall back to) — wired into both xkmsd and the standalone `TrustedCA`; see Trust boundaries |
+| Circuit breakers, degradation cache | `pkg/acme/server/circuitbreaker` (breakers, `Manager`, the bounded per-target groups in `target.go`, the HTTP middleware, and the `WrapChallengeVerifier`/`WrapChallengeVerifierPerTarget`/`WrapLogSubmitter`/`WrapKMSService` decorators), `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` (the shared challenge-verifier wrapping helper), `pkg/acme/server/degradation` (the cache `GET /acme/directory` and `GET /acme/ca-bundle` fall back to) — wired into both xkmsd and the standalone `TrustedCA`; see Trust boundaries |
 | Certificate Transparency | `pkg/acme/ct` |
 | Admin plane | `pkg/acme/admin` |
 | Multi-transport adapters | `pkg/acme/api/{rest,grpc,quic,mcp}` + `pkg/acme/api/adapter.go` |
@@ -195,29 +195,39 @@ through ACME against an existing node's directory.
   admission control (go-xkms#886).
 - **Circuit breakers guard individual outbound dependencies, not order
   creation, and now run on both ACME server compositions.**
-  `pkg/acme/server/circuitbreaker` wraps five dependencies, each with its own
-  breaker: the `http-01` and `dns-01` challenge verifiers, CT log submission
-  (`circuitbreaker.WrapLogSubmitter`, available wherever a CT submitter is
-  constructed — see "What this feature deliberately does not do"), the
-  tenant KMS signer (`Params.KMSService`, wrapped automatically by
-  `NewRestService` when both it and `Params.Breakers` are set), and the
-  CA/keystore-backed certificate storage `GET /acme/ca-bundle` reads from.
+  `pkg/acme/server/circuitbreaker` guards five dependencies: three named,
+  single breakers (CT log submission via `circuitbreaker.WrapLogSubmitter`,
+  available wherever a CT submitter is constructed — see "What this feature
+  deliberately does not do"; the tenant KMS signer, `Params.KMSService`,
+  wrapped automatically by `NewRestService` when both it and
+  `Params.Breakers` are set; and the CA/keystore-backed certificate storage
+  `GET /acme/ca-bundle` reads from), and two **per-target breaker groups**
+  — the `http-01` and `dns-01` challenge verifiers, one breaker per
+  validation target (the domain http-01 dials, or the zone dns-01 queries)
+  rather than one breaker shared by every account's validation
+  (go-xkms#1189, #1190). A target that never responds trips only its own
+  breaker; every other target's admission is decided independently, and the
+  per-group table is bounded (LRU plus idle-TTL eviction, see
+  [`engineering.md`](engineering.md) "Circuit breakers and degradation") so
+  a flood of distinct hosts cannot grow it without limit.
   `cmd/xkmsd/acme.go` and the standalone `TrustedCA`
   (`pkg/acme/client/trustedca.go`, go-xkms#820) both build their breaker
   `Manager` and wrap their challenge verifiers through the same
   `server.WrapChallengeVerifiers` helper (`pkg/acme/server/resilience.go`),
-  so a breaker named `http01` or `dns01` means the same thing in either
-  composition's `/health` output; `xkmsd`'s `buildChallengeMap` calls it
-  after selecting verifiers from `acme.challenges`, `TrustedCA.Serve` calls
-  it on the map a caller supplied through `WithChallengeMap`. `TrustedCA`
-  reuses `pkg/config`'s `ACMEResilienceConfig` directly as
+  so a breaker group named `http01` or `dns01` means the same thing in
+  either composition's `/health` output; `xkmsd`'s `buildChallengeMap` calls
+  it after selecting verifiers from `acme.challenges`, `TrustedCA.Serve`
+  calls it on the map a caller supplied through `WithChallengeMap`.
+  `TrustedCA` reuses `pkg/config`'s `ACMEResilienceConfig` directly as
   `TCAACMEConfig.Resilience` rather than a parallel type, so the same
-  `storage`/`kms`/`http01`/`dns01` breaker sections and defaults apply to
-  both compositions' configuration.
+  `storage`/`kms`/`http01`/`dns01` breaker sections and defaults — including
+  each per-target group's capacity and idle timeout — apply to both
+  compositions' configuration.
   A challenge the validation client refuses before contacting the target
-  (an invalid target, or a reserved address) does not count toward the
-  `http01`/`dns01` breaker (go-xkms#1181): the target is client-chosen, so
-  counting refusals would let any account open the server-wide breaker. See
+  (an invalid target, or a reserved address) does not count toward that
+  target's breaker (go-xkms#1181): the target is client-chosen, so counting
+  refusals would let an account open a breaker for free, though per-target
+  isolation already limits the damage to that account's own target. See
   [`engineering.md`](engineering.md) "Circuit breakers and degradation".
   An open breaker fails only the call it guards — a challenge validation
   attempt returns an `incorrectResponse` problem instead of hanging on a dead
@@ -227,9 +237,9 @@ through ACME against an existing node's directory.
   while the storage breaker is open they serve their last computed response
   from a `pkg/acme/server/degradation` cache (falling back to a *stale*
   cache entry only past its TTL; a still-fresh one is served as a normal,
-  non-degraded response). `GET /acme/health` reports every breaker's state
-  and counters and whether the directory/CA-bundle endpoints are currently
-  degraded.
+  non-degraded response). `GET /acme/health` reports every named breaker's
+  state and counters, a bounded summary of each per-target group, and
+  whether the directory/CA-bundle endpoints are currently degraded.
   The ACME protocol state itself — accounts, orders, authorizations,
   challenges, nonces (`pkg/acme/storage` → `go-qrdb/sdk/go`) — is not wrapped
   in a circuit breaker: go-qrdb owns that storage's consistency and retry

@@ -49,6 +49,19 @@ const (
 	// DefaultACMEBreakerTimeoutSeconds bounds a single call a breaker
 	// protects.
 	DefaultACMEBreakerTimeoutSeconds = 10
+
+	// DefaultACMEBreakerTargetCapacity is the maximum number of distinct
+	// validation targets (see ACMECircuitBreakerConfig.TargetCapacity) a
+	// per-target breaker group tracks at once. Only meaningful for HTTP01
+	// and DNS01, the two per-target groups; matches
+	// circuitbreaker.DefaultTargetCapacity.
+	DefaultACMEBreakerTargetCapacity = 1000
+
+	// DefaultACMEBreakerTargetIdleTimeoutSeconds evicts a validation target
+	// that has not been used for at least this long, independent of
+	// TargetCapacity. Only meaningful for HTTP01 and DNS01; matches
+	// circuitbreaker.DefaultTargetIdleTTL.
+	DefaultACMEBreakerTargetIdleTimeoutSeconds = 600
 )
 
 // Default degradation cache settings, applied whenever an
@@ -140,15 +153,52 @@ type ACMECircuitBreakerConfig struct {
 	// TimeoutSeconds bounds a single call the breaker protects. Zero selects
 	// DefaultACMEBreakerTimeoutSeconds.
 	TimeoutSeconds int `yaml:"timeout_seconds"`
+
+	// TargetCapacity bounds the number of distinct validation targets
+	// tracked at once, each with its own breaker (see
+	// circuitbreaker.TargetConfig.Capacity). Meaningful only on HTTP01 and
+	// DNS01 -- the breakers guarding a per-account validation target rather
+	// than a single fixed dependency -- and ignored on CTSubmitter/KMS/
+	// Storage, which have exactly one target. Zero selects
+	// DefaultACMEBreakerTargetCapacity.
+	TargetCapacity int `yaml:"target_capacity"`
+
+	// TargetIdleTimeoutSeconds evicts a validation target that has not been
+	// used for at least this long, independent of TargetCapacity (see
+	// circuitbreaker.TargetConfig.IdleTTL). Meaningful only on HTTP01 and
+	// DNS01, for the same reason as TargetCapacity. Zero selects
+	// DefaultACMEBreakerTargetIdleTimeoutSeconds.
+	TargetIdleTimeoutSeconds int `yaml:"target_idle_timeout_seconds"`
 }
 
 // Validate checks that the configured durations are not negative. The
 // unsigned counter fields cannot be negative by construction.
 func (c ACMECircuitBreakerConfig) Validate() error {
-	if c.ResetTimeoutSeconds < 0 || c.TimeoutSeconds < 0 {
+	if c.ResetTimeoutSeconds < 0 || c.TimeoutSeconds < 0 || c.TargetCapacity < 0 || c.TargetIdleTimeoutSeconds < 0 {
 		return ErrACMEResilienceNegativeValue
 	}
 	return nil
+}
+
+// ResolveTargetCapacity returns the configured per-target breaker capacity,
+// substituting DefaultACMEBreakerTargetCapacity when unset. Meaningful only
+// when this config backs a per-target breaker group (HTTP01, DNS01).
+func (c ACMECircuitBreakerConfig) ResolveTargetCapacity() int {
+	if c.TargetCapacity > 0 {
+		return c.TargetCapacity
+	}
+	return DefaultACMEBreakerTargetCapacity
+}
+
+// ResolveTargetIdleTimeout returns the configured per-target idle eviction
+// timeout, substituting DefaultACMEBreakerTargetIdleTimeoutSeconds when
+// unset. Meaningful only when this config backs a per-target breaker group
+// (HTTP01, DNS01).
+func (c ACMECircuitBreakerConfig) ResolveTargetIdleTimeout() time.Duration {
+	if c.TargetIdleTimeoutSeconds > 0 {
+		return time.Duration(c.TargetIdleTimeoutSeconds) * time.Second
+	}
+	return DefaultACMEBreakerTargetIdleTimeoutSeconds * time.Second
 }
 
 // CircuitBreakerConfig maps this section onto a *circuitbreaker.Config named

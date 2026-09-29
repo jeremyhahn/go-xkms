@@ -180,6 +180,10 @@ func (s *simpleTPM) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
+func (s *simpleTPM) ProvisionIAKCert(cert *x509.Certificate) error {
+	return nil
+}
+
 func (s *simpleTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	return newTestAttestedKey(keyAuth)
 }
@@ -482,6 +486,10 @@ type mockXKMSTPM struct {
 
 	// ProvisionEKCert configuration
 	provisionError error
+
+	// ProvisionIAKCert configuration
+	provisionIAKError  error
+	provisionedIAKCert *x509.Certificate
 
 	// ParseEKCertificate configuration
 	parsedEKCert *x509.Certificate
@@ -945,6 +953,10 @@ func (m *mockXKMSTPM) IAKCertificate() (*x509.Certificate, error) {
 }
 
 func (m *mockXKMSTPM) ProvisionIAKCert(cert *x509.Certificate) error {
+	if m.provisionIAKError != nil {
+		return m.provisionIAKError
+	}
+	m.provisionedIAKCert = cert
 	return nil
 }
 
@@ -1681,6 +1693,37 @@ func TestXKMSTPMAdapter_ProvisionEKCert(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse provisioned EK certificate")
+	})
+}
+
+func TestXKMSTPMAdapter_ProvisionIAKCert(t *testing.T) {
+	t.Run("provisions certificate successfully", func(t *testing.T) {
+		ecKey := newTestECDSAKey(t)
+		cert := newTestCertificateFromPublicKey(t, &ecKey.PublicKey)
+
+		mockTPM := &mockXKMSTPM{}
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
+
+		err := adapter.ProvisionIAKCert(cert)
+
+		require.NoError(t, err)
+		assert.Equal(t, cert, mockTPM.provisionedIAKCert)
+	})
+
+	t.Run("returns error on provision failure", func(t *testing.T) {
+		ecKey := newTestECDSAKey(t)
+		cert := newTestCertificateFromPublicKey(t, &ecKey.PublicKey)
+
+		mockTPM := &mockXKMSTPM{
+			provisionIAKError: errors.New("NVRAM write failed"),
+		}
+		adapter := NewXKMSTPMAdapter(mockTPM, nil)
+
+		err := adapter.ProvisionIAKCert(cert)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to provision IAK certificate")
+		assert.Contains(t, err.Error(), "NVRAM write failed")
 	})
 }
 

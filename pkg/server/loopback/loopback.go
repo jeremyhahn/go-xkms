@@ -27,6 +27,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 
@@ -34,6 +35,32 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
 )
+
+// randReader is the entropy source for the per-launch token. Package-level
+// so a test can substitute a failing io.Reader for the generate-token error
+// path without touching the host's real entropy source.
+var randReader io.Reader = rand.Reader
+
+// listenLoopback binds the pre-started REST listener Launch reports the
+// port from. Package-level so a test can substitute a failing dialer for
+// the bind-failure error path without exhausting real ports on the host.
+var listenLoopback = func() (net.Listener, error) {
+	return net.Listen("tcp", "127.0.0.1:0")
+}
+
+// startServer starts srv. Package-level so a test can force the otherwise
+// real Server.Start failure-and-cleanup path without needing a config shape
+// that fails deep inside pkg/server.
+var startServer = func(srv *server.Server) error {
+	return srv.Start()
+}
+
+// shutdownServer stops srv. Same seam pattern as startServer, shared by the
+// Start-failure cleanup path and Instance.Close, so a test can force either
+// one's shutdown-error handling without needing a real transport failure.
+var shutdownServer = func(srv *server.Server) error {
+	return srv.Shutdown()
+}
 
 // Options configures a loopback launch.
 type Options struct {
@@ -75,22 +102,21 @@ func Launch(ctx context.Context, o Options) (*Instance, error) {
 
 	// Per-launch token: 32 bytes of randomness, hex-encoded.
 	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
+	if _, err := io.ReadFull(randReader, tokenBytes); err != nil {
 		return nil, &LaunchError{Reason: "generate token", Err: err}
 	}
 	token := hex.EncodeToString(tokenBytes)
 
 	// Pre-bind the loopback listener so the ephemeral port is known before
 	// the server starts and can be reported to the shell.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := listenLoopback()
 	if err != nil {
 		return nil, &LaunchError{Reason: "bind loopback listener", Err: err}
 	}
-	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
-	if !ok {
-		return nil, errors.Join(&LaunchError{Reason: "unexpected listener address type"}, ln.Close())
-	}
-	port := tcpAddr.Port
+	// listenLoopback always dials the "tcp" network, and net.Listen
+	// documents that Addr's dynamic type for "tcp" is always *net.TCPAddr,
+	// so this assertion cannot fail.
+	port := ln.Addr().(*net.TCPAddr).Port
 
 	// Derive a loopback, REST-only configuration from the caller's config.
 	cfg := desktopConfig(o.Config, port)
@@ -143,8 +169,8 @@ func Launch(ctx context.Context, o Options) (*Instance, error) {
 	// sync.WaitGroup's contract and left the REST listener leaked besides.
 	// Calling Start here, before Launch returns, makes every wg.Add
 	// happen-before any Close the caller can possibly issue.
-	if err := srv.Start(); err != nil {
-		if shutdownErr := srv.Shutdown(); shutdownErr != nil {
+	if err := startServer(srv); err != nil {
+		if shutdownErr := shutdownServer(srv); shutdownErr != nil {
 			logger.Error("loopback engine shutdown after failed start", "error", shutdownErr)
 		}
 		if closeErr := ln.Close(); closeErr != nil {
@@ -162,7 +188,7 @@ func (i *Instance) Close(_ context.Context) error {
 	if i.srv == nil {
 		return nil
 	}
-	if err := i.srv.Shutdown(); err != nil {
+	if err := shutdownServer(i.srv); err != nil {
 		return &LaunchError{Reason: "shutdown engine", Err: err}
 	}
 	return nil

@@ -69,6 +69,16 @@ func TestPeerUID_ReportsListenerUID(t *testing.T) {
 	assert.Equal(t, os.Geteuid(), uid)
 }
 
+func TestPeerUID_ClosedConnectionIsReported(t *testing.T) {
+	client, _ := dialPair(t)
+	uc := client.(*net.UnixConn)
+	require.NoError(t, uc.Close())
+
+	_, err := peerUID(uc)
+
+	require.ErrorIs(t, err, ErrPeerCredentials)
+}
+
 func TestVerifyPeer_AcceptsTrustedPeer(t *testing.T) {
 	client, server := dialPair(t)
 

@@ -27,9 +27,11 @@ func TestACMECircuitBreakerConfig_Validate(t *testing.T) {
 		wantErr error
 	}{
 		{name: "zero value is valid", cfg: ACMECircuitBreakerConfig{}},
-		{name: "positive values are valid", cfg: ACMECircuitBreakerConfig{MaxFailures: 3, ResetTimeoutSeconds: 10, TimeoutSeconds: 5}},
+		{name: "positive values are valid", cfg: ACMECircuitBreakerConfig{MaxFailures: 3, ResetTimeoutSeconds: 10, TimeoutSeconds: 5, TargetCapacity: 100, TargetIdleTimeoutSeconds: 60}},
 		{name: "negative reset timeout", cfg: ACMECircuitBreakerConfig{ResetTimeoutSeconds: -1}, wantErr: ErrACMEResilienceNegativeValue},
 		{name: "negative timeout", cfg: ACMECircuitBreakerConfig{TimeoutSeconds: -1}, wantErr: ErrACMEResilienceNegativeValue},
+		{name: "negative target capacity", cfg: ACMECircuitBreakerConfig{TargetCapacity: -1}, wantErr: ErrACMEResilienceNegativeValue},
+		{name: "negative target idle timeout", cfg: ACMECircuitBreakerConfig{TargetIdleTimeoutSeconds: -1}, wantErr: ErrACMEResilienceNegativeValue},
 	}
 
 	for _, tt := range tests {
@@ -90,6 +92,30 @@ func TestACMECircuitBreakerConfig_CircuitBreakerConfig(t *testing.T) {
 			t.Fatalf("mapped config did not preserve operator values: %+v", got)
 		}
 	})
+}
+
+// TestACMECircuitBreakerConfig_ResolveTargetCapacity verifies the default
+// substitution and pass-through for the per-target breaker capacity, used
+// only by the HTTP01/DNS01 sections (see ResolveTargetCapacity's doc).
+func TestACMECircuitBreakerConfig_ResolveTargetCapacity(t *testing.T) {
+	if got := (ACMECircuitBreakerConfig{}).ResolveTargetCapacity(); got != DefaultACMEBreakerTargetCapacity {
+		t.Fatalf("ResolveTargetCapacity() with zero value = %d, want %d", got, DefaultACMEBreakerTargetCapacity)
+	}
+	if got := (ACMECircuitBreakerConfig{TargetCapacity: 42}).ResolveTargetCapacity(); got != 42 {
+		t.Fatalf("ResolveTargetCapacity() with operator value = %d, want 42", got)
+	}
+}
+
+// TestACMECircuitBreakerConfig_ResolveTargetIdleTimeout verifies the default
+// substitution and pass-through for the per-target idle eviction timeout.
+func TestACMECircuitBreakerConfig_ResolveTargetIdleTimeout(t *testing.T) {
+	want := DefaultACMEBreakerTargetIdleTimeoutSeconds * time.Second
+	if got := (ACMECircuitBreakerConfig{}).ResolveTargetIdleTimeout(); got != want {
+		t.Fatalf("ResolveTargetIdleTimeout() with zero value = %v, want %v", got, want)
+	}
+	if got := (ACMECircuitBreakerConfig{TargetIdleTimeoutSeconds: 90}).ResolveTargetIdleTimeout(); got != 90*time.Second {
+		t.Fatalf("ResolveTargetIdleTimeout() with operator value = %v, want 90s", got)
+	}
 }
 
 // TestACMEDegradationConfig_Validate verifies that negative values are

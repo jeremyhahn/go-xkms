@@ -442,13 +442,15 @@ type RestService struct {
 	// this process's current epoch as its local/default service; remote-node
 	// registration in a load-balanced deployment is future work.
 	nonceService *acmenonce.MultiService
-	// nonceEpoch is the signing epoch minting currently goes through. It is
-	// an atomic.Pointer so the hot mint/redeem path never takes a lock; only
-	// rotation (rare, gated by nonceLifetime) takes nonceRotateMu.
-	nonceEpoch atomic.Pointer[acmenonce.Service]
-	// nonceEpochAt is the UnixNano timestamp the current epoch began, read
-	// and written atomically for the same reason.
-	nonceEpochAt atomic.Int64
+	// nonceEpoch holds the signing epoch minting currently goes through,
+	// paired with the time it began. Both fields of nonceEpochRecord are
+	// swapped together in a single atomic.Pointer store so a reader can
+	// never observe a fresh epoch alongside a stale start time (or vice
+	// versa) — see nonceEpochRecord and rotateNonceEpoch. This is an
+	// atomic.Pointer, not a lock, so the hot mint/redeem path never blocks;
+	// only rotation itself (rare, gated by nonceLifetime) takes
+	// nonceRotateMu.
+	nonceEpoch atomic.Pointer[nonceEpochRecord]
 	// nonceRotateMu serializes epoch rotation so concurrent requests that
 	// all observe an expired epoch do not each construct and register a
 	// separate replacement.
@@ -478,6 +480,16 @@ type RestService struct {
 	degradationStaleTTL time.Duration
 
 	RestServicer
+}
+
+// nonceEpochRecord pairs a signing epoch with the time it began. See
+// RestService.nonceEpoch: the two fields are always read and written
+// together through a single atomic.Pointer[nonceEpochRecord] store, never as
+// separate atomics, so a concurrent reader can never pair a fresh epoch with
+// a stale start time.
+type nonceEpochRecord struct {
+	epoch *acmenonce.Service
+	at    time.Time
 }
 
 // newNonceEpoch constructs the pkg/acme/nonce.Service for one signing epoch:
@@ -735,8 +747,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 		degradationCacheTTL:     degradationCacheTTL,
 		degradationStaleTTL:     degradationStaleTTL,
 	}
-	svc.nonceEpoch.Store(epoch)
-	svc.nonceEpochAt.Store(epochAt.UnixNano())
+	svc.nonceEpoch.Store(&nonceEpochRecord{epoch: epoch, at: epochAt})
 	if svc.nonceGenerator == nil {
 		svc.nonceGenerator = svc.mintNonce
 	}
@@ -865,15 +876,14 @@ func (s *RestService) redeemNonce(nonce string) error {
 
 // currentNonceEpoch returns the signing epoch minting should use, rotating
 // to a fresh one first if the current epoch has outlived nonceLifetime.
-// Reading nonceEpoch/nonceEpochAt never blocks; only rotation itself takes
-// nonceRotateMu, and only when the epoch has actually expired.
+// Reading nonceEpoch never blocks; only rotation itself takes nonceRotateMu,
+// and only when the epoch has actually expired.
 func (s *RestService) currentNonceEpoch() *acmenonce.Service {
-	epoch := s.nonceEpoch.Load()
-	age := nonceClock().Sub(time.Unix(0, s.nonceEpochAt.Load()))
-	if age < s.nonceLifetime {
-		return epoch
+	record := s.nonceEpoch.Load()
+	if nonceClock().Sub(record.at) < s.nonceLifetime {
+		return record.epoch
 	}
-	return s.rotateNonceEpoch(epoch)
+	return s.rotateNonceEpoch(record)
 }
 
 // rotateNonceEpoch replaces stale with a freshly-counted epoch built from
@@ -883,17 +893,27 @@ func (s *RestService) currentNonceEpoch() *acmenonce.Service {
 // longer decrypts against a registered prefix and is rejected instead of
 // being checked against the new epoch's unrelated counter state.
 //
+// stale is the *nonceEpochRecord currentNonceEpoch observed as expired, not
+// just its epoch: comparing whole records (rather than epoch pointers) for
+// the re-check below is what makes the re-check sound. nonceEpoch's epoch
+// and at fields are swapped together as one record, so nonceEpoch never
+// holds a fresh epoch paired with a stale at — the pairing that previously
+// let a second goroutine, having loaded the fresh epoch but not yet the
+// fresh timestamp, mistake the just-rotated epoch for expired and pass it
+// back in here as "stale", defeating the pointer re-check and causing a
+// second, illegitimate rotation.
+//
 // A rotation failure (only reachable if the process is out of entropy for
 // AES-GCM setup, since the key is already validated) logs and keeps serving
 // stale rather than losing nonce issuance entirely.
-func (s *RestService) rotateNonceEpoch(stale *acmenonce.Service) *acmenonce.Service {
+func (s *RestService) rotateNonceEpoch(stale *nonceEpochRecord) *acmenonce.Service {
 	s.nonceRotateMu.Lock()
 	defer s.nonceRotateMu.Unlock()
 
 	// Another goroutine may have rotated already while this one waited for
 	// the lock.
 	if current := s.nonceEpoch.Load(); current != stale {
-		return current
+		return current.epoch
 	}
 
 	epochAt := nonceClock()
@@ -901,12 +921,11 @@ func (s *RestService) rotateNonceEpoch(stale *acmenonce.Service) *acmenonce.Serv
 	if err != nil {
 		s.logger.Error("acme: failed to rotate nonce epoch, continuing on the previous epoch",
 			slog.String("error", err.Error()))
-		return stale
+		return stale.epoch
 	}
 
 	s.nonceService.SetLocal(fresh)
-	s.nonceEpoch.Store(fresh)
-	s.nonceEpochAt.Store(epochAt.UnixNano())
+	s.nonceEpoch.Store(&nonceEpochRecord{epoch: fresh, at: epochAt})
 	return fresh
 }
 

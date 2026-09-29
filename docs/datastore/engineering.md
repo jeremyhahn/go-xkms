@@ -126,6 +126,47 @@ any replica reflects all committed entries without blocking on a leader
 reports whether `PutIfAbsent`/`CompareAndSwap`/`CompareAndDelete` can
 execute against this client.
 
+### `pkg/storage/file` — the file engine's validation and permission wrapper
+
+```go
+func New(rootDir string) (storage.Backend, error)
+```
+
+(`pkg/storage/file/storage.go`.) Wraps `OpenEngine(EngineConfig{Kind: EngineFile})`
+with storage-key validation (blocks path traversal and null bytes) and
+prefix-based file permissions (`keys/*` = 0600, `certs/*` = 0644, default
+0600). It is the constructor the PKCS#11 module's `StorageTypeFile` opens
+directly (`pkg/pkcs11/module/module.go:initializeStorage`), rather than going
+through `storage.NewFile` (which builds the embedded qrdb stack instead — see
+`pkg/storage/qrdb` above).
+
+**Every write this type performs — `Put`, `Delete`, `PutIfAbsent`,
+`CompareAndSwap`, `CompareAndDelete` — holds an advisory `flock` on a
+`.lock` file in the store root for the whole call** (`pkg/storage/file/lock.go`,
+#1157). `OpenEngine`'s `engineBackend` (`pkg/storage/engine.go`) already
+guards every write with its own `writeMu`, but that guard is genuine only
+within one process: it is a Go `sync.Mutex`, invisible to a second process
+holding a second `*os.File` over the same directory. Two processes sharing
+one file-token directory — the scenario the PKCS#11 module's PIN attempt
+counter (#1144) runs under when several module instances open the same
+token — could interleave a guarded read-compare-write before this fix and
+both report success, silently undercounting the shared value. The lock
+covers the unconditional `Put`/`Delete` too, for the same reason `writeMu`
+does (see its doc in `engine.go`): a plain `Put` from another process
+landing inside a guarded operation's read-compare-write would defeat the
+guard exactly as an unguarded write would in-process.
+
+A fresh file description is opened and `flock`'d for every call rather than
+one held for the store's lifetime, because `flock(2)` locks are scoped to the
+open file description: two descriptions opened by the *same* process contend
+for the lock exactly like two different processes would. That single
+mechanism is what serializes this process's own concurrent goroutines calling
+`FileStorage` methods, as well as every other process, without a second
+in-process mutex to keep paired with it. Plain reads (`Get`, `Exists`, `List`,
+`Scan`) are not locked, matching `engineBackend`'s own read path — this closes
+the write/write race the guarded verbs exist for, not general
+read/write linearizability.
+
 ## Invariants
 
 - **One datastore, one shared instance.** `initializeQRDBStorage` must run
@@ -387,7 +428,8 @@ in-memory `storage.Backend` for the non-barrier cases, independent of
   `TestDatastoreConfig_Remote`), `pkg/server/storage_factory_qrdb_test.go`,
   `pkg/server/server_coverage_test.go`
   (`TestServer_CreateStorage_DistinctPrefixesOverOneStore`);
-  `pkg/embeddednode/embedded_node_test.go`; `pkg/datastore/datastore_test.go`
+  `pkg/embeddednode/embedded_node_test.go`; `pkg/datastore/datastore_test.go`; `pkg/storage/file/crosslock_test.go` (re-exec'd processes race
+  CompareAndSwap on one directory, #1157)
   (`TestOpen_StandaloneMemoryEngine`, remote-dial and unsupported-mode
   cases); `pkg/xkms/auto_test.go` (`TestAutoInitialize_WithDatastore`,
   `TestResolveBackendConfig_WithDatastore`); `pkg/tpm2/store/store_test.go`
