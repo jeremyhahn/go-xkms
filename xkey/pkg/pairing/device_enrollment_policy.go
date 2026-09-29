@@ -15,10 +15,8 @@ package pairing
 
 import (
 	"crypto/x509"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -54,28 +52,7 @@ var (
 	// ErrEnrollmentSecurityLevel means the key is not held at the required
 	// level -- software where TEE or StrongBox was demanded.
 	ErrEnrollmentSecurityLevel = errors.New("enrollment: key security level is below policy")
-
-	// ErrEnrollmentApplicationDenied means the requesting application is not on
-	// the allow-list, by package name or by signing certificate digest.
-	ErrEnrollmentApplicationDenied = errors.New("enrollment: requesting application is not allowed")
 )
-
-// AllowedApplication pins one application build the CA will enroll.
-//
-// The package name alone is not an identity: anybody can build an APK claiming
-// any package name. What makes it an identity is the signing certificate
-// digest, which changes the moment the APK is rebuilt with a different key. So
-// a rule with no digests is accepted only when the policy explicitly says
-// unpinned builds are allowed.
-type AllowedApplication struct {
-	// PackageName is the Android package, e.g. com.automatethethings.xkey.
-	PackageName string `json:"package_name" yaml:"package_name"`
-
-	// SigningDigests are hex SHA-256 digests of acceptable signing
-	// certificates. Empty means any signature, which is only honoured when
-	// EnrollmentPolicy.AllowUnpinnedSignatures is set.
-	SigningDigests []string `json:"signing_digests,omitempty" yaml:"signing_digests"`
-}
 
 // EnrollmentPolicy is what an enterprise CA enforces before it will certify a
 // phone, and how long that certificate stands.
@@ -97,15 +74,11 @@ type EnrollmentPolicy struct {
 	// often the device must re-attest. Zero means DefaultEnrollmentValidity.
 	Validity time.Duration `json:"validity" yaml:"validity"`
 
-	// AllowedApplications lists the application builds this CA will enroll.
+	// ApplicationPolicy lists the application builds this CA will enroll.
 	// Empty denies every enrollment: a CA that certifies any application that
-	// asks is not an enterprise CA.
-	AllowedApplications []AllowedApplication `json:"allowed_applications" yaml:"allowed_applications"`
-
-	// AllowUnpinnedSignatures honours allow-list entries that carry no signing
-	// digests. Useful while developing against a debug build; leaving it on in
-	// production means any APK claiming the package name enrolls.
-	AllowUnpinnedSignatures bool `json:"allow_unpinned_signatures" yaml:"allow_unpinned_signatures"`
+	// asks is not an enterprise CA. It is the same allow-list, matched by the
+	// same code, that pairing and re-attestation apply.
+	ApplicationPolicy `yaml:",inline"`
 
 	// MinSecurityLevel is the weakest key protection accepted. Empty means
 	// SecurityLevelTEE -- software-held keys are refused, because a software
@@ -224,9 +197,8 @@ func (p *EnrollmentPolicy) Evaluate(
 		return nil, fmt.Errorf("%w: no trusted attestation roots configured",
 			ErrEnrollmentChainUntrusted)
 	}
-	if len(p.AllowedApplications) == 0 {
-		return nil, fmt.Errorf("%w: the allow-list is empty",
-			ErrEnrollmentApplicationDenied)
+	if !p.Configured() {
+		return nil, ErrApplicationPolicyUnconfigured
 	}
 
 	chain, err := decodeAttestationChain(result.AttestationChain)
@@ -286,11 +258,7 @@ func (p *EnrollmentPolicy) Evaluate(
 		}
 	}
 
-	appID := desc.SoftwareEnforced.AttestationApplicationID
-	if appID == nil {
-		appID = desc.TeeEnforced.AttestationApplicationID
-	}
-	pkg, digest, err := p.matchApplication(appID)
+	pkg, digest, err := p.Match(AttestedApplication(desc))
 	if err != nil {
 		return nil, err
 	}
@@ -305,59 +273,4 @@ func (p *EnrollmentPolicy) Evaluate(
 		decision.DeviceLocked = rot.DeviceLocked
 	}
 	return decision, nil
-}
-
-// matchApplication checks the attested application against the allow-list and
-// returns the package and digest that matched.
-func (p *EnrollmentPolicy) matchApplication(
-	appID *xkms.AndroidAttestationApplicationID,
-) (string, string, error) {
-	if appID == nil || len(appID.Packages) == 0 {
-		return "", "", fmt.Errorf("%w: the attestation names no application",
-			ErrEnrollmentApplicationDenied)
-	}
-
-	digests := make([]string, 0, len(appID.SignatureDigests))
-	for _, d := range appID.SignatureDigests {
-		digests = append(digests, hex.EncodeToString(d))
-	}
-
-	for _, pkg := range appID.Packages {
-		for _, allowed := range p.AllowedApplications {
-			if !strings.EqualFold(pkg.Name, allowed.PackageName) {
-				continue
-			}
-
-			if len(allowed.SigningDigests) == 0 {
-				if !p.AllowUnpinnedSignatures {
-					return "", "", fmt.Errorf(
-						"%w: %s is allow-listed without a signing digest and "+
-							"unpinned signatures are disabled",
-						ErrEnrollmentApplicationDenied, pkg.Name)
-				}
-				if len(digests) == 0 {
-					return pkg.Name, "", nil
-				}
-				return pkg.Name, digests[0], nil
-			}
-
-			for _, want := range allowed.SigningDigests {
-				for _, got := range digests {
-					if strings.EqualFold(strings.TrimSpace(want), got) {
-						return pkg.Name, got, nil
-					}
-				}
-			}
-
-			return "", "", fmt.Errorf(
-				"%w: %s is allow-listed but its signing digest %v is not",
-				ErrEnrollmentApplicationDenied, pkg.Name, digests)
-		}
-	}
-
-	names := make([]string, 0, len(appID.Packages))
-	for _, pkg := range appID.Packages {
-		names = append(names, pkg.Name)
-	}
-	return "", "", fmt.Errorf("%w: %v", ErrEnrollmentApplicationDenied, names)
 }

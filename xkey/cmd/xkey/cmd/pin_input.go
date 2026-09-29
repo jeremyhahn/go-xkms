@@ -173,6 +173,31 @@ func resolveSOPINInput(cmd *cobra.Command) (string, error) {
 	return soPINSource.resolve(cmd)
 }
 
+// resolveSOPINFromEnv returns the SO PIN from XKEY_SO_PIN alone, for a caller
+// with no *cobra.Command to check --so-pin-stdin against.
+//
+// loadPairingAttestationTrust is reached from two shapes of call site: a
+// command's own RunE, which has cmd and could ask resolveSOPINInput, and deep
+// re-attestation call graphs that do not thread one through --
+// openDeviceSession's enforceReattestation and newLiveAttestor, reached from
+// OATH sync, backup, sharing, phone enrollment and the FIDO2 phone backend,
+// same as unsealDeviceLocalKey reads XKEY_BARRIER_PASSWORD directly rather
+// than a --barrier-password flag for the identical reason. One resolver for
+// both shapes, rather than a second policy-loading path for the deep one,
+// keeps the enterprise application allow-list (#1305) reachable from every
+// place a device is judged -- including an unattended reconnect, which the
+// operator cannot type a PIN into -- without inventing a second mechanism:
+// resolveBytesFrom(false) is the same env-only lookup #1209's fido2.go
+// pattern already established for a caller without cmd.
+func resolveSOPINFromEnv() (string, error) {
+	secret, err := soPINSource.resolveBytesFrom(false)
+	if err != nil {
+		return "", err
+	}
+	defer enclave.Wipe(secret)
+	return string(secret), nil
+}
+
 // addFlags declares the source's one flag on cmd. XKEY_PIN / XKEY_SO_PIN
 // need no flag of their own: os.Getenv reads them directly.
 func (p pinSource) addFlags(cmd *cobra.Command) {

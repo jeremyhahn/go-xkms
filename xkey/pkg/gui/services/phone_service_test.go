@@ -36,6 +36,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
@@ -44,6 +46,91 @@ func TestNewPhoneService(t *testing.T) {
 	svc := NewPhoneService()
 	assert.NotNil(t, svc)
 	assert.NotNil(t, svc.log)
+}
+
+// --- ResolvedApplicationPolicy (#1305) ---
+//
+// These pin the fail-closed fix: a sealed (enterprise) deployment whose
+// policy has not verified in this run must refuse rather than silently
+// falling back to devices.yaml -- otherwise anyone who can write
+// devices.yaml, without ever producing the SO PIN, bypasses a deployment
+// that locks the allow-list simply by outrunning (or avoiding) SO login.
+
+func testEnterpriseApps() []pairing.AllowedApplication {
+	return []pairing.AllowedApplication{{
+		PackageName:    "com.automatethethings.xkey",
+		SigningDigests: []string{"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"},
+	}}
+}
+
+func testUserApps() pairing.ApplicationPolicy {
+	return pairing.ApplicationPolicy{AllowedApplications: []pairing.AllowedApplication{
+		{PackageName: "com.example.usersowndebugbuild"},
+	}}
+}
+
+// TestPhoneService_ResolvedApplicationPolicy_SealedUnverifiedRefuses is the
+// defect this fix closes: sealed, no verified policy installed yet (no SO
+// login in this run) -- refuse, and NEVER return the user's own list.
+func TestPhoneService_ResolvedApplicationPolicy_SealedUnverifiedRefuses(t *testing.T) {
+	svc := NewPhoneService()
+	svc.SetEnterpriseSealed(true)
+	// SetPolicy deliberately never called: no SO has logged in this run.
+
+	resolved, err := svc.ResolvedApplicationPolicy(testUserApps())
+	require.ErrorIs(t, err, xkeyAttestation.ErrApplicationPolicyUnverifiable)
+	assert.Empty(t, resolved.AllowedApplications,
+		"a sealed, unverified deployment must never return the user's own list")
+}
+
+// TestPhoneService_ResolvedApplicationPolicy_SealedAndLockedVerifiedReturnsEnterpriseList
+// is the case the lock exists for: once SetPolicy installs a genuinely
+// verified, locked section (the shape applyVerifiedEnterprisePolicy installs
+// after SO login), the enterprise list governs outright.
+func TestPhoneService_ResolvedApplicationPolicy_SealedAndLockedVerifiedReturnsEnterpriseList(t *testing.T) {
+	svc := NewPhoneService()
+	svc.SetEnterpriseSealed(true)
+	enterpriseApps := testEnterpriseApps()
+	svc.SetPolicy(&config.PolicySection{
+		LockPairingApplicationPolicy: true,
+		PairingAllowedApplications:   enterpriseApps,
+	})
+
+	resolved, err := svc.ResolvedApplicationPolicy(testUserApps())
+	require.NoError(t, err)
+	assert.Equal(t, enterpriseApps, resolved.AllowedApplications,
+		"a locked, verified enterprise policy must govern outright over devices.yaml")
+}
+
+// TestPhoneService_ResolvedApplicationPolicy_UnsealedUsesUserList is personal
+// mode: SetEnterpriseSealed is never called (or called with false), and the
+// user's own devices.yaml allow-list is used with no verification required,
+// because there is no enterprise plane to verify in the first place.
+func TestPhoneService_ResolvedApplicationPolicy_UnsealedUsesUserList(t *testing.T) {
+	svc := NewPhoneService()
+	// SetEnterpriseSealed left at its zero value (false): personal mode.
+
+	userApps := testUserApps()
+	resolved, err := svc.ResolvedApplicationPolicy(userApps)
+	require.NoError(t, err)
+	assert.Equal(t, userApps.AllowedApplications, resolved.AllowedApplications)
+}
+
+// TestPhoneService_ResolvedApplicationPolicy_VerifiedButUnlockedUsesUserList
+// covers the fourth combination: a verified enterprise section that does NOT
+// lock the allow-list must not override devices.yaml either -- the SO
+// deliberately delegated, and that delegation is not itself a bypass.
+func TestPhoneService_ResolvedApplicationPolicy_VerifiedButUnlockedUsesUserList(t *testing.T) {
+	svc := NewPhoneService()
+	svc.SetEnterpriseSealed(true)
+	svc.SetPolicy(&config.PolicySection{
+		PairingAllowedApplications: testEnterpriseApps(), // present but not locked
+	})
+
+	userApps := testUserApps()
+	resolved, err := svc.ResolvedApplicationPolicy(userApps)
+	require.NoError(t, err)
+	assert.Equal(t, userApps.AllowedApplications, resolved.AllowedApplications)
 }
 
 func TestPhoneService_SetContext(t *testing.T) {

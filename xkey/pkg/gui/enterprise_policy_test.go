@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
@@ -337,4 +338,39 @@ func TestApplyCapabilityPolicy_NilServicesDoNotPanic(t *testing.T) {
 	assert.NotPanics(t, func() {
 		applyCapabilityPolicy(nil, nil, nil, nil, nil, nil, config.DefaultPolicy())
 	})
+}
+
+// TestApplyVerifiedEnterprisePolicy_LocksPhoneServiceApplicationAllowList
+// pins PhoneService's OWN wiring (#1305): applyCapabilityPolicy deliberately
+// does not touch it (see its own doc comment for why), so this is the one
+// place that installs a verified section on it, and it must actually happen
+// as part of the SO-login path, not merely be possible to call by hand.
+func TestApplyVerifiedEnterprisePolicy_LocksPhoneServiceApplicationAllowList(t *testing.T) {
+	phoneSvc := services.NewPhoneService()
+	phoneSvc.SetEnterpriseSealed(true)
+
+	a := &App{log: stateTestLogger(), phoneService: phoneSvc}
+
+	enterpriseApps := []pairing.AllowedApplication{{
+		PackageName:    "com.automatethethings.xkey",
+		SigningDigests: []string{"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"},
+	}}
+	// A zero-value section, not config.DefaultPolicy(): DefaultPolicy() turns
+	// on Require* preconditions a bare *App{} with no pinService/tpmService
+	// cannot meet (see TestCheckStartupPreconditions_NoneRequiredIsAlwaysMet),
+	// and that is not what this test is exercising.
+	locked := &config.PolicySection{
+		LockPairingApplicationPolicy: true,
+		PairingAllowedApplications:   enterpriseApps,
+	}
+
+	require.NoError(t, a.applyVerifiedEnterprisePolicy(locked))
+
+	userApps := pairing.ApplicationPolicy{AllowedApplications: []pairing.AllowedApplication{
+		{PackageName: "com.example.usersowndebugbuild"},
+	}}
+	resolved, err := phoneSvc.ResolvedApplicationPolicy(userApps)
+	require.NoError(t, err)
+	assert.Equal(t, enterpriseApps, resolved.AllowedApplications,
+		"PhoneService did not receive the verified policy from applyVerifiedEnterprisePolicy")
 }

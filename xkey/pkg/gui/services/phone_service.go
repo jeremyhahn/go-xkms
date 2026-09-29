@@ -239,6 +239,11 @@ type devicesAttestationPolicy struct {
 	// enterprise plane.
 	AllowUnattestableDevices bool `yaml:"allow_unattestable_devices"`
 
+	// ApplicationPolicy is the attested-application allow-list pairing and
+	// every re-attestation judge the phone against (#1305) -- the same keys,
+	// by the same type, the CLI reads from this block.
+	pairing.ApplicationPolicy `yaml:",inline"`
+
 	Rest map[string]any `yaml:",inline"`
 }
 
@@ -247,6 +252,15 @@ type phoneConfig struct {
 	Devices           []phoneConfigDevice       `yaml:"devices"`
 	DefaultDevice     string                    `yaml:"default_device"`
 	AttestationPolicy *devicesAttestationPolicy `yaml:"attestation_policy,omitempty"`
+}
+
+// applicationPolicy is the attested-application allow-list devices.yaml
+// configures. An absent block allow-lists nothing.
+func (c *phoneConfig) applicationPolicy() pairing.ApplicationPolicy {
+	if c == nil || c.AttestationPolicy == nil {
+		return pairing.ApplicationPolicy{}
+	}
+	return c.AttestationPolicy.ApplicationPolicy
 }
 
 // allowsUnattestablePairing is the user plane as devices.yaml states it. An
@@ -328,6 +342,57 @@ type PhoneService struct {
 	// retainedKeys holds static keys a teardown could not prove unreferenced.
 	// They are never destroyed; see closeActiveConnectionLocked.
 	retainedKeys []*pairing.StaticKey
+
+	// policy is the enterprise policy section gating the attested-application
+	// allow-list (#1305), but ONLY ever a genuinely VERIFIED section -- never
+	// a startup placeholder. See SetPolicy, applyVerifiedEnterprisePolicy in
+	// pkg/gui/enterprise_policy.go, and ResolvedApplicationPolicy for how it
+	// combines with devices.yaml's own allow-list and enterpriseSealed below.
+	//
+	// This is deliberately NOT the same pattern AppService, PINService,
+	// TrustService, AuditService, SealService and APIExplorerService use for
+	// their own PolicySection-gated features, where the GUI installs
+	// config.DefaultPolicy() at startup as a stand-in until SO login verifies
+	// the real section. That stand-in is safe for THEIR gates because
+	// DefaultPolicy() is the secure state for a UserCan*/*Enabled switch. It
+	// is NOT safe here: DefaultPolicy() leaves LockPairingApplicationPolicy
+	// unset, so installing it here would make ResolvedApplicationPolicy read
+	// "not locked" and fall back to devices.yaml -- letting anyone who can
+	// edit devices.yaml pair or re-attest under a deployment that intends to
+	// lock the allow-list, simply by not waiting for (or never triggering)
+	// an SO login. So policy stays nil until SetPolicy is called with an
+	// ACTUALLY verified section, and enterpriseSealed is what lets
+	// ResolvedApplicationPolicy tell "nil because personal mode" apart from
+	// "nil because sealed and not yet verified".
+	policy atomic.Pointer[config.PolicySection]
+
+	// enterpriseSealed records whether this machine's config directory is an
+	// enterprise (HMAC-sealed) deployment at all, set once at GUI startup
+	// (config.IsEnterpriseMode) via SetEnterpriseSealed and immutable
+	// afterward -- whether the section has been verified in THIS run does
+	// not change whether one exists to verify. See ResolvedApplicationPolicy.
+	enterpriseSealed atomic.Bool
+}
+
+// SetPolicy installs the VERIFIED enterprise policy section that gates the
+// attested-application allow-list ResolvedApplicationPolicy resolves against
+// (#1305). Call it ONLY with a section that has actually verified under the
+// SO PIN -- applyVerifiedEnterprisePolicy in pkg/gui/enterprise_policy.go is
+// the one caller, reached from AuthService.LoginSO once verification
+// succeeds. Never call it with config.DefaultPolicy() or any other
+// unverified placeholder; see the policy field's own comment for why that
+// would defeat the lock. A personal-mode deployment (no enterprise plane at
+// all) simply never calls this, and policy stays nil.
+func (s *PhoneService) SetPolicy(pol *config.PolicySection) {
+	s.policy.Store(pol)
+}
+
+// SetEnterpriseSealed records whether this machine's config directory is a
+// sealed (enterprise) deployment, resolved once at GUI startup
+// (config.IsEnterpriseMode) and passed here before any pairing or
+// re-attestation is attempted. See ResolvedApplicationPolicy.
+func (s *PhoneService) SetEnterpriseSealed(sealed bool) {
+	s.enterpriseSealed.Store(sealed)
 }
 
 // connNotice is a connection-status transition decided under connMu and
@@ -873,7 +938,7 @@ func (s *PhoneService) attestForPairing(
 		return nil, ErrPhoneAttestFailed
 	}
 
-	trust, err := xkeyAttestation.LoadTrust(s.trustStore)
+	trust, err := s.loadAttestationTrust()
 	if err != nil {
 		s.log.Error("pairing attestation impossible: trust material unavailable", "error", err)
 		return nil, err
@@ -1287,7 +1352,7 @@ func (s *PhoneService) proveDeviceLiveness(
 		return ErrPhoneAttestationRequired
 	}
 
-	trust, err := xkeyAttestation.LoadTrust(s.trustStore)
+	trust, err := s.loadAttestationTrust()
 	if err != nil {
 		return err
 	}
@@ -1523,7 +1588,7 @@ func (s *PhoneService) attestOverTransport(
 		s.log.Error("attestation impossible: no trust store is configured", "device", device.Name)
 		return nil, ErrPhoneAttestFailed
 	}
-	trust, err := xkeyAttestation.LoadTrust(s.trustStore)
+	trust, err := s.loadAttestationTrust()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
 	}
@@ -2194,6 +2259,58 @@ func (s *PhoneService) awaitNoticesDelivered() bool {
 // wedged systray handler into a wedged service, which is the same
 // bound-the-wait reasoning as every drain on this branch.
 var noticeDeliveryTimeout = 30 * time.Second
+
+// loadAttestationTrust builds what every attestation this service performs is
+// judged against: the trust store's Android hardware roots and the
+// attested-application allow-list, resolved across devices.yaml and, while
+// this service's verified enterprise policy locks it, the SO's allow-list
+// instead (#1305) -- through the same attestation.LoadTrust the CLI calls.
+//
+// A missing devices.yaml allow-lists nothing, so LoadTrust refuses with
+// pairing.ErrApplicationPolicyUnconfigured, unless an enterprise policy is
+// locked and configured. One that exists but cannot be read refuses outright:
+// it may well be the file that lists the allowed builds, and guessing that it
+// does not is how an unreadable policy becomes no policy. A sealed enterprise
+// deployment whose policy has not yet verified in this run refuses with
+// xkeyAttestation.ErrApplicationPolicyUnverifiable -- see
+// ResolvedApplicationPolicy.
+func (s *PhoneService) loadAttestationTrust() (*xkeyAttestation.Trust, error) {
+	cfg, err := s.loadConfig()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
+	}
+	apps, err := s.ResolvedApplicationPolicy(cfg.applicationPolicy())
+	if err != nil {
+		return nil, err
+	}
+	return xkeyAttestation.LoadTrust(s.trustStore, apps)
+}
+
+// ResolvedApplicationPolicy returns the attested-application allow-list a
+// pairing or re-attestation would judge against right now: userPolicy as
+// devices.yaml states it, overridden outright by this service's verified
+// enterprise policy while LockPairingApplicationPolicy is set (#1305).
+//
+// A sealed (enterprise) deployment whose policy has not yet verified in this
+// run -- no SO has logged in since the GUI started -- refuses with
+// xkeyAttestation.ErrApplicationPolicyUnverifiable rather than falling back
+// to devices.yaml: which allow-list a locked deployment intends is unknown
+// until the section verifies, so a device must not be pairable or
+// re-attestable under an unverified guess at it. Only a genuinely personal
+// (unsealed) deployment falls through to devices.yaml.
+//
+// It is loadAttestationTrust's resolution exposed on its own so a caller —
+// chiefly a test pinning applyCapabilityPolicy's wiring — can observe which
+// plane governs without opening a trust store.
+func (s *PhoneService) ResolvedApplicationPolicy(userPolicy pairing.ApplicationPolicy) (pairing.ApplicationPolicy, error) {
+	if verified := s.policy.Load(); verified != nil {
+		return xkeyAttestation.ResolveApplicationPolicy(userPolicy, verified), nil
+	}
+	if s.enterpriseSealed.Load() {
+		return pairing.ApplicationPolicy{}, xkeyAttestation.ErrApplicationPolicyUnverifiable
+	}
+	return userPolicy, nil
+}
 
 // loadConfig loads the phone config from the shared YAML file.
 func (s *PhoneService) loadConfig() (*phoneConfig, error) {

@@ -1,6 +1,6 @@
 # Device Pairing and Enrollment — Engineering
 
-> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 For the phone-pairing verbs (`pair`, `scan`, `listen`, `attest*`, `*-sync`,
 `share*`, `relay`'s Noise/barrier semantics) see
@@ -20,8 +20,13 @@ Types (`cmd/xkey/cmd/device.go`):
 - `AttestationPolicy` — `default_grace_period`, `require_device_attestation`,
   `min_security_level`, `verify_boot_state`, `auto_attest_on_connect`,
   `allow_unattestable_devices` (see
-  [phone-hsm/architecture.md](../phone-hsm/architecture.md) for what the last
-  field means).
+  [phone-hsm/architecture.md](../phone-hsm/architecture.md) for what that
+  field means), plus the inlined `pairing.ApplicationPolicy` keys
+  `allowed_applications` and `allow_unpinned_signatures` — the
+  attested-application allow-list pairing and every re-attestation enforce
+  (see [phone-hsm/engineering.md](../phone-hsm/engineering.md)).
+  `(*DevicesConfig).applicationPolicy()` returns it, nil-safe
+  (`cmd/xkey/cmd/device.go`).
 - `DevicesConfig` — `Devices []PairedDevice`, `DefaultDevice string`,
   `AttestationPolicy *AttestationPolicy`; this is the root of `devices.yaml`.
 - `deviceConfig() xkeyconfig.DeviceConfig` — the `device` group's
