@@ -15,11 +15,14 @@ package xkms
 
 import (
 	"context"
+	"encoding/base64"
+	"log"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
 // userToTransport projects an embedded-qrdb user onto the xkms-facing
@@ -168,6 +171,7 @@ func (s *XKMSService) DeleteUser(ctx context.Context, username string) error {
 	if err := s.users.DeleteUser(ctx, u.ID); err != nil {
 		return &ErrUserOperation{Operation: "delete user", Err: err}
 	}
+	s.revokeUserSessions(ctx, u)
 	return nil
 }
 
@@ -198,7 +202,32 @@ func (s *XKMSService) DisableUser(ctx context.Context, username string) error {
 	if err := s.users.DisableUser(ctx, u.ID); err != nil {
 		return &ErrUserOperation{Operation: "disable user", Err: err}
 	}
+	s.revokeUserSessions(ctx, u)
 	return nil
+}
+
+// revokeUserSessions ends every refresh-token session u holds, covering
+// both subject encodings a login can mint a refresh token under: the
+// username (mTLS and PIV logins, MTLSAuthenticator.userIdentity /
+// handlePIVLogin) and the WebAuthn user handle (passkey logins,
+// WebAuthnTokenAdapter.identityFor) -- go-xkms#1297.
+//
+// Best-effort by design: the qrdb lifecycle change the caller just made has
+// already succeeded and must not be rolled back by a session-revocation
+// failure, so a failure here is logged, not returned. The refresh-time
+// re-check (pkg/auth.QRDBUserResolver) still refuses u's sessions on their
+// next refresh attempt even when this sweep could not reach the store.
+func (s *XKMSService) revokeUserSessions(ctx context.Context, u *qrdbtransport.User) {
+	if s.tokenIssuer == nil {
+		return
+	}
+	if err := s.tokenIssuer.RevokeBySubject(ctx, u.Username); err != nil {
+		log.Printf("xkms: revoke refresh sessions for user %q failed: %v", u.Username, err)
+	}
+	handle := base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(u.ID))
+	if err := s.tokenIssuer.RevokeBySubject(ctx, handle); err != nil {
+		log.Printf("xkms: revoke webauthn refresh sessions for user %q failed: %v", u.Username, err)
+	}
 }
 
 // BindUserCert binds an mTLS certificate's SPKI thumbprint to an xkms user.

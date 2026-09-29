@@ -557,3 +557,86 @@ func TestRevokeFamily_IsIdempotent(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// RevokeBySubject (go-xkms#1297): a user-lifecycle change ends every
+// session the account holds, and no other account's.
+// ---------------------------------------------------------------------------
+
+func TestRevokeBySubject_RevokesEveryFamilyForSubjectAndNoOther(t *testing.T) {
+	for _, tc := range refreshStoreCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := tc.newStore(t)
+
+			// alice holds two families (e.g. two browser sessions); bob holds
+			// one. Revoking alice must not touch bob's.
+			require.NoError(t, store.Save(ctx, &Record{
+				JTI: "jti-1", Family: "fam-alice-1", Subject: "alice",
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
+			}))
+			require.NoError(t, store.Save(ctx, &Record{
+				JTI: "jti-2", Family: "fam-alice-2", Subject: "alice",
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
+			}))
+			require.NoError(t, store.Save(ctx, &Record{
+				JTI: "jti-3", Family: "fam-bob-1", Subject: "bob",
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
+			}))
+
+			require.NoError(t, store.RevokeBySubject(ctx, "alice"))
+
+			got1, err := store.Get(ctx, "fam-alice-1", "jti-1")
+			require.NoError(t, err)
+			assert.Nil(t, got1, "alice's first family must be revoked")
+
+			got2, err := store.Get(ctx, "fam-alice-2", "jti-2")
+			require.NoError(t, err)
+			assert.Nil(t, got2, "alice's second family must be revoked")
+
+			got3, err := store.Get(ctx, "fam-bob-1", "jti-3")
+			require.NoError(t, err)
+			require.NotNil(t, got3, "bob's family must survive alice's revocation")
+			assert.Equal(t, "bob", got3.Subject)
+
+			// A successor can no longer be minted into either of alice's
+			// families -- exactly RevokeFamily's own tombstone guarantee.
+			err = store.Save(ctx, &Record{
+				JTI: "jti-successor", Family: "fam-alice-1", Subject: "alice",
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
+			})
+			var revoked *FamilyRevokedError
+			assert.ErrorAs(t, err, &revoked)
+		})
+	}
+}
+
+func TestRevokeBySubject_NoFamiliesIsANoop(t *testing.T) {
+	for _, tc := range refreshStoreCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			store := tc.newStore(t)
+			require.NoError(t, store.RevokeBySubject(context.Background(), "nobody"))
+		})
+	}
+}
+
+// TestRevokeBySubject_IssuerIntegration proves the Issuer-level convenience
+// method (used by pkg/xkms's DisableUser/DeleteUser) reaches the store and
+// ends a session a refresh token was already minted for.
+func TestRevokeBySubject_IssuerIntegration(t *testing.T) {
+	for _, tc := range refreshStoreCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			issuer := newIssuerWithStore(t, tc.newStore(t))
+
+			pair, err := issuer.Mint(ctx, testIdentity())
+			require.NoError(t, err)
+
+			require.NoError(t, issuer.RevokeBySubject(ctx, testIdentity().Subject))
+
+			_, err = issuer.Refresh(ctx, pair.RefreshToken)
+			var revokedErr *RefreshRevokedError
+			assert.ErrorAs(t, err, &revokedErr)
+		})
+	}
+}

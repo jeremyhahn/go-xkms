@@ -87,6 +87,15 @@ type Config struct {
 
 	// RefreshStore tracks issued refresh tokens. Required.
 	RefreshStore RefreshStore
+
+	// UserResolver re-checks the refresh token's subject against the
+	// CURRENT user record on every Refresh, so a disabled or deleted
+	// account cannot keep refreshing and a role change takes effect
+	// immediately rather than at the next full login (go-xkms#1297).
+	// Optional: nil skips the re-check, trusting the identity snapshot
+	// carried in the refresh token's own claims exactly as before -- the
+	// correct behavior when there is no identity plane to check against.
+	UserResolver UserResolver
 }
 
 // Issuer mints and rotates token pairs.
@@ -99,6 +108,7 @@ type Issuer struct {
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 	store      RefreshStore
+	resolver   UserResolver
 	jwtSigner  *xkmsjwt.Signer
 }
 
@@ -149,6 +159,7 @@ func NewIssuer(cfg *Config) (*Issuer, error) {
 		accessTTL:  accessTTL,
 		refreshTTL: refreshTTL,
 		store:      cfg.RefreshStore,
+		resolver:   cfg.UserResolver,
 		jwtSigner:  xkmsjwt.NewSigner(),
 	}, nil
 }
@@ -186,6 +197,17 @@ func (i *Issuer) Mint(ctx context.Context, id *auth.Identity) (*Pair, error) {
 // the refresh token. Presenting an already-rotated token revokes the entire
 // family and fails: replay of a rotated refresh token means two parties hold
 // the same lineage, which is the signature of theft.
+//
+// When a UserResolver is configured, the token's subject is re-checked
+// against the CURRENT user record before any rotation is attempted: a
+// disabled or deleted account, or one the resolver cannot currently vouch
+// for, refuses the refresh with *UserRecheckFailedError -- mapped by every
+// transport to the same generic response as *RefreshRevokedError, so a
+// presented refresh token never reveals whether it failed because it was
+// revoked or because the account behind it no longer may authenticate. The
+// resolver's fresh identity -- current roles included -- is what the
+// rotated pair is minted from, not the snapshot the old refresh token
+// carried.
 func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error) {
 	claims, err := i.verifyRefresh(refreshToken)
 	if err != nil {
@@ -196,6 +218,15 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 	family, _ := claims["fam"].(string)
 	if jti == "" || family == "" {
 		return nil, &InvalidTokenError{Reason: "missing jti or fam claim"}
+	}
+
+	identity := identityFromClaims(claims)
+	if i.resolver != nil {
+		fresh, resolveErr := i.resolver.ResolveUser(ctx, identity)
+		if resolveErr != nil {
+			return nil, &UserRecheckFailedError{Err: resolveErr}
+		}
+		identity = fresh
 	}
 
 	rec, err := i.store.Get(ctx, family, jti)
@@ -224,7 +255,18 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 
 	// The successor is committed by mintPair's Save, which refuses a family
 	// that was revoked while this refresh was in flight.
-	return i.mintPair(ctx, identityFromClaims(claims), family)
+	return i.mintPair(ctx, identity, family)
+}
+
+// RevokeBySubject revokes every refresh-token family belonging to subject,
+// immediately ending every session it holds regardless of which login flow
+// minted it. It is the hook a user-lifecycle change (disable, delete) calls
+// once the underlying account update has succeeded (go-xkms#1297); the
+// refresh-time re-check a UserResolver performs is the backstop for a
+// lifecycle change that reaches the identity plane through a path this
+// method is never called from.
+func (i *Issuer) RevokeBySubject(ctx context.Context, subject string) error {
+	return i.store.RevokeBySubject(ctx, subject)
 }
 
 // Revoke invalidates the refresh token's whole family (logout). An invalid
@@ -326,6 +368,9 @@ func addIdentityClaims(claims jwt.MapClaims, id *auth.Identity) {
 	if level := id.Metadata["attest_level"]; level != "" {
 		claims["attest_level"] = level
 	}
+	if kind := id.Metadata[auth.SubjectKindMetadataKey]; kind != "" {
+		claims[auth.SubjectKindMetadataKey] = kind
+	}
 }
 
 // sign signs claims with the configured crypto.Signer.
@@ -364,9 +409,11 @@ func (i *Issuer) verifyRefresh(refreshToken string) (jwt.MapClaims, error) {
 }
 
 // identityFromClaims rebuilds the identity carried in refresh-token claims.
-// Role changes therefore take effect at the next full login, not on refresh —
-// the refresh lineage carries the identity snapshot from the original
-// ceremony.
+// It is the starting point Refresh re-checks through a UserResolver, when
+// one is configured, before minting the next pair; without one, this
+// snapshot from the original login ceremony is what the rotated pair
+// carries forward unchanged, and a role change then only takes effect at
+// the next full login.
 func identityFromClaims(claims jwt.MapClaims) *auth.Identity {
 	id := &auth.Identity{Metadata: make(map[string]string)}
 	id.Subject, _ = claims["sub"].(string)
@@ -389,6 +436,9 @@ func identityFromClaims(claims jwt.MapClaims) *auth.Identity {
 	}
 	if level, ok := claims["attest_level"].(string); ok && level != "" {
 		id.Metadata["attest_level"] = level
+	}
+	if kind, ok := claims[auth.SubjectKindMetadataKey].(string); ok && kind != "" {
+		id.Metadata[auth.SubjectKindMetadataKey] = kind
 	}
 	return id
 }

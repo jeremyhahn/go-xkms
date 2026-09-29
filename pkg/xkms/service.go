@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
@@ -116,6 +117,17 @@ type XKMSService struct {
 	custodians      qrdbtransport.CustodianGroupClient
 	shares          qrdbtransport.ShareClient
 	userAuthFactors qrdbtransport.UserAuthFactorClient
+
+	// tokenIssuer mints and revokes the browser/desktop session token
+	// pairs behind the WebAuthn, PIV, and mTLS login flows. DisableUser and
+	// DeleteUser use it to revoke every refresh-token session an affected
+	// account holds the moment the lifecycle change lands (go-xkms#1297).
+	// Nil when the deployment did not wire one (SetTokenIssuer not
+	// called), in which case those methods still update the qrdb account
+	// but revoke no session directly; the refresh-time re-check
+	// (pkg/auth.QRDBUserResolver, consulted by pkg/auth/token.Issuer on
+	// every refresh) is the enforcement backstop either way.
+	tokenIssuer *token.Issuer
 
 	// audit is the embedded qrdb node's audit client, used READ-ONLY here:
 	// QueryAudit serves the audit viewer. Emission goes through pkg/audit's
@@ -275,6 +287,11 @@ func (s *XKMSService) SetUserClients(users qrdbtransport.UserClient, roles qrdbt
 	s.users = users
 	s.roles = roles
 }
+
+// SetTokenIssuer wires the session-token issuer so DisableUser and
+// DeleteUser can revoke every refresh-token session belonging to the
+// affected account (go-xkms#1297).
+func (s *XKMSService) SetTokenIssuer(issuer *token.Issuer) { s.tokenIssuer = issuer }
 
 // SetPlatformStore sets the sealed platform credential store subsystem.
 func (s *XKMSService) SetPlatformStore(p seal.PlatformStore) { s.platformStore = p }

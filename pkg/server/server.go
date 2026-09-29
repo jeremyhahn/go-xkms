@@ -855,6 +855,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.barrier != nil {
 			svc.SetBarrier(s.barrier)
 		}
+		if s.tokenIssuer != nil {
+			// So DisableUser/DeleteUser can revoke every refresh-token
+			// session an affected account holds the moment the lifecycle
+			// change lands, rather than only at its next refresh attempt
+			// (go-xkms#1297).
+			svc.SetTokenIssuer(s.tokenIssuer)
+		}
 		if s.webauthnService != nil {
 			svc.SetWebAuthn(s.webauthnService)
 		}

@@ -356,6 +356,11 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 			"display_name":         user.DisplayName,
 			"auth_method":          "piv",
 			attestLevelMetadataKey: attestLevel,
+			// Declares Subject's encoding explicitly for the refresh-time
+			// re-check (go-xkms#1297 review): QRDBUserResolver must never
+			// guess it from the subject's shape. This exchange serves both
+			// PIV and mTLS certificate logins; both mint a username subject.
+			auth.SubjectKindMetadataKey: auth.SubjectKindUsername,
 		},
 	}
 	if user.Email != "" {
