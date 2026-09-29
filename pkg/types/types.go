@@ -2150,8 +2150,8 @@ type KDFParams struct {
 	// first PRF invocation chains an empty value.
 	IV []byte
 
-	// KeyLength specifies the desired output key length in bytes.
-	// Must be positive and appropriate for the intended use.
+	// KeyLength specifies the desired output key length in bytes. Must be
+	// positive and no greater than MaxDerivedKeyLength.
 	// For example: 16 for AES-128, 32 for AES-256.
 	KeyLength int
 
@@ -2200,6 +2200,12 @@ func (p *KDFParams) Validate() error {
 		if p.KeyLength <= 0 {
 			return &errs.Message{Msg: fmt.Sprintf("key length must be positive, got %d", p.KeyLength)}
 		}
+		if p.KeyLength > MaxDerivedKeyLength {
+			return &errs.Detail{
+				Err:    ErrKeyLengthTooLarge,
+				Detail: fmt.Sprintf("requested %d bytes, maximum is %d bytes", p.KeyLength, MaxDerivedKeyLength),
+			}
+		}
 		if !p.DerivationMode.IsValid() {
 			return &errs.Message{Msg: fmt.Sprintf("invalid derivation mode: %d", p.DerivationMode)}
 		}
@@ -2225,8 +2231,11 @@ func (p *KDFParams) Validate() error {
 	if p.KeyLength <= 0 {
 		return &errs.Message{Msg: fmt.Sprintf("key length must be positive, got %d", p.KeyLength)}
 	}
-	if p.KeyLength > 1024 {
-		return &errs.Message{Msg: fmt.Sprintf("key length %d exceeds maximum of 1024 bytes", p.KeyLength)}
+	if p.KeyLength > MaxDerivedKeyLength {
+		return &errs.Detail{
+			Err:    ErrKeyLengthTooLarge,
+			Detail: fmt.Sprintf("requested %d bytes, maximum is %d bytes", p.KeyLength, MaxDerivedKeyLength),
+		}
 	}
 
 	// Validate derivation mode

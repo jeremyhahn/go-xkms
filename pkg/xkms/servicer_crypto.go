@@ -1157,6 +1157,19 @@ func (s *XKMSService) DeriveKey(ctx context.Context, req *transport.DeriveKeyReq
 	if keyLength <= 0 {
 		keyLength = defaultDerivedKeyLength
 	}
+	// Refused before any KDF parameter assembly or backend work: a caller
+	// that names an oversized key_length must not cause an adapter in
+	// pkg/crypto/kdf to preallocate on its behalf. types.KDFParams.Derive and
+	// types.DeriveFromKeyMaterial enforce the same ceiling as the actual
+	// gate; this is the same check, reported as request validation instead of
+	// an operation failure so it surfaces as InvalidArgument, matching every
+	// other malformed KDF field this function reports (go-xkms#1259).
+	if keyLength > types.MaxDerivedKeyLength {
+		return nil, &ErrValidation{
+			Sentinel: ErrInvalidKeyAttributes,
+			Detail:   fmt.Sprintf("key_length %d exceeds the maximum of %d bytes", keyLength, types.MaxDerivedKeyLength),
+		}
+	}
 
 	params, err := bridge.params(req, keyLength, h)
 	if err != nil {
@@ -1218,6 +1231,22 @@ func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKe
 	}
 	if len(req.PeerPublicKey) == 0 {
 		return nil, requiredField("peer_public_key")
+	}
+
+	// Refused before any backend or key lookup: a caller that names an
+	// oversized key_length must not cause the backend to be resolved, the
+	// key attributes fetched, or (once it runs) ECDH computed, only to have
+	// the result handed to a KDF adapter that preallocates on the caller's
+	// behalf. types.KDFParams.Derive enforces the same ceiling as the actual
+	// gate (every DeriveKeyECDH backend validates through it); this is the
+	// same check, reported as request validation instead of the generic
+	// ErrKeyAgreementFailed so it surfaces as InvalidArgument, matching every
+	// other malformed request field this function reports (go-xkms#1259).
+	if req.KeyLength > types.MaxDerivedKeyLength {
+		return nil, &ErrValidation{
+			Sentinel: ErrInvalidKeyAttributes,
+			Detail:   fmt.Sprintf("key_length %d exceeds the maximum of %d bytes", req.KeyLength, types.MaxDerivedKeyLength),
+		}
 	}
 
 	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)

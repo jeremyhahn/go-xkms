@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,6 +73,28 @@ func TestDeriveKeyECDH_KeyNotFoundInBackend(t *testing.T) {
 	require.True(t, ok)
 	// Will be NotFound because the key doesn't exist
 	assert.Contains(t, st.Message(), "not found")
+}
+
+// TestDeriveKeyECDH_KeyLengthExceedsMaximum proves an oversized key_length is
+// refused as InvalidArgument before the (here, nonexistent) backend or key is
+// ever looked up. Neither resolving unconditionally to NotFound, matching
+// TestDeriveKeyECDH_KeyNotFoundInBackend above, would prove the request is
+// refused because of its own shape rather than because of what it names
+// (go-xkms#1259).
+func TestDeriveKeyECDH_KeyLengthExceedsMaximum(t *testing.T) {
+	svc := setupServiceTest(t)
+	defer xkms.Reset()
+
+	_, err := svc.DeriveKeyECDH(context.Background(), &pb.DeriveKeyECDHRequest{
+		KeyId:         "nonexistent-key",
+		Backend:       "nonexistent-backend",
+		PeerPublicKey: []byte("fake-key"),
+		KeyLength:     int32(types.MaxDerivedKeyLength) + 1,
+	})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
 func TestAttestKey_SoftwareBackendDoesNotSupportAttestation(t *testing.T) {
