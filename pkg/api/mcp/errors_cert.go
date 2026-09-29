@@ -16,6 +16,8 @@ package mcp
 import (
 	"errors"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -81,6 +83,12 @@ func mapCAError(err error) error {
 
 	if errors.Is(err, xkms.ErrNilRequest) || errors.Is(err, xkms.ErrNilData) {
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	}
+
+	// SignCSR's SPIFFE tenant is caller-supplied; the service's tenant
+	// binding refuses a foreign one as not-found (xkms.TenantBindingError).
+	if errors.Is(err, qrdbsdk.ErrTenantMissing) {
+		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: err}
 	}
 
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/ct"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
@@ -97,6 +98,95 @@ func TestWrapChallengeVerifier_HalfOpenProbeClosesOnSuccess(t *testing.T) {
 	wrapped2 := WrapChallengeVerifier(cb, inner2)
 	require.NoError(t, wrapped2(nil, nil, "a", "80", "t", "k"))
 	assert.Equal(t, StateClosed, cb.State())
+}
+
+// validationVerifier returns a challenge verifier that fetches the challenge
+// URL through client, the way the http-01 verifier does, and returns the
+// client's error unchanged.
+func validationVerifier(client *validation.Client) common.ChallengeVerifierFunc {
+	return func(_ *net.Resolver, _ common.CertificateAuthority, authzValue, challengePort, challengeToken, _ string) error {
+		_, err := client.Get(context.Background(), validation.Target{
+			Host: authzValue,
+			Port: challengePort,
+			Path: "/.well-known/acme-challenge/" + challengeToken,
+		})
+		return err
+	}
+}
+
+// closedLoopbackPort returns a loopback port nothing listens on, so a
+// connection to it fails the way an unreachable public target does.
+func closedLoopbackPort(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	require.NoError(t, err)
+	require.NoError(t, listener.Close())
+	return port
+}
+
+// TestWrapChallengeVerifier_RefusedTargetsDoNotOpenBreaker is the regression
+// test for #1181: an ACME account naming reserved or invalid targets must not
+// be able to open the shared http-01 breaker for every other account.
+func TestWrapChallengeVerifier_RefusedTargetsDoNotOpenBreaker(t *testing.T) {
+	cb := decoratorTestBreaker("verifier-refused-flood")
+	wrapped := WrapChallengeVerifier(cb, validationVerifier(validation.NewClient(validation.Config{})))
+
+	targets := []struct{ host, port string }{
+		{"127.0.0.1", "80"},
+		{"10.0.0.1", "80"},
+		{"169.254.169.254", "80"},
+		{"::1", "80"},
+		{"169.254.169.254/latest/meta-data", "80"},
+		{"example.com", "0"},
+	}
+	for i := 0; i < 50; i++ {
+		target := targets[i%len(targets)]
+		err := wrapped(nil, nil, target.host, target.port, "token", "keyauth")
+		require.Error(t, err)
+		require.True(t, validation.IsTargetRejected(err), "target %s:%s: got %v, want the client's refusal", target.host, target.port, err)
+	}
+
+	assert.Equal(t, StateClosed, cb.State(), "refused targets must not open the breaker (MaxFailures 1)")
+	failures, _ := cb.Counts()
+	assert.Zero(t, failures)
+}
+
+// TestWrapChallengeVerifier_ConnectionFailuresOpenBreaker verifies the
+// breaker still does its job: targets the client contacts and cannot reach
+// count as failures.
+func TestWrapChallengeVerifier_ConnectionFailuresOpenBreaker(t *testing.T) {
+	cb := New(&Config{Name: "verifier-connection", MaxFailures: 3, ResetTimeout: time.Hour})
+	wrapped := WrapChallengeVerifier(cb, validationVerifier(validation.NewClient(validation.Config{AllowPrivateTargets: true})))
+	port := closedLoopbackPort(t)
+
+	for i := 0; i < 3; i++ {
+		err := wrapped(nil, nil, "127.0.0.1", port, "token", "keyauth")
+		var verr *validation.Error
+		require.ErrorAs(t, err, &verr)
+		require.Equal(t, validation.KindConnection, verr.Kind)
+	}
+
+	assert.Equal(t, StateOpen, cb.State())
+	require.ErrorIs(t, wrapped(nil, nil, "127.0.0.1", port, "token", "keyauth"), ErrCircuitOpen)
+}
+
+// TestWrapChallengeVerifier_RefusalsDoNotMaskConnectionFailures verifies that
+// refusals are neutral rather than successes: interleaving them with genuine
+// connection failures must not reset the failure count and hold an
+// unreachable-network breaker closed.
+func TestWrapChallengeVerifier_RefusalsDoNotMaskConnectionFailures(t *testing.T) {
+	cb := New(&Config{Name: "verifier-interleaved", MaxFailures: 2, ResetTimeout: time.Hour})
+	contacted := WrapChallengeVerifier(cb, validationVerifier(validation.NewClient(validation.Config{AllowPrivateTargets: true})))
+	refusing := WrapChallengeVerifier(cb, validationVerifier(validation.NewClient(validation.Config{})))
+	port := closedLoopbackPort(t)
+
+	require.Error(t, contacted(nil, nil, "127.0.0.1", port, "token", "keyauth"))
+	require.True(t, validation.IsTargetRejected(refusing(nil, nil, "127.0.0.1", port, "token", "keyauth")))
+	require.Error(t, contacted(nil, nil, "127.0.0.1", port, "token", "keyauth"))
+
+	assert.Equal(t, StateOpen, cb.State())
 }
 
 // --- WrapLogSubmitter ---------------------------------------------------

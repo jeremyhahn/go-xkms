@@ -27,6 +27,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,6 +37,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
@@ -190,6 +192,34 @@ func TestBuildChallengeMap_Selection(t *testing.T) {
 	verify := m[common.ChallengeTypeEnroll01]
 	if err := verify(nil, nil, "device", "8080", "tok", "ka"); !errors.Is(err, acmesdk.ErrACMEEnrollCAUnsupported) {
 		t.Fatalf("enroll-01 with unsupported CA = %v, want ErrACMEEnrollCAUnsupported", err)
+	}
+}
+
+// TestBuildChallengeMap_AllowPrivateTargets proves
+// acme.challenges.allow_private_targets reaches the shared challenge
+// client: off (the default), an http-01 target on loopback is refused at
+// dial time; on, the same target is validated.
+func TestBuildChallengeMap_AllowPrivateTargets(t *testing.T) {
+	const keyAuth = "tok.thumbprint"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, keyAuth)
+	}))
+	defer ts.Close()
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split %s: %v", ts.URL, err)
+	}
+
+	refusing := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true}, config.ACMEResilienceConfig{}, nil)
+	err = refusing[common.ChallengeTypeHTTP01](nil, nil, host, port, "tok", keyAuth)
+	var verr *validation.Error
+	if !errors.As(err, &verr) || verr.Kind != validation.KindTargetRefused {
+		t.Fatalf("default http-01 verifier against loopback = %v, want a KindTargetRefused *validation.Error", err)
+	}
+
+	allowing := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true, AllowPrivateTargets: true}, config.ACMEResilienceConfig{}, nil)
+	if err := allowing[common.ChallengeTypeHTTP01](nil, nil, host, port, "tok", keyAuth); err != nil {
+		t.Fatalf("http-01 verifier with allow_private_targets = %v, want nil", err)
 	}
 }
 
@@ -356,6 +386,50 @@ func TestBuildACMERouter_DirectoryEndpoint(t *testing.T) {
 		if _, ok := directory[field]; !ok {
 			t.Fatalf("expected %q in directory, got %+v", field, directory)
 		}
+	}
+}
+
+// TestBuildACMERouter_OversizedBodyIs413 verifies buildACMERouter mounts
+// acmeserver.RequestBodyMiddleware: a POST body one byte over
+// acmeserver.MaxRequestBodySize is refused with 413 and a "malformed"
+// problem before the handler runs, while a normal body still reaches it.
+func TestBuildACMERouter_OversizedBodyIs413(t *testing.T) {
+	svc := &stubRestService{}
+	ts := httptest.NewServer(buildACMERouter(svc, "/acme", nil, nil))
+	t.Cleanup(ts.Close)
+
+	oversized := strings.Repeat("a", int(acmeserver.MaxRequestBodySize)+1)
+	resp, err := http.Post(ts.URL+"/acme/new-order", "application/jose+json", strings.NewReader(oversized))
+	if err != nil {
+		t.Fatalf("POST /acme/new-order: %v", err)
+	}
+	var problem entities.Error
+	decodeErr := json.NewDecoder(resp.Body).Decode(&problem)
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		t.Fatalf("close response body: %v", closeErr)
+	}
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected HTTP 413, got %d", resp.StatusCode)
+	}
+	if decodeErr != nil {
+		t.Fatalf("decode problem: %v", decodeErr)
+	}
+	if problem.Type != "urn:ietf:params:acme:error:"+common.ErrTypeMalformedError {
+		t.Fatalf("expected a malformed problem, got %q", problem.Type)
+	}
+	if svc.newOrderCalled.Load() {
+		t.Fatal("an oversized request must not reach NewOrderHandler")
+	}
+
+	resp, err = http.Post(ts.URL+"/acme/new-order", "application/jose+json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST /acme/new-order: %v", err)
+	}
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		t.Fatalf("close response body: %v", closeErr)
+	}
+	if !svc.newOrderCalled.Load() {
+		t.Fatal("a normal-sized request must reach NewOrderHandler")
 	}
 }
 

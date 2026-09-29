@@ -745,6 +745,15 @@ type ACMEChallengesConfig struct {
 	// TPMs without a manufacturer EK cert. Server-side verification is a no-op;
 	// issuance is gated by External Account Binding (EAB).
 	Endorse01 bool `yaml:"endorse01"`
+
+	// AllowPrivateTargets lets challenge validation (http-01, enroll-01)
+	// connect to reserved addresses: loopback, private (RFC 1918/4193),
+	// link-local including the 169.254.169.254 metadata address, and the
+	// other special-purpose ranges. Off by default, which refuses them after
+	// DNS resolution so a client cannot aim the server at its own internal
+	// network. Turn it on only for tests and for lab deployments whose
+	// devices sit on a private network.
+	AllowPrivateTargets bool `yaml:"allow_private_targets"`
 }
 
 // ACMETLSConfig configures TLS for the ACME listener.

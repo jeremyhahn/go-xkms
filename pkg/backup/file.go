@@ -76,6 +76,12 @@ var (
 	// ErrMissingKeyIdentifier is returned when a backed-up key carries no
 	// identifier, which makes conflict detection impossible.
 	ErrMissingKeyIdentifier = errors.New("backup key is missing an identifier")
+
+	// ErrInvalidBackupID is returned when a backup ID is not a well-formed
+	// UUID. Every ID this adapter issues is one, and the ID becomes part of
+	// a file path, so anything else is refused before it reaches the
+	// filesystem.
+	ErrInvalidBackupID = errors.New("invalid backup id")
 )
 
 // FileBackupAdapter implements BackupAdapter using the local filesystem
@@ -760,7 +766,12 @@ func (f *FileBackupAdapter) getBackupMetadata(backupID string) (*BackupMetadata,
 		return metadata, nil
 	}
 
-	// Try to load from disk
+	// Try to load from disk. backupID is caller-supplied and feeds
+	// getMetadataPath's filepath.Join, so it must be a UUID: an ID such as
+	// "../../etc/x" would otherwise read outside f.basePath (CWE-22).
+	if uuid.Validate(backupID) != nil {
+		return nil, ErrInvalidBackupID
+	}
 	metadataPath := f.getMetadataPath(backupID)
 	metadataBytes, err := os.ReadFile(metadataPath)
 	if err != nil {
@@ -804,6 +815,13 @@ func (f *FileBackupAdapter) loadIndex() error {
 			var metadata BackupMetadata
 			if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
 				continue // Skip files we can't parse
+			}
+
+			// The index key becomes a path in getBackupPath, and it comes
+			// from the file's contents, not its name: skip a record whose
+			// ID is not a UUID rather than index a path-traversal string.
+			if uuid.Validate(metadata.ID) != nil {
+				continue
 			}
 
 			f.index[metadata.ID] = &metadata

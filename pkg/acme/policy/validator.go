@@ -17,7 +17,10 @@ import (
 	"net/netip"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
+	"github.com/jeremyhahn/go-xkms/pkg/netguard"
 	"github.com/weppos/publicsuffix-go/publicsuffix"
 	"golang.org/x/net/idna"
 	"golang.org/x/text/unicode/norm"
@@ -34,6 +37,11 @@ const (
 	// MaxDNSIdentifierLength is the maximum length of a complete domain name.
 	// RFC 1034 specifies 255 octets total, minus 2 for length byte and root.
 	MaxDNSIdentifierLength = 253
+
+	// MaxPermanentIdentifierLength bounds a permanent-identifier value. The
+	// longest value the server issues for is an endorse-01 identifier, a
+	// base64url-encoded PKIX public key: 736 bytes for an RSA-4096 key.
+	MaxPermanentIdentifierLength = 1024
 )
 
 // Identifier type constants
@@ -304,59 +312,87 @@ func ValidateIPWithReservedCheck(ip string) error {
 	}
 
 	// Check for reserved/special ranges
-	if isReservedIP(parsedIP) {
+	if IsReservedIP(parsedIP) {
 		return ErrIPReserved
 	}
 
 	return nil
 }
 
-// isReservedIP checks if an IP address is in a reserved/special-purpose range.
-func isReservedIP(ip netip.Addr) bool {
-	// Check various reserved ranges
-	if ip.IsLoopback() {
-		return true
-	}
-	if ip.IsMulticast() {
-		return true
-	}
-	if ip.IsPrivate() {
-		return true
-	}
-	if ip.IsLinkLocalUnicast() {
-		return true
-	}
-	if ip.IsLinkLocalMulticast() {
-		return true
-	}
-	if ip.IsUnspecified() {
-		return true
-	}
+// IsReservedIP reports whether ip is in a reserved or special-purpose range:
+// loopback, private (RFC 1918, RFC 4193), link-local (which holds the
+// 169.254.169.254 cloud metadata address), multicast, unspecified, or one of
+// the special-purpose ranges CGNAT, the TEST-NETs, benchmarking, NAT64,
+// 6to4, documentation and the rest of RFC 6890 cover. An IPv4-mapped IPv6
+// address is classified by the IPv4 address it carries, so ::ffff:127.0.0.1
+// is loopback.
+//
+// It delegates to netguard.ReservedAddr, the one reserved-address
+// classification in go-xkms: the reserved-IP identifier policy
+// (ValidateIPWithReservedCheck) and the challenge-validation dialer
+// (pkg/acme/challenges/validation) both refuse exactly the addresses it
+// reports, so an address the policy calls reserved is an address validation
+// will not connect to.
+func IsReservedIP(ip netip.Addr) bool {
+	return netguard.ReservedAddr(ip)
+}
 
-	// IPv4 specific checks
-	if ip.Is4() {
-		// Documentation ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)
-		docRanges := []netip.Prefix{
-			netip.MustParsePrefix("192.0.2.0/24"),
-			netip.MustParsePrefix("198.51.100.0/24"),
-			netip.MustParsePrefix("203.0.113.0/24"),
+// ValidateNetworkTarget validates host as a bare network target: a
+// hostname (RFC 1123 labels, single-label names included) or a canonical IP
+// address literal without a zone. It is the check applied to an identifier
+// before the ACME server dials it to validate a challenge, so anything that
+// could change the meaning of the URL built around it -- a path, query,
+// fragment, userinfo, port, or whitespace -- is refused.
+func ValidateNetworkTarget(host string) error {
+	if host == "" {
+		return ErrEmptyIdentifier
+	}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if ip.Zone() != "" {
+			return ErrInvalidNetworkTarget
 		}
-		for _, r := range docRanges {
-			if r.Contains(ip) {
-				return true
-			}
+		if ip.String() != host {
+			return ErrInvalidNetworkTarget
+		}
+		return nil
+	}
+	if len(host) > MaxDNSIdentifierLength {
+		return ErrInvalidNetworkTarget
+	}
+	for _, label := range strings.Split(strings.ToLower(host), ".") {
+		if err := validateLabel(label); err != nil {
+			return ErrInvalidNetworkTarget
 		}
 	}
+	return nil
+}
 
-	// IPv6 specific checks
-	if ip.Is6() {
-		// Documentation range (2001:db8::/32)
-		if netip.MustParsePrefix("2001:db8::/32").Contains(ip) {
-			return true
+// ValidatePermanentIdentifier validates the value of a permanent-identifier
+// ACME identifier. The ACME device-attestation draft
+// (draft-ietf-acme-device-attest, section "Permanent Identifier") carries the
+// value as the identifierValue of an RFC 4043 PermanentIdentifier, a
+// UTF8String with no further syntax, so the value is opaque: a device
+// serial, a base64url public key (endorse-01), or a host (enroll-01). It
+// must be non-empty, valid UTF-8, at most MaxPermanentIdentifierLength
+// bytes, and free of whitespace and control characters. Whether the value
+// is also usable as a network target is a separate check,
+// ValidateNetworkTarget, applied where the server dials it.
+func ValidatePermanentIdentifier(value string) error {
+	if value == "" {
+		return ErrEmptyIdentifier
+	}
+	if len(value) > MaxPermanentIdentifierLength {
+		return ErrPermanentIdentifierTooLong
+	}
+	if !utf8.ValidString(value) {
+		return ErrPermanentIdentifierInvalidCharacter
+	}
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return ErrPermanentIdentifierInvalidCharacter
 		}
 	}
-
-	return false
+	return nil
 }
 
 // ValidateIdentifier validates an identifier based on its type.
@@ -370,11 +406,7 @@ func ValidateIdentifier(identifierType, value string) error {
 		return ValidateIP(value)
 
 	case IdentifierTypePermanentIdentifier:
-		// Permanent identifiers have minimal validation requirements
-		if value == "" {
-			return ErrEmptyIdentifier
-		}
-		return nil
+		return ValidatePermanentIdentifier(value)
 
 	default:
 		return NewPolicyError(ErrUnsupportedIdentifierType, identifierType, value, "")

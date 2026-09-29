@@ -26,6 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -869,6 +870,7 @@ func TestHandleBarrierError_AllCases(t *testing.T) {
 		{"NoAvailableStrategy", seal.ErrNoAvailableStrategy, http.StatusServiceUnavailable},
 		{"StrategyNotFound", seal.ErrStrategyNotFound, http.StatusBadRequest},
 		{"CorruptRootKey", seal.ErrCorruptRootKey, http.StatusInternalServerError},
+		{"TenantBindingRefusal", &xkms.TenantBindingError{Op: "barrier enable encryption", CallerTenantID: "a", TargetTenantID: "b"}, http.StatusNotFound},
 		{"ShamirNotConfigured", seal.ErrShamirNotConfigured, http.StatusBadRequest},
 		{"ShamirThresholdInvalid", seal.ErrShamirThresholdInvalid, http.StatusBadRequest},
 		{"ShamirQuorumIncomplete", seal.ErrShamirQuorumIncomplete, http.StatusUnprocessableEntity},

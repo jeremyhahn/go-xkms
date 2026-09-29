@@ -21,6 +21,7 @@ import (
 	endorse01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/endorse-01"
 	enroll01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/enroll-01"
 	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	acmeclient "github.com/jeremyhahn/go-xkms/pkg/acme/client"
 	acmecommon "github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
@@ -313,14 +314,30 @@ type ACMERateLimiter = acmeserver.RateLimiter
 // NewACMERateLimiter creates a new rate limiter with the specified limits.
 var NewACMERateLimiter = acmeserver.NewRateLimiter
 
-// ACMEClientID extracts a client identifier from an HTTP request for rate limiting.
+// ACMEClientID returns the rate-limiting key for an HTTP request: the verified
+// account ID when one was recorded on the request context, otherwise the
+// client IP. It never trusts an unverified JWS "kid".
 var ACMEClientID = acmeserver.ClientID
 
 // =============================================================================
 // ACME Challenge Verify Functions
 // =============================================================================
 
-// ACMEVerifyHTTP01 verifies an HTTP-01 ACME challenge.
+// ACMEChallengeClient is the shared, SSRF-safe HTTP client the http-01,
+// enroll-01 and device-attest-01 verifiers contact client-named targets
+// through. One client is built per ACME server and shared by its verifiers.
+type ACMEChallengeClient = validation.Client
+
+// ACMEChallengeClientConfig configures an ACMEChallengeClient.
+// AllowPrivateTargets (default false) is the only way to reach a reserved
+// target address, for test and lab deployments.
+type ACMEChallengeClientConfig = validation.Config
+
+// NewACMEChallengeClient returns an ACMEChallengeClient.
+var NewACMEChallengeClient = validation.NewClient
+
+// ACMEVerifyHTTP01 verifies an HTTP-01 ACME challenge through an
+// ACMEChallengeClient.
 var ACMEVerifyHTTP01 = http01.Verify
 
 // ACMEVerifyDNS01 verifies a DNS-01 ACME challenge.

@@ -27,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestRateLimiterBasicIntegration tests basic rate limiting functionality
@@ -203,7 +204,7 @@ func TestRateLimiterMiddlewareIntegration(t *testing.T) {
 	})
 
 	// Wrap with rate limit middleware
-	rateLimitedHandler := ratelimit.Middleware(limiter)(handler)
+	rateLimitedHandler := ratelimit.Middleware(limiter, nil)(handler)
 
 	t.Run("AllowedRequests", func(t *testing.T) {
 		// First 2 requests should succeed (burst)
@@ -251,7 +252,10 @@ func TestRateLimiterXForwardedForIntegration(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	rateLimitedHandler := ratelimit.Middleware(limiter)(handler)
+	// The peer 192.168.1.1 is the trusted reverse proxy naming the client.
+	proxies, err := ratelimit.ParseTrustedProxies([]string{"192.168.1.1"})
+	require.NoError(t, err)
+	rateLimitedHandler := ratelimit.Middleware(limiter, proxies)(handler)
 
 	// Request with X-Forwarded-For header
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -278,6 +282,37 @@ func TestRateLimiterXForwardedForIntegration(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 }
 
+// TestRateLimiterUntrustedForwardedForIntegration proves a peer that is not a
+// trusted proxy cannot escape its bucket by rotating X-Forwarded-For or by
+// opening a new connection (a new source port).
+func TestRateLimiterUntrustedForwardedForIntegration(t *testing.T) {
+	limiter := ratelimit.New(&ratelimit.Config{Enabled: true, RequestsPerMinute: 60, Burst: 1})
+	defer limiter.Stop()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	rateLimitedHandler := ratelimit.Middleware(limiter, nil)(handler)
+
+	for i, tc := range []struct {
+		remoteAddr, xff string
+		want            int
+	}{
+		{"192.168.1.1:12345", "10.0.0.1", http.StatusOK},
+		{"192.168.1.1:12345", "10.0.0.2", http.StatusTooManyRequests},
+		{"192.168.1.1:23456", "", http.StatusTooManyRequests},
+	} {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.RemoteAddr = tc.remoteAddr
+		if tc.xff != "" {
+			req.Header.Set("X-Forwarded-For", tc.xff)
+		}
+		w := httptest.NewRecorder()
+		rateLimitedHandler.ServeHTTP(w, req)
+		assert.Equal(t, tc.want, w.Code, "request %d", i)
+	}
+}
+
 // TestRateLimiterXRealIPIntegration tests X-Real-IP header handling
 func TestRateLimiterXRealIPIntegration(t *testing.T) {
 	config := &ratelimit.Config{
@@ -293,7 +328,10 @@ func TestRateLimiterXRealIPIntegration(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	rateLimitedHandler := ratelimit.Middleware(limiter)(handler)
+	// The peer 192.168.1.1 is the trusted reverse proxy naming the client.
+	proxies, err := ratelimit.ParseTrustedProxies([]string{"192.168.1.1"})
+	require.NoError(t, err)
+	rateLimitedHandler := ratelimit.Middleware(limiter, proxies)(handler)
 
 	// Request with X-Real-IP header
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -529,7 +567,11 @@ func TestRateLimiterRealWorldHTTPServerIntegration(t *testing.T) {
 		io.WriteString(w, `{"status":"ok"}`)
 	})
 
-	server := httptest.NewServer(ratelimit.Middleware(limiter)(handler))
+	// The test clients reach the server over loopback, standing in for a
+	// trusted reverse proxy that names each client in X-Forwarded-For.
+	proxies, err := ratelimit.ParseTrustedProxies([]string{"127.0.0.1", "::1"})
+	require.NoError(t, err)
+	server := httptest.NewServer(ratelimit.Middleware(limiter, proxies)(handler))
 	defer server.Close()
 
 	// Simulate multiple clients making requests

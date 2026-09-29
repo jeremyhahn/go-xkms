@@ -435,22 +435,6 @@ func TestSign_NilRandReader(t *testing.T) {
 }
 
 // =============================================================================
-// ImportIssuingCAs — with cert that has AIA but fails download (no HTTP server)
-// =============================================================================
-
-func TestImportIssuingCAs_AIARequestFails(t *testing.T) {
-	ca := setupTestCA(t)
-	// Build a cert template with a deliberately unreachable AIA URL.
-	cert := &x509.Certificate{
-		IssuingCertificateURL: []string{"http://127.0.0.1:1/nonexistent.crt"},
-	}
-	err := ca.ImportIssuingCAs(context.Background(), cert)
-	// The HTTP download will fail (connection refused). The function wraps
-	// that in ErrStorageError.
-	assert.Error(t, err)
-}
-
-// =============================================================================
 // lookupRevocation — checkCertificateStatus cold path (object store,
 // record NOT found → ocsp.Good)
 // =============================================================================

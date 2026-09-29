@@ -479,9 +479,13 @@ type KeystoreServiceClient interface {
 	TenantBarrierUnseal(ctx context.Context, in *TenantBarrierUnsealRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// TenantBarrierStatus reports the current state of a per-tenant barrier.
 	TenantBarrierStatus(ctx context.Context, in *TenantBarrierStatusRequest, opts ...grpc.CallOption) (*TenantBarrierStatusResponse, error)
-	// UpdateTenantEntitlements updates a tenant's feature entitlements.
+	// UpdateTenantEntitlements updates a tenant's feature entitlements. Plan
+	// management: gated on tenants:set_entitlements, never tenants:update, and
+	// admitted only for a cross-tenant (system) identity.
 	UpdateTenantEntitlements(ctx context.Context, in *UpdateTenantEntitlementsRequest, opts ...grpc.CallOption) (*UpdateTenantEntitlementsResponse, error)
-	// UpdateTenantQuotas updates a tenant's resource quotas.
+	// UpdateTenantQuotas updates a tenant's resource quotas. Plan management:
+	// gated on tenants:set_quotas, never tenants:update, and admitted only for a
+	// cross-tenant (system) identity.
 	UpdateTenantQuotas(ctx context.Context, in *UpdateTenantQuotasRequest, opts ...grpc.CallOption) (*UpdateTenantQuotasResponse, error)
 	// PasswordAdd adds a new password entry to the encrypted store.
 	PasswordAdd(ctx context.Context, in *PasswordAddRequest, opts ...grpc.CallOption) (*PasswordAddResponse, error)
@@ -2621,9 +2625,13 @@ type KeystoreServiceServer interface {
 	TenantBarrierUnseal(context.Context, *TenantBarrierUnsealRequest) (*emptypb.Empty, error)
 	// TenantBarrierStatus reports the current state of a per-tenant barrier.
 	TenantBarrierStatus(context.Context, *TenantBarrierStatusRequest) (*TenantBarrierStatusResponse, error)
-	// UpdateTenantEntitlements updates a tenant's feature entitlements.
+	// UpdateTenantEntitlements updates a tenant's feature entitlements. Plan
+	// management: gated on tenants:set_entitlements, never tenants:update, and
+	// admitted only for a cross-tenant (system) identity.
 	UpdateTenantEntitlements(context.Context, *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error)
-	// UpdateTenantQuotas updates a tenant's resource quotas.
+	// UpdateTenantQuotas updates a tenant's resource quotas. Plan management:
+	// gated on tenants:set_quotas, never tenants:update, and admitted only for a
+	// cross-tenant (system) identity.
 	UpdateTenantQuotas(context.Context, *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error)
 	// PasswordAdd adds a new password entry to the encrypted store.
 	PasswordAdd(context.Context, *PasswordAddRequest) (*PasswordAddResponse, error)

@@ -59,11 +59,25 @@ func (s *Server) handleSDKBeginRegistration(w http.ResponseWriter, r *http.Reque
 			}, http.StatusForbidden)
 			return
 		}
+		if webauthn.IsSessionLimit(err) {
+			writeSessionLimit(w)
+			return
+		}
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
 
 	writeJSON(w, resp, http.StatusOK)
+}
+
+// writeSessionLimit answers a ceremony refused because the session store is
+// full, with the same machine-readable code as the browser ceremony route.
+func writeSessionLimit(w http.ResponseWriter) {
+	writeJSON(w, ErrorResponse{
+		Error:   webauthnhttp.ErrorCodeSessionLimit,
+		Message: "too many unfinished ceremonies; retry later",
+		Code:    http.StatusServiceUnavailable,
+	}, http.StatusServiceUnavailable)
 }
 
 // handleSDKFinishRegistration handles POST /api/v1/webauthn/sdk/registration/finish.
@@ -105,6 +119,10 @@ func (s *Server) handleSDKBeginAuthentication(w http.ResponseWriter, r *http.Req
 
 	resp, err := svc.BeginAuthentication(r.Context(), &req)
 	if err != nil {
+		if webauthn.IsSessionLimit(err) {
+			writeSessionLimit(w)
+			return
+		}
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}

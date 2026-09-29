@@ -130,6 +130,17 @@ var (
 	ErrInvalidNonce                = errors.New("tpm: invalid nonce")
 	ErrNotInitialized              = errors.New("tpm: not initialized")
 
+	// ErrPCRDataTooLarge indicates encoded PCR banks longer than
+	// maxEncodedPCRBytes were refused before decoding. The encoding arrives
+	// from remote attesters, and encoding/gob is not hardened against
+	// adversarial input, so its size is bounded first.
+	ErrPCRDataTooLarge = errors.New("tpm: encoded PCR data too large")
+
+	// ErrInvalidPCRData indicates decoded PCR banks that no TPM produces:
+	// too many banks, a PCR index outside 0..maxPCRIndex, or a value longer
+	// than the largest TPM digest.
+	ErrInvalidPCRData = errors.New("tpm: invalid PCR data")
+
 	// ErrKeyRetrievalFailed indicates GetSymmetricKey could not determine
 	// whether a symmetric key exists because the underlying key store
 	// (store.KeyBackend) returned an error other than "not found" -- a

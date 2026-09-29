@@ -85,5 +85,6 @@ const (
 	ErrorCodeNoCredentials        = "no_credentials"
 	ErrorCodeVerificationFailed   = "verification_failed"
 	ErrorCodeRegistrationDisabled = "registration_disabled"
+	ErrorCodeSessionLimit         = "session_limit"
 	ErrorCodeInternalError        = "internal_error"
 )

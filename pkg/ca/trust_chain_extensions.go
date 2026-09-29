@@ -21,23 +21,15 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
-
-// aiaHTTPClient downloads AIA-referenced issuer certificates. A dedicated
-// client with a timeout prevents a stalled issuer endpoint from hanging an
-// import indefinitely (http.DefaultClient sets no timeout); the per-request
-// context still allows earlier cancellation.
-var aiaHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // TrustedRoot returns the root CA certificate that anchors this CA's
 // hierarchy. Returns ErrNotInitialized if Init/Load has not been called,
@@ -264,10 +256,21 @@ func (ca *CA) RootCertificate(childCert *x509.Certificate) (*x509.Certificate, e
 	return nil, &errs.Detail{Err: ErrInvalidCertificateChain, Detail: "chain too long"}
 }
 
-// ImportIssuingCAs recursively downloads every certificate listed in the
-// provided certificate's AuthorityInformationAccess (IssuingCertificateURL)
-// extension and imports it into the certificate store. The walk stops at
-// self-signed certificates. Existing certificates are skipped.
+// ImportIssuingCAs walks the certificate's AuthorityInformationAccess
+// (IssuingCertificateURL) extension upward, downloading each issuer and
+// importing it into the certificate store. Certificates already in the store
+// are not imported again, but the walk continues through them. The walk
+// stops at a self-signed certificate.
+//
+// The URLs are chosen by whoever issued cert, so the walk is bounded:
+//   - only http and https URLs resolving to public addresses are fetched
+//     (ErrPKIFetchRefused), and each response is capped at
+//     maxAIACertificateBytes (ErrPKIFetchTooLarge);
+//   - a fetched certificate must have signed the certificate that named it
+//     (ErrAIAIssuerSignatureInvalid), so an AIA URL cannot plant an
+//     unrelated certificate in the store;
+//   - a certificate seen earlier in the walk ends it (ErrAIALoop), and a
+//     walk of more than maxAIADepth issuers is refused (ErrAIADepthExceeded).
 //
 // Returns nil when cert has no AIA extension (not an error).
 //
@@ -276,55 +279,50 @@ func (ca *CA) ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) erro
 	if cert == nil {
 		return ErrInvalidCertificate
 	}
-	if len(cert.IssuingCertificateURL) == 0 {
+	seen := map[[sha256.Size]byte]bool{sha256.Sum256(cert.Raw): true}
+	return ca.importIssuingCAs(ctx, cert, seen, 0)
+}
+
+// importIssuingCAs imports the issuers named by child's AIA extension and
+// recurses into each. depth is the number of issuers already fetched above
+// the starting certificate; seen holds the fingerprints of every
+// certificate visited so far.
+func (ca *CA) importIssuingCAs(ctx context.Context, child *x509.Certificate, seen map[[sha256.Size]byte]bool, depth int) error {
+	if len(child.IssuingCertificateURL) == 0 || isSelfSigned(child) {
 		return nil
 	}
+	if depth >= maxAIADepth {
+		return &errs.Detail{Err: ErrAIADepthExceeded, Detail: fmt.Sprintf("more than %d issuers above the starting certificate", maxAIADepth)}
+	}
 
-	for _, issuerURL := range cert.IssuingCertificateURL {
-		// #nosec G107 - URL is from X.509 certificate AIA extension (issuer-controlled)
-		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, issuerURL, nil)
-		if reqErr != nil {
-			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to build request %s: %v", issuerURL, reqErr)}
-		}
-		resp, err := aiaHTTPClient.Do(req)
+	for _, issuerURL := range child.IssuingCertificateURL {
+		body, err := ca.fetchPKIObject(ctx, issuerURL, maxAIACertificateBytes)
 		if err != nil {
-			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to download %s: %v", issuerURL, err)}
+			return err
 		}
-
-		body, readErr := io.ReadAll(resp.Body)
-		closeErr := resp.Body.Close()
-		if readErr != nil {
-			return errors.Join(&errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read %s: %v", issuerURL, readErr)}, closeErr)
-		}
-		if resp.StatusCode != http.StatusOK {
-			return errors.Join(&errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("AIA download %s returned status %d", issuerURL, resp.StatusCode)}, closeErr)
-		}
-		if closeErr != nil {
-			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to close AIA response body for %s: %v", issuerURL, closeErr)}
-		}
-
 		issuerCert, err := parseAIACertificate(body)
 		if err != nil {
 			return &errs.Detail{Err: ErrInvalidCertificate, Detail: fmt.Sprintf("%s: %v", issuerURL, err)}
 		}
 
-		// Skip if the certificate already exists in the store.
-		if existing, err := ca.certStore.GetCertificate(issuerCert.Subject.CommonName); err == nil && existing != nil {
-			// Still recurse in case the parent chain hasn't been populated.
-			if err := ca.ImportIssuingCAs(ctx, issuerCert); err != nil {
-				return err
-			}
-			continue
+		fingerprint := sha256.Sum256(issuerCert.Raw)
+		if seen[fingerprint] {
+			return &errs.Detail{Err: ErrAIALoop, Detail: fmt.Sprintf("%s returned %q, already visited", issuerURL, issuerCert.Subject.CommonName)}
+		}
+		seen[fingerprint] = true
+
+		if err := child.CheckSignatureFrom(issuerCert); err != nil {
+			return &errs.Detail{Err: ErrAIAIssuerSignatureInvalid, Detail: fmt.Sprintf("%s returned %q: %v", issuerURL, issuerCert.Subject.CommonName, err)}
 		}
 
-		if err := ca.ImportCertificate(ctx, issuerCert); err != nil {
+		if existing, err := ca.certStore.GetCertificate(issuerCert.Subject.CommonName); err != nil || existing == nil {
+			if err := ca.ImportCertificate(ctx, issuerCert); err != nil {
+				return err
+			}
+		}
+
+		if err := ca.importIssuingCAs(ctx, issuerCert, seen, depth+1); err != nil {
 			return err
-		}
-
-		if len(issuerCert.IssuingCertificateURL) > 0 {
-			if err := ca.ImportIssuingCAs(ctx, issuerCert); err != nil {
-				return err
-			}
 		}
 	}
 	return nil

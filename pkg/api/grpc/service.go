@@ -2182,6 +2182,7 @@ func (s *Service) DeriveKey(ctx context.Context, req *pb.DeriveKeyRequest) (*pb.
 		StoreResult:      req.GetStoreResult(),
 		DerivedKeyID:     req.GetDerivedKeyId(),
 		DerivedKeyType:   req.GetDerivedKeyType(),
+		TenantID:         callerTenantID(ctx),
 	})
 	if err != nil {
 		return nil, mapKeyOpError(ctx, s.xkmsService, err)

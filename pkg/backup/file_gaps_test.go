@@ -259,7 +259,7 @@ func TestFileBackupAdapter_GetBackupMetadata_ReadError(t *testing.T) {
 	adapter, err := NewFileBackupAdapter(tempDir)
 	require.NoError(t, err)
 
-	const backupID = "unreadable-id"
+	const backupID = "5f0c8e7a-3b1d-4c2e-9a6f-2d8b7c1e4f30"
 	metadataPath := adapter.getMetadataPath(backupID)
 	require.NoError(t, os.MkdirAll(metadataPath, 0700))
 

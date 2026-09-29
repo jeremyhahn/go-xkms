@@ -24,7 +24,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"math/big"
-	"net"
 	"testing"
 	"time"
 
@@ -310,7 +309,7 @@ func TestVerifyAttestationRefusesAnX5cEntryThatIsNotACertificate(t *testing.T) {
 	})
 	ca := &mockCA{}
 
-	_, err := VerifyAttestation(net.DefaultResolver, ca, host, port, "token", tpmKeyAuth)
+	_, err := VerifyAttestation(loopbackClient(), ca, host, port, "token", tpmKeyAuth)
 	assert.ErrorIs(t, err, ErrCertificateChainInvalid)
 	assert.False(t, ca.verifyAKChainCalled, "a partial chain was handed to the anchor")
 }
@@ -323,7 +322,7 @@ func TestVerifyAttestationRefusesATPMStatementWithoutX5c(t *testing.T) {
 		AttStatement: AttestationStatement{Ver: "2.0", Alg: coseES256},
 	})
 
-	_, err := VerifyAttestation(net.DefaultResolver, &mockCA{}, host, port, "token", tpmKeyAuth)
+	_, err := VerifyAttestation(loopbackClient(), &mockCA{}, host, port, "token", tpmKeyAuth)
 	assert.ErrorIs(t, err, ErrTPMAttestationInvalid)
 }
 

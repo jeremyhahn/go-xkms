@@ -85,24 +85,11 @@ func (s *WebAuthnStores) CleanupSessions() int {
 }
 
 // StartCleanupRoutine starts a background goroutine that periodically cleans up
-// expired sessions. Call the returned cancel function to stop the routine.
+// expired sessions (webauthn.SweepSessions). Call the returned cancel function
+// to stop the routine.
 func (s *WebAuthnStores) StartCleanupRoutine(ctx context.Context, interval time.Duration) context.CancelFunc {
 	ctx, cancel := context.WithCancel(ctx) // #nosec G118 -- cancel is returned to the caller
-
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				s.CleanupSessions()
-			}
-		}
-	}()
-
+	go webauthn.SweepSessions(ctx, s.sessions, interval)
 	return cancel
 }
 

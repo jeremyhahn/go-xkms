@@ -93,6 +93,7 @@ func TestImportDistributionCRLs_ReaderCloseErrorSurfaces(t *testing.T) {
 
 	closeErr := errors.New("crl_import_close_error_test: simulated reader close failure")
 	ca := setupTestCA(t)
+	allowLoopbackFetch(ca)
 	ca.objectStore = &failCloseStore{Storage: objmemory.New(), closeErr: closeErr}
 
 	cert := &x509.Certificate{

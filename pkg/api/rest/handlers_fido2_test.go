@@ -341,3 +341,37 @@ func TestHandleSDKFinishAuthentication_ServiceNotInitialized(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
 }
+
+// TestHandleSDKBeginRegistration_SessionStoreFull pins the SDK route's answer
+// when the relying party holds its maximum number of unfinished ceremonies:
+// 503 with the browser route's session_limit code, not a 500.
+func TestHandleSDKBeginRegistration_SessionStoreFull(t *testing.T) {
+	allowRegistration := true
+	rp, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
+		Config: &pkgwebauthn.Config{
+			RPID:                    "localhost",
+			RPDisplayName:           "xkms test",
+			RPOrigins:               []string{"https://localhost"},
+			AllowPublicRegistration: &allowRegistration,
+		},
+		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		SessionStore:    pkgwebauthn.NewMemorySessionStore(pkgwebauthn.WithMaxSessions(1)),
+		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+	})
+	require.NoError(t, err)
+	r := setupFIDO2HandlerTest(t, rp)
+
+	begin := func(email string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(transport.BeginRegistrationRequest{Email: email})
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/registration/begin", bytes.NewReader(body)))
+		return rr
+	}
+
+	require.Equal(t, http.StatusOK, begin("alice@example.com").Code)
+	rr := begin("bob@example.com")
+	require.Equal(t, http.StatusServiceUnavailable, rr.Code, "body: %s", rr.Body.String())
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &errResp))
+	assert.Equal(t, "session_limit", errResp.Error)
+}

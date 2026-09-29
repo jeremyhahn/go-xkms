@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 )
 
 // HTTPMiddleware creates HTTP middleware that automatically audits requests
@@ -93,26 +95,44 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// extractClientIP extracts the client IP from the request
-func extractClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
-	}
+// trustedProxies is the set of reverse proxies permitted to name the client
+// in X-Forwarded-For / X-Real-IP for audit source-IP attribution. It must be
+// the same *ratelimit.TrustedProxies the ACME server's own rate limiter uses
+// (acmeserver.TrustedProxies) — both are sourced from the single
+// server.trusted_proxies configuration key by SetTrustedProxies — so a
+// forwarding header is trusted, or not, identically for rate limiting and
+// for the audit trail. The nil zero value trusts no proxy, the secure
+// default: until SetTrustedProxies is called, extractClientIP resolves to
+// the transport peer address alone.
+var trustedProxies *ratelimit.TrustedProxies
 
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr
-	return r.RemoteAddr
+// SetTrustedProxies configures the reverse-proxy set that extractClientIP
+// (and so the HTTP audit middleware and RequestContext) trusts to name the
+// client in X-Forwarded-For / X-Real-IP. Call it once during start-up with
+// the same *ratelimit.TrustedProxies value passed to the ACME server's rate
+// limiter, so both derive the client identity from the same trusted-proxy
+// set and neither introduces a second server.trusted_proxies-shaped config
+// key. A nil proxies — the default before SetTrustedProxies is ever called —
+// trusts no proxy.
+func SetTrustedProxies(proxies *ratelimit.TrustedProxies) {
+	trustedProxies = proxies
 }
 
-// ClientIP returns the address of the client that sent r, preferring the
-// forwarding headers a reverse proxy sets over the transport-level peer
-// address. Handlers use it to stamp audit events with the true origin of a
-// request rather than the address of the proxy in front of the CA.
+// extractClientIP resolves the address of the client that sent r using the
+// shared trusted-proxy resolver (ratelimit.TrustedProxies.ClientIP): the
+// transport peer address, or, only when that peer is a configured trusted
+// proxy, the right-most untrusted X-Forwarded-For hop (then X-Real-IP). A
+// request from any other peer is attributed to its own transport address, so
+// a client cannot forge the recorded source IP by sending a forwarding
+// header.
+func extractClientIP(r *http.Request) string {
+	return trustedProxies.ClientIP(r)
+}
+
+// ClientIP returns the address of the client that sent r, resolved through
+// the same trusted-proxy rules as extractClientIP. Handlers use it to stamp
+// audit events with the true origin of a request rather than the address of
+// the proxy in front of the CA.
 func ClientIP(r *http.Request) string {
 	return extractClientIP(r)
 }

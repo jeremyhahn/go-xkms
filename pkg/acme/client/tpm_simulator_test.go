@@ -23,6 +23,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"io"
 	"log/slog"
 	"math/big"
@@ -187,7 +188,7 @@ func verifyServed(t *testing.T, issuer *attestationCA, statement []byte, keyAuth
 	t.Cleanup(server.Close)
 	host, port, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
 	require.NoError(t, err)
-	return deviceattest01.VerifyAttestation(net.DefaultResolver, issuer, host, port, "token", keyAuth)
+	return deviceattest01.VerifyAttestation(validation.NewClient(validation.Config{AllowPrivateTargets: true}), issuer, host, port, "token", keyAuth)
 }
 
 func csrSignedBy(t *testing.T, signer crypto.Signer) *x509.CertificateRequest {

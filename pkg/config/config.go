@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -355,6 +356,14 @@ type ServerConfig struct {
 	QUICPort  int    `yaml:"quic_port"`
 	MCPPort   int    `yaml:"mcp_port"`
 	NoisePort int    `yaml:"noise_port"`
+
+	// TrustedProxies lists the reverse proxies (IP addresses or CIDR
+	// prefixes) allowed to name the client in X-Forwarded-For / X-Real-IP.
+	// The REST rate limiters key on the client IP; a request from any other
+	// peer is keyed on its transport address, so a client cannot pick its
+	// own bucket by sending a forwarding header. Empty (the default) trusts
+	// no proxy. Parsed by ratelimit.ParseTrustedProxies.
+	TrustedProxies []string `yaml:"trusted_proxies,omitempty"`
 }
 
 // NetworkServing reports whether any network protocol is enabled. Network
@@ -1475,6 +1484,10 @@ func (c *Config) Validate() error {
 	}
 	if c.Protocols.Noise && (c.Server.NoisePort < 1 || c.Server.NoisePort > 65535) {
 		return &errs.Message{Msg: fmt.Sprintf("invalid Noise port: %d", c.Server.NoisePort)}
+	}
+
+	if _, err := ratelimit.ParseTrustedProxies(c.Server.TrustedProxies); err != nil {
+		return &errs.Wrapped{Msg: "invalid server.trusted_proxies", Err: err}
 	}
 
 	if _, err := c.Barrier.SealedWindowTimeoutDuration(); err != nil {

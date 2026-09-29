@@ -47,6 +47,7 @@ import (
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 )
@@ -97,6 +98,11 @@ var (
 	// ErrACMECAAValidator is returned when the CAA validator cannot be
 	// constructed from the supplied configuration.
 	ErrACMECAAValidator = errors.New("acme: failed to create CAA validator")
+
+	// ErrACMETrustedProxies is returned when server.trusted_proxies cannot be
+	// parsed. Config.Validate rejects a malformed list before xkmsd starts,
+	// so this only fires if that invariant is ever broken.
+	ErrACMETrustedProxies = errors.New("acme: failed to parse trusted proxies")
 )
 
 // acmeServer holds the runtime state of the embedded ACME HTTPS server so it
@@ -146,6 +152,21 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		slog.String("https_addr", acmeCfg.HTTPSAddr),
 		slog.String("external_url", acmeCfg.ExternalURL),
 		slog.String("keystore_backend", acmeCfg.KeystoreBackend))
+
+	// Client identity: forwarding headers are believed only from the
+	// configured reverse proxies (server.trusted_proxies; none by default).
+	// This is the one config key for the whole process — pkg/server wires the
+	// same list into the REST rate limiters — and the parsed value here feeds
+	// both the ACME rate limiter's own client-IP resolution
+	// (acmeserver.TrustedProxies, consulted by acmeserver.ClientIP) and the
+	// ACME audit trail's source-IP attribution (audit.SetTrustedProxies), so
+	// a forwarding header is trusted, or not, identically for both purposes.
+	trustedProxies, err := ratelimit.ParseTrustedProxies(cfg.Server.TrustedProxies)
+	if err != nil {
+		return nil, &acmeInitError{Stage: "parse trusted proxies", Sentinel: ErrACMETrustedProxies, Err: err}
+	}
+	acmeserver.TrustedProxies = trustedProxies
+	audit.SetTrustedProxies(trustedProxies)
 
 	// Resolve data directory for ACME state. Defaults to "<storage.path>/acme".
 	dataDir := acmeCfg.DataDir
@@ -479,13 +500,20 @@ func buildChallengeMap(
 	resilience config.ACMEResilienceConfig,
 	breakers *circuitbreaker.Manager,
 ) map[string]common.ChallengeVerifierFunc {
+	// One challenge-validation client serves every verifier that contacts a
+	// client-named target. It refuses reserved addresses unless
+	// acme.challenges.allow_private_targets is set.
+	client := acmesdk.NewACMEChallengeClient(acmesdk.ACMEChallengeClientConfig{
+		AllowPrivateTargets: cfg.AllowPrivateTargets,
+	})
+
 	m := make(map[string]common.ChallengeVerifierFunc, 2)
 	if cfg.HTTP01 {
 		m[common.ChallengeTypeHTTP01] = common.ChallengeVerifierFunc(func(
-			resolver *net.Resolver,
+			_ *net.Resolver,
 			_ common.CertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-			return http01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
+			return http01.Verify(client, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		})
 	}
 	if cfg.DNS01 {
@@ -499,7 +527,7 @@ func buildChallengeMap(
 	// The TPM attestation challenges (enroll-01/endorse-01) use the shared SDK
 	// wiring so every ACME server in the stack (xkmsd, quicbaas) enables them
 	// identically. The verifiers encapsulate the CA type-assertion + Verify.
-	for challengeType, verifier := range acmesdk.ACMEAttestationVerifiers(cfg.Enroll01, cfg.Endorse01) {
+	for challengeType, verifier := range acmesdk.ACMEAttestationVerifiers(client, cfg.Enroll01, cfg.Endorse01) {
 		m[challengeType] = verifier
 	}
 	return acmeserver.WrapChallengeVerifiers(m, resilience, breakers)
@@ -571,6 +599,9 @@ const defaultClusterTrustDomain = "xkms.cluster"
 // under the given directory path prefix. The route layout follows
 // RFC 8555 Section 7.1.
 //
+// Every route reads its request body through acmeserver.RequestBodyMiddleware,
+// mounted ahead of every other middleware except metrics instrumentation.
+//
 // rateLimitMiddleware, when non-nil, is applied to every route on the
 // returned router (including any handler a caller mounts on it afterward,
 // e.g. the cluster secret-delivery endpoint in startACMEServer) via
@@ -597,6 +628,13 @@ func buildACMERouter(svc handlers.RestServicer, directoryPath string, rateLimitM
 	// rate-limited (429) request is still recorded.
 	acmemetrics.Mount(r)
 
+	// RequestBodyMiddleware is the outermost middleware that touches the
+	// request: it reads every body once, capped at
+	// acmeserver.MaxRequestBodySize (an oversized body is a 413 problem), so
+	// nothing below it — rate limiters, TenantAuthMiddleware, handlers —
+	// ever reads the connection or holds shared state while a slow client
+	// trickles its body in.
+	r.Use(acmeserver.RequestBodyMiddleware)
 	if rateLimitMiddleware != nil {
 		r.Use(rateLimitMiddleware)
 	}

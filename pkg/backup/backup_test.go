@@ -360,7 +360,7 @@ func TestFileBackupAdapter_RestoreBackup(t *testing.T) {
 	// Test restoring non-existent backup
 	t.Run("NonExistentBackup", func(t *testing.T) {
 		restoreOpts := &RestoreOptions{}
-		_, err := adapter.RestoreBackup(ctx, "non-existent-id", restoreOpts)
+		_, err := adapter.RestoreBackup(ctx, "3b9e2f64-7c1a-4d8e-b5f2-9a0c6e1d7b48", restoreOpts)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrBackupNotFound)
 	})
@@ -507,7 +507,7 @@ func TestFileBackupAdapter_GetBackup(t *testing.T) {
 
 	// Test getting a non-existent backup
 	t.Run("NonExistentBackup", func(t *testing.T) {
-		_, err := adapter.GetBackup(ctx, "non-existent-id")
+		_, err := adapter.GetBackup(ctx, "3b9e2f64-7c1a-4d8e-b5f2-9a0c6e1d7b48")
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrBackupNotFound)
 	})
@@ -1593,7 +1593,7 @@ func TestFileBackupAdapter_GetBackupMetadata_LoadFromDiskError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try to get metadata for non-existent backup
-	_, err = adapter.getBackupMetadata("non-existent-id")
+	_, err = adapter.getBackupMetadata("3b9e2f64-7c1a-4d8e-b5f2-9a0c6e1d7b48")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackupNotFound)
 }
@@ -1750,7 +1750,7 @@ func TestFileBackupAdapter_LoadIndexWithInvalidJSON(t *testing.T) {
 
 	// Create invalid JSON files in the directory before creating adapter
 	invalidJSON := []byte("{invalid json}")
-	validJSON, _ := json.Marshal(&BackupMetadata{ID: "valid-backup", Version: "1.0"})
+	validJSON, _ := json.Marshal(&BackupMetadata{ID: "6e2d9c41-8a3b-4f5e-a7c0-1b2d3e4f5a6b", Version: "1.0"})
 
 	err := os.WriteFile(filepath.Join(tempDir, "invalid.json"), invalidJSON, 0600)
 	require.NoError(t, err)
@@ -1763,7 +1763,7 @@ func TestFileBackupAdapter_LoadIndexWithInvalidJSON(t *testing.T) {
 	require.NotNil(t, adapter)
 
 	// Should have loaded the valid backup
-	_, exists := adapter.index["valid-backup"]
+	_, exists := adapter.index["6e2d9c41-8a3b-4f5e-a7c0-1b2d3e4f5a6b"]
 	assert.True(t, exists, "Should have loaded valid backup")
 }
 
@@ -1771,7 +1771,7 @@ func TestFileBackupAdapter_LoadIndexWithUnreadableFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Create a valid JSON file
-	validJSON, err := json.Marshal(&BackupMetadata{ID: "valid-backup", Version: "1.0"})
+	validJSON, err := json.Marshal(&BackupMetadata{ID: "6e2d9c41-8a3b-4f5e-a7c0-1b2d3e4f5a6b", Version: "1.0"})
 	require.NoError(t, err)
 	validPath := filepath.Join(tempDir, "valid.json")
 	require.NoError(t, os.WriteFile(validPath, validJSON, 0600))
@@ -1789,7 +1789,7 @@ func TestFileBackupAdapter_LoadIndexWithUnreadableFiles(t *testing.T) {
 	require.NotNil(t, adapter)
 
 	// Should have loaded the valid backup
-	_, exists := adapter.index["valid-backup"]
+	_, exists := adapter.index["6e2d9c41-8a3b-4f5e-a7c0-1b2d3e4f5a6b"]
 	assert.True(t, exists, "Should have loaded valid backup")
 }
 
@@ -1802,7 +1802,7 @@ func TestFileBackupAdapter_LoadIndexSkipsDirectories(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a valid JSON file in the main directory
-	validJSON, _ := json.Marshal(&BackupMetadata{ID: "valid-backup", Version: "1.0"})
+	validJSON, _ := json.Marshal(&BackupMetadata{ID: "6e2d9c41-8a3b-4f5e-a7c0-1b2d3e4f5a6b", Version: "1.0"})
 	err = os.WriteFile(filepath.Join(tempDir, "valid.json"), validJSON, 0600)
 	require.NoError(t, err)
 
@@ -1812,7 +1812,7 @@ func TestFileBackupAdapter_LoadIndexSkipsDirectories(t *testing.T) {
 	require.NotNil(t, adapter)
 
 	// Should have loaded the valid backup
-	_, exists := adapter.index["valid-backup"]
+	_, exists := adapter.index["6e2d9c41-8a3b-4f5e-a7c0-1b2d3e4f5a6b"]
 	assert.True(t, exists, "Should have loaded valid backup")
 }
 

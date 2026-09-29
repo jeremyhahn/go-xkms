@@ -50,6 +50,11 @@ var tenantSentinelCodes = []struct {
 	code     int
 }{
 	{seal.ErrTenantNotFound, sdkssh.JSONRPCCodeNotFound},
+	// The composed go-qrdb TenantService reports an unknown tenant with its
+	// own sentinel, and XKMSService's tenant binding refuses a foreign tenant
+	// with an error that unwraps to it (xkms.TenantBindingError); both are
+	// not-found so a foreign tenant reads exactly like a missing one.
+	{qrdbsdk.ErrTenantMissing, sdkssh.JSONRPCCodeNotFound},
 	{seal.ErrTenantAlreadyExists, sdkssh.JSONRPCCodeDuplicate},
 	{seal.ErrEmptyTenantID, ErrCodeInvalidParams},
 	{seal.ErrAlreadyInitialized, sdkssh.JSONRPCCodeDuplicate},
@@ -66,8 +71,8 @@ var tenantSentinelCodes = []struct {
 }
 
 // mapTenantError converts an error returned by the XKMSService tenant
-// operations, or by refuseCrossTenantAdmin's anti-enumeration check, into a
-// *KeyOpError, mirroring pkg/api/grpc/service_custodian_share_tenant.go's
+// operations -- including the tenant binding's *xkms.TenantBindingError,
+// which unwraps to seal.ErrTenantNotFound -- into a *KeyOpError, mirroring pkg/api/grpc/service_custodian_share_tenant.go's
 // mapTenantError.
 //
 // Unlike PIN, PIV and barrier, tenant classification is not shared through
