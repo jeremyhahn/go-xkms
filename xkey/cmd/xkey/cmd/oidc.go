@@ -1164,8 +1164,16 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 	if logFile != "" {
 		logFile = expandPath(logFile)
 	}
-	if awsSessionStore != "" {
+	// AWSSessionStore is only persisted when --session-store was actually
+	// set on this command: an unset value lets runAWSProviderLogin (oidc.go)
+	// take the barrier-or-fallback path at login time, the same as `xkey
+	// oidc aws` run directly without --session-store, rather than silently
+	// pinning every provider added without the flag to the flag's default
+	// literal and bypassing barrier auto-detection for all of them.
+	if cmd.Flags().Changed("session-store") {
 		awsSessionStore = expandPath(awsSessionStore)
+	} else {
+		awsSessionStore = ""
 	}
 
 	if redirectURL == "" && pType != OIDCProviderTypeAWS {
@@ -2315,6 +2323,15 @@ func runAWSProviderLogin(cmd *cobra.Command, provider *OIDCProvider) error {
 		output = "aws-credentials"
 	}
 	crossDevice := provider.AWSCrossDevice
+	// sessionStoreExplicit reflects whether this provider was actually
+	// configured with a --session-store value at `providers add` time
+	// (runOIDCProvidersAdd only persists AWSSessionStore when its own
+	// --session-store flag was explicitly set): a real configuration choice
+	// bypasses barrier auto-detection for a plain file at that exact path,
+	// exactly like `xkey oidc aws --session-store` does directly; an unset
+	// provider follows the barrier-or-fallback decision, rooted at the
+	// shared xkey data directory.
+	sessionStoreExplicit := provider.AWSSessionStore != ""
 	sessionStore := provider.AWSSessionStore
 	if sessionStore == "" {
 		sessionStore = "~/.xkey/aws-session.json"
@@ -2327,6 +2344,7 @@ func runAWSProviderLogin(cmd *cobra.Command, provider *OIDCProvider) error {
 
 	// Call the AWS login implementation directly
 	return runAWSLogin(
+		cmd,
 		cmd.OutOrStdout(),
 		region,
 		profile,
@@ -2337,6 +2355,7 @@ func runAWSProviderLogin(cmd *cobra.Command, provider *OIDCProvider) error {
 		execCmd,
 		autoRefresh,
 		sessionStore,
+		sessionStoreExplicit,
 		background,
 		logFile,
 		provider.Name,

@@ -101,7 +101,10 @@ func (m *scMockTrustStore) AddCertificate(_ *x509.Certificate) error { return ni
 func (m *scMockTrustStore) AddCertificateWithOptions(_ *x509.Certificate, _ *truststore.AddCertificateOptions) error {
 	return m.addCertWithOptsErr
 }
-func (m *scMockTrustStore) AddPEM(_ []byte) (int, error)     { return 0, nil }
+func (m *scMockTrustStore) AddPEM(_ []byte) (int, error) { return 0, nil }
+func (m *scMockTrustStore) ImportPEM(_ []byte, _ *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
+	return truststore.ImportResult{}, nil
+}
 func (m *scMockTrustStore) RemoveCertificate(_ string) error { return nil }
 func (m *scMockTrustStore) Certificates() ([]*x509.Certificate, error) {
 	return m.certs, m.certsErr

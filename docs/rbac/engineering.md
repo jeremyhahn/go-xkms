@@ -328,8 +328,8 @@ specific permission before assuming a non-Admin role holds it.
   name `mtls` (`qrdbsdk.MethodMTLS`). `QRDBUserStore` projects the policy onto
   `MTLSUser.AuthMethods` (`pkg/auth/qrdb_userstore.go:69`);
   `MTLSAuthenticator.userIdentity` checks it after the enabled check
-  (`pkg/auth/mtls.go:247`) via `checkAuthMethod`
-  (`pkg/auth/authmethod.go:34`), which applies go-qrdb's
+  (`pkg/auth/mtls.go:247`) via `CheckAuthMethod`
+  (`pkg/auth/authmethod.go:42`), which applies go-qrdb's
   `auth/middleware` `checkAuthMethod` contract unchanged: an **empty policy
   states no restriction**, the method name is normalized with
   `qrdbsdk.NormalizeAuthMethods` and compared against the stored entries,
@@ -338,6 +338,10 @@ specific permission before assuming a non-Admin role holds it.
   serves certificates when no `UserStore` is configured — a `UserStore`
   configuration never falls back to certificate fields at all, whether the
   refusal is disablement, policy exclusion, or an unbound certificate.
+  The WebAuthn relying party applies the same `CheckAuthMethod` with
+  `auth.MethodWebAuthn`, alongside the lifecycle check, through
+  `webauthn.CheckAccountStanding` (go-xkms#1298; see
+  [webauthn/engineering.md](../webauthn/engineering.md)).
 - **A tenant ID taken from a request is bound in `XKMSService`, never in a
   transport.** The RBAC gate cannot do it (see `Authorize` above); a
   transport-level copy is a second owner that drifts. A new service method

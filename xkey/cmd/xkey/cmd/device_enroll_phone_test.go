@@ -60,6 +60,24 @@ func loadEnrollFixtureChain(t *testing.T) []string {
 	return chain
 }
 
+// TestEnrollPhone_RefusesAmbiguousDeviceName pins #1315: two paired records
+// sharing a name must refuse `device enroll-phone` instead of silently
+// enrolling whichever record happens to be first in the file.
+func TestEnrollPhone_RefusesAmbiguousDeviceName(t *testing.T) {
+	isolateDeviceBarrierHome(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "A", Address: "11:22:33:44:55:66"},
+			{Name: "A", Address: "AA:BB:CC:DD:EE:FF"},
+		},
+	}))
+
+	err := enrollPhone(t.Context(), &enrollPhoneOptions{DeviceFilter: "A"}, discardLogger())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDeviceNameAmbiguous)
+}
+
 // TestBuildEnrollmentPolicy_FailsClosedWithNoAllowList is the important
 // default.
 //

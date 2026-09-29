@@ -13,7 +13,10 @@
 
 package backup
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	// ErrNilConfig is returned when a nil config is passed to NewService.
@@ -78,7 +81,41 @@ var (
 	// ErrNotPasswordSealed is returned when a password is offered for an
 	// envelope that was sealed with a raw key and so carries no KDF record.
 	ErrNotPasswordSealed = errors.New("backup: backup was sealed with a raw key, not a password")
+
+	// ErrMissingRecordedPurpose is returned when an archived trust-store
+	// certificate carries no recorded purpose. Restore refuses it rather
+	// than auto-classifying it (#1312).
+	ErrMissingRecordedPurpose = errors.New("backup: certificate has no recorded purpose")
+
+	// ErrInvalidRecordedPurpose is returned when an archived trust-store
+	// certificate's recorded purpose is not a recognized trust-store purpose.
+	ErrInvalidRecordedPurpose = errors.New("backup: certificate has an invalid recorded purpose")
 )
+
+// RecordedPurposeError reports an archived trust-store certificate whose
+// recorded purpose restore refuses. It matches ErrRestoreFailed and its Err
+// (ErrMissingRecordedPurpose or ErrInvalidRecordedPurpose) under errors.Is.
+type RecordedPurposeError struct {
+	// Fingerprint identifies the refused certificate.
+	Fingerprint string
+
+	// Purpose is the purpose the archive recorded, empty when none was.
+	Purpose string
+
+	// Err is the reason for the refusal.
+	Err error
+}
+
+// Error implements the error interface.
+func (e *RecordedPurposeError) Error() string {
+	return fmt.Sprintf("%s (certificate %s, purpose %q)", e.Err.Error(), e.Fingerprint, e.Purpose)
+}
+
+// Unwrap returns ErrRestoreFailed and the refusal reason for errors.Is /
+// errors.As.
+func (e *RecordedPurposeError) Unwrap() []error {
+	return []error{ErrRestoreFailed, e.Err}
+}
 
 // DetailError appends detail text directly after a wrapped error while
 // preserving errors.Is / errors.As matching of the wrapped error through

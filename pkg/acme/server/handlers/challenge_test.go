@@ -604,44 +604,38 @@ func TestChallengeHandler_LoopbackIdentifierRefusedByDefault(t *testing.T) {
 
 func TestParseChallengeAsDynamicPortAssignment_NoPort(t *testing.T) {
 	// Note: "-01" suffix is NOT treated as a port (port must be > 99 to avoid matching challenge version suffixes)
-	baseType, port, err := parseChallengeAsDynamicPortAssignment("http-01")
-	require.NoError(t, err)
+	baseType, port := parseChallengeAsDynamicPortAssignment("http-01")
 	assert.Equal(t, "http-01", baseType)
 	assert.Equal(t, uint16(0), port)
 }
 
 func TestParseChallengeAsDynamicPortAssignment_WithPort(t *testing.T) {
-	baseType, port, err := parseChallengeAsDynamicPortAssignment("http-01-8080")
-	require.NoError(t, err)
+	baseType, port := parseChallengeAsDynamicPortAssignment("http-01-8080")
 	assert.Equal(t, "http-01", baseType)
 	assert.Equal(t, uint16(8080), port)
 }
 
 func TestParseChallengeAsDynamicPortAssignment_MultipleHyphens(t *testing.T) {
-	baseType, port, err := parseChallengeAsDynamicPortAssignment("device-attest-01-9443")
-	require.NoError(t, err)
+	baseType, port := parseChallengeAsDynamicPortAssignment("device-attest-01-9443")
 	assert.Equal(t, "device-attest-01", baseType)
 	assert.Equal(t, uint16(9443), port)
 }
 
 func TestParseChallengeAsDynamicPortAssignment_InvalidPort(t *testing.T) {
-	baseType, port, err := parseChallengeAsDynamicPortAssignment("http-01-invalid")
-	require.NoError(t, err)
+	baseType, port := parseChallengeAsDynamicPortAssignment("http-01-invalid")
 	assert.Equal(t, "http-01-invalid", baseType)
 	assert.Equal(t, uint16(0), port)
 }
 
 func TestParseChallengeAsDynamicPortAssignment_PortOutOfRange(t *testing.T) {
-	baseType, port, err := parseChallengeAsDynamicPortAssignment("http-01-99999")
-	require.NoError(t, err)
+	baseType, port := parseChallengeAsDynamicPortAssignment("http-01-99999")
 	// Port number out of uint16 range should be treated as not a port
 	assert.Equal(t, "http-01-99999", baseType)
 	assert.Equal(t, uint16(0), port)
 }
 
 func TestParseChallengeAsDynamicPortAssignment_SinglePart(t *testing.T) {
-	baseType, port, err := parseChallengeAsDynamicPortAssignment("http")
-	require.NoError(t, err)
+	baseType, port := parseChallengeAsDynamicPortAssignment("http")
 	assert.Equal(t, "http", baseType)
 	assert.Equal(t, uint16(0), port)
 }

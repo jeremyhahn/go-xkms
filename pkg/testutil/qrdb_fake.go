@@ -14,6 +14,7 @@
 package testutil
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"sort"
@@ -58,7 +59,10 @@ type QRDBFakeTransport struct {
 // Conformance is asserted at compile time: without this, a method added to
 // an upstream qrdb interface surfaces as a panic inside a test binary that
 // type-asserts this fake, not as a build failure. It did exactly that once.
-var _ qrdbtransport.UserClient = (*QRDBFakeTransport)(nil)
+var (
+	_ qrdbtransport.UserClient      = (*QRDBFakeTransport)(nil)
+	_ qrdbtransport.GuardedKVClient = (*QRDBFakeTransport)(nil)
+)
 
 // NewQRDBFakeTransport constructs an empty in-memory fake transport.
 func NewQRDBFakeTransport() *QRDBFakeTransport {
@@ -170,6 +174,42 @@ func (f *QRDBFakeTransport) Exists(ctx context.Context, key string, opts ...qrdb
 	defer f.mu.Unlock()
 	_, ok := f.kv[key]
 	return ok, nil
+}
+
+// PutIfAbsent implements transport.GuardedKVClient.
+func (f *QRDBFakeTransport) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.kv[key]; ok {
+		return false, nil
+	}
+	f.kv[key] = bytes.Clone(value)
+	return true, nil
+}
+
+// CompareAndDelete implements transport.GuardedKVClient.
+func (f *QRDBFakeTransport) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.kv[key]
+	if !ok || !bytes.Equal(v, expected) {
+		return false, nil
+	}
+	delete(f.kv, key)
+	return true, nil
+}
+
+// CompareAndSwap implements transport.GuardedKVClient. An absent key is left
+// absent, exactly as the real verb.
+func (f *QRDBFakeTransport) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.kv[key]
+	if !ok || !bytes.Equal(v, expected) {
+		return false, nil
+	}
+	f.kv[key] = bytes.Clone(next)
+	return true, nil
 }
 
 // --- transport.UserClient ---

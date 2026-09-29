@@ -21,6 +21,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -420,5 +421,28 @@ func TestResolveLocalSigners_DiscoverIdentitiesErrorPropagates(t *testing.T) {
 	var re *sdkssh.LocalIdentityReadError
 	if !errors.As(err, &re) {
 		t.Fatalf("expected *LocalIdentityReadError, got %T: %v", err, err)
+	}
+}
+
+// TestResolveLocalSigners_UserHomeDirErrorPropagates pins that a failure
+// resolving the operator's home directory aborts resolution and surfaces
+// os.UserHomeDir's own error, instead of silently falling back to an empty
+// home directory and searching the wrong (root-relative) paths for identity
+// files (go-xkms#1347).
+//
+// DefaultConfigPaths tolerates a UserHomeDir failure (it only loses the
+// ~/.ssh/config candidate), so clearing $HOME does not fail config loading
+// itself; it surfaces at the later, unguarded os.UserHomeDir call that
+// resolves DiscoverLocalIdentities' search root.
+func TestResolveLocalSigners_UserHomeDirErrorPropagates(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	sel := sdkssh.LocalKeySelector{Alias: "unconfigured-host"}
+	_, err := sdkssh.ResolveLocalSigners(context.Background(), sel, "")
+	if err == nil {
+		t.Fatal("expected an error when $HOME cannot be resolved")
+	}
+	if !strings.Contains(err.Error(), "HOME") {
+		t.Fatalf("expected os.UserHomeDir's own error to be surfaced, got: %v", err)
 	}
 }

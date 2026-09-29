@@ -14,13 +14,61 @@
 package encoding
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"testing"
+
+	"github.com/youmark/pkcs8"
 )
+
+// pbes2Params and pbkdf2Params mirror the unexported ASN.1 shapes
+// github.com/youmark/pkcs8 encodes a PBES2-wrapped key with (RFC 8018), so a
+// test here can read back the iteration count actually written to a blob
+// without a decryption round trip.
+type pbes2Params struct {
+	KeyDerivationFunc pkix.AlgorithmIdentifier
+	EncryptionScheme  pkix.AlgorithmIdentifier
+}
+
+type pbkdf2Params struct {
+	Salt           []byte
+	IterationCount int
+	PRF            pkix.AlgorithmIdentifier `asn1:"optional"`
+}
+
+type encryptedPrivateKeyInfo struct {
+	EncryptionAlgorithm pkix.AlgorithmIdentifier
+	EncryptedData       []byte
+}
+
+// pbes2IterationCount extracts the PBKDF2 iteration count recorded in a
+// PBES2-encrypted PKCS#8 DER blob.
+func pbes2IterationCount(t *testing.T, der []byte) int {
+	t.Helper()
+
+	var privKey encryptedPrivateKeyInfo
+	if _, err := asn1.Unmarshal(der, &privKey); err != nil {
+		t.Fatalf("asn1.Unmarshal(encryptedPrivateKeyInfo) error = %v", err)
+	}
+
+	var params pbes2Params
+	if _, err := asn1.Unmarshal(privKey.EncryptionAlgorithm.Parameters.FullBytes, &params); err != nil {
+		t.Fatalf("asn1.Unmarshal(pbes2Params) error = %v", err)
+	}
+
+	var kdfParams pbkdf2Params
+	if _, err := asn1.Unmarshal(params.KeyDerivationFunc.Parameters.FullBytes, &kdfParams); err != nil {
+		t.Fatalf("asn1.Unmarshal(pbkdf2Params) error = %v", err)
+	}
+
+	return kdfParams.IterationCount
+}
 
 func TestEncodePKCS8_RSA(t *testing.T) {
 	// Generate RSA key
@@ -360,4 +408,67 @@ func TestDecodePublicKeyPKIX_Errors(t *testing.T) {
 			t.Fatal("DecodePublicKeyPKIX should have failed with invalid data")
 		}
 	})
+}
+
+// TestEncodePKCS8_IterationCount proves EncodePKCS8 writes
+// pbkdf2IterationCount (go-xkms#1286: OWASP's 2023 PBKDF2-SHA256
+// recommendation), not this package's old default of 10,000, into the
+// PBES2 parameters of the blob it produces.
+func TestEncodePKCS8_IterationCount(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey() error = %v", err)
+	}
+
+	der, err := EncodePKCS8(privateKey, []byte("test-password"))
+	if err != nil {
+		t.Fatalf("EncodePKCS8() error = %v", err)
+	}
+
+	got := pbes2IterationCount(t, der)
+	if got != pbkdf2IterationCount {
+		t.Errorf("PBES2 iteration count = %d, want %d", got, pbkdf2IterationCount)
+	}
+}
+
+// TestDecodePKCS8_LegacyIterationCount proves a blob encrypted at this
+// package's old iteration count (10,000, before go-xkms#1286 raised the
+// default to 600,000) stays decryptable: PBES2 records its own iteration
+// count in the blob, so DecodePKCS8 must read it from there rather than
+// assume pbkdf2IterationCount.
+func TestDecodePKCS8_LegacyIterationCount(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey() error = %v", err)
+	}
+
+	legacyOpts := &pkcs8.Opts{
+		Cipher: pkcs8.AES256CBC,
+		KDFOpts: pkcs8.PBKDF2Opts{
+			SaltSize:       16,
+			IterationCount: 10000,
+			HMACHash:       crypto.SHA256,
+		},
+	}
+	password := []byte("legacy-password")
+	der, err := pkcs8.MarshalPrivateKey(privateKey, password, legacyOpts)
+	if err != nil {
+		t.Fatalf("pkcs8.MarshalPrivateKey() error = %v", err)
+	}
+	if got := pbes2IterationCount(t, der); got != 10000 {
+		t.Fatalf("test setup: PBES2 iteration count = %d, want 10000", got)
+	}
+
+	decoded, err := DecodePKCS8(der, password)
+	if err != nil {
+		t.Fatalf("DecodePKCS8() error = %v, want a legacy-iteration-count blob to stay decryptable", err)
+	}
+
+	decodedECDSA, ok := decoded.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatal("Decoded key is not *ecdsa.PrivateKey")
+	}
+	if !decodedECDSA.Equal(privateKey) {
+		t.Fatal("Decoded key doesn't match original")
+	}
 }

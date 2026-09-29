@@ -1273,6 +1273,8 @@ Usage: `xkey oidc aws [flags]`
 |---|---|---|---|
 | `--auto-refresh` | int | 0 | Auto-refresh interval in seconds (0 to disable) |
 | `--background` | bool | false | Run auto-refresh in background (requires --auto-refresh) |
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--callback-host` | string |  | Host the local callback listener binds (default: oidc.callback_host, localhost) |
 | `--callback-port` | int | 0 | Port of the default redirect URL (default: oidc.callback_port, 8085) |
 | `--credentials-file` | string | ~/.aws/credentials | Path to AWS credentials file |
@@ -2662,7 +2664,7 @@ Usage: `xkey trust add <pem-file> [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--purpose` | string |  | certificate purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer) |
+| `--purpose` | string |  | certificate purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer, synced) |
 | `--source` | string |  | source of the certificate (e.g., manual, url:..., file:...) |
 
 ## xkey trust bootstrap

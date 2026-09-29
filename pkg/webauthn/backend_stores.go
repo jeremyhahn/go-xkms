@@ -14,6 +14,7 @@
 package webauthn
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -185,7 +186,10 @@ func credByUserKey(userID, credID []byte) string {
 	return credByUserKeyPrefix + hex.EncodeToString(userID) + "/" + hex.EncodeToString(credID)
 }
 
-// Save stores a new credential and its user index.
+// Save stores a NEW credential and its user index. The record is created
+// with PutIfAbsent, so a credential ID that is already registered — to this
+// account or any other — is refused with ErrCredentialAlreadyExists and the
+// existing record is left untouched (go-xkms#1295).
 func (s *BackendCredentialStore) Save(ctx context.Context, cred *Credential) error {
 	if cred == nil {
 		return ErrInvalidRequest
@@ -194,9 +198,18 @@ func (s *BackendCredentialStore) Save(ctx context.Context, cred *Credential) err
 	if err != nil {
 		return &WebAuthnError{Op: "cred store: marshal credential", Err: err}
 	}
-	if err := s.backend.Put(ctx, backendCredKey(cred.ID), buf); err != nil {
+	stored, err := s.backend.PutIfAbsent(ctx, backendCredKey(cred.ID), buf)
+	if err != nil {
 		return &WebAuthnError{Op: "cred store: put credential", Err: err}
 	}
+	if !stored {
+		return ErrCredentialAlreadyExists
+	}
+	return s.putUserIndex(ctx, cred)
+}
+
+// putUserIndex records cred under its owner's credential index.
+func (s *BackendCredentialStore) putUserIndex(ctx context.Context, cred *Credential) error {
 	if err := s.backend.Put(ctx, credByUserKey(cred.UserID, cred.ID), []byte{1}); err != nil {
 		return &WebAuthnError{Op: "cred store: put user index", Err: err}
 	}
@@ -245,17 +258,30 @@ func (s *BackendCredentialStore) GetByUserID(ctx context.Context, userID []byte)
 	return creds, nil
 }
 
-// Update updates an existing credential.
+// Update overwrites an existing credential record: the sign counter, clone
+// flag and last-used time a login refreshes. The credential must exist
+// (ErrCredentialNotFound) and belong to the user the update names
+// (ErrCredentialOwnerMismatch); an update can never move a credential to
+// another account.
 func (s *BackendCredentialStore) Update(ctx context.Context, cred *Credential) error {
 	if cred == nil {
 		return ErrInvalidRequest
 	}
-	if exists, err := s.backend.Exists(ctx, backendCredKey(cred.ID)); err != nil {
-		return &WebAuthnError{Op: "cred store: check credential", Err: err}
-	} else if !exists {
-		return ErrCredentialNotFound
+	existing, err := s.GetByCredentialID(ctx, cred.ID)
+	if err != nil {
+		return err
 	}
-	return s.Save(ctx, cred)
+	if !bytes.Equal(existing.UserID, cred.UserID) {
+		return ErrCredentialOwnerMismatch
+	}
+	buf, err := json.Marshal(cred)
+	if err != nil {
+		return &WebAuthnError{Op: "cred store: marshal credential", Err: err}
+	}
+	if err := s.backend.Put(ctx, backendCredKey(cred.ID), buf); err != nil {
+		return &WebAuthnError{Op: "cred store: put credential", Err: err}
+	}
+	return nil
 }
 
 // Delete removes a credential by its ID.

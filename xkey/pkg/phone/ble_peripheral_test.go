@@ -336,6 +336,47 @@ func TestNewBLEPeripheral_MTUSelection(t *testing.T) {
 	}
 }
 
+// TestNewBLEPeripheral_RejectsInvalidPin pins the fix for #1307: a caller
+// that supplies ExpectedRemoteStatic but the value is not a usable Noise
+// static key -- empty, or any length other than NoiseKeySize -- must be
+// refused rather than silently accepted as "nothing to pin". An omitted
+// (nil) ExpectedRemoteStatic is the one value that legitimately means
+// unpinned, and must still construct successfully.
+func TestNewBLEPeripheral_RejectsInvalidPin(t *testing.T) {
+	tests := []struct {
+		name    string
+		pin     []byte
+		wantErr error
+	}{
+		{name: "nil is unpinned, not an error", pin: nil, wantErr: nil},
+		{name: "empty is refused", pin: []byte{}, wantErr: ErrPeripheralInvalidPin},
+		{name: "too short is refused", pin: make([]byte, pairing.NoiseKeySize-1), wantErr: ErrPeripheralInvalidPin},
+		{name: "too long is refused", pin: make([]byte, pairing.NoiseKeySize+1), wantErr: ErrPeripheralInvalidPin},
+		{name: "correct length is accepted", pin: make([]byte, pairing.NoiseKeySize), wantErr: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := NewBLEPeripheral(&BLEPeripheralConfig{
+				DeviceName:           "xKey-test",
+				ExpectedRemoteStatic: tt.pin,
+			})
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("got error %v, want %v", err, tt.wantErr)
+				}
+				if p != nil {
+					t.Fatal("a refused construction must not return a peripheral")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewBLEPeripheral failed: %v", err)
+			}
+		})
+	}
+}
+
 func TestBLEPeripheral_HandleRequestsReassemblesFragments(t *testing.T) {
 	// The control point delivers BLE-sized fragments. A request larger than
 	// one fragment must be reassembled before it is decrypted, otherwise the

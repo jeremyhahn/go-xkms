@@ -16,9 +16,6 @@ package http
 // HeaderSessionID is the header name for the session ID.
 const HeaderSessionID = "X-Session-Id"
 
-// HeaderUserID is the header name for the user ID.
-const HeaderUserID = "X-User-Id"
-
 // BeginRegistrationRequest is the request body for starting registration.
 type BeginRegistrationRequest struct {
 	// Email is the user's email address (required).
@@ -36,21 +33,6 @@ type BeginLoginRequest struct {
 
 	// Email is the user's email address (optional, alternative to UserID).
 	Email string `json:"email,omitempty"`
-}
-
-// RegistrationStatusRequest is used for checking registration status.
-type RegistrationStatusRequest struct {
-	// UserID is the base64-encoded user ID (optional).
-	UserID string `json:"user_id,omitempty"`
-
-	// Email is the user's email address (optional, alternative to UserID).
-	Email string `json:"email,omitempty"`
-}
-
-// RegistrationStatusResponse is the response for registration status.
-type RegistrationStatusResponse struct {
-	// Registered indicates if the user has registered credentials.
-	Registered bool `json:"registered"`
 }
 
 // AuthResponse is the response after successful registration or login.
@@ -78,13 +60,25 @@ type ErrorResponse struct {
 
 // Error codes returned in ErrorResponse.
 const (
-	ErrorCodeInvalidRequest       = "invalid_request"
-	ErrorCodeInvalidSession       = "invalid_session"
-	ErrorCodeSessionExpired       = "session_expired"
-	ErrorCodeUserNotFound         = "user_not_found"
-	ErrorCodeNoCredentials        = "no_credentials"
-	ErrorCodeVerificationFailed   = "verification_failed"
-	ErrorCodeRegistrationDisabled = "registration_disabled"
-	ErrorCodeSessionLimit         = "session_limit"
-	ErrorCodeInternalError        = "internal_error"
+	ErrorCodeInvalidRequest      = "invalid_request"
+	ErrorCodeInvalidSession      = "invalid_session"
+	ErrorCodeSessionExpired      = "session_expired"
+	ErrorCodeUserNotFound        = "user_not_found"
+	ErrorCodeNoCredentials       = "no_credentials"
+	ErrorCodeVerificationFailed  = "verification_failed"
+	ErrorCodeRegistrationRefused = "registration_refused"
+	ErrorCodeSessionLimit        = "session_limit"
+	ErrorCodeInternalError       = "internal_error"
+
+	// ErrorCodeUnauthenticated answers an authenticated-only ceremony
+	// (BeginAddCredential) reached without a session.
+	ErrorCodeUnauthenticated = "unauthenticated"
+
+	// ErrorCodeSessionAccountMismatch answers BeginAddCredential when the
+	// session does not identify an existing WebAuthn account.
+	ErrorCodeSessionAccountMismatch = "session_account_mismatch"
+
+	// ErrorCodeCredentialExists answers FinishRegistration when the
+	// authenticator's credential ID is already registered.
+	ErrorCodeCredentialExists = "credential_exists"
 )

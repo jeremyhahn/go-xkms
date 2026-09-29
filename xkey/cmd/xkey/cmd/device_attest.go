@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
@@ -125,13 +124,7 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(deviceAttestCmd)
 
-	deviceAttestCmd.Flags().String("device", "", "Specific paired device to use")
-	deviceAttestCmd.Flags().Bool("no-verify", false, "Skip certificate chain verification")
-	deviceAttestCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout (includes biometric wait)")
-
-	_ = viper.BindPFlag("device.attest.device", deviceAttestCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.attest.no-verify", deviceAttestCmd.Flags().Lookup("no-verify"))
-	_ = viper.BindPFlag("device.attest.timeout", deviceAttestCmd.Flags().Lookup("timeout"))
+	registerDeviceAttestFlags(deviceAttestCmd)
 }
 
 // runDeviceAttest executes the phone attestation command.
@@ -156,7 +149,10 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select the device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
@@ -332,7 +328,11 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 }
 
 // selectDevice picks a device from config by name, or returns the default.
-func selectDevice(cfg *DevicesConfig, deviceName string) *PairedDevice {
+//
+// It returns a non-nil error, wrapping ErrDeviceNameAmbiguous, when
+// deviceName (or, absent that, DefaultDevice) matches more than one paired
+// device record; see findDeviceByName.
+func selectDevice(cfg *DevicesConfig, deviceName string) (*PairedDevice, error) {
 	if deviceName != "" {
 		return findDeviceByName(cfg, deviceName)
 	}
@@ -340,9 +340,9 @@ func selectDevice(cfg *DevicesConfig, deviceName string) *PairedDevice {
 		return findDeviceByName(cfg, cfg.DefaultDevice)
 	}
 	if len(cfg.Devices) > 0 {
-		return &cfg.Devices[0]
+		return &cfg.Devices[0], nil
 	}
-	return nil
+	return nil, nil
 }
 
 // nonceMatches compares sent and received nonces using constant-time comparison.

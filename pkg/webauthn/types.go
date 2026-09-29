@@ -20,6 +20,8 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // User represents a WebAuthn user. Applications should implement this
@@ -48,6 +50,16 @@ type User interface {
 
 	// DisplayName returns the user's display name.
 	DisplayName() string
+
+	// Lifecycle returns the account's lifecycle state. Only an account whose
+	// state can authenticate (qrdbsdk.LifecycleActive) may log in or enrol
+	// a passkey; see CheckAccountStanding.
+	Lifecycle() qrdbsdk.Lifecycle
+
+	// AuthMethods returns the account's permitted-authentication-method
+	// policy, as qrdb stores it. Empty states no restriction; otherwise a
+	// WebAuthn login requires the list to name auth.MethodWebAuthn.
+	AuthMethods() []string
 }
 
 // Credential represents a WebAuthn credential stored by the Relying Party.
@@ -165,15 +177,20 @@ type DefaultUser struct {
 	displayName string
 	credentials []*Credential
 	sessionData []byte
+	lifecycle   qrdbsdk.Lifecycle
+	authMethods []string
 }
 
-// NewDefaultUser creates a new DefaultUser with the given parameters.
+// NewDefaultUser creates a new DefaultUser with the given parameters. The
+// account starts active with no auth-method restriction; a store that tracks
+// account standing sets it with SetLifecycle and SetAuthMethods.
 func NewDefaultUser(id []byte, email, displayName string) *DefaultUser {
 	return &DefaultUser{
 		id:          id,
 		email:       email,
 		displayName: displayName,
 		credentials: make([]*Credential, 0),
+		lifecycle:   qrdbsdk.LifecycleActive,
 	}
 }
 
@@ -268,4 +285,25 @@ func (u *DefaultUser) Credentials() []*Credential {
 // SetCredentials replaces the user's credentials.
 func (u *DefaultUser) SetCredentials(creds []*Credential) {
 	u.credentials = creds
+}
+
+// Lifecycle returns the account's lifecycle state.
+func (u *DefaultUser) Lifecycle() qrdbsdk.Lifecycle {
+	return u.lifecycle
+}
+
+// SetLifecycle sets the account's lifecycle state.
+func (u *DefaultUser) SetLifecycle(state qrdbsdk.Lifecycle) {
+	u.lifecycle = state
+}
+
+// AuthMethods returns the account's permitted-authentication-method policy.
+func (u *DefaultUser) AuthMethods() []string {
+	return u.authMethods
+}
+
+// SetAuthMethods sets the account's permitted-authentication-method policy.
+// Empty states no restriction.
+func (u *DefaultUser) SetAuthMethods(methods []string) {
+	u.authMethods = methods
 }

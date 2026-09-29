@@ -32,6 +32,8 @@ Rebuild with '-tags ble' to enable Bluetooth functionality.`,
 
 func init() {
 	deviceCmd.AddCommand(deviceScanCmd)
+
+	registerDeviceScanFlags(deviceScanCmd)
 }
 
 // runDeviceScan returns an error since BLE is not available.

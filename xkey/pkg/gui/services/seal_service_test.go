@@ -1092,6 +1092,75 @@ func TestSealService_DeleteBlob_NonExistentID(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSealBlobNotFound)
 }
 
+// TestValidateBlobID verifies that a frontend-supplied blob ID must match a
+// strict charset before it can reach blobPath: no path separators, no ".",
+// and non-empty. IDs SealData actually generates (32-character hex) are
+// well inside the accepted charset, as are legacy hand-assigned IDs seen
+// elsewhere in this file (e.g. "legacy-blob").
+func TestValidateBlobID(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		wantErr bool
+	}{
+		{name: "generated hex id", id: "a3f5c9e1b2d4f6a8c0e2b4d6f8a0c2e4", wantErr: false},
+		{name: "legacy hand-assigned id", id: "legacy-blob", wantErr: false},
+		{name: "empty", id: "", wantErr: true},
+		{name: "parent directory traversal", id: "../../etc/passwd", wantErr: true},
+		{name: "embedded path separator", id: "a/b", wantErr: true},
+		{name: "leading dot", id: "..", wantErr: true},
+		{name: "embedded dot", id: "id.with.dots", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBlobID(tt.id)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrSealInvalidBlobID)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestSealService_DeleteBlob_TraversalID verifies that DeleteBlob refuses a
+// path traversal ID before it reaches blobPath, and that a file planted at
+// the location the traversal would resolve to is left untouched.
+func TestSealService_DeleteBlob_TraversalID(t *testing.T) {
+	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
+
+	sentinel := filepath.Join(filepath.Dir(svc.StorageDir()), "passwd")
+	require.NoError(t, os.WriteFile(sentinel, []byte("do-not-delete"), 0600))
+	t.Cleanup(func() { _ = os.Remove(sentinel) })
+
+	err := svc.DeleteBlob("../passwd")
+	assert.ErrorIs(t, err, ErrSealInvalidBlobID)
+
+	_, statErr := os.Stat(sentinel)
+	require.NoError(t, statErr, "traversal ID must not delete files outside the storage directory")
+}
+
+// TestSealService_UnsealData_TraversalID verifies that UnsealData refuses a
+// path traversal ID before it reaches blobPath.
+func TestSealService_UnsealData_TraversalID(t *testing.T) {
+	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
+
+	_, err := svc.UnsealData("../../etc/passwd", "")
+	assert.ErrorIs(t, err, ErrSealInvalidBlobID)
+}
+
+// TestSealService_DeleteBlob_RealID verifies that a real, service-generated
+// blob ID is unaffected by the ID validation added for path traversal
+// hardening.
+func TestSealService_DeleteBlob_RealID(t *testing.T) {
+	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
+
+	entry, err := svc.SealData(validSealRequest())
+	require.NoError(t, err)
+
+	require.NoError(t, svc.DeleteBlob(entry.ID))
+}
+
 func TestSealService_DeleteBlob_VerifyListAfterDelete(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 

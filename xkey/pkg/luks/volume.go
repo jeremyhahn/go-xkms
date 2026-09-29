@@ -51,6 +51,7 @@ var (
 	unmountLUKS      = luks2.Unmount
 	isMountedFn      = luks2.IsMounted
 	isUnlockedFn     = luks2.IsUnlocked
+	chmodFn          = os.Chmod
 )
 
 // NewVolume creates a new Volume instance with paths resolved through
@@ -117,9 +118,14 @@ func (v *Volume) Create(sizeBytes int64, passphrase string) error {
 		return &VolumeError{Operation: "create_dir", Path: dir, Err: err}
 	}
 
-	// Create sparse file
-	f, err := os.Create(v.LUKSPath)
+	// Create sparse file. O_EXCL makes the existence check atomic with
+	// creation, closing the race window between the Exists check above
+	// and this call.
+	f, err := os.OpenFile(v.LUKSPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return ErrVolumeAlreadyExists
+		}
 		return &VolumeError{Operation: "create_file", Path: v.LUKSPath, Err: err}
 	}
 	if err := f.Truncate(sizeBytes); err != nil {
@@ -217,6 +223,15 @@ func (v *Volume) Unlock(passphrase string) error {
 	if err := mountLUKS(mountOpts); err != nil {
 		cleanupErr := errors.Join(lockLUKS(v.MapperName), detachLoopDevice(loopDev))
 		return &VolumeError{Operation: "mount", Path: v.MountPoint, Err: errors.Join(err, cleanupErr)}
+	}
+
+	// go-luks2 creates the ext4 filesystem with mkfs.ext4's default root
+	// permissions (0755), and mounting it replaces whatever mode the
+	// MkdirAll above gave the mount point directory. Re-assert 0700 here so
+	// the unlocked volume is never left world-listable.
+	if err := chmodFn(v.MountPoint, 0700); err != nil {
+		cleanupErr := errors.Join(unmountLUKS(v.MountPoint, 0), lockLUKS(v.MapperName), detachLoopDevice(loopDev))
+		return &VolumeError{Operation: "chmod_mountpoint", Path: v.MountPoint, Err: errors.Join(err, cleanupErr)}
 	}
 
 	// Chown the entire mount tree to the real (non-elevated) user when

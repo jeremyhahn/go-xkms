@@ -100,8 +100,10 @@ var _ keybackend.FIDO2KeyBackend = (*phoneBackendWithBridge)(nil)
 // --barrier-password-file flags (go-xkms#1041). fido2Cmd registers those
 // flags itself (fido2.go), so a phone paired through "xkey fido2" reaches the
 // identical barrier the operator already unlocked for FIDO2 credential
-// storage, not a second, differently-configured one.
-func connectXKMSdBridge(backend *phone.PhoneKeyBackend, cmd *cobra.Command, logger *slog.Logger) (*phoneBackendWithBridge, error) {
+// storage, not a second, differently-configured one. device is the paired
+// phone the bridge serves; bridge calls are audited against it (see
+// buildListenBridgeConfig).
+func connectXKMSdBridge(backend *phone.PhoneKeyBackend, cmd *cobra.Command, device *PairedDevice, logger *slog.Logger) (*phoneBackendWithBridge, error) {
 	cfg := loadXKMSdBridgeConfig()
 	if !cfg.Enabled {
 		return nil, nil
@@ -125,7 +127,7 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, cmd *cobra.Command, logg
 	// service a phone reaches through this bridge are the same ones a paired
 	// laptop's "xkey device listen" serves, not a parallel implementation
 	// that only forwards ping/attestation/TPM enrollment (go-xkms#1041).
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, enroller, enrollerErr)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, device, enroller, enrollerErr)
 
 	bridge, err := pairing.NewBridge(client, bridgeCfg)
 	if err != nil {

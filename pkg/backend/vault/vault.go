@@ -80,11 +80,12 @@ func NewBackend(config *Config) (*Backend, error) {
 	vaultConfig := vault.DefaultConfig()
 	vaultConfig.Address = config.Address
 
-	if config.TLSSkipVerify {
-		slog.Warn("vault: TLS certificate verification disabled via TLSSkipVerify; do not use in production",
-			"address", config.Address)
+	if config.TLSCAFile != "" || config.TLSCAPath != "" || config.TLSCertFile != "" || config.TLSKeyFile != "" {
 		tlsConfig := &vault.TLSConfig{
-			Insecure: true,
+			CACert:     config.TLSCAFile,
+			CAPath:     config.TLSCAPath,
+			ClientCert: config.TLSCertFile,
+			ClientKey:  config.TLSKeyFile,
 		}
 		if err := vaultConfig.ConfigureTLS(tlsConfig); err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to configure TLS", Err: err}

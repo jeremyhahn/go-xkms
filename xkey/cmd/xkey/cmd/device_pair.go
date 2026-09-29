@@ -74,17 +74,22 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(devicePairCmd)
 
-	// Pairing flags. --device and --force are per-invocation choices with no
-	// config-file meaning and are read directly off the flag; --timeout is
-	// shared with `device scan` and resolves through resolveDeviceScanTimeout
-	// (device.go), so device.scan_timeout applies here too (go-xkms#1071).
-	devicePairCmd.Flags().String("device", "", "Specific device name or address to pair")
-	devicePairCmd.Flags().Duration("timeout", defaultDeviceScanTimeout,
-		"Scan timeout duration (default: device.scan_timeout, 30s)")
-	devicePairCmd.Flags().Bool("force", false, "Force re-pairing even if already paired")
-	addSOPINFlags(devicePairCmd)
-	addDeviceBarrierFlags(devicePairCmd)
+	registerDevicePairFlags(devicePairCmd)
 }
+
+// Device pair command errors (#1307).
+var (
+	// ErrDeviceNameInvalid indicates the advertised device name failed
+	// validation: empty, too long, or containing a non-printable character.
+	// See pairing.ValidateDeviceName.
+	ErrDeviceNameInvalid = errors.New("device pair: invalid device name")
+
+	// ErrDeviceNameCollision indicates the advertised device name is
+	// already used by a different paired device -- one pinned to a
+	// different Noise static key, not the device being (re-)paired. See
+	// pairing.ConflictingPairedDevice.
+	ErrDeviceNameCollision = errors.New("device pair: device name is already used by a different paired device")
+)
 
 // pairingTransport is what runDevicePair needs from a transport: discovery,
 // a connection to the selected device, and the encrypted channel. The BLE
@@ -299,8 +304,14 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 		}
 	}
 
-	// Determine device name for storage and display
+	// Determine device name for storage and display. This is the BLE
+	// advertised local name -- untrusted input from the device being paired
+	// -- and it becomes the record's lookup key below, so it is validated
+	// before anything else uses it (#1307).
 	deviceName := selectedDevice.DisplayName()
+	if err := pairing.ValidateDeviceName(deviceName); err != nil {
+		return &SentinelCauseError{Sentinel: ErrDeviceNameInvalid, Cause: err}
+	}
 
 	fmt.Printf("\nPairing with \"%s\" (%s)...\n", deviceName, selectedDevice.Address)
 
@@ -441,34 +452,13 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 	pairedDevice := newPairedDeviceRecord(
 		deviceName, selectedDevice.Address, remotePublicKey, noiseKeyField, attestResult)
 
-	// Update or add to configuration.
-	// When force re-pairing, remove all old entries for the same device name
-	// since Android RPA rotation means the address changes across reinstalls.
-	switch {
-	case existingDevice != nil:
-		// Update existing device matched by address
-		for i := range cfg.Devices {
-			if cfg.Devices[i].Address == selectedDevice.Address {
-				cfg.Devices[i] = pairedDevice
-				break
-			}
-		}
-	case force:
-		// Force mode: remove stale entries by name, then add fresh entry.
-		// This handles the case where the phone's BLE address changed
-		// (Android RPA rotation or app reinstall) but the name is the same.
-		filtered := make([]PairedDevice, 0, len(cfg.Devices))
-		for _, d := range cfg.Devices {
-			if d.Name != deviceName {
-				filtered = append(filtered, d)
-			}
-		}
-		filtered = append(filtered, pairedDevice)
-		cfg.Devices = filtered
-	default:
-		// Add new device
-		cfg.Devices = append(cfg.Devices, pairedDevice)
+	// Update or add to configuration; see resolvePairedDevices for the
+	// name-collision refusal and identity-based replacement (#1307).
+	updatedDevices, err := resolvePairedDevices(cfg.Devices, pairedDevice)
+	if err != nil {
+		return err
 	}
+	cfg.Devices = updatedDevices
 
 	// Set as default if first device
 	if cfg.DefaultDevice == "" {
@@ -581,6 +571,40 @@ func newPairedDeviceRecord(
 		recordDeviceAttestation(&device, attest)
 	}
 	return device
+}
+
+// resolvePairedDevices returns devices with pairedDevice inserted (#1307).
+//
+// It refuses a name collision with a different, still-paired device
+// (ErrDeviceNameCollision): re-pairing the SAME device is allowed, but
+// persisting a second device under a name already in use would make every
+// later name lookup ambiguous between them. Otherwise every existing record
+// that identifies the SAME device -- matched by address or by its pinned
+// Noise key, which survives Android's RPA address rotation across
+// reinstalls -- is replaced by pairedDevice, unconditionally rather than
+// only under --force: a same-address or same-key match already confirmed
+// itself as this device by completing the handshake, so there is nothing
+// left for --force to gate. A device matching neither is appended.
+//
+// This replaces `--force` deleting every record sharing the advertised
+// name, which could remove an unrelated device's pairing merely because an
+// operator reused its display name; that collision is refused outright
+// above; see pairing.ConflictingPairedDevice, pairing.SamePairedDeviceIndices
+// and pairing.ReplacePairedDevices, which do the matching this sequences.
+func resolvePairedDevices(devices []PairedDevice, pairedDevice PairedDevice) ([]PairedDevice, error) {
+	if conflict := pairing.ConflictingPairedDevice(devices, pairedDevice.Name, pairedDevice.Address, pairedDevice.NoisePublicKey); conflict != nil {
+		return nil, &DetailError{
+			Err: ErrDeviceNameCollision,
+			Detail: fmt.Sprintf(": %q is already paired at address %s; choose a different name or unpair it first",
+				pairedDevice.Name, conflict.Address),
+		}
+	}
+
+	sameDevice := pairing.SamePairedDeviceIndices(devices, pairedDevice.Address, pairedDevice.NoisePublicKey)
+	if len(sameDevice) > 0 {
+		return pairing.ReplacePairedDevices(devices, sameDevice, pairedDevice), nil
+	}
+	return append(devices, pairedDevice), nil
 }
 
 // ErrPairingPolicyRefused indicates the config directory is sealed, an SO

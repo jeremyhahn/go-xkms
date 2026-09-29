@@ -368,16 +368,21 @@ func (a *OIDCAuthenticator) getJWKS(ctx context.Context) (*jose.JSONWebKeySet, e
 	return &jwks, nil
 }
 
-// validateToken validates the token as an ID token or falls back to userinfo.
+// validateToken routes tokenString to ID-token or opaque-access-token
+// validation based on its wire format, never on whether ID-token validation
+// happened to succeed. Falling back to the userinfo endpoint whenever
+// validateIDToken failed -- for any reason, including a bad signature, a
+// mismatched issuer, or (most dangerously) a mismatched audience -- would let
+// a userinfo response the provider serves any bearer token salvage a token
+// this authenticator has already determined is not valid for this
+// deployment's client ID. A malformed or non-JWT string is the only case
+// that legitimately belongs to the opaque-access-token flow.
 func (a *OIDCAuthenticator) validateToken(ctx context.Context, tokenString string) (*Identity, error) {
-	// Try to validate as ID token first
-	identity, err := a.validateIDToken(ctx, tokenString)
-	if err == nil {
-		return identity, nil
+	if _, _, err := jwt.NewParser().ParseUnverified(tokenString, jwt.MapClaims{}); err != nil {
+		// Not a JWT at all: this is the opaque access token flow.
+		return a.validateAccessToken(ctx, tokenString)
 	}
-
-	// Fall back to userinfo endpoint for access tokens
-	return a.validateAccessToken(ctx, tokenString)
+	return a.validateIDToken(ctx, tokenString)
 }
 
 // validateIDToken validates the token as a JWT ID token.
@@ -471,10 +476,25 @@ func (a *OIDCAuthenticator) validateIDToken(ctx context.Context, tokenString str
 		}
 	}
 
-	return a.claimsToIdentity(claims), nil
+	identity := a.claimsToIdentity(claims)
+	if identity.Subject == "" {
+		return nil, ErrOIDCMissingSubject
+	}
+	return identity, nil
 }
 
-// validateAccessToken validates an access token via the userinfo endpoint.
+// validateAccessToken validates an opaque access token via the userinfo
+// endpoint.
+//
+// This is deliberately not RFC 7662 token introspection: introspection needs
+// a client-authenticated call (typically HTTP Basic with a client secret)
+// and this authenticator's OIDCConfig carries no client secret -- adding one
+// is a config and discovery-plumbing change of its own, tracked as a
+// follow-up rather than folded into this fix. What this function closes is
+// narrower: the userinfo endpoint identifies the token's subject but does not
+// generally echo an audience claim to check, so the one universal defect it
+// can fix is a response accepted with no subject at all -- a provider bug or
+// a misconfigured endpoint would otherwise mint an Identity for nobody.
 func (a *OIDCAuthenticator) validateAccessToken(ctx context.Context, tokenString string) (*Identity, error) {
 	discovery := a.discovery.Load()
 	if discovery == nil || discovery.UserInfoEndpoint == "" {
@@ -511,7 +531,11 @@ func (a *OIDCAuthenticator) validateAccessToken(ctx context.Context, tokenString
 		return nil, &OIDCAuthenticatorError{Message: "failed to parse userinfo response", Cause: err}
 	}
 
-	return a.claimsToIdentity(claims), nil
+	identity := a.claimsToIdentity(claims)
+	if identity.Subject == "" {
+		return nil, ErrOIDCMissingSubject
+	}
+	return identity, nil
 }
 
 // validateAudience validates the audience claim.

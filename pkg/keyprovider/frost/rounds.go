@@ -20,7 +20,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -39,9 +38,6 @@ type SignatureShare struct {
 	// Share is the signature share bytes
 	Share []byte
 }
-
-// DefaultSessionTimeout is the default timeout for signing sessions.
-const DefaultSessionTimeout = 5 * time.Minute
 
 // GenerateNonces generates nonces and commitments for Round 1 of FROST signing.
 // The returned NoncePackage contains secret nonces (keep private) and
@@ -147,17 +143,12 @@ func (b *FrostBackend) GenerateNonces(keyID string) (*NoncePackage, error) {
 		},
 	}
 
-	// Store session for Round 2
-	b.sessionsMu.Lock()
-	b.sessions[sessionID] = &SigningSession{
-		SessionID:     sessionID,
-		KeyID:         keyID,
-		ParticipantID: participantID,
-		Nonces:        noncePackage,
-		CreatedAt:     time.Now(),
-		ExpiresAt:     time.Now().Add(DefaultSessionTimeout),
-	}
-	b.sessionsMu.Unlock()
+	// The caller holds noncePackage's secret nonces for Round 2 and is
+	// responsible for zeroizing them once SignRound is called (see
+	// SigningNonces.Zeroize and docs/frost/security.md). xkms does not keep
+	// a server-side copy: SignRound takes the nonces from the request, and
+	// EnableNonceTracking (default true) rejects any commitment reused
+	// across signing attempts.
 
 	return noncePackage, nil
 }

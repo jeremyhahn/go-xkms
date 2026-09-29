@@ -197,13 +197,23 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 	// Refresh-token records live on the qrdb identity plane when available,
 	// falling back to process memory (sessions then end on restart, which
 	// is the correct fail-closed behavior without a durable identity plane).
-	var refreshStore token.RefreshStore
+	//
+	// The user resolver rides the same availability: with a qrdb client, the
+	// refresh token's subject is re-checked against the CURRENT user record
+	// on every refresh (go-xkms#1297); without one there is no identity
+	// plane to check against, so the resolver stays nil and Refresh trusts
+	// the token's own claims exactly as it always has.
+	var (
+		refreshStore token.RefreshStore
+		userResolver token.UserResolver
+	)
 	if p.QRDBClient != nil {
 		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV())
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
 		refreshStore = qs
+		userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users())
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}
@@ -226,12 +236,19 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		AccessTTL:     accessTTL,
 		RefreshTTL:    refreshTTL,
 		RefreshStore:  refreshStore,
+		UserResolver:  userResolver,
 	})
 	if err != nil {
 		return nil, &TokenIssuerConfigError{Err: err}
 	}
 	return issuer, nil
 }
+
+// Compile-time check: pkg/auth's QRDBUserResolver cannot declare this
+// interface itself (pkg/auth/token already imports pkg/auth, so the reverse
+// import would cycle), so the structural match is asserted where both
+// packages are already imported together.
+var _ token.UserResolver = (*auth.QRDBUserResolver)(nil)
 
 // ---------------------------------------------------------------------------
 // WebAuthn service construction
@@ -267,6 +284,10 @@ func (a *WebAuthnTokenAdapter) identityFor(user webauthn.User) *auth.Identity {
 		Metadata: map[string]string{
 			"username":     user.WebAuthnName(),
 			"display_name": user.WebAuthnDisplayName(),
+			// Declares Subject's encoding explicitly for the refresh-time
+			// re-check (go-xkms#1297 review): QRDBUserResolver must never
+			// guess it from the subject's shape.
+			auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle,
 		},
 	}
 	if email := user.Email(); email != "" {
@@ -713,6 +734,11 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				"WebAuthn and PIV/mTLS logins will not work", "error", tiErr)
 		} else {
 			cfg.TokenIssuer = issuer
+			// So DisableUser/DeleteUser (pkg/xkms) can end every
+			// refresh-token session the account holds the moment the
+			// lifecycle change lands, rather than only at the account's
+			// next refresh attempt (go-xkms#1297).
+			hc.XKMSService.SetTokenIssuer(issuer)
 
 			loginRate := 10
 			if session.LoginRatePerMin > 0 {

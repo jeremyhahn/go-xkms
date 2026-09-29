@@ -104,8 +104,8 @@ func TestPublicRegistrationDefault_RefusesUnknownUser(t *testing.T) {
 	options, sessionID, err := svc.BeginRegistration(ctx, "stranger@example.com", "Stranger")
 
 	require.Error(t, err, "the default policy must refuse an unknown email")
-	assert.True(t, errors.Is(err, ErrPublicRegistrationDisabled),
-		"want ErrPublicRegistrationDisabled, got %v", err)
+	assert.True(t, errors.Is(err, ErrRegistrationRefused),
+		"want ErrRegistrationRefused, got %v", err)
 	assert.Nil(t, options)
 	assert.Empty(t, sessionID)
 
@@ -138,8 +138,8 @@ func TestPublicRegistrationDisabled_RefusesUnknownUser(t *testing.T) {
 	options, sessionID, err := svc.BeginRegistration(ctx, "stranger@example.com", "Stranger")
 
 	require.Error(t, err, "closed registration must refuse an unknown email")
-	assert.True(t, errors.Is(err, ErrPublicRegistrationDisabled),
-		"want ErrPublicRegistrationDisabled, got %v", err)
+	assert.True(t, errors.Is(err, ErrRegistrationRefused),
+		"want ErrRegistrationRefused, got %v", err)
 	assert.Nil(t, options)
 	assert.Empty(t, sessionID)
 

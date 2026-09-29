@@ -16,6 +16,7 @@
 package rand
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
@@ -58,34 +59,29 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 
 	// Call GetSlotList to activate slots in this context
 	// This is required by some PKCS#11 implementations (e.g., YubiKey)
-	// Every cleanup call below unwinds a partially-initialized context after
-	// a failure that is already being reported through the returned error;
-	// its own failure would not change the outcome, so it is a best-effort
-	// discard (the explicit `_ =` is what satisfies errcheck, matching the
-	// same idiom already used in pkg/auth/token/store.go).
 	_, err = ctx.GetSlotList(true)
 	if err != nil {
-		_ = ctx.Finalize()
+		finalizeErr := ctx.Finalize()
 		ctx.Destroy()
-		return nil, &errs.Wrapped{Msg: "failed to get PKCS#11 slot list", Err: err}
+		return nil, errors.Join(&errs.Wrapped{Msg: "failed to get PKCS#11 slot list", Err: err}, finalizeErr)
 	}
 
 	// Open session
 	session, err := ctx.OpenSession(config.SlotID, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
 	if err != nil {
-		_ = ctx.Finalize()
+		finalizeErr := ctx.Finalize()
 		ctx.Destroy()
-		return nil, &errs.Wrapped{Msg: "failed to open PKCS#11 session", Err: err}
+		return nil, errors.Join(&errs.Wrapped{Msg: "failed to open PKCS#11 session", Err: err}, finalizeErr)
 	}
 
 	// Login if PIN is required
 	if config.PINRequired && config.PIN != nil {
 		buf, openErr := config.PIN.Open()
 		if openErr != nil {
-			_ = ctx.CloseSession(session)
-			_ = ctx.Finalize()
+			closeErr := ctx.CloseSession(session)
+			finalizeErr := ctx.Finalize()
 			ctx.Destroy()
-			return nil, &errs.Wrapped{Msg: "failed to open PKCS#11 PIN", Err: openErr}
+			return nil, errors.Join(&errs.Wrapped{Msg: "failed to open PKCS#11 PIN", Err: openErr}, closeErr, finalizeErr)
 		}
 		// miekg/pkcs11's Login takes a Go string, so this converts the
 		// opened buffer into an unwipeable copy for the duration of the
@@ -93,10 +89,10 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 		loginErr := ctx.Login(session, pkcs11.CKU_USER, string(buf.Bytes()))
 		buf.Destroy()
 		if loginErr != nil {
-			_ = ctx.CloseSession(session)
-			_ = ctx.Finalize()
+			closeErr := ctx.CloseSession(session)
+			finalizeErr := ctx.Finalize()
 			ctx.Destroy()
-			return nil, &errs.Wrapped{Msg: "failed to authenticate with PKCS#11", Err: loginErr}
+			return nil, errors.Join(&errs.Wrapped{Msg: "failed to authenticate with PKCS#11", Err: loginErr}, closeErr, finalizeErr)
 		}
 	}
 
@@ -155,19 +151,20 @@ func (p *pkcs11Resolver) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.ctx != nil {
-		// Best-effort teardown: Close always returns nil below, so a
-		// Logout/CloseSession/Finalize failure here has nowhere to
-		// propagate to, and Destroy releases the module regardless.
-		if p.config.PINRequired {
-			_ = p.ctx.Logout(p.session)
-		}
-		_ = p.ctx.CloseSession(p.session)
-		_ = p.ctx.Finalize()
-		p.ctx.Destroy()
-		p.ctx = nil
+	if p.ctx == nil {
+		return nil
 	}
-	return nil
+
+	var logoutErr error
+	if p.config.PINRequired {
+		logoutErr = p.ctx.Logout(p.session)
+	}
+	closeErr := p.ctx.CloseSession(p.session)
+	finalizeErr := p.ctx.Finalize()
+	p.ctx.Destroy()
+	p.ctx = nil
+
+	return errors.Join(logoutErr, closeErr, finalizeErr)
 }
 
 type pkcs11Source struct {

@@ -347,8 +347,15 @@ func TestIntegration_MultipleCredentials(t *testing.T) {
 	require.NoError(t, err)
 	authenticator1.AddCredential(credential1)
 
-	// Register second credential for same user
-	regOptions2, regSessionID2, err := svc.BeginRegistration(ctx, "multicred@example.com", "Multi Cred User")
+	// A second credential cannot be added through the public ceremony
+	// (go-xkms#1294); it takes a session authenticated as the account.
+	_, _, err = svc.BeginRegistration(ctx, "multicred@example.com", "Multi Cred User")
+	require.ErrorIs(t, err, ErrRegistrationRefused)
+
+	regOptions2, regSessionID2, err := svc.BeginAddCredential(ctx, SessionAccount{
+		UserID: user.WebAuthnID(),
+		Email:  "multicred@example.com",
+	})
 	require.NoError(t, err)
 
 	// Verify exclude list contains first credential

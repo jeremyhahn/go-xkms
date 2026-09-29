@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,10 +44,11 @@ type mockTrustStoreAccessor struct {
 	meta       map[string]*backup.CertMetadataInfo
 	contains   map[string]bool
 	addedPEM   [][]byte
+	importOpts []*truststore.AddCertificateOptions
 	certsErr   error
 	metaErr    error
 	containErr error
-	addPEMErr  error
+	importErr  error
 }
 
 func (m *mockTrustStoreAccessor) Certificates() ([]*x509.Certificate, error) {
@@ -80,12 +82,13 @@ func (m *mockTrustStoreAccessor) Contains(fingerprint string) (bool, error) {
 	return m.contains[fingerprint], nil
 }
 
-func (m *mockTrustStoreAccessor) AddPEM(pemData []byte) (int, error) {
-	if m.addPEMErr != nil {
-		return 0, m.addPEMErr
+func (m *mockTrustStoreAccessor) ImportPEM(pemData []byte, opts *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
+	if m.importErr != nil {
+		return truststore.ImportResult{}, m.importErr
 	}
 	m.addedPEM = append(m.addedPEM, pemData)
-	return 1, nil
+	m.importOpts = append(m.importOpts, opts)
+	return truststore.ImportResult{Added: 1}, nil
 }
 
 type mockOATHAccessor struct {
@@ -668,6 +671,30 @@ func TestApplyTrustStoreDelta_NewCertsAdded(t *testing.T) {
 	assert.Len(t, ts.addedPEM, 2)
 }
 
+// TestApplyTrustStoreDelta_ImportsUnderSyncedPurpose guards #1304: every
+// certificate a paired device sends is imported under the caller-chosen
+// PurposeSynced quarantine, never auto-classified into an anchor purpose.
+func TestApplyTrustStoreDelta_ImportsUnderSyncedPurpose(t *testing.T) {
+	ts := &mockTrustStoreAccessor{contains: map[string]bool{}}
+	svc, err := NewService(testConfig(), WithTrustStore(ts))
+	require.NoError(t, err)
+
+	_, err = svc.ApplyTrustStoreDelta(&TrustStoreDelta{
+		Certificates: []TrustStoreCertSync{
+			{PEM: "cert1", Fingerprint: "fp1"},
+			{PEM: "cert2", Fingerprint: "fp2"},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, ts.importOpts, 2)
+	for _, opts := range ts.importOpts {
+		require.NotNil(t, opts, "a nil options value would auto-classify the certificate")
+		assert.Equal(t, truststore.PurposeSynced, opts.Purpose)
+		assert.Equal(t, syncedCertificateSource, opts.Source)
+	}
+}
+
 func TestApplyTrustStoreDelta_DuplicatesSkipped(t *testing.T) {
 	ts := &mockTrustStoreAccessor{
 		contains: map[string]bool{"fp1": true, "fp2": true},
@@ -730,10 +757,10 @@ func TestApplyTrustStoreDelta_ContainsError(t *testing.T) {
 	assert.Len(t, result.Errors, 1)
 }
 
-func TestApplyTrustStoreDelta_AddPEMError(t *testing.T) {
+func TestApplyTrustStoreDelta_ImportError(t *testing.T) {
 	ts := &mockTrustStoreAccessor{
 		contains:  map[string]bool{},
-		addPEMErr: errors.New("write failed"),
+		importErr: errors.New("write failed"),
 	}
 	svc, err := NewService(testConfig(), WithTrustStore(ts))
 	require.NoError(t, err)
@@ -1146,9 +1173,26 @@ func TestApplyCADelta_CertAndChain(t *testing.T) {
 	assert.Len(t, ts.addedPEM, 2)
 }
 
+// TestApplyCADelta_ImportsUnderSyncedPurpose guards #1304 on the CA path:
+// neither the synced CA certificate nor its chain becomes an anchor.
+func TestApplyCADelta_ImportsUnderSyncedPurpose(t *testing.T) {
+	ts := &mockTrustStoreAccessor{}
+	svc, err := NewService(testConfig(), WithTrustStore(ts))
+	require.NoError(t, err)
+
+	_, err = svc.ApplyCADelta(&CADelta{CACertPEM: "ca", CAChainPEM: "chain"})
+	require.NoError(t, err)
+
+	require.Len(t, ts.importOpts, 2)
+	for _, opts := range ts.importOpts {
+		require.NotNil(t, opts, "a nil options value would auto-classify the certificate")
+		assert.Equal(t, truststore.PurposeSynced, opts.Purpose)
+	}
+}
+
 func TestApplyCADelta_CertAddError(t *testing.T) {
 	ts := &mockTrustStoreAccessor{
-		addPEMErr: errors.New("cert add failed"),
+		importErr: errors.New("cert add failed"),
 	}
 	svc, err := NewService(testConfig(), WithTrustStore(ts))
 	require.NoError(t, err)
@@ -1166,20 +1210,16 @@ func TestApplyCADelta_CertAddError(t *testing.T) {
 
 func TestApplyCADelta_ChainAddError(t *testing.T) {
 	callCount := 0
-	ts := &mockTrustStoreAccessor{}
-	// Override AddPEM to fail on second call (chain)
-	origAddPEM := ts.AddPEM
-	_ = origAddPEM // We need a different approach since mock fields are simple
 
-	// Use a custom accessor that fails on the second AddPEM call.
+	// A custom accessor that fails on the second import (the chain).
 	customTS := &countingTrustStoreAccessor{
 		contains: map[string]bool{},
-		addFunc: func(pemData []byte) (int, error) {
+		addFunc: func(pemData []byte) (truststore.ImportResult, error) {
 			callCount++
 			if callCount == 2 {
-				return 0, errors.New("chain add failed")
+				return truststore.ImportResult{}, errors.New("chain add failed")
 			}
-			return 1, nil
+			return truststore.ImportResult{Added: 1}, nil
 		},
 	}
 
@@ -1198,10 +1238,10 @@ func TestApplyCADelta_ChainAddError(t *testing.T) {
 	assert.Contains(t, result.Errors[0], "ca chain")
 }
 
-// countingTrustStoreAccessor provides custom AddPEM behavior for testing.
+// countingTrustStoreAccessor provides custom ImportPEM behavior for testing.
 type countingTrustStoreAccessor struct {
 	contains map[string]bool
-	addFunc  func(pemData []byte) (int, error)
+	addFunc  func(pemData []byte) (truststore.ImportResult, error)
 }
 
 func (c *countingTrustStoreAccessor) Certificates() ([]*x509.Certificate, error) {
@@ -1216,7 +1256,7 @@ func (c *countingTrustStoreAccessor) Contains(fingerprint string) (bool, error) 
 	return c.contains[fingerprint], nil
 }
 
-func (c *countingTrustStoreAccessor) AddPEM(pemData []byte) (int, error) {
+func (c *countingTrustStoreAccessor) ImportPEM(pemData []byte, _ *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
 	return c.addFunc(pemData)
 }
 

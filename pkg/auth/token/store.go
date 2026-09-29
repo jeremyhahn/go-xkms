@@ -102,6 +102,14 @@ type RefreshStore interface {
 	// the family. The tombstone is written first so a refresh in flight cannot
 	// slip a successor past the sweep.
 	RevokeFamily(ctx context.Context, family string) error
+
+	// RevokeBySubject revokes every family whose Record.Subject equals
+	// subject, exactly as RevokeFamily revokes one -- so a user-lifecycle
+	// change (disable, delete) ends every session the account holds, no
+	// matter which login flow minted it. It is idempotent: a subject with no
+	// live family is a no-op success, matching RevokeFamily's own logout
+	// semantics.
+	RevokeBySubject(ctx context.Context, subject string) error
 }
 
 // refreshKey builds the KV key for a record.
@@ -193,7 +201,30 @@ func (s *MemoryRefreshStore) MarkRotated(_ context.Context, family, jti string) 
 func (s *MemoryRefreshStore) RevokeFamily(_ context.Context, family string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.revokeFamilyLocked(family)
+	return nil
+}
 
+// RevokeBySubject implements RefreshStore.
+func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	families := make(map[string]struct{})
+	for _, rec := range s.records {
+		if rec.Subject == subject {
+			families[rec.Family] = struct{}{}
+		}
+	}
+	for family := range families {
+		s.revokeFamilyLocked(family)
+	}
+	return nil
+}
+
+// revokeFamilyLocked writes family's revocation tombstone and removes every
+// record in it. Callers hold s.mu.
+func (s *MemoryRefreshStore) revokeFamilyLocked(family string) {
 	if _, ok := s.revoked[family]; !ok {
 		s.revoked[family] = time.Now().Add(RevocationTombstoneTTL).Unix()
 	}
@@ -203,7 +234,6 @@ func (s *MemoryRefreshStore) RevokeFamily(_ context.Context, family string) erro
 			delete(s.records, k)
 		}
 	}
-	return nil
 }
 
 // sweepLocked drops expired records and tombstones. Callers hold the mutex.
@@ -391,6 +421,40 @@ func (s *QRDBRefreshStore) RevokeFamily(ctx context.Context, family string) erro
 	for _, k := range keys {
 		if err := s.kv.Delete(ctx, k); err != nil {
 			return &StoreError{Op: "delete", Err: err}
+		}
+	}
+	return nil
+}
+
+// RevokeBySubject implements RefreshStore.
+//
+// The store keeps no secondary index from subject to family, so this scans
+// every live refresh record under refreshPrefix once to collect the
+// families subject owns, then revokes each exactly as RevokeFamily does.
+// That scan is the store's only way to answer "every session this account
+// holds": the alternative -- indexing by subject on every Save -- would
+// have to stay consistent with RevokeFamily's own delete-by-prefix sweep,
+// and a lifecycle change is rare enough next to a refresh that the scan's
+// cost is the right place to pay it.
+func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+	entries, err := s.kv.Scan(ctx, refreshPrefix)
+	if err != nil {
+		return &StoreError{Op: "scan", Err: err}
+	}
+
+	families := make(map[string]struct{})
+	for _, data := range entries {
+		var rec Record
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return &StoreError{Op: "decode", Err: err}
+		}
+		if rec.Subject == subject {
+			families[rec.Family] = struct{}{}
+		}
+	}
+	for family := range families {
+		if err := s.RevokeFamily(ctx, family); err != nil {
+			return err
 		}
 	}
 	return nil

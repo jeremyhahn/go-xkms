@@ -33,6 +33,14 @@ import (
 // (nil = the config never decided, i.e. the go-xkms#184 secure default).
 func newFIDO2PolicyService(t *testing.T, allow *bool) *Service {
 	t.Helper()
+	svc, _ := newFIDO2RelyingPartyService(t, allow)
+	return svc
+}
+
+// newFIDO2RelyingPartyService is newFIDO2PolicyService that also returns the
+// relying party, for tests that inspect or change the accounts it holds.
+func newFIDO2RelyingPartyService(t *testing.T, allow *bool) (*Service, *webauthn.Service) {
+	t.Helper()
 
 	xkms.Reset()
 	t.Cleanup(xkms.Reset)
@@ -57,7 +65,7 @@ func newFIDO2PolicyService(t *testing.T, allow *bool) *Service {
 	require.NoError(t, err)
 	svc.SetWebAuthn(rp)
 
-	return NewService(nil, nil, svc)
+	return NewService(nil, nil, svc), rp
 }
 
 // TestBeginRegistration_DefaultClosedReturnsPermissionDenied pins the gRPC

@@ -120,12 +120,10 @@ func (s *XKMSService) BeginAuthentication(ctx context.Context, req *transport.Be
 		return nil, ErrNotConfigured
 	}
 
-	user, err := s.webauthnService.GetUserByEmail(ctx, req.Email)
-	if err != nil {
-		return nil, &ErrWebAuthnCeremony{Operation: "resolve user", Err: err}
-	}
-
-	assertion, sessionID, err := s.webauthnService.BeginLogin(ctx, user.WebAuthnID())
+	// BeginLoginForEmail answers an unknown email, or an account without
+	// credentials, with decoy options rather than an error, so this verb
+	// does not reveal whether the account exists (go-xkms#1296).
+	assertion, sessionID, err := s.webauthnService.BeginLoginForEmail(ctx, req.Email)
 	if err != nil {
 		return nil, &ErrWebAuthnCeremony{Operation: "begin authentication", Err: err}
 	}
@@ -157,15 +155,18 @@ func (s *XKMSService) FinishAuthentication(ctx context.Context, req *transport.F
 
 	parsed, err := protocol.ParseCredentialRequestResponseBody(strings.NewReader(req.AssertionJSON))
 	if err != nil {
-		return nil, &ErrWebAuthnCeremony{Operation: "parse assertion", Err: err}
+		// Classified as a verification failure, not wrapped bare: a malformed
+		// assertion is a login-finish failure like any other, and every
+		// transport (pkg/api/grpc, pkg/api/rest) must fold it into the same
+		// fixed response a wrong-but-well-formed assertion gets, so it
+		// carries no more detail than that (go-xkms#1310).
+		return nil, &ErrWebAuthnCeremony{Operation: "parse assertion", Err: xkmswebauthn.NewVerificationError("parse assertion", err)}
 	}
 
-	user, err := s.webauthnService.GetUserByEmail(ctx, req.Email)
-	if err != nil {
-		return nil, &ErrWebAuthnCeremony{Operation: "resolve user", Err: err}
-	}
-
-	token, loggedIn, err := s.webauthnService.FinishLogin(ctx, req.SessionID, user.WebAuthnID(), parsed)
+	// The session begun by BeginAuthentication records the account; the
+	// email is not resolved again, so an unknown email fails exactly like a
+	// wrong assertion instead of revealing that it names no account.
+	token, loggedIn, err := s.webauthnService.FinishLogin(ctx, req.SessionID, nil, parsed)
 	if err != nil {
 		return nil, &ErrWebAuthnCeremony{Operation: "finish authentication", Err: err}
 	}

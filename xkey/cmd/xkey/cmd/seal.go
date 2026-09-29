@@ -36,6 +36,13 @@ var (
 	ErrSealPassphraseRead = &SealError{Operation: "read_passphrase", Message: "failed to read passphrase"}
 	ErrSealVolumeCreate   = &SealError{Operation: "create_volume", Message: "failed to create LUKS volume"}
 	ErrSealDataMigration  = &SealError{Operation: "migrate_data", Message: "failed to migrate data"}
+
+	// ErrSealSymlinkRefused identifies a SealError returned by copyFileSeal
+	// when the plaintext source directory contains a symlink. Following it
+	// would copy whatever it points at -- possibly outside the data
+	// directory -- into the unencrypted staging copy or the encrypted
+	// volume under a name the caller never intended to expose.
+	ErrSealSymlinkRefused = errors.New("seal: refusing to copy a symlink")
 )
 
 var (
@@ -287,7 +294,11 @@ func migrateExistingData(out io.Writer, vol migrateVolume, passphrase string) er
 	// From here on, every failure preserves tmpDir: it may be the only
 	// intact copy of the source data until the source is removed below.
 	failMigration := func(op string, cause error) error {
-		_, _ = fmt.Fprintf(out, "Migration failed: staged copy preserved at %s\n", tmpDir)
+		_, _ = fmt.Fprintf(out,
+			"Migration failed: staged copy preserved at %s\n"+
+				"This directory holds an UNENCRYPTED copy of your plaintext secrets -- copy what you need out of "+
+				"it, then securely delete it (e.g. `shred -u -r %s`)\n",
+			tmpDir, tmpDir)
 		return &SealError{Operation: op, Err: cause}
 	}
 
@@ -458,19 +469,31 @@ func copyDirContents(src, dst string) error {
 	return nil
 }
 
-// copyFileSeal copies a single file preserving permissions.
+// copyFileSeal copies a single regular file preserving permissions. It
+// refuses to copy symlinks: this function stages the plaintext data
+// directory before it is moved into the encrypted volume, and following a
+// symlink there would silently pull in whatever it points at -- possibly
+// from outside the data directory -- under a name the caller never
+// intended to expose in the (unencrypted) staging copy.
 func copyFileSeal(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return &SealError{
+			Operation: "copy_file",
+			Message:   fmt.Sprintf("%s is a symlink", src),
+			Err:       ErrSealSymlinkRefused,
+		}
+	}
+
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
 
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(dst, data, srcInfo.Mode())
+	return os.WriteFile(dst, data, info.Mode())
 }
 
 // SealError represents a seal operation error.

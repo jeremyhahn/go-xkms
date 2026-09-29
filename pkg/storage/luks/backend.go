@@ -15,6 +15,7 @@ package luks
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 
@@ -89,8 +90,12 @@ func (b *Backend) Unlock(passphrase string) error {
 	delegate, err := filestorage.New(b.volume.GetMountPoint())
 	if err != nil {
 		// Best-effort rollback: lock the volume again since we cannot
-		// create the delegate storage.
-		b.volume.Lock() //nolint:errcheck // best-effort rollback after the delegate failed to open; the function already returns ErrDelegateCreateFailed regardless of this outcome
+		// create the delegate storage. A failure to re-lock is joined into
+		// the returned error rather than swallowed, since the caller needs
+		// to know the volume may have been left unlocked.
+		if lockErr := b.volume.Lock(); lockErr != nil {
+			return errors.Join(ErrDelegateCreateFailed, lockErr)
+		}
 		return ErrDelegateCreateFailed
 	}
 
@@ -156,15 +161,16 @@ func (b *Backend) Lock() error {
 	b.delegate = nil
 	b.mu.Unlock()
 
+	var closeErr error
 	if delegate != nil {
-		delegate.Close() //nolint:errcheck // best-effort close before locking the volume; a Close failure here does not affect the lock outcome, which is checked below
+		closeErr = delegate.Close()
 	}
 
 	if err := b.volume.Lock(); err != nil {
-		return ErrVolumeLockFailed
+		return errors.Join(ErrVolumeLockFailed, closeErr)
 	}
 
-	return nil
+	return closeErr
 }
 
 // IsUnlocked reports whether the backend is in the unlocked state.

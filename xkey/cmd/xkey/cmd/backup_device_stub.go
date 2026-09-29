@@ -17,10 +17,8 @@ package cmd
 
 import (
 	"errors"
-	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // Device backup errors (stub).
@@ -78,19 +76,8 @@ func init() {
 	backupCmd.AddCommand(backupToDeviceCmd)
 	backupCmd.AddCommand(backupFromDeviceCmd)
 
-	// To-device flags
-	backupToDeviceCmd.Flags().String("device", "", "Paired device name to send backup to")
-	backupToDeviceCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-
-	// From-device flags
-	backupFromDeviceCmd.Flags().String("device", "", "Paired device name to restore from")
-	backupFromDeviceCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("backup.to_device.device", backupToDeviceCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("backup.to_device.timeout", backupToDeviceCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("backup.from_device.device", backupFromDeviceCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("backup.from_device.timeout", backupFromDeviceCmd.Flags().Lookup("timeout"))
+	registerBackupToDeviceFlags(backupToDeviceCmd)
+	registerBackupFromDeviceFlags(backupFromDeviceCmd)
 }
 
 // runBackupToDeviceStub returns an error indicating BLE support is not available.

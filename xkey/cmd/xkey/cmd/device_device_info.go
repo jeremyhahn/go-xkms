@@ -80,7 +80,10 @@ func runDeviceInfo(cmd *cobra.Command, args []string) error {
 		deviceName = cfg.Devices[0].Name
 	}
 
-	device := findDeviceByName(cfg, deviceName)
+	device, err := findDeviceByName(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
 	}

@@ -130,8 +130,11 @@ func (m *p6aMockTrustStore) RemoveCertificate(_ string) error { return nil }
 func (m *p6aMockTrustStore) CertificatesByPurpose(purpose truststore.CertPurpose) ([]*x509.Certificate, error) {
 	return m.certs[purpose], nil
 }
-func (m *p6aMockTrustStore) Certificates() ([]*x509.Certificate, error)          { return nil, nil }
-func (m *p6aMockTrustStore) AddPEM(_ []byte) (int, error)                        { return 0, nil }
+func (m *p6aMockTrustStore) Certificates() ([]*x509.Certificate, error) { return nil, nil }
+func (m *p6aMockTrustStore) AddPEM(_ []byte) (int, error)               { return 0, nil }
+func (m *p6aMockTrustStore) ImportPEM(_ []byte, _ *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
+	return truststore.ImportResult{}, nil
+}
 func (m *p6aMockTrustStore) CertPool() (*x509.CertPool, error)                   { return x509.NewCertPool(), nil }
 func (m *p6aMockTrustStore) Contains(_ string) (bool, error)                     { return false, nil }
 func (m *p6aMockTrustStore) Count() (int, error)                                 { return 0, nil }

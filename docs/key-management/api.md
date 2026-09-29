@@ -1,6 +1,6 @@
 # Key Management — API
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## How the six transports are shaped
 
@@ -113,6 +113,42 @@ needs to encrypt under an RSA key should call `EncryptAsym`
 (`pkg/xkms/servicer_crypto.go:856`, `POST /api/v1/keys/{id}/encrypt-asym`)
 instead: RSA-OAEP is unconditionally available and requires no configuration
 change.
+
+### Decrypt's RSA fallback (PKCS#1 v1.5) is refused by default, symmetric with Encrypt
+
+`Decrypt` mirrors `Encrypt`'s split: a symmetric key uses the backend's AEAD
+(`pkg/xkms/servicer_crypto.go:788`); an RSA key falls back to
+`crypto.Decrypter.Decrypt` (`pkg/xkms/servicer_crypto.go:844`) under the
+padding named on the request's `padding` field ("" or `"pkcs1v15"` for
+PKCS#1 v1.5, `"oaep"` for RSA-OAEP). Until go-xkms#1283, this was the one
+PKCS#1 v1.5 construction in the service that ran unconditionally: `Encrypt`'s
+matching fallback, `WrapKeyByID`'s `CKM_RSA_PKCS` mechanism and `UnwrapKeyByID`
+all refused it by default, but `Decrypt` performed it regardless of policy.
+
+`asymDecrypterOpts` (`pkg/xkms/servicer_crypto.go:917`) now applies the same
+gate: PKCS#1 v1.5 — named explicitly or left unnamed, since an unnamed padding
+still means PKCS#1 v1.5 — is refused unless `crypto.allow_legacy_key_wrap:
+true` is set, the same setting `Encrypt`'s fallback and the wrap/unwrap RPCs
+already read. The unnamed-padding default itself is unchanged: `Encrypt`'s
+asymmetric fallback has exactly one construction (PKCS#1 v1.5), so a `Decrypt`
+that defaulted an unnamed padding to OAEP could never read back what `Encrypt`
+produced. A caller who wants RSA-OAEP over `Decrypt` names it explicitly
+(`padding: "oaep"`), exactly as `EncryptAsym` requires unconditionally on its
+side of the same round trip.
+
+A bad ciphertext under PKCS#1 v1.5 or RSA-OAEP reports one uniform,
+undifferentiated failure (`pkg/xkms/servicer_crypto.go:871`,
+`wrapAsymDecryptError`), discarding whatever diagnostic text the backend's own
+`crypto.Decrypter` attached: PKCS#1 v1.5's conformance check is the
+Bleichenbacher/Marvin decryption oracle and RSA-OAEP's decoding check is the
+Manger oracle (RFC 8017 §§7.1.2, 7.2.2), and `Decrypt` is reachable over every
+transport with a caller-designated key and a caller-supplied ciphertext, so a
+distinguishable failure reason is the oracle's confirmation bit. This mirrors
+`ErrUnwrapCiphertextRejected`, the same discipline `UnwrapKeyByID` already
+applies to its own RSA constructions. A backend capability refusal (a TPM2
+raw-decrypt refusal on a sign-only key, for instance) is unaffected and still
+reports its own text under `ErrOperationNotSupported`, since that names a
+static capability boundary rather than a property of the ciphertext.
 
 ### MCP names some import/export fields differently from the request struct
 

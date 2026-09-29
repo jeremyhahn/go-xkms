@@ -102,6 +102,21 @@ func TestFIDO2Cmd_HarnessArgvIsRegistered(t *testing.T) {
 // restores the live flags, so this guard cannot leak state into the other
 // tests that read fido2Cmd's flag values.
 func TestFIDO2Cmd_HarnessArgvLeavesFlagsUntouched(t *testing.T) {
+	// fido2Cmd.Flags() only returns what cobra has already merged into
+	// fido2Cmd's own FlagSet: its locally declared flags plus, once
+	// something has resolved a command through fido2Cmd (root.Find below,
+	// ParseFlags, ...), every ancestor's persistent flags (e.g. --log-level
+	// from RootCmd). fido2Cmd is a package-level singleton shared by every
+	// test in this process, so whether that merge already happened depends
+	// on which other tests ran first. Resolve the harness argv once here,
+	// discarding the result, so the merge is forced before the "before"
+	// snapshot is taken: otherwise a not-yet-merged persistent flag is
+	// absent from "before" but present (at its declared default) in
+	// "after", and the comparison below reports it as changed when it
+	// never was (go-xkms#1328).
+	_, _, err := RootCmd.Find(logins.VirtualAuthenticatorArgv)
+	require.NoError(t, err)
+
 	before := map[string]string{}
 	fido2Cmd.Flags().VisitAll(func(f *pflag.Flag) {
 		before[f.Name] = f.Value.String()

@@ -224,6 +224,98 @@ func TestCleanupHTTP01TokenFile_NonExistentFile(t *testing.T) {
 	CleanupHTTP01TokenFile(webroot, "no-such-token", testLogger())
 }
 
+// TestValidateHTTP01Token verifies that RFC 8555 Section 8.3 token format
+// validation accepts well-formed base64url tokens and refuses path
+// traversal sequences, embedded separators, and empty input.
+func TestValidateHTTP01Token(t *testing.T) {
+	tests := []struct {
+		name    string
+		token   string
+		wantErr bool
+	}{
+		{name: "valid base64url token", token: "gvOUcHiVIxNQ1mMFj4KMJfl3n0dp2v-6qN3TttMOsm0", wantErr: false},
+		{name: "valid short token", token: "abc123", wantErr: false},
+		{name: "parent directory traversal", token: "../x", wantErr: true},
+		{name: "embedded path separator", token: "a/b", wantErr: true},
+		{name: "empty token", token: "", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateHTTP01Token(tt.token)
+			if tt.wantErr {
+				require.Error(t, err)
+				var invalidErr ErrInvalidHTTP01Token
+				assert.ErrorAs(t, err, &invalidErr)
+				assert.Equal(t, tt.token, invalidErr.Token)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestWriteHTTP01TokenFile_InvalidToken verifies that WriteHTTP01TokenFile
+// refuses tokens carrying path traversal sequences or separators before
+// joining them into a filesystem path, and that no file is written for
+// them anywhere on disk, including outside the webroot.
+func TestWriteHTTP01TokenFile_InvalidToken(t *testing.T) {
+	invalidTokens := []string{"../x", "a/b", ""}
+
+	for _, token := range invalidTokens {
+		t.Run(token, func(t *testing.T) {
+			webroot := t.TempDir()
+
+			err := WriteHTTP01TokenFile(webroot, token, "ka", testLogger())
+			require.Error(t, err)
+			var invalidErr ErrInvalidHTTP01Token
+			assert.ErrorAs(t, err, &invalidErr)
+
+			// The challenge directory is created after validation, so an
+			// invalid token must leave no trace of it at all.
+			_, statErr := os.Stat(filepath.Join(webroot, ".well-known"))
+			assert.True(t, os.IsNotExist(statErr), "no files should be written for an invalid token")
+
+			// A traversal token in particular must not escape webroot.
+			outside := filepath.Join(filepath.Dir(webroot), "x")
+			_, outsideErr := os.Stat(outside)
+			assert.True(t, os.IsNotExist(outsideErr), "token traversal must not escape webroot")
+		})
+	}
+}
+
+// TestWriteHTTP01TokenFile_ValidToken verifies that a well-formed base64url
+// token is still accepted and written under the webroot.
+func TestWriteHTTP01TokenFile_ValidToken(t *testing.T) {
+	webroot := t.TempDir()
+	token := "gvOUcHiVIxNQ1mMFj4KMJfl3n0dp2v-6qN3TttMOsm0"
+	keyAuth := token + ".thumbprint"
+
+	require.NoError(t, WriteHTTP01TokenFile(webroot, token, keyAuth, testLogger()))
+
+	tokenPath := filepath.Join(webroot, ".well-known", "acme-challenge", token)
+	content, err := os.ReadFile(tokenPath)
+	require.NoError(t, err)
+	assert.Equal(t, keyAuth, string(content))
+}
+
+// TestCleanupHTTP01TokenFile_InvalidToken verifies that CleanupHTTP01TokenFile
+// refuses a path traversal token and never touches anything outside webroot.
+func TestCleanupHTTP01TokenFile_InvalidToken(t *testing.T) {
+	webroot := t.TempDir()
+
+	// Plant a sentinel file at the location "../x" would resolve to,
+	// relative to webroot's ".well-known/acme-challenge" directory, and
+	// confirm cleanup never reaches it.
+	sentinel := filepath.Join(filepath.Dir(webroot), "x")
+	require.NoError(t, os.WriteFile(sentinel, []byte("do-not-delete"), 0600))
+	t.Cleanup(func() { _ = os.Remove(sentinel) })
+
+	CleanupHTTP01TokenFile(webroot, "../x", testLogger())
+
+	_, err := os.Stat(sentinel)
+	require.NoError(t, err, "a traversal token must not delete files outside webroot")
+}
+
 // TestComputeDNS01Response verifies the DNS-01 response computation matches
 // RFC 8555 Section 8.4: base64url(SHA-256(keyAuthorization)).
 func TestComputeDNS01Response(t *testing.T) {

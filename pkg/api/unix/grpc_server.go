@@ -32,6 +32,7 @@ import (
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
+	"github.com/jeremyhahn/go-xkms/pkg/peercred"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -86,6 +87,16 @@ type GRPCConfig struct {
 
 	// SocketMode is the file mode for the socket (default: 0660)
 	SocketMode os.FileMode
+
+	// AllowedUIDs extends the accept-time peer-credential check
+	// (PeerCredentialPolicy) beyond its defaults -- the daemon's own uid and
+	// root (uid 0) -- with additional uids permitted to connect. Optional;
+	// nil admits only the defaults.
+	AllowedUIDs []uint32
+
+	// AllowedGIDs extends PeerCredentialPolicy by primary group, evaluated
+	// the same way as AllowedUIDs. Optional; nil admits only the defaults.
+	AllowedGIDs []uint32
 
 	// Logger is the logging adapter
 	Logger *slog.Logger
@@ -205,8 +216,25 @@ func NewGRPCServer(cfg *GRPCConfig) (*GRPCServer, error) {
 
 // Start starts the gRPC Unix socket server
 func (s *GRPCServer) Start() error {
-	// Ensure the socket directory exists
+	// The kernel peer-credential check below (peercred.FromConn, via
+	// peerCredentialTransport) is this listener's only gate now that the
+	// keystore service registers with grpcinternal.WithLocalTrust (RBAC
+	// off): refuse to start on a platform this project has not verified a
+	// kernel peer-credential mechanism for, rather than silently serving
+	// every peer unauthenticated.
+	if err := peercred.CheckSupport(); err != nil {
+		return &errs.Wrapped{Msg: "peer credential support required for Unix socket listener", Err: err}
+	}
+
+	// An existing socket directory must already be privately owned by this
+	// process: its mode is what stands between an unrelated user replacing
+	// the socket pathname and this daemon binding it (see sockdir.go).
 	socketDir := filepath.Dir(s.config.SocketPath)
+	if err := validateSocketDir(socketDir); err != nil {
+		return err
+	}
+
+	// Ensure the socket directory exists
 	if err := os.MkdirAll(socketDir, 0750); err != nil {
 		return &errs.Wrapped{Msg: "failed to create socket directory", Err: err}
 	}
@@ -238,11 +266,17 @@ func (s *GRPCServer) Start() error {
 	// identity, so tenant scoping is a no-op passthrough unless a caller
 	// context ever carries one -- kept for parity with every other transport
 	// rather than because a nil identity needs gating today.
+	peerPolicy := NewPeerCredentialPolicy(s.config.AllowedUIDs, s.config.AllowedGIDs)
 	opts := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(s.config.MaxRecvMsgSize),
 		grpc.MaxSendMsgSize(s.config.MaxSendMsgSize),
 		grpc.ConnectionTimeout(s.config.ConnectionTimeout),
 		grpc.MaxConcurrentStreams(s.config.MaxConcurrentStreams),
+		// Refuses any peer whose kernel-verified uid/gid is not the daemon's
+		// own, root, or configured (AllowedUIDs/AllowedGIDs) -- at accept
+		// time, before this listener's WithLocalTrust (RBAC off) keystore
+		// service would otherwise trust the connection on file mode alone.
+		grpc.Creds(newPeerCredentialTransport(peerPolicy)),
 		grpc.ChainUnaryInterceptor(grpcinternal.TenantUnaryInterceptor(s.config.BarrierRegistry, s.logger)),
 		grpc.ChainStreamInterceptor(grpcinternal.TenantStreamInterceptor(s.config.BarrierRegistry, s.logger)),
 		// Tracks this listener's active connections (go-xkms#720): the unix

@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/spf13/cobra"
@@ -81,15 +82,23 @@ func TestAWSPathHelpers_ExpandTilde(t *testing.T) {
 }
 
 // --- session persistence ---
+//
+// These tests all pass an explicit session store path, which bypasses
+// barrier auto-detection entirely (openAWSSessionStore, matching `xkey
+// oath`'s --store and `xkey oidc`'s --token-store overrides), so the cmd
+// argument's flags are never consulted and an empty *cobra.Command
+// suffices. See oidc_aws_barrier_test.go for the barrier-or-fallback
+// decision itself.
 
 // TestStoreAWSSession_CreatesParentDirWithPrivateFile complements the
 // existing round-trip test by pinning the two properties that matter for
 // safety: the parent directory is created on demand, and the file holding
 // the refresh token is owner-only.
 func TestStoreAWSSession_CreatesParentDirWithPrivateFile(t *testing.T) {
+	cmd := &cobra.Command{}
 	path := filepath.Join(t.TempDir(), "nested", "aws-session.json")
 
-	require.NoError(t, storeAWSSession(path, AWSStoredSession{
+	require.NoError(t, storeAWSSession(cmd, path, AWSStoredSession{
 		Region: "us-east-1", RefreshToken: "refresh-token-value",
 	}))
 
@@ -102,40 +111,43 @@ func TestStoreAWSSession_CreatesParentDirWithPrivateFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0700), dirInfo.Mode().Perm())
 
-	got, err := loadAWSSession(path)
+	got, err := loadAWSSession(cmd, path)
 	require.NoError(t, err)
 	assert.Equal(t, "refresh-token-value", got.RefreshToken)
 }
 
 func TestStoreAWSSession_ExpandsTilde(t *testing.T) {
+	cmd := &cobra.Command{}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	require.NoError(t, storeAWSSession("~/aws/session.json", AWSStoredSession{Region: "eu-west-1"}))
+	require.NoError(t, storeAWSSession(cmd, "~/aws/session.json", AWSStoredSession{Region: "eu-west-1"}))
 	assert.FileExists(t, filepath.Join(home, "aws", "session.json"))
 
-	got, err := loadAWSSession("~/aws/session.json")
+	got, err := loadAWSSession(cmd, "~/aws/session.json")
 	require.NoError(t, err)
 	assert.Equal(t, "eu-west-1", got.Region)
 }
 
 func TestLoadAWSSession_MissingAndCorrupt(t *testing.T) {
+	cmd := &cobra.Command{}
 	dir := t.TempDir()
 
-	_, err := loadAWSSession(filepath.Join(dir, "absent.json"))
-	assert.ErrorIs(t, err, os.ErrNotExist)
+	_, err := loadAWSSession(cmd, filepath.Join(dir, "absent.json"))
+	assert.ErrorIs(t, err, xkms.ErrStorageNotFound)
 
 	corrupt := filepath.Join(dir, "corrupt.json")
 	require.NoError(t, os.WriteFile(corrupt, []byte("{not json"), 0600))
-	_, err = loadAWSSession(corrupt)
+	_, err = loadAWSSession(cmd, corrupt)
 	assert.Error(t, err)
 }
 
 func TestStoreAWSSession_ReportsUnwritablePath(t *testing.T) {
+	cmd := &cobra.Command{}
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
 
-	err := storeAWSSession(filepath.Join(blocker, "aws-session.json"), AWSStoredSession{})
+	err := storeAWSSession(cmd, filepath.Join(blocker, "aws-session.json"), AWSStoredSession{})
 	assert.Error(t, err)
 }
 
@@ -174,8 +186,9 @@ func TestRunOIDCAWS_RequiresRegion(t *testing.T) {
 }
 
 func TestRunAWSLogin_RequiresRegion(t *testing.T) {
+	cmd, _ := awsTestCmd(t)
 	var buf bytes.Buffer
-	err := runAWSLogin(&buf, "", "", false, false, "", "", "", 0, "", false, "", "", oidc.Callback{})
+	err := runAWSLogin(cmd, &buf, "", "", false, false, "", "", "", 0, "", false, false, "", "", oidc.Callback{})
 	assert.ErrorIs(t, err, ErrAWSMissingRegion)
 }
 
@@ -192,10 +205,11 @@ func TestRunAWSLogin_StateMismatch(t *testing.T) {
 
 	callback := oidc.Callback{Host: "127.0.0.1", Port: port}
 
+	cmd, _ := awsTestCmd(t)
 	done := make(chan error, 1)
 	var buf bytes.Buffer
 	go func() {
-		done <- runAWSLogin(&buf, "us-east-1", "default", false, true /* noBrowser */, "none", "", "", 0, "", false, "", "", callback)
+		done <- runAWSLogin(cmd, &buf, "us-east-1", "default", false, true /* noBrowser */, "none", "", "", 0, "", false, false, "", "", callback)
 	}()
 
 	// Poll until the callback server is accepting connections, then deliver

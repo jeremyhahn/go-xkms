@@ -96,7 +96,7 @@ func deliverToPeripheral(t *testing.T, p *BLEPeripheral, mtu int, message []byte
 		t.Fatalf("fragment message: %v", err)
 	}
 	for _, frag := range fragments {
-		p.handleWrite(frag)
+		p.handleWrite(1, frag)
 	}
 }
 

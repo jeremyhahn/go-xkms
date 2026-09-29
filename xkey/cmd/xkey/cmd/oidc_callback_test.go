@@ -327,10 +327,11 @@ func TestRunOIDCLogin_RejectsAnUnservableRedirectURL(t *testing.T) {
 func TestRunAWSLogin_BindsTheConfiguredCallbackHostAndPort(t *testing.T) {
 	port := occupyLoopbackPort(t)
 	dir := t.TempDir()
+	cmd, _ := awsTestCmd(t)
 	var buf bytes.Buffer
 	err := loginError(t, func() error {
-		return runAWSLogin(&buf, "us-east-1", "default", false, true, "none",
-			filepath.Join(dir, "credentials"), "", 0, filepath.Join(dir, "session.json"), false, "", "",
+		return runAWSLogin(cmd, &buf, "us-east-1", "default", false, true, "none",
+			filepath.Join(dir, "credentials"), "", 0, filepath.Join(dir, "session.json"), false, false, "", "",
 			oidc.Callback{Host: "127.0.0.1", Port: port})
 	})
 	require.Error(t, err)
@@ -343,10 +344,11 @@ func TestRunAWSLogin_BindsTheConfiguredCallbackHostAndPort(t *testing.T) {
 // before any browser opens, with the typed error.
 func TestRunAWSLogin_RefusesAHostThatCannotServeTheAWSRedirect(t *testing.T) {
 	dir := t.TempDir()
+	cmd, _ := awsTestCmd(t)
 	var buf bytes.Buffer
 	err := loginError(t, func() error {
-		return runAWSLogin(&buf, "us-east-1", "default", false, true, "none",
-			filepath.Join(dir, "credentials"), "", 0, filepath.Join(dir, "session.json"), false, "", "",
+		return runAWSLogin(cmd, &buf, "us-east-1", "default", false, true, "none",
+			filepath.Join(dir, "credentials"), "", 0, filepath.Join(dir, "session.json"), false, false, "", "",
 			oidc.Callback{Host: "::1", Port: 8085})
 	})
 	var hostErr *oidc.CallbackHostError

@@ -62,7 +62,6 @@ Open your browser to: `https://localhost:8443`
 │  /                    - Serve static files                  │
 │  /api/v1/webauthn/registration/begin   - Start registration │
 │  /api/v1/webauthn/registration/finish  - Complete reg       │
-│  /api/v1/webauthn/registration/status  - Check status       │
 │  /api/v1/webauthn/login/begin          - Start login        │
 │  /api/v1/webauthn/login/finish         - Complete login     │
 ├─────────────────────────────────────────────────────────────┤
