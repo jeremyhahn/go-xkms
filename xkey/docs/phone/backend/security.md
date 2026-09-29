@@ -126,8 +126,13 @@ Properties:
 
 ### Pairing Security
 
-- First pairing displays a verification code on both devices
-- User confirms codes match (prevents MITM)
+- First pairing derives a short authentication string (SAS) from the Noise
+  handshake's channel binding and prints it on the desktop
+  (`pairing.ShortAuthString`, go-xkms#1306). It is informational today: the
+  Android app does not yet display the matching code, so nothing currently
+  blocks pairing on the operator confirming a match. Once the app shows it,
+  comparing the two is what catches an active MITM that substituted its own
+  static key during the unauthenticated first handshake.
 - After pairing, static keys are stored for future connections
 - Subsequent connections verify static keys match expected values
 

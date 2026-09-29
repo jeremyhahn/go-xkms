@@ -270,21 +270,29 @@ Initiator (Laptop)                        Responder (Phone)
 
 ### Key Management
 
-- **Static keys**: Generated during `xkey phone pair` and stored in config
+- **Static keys**: Generated during `xkey device pair` and stored in `devices.yaml`
 - **Ephemeral keys**: Generated fresh per connection for forward secrecy
 - **Session keys**: Derived from Noise handshake, used for transport encryption
 - **Key rotation**: New session keys on every reconnection
 
 ### Pairing Flow
 
+There is no `xkey phone pair` command; the verb is `xkey device pair`
+(BLE-only, phone-hsm's [cli.md](../../phone-hsm/cli.md)):
+
 ```
-xkey phone pair
+xkey device pair
      |
-     +-- Generate laptop static keypair
-     +-- Display laptop public key (QR code or base64)
-     +-- Scan/enter phone public key
-     +-- Store both keys in config file
-     +-- Perform trial Noise XX handshake to verify
+     +-- Scan for advertising devices, select one
+     +-- Generate this host's Noise static keypair
+     +-- Perform the real Noise XX handshake (not a trial run) --
+     |   the phone's static public key is learned from it
+     +-- Print a short authentication string derived from the handshake's
+     |   channel binding (go-xkms#1306; informational -- see security.md)
+     +-- Send pairing.confirm; the phone answers Confirmed true/false
+     +-- Attest the device (unless policy allows an unattestable pairing)
+     +-- Save the record to devices.yaml, sealing the local private key
+         under the barrier when one is configured
 ```
 
 ### Message Encryption

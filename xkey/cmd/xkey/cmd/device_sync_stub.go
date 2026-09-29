@@ -21,14 +21,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Device sync errors (stub).
-var (
-	// ErrDeviceSyncFailed indicates a phone sync operation failed.
-	ErrDeviceSyncFailed = errors.New("device: sync operation failed")
-
-	// ErrDeviceSyncNoScope indicates no sync scope was specified.
-	ErrDeviceSyncNoScope = errors.New("device: no sync scope specified")
-)
+// ErrDeviceSyncNoScope indicates no sync scope was specified.
+//
+// ErrDeviceSyncFailed is NOT re-declared here: it lives in
+// device_sync_shared.go, which carries no build tag, so this stub build and
+// the ble build share one declaration instead of two that can drift apart.
+var ErrDeviceSyncNoScope = errors.New("device: no sync scope specified")
 
 // deviceSyncCmd synchronizes data bidirectionally with a paired phone.
 // This is a stub implementation when built without BLE support.

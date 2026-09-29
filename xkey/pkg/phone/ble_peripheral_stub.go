@@ -18,6 +18,7 @@ package phone
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
@@ -64,6 +65,14 @@ type BLEPeripheralConfig struct {
 	// RequestHandler processes incoming requests from the phone.
 	// If nil, requests are logged but not processed.
 	RequestHandler PeripheralRequestHandler
+
+	// LiveAttest is present here for API parity with the ble-tagged
+	// configuration; this stub never starts a peripheral, so it is never
+	// consulted. See ble_peripheral.go's BLEPeripheralConfig.LiveAttest.
+	LiveAttest pairing.LiveAttestFunc
+
+	// LiveAttestTimeout is present here for the same reason.
+	LiveAttestTimeout time.Duration
 }
 
 // PeripheralRequestHandler handles incoming requests from phone.

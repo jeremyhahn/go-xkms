@@ -225,6 +225,8 @@ func TestPolicyCanonicalJSON_FieldOrder(t *testing.T) {
 		"user_can_configure_extension",
 		"pairing_allow_unattestable_devices",
 		"lock_pairing_attestation_policy",
+		"phone_sync_allow_secret_export",
+		"lock_phone_sync_policy",
 		"organization_name",
 		"policy_version",
 	}
@@ -606,6 +608,8 @@ var policySectionFieldReaders = map[string]string{
 	"UserCanConfigureExtension":       "pkg/gui/services/autofill_service.go SetEnabled/SetRequireAuthentication/SetPolicy (#668)",
 	"PairingAllowUnattestableDevices": "pkg/attestation/policy.go",
 	"LockPairingAttestationPolicy":    "pkg/attestation/policy.go",
+	"PhoneSyncAllowSecretExport":      "cmd/xkey/cmd/device_pairing_policy_shared.go allowPhoneSyncExport (go-xkms#1306)",
+	"LockPhoneSyncPolicy":             "cmd/xkey/cmd/device_pairing_policy_shared.go allowPhoneSyncExport (go-xkms#1306)",
 	"OrganizationName":                "pkg/gui/services/setup_wizard_service.go SO provisioning event payload",
 	"PolicyVersion":                   "pkg/gui/services/setup_wizard_service.go SO provisioning event payload",
 }

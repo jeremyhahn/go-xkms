@@ -397,10 +397,11 @@ func TestBridge_HandleSyncOATH_AuditsAFailedApply(t *testing.T) {
 
 	auditLog := &mockAuditLogger{}
 	b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{
-		Logger:      testLogger(),
-		SyncService: svc,
-		AuditLogger: auditLog,
-		DeviceID:    "AA:BB:CC:DD:EE:01",
+		Logger:       testLogger(),
+		SyncService:  svc,
+		SyncApproval: AlwaysApproveSync,
+		AuditLogger:  auditLog,
+		DeviceID:     "AA:BB:CC:DD:EE:01",
 	})
 	require.NoError(t, err)
 
@@ -452,7 +453,7 @@ func TestBridge_HandleSyncTrustStore_EmptyCertificates(t *testing.T) {
 // unavailable rather than silently skipping every credential.
 func TestBridge_HandleSyncOATH_NotConfigured(t *testing.T) {
 	client := &mockTransportClient{}
-	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
+	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
 	req := newRemoteRequest(MethodRemoteSyncOATH, RemoteSyncOATHParams{
@@ -474,7 +475,7 @@ func TestBridge_HandleSyncOATH_Success(t *testing.T) {
 	require.NoError(t, oathAcc.Add(old))
 
 	client := &mockTransportClient{}
-	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc})
+	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc, SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
 	req := newRemoteRequest(MethodRemoteSyncOATH, RemoteSyncOATHParams{
@@ -512,7 +513,7 @@ func TestBridge_HandleSyncOATH_InvalidParams(t *testing.T) {
 // feature as unavailable rather than silently skipping every entry.
 func TestBridge_HandleSyncPasswords_NotConfigured(t *testing.T) {
 	client := &mockTransportClient{}
-	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
+	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
 	req := newRemoteRequest(MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{
@@ -530,7 +531,7 @@ func TestBridge_HandleSyncPasswords_NotConfigured(t *testing.T) {
 func TestBridge_HandleSyncPasswords_Success(t *testing.T) {
 	svc, _, _, pwAcc := newTestSyncService(t)
 	client := &mockTransportClient{}
-	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc})
+	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc, SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
 	req := newRemoteRequest(MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{
@@ -567,7 +568,7 @@ func TestBridge_HandleSyncPasswords_InvalidParams(t *testing.T) {
 // unavailable rather than an all-empty success.
 func TestBridge_HandleSyncAll_NotConfigured(t *testing.T) {
 	client := &mockTransportClient{}
-	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
+	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
 	req := newRemoteRequest(MethodRemoteSyncAll, RemoteSyncAllParams{
@@ -594,7 +595,7 @@ func TestBridge_HandleSyncAll_AllIncluded(t *testing.T) {
 	require.NoError(t, pwAcc.Add(pw))
 
 	client := &mockTransportClient{}
-	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc})
+	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc, SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
 	req := newRemoteRequest(MethodRemoteSyncAll, RemoteSyncAllParams{
@@ -619,7 +620,7 @@ func TestBridge_HandleSyncAll_AllIncluded(t *testing.T) {
 func TestBridge_HandleSyncAll_TrustStoreOnly(t *testing.T) {
 	svc, _, _, _ := newTestSyncService(t)
 	client := &mockTransportClient{}
-	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc})
+	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc, SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
 	req := newRemoteRequest(MethodRemoteSyncAll, RemoteSyncAllParams{
@@ -638,7 +639,7 @@ func TestBridge_HandleSyncAll_TrustStoreOnly(t *testing.T) {
 func TestBridge_HandleSyncAll_NoneIncluded(t *testing.T) {
 	svc, _, _, _ := newTestSyncService(t)
 	client := &mockTransportClient{}
-	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc})
+	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger(), SyncService: svc, SyncApproval: AlwaysApproveSync})
 	require.NoError(t, err)
 
 	req := newRemoteRequest(MethodRemoteSyncAll, RemoteSyncAllParams{
@@ -662,6 +663,107 @@ func TestBridge_HandleSyncAll_InvalidParams(t *testing.T) {
 	req := newRemoteRequest(MethodRemoteSyncAll, nil)
 	resp := b.HandleRequest(context.Background(), req)
 	assertErrorResponse(t, resp, req.ID, ErrorCodeInvalidParams)
+}
+
+// --- Sync approval gating tests (go-xkms#1306) ---
+
+// syncGatedMethods are the three remote.sync* methods that export secrets
+// (the password vault or OATH credentials) to the phone, and therefore
+// require SyncApproval to serve anything at all. remote.syncTrustStore
+// (public certificates) and remote.syncStatus (metadata) are deliberately
+// excluded: they are exercised elsewhere and must NOT require approval.
+var syncGatedMethods = []struct {
+	name   string
+	method string
+	params interface{}
+}{
+	{"OATH", MethodRemoteSyncOATH, RemoteSyncOATHParams{Credentials: []SyncOATHCredential{{ID: "c1", Name: "GitHub", Secret: "SEC", Type: "totp"}}}},
+	{"Passwords", MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{Passwords: []SyncPassword{{ID: "p1", Name: "GitHub", Password: "pw1"}}}},
+	{"All", MethodRemoteSyncAll, RemoteSyncAllParams{IncludeTrustStore: true}},
+}
+
+// TestBridge_SyncApproval_NilRefusesEveryGatedMethod verifies that a bridge
+// with no SyncApproval configured refuses all three secret-exporting sync
+// methods, even when a sync.Service is fully wired -- the vault must not be
+// exported on the strength of the Noise session alone.
+func TestBridge_SyncApproval_NilRefusesEveryGatedMethod(t *testing.T) {
+	for _, tc := range syncGatedMethods {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _, _, _ := newTestSyncService(t)
+			b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{Logger: testLogger(), SyncService: svc})
+			require.NoError(t, err)
+
+			req := newRemoteRequest(tc.method, tc.params)
+			resp := b.HandleRequest(context.Background(), req)
+			assertErrorResponse(t, resp, req.ID, ErrorCodeSyncApprovalRequired)
+		})
+	}
+}
+
+// TestBridge_SyncApproval_DenialRefusesTheCall verifies that an approver
+// which declines the request refuses the call with ErrorCodeSyncNotApproved,
+// distinct from "not configured", and that nothing is applied.
+func TestBridge_SyncApproval_DenialRefusesTheCall(t *testing.T) {
+	for _, tc := range syncGatedMethods {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _, _, _ := newTestSyncService(t)
+			denyErr := errors.New("test: operator declined")
+			b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{
+				Logger:      testLogger(),
+				SyncService: svc,
+				SyncApproval: func(context.Context, *SyncApprovalRequest) error {
+					return denyErr
+				},
+			})
+			require.NoError(t, err)
+
+			req := newRemoteRequest(tc.method, tc.params)
+			resp := b.HandleRequest(context.Background(), req)
+			assertErrorResponse(t, resp, req.ID, ErrorCodeSyncNotApproved)
+		})
+	}
+}
+
+// TestBridge_SyncApproval_ReceivesMethodAndDeviceName verifies the approval
+// function is told which method is being asked about and which paired
+// device is asking, so a GUI prompt or CLI check can say something useful.
+func TestBridge_SyncApproval_ReceivesMethodAndDeviceName(t *testing.T) {
+	svc, _, _, _ := newTestSyncService(t)
+	var got *SyncApprovalRequest
+	b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{
+		Logger:      testLogger(),
+		SyncService: svc,
+		DeviceName:  "Pixel",
+		SyncApproval: func(_ context.Context, req *SyncApprovalRequest) error {
+			got = req
+			return nil
+		},
+	})
+	require.NoError(t, err)
+
+	req := newRemoteRequest(MethodRemoteSyncPasswords, RemoteSyncPasswordsParams{
+		Passwords: []SyncPassword{{ID: "p1", Name: "GitHub", Password: "pw1"}},
+	})
+	b.HandleRequest(context.Background(), req)
+
+	require.NotNil(t, got)
+	assert.Equal(t, MethodRemoteSyncPasswords, got.Method)
+	assert.Equal(t, "Pixel", got.DeviceName)
+}
+
+// TestBridge_SyncApproval_TrustStoreAndStatusAreNotGated verifies
+// remote.syncTrustStore and remote.syncStatus serve without any
+// SyncApproval configured: they are not secret-exporting.
+func TestBridge_SyncApproval_TrustStoreAndStatusAreNotGated(t *testing.T) {
+	svc, _, _, _ := newTestSyncService(t)
+	b, err := NewBridge(&mockTransportClient{}, &BridgeConfig{Logger: testLogger(), SyncService: svc})
+	require.NoError(t, err)
+
+	trustResp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteSyncTrustStore, RemoteSyncTrustStoreParams{}))
+	decodeResult[RemoteSyncTrustStoreResult](t, trustResp)
+
+	statusResp := b.HandleRequest(context.Background(), newRemoteRequest(MethodRemoteSyncStatus, nil))
+	decodeResult[RemoteSyncStatusResult](t, statusResp)
 }
 
 // --- handleSyncStatus tests ---

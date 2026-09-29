@@ -106,6 +106,14 @@ func (h *rpcTestHandler) HandleRequest(_ context.Context, request []byte) ([]byt
 	}
 }
 
+// alwaysLiveAttestForTest is a pairing.LiveAttestFunc stand-in for tests that
+// exercise the request-serving loop, not the #129 live-attestation gate that
+// now runs ahead of it. It is deliberately local to the test binary: nothing
+// in production may treat "no live attestation" as automatically approved.
+func alwaysLiveAttestForTest(context.Context, pairing.RPCExchange, []byte) error {
+	return nil
+}
+
 // startTCPPairingServer starts a TCPPairingServer on an ephemeral loopback port
 // and registers cleanup.
 func startTCPPairingServer(t *testing.T, cfg *TCPPairingConfig) *TCPPairingServer {
@@ -116,6 +124,11 @@ func startTCPPairingServer(t *testing.T, cfg *TCPPairingConfig) *TCPPairingServe
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
+	}
+	// A test that wants the gate itself sets cfg.LiveAttest before calling
+	// this and is left alone.
+	if cfg.LiveAttest == nil {
+		cfg.LiveAttest = alwaysLiveAttestForTest
 	}
 
 	srv, err := NewTCPPairingServer(cfg)
