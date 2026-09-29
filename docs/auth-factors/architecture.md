@@ -116,8 +116,10 @@ and qrdb composes the answers into an authentication decision.
   invalidates existing enrollments, and setting it too broadly widens where a
   credential can be used.
 - **`PKCS11Mechanism` is recorded on the enrollment**, not chosen at
-  verification. Default `CKM_ECDSA_SHA256`. An attacker who could pick the
-  mechanism at verification time could downgrade it.
+  verification. Default `CKM_ECDSA_SHA256`. `Verify` enforces this: it reads
+  the mechanism from the challenge (never the response) and refuses when the
+  response names a different one, so an attacker who could pick the mechanism
+  at verification time cannot downgrade it.
 - **Software PIV is a development convenience, and must be asked for by name.**
   With `PIVGenerator` nil the factor is software-backed — it proves possession of
   a key, not possession of a card. That substitution is silent and the resulting
