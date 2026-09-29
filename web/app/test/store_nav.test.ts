@@ -63,7 +63,7 @@ describe("navSections", () => {
     const item = findItem("ssh");
     expect(item).toBeDefined();
     expect(item!.capability).toBe("ssh");
-    expect(item!.requires).toEqual({ resource: "ssh", action: "use" });
+    expect(item!.requires).toEqual({ resource: "ssh", action: "read" });
   });
 
   it("gives every item a non-empty label and icon key", () => {

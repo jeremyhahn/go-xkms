@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — Architecture
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Scope of this folder
 
@@ -75,19 +75,24 @@ xkmsctl ssh <verb> / xkey ssh <verb>
 sdk/go/client/ssh.Client   (embedded | REST | gRPC | unix | QUIC | MCP — dispatch by URL scheme)
         |
         v
-xkmsd: s.ensureSSHClient() builds ONE embedded sdkssh.Client, shared by every transport
-        |                          (pkg/server/server.go:417-452)
-        +-- storage "ssh" view --> pkg/ssh/keys.BackendStore   (SSH key envelopes)
-        +-- pkg/ssh/known_hosts.Store                          (host-key pins)
-        +-- pkg/ssh/authorized.Store                           (authorized_keys entries)
-        +-- pkg/ssh/backend.Provider --> s.xkmsService.LookupBackend(backendID)
+xkmsd: s.ensureSSHClient() builds ONE tenancy client, shared by every transport
+        |                          (pkg/server/server.go:486-512)
+        v
+pkg/ssh/tenancy: bind (scope, owner) to the caller, pick the partition
+        |
+        v  per request: an embedded sdkssh.Client over one partition
+        +-- storage "ssh" view [+ "tenants/<id>/"] --> pkg/ssh/keys.BackendStore  (SSH key envelopes)
+        +-- pkg/ssh/known_hosts.Store                                            (host-key pins)
+        +-- pkg/ssh/authorized.Store                                             (authorized_keys entries)
+        +-- pkg/ssh/backend.Provider --> tenant KeyProvider view
+                                          --> s.xkmsService.LookupBackend(backendID)
                                           --> any configured crypto backend
 ```
 
-`ensureSSHClient` (`pkg/server/server.go:417`) builds this lazily, once, the
+`ensureSSHClient` (`pkg/server/server.go:486`) builds this lazily, once, the
 first time any transport needs it, and only if `s.xkmsService != nil` — REST,
-gRPC, and MCP all call through the *same* embedded client object, so a key
-generated over gRPC is immediately visible over REST. There is no
+gRPC, and MCP all call through the *same* client object, so a key generated
+over gRPC is immediately visible over REST to the same caller. There is no
 separate "REST implementation" of key generation; the REST/gRPC/MCP handlers
 are thin encode/decode layers over `sdkssh.Client` method calls
 (`pkg/api/rest/handlers_ssh.go:102`: `h.client.Keys().Generate(r.Context(), req)`).
@@ -116,7 +121,71 @@ three string constants: `Tenant`, `User`, `Service`. Owner is a
 scope-relative identifier (a tenant ID, user ID, or service ID); Name is the
 caller-assigned label within that (Scope, Owner) pair. `xkmsctl ssh`'s
 `--scope`/`--owner` flags default to `user`/`default`
-(`cmd/xkmsctl/ssh.go:219-220`).
+(`cmd/xkmsctl/ssh.go:219-220`). Against `xkmsd` a tenant-scoped caller must
+name an owner it owns (next section), so it passes `--owner <its subject>`
+for `user`/`service` scope and `--owner <its tenant ID>` for `tenant` scope.
+
+## Owner binding and tenant partitions (go-xkms#1230)
+
+`xkmsd` wires every transport — REST, gRPC, MCP, QUIC and the Unix socket —
+with one SSH client, the tenant-binding service `pkg/ssh/tenancy`
+(`pkg/server/server.go:486-512`). The transports stay thin: they decode a
+request and call it. The RBAC gate in front of them cannot protect an SSH
+asset, because `auth.Authorizer` always binds the caller's own tenant as the
+target, and a tenant Admin holds every `ssh:*` permission. Before this
+service existed the transports called the embedded client directly, so a
+tenant-A Admin could list, sign with, delete, and plant `authorized_keys`
+entries for tenant B's and every user's keys.
+
+**Binding.** For each request the service reads the caller from the context
+and decides whether it owns the address (`pkg/ssh/tenancy/client.go:170-182`):
+`scope=tenant` belongs to the tenant whose ID is the owner; `scope=user` and
+`scope=service` belong to the principal whose subject is the owner. A
+platform caller (`auth.IsCrossTenant`: no identity or the system tenant) owns
+every address. A refused request is served from the *empty partition*, a
+store nothing is ever written to (`pkg/ssh/tenancy/client.go:89-93`), so its
+answer is by construction the genuine-miss answer; the service wraps it in
+`*OwnerBindingError`, which renders that answer verbatim
+(`pkg/ssh/tenancy/errors.go:44-71`). A refused write never reaches a store or
+a backend: it is answered with the not-found for the address it names
+(`pkg/ssh/tenancy/ops.go:135-138`). A listing reads the caller's partition and
+keeps only what the caller owns (`pkg/ssh/tenancy/ops.go:76-92`).
+
+**Partitions.** A subject is unique only within its tenant — the mTLS
+authenticator uses the username (`pkg/auth/mtls.go:252`) — so the owner
+binding alone would still let `alice` of tenant A reach the `user/alice`
+keys of `alice` in tenant B in one flat store. Each tenant therefore gets its
+own storage partition, the `tenants/<tenant-id>/` prefix of the shared `ssh`
+storage view (`pkg/ssh/tenancy/client.go:66-69,283-301`), and its own
+backend-key namespace: backend-backed keys are generated and resolved
+through a `KeyProvider` view that sets `types.KeyAttributes.TenantID`
+(`pkg/ssh/tenancy/keyprovider.go:24-105`), exactly as
+`xkms.TenantScopedBackend` scopes the key-management surface. A backend key's
+common name (`ssh-<scope>-<owner>-<name>`, `pkg/ssh/keys/generate.go:238-244`)
+is unique only within a tenant; the namespace keeps two tenants' equal names
+apart.
+
+Which partition serves a request (`pkg/ssh/tenancy/client.go:217-236`):
+
+| Caller | Address | Partition |
+|---|---|---|
+| tenant-scoped | any it owns | its own tenant's |
+| platform | `scope=tenant`, owner a real tenant ID | that tenant's |
+| platform | anything else (user/service scope, the system tenant) | the platform partition (the unprefixed view) |
+
+A platform identity therefore manages any tenant's `scope=tenant` assets but
+not a tenant user's `scope=user` assets — the address does not name the
+user's tenant. A session (`Session().Dial`) must take its key and its
+host-key pins from one partition the caller owns
+(`pkg/ssh/tenancy/ops.go:327-352`).
+
+Rejected: enforcing the binding in each transport handler. Three transports
+(and the Unix socket, which reuses the gRPC service) would each need the same
+check, and the next transport would need it again; the service is the one
+place every transport already goes through, the pattern go-xkms#1112 set for
+tenant targets. Rejected: a tenant-qualified owner string (`<tenant>:<user>`)
+in one flat store. It changes the wire value every client sends and still
+shares one backend-key namespace.
 
 ## Known-hosts: full public key, not just a fingerprint
 
@@ -159,15 +228,13 @@ single targeted lookup, and that `Callback` (`grpc.go:301`, the
 `ssh.HostKeyCallback` adapter used for real SSH dials) inherits the same
 `List`-then-compare cost on every host-key check.
 
-## Rejected alternative: a dedicated `ssh` resource per verb
+## Permissions per verb
 
-REST/gRPC/MCP authorization uses one blanket permission,
-`auth.ResourceSSH`/`auth.ActionUse`, on every route in this feature
-(`pkg/api/rest/routes.go:394-397`: "Every route carries the blanket ssh:use
-gate; key generation and signing must never be reachable anonymously"). This
-is coarser than the generic key-management routes, which vary
-`auth.ActionCreate`/`List`/`Get`/`Delete`/`Sign` per verb. The RBAC
-vocabulary for a finer split is go-qrdb's, not xkms's local decision; a
-local view of it is the still-owed `architecture/rbac.md` item tracked in
-[`../README.md`](../README.md) — this note records the fact for this
-feature rather than resolving it.
+Each REST route gates on its own `ssh:*` action
+(`pkg/api/rest/routes.go:476-503`): `ssh:read`, `ssh:write`, `ssh:delete`,
+matching the MCP `ssh.*` methods (`pkg/api/mcp/authz.go:321-341`) and the
+gRPC `qrdb.v1.permission` options. Signing is `ssh:write` on every
+transport (`pkg/api/rest/routes.go:493`). Until go-xkms#1230 every REST route
+carried the blanket `ssh:use`, so a grant meant for signing also deleted keys
+and added `authorized_keys` entries. The blanket `ssh:use` is retired. See [`api.md`](api.md) for
+the per-route table.

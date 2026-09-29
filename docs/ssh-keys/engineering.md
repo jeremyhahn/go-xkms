@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 No build tag gates any symbol in this document — see
 [`architecture.md`](architecture.md).
@@ -51,6 +51,19 @@ No build tag gates any symbol in this document — see
 | `ParseLine` / `Emit` | Parse an `authorized_keys`-format line into an `Entry`; render an `Entry` back to a line. |
 | Typed errors (`errors.go`) | `NilInputError`, `MalformedLineError`, `NotFoundError`, `DuplicateError`, `InvalidNameError`, `StorageError`, `SerializationError`, `UnsupportedVersionError`. |
 
+## Exported surface — `pkg/ssh/tenancy` (the server-side SSH service)
+
+| Symbol | Contract |
+|---|---|
+| `Options{Storage, Resolver}` / `New(opts) (sdkssh.Client, error)` | `client.go:72-116`. `Storage` is required (`*NilInputError` otherwise) and owned: `Close` closes it, idempotently. `Resolver` is optional and unscoped; the client narrows it per partition. |
+| Owner binding | `client.go:170-182`. A tenant-scoped caller owns `scope=tenant` only for `owner == identity.TenantID`, and `scope=user`/`service` only for `owner == identity.Subject`. A platform caller (`auth.IsCrossTenant`) owns every address. |
+| Partition choice | `client.go:217-266`. Tenant-scoped callers: their own tenant, always. Platform callers: the tenant a `scope=tenant` owner names, else the platform (unprefixed) partition. A platform owner no tenant can have (`storage.ValidateTenantID` fails) has no partition and is refused. Tenant partitions are `tenants/<id>/` prefixes of `Storage` (`client.go:69,283-301`). |
+| Backend namespace | `client.go:306-320`, `keyprovider.go:33-105`. A tenant partition's `KeyProvider` sets `KeyAttributes.TenantID` on every call, never mutating the caller's attributes; `ListKeys` returns only its tenant's keys; `Close` releases nothing (the provider is shared). A resolver that returns no provider is `*backend.BackendNotFoundError`. |
+| Refusals | Reads, deletes, `Verify` and `Callback` on an address the caller does not own are served by the empty partition and wrapped in `*OwnerBindingError` (`client.go:324-346`). Writes (`Generate`, `Import`, known-hosts `Add`, authorized-keys `Add`) are answered with the empty partition's lookup of the same address and never touch a store or backend (`ops.go:38-59,135-138,152-163,237-248`). `Emit` addresses no asset and is not bound (`ops.go:297-299`). |
+| Listings | `ops.go:76-92,166-182,264-280`. The listing reads the caller's partition and drops every item the caller does not own; filters never widen it. |
+| Sessions / console | `ops.go:327-352`: key and host-key pins must both be owned and in one partition. `client.go:133-143`: the console binds `(KeyScope, KeyOwner)`, which addresses both. |
+| Typed errors (`errors.go`) | `NilInputError`; `CallerTenantError` (a tenant-scoped identity whose tenant fails `storage.ValidateTenantID`: an internal invariant failure); `OwnerBindingError{Op, Scope, Owner, CallerTenantID, CallerSubject, Err}` — `Error()` is `Err.Error()` and `Unwrap()` is `Err`, the genuine-miss answer, so every transport's classifier maps it exactly as the miss; `EmptyPartitionError` (the empty partition answered a lookup — still a refusal, reported as internal). |
+
 ## Exported surface — `sdk/go/client/ssh` (the transport-agnostic client)
 
 `Client` interface (`client.go:26`): `Keys() KeysClient`, `KnownHosts()
@@ -75,21 +88,21 @@ device.
 
 ## Daemon wiring (`pkg/server/server.go`)
 
-`ensureSSHClient()` (`server.go:417`, `sync.Once`-guarded) is the only place
-an `sdkssh.Client` is constructed for `xkmsd`. It:
+`ensureSSHClient()` (`server.go:486-512`, `sync.Once`-guarded) is the only
+place an `sdkssh.Client` is constructed for `xkmsd`. It:
 
 1. Returns `nil` immediately if `s.xkmsService == nil` — every REST/gRPC/MCP
    SSH route is `Enabled: hasSSH` (`s.sshHandlers != nil`), so the whole
    feature is absent, not erroring, when there is no `XKMSService`.
 2. Creates a `"ssh"`-prefixed `storage.Backend` view via
    `s.createStorage("ssh")` for key envelopes.
-3. Builds a `sshbackend.ResolverFunc` closing over
+3. Builds an unscoped `sshbackend.ResolverFunc` closing over
    `s.xkmsService.LookupBackend(backendID)`.
-4. Constructs `sdkssh.NewEmbedded(EmbeddedOptions{Backend: sshStorage,
-   BackendProvider: provider})` and stores it as `s.sshClient`.
+4. Constructs `tenancy.New(tenancy.Options{Storage: sshStorage, Resolver:
+   resolver})` and stores it as `s.sshClient`.
 
 Every transport's SSH handlers hold a reference to this one client; none
-constructs its own.
+constructs its own, and none performs its own owner check.
 
 ## REST/gRPC/MCP handler files (thin, transport-only)
 
@@ -97,12 +110,23 @@ constructs its own.
 (`Service`), `pkg/api/mcp/handlers_ssh.go` (`Server`) each decode a
 transport-specific request into the corresponding `sdkssh` request struct
 and call the matching `s.sshClient`/`h.client` method. None re-implements
-key generation, storage, or verification logic — see architecture.md for
+key generation, storage, verification, or owner binding logic — see architecture.md for
 the one exception (gRPC's client-side `Verify`/`Emit`), which lives in the
 SDK client, not the server handler.
 
 ## Testing
 
+- Owner binding (go-xkms#1230): `pkg/ssh/tenancy/client_test.go` and
+  `keyprovider_test.go` cover every operation across the owner matrix, the
+  partition rules, platform reach, the per-tenant backend namespace and the
+  refusal errors. Each transport repeats the attack matrix end to end —
+  `pkg/api/rest/handlers_ssh_crosstenant_test.go`,
+  `pkg/api/grpc/service_ssh_crosstenant_test.go`,
+  `pkg/api/mcp/handlers_ssh_crosstenant_test.go`: tenant A's alice against
+  tenant B's assets, against bob's, and against the same-subject alice of
+  tenant B. Every read must equal the genuine-miss response byte for byte and
+  leave the asset in place; no listing may show it; no write may land.
+  `pkg/api/rest/server_ssh_authz_test.go` pins each REST route's permission.
 - Unit: `make test-ssh` runs `pkg/ssh/...`. Also
   `go test -tags codec_json ./xkey/pkg/gui/services/ -run SSH` and the SDK +
   gRPC-service SSH test files (`sdk/go/client/ssh/*_test.go`,

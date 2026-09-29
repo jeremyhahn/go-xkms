@@ -63,7 +63,7 @@ export const navSections: NavSection[] = [
       { route: "barrier", path: "/barrier", label: "Barrier & Seal", icon: "Lock", requires: { resource: "seal", action: "status" } },
       { route: "pin", path: "/pin", label: "PIN", icon: "KeyRound", requires: { resource: "pin", action: "read" } },
       { route: "piv", path: "/piv", label: "PIV", icon: "CreditCard", requires: { resource: "piv", action: "read" } },
-      { route: "ssh", path: "/ssh", label: "SSH", icon: "TerminalSquare", capability: "ssh", requires: { resource: "ssh", action: "use" } },
+      { route: "ssh", path: "/ssh", label: "SSH", icon: "TerminalSquare", capability: "ssh", requires: { resource: "ssh", action: "read" } },
       { route: "passwords", path: "/passwords", label: "Passwords", icon: "Vault", capability: "passwords", requires: { resource: "passwords", action: "read" } },
       { route: "platform", path: "/platform", label: "Platform Secrets", icon: "FolderLock", capability: "platform" },
       { route: "ceremony", path: "/ceremony", label: "Init Ceremony", icon: "Sparkles", capability: "ceremony" },
