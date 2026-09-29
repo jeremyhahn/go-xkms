@@ -1,6 +1,6 @@
 # RBAC — API
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1226, #1227)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1226, #1227, #1232)
 
 RBAC is cross-cutting, not a capability with its own endpoint set: it is the
 authorization gate every other feature's REST route, gRPC RPC, and MCP tool
@@ -13,6 +13,26 @@ does own an API for directly — user lifecycle and role **assignment**. Role
 Every transport described in
 [`../key-management/api.md`](../key-management/api.md) §"How the six
 transports are shaped" carries the RBAC gate. This page assumes that model.
+
+## The same operation requires the same permission on every transport
+
+A capability reachable from more than one transport — for example
+`POST /api/v1/keys/wrap` (REST), `WrapKey` (gRPC), and `xkms.wrapKey`
+(MCP) — requires the identical `resource:action` pair on all of them. This
+is a verified property, not a convention callers must trust: each
+transport's own permission table is pinned against its own source
+(`internal/authzscan`, engineering.md's Test strategy), and
+`pkg/api/authz_consistency_test` additionally cross-checks the three tables
+against each other so a permission that drifts on only one transport fails
+CI (go-xkms#1232). Two known exceptions are tracked, not silently allowed:
+`POST /api/v1/passwords/access-mode` is session-authenticated on REST with
+no RBAC permission, where gRPC's `PasswordStoreSetAccessMode` and MCP's
+`password.setAccessMode` both require `passwords:write`; and REST's
+`/api/v1/pkcs11state/*` routes carry per-verb CRUD actions
+(`keys:create`/`get`/`list`/`update`/`delete`) where gRPC's `PKCS11State*`
+RPCs collapse to a coarser `keys:write`/`keys:read` tiering. Both are
+allowlisted in the consistency golden pending a product decision; see
+engineering.md's Invariants.
 
 ## User lifecycle — REST
 

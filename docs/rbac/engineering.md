@@ -1,7 +1,6 @@
 # RBAC — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1230)
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1226, #1227)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1226, #1227, #1230, #1232)
 
 ## Exported surface
 
@@ -187,10 +186,17 @@ holds `audit:read:cross`. A nil Authorizer is RBAC-disabled, as everywhere
 else. The service clamps tenant identities whatever the Authorizer says.
 
 A permission is a `resource:action` pair. A transport must never declare its
-own resource or action string literal — `internal/authzscan` enforces this
-for the per-call-site transports (gRPC, QUIC) by parsing their source and
-rejecting a raw string literal or an unknown constant name (see Test
-strategy).
+own resource or action string literal — `internal/authzscan` enforces this by
+parsing a transport's own source (there is no separate QUIC transport; the
+legacy per-transport listeners, including `pkg/api/quic`, were removed
+wholesale) and rejecting a raw string literal or an unknown constant name
+(see Test strategy). `internal/authzscan.Scan` covers the per-call-site
+transports — gRPC's `s.authorize(...)` calls, REST's `routes.go` route-table
+helper calls, and `pkg/acme/admin`'s `gate.Wrap(...)` calls —
+`internal/authzscan.ScanMap` covers MCP's `methodPermissions` map literal
+directly, and `pkg/api/authz_consistency_test` cross-checks all three
+against a hand-built capability table so the same capability cannot require
+different permissions on different transports (go-xkms#1232).
 
 ### `cmd/xkmsctl/roles.go` — CLI role names
 
@@ -293,8 +299,23 @@ specific permission before assuming a non-Admin role holds it.
   override an upstream decision; `pkg/apimodule/module_scopes_test.go`
   (`TestModuleDeclaresOnlyItsOwnScopes`) is the build gate against that.
 - **A route/RPC/tool's resource and action must be `pkg/auth` constants,
-  never string literals**, on the two transports without an in-process
-  table to check against (gRPC, QUIC) — enforced by `internal/authzscan`.
+  never string literals**, on every transport — enforced by
+  `internal/authzscan`, which scans gRPC's, REST's, and `pkg/acme/admin`'s
+  call sites (`authzscan.Scan`) and MCP's `methodPermissions` map literal
+  directly (`authzscan.ScanMap`). REST's `routes.go` briefly carried three
+  raw literals (`"derive"`, `"wrap"`, `"unwrap"`) with no test to catch them
+  until go-xkms#1232 added `pkg/api/rest/authz_golden_test.go`.
+- **The same capability requires the same permission on every transport
+  that exposes it.** `pkg/api/authz_consistency_test` cross-checks a
+  hand-built capability table against all three transports' own golden
+  tables; go-xkms#1232's audit found and fixed one violation
+  (`POST /api/v1/keys/wrap`/`unwrap` carried `keys:encrypt`/`keys:decrypt`
+  instead of the `keys:wrap`/`keys:unwrap` gRPC and MCP already required for
+  the identical operation) and reported two more that need a product
+  decision rather than a mechanical fix (`POST /api/v1/passwords/access-mode`
+  serving under session-only auth where gRPC/MCP require `passwords:write`;
+  the `pkcs11state.*` family's REST per-verb CRUD actions vs gRPC's coarser
+  write/read tiering).
 - **A tenant named in a request is never the target tenant.** The gate
   resolves a self-scope permission against the caller's own tenant, so a
   handler that forwards a request tenant to a store or query escapes it. The
@@ -504,10 +525,21 @@ re-exported verbatim so a downstream consumer needs a single import.
   (`TestEveryModulePermissionDeclaresItsScope`, `TestModuleDeclaresOnlyItsOwnScopes`,
   `TestModuleScopeDeclarationsAreAllContributed`, `TestUndeclaredPermissionHasNoScope`).
 - **Vocabulary consistency** — `internal/authzscan` builds a checked-in
-  resource:action table from the gRPC/QUIC source (the two transports that
-  gate per call site rather than per table), rejecting a raw string literal
-  or an unrecognized `pkg/auth` constant name; `pkg/api/grpc/authz_golden_test.go`
-  is the golden test built on it.
+  resource:action table from each transport's own source, rejecting a raw
+  string literal or an unrecognized `pkg/auth` constant name:
+  `pkg/api/grpc/authz_golden_test.go` (gRPC's `authorize` call sites),
+  `pkg/api/rest/authz_golden_test.go` (REST's `routes.go` route-table helper
+  calls), `pkg/acme/admin/authz_golden_test.go` (`gate.Wrap` call sites), and
+  `pkg/api/mcp/authz_golden_test.go` (the `methodPermissions` map literal,
+  via `authzscan.ScanMap`). `internal/authzscan_test.go` covers the scanner
+  itself, including the raw-literal and unknown-constant rejection paths.
+- **Cross-transport consistency** — `pkg/api/authz_consistency_test`
+  (`TestCapabilities_RequireSamePermissionOnEveryTransport`) re-derives the
+  gRPC, REST, and MCP tables with `internal/authzscan` and asserts every
+  capability named in its `canonicalCapabilities` table resolves to the
+  identical `resource:action` pair on every transport that exposes it, so a
+  capability that drifts on only one transport fails even though that
+  transport's own golden test still passes.
 - **Request-tenant confinement** — `pkg/xkms/servicer_pkcs11state_tenant_test.go`
   and `pkg/xkms/servicer_audit_tenant_test.go`. The audit tests decide
   `audit:read:cross` from qrdb's real built-in grant table

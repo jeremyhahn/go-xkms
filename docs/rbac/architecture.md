@@ -1,6 +1,6 @@
 # RBAC — Architecture
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1228, #1230, #1231)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1228, #1230, #1231, #1232)
 
 ## The problem
 
@@ -148,8 +148,9 @@ for every transport:
   write under it creates nothing (go-xkms#1230; see
   [`../ssh-keys/architecture.md`](../ssh-keys/architecture.md) §"Owner
   binding and tenant partitions"). REST's SSH routes also gate per verb now
-  — `ssh:read`/`ssh:write`/`ssh:delete`, `ssh:use` to sign
-  (`pkg/api/rest/routes.go:476-503`) — instead of one blanket `ssh:use`.
+  — `ssh:read` to read, `ssh:write` to create/import/sign, `ssh:delete` to
+  remove (`pkg/api/rest/routes.go:496-512`) — instead of one blanket
+  permission. `ssh:use` never gated anything and was removed (go-xkms#1232).
 ## Identities carry role identifiers, never role names
 
 Every authenticated identity carries qrdb role **identifiers** in `Roles`:
