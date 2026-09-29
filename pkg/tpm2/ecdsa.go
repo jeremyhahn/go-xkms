@@ -110,6 +110,13 @@ func (tpm *TPM2) CreateECDSA(
 		policyPin = pin
 	}
 
+	// A named, authorized policy replaces the password path entirely: the
+	// template gets the policy's authPolicy and loses USERWITHAUTH.
+	policyBinding, err := tpm.namedPolicyBinding(keyAttrs, &eccTemplate)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create ECC key
 	// The sensitive area carries the new key's authValue, so it is
 	// encrypted on its way into the TPM by a salted session of its own: the
@@ -247,6 +254,16 @@ func (tpm *TPM2) CreateECDSA(
 	if policyPin != nil {
 		if err := tpm.recordKeyPolicyPin(
 			keyAttrs, backend, policyPin, overwrite); err != nil {
+
+			return nil, err
+		}
+	}
+
+	// Record which named policy this object follows. Without it the object
+	// could not be used: nothing else says which policy session to build.
+	if policyBinding != nil {
+		if err := tpm.recordPolicyBinding(
+			keyAttrs, backend, policyBinding, overwrite); err != nil {
 
 			return nil, err
 		}

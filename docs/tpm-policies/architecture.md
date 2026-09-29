@@ -50,9 +50,8 @@ creation still needs it; otherwise it uses `platform` too.
 An object that uses a named policy `P` in scope `S` is created with:
 
 ```
-authPolicy = PolicyOR(
-    PolicyAuthorize(approvedPolicy*, policyRef(P), keySign = Name(authority(S))),
-    PolicyAuthValue)
+authPolicy = PolicyOR(PolicyAuthorizeNV(index(P)), PolicyAuthValue)
+index(P)   = PolicyAuthorize(policyRef(P), keySign = Name(authority(S)))   -- as TPMT_HA
 ```
 
 - `policyRef(P)` is `SHA-256("xkms/tpm-policy/v1" ‖ scope ‖ 0x00 ‖ name)`. The
@@ -62,6 +61,13 @@ authPolicy = PolicyOR(
   the approval, and that is why an update needs no re-key.
 - `PolicyAuthValue` is the second branch, as in `platform`. The key password
   stays a separate field on the key.
+- An object with **no** auth value gets the `PolicyAuthorizeNV` branch alone.
+  An OR branch that an empty password satisfies would bypass the policy.
+- Named-policy objects are created with `userWithAuth` clear, so the policy is
+  the only way to authorize them. The password path is the `PolicyAuthValue`
+  branch.
+- The TPM refuses a policy whose hash differs from the object's name
+  algorithm. That mismatch is refused at creation with `ErrPolicyHashMismatch`.
 
 An approval for `P` at epoch `e` signs:
 
@@ -83,7 +89,8 @@ from the assignment:
   3. `PolicyGetDigest`
   4. `VerifySignature(authority, aHash, signature)`, which yields a ticket
   5. `PolicyAuthorize(approvedPolicy, policyRef, Name(authority), ticket)`
-  6. `PolicyOR`
+  6. `PolicyAuthorizeNV(index(P))`
+  7. `PolicyOR`, when the object has an auth-value branch
 - **Password branch:** `PolicyAuthValue`, then `PolicyOR`, with the object's
   auth value in an HMAC-bound session. This matches the platform policy's PIN
   branch today.
@@ -93,25 +100,29 @@ approval is current". The server makes no software comparison.
 
 ## Policy-authority lifecycle
 
-1. **Scope creation** runs when a tenant's `tpm.mode` becomes `shared` or
+1. **Binding record.** Each object stores a binding record beside its blobs
+   (`.tpmpolicy`, format `XTPB` v1): scope, policy, index, hash and whether it
+   has an auth-value branch. The session code reads this record, not the
+   caller's attributes.
+2. **Scope creation** runs when a tenant's `tpm.mode` becomes `shared` or
    `vtpm`, and at first boot for `system`. It creates the scope's storage
    key, then the authority under it, then the counter, and writes the scope
    record.
-2. **Authority key:**
-   - It is a restricted-to-signing ECDSA P-256 child of the scope's storage key,
-     with `fixedTPM | fixedParent | sensitiveDataOrigin | userWithAuth=false`,
-     so it is non-exportable.
-   - Its own `authPolicy` is `platform`, so it signs only on a platform whose
-     PCR 16 matches, or with the scope's authority auth value. That value is a
-     random 32 bytes stored in the scope record, which lives behind the barrier.
+3. **Authority key:**
+   - It is an ECDSA P-256 signing child of the scope's storage key, with
+     `fixedTPM | fixedParent | sensitiveDataOrigin`, so it is non-exportable.
+     It signs only approval digests that xkms computes itself; callers never
+     reach it.
+   - It is bound to the `platform` policy and has a random 32-byte auth value.
+     That value lives in the scope's sealed secrets behind the barrier.
    - Its public area and Name are recorded in the scope record. Every approval
      is verified against that Name.
-3. **Signing** happens only inside xkms, on policy create and update. A caller
+4. **Signing** happens only inside xkms, on policy create and update. A caller
    never supplies a signature.
-4. **Rotation** is required (owner ruling, 2026-09-29). See
-   [Authority rotation](#authority-rotation-pending-decision).
+5. **Rotation** is required (owner ruling, 2026-09-29). See
+   [Authority rotation](#authority-rotation).
 
-## Authority rotation (pending decision)
+## Authority rotation
 
 **Feasibility.** Rotation uses `TPM2_PolicyAuthorizeNV` indirection: an object
 binds to an NV index, and the NV index names the current authority, so writing
@@ -137,7 +148,7 @@ enforced only in software. Three ways to keep the TPM enforcing it:
 
 | Option | Object binds to | Stored in NV | Update or rotation cost | NV cost on the physical TPM |
 |---|---|---|---|---|
-| **A** (recommended) | `PolicyAuthorizeNV(index(P))`, one index per named policy | `PolicyAuthorize(authority, policyRef(P))` digest | rotation rewrites each of the tenant's policy indices; an update re-signs the tenant's policies (a few) | one index per named policy, plus one counter per tenant |
+| **A** (ruled 2026-09-29, built) | `PolicyAuthorizeNV(index(P))`, one index per named policy | `PolicyAuthorize(authority, policyRef(P))` digest | rotation rewrites each of the tenant's policy indices; an update re-signs the tenant's policies (a few) | one index per named policy, plus one counter per tenant |
 | B | `PolicyAuthorizeNV(index(tenant))` | `PolicyAuthorize(authority, tenantRef)` digest | approvals are per object (`PolicyNameHash(object Name)`), so every update or rotation re-signs every object of the tenant | one index plus one counter per tenant |
 | C | same as B | same as B | same as A | same as B, but the object-to-policy binding is enforced only by the registry |
 
@@ -158,7 +169,9 @@ Approvals signed by `k` no longer match any index, so rotation also revokes
 them. If the process crashes after the first index write, `k` and `k+1` are
 both recorded as `rotating`, and startup finishes the remaining writes.
 
-**Tenant key rotation (pending decision).** The ruling asks for key versions:
+**Tenant key rotation** (ruled 2026-09-29: a service-layer version model on
+every backend, with the version carried in an envelope header). It is
+designed in [Key versions](#key-versions). The ruling asks for key versions:
 a new version under the tenant's scope, old versions kept for verify and
 decrypt until retired, and "rotate all keys in this scope". xkms has no such
 model today:
@@ -173,13 +186,23 @@ verify or decrypt call selects a version.
 
 ## NV counter and revocation
 
-- Each scope has one NV index of type `TPM_NT_COUNTER`:
-  - `TPMA_NV_AUTHREAD` with an empty auth value, because reading a counter
-    reveals nothing.
-  - `TPMA_NV_POLICYWRITE`, so only a session that satisfies
-    `PolicyCommandCode(TPM_CC_NV_Increment) ∧ PolicySigned(authority(S))` can
-    increment it. Revocation is therefore held by the same key that approves.
-  - `TPMA_NV_NO_DA`.
+- Each scope has one NV index of type `TPM_NT_COUNTER`, and each named policy
+  has one ordinary NV index holding a `TPMT_HA` digest. Both use the same
+  attributes:
+  - `AUTHWRITE`, with the index's auth value set to a random write secret held
+    (sealed) in the scope record. Only xkms can update, rotate or revoke.
+  - `POLICYREAD`, with the read policy
+    `PolicyOR(PolicyCommandCode(NV_Read), PolicyCommandCode(X))`. X is
+    `PolicyAuthorizeNV` for a policy index and `PolicyNV` for the counter.
+    Using an object therefore needs no secret, and the index cannot be read
+    for any other purpose.
+    `AUTHREAD` would check reads against the write secret. An empty auth value
+    would leave the index writable by anyone.
+  - `NO_DA`: the secret is random, so dictionary-attack lockout would only
+    let one caller lock the TPM for every tenant.
+- The first write sets `TPMA_NV_WRITTEN`, which changes the index's Name. An
+  object is bound to the Name read after that write, and creating an object
+  against an unwritten index is refused.
 - Physical-TPM indices come from the owner range `0x01500000–0x015FFFFF` and
   are allocated per scope. A vTPM uses a fixed index in its own TPM.
 - **Update of `P`:**

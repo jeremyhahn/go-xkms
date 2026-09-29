@@ -60,6 +60,12 @@ const (
 	// simply have none; see PlatformPolicyPin for how they are handled.
 	FSEXT_PLATFORM_POLICY = ".policy"
 
+	// FSEXT_TPM_POLICY holds the TPMPolicyBinding record of an object created
+	// under a named, authorized TPM policy: the scope, policy name and NV
+	// index its authPolicy follows. Like FSEXT_PLATFORM_POLICY it lives beside
+	// the object's blobs and shares their lifetime.
+	FSEXT_TPM_POLICY = ".tpmpolicy"
+
 	// FSEXT_LEGACY_PRIVATE_BLOB is the private-blob extension symmetric keys
 	// were written with before go-xkms#1148 moved them onto the Platform SRK
 	// seal path. Those blobs hold an AES key sealed with no authorization

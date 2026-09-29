@@ -94,16 +94,44 @@ func EncodePCRSelection(bank string, indices []int) []byte {
 //
 // The returned slice length matches the hash size of the given bank.
 func ComputePolicyPCRDigest(bank string, pcrIndices []int, pcrDigests map[string]string) ([]byte, error) {
+	pcrDigestHash, err := PCRCompositeDigest(bank, pcrIndices, pcrDigests)
+	if err != nil {
+		return nil, err
+	}
+
+	sorted := sortedPCRIndices(pcrIndices)
+	newHash := pcrBankHashFunc(bank)
+
+	// Step 3: Compute the policy digest.
+	pcrSelect := EncodePCRSelection(bank, sorted)
+	oldDigest := make([]byte, len(pcrDigestHash)) // Initial empty policy digest (zeros).
+
+	policyHash := newHash()
+	policyHash.Write(oldDigest)
+	// TPM_CC_PolicyPCR = 0x0000017F (big-endian).
+	policyHash.Write([]byte{0x00, 0x00, 0x01, 0x7F})
+	policyHash.Write(pcrSelect)
+	policyHash.Write(pcrDigestHash)
+
+	return policyHash.Sum(nil), nil
+}
+
+// PCRCompositeDigest computes the pcrDigest operand of TPM2_PolicyPCR (TCG
+// TPM 2.0 Part 3, section 23.7): the bank's hash over the selected PCR values
+// concatenated in ascending index order. pcrDigests maps "<bank>:<index>" to
+// the hex PCR value; a missing value is zero-filled, as tpm2-tools does, which
+// can only make a later TPM2_PolicyPCR fail, never pass.
+//
+// Steps 1 and 2 of ComputePolicyPCRDigest are this function; it exists on its
+// own for callers that hand the operand to a live TPM2_PolicyPCR or to an
+// approved-policy trial digest rather than wanting the finished policy digest.
+func PCRCompositeDigest(bank string, pcrIndices []int, pcrDigests map[string]string) ([]byte, error) {
 	if len(pcrIndices) == 0 {
 		return nil, ErrPolicyEmptyPCRs
 	}
 
-	sorted := make([]int, len(pcrIndices))
-	copy(sorted, pcrIndices)
-	sort.Ints(sorted)
-
+	sorted := sortedPCRIndices(pcrIndices)
 	hashSize := PCRDigestSize(bank)
-	newHash := pcrBankHashFunc(bank)
 
 	// Step 1: Concatenate PCR digests in sorted order.
 	var pcrComposite []byte
@@ -122,22 +150,17 @@ func ComputePolicyPCRDigest(bank string, pcrIndices []int, pcrDigests map[string
 	}
 
 	// Step 2: Hash the composite to form pcrDigestHash.
-	compositeHash := newHash()
+	compositeHash := pcrBankHashFunc(bank)()
 	compositeHash.Write(pcrComposite)
-	pcrDigestHash := compositeHash.Sum(nil)
+	return compositeHash.Sum(nil), nil
+}
 
-	// Step 3: Compute the policy digest.
-	pcrSelect := EncodePCRSelection(bank, sorted)
-	oldDigest := make([]byte, compositeHash.Size()) // Initial empty policy digest (zeros).
-
-	policyHash := newHash()
-	policyHash.Write(oldDigest)
-	// TPM_CC_PolicyPCR = 0x0000017F (big-endian).
-	policyHash.Write([]byte{0x00, 0x00, 0x01, 0x7F})
-	policyHash.Write(pcrSelect)
-	policyHash.Write(pcrDigestHash)
-
-	return policyHash.Sum(nil), nil
+// sortedPCRIndices returns a sorted copy of indices.
+func sortedPCRIndices(indices []int) []int {
+	sorted := make([]int, len(indices))
+	copy(sorted, indices)
+	sort.Ints(sorted)
+	return sorted
 }
 
 // pcrBankHashFunc returns a constructor for the hash function associated

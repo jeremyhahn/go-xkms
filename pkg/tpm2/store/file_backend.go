@@ -103,6 +103,7 @@ func (fb *FileBackend) Delete(attrs *types.KeyAttributes) error {
 		FSEXT_PUBLIC_BLOB,
 		FSEXT_TPM_CONTEXT,
 		FSEXT_PLATFORM_POLICY,
+		FSEXT_TPM_POLICY,
 		FSEXT_LEGACY_PRIVATE_BLOB,
 	}
 

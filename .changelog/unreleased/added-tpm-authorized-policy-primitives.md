@@ -1,0 +1,19 @@
+- **`pkg/tpm2` can bind keys and sealed objects to named, authorized TPM policies that can be updated, revoked and re-signed by a new authority without re-keying.**
+  - A key or sealed object whose `TPMPolicy` names a policy (anything but `""` or `platform`) is created with `authPolicy = PolicyOR(PolicyAuthorizeNV(the policy's NV index), PolicyAuthValue)`. It has only the first branch when it has no auth value, and `userWithAuth` is cleared.
+  - A `.tpmpolicy` binding record (format `XTPB` v1) is saved beside its blobs.
+  - At use, the session code reads that record and runs PolicyPCR → PolicyNV(counter == epoch) → VerifySignature → PolicyAuthorize → PolicyAuthorizeNV. The approval comes from a `PolicyBindingResolver`.
+  - A PCR change fails as `PolicyPCRMismatchError`, and a superseded approval fails as `PolicyApprovalRevokedError`. Both wrap the TPM response code.
+  - New primitives:
+    - digests: `PolicyRef`, `AuthorizeDigest`, `ApprovedPolicyDigest`, `ApprovalDigest`, `AuthorizedObjectPolicy`;
+    - NV indices: `FindFreeNVIndex`, `DefinePolicyIndex`, `WritePolicyIndex`, `ReadPolicyIndex`, `UndefineNVIndex`, `NVIndexName` (a full NV space is `ErrTPMNVExhausted`);
+    - counters: `DefineCounterIndex`, `IncrementCounter`, `ReadCounter`;
+    - keys: `CreateStorageKey` (a tenant's storage key under the Platform SRK), `SignApproval` and `AuthorityName`.
+  - NV indices are `AUTHWRITE` with a random write secret, plus `POLICYREAD` restricted to the one command that needs the read, so using an object needs no secret.
+  - Verified on the TPM simulator:
+    - `TestAuthorizedPolicy_DigestsMatchLiveSession`: every trial digest equals the live session digest;
+    - `..._KeysSignUnderApproval`: two keys, with and without a password;
+    - `..._PCRChangeRefusesApprovedBranch`;
+    - `..._UpdateReapprovesWithoutRekey`: byte-identical blobs;
+    - `..._ReplayOfSupersededApprovalRefused`;
+    - `..._AuthorityRotation`: the old authority is refused;
+    - `..._SealedObject`, the binding-record and refusal tests, and the NV index and counter tests.

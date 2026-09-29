@@ -65,6 +65,13 @@ func (tpm *TPM2) CreateSecretKey(
 		policyPin = pin
 	}
 
+	// A named, authorized policy replaces the password path entirely: the
+	// template gets the policy's authPolicy and loses USERWITHAUTH.
+	policyBinding, err := tpm.namedPolicyBinding(keyAttrs, &aesTemplate)
+	if err != nil {
+		return err
+	}
+
 	// Create the parent key authorization session
 	session, closer, err := tpm.CreateSession(keyAttrs)
 	if err != nil {
@@ -120,6 +127,16 @@ func (tpm *TPM2) CreateSecretKey(
 	if policyPin != nil {
 		if err := tpm.recordKeyPolicyPin(
 			keyAttrs, backend, policyPin, false); err != nil {
+
+			return err
+		}
+	}
+
+	// Record which named policy this object follows. Without it the object
+	// could not be used: nothing else says which policy session to build.
+	if policyBinding != nil {
+		if err := tpm.recordPolicyBinding(
+			keyAttrs, backend, policyBinding, false); err != nil {
 
 			return err
 		}

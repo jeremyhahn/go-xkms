@@ -102,6 +102,15 @@ func (tpm *TPM2) sealKeyInternal(
 		policyPin = pin
 	}
 
+	// A named, authorized policy replaces the password path entirely: the
+	// template gets the policy's authPolicy and loses USERWITHAUTH.
+	sealTemplate := keyAttrs.TPMAttributes.Template
+	policyBinding, err := tpm.namedPolicyBinding(keyAttrs, &sealTemplate)
+	if err != nil {
+		return nil, err
+	}
+	keyAttrs.TPMAttributes.Template = sealTemplate
+
 	if keyAttrs.SealData == nil {
 		tpm.logger.Info("Generating HMAC seal data", slog.String("cn", keyAttrs.CN))
 		secretBytes = make([]byte, 32) // AES-256 key
@@ -235,6 +244,16 @@ func (tpm *TPM2) sealKeyInternal(
 	if policyPin != nil {
 		if err := tpm.recordKeyPolicyPin(
 			keyAttrs, backend, policyPin, overwrite); err != nil {
+
+			return nil, err
+		}
+	}
+
+	// Record which named policy this object follows. Without it the object
+	// could not be used: nothing else says which policy session to build.
+	if policyBinding != nil {
+		if err := tpm.recordPolicyBinding(
+			keyAttrs, backend, policyBinding, overwrite); err != nil {
 
 			return nil, err
 		}

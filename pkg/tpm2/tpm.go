@@ -331,11 +331,15 @@ type TPM2 struct {
 	policyDigest     tpm2.TPM2BDigest
 	platformKeyStore PlatformKeyStorer
 	platformSRKAttrs *types.KeyAttributes
-	random           io.Reader
-	simulator        SimulatorInterface
-	ssrkAttrs        *types.KeyAttributes
-	tracker          types.AEADSafetyTracker
-	transport        transport.TPM
+	// policyResolver supplies named, authorized policies to key creation and
+	// key use (see SetPolicyBindingResolver). It is published atomically so
+	// the hot session path reads it without a lock.
+	policyResolver atomic.Pointer[PolicyBindingResolver]
+	random         io.Reader
+	simulator      SimulatorInterface
+	ssrkAttrs      *types.KeyAttributes
+	tracker        types.AEADSafetyTracker
+	transport      transport.TPM
 	TrustedPlatformModule
 }
 
@@ -687,12 +691,7 @@ func (tpm *TPM2) AlgID() tpm2.TPMAlgID {
 // branch of the platform policy: the single platform PCR in the platform PCR
 // bank (TCG TPM 2.0 Part 2, Section 10.6.2).
 func platformPolicyPCRSelection(hashAlgID tpm2.TPMAlgID, pcr uint) tpm2.TPMLPCRSelection {
-	return tpm2.TPMLPCRSelection{
-		PCRSelections: []tpm2.TPMSPCRSelection{{
-			Hash:      hashAlgID,
-			PCRSelect: tpm2.PCClientCompatible.PCRs(pcr),
-		}},
-	}
+	return PolicyPCRSelection(hashAlgID, pcr)
 }
 
 // platformPolicyBranchDigests computes the two branch digests of the platform

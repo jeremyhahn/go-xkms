@@ -485,24 +485,11 @@ func (tpm *TPM2) platformPolicySession(
 	// value is handed to the session -- and the session is salted. Unsalted,
 	// the session key is empty and the HMAC key is the auth value alone: a
 	// single captured command lets an observer brute force the PIN offline.
-	// The PCR branch proves no secret and needs no salt.
-	var sessionOpts []tpm2.AuthOption
-	releaseSaltKey := noopCloser
-	if !usePCRBranch && len(auth) > 0 {
-		saltHandle, saltPub, release, saltErr := tpm.saltKey()
-		if saltErr != nil {
-			return nil, nil, &errs.Joined{Lead: ErrPlatformPolicySession, Cause: saltErr}
-		}
-		releaseSaltKey = release
-		sessionOpts = append(sessionOpts,
-			tpm2.Auth(auth),
-			tpm2.Salted(saltHandle, saltPub))
-	}
-	session, closer, err := tpm2.PolicySession(
-		tpm.transport, hashAlgID, sessionNonceSize, sessionOpts...)
-	tpm.closeSession(releaseSaltKey, "salt key")
+	// The PCR branch proves no secret, passes a nil auth and so gets an
+	// unsalted session (see startPolicySession).
+	session, closer, err := tpm.startPolicySession(hashAlgID, auth)
 	if err != nil {
-		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+		return nil, nil, &errs.Joined{Lead: ErrPlatformPolicySession, Cause: err}
 	}
 
 	if usePCRBranch {
@@ -816,6 +803,17 @@ func (tpm *TPM2) createKeySession(
 	// Callers register their closer in a defer before inspecting the error,
 	// so every return path -- including the failures -- has to hand back a
 	// callable closer (noopCloser).
+
+	// An object bound to a named, authorized policy is authorized only
+	// through that policy, whatever the caller's attributes say: its
+	// binding record, not the attributes, is what describes the object.
+	binding, err := tpm.loadPolicyBinding(keyAttrs, backend)
+	if err != nil {
+		return nil, noopCloser, err
+	}
+	if binding != nil {
+		return tpm.authorizedPolicySession(keyAttrs, binding)
+	}
 
 	// An IDevID or IAK carries the TCG IDevID/IAK Key Policy as its
 	// authPolicy, not the platform policy, so a platform-policy session
