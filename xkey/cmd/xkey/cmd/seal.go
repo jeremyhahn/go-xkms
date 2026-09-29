@@ -46,6 +46,11 @@ var (
 	sealSkipMigrate bool   // Skip automatic data migration
 )
 
+// removeAllFn is os.RemoveAll, held behind a variable so tests can inject a
+// failure when a staged migration copy must be cleaned up after a
+// copy_to_temp failure.
+var removeAllFn = os.RemoveAll
+
 var sealCmd = &cobra.Command{
 	Use:   "seal",
 	Short: "Create encrypted LUKS storage",
@@ -123,10 +128,16 @@ func runSeal(cmd *cobra.Command, args []string) error {
 	}
 
 	// If --unseal is set, unlock and mount the volume so it's ready for use.
-	if sealUnseal && !vol.IsMounted() {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Unlocking volume...")
-		if err := vol.Unlock(passphrase); err != nil {
-			return &SealError{Operation: "unseal_after_create", Err: err}
+	if sealUnseal {
+		mounted, err := vol.IsMounted()
+		if err != nil {
+			return &SealError{Operation: "check_mounted", Err: err}
+		}
+		if !mounted {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Unlocking volume...")
+			if err := vol.Unlock(passphrase); err != nil {
+				return &SealError{Operation: "unseal_after_create", Err: err}
+			}
 		}
 	}
 
@@ -280,7 +291,13 @@ func migrateExistingData(out io.Writer, vol migrateVolume, passphrase string) er
 		return &SealError{Operation: "create_temp", Err: err}
 	}
 	if err := copyDirContents(dataDir, tmpDir); err != nil {
-		_ = os.RemoveAll(tmpDir)
+		if rmErr := removeAllFn(tmpDir); rmErr != nil {
+			return &SealError{
+				Operation: "copy_to_temp",
+				Message:   fmt.Sprintf("staged copy left behind at %s", tmpDir),
+				Err:       errors.Join(err, rmErr),
+			}
+		}
 		return &SealError{Operation: "copy_to_temp", Err: err}
 	}
 

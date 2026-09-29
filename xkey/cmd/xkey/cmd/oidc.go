@@ -1760,28 +1760,31 @@ func runAutoRefresh(tokenEndpoint, clientID string, store *oidcCLITokenStore, to
 
 		// Execute script if specified
 		if execCmd != "" {
-			claims, _ := parseIDToken(token.IDToken())
-			if claims == nil {
-				claims = &OIDCIDTokenClaims{}
-			}
+			claims, err := parseIDToken(token.IDToken())
+			if err != nil {
+				// A malformed ID token means the claims below cannot be
+				// trusted; skip this cycle's exec hook rather than run it
+				// with an empty Subject/Email/Name.
+				log("  Error parsing ID token, skipping exec hook: %v\n", err)
+			} else {
+				payload := OIDCExecPayload{
+					Provider:     token.Issuer,
+					Issuer:       token.Issuer,
+					ClientID:     token.ClientID,
+					AccessToken:  token.AccessToken(),
+					RefreshToken: token.RefreshToken(),
+					IDToken:      token.IDToken(),
+					ExpiresAt:    token.ExpiresAt.Format(time.RFC3339),
+					ExpiresIn:    newTokens.ExpiresIn,
+					Scopes:       token.Scopes,
+					Subject:      claims.Subject,
+					Email:        claims.Email,
+					Name:         claims.Name,
+				}
 
-			payload := OIDCExecPayload{
-				Provider:     token.Issuer,
-				Issuer:       token.Issuer,
-				ClientID:     token.ClientID,
-				AccessToken:  token.AccessToken(),
-				RefreshToken: token.RefreshToken(),
-				IDToken:      token.IDToken(),
-				ExpiresAt:    token.ExpiresAt.Format(time.RFC3339),
-				ExpiresIn:    newTokens.ExpiresIn,
-				Scopes:       token.Scopes,
-				Subject:      claims.Subject,
-				Email:        claims.Email,
-				Name:         claims.Name,
-			}
-
-			if err := executeOIDCScript(logWriter, execCmd, payload); err != nil {
-				log("  Script error: %v\n", err)
+				if err := executeOIDCScript(logWriter, execCmd, payload); err != nil {
+					log("  Script error: %v\n", err)
+				}
 			}
 		}
 		return false

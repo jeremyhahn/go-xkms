@@ -299,14 +299,16 @@ func TestIsLUKSVolume_EmptyFile(t *testing.T) {
 
 // Test IsMounted for non-mounted path
 func TestIsMounted_NotMounted(t *testing.T) {
-	result := IsMounted("/nonexistent/mount/point")
+	result, err := IsMounted("/nonexistent/mount/point")
+	require.NoError(t, err)
 	assert.False(t, result)
 }
 
 // Test IsMounted for well-known mounted path
 func TestIsMounted_KnownMount(t *testing.T) {
 	// Root is always mounted on Linux
-	result := IsMounted("/")
+	result, err := IsMounted("/")
+	require.NoError(t, err)
 	assert.True(t, result)
 }
 
@@ -326,7 +328,9 @@ func TestVolume_StateChecks(t *testing.T) {
 
 	assert.False(t, vol.Exists())
 	assert.False(t, vol.IsLUKS())
-	assert.False(t, vol.IsMounted())
+	mounted, err := vol.IsMounted()
+	require.NoError(t, err)
+	assert.False(t, mounted)
 	assert.False(t, vol.IsOpen())
 }
 

@@ -1675,6 +1675,18 @@ func (a *App) PostBarrierUnseal() error {
 	return nil
 }
 
+// resolveBrowsersDir resolves the directory browser certificate state is
+// stored under, ~/.xkey/browsers. Extracted from NewApp so its
+// user-home-directory resolution failure is unit-testable without
+// invoking the rest of NewApp's service construction.
+func resolveBrowsersDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".xkey", "browsers"), nil
+}
+
 // NewApp creates a new App with the provided configuration. Pass nil to
 // use DefaultGUIConfig.
 func NewApp(cfg *GUIConfig) *App {
@@ -1855,8 +1867,11 @@ func NewApp(cfg *GUIConfig) *App {
 		}
 	}
 
-	home, _ := os.UserHomeDir()
-	browsersDir := filepath.Join(home, ".xkey", "browsers")
+	browsersDir, err := resolveBrowsersDir()
+	if err != nil {
+		log.Error("failed to resolve user home directory", "error", err)
+		panic("browser service initialization failed: could not resolve user home directory: " + err.Error())
+	}
 	secureBrowserSvc := services.NewSecureBrowserService(
 		browsersDir, browserSvc, trustSvc, log)
 	// Without this the generic launcher only exports SSL_CERT_FILE, which no

@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"golang.org/x/sys/unix"
 
@@ -279,6 +280,40 @@ func TestGenerateFIDO2SerialNumber(t *testing.T) {
 	// Test length (16 hex chars)
 	if len(serial1) != 16 {
 		t.Errorf("generateFIDO2SerialNumber() returned %d chars, want 16", len(serial1))
+	}
+}
+
+// TestReadCryptoRandomFrom_HandlesShortReads proves readCryptoRandomFrom
+// fully populates the destination buffer even when the source only
+// returns a few bytes per Read call, rather than returning after the
+// first short read the way a bare r.Read(b) would.
+func TestReadCryptoRandomFrom_HandlesShortReads(t *testing.T) {
+	data := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	r := iotest.OneByteReader(bytes.NewReader(data))
+
+	buf := make([]byte, len(data))
+	n, err := readCryptoRandomFrom(r, buf)
+	if err != nil {
+		t.Fatalf("readCryptoRandomFrom() error = %v", err)
+	}
+	if n != len(data) {
+		t.Fatalf("readCryptoRandomFrom() n = %d, want %d", n, len(data))
+	}
+	if !bytes.Equal(buf, data) {
+		t.Fatalf("readCryptoRandomFrom() buf = %v, want %v", buf, data)
+	}
+}
+
+// TestReadCryptoRandomFrom_ShortSourcePropagatesError verifies that a
+// source exhausted before the buffer is filled reports an error rather
+// than silently returning fewer bytes than requested.
+func TestReadCryptoRandomFrom_ShortSourcePropagatesError(t *testing.T) {
+	r := iotest.OneByteReader(bytes.NewReader([]byte{1, 2, 3}))
+
+	buf := make([]byte, 8)
+	_, err := readCryptoRandomFrom(r, buf)
+	if err == nil {
+		t.Fatal("readCryptoRandomFrom() error = nil, want an error for a short source")
 	}
 }
 

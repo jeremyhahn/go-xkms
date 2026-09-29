@@ -96,19 +96,36 @@ Examples:
 	RunE: runDeviceEnrollPhone,
 }
 
+// Flag-bound values for device enroll-phone, written directly by cobra at
+// parse time via the *Var registrations in init() below. Binding this way
+// (rather than reading back through f.GetString et al. in
+// runDeviceEnrollPhone) makes a lookup typo a compile error instead of a
+// silently discarded error that leaves the option at its zero value.
+var (
+	deviceEnrollPhoneDevice              string
+	deviceEnrollPhoneCA                  string
+	deviceEnrollPhoneValidity            time.Duration
+	deviceEnrollPhoneAllowPackages       []string
+	deviceEnrollPhoneAllowSigners        []string
+	deviceEnrollPhoneAllowUnpinned       bool
+	deviceEnrollPhoneMinSecurityLevel    string
+	deviceEnrollPhoneRequireVerifiedBoot bool
+	deviceEnrollPhoneSubject             string
+)
+
 func init() {
 	deviceCmd.AddCommand(deviceEnrollPhoneCmd)
 
 	f := deviceEnrollPhoneCmd.Flags()
-	f.String("device", "", "Device name to enroll (uses the default if unset)")
-	f.String("ca", "local", "Signing authority: local or xkms")
-	f.Duration("validity", 0, "Credential lifetime, and so the re-attestation cadence (default 90 days)")
-	f.StringSlice("allow-package", nil, "Android package name permitted to enroll (repeatable)")
-	f.StringSlice("allow-signer", nil, "Hex SHA-256 signing certificate digest permitted (repeatable)")
-	f.Bool("allow-unpinned", false, "Permit an allow-listed package with no signing digest (development only)")
-	f.String("min-security-level", "trusted_environment", "Weakest key protection accepted: software, trusted_environment, strongbox")
-	f.Bool("require-verified-boot", true, "Refuse devices that are not verified-boot with a locked bootloader")
-	f.String("subject", "", "Subject DN to request on the certificate")
+	f.StringVar(&deviceEnrollPhoneDevice, "device", "", "Device name to enroll (uses the default if unset)")
+	f.StringVar(&deviceEnrollPhoneCA, "ca", "local", "Signing authority: local or xkms")
+	f.DurationVar(&deviceEnrollPhoneValidity, "validity", 0, "Credential lifetime, and so the re-attestation cadence (default 90 days)")
+	f.StringSliceVar(&deviceEnrollPhoneAllowPackages, "allow-package", nil, "Android package name permitted to enroll (repeatable)")
+	f.StringSliceVar(&deviceEnrollPhoneAllowSigners, "allow-signer", nil, "Hex SHA-256 signing certificate digest permitted (repeatable)")
+	f.BoolVar(&deviceEnrollPhoneAllowUnpinned, "allow-unpinned", false, "Permit an allow-listed package with no signing digest (development only)")
+	f.StringVar(&deviceEnrollPhoneMinSecurityLevel, "min-security-level", "trusted_environment", "Weakest key protection accepted: software, trusted_environment, strongbox")
+	f.BoolVar(&deviceEnrollPhoneRequireVerifiedBoot, "require-verified-boot", true, "Refuse devices that are not verified-boot with a locked bootloader")
+	f.StringVar(&deviceEnrollPhoneSubject, "subject", "", "Subject DN to request on the certificate")
 
 	_ = viper.BindPFlag("device.enroll.ca", f.Lookup("ca"))
 	_ = viper.BindPFlag("device.enroll.validity", f.Lookup("validity"))
@@ -132,20 +149,27 @@ type enrollPhoneOptions struct {
 	Subject             string
 }
 
-func runDeviceEnrollPhone(cmd *cobra.Command, args []string) error {
-	f := cmd.Flags()
-	opts := &enrollPhoneOptions{}
-	opts.DeviceFilter, _ = f.GetString("device")
-	opts.CASource, _ = f.GetString("ca")
-	opts.Validity, _ = f.GetDuration("validity")
-	opts.AllowPackages, _ = f.GetStringSlice("allow-package")
-	opts.AllowSigners, _ = f.GetStringSlice("allow-signer")
-	opts.AllowUnpinned, _ = f.GetBool("allow-unpinned")
-	opts.MinSecurityLevel, _ = f.GetString("min-security-level")
-	opts.RequireVerifiedBoot, _ = f.GetBool("require-verified-boot")
-	opts.Subject, _ = f.GetString("subject")
+// deviceEnrollPhoneOptionsFromFlags builds enrollPhoneOptions from the
+// package-level values cobra writes directly into via the *Var flag
+// registrations in init(). Kept separate from runDeviceEnrollPhone so
+// tests can verify flag values reach enrollPhoneOptions without running
+// the full enrollment flow.
+func deviceEnrollPhoneOptionsFromFlags() *enrollPhoneOptions {
+	return &enrollPhoneOptions{
+		DeviceFilter:        deviceEnrollPhoneDevice,
+		CASource:            deviceEnrollPhoneCA,
+		Validity:            deviceEnrollPhoneValidity,
+		AllowPackages:       deviceEnrollPhoneAllowPackages,
+		AllowSigners:        deviceEnrollPhoneAllowSigners,
+		AllowUnpinned:       deviceEnrollPhoneAllowUnpinned,
+		MinSecurityLevel:    deviceEnrollPhoneMinSecurityLevel,
+		RequireVerifiedBoot: deviceEnrollPhoneRequireVerifiedBoot,
+		Subject:             deviceEnrollPhoneSubject,
+	}
+}
 
-	return enrollPhone(context.Background(), opts, slog.Default())
+func runDeviceEnrollPhone(cmd *cobra.Command, args []string) error {
+	return enrollPhone(context.Background(), deviceEnrollPhoneOptionsFromFlags(), slog.Default())
 }
 
 // buildEnrollmentPolicy turns the flags into the policy applied to the phone's

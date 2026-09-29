@@ -146,6 +146,30 @@ func init() {
 	_ = tpmIDevIDCertImportCmd.MarkFlagRequired("cert")
 }
 
+// buildCSRSubjectFromOpenSSLDefaults builds a CSR subject pre-populated
+// from the OpenSSL config's [req_distinguished_name] defaults, when a
+// config file exists. xkms.LoadOpenSSLConfig returns (nil, nil) when no
+// config file is found, which is the only condition tolerated here: a
+// config file that exists but cannot be parsed must fail rather than
+// silently proceed with defaults the operator did not ask for. Extracted
+// from runIDevIDCSRExportPEM so this failure mode is unit-testable
+// without a real or simulated TPM.
+func buildCSRSubjectFromOpenSSLDefaults() (*xkms.TrustedCASubject, error) {
+	caSubject := &xkms.TrustedCASubject{}
+	opensslCfg, err := xkms.LoadOpenSSLConfig()
+	if err != nil {
+		return nil, err
+	}
+	if opensslCfg != nil {
+		caSubject.Organization = opensslCfg.Organization
+		caSubject.OrganizationalUnit = opensslCfg.OrganizationalUnit
+		caSubject.Country = opensslCfg.Country
+		caSubject.Province = opensslCfg.Province
+		caSubject.Locality = opensslCfg.Locality
+	}
+	return caSubject, nil
+}
+
 func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
@@ -173,14 +197,10 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) (err error) {
 		return &DetailError{Err: ErrKeyNotFound, Detail: ": failed to get IDevID public key"}
 	}
 
-	// Build CSR subject: start with OpenSSL defaults
-	caSubject := &xkms.TrustedCASubject{}
-	if opensslCfg, _ := xkms.LoadOpenSSLConfig(); opensslCfg != nil {
-		caSubject.Organization = opensslCfg.Organization
-		caSubject.OrganizationalUnit = opensslCfg.OrganizationalUnit
-		caSubject.Country = opensslCfg.Country
-		caSubject.Province = opensslCfg.Province
-		caSubject.Locality = opensslCfg.Locality
+	// Build CSR subject: start with OpenSSL defaults.
+	caSubject, err := buildCSRSubjectFromOpenSSLDefaults()
+	if err != nil {
+		return &WrappedError{Msg: "failed to load OpenSSL config", Err: err}
 	}
 
 	// CN comes from IDevIDConfig

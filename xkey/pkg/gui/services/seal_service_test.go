@@ -16,6 +16,7 @@ package services
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -670,6 +671,43 @@ func TestSealService_SealData_PolicyTypePassword_EmptyPassword(t *testing.T) {
 
 	_, err := svc.SealData(req)
 	assert.ErrorIs(t, err, ErrSealPasswordRequired)
+}
+
+// failingPassword is a test double for xkms.Password whose String() always
+// fails, simulating a secure buffer that has already been wiped or cannot
+// be decrypted.
+type failingPassword struct{}
+
+func (failingPassword) Bytes() []byte           { return nil }
+func (failingPassword) String() (string, error) { return "", errors.New("password buffer destroyed") }
+func (failingPassword) Clear()                  {}
+
+// TestSealService_SealData_PasswordStringError proves that a seal option
+// password which cannot be read aborts the seal with a typed error before
+// the SDK client is ever called, rather than sealing the object without
+// the authentication the caller requested.
+func TestSealService_SealData_PasswordStringError(t *testing.T) {
+	origHandler := policyHandlers[PolicyTypeNone]
+	t.Cleanup(func() { policyHandlers[PolicyTypeNone] = origHandler })
+
+	policyHandlers[PolicyTypeNone] = func(s *SealService, req *SealRequest, opts *xkms.SealOptions) error {
+		opts.Password = failingPassword{}
+		return nil
+	}
+
+	mockClient := defaultSealMockClient()
+	sealCalled := false
+	mockClient.sealFn = func(_ context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
+		sealCalled = true
+		return &transport.SealResponse{Backend: req.Backend, Ciphertext: req.Data}, nil
+	}
+	svc := newSealServiceWithMockClient(t, mockClient)
+	req := validSealRequest()
+	req.PolicyType = "none"
+
+	_, err := svc.SealData(req)
+	assert.ErrorIs(t, err, ErrSealPasswordUnavailable)
+	assert.False(t, sealCalled, "the SDK client must not be called when the password cannot be read")
 }
 
 func TestSealService_SealData_PolicyTypePlatformPolicy_Success(t *testing.T) {

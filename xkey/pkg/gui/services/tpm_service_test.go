@@ -611,7 +611,7 @@ func defaultMockTPM() *mockTPM {
 				Handle: 0x81010001,
 			},
 		},
-		ekCertErr:    errors.New("no cert"),
+		ekCertErr:    xkms.ErrTPMEndorsementCertNotFound,
 		ekCertRSAErr: errors.New("not available"),
 		ekCertECErr:  errors.New("not available"),
 		ekECC:        nil,
@@ -4445,6 +4445,29 @@ func TestTPMService_ProvisionIDevID_IAKAttrsError(t *testing.T) {
 	mock := defaultMockTPM()
 	mock.iakAttrsErr = errors.New("no IAK")
 	mock.iakAttrs = nil
+	svc := newServiceWithMock(mock)
+	err := svc.ProvisionIDevID("ownerpass")
+	assert.ErrorIs(t, err, ErrTPMProvisionIDevIDFailed)
+}
+
+// TestTPMService_ProvisionIDevID_EKCertNotProvisioned verifies that the
+// sentinel "no EK certificate provisioned yet" error is tolerated: the EK
+// certificate is optional for CreateIDevID, so provisioning proceeds
+// without one.
+func TestTPMService_ProvisionIDevID_EKCertNotProvisioned(t *testing.T) {
+	mock := defaultMockTPM() // ekCertErr defaults to xkms.ErrTPMEndorsementCertNotFound.
+	mock.createIDevIDResult = &xkms.KeyAttributes{KeyAlgorithm: x509.ECDSA}
+	svc := newServiceWithMock(mock)
+	err := svc.ProvisionIDevID("ownerpass")
+	assert.NoError(t, err)
+}
+
+// TestTPMService_ProvisionIDevID_EKCertError verifies that a non-sentinel
+// EK certificate lookup failure (e.g. a TPM communication error) fails
+// provisioning instead of silently proceeding without the EK certificate.
+func TestTPMService_ProvisionIDevID_EKCertError(t *testing.T) {
+	mock := defaultMockTPM()
+	mock.ekCertErr = errors.New("TPM communication failure")
 	svc := newServiceWithMock(mock)
 	err := svc.ProvisionIDevID("ownerpass")
 	assert.ErrorIs(t, err, ErrTPMProvisionIDevIDFailed)
