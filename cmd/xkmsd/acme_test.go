@@ -836,3 +836,36 @@ func TestBuildClusterPreSignHooks_RegisteredHookStampsSPIFFEURI(t *testing.T) {
 		t.Errorf("registry.Execute (no permanent identifier) returned %d extensions, want 0", len(exts))
 	}
 }
+
+// TestBuildACMERouter_CertificateRouteMatchesHexSerials pins the
+// certificate route to the ID form order finalize actually issues: the
+// serial number in hexadecimal (cert.SerialNumber.Text(16)). A decimal-only
+// route answered an un-routed 404 for every serial containing a-f, which
+// is most 128-bit random serials (go-xkms#1125).
+func TestBuildACMERouter_CertificateRouteMatchesHexSerials(t *testing.T) {
+	ts := httptest.NewServer(buildACMERouter(&stubRestService{}, "/acme", nil, nil))
+	t.Cleanup(ts.Close)
+
+	tests := []struct {
+		name string
+		id   string
+		want int
+	}{
+		{name: "lower-case hex serial", id: "3f9a0c7be21d44", want: http.StatusNoContent},
+		{name: "upper-case hex serial", id: "3F9A0C7BE21D44", want: http.StatusNoContent},
+		{name: "all-digit serial", id: "1234567890", want: http.StatusNoContent},
+		{name: "non-hex id is not routed", id: "xyz-not-hex", want: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := http.Post(ts.URL+"/acme/cert/"+tt.id, "application/jose+json", nil)
+			if err != nil {
+				t.Fatalf("POST /acme/cert/%s: %v", tt.id, err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != tt.want {
+				t.Fatalf("POST /acme/cert/%s: status %d, want %d", tt.id, resp.StatusCode, tt.want)
+			}
+		})
+	}
+}

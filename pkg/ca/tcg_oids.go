@@ -231,19 +231,6 @@ func CreatePlatformModelExtension(model string) (pkix.Extension, error) {
 	}, nil
 }
 
-// CreatePlatformVersionExtension creates an X.509 extension for platform version.
-func CreatePlatformVersionExtension(version string) (pkix.Extension, error) {
-	value, err := asn1.Marshal(version)
-	if err != nil {
-		return pkix.Extension{}, ErrTCGExtensionEncoding
-	}
-	return pkix.Extension{
-		Id:       OIDTCGAttributePlatformVersion,
-		Critical: false,
-		Value:    value,
-	}, nil
-}
-
 // MarshalHardwareModuleName encodes an RFC 4108 HardwareModuleName for use as
 // the value of a subjectAltName otherName.
 //

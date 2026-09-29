@@ -18,10 +18,10 @@ package tpm_test
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -29,6 +29,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,6 +38,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/local"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 )
@@ -217,6 +219,29 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 	// Use cert store instead of TPM NVRAM
 	config.EK.CertHandle = 0
 
+	// Configure the IAK for ECDSA too: xkmssdk.DefaultTPMConfig.IAK is a
+	// shared *IAKConfig (pkg/tpm2/config.go's package-level DefaultConfig),
+	// so `config := xkmssdk.DefaultTPMConfig` only copies the outer struct --
+	// config.IAK still points at that same shared RSA-default instance.
+	// TestSignTCGCSRIDevID_ValidECDSAEnrollment asserts BOTH the IAK and the
+	// IDevID public keys are ECDSA; leaving this unset left the IAK issued
+	// as RSA (the shared default) while only IDevID actually became ECDSA.
+	// Copying the struct before mutating it keeps the shared package default
+	// untouched for every other test.
+	iakConfig := *xkmssdk.DefaultTPMConfig.IAK
+	iakConfig.KeyAlgorithm = "ECDSA"
+	iakConfig.SignatureAlgorithm = "ECDSA-SHA256"
+	iakConfig.RSAConfig = nil
+	// ECCConfig must be set explicitly, not left nil: pkg/tpm2's own
+	// TestVerifyTCG_CSR_IAK_Stateless_ECDSAKey_Succeeds (the one other place
+	// in this repo that provisions an ECDSA IAK) sets exactly this, and
+	// without it TPM2_Certify's signature over the IDevID key fails to
+	// verify (ErrCertifySignature) even though key creation itself succeeds
+	// silently -- the template's own "nil curve defaults to P-256" fallback
+	// (pkg/tpm2/devid_template.go) is not enough on its own here.
+	iakConfig.ECCConfig = &xkmssdk.ECCConfig{Curve: "P-256"}
+	config.IAK = &iakConfig
+
 	// Configure IDevID for enrollment with ECDSA
 	config.IDevID = &xkmssdk.IDevIDConfig{
 		CertHandle:         0, // Use cert store
@@ -362,7 +387,94 @@ func (s *SwtpmConnection) Close() {
 	}
 }
 
-// generateEKCertificate creates a self-signed EK certificate for swtpm testing
+// swtpmTestEKIssuer is the shared, fixed signing key/certificate every
+// generateEKCertificate call signs a test device's EK certificate with, so
+// every EK certificate this test binary generates chains to ONE reusable
+// root -- SwtpmTestEKRootPEM / writeSwtpmTestEKRootPEM expose it for
+// newTestCA (handlers_tcgcsr_integration_test.go) to configure as a pkg/ca
+// TCGConfig trust anchor. Lazily loaded once via swtpmTestEKIssuerOnce, from
+// the fixed key/cert committed at testdata/swtpm-test-ek-root.{crt,key}.
+//
+// Before this, each call minted a fresh ECDSA key, signed with it, and then
+// discarded it -- the certificate embedded the EK's own public key but was
+// signed by a key nothing else ever saw again, so no caller could construct
+// a matching root to verify it against. A shared, retrievable issuer is
+// required for chain verification to be possible at all, not merely
+// convenient.
+//
+// It must additionally be FIXED, not generated fresh per test-binary run
+// (as an earlier version of this helper did): the acme-tpm lane's real ACME
+// server (test/integration/acme-tpm/config.acme-tpm.yaml, a separate
+// process in the acme-server container) verifies device EK certificates
+// against its own configured trust anchors too, and can only be given a
+// trust anchor that exists before it starts -- config.acme-tpm.yaml's
+// `ca.tcg-config.trust-anchors` points at the same committed
+// testdata/swtpm-test-ek-root.crt (bind-mounted read-only into that
+// container by docker-compose.yml), so the two processes agree on the
+// issuer without either needing to know anything about the other's runtime
+// state.
+var (
+	swtpmTestEKIssuerOnce sync.Once
+	swtpmTestEKIssuerKey  *ecdsa.PrivateKey
+	swtpmTestEKIssuerCert *x509.Certificate
+)
+
+func swtpmTestEKIssuer() (*ecdsa.PrivateKey, *x509.Certificate) {
+	swtpmTestEKIssuerOnce.Do(func() {
+		certPEM, err := os.ReadFile("testdata/swtpm-test-ek-root.crt")
+		if err != nil {
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to read issuer certificate: %v", err))
+		}
+		certBlock, _ := pem.Decode(certPEM)
+		if certBlock == nil {
+			panic("swtpmTestEKIssuer: testdata/swtpm-test-ek-root.crt has no PEM block")
+		}
+		cert, err := x509.ParseCertificate(certBlock.Bytes)
+		if err != nil {
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to parse issuer certificate: %v", err))
+		}
+
+		keyPEM, err := os.ReadFile("testdata/swtpm-test-ek-root.key")
+		if err != nil {
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to read issuer key: %v", err))
+		}
+		keyBlock, _ := pem.Decode(keyPEM)
+		if keyBlock == nil {
+			panic("swtpmTestEKIssuer: testdata/swtpm-test-ek-root.key has no PEM block")
+		}
+		key, err := x509.ParseECPrivateKey(keyBlock.Bytes)
+		if err != nil {
+			panic(fmt.Sprintf("swtpmTestEKIssuer: failed to parse issuer key: %v", err))
+		}
+
+		swtpmTestEKIssuerKey, swtpmTestEKIssuerCert = key, cert
+	})
+	return swtpmTestEKIssuerKey, swtpmTestEKIssuerCert
+}
+
+// SwtpmTestEKRootPEM returns the PEM encoding of the shared swtpm test EK
+// issuer certificate (see swtpmTestEKIssuer).
+func SwtpmTestEKRootPEM() []byte {
+	_, cert := swtpmTestEKIssuer()
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+}
+
+// writeSwtpmTestEKRootPEM writes SwtpmTestEKRootPEM to a file under t's
+// temporary directory and returns its path, for
+// truststore.Config.ExternalRootPaths (pkg/attestation/truststore has no
+// inline-PEM option).
+func writeSwtpmTestEKRootPEM(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "swtpm-test-ek-root.pem")
+	require.NoError(t, os.WriteFile(path, SwtpmTestEKRootPEM(), 0o600))
+	return path
+}
+
+// generateEKCertificate creates an EK certificate for swtpm testing, signed
+// by the shared swtpmTestEKIssuer and carrying the tcg-kp-EKCertificate
+// extended key usage (2.23.133.8.1) the TCG EK Credential Profile defines --
+// pkg/ca/tcg_ek_trust.go's requireTCGEKCertificateEKU refuses any EK
+// certificate without it, a real manufacturer certificate included.
 func (s *SwtpmConnection) generateEKCertificate() ([]byte, error) {
 	// Get EK attributes to access the public key
 	ekAttrs, err := s.tpmModule.EKAttributes()
@@ -382,31 +494,53 @@ func (s *SwtpmConnection) generateEKCertificate() ([]byte, error) {
 		return nil, caerrors.InternalServerError("failed to generate serial number: %v", err)
 	}
 
+	subject := pkix.Name{
+		CommonName:   s.deviceID,
+		Organization: []string{"swtpm-test"},
+	}
+
+	// TCG EK Credential Profile subjectAltName directoryName: tcg-at-
+	// tpmManufacturer/tpmModel/tpmVersion (2.23.133.2.{1,2,3}). Without the
+	// manufacturer attribute pkg/ca/tcg_devid_name.go's TCGTPMManufacturer
+	// refuses the certificate outright (ErrTCGEKManufacturerUnknown) before
+	// chain verification is even reached. Read from swtpm itself via
+	// TPM2_GetCapability (FixedProperties) rather than hardcoding, the same
+	// pattern pkg/tpm2/tpm2test.ProvisionIAKCertificate already uses for the
+	// IAK certificate this same test binary provisions.
+	props, err := s.tpmModule.FixedProperties()
+	if err != nil {
+		return nil, caerrors.TPMErr("failed to read TPM fixed properties: %v", err)
+	}
+	san, err := ca.BuildSubjectAltName(subject, nil, nil, nil, nil, nil, []pkix.Name{{
+		ExtraNames: []pkix.AttributeTypeAndValue{
+			{Type: ca.OIDTCGAttributeTPMManufacturer, Value: props.ManufacturerCode},
+			{Type: ca.OIDTCGAttributeTPMModel, Value: props.Model},
+			{Type: ca.OIDTCGAttributeTPMVersion, Value: fmt.Sprintf("id:%04X%04X", props.FwMajor, props.FwMinor)},
+		},
+	}})
+	if err != nil {
+		return nil, caerrors.MalformedError("failed to build EK certificate subject alt name: %v", err)
+	}
+
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName:   s.deviceID,
-			Organization: []string{"swtpm-test"},
-		},
-		Issuer: pkix.Name{
-			CommonName:   "swtpm Test EK CA",
-			Organization: []string{"swtpm-test"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDataEncipherment,
+		Subject:      subject,
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDataEncipherment,
+		// tcg-kp-EKCertificate: see the function doc comment above.
+		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{ca.OIDTCGKpEKCertificate},
 		BasicConstraintsValid: true,
 		IsCA:                  false,
+		ExtraExtensions:       []pkix.Extension{san},
 	}
 
-	// Generate a temporary signing key for the self-signed certificate
-	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, caerrors.KeyGenerationFailureError("failed to generate signing key: %v", err)
-	}
+	issuerKey, issuerCert := swtpmTestEKIssuer()
 
-	// Create the certificate with the EK public key
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, ekPublicKey, signingKey)
+	// Sign with the shared issuer (see swtpmTestEKIssuer's doc comment) --
+	// the certificate's Issuer field is derived from issuerCert.Subject by
+	// x509.CreateCertificate, not from this template.
+	certDER, err := x509.CreateCertificate(rand.Reader, template, issuerCert, ekPublicKey, issuerKey)
 	if err != nil {
 		return nil, caerrors.SigningFailureError("failed to create certificate: %v", err)
 	}

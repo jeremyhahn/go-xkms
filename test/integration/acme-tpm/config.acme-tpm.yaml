@@ -1,0 +1,241 @@
+# xkmsd configuration for the acme-tpm integration lane (make integration-test-acme-tpm).
+#
+# Boots xkmsd with its embedded ACME server (cmd/xkmsd/acme.go) enabled and
+# the enroll-01/endorse-01 TPM-attestation challenges turned on, so the
+# device-attest-01, enroll-01 and permanent-identifier end-to-end tests under
+# test/integration/acme-tpm have a real server to dial at ACME_SERVER_URL.
+#
+# storage.backend is "qrdb" with barrier.strategy "none" (go-xkms#1125),
+# matching test/integration/acmeadmin/xkmsd.yaml's pattern -- the ONE fixture
+# in this repository that already boots an ACME-enabled xkmsd unattended.
+# This is load-bearing for two independent reasons:
+#
+#  1. Since go-xkms#1091 (cmd/xkmsd/admin.go's finalizeAdminModule),
+#     EVERY xkmsd boot -- ACME-enabled or not -- requires
+#     server.Server.QRDBClient() to be non-nil, and refuses a
+#     disabled-authorizer fallback (ErrAdminQRDBClientRequired): the ACME
+#     admin surface's RBAC gate has no "authorization is optional" mode. A
+#     non-qrdb storage.backend never publishes that client, so this lane
+#     failed to start at all with "failed to finalize admin ServiceModule":
+#     "acme: resolve qrdb client for admin authorization" once that
+#     requirement landed -- storage.backend "qrdb" is what publishes it.
+#  2. storage.backend "qrdb" flips the qrdb node's OWN barrier on
+#     (pkg/server/embedded_node.go ResolveNodeSeal / BarrierConfig.NodeFlipWired).
+#     An earlier version of this file paired that with barrier.strategy
+#     "passphrase", which does NOT auto-unseal at construction (only "none"
+#     and a provisioned "tpm2" do), so xkmsd blocked boot behind a pre-boot
+#     "sealed-window" listener until an operator ran `xkmsctl barrier
+#     unseal` against it -- and pkg/server/sealed_window.go refuses to even
+#     open that listener on a non-loopback Server.Host (0.0.0.0 here):
+#
+#       ERROR Failed to create server error="failed to initialize qrdb
+#       storage: failed to create embedded qrdb node: qrdb node: sealed
+#       window: qrdb node: sealed-window listener refused to bind
+#       \"0.0.0.0\": while the barrier is sealed ..."
+#
+#     barrier.strategy "none" auto-unseals unattended at construction
+#     (pkg/config/config.go's BarrierConfig.NodeFlipWired lists it alongside
+#     passphrase/shamir/tpm2, so it still counts as the qrdb node's own
+#     barrier for the ComplianceGaps gate), so serveSealedWindow is a
+#     documented no-op and boot never blocks on it -- exactly
+#     test/integration/acmeadmin/xkmsd.yaml's barrier.strategy comment.
+#
+# pkg/config/config.go's Validate() only requires storage.backend "qrdb" when
+# a network protocol (rest/grpc/quic/mcp) is enabled (NetworkServing --
+# "the embedded qrdb node is the unified API server"); it does not require
+# the reverse. This lane still needs none of those: the ACME listener below
+# is its own dedicated net.Listener, wired directly in cmd/xkmsd/acme.go
+# independent of protocols.*. So every main protocol stays off except
+# protocols.unix, kept on solely because at least one protocol must be
+# enabled.
+protocols:
+  unix: true
+  rest: false
+  grpc: false
+  quic: false
+  mcp: false
+
+unix:
+  enabled: true
+  socket_path: "/data/xkms.sock"
+  socket_mode: "0660"
+  protocol: "grpc"
+
+server:
+  host: "0.0.0.0"
+  rest_port: 9000
+
+logging:
+  level: "debug"
+  format: "json"
+
+tls:
+  enabled: true
+  server_cn: "acme-server"
+
+auth:
+  enabled: true
+  type: "composite"
+
+# "none": auto-unseals unattended at startup -- see the storage.backend
+# comment above for why this, and not "passphrase"/"shamir", is required
+# here. Matches test/integration/acmeadmin/xkmsd.yaml's barrier.strategy.
+barrier:
+  enabled: true
+  strategy: "none"
+
+ratelimit:
+  enabled: false
+
+storage:
+  backend: "qrdb"
+  path: "/data/storage"
+
+default_backend: "software"
+
+backends:
+  software:
+    enabled: true
+    path: "/data/keys"
+
+# Certificate Authority configuration. ACME issues through this same CA
+# (cmd/xkmsd/acme.go: "ACME issues certificates through the same TrustedCA
+# that backs the xkmsd REST/gRPC/QUIC surfaces"), so it must be present and
+# TCG-capable even though this lane never enables the REST CA surface itself.
+ca:
+  identity:
+    - subject:
+        cn: "ACME TPM Integration Test Root CA"
+        organization: "go-xkms Integration Tests"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key-type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: "/data/ca"
+  # pkg/ca/tcg_ek_trust.go refuses every device's EK certificate with
+  # ErrTCGEKCertUntrusted ("no ek trust anchors configured") unless the CA
+  # has at least one configured. The swtpm fixture (swtpm_helper_test.go's
+  # generateEKCertificate) signs every EK certificate with the fixed,
+  # committed key/cert at testdata/swtpm-test-ek-root.{crt,key} -- fixed
+  # rather than generated per test-binary run, specifically so this server
+  # process (a different container, started before the test binary even
+  # runs) can be told about it in advance, via this same file bind-mounted
+  # read-only by docker-compose.yml.
+  tcg-config:
+    trust-anchors:
+      external_root_paths:
+        - "/testdata/swtpm-test-ek-root.crt"
+
+# ACME (RFC 8555) server. The TLS cert/key are generated at container start by
+# `go run ./test/integration/acme-tpm/certgen` (see docker-compose.yml) since
+# ACMEConfig.TLS requires pre-existing PEM files and xkmsd does not generate
+# them itself for this dedicated listener.
+acme:
+  enabled: true
+  https_addr: ":8443"
+  external_url: "https://acme-server:8443"
+  directory_path: "/acme"
+  # RFC 8555 Section 9.7.6 / CAA (RFC 8659): the issuer identity this CA is
+  # known by. Not meaningful for the permanent-identifier orders this lane
+  # issues, but pkg/config/acme.go's Validate requires a non-empty list
+  # whenever acme.enabled is true.
+  caa_identities:
+    - "acme-server"
+  keystore_backend: "software"
+  data_dir: "/data/acme"
+  tls:
+    cert_file: "/data/acme-tls/acme.crt"
+    key_file: "/data/acme-tls/acme.key"
+  challenges:
+    enroll01: true
+    endorse01: true
+    # test/integration/challenges/{enroll01,endorse01} create orders for
+    # "dns"-type identifiers to check challenge-availability behavior (they
+    # never complete a challenge, only inspect what an authorization offers).
+    # pkg/acme/policy's default DNS candidates are http-01/dns-01/tls-alpn-01/
+    # device-attest-01/dns-account-01; with only enroll01/endorse01 enabled
+    # above (neither is ever a DNS candidate), createChallenges intersects
+    # policy candidates with registered verifiers (cmd/xkmsd/acme.go's
+    # buildChallengeMap) down to zero and new-order fails 500 ("Failed to
+    # create authorization challenge") before either test gets to look at
+    # anything. http01 is enough to give a DNS identifier at least one
+    # available challenge; dns-01/tls-alpn-01 would need DNS/ALPN
+    # infrastructure this lane doesn't stand up.
+    http01: true
+    # The test runner that answers enroll-01/http-01 challenges sits on the
+    # compose network at a private address (172.28.90.10). The challenge
+    # validation client refuses reserved and private targets by default
+    # (go-xkms#1172), so this lab lane opts in; production leaves it false.
+    allow_private_targets: true
+  enrollment:
+    # The challenge client hostname the test runner registers as its
+    # permanent-identifier (CHALLENGE_CLIENT_HOSTNAME) is a docker-compose
+    # network alias, not a loopback address, so this stays off; kept explicit
+    # rather than relying on the zero value.
+    allow_loopback_identifier: false
+  # Rate limiting stays ON (RateLimit.IsEnabled defaults true; there is no
+  # "disabled" value here) but the RFC 8555 Section 6.6 defaults are sized
+  # for a real deployment's traffic, not one test binary that registers a
+  # fresh ACME account per test case from a single client IP:
+  # DefaultACMENewAccountRateLimitMaxRequests is 10 per hour
+  # (pkg/config/acme.go), so this suite hit 429s well before finishing. Every
+  # value below is still a genuine, enforced cap -- just one this lane can
+  # actually run under -- never "no limit".
+  #
+  # Every limiter cmd/xkmsd/acme.go's buildACMERouterLimiters constructs
+  # (grepped, none hardcoded) is raised here, not only new_account/new_order:
+  # `tenant` in particular is mounted router-wide (r.Use(...) in
+  # buildACMERouter, ahead of every route including /authz and /challenge,
+  # not just new-account/new-order/finalize) and keyed by a SHARED,
+  # request-independent client key (tenantSharedClientKey always returns
+  # ""), so every request this whole lane makes -- across every test,
+  # concurrently -- draws from the one bucket at the default 20/s
+  # (DefaultACMETenantRateLimitMaxRequests). That is what was actually
+  # tripping "authorization failed: 429" and TestEnrollment_ConcurrentRequests,
+  # not the account/order categories raised in an earlier pass.
+  rate_limit:
+    max_requests: 1000
+    interval: 1s
+    tenant:
+      max_requests: 1000
+      interval: 1s
+    new_account:
+      max_requests: 1000
+      interval: 1m
+    new_order:
+      max_requests: 1000
+      interval: 1m
+    certificate:
+      max_requests: 1000
+      interval: 1m
+    failed_validation:
+      max_requests: 1000
+      interval: 1m
+  # policy.blocklist.use_defaults seeds RFC 2606/6761 reserved names
+  # (example.com, example.net, test, local, ...) into the blocklist; every
+  # DNS identifier this suite's fixtures use is a subdomain of example.com
+  # (test/integration/challenges/enroll01 and endorse01, by convention, per
+  # RFC 2606 itself -- a real deployment blocks exactly these names because
+  # nobody should be issued a cert for them, which is precisely why a test
+  # fixture that intentionally uses them must opt out explicitly rather than
+  # pick a non-reserved domain that would look like it could receive a real
+  # certificate). This is the one documented lever for that
+  # (pkg/config/acme_policy.go's ACMEBlocklistConfig.UseDefaults); there is
+  # no separate allowlist to punch a single-domain hole in it instead. Every
+  # other policy check (RequirePublicSuffix, RejectReservedIPs,
+  # AllowWildcards) stays on.
+  policy:
+    blocklist:
+      use_defaults: false

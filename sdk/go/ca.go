@@ -620,7 +620,6 @@ var (
 var (
 	CreatePlatformManufacturerExtension = pkgca.CreatePlatformManufacturerExtension
 	CreatePlatformModelExtension        = pkgca.CreatePlatformModelExtension
-	CreatePlatformVersionExtension      = pkgca.CreatePlatformVersionExtension
 	CreateTPFIPS140Extension            = pkgca.CreateTPFIPS140Extension
 	CreateTPKeyStoreExtension           = pkgca.CreateTPKeyStoreExtension
 	CreateTPIssuerKeyStoreExtension     = pkgca.CreateTPIssuerKeyStoreExtension
