@@ -15,6 +15,7 @@ package oath
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -385,6 +386,46 @@ func TestParseURI_Errors(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantErr.Error()) {
 				t.Errorf("expected error containing %q, got %q", tc.wantErr.Error(), err.Error())
+			}
+		})
+	}
+}
+
+// TestParseURI_MalformedURIDoesNotLeakSecret guards against url.Parse's
+// *url.Error, whose message embeds the full input URI -- including the
+// query string, and therefore the secret -- ever reaching a caller of
+// ParseURI (go-xkms#1257).
+func TestParseURI_MalformedURIDoesNotLeakSecret(t *testing.T) {
+	const secret = "JBSWY3DPEHPK3PXP"
+
+	tests := []struct {
+		name string
+		uri  string
+	}{
+		{
+			name: "trailing newline",
+			uri:  "otpauth://totp/GitHub:user?secret=" + secret + "&issuer=GitHub\n",
+		},
+		{
+			name: "bad percent escape",
+			uri:  "otpauth://totp/%zz?secret=" + secret,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseURI(tc.uri)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrInvalidURI) {
+				t.Errorf("expected errors.Is(err, ErrInvalidURI), got %v", err)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("error leaked the secret: %q", err.Error())
+			}
+			if strings.Contains(err.Error(), tc.uri) {
+				t.Errorf("error leaked the full URI: %q", err.Error())
 			}
 		})
 	}

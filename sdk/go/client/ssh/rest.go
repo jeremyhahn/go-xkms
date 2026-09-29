@@ -16,7 +16,6 @@ package ssh
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -238,10 +237,11 @@ func (k *restKeysClient) Generate(ctx context.Context, req GenerateRequest) (*Ke
 	return &out, nil
 }
 
-// Import calls POST /keys/import. The passphrase (if the provider is
-// non-nil and the server signals it needs one) is acquired client-side,
-// base64-encoded, and sent inside the request body. The passphrase
-// Buffer is destroyed before the request returns regardless of outcome.
+// Import calls POST /keys/import. When provider is non-nil the
+// passphrase is fetched into a copy in the wire body (encoding/json
+// base64-encodes the []byte field on the wire); the copy is wiped
+// before the call returns regardless of outcome, and the source
+// secure.Buffer is destroyed as soon as the copy is made.
 func (k *restKeysClient) Import(ctx context.Context, req ImportRequest, provider secure.PassphraseProvider) (*Key, error) {
 	wire := restImportRequest{
 		Scope:   req.Scope,
@@ -255,23 +255,19 @@ func (k *restKeysClient) Import(ctx context.Context, req ImportRequest, provider
 		if err != nil {
 			return nil, err
 		}
-		// Encode directly into a Buffer-sized destination so no Go
-		// string holds the plaintext. The base64 encoding IS the
-		// ciphertext-free wire form — it is intentionally held in
-		// an ordinary []byte because JSON transport requires it.
-		wire.PassphraseB64 = base64.StdEncoding.EncodeToString(pwBuf.Bytes())
+		wire.Passphrase = make([]byte, pwBuf.Size())
+		copy(wire.Passphrase, pwBuf.Bytes())
 		pwBuf.Destroy()
 	}
 
 	body, err := k.c.do(ctx, http.MethodPost, "/keys/import", wire)
-	// Wipe the base64 form regardless of outcome — even though base64
-	// is already host-visible (JSON is not encrypted), the wipe
-	// eliminates the in-process heap copy.
-	if wire.PassphraseB64 != "" {
-		pwBytes := []byte(wire.PassphraseB64)
-		secure.Wipe(pwBytes)
-		wire.PassphraseB64 = ""
-	}
+	// Wipe the passphrase copy regardless of outcome. secure.Wipe zeroes
+	// the backing array in place; wire.Passphrase itself (not a copy of
+	// it, unlike a string conversion) is what k.c.do marshaled, so this
+	// actually erases the plaintext rather than a byte slice the marshal
+	// call never touched.
+	secure.Wipe(wire.Passphrase)
+	wire.Passphrase = nil
 	if err != nil {
 		return nil, err
 	}
