@@ -41,6 +41,36 @@ unified-server module) the same way `pkg/api/rest`'s `Config.CA` is. See
 | Get CRL (read, regenerates only if stale/missing) | `GET /api/v1/ca/crl` | **MISSING — #275** | **MISSING — #275** | **MISSING — #275** | **MISSING — #275** | session |
 | Revocation status | `GET /api/v1/ca/revoked/{serial}` | `IsRevoked` | same as REST | **MISSING — docs/13** | `IsRevoked` | `certs:read` |
 
+### Revoke is confined to the certificate's issuing tenant (go-xkms#1229)
+
+`certs:revoke` — the same permission on REST, gRPC, MCP and the embedded
+transport — is necessary but not sufficient: it says a caller's role may
+revoke *some* certificate, not *which one*. `XKMSService.RevokeCertificate`
+(`pkg/xkms/servicer_ca.go`) makes that second decision by reading the
+certificate's issuing tenant back with `CertificateTenant` (`pkg/ca`,
+recorded at issuance by `signCSR` into `cert-tenant/<serial>.json`) and
+running it through the same tenant-binding check (`bindTenantTarget`) every
+other tenant-scoped operation in this service uses:
+
+- A tenant-scoped caller may revoke only a certificate whose recorded
+  issuing tenant is its own; a foreign tenant's certificate answers exactly
+  like an unknown serial (`*TenantBindingError`, the same not-found shape
+  `docs/tenancy` documents elsewhere in this service).
+- A cross-tenant (system) caller may revoke any certificate, including one
+  recorded for the system/platform scope (`""`) — the server's own
+  certificates and certificates issued through a path that records no
+  tenant at all (TCG EK/AK/IDevID, the CA's own root/intermediate chain).
+- `IssueCertificate` binds `req.TenantID` against the caller's own tenant
+  before forwarding it to `IssueCertificateRaw`, exactly as `SignCSR`
+  already did for `SignCSRWithSPIFFE`'s tenant, so a tenant-scoped caller
+  cannot mint a certificate attributed to a different tenant either.
+
+Both built-in roles that carry `certs:revoke` by default — go-qrdb's Admin
+role, seeded into every tenant including the system tenant — get the
+permission from go-qrdb's own registry (`registerAdminGrants`,
+`pkg/permission/builtin_role_grants.go` in go-qrdb); xkms registers no
+grant of its own for it.
+
 ### TCG enrollment (`TCGCAService`)
 
 | Capability | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth / permission |

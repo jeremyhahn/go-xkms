@@ -77,6 +77,12 @@ xkmsctl ca issue --cn gateway.example.com --profile server \
 xkmsctl ca revoke --serial 0a1b2c3d4e5f --reason 1
 ```
 
+Requires `certs:revoke` and is further confined to the serial's issuing
+tenant: a tenant-scoped caller can revoke only a certificate issued for its
+own tenant, and a foreign tenant's serial answers exactly like an unknown
+one. A system-tenant caller may revoke any serial. See
+[api.md](api.md#revoke-is-confined-to-the-certificates-issuing-tenant-go-xkms1229).
+
 ### `ca crl`
 
 Forces regeneration of the CRL (`POST /ca/crl`) and writes the result, even

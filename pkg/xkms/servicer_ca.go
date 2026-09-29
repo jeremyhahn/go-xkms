@@ -380,6 +380,14 @@ func (s *XKMSService) verifyCSRAttestation(req *transport.SignCSRRequest) error 
 }
 
 // IssueCertificate issues a new certificate from the CA.
+//
+// The tenant stamped onto the issued certificate's ownership record follows
+// the same rule SignCSR documents: a tenant-scoped caller may name only its
+// own tenant (or none, which is the system/platform scope), and naming
+// another tenant is refused with a *TenantBindingError that reads as
+// not-found. IssueCertificateRaw records the resolved tenant against the
+// certificate's serial so a later revoke can be checked against it
+// (go-xkms#1229).
 func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.IssueCertificateRequest) (resp *transport.IssueCertificateResponse, err error) {
 	start := time.Now()
 	defer func() { recordServiceOp(metrics.OpIssueCert, caMetricsBackend, start, err) }()
@@ -389,6 +397,12 @@ func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.Issue
 	}
 	if req.CommonName == "" {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "common name required"}
+	}
+
+	if req.TenantID != "" {
+		if err := bindTenantTarget(ctx, "issue certificate", req.TenantID); err != nil {
+			return nil, err
+		}
 	}
 
 	ca, err := s.getCA()
@@ -404,6 +418,7 @@ func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.Issue
 		req.ValidityDays,
 		req.Profile,
 		req.Algorithm,
+		req.TenantID,
 	)
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "issue certificate", Err: err}
@@ -418,6 +433,20 @@ func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.Issue
 }
 
 // RevokeCertificate revokes a certificate by serial number.
+//
+// Authorization is not decided here for the permission gate: every
+// transport reaching this method has already required certs:revoke from
+// the qrdb authorizer before dispatching, exactly like every other CA
+// servicer method (see SignCSR's doc comment for the full list). What IS
+// decided here is ownership: the certificate's issuing tenant, recorded at
+// issuance by IssueCertificateRaw/SignCSRWithSPIFFE, is looked up and
+// checked against the caller's own tenant with the same bindTenantTarget
+// every other tenant-scoped operation uses. A tenant-scoped caller may
+// revoke only its own tenant's certificates; a cross-tenant (system)
+// caller may revoke any, including the system/platform scope's own
+// certificates. This closes go-xkms#1229: previously any authenticated
+// caller holding certs:revoke could revoke any certificate regardless of
+// which tenant it was issued for.
 func (s *XKMSService) RevokeCertificate(ctx context.Context, req *transport.RevokeCertificateRequest) (resp *transport.RevokeCertificateResponse, err error) {
 	start := time.Now()
 	defer func() { recordServiceOp(metrics.OpRevokeCert, caMetricsBackend, start, err) }()
@@ -436,6 +465,14 @@ func (s *XKMSService) RevokeCertificate(ctx context.Context, req *transport.Revo
 
 	serial, err := parseSerialHex(req.SerialNumber)
 	if err != nil {
+		return nil, err
+	}
+
+	issuingTenant, err := ca.CertificateTenant(ctx, serial)
+	if err != nil {
+		return nil, &ErrCAOperation{Operation: "revoke", Err: err}
+	}
+	if err := bindTenantTarget(ctx, "revoke certificate", issuingTenant); err != nil {
 		return nil, err
 	}
 

@@ -1876,6 +1876,19 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 		return nil, &errs.Wrapped{Msg: "failed to store certificate", Err: err}
 	}
 
+	// Record the issuing tenant (empty for the system/platform scope) so a
+	// later revoke request can be refused for a caller bound to a different
+	// tenant (go-xkms#1229). This is the single recording site for both
+	// direct CSR signing and keypair issuance -- IssueCertificateWithProfile
+	// routes through this method.
+	tenantID := ""
+	if opts != nil {
+		tenantID = opts.TenantID
+	}
+	if err := ca.recordCertTenant(ctx, cert.SerialNumber, tenantID); err != nil {
+		return nil, err
+	}
+
 	return cert, nil
 }
 
