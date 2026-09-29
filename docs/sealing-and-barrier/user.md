@@ -1,6 +1,6 @@
 # Sealing and Barrier — User Guide
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## What the barrier is
 
@@ -129,6 +129,14 @@ xkmsctl unseal "$SEALED"
 
 TPM sealing here is PCR-bound: the data unseals only on a machine in the same
 measured state.
+
+Sealing belongs to your tenant. With `--key-id`, the key must be one of your
+tenant's keys; another tenant's key reads as "key not found". Without it, a
+software, PKCS#11 or cloud-KMS backend uses your tenant's own default sealing
+key, created the first time you seal, so another tenant cannot unseal your
+data even with the sealed blob in hand. A tenant account cannot seal on a TPM
+2.0 backend: TPM-sealed data unseals for anyone who holds it, so only
+platform accounts may use it.
 
 ## Troubleshooting
 

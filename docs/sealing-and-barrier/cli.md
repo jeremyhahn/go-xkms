@@ -1,6 +1,6 @@
 # Sealing and Barrier — CLI
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Binary: `xkmsctl`. Groups: `barrier` (`cmd/xkmsctl/barrier*.go`), `policy`
 (`cmd/xkmsctl/policy.go`), and the top-level `seal` / `unseal` / `can-seal`
@@ -145,7 +145,12 @@ mechanism.
 ```
 xkmsctl can-seal --backend tpm2
 xkmsctl seal "secret payload" --backend tpm2
+xkmsctl seal "secret payload" --backend software --key-id vault-key
 ```
+
+`--key-id` names one of the calling tenant's keys; without it the tenant's
+own default sealing key is used. A tenant account is refused on `tpm2`
+(see [`api.md`](api.md) §"Data-level sealing is tenant-scoped").
 
 ## `xkmsctl policy`
 

@@ -417,7 +417,7 @@ func TestHandler_SaveCertChain_InvalidPEM(t *testing.T) {
 
 		_, err = server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid certificate PEM at index 1")
+		assert.Contains(t, err.Error(), "failed to parse certificate at index 1")
 	})
 
 	t.Run("fails with malformed certificate data", func(t *testing.T) {

@@ -14,7 +14,6 @@
 package xkms
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +24,7 @@ import (
 // direct method calls (as opposed to the package-level free functions of the
 // same name, which already have coverage): SetSPIFFETrustDomain/
 // SPIFFETrustDomain, TenantService, LookupBackend, LookupDefaultBackend,
-// BackendNames, SealWithBackend, UnsealWithBackend, CanSealDirect, and the
+// BackendNames, CanSealDirect, and the
 // package-level UnregisterBackend.
 
 func TestXKMSService_SetSPIFFETrustDomain(t *testing.T) {
@@ -166,67 +165,6 @@ func TestXKMSService_BackendNames_Empty(t *testing.T) {
 	svc.mu.Unlock()
 
 	assert.Empty(t, svc.BackendNames())
-}
-
-func TestXKMSService_SealWithBackend_Success(t *testing.T) {
-	Reset()
-	t.Cleanup(Reset)
-
-	sealer := newMockKeyStoreWithSealer("software", "software")
-	err := Initialize(&ServiceConfig{
-		Backends:       map[string]Backend{"software": sealer},
-		DefaultBackend: "software",
-	})
-	require.NoError(t, err)
-
-	svc, err := Get()
-	require.NoError(t, err)
-
-	sealed, err := svc.SealWithBackend(context.Background(), "software", []byte("secret"), nil)
-	require.NoError(t, err)
-	require.NotNil(t, sealed)
-}
-
-func TestXKMSService_SealWithBackend_BackendNotFound(t *testing.T) {
-	setupService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	_, err = svc.SealWithBackend(context.Background(), "nonexistent", []byte("secret"), nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrBackendNotFound)
-}
-
-func TestXKMSService_UnsealWithBackend_Success(t *testing.T) {
-	Reset()
-	t.Cleanup(Reset)
-
-	sealer := newMockKeyStoreWithSealer("software", "software")
-	err := Initialize(&ServiceConfig{
-		Backends:       map[string]Backend{"software": sealer},
-		DefaultBackend: "software",
-	})
-	require.NoError(t, err)
-
-	svc, err := Get()
-	require.NoError(t, err)
-
-	sealed, err := svc.SealWithBackend(context.Background(), "software", []byte("round-trip"), nil)
-	require.NoError(t, err)
-
-	plaintext, err := svc.UnsealWithBackend(context.Background(), "software", sealed, nil)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("round-trip"), plaintext)
-}
-
-func TestXKMSService_UnsealWithBackend_BackendNotFound(t *testing.T) {
-	setupService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	_, err = svc.UnsealWithBackend(context.Background(), "nonexistent", nil, nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrBackendNotFound)
 }
 
 func TestXKMSService_CanSealDirect_ExplicitBackend(t *testing.T) {

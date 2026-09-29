@@ -1,6 +1,6 @@
 # Certificate Authority — CLI
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Binary: `xkmsctl`. Groups: `ca` (the authority), `cert` (certificate storage
 against a key), `tls` (TLS material). Sources: `cmd/xkmsctl/ca.go`,
@@ -126,6 +126,10 @@ xkmsctl cert save web-tls web.crt
 xkmsctl cert get-chain web-tls > web-chain.pem
 xkmsctl cert exists web-tls && echo present
 ```
+
+Every `cert` verb, and `tls get`, works in the calling tenant's certificate
+namespace: `cert list` shows only that tenant's certificates, and another
+tenant's certificate reads as not found. A `<key-id>` cannot contain `/`.
 
 ## `xkmsctl tls`
 

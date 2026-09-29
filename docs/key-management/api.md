@@ -492,17 +492,20 @@ vocabulary with a small, total, package-local map (`classToGRPCCode` /
 `classToJSONRPCCode`): the judgment of "which sentinel means what" is written
 down once; only the mechanical `Class` → local-code step is duplicated.
 
-CA (`errors_cert.go`'s `mapCAError`) and certificate storage
-(`certOperationError`, `getCertError`) do **not** read a shared table: gRPC's
-own classification for these two families (`pkg/api/grpc/service_ca.go`,
-`service.go`'s `SaveCert`/`GetCert`/…) is not sentinel-driven — each RPC
-pre-validates its own request fields and checks a package-level CA instance
-for nil, then reports any servicer failure as a fixed `codes.Internal` (or,
-for `GetCert` only, a fixed `codes.NotFound` regardless of cause). There is
-no gRPC-side table to share; MCP's two functions reproduce the same wire
-*outcome* by checking the sentinels its own call path can actually produce
-(`xkms.ErrNotConfigured`, `*xkms.ErrValidation`, `xkms.ErrNilRequest`,
-`xkms.ErrNilData`) instead.
+CA (`errors_cert.go`'s `mapCAError`) does **not** read a shared table:
+gRPC's own classification for it (`pkg/api/grpc/service_ca.go`) is not
+sentinel-driven — each RPC pre-validates its own request fields and checks a
+package-level CA instance for nil, then reports any servicer failure as a
+fixed `codes.Internal`. There is no gRPC-side table to share; MCP's function
+reproduces the same wire *outcome* by checking the sentinels its own call
+path can actually produce (`xkms.ErrNotConfigured`, `*xkms.ErrValidation`,
+`xkms.ErrNilRequest`, `xkms.ErrNilData`) instead.
+
+Certificate storage and data-level sealing are adapters over the service on
+every transport (go-xkms#1228), so they classify through each transport's
+`mapKeyOpError` like every other key operation. MCP's former
+`certOperationError` and `getCertError` — which reported every storage
+failure as Internal, and every `GetCert` failure as Not found — are deleted.
 
 | Family | Sentinel(s) | MCP code | gRPC code |
 |---|---|---|---|
@@ -522,8 +525,10 @@ no gRPC-side table to share; MCP's two functions reproduce the same wire
 | barrier | `seal.ErrShamirQuorumExpired` | `ErrCodeInternalError` (no JSON-RPC DeadlineExceeded) | `DeadlineExceeded` |
 | CA / cert | `xkms.ErrNotConfigured` (`mapCAError`) | `ErrCodeServiceUnavailable` | `Unavailable` (nil CA instance check) |
 | CA / cert | `*xkms.ErrValidation`, `xkms.ErrNilRequest`, `xkms.ErrNilData` (`mapCAError`) | `ErrCodeInvalidParams` | `InvalidArgument` (pre-validated request field) |
-| cert | any `GetCert` failure (`getCertError`) | `sdkssh.JSONRPCCodeNotFound` | `NotFound` (unconditional) |
-| cert | any other cert-storage failure (`certOperationError`) | `ErrCodeInternalError` | `Internal` (unconditional) |
+| cert / seal | `*xkms.ErrKeyIDParse` (`mapKeyOpError`) | `ErrCodeInvalidParams` | `InvalidArgument` |
+| cert / seal | `xkms.ErrInvalidEncodingPEM`, `ErrInvalidCertificate`, `ErrEmptyChain`, `ErrInvalidSealedData`, `ErrNilData` (`mapKeyOpError`) | `ErrCodeInvalidParams` | `InvalidArgument` |
+| cert | `xkms.ErrCertNotFound`, `ErrCertChainNotFound`, `storage.ErrNotFound` (`mapKeyOpError`) | `sdkssh.JSONRPCCodeNotFound` | `NotFound` |
+| seal | `xkms.ErrSealingNotSupported` (`mapKeyOpError`) | `ErrCodeMethodNotFound` | `Unimplemented` |
 
 **`*xkms.ErrRoleLookup` now classifies as Not found, not Invalid params, on
 MCP (#912)**, resolving a divergence from gRPC: `pkg/api/grpc/errors_keyops.go`'s
@@ -802,7 +807,7 @@ calls the same handler function through the same
 from real dispatch behaviour the way a lexical pattern match over source
 text could — a static check would have to re-derive, by tracing call graphs
 across interface boundaries, that every "safe" mapper function
-(`mapKeyOpError`, `mapShareError`, `certOperationError`, …) itself only ever
+(`mapKeyOpError`, `mapShareError`, `mapCAError`, …) itself only ever
 returns nil or `*KeyOpError`, which a direct runtime call proves for free.
 Second, it is exactly the architecture this package already committed to
 for the sibling gate (#774): a table a reviewer watches shrink or grow, not

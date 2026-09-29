@@ -1,6 +1,6 @@
 # RBAC — Architecture
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1230, #1231)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1228, #1230, #1231)
 
 ## The problem
 
@@ -114,6 +114,20 @@ for every transport:
   `keys:sign` reached every tenant's key shares. See
   [`../frost-threshold-signing/architecture.md`](../frost-threshold-signing/architecture.md)
   §"Tenancy".
+- **Certificates and data-level sealing** resolve inside the caller's tenant
+  in the service, on every transport (go-xkms#1228). A tenant's certificates
+  live under `{tenant}/{keyID}` (`pkg/xkms/backend_tenant.go:58`) and the
+  `XKMSService` certificate methods only ever open that namespace
+  (`pkg/xkms/servicer_cert.go:29-284`); a key ID containing `/` is refused.
+  Seal and Unseal find a named key among the caller's keys and use the
+  caller's own default sealing key (`pkg/xkms/servicer_seal.go:131-237`,
+  `pkg/xkms/backend_tenant.go:243`). Another owner's certificate or key reads
+  exactly as a missing one, so a `certs:*` or `keys:encrypt`/`keys:decrypt`
+  grant never reaches past the holder's tenant. See
+  [`../certificate-authority/api.md`](../certificate-authority/api.md)
+  §"Certificate storage is tenant-scoped" and
+  [`../sealing-and-barrier/api.md`](../sealing-and-barrier/api.md)
+  §"Data-level sealing is tenant-scoped".
 - **PKCS#11 remote state** accepts a `tenant_id` only when it names the
   caller's own tenant, because the module states its configured tenant
   (`pkcs11StateScope`, `pkg/xkms/servicer_pkcs11state.go:79`). See

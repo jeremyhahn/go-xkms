@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -74,10 +75,21 @@ var keyOpSentinelCodes = []struct {
 	// failed.
 	{xkms.ErrWeakOAEPHash, codes.InvalidArgument},
 	{xkms.ErrInvalidHashFunction, codes.InvalidArgument},
+	// A malformed certificate, an empty chain, or sealed data missing its
+	// payload is a fault in the request (go-xkms#1228).
+	{xkms.ErrInvalidEncodingPEM, codes.InvalidArgument},
+	{xkms.ErrInvalidCertificate, codes.InvalidArgument},
+	{xkms.ErrEmptyChain, codes.InvalidArgument},
+	{xkms.ErrInvalidSealedData, codes.InvalidArgument},
+	{xkms.ErrNilData, codes.InvalidArgument},
 	{xkms.ErrOperationNotSupported, codes.Unimplemented},
+	{xkms.ErrSealingNotSupported, codes.Unimplemented},
 	{xkms.ErrExportKeyMaterialFailed, codes.FailedPrecondition},
 	{xkms.ErrBackendNotFound, codes.NotFound},
 	{xkms.ErrKeyNotFound, codes.NotFound},
+	{xkms.ErrCertNotFound, codes.NotFound},
+	{xkms.ErrCertChainNotFound, codes.NotFound},
+	{storage.ErrNotFound, codes.NotFound},
 	{xkms.ErrNotInitialized, codes.Unavailable},
 }
 
@@ -115,6 +127,15 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 	var role *xkms.ErrRoleLookup
 	if errors.As(err, &role) {
 		return status.Error(codes.NotFound, role.Error())
+	}
+
+	// A key or certificate ID that does not parse -- including one naming
+	// another tenant's namespace ("tenant-b/web") -- is malformed input. It
+	// is matched before ErrValidation, which the parse failure may wrap, so
+	// the message names the key ID as the field at fault.
+	var keyID *xkms.ErrKeyIDParse
+	if errors.As(err, &keyID) {
+		return status.Error(codes.InvalidArgument, keyID.Error())
 	}
 
 	var validation *xkms.ErrValidation

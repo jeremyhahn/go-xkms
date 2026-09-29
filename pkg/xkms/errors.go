@@ -164,6 +164,10 @@ var (
 	// ErrInvalidEncodingPEM indicates invalid PEM encoding.
 	ErrInvalidEncodingPEM = errors.New("keystore: invalid PEM encoding")
 
+	// ErrInvalidCertificate indicates a well-formed PEM CERTIFICATE block
+	// whose DER content is not a parseable X.509 certificate.
+	ErrInvalidCertificate = errors.New("keystore: invalid certificate")
+
 	// ErrUnsupportedKeyAlgorithm indicates an unsupported key algorithm.
 	ErrUnsupportedKeyAlgorithm = errors.New("keystore: unsupported key algorithm")
 
@@ -306,6 +310,12 @@ var (
 
 	// ErrInvalidPCRIndex indicates a PCR index is out of the valid range (0-23).
 	ErrInvalidPCRIndex = errors.New("keystore: invalid PCR index")
+
+	// ErrSealNotTenantBound indicates a backend whose sealing is not bound to
+	// any key, so a blob it seals for one tenant would unseal for every other
+	// tenant that holds the blob. A tenant-scoped view refuses to seal or
+	// unseal on such a backend (go-xkms#1228).
+	ErrSealNotTenantBound = errors.New("keystore: sealing on this backend is not bound to a tenant")
 )
 
 // ErrPCRHashAlgParse represents a failure to parse a PCR hash algorithm string.
@@ -758,6 +768,21 @@ func (e *ErrPEMBlock) Error() string {
 
 // Unwrap returns the underlying sentinel error.
 func (e *ErrPEMBlock) Unwrap() error { return ErrInvalidEncodingPEM }
+
+// ErrCertificateParse reports DER certificate content that x509 could not
+// parse. It matches ErrInvalidCertificate, so every transport classifies it
+// as a fault in the request, and unwraps to the parser's own error.
+type ErrCertificateParse struct {
+	Err error
+}
+
+// Error returns the error message.
+func (e *ErrCertificateParse) Error() string {
+	return fmt.Sprintf("%s: %v", ErrInvalidCertificate.Error(), e.Err)
+}
+
+// Unwrap returns the sentinel and the parser's error.
+func (e *ErrCertificateParse) Unwrap() []error { return []error{ErrInvalidCertificate, e.Err} }
 
 // ErrCertParseIndex represents a certificate parsing error at a specific index in a chain.
 type ErrCertParseIndex struct {

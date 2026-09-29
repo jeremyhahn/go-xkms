@@ -55,6 +55,8 @@ type mockKeyStore struct {
 	listKeysErr error
 	// storeType overrides Type()'s default of StoreSoftware when set.
 	storeType types.StoreType
+	// generateErr, when set, is returned by GenerateECDSA instead of a key.
+	generateErr error
 }
 
 func newMockKeyStore(name string) *mockKeyStore {
@@ -77,6 +79,9 @@ func (m *mockKeyStore) GenerateRSA(_ context.Context, attrs *types.KeyAttributes
 }
 
 func (m *mockKeyStore) GenerateECDSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	if m.generateErr != nil {
+		return nil, m.generateErr
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err

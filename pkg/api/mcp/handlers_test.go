@@ -35,6 +35,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1088,7 +1089,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid certificate PEM")
+		assert.ErrorIs(t, err, xkms.ErrInvalidEncodingPEM)
 	})
 
 	t.Run("fails saveCert with invalid params", func(t *testing.T) {
@@ -1363,7 +1364,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 
 		_, err := server.handleSaveCertChain(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid certificate PEM")
+		assert.ErrorIs(t, err, xkms.ErrInvalidEncodingPEM)
 	})
 
 	t.Run("saveCertChain fails with invalid params", func(t *testing.T) {
@@ -1498,7 +1499,9 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 
 		_, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "key not found")
+		var keyErr *KeyOpError
+		require.ErrorAs(t, err, &keyErr)
+		assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyErr.Code, "a missing certificate is Not found")
 	})
 }
 
@@ -3545,7 +3548,7 @@ func TestHandler_SaveCert_CorruptCertificate(t *testing.T) {
 
 		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse certificate")
+		assert.ErrorIs(t, err, xkms.ErrInvalidCertificate)
 	})
 
 	t.Run("fails with wrong PEM type", func(t *testing.T) {
@@ -3570,7 +3573,7 @@ func TestHandler_SaveCert_CorruptCertificate(t *testing.T) {
 
 		_, err := server.handleSaveCert(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid certificate PEM")
+		assert.ErrorIs(t, err, xkms.ErrInvalidEncodingPEM)
 	})
 }
 

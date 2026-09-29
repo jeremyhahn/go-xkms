@@ -1,6 +1,6 @@
 # Sealing and Barrier — API
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227, #1244)
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227, #1228, #1244)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -80,6 +80,51 @@ operations (`TenantBarrier*`, below) keep theirs.
 | Seal data | `POST /api/v1/seal` | `Seal` | same as REST | `xkms.seal` | `Seal` | `keys:encrypt` |
 | Unseal data | `POST /api/v1/unseal` | `Unseal` | same as REST | `xkms.unseal` | `Unseal` | `keys:decrypt` |
 | Seal capability | `GET /api/v1/seal/capability` | `CanSeal` | same as REST | `xkms.canSeal` | `CanSeal` | `keys:get` |
+
+### Data-level sealing is tenant-scoped (go-xkms#1228)
+
+Seal and Unseal are thin adapters over `XKMSService.Seal` and
+`XKMSService.Unseal` on every transport: REST `SealHandler` / `UnsealHandler`
+(`pkg/api/rest/handlers.go:1554-1645`), gRPC `Seal` / `Unseal`
+(`pkg/api/grpc/service.go:1686-1768`) and MCP `handleSeal` / `handleUnseal`
+(`pkg/api/mcp/handlers.go:1653-1725`). Each fills the request's `TenantID`
+from the authenticated identity, and the service resolves the backend through
+that tenant (`pkg/xkms/servicer_seal.go:157`, `:237`).
+
+- **Named key.** `key_id` is parsed as a key reference and its key name is
+  resolved among the caller's tenant's keys (`sealingKey`,
+  `pkg/xkms/servicer_seal.go:131`). Another tenant's key, or the platform's,
+  is `ErrKeyNotFound` — the same response a key nobody holds gets
+  (`404` / `NotFound` / Not found). A `key_id` containing `/` is malformed.
+- **Default sealing key.** Without `key_id`, a key-based backend (software,
+  PKCS#11, the cloud KMSs) seals under the deterministic key
+  `xkms-sealing-key-<backend-type>` (`defaultSealingKeyAttributes`,
+  `pkg/xkms/servicer_seal.go:89`), generated on first use
+  (`ensureSealingKey`, `:105`). The tenant view stamps the caller's tenant on
+  the key's attributes (`TenantScopedBackend.Seal` / `Unseal`,
+  `pkg/xkms/backend_tenant.go:243`, `:258`), so each tenant has its own
+  default key, stored under its own identifier, and a blob sealed under one
+  tenant's default key does not unseal for another tenant or for the
+  platform. A platform-scoped caller uses the untenanted default key.
+- **TPM 2.0.** TPM sealing needs no key: the blob is a keyed-hash object
+  under the platform storage root and unseals for anyone who presents it. A
+  tenant-scoped caller is therefore refused on a TPM 2.0 backend, with or
+  without a `key_id` (`sealBound`, `pkg/xkms/backend_tenant.go:227`;
+  `ErrBackendUnsupported` carrying `ErrSealingNotSupported` and
+  `ErrSealNotTenantBound`, `pkg/xkms/errors.go:318`): `400` on REST,
+  `Unimplemented` on gRPC, Method not found on MCP. Platform-scoped TPM
+  sealing is unchanged.
+
+Wire changes: REST, gRPC and MCP now seal and unseal without a `key_id` on a
+key-based backend (they used to fail, because no transport generated the
+default key); an unknown backend is `404` / `NotFound`; a `key_id` of another
+tenant's key is `keystore: key not found` on every transport (MCP used to say
+`key not found: <id>`); an unparseable `key_id` is `invalid key ID: ...`.
+Verified by `pkg/api/rest/handlers_certseal_crosstenant_test.go`,
+`pkg/api/grpc/service_certseal_crosstenant_test.go`,
+`pkg/api/mcp/handlers_certseal_crosstenant_test.go`,
+`pkg/xkms/servicer_certseal_tenant_test.go` and
+`pkg/xkms/backend_tenant_seal_test.go`.
 
 ## PCR policy management
 

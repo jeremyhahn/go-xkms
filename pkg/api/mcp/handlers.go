@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
@@ -29,7 +28,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
-	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // tenantBackend returns the named backend viewed through the authenticated
@@ -709,6 +707,24 @@ func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interf
 	}, nil
 }
 
+// The certificate methods below are thin adapters over the XKMSService
+// certificate methods, which confine every read, write, listing and delete to
+// the caller's tenant namespace. A certificate another tenant holds, or one
+// the platform holds, answers exactly as one nobody stored, and a key ID that
+// names another namespace ("tenant-b/web") is refused as malformed. These
+// methods used to call the unscoped default keystore directly, so any tenant
+// could read, overwrite, list or delete every tenant's certificates and the
+// platform's (go-xkms#1228).
+
+// requireKeyID refuses an empty key ID with the Invalid params every
+// certificate method reports for it.
+func requireKeyID(keyID string) error {
+	if keyID == "" {
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
+	}
+	return nil
+}
+
 // handleSaveCert handles the saveCert method
 func (s *Server) handleSaveCert(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SaveCertParams
@@ -716,27 +732,20 @@ func (s *Server) handleSaveCert(ctx context.Context, req *JSONRPCRequest) (inter
 		return nil, err
 	}
 
-	if params.KeyID == "" {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
+	if err := requireKeyID(params.KeyID); err != nil {
+		return nil, err
 	}
 
 	if params.CertPEM == "" {
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "cert_pem is required"}}
 	}
 
-	// Parse PEM certificate
-	block, _ := pem.Decode([]byte(params.CertPEM))
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "invalid certificate PEM"}}
-	}
-
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "failed to parse certificate", Err: err}}
-	}
-
-	if err := s.keystore.SaveCert(ctx, params.KeyID, cert); err != nil {
-		return nil, certOperationError("failed to save certificate", err)
+	if err := s.xkmsService.SaveCertificate(ctx, &transport.SaveCertificateRequest{
+		KeyID:          params.KeyID,
+		CertificatePEM: params.CertPEM,
+		TenantID:       callerTenantID(ctx),
+	}); err != nil {
+		return nil, mapKeyOpError(err)
 	}
 
 	return map[string]interface{}{
@@ -751,25 +760,18 @@ func (s *Server) handleGetCert(ctx context.Context, req *JSONRPCRequest) (interf
 		return nil, err
 	}
 
-	if params.KeyID == "" {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
+	if err := requireKeyID(params.KeyID); err != nil {
+		return nil, err
 	}
 
-	cert, err := s.keystore.GetCert(ctx, params.KeyID)
+	resp, err := s.xkmsService.GetCertificate(ctx, "", params.KeyID)
 	if err != nil {
-		return nil, getCertError("failed to get certificate", err)
+		return nil, mapKeyOpError(err)
 	}
-
-	// Encode to PEM
-	pemBlock := &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: cert.Raw,
-	}
-	certPEM := string(pem.EncodeToMemory(pemBlock))
 
 	return GetCertResult{
-		KeyID:   params.KeyID,
-		CertPEM: certPEM,
+		KeyID:   resp.KeyID,
+		CertPEM: resp.CertificatePEM,
 	}, nil
 }
 
@@ -780,12 +782,12 @@ func (s *Server) handleDeleteCert(ctx context.Context, req *JSONRPCRequest) (int
 		return nil, err
 	}
 
-	if params.KeyID == "" {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
+	if err := requireKeyID(params.KeyID); err != nil {
+		return nil, err
 	}
 
-	if err := s.keystore.DeleteCert(ctx, params.KeyID); err != nil {
-		return nil, certOperationError("failed to delete certificate", err)
+	if err := s.xkmsService.DeleteCertificate(ctx, "", params.KeyID); err != nil {
+		return nil, mapKeyOpError(err)
 	}
 
 	return map[string]interface{}{
@@ -795,23 +797,27 @@ func (s *Server) handleDeleteCert(ctx context.Context, req *JSONRPCRequest) (int
 
 // handleListCerts handles the listCerts method
 func (s *Server) handleListCerts(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	keyIDs, err := s.keystore.ListCerts(ctx)
-	if err != nil {
-		return nil, certOperationError("failed to list certificates", err)
-	}
-
-	// Apply pagination if params are provided
+	// Pagination params are optional.
 	var pr transport.PageRequest
 	if len(req.Params) > 0 {
 		if err := decodeParams(req, &pr); err != nil {
 			return nil, err
 		}
 	}
-	paginatedIDs, pageResp := transport.ApplyPagination(keyIDs, pr)
+
+	listed, err := s.xkmsService.ListCertificates(ctx, "", transport.WithPageRequest(pr))
+	if err != nil {
+		return nil, mapKeyOpError(err)
+	}
+
+	keyIDs := make([]string, 0, len(listed.Certificates))
+	for _, cert := range listed.Certificates {
+		keyIDs = append(keyIDs, cert.KeyID)
+	}
 
 	return ListCertsResult{
-		KeyIDs:     paginatedIDs,
-		Pagination: &pageResp,
+		KeyIDs:     keyIDs,
+		Pagination: &listed.PageResponse,
 	}, nil
 }
 
@@ -822,13 +828,13 @@ func (s *Server) handleCertExists(ctx context.Context, req *JSONRPCRequest) (int
 		return nil, err
 	}
 
-	if params.KeyID == "" {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
+	if err := requireKeyID(params.KeyID); err != nil {
+		return nil, err
 	}
 
-	exists, err := s.keystore.CertExists(ctx, params.KeyID)
+	exists, err := s.xkmsService.CertificateExists(ctx, "", params.KeyID)
 	if err != nil {
-		return nil, certOperationError("failed to check certificate existence", err)
+		return nil, mapKeyOpError(err)
 	}
 
 	return CertExistsResult{
@@ -843,32 +849,20 @@ func (s *Server) handleSaveCertChain(ctx context.Context, req *JSONRPCRequest) (
 		return nil, err
 	}
 
-	if params.KeyID == "" {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
+	if err := requireKeyID(params.KeyID); err != nil {
+		return nil, err
 	}
 
 	if len(params.ChainPEMs) == 0 {
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "chain_pems is required"}}
 	}
 
-	// Parse all certificates
-	chain := make([]*x509.Certificate, 0, len(params.ChainPEMs))
-	for i, pemStr := range params.ChainPEMs {
-		block, _ := pem.Decode([]byte(pemStr))
-		if block == nil || block.Type != "CERTIFICATE" {
-			return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: fmt.Sprintf("invalid certificate PEM at index %d", i)}}
-		}
-
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: fmt.Sprintf("failed to parse certificate at index %d", i), Err: err}}
-		}
-
-		chain = append(chain, cert)
-	}
-
-	if err := s.keystore.SaveCertChain(ctx, params.KeyID, chain); err != nil {
-		return nil, certOperationError("failed to save certificate chain", err)
+	if err := s.xkmsService.SaveCertificateChain(ctx, &transport.SaveCertificateChainRequest{
+		KeyID:    params.KeyID,
+		ChainPEM: params.ChainPEMs,
+		TenantID: callerTenantID(ctx),
+	}); err != nil {
+		return nil, mapKeyOpError(err)
 	}
 
 	return map[string]interface{}{
@@ -883,99 +877,47 @@ func (s *Server) handleGetCertChain(ctx context.Context, req *JSONRPCRequest) (i
 		return nil, err
 	}
 
-	if params.KeyID == "" {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
+	if err := requireKeyID(params.KeyID); err != nil {
+		return nil, err
 	}
 
-	chain, err := s.keystore.GetCertChain(ctx, params.KeyID)
+	resp, err := s.xkmsService.GetCertificateChain(ctx, "", params.KeyID)
 	if err != nil {
-		return nil, certOperationError("failed to get certificate chain", err)
-	}
-
-	// Encode all certificates to PEM
-	chainPEMs := make([]string, len(chain))
-	for i, cert := range chain {
-		pemBlock := &pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: cert.Raw,
-		}
-		chainPEMs[i] = string(pem.EncodeToMemory(pemBlock))
+		return nil, mapKeyOpError(err)
 	}
 
 	return GetCertChainResult{
-		KeyID:     params.KeyID,
-		ChainPEMs: chainPEMs,
+		KeyID:     resp.KeyID,
+		ChainPEMs: resp.ChainPEM,
 	}, nil
 }
 
-// handleGetTLSCertificate handles the getTLSCertificate method
+// handleGetTLSCertificate handles the getTLSCertificate method. The bundle is
+// the leaf and chain stored in the caller's certificate namespace, in the
+// named backend or the default one; the private key never travels on this
+// response (go-xkms#627).
 func (s *Server) handleGetTLSCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetTLSCertificateParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
-	if params.KeyID == "" {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
+	if err := requireKeyID(params.KeyID); err != nil {
+		return nil, err
 	}
 
-	// Refuse a backend the service does not resolve before the key lookup,
-	// so the refusal names the backend rather than the key.
+	// Refuse a backend the service does not resolve before the lookup, so
+	// the refusal names the backend rather than the certificate.
 	if err := s.refuseUnknownBackend(params.Backend); err != nil {
 		return nil, err
 	}
 
-	// The key and its certificate are read from the named backend, viewed
-	// through the caller's tenant, or from the default backend when none is
-	// named. Looking the key up in the default backend and then reading the
-	// certificate from it would ignore the name for any backend that is not
-	// the default, and could answer with the default backend's material for
-	// the same common name.
-	ks, err := s.operationBackend(ctx, params.Backend)
-	if err != nil {
-		return nil, mapKeyOpError(err)
-	}
-	// The attributes keep the store type the backend recorded for the key.
-	// Replacing it with a parse of the backend name would turn a configured
-	// name that is not a store-type keyword into StoreUnknown, and a
-	// composite backend dispatches the private-key retrieval on that field.
-	attrs, err := keyByCN(ctx, ks, params.KeyID)
+	resp, err := s.xkmsService.GetTLSCertificate(ctx, params.Backend, params.KeyID)
 	if err != nil {
 		return nil, mapKeyOpError(err)
 	}
 
-	tlsCert, err := ks.GetTLSCertificate(ctx, params.KeyID, attrs)
-	if err != nil {
-		return nil, mapKeyOpError(err)
-	}
-
-	// Convert certificate to PEM
-	var certPEM string
-	if len(tlsCert.Certificate) > 0 {
-		pemBlock := &pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: tlsCert.Certificate[0],
-		}
-		certPEM = string(pem.EncodeToMemory(pemBlock))
-	}
-
-	// Convert chain to PEM. The private key (tlsCert.PrivateKey) is
-	// deliberately never encoded or returned here: it stays in the backend
-	// that holds it (go-xkms#627).
-	chainPEMs := make([]string, 0, len(tlsCert.Certificate)-1)
-	for i := 1; i < len(tlsCert.Certificate); i++ {
-		pemBlock := &pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: tlsCert.Certificate[i],
-		}
-		chainPEMs = append(chainPEMs, string(pem.EncodeToMemory(pemBlock)))
-	}
-
-	return transport.GetTLSCertificateResponse{
-		KeyID:          params.KeyID,
-		CertificatePEM: certPEM,
-		ChainPEM:       chainPEMs,
-	}, nil
+	return *resp, nil
 }
 
 // handleGetImportParameters handles getting import parameters for key import
@@ -1288,24 +1230,6 @@ func (e *InvalidBackendError) Unwrap() error { return e.Cause }
 
 // Is reports ErrInvalidBackend as this error's identity.
 func (e *InvalidBackendError) Is(target error) bool { return target == ErrInvalidBackend }
-
-// operationBackend returns the backend an operation runs against: the named
-// one viewed through the caller's tenant, or the default backend scoped to
-// that tenant when none is named.
-func (s *Server) operationBackend(ctx context.Context, backendName string) (xkms.Backend, error) {
-	if backendName != "" {
-		ks, err := s.tenantBackend(ctx, backendName)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
-		}
-		return ks, nil
-	}
-	ks, err := xkms.ScopeBackendToTenant(s.keystore, callerTenantID(ctx))
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to scope keystore to the caller's tenant", Err: err}
-	}
-	return ks, nil
-}
 
 // refuseUnknownBackend returns nil when name is empty (the default backend)
 // or names a backend the service resolves, and otherwise the one refusal
@@ -1660,7 +1584,11 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 	}, nil
 }
 
-// handleSeal handles the seal method for sealing data with a backend
+// handleSeal handles the seal method for sealing data with a backend.
+//
+// The seal belongs to the service layer, which resolves the sealing key --
+// the named one, or the caller's default sealing key when none is named --
+// within the caller's tenant (go-xkms#1228).
 func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SealParams
 	if err := decodeParams(req, &params); err != nil {
@@ -1671,36 +1599,15 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "data is required"}}
 	}
 
-	// Build seal options
-	opts := &types.SealOptions{
-		AAD: params.AAD,
-	}
-
-	// Use backend name if provided, otherwise use default
-	backendName := params.Backend
-
-	// If KeyID is provided, look up the key to get its actual attributes
-	if params.KeyID != "" {
-		// Get the backend, scoped to the caller's tenant, to look up the key
-		ks, err := s.tenantBackend(ctx, backendName)
-		if err != nil {
-			return nil, &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: &errs.Wrapped{Msg: "backend not found", Err: err}}
-		}
-
-		targetAttr, err := keyByCN(ctx, ks, params.KeyID)
-		if err != nil {
-			return nil, mapKeyOpError(err)
-		}
-
-		opts.KeyAttributes = targetAttr
-	}
-
-	// Call the xkms service to seal the data. Matches
-	// pkg/api/grpc/service.go's Seal, which reports this call's failure as
-	// codes.Internal unconditionally.
-	sealed, err := s.xkmsService.SealWithBackend(ctx, backendName, params.Data, opts)
+	sealed, err := s.xkmsService.Seal(ctx, &transport.SealRequest{
+		Backend:  params.Backend,
+		KeyID:    params.KeyID,
+		Data:     params.Data,
+		AAD:      params.AAD,
+		TenantID: callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: "failed to seal data", Err: err}}
+		return nil, mapKeyOpError(err)
 	}
 
 	// Convert metadata from map[string][]byte to map[string]string for JSON serialization
@@ -1713,7 +1620,7 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 	}
 
 	return SealResult{
-		Backend:    string(sealed.Backend),
+		Backend:    sealed.Backend,
 		Ciphertext: sealed.Ciphertext,
 		Nonce:      sealed.Nonce,
 		Tag:        sealed.Tag,
@@ -1723,7 +1630,11 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 	}, nil
 }
 
-// handleUnseal handles the unseal method for unsealing data with a backend
+// handleUnseal handles the unseal method for unsealing data with a backend.
+//
+// As with handleSeal, the key is resolved within the caller's tenant by the
+// service, so a blob sealed under another tenant's key -- named, or that
+// tenant's default sealing key -- does not unseal here (go-xkms#1228).
 func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UnsealParams
 	if err := decodeParams(req, &params); err != nil {
@@ -1734,50 +1645,21 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "ciphertext is required"}}
 	}
 
-	// Use backend name if provided, otherwise use default
-	backendName := params.Backend
-
-	// Get the backend, scoped to the caller's tenant, to determine the backend
-	// type for the sealed data and to resolve the key below.
-	ks, err := s.tenantBackend(ctx, backendName)
-	if err != nil {
-		return nil, &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: &errs.Wrapped{Msg: "backend not found", Err: err}}
-	}
-
-	// Build sealed data structure
-	sealed := &types.SealedData{
-		Backend:    ks.KeyProvider().Type(),
+	resp, err := s.xkmsService.Unseal(ctx, &transport.UnsealRequest{
+		Backend:    params.Backend,
+		KeyID:      params.KeyID,
 		Ciphertext: params.Ciphertext,
 		Nonce:      params.Nonce,
 		Tag:        params.Tag,
-	}
-
-	// Build unseal options
-	opts := &types.UnsealOptions{
-		AAD: params.AAD,
-	}
-
-	// If KeyID is provided, look up the key to get its actual attributes
-	if params.KeyID != "" {
-		targetAttr, err := keyByCN(ctx, ks, params.KeyID)
-		if err != nil {
-			return nil, mapKeyOpError(err)
-		}
-
-		opts.KeyAttributes = targetAttr
-		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
-	}
-
-	// Call the xkms service to unseal the data. Matches
-	// pkg/api/grpc/service.go's Unseal, which reports this call's failure as
-	// codes.Internal unconditionally.
-	plaintext, err := s.xkmsService.UnsealWithBackend(ctx, backendName, sealed, opts)
+		AAD:        params.AAD,
+		TenantID:   callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: "failed to unseal data", Err: err}}
+		return nil, mapKeyOpError(err)
 	}
 
 	return UnsealResult{
-		Plaintext: plaintext,
+		Plaintext: resp.Plaintext,
 	}, nil
 }
 
