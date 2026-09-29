@@ -512,17 +512,49 @@ var (
 	ErrFinishRegistrationFailed = errors.New("failed to finish registration")
 
 	// ErrSoftwareBackendNotSealer is the sentinel error returned when the SDK
-	// software backend used to hold FROST secret shares unexpectedly does
-	// not implement client.SealingKeyProvider. Every production software
+	// PKCS#8 backend used to hold the FROST wrapping key unexpectedly does
+	// not implement client.SealingKeyProvider. Every production PKCS#8
 	// backend does; reaching this indicates an SDK defect, not an operator
 	// config mistake.
 	ErrSoftwareBackendNotSealer = errors.New("software backend does not implement SealingKeyProvider")
 
 	// ErrProvisionFrostSealKeyFailed is the sentinel error "failed to
-	// provision FROST secret wrapping key", returned when the software
-	// backend's Ed25519 wrapping key (used to seal/unseal FROST secret
-	// shares) could not be generated or retrieved.
+	// provision FROST secret wrapping key", returned when the
+	// passphrase-encrypted Ed25519 wrapping key (used to seal/unseal FROST
+	// secret shares) could not be generated or retrieved for a reason other
+	// than a rejected passphrase.
 	ErrProvisionFrostSealKeyFailed = errors.New("failed to provision FROST secret wrapping key")
+
+	// ErrFrostPassphraseRequired is returned by every xkmsctl FROST verb
+	// that seals or unseals a secret share when no passphrase source was
+	// supplied. xkmsctl has no local hardware backend to hold the wrapping
+	// key, so the passphrase is the only thing protecting it at rest.
+	ErrFrostPassphraseRequired = errors.New("FROST secret shares are protected by a passphrase: supply it with --passphrase-stdin, --passphrase-file or XKMS_FROST_PASSPHRASE")
+
+	// ErrFrostPassphraseEmpty is returned when a FROST passphrase source was
+	// supplied but held an empty passphrase.
+	ErrFrostPassphraseEmpty = errors.New("FROST passphrase is empty")
+
+	// ErrReadFrostPassphraseFailed is the sentinel error "failed to read
+	// FROST passphrase", returned when the stdin or file passphrase source
+	// could not be read.
+	ErrReadFrostPassphraseFailed = errors.New("failed to read FROST passphrase")
+
+	// ErrFrostPassphraseRejected is returned when the FROST wrapping key on
+	// disk cannot be decrypted with the supplied passphrase: either the
+	// passphrase is wrong, or the key was not written under a passphrase
+	// (a key store created before go-xkms#1324) or is corrupt.
+	ErrFrostPassphraseRejected = errors.New("FROST passphrase rejected: the wrapping key could not be decrypted with it")
+
+	// ErrFrostWrapBackendUnsupported is returned when --backend names a
+	// backend that the local xkmsctl FROST store cannot hold its wrapping
+	// key in. The store supports only the passphrase-encrypted software
+	// key; it refuses rather than silently ignoring the requested backend.
+	ErrFrostWrapBackendUnsupported = errors.New("xkmsctl frost stores its share wrapping key only in the passphrase-encrypted software backend; unsupported --backend")
+
+	// ErrRestrictFrostDirectoryFailed is the sentinel error "failed to
+	// restrict FROST directory to owner-only access".
+	ErrRestrictFrostDirectoryFailed = errors.New("failed to restrict FROST directory to owner-only access")
 
 	// ErrGenerateCAFailed is the sentinel error "failed to generate CA".
 	ErrGenerateCAFailed = errors.New("failed to generate CA")

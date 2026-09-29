@@ -1,6 +1,6 @@
 # FROST Threshold Signing — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1231)
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1324)
 
 All symbols below require `-tags frost` unless noted. See
 [`architecture.md`](architecture.md) for why the CLI and network-API surfaces
@@ -104,6 +104,23 @@ dispatches on `backends.frost.secret_backend`'s name and provisions
 
 `pkg/xkms/register_frost.go`'s `newFROSTKeyProvider` factory (see below)
 provisions its `pkcs8` secret backend's wrapping key the same way, inline.
+
+### xkmsctl's local store (`cmd/xkmsctl/frost.go`, `frost_passphrase.go`)
+
+`xkmsctl frost` composes the same pieces locally, with a passphrase instead
+of hardware protecting the wrapping key (go-xkms#1324):
+
+| Step | Code | Behaviour |
+|---|---|---|
+| Directories | `frostStoreDirs` (`frost.go:1167`) | `MkdirAll` of `<key-dir>/frost/{public,secrets}` with `0700`, then `Chmod 0700` on the three FROST directories. `<key-dir>` is only created, never re-moded. |
+| Backend check | `openFrostShareBackend` (`frost.go:1218`) | `--backend` must be `software`; anything else is `ErrFrostWrapBackendUnsupported`. |
+| Passphrase | `resolveFrostPassphrase` (`frost_passphrase.go:65`) | `--passphrase-stdin`, then `--passphrase-file`, then `XKMS_FROST_PASSPHRASE`; one trailing line ending trimmed; held as a `client.Password` (memguard enclave); raw bytes wiped. No flag accepts the value. |
+| Wrapping-key backend | `newFrostWrapKeyProvider` (`frost.go:1248`) | `client.NewPKCS8Backend` over `<key-dir>/frost/secrets` with `AllowPlaintextKeys` false. |
+| Wrapping key | `ensureFrostWrapKey` (`frost.go:1270`) | `AsymmetricSecretSealKeyAttributes(StoreSoftware)` with `Password` set, provisioned by `EnsurePrivateSealKey`, so the key is written as encrypted PKCS#8 (PBES2). A decode failure (`client.ErrPKCS8KeyDecodingFailed`) is `ErrFrostPassphraseRejected`; any other failure is `ErrProvisionFrostSealKeyFailed`. |
+| Public verbs | `openFrostPublicBackend` (`frost.go:1195`) | Same PKCS#8 backend, no passphrase, no provisioning: a seal or unseal through it fails to decode the wrapping key. `info` reads `PublicKeyPackage` rather than unsealing. |
+
+`import` stores through `FrostBackend.ImportKeyPackage`, so it shares this
+wiring rather than building its own `KeyStore`.
 
 ## Ciphersuites (`pkg/keyprovider/frost/ciphersuite.go`)
 
@@ -251,6 +268,17 @@ ID: they are platform keys, invisible to every tenant. There is no migration.
   comment), so the full FROST+`azurekv` round trip is exercised by the
   emulator-backed integration suite (`test/integration/azurekv`), not a unit
   test, consistent with that package's own existing boundary.
+- `cmd/xkmsctl/frost_store_test.go` (`-tags frost`) covers the CLI's local
+  store: a passphrase round trip that reopens the store and unseals the
+  share; the stored wrapping key parses as a PBES2 `EncryptedPrivateKeyInfo`
+  and not as plaintext PKCS#8, and no file under `secrets` contains the
+  passphrase; a wrong passphrase and a pre-#1324 plaintext wrapping key are
+  both `ErrFrostPassphraseRejected`; no passphrase is
+  `ErrFrostPassphraseRequired` before any directory is created;
+  `--backend tpm2` is `ErrFrostWrapBackendUnsupported`; every directory is
+  `0700`, including pre-existing `0755` ones; the public backend reads
+  public material but cannot unseal; passphrase source precedence, empty
+  and unreadable sources, and flag mutual exclusion.
 - `pkg/xkms/register_frost_test.go` covers the `newFROSTKeyProvider` factory
   itself: fails closed with `pkcs8.ErrPlaintextKeyNotAllowed` on a nil or
   empty config (go-xkms#1237's reproduction); with

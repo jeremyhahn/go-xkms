@@ -1,6 +1,6 @@
 # FROST Threshold Signing — Architecture
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1231)
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1324)
 
 ## The problem
 
@@ -52,15 +52,38 @@ client.NewFrostBackend(...)               XKMSService.Frost* (pkg/xkms/servicer_
 ### The CLI path is local-only, every subcommand
 
 `xkmsctl frost keygen|import|list|info|delete|round1|round2|aggregate|verify`
-all call `createFrostBackend` (`cmd/xkmsctl/frost.go:1146`), which builds a
-`frost.Config` from two directories under `--key-dir` —
-`<key-dir>/frost/public` (group public key, verification shares, metadata)
-and `<key-dir>/frost/secrets` (this operator's secret share, via a
-`pkcs8`-backed file secret store) — and opens a fresh `frost.FrostBackend`
-in the `xkmsctl` process itself. None of these subcommands call the SDK's
-network transports; `--server`/`--transport` has no effect on
-`xkmsctl frost`. The CLI names keys by bare key ID, so every key it writes is
-an untenanted (platform) key — see "Tenancy" below.
+all open a fresh `frost.FrostBackend` in the `xkmsctl` process itself, over
+two owner-only (`0700`) directories under `--key-dir`:
+
+- `<key-dir>/frost/public` — group public key, verification shares,
+  metadata, and each key's secret share **sealed** (AES-256-GCM under a key
+  HKDF-derived from the wrapping key).
+- `<key-dir>/frost/secrets` — the Ed25519 wrapping key, stored as encrypted
+  PKCS#8 under the operator's FROST passphrase by a PKCS#8 backend that
+  refuses plaintext keys (`newFrostWrapKeyProvider`,
+  `cmd/xkmsctl/frost.go:1248`).
+
+The share verbs (`keygen` in participant mode, `import`, `round1`, `round2`)
+go through `openFrostShareBackend` (`frost.go:1218`), which resolves the
+passphrase and decrypts the wrapping key with it. The public verbs go through
+`openFrostPublicBackend` (`frost.go:1195`), which never provisions or
+decrypts the wrapping key, so any unseal through it fails closed. The
+passphrase is what protects the shares at rest: the sealed envelopes and the
+wrapping key sit on the same disk, and before go-xkms#1324 the wrapping key
+was plaintext PKCS#8 beside them.
+
+xkmsctl builds no local TPM 2.0 or PKCS#11 key backend (`--backend` only
+names a backend for the service API and `--pkcs11-module` configures mTLS
+client authentication), so the passphrase-encrypted software key is the
+only wrapping key the CLI can hold; any other `--backend` is refused. A
+hardware-held wrapping key is available through `xkmsd`'s
+`backends.frost.secret_backend` (see
+[`engineering.md`](engineering.md) §"Provisioning").
+
+None of these subcommands call the SDK's network transports;
+`--server`/`--transport` has no effect on `xkmsctl frost`. The CLI names keys
+by bare key ID, so every key it writes is an untenanted (platform) key — see
+"Tenancy" below.
 
 ### The network API path goes through the service layer
 
