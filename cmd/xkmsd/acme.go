@@ -26,7 +26,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gorilla/mux"
 
@@ -390,13 +389,10 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	}
 
 	httpSrv := &http.Server{
-		Handler:           router,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		TLSConfig:         tlsCfg,
+		Handler:   router,
+		TLSConfig: tlsCfg,
 	}
+	server.ApplyHardenedTimeouts(httpSrv)
 
 	as := &acmeServer{
 		httpServer:     httpSrv,
