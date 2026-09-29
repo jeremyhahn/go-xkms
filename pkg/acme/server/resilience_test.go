@@ -14,9 +14,9 @@
 package server
 
 import (
+	"errors"
 	"net"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,44 +34,102 @@ func noopVerifier(*net.Resolver, common.CertificateAuthority, string, string, st
 	return nil
 }
 
-// TestWrapChallengeVerifiers_WrapsHTTP01AndDNS01 verifies that
+// errFailingTarget is returned by a verifier standing in for a validation
+// target that is always unreachable, so tests can trip a target's breaker
+// deterministically without a real network call.
+var errFailingTarget = errors.New("target unreachable")
+
+// failingVerifier is a common.ChallengeVerifierFunc that always fails with
+// errFailingTarget, regardless of which target (authzValue) it is asked to
+// verify.
+func failingVerifier(*net.Resolver, common.CertificateAuthority, string, string, string, string) error {
+	return errFailingTarget
+}
+
+// oneFailureTripsConfig configures a breaker group that opens a target's
+// breaker on its first failure and never resets it for the duration of a
+// test (ResetTimeoutSeconds well beyond any test's runtime).
+func oneFailureTripsConfig() config.ACMECircuitBreakerConfig {
+	return config.ACMECircuitBreakerConfig{MaxFailures: 1, ResetTimeoutSeconds: 3600}
+}
+
+// TestWrapChallengeVerifiers_WrapsHTTP01AndDNS01PerTarget verifies that
 // WrapChallengeVerifiers wraps the "http-01" and "dns-01" entries of the
-// input map with breakers registered on the given Manager under "http01"
-// and "dns01" respectively, and leaves every other entry (e.g. enroll-01)
-// untouched. It pre-trips both breakers rather than driving a real network
-// failure through the verifier, so the assertion is that the wrapped
-// verifiers fail fast on an already-open breaker while the untouched entry
-// still succeeds.
-func TestWrapChallengeVerifiers_WrapsHTTP01AndDNS01(t *testing.T) {
+// input map with per-target breaker groups on breakers (named "http01" and
+// "dns01"), and leaves every other entry (e.g. enroll-01) untouched. This is
+// the regression test for go-xkms#1189/#1190: an account whose target always
+// fails trips only that target's own breaker, so a different target under
+// the same challenge type still reaches the verifier instead of failing
+// fast on someone else's open breaker.
+func TestWrapChallengeVerifiers_WrapsHTTP01AndDNS01PerTarget(t *testing.T) {
 	breakers := circuitbreaker.NewManager()
-	httpCB := breakers.GetOrCreate(&circuitbreaker.Config{Name: "http01", MaxFailures: 1, ResetTimeout: time.Hour})
-	dnsCB := breakers.GetOrCreate(&circuitbreaker.Config{Name: "dns01", MaxFailures: 1, ResetTimeout: time.Hour})
-	httpCB.Trip()
-	dnsCB.Trip()
 
 	in := map[string]common.ChallengeVerifierFunc{
-		common.ChallengeTypeHTTP01:   noopVerifier,
-		common.ChallengeTypeDNS01:    noopVerifier,
+		common.ChallengeTypeHTTP01:   failingVerifier,
+		common.ChallengeTypeDNS01:    failingVerifier,
 		common.ChallengeTypeEnroll01: noopVerifier,
 	}
 
-	out := WrapChallengeVerifiers(in, config.ACMEResilienceConfig{}, breakers)
+	resilience := config.ACMEResilienceConfig{
+		HTTP01: oneFailureTripsConfig(),
+		DNS01:  oneFailureTripsConfig(),
+	}
+	out := WrapChallengeVerifiers(in, resilience, breakers)
 	require.Len(t, out, 3)
 
-	err := out[common.ChallengeTypeHTTP01](nil, nil, "example.com", "80", "tok", "ka")
-	assert.ErrorIs(t, err, circuitbreaker.ErrCircuitOpen, "http-01 verifier should be wrapped with the open http01 breaker")
+	// A failing call against "bad.example.com" trips that target's http01
+	// breaker (MaxFailures 1).
+	err := out[common.ChallengeTypeHTTP01](nil, nil, "bad.example.com", "80", "tok", "ka")
+	assert.ErrorIs(t, err, errFailingTarget)
+	err = out[common.ChallengeTypeHTTP01](nil, nil, "bad.example.com", "80", "tok", "ka")
+	assert.ErrorIs(t, err, circuitbreaker.ErrCircuitOpen, "bad.example.com's own breaker must now be open")
 
-	err = out[common.ChallengeTypeDNS01](nil, nil, "example.com", "80", "tok", "ka")
-	assert.ErrorIs(t, err, circuitbreaker.ErrCircuitOpen, "dns-01 verifier should be wrapped with the open dns01 breaker")
+	// A different http-01 target must be unaffected: it has its own breaker
+	// and still reaches the verifier.
+	err = out[common.ChallengeTypeHTTP01](nil, nil, "good.example.com", "80", "tok", "ka")
+	assert.ErrorIs(t, err, errFailingTarget, "a healthy target must not fail fast on another target's open breaker")
+
+	// dns-01 exhibits the same per-target isolation.
+	err = out[common.ChallengeTypeDNS01](nil, nil, "bad.example.com", "80", "tok", "ka")
+	assert.ErrorIs(t, err, errFailingTarget)
+	err = out[common.ChallengeTypeDNS01](nil, nil, "bad.example.com", "80", "tok", "ka")
+	assert.ErrorIs(t, err, circuitbreaker.ErrCircuitOpen)
+	err = out[common.ChallengeTypeDNS01](nil, nil, "good.example.com", "80", "tok", "ka")
+	assert.ErrorIs(t, err, errFailingTarget)
 
 	err = out[common.ChallengeTypeEnroll01](nil, nil, "example.com", "80", "tok", "ka")
 	assert.NoError(t, err, "enroll-01 has no breaker and must be returned unwrapped")
 
 	// The input map itself must not be mutated: its http-01 entry is still
-	// the original, unwrapped verifier, so it succeeds even though the
-	// breaker the returned copy wraps it with is open.
-	err = in[common.ChallengeTypeHTTP01](nil, nil, "example.com", "80", "tok", "ka")
-	assert.NoError(t, err, "input map must not be mutated by WrapChallengeVerifiers")
+	// the original, unwrapped verifier.
+	err = in[common.ChallengeTypeHTTP01](nil, nil, "bad.example.com", "80", "tok", "ka")
+	assert.ErrorIs(t, err, errFailingTarget, "input map must not be mutated by WrapChallengeVerifiers")
+}
+
+// TestWrapChallengeVerifiers_RegistersTargetGroupsForHealth verifies that
+// wrapping registers the "http01"/"dns01" per-target breaker groups on
+// breakers immediately -- so /acme/health can report them (via
+// circuitbreaker.Manager.TargetGroupStatuses) before any challenge has ever
+// been validated -- configured with the resolved capacity from resilience.
+func TestWrapChallengeVerifiers_RegistersTargetGroupsForHealth(t *testing.T) {
+	breakers := circuitbreaker.NewManager()
+	in := map[string]common.ChallengeVerifierFunc{
+		common.ChallengeTypeHTTP01: noopVerifier,
+		common.ChallengeTypeDNS01:  noopVerifier,
+	}
+	resilience := config.ACMEResilienceConfig{
+		HTTP01: config.ACMECircuitBreakerConfig{TargetCapacity: 7},
+		DNS01:  config.ACMECircuitBreakerConfig{TargetCapacity: 9},
+	}
+
+	WrapChallengeVerifiers(in, resilience, breakers)
+
+	statuses := breakers.TargetGroupStatuses()
+	require.Contains(t, statuses, "http01")
+	assert.Equal(t, 7, statuses["http01"].Capacity)
+	assert.Zero(t, statuses["http01"].Tracked, "no target has been validated yet")
+	require.Contains(t, statuses, "dns01")
+	assert.Equal(t, 9, statuses["dns01"].Capacity)
 }
 
 // TestWrapChallengeVerifiers_NilBreakersReturnsInputUnchanged verifies the

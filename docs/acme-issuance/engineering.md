@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## Exported surface
 
@@ -36,16 +36,17 @@
 - `pkg/acme/server/request_body.go` — the capped, read-once request body
   (`RequestBodyMiddleware`, `RequestBody`); see Invariants below.
 - `pkg/acme/server/circuitbreaker` — the one circuit breaker implementation
-  (`CircuitBreaker`, `Manager`, the `Middleware` HTTP wrapper, and the
-  `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators;
-  go-xkms#975 deleted the unreferenced duplicate `pkg/acme/server/circuit_breaker.go`
-  that #735 had left behind) and `pkg/acme/server/degradation` (the
-  cache-backed graceful-degradation primitives) — the protective layer,
-  wired into both xkmsd and the standalone `TrustedCA` (go-xkms#820). Both
-  compositions build their breaker `Manager` and wrap their challenge
-  verifiers through `pkg/acme/server/resilience.go`'s
-  `WrapChallengeVerifiers`, the one shared construction path — see "Circuit
-  breakers and degradation" below.
+  (`CircuitBreaker`, `Manager`, the bounded per-target groups in
+  `target.go` (go-xkms#1189, #1190), the `Middleware` HTTP wrapper, and the
+  `WrapChallengeVerifier`/`WrapChallengeVerifierPerTarget`/`WrapLogSubmitter`/`WrapKMSService`
+  decorators; go-xkms#975 deleted the unreferenced duplicate
+  `pkg/acme/server/circuit_breaker.go` that #735 had left behind) and
+  `pkg/acme/server/degradation` (the cache-backed graceful-degradation
+  primitives) — the protective layer, wired into both xkmsd and the
+  standalone `TrustedCA` (go-xkms#820). Both compositions build their
+  breaker `Manager` and wrap their challenge verifiers through
+  `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers`, the one shared
+  construction path — see "Circuit breakers and degradation" below.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
   `barrier_handlers.go`, `barrier_service.go`, `ca_adapter.go`).
 - `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — the transport
@@ -648,55 +649,91 @@ own with `NewACMEChallengeClient` (`sdk/go/acme`) and passes it to
 ## Circuit breakers and degradation
 
 `pkg/acme/server/circuitbreaker` is the one circuit breaker implementation
-(go-xkms#735 folded the previously-duplicated HTTP middleware into it). Five
-dependencies each get their own breaker from a shared `circuitbreaker.Manager`:
+(go-xkms#735 folded the previously-duplicated HTTP middleware into it).
+`circuitbreaker.Manager` holds two kinds of breaker:
 
-| Breaker name | Guards | Wired by |
-|---|---|---|
-| `http01` | the `http-01` challenge verifier | `cmd/xkmsd/acme.go:buildChallengeMap` and `TrustedCA.Serve` (`pkg/acme/client/trustedca.go`, go-xkms#820), both via `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` -> `circuitbreaker.WrapChallengeVerifier` |
-| `dns01` | the `dns-01` challenge verifier | same, `WrapChallengeVerifiers` -> `circuitbreaker.WrapChallengeVerifier` |
-| `ct` | CT log submission (`ct.LogSubmitter`) | `circuitbreaker.WrapLogSubmitter` — no production call site yet; see architecture.md |
-| `kms` | `Params.KMSService` (the tenant KMS signer) | `handlers.NewRestService`, automatically, when both `Params.Breakers` and `Params.KMSService` are set |
-| `storage` | CA/keystore-backed certificate storage (`CA.CABundleFiltered`, `GET /acme/ca-bundle`'s dependency) | `handlers.NewRestService`, from `Params.StorageBreaker` |
+| Kind | Registered as | Guards | Wired by |
+|---|---|---|---|
+| Named (one breaker) | `ct` | CT log submission (`ct.LogSubmitter`) | `circuitbreaker.WrapLogSubmitter` — no production call site yet; see architecture.md |
+| Named (one breaker) | `kms` | `Params.KMSService` (the tenant KMS signer) | `handlers.NewRestService`, automatically, when both `Params.Breakers` and `Params.KMSService` are set |
+| Named (one breaker) | `storage` | CA/keystore-backed certificate storage (`CA.CABundleFiltered`, `GET /acme/ca-bundle`'s dependency) | `handlers.NewRestService`, from `Params.StorageBreaker` |
+| Per-target group | `http01` | the `http-01` challenge verifier, **one breaker per validation target (domain)** | `cmd/xkmsd/acme.go:buildChallengeMap` and `TrustedCA.Serve` (`pkg/acme/client/trustedca.go`, go-xkms#820), both via `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` -> `circuitbreaker.WrapChallengeVerifierPerTarget` |
+| Per-target group | `dns01` | the `dns-01` challenge verifier, **one breaker per validation target (zone)** | same, `WrapChallengeVerifiers` -> `circuitbreaker.WrapChallengeVerifierPerTarget` |
+
+A named breaker (`Manager.Get`/`GetOrCreate`) is a single instance for a
+single, operator-configured dependency: safe to list in full on
+`GET /acme/health` (`Manager.List`/`Status`) because there are only ever a
+handful. A per-target group (`Manager.TargetBreaker`,
+`pkg/acme/server/circuitbreaker/target.go`) is different: its keys are
+whatever validation target a caller names, which is attacker-influenced
+input, so it cannot be a single breaker (go-xkms#1189/#1190, see below) or
+an unbounded one (it would be attacker-controlled memory growth). It is a
+bounded, LRU-plus-idle-TTL table of per-target `CircuitBreaker` instances
+scoped under a group name ("http01", "dns01"), reported only through
+`Manager.TargetGroupStatuses` — a fixed-size summary, never a per-target
+listing (see `GET /acme/health` below).
 
 `WrapChallengeVerifiers` (`pkg/acme/server/resilience.go`) is the one place
-that decides which challenge-map entries get wrapped and under which breaker
+that decides which challenge-map entries get wrapped and under which group
 names: it copies the map, wraps the `http-01` and `dns-01` entries (when
-present) with a breaker from the `Manager` it is given, and returns every
-other entry — the TPM attestation verifiers `sdk/go/acme.ACMEAttestationVerifiers`
-builds, for instance — unchanged. `cmd/xkmsd/acme.go`'s `buildChallengeMap`
-calls it after selecting verifiers from `acme.challenges`; `TrustedCA.Serve`
-calls it on whatever map a caller supplied through `WithChallengeMap`. A nil
-`Manager` (resilience not wired) or nil map returns the input unchanged.
+present) with a per-target breaker group from the `Manager` it is given, and
+returns every other entry — the TPM attestation verifiers
+`sdk/go/acme.ACMEAttestationVerifiers` builds, for instance — unchanged. It
+also calls `Manager.RegisterTargetGroup` for each group it wraps, so
+`http01`/`dns01` are visible in `GET /acme/health` immediately, before any
+target has been validated. `cmd/xkmsd/acme.go`'s `buildChallengeMap` calls
+`WrapChallengeVerifiers` after selecting verifiers from `acme.challenges`;
+`TrustedCA.Serve` calls it on whatever map a caller supplied through
+`WithChallengeMap`. A nil `Manager` (resilience not wired) or nil map
+returns the input unchanged.
 
-**Refused targets do not count toward a challenge breaker** (go-xkms#1181).
-The `http01` breaker is one breaker for the whole server, and the target it
-guards is chosen by the ACME client. `WrapChallengeVerifier`
-(`pkg/acme/server/circuitbreaker/decorators.go:41`) therefore runs the
-verifier through the breaker's unexported `execute`
-(`circuitbreaker.go:214`) with `validation.IsTargetRejected`
-(`pkg/acme/challenges/validation/errors.go:99`) as its exclusion predicate
-(`decorators.go:48`). A `*validation.Error` of `KindInvalidTarget` or
+**Per-target breakers, and refused targets excluded from them**
+(go-xkms#1189, #1190, #1181). Before go-xkms#1189/#1190, `http01` and
+`dns01` were each a single breaker for the whole server: one account whose
+validation target always failed a) tripped the breaker for every other
+account's `http-01` (or `dns-01`) validation, and b) for `dns-01`, a slow
+authoritative name server for one account's zone could stall admission for
+every zone, because the breaker's timeout is what bounds a call, and every
+call shared the one breaker's admission state. `WrapChallengeVerifierPerTarget`
+(`pkg/acme/server/circuitbreaker/decorators.go`) closes this: it resolves
+(creating on first use) the breaker for `authzValue` — the domain http-01
+dials, or the zone dns-01 queries, the only attribution the verifier's
+signature actually gives the wrapper (there is no visibility into which
+authoritative name server `net.Resolver.LookupTXT` contacted for dns-01) —
+within the group's bounded table, via `Manager.TargetBreaker`. A failing or
+slow target now only ever affects its own breaker; every other target's
+admission is decided independently.
+
+The bounded table (`circuitbreaker.TargetConfig`, `target.go`) is an
+LRU-ordered `container/list` under one `sync.Mutex` per group: every
+touch (creation or lookup) moves the target to the front, so the entry at
+the back is simultaneously the least recently used and the longest idle,
+and both `Capacity` eviction (trim the back on overflow) and `IdleTTL`
+eviction (prune expired entries from the back) work off the same list.
+`ACMECircuitBreakerConfig.TargetCapacity` /`TargetIdleTimeoutSeconds`
+(`target_capacity` / `target_idle_timeout_seconds` in the `http01`/`dns01`
+YAML sections; see "Configuration" below) bound it — defaults 1000 targets
+/ 10 minutes idle (`circuitbreaker.DefaultTargetCapacity`,
+`DefaultTargetIdleTTL`) — so a flood of distinct hosts cannot grow the
+table without bound.
+
+As before go-xkms#1181, a challenge the validation client refuses without
+contacting the target does not count toward that target's breaker.
+`WrapChallengeVerifierPerTarget` runs the verifier through the resolved
+breaker's unexported `execute` (`circuitbreaker.go:214`) with
+`validation.IsTargetRejected` (`pkg/acme/challenges/validation/errors.go:99`)
+as its exclusion predicate. A `*validation.Error` of `KindInvalidTarget` or
 `KindTargetRefused` -- a failure the validation client decided without
 contacting the target -- is returned to the verifier's caller unchanged but
 is not recorded (`circuitbreaker.go:242`): it is neither a failure nor a
-success, so it cannot open the breaker and cannot reset its failure count
-either. `releaseAdmission` (`circuitbreaker.go:258`) gives back a half-open
-slot such a call held, under the same generation rule as `afterRequest`.
-Before this, any account could open the breaker, and stall every `http-01`
-validation on the server, by requesting challenges against loopback or
-metadata addresses. Everything else still counts: `KindConnection` (a target
-that was contacted and could not be reached), the breaker's own timeout,
-`KindStatus`, `KindRedirect`, `KindResponseTooLarge` and a key-authorization
-mismatch.
-
-The breaker stays global, not per target host. What is left of the
-account-trippable surface -- an account naming a public host that drops
-connections, or answers 404 -- is the reason a per-host breaker would help,
-but it is not a small change: the `Manager` has no eviction, so one breaker
-per client-chosen host name is unbounded memory an account controls, and
-`GET /acme/health` reports breakers by name, so it would stop reporting a
-single `http01`. It is recorded as a follow-up, not done here.
+success, so it cannot open the target's breaker and cannot reset its
+failure count either. `releaseAdmission` (`circuitbreaker.go:258`) gives
+back a half-open slot such a call held, under the same generation rule as
+`afterRequest`. This still matters per-target: without it, an account could
+still open its own target's breaker for free by naming a reserved address,
+which is merely pointless self-sabotage rather than the cross-account denial
+of service #1181 originally fixed, but excluding it keeps a refused target's
+breaker meaningful as a signal of real reachability problems.
 
 `storage` here is **not** the go-qrdb-backed ACME protocol state
 (`pkg/acme/storage` → `go-qrdb/sdk/go`, accounts/orders/authorizations/
@@ -747,13 +784,28 @@ CABundleHandler's real recovery test. Both endpoints share one cache entry
 each (`Resilience.Degradation.MaxCacheSize`, default 8, is generous for a
 one-entry-per-endpoint cache).
 
-`GET /acme/health` (`RestService.HealthHandler`, `HealthStatus`) reports
-every breaker registered on `Params.Breakers` by name — state, failure
-count, success count — and whether `storage` is open (`Degradation.Active`).
-It returns 503 when any breaker is not closed, 200 otherwise. A
-`RestService` built without `Params.Breakers` reports healthy with no
-breakers listed rather than omitting the endpoint. `cmd/xkmsd/acme.go` opts
-in (`Params.Breakers`, `StorageBreaker`, `KMSBreaker`, all sourced from
+`GET /acme/health` (`RestService.HealthHandler`, `HealthStatus`) reports two
+things:
+
+- `Breakers` — every *named* breaker registered on `Params.Breakers`
+  (`storage`, `kms`, `ct` when wired) by name: state, failure count,
+  success count. `Healthy` (and the 503/200 status) is driven only by this
+  set.
+- `TargetGroups` — `Manager.TargetGroupStatuses()`, one bounded
+  `circuitbreaker.TargetGroupStatus` per per-target group (`http01`,
+  `dns01`): `Capacity`, `Tracked`, `Closed`, `HalfOpen`, `Open`, and
+  `TopOpen` (at most `circuitbreaker.TargetGroupTopOpenLimit` = 10 currently
+  open target names). This does **not** affect `Healthy`: one account's
+  failing validation target opening its own breaker is expected, isolated
+  behavior (that isolation is the entire point of go-xkms#1189/#1190), not
+  evidence that the server itself is degraded the way an open `storage` or
+  `kms` breaker is. It is also why `TargetGroups` cannot be folded into
+  `Breakers`: a per-target listing would grow with attacker-chosen input,
+  where `Breakers` is a small, fixed, operator-configured set.
+
+A `RestService` built without `Params.Breakers` reports healthy with both
+maps empty rather than omitting the endpoint. `cmd/xkmsd/acme.go` opts in
+(`Params.Breakers`, `StorageBreaker`, `KMSBreaker`, all sourced from
 `acme.resilience` — see "Configuration"); the standalone `TrustedCA` path
 (`pkg/acme/client/trustedca.go`) now opts in the same way (go-xkms#820),
 sourcing the same four fields from `TCAACMEConfig.Resilience` — reusing
@@ -763,8 +815,9 @@ either composition's configuration file. `TrustedCA.Serve` builds its
 breaker `Manager` unconditionally, same as `cmd/xkmsd/acme.go` — there is no
 "resilience disabled" switch, matching `ACMEResilienceConfig`'s own
 always-on defaults — so `GET /health` always lists at least the `storage`
-breaker, plus `http01`/`dns01` when the caller-supplied challenge map
-(`WithChallengeMap`) has those entries.
+breaker, plus an `http01`/`dns01` entry in `TargetGroups` (registered by
+`WrapChallengeVerifiers`, empty until a target is validated) when the
+caller-supplied challenge map (`WithChallengeMap`) has those entries.
 
 ## Error semantics
 
@@ -1091,8 +1144,8 @@ which collides with the SDK's `DefaultMCPAddress` of `localhost:9444`. See
 **Resilience configuration (`ACMEResilienceConfig`, `acme.resilience`,
 `pkg/config/acme_resilience.go`).** Five typed sections —
 `http01`/`dns01`/`ct_submitter`/`kms`/`storage`, each an
-`ACMECircuitBreakerConfig` — configure the breaker of the matching name (see
-"Circuit breakers and degradation"): `max_failures`,
+`ACMECircuitBreakerConfig` — configure the breaker(s) of the matching name
+(see "Circuit breakers and degradation"): `max_failures`,
 `reset_timeout_seconds`, `half_open_max_requests`, `success_threshold`,
 `timeout_seconds`. Every field's zero value selects
 `circuitbreaker.DefaultConfig`'s default (`DefaultACMEBreaker*` constants:
@@ -1101,7 +1154,19 @@ timeout) through `ACMECircuitBreakerConfig.CircuitBreakerConfig(name)`, the
 one mapping between this YAML and `circuitbreaker.Config` — mirroring
 `ACMEAuditConfig.AuditConfig`. A negative `reset_timeout_seconds` or
 `timeout_seconds` is `ErrACMEResilienceNegativeValue`; the unsigned counter
-fields cannot go negative in YAML without a parse error first. A `degradation`
+fields cannot go negative in YAML without a parse error first.
+
+`http01` and `dns01` additionally carry `target_capacity` and
+`target_idle_timeout_seconds`: they bound the per-target breaker table each
+backs (see "Circuit breakers and degradation"), substituting
+`DefaultACMEBreakerTargetCapacity` (1000) /
+`DefaultACMEBreakerTargetIdleTimeoutSeconds` (600) at zero, via
+`ResolveTargetCapacity`/`ResolveTargetIdleTimeout`. A negative value here is
+`ErrACMEResilienceNegativeValue` too. These two fields are meaningless on
+`ct_submitter`/`kms`/`storage` (each a single breaker, not a per-target
+group) and are ignored there.
+
+A `degradation`
 subsection (`ACMEDegradationConfig`) configures the directory/CA-bundle
 cache: `cache_ttl_seconds` (default 60), `stale_ttl_seconds` (default 300),
 `max_cache_size` (default 32, generous headroom over the one entry each

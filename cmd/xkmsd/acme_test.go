@@ -223,40 +223,126 @@ func TestBuildChallengeMap_AllowPrivateTargets(t *testing.T) {
 	}
 }
 
+// closedLoopbackPort returns a 127.0.0.1 port nothing listens on, so a
+// connection to it fails the way an unreachable public target does.
+func closedLoopbackPort(t *testing.T) string {
+	t.Helper()
+	return closedPortOn(t, "127.0.0.1")
+}
+
+// closedPortOn returns a port nothing listens on for the given loopback
+// host, so a connection to it fails the way an unreachable public target
+// does. host lets a test pick a target host distinct from another target in
+// the same test (127.0.0.0/8 is entirely loopback on Linux).
+func closedPortOn(t *testing.T, host string) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", host+":0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split %s: %v", listener.Addr().String(), err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	return port
+}
+
 // TestBuildChallengeMap_WrapsVerifiersWithBreaker verifies that, given a
 // non-nil circuit breaker Manager, buildChallengeMap wraps the http-01 and
-// dns-01 verifiers with breakers registered on that Manager under "http01"
-// and "dns01". It pre-trips each breaker rather than driving a real network
-// failure through http01.Verify/dns01.Verify, so the assertion is that the
-// wrapped verifier fails fast on an already-open breaker without making any
-// network call at all.
+// dns-01 verifiers with per-target breaker groups on that Manager, named
+// "http01" and "dns01" -- one breaker per validation target rather than one
+// breaker shared by every target. This is the regression test for
+// go-xkms#1189/#1190: a target whose verifier always fails trips only its
+// own breaker, so a different target under the same challenge type still
+// reaches the verifier.
 func TestBuildChallengeMap_WrapsVerifiersWithBreaker(t *testing.T) {
 	breakers := circuitbreaker.NewManager()
-	httpCB := breakers.GetOrCreate(&circuitbreaker.Config{Name: "http01", MaxFailures: 1, ResetTimeout: time.Hour})
-	dnsCB := breakers.GetOrCreate(&circuitbreaker.Config{Name: "dns01", MaxFailures: 1, ResetTimeout: time.Hour})
-	httpCB.Trip()
-	dnsCB.Trip()
+	resilience := config.ACMEResilienceConfig{
+		HTTP01: config.ACMECircuitBreakerConfig{MaxFailures: 1, ResetTimeoutSeconds: 3600},
+		DNS01:  config.ACMECircuitBreakerConfig{MaxFailures: 1, ResetTimeoutSeconds: 3600},
+	}
 
 	m := buildChallengeMap(
-		config.ACMEChallengesConfig{HTTP01: true, DNS01: true},
-		config.ACMEResilienceConfig{},
+		config.ACMEChallengesConfig{HTTP01: true, DNS01: true, AllowPrivateTargets: true},
+		resilience,
 		breakers,
 	)
 
+	// http01.Verify against a target nothing listens on returns a connection
+	// error, which trips "bad.example.com"'s own breaker on the first call.
+	port := closedLoopbackPort(t)
 	httpVerify, ok := m[common.ChallengeTypeHTTP01]
 	if !ok {
 		t.Fatalf("expected http-01 verifier to be registered")
 	}
-	if err := httpVerify(nil, nil, "example.com", "80", "tok", "ka"); !errors.Is(err, circuitbreaker.ErrCircuitOpen) {
-		t.Fatalf("http-01 verifier with open breaker = %v, want ErrCircuitOpen", err)
+	if err := httpVerify(nil, nil, "127.0.0.1", port, "tok", "ka"); err == nil {
+		t.Fatalf("http-01 verifier against a closed port = nil, want a connection error")
+	}
+	if err := httpVerify(nil, nil, "127.0.0.1", port, "tok", "ka"); !errors.Is(err, circuitbreaker.ErrCircuitOpen) {
+		t.Fatalf("second http-01 verifier call for the same target = %v, want ErrCircuitOpen", err)
 	}
 
+	// dns-01 has no DNS service configured, so every call fails with
+	// dns01.ErrDNSServiceNotInitialized -- enough to trip "example.com"'s
+	// own dns01 breaker without a real network dependency.
 	dnsVerify, ok := m[common.ChallengeTypeDNS01]
 	if !ok {
 		t.Fatalf("expected dns-01 verifier to be registered")
 	}
+	if err := dnsVerify(nil, nil, "example.com", "80", "tok", "ka"); err == nil {
+		t.Fatalf("dns-01 verifier with no DNS service = nil, want an error")
+	}
 	if err := dnsVerify(nil, nil, "example.com", "80", "tok", "ka"); !errors.Is(err, circuitbreaker.ErrCircuitOpen) {
-		t.Fatalf("dns-01 verifier with open breaker = %v, want ErrCircuitOpen", err)
+		t.Fatalf("second dns-01 verifier call for the same target = %v, want ErrCircuitOpen", err)
+	}
+}
+
+// TestBuildChallengeMap_BreakerIsolatedPerTarget verifies go-xkms#1189
+// directly: an http-01 target that always fails must not stall validation
+// for a different, healthy target sharing the same breaker group.
+func TestBuildChallengeMap_BreakerIsolatedPerTarget(t *testing.T) {
+	const keyAuth = "tok.thumbprint"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, keyAuth)
+	}))
+	defer ts.Close()
+	healthyHost, healthyPort, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split %s: %v", ts.URL, err)
+	}
+	// A distinct loopback host from healthyHost (httptest.NewServer always
+	// binds 127.0.0.1): breakers are keyed by host, so a same-host,
+	// different-port target would share healthyHost's breaker instead of
+	// proving isolation between two different targets.
+	const failingHost = "127.0.0.2"
+	failingPort := closedPortOn(t, failingHost)
+
+	breakers := circuitbreaker.NewManager()
+	resilience := config.ACMEResilienceConfig{
+		HTTP01: config.ACMECircuitBreakerConfig{MaxFailures: 1, ResetTimeoutSeconds: 3600},
+	}
+	m := buildChallengeMap(
+		config.ACMEChallengesConfig{HTTP01: true, AllowPrivateTargets: true},
+		resilience,
+		breakers,
+	)
+	verify := m[common.ChallengeTypeHTTP01]
+
+	// The failing target's breaker trips on its first call.
+	if err := verify(nil, nil, failingHost, failingPort, "tok", keyAuth); err == nil {
+		t.Fatalf("verify against a closed port = nil, want a connection error")
+	}
+	if err := verify(nil, nil, failingHost, failingPort, "tok", keyAuth); !errors.Is(err, circuitbreaker.ErrCircuitOpen) {
+		t.Fatalf("second call for the failing target = %v, want ErrCircuitOpen", err)
+	}
+
+	// A different, healthy target must still validate successfully: it is
+	// not behind the failing target's now-open breaker.
+	if err := verify(nil, nil, healthyHost, healthyPort, "tok", keyAuth); err != nil {
+		t.Fatalf("verify against a healthy, different target = %v, want nil", err)
 	}
 }
 
