@@ -46,6 +46,10 @@ const DefaultSessionTimeout = 5 * time.Minute
 // GenerateNonces generates nonces and commitments for Round 1 of FROST signing.
 // The returned NoncePackage contains secret nonces (keep private) and
 // public commitments (share with other participants).
+//
+// keyID is the key's storage key ID (see StorageKeyID), as it is for
+// SignRound, Aggregate and Verify: the common name alone for a platform key,
+// "{tenantID}:{cn}" for a tenant's key.
 func (b *FrostBackend) GenerateNonces(keyID string) (*NoncePackage, error) {
 	b.mu.RLock()
 	if b.closed {
@@ -53,6 +57,10 @@ func (b *FrostBackend) GenerateNonces(keyID string) (*NoncePackage, error) {
 		return nil, ErrBackendClosed
 	}
 	b.mu.RUnlock()
+
+	if err := validateStorageKeyID(keyID); err != nil {
+		return nil, err
+	}
 
 	// Load key package - use participant ID from stored metadata (pass 0 to use metadata value)
 	// This is critical for CLI usage where the config may use a default value
@@ -168,6 +176,10 @@ func (b *FrostBackend) SignRound(
 		return nil, ErrBackendClosed
 	}
 	b.mu.RUnlock()
+
+	if err := validateStorageKeyID(keyID); err != nil {
+		return nil, err
+	}
 
 	// Validate inputs
 	if nonces == nil {
@@ -335,6 +347,10 @@ func (b *FrostBackend) Aggregate(
 	}
 	b.mu.RUnlock()
 
+	if err := validateStorageKeyID(keyID); err != nil {
+		return nil, err
+	}
+
 	// Load public key package
 	pubPkg, _, err := b.keystore.LoadPublicKeyPackage(context.Background(), keyID)
 	if err != nil {
@@ -422,6 +438,10 @@ func (b *FrostBackend) Verify(keyID string, message, signature []byte) error {
 		return ErrBackendClosed
 	}
 	b.mu.RUnlock()
+
+	if err := validateStorageKeyID(keyID); err != nil {
+		return err
+	}
 
 	// Load public key package
 	pubPkg, _, err := b.keystore.LoadPublicKeyPackage(context.Background(), keyID)

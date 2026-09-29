@@ -18,22 +18,70 @@ package grpc
 import (
 	"context"
 	"fmt"
-	"time"
-
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// FrostGenerateKey generates FROST key packages using trusted dealer model
+// The FROST RPCs are thin adapters over the XKMSService FROST methods, which
+// resolve every key inside the caller's tenant (go-xkms#1231). Each RPC
+// authorizes first, then delegates, and maps the service error through
+// mapKeyOpError, so another tenant's key is the same codes.NotFound a missing
+// key is.
+
+// frostDefaultPageSize is the page size FrostListKeys applies when the request
+// names none.
+const frostDefaultPageSize = 100
+
+// frostService returns the injected xkms service, or the Unavailable status
+// every service-layer RPC reports without one.
+func (s *Service) frostService() (*xkms.XKMSService, error) {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
+	}
+	return s.xkmsService, nil
+}
+
+// frostKeyInfoToProto renders a service key description for the wire.
+func frostKeyInfoToProto(info *xkms.FrostKeyInfo) *pb.FrostKeyInfo {
+	return &pb.FrostKeyInfo{
+		KeyId:          info.KeyID,
+		Algorithm:      info.Algorithm,
+		Threshold:      int32(info.Threshold),
+		Total:          int32(info.Total),
+		ParticipantId:  info.ParticipantID,
+		GroupPublicKey: info.GroupPublicKey,
+		Participants:   info.Participants,
+		CreatedAt:      timestamppb.New(info.CreatedAt),
+	}
+}
+
+// frostCommitmentsFromProto converts the wire commitments of a signing
+// request.
+func frostCommitmentsFromProto(in []*pb.FrostCommitment) []*frost.Commitment {
+	commitments := make([]*frost.Commitment, len(in))
+	for i, c := range in {
+		commitments[i] = &frost.Commitment{
+			ParticipantID: c.ParticipantId,
+			Commitments: &frost.SigningCommitments{
+				ParticipantID:     c.ParticipantId,
+				HidingCommitment:  c.HidingCommitment,
+				BindingCommitment: c.BindingCommitment,
+			},
+		}
+	}
+	return commitments
+}
+
+// FrostGenerateKey generates a FROST key: in participant mode the key is
+// stored for the caller's tenant, in dealer mode every participant's package
+// is returned.
 func (s *Service) FrostGenerateKey(ctx context.Context, req *pb.FrostGenerateKeyRequest) (*pb.FrostGenerateKeyResponse, error) {
-	// Validate request
 	if req.Threshold < 2 {
 		return nil, status.Error(codes.InvalidArgument, "threshold must be at least 2")
 	}
@@ -43,119 +91,57 @@ func (s *Service) FrostGenerateKey(ctx context.Context, req *pb.FrostGenerateKey
 
 	// FROST key generation creates threshold key material, so it is gated by
 	// the same permission as any other key creation (see GenerateKey in
-	// service.go), and identically in the QUIC handlers and the MCP
-	// frost.generateKey permission entry.
+	// service.go), and identically in the MCP frost.generateKey permission
+	// entry.
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionCreate, req.KeyId); err != nil {
 		return nil, err
 	}
-
-	// Set defaults
-	algorithm := req.Algorithm
-	if algorithm == "" {
-		algorithm = string(types.FrostAlgorithmEd25519)
-	}
-
-	keyID := req.KeyId
-	if keyID == "" {
-		keyID = fmt.Sprintf("frost-key-%d", time.Now().UnixNano())
-	}
-
-	// Get FROST backend
-	be, err := s.getFrostBackend()
+	svc, err := s.frostService()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
+		return nil, err
 	}
 
-	if req.DealerMode {
-		// Dealer mode: generate all packages using trusted dealer
-		td := frost.NewTrustedDealer()
-		frostConfig := frost.FrostConfig{
-			Threshold:     int(req.Threshold),
-			Total:         int(req.Total),
-			Algorithm:     types.FrostAlgorithm(algorithm),
-			ParticipantID: 1, // Not used for generation
-		}
-
-		packages, pubPkg, err := td.Generate(frostConfig)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to generate FROST packages: %v", err)
-		}
-
-		// Convert to protobuf format
-		pbPackages := make([]*pb.FrostKeyPackage, len(packages))
-		for i, pkg := range packages {
-			vsMap := make(map[uint32][]byte)
-			for id, vs := range pubPkg.VerificationShares {
-				vsMap[id] = vs
-			}
-
-			var participantName string
-			if i < len(req.Participants) {
-				participantName = req.Participants[i]
-			}
-
-			pbPackages[i] = &pb.FrostKeyPackage{
-				KeyId:              keyID,
-				Algorithm:          algorithm,
-				Threshold:          req.Threshold,
-				Total:              req.Total,
-				ParticipantId:      pkg.ParticipantID,
-				ParticipantName:    participantName,
-				SecretShare:        pkg.SecretShare.Value,
-				GroupPublicKey:     pubPkg.GroupPublicKey,
-				VerificationShares: vsMap,
-			}
-		}
-
-		return &pb.FrostGenerateKeyResponse{
-			KeyId:          keyID,
-			Algorithm:      algorithm,
-			Threshold:      req.Threshold,
-			Total:          req.Total,
-			GroupPublicKey: pubPkg.GroupPublicKey,
-			Packages:       pbPackages,
-			CreatedAt:      timestamppb.Now(),
-		}, nil
-	}
-
-	// Participant mode: generate and store locally
-	participantID := req.ParticipantId
-	if participantID == 0 {
-		return nil, status.Error(codes.InvalidArgument, "participant_id is required in participant mode (use dealer_mode=true for dealer mode)")
-	}
-
-	attrs := &types.KeyAttributes{
-		CN:        keyID,
-		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StoreFrost,
-		FrostAttributes: &types.FrostAttributes{
-			Algorithm:     types.FrostAlgorithm(algorithm),
-			Threshold:     int(req.Threshold),
-			Total:         int(req.Total),
-			Participants:  req.Participants,
-			ParticipantID: participantID,
-		},
-	}
-
-	key, err := be.GenerateKey(ctx, attrs)
+	gen, err := svc.FrostGenerateKey(ctx, &xkms.FrostGenerateKeyRequest{
+		KeyID:         req.KeyId,
+		Algorithm:     req.Algorithm,
+		Threshold:     int(req.Threshold),
+		Total:         int(req.Total),
+		Participants:  req.Participants,
+		ParticipantID: req.ParticipantId,
+		DealerMode:    req.DealerMode,
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to generate FROST key: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
-	handle := key.(*frost.FrostKeyHandle)
+	packages := make([]*pb.FrostKeyPackage, 0, len(gen.Packages))
+	for _, pkg := range gen.Packages {
+		packages = append(packages, &pb.FrostKeyPackage{
+			KeyId:              gen.KeyID,
+			Algorithm:          gen.Algorithm,
+			Threshold:          req.Threshold,
+			Total:              req.Total,
+			ParticipantId:      pkg.ParticipantID,
+			ParticipantName:    pkg.ParticipantName,
+			SecretShare:        pkg.SecretShare,
+			GroupPublicKey:     pkg.GroupPublicKey,
+			VerificationShares: pkg.VerificationShares,
+		})
+	}
 
 	return &pb.FrostGenerateKeyResponse{
-		KeyId:          keyID,
-		Algorithm:      algorithm,
+		KeyId:          gen.KeyID,
+		Algorithm:      gen.Algorithm,
 		Threshold:      req.Threshold,
 		Total:          req.Total,
-		GroupPublicKey: handle.GroupPublicKey,
-		ParticipantId:  participantID,
-		CreatedAt:      timestamppb.Now(),
+		GroupPublicKey: gen.GroupPublicKey,
+		ParticipantId:  gen.ParticipantID,
+		Packages:       packages,
+		CreatedAt:      timestamppb.New(gen.CreatedAt),
 	}, nil
 }
 
-// FrostImportKey imports a FROST key package
+// FrostImportKey imports a FROST key package into the caller's tenant.
 func (s *Service) FrostImportKey(ctx context.Context, req *pb.FrostImportKeyRequest) (*pb.FrostImportKeyResponse, error) {
 	if req.Package == nil {
 		return nil, status.Error(codes.InvalidArgument, "package is required")
@@ -166,51 +152,23 @@ func (s *Service) FrostImportKey(ctx context.Context, req *pb.FrostImportKeyRequ
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionImport, req.Package.KeyId); err != nil {
 		return nil, err
 	}
+	svc, err := s.frostService()
+	if err != nil {
+		return nil, err
+	}
 
 	pkg := req.Package
-	if pkg.KeyId == "" {
-		return nil, status.Error(codes.InvalidArgument, "package.key_id is required")
-	}
-	if len(pkg.SecretShare) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "package.secret_share is required")
-	}
-	if len(pkg.GroupPublicKey) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "package.group_public_key is required")
-	}
-
-	// Get FROST backend
-	be, err := s.getFrostBackend()
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
-	}
-
-	// Create key package
-	keyPackage := &frost.KeyPackage{
-		ParticipantID: pkg.ParticipantId,
-		SecretShare: &frost.SecretKeyShare{
-			Value: pkg.SecretShare,
-		},
+	if err := svc.FrostImportKey(ctx, &xkms.FrostImportKeyRequest{
+		KeyID:              pkg.KeyId,
+		Algorithm:          pkg.Algorithm,
+		Threshold:          int(pkg.Threshold),
+		Total:              int(pkg.Total),
+		ParticipantID:      pkg.ParticipantId,
+		SecretShare:        pkg.SecretShare,
 		GroupPublicKey:     pkg.GroupPublicKey,
 		VerificationShares: pkg.VerificationShares,
-		MinSigners:         uint32(pkg.Threshold),
-		MaxSigners:         uint32(pkg.Total),
-		Algorithm:          types.FrostAlgorithm(pkg.Algorithm),
-	}
-
-	metadata := &frost.KeyMetadata{
-		KeyID:             pkg.KeyId,
-		Algorithm:         types.FrostAlgorithm(pkg.Algorithm),
-		Threshold:         int(pkg.Threshold),
-		Total:             int(pkg.Total),
-		ParticipantID:     pkg.ParticipantId,
-		CreatedAt:         time.Now().Unix(),
-		SecretBackendType: types.BackendTypeSoftware,
-	}
-
-	// Store key package via keystore
-	ks := be.KeyStore()
-	if err := ks.StoreKeyPackage(ctx, pkg.KeyId, keyPackage, metadata); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to store key package: %v", err)
+	}); err != nil {
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.FrostImportKeyResponse{
@@ -222,74 +180,38 @@ func (s *Service) FrostImportKey(ctx context.Context, req *pb.FrostImportKeyRequ
 	}, nil
 }
 
-// FrostListKeys lists all FROST keys
+// FrostListKeys lists the caller's tenant's FROST keys.
 func (s *Service) FrostListKeys(ctx context.Context, req *pb.FrostListKeysRequest) (*pb.FrostListKeysResponse, error) {
 	// Enumerating key material is a listing, exactly as ListKeys is. There is
 	// no per-key subject to name, so the resource ID is empty.
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionList, ""); err != nil {
 		return nil, err
 	}
-
-	be, err := s.getFrostBackend()
+	svc, err := s.frostService()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
+		return nil, err
 	}
 
-	keys, err := be.ListKeys(ctx)
+	keys, err := svc.FrostListKeys(ctx)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
-	// Apply pagination
-	offset := int(req.Offset)
 	limit := int(req.Limit)
-	if limit == 0 {
-		limit = 100
+	if limit <= 0 {
+		limit = frostDefaultPageSize
 	}
+	offset := min(max(int(req.Offset), 0), len(keys))
+	end := min(offset+limit, len(keys))
 
-	end := offset + limit
-	if end > len(keys) {
-		end = len(keys)
+	infos := make([]*pb.FrostKeyInfo, 0, end-offset)
+	for i := offset; i < end; i++ {
+		infos = append(infos, frostKeyInfoToProto(&keys[i]))
 	}
-	if offset > len(keys) {
-		offset = len(keys)
-	}
-
-	paginatedKeys := keys[offset:end]
-
-	// Convert to protobuf format
-	pbKeys := make([]*pb.FrostKeyInfo, len(paginatedKeys))
-	for i, k := range paginatedKeys {
-		if k.FrostAttributes != nil {
-			// Get key handle to retrieve group public key
-			handle, err := be.GetKey(ctx, k)
-			var groupPubKey []byte
-			if err == nil {
-				if h, ok := handle.(*frost.FrostKeyHandle); ok {
-					groupPubKey = h.GroupPublicKey
-				}
-			}
-
-			pbKeys[i] = &pb.FrostKeyInfo{
-				KeyId:          k.CN,
-				Algorithm:      string(k.FrostAttributes.Algorithm),
-				Threshold:      int32(k.FrostAttributes.Threshold),
-				Total:          int32(k.FrostAttributes.Total),
-				ParticipantId:  k.FrostAttributes.ParticipantID,
-				GroupPublicKey: groupPubKey,
-				Participants:   k.FrostAttributes.Participants,
-				CreatedAt:      timestamppb.Now(),
-			}
-		}
-	}
-
-	return &pb.FrostListKeysResponse{
-		Keys:  pbKeys,
-		Total: int32(len(keys)),
-	}, nil
+	return &pb.FrostListKeysResponse{Keys: infos, Total: int32(len(keys))}, nil
 }
 
-// FrostGetKey retrieves information about a specific FROST key
+// FrostGetKey describes one of the caller's tenant's FROST keys.
 func (s *Service) FrostGetKey(ctx context.Context, req *pb.FrostGetKeyRequest) (*pb.FrostGetKeyResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -299,60 +221,19 @@ func (s *Service) FrostGetKey(ctx context.Context, req *pb.FrostGetKeyRequest) (
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionGet, req.KeyId); err != nil {
 		return nil, err
 	}
-
-	be, err := s.getFrostBackend()
+	svc, err := s.frostService()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
+		return nil, err
 	}
 
-	attrs := &types.KeyAttributes{
-		CN:        req.KeyId,
-		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StoreFrost,
-	}
-
-	key, err := be.GetKey(ctx, attrs)
+	info, err := svc.FrostGetKey(ctx, req.KeyId)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
-
-	handle := key.(*frost.FrostKeyHandle)
-
-	// Get full key list to find metadata
-	keys, _ := be.ListKeys(ctx)
-	var keyInfo *pb.FrostKeyInfo
-	for _, k := range keys {
-		if k.CN == req.KeyId && k.FrostAttributes != nil {
-			keyInfo = &pb.FrostKeyInfo{
-				KeyId:          k.CN,
-				Algorithm:      string(k.FrostAttributes.Algorithm),
-				Threshold:      int32(k.FrostAttributes.Threshold),
-				Total:          int32(k.FrostAttributes.Total),
-				ParticipantId:  handle.ParticipantID,
-				GroupPublicKey: handle.GroupPublicKey,
-				Participants:   k.FrostAttributes.Participants,
-				CreatedAt:      timestamppb.Now(),
-			}
-			break
-		}
-	}
-
-	if keyInfo == nil {
-		keyInfo = &pb.FrostKeyInfo{
-			KeyId:          req.KeyId,
-			Algorithm:      string(handle.Algorithm),
-			ParticipantId:  handle.ParticipantID,
-			GroupPublicKey: handle.GroupPublicKey,
-			CreatedAt:      timestamppb.Now(),
-		}
-	}
-
-	return &pb.FrostGetKeyResponse{
-		Key: keyInfo,
-	}, nil
+	return &pb.FrostGetKeyResponse{Key: frostKeyInfoToProto(info)}, nil
 }
 
-// FrostDeleteKey deletes a FROST key
+// FrostDeleteKey deletes one of the caller's tenant's FROST keys.
 func (s *Service) FrostDeleteKey(ctx context.Context, req *pb.FrostDeleteKeyRequest) (*pb.FrostDeleteKeyResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -362,29 +243,21 @@ func (s *Service) FrostDeleteKey(ctx context.Context, req *pb.FrostDeleteKeyRequ
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionDelete, req.KeyId); err != nil {
 		return nil, err
 	}
-
-	be, err := s.getFrostBackend()
+	svc, err := s.frostService()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
+		return nil, err
 	}
 
-	attrs := &types.KeyAttributes{
-		CN:        req.KeyId,
-		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StoreFrost,
+	if err := svc.FrostDeleteKey(ctx, req.KeyId); err != nil {
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
-
-	if err := be.DeleteKey(ctx, attrs); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to delete key: %v", err)
-	}
-
 	return &pb.FrostDeleteKeyResponse{
 		Success: true,
 		Message: fmt.Sprintf("key %s deleted successfully", req.KeyId),
 	}, nil
 }
 
-// FrostGenerateNonces generates nonces and commitments for Round 1
+// FrostGenerateNonces generates nonces and commitments for Round 1.
 func (s *Service) FrostGenerateNonces(ctx context.Context, req *pb.FrostGenerateNoncesRequest) (*pb.FrostGenerateNoncesResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -395,28 +268,26 @@ func (s *Service) FrostGenerateNonces(ctx context.Context, req *pb.FrostGenerate
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionSign, req.KeyId); err != nil {
 		return nil, err
 	}
-
-	be, err := s.getFrostBackend()
+	svc, err := s.frostService()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
+		return nil, err
 	}
 
-	noncePackage, err := be.GenerateNonces(req.KeyId)
+	nonces, err := svc.FrostGenerateNonces(ctx, req.KeyId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to generate nonces: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
-
 	return &pb.FrostGenerateNoncesResponse{
-		ParticipantId:     noncePackage.ParticipantID,
-		SessionId:         noncePackage.SessionID,
-		HidingNonce:       noncePackage.Nonces.HidingNonce,
-		BindingNonce:      noncePackage.Nonces.BindingNonce,
-		HidingCommitment:  noncePackage.Commitments.HidingCommitment,
-		BindingCommitment: noncePackage.Commitments.BindingCommitment,
+		ParticipantId:     nonces.ParticipantID,
+		SessionId:         nonces.SessionID,
+		HidingNonce:       nonces.Nonces.HidingNonce,
+		BindingNonce:      nonces.Nonces.BindingNonce,
+		HidingCommitment:  nonces.Commitments.HidingCommitment,
+		BindingCommitment: nonces.Commitments.BindingCommitment,
 	}, nil
 }
 
-// FrostSignRound generates a signature share for Round 2
+// FrostSignRound generates a signature share for Round 2.
 func (s *Service) FrostSignRound(ctx context.Context, req *pb.FrostSignRoundRequest) (*pb.FrostSignRoundResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -435,57 +306,24 @@ func (s *Service) FrostSignRound(ctx context.Context, req *pb.FrostSignRoundRequ
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionSign, req.KeyId); err != nil {
 		return nil, err
 	}
-
-	be, err := s.getFrostBackend()
+	svc, err := s.frostService()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
+		return nil, err
 	}
 
-	// Get key to find participant ID
-	attrs := &types.KeyAttributes{
-		CN:        req.KeyId,
-		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StoreFrost,
-	}
-	key, err := be.GetKey(ctx, attrs)
+	share, err := svc.FrostSignRound(ctx, &xkms.FrostSignRoundRequest{
+		KeyID:             req.KeyId,
+		Message:           req.Message,
+		SessionID:         req.SessionId,
+		HidingNonce:       req.HidingNonce,
+		BindingNonce:      req.BindingNonce,
+		HidingCommitment:  req.HidingCommitment,
+		BindingCommitment: req.BindingCommitment,
+		Commitments:       frostCommitmentsFromProto(req.Commitments),
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
-	handle := key.(*frost.FrostKeyHandle)
-
-	// Build nonce package
-	noncePackage := &frost.NoncePackage{
-		ParticipantID: handle.ParticipantID,
-		SessionID:     req.SessionId,
-		Nonces: &frost.SigningNonces{
-			HidingNonce:  req.HidingNonce,
-			BindingNonce: req.BindingNonce,
-		},
-		Commitments: &frost.SigningCommitments{
-			ParticipantID:     handle.ParticipantID,
-			HidingCommitment:  req.HidingCommitment,
-			BindingCommitment: req.BindingCommitment,
-		},
-	}
-
-	// Build commitments list
-	commitments := make([]*frost.Commitment, len(req.Commitments))
-	for i, c := range req.Commitments {
-		commitments[i] = &frost.Commitment{
-			ParticipantID: c.ParticipantId,
-			Commitments: &frost.SigningCommitments{
-				ParticipantID:     c.ParticipantId,
-				HidingCommitment:  c.HidingCommitment,
-				BindingCommitment: c.BindingCommitment,
-			},
-		}
-	}
-
-	share, err := be.SignRound(req.KeyId, req.Message, noncePackage, commitments)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to generate signature share: %v", err)
-	}
-
 	return &pb.FrostSignRoundResponse{
 		ParticipantId:  share.ParticipantID,
 		SessionId:      share.SessionID,
@@ -493,7 +331,7 @@ func (s *Service) FrostSignRound(ctx context.Context, req *pb.FrostSignRoundRequ
 	}, nil
 }
 
-// FrostAggregate combines signature shares into a final FROST signature
+// FrostAggregate combines signature shares into a final FROST signature.
 func (s *Service) FrostAggregate(ctx context.Context, req *pb.FrostAggregateRequest) (*pb.FrostAggregateResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -513,55 +351,34 @@ func (s *Service) FrostAggregate(ctx context.Context, req *pb.FrostAggregateRequ
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionSign, req.KeyId); err != nil {
 		return nil, err
 	}
-
-	be, err := s.getFrostBackend()
+	svc, err := s.frostService()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
+		return nil, err
 	}
 
-	// Build commitments list
-	commitments := make([]*frost.Commitment, len(req.Commitments))
-	for i, c := range req.Commitments {
-		commitments[i] = &frost.Commitment{
-			ParticipantID: c.ParticipantId,
-			Commitments: &frost.SigningCommitments{
-				ParticipantID:     c.ParticipantId,
-				HidingCommitment:  c.HidingCommitment,
-				BindingCommitment: c.BindingCommitment,
-			},
-		}
-	}
-
-	// Build shares list
 	shares := make([]*frost.SignatureShare, len(req.Shares))
-	for i, s := range req.Shares {
+	for i, share := range req.Shares {
 		shares[i] = &frost.SignatureShare{
-			ParticipantID: s.ParticipantId,
-			SessionID:     s.SessionId,
-			Share:         s.Share,
+			ParticipantID: share.ParticipantId,
+			SessionID:     share.SessionId,
+			Share:         share.Share,
 		}
 	}
 
-	signature, err := be.Aggregate(req.KeyId, req.Message, commitments, shares)
+	agg, err := svc.FrostAggregate(ctx, &xkms.FrostAggregateRequest{
+		KeyID:       req.KeyId,
+		Message:     req.Message,
+		Commitments: frostCommitmentsFromProto(req.Commitments),
+		Shares:      shares,
+		Verify:      req.Verify,
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to aggregate signatures: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
-
-	// Verify if requested
-	verified := false
-	if req.Verify {
-		if err := be.Verify(req.KeyId, req.Message, signature); err == nil {
-			verified = true
-		}
-	}
-
-	return &pb.FrostAggregateResponse{
-		Signature: signature,
-		Verified:  verified,
-	}, nil
+	return &pb.FrostAggregateResponse{Signature: agg.Signature, Verified: agg.Verified}, nil
 }
 
-// FrostVerify verifies a FROST signature against the group public key
+// FrostVerify verifies a FROST signature against the group public key.
 func (s *Service) FrostVerify(ctx context.Context, req *pb.FrostVerifyRequest) (*pb.FrostVerifyResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -577,41 +394,20 @@ func (s *Service) FrostVerify(ctx context.Context, req *pb.FrostVerifyRequest) (
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionVerify, req.KeyId); err != nil {
 		return nil, err
 	}
-
-	be, err := s.getFrostBackend()
+	svc, err := s.frostService()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
+		return nil, err
 	}
 
-	if err := be.Verify(req.KeyId, req.Message, req.Signature); err != nil {
+	result, err := svc.FrostVerify(ctx, req.KeyId, req.Message, req.Signature)
+	if err != nil {
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
+	}
+	if !result.Valid {
 		return &pb.FrostVerifyResponse{
 			Valid:   false,
-			Message: fmt.Sprintf("signature verification failed: %v", err),
+			Message: "signature verification failed: " + result.Reason,
 		}, nil
 	}
-
-	return &pb.FrostVerifyResponse{
-		Valid:   true,
-		Message: "signature is valid",
-	}, nil
-}
-
-// getFrostBackend retrieves the FROST backend from the xkms service
-func (s *Service) getFrostBackend() (*frost.FrostBackend, error) {
-	// Try to get a FROST backend from registered backends
-	backends := s.backendNames()
-	for _, name := range backends {
-		ks, err := s.lookupBackend(name)
-		if err != nil {
-			continue
-		}
-		backend := ks.KeyProvider()
-		if backend.Type() == types.BackendTypeFrost {
-			if fb, ok := backend.(*frost.FrostBackend); ok {
-				return fb, nil
-			}
-		}
-	}
-
-	return nil, &errs.Message{Msg: "no FROST backend configured"}
+	return &pb.FrostVerifyResponse{Valid: true, Message: "signature is valid"}, nil
 }

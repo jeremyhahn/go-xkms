@@ -40,7 +40,7 @@ import (
 )
 
 // frostBackendKeyStore is a test xkms.Backend whose KeyProvider() returns a
-// real *frost.FrostBackend, so getFrostBackend() can resolve it. Mirrors
+// real *frost.FrostBackend, so the xkms service can resolve it. Mirrors
 // pkg/api/rest/handlers_frost_real_test.go's fixture of the same name.
 type frostBackendKeyStore struct {
 	*xkmsmocks.MockKeyStore
@@ -196,10 +196,9 @@ func TestHandleFrostGenerateKey_Validation(t *testing.T) {
 		_, err = noFrostServer.handleFrostGenerateKey(ctx, frostReq(t, "frost.generateKey",
 			FrostGenerateKeyParams{Threshold: 2, Total: 3, DealerMode: true}))
 		require.Error(t, err)
-		// go-xkms#930: getFrostBackend's failure now reaches dispatch as a
-		// *KeyOpError carrying ErrCodeInternalError, matching
-		// service_frost.go's "failed to get FROST backend" -> codes.Internal
-		// at every one of its own call sites.
+		// go-xkms#930: the service's ErrFrostNotConfigured reaches dispatch
+		// as a *KeyOpError carrying ErrCodeInternalError, matching gRPC's
+		// codes.Internal for the same refusal.
 		assertKeyOpCode(t, err, ErrCodeInternalError)
 	})
 }
@@ -272,6 +271,7 @@ func TestHandleFrostSignRound_Validation(t *testing.T) {
 		_, err := server.handleFrostSignRound(ctx, frostReq(t, "frost.signRound", FrostSignRoundParams{
 			KeyID: "missing", Message: "beef", HidingNonce: "aa", BindingNonce: "bb",
 			HidingCommitment: "cc", BindingCommitment: "dd",
+			Commitments: []FrostCommitment{{ParticipantID: 1, HidingCommitment: "aa", BindingCommitment: "bb"}},
 		}))
 		require.Error(t, err)
 		assertKeyOpCode(t, err, sdkssh.JSONRPCCodeNotFound)

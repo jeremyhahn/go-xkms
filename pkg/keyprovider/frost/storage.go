@@ -55,8 +55,14 @@ const (
 
 // KeyMetadata contains metadata about a stored FROST key.
 type KeyMetadata struct {
-	// KeyID is the unique identifier for this key
+	// KeyID is the key's common name, unique within its tenant.
 	KeyID string `json:"key_id"`
+
+	// TenantID is the tenant that owns the key, empty for a platform key.
+	// Together with KeyID it determines the key's storage key ID (see
+	// StorageKeyID), and a tenant-scoped view of the backend filters its
+	// listing on it.
+	TenantID string `json:"tenant_id,omitempty"`
 
 	// Algorithm is the FROST ciphersuite
 	Algorithm types.FrostAlgorithm `json:"algorithm"`

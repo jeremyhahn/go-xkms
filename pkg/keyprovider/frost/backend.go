@@ -174,9 +174,9 @@ func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 		return nil, &errs.Wrapped{Msg: "invalid frost attributes", Err: err}
 	}
 
-	keyID := attrs.CN
-	if keyID == "" {
-		return nil, &ConfigError{Field: "CN", Message: "key ID (CN) is required"}
+	keyID, err := storageKeyIDOf(attrs)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check if key already exists
@@ -215,7 +215,8 @@ func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 
 	// Create metadata
 	metadata := &KeyMetadata{
-		KeyID:             keyID,
+		KeyID:             attrs.CN,
+		TenantID:          attrs.TenantID,
 		Algorithm:         frostAttrs.Algorithm,
 		Threshold:         frostAttrs.Threshold,
 		Total:             frostAttrs.Total,
@@ -235,7 +236,7 @@ func (b *FrostBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 
 	// Return a handle to the key (not the actual private key)
 	return &FrostKeyHandle{
-		KeyID:          keyID,
+		KeyID:          attrs.CN,
 		ParticipantID:  participantID,
 		GroupPublicKey: pkg.GroupPublicKey,
 		Algorithm:      frostAttrs.Algorithm,
@@ -251,9 +252,9 @@ func (b *FrostBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (
 	}
 	b.mu.RUnlock()
 
-	keyID := attrs.CN
-	if keyID == "" {
-		return nil, &ConfigError{Field: "CN", Message: "key ID (CN) is required"}
+	keyID, err := storageKeyIDOf(attrs)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get participant ID from attributes or config
@@ -276,7 +277,7 @@ func (b *FrostBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (
 
 	// Return a handle to the key
 	return &FrostKeyHandle{
-		KeyID:          keyID,
+		KeyID:          attrs.CN,
 		ParticipantID:  metadata.ParticipantID,
 		GroupPublicKey: pkg.GroupPublicKey,
 		Algorithm:      pkg.Algorithm,
@@ -292,9 +293,9 @@ func (b *FrostBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 	}
 	b.mu.RUnlock()
 
-	keyID := attrs.CN
-	if keyID == "" {
-		return &ConfigError{Field: "CN", Message: "key ID (CN) is required"}
+	keyID, err := storageKeyIDOf(attrs)
+	if err != nil {
+		return err
 	}
 
 	// Delete nonce markers for this key
@@ -325,6 +326,7 @@ func (b *FrostBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 	for _, metadata := range metadataList {
 		attrs := &types.KeyAttributes{
 			CN:        metadata.KeyID,
+			TenantID:  metadata.TenantID,
 			StoreType: types.StoreFrost,
 			FrostAttributes: &types.FrostAttributes{
 				Threshold:     metadata.Threshold,
@@ -354,9 +356,9 @@ func (b *FrostBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (
 	}
 	b.mu.RUnlock()
 
-	keyID := attrs.CN
-	if keyID == "" {
-		return nil, &ConfigError{Field: "CN", Message: "key ID (CN) is required"}
+	keyID, err := storageKeyIDOf(attrs)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get participant ID
@@ -409,9 +411,9 @@ func (b *FrostBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes
 	}
 	b.mu.RUnlock()
 
-	keyID := attrs.CN
-	if keyID == "" {
-		return &ConfigError{Field: "CN", Message: "key ID (CN) is required"}
+	keyID, err := storageKeyIDOf(attrs)
+	if err != nil {
+		return err
 	}
 
 	// Load existing metadata
@@ -443,7 +445,8 @@ func (b *FrostBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes
 
 	// Update metadata timestamp
 	newMetadata := &KeyMetadata{
-		KeyID:             keyID,
+		KeyID:             metadata.KeyID,
+		TenantID:          metadata.TenantID,
 		Algorithm:         metadata.Algorithm,
 		Threshold:         metadata.Threshold,
 		Total:             metadata.Total,
@@ -459,6 +462,67 @@ func (b *FrostBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes
 	}
 
 	return nil
+}
+
+// PublicKeyPackage returns the public half of the key attrs names -- its
+// group public key and verification shares -- together with its stored
+// metadata. It never unseals the secret share, so describing a key costs a
+// storage read rather than a round trip to the secret backend.
+func (b *FrostBackend) PublicKeyPackage(ctx context.Context, attrs *types.KeyAttributes) (*PublicKeyPackage, *KeyMetadata, error) {
+	b.mu.RLock()
+	if b.closed {
+		b.mu.RUnlock()
+		return nil, nil, ErrBackendClosed
+	}
+	b.mu.RUnlock()
+
+	keyID, err := storageKeyIDOf(attrs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return b.keystore.LoadPublicKeyPackage(ctx, keyID)
+}
+
+// ImportKeyPackage stores an externally generated participant key package --
+// typically one a trusted dealer produced -- as the key attrs names,
+// replacing any key package already stored under that name. attrs.CN names
+// the key and attrs.TenantID the tenant that owns it, so an import can only
+// ever write inside its own tenant; attrs.FrostAttributes, when set,
+// contributes the participant names. The threshold, participant count,
+// participant ID and ciphersuite are taken from pkg itself.
+func (b *FrostBackend) ImportKeyPackage(ctx context.Context, attrs *types.KeyAttributes, pkg *KeyPackage) error {
+	b.mu.RLock()
+	if b.closed {
+		b.mu.RUnlock()
+		return ErrBackendClosed
+	}
+	b.mu.RUnlock()
+
+	keyID, err := storageKeyIDOf(attrs)
+	if err != nil {
+		return err
+	}
+	if pkg == nil || pkg.SecretShare == nil {
+		return ErrInvalidAttributes
+	}
+
+	var participants []string
+	if attrs.FrostAttributes != nil {
+		participants = attrs.FrostAttributes.Participants
+	}
+
+	metadata := &KeyMetadata{
+		KeyID:             attrs.CN,
+		TenantID:          attrs.TenantID,
+		Algorithm:         pkg.Algorithm,
+		Threshold:         int(pkg.MinSigners),
+		Total:             int(pkg.MaxSigners),
+		ParticipantID:     pkg.ParticipantID,
+		Participants:      participants,
+		CreatedAt:         time.Now().Unix(),
+		SecretBackendType: b.config.SecretBackend.Type(),
+	}
+	return b.keystore.StoreKeyPackage(ctx, keyID, pkg, metadata)
 }
 
 // Close releases resources held by the backend.
@@ -486,6 +550,7 @@ func (b *FrostBackend) Close() error {
 }
 
 // FrostKeyHandle is a handle to a FROST key (not the actual private key).
+// KeyID is the key's common name, not its storage key ID.
 type FrostKeyHandle struct {
 	KeyID          string
 	ParticipantID  uint32

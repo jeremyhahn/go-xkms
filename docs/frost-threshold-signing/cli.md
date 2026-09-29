@@ -1,6 +1,6 @@
 # FROST Threshold Signing — CLI
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1231)
 
 `xkmsctl frost` requires a binary built with `-tags frost`
 (`go build -tags frost ./cmd/xkmsctl`); without the tag, every subcommand
@@ -13,6 +13,9 @@ machine.** The global `--server` / `--transport` flags that every other
 [`architecture.md`](architecture.md) §"Two independent surfaces". Keys are
 read from and written to `--key-dir` (default `xkms-data/keys`, global
 persistent flag), under `<key-dir>/frost/public` and `<key-dir>/frost/secrets`.
+The CLI has no tenant: every key it writes is stored at its bare key ID, the
+platform namespace the server keeps apart from every tenant's keys (see
+[`architecture.md`](architecture.md) §"Tenancy").
 
 ## `xkmsctl frost keygen`
 

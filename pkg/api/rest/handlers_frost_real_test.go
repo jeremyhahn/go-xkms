@@ -37,7 +37,7 @@ import (
 )
 
 // frostBackendKeyStore is a test xkms.Backend whose KeyProvider() returns a
-// real *frost.FrostBackend so getFrostBackend() can resolve it.
+// real *frost.FrostBackend so the xkms service can resolve it.
 type frostBackendKeyStore struct {
 	*xkmsmocks.MockKeyStore
 	provider types.KeyProvider
@@ -124,7 +124,7 @@ func newFrostBackend(t *testing.T) *frost.FrostBackend {
 }
 
 // setupFrostService registers a FROST backend with the global xkms service so
-// the handlers' getFrostBackend() helper can locate it.
+// the handlers' xkms service can locate it.
 func setupFrostService(t *testing.T) *frost.FrostBackend {
 	t.Helper()
 	be := newFrostBackend(t)
@@ -190,16 +190,15 @@ func TestFrostHexHelpers(t *testing.T) {
 	})
 }
 
-// TestGetFrostBackend_NotConfigured verifies the resolver fails when no FROST
-// backend is registered.
-func TestGetFrostBackend_NotConfigured(t *testing.T) {
-	xkms.Reset()
-	t.Cleanup(func() { xkms.Reset() })
-
+// TestFrostHandlers_NotConfigured verifies a service with no FROST backend
+// refuses a FROST request with the service's ErrFrostNotConfigured.
+func TestFrostHandlers_NotConfigured(t *testing.T) {
+	setupTestService(t, "software")
 	ctx := newTestHandlerContext()
-	_, err := ctx.getFrostBackend()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no FROST backend configured")
+
+	w := httptest.NewRecorder()
+	ctx.FrostListKeysHandler(w, httptest.NewRequest(http.MethodGet, "/frost/keys", nil))
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 // TestFrostGenerateKeyHandler_Validation covers the request-validation branches.
@@ -213,6 +212,7 @@ func TestFrostGenerateKeyHandler_Validation(t *testing.T) {
 	})
 
 	t.Run("threshold too low", func(t *testing.T) {
+		setupFrostService(t)
 		ctx := newTestHandlerContext()
 		req := frostRequest(t, http.MethodPost, "/frost/keys", FrostGenerateKeyRequest{Threshold: 1, Total: 3})
 		w := httptest.NewRecorder()
@@ -221,6 +221,7 @@ func TestFrostGenerateKeyHandler_Validation(t *testing.T) {
 	})
 
 	t.Run("total less than threshold", func(t *testing.T) {
+		setupFrostService(t)
 		ctx := newTestHandlerContext()
 		req := frostRequest(t, http.MethodPost, "/frost/keys", FrostGenerateKeyRequest{Threshold: 3, Total: 2})
 		w := httptest.NewRecorder()
@@ -228,14 +229,14 @@ func TestFrostGenerateKeyHandler_Validation(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("no backend configured", func(t *testing.T) {
+	t.Run("service not initialized", func(t *testing.T) {
 		xkms.Reset()
 		t.Cleanup(func() { xkms.Reset() })
 		ctx := newTestHandlerContext()
 		req := frostRequest(t, http.MethodPost, "/frost/keys", FrostGenerateKeyRequest{Threshold: 2, Total: 3, DealerMode: true})
 		w := httptest.NewRecorder()
 		ctx.FrostGenerateKeyHandler(w, req)
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	})
 
 	t.Run("participant mode requires participant_id", func(t *testing.T) {
@@ -480,7 +481,7 @@ func TestFrostGenerateNoncesHandler_Errors(t *testing.T) {
 		req := withURLParam(httptest.NewRequest(http.MethodPost, "/frost/keys/missing/nonces", nil), "id", "missing")
 		w := httptest.NewRecorder()
 		ctx.FrostGenerateNoncesHandler(w, req)
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }
 
@@ -560,6 +561,7 @@ func TestFrostSignRoundHandler_Errors(t *testing.T) {
 		ctx := newTestHandlerContext()
 		req := withURLParam(frostRequest(t, http.MethodPost, "/frost/keys/missing/sign", FrostSignRoundRequest{
 			Message: "beef", HidingNonce: "aa", BindingNonce: "bb", HidingCommitment: "cc", BindingCommitment: "dd",
+			Commitments: []FrostCommitment{{ParticipantID: 1, HidingCommitment: "aa", BindingCommitment: "bb"}},
 		}), "id", "missing")
 		w := httptest.NewRecorder()
 		ctx.FrostSignRoundHandler(w, req)
@@ -662,13 +664,16 @@ func TestFrostAggregateHandler_Errors(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("aggregate failure with no shares", func(t *testing.T) {
+	t.Run("no shares is refused", func(t *testing.T) {
 		setupFrostService(t)
 		ctx := newTestHandlerContext()
-		req := frostRequest(t, http.MethodPost, "/frost/aggregate", FrostAggregateRequest{KeyID: "k", Message: "beef"})
+		req := frostRequest(t, http.MethodPost, "/frost/aggregate", FrostAggregateRequest{
+			KeyID: "k", Message: "beef",
+			Commitments: []FrostCommitment{{ParticipantID: 1, HidingCommitment: "aa", BindingCommitment: "bb"}},
+		})
 		w := httptest.NewRecorder()
 		ctx.FrostAggregateHandler(w, req)
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 }
 
@@ -708,10 +713,20 @@ func TestFrostVerifyHandler_Errors(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("verification failure returns 200 invalid", func(t *testing.T) {
+	t.Run("unknown key is 404", func(t *testing.T) {
 		setupFrostService(t)
 		ctx := newTestHandlerContext()
 		req := frostRequest(t, http.MethodPost, "/frost/verify", FrostVerifyRequest{KeyID: "k", Message: "beef", Signature: "beef"})
+		w := httptest.NewRecorder()
+		ctx.FrostVerifyHandler(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("verification failure returns 200 invalid", func(t *testing.T) {
+		be := setupFrostService(t)
+		ctx := newTestHandlerContext()
+		seedFrostKey(t, ctx, be)
+		req := frostRequest(t, http.MethodPost, "/frost/verify", FrostVerifyRequest{KeyID: "seed", Message: "beef", Signature: "beef"})
 		w := httptest.NewRecorder()
 		ctx.FrostVerifyHandler(w, req)
 		require.Equal(t, http.StatusOK, w.Code)

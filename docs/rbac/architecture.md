@@ -1,6 +1,10 @@
 # RBAC — Architecture
 
+<<<<<<< HEAD
 > **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1230)
+=======
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1231)
+>>>>>>> origin/security/1231-frost-tenant
 
 ## The problem
 
@@ -104,6 +108,16 @@ for every transport:
   holder's tenant (go-xkms#1218; see
   [`../key-management/engineering.md`](../key-management/engineering.md)
   §"Key lifecycle RPCs resolve inside the caller's tenant").
+- **FROST threshold keys** are stored per tenant and resolved inside the
+  caller's tenant for every route that names one — get, delete, Round 1 and
+  Round 2 signing, aggregate, verify — and a FROST listing holds only the
+  caller's keys (`frostKeyAttrs` and `FrostListKeys`,
+  `pkg/xkms/servicer_frost.go:207` and `:406`; go-xkms#1231). The FROST
+  routes carry the ordinary `keys:*` permissions
+  (`pkg/api/rest/routes.go:174-182`), so without this a tenant Admin's
+  `keys:sign` reached every tenant's key shares. See
+  [`../frost-threshold-signing/architecture.md`](../frost-threshold-signing/architecture.md)
+  §"Tenancy".
 - **PKCS#11 remote state** accepts a `tenant_id` only when it names the
   caller's own tenant, because the module states its configured tenant
   (`pkcs11StateScope`, `pkg/xkms/servicer_pkcs11state.go:79`). See

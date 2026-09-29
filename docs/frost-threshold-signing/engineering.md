@@ -1,11 +1,10 @@
 # FROST Threshold Signing — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1231)
 
 All symbols below require `-tags frost` unless noted. See
 [`architecture.md`](architecture.md) for why the CLI and network-API surfaces
-are independent, and for why the network surface has no supported way to be
-enabled on a stock `xkmsd` today.
+are independent, and for how FROST keys are scoped to tenants.
 
 ## Exported surface — `pkg/keyprovider/frost`
 
@@ -186,14 +185,48 @@ turns up only this file, and it never dials a transport. A Go program that
 wants FROST over the network must call the REST/gRPC/MCP endpoints itself
 (and first solve the daemon-wiring gap in architecture.md).
 
-## Daemon-side handler lookup (network API only)
+## Service layer and tenancy (network API only, go-xkms#1231)
 
-`getFrostBackend()` (`pkg/api/rest/handlers_frost.go:816`,
-`pkg/api/grpc/service_frost.go:600`) iterates the daemon's registered
-backends and returns the first whose `KeyProvider().Type() ==
-types.BackendTypeFrost`, or a "no FROST backend configured" error. Every
-REST/gRPC/MCP FROST handler calls this first; none constructs a backend
-itself.
+The REST, gRPC and MCP FROST handlers are thin adapters over
+`pkg/xkms/servicer_frost.go`. None of them touches a `FrostBackend` itself.
+
+| Symbol | Where | Contract |
+|---|---|---|
+| `XKMSService.FrostGenerateKey` | `pkg/xkms/servicer_frost.go:253` | Participant mode stores the key for the caller's tenant; dealer mode returns every package and stores nothing. Both require a registered FROST backend. |
+| `XKMSService.FrostImportKey` | `servicer_frost.go:364` | Imports one package into the caller's tenant, replacing only that tenant's key of the same ID. |
+| `XKMSService.FrostListKeys` | `servicer_frost.go:406` | The caller's tenant's keys, ordered by key ID; every tenant's for a platform-scoped caller. Describes each key from its public package (`FrostBackend.PublicKeyPackage`, `pkg/keyprovider/frost/backend.go:471`) without unsealing the secret share. |
+| `XKMSService.FrostGetKey` / `FrostDeleteKey` | `servicer_frost.go:450`, `:484` | Resolve the key ID inside the caller's tenant. |
+| `XKMSService.FrostGenerateNonces` / `FrostSignRound` / `FrostAggregate` / `FrostVerify` | `servicer_frost.go:518`, `:535`, `:583`, `:620` | Resolve the key ID inside the caller's tenant, then drive the round API by storage key ID. `FrostVerify` reports a signature that does not verify as `Valid: false` with a `Reason`, not as an error. |
+| `frost.StorageKeyID(tenantID, keyID)` | `pkg/keyprovider/frost/tenant.go:46` | `keyID` for a platform key, `tenantID:keyID` for a tenant's key; validates both halves. The round API (`GenerateNonces`, `SignRound`, `Aggregate`, `Verify`) takes this ID and re-validates it (`validateStorageKeyID`, `tenant.go:73`). |
+| `FrostBackend.ImportKeyPackage` | `pkg/keyprovider/frost/backend.go:493` | Stores a dealer package under the key `attrs` names, stamping `attrs.TenantID`. |
+| `KeyMetadata.TenantID` | `pkg/keyprovider/frost/storage.go:65` | The owning tenant, empty for a platform key; `ListKeys` reports it as `KeyAttributes.TenantID`. |
+
+Invariants:
+
+- The tenant comes from the authenticated identity (`frostTenant`,
+  `servicer_frost.go:193`), never from a request field. A platform-scoped
+  caller (no identity, or the system tenant) is the platform namespace.
+- Every attribute-addressed `FrostBackend` method (`GenerateKey`, `GetKey`,
+  `DeleteKey`, `Signer`, `RotateKey`, `ImportKeyPackage`,
+  `PublicKeyPackage`) derives the storage path from `attrs.TenantID` and
+  `attrs.CN`; `FrostKeyHandle.KeyID` is the key ID, not the storage key ID.
+- A key the caller's tenant does not hold is the bare `xkms.ErrKeyNotFound`
+  (`frostKeyError`, `servicer_frost.go:231`), whether it is missing
+  everywhere or held by another tenant.
+
+Errors:
+
+| Condition | Service error | REST | gRPC | MCP |
+|---|---|---|---|---|
+| Key not in the caller's tenant | `ErrKeyNotFound` | 404 | `NotFound` | `JSONRPCCodeNotFound` |
+| Bad threshold/total/participant, missing field | `*ErrValidation{ErrFrostInvalidRequest}` (`servicer_frost.go:51`) | 400 | `InvalidArgument` | Invalid params |
+| Key ID or tenant with `:`, `/`, `..` | `*ErrValidation{ErrInvalidKeyID}` | 400 | `InvalidArgument` | Invalid params |
+| No FROST backend registered | `ErrFrostNotConfigured` (`servicer_frost.go:47`) | 500 | `Internal` | Internal error |
+| No xkms service | `ErrNotInitialized` | 503 | `Unavailable` | — (the MCP server requires one) |
+| Backend failure | `*ErrOperationWrap{ErrOperationFailed}` | 500 | `Internal` | Internal error |
+
+Keys written before go-xkms#1231 carry no tenant and sit at their bare key
+ID: they are platform keys, invisible to every tenant. There is no migration.
 
 ## Testing
 
@@ -238,6 +271,15 @@ itself.
   (`//go:build integration && frost`) drives `xkmsctl frost keygen` with
   `--transport embedded`, exercising the CLI's local path, not the
   REST/gRPC/MCP handlers against a live daemon backend.
+- Tenancy: `pkg/keyprovider/frost/tenant_test.go` (storage key IDs, per-tenant
+  namespaces, import, round-API validation), `pkg/xkms/servicer_frost_test.go`
+  (service-level cross-tenant refusal equals a genuine miss, listing, import,
+  a full 2-of-3 signature inside a tenant), and one cross-tenant suite per
+  transport: `pkg/api/rest/handlers_frost_crosstenant_test.go`,
+  `pkg/api/grpc/service_frost_crosstenant_test.go`,
+  `pkg/api/mcp/handlers_frost_crosstenant_test.go`. Each compares, for every
+  key-naming route, tenant A naming tenant B's key against the same key ID in
+  a deployment where no tenant holds it, then proves B's key survived.
 - The REST handler unit tests
   (`pkg/api/rest/handlers_frost_real_test.go`) inject a hand-built
   `frost.NewBackend(...)`-backed fake `xkms.Backend` directly into the
