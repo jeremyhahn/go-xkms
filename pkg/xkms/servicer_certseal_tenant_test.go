@@ -287,7 +287,7 @@ func TestSeal_TenantCallerRefusedOnUnboundTPM2Sealing(t *testing.T) {
 	assert.Nil(t, sealer.lastSealOpts, "the TPM must not be reached for a tenant caller")
 
 	_, err = svc.Unseal(identityCtx("acme"), &transport.UnsealRequest{
-		Backend: "tpm2", TPMPublic: []byte("pub"), TPMPrivate: []byte("priv"), TenantID: "acme",
+		Backend: "tpm2", KeyID: "vault", TPMPublic: []byte("pub"), TPMPrivate: []byte("priv"), TenantID: "acme",
 	})
 	require.ErrorIs(t, err, ErrSealNotTenantBound)
 	assert.Nil(t, sealer.lastUnsealOpts)

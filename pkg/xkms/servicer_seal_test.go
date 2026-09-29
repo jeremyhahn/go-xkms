@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -639,6 +640,7 @@ func TestUnseal_TPMBlobsOnly_NoCiphertext(t *testing.T) {
 
 	resp, err := svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "tpm2",
+		KeyID:      "vault",
 		TPMPublic:  []byte("tpm-public-blob"),
 		TPMPrivate: []byte("tpm-private-blob"),
 	})
@@ -759,24 +761,39 @@ func TestSeal_NoTPMPolicyCarriesNoSealPolicy(t *testing.T) {
 	assert.Nil(t, sealer.lastSealOpts.TPMPolicy)
 }
 
-// TestTPMSealedObject names the TPM2 sealed object a seal creates: the
-// backend's default object, or the one a key ID names, bound to the policy
-// the request named.
+// TestTPMSealedObject names the TPM2 sealed object a key ID names, bound to
+// the policy the request named, and refuses to name one without a key ID.
 func TestTPMSealedObject(t *testing.T) {
-	def, err := tpmSealedObject("", "")
-	require.NoError(t, err)
-	assert.Equal(t, sealingKeyCNPrefix+"-"+string(types.BackendTypeTPM2), def.CN)
-	assert.Equal(t, types.StoreTPM2, def.StoreType)
-	assert.Empty(t, def.TPMPolicy)
-
 	named, err := tpmSealedObject("vault-key", "boot")
 	require.NoError(t, err)
 	assert.Equal(t, "vault-key", named.CN)
+	assert.Equal(t, types.StoreTPM2, named.StoreType)
 	assert.Equal(t, "boot", named.TPMPolicy)
+
+	_, err = tpmSealedObject("", "")
+	require.ErrorIs(t, err, ErrTPMSealedObjectKeyIDRequired)
+	var validation *ErrValidation
+	require.ErrorAs(t, err, &validation)
 
 	_, err = tpmSealedObject("tpm2:not-a-type:x:y", "")
 	var parseErr *ErrKeyIDParse
 	require.ErrorAs(t, err, &parseErr)
+}
+
+// TestNewTPMSealedObjectName proves every generated sealed object name is a
+// valid key name under the well-known prefix, and no two are the same.
+func TestNewTPMSealedObjectName(t *testing.T) {
+	seen := make(map[string]bool)
+	for range 64 {
+		name, err := newTPMSealedObjectName()
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(name, sealingKeyCNPrefix+"-tpm2-"), name)
+		_, _, _, parsed, err := ParseKeyID(name)
+		require.NoError(t, err, "the name round-trips as a key ID")
+		assert.Equal(t, name, parsed)
+		assert.False(t, seen[name], "names never repeat")
+		seen[name] = true
+	}
 }
 
 // --- Password mapping tests ---
@@ -969,45 +986,58 @@ func TestUnseal_WithExplicitKeyID_SkipsAutoResolve(t *testing.T) {
 	assert.Equal(t, "my-unseal-key", sealer.lastUnsealOpts.KeyAttributes.CN)
 }
 
+// TestSeal_TPM2Backend_NoAutoGenerate proves a TPM2 seal without a key ID
+// generates no sealing key -- TPM2 seals a keyed-hash object of its own under
+// the scope's storage parent -- and names a fresh object for each seal.
 func TestSeal_TPM2Backend_NoAutoGenerate(t *testing.T) {
 	sealer := setupSealableServiceWithBackendType(t, "tpm2", types.BackendTypeTPM2)
 	svc, err := Get()
 	require.NoError(t, err)
 
-	// Seal without KeyID on TPM2 backend -- no sealing key is generated:
-	// TPM2 seals a keyed-hash object of its own under the scope's storage
-	// parent, and the attributes name that object, not a key.
-	_, err = svc.Seal(context.Background(), &transport.SealRequest{
-		Backend:   "tpm2",
-		Data:      []byte("secret"),
-		TPMPolicy: "boot",
-	})
-	require.NoError(t, err)
-
-	require.NotNil(t, sealer.lastSealOpts)
-	require.NotNil(t, sealer.lastSealOpts.KeyAttributes)
-	assert.Equal(t, sealingKeyCNPrefix+"-tpm2", sealer.lastSealOpts.KeyAttributes.CN)
-	assert.Equal(t, "boot", sealer.lastSealOpts.KeyAttributes.TPMPolicy)
-	assert.Zero(t, sealer.lastSealOpts.KeyAttributes.KeyAlgorithm, "no key was generated")
+	names := make([]string, 0, 2)
+	for range 2 {
+		_, err = svc.Seal(context.Background(), &transport.SealRequest{
+			Backend:   "tpm2",
+			Data:      []byte("secret"),
+			TPMPolicy: "boot",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, sealer.lastSealOpts)
+		attrs := sealer.lastSealOpts.KeyAttributes
+		require.NotNil(t, attrs)
+		assert.True(t, strings.HasPrefix(attrs.CN, sealingKeyCNPrefix+"-tpm2-"), attrs.CN)
+		assert.Equal(t, "boot", attrs.TPMPolicy)
+		assert.Zero(t, attrs.KeyAlgorithm, "no key was generated")
+		names = append(names, attrs.CN)
+	}
+	assert.NotEqual(t, names[0], names[1], "each seal without a key ID is its own object")
 }
 
-func TestUnseal_TPM2Backend_NoAutoResolve(t *testing.T) {
+// TestUnseal_TPM2Backend_RequiresKeyID proves a TPM2 unseal without a key ID
+// is refused before the TPM is reached: there is no default sealed object,
+// only the one the seal's returned key ID names.
+func TestUnseal_TPM2Backend_RequiresKeyID(t *testing.T) {
 	sealer := setupSealableServiceWithBackendType(t, "tpm2", types.BackendTypeTPM2)
 	svc, err := Get()
 	require.NoError(t, err)
 
-	// Unseal without KeyID on TPM2 backend -- no key is resolved: the
-	// attributes name the default sealed object, whose binding record the
-	// scope's store holds.
 	_, err = svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "tpm2",
-		Ciphertext: []byte("encrypted"),
+		TPMPublic:  []byte("pub"),
+		TPMPrivate: []byte("priv"),
+	})
+	require.ErrorIs(t, err, ErrTPMSealedObjectKeyIDRequired)
+	assert.Nil(t, sealer.lastUnsealOpts, "a refused request never reaches the backend")
+
+	_, err = svc.Unseal(context.Background(), &transport.UnsealRequest{
+		Backend:    "tpm2",
+		KeyID:      "vault",
+		TPMPublic:  []byte("pub"),
+		TPMPrivate: []byte("priv"),
 	})
 	require.NoError(t, err)
-
 	require.NotNil(t, sealer.lastUnsealOpts)
-	require.NotNil(t, sealer.lastUnsealOpts.KeyAttributes)
-	assert.Equal(t, sealingKeyCNPrefix+"-tpm2", sealer.lastUnsealOpts.KeyAttributes.CN)
+	assert.Equal(t, "vault", sealer.lastUnsealOpts.KeyAttributes.CN)
 	assert.Empty(t, sealer.lastUnsealOpts.KeyAttributes.TPMPolicy)
 }
 

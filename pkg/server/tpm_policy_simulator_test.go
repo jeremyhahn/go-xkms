@@ -238,3 +238,41 @@ func TestTPMPolicy_ModeNoneRefusesTenantKeys(t *testing.T) {
 	})
 	require.ErrorIs(t, err, tpmpolicy.ErrTPMModeNone)
 }
+
+// TestTPMPolicy_SealsWithoutKeyIDAreDistinctObjects proves each TPM2 seal
+// without a key ID creates its own sealed object: a second seal does not
+// overwrite the first's blobs, policy binding or registry assignment, and
+// the first still unseals, by the key ID its seal returned, to its own
+// plaintext.
+func TestTPMPolicy_SealsWithoutKeyIDAreDistinctObjects(t *testing.T) {
+	svc := newTPMPolicyServer(t)
+	sys := identityCtx(qrdbsdk.SystemTenantID)
+	_, err := svc.TPMPolicyCreate(sys, &transport.TPMPolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []uint{policyPCR}})
+	require.NoError(t, err)
+
+	first, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("first"), TPMPolicy: "boot"})
+	require.NoError(t, err)
+	second, err := svc.Seal(sys, &transport.SealRequest{Backend: "tpm2", Data: []byte("second")})
+	require.NoError(t, err)
+	require.NotEmpty(t, first.KeyID, "the seal names the object it created")
+	require.NotEmpty(t, second.KeyID)
+	assert.NotEqual(t, first.KeyID, second.KeyID, "two seals are two objects")
+
+	objects, err := svc.TPMPolicyObjects(sys, &transport.TPMPolicyRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sealed/" + first.KeyID}, objects.Objects, "the first object's assignment survives the second seal")
+
+	for _, tc := range []struct {
+		sealed *transport.SealResponse
+		want   string
+	}{{first, "first"}, {second, "second"}} {
+		got, err := svc.Unseal(sys, &transport.UnsealRequest{
+			Backend:    "tpm2",
+			KeyID:      tc.sealed.KeyID,
+			TPMPublic:  tc.sealed.TPMPublic,
+			TPMPrivate: tc.sealed.TPMPrivate,
+		})
+		require.NoError(t, err, tc.want)
+		assert.Equal(t, []byte(tc.want), got.Plaintext)
+	}
+}

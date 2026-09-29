@@ -19,13 +19,17 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// sealingKeyCNPrefix is the well-known prefix for auto-generated sealing keys.
-// A deterministic CN is used so the same key is reused across seal operations
-// on the same backend.
+// sealingKeyCNPrefix is the well-known prefix for auto-generated sealing keys
+// and TPM2 sealed objects. A key-based backend's default sealing key has a
+// deterministic CN, so the same key is reused across seal operations; a TPM2
+// sealed object created without a key ID gets a unique one (see
+// newTPMSealedObjectName).
 const sealingKeyCNPrefix = "xkms-sealing-key"
 
 // defaultSealingKeyAttributes builds KeyAttributes for an auto-generated
@@ -79,13 +83,14 @@ func ensureSealingKey(ctx context.Context, b Backend, attrs *types.KeyAttributes
 //
 // Without a key ID a key-based backend uses the default sealing key; see
 // defaultSealingKeyAttributes. TPM 2.0 seals a keyed-hash object of its own
-// rather than under a key; see tpmSealedObject. tpmPolicy names the TPM policy
-// a TPM2 sealed object is bound to, and any other backend refuses one.
+// rather than under a key, which keyID must name; see tpmSealedObject.
+// tpmPolicy names the TPM policy a TPM2 sealed object is bound to, and any
+// other backend refuses one.
 func sealingKey(ctx context.Context, b Backend, keyID, tpmPolicy string) (*types.KeyAttributes, error) {
-	kp := b.KeyProvider()
-	if kp != nil && kp.Type() == types.BackendTypeTPM2 {
+	if isTPM2Backend(b) {
 		return tpmSealedObject(keyID, tpmPolicy)
 	}
+	kp := b.KeyProvider()
 	if tpmPolicy != "" {
 		return nil, &ErrValidation{Sentinel: ErrTPMPolicyNotSupported, Detail: "tpm_policy is only valid on a TPM2 backend"}
 	}
@@ -102,23 +107,43 @@ func sealingKey(ctx context.Context, b Backend, keyID, tpmPolicy string) (*types
 	return defaultSealingKeyAttributes(kp.Type()), nil
 }
 
-// tpmSealedObject returns the attributes of the TPM2 sealed object a seal
-// creates, or an unseal authorizes: the object keyID names, or the backend's
-// default sealed object when keyID is empty. It is created under the storage
-// parent of the scope the tenant view selects, bound to tpmPolicy -- a named
-// policy of that scope, "platform" for the built-in platform policy, or empty
-// for none, leaving its password as its only authorization.
+// isTPM2Backend reports whether b seals TPM 2.0 keyed-hash objects.
+func isTPM2Backend(b Backend) bool {
+	kp := b.KeyProvider()
+	return kp != nil && kp.Type() == types.BackendTypeTPM2
+}
+
+// newTPMSealedObjectName returns a fresh, collision-free name for a TPM2
+// sealed object created without a key ID. Every such seal is its own object:
+// a shared default name let each seal overwrite the previous object's blobs,
+// policy binding and registry assignment, so the earlier object no longer
+// unsealed.
+func newTPMSealedObjectName() (string, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return "", &ErrSealOperation{Operation: "name sealed object", Err: err}
+	}
+	return fmt.Sprintf("%s-%s-%s", sealingKeyCNPrefix, types.BackendTypeTPM2, id), nil
+}
+
+// tpmSealedObject returns the attributes of the TPM2 sealed object keyID
+// names, which a seal creates or an unseal authorizes. It is created under
+// the storage parent of the scope the tenant view selects, bound to
+// tpmPolicy -- a named policy of that scope, "platform" for the built-in
+// platform policy, or empty for none, leaving its password as its only
+// authorization. An empty keyID is refused with
+// ErrTPMSealedObjectKeyIDRequired: Seal names an object it creates without
+// one (newTPMSealedObjectName), and an unseal must name the object.
 func tpmSealedObject(keyID, tpmPolicy string) (*types.KeyAttributes, error) {
-	cn := fmt.Sprintf("%s-%s", sealingKeyCNPrefix, types.BackendTypeTPM2)
-	if keyID != "" {
-		parsed, err := ParseKeyIDToAttributes(keyID)
-		if err != nil {
-			return nil, &ErrKeyIDParse{Err: err}
-		}
-		cn = parsed.CN
+	if keyID == "" {
+		return nil, &ErrValidation{Sentinel: ErrTPMSealedObjectKeyIDRequired, Detail: "key_id is required"}
+	}
+	parsed, err := ParseKeyIDToAttributes(keyID)
+	if err != nil {
+		return nil, &ErrKeyIDParse{Err: err}
 	}
 	return &types.KeyAttributes{
-		CN:        cn,
+		CN:        parsed.CN,
 		StoreType: types.StoreTPM2,
 		TPMPolicy: tpmPolicy,
 	}, nil
@@ -133,6 +158,11 @@ func tpmSealedObject(keyID, tpmPolicy string) (*types.KeyAttributes, error) {
 // key-based backend the tenant's own default sealing key is generated on
 // first use and reused after that. A platform-scoped caller seals on the
 // unscoped backend.
+//
+// On a TPM2 backend each seal creates a sealed object named by req.KeyID or,
+// without one, by a fresh unique name; either way SealResponse.KeyID names
+// the object, and the caller passes it to Unseal. A second seal never
+// replaces an object it did not name.
 //
 // Implements the SealServicer interface.
 func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
@@ -149,7 +179,13 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 		return nil, err
 	}
 
-	attrs, err := sealingKey(ctx, b, req.KeyID, req.TPMPolicy)
+	keyID := req.KeyID
+	if keyID == "" && isTPM2Backend(b) {
+		if keyID, err = newTPMSealedObjectName(); err != nil {
+			return nil, err
+		}
+	}
+	attrs, err := sealingKey(ctx, b, keyID, req.TPMPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +232,8 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 //
 // The key is resolved within req.TenantID exactly as Seal resolves it, so a
 // blob sealed under another tenant's key -- named or default -- does not
-// unseal for this caller.
+// unseal for this caller. A TPM2 unseal must carry the key ID its seal
+// returned (ErrTPMSealedObjectKeyIDRequired otherwise).
 //
 // Implements the SealServicer interface.
 func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) (*transport.UnsealResponse, error) {

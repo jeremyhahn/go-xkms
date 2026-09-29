@@ -17,6 +17,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
+	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -77,6 +78,17 @@ type TPMVTPMStatus = vtpm.Status
 // TPMPolicyParams are the dependencies of BuildTPMPolicyService.
 type TPMPolicyParams = compose.TPMPolicyParams
 
+// TenantTPMPolicies serves the tenant-level TPM policy operations
+// (TPMPolicyCreate ... TPMPolicyRotateAuthority) for one fixed tenant over a
+// TPMPolicyService, in the API's types. It is the conversion xkmsd serves
+// the TPM policy API through; a process that owns its TPM uses it with the
+// system scope ("").
+type TenantTPMPolicies = pkgxkms.TenantTPMPolicies
+
+// InvalidTPMObjectKindError reports a TPM object kind other than "key" or
+// "sealed".
+type InvalidTPMObjectKindError = pkgxkms.InvalidTPMObjectKindError
+
 // TPMPolicyInUseError is returned when deleting a policy objects still use;
 // it lists them.
 type TPMPolicyInUseError = tpmpolicy.PolicyInUseError
@@ -122,6 +134,14 @@ var (
 
 	// TPMPolicyObjectID returns the registry ID of a TPM object.
 	TPMPolicyObjectID = tpmpolicy.ObjectID
+
+	// NewTenantTPMPolicies returns the TenantTPMPolicies of a tenant ("" is
+	// the system scope) over a TPMPolicyService.
+	NewTenantTPMPolicies = pkgxkms.NewTenantTPMPolicies
+
+	// ParseTPMObjectKind returns the TPMObjectKind an API object kind
+	// ("key", "" or "sealed") names, or *InvalidTPMObjectKindError.
+	ParseTPMObjectKind = pkgxkms.ParseTPMObjectKind
 
 	// TPMPolicyScopeName normalizes a tenant ID to its scope name.
 	TPMPolicyScopeName = tpmpolicy.ScopeName

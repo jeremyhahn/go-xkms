@@ -15,12 +15,10 @@ package services
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"io/fs"
 	"log/slog"
 	"path/filepath"
-	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -47,10 +45,6 @@ var (
 	// service could not be built over the TPM.
 	ErrLocalTPMPolicyBuildFailed = errors.New("tpm_policy: failed to build the local TPM policy service")
 
-	// ErrTPMObjectKindInvalid indicates an object kind other than key or
-	// sealed.
-	ErrTPMObjectKindInvalid = errors.New("tpm_policy: object kind must be key or sealed")
-
 	// ErrTPMObjectNameRequired indicates a sealed-object operation without a
 	// name.
 	ErrTPMObjectNameRequired = errors.New("tpm_policy: sealed object name is required")
@@ -59,13 +53,6 @@ var (
 // localScope is the tenant every local operation acts on: xKey owns one TPM
 // and keeps all of its objects in the system scope.
 const localScope = ""
-
-// localObjectKinds maps the API's object kinds to the policy service's.
-var localObjectKinds = map[string]xkms.TPMObjectKind{
-	"":                       xkms.TPMObjectKey,
-	xkms.TPMObjectKindKey:    xkms.TPMObjectKey,
-	xkms.TPMObjectKindSealed: xkms.TPMObjectSealed,
-}
 
 // LocalTPMPolicyParams are the dependencies of the TPM policy service xKey
 // runs in-process over its own TPM.
@@ -99,9 +86,14 @@ type LocalTPMPolicyParams struct {
 }
 
 // LocalTPMPolicies is the TPM policy service running in-process over xKey's
-// own TPM, in the system scope, and the stores it owns.
+// own TPM, in the system scope, and the stores it owns. Its TPM policy API
+// operations are the SDK's TenantTPMPolicies for the system scope -- the
+// conversion xkmsd serves -- serialized with the TPM's other users.
 type LocalTPMPolicies struct {
 	svc *xkms.TPMPolicyService
+
+	// policies serves the TPM policy API operations in the system scope.
+	policies *xkms.TenantTPMPolicies
 
 	// backend is the TPM2 key backend the service was built over, with the
 	// service installed as its scope provider: it seals the local sealed
@@ -154,7 +146,12 @@ func OpenLocalTPMPolicies(p LocalTPMPolicyParams) (*LocalTPMPolicies, error) {
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrLocalTPMPolicyBuildFailed, Cause: errors.Join(err, l.closeStores())}
 	}
+	policies, err := xkms.NewTenantTPMPolicies(svc, localScope)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrLocalTPMPolicyBuildFailed, Cause: errors.Join(err, svc.Close(), l.closeStores())}
+	}
 	l.svc = svc
+	l.policies = policies
 	l.backend = backend
 	return l, nil
 }
@@ -194,9 +191,9 @@ func (l *LocalTPMPolicies) lock() (func(), error) {
 // Assign records that the local object of kind ("key" or "sealed") named
 // name was created under policy ("" is the platform policy).
 func (l *LocalTPMPolicies) Assign(ctx context.Context, kind, name, policy string) error {
-	objectKind, ok := localObjectKinds[kind]
-	if !ok {
-		return ErrTPMObjectKindInvalid
+	objectKind, err := xkms.ParseTPMObjectKind(kind)
+	if err != nil {
+		return err
 	}
 	unlock, err := l.lock()
 	if err != nil {
@@ -209,9 +206,9 @@ func (l *LocalTPMPolicies) Assign(ctx context.Context, kind, name, policy string
 // Unassign removes the local object's assignment; an object with none is
 // not an error.
 func (l *LocalTPMPolicies) Unassign(ctx context.Context, kind, name string) error {
-	objectKind, ok := localObjectKinds[kind]
-	if !ok {
-		return ErrTPMObjectKindInvalid
+	objectKind, err := xkms.ParseTPMObjectKind(kind)
+	if err != nil {
+		return err
 	}
 	unlock, err := l.lock()
 	if err != nil {
@@ -316,94 +313,49 @@ func isNotFound(err error) bool {
 // connected xkmsd.
 var _ tpmPolicyBackend = (*LocalTPMPolicies)(nil)
 
+// locked runs op, one of the system scope's TPM policy API operations, with
+// the TPM held.
+func locked[Req, Resp any](ctx context.Context, l *LocalTPMPolicies, req Req,
+	op func(*xkms.TenantTPMPolicies, context.Context, Req) (Resp, error)) (Resp, error) {
+
+	unlock, err := l.lock()
+	if err != nil {
+		var zero Resp
+		return zero, err
+	}
+	defer unlock()
+	return op(l.policies, ctx, req)
+}
+
 // TPMPolicyCreate creates a named policy over the live PCR values of xKey's
 // TPM.
 func (l *LocalTPMPolicies) TPMPolicyCreate(ctx context.Context, req *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
-	unlock, err := l.lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	p, err := l.svc.CreatePolicy(ctx, localScope, xkms.TPMPolicyCreateParams{
-		Name:       req.Name,
-		Bank:       req.Bank,
-		PCRs:       req.PCRs,
-		AutoUnseal: req.AutoUnseal,
-		OwnerAuth:  req.OwnerAuth,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return localPolicyToTransport(p), nil
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyCreate)
 }
 
 // TPMPolicyGet returns a named policy.
 func (l *LocalTPMPolicies) TPMPolicyGet(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
-	return l.policyOp(ctx, req.Name, (*xkms.TPMPolicyService).Policy)
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyGet)
 }
 
 // TPMPolicyUpdate re-captures a policy's PCR values and re-approves it.
 func (l *LocalTPMPolicies) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
-	return l.policyOp(ctx, req.Name, (*xkms.TPMPolicyService).UpdatePolicy)
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyUpdate)
 }
 
 // TPMPolicyRevoke withdraws a policy's approval.
 func (l *LocalTPMPolicies) TPMPolicyRevoke(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
-	return l.policyOp(ctx, req.Name, (*xkms.TPMPolicyService).RevokePolicy)
-}
-
-// policyOp runs op, a policy service operation that returns one policy, on
-// the named policy.
-func (l *LocalTPMPolicies) policyOp(ctx context.Context, name string,
-	op func(*xkms.TPMPolicyService, context.Context, string, string) (*xkms.TPMPolicyDefinition, error)) (*transport.TPMPolicy, error) {
-
-	unlock, err := l.lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	p, err := op(l.svc, ctx, localScope, name)
-	if err != nil {
-		return nil, err
-	}
-	return localPolicyToTransport(p), nil
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyRevoke)
 }
 
 // TPMPolicyList returns the named policies, sorted by name.
-func (l *LocalTPMPolicies) TPMPolicyList(ctx context.Context, _ *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
-	unlock, err := l.lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	policies, err := l.svc.ListPolicies(ctx, localScope)
-	if err != nil {
-		return nil, err
-	}
-	resp := &transport.TPMPolicyListResponse{Policies: make([]transport.TPMPolicy, 0, len(policies))}
-	for _, p := range policies {
-		resp.Policies = append(resp.Policies, *localPolicyToTransport(p))
-	}
-	return resp, nil
+func (l *LocalTPMPolicies) TPMPolicyList(ctx context.Context, req *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyList)
 }
 
 // TPMPolicyVerify compares a policy's captured PCR values with the live ones.
 func (l *LocalTPMPolicies) TPMPolicyVerify(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
-	unlock, err := l.lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	v, err := l.svc.VerifyPolicy(ctx, localScope, req.Name)
-	if err != nil {
-		return nil, err
-	}
-	return &transport.TPMPolicyVerifyResponse{
-		Name:       v.Policy,
-		Match:      v.Match,
-		Mismatched: v.Mismatched,
-		Approved:   v.Approved,
-	}, nil
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyVerify)
 }
 
 // TPMPolicyDelete deletes a policy no object is assigned to.
@@ -413,133 +365,26 @@ func (l *LocalTPMPolicies) TPMPolicyDelete(ctx context.Context, req *transport.T
 		return err
 	}
 	defer unlock()
-	return l.svc.DeletePolicy(ctx, localScope, req.Name, req.OwnerAuth)
+	return l.policies.TPMPolicyDelete(ctx, req)
 }
 
 // TPMPolicyObjects lists the objects assigned to a policy.
 func (l *LocalTPMPolicies) TPMPolicyObjects(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
-	unlock, err := l.lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	objects, err := l.svc.ObjectsOf(ctx, localScope, req.Name)
-	if err != nil {
-		return nil, err
-	}
-	if objects == nil {
-		objects = []string{}
-	}
-	return &transport.TPMPolicyObjectsResponse{Name: req.Name, Objects: objects}, nil
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyObjects)
 }
 
 // TPMPolicySetAutoUnseal sets or clears a policy's auto-unseal mark.
 func (l *LocalTPMPolicies) TPMPolicySetAutoUnseal(ctx context.Context, req *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
-	unlock, err := l.lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	if err := l.svc.SetAutoUnseal(ctx, localScope, req.Name, req.Enabled); err != nil {
-		return nil, err
-	}
-	p, err := l.svc.Policy(ctx, localScope, req.Name)
-	if err != nil {
-		return nil, err
-	}
-	return localPolicyToTransport(p), nil
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicySetAutoUnseal)
 }
 
 // TPMObjectPolicy returns the policy a local key or sealed object was
 // created under. KeyID is a key ID or a bare object name.
 func (l *LocalTPMPolicies) TPMObjectPolicy(ctx context.Context, req *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
-	kind, ok := localObjectKinds[req.Kind]
-	if !ok {
-		return nil, ErrTPMObjectKindInvalid
-	}
-	name, err := objectName(req.KeyID)
-	if err != nil {
-		return nil, err
-	}
-	unlock, err := l.lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	a, err := l.svc.PolicyOf(ctx, localScope, kind, name)
-	if err != nil {
-		return nil, err
-	}
-	return &transport.TPMObjectPolicyResponse{
-		ObjectID:   a.ObjectID,
-		Kind:       string(a.Kind),
-		Policy:     a.Policy,
-		AuthPolicy: hex.EncodeToString(a.AuthPolicy),
-		CreatedAt:  formatPolicyTime(a.CreatedAt),
-	}, nil
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMObjectPolicy)
 }
 
 // TPMPolicyRotateAuthority replaces the system scope's policy authority.
-func (l *LocalTPMPolicies) TPMPolicyRotateAuthority(ctx context.Context, _ *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
-	unlock, err := l.lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	scope, err := l.svc.RotateAuthority(ctx, localScope)
-	if err != nil {
-		return nil, err
-	}
-	return &transport.TPMAuthorityRotateResponse{
-		Generation:    scope.Authority.Generation,
-		AuthorityName: hex.EncodeToString(scope.Authority.Name),
-		Epoch:         scope.Epoch,
-	}, nil
-}
-
-// objectName returns the object name a key ID or bare name refers to.
-func objectName(keyID string) (string, error) {
-	if keyID == "" {
-		return "", ErrTPMPolicyKeyIDRequired
-	}
-	attrs, err := xkms.ServiceParseKeyIDToAttributes(keyID)
-	if err != nil {
-		return "", &SentinelCauseError{Sentinel: ErrTPMPolicyKeyIDInvalid, Cause: err}
-	}
-	return attrs.CN, nil
-}
-
-// localPolicyToTransport converts a stored policy of the system scope to its
-// API form, the form a connected xkmsd returns.
-func localPolicyToTransport(p *xkms.TPMPolicyDefinition) *transport.TPMPolicy {
-	values := make(map[uint]string, len(p.PCRValues))
-	for pcr, value := range p.PCRValues {
-		values[pcr] = hex.EncodeToString(value)
-	}
-	out := &transport.TPMPolicy{
-		Name:       p.Name,
-		Bank:       p.Bank,
-		PCRs:       p.PCRs,
-		PCRValues:  values,
-		PCRDigest:  hex.EncodeToString(p.PCRDigest),
-		Index:      p.Index,
-		AutoUnseal: p.AutoUnseal,
-		CreatedAt:  formatPolicyTime(p.CreatedAt),
-		UpdatedAt:  formatPolicyTime(p.UpdatedAt),
-	}
-	if p.Approval != nil {
-		out.Approved = true
-		out.Epoch = p.Approval.Epoch
-		out.AuthorityGeneration = p.Approval.AuthorityGeneration
-	}
-	return out
-}
-
-// formatPolicyTime formats a registry timestamp as RFC 3339 in UTC; the zero
-// time is empty.
-func formatPolicyTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339)
+func (l *LocalTPMPolicies) TPMPolicyRotateAuthority(ctx context.Context, req *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	return locked(ctx, l, req, (*xkms.TenantTPMPolicies).TPMPolicyRotateAuthority)
 }

@@ -11,7 +11,8 @@ Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
 | Service | `pkg/tpmpolicy` | Scopes, named policies, approvals, the registry, vTPMs |
 | Key routing | `pkg/backend/tpm2` (`scope.go`) | Runs each key and seal operation in the TPM scope of `KeyAttributes.TenantID` |
 | Composition | `pkg/compose` (`BuildTPMPolicyService`) | The one construction path, used by xkmsd and by embedding hosts |
-| Service layer | `pkg/xkms/servicer_tpm_policy.go` | Tenant binding, system scope, API types |
+| Service layer | `pkg/xkms/servicer_tpm_policy.go` | Tenant binding and system scope, then delegation to `TenantTPMPolicies` |
+| API conversion | `pkg/xkms/tenant_tpm_policies.go` (`TenantTPMPolicies`) | The one mapping between `*tpmpolicy.Service` and the API types, for one fixed tenant |
 | Transports | `pkg/api/{rest,grpc,mcp}`, `pkg/api/transport/*` | Wire mapping only |
 
 ## Key routing (`pkg/backend/tpm2`)
@@ -74,6 +75,22 @@ path. An embedding host's module (`pkg/apimodule`) builds it through
 (`compose.TPM2Backend`); `WithVTPM` makes vtpm mode available there, and the
 host closes the stores (`Stores.Close`) at shutdown.
 
+## Tenant adapter (`TenantTPMPolicies`)
+
+`xkms.NewTenantTPMPolicies(svc, tenant)` (re-exported by `sdk/go`) returns
+the tenant-level operations of `transport.TPMPolicyService`
+(`TPMPolicyCreate` ... `TPMPolicyRotateAuthority`) with their exact
+signatures, over `svc` for a fixed tenant (`""` is the system scope). It
+ignores every request's `TenantID`: authorizing the tenant is the caller's
+job. A nil `svc` is `ErrNotConfigured`.
+
+- `XKMSService` binds the caller's tenant (`tpmPolicyTarget`) and delegates.
+- xKey's local mode (`xkey/pkg/gui/services/tpm_policy_local.go`) delegates
+  every `TPMPolicy*` method for the system scope, holding the TPM accessor
+  around each call, so local and connected answers are the same types from
+  the same code. `xkms.ParseTPMObjectKind` is the one object-kind parser
+  (`*InvalidTPMObjectKindError`).
+
 ## Configuration
 
 ```yaml
@@ -94,8 +111,9 @@ backends:
   reserved objects.
 - `pkg/server/tpm_policy_simulator_test.go` (simulator): xkmsd end to end —
   two keys bound to one policy, objects/object-policy, refused delete, sign,
-  update, and two tenants isolated from each other.
-- `pkg/xkms/servicer_tpm_policy_test.go`, `pkg/api/{grpc,rest,mcp}/*tpm_policy*_test.go`,
+  update, two tenants isolated from each other, and two TPM2 seals without a
+  key ID staying two objects that each unseal.
+- `pkg/xkms/servicer_tpm_policy_test.go`, `pkg/xkms/tenant_tpm_policies_test.go`, `pkg/api/{grpc,rest,mcp}/*tpm_policy*_test.go`,
   `pkg/api/grpc/pbconv`, `pkg/api/rest/wire`: binding, system scope, error
   mapping and wire mapping over a TPM-less service
   (`pkg/testutil/tpmpolicytest.NewOffline`).

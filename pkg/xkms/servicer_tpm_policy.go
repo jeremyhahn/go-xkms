@@ -15,9 +15,6 @@ package xkms
 
 import (
 	"context"
-	"encoding/hex"
-	"fmt"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -27,24 +24,6 @@ import (
 
 // Compile-time check that XKMSService serves the TPM policy API.
 var _ transport.TPMPolicyServicer = (*XKMSService)(nil)
-
-// InvalidTPMObjectKindError reports a TPM object kind other than "key" or
-// "sealed".
-type InvalidTPMObjectKindError struct {
-	Kind string
-}
-
-// Error implements the error interface.
-func (e *InvalidTPMObjectKindError) Error() string {
-	return fmt.Sprintf("keystore: invalid TPM object kind %q (want %s or %s)", e.Kind, transport.TPMObjectKindKey, transport.TPMObjectKindSealed)
-}
-
-// objectKinds maps the API's object kinds to the policy service's.
-var objectKinds = map[string]tpmpolicy.ObjectKind{
-	"":                            tpmpolicy.ObjectKey,
-	transport.TPMObjectKindKey:    tpmpolicy.ObjectKey,
-	transport.TPMObjectKindSealed: tpmpolicy.ObjectSealed,
-}
 
 // SetTPMPolicyService wires the TPM policy service (pkg/tpmpolicy) the
 // TPMPolicy* methods delegate to.
@@ -71,22 +50,18 @@ func tpmPolicyTarget(ctx context.Context, op, requested string) (string, error) 
 	return requested, nil
 }
 
-// tpmPolicyService resolves the target tenant of op and returns the wired
-// policy service. The binding is checked first, so a refused caller learns
-// nothing about the node's configuration.
-func (s *XKMSService) tpmPolicyService(ctx context.Context, op, requested string) (*tpmpolicy.Service, string, error) {
+// tenantPolicies resolves the target tenant of op and returns its TPM
+// policy operations. The binding is checked first, so a refused caller
+// learns nothing about the node's configuration.
+func (s *XKMSService) tenantPolicies(ctx context.Context, op, requested string) (*TenantTPMPolicies, error) {
 	tenant, err := tpmPolicyTarget(ctx, op, requested)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	svc := s.tpmPolicies.load()
-	if svc == nil {
-		return nil, "", ErrNotConfigured
-	}
-	return svc, tenant, nil
+	return NewTenantTPMPolicies(s.tpmPolicies.load(), tenant)
 }
 
-// tenantTPMService is tpmPolicyService for the tenant TPM mode and vTPM
+// tenantTPMService resolves the policy service for the tenant TPM mode and vTPM
 // operations, which only a system caller may perform on any tenant.
 func (s *XKMSService) tenantTPMService(ctx context.Context, op, tenantID string) (*tpmpolicy.Service, error) {
 	if tenantID == "" {
@@ -108,57 +83,23 @@ func (s *XKMSService) TPMPolicyCreate(ctx context.Context, req *transport.TPMPol
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	svc, tenant, err := s.tpmPolicyService(ctx, "tpm policy create", req.TenantID)
+	p, err := s.tenantPolicies(ctx, "tpm policy create", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	p, err := svc.CreatePolicy(ctx, tenant, tpmpolicy.CreatePolicyRequest{
-		Name:       req.Name,
-		Bank:       req.Bank,
-		PCRs:       req.PCRs,
-		AutoUnseal: req.AutoUnseal,
-		OwnerAuth:  req.OwnerAuth,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return tpmPolicyToTransport(tenant, p), nil
+	return p.TPMPolicyCreate(ctx, req)
 }
 
 // TPMPolicyGet returns a named TPM policy of the target tenant.
 func (s *XKMSService) TPMPolicyGet(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
-	return s.tpmPolicyOp(ctx, "tpm policy get", req, (*tpmpolicy.Service).Policy)
-}
-
-// TPMPolicyUpdate re-captures a policy's PCR values and re-approves it at the
-// scope's next epoch. No object is re-keyed.
-func (s *XKMSService) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
-	return s.tpmPolicyOp(ctx, "tpm policy update", req, (*tpmpolicy.Service).UpdatePolicy)
-}
-
-// TPMPolicyRevoke withdraws a policy's approval; its objects answer only to
-// their password branch until it is updated.
-func (s *XKMSService) TPMPolicyRevoke(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
-	return s.tpmPolicyOp(ctx, "tpm policy revoke", req, (*tpmpolicy.Service).RevokePolicy)
-}
-
-// tpmPolicyOp runs op, a policy service operation that returns one policy,
-// on the policy req names.
-func (s *XKMSService) tpmPolicyOp(ctx context.Context, name string, req *transport.TPMPolicyRequest,
-	op func(*tpmpolicy.Service, context.Context, string, string) (*tpmpolicy.Policy, error)) (*transport.TPMPolicy, error) {
-
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	svc, tenant, err := s.tpmPolicyService(ctx, name, req.TenantID)
+	p, err := s.tenantPolicies(ctx, "tpm policy get", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	p, err := op(svc, ctx, tenant, req.Name)
-	if err != nil {
-		return nil, err
-	}
-	return tpmPolicyToTransport(tenant, p), nil
+	return p.TPMPolicyGet(ctx, req)
 }
 
 // TPMPolicyList returns the target tenant's named TPM policies.
@@ -166,19 +107,37 @@ func (s *XKMSService) TPMPolicyList(ctx context.Context, req *transport.TPMPolic
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	svc, tenant, err := s.tpmPolicyService(ctx, "tpm policy list", req.TenantID)
+	p, err := s.tenantPolicies(ctx, "tpm policy list", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	policies, err := svc.ListPolicies(ctx, tenant)
+	return p.TPMPolicyList(ctx, req)
+}
+
+// TPMPolicyUpdate re-captures a policy's PCR values and re-approves it at the
+// scope's next epoch. No object is re-keyed.
+func (s *XKMSService) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	p, err := s.tenantPolicies(ctx, "tpm policy update", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	resp := &transport.TPMPolicyListResponse{Policies: make([]transport.TPMPolicy, 0, len(policies))}
-	for _, p := range policies {
-		resp.Policies = append(resp.Policies, *tpmPolicyToTransport(tenant, p))
+	return p.TPMPolicyUpdate(ctx, req)
+}
+
+// TPMPolicyRevoke withdraws a policy's approval; its objects answer only to
+// their password branch until it is updated.
+func (s *XKMSService) TPMPolicyRevoke(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if req == nil {
+		return nil, ErrNilRequest
 	}
-	return resp, nil
+	p, err := s.tenantPolicies(ctx, "tpm policy revoke", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	return p.TPMPolicyRevoke(ctx, req)
 }
 
 // TPMPolicyVerify compares a policy's captured PCR values with the live ones
@@ -187,20 +146,11 @@ func (s *XKMSService) TPMPolicyVerify(ctx context.Context, req *transport.TPMPol
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	svc, tenant, err := s.tpmPolicyService(ctx, "tpm policy verify", req.TenantID)
+	p, err := s.tenantPolicies(ctx, "tpm policy verify", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	v, err := svc.VerifyPolicy(ctx, tenant, req.Name)
-	if err != nil {
-		return nil, err
-	}
-	return &transport.TPMPolicyVerifyResponse{
-		Name:       v.Policy,
-		Match:      v.Match,
-		Mismatched: v.Mismatched,
-		Approved:   v.Approved,
-	}, nil
+	return p.TPMPolicyVerify(ctx, req)
 }
 
 // TPMPolicyDelete deletes a policy and its NV index. It is refused with
@@ -209,11 +159,11 @@ func (s *XKMSService) TPMPolicyDelete(ctx context.Context, req *transport.TPMPol
 	if req == nil {
 		return ErrNilRequest
 	}
-	svc, tenant, err := s.tpmPolicyService(ctx, "tpm policy delete", req.TenantID)
+	p, err := s.tenantPolicies(ctx, "tpm policy delete", req.TenantID)
 	if err != nil {
 		return err
 	}
-	return svc.DeletePolicy(ctx, tenant, req.Name, req.OwnerAuth)
+	return p.TPMPolicyDelete(ctx, req)
 }
 
 // TPMPolicyObjects lists the objects assigned to a policy of the target
@@ -222,18 +172,11 @@ func (s *XKMSService) TPMPolicyObjects(ctx context.Context, req *transport.TPMPo
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	svc, tenant, err := s.tpmPolicyService(ctx, "tpm policy objects", req.TenantID)
+	p, err := s.tenantPolicies(ctx, "tpm policy objects", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	objects, err := svc.ObjectsOf(ctx, tenant, req.Name)
-	if err != nil {
-		return nil, err
-	}
-	if objects == nil {
-		objects = []string{}
-	}
-	return &transport.TPMPolicyObjectsResponse{Name: req.Name, Objects: objects}, nil
+	return p.TPMPolicyObjects(ctx, req)
 }
 
 // TPMPolicySetAutoUnseal sets or clears a policy's auto-unseal mark and
@@ -242,18 +185,11 @@ func (s *XKMSService) TPMPolicySetAutoUnseal(ctx context.Context, req *transport
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	svc, tenant, err := s.tpmPolicyService(ctx, "tpm policy auto-unseal", req.TenantID)
+	p, err := s.tenantPolicies(ctx, "tpm policy auto-unseal", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	if err := svc.SetAutoUnseal(ctx, tenant, req.Name, req.Enabled); err != nil {
-		return nil, err
-	}
-	p, err := svc.Policy(ctx, tenant, req.Name)
-	if err != nil {
-		return nil, err
-	}
-	return tpmPolicyToTransport(tenant, p), nil
+	return p.TPMPolicySetAutoUnseal(ctx, req)
 }
 
 // TPMObjectPolicy returns the policy the target tenant's TPM key or sealed
@@ -263,29 +199,11 @@ func (s *XKMSService) TPMObjectPolicy(ctx context.Context, req *transport.TPMObj
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	kind, ok := objectKinds[req.Kind]
-	if !ok {
-		return nil, &InvalidTPMObjectKindError{Kind: req.Kind}
-	}
-	parsed, err := ParseKeyIDToAttributes(req.KeyID)
-	if err != nil {
-		return nil, &ErrKeyIDParse{Err: err}
-	}
-	svc, tenant, err := s.tpmPolicyService(ctx, "tpm object policy", req.TenantID)
+	p, err := s.tenantPolicies(ctx, "tpm object policy", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	a, err := svc.PolicyOf(ctx, tenant, kind, parsed.CN)
-	if err != nil {
-		return nil, err
-	}
-	return &transport.TPMObjectPolicyResponse{
-		ObjectID:   a.ObjectID,
-		Kind:       string(a.Kind),
-		Policy:     a.Policy,
-		AuthPolicy: hex.EncodeToString(a.AuthPolicy),
-		CreatedAt:  formatTPMTime(a.CreatedAt),
-	}, nil
+	return p.TPMObjectPolicy(ctx, req)
 }
 
 // TPMPolicyRotateAuthority replaces the target tenant's policy authority:
@@ -295,20 +213,11 @@ func (s *XKMSService) TPMPolicyRotateAuthority(ctx context.Context, req *transpo
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	svc, tenant, err := s.tpmPolicyService(ctx, "tpm authority rotate", req.TenantID)
+	p, err := s.tenantPolicies(ctx, "tpm authority rotate", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	scope, err := svc.RotateAuthority(ctx, tenant)
-	if err != nil {
-		return nil, err
-	}
-	return &transport.TPMAuthorityRotateResponse{
-		TenantID:      tenant,
-		Generation:    scope.Authority.Generation,
-		AuthorityName: hex.EncodeToString(scope.Authority.Name),
-		Epoch:         scope.Epoch,
-	}, nil
+	return p.TPMPolicyRotateAuthority(ctx, req)
 }
 
 // GetTenantTPMMode returns a tenant's TPM mode. System scope only.
@@ -379,32 +288,6 @@ func (s *XKMSService) TenantVTPMStop(ctx context.Context, tenantID string) (*tra
 	return vtpmStatusToTransport(tenantID, svc.VTPMStatus(tenantID)), nil
 }
 
-// tpmPolicyToTransport converts a stored policy of tenant to its API form.
-func tpmPolicyToTransport(tenant string, p *tpmpolicy.Policy) *transport.TPMPolicy {
-	values := make(map[uint]string, len(p.PCRValues))
-	for pcr, value := range p.PCRValues {
-		values[pcr] = hex.EncodeToString(value)
-	}
-	out := &transport.TPMPolicy{
-		Name:       p.Name,
-		TenantID:   tenant,
-		Bank:       p.Bank,
-		PCRs:       p.PCRs,
-		PCRValues:  values,
-		PCRDigest:  hex.EncodeToString(p.PCRDigest),
-		Index:      p.Index,
-		AutoUnseal: p.AutoUnseal,
-		CreatedAt:  formatTPMTime(p.CreatedAt),
-		UpdatedAt:  formatTPMTime(p.UpdatedAt),
-	}
-	if p.Approval != nil {
-		out.Approved = true
-		out.Epoch = p.Approval.Epoch
-		out.AuthorityGeneration = p.Approval.AuthorityGeneration
-	}
-	return out
-}
-
 // vtpmStatusToTransport converts a vTPM supervisor status to its API form.
 func vtpmStatusToTransport(tenant string, st vtpm.Status) *transport.TenantVTPMStatusResponse {
 	return &transport.TenantVTPMStatusResponse{
@@ -414,13 +297,4 @@ func vtpmStatusToTransport(tenant string, st vtpm.Status) *transport.TenantVTPMS
 		Socket:   st.Socket,
 		Restarts: st.Restarts,
 	}
-}
-
-// formatTPMTime formats a registry timestamp as RFC 3339 in UTC; the zero
-// time is empty.
-func formatTPMTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format(time.RFC3339)
 }

@@ -276,8 +276,9 @@ func TestLocalTPMPolicies_ObjectOperationsNeedAName(t *testing.T) {
 	_, err := local.UnsealObject(ctx, "")
 	assert.ErrorIs(t, err, ErrTPMObjectNameRequired)
 	assert.ErrorIs(t, local.DeleteObject(ctx, ""), ErrTPMObjectNameRequired)
-	assert.ErrorIs(t, local.Assign(ctx, "bogus", "k", ""), ErrTPMObjectKindInvalid)
-	assert.ErrorIs(t, local.Unassign(ctx, "bogus", "k"), ErrTPMObjectKindInvalid)
+	var kindErr *xkms.InvalidTPMObjectKindError
+	assert.ErrorAs(t, local.Assign(ctx, "bogus", "k", ""), &kindErr)
+	assert.ErrorAs(t, local.Unassign(ctx, "bogus", "k"), &kindErr)
 }
 
 // newSimPassphraseBarrier initializes a passphrase barrier in a temporary
@@ -527,7 +528,8 @@ func TestLocalTPMPolicies_ErrorsFromTheService(t *testing.T) {
 	_, err = svc.KeyPolicy("never-created")
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNotAssigned)
 	_, err = local.TPMObjectPolicy(ctx, &transport.TPMObjectPolicyRequest{KeyID: "k", Kind: "bogus"})
-	assert.ErrorIs(t, err, ErrTPMObjectKindInvalid)
+	var kindErr *xkms.InvalidTPMObjectKindError
+	assert.ErrorAs(t, err, &kindErr)
 	_, err = local.AutoUnsealPolicy(ctx)
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyNotFound)
 	assert.NoError(t, local.DeleteObject(ctx, "never-sealed"), "deleting a missing object is not an error")

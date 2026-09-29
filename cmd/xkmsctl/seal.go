@@ -350,14 +350,14 @@ func canSeal(cfg *Config, printer *Printer) {
 
 func init() {
 	// Seal command flags
-	sealCmd.Flags().String("key-id", "", "Key ID to use for sealing (optional)")
+	sealCmd.Flags().String("key-id", "", "Key ID to use for sealing (optional; on tpm2 it names the sealed object, and without it each seal creates a uniquely named object whose key_id is printed)")
 	sealCmd.Flags().String("data-file", "", "File containing data to seal")
 	sealCmd.Flags().String("aad", "", "Additional authenticated data (optional)")
 	sealCmd.Flags().String("tpm-policy", "", "TPM policy a TPM2 sealed object is bound to: 'platform' or a policy from 'xkmsctl tpm policy' (default: none)")
 	sealCmd.Flags().String("password", "", "Authorization value of a TPM2 sealed object (optional)")
 
 	// Unseal command flags
-	unsealDataCmd.Flags().String("key-id", "", "Key ID to use for unsealing (optional)")
+	unsealDataCmd.Flags().String("key-id", "", "Key ID to use for unsealing (optional; required on tpm2: the key_id the seal printed)")
 	unsealDataCmd.Flags().String("ciphertext", "", "Ciphertext in base64 (alternative to positional arg)")
 	unsealDataCmd.Flags().String("ciphertext-file", "", "File containing ciphertext to unseal")
 	unsealDataCmd.Flags().String("nonce", "", "Nonce/IV in base64 (if required)")

@@ -564,3 +564,15 @@ func policyInfo(p *transport.TPMPolicy, objects int) *TPMPolicyInfo {
 		UpdatedAt:           p.UpdatedAt,
 	}
 }
+
+// objectName returns the object name a key ID or bare name refers to.
+func objectName(keyID string) (string, error) {
+	if keyID == "" {
+		return "", ErrTPMPolicyKeyIDRequired
+	}
+	attrs, err := xkms.ServiceParseKeyIDToAttributes(keyID)
+	if err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrTPMPolicyKeyIDInvalid, Cause: err}
+	}
+	return attrs.CN, nil
+}

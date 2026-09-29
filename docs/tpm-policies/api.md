@@ -62,9 +62,16 @@ gRPC also gained the fields a TPM2 sealed object needs to round-trip:
 `wrapped_dek` = 9, `metadata` = 10, `password` = 11. An unseal needs a
 ciphertext, or both TPM areas.
 
-A TPM2 seal's key ID names the sealed object; without one the object is
-`xkms-sealing-key-tpm2` in the caller's scope. A sealed object bound to a
-named policy is recorded against it (`sealed/<name>`).
+A TPM2 seal's key ID names the sealed object; without one each seal creates
+a new object with a unique name (`xkms-sealing-key-tpm2-<uuid>`) in the
+caller's scope, so a seal never replaces an object it did not name. The
+object's name is returned in `SealResponse.KeyID` (REST/MCP `key_id`, gRPC
+`key_id` = 9), and a TPM2 unseal must pass it back as `UnsealRequest.KeyID`:
+without one it is refused with `xkms.ErrTPMSealedObjectKeyIDRequired`
+(`*xkms.ErrValidation`, invalid argument). A sealed object bound to a named
+policy is recorded against it (`sealed/<name>`). Other backends are
+unchanged: without a key ID they seal under the caller's default sealing
+key.
 
 ## Request bodies
 

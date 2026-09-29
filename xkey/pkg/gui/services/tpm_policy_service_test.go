@@ -18,7 +18,6 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -373,11 +372,6 @@ func TestTPMPolicyService_ObjectCountErrorsPropagate(t *testing.T) {
 func TestOwnerAuthBytes(t *testing.T) {
 	assert.Nil(t, ownerAuthBytes(""))
 	assert.Equal(t, []byte("owner"), ownerAuthBytes("owner"))
-}
-
-func TestFormatPolicyTime(t *testing.T) {
-	assert.Empty(t, formatPolicyTime(time.Time{}))
-	assert.Equal(t, "2026-01-02T03:04:05Z", formatPolicyTime(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)))
 }
 
 func TestLocalTPMPolicies_AccessorSerializesAndReportsAnUnavailableTPM(t *testing.T) {

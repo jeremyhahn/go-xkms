@@ -317,6 +317,12 @@ var (
 	// ErrTPMPolicyNotSupported indicates a TPM policy was named for a key or
 	// sealed object on a backend that is not a TPM.
 	ErrTPMPolicyNotSupported = errors.New("keystore: a TPM policy applies to TPM2 keys and sealed objects only")
+
+	// ErrTPMSealedObjectKeyIDRequired indicates a TPM2 unseal without the
+	// key ID naming the sealed object: every TPM2 seal creates its own
+	// object and returns its key ID, so there is no default object to fall
+	// back to.
+	ErrTPMSealedObjectKeyIDRequired = errors.New("keystore: a TPM2 unseal needs the key ID its seal returned")
 )
 
 // Subsystem errors
