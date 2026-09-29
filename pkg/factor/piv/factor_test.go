@@ -15,7 +15,12 @@ package piv
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"testing"
@@ -106,12 +111,13 @@ func TestPIVFactor_FullRoundTrip_Software(t *testing.T) {
 		t.Fatalf("SignNonce: %v", err)
 	}
 
-	response := &qrdbsdk.AuthFactorResponse{
-		Value: sig,
-		Metadata: map[string]string{
-			"public_key_pem": string(enrollment.PublicKey),
-		},
+	if got := challenge.MethodData[methodDataEnrolledCert]; got != string(enrollment.PublicKey) {
+		t.Fatalf("challenge MethodData[%q] = %v, want the enrolled certificate", methodDataEnrolledCert, got)
 	}
+
+	// The response carries only the signature: the verification key comes
+	// from the challenge.
+	response := &qrdbsdk.AuthFactorResponse{Value: sig}
 
 	if err := f.Verify(ctx, challenge, response); err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -133,23 +139,78 @@ func TestPIVFactor_Verify_RejectsExpiredChallenge(t *testing.T) {
 	// Force expiry by manually moving ExpiresAt into the past.
 	challenge.ExpiresAt = challenge.ExpiresAt.Add(-1000 * 1000 * 1000) // -1s in nanoseconds
 	var expired *qrdbsdk.AuthFactorChallengeExpiredError
-	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Metadata: map[string]string{"public_key_pem": string(enrollment.PublicKey)},
-	})
+	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{})
 	if !errors.As(err, &expired) {
 		t.Fatalf("Verify(expired) err = %v, want ChallengeExpiredError", err)
 	}
 }
 
-func TestPIVFactor_Verify_RejectsMissingPublicKey(t *testing.T) {
+// TestPIVFactor_Verify_RejectsAttackerKeyInResponse is the #1282 regression:
+// a response signed by a key the attacker controls, carrying that key's
+// certificate in its metadata, must not verify against the enrollment.
+func TestPIVFactor_Verify_RejectsAttackerKeyInResponse(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
-	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
-	challenge, _ := f.Challenge(ctx, enrollment)
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "victim"})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	challenge, err := f.Challenge(ctx, enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+
+	attackerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey: %v", err)
+	}
+	attackerCert, err := buildSelfSignedCert(attackerKey, pkix.Name{CommonName: "attacker"}, 1)
+	if err != nil {
+		t.Fatalf("buildSelfSignedCert: %v", err)
+	}
+	digest := sha256.Sum256(challenge.Nonce)
+	sig, err := ecdsa.SignASN1(rand.Reader, attackerKey, digest[:])
+	if err != nil {
+		t.Fatalf("ecdsa.SignASN1: %v", err)
+	}
+
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Metadata: map[string]string{}})
+	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Value:    sig,
+		Metadata: map[string]string{"public_key_pem": string(attackerCert)},
+	})
 	if !errors.As(err, &failed) {
-		t.Fatalf("Verify(missing pub) err = %v, want VerificationFailedError", err)
+		t.Fatalf("Verify(attacker key) err = %v, want VerificationFailedError", err)
+	}
+}
+
+// TestPIVFactor_Verify_RejectsChallengeWithoutEnrolledCert proves Verify has
+// no second source for the key: with the enrolled certificate absent from the
+// challenge it refuses, even when the response carries the genuine one.
+func TestPIVFactor_Verify_RejectsChallengeWithoutEnrolledCert(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "u1"})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	challenge, err := f.Challenge(ctx, enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	sig, err := f.SignNonce(ctx, pivcert.PIVSlotAuthentication, challenge.Nonce)
+	if err != nil {
+		t.Fatalf("SignNonce: %v", err)
+	}
+	delete(challenge.MethodData, methodDataEnrolledCert)
+
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Value:    sig,
+		Metadata: map[string]string{"public_key_pem": string(enrollment.PublicKey)},
+	})
+	if !errors.As(err, &failed) {
+		t.Fatalf("Verify(no enrolled cert) err = %v, want VerificationFailedError", err)
 	}
 }
 
@@ -160,8 +221,7 @@ func TestPIVFactor_Verify_RejectsBadSignature(t *testing.T) {
 	challenge, _ := f.Challenge(ctx, enrollment)
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value:    []byte("not-a-valid-DER-signature"),
-		Metadata: map[string]string{"public_key_pem": string(enrollment.PublicKey)},
+		Value: []byte("not-a-valid-DER-signature"),
 	})
 	if !errors.As(err, &failed) {
 		t.Fatalf("Verify(bad sig) err = %v, want VerificationFailedError", err)
