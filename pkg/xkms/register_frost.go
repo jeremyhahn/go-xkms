@@ -42,11 +42,26 @@ func init() {
 //   - "threshold" (int): Minimum signers required (default: 2)
 //   - "total" (int): Total number of participants (default: 3)
 //   - "participant_id" (int): This node's participant ID (default: 1)
+//   - "allow_plaintext_keys" (bool): When true, permits the internal PKCS#8
+//     secret store to persist the FROST wrapping key without a password.
+//     Defaults to false (fail-closed), the identical knob and default
+//     newPKCS8KeyProvider exposes for the standalone "pkcs8" backend: set
+//     true only when the storage medium is encrypted out of band (e.g. an
+//     ephemeral, in-memory test backend). When false and no password is
+//     configured, construction fails with pkcs8.ErrPlaintextKeyNotAllowed
+//     rather than silently persisting the wrapping key in the clear.
 func newFROSTKeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
-	// Create a software PKCS#8 backend for secret key storage
+	allowPlaintext, _ := config["allow_plaintext_keys"].(bool)
+
+	// Create a software PKCS#8 backend for secret key storage. Every other
+	// key-persisting backend reachable through this registry (newPKCS8KeyProvider)
+	// gates plaintext persistence behind this same AllowPlaintextKeys flag; FROST's
+	// standalone factory previously never set it, so it failed closed
+	// unconditionally (go-xkms#1237).
 	secretStorage := storage.New()
 	provider, err := pkcs8.NewBackend(&pkcs8.Config{
-		KeyStorage: secretStorage,
+		KeyStorage:         secretStorage,
+		AllowPlaintextKeys: allowPlaintext,
 	})
 	if err != nil {
 		return nil, err
