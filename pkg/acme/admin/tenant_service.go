@@ -185,7 +185,13 @@ func (s *TenantAwareAdminService) SetBarrierService(svc BarrierService) {
 // CreateTenant creates a new tenant with default policies. Tenant identity
 // and existence are delegated to qrdb's TenantServicer, which must be wired
 // via SetTenantService before this is called — there is no local-only path.
+//
+// Creating a tenant is a platform operation: a tenant-scoped caller is refused
+// with a *PlatformScopeError whatever ID it names.
 func (s *TenantAwareAdminService) CreateTenant(ctx context.Context, req CreateTenantRequest) (*TenantInfo, error) {
+	if err := requirePlatformScope(ctx, "create tenant"); err != nil {
+		return nil, err
+	}
 	if req.ID == "" {
 		return nil, wrapInputError("id", "tenant ID is required")
 	}
@@ -252,6 +258,9 @@ func (s *TenantAwareAdminService) GetTenant(ctx context.Context, tenantID string
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
+	if err := bindTenantTarget(ctx, "get tenant", tenantID); err != nil {
+		return nil, err
+	}
 	if s.tenantSvc == nil {
 		return nil, ErrTenantServiceUnavailable
 	}
@@ -302,6 +311,9 @@ func (s *TenantAwareAdminService) getTenantQRDB(ctx context.Context, tenantID st
 func (s *TenantAwareAdminService) UpdateTenant(ctx context.Context, tenantID string, req UpdateTenantRequest) (*TenantInfo, error) {
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
+	}
+	if err := bindTenantTarget(ctx, "update tenant", tenantID); err != nil {
+		return nil, err
 	}
 	if s.tenantSvc == nil {
 		return nil, ErrTenantServiceUnavailable
@@ -362,6 +374,9 @@ func (s *TenantAwareAdminService) UpdateTenantStatus(ctx context.Context, tenant
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
 	}
+	if err := bindTenantTarget(ctx, "update tenant status", tenantID); err != nil {
+		return err
+	}
 	if status == "" {
 		return wrapInputError("status", "status is required")
 	}
@@ -403,6 +418,9 @@ func (s *TenantAwareAdminService) UpdateTenantStatus(ctx context.Context, tenant
 func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID string) error {
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
+	}
+	if err := bindTenantTarget(ctx, "delete tenant", tenantID); err != nil {
+		return err
 	}
 	if s.tenantSvc == nil {
 		return ErrTenantServiceUnavailable
@@ -490,7 +508,9 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 	return nil
 }
 
-// ListTenants lists all tenants with pagination.
+// ListTenants lists, with pagination, the tenants the caller may see: every
+// tenant for a cross-tenant caller, only its own tenant for a tenant-scoped
+// one. The pagination total counts only what the caller may see.
 func (s *TenantAwareAdminService) ListTenants(ctx context.Context, req ListTenantsRequest) ([]*TenantInfo, *Pagination, error) {
 	// Set defaults
 	if req.Page < 1 {
@@ -520,9 +540,13 @@ func (s *TenantAwareAdminService) listTenantsQRDB(ctx context.Context, req ListT
 		return nil, nil, caerrors.StorageFailureError("admin: failed to list tenants: %s", err)
 	}
 
+	caller, confined := callerTenant(ctx)
 	infos := make([]*TenantInfo, 0, len(all))
 	for i := range all {
 		qt := all[i]
+		if confined && qt.ID != caller {
+			continue
+		}
 		info := &TenantInfo{
 			ID:        qt.ID,
 			Name:      qt.Name,
@@ -622,6 +646,9 @@ func (s *TenantAwareAdminService) parentIdentity(parentType string) *ca.Identity
 func (s *TenantAwareAdminService) CreateTenantRootCA(ctx context.Context, tenantID string, req CreateTenantRootCARequest) (*TenantRootCAInfo, error) {
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
+	}
+	if err := bindTenantTarget(ctx, "create tenant root CA", tenantID); err != nil {
+		return nil, err
 	}
 	if req.CommonName == "" {
 		return nil, wrapInputError("common_name", "common name is required")
@@ -749,6 +776,9 @@ func (s *TenantAwareAdminService) CreateTenantRootCA(ctx context.Context, tenant
 func (s *TenantAwareAdminService) CreateTenantIntermediateCA(ctx context.Context, tenantID string, req CreateTenantIntermediateCARequest) (*TenantIntCAInfo, error) {
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
+	}
+	if err := bindTenantTarget(ctx, "create tenant intermediate CA", tenantID); err != nil {
+		return nil, err
 	}
 	if req.CommonName == "" {
 		return nil, wrapInputError("common_name", "common name is required")
@@ -929,6 +959,9 @@ func (s *TenantAwareAdminService) GetTenantIntermediateCA(ctx context.Context, t
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
+	if err := bindTenantTarget(ctx, "get tenant intermediate CA", tenantID); err != nil {
+		return nil, err
+	}
 	if caID == "" {
 		return nil, wrapInputError("ca_id", "CA ID is required")
 	}
@@ -968,6 +1001,9 @@ func (s *TenantAwareAdminService) ListTenantIntermediateCAs(ctx context.Context,
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
+	if err := bindTenantTarget(ctx, "list tenant intermediate CAs", tenantID); err != nil {
+		return nil, err
+	}
 
 	s.mu.RLock()
 	entry, exists := s.tenantCAs[tenantID]
@@ -1006,6 +1042,9 @@ func (s *TenantAwareAdminService) ListTenantIntermediateCAs(ctx context.Context,
 func (s *TenantAwareAdminService) UpdateTenantIntermediateCAStatus(ctx context.Context, tenantID string, caID string, status string) error {
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
+	}
+	if err := bindTenantTarget(ctx, "update tenant intermediate CA status", tenantID); err != nil {
+		return err
 	}
 	if caID == "" {
 		return wrapInputError("ca_id", "CA ID is required")
@@ -1082,6 +1121,9 @@ func (s *TenantAwareAdminService) SetTenantDefaultIntermediateCA(ctx context.Con
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
 	}
+	if err := bindTenantTarget(ctx, "set tenant default intermediate CA", tenantID); err != nil {
+		return err
+	}
 	if caID == "" {
 		return wrapInputError("ca_id", "CA ID is required")
 	}
@@ -1134,6 +1176,9 @@ func (s *TenantAwareAdminService) SetTenantDefaultIntermediateCA(ctx context.Con
 func (s *TenantAwareAdminService) GetTenantCAStatus(ctx context.Context, tenantID string) (*TenantCAStatusInfo, error) {
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
+	}
+	if err := bindTenantTarget(ctx, "get tenant CA status", tenantID); err != nil {
+		return nil, err
 	}
 
 	s.mu.RLock()
@@ -1218,6 +1263,9 @@ func (s *TenantAwareAdminService) GetTenantCAStatus(ctx context.Context, tenantI
 func (s *TenantAwareAdminService) CreateTenantEAB(ctx context.Context, tenantID string, req CreateEABRequest) (*CreateEABResponse, error) {
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
+	}
+	if err := bindTenantTarget(ctx, "create tenant EAB", tenantID); err != nil {
+		return nil, err
 	}
 
 	// Validate purpose
@@ -1307,6 +1355,9 @@ func (s *TenantAwareAdminService) GetTenantEAB(ctx context.Context, tenantID str
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
+	if err := bindTenantTarget(ctx, "get tenant EAB", tenantID); err != nil {
+		return nil, err
+	}
 	if kid == "" {
 		return nil, wrapInputError("kid", "key ID is required")
 	}
@@ -1338,6 +1389,9 @@ func (s *TenantAwareAdminService) GetTenantEAB(ctx context.Context, tenantID str
 func (s *TenantAwareAdminService) DeleteTenantEAB(ctx context.Context, tenantID string, kid string) error {
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
+	}
+	if err := bindTenantTarget(ctx, "delete tenant EAB", tenantID); err != nil {
+		return err
 	}
 	if kid == "" {
 		return wrapInputError("kid", "key ID is required")
@@ -1379,6 +1433,9 @@ func (s *TenantAwareAdminService) DeleteTenantEAB(ctx context.Context, tenantID 
 func (s *TenantAwareAdminService) ListTenantEABs(ctx context.Context, tenantID string, req ListEABRequest) ([]*EABInfo, *Pagination, error) {
 	if tenantID == "" {
 		return nil, nil, wrapInputError("tenant_id", "tenant ID is required")
+	}
+	if err := bindTenantTarget(ctx, "list tenant EABs", tenantID); err != nil {
+		return nil, nil, err
 	}
 
 	// Get tenant-scoped EAB DAO
@@ -1451,10 +1508,14 @@ func (s *TenantAwareAdminService) ListTenantEABs(ctx context.Context, tenantID s
 	}, nil
 }
 
-// CreateTenantRole creates a new role within a tenant.
+// CreateTenantRole creates a new role within a tenant. The request's tenant
+// is always the tenant the path names.
 func (s *TenantAwareAdminService) CreateTenantRole(ctx context.Context, tenantID string, req *db.CreateRoleRequest) (*db.Role, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
+	}
+	if err := bindTenantTarget(ctx, "create tenant role", tenantID); err != nil {
+		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Roles() == nil {
 		return nil, ErrRBACNotAvailable
@@ -1463,35 +1524,53 @@ func (s *TenantAwareAdminService) CreateTenantRole(ctx context.Context, tenantID
 	return s.qrdbService.Roles().CreateRole(ctx, req)
 }
 
-// GetTenantRole retrieves a role by ID within a tenant.
+// GetTenantRole retrieves a role by ID within a tenant. A role of another
+// tenant is ErrRoleNotFound, exactly like a role that does not exist.
 func (s *TenantAwareAdminService) GetTenantRole(ctx context.Context, tenantID string, roleID string) (*db.Role, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
+	if err := bindTenantTarget(ctx, "get tenant role", tenantID); err != nil {
+		return nil, err
+	}
 	if s.qrdbService == nil || s.qrdbService.Roles() == nil {
 		return nil, ErrRBACNotAvailable
 	}
-	return s.qrdbService.Roles().GetRole(ctx, roleID)
+	return s.tenantRole(ctx, tenantID, roleID)
 }
 
-// UpdateTenantRole updates an existing role within a tenant.
+// UpdateTenantRole updates an existing role within a tenant, after verifying
+// the role belongs to that tenant.
 func (s *TenantAwareAdminService) UpdateTenantRole(ctx context.Context, tenantID string, req *db.UpdateRoleRequest) (*db.Role, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
+	if err := bindTenantTarget(ctx, "update tenant role", tenantID); err != nil {
+		return nil, err
+	}
 	if s.qrdbService == nil || s.qrdbService.Roles() == nil {
 		return nil, ErrRBACNotAvailable
+	}
+	if _, err := s.tenantRole(ctx, tenantID, req.ID); err != nil {
+		return nil, err
 	}
 	return s.qrdbService.Roles().UpdateRole(ctx, req)
 }
 
-// DeleteTenantRole deletes a role from a tenant.
+// DeleteTenantRole deletes a role from a tenant, after verifying the role
+// belongs to that tenant.
 func (s *TenantAwareAdminService) DeleteTenantRole(ctx context.Context, tenantID string, roleID string) error {
 	if tenantID == "" {
 		return ErrInvalidTenantID
 	}
+	if err := bindTenantTarget(ctx, "delete tenant role", tenantID); err != nil {
+		return err
+	}
 	if s.qrdbService == nil || s.qrdbService.Roles() == nil {
 		return ErrRBACNotAvailable
+	}
+	if _, err := s.tenantRole(ctx, tenantID, roleID); err != nil {
+		return err
 	}
 	return s.qrdbService.Roles().DeleteRole(ctx, roleID)
 }
@@ -1501,6 +1580,9 @@ func (s *TenantAwareAdminService) ListTenantRoles(ctx context.Context, tenantID 
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
+	if err := bindTenantTarget(ctx, "list tenant roles", tenantID); err != nil {
+		return nil, err
+	}
 	if s.qrdbService == nil || s.qrdbService.Roles() == nil {
 		return nil, ErrRBACNotAvailable
 	}
@@ -1508,10 +1590,33 @@ func (s *TenantAwareAdminService) ListTenantRoles(ctx context.Context, tenantID 
 	return s.qrdbService.Roles().ListRoles(ctx, req)
 }
 
-// CreateTenantUser creates a new user within a tenant.
+// tenantRole returns the role roleID when it belongs to tenantID. A role that
+// does not exist and a role of another tenant are the same ErrRoleNotFound:
+// the path's tenant is the only tenant a role operation may touch, for the
+// platform as for a tenant caller, and a foreign role's existence is not
+// disclosed.
+func (s *TenantAwareAdminService) tenantRole(ctx context.Context, tenantID, roleID string) (*db.Role, error) {
+	role, err := s.qrdbService.Roles().GetRole(ctx, roleID)
+	if err != nil {
+		if isRoleNotFound(err) {
+			return nil, ErrRoleNotFound
+		}
+		return nil, err
+	}
+	if !sameTenant(role.TenantID, tenantID) {
+		return nil, ErrRoleNotFound
+	}
+	return role, nil
+}
+
+// CreateTenantUser creates a new user within a tenant. The request's tenant
+// is always the tenant the path names.
 func (s *TenantAwareAdminService) CreateTenantUser(ctx context.Context, tenantID string, req *db.CreateUserRequest) (*db.User, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
+	}
+	if err := bindTenantTarget(ctx, "create tenant user", tenantID); err != nil {
+		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
 		return nil, ErrRBACNotAvailable
@@ -1520,10 +1625,14 @@ func (s *TenantAwareAdminService) CreateTenantUser(ctx context.Context, tenantID
 	return s.qrdbService.Users().CreateUser(ctx, req)
 }
 
-// GetTenantUser retrieves a user by ID within a tenant.
+// GetTenantUser retrieves a user by ID within a tenant. A user of another
+// tenant is ErrUserNotFound, exactly like a user that does not exist.
 func (s *TenantAwareAdminService) GetTenantUser(ctx context.Context, tenantID string, userID string) (*db.User, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
+	}
+	if err := bindTenantTarget(ctx, "get tenant user", tenantID); err != nil {
+		return nil, err
 	}
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
 		return nil, ErrRBACNotAvailable
@@ -1532,30 +1641,44 @@ func (s *TenantAwareAdminService) GetTenantUser(ctx context.Context, tenantID st
 	if err != nil {
 		return nil, err
 	}
-	return s.qrdbService.Users().GetUser(ctx, id)
+	return s.tenantUser(ctx, tenantID, id)
 }
 
-// UpdateTenantUser updates an existing user within a tenant.
+// UpdateTenantUser updates an existing user within a tenant, after verifying
+// the user belongs to that tenant.
 func (s *TenantAwareAdminService) UpdateTenantUser(ctx context.Context, tenantID string, req *db.UpdateUserRequest) (*db.User, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
+	if err := bindTenantTarget(ctx, "update tenant user", tenantID); err != nil {
+		return nil, err
+	}
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
 		return nil, ErrRBACNotAvailable
+	}
+	if _, err := s.tenantUser(ctx, tenantID, req.ID); err != nil {
+		return nil, err
 	}
 	return s.qrdbService.Users().UpdateUser(ctx, req)
 }
 
-// DeleteTenantUser deletes a user from a tenant.
+// DeleteTenantUser deletes a user from a tenant, after verifying the user
+// belongs to that tenant.
 func (s *TenantAwareAdminService) DeleteTenantUser(ctx context.Context, tenantID string, userID string) error {
 	if tenantID == "" {
 		return ErrInvalidTenantID
+	}
+	if err := bindTenantTarget(ctx, "delete tenant user", tenantID); err != nil {
+		return err
 	}
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
 		return ErrRBACNotAvailable
 	}
 	id, err := parseUserID(userID)
 	if err != nil {
+		return err
+	}
+	if _, err := s.tenantUser(ctx, tenantID, id); err != nil {
 		return err
 	}
 	return s.qrdbService.Users().DeleteUser(ctx, id)
@@ -1566,11 +1689,31 @@ func (s *TenantAwareAdminService) ListTenantUsers(ctx context.Context, tenantID 
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
 	}
+	if err := bindTenantTarget(ctx, "list tenant users", tenantID); err != nil {
+		return nil, err
+	}
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
 		return nil, ErrRBACNotAvailable
 	}
 	req.TenantID = tenantID
 	return s.qrdbService.Users().ListUsers(ctx, req)
+}
+
+// tenantUser returns the user userID when it belongs to tenantID. A user that
+// does not exist and a user of another tenant are the same ErrUserNotFound,
+// for the same reasons tenantRole gives.
+func (s *TenantAwareAdminService) tenantUser(ctx context.Context, tenantID string, userID uint64) (*db.User, error) {
+	user, err := s.qrdbService.Users().GetUser(ctx, userID)
+	if err != nil {
+		if isUserNotFound(err) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	if !sameTenant(user.TenantID, tenantID) {
+		return nil, ErrUserNotFound
+	}
+	return user, nil
 }
 
 // parseUserID converts the admin-API string user identifier into qrdb's

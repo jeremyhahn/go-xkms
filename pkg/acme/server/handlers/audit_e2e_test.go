@@ -39,6 +39,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/gorilla/mux"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
@@ -108,9 +109,11 @@ func (a *auditTrail) query(t *testing.T, rawQuery string) *httptest.ResponseReco
 
 	require.NoError(t, a.logger.Flush())
 
+	// The audit trail records no tenant, so reading it is a platform
+	// operation (go-xkms#1225): the querying identity is a system-tenant one.
 	req := httptest.NewRequest(http.MethodGet, "/admin/audit?"+rawQuery, nil)
 	req = req.WithContext(auth.WithIdentity(req.Context(), &auth.Identity{
-		Subject: "audit-test", TenantID: "test-tenant",
+		Subject: "audit-test", TenantID: qrdbsdk.SystemTenantID,
 	}))
 	resp := httptest.NewRecorder()
 	a.router.ServeHTTP(resp, req)

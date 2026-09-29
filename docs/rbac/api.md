@@ -85,7 +85,10 @@ Same routes as REST — QUIC is HTTP/3 on the unified REST listener.
   `GET/POST/PUT/DELETE /admin/.../tenants/{id}/roles` gated by
   `roles:{list,create,read,update,delete}` — this is the ACME server's
   per-tenant role CRUD for its own admin surface, not xkms-core RBAC. It is
-  documented under the `acme-issuance` feature folder, not here.
+  documented under the `acme-issuance` feature folder, not here. It binds
+  tenants the same way `XKMSService` does below — a foreign tenant, role or
+  user answers `404` like a missing one (go-xkms#1225;
+  [`../acme-issuance/api.md`](../acme-issuance/api.md#admin-api-tenant-binding-responses)).
 
 ## Denial responses
 

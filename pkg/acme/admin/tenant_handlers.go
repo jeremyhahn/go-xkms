@@ -14,7 +14,6 @@
 package admin
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -127,31 +126,66 @@ func (h *TenantHandlers) RegisterRoutes(router *mux.Router, authMiddleware AuthH
 		gate.Wrap(auth.ResourceUsers, auth.ActionDelete, h.DeleteTenantUser)).Methods("DELETE")
 }
 
-// checkTenantAccess verifies that the caller has permission to access the specified tenant.
-// It performs RBAC role checks to determine access.
+// checkTenantAccess enforces the tenant binding for a request addressing
+// tenantID, before its body is read. It answers 401 when no caller is
+// authenticated, and a caller that may not address tenantID gets exactly the
+// response a missing tenant gets (writeTenantNotFound, the go-xkms#1112
+// convention). It reports whether the handler may proceed.
 //
-// Access rules follow go-qrdb's canonical system-tenant rule (RequireTenantScope):
-//   - An identity rooted in the reserved system tenant is platform-scoped and
-//     reaches every tenant.
-//   - Any other identity reaches only its own tenant.
-//   - Cross-tenant access is denied by default.
-//
-// Returns nil if access is allowed, or an error describing the denial reason.
-func (h *TenantHandlers) checkTenantAccess(ctx context.Context, _ *http.Request, user *AuthenticatedUser, targetTenantID, _ string) error {
-	if err := RequireTenantScope(ctx, targetTenantID); err != nil {
-		h.logger.Warn("cross-tenant access denied",
+// The service applies the same binding (bindTenantTarget) for every
+// transport. Checking here as well answers a refused request before body
+// parsing and validation run, whose answers would otherwise set a foreign
+// tenant apart from a missing one.
+func (h *TenantHandlers) checkTenantAccess(w http.ResponseWriter, r *http.Request, op, tenantID string) bool {
+	user := GetUserFromContext(r.Context())
+	if user == nil {
+		writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Authentication required")
+		return false
+	}
+	if err := bindTenantTarget(r.Context(), op, tenantID); err != nil {
+		h.logger.Warn("cross-tenant access refused",
+			slog.String("op", op),
 			slog.String("user_id", user.UserID),
 			slog.String("user_tenant", user.TenantID),
-			slog.String("target_tenant", targetTenantID),
-			slog.String("error", err.Error()))
-		return ErrForbidden
+			slog.String("target_tenant", tenantID))
+		writeTenantNotFound(w)
+		return false
 	}
-	return nil
+	return true
 }
 
-// CreateTenant handles POST /api/v1/tenants
+// writeTenantNotFound writes the single response for a tenant the caller
+// cannot reach, whether it does not exist or belongs to someone else.
+func writeTenantNotFound(w http.ResponseWriter) {
+	writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+}
+
+// writeIdentityError answers a failed role or user operation. A refused or
+// missing tenant, role or user is not-found; anything else is an internal
+// failure described by failure.
+func writeIdentityError(w http.ResponseWriter, err error, failure string) {
+	switch {
+	case errors.Is(err, ErrTenantNotFound):
+		writeTenantNotFound(w)
+	case errors.Is(err, ErrRoleNotFound):
+		writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Role not found")
+	case errors.Is(err, ErrUserNotFound):
+		writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "User not found")
+	default:
+		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", failure)
+	}
+}
+
+// CreateTenant handles POST /api/v1/tenants. Creating a tenant is a platform
+// operation: a tenant-scoped caller is answered exactly as a caller lacking
+// the grant is.
 func (h *TenantHandlers) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	if err := requirePlatformScope(ctx, "create tenant"); err != nil {
+		writePermissionDenied(w)
+		return
+	}
 
 	var req CreateTenantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -189,23 +223,14 @@ func (h *TenantHandlers) GetTenant(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
 
-	// Extract caller identity from request context
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	// Check if caller has permission to access this tenant
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionRead); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "get tenant", tenantID) {
 		return
 	}
 
 	tenant, err := h.service.GetTenant(ctx, tenantID)
 	if err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		h.logger.Error("failed to get tenant", slog.String("id", tenantID), slog.String("error", err.Error()))
@@ -222,15 +247,7 @@ func (h *TenantHandlers) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
 
-	// Extract caller identity and check tenant access
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionUpdate); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "update tenant", tenantID) {
 		return
 	}
 
@@ -243,7 +260,7 @@ func (h *TenantHandlers) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 	tenant, err := h.service.UpdateTenant(ctx, tenantID, req)
 	if err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		h.logger.Error("failed to update tenant", slog.String("id", tenantID), slog.String("error", err.Error()))
@@ -259,6 +276,10 @@ func (h *TenantHandlers) UpdateTenantStatus(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
+
+	if !h.checkTenantAccess(w, r, "update tenant status", tenantID) {
+		return
+	}
 
 	var req UpdateTenantStatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -280,7 +301,7 @@ func (h *TenantHandlers) UpdateTenantStatus(w http.ResponseWriter, r *http.Reque
 
 	if err := h.service.UpdateTenantStatus(ctx, tenantID, req.Status); err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		h.logger.Error("failed to update tenant status", slog.String("id", tenantID), slog.String("error", err.Error()))
@@ -297,9 +318,13 @@ func (h *TenantHandlers) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
 
+	if !h.checkTenantAccess(w, r, "delete tenant", tenantID) {
+		return
+	}
+
 	if err := h.service.DeleteTenant(ctx, tenantID); err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		h.logger.Error("failed to delete tenant", slog.String("id", tenantID), slog.String("error", err.Error()))
@@ -340,15 +365,7 @@ func (h *TenantHandlers) CreateTenantRootCA(w http.ResponseWriter, r *http.Reque
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
 
-	// Check tenant access for CA management
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionUpdate); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "create tenant root CA", tenantID) {
 		return
 	}
 
@@ -376,7 +393,7 @@ func (h *TenantHandlers) CreateTenantRootCA(w http.ResponseWriter, r *http.Reque
 	rootCA, err := h.service.CreateTenantRootCA(ctx, tenantID, req)
 	if err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		if errors.Is(err, ErrTenantRootCAExists) {
@@ -397,15 +414,7 @@ func (h *TenantHandlers) CreateTenantIntermediateCA(w http.ResponseWriter, r *ht
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
 
-	// Check tenant access for CA management
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionUpdate); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "create tenant intermediate CA", tenantID) {
 		return
 	}
 
@@ -446,7 +455,7 @@ func (h *TenantHandlers) CreateTenantIntermediateCA(w http.ResponseWriter, r *ht
 			return
 		}
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		h.logger.Error("failed to create tenant intermediate CA", slog.String("tenant", tenantID), slog.String("error", err.Error()))
@@ -463,22 +472,14 @@ func (h *TenantHandlers) GetTenantCAStatus(w http.ResponseWriter, r *http.Reques
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
 
-	// Check tenant access
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionRead); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "get tenant CA status", tenantID) {
 		return
 	}
 
 	status, err := h.service.GetTenantCAStatus(ctx, tenantID)
 	if err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		h.logger.Error("failed to get tenant CA status", slog.String("tenant", tenantID), slog.String("error", err.Error()))
@@ -495,22 +496,14 @@ func (h *TenantHandlers) ListTenantIntermediateCAs(w http.ResponseWriter, r *htt
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
 
-	// Check tenant access
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionRead); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "list tenant intermediate CAs", tenantID) {
 		return
 	}
 
 	cas, err := h.service.ListTenantIntermediateCAs(ctx, tenantID)
 	if err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		h.logger.Error("failed to list tenant intermediate CAs", slog.String("tenant", tenantID), slog.String("error", err.Error()))
@@ -531,22 +524,14 @@ func (h *TenantHandlers) GetTenantIntermediateCA(w http.ResponseWriter, r *http.
 	tenantID := vars["id"]
 	caID := vars["caid"]
 
-	// Check tenant access
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionRead); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "get tenant intermediate CA", tenantID) {
 		return
 	}
 
 	ca, err := h.service.GetTenantIntermediateCA(ctx, tenantID, caID)
 	if err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		if errors.Is(err, ErrTenantCANotConfigured) {
@@ -568,15 +553,7 @@ func (h *TenantHandlers) UpdateTenantIntermediateCAStatus(w http.ResponseWriter,
 	tenantID := vars["id"]
 	caID := vars["caid"]
 
-	// Check tenant access for CA management
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionUpdate); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "update tenant intermediate CA status", tenantID) {
 		return
 	}
 
@@ -600,7 +577,7 @@ func (h *TenantHandlers) UpdateTenantIntermediateCAStatus(w http.ResponseWriter,
 
 	if err := h.service.UpdateTenantIntermediateCAStatus(ctx, tenantID, caID, req.Status); err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		if errors.Is(err, ErrTenantCANotConfigured) {
@@ -621,15 +598,7 @@ func (h *TenantHandlers) SetTenantDefaultIntermediateCA(w http.ResponseWriter, r
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
 
-	// Check tenant access for CA management
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionUpdate); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "set tenant default intermediate CA", tenantID) {
 		return
 	}
 
@@ -646,7 +615,7 @@ func (h *TenantHandlers) SetTenantDefaultIntermediateCA(w http.ResponseWriter, r
 
 	if err := h.service.SetTenantDefaultIntermediateCA(ctx, tenantID, req.IntermediateCAID); err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		if errors.Is(err, ErrTenantCANotConfigured) {
@@ -667,15 +636,7 @@ func (h *TenantHandlers) CreateTenantEAB(w http.ResponseWriter, r *http.Request)
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
 
-	// Check tenant access for EAB creation
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionCreate); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "create tenant EAB", tenantID) {
 		return
 	}
 
@@ -705,7 +666,7 @@ func (h *TenantHandlers) CreateTenantEAB(w http.ResponseWriter, r *http.Request)
 	eabResp, err := h.service.CreateTenantEAB(ctx, tenantID, req)
 	if err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		if errors.Is(err, ErrInvalidEABPurpose) {
@@ -727,22 +688,14 @@ func (h *TenantHandlers) GetTenantEAB(w http.ResponseWriter, r *http.Request) {
 	tenantID := vars["id"]
 	kid := vars["kid"]
 
-	// Check tenant access
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionRead); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "get tenant EAB", tenantID) {
 		return
 	}
 
 	eab, err := h.service.GetTenantEAB(ctx, tenantID, kid)
 	if err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		if errors.Is(err, ErrEABNotFound) {
@@ -764,21 +717,13 @@ func (h *TenantHandlers) DeleteTenantEAB(w http.ResponseWriter, r *http.Request)
 	tenantID := vars["id"]
 	kid := vars["kid"]
 
-	// Check tenant access for EAB deletion
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionDelete); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "delete tenant EAB", tenantID) {
 		return
 	}
 
 	if err := h.service.DeleteTenantEAB(ctx, tenantID, kid); err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		if errors.Is(err, ErrEABNotFound) {
@@ -799,15 +744,7 @@ func (h *TenantHandlers) ListTenantEABs(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	tenantID := vars["id"]
 
-	// Check tenant access
-	user := GetUserFromContext(ctx)
-	if user == nil {
-		writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-		return
-	}
-
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionList); err != nil {
-		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
+	if !h.checkTenantAccess(w, r, "list tenant EABs", tenantID) {
 		return
 	}
 
@@ -822,7 +759,7 @@ func (h *TenantHandlers) ListTenantEABs(w http.ResponseWriter, r *http.Request) 
 	eabs, pagination, err := h.service.ListTenantEABs(ctx, tenantID, req)
 	if err != nil {
 		if errors.Is(err, ErrTenantNotFound) {
-			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
+			writeTenantNotFound(w)
 			return
 		}
 		h.logger.Error("failed to list tenant EABs", slog.String("tenant", tenantID), slog.String("error", err.Error()))
@@ -844,6 +781,9 @@ func (h *TenantHandlers) CreateTenantRole(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID is required")
 		return
 	}
+	if !h.checkTenantAccess(w, r, "create tenant role", tenantID) {
+		return
+	}
 
 	var req db.CreateRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -855,7 +795,7 @@ func (h *TenantHandlers) CreateTenantRole(w http.ResponseWriter, r *http.Request
 	role, err := h.service.CreateTenantRole(r.Context(), tenantID, &req)
 	if err != nil {
 		h.logger.Error("failed to create role", slog.String("tenant_id", tenantID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to create role")
+		writeIdentityError(w, err, "Failed to create role")
 		return
 	}
 
@@ -871,11 +811,14 @@ func (h *TenantHandlers) GetTenantRole(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID and role ID are required")
 		return
 	}
+	if !h.checkTenantAccess(w, r, "get tenant role", tenantID) {
+		return
+	}
 
 	role, err := h.service.GetTenantRole(r.Context(), tenantID, roleID)
 	if err != nil {
 		h.logger.Error("failed to get role", slog.String("tenant_id", tenantID), slog.String("role_id", roleID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Role not found")
+		writeIdentityError(w, err, "Failed to get role")
 		return
 	}
 
@@ -891,6 +834,9 @@ func (h *TenantHandlers) UpdateTenantRole(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID and role ID are required")
 		return
 	}
+	if !h.checkTenantAccess(w, r, "update tenant role", tenantID) {
+		return
+	}
 
 	var req db.UpdateRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -902,7 +848,7 @@ func (h *TenantHandlers) UpdateTenantRole(w http.ResponseWriter, r *http.Request
 	role, err := h.service.UpdateTenantRole(r.Context(), tenantID, &req)
 	if err != nil {
 		h.logger.Error("failed to update role", slog.String("tenant_id", tenantID), slog.String("role_id", roleID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to update role")
+		writeIdentityError(w, err, "Failed to update role")
 		return
 	}
 
@@ -918,10 +864,13 @@ func (h *TenantHandlers) DeleteTenantRole(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID and role ID are required")
 		return
 	}
+	if !h.checkTenantAccess(w, r, "delete tenant role", tenantID) {
+		return
+	}
 
 	if err := h.service.DeleteTenantRole(r.Context(), tenantID, roleID); err != nil {
 		h.logger.Error("failed to delete role", slog.String("tenant_id", tenantID), slog.String("role_id", roleID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to delete role")
+		writeIdentityError(w, err, "Failed to delete role")
 		return
 	}
 
@@ -936,6 +885,9 @@ func (h *TenantHandlers) ListTenantRoles(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID is required")
 		return
 	}
+	if !h.checkTenantAccess(w, r, "list tenant roles", tenantID) {
+		return
+	}
 
 	page, pageSize := parsePagination(r)
 	req := &db.ListRolesRequest{
@@ -947,7 +899,7 @@ func (h *TenantHandlers) ListTenantRoles(w http.ResponseWriter, r *http.Request)
 	resp, err := h.service.ListTenantRoles(r.Context(), tenantID, req)
 	if err != nil {
 		h.logger.Error("failed to list roles", slog.String("tenant_id", tenantID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to list roles")
+		writeIdentityError(w, err, "Failed to list roles")
 		return
 	}
 	if resp.Roles == nil {
@@ -965,6 +917,9 @@ func (h *TenantHandlers) CreateTenantUser(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID is required")
 		return
 	}
+	if !h.checkTenantAccess(w, r, "create tenant user", tenantID) {
+		return
+	}
 
 	var req db.CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -976,7 +931,7 @@ func (h *TenantHandlers) CreateTenantUser(w http.ResponseWriter, r *http.Request
 	user, err := h.service.CreateTenantUser(r.Context(), tenantID, &req)
 	if err != nil {
 		h.logger.Error("failed to create user", slog.String("tenant_id", tenantID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to create user")
+		writeIdentityError(w, err, "Failed to create user")
 		return
 	}
 
@@ -992,11 +947,18 @@ func (h *TenantHandlers) GetTenantUser(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID and user ID are required")
 		return
 	}
+	if !h.checkTenantAccess(w, r, "get tenant user", tenantID) {
+		return
+	}
+	if _, err := strconv.ParseUint(userID, 10, 64); err != nil {
+		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Invalid user ID: "+err.Error())
+		return
+	}
 
 	user, err := h.service.GetTenantUser(r.Context(), tenantID, userID)
 	if err != nil {
 		h.logger.Error("failed to get user", slog.String("tenant_id", tenantID), slog.String("user_id", userID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "User not found")
+		writeIdentityError(w, err, "Failed to get user")
 		return
 	}
 
@@ -1010,6 +972,9 @@ func (h *TenantHandlers) UpdateTenantUser(w http.ResponseWriter, r *http.Request
 	userID := vars["userID"]
 	if tenantID == "" || userID == "" {
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID and user ID are required")
+		return
+	}
+	if !h.checkTenantAccess(w, r, "update tenant user", tenantID) {
 		return
 	}
 
@@ -1028,7 +993,7 @@ func (h *TenantHandlers) UpdateTenantUser(w http.ResponseWriter, r *http.Request
 	user, err := h.service.UpdateTenantUser(r.Context(), tenantID, &req)
 	if err != nil {
 		h.logger.Error("failed to update user", slog.String("tenant_id", tenantID), slog.String("user_id", userID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to update user")
+		writeIdentityError(w, err, "Failed to update user")
 		return
 	}
 
@@ -1044,10 +1009,17 @@ func (h *TenantHandlers) DeleteTenantUser(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID and user ID are required")
 		return
 	}
+	if !h.checkTenantAccess(w, r, "delete tenant user", tenantID) {
+		return
+	}
+	if _, err := strconv.ParseUint(userID, 10, 64); err != nil {
+		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Invalid user ID: "+err.Error())
+		return
+	}
 
 	if err := h.service.DeleteTenantUser(r.Context(), tenantID, userID); err != nil {
 		h.logger.Error("failed to delete user", slog.String("tenant_id", tenantID), slog.String("user_id", userID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to delete user")
+		writeIdentityError(w, err, "Failed to delete user")
 		return
 	}
 
@@ -1062,6 +1034,9 @@ func (h *TenantHandlers) ListTenantUsers(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID is required")
 		return
 	}
+	if !h.checkTenantAccess(w, r, "list tenant users", tenantID) {
+		return
+	}
 
 	page, pageSize := parsePagination(r)
 	req := &db.ListUsersRequest{
@@ -1073,7 +1048,7 @@ func (h *TenantHandlers) ListTenantUsers(w http.ResponseWriter, r *http.Request)
 	resp, err := h.service.ListTenantUsers(r.Context(), tenantID, req)
 	if err != nil {
 		h.logger.Error("failed to list users", slog.String("tenant_id", tenantID), slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to list users")
+		writeIdentityError(w, err, "Failed to list users")
 		return
 	}
 	if resp.Users == nil {

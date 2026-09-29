@@ -80,6 +80,18 @@ transport's SSH surface calls that one service (`pkg/server/server.go:486-512`);
 none repeats the check. See
 [`../ssh-keys/architecture.md`](../ssh-keys/architecture.md) §"Owner binding
 and tenant partitions".
+The ACME admin plane (`pkg/acme/admin`) is served by its own service, not
+`XKMSService`, and carries its own binding with the same convention
+(go-xkms#1225): `bindTenantTarget` and `requirePlatformScope`
+(`pkg/acme/admin/tenant_binding.go:103`, `:113`), whose
+`*TenantBindingError` unwraps to that package's `ErrTenantNotFound` and reads
+as a missing tenant. It also checks that a role or user belongs to the tenant
+the path names before touching it, scopes ACME certificates, accounts and
+orders by the caller's tenant, and binds the caller's tenant as the qrdb
+context tenant at its authentication boundary (`pkg/acme/admin/auth.go:101`).
+The full contract is in
+[`../acme-issuance/engineering.md`](../acme-issuance/engineering.md#invariants).
+
 ### `pkg/auth/rolemembership.go` — role membership
 
 var ErrRoleClientRequired error

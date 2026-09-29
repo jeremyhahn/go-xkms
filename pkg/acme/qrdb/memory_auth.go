@@ -15,7 +15,6 @@ package qrdb
 
 import (
 	"context"
-	"errors"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -25,10 +24,25 @@ import (
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
-var (
-	errRoleNotFound = errors.New("qrdb: role not found")
-	errUserNotFound = errors.New("qrdb: user not found")
-)
+// The double answers a miss with the typed errors every qrdb transport
+// returns (db.RoleNotFoundError, db.UserNotFoundError), so a consumer's
+// not-found classification is exercised against the shape production sees.
+
+// roleNotFound is the miss for a role lookup by ID (or, for GetRoleByName,
+// by name).
+func roleNotFound(id string) error {
+	return &db.RoleNotFoundError{ID: id}
+}
+
+// userNotFound is the miss for a user lookup by ID.
+func userNotFound(id uint64) error {
+	return &db.UserNotFoundError{ID: id}
+}
+
+// userLookupNotFound is the miss for a tenant-scoped user lookup by key.
+func userLookupNotFound(tenantID, key string) error {
+	return &db.UserNotFoundError{Lookup: db.UserLookupKey(tenantID, key)}
+}
 
 // memoryRoleClient is an in-memory RoleClient implementation.
 type memoryRoleClient struct {
@@ -65,7 +79,7 @@ func (c *memoryRoleClient) GetRole(_ context.Context, id string) (*db.Role, erro
 	role, ok := c.roles[id]
 	c.mu.RUnlock()
 	if !ok {
-		return nil, errRoleNotFound
+		return nil, roleNotFound(id)
 	}
 	return role, nil
 }
@@ -75,7 +89,7 @@ func (c *memoryRoleClient) UpdateRole(_ context.Context, req *db.UpdateRoleReque
 	defer c.mu.Unlock()
 	role, ok := c.roles[req.ID]
 	if !ok {
-		return nil, errRoleNotFound
+		return nil, roleNotFound(req.ID)
 	}
 	if req.Name != "" {
 		role.Name = req.Name
@@ -91,7 +105,7 @@ func (c *memoryRoleClient) DeleteRole(_ context.Context, id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.roles[id]; !ok {
-		return errRoleNotFound
+		return roleNotFound(id)
 	}
 	delete(c.roles, id)
 	return nil
@@ -157,7 +171,7 @@ func (c *memoryUserClient) GetUser(_ context.Context, id uint64) (*db.User, erro
 	user, ok := c.users[id]
 	c.mu.RUnlock()
 	if !ok {
-		return nil, errUserNotFound
+		return nil, userNotFound(id)
 	}
 	return user, nil
 }
@@ -174,7 +188,7 @@ func (c *memoryUserClient) GetUserByUsername(_ context.Context, tenantID, userna
 		}
 		return user, nil
 	}
-	return nil, errUserNotFound
+	return nil, userLookupNotFound(tenantID, username)
 }
 
 // GetUserByEmail resolves the canonical tenant-scoped login key. It mirrors
@@ -184,7 +198,7 @@ func (c *memoryUserClient) GetUserByUsername(_ context.Context, tenantID, userna
 func (c *memoryUserClient) GetUserByEmail(_ context.Context, tenantID, email string) (*db.User, error) {
 	normalized := qrdbsdk.NormalizeEmail(email)
 	if normalized == "" {
-		return nil, errUserNotFound
+		return nil, userLookupNotFound(tenantID, email)
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -197,15 +211,15 @@ func (c *memoryUserClient) GetUserByEmail(_ context.Context, tenantID, email str
 		}
 		return user, nil
 	}
-	return nil, errUserNotFound
+	return nil, userLookupNotFound(tenantID, normalized)
 }
 
 // GetUserByCertThumbprint satisfies the transport.UserClient contract. This
 // in-memory test client does not track mTLS cert bindings (the transport-layer
 // User carries no binding data), so it reports no match — the ACME tests that
 // use this client authenticate by username, not by cert thumbprint.
-func (c *memoryUserClient) GetUserByCertThumbprint(_ context.Context, _ string) (*db.User, error) {
-	return nil, errUserNotFound
+func (c *memoryUserClient) GetUserByCertThumbprint(_ context.Context, thumbprint string) (*db.User, error) {
+	return nil, userLookupNotFound("", "cert_spki/"+thumbprint)
 }
 
 func (c *memoryUserClient) UpdateUser(_ context.Context, req *db.UpdateUserRequest) (*db.User, error) {
@@ -213,10 +227,13 @@ func (c *memoryUserClient) UpdateUser(_ context.Context, req *db.UpdateUserReque
 	defer c.mu.Unlock()
 	user, ok := c.users[req.ID]
 	if !ok {
-		return nil, errUserNotFound
+		return nil, userNotFound(req.ID)
 	}
 	if req.Username != "" {
 		user.Username = req.Username
+	}
+	if req.Name != "" {
+		user.Name = req.Name
 	}
 	if req.RoleIDs != nil {
 		user.RoleIDs = req.RoleIDs
@@ -229,7 +246,7 @@ func (c *memoryUserClient) DeleteUser(_ context.Context, id uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.users[id]; !ok {
-		return errUserNotFound
+		return userNotFound(id)
 	}
 	delete(c.users, id)
 	return nil
@@ -255,7 +272,7 @@ func (c *memoryUserClient) EnableUser(_ context.Context, id uint64) error {
 	defer c.mu.Unlock()
 	user, ok := c.users[id]
 	if !ok {
-		return errUserNotFound
+		return userNotFound(id)
 	}
 	user.Lifecycle = string(qrdbsdk.LifecycleActive)
 	return nil
@@ -266,7 +283,7 @@ func (c *memoryUserClient) DisableUser(_ context.Context, id uint64) error {
 	defer c.mu.Unlock()
 	user, ok := c.users[id]
 	if !ok {
-		return errUserNotFound
+		return userNotFound(id)
 	}
 	user.Lifecycle = string(qrdbsdk.LifecycleDisabled)
 	return nil
@@ -281,7 +298,7 @@ func (c *memoryUserClient) AddCertBinding(_ context.Context, userID uint64, _ st
 	defer c.mu.RUnlock()
 	user, ok := c.users[userID]
 	if !ok {
-		return nil, errUserNotFound
+		return nil, userNotFound(userID)
 	}
 	return user, nil
 }
@@ -295,7 +312,7 @@ func (c *memoryUserClient) RemoveCertBinding(_ context.Context, userID uint64, _
 	defer c.mu.RUnlock()
 	user, ok := c.users[userID]
 	if !ok {
-		return nil, errUserNotFound
+		return nil, userNotFound(userID)
 	}
 	return user, nil
 }

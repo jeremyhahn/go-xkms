@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	acmeauth "github.com/jeremyhahn/go-xkms/pkg/acme/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -80,13 +82,23 @@ func (u *AuthenticatedUser) identity() *auth.Identity {
 	}
 }
 
-// withUser publishes both the AuthenticatedUser record and the canonical
-// auth.Identity on the request context. Both are required: handlers read the
-// user for tenant scoping and audit attribution, and the PermissionGate reads
-// the identity to resolve the caller's qrdb role grants.
+// withUser publishes the AuthenticatedUser record and the canonical
+// auth.Identity on the request context, and binds the user's tenant as the
+// context's qrdb tenant. All three are required: handlers read the user for
+// tenant scoping and audit attribution, the PermissionGate reads the identity
+// to resolve the caller's qrdb role grants, and qrdb's own services read the
+// bound tenant to confine every identity-plane call the request makes.
+//
+// The ACME admin routes are public routes on the qrdb module boundary, so
+// qrdb's middleware never binds a tenant for them; without this binding every
+// call the admin service makes into qrdb (roles, users) resolves to the
+// system tenant and qrdb's EffectiveTenant enforcement admits it everywhere.
+// The tenant is normalized first, so a user with no tenant binds the system
+// tenant explicitly (qrdbsdk.NormalizeTenantID).
 func withUser(ctx context.Context, user *AuthenticatedUser) context.Context {
 	ctx = context.WithValue(ctx, ContextKeyUser, user)
 	ctx = context.WithValue(ctx, ContextKeyTenantID, user.TenantID)
+	ctx = qrdbsdk.ContextWithTenant(ctx, qrdbsdk.NormalizeTenantID(user.TenantID))
 	return auth.WithIdentity(ctx, user.identity())
 }
 
@@ -139,7 +151,8 @@ func (am *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 
 // RequireTenant creates a middleware that validates tenant access. Cross-tenant
 // reach is decided by qrdb's system-tenant rule (see RequireTenantScope), not by
-// a local role name.
+// a local role name, and a tenant the caller may not reach is answered exactly
+// as a missing tenant is.
 func RequireTenant(getTenantID func(r *http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -155,7 +168,7 @@ func RequireTenant(getTenantID func(r *http.Request) string) func(http.Handler) 
 			case errors.Is(err, auth.ErrUnauthenticated):
 				writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Authentication required")
 			default:
-				writeProblem(w, http.StatusForbidden, problemForbidden, "Cannot access tenant")
+				writeTenantNotFound(w)
 			}
 		})
 	}
