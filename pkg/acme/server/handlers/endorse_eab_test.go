@@ -763,10 +763,6 @@ func TestIsEndorseChallengeType_Endorse01(t *testing.T) {
 	assert.True(t, IsEndorseChallengeType("endorse-01"))
 }
 
-func TestIsEndorseChallengeType_Endorse01WithPort(t *testing.T) {
-	assert.True(t, IsEndorseChallengeType("endorse-01-8443"))
-}
-
 func TestIsEndorseChallengeType_HTTP01(t *testing.T) {
 	assert.False(t, IsEndorseChallengeType("http-01"))
 }

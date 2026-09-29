@@ -27,6 +27,9 @@ make integration-test
 - PKCS#11: `make integration-test-pkcs11`
 - TPM2: `make integration-test-tpm2`
 - Software: `make integration-test-software`
+- ACME challenge framework (enroll01/endorse01): `make integration-test-challenges`
+- ACME + TPM end-to-end (device-attest-01/enroll-01/permanent-identifier),
+  standalone only pending go-xkms#737: `make integration-test-acme-tpm`
 
 ## Testing Guides
 

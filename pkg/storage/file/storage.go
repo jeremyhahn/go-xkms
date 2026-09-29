@@ -13,11 +13,15 @@
 
 // Package file provides a file-based implementation of the storage.Backend
 // interface. Key/value I/O is delegated to the canonical go-qrdb file engine
-// (one flat file per key at <root>/<key>); this package layers two
+// (one flat file per key at <root>/<key>); this package layers three
 // xkms-specific behaviors the raw engine does not provide: storage-key
-// validation that blocks path traversal, and prefix-based file permissions so
+// validation that blocks path traversal, prefix-based file permissions so
 // private key material stays owner-only (0600) while public certificates are
-// world-readable (0644).
+// world-readable (0644), and an advisory cross-process lock (lock.go) around
+// every write so guarded writes (PutIfAbsent, CompareAndSwap,
+// CompareAndDelete) stay atomic when several processes share one store
+// directory -- the file-token case the PKCS#11 module's PIN attempt counter
+// depends on (#1144, #1157).
 package file
 
 import (
@@ -44,11 +48,16 @@ const (
 )
 
 // FileStorage is a file-based implementation of storage.Backend. It wraps the
-// go-qrdb file engine for I/O and is thread-safe (the underlying engine
-// serializes access).
+// go-qrdb file engine for I/O and is safe for concurrent use: within one
+// process the wrapped engine serializes access, and every write this type
+// performs additionally holds an advisory lock on the store directory (see
+// lock.go) that excludes the same operations running against the same
+// directory from another process (#1157) -- which is what makes a guarded
+// write here safe for several processes sharing one file-backed token.
 type FileStorage struct {
-	backend storage.Backend // engine adapter over the go-qrdb file engine
-	rootDir string          // absolute root, used to apply per-file permissions
+	backend  storage.Backend // engine adapter over the go-qrdb file engine
+	rootDir  string          // absolute root, used to apply per-file permissions
+	lockPath string          // cross-process advisory lock file under rootDir
 }
 
 // Compile-time assertion that FileStorage satisfies storage.Backend.
@@ -82,7 +91,11 @@ func New(rootDir string) (storage.Backend, error) {
 		return nil, &errs.Wrapped{Msg: "file storage: failed to open file engine", Err: err}
 	}
 
-	return &FileStorage{backend: backend, rootDir: absRootDir}, nil
+	return &FileStorage{
+		backend:  backend,
+		rootDir:  absRootDir,
+		lockPath: filepath.Join(absRootDir, lockFileName),
+	}, nil
 }
 
 // Get retrieves the value for the given key.
@@ -103,16 +116,18 @@ func (f *FileStorage) Put(ctx context.Context, key string, value []byte) error {
 	if err := validateStorageKey(key); err != nil {
 		return &errs.Wrapped{Msg: fmt.Sprintf("file storage: invalid key %q", key), Err: err}
 	}
-	if err := f.backend.Put(ctx, key, value); err != nil {
-		return err
-	}
-	// The engine writes 0600; widen only the prefixes that require it.
-	if perm := filePermissionsForKey(key); perm != defaultPerms {
-		if err := os.Chmod(f.keyPath(key), perm); err != nil {
-			return &errs.Wrapped{Msg: fmt.Sprintf("file storage: failed to set permissions for key %q", key), Err: err}
+	return withCrossProcessLock(ctx, f.lockPath, func() error {
+		if err := f.backend.Put(ctx, key, value); err != nil {
+			return err
 		}
-	}
-	return nil
+		// The engine writes 0600; widen only the prefixes that require it.
+		if perm := filePermissionsForKey(key); perm != defaultPerms {
+			if err := os.Chmod(f.keyPath(key), perm); err != nil {
+				return &errs.Wrapped{Msg: fmt.Sprintf("file storage: failed to set permissions for key %q", key), Err: err}
+			}
+		}
+		return nil
+	})
 }
 
 // Delete removes the key and its value from storage.
@@ -121,7 +136,9 @@ func (f *FileStorage) Delete(ctx context.Context, key string) error {
 	if err := validateStorageKey(key); err != nil {
 		return &errs.Wrapped{Msg: fmt.Sprintf("file storage: invalid key %q", key), Err: err}
 	}
-	return f.backend.Delete(ctx, key)
+	return withCrossProcessLock(ctx, f.lockPath, func() error {
+		return f.backend.Delete(ctx, key)
+	})
 }
 
 // List returns all keys with the given prefix in sorted order.

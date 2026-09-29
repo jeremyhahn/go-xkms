@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## Build
 
@@ -176,6 +176,18 @@ opens the same token shares one counter per PIN (`MaxPINAttempts`,
   retries against the value the failed swap observed. Remote tokens reach the
   server's compare-and-swap through `PKCS11StateCAS` (`storage_remote.go:136`,
   `pkg/pkcs11state/store.go:93`), so the guard holds across hosts.
+- **A local file token's guard holds across processes, not only goroutines**
+  (#1157). `StorageTypeFile` opens `pkg/storage/file.FileStorage`, whose
+  `Put`, `Delete`, `PutIfAbsent`, `CompareAndSwap` and `CompareAndDelete` each
+  hold an advisory `flock` on a lock file in the token directory
+  (`pkg/storage/file/lock.go`) for the whole guarded read-compare-write.
+  Before this, the wrapped engine's atomicity (`pkg/storage/engine.go`'s
+  `engineBackend`, still the in-process guarantee this lock is layered over)
+  was a process-local mutex: two module instances pointed at the same file
+  token directory could interleave their `SpendFailedAttempt` read and write
+  and both succeed, undercounting the shared budget. See
+  [`../storage-engines/engineering.md`](../storage-engines/engineering.md)
+  for the lock's design.
 - **A refund never erases someone else's failure.**
   `RefundFailedAttempt` (`storage.go:283`) applies `refundedCount`
   (`session.go:1352`). If nothing touched the counter since the spend, it resets
@@ -220,9 +232,17 @@ not-supported answer, so the behaviour is deliberate. Compliance detail:
   (`module_kem_test.go`, `module_authwrap_*_test.go`,
   `module_verifysig_*_test.go`, `module_async_test.go`). The cross-process
   lockout is pinned by `session_pin_ledger_test.go`. Two `Module` values over
-  one backend stand in for two processes. The tests cover the shared budget,
-  a stale instance, concurrent guessing (counted by derivations), a reset on
+  one backend stand in for two processes, sharing the same in-process
+  `storage.Backend`, so this suite pins the ledger's semantics rather than
+  cross-process file-lock atomicity. The tests cover the shared budget, a
+  stale instance, concurrent guessing (counted by derivations), a reset on
   success, and a store fault. Each runs for both the user PIN and the SO PIN.
+  `pkg/pkcs11/module/storage_crossprocess_test.go`'s
+  `TestModuleStorage_FailedAttemptCounter_CrossProcessAccumulates` is the
+  genuinely cross-process counterpart (#1157): it re-execs the test binary as
+  several real OS processes sharing one `StorageTypeFile` token directory,
+  each spending failed attempts concurrently, and asserts the durable counter
+  is the exact combined total.
 - **Tenant isolation of remote state** —
   `pkg/xkms/servicer_pkcs11state_tenant_test.go` drives all seven operations
   through one table and checks four things. A foreign or `system` tenant is

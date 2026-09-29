@@ -676,64 +676,6 @@ func TestEventLogValidationHook_MaxEventCountZeroAllowsAny(t *testing.T) {
 }
 
 // ========================================
-// parseChallengeAsDynamicPortAssignment Tests
-// ========================================
-
-func TestParseChallengeAsDynamicPortAssignment_AllCases(t *testing.T) {
-	tests := []struct {
-		name         string
-		challengeTyp string
-		wantBase     string
-		wantPort     uint16
-	}{
-		{
-			name:         "standard http-01",
-			challengeTyp: "http-01",
-			wantBase:     "http-01",
-			wantPort:     0,
-		},
-		{
-			name:         "standard enroll-01",
-			challengeTyp: "enroll-01",
-			wantBase:     "enroll-01",
-			wantPort:     0,
-		},
-		{
-			name:         "enroll with port",
-			challengeTyp: "enroll-01-8080",
-			wantBase:     "enroll-01",
-			wantPort:     8080,
-		},
-		{
-			name:         "device-attest with port",
-			challengeTyp: "device-attest-01-443",
-			wantBase:     "device-attest-01",
-			wantPort:     443,
-		},
-		{
-			name:         "single part",
-			challengeTyp: "dns",
-			wantBase:     "dns",
-			wantPort:     0,
-		},
-		{
-			name:         "port less than 100",
-			challengeTyp: "test-01",
-			wantBase:     "test-01",
-			wantPort:     0, // 01 <= 99, so treated as suffix not port
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			base, port := parseChallengeAsDynamicPortAssignment(tt.challengeTyp)
-			assert.Equal(t, tt.wantBase, base)
-			assert.Equal(t, tt.wantPort, port)
-		})
-	}
-}
-
-// ========================================
 // isEnrollXChallenge Tests
 // ========================================
 

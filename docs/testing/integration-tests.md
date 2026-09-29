@@ -77,10 +77,16 @@ test/integration/
 │   ├── docker-compose.yml
 │   ├── Dockerfile
 │   └── azurekv_integration_test.go
-└── vault/                     # HashiCorp Vault
+├── vault/                      # HashiCorp Vault
+│   ├── docker-compose.yml
+│   ├── Dockerfile
+│   └── vault_integration_test.go
+├── acme-tpm/                  # ACME device-attest-01/enroll-01/permanent-identifier over swtpm
+│   ├── docker-compose.yml
+│   └── *_integration_test.go
+└── challenges/                 # ACME challenge-framework availability (enroll01/endorse01, no TPM)
     ├── docker-compose.yml
-    ├── Dockerfile
-    └── vault_integration_test.go
+    └── {enroll01,endorse01}/*_test.go
 ```
 
 ## Running Tests
@@ -116,6 +122,14 @@ make integration-test-azurekv
 
 # HashiCorp Vault
 make integration-test-vault
+
+# ACME challenge-framework availability (enroll01/endorse01, no TPM)
+make integration-test-challenges
+
+# ACME + TPM end-to-end (device-attest-01, enroll-01, permanent-identifier);
+# standalone only -- see "ACME + TPM Integration Tests" below for why it is
+# not part of the `make integration-test` aggregate yet
+make integration-test-acme-tpm
 ```
 
 
@@ -244,6 +258,67 @@ docker-compose down -v
 - TPM Version: 2.0
 - Socket: /var/lib/swtpm/swtpm-sock
 - State Directory: /var/lib/swtpm/state
+
+
+## ACME Challenge-Framework Integration Tests
+
+### What It Tests
+- enroll-01 and endorse-01 challenge availability against a real ACME server
+  (no TPM involved)
+- `dns-01` and `http-01` live under `test/integration/challenges/{dns01,http01}`
+  as their own multi-service E2E stacks (`docker-compose.dns01.yml` /
+  `docker-compose.http01.yml`) and are not part of this target
+
+### Running
+
+```bash
+make integration-test-challenges
+```
+
+Part of the `make integration-test` aggregate.
+
+### Manual Execution
+
+```bash
+cd test/integration/challenges
+docker compose up -d acme-server
+docker compose run --rm test
+docker compose down -v
+```
+
+
+## ACME + TPM Integration Tests
+
+### What It Tests
+- The device-attest-01, enroll-01 and permanent-identifier ACME end-to-end
+  flows: the test runner dials swtpm directly (acting as the TPM-backed
+  device) and a real ACME server (xkmsd with its embedded ACME listener) over
+  the network for the account/order/challenge/finalize protocol exchange
+
+### Running
+
+```bash
+make integration-test-acme-tpm
+```
+
+**Not** part of the `make integration-test` aggregate: `device-attest-01` has
+no registered server-side challenge verifier yet (go-xkms#737, pending an
+owner ruling on go-xkms#828), so a subset of this suite fails against current
+`main` for a known, tracked reason rather than a regression. Run it on its
+own; `Makefile`'s `integration-test-acme-tpm` target explains where to add it
+back once #737 lands.
+
+### Manual Execution
+
+```bash
+cd test/integration/acme-tpm
+docker compose up -d --build tpm-simulator acme-server
+docker compose run --build --rm test
+docker compose down -v
+```
+
+### SWTPM Configuration
+Same swtpm image and socket contract as the TPM2 suite above.
 
 
 ## AWS KMS Integration Tests

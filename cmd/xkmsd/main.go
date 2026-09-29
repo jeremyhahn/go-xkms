@@ -39,8 +39,12 @@ var (
 	date    = "unknown"
 )
 
-// subcommands maps subcommand names to their handler functions.
-var subcommands = map[string]func([]string){
+// subcommands maps subcommand names to their handler functions. A handler
+// reports its exit code as a return value rather than calling os.Exit
+// directly, so it can be called from a test in this binary without
+// terminating it; only main (via runProcess) turns the returned code into a
+// process exit.
+var subcommands = map[string]func([]string) int{
 	"init": runInit,
 }
 
@@ -93,8 +97,7 @@ func run() int {
 	// Check for subcommands before parsing global flags.
 	if len(os.Args) > 1 {
 		if handler, ok := subcommands[os.Args[1]]; ok {
-			handler(os.Args[2:])
-			return 0
+			return handler(os.Args[2:])
 		}
 	}
 
@@ -233,6 +236,21 @@ func run() int {
 		}
 	}()
 
+	return serve(shutdownCtx, srv, cfg, logger)
+}
+
+// serve starts srv (and its optional ACME companion) and blocks until
+// shutdownCtx is done, then drains both gracefully. It is the part of run()
+// the go-xkms#1141 split names explicitly: "from srv.Start() through the
+// shutdown calls". srv is already fully constructed (server.New, including
+// the admin ServiceModule registered via WithExtraModules, and any UI
+// assets) by the time serve is called; serve owns none of run()'s
+// process-wide setup (signal wiring, PID file, config reload) and performs
+// no teardown of its own beyond srv's and its ACME companion's -- so it is
+// safe for a test to call directly with a shutdownCtx it controls (for
+// example context.WithCancel, canceled once the test has observed the
+// server is up) instead of a real SIGTERM/SIGINT delivered to the process.
+func serve(shutdownCtx context.Context, srv *server.Server, cfg *config.Config, logger *slog.Logger) int {
 	// Start the server
 	if err := srv.Start(); err != nil {
 		logger.Error("Failed to start server", slog.Any("error", err))

@@ -83,7 +83,21 @@ func openDeviceTPM(name string, spec *DeviceSpec, logger *slog.Logger) (client.T
 		Logger:    logger,
 	}
 	if simulator {
+		// The simulator re-mints a throwaway IAK certificate on every open
+		// (provisionSimulatorIAKCertificate below), so nothing is ever read
+		// back from a previous process -- an in-memory store is sufficient
+		// and, being development and testing tooling only, deliberately
+		// never touches disk.
 		params.CertStore = store.NewMemoryCertStore(logger)
+	} else {
+		// Real hardware is never auto-provisioned (see this function's own
+		// doc comment), so its IAK certificate is the one enroll-01 issues,
+		// installed once and read back by a later, possibly separate,
+		// process running device-attest-01. It must persist across process
+		// restarts, so it is stored in the same on-disk location as the
+		// device's TPM key blobs (factory.Backend()) rather than a new,
+		// separately configured store (go-xkms#1100).
+		params.CertStore = store.NewFileCertStore(logger, factory.Backend())
 	}
 	tpm, err := xkmssdk.NewTPM2(params)
 	if err != nil {

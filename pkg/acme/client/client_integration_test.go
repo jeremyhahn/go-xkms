@@ -584,6 +584,10 @@ type integrationTPM struct {
 	// attested is the certificate key CreateAttestedKey answered with, kept
 	// so a test can compare it with the key the CSR names.
 	attested *AttestedKey
+
+	// provisionedIAKCert records the certificate EnrollDevice installed via
+	// ProvisionIAKCert (go-xkms#1100).
+	provisionedIAKCert *x509.Certificate
 }
 
 func newIntegrationTPM(t *testing.T) *integrationTPM {
@@ -660,6 +664,11 @@ func (m *integrationTPM) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
+func (m *integrationTPM) ProvisionIAKCert(cert *x509.Certificate) error {
+	m.provisionedIAKCert = cert
+	return nil
+}
+
 func (m *integrationTPM) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	attested, err := newTestAttestedKey(keyAuth)
 	if err != nil {
@@ -713,6 +722,10 @@ func TestClient_EnrollDevice_FullFlow(t *testing.T) {
 		assert.NotNil(t, result)
 		assert.NotNil(t, result.IAKCertificate)
 		assert.NotNil(t, result.IDevIDCertificate)
+		// go-xkms#1100: the issued IAK certificate must be installed via
+		// ProvisionIAKCert so a later device-attest-01 can read it back.
+		require.NotNil(t, tpm.provisionedIAKCert)
+		assert.True(t, result.IAKCertificate.Equal(tpm.provisionedIAKCert))
 	}
 
 	// Verify requests were made to the mock server

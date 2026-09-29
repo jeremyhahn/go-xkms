@@ -17,6 +17,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -207,4 +208,47 @@ func TestTrustedUIDs_IncludesSelfAndRoot(t *testing.T) {
 	uids := trustedUIDs()
 	assert.Contains(t, uids, os.Geteuid())
 	assert.Contains(t, uids, 0)
+}
+
+// noSysFileInfo is an fs.FileInfo whose Sys() does not return a
+// *syscall.Stat_t, standing in for a platform or filesystem where the owning
+// uid cannot be recovered from stat information.
+type noSysFileInfo struct{ fakeDir }
+
+func (noSysFileInfo) Sys() any { return nil }
+
+func TestCheckOwner_RefusesWhenOwnerIsUnavailable(t *testing.T) {
+	info := noSysFileInfo{fakeDir{name: "/x", mode: 0o700}}
+
+	err := checkOwner("/x", info, trustedUIDs(), ErrSocketNotOwned)
+
+	require.ErrorIs(t, err, ErrSocketNotOwned)
+	assert.ErrorContains(t, err, "file owner is unavailable")
+}
+
+func TestEnsureSocketDir_PropagatesParentCreationFailure(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Fatal("unit tests must not run as root")
+	}
+	blocked := filepath.Join(t.TempDir(), "blocked")
+	require.NoError(t, os.Mkdir(blocked, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o700) })
+
+	dir := filepath.Join(blocked, "a", "b")
+	err := ensureSocketDir(dir, trustedUIDs())
+
+	require.ErrorIs(t, err, ErrSocketCreateFailed)
+	_, statErr := os.Lstat(filepath.Join(blocked, "a"))
+	assert.True(t, os.IsNotExist(statErr), "a parent creation failure must not leave a partial component behind")
+}
+
+func TestReclaimSocket_LstatFailureOtherThanNotExistIsReported(t *testing.T) {
+	// A path component longer than NAME_MAX fails Lstat with ENAMETOOLONG,
+	// a real stat error distinct from "socket not present yet".
+	sockPath := filepath.Join(privateDir(t), strings.Repeat("a", 300))
+
+	err := reclaimSocket(sockPath, trustedUIDs())
+
+	require.ErrorIs(t, err, ErrSocketNotOwned)
+	assert.NotErrorIs(t, err, ErrSocketDirInsecure)
 }

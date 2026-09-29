@@ -105,6 +105,10 @@ func (m *coveragePushTPMModule) ProvisionEKCert(certDER []byte) error {
 	return m.provisionEKError
 }
 
+func (m *coveragePushTPMModule) ProvisionIAKCert(cert *x509.Certificate) error {
+	return nil
+}
+
 func (m *coveragePushTPMModule) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	if m.attestErr != nil {
 		return nil, m.attestErr

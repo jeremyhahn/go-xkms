@@ -1,6 +1,6 @@
 # Storage Engines — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `storage-engines` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `storage-engines` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## Exported surface
 
@@ -81,6 +81,47 @@ case; setting `storage.backend: objstore` in `xkmsd.yaml` passes
 `Config.Validate` (which does not enumerate backend names — see
 Configuration below) and then fails at server construction with
 `*ErrUnsupportedStorageBackend{Backend: "objstore"}`.
+
+### `pkg/storage/file` — the file engine's validation and permission wrapper
+
+```go
+func New(rootDir string) (storage.Backend, error)
+```
+
+(`pkg/storage/file/storage.go`.) Wraps `OpenEngine(EngineConfig{Kind: EngineFile})`
+with storage-key validation (blocks path traversal and null bytes) and
+prefix-based file permissions (`keys/*` = 0600, `certs/*` = 0644, default
+0600). It is the constructor the PKCS#11 module's `StorageTypeFile` opens
+directly (`pkg/pkcs11/module/module.go:initializeStorage`), rather than going
+through `storage.NewFile` (which builds the embedded qrdb stack instead — see
+`pkg/storage/qrdb` below).
+
+**Every write this type performs — `Put`, `Delete`, `PutIfAbsent`,
+`CompareAndSwap`, `CompareAndDelete` — holds an advisory `flock` on a
+`.lock` file in the store root for the whole call** (`pkg/storage/file/lock.go`,
+#1157). `OpenEngine`'s `engineBackend` (`pkg/storage/engine.go`) already
+guards every write with its own `writeMu`, but that guard is genuine only
+within one process: it is a Go `sync.Mutex`, invisible to a second process
+holding a second `*os.File` over the same directory. Two processes sharing
+one file-token directory — the scenario the PKCS#11 module's PIN attempt
+counter (#1144) runs under when several module instances open the same
+token — could interleave a guarded read-compare-write before this fix and
+both report success, silently undercounting the shared value. The lock
+covers the unconditional `Put`/`Delete` too, for the same reason `writeMu`
+does (see its doc in `engine.go`): a plain `Put` from another process
+landing inside a guarded operation's read-compare-write would defeat the
+guard exactly as an unguarded write would in-process.
+
+A fresh file description is opened and `flock`'d for every call rather than
+one held for the store's lifetime, because `flock(2)` locks are scoped to the
+open file description: two descriptions opened by the *same* process contend
+for the lock exactly like two different processes would. That single
+mechanism is what serializes this process's own concurrent goroutines calling
+`FileStorage` methods, as well as every other process, without a second
+in-process mutex to keep paired with it. Plain reads (`Get`, `Exists`, `List`,
+`Scan`) are not locked, matching `engineBackend`'s own read path — this closes
+the write/write race the guarded verbs exist for, not general
+read/write linearizability.
 
 ### `pkg/storage/qrdb` — the `"qrdb"` backend's wrapper
 
@@ -226,7 +267,13 @@ another's; a changed backend starts a new, empty store.
 
 - **Unit** — `pkg/storage/engine_test.go`, `engine_objstore_test.go`,
   `engine_compareanddelete_faults_test.go`; `pkg/server/storage_factory_qrdb_test.go`;
-  `pkg/config/storage_default_test.go`.
+  `pkg/config/storage_default_test.go`; `pkg/storage/file/crosslock_test.go`
+  (`TestFileStorage_CompareAndSwap_ConcurrentAccumulates` for the
+  single-process case, `TestFileStorage_CompareAndSwap_CrossProcessAccumulates`
+  re-execing worker processes for the cross-process guarantee, #1157);
+  `pkg/pkcs11/module/storage_crossprocess_test.go`
+  (`TestModuleStorage_FailedAttemptCounter_CrossProcessAccumulates`, the same
+  property against the PIN attempt counter itself).
 - **Integration** (`test/integration/storage/`) — `file_storage_integration_test.go`,
   `memory_storage_integration_test.go`, and the hardware-adapter suites
   (`hardware_storage_integration_{pkcs11,tpm2}_test.go` and their `_hw_` and

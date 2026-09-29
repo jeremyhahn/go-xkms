@@ -151,7 +151,7 @@ func TestPut_ChmodFailure(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	store := &FileStorage{backend: engine, rootDir: chmodDir}
+	store := &FileStorage{backend: engine, rootDir: chmodDir, lockPath: filepath.Join(chmodDir, lockFileName)}
 
 	// certs/ is the prefix whose permissions Put widens, so the chmod runs.
 	if err := store.Put(ctx, "certs/widened.pem", []byte("data")); err == nil {
