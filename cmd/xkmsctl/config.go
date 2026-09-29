@@ -15,6 +15,7 @@ package main
 
 import (
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -106,6 +107,20 @@ type Config struct {
 	// ClientFactory allows injecting a custom client factory for testing.
 	// If nil, the default client creation logic is used.
 	ClientFactory ClientFactory
+
+	// HIDEnumerator discovers the FIDO2 authenticators the WebAuthn
+	// commands drive. If nil, the platform HID enumerator is used.
+	HIDEnumerator fido2.HIDDeviceEnumerator
+}
+
+// HIDDeviceEnumerator returns the enumerator the FIDO2 commands discover
+// authenticators with: HIDEnumerator when set, otherwise the platform HID
+// enumerator (fido2.NewDefaultEnumerator).
+func (c *Config) HIDDeviceEnumerator() fido2.HIDDeviceEnumerator {
+	if c.HIDEnumerator != nil {
+		return c.HIDEnumerator
+	}
+	return fido2.NewDefaultEnumerator()
 }
 
 // NewConfig creates a new Config with default values. The transport

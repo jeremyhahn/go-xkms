@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -127,4 +128,35 @@ func TestInitTPM2Backend_SharedTPM_InvalidKeyStorageConfig(t *testing.T) {
 	require.True(t, errors.As(err, &cfgErr), "error must unwrap to *ErrConfigRequired, got %v", err)
 	assert.Equal(t, "storage.path", cfgErr.Field)
 	assert.Equal(t, "tpm2", cfgErr.Backend)
+}
+
+// TestInitializePolicyManager_TPMIsThePCRReader verifies that xkmsd with a
+// TPM2 backend serves PCR policies: the policy manager is built over the
+// backend's TPM, wired into the XKMSService, and a policy captured from the
+// TPM verifies against it.
+func TestInitializePolicyManager_TPMIsThePCRReader(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	cfg.Backends.TPM2 = &config.TPM2Config{Enabled: true, UseSimulator: true}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer func() { _ = server.Shutdown() }()
+
+	require.NotNil(t, server.PolicyManager(), "a configured TPM must turn PCR policies on")
+
+	ctx := context.Background()
+	created, err := server.XKMSService().PolicyCreate(ctx, &transport.PolicyCreateRequest{
+		Name: "boot-state",
+		Bank: "sha256",
+		PCRs: []int{0, 16},
+	})
+	require.NoError(t, err, "the XKMSService must serve policies from the TPM")
+	assert.Equal(t, "boot-state", created.Name)
+
+	verified, err := server.XKMSService().PolicyVerify(ctx, &transport.PolicyVerifyRequest{Name: "boot-state"})
+	require.NoError(t, err)
+	assert.True(t, verified.Valid, "a policy captured from the TPM must verify against the unchanged PCRs")
 }

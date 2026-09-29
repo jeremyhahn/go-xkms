@@ -25,10 +25,11 @@ import (
 // getTCGCA returns the CA as a TCGCA provider. Returns ErrNotConfigured if
 // no CA is wired, or ErrNotSupported if the CA does not support TCG operations.
 func (s *XKMSService) getTCGCA() (provider.TCGCA, error) {
-	if s.ca == nil {
+	ca := s.ca.load()
+	if ca == nil {
 		return nil, ErrNotConfigured
 	}
-	tcg, ok := s.ca.(provider.TCGCA)
+	tcg, ok := ca.(provider.TCGCA)
 	if !ok {
 		return nil, ErrNotSupported
 	}

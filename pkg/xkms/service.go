@@ -72,7 +72,7 @@ type XKMSService struct {
 	// Optional subsystems — when set via Set* methods, XKMSService implements
 	// the full transport.XKMSServicer interface. Each field starts nil (returning
 	// ErrNotConfigured) until wired by the server or application.
-	barrier *seal.Barrier
+	barrier subsystem[*seal.Barrier]
 
 	// encMigrator enables at-rest encryption on a previously-unencrypted
 	// barrier by migrating it to a keyed strategy in place. It is the embedded
@@ -97,8 +97,8 @@ type XKMSService struct {
 	// barrier-registry operations.
 	tenantService qrdbsdk.ServiceTenantServicer
 
-	pinManager    qrdbsdk.PINBackend
-	passwordStore *staticpw.BackendStore
+	pinManager    subsystem[qrdbsdk.PINBackend]
+	passwordStore subsystem[*staticpw.BackendStore]
 
 	// pkcs11StateStore persists a remote-mode PKCS#11 module's durable token and
 	// object state (token metadata, PIN hashes, lockout counters, object
@@ -111,11 +111,11 @@ type XKMSService struct {
 	// ever see xkms users; qrdb is an internal implementation detail.
 	users           qrdbtransport.UserClient
 	roles           qrdbtransport.RoleClient
-	platformStore   seal.PlatformStore
-	policyManager   *policy.Manager
+	platformStore   subsystem[seal.PlatformStore]
+	policyManager   subsystem[*policy.Manager]
 	webauthnService *webauthn.Service
-	custodians      qrdbtransport.CustodianGroupClient
-	shares          qrdbtransport.ShareClient
+	custodians      subsystem[qrdbtransport.CustodianGroupClient]
+	shares          subsystem[qrdbtransport.ShareClient]
 	userAuthFactors qrdbtransport.UserAuthFactorClient
 
 	// tokenIssuer mints and revokes the browser/desktop session token
@@ -133,7 +133,7 @@ type XKMSService struct {
 	// QueryAudit serves the audit viewer. Emission goes through pkg/audit's
 	// Logger seam instead, so an API caller can never write to the chain.
 	audit             qrdbtransport.AuditClient
-	credentialService *credentialspkg.Service
+	credentialService subsystem[*credentialspkg.Service]
 
 	// authorizer is the process's single qrdb-backed Authorizer, the same one
 	// every transport gates on. The service consults it only where a decision
@@ -165,7 +165,7 @@ type XKMSService struct {
 
 	// passwordStoreManager manages per-tenant password stores with
 	// session lock state and TenantBarrier-backed encryption.
-	passwordStoreManager *staticpw.TenantPasswordStoreManager
+	passwordStoreManager subsystem[*staticpw.TenantPasswordStoreManager]
 
 	// ceremonyService is stored as any to break the import cycle:
 	// xkms -> init -> ca -> xkms. The concrete type is *initialize.CeremonyService.
@@ -176,7 +176,7 @@ type XKMSService struct {
 	// from pkg/ca/provider to break the import cycle (pkg/ca imports pkg/xkms).
 	// The concrete type is *ca.CA which implements provider.CA (and optionally
 	// provider.TCGCA for TCG operations).
-	ca provider.CA
+	ca subsystem[provider.CA]
 
 	// attestationVerifiers holds the hardware-attestation verifiers keyed by
 	// normalized attestation format ("tpm2", "yubikey-piv", ...). Each verifier
@@ -287,17 +287,17 @@ func (s *XKMSService) SPIFFETrustDomain() string {
 }
 
 // SetBarrier sets the barrier subsystem for seal/unseal operations.
-func (s *XKMSService) SetBarrier(b *seal.Barrier) { s.barrier = b }
+func (s *XKMSService) SetBarrier(b *seal.Barrier) { s.barrier.store(b) }
 
 // SetEncryptionMigrator sets the encryption-migration subsystem used by
 // BarrierEnableEncryption. It is the embedded go-qrdb node.
 func (s *XKMSService) SetEncryptionMigrator(m EncryptionMigrator) { s.encMigrator = m }
 
 // SetPINManager sets the PIN backend subsystem.
-func (s *XKMSService) SetPINManager(p qrdbsdk.PINBackend) { s.pinManager = p }
+func (s *XKMSService) SetPINManager(p qrdbsdk.PINBackend) { s.pinManager.store(p) }
 
 // SetPasswordStore sets the static password management subsystem.
-func (s *XKMSService) SetPasswordStore(p *staticpw.BackendStore) { s.passwordStore = p }
+func (s *XKMSService) SetPasswordStore(p *staticpw.BackendStore) { s.passwordStore.store(p) }
 
 // SetPKCS11StateStore wires the remote-mode PKCS#11 state persistence store.
 func (s *XKMSService) SetPKCS11StateStore(p *pkcs11state.Store) { s.pkcs11StateStore = p }
@@ -315,10 +315,10 @@ func (s *XKMSService) SetUserClients(users qrdbtransport.UserClient, roles qrdbt
 func (s *XKMSService) SetTokenIssuer(issuer *token.Issuer) { s.tokenIssuer = issuer }
 
 // SetPlatformStore sets the sealed platform credential store subsystem.
-func (s *XKMSService) SetPlatformStore(p seal.PlatformStore) { s.platformStore = p }
+func (s *XKMSService) SetPlatformStore(p seal.PlatformStore) { s.platformStore.store(p) }
 
 // SetPolicyManager sets the PCR policy management subsystem.
-func (s *XKMSService) SetPolicyManager(p *policy.Manager) { s.policyManager = p }
+func (s *XKMSService) SetPolicyManager(p *policy.Manager) { s.policyManager.store(p) }
 
 // SetEscrowRegistry wires the external key-escrow agent registry
 // (pkg/escrow) into the service.
@@ -342,14 +342,14 @@ func (s *XKMSService) SetInviteConfig(cfg InviteConfig) { s.inviteConfig = cfg }
 // into the service. xkms presents its own custodian API on top of it; qrdb is
 // an internal implementation detail.
 func (s *XKMSService) SetCustodianClient(c qrdbtransport.CustodianGroupClient) {
-	s.custodians = c
+	s.custodians.store(c)
 }
 
 // SetShareClient wires the embedded qrdb node's share client into the service.
 // xkms presents its own Shamir share API on top of it; qrdb is an internal
 // implementation detail.
 func (s *XKMSService) SetShareClient(c qrdbtransport.ShareClient) {
-	s.shares = c
+	s.shares.store(c)
 }
 
 // SetUserAuthFactorClient wires the embedded qrdb node's user-side auth-factor
@@ -411,12 +411,12 @@ func (s *XKMSService) TenantService() qrdbsdk.ServiceTenantServicer { return s.t
 
 // SetPasswordStoreManager sets the per-tenant password store manager.
 func (s *XKMSService) SetPasswordStoreManager(m *staticpw.TenantPasswordStoreManager) {
-	s.passwordStoreManager = m
+	s.passwordStoreManager.store(m)
 }
 
 // SetCredentialService sets the credential management subsystem.
 func (s *XKMSService) SetCredentialService(svc *credentialspkg.Service) {
-	s.credentialService = svc
+	s.credentialService.store(svc)
 }
 
 // SetCeremonyService sets the init ceremony subsystem. The value is stored as
@@ -435,12 +435,12 @@ func (s *XKMSService) CeremonyService() any {
 // SetCA sets the Certificate Authority provider. The concrete type is *ca.CA
 // which implements provider.CA (and optionally provider.TCGCA for TCG ops).
 func (s *XKMSService) SetCA(ca provider.CA) {
-	s.ca = ca
+	s.ca.store(ca)
 }
 
 // CA returns the Certificate Authority provider, or nil if not configured.
 func (s *XKMSService) CA() provider.CA {
-	return s.ca
+	return s.ca.load()
 }
 
 // LookupBackend returns the raw Backend instance for the given name.

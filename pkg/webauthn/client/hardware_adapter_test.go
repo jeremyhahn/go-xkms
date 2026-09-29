@@ -16,6 +16,7 @@ package client
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/fido2"
@@ -210,21 +211,27 @@ func TestNewHardwareAdapter_UsesSuppliedConfig(t *testing.T) {
 	}
 }
 
-// TestNewHardwareAdapter_NilEnumeratorUsesPlatformDefault proves a nil
-// enumerator falls back to fido2.NewDefaultEnumerator() rather than leaving
-// the adapter with no way to discover a device. This host carries no FIDO2
-// authenticator, so discovery must fail closed with ErrAuthenticatorNotFound
-// exactly as the fakeEnumerator-driven "no authenticator" case does — the
-// point of the test is that the platform enumerator was actually reached
-// (a read-only /sys/class/hidraw walk), not that it finds anything.
-func TestNewHardwareAdapter_NilEnumeratorUsesPlatformDefault(t *testing.T) {
-	adapter, err := NewHardwareAdapter(nil, nil)
-	if adapter != nil {
-		defer func() { _ = adapter.Close() }()
-		t.Fatal("NewHardwareAdapter(nil, nil) should not find a device on a host with no authenticator attached")
+// TestHIDEnumerator_NilUsesPlatformDefault proves a nil enumerator falls
+// back to fido2.NewDefaultEnumerator() rather than leaving the adapter with
+// no way to discover a device. Only the enumerator's type is compared:
+// enumerating would read the HID devices attached to the host running the
+// test, and the outcome would then depend on that host's hardware.
+func TestHIDEnumerator_NilUsesPlatformDefault(t *testing.T) {
+	got, want := hidEnumerator(nil), fido2.NewDefaultEnumerator()
+	if got == nil {
+		t.Fatal("hidEnumerator(nil) returned nil")
 	}
-	if !errors.Is(err, ErrAuthenticatorNotFound) {
-		t.Errorf("error = %v, want %v", err, ErrAuthenticatorNotFound)
+	if reflect.TypeOf(got) != reflect.TypeOf(want) {
+		t.Errorf("hidEnumerator(nil) is a %T, want the platform %T", got, want)
+	}
+}
+
+// TestHIDEnumerator_KeepsTheSuppliedEnumerator proves a supplied enumerator
+// is used as given.
+func TestHIDEnumerator_KeepsTheSuppliedEnumerator(t *testing.T) {
+	supplied := &fakeEnumerator{}
+	if got := hidEnumerator(supplied); got != supplied {
+		t.Errorf("hidEnumerator(supplied) = %#v, want the supplied enumerator", got)
 	}
 }
 

@@ -322,7 +322,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	if s.inviteStore == nil || s.users == nil {
 		return nil, ErrNotConfigured
 	}
-	if s.ca == nil {
+	if _, err := s.getCA(); err != nil {
 		return nil, ErrNotConfigured
 	}
 
@@ -406,7 +406,11 @@ func (s *XKMSService) activateInviteUser(ctx context.Context, userID uint64) err
 // no separate PIV-activation trust-anchor configuration surface: xkms owns
 // exactly one CA trust pool.
 func (s *XKMSService) caRootPool() (*x509.CertPool, error) {
-	bundle, err := s.ca.CABundle()
+	ca, err := s.getCA()
+	if err != nil {
+		return nil, ErrNotConfigured
+	}
+	bundle, err := ca.CABundle()
 	if err != nil {
 		return nil, &ErrUserOperation{Operation: "load CA bundle", Err: err}
 	}

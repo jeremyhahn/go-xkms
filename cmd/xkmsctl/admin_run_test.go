@@ -29,9 +29,22 @@ import (
 	"time"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
 )
+
+// noHIDEnumerator finds no authenticator, whatever is attached to the host,
+// so a command driven with it fails closed at discovery. Shared by
+// TestConfig_HIDDeviceEnumerator_ReturnsTheInjectedEnumerator
+// (config_test.go) and the FIDO2 admin-enrollment tests below.
+type noHIDEnumerator struct{}
+
+func (noHIDEnumerator) Enumerate(_, _ uint16) ([]fido2.HIDDevice, error) { return nil, nil }
+
+func (noHIDEnumerator) Open(string) (fido2.HIDDevice, error) {
+	return nil, errors.New("no authenticator attached")
+}
 
 // mockAdminCRUDClient implements client.Client for the adminList/Get/Delete/
 // Disable/Enable/Status command tree.
@@ -517,6 +530,7 @@ func TestEnrollFIDO2Admin_CreatesInvitedAccount(t *testing.T) {
 		ClientFactory: func(*Config) (client.Client, error) {
 			return mock, nil
 		},
+		HIDEnumerator: noHIDEnumerator{},
 	}
 	cmd := newAdminCreateCmdCopy()
 	printer := NewPrinter("text", io.Discard)

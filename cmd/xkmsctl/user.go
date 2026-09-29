@@ -407,7 +407,7 @@ Example:
 		fidoConfig.DevicePath = devicePath
 		fidoConfig.RequireUserVerification = requireUV
 		fidoConfig.UserPresenceTimeout = timeout
-		enumerator := fido2.NewDefaultEnumerator()
+		enumerator := cfg.HIDDeviceEnumerator()
 
 		adapter, err := webauthnclient.NewHardwareAdapter(&fidoConfig, enumerator)
 		if err != nil {
