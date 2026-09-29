@@ -53,24 +53,25 @@ const (
 
 // Seal service errors.
 var (
-	ErrSealTPMNotAvailable    = errors.New("seal_service: TPM not available")
-	ErrSealNotSupported       = errors.New("seal_service: sealer does not support sealing")
-	ErrSealInvalidLabel       = errors.New("seal_service: label is required")
-	ErrSealInvalidData        = errors.New("seal_service: data is required")
-	ErrSealBlobNotFound       = errors.New("seal_service: sealed blob not found")
-	ErrSealStorageFailed      = errors.New("seal_service: storage operation failed")
-	ErrSealDecodeFailed       = errors.New("seal_service: base64 decode failed")
-	ErrSealMarshalFailed      = errors.New("seal_service: JSON marshal failed")
-	ErrSealUnmarshalFailed    = errors.New("seal_service: JSON unmarshal failed")
-	ErrSealInvalidPolicyType  = errors.New("seal_service: invalid policy type")
-	ErrSealPasswordRequired   = errors.New("seal_service: password required for this blob")
-	ErrSealPolicyMismatch     = errors.New("seal_service: password does not match")
-	ErrSealPolicyNotAvailable = errors.New("seal_service: platform policy not configured")
-	ErrSealStorageDirNotSet   = errors.New("seal_service: storage directory not configured")
-	ErrSealStorageDirRelative = errors.New("seal_service: storage directory must be an absolute path")
-	ErrSealBackendNotFound    = errors.New("seal_service: requested backend not registered")
-	ErrSealPolicyRequiresTPM  = errors.New("seal_service: PCR-based policies require TPM backend")
-	ErrSealNoClient           = errors.New("seal_service: SDK client not available")
+	ErrSealTPMNotAvailable     = errors.New("seal_service: TPM not available")
+	ErrSealNotSupported        = errors.New("seal_service: sealer does not support sealing")
+	ErrSealInvalidLabel        = errors.New("seal_service: label is required")
+	ErrSealInvalidData         = errors.New("seal_service: data is required")
+	ErrSealBlobNotFound        = errors.New("seal_service: sealed blob not found")
+	ErrSealStorageFailed       = errors.New("seal_service: storage operation failed")
+	ErrSealDecodeFailed        = errors.New("seal_service: base64 decode failed")
+	ErrSealMarshalFailed       = errors.New("seal_service: JSON marshal failed")
+	ErrSealUnmarshalFailed     = errors.New("seal_service: JSON unmarshal failed")
+	ErrSealInvalidPolicyType   = errors.New("seal_service: invalid policy type")
+	ErrSealPasswordRequired    = errors.New("seal_service: password required for this blob")
+	ErrSealPolicyMismatch      = errors.New("seal_service: password does not match")
+	ErrSealPolicyNotAvailable  = errors.New("seal_service: platform policy not configured")
+	ErrSealStorageDirNotSet    = errors.New("seal_service: storage directory not configured")
+	ErrSealStorageDirRelative  = errors.New("seal_service: storage directory must be an absolute path")
+	ErrSealBackendNotFound     = errors.New("seal_service: requested backend not registered")
+	ErrSealPolicyRequiresTPM   = errors.New("seal_service: PCR-based policies require TPM backend")
+	ErrSealNoClient            = errors.New("seal_service: SDK client not available")
+	ErrSealPasswordUnavailable = errors.New("seal_service: password could not be read")
 
 	// ErrSealBlobPolicyTypeMissing indicates a sealed blob record on disk has
 	// no policy_type. Every blob written by this version sets it; a record
@@ -823,9 +824,14 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		sdkReq.PCRHashAlg = hashAlgIDToString(sel.Hash)
 	}
 
-	// Transfer password if set.
+	// Transfer password if set. An unreadable password must abort the seal
+	// rather than silently sealing without the authentication the caller
+	// requested.
 	if opts.Password != nil {
-		pwStr, _ := opts.Password.String()
+		pwStr, err := opts.Password.String()
+		if err != nil {
+			return nil, ErrSealPasswordUnavailable
+		}
 		sdkReq.Password = pwStr
 	}
 

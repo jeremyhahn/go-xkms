@@ -44,9 +44,10 @@ type mockVolumeOperator struct {
 	created    bool
 	unlocked   bool
 
-	createErr error
-	unlockErr error
-	lockErr   error
+	createErr    error
+	unlockErr    error
+	lockErr      error
+	isMountedErr error
 }
 
 func newMockVolumeOperator(mountPoint string) *mockVolumeOperator {
@@ -57,11 +58,11 @@ func newMockVolumeOperator(mountPoint string) *mockVolumeOperator {
 	}
 }
 
-func (m *mockVolumeOperator) Exists() bool          { return m.exists }
-func (m *mockVolumeOperator) IsLUKS() bool          { return m.isLUKS }
-func (m *mockVolumeOperator) IsMounted() bool       { return m.isMounted }
-func (m *mockVolumeOperator) IsOpen() bool          { return m.isOpen }
-func (m *mockVolumeOperator) GetMountPoint() string { return m.mountPoint }
+func (m *mockVolumeOperator) Exists() bool             { return m.exists }
+func (m *mockVolumeOperator) IsLUKS() bool             { return m.isLUKS }
+func (m *mockVolumeOperator) IsMounted() (bool, error) { return m.isMounted, m.isMountedErr }
+func (m *mockVolumeOperator) IsOpen() bool             { return m.isOpen }
+func (m *mockVolumeOperator) GetMountPoint() string    { return m.mountPoint }
 
 func (m *mockVolumeOperator) Create(sizeBytes int64, passphrase string) error {
 	if m.createErr != nil {
@@ -467,6 +468,25 @@ func TestAttach_NotMounted_ReturnsError(t *testing.T) {
 	}
 	if b.IsUnlocked() {
 		t.Error("backend should remain locked when nothing is mounted to attach to")
+	}
+}
+
+func TestAttach_MountCheckFails_ReturnsError(t *testing.T) {
+	mountCheckErr := errors.New("could not read /proc/self/mountinfo")
+	mock := newMockVolumeOperator(t.TempDir())
+	mock.isMountedErr = mountCheckErr
+	b := NewBackend(mock)
+
+	err := b.Attach()
+	if !errors.Is(err, mountCheckErr) {
+		t.Errorf("expected the mount check error to be wrapped, got %v", err)
+	}
+	var mountErr *VolumeMountCheckError
+	if !errors.As(err, &mountErr) {
+		t.Errorf("expected *VolumeMountCheckError, got %T", err)
+	}
+	if b.IsUnlocked() {
+		t.Error("backend must remain locked when mount state cannot be determined")
 	}
 }
 

@@ -29,6 +29,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fakeEntryLogger is a test double for entryLogger that lets tests inject
+// a Log failure to prove BackendStore and DAOAuditStore no longer discard
+// it.
+type fakeEntryLogger struct {
+	logErr error
+	logged []Entry
+}
+
+func (f *fakeEntryLogger) Log(entry Entry) error {
+	f.logged = append(f.logged, entry)
+	return f.logErr
+}
+
+func (f *fakeEntryLogger) slogHandle() *slog.Logger {
+	return slog.Default()
+}
+
 func TestNewBackendStore(t *testing.T) {
 
 	t.Run("with explicit max size", func(t *testing.T) {
@@ -1064,6 +1081,39 @@ func TestBackendStore_WithSlogLogger(t *testing.T) {
 
 		assert.Equal(t, 8, store.Count())
 	})
+}
+
+// TestBackendStore_Log_SlogFailureIsNotDiscarded proves that a failure
+// from the configured slog logger is joined into the write-failure path
+// instead of being silently dropped: for a SeveritySecurity operation
+// (the default), it must surface as *ErrAuditWriteFailed even though the
+// backend write itself succeeded.
+func TestBackendStore_Log_SlogFailureIsNotDiscarded(t *testing.T) {
+	backend := xkms.NewStorageMemory()
+	store, err := NewBackendStore(backend, 100, nil)
+	require.NoError(t, err)
+
+	slogErr := errors.New("slog handler unavailable")
+	fake := &fakeEntryLogger{logErr: slogErr}
+	store.slog = fake
+
+	logErr := store.Log(Entry{
+		Timestamp: time.Now(),
+		Operation: OpKeyCreated, // SeveritySecurity by default.
+		KeyID:     "key-1",
+		Success:   true,
+	})
+
+	require.Error(t, logErr)
+	assert.ErrorIs(t, logErr, slogErr, "the slog failure must be reachable via errors.Is, not discarded")
+
+	var writeFailed *ErrAuditWriteFailed
+	require.ErrorAs(t, logErr, &writeFailed)
+
+	// The entry must still be cached even though Log reports an error, so
+	// Query/Count stay consistent with what was audibly logged.
+	assert.Equal(t, 1, store.Count())
+	assert.Len(t, fake.logged, 1)
 }
 
 func TestBackendStore_StoreInterface(t *testing.T) {

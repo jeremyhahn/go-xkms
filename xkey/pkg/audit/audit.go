@@ -212,6 +212,16 @@ type Logger interface {
 	LogUserPresenceEvent(op OperationType, source string, success bool, details map[string]any) error
 }
 
+// entryLogger is the minimal capability BackendStore and DAOAuditStore need
+// from a configured audit logger: writing an individual entry (whose error
+// must be surfaced, not discarded, alongside the primary persistent write
+// failure) and exposing the underlying *slog.Logger for
+// handleWriteFailure's own fallback logging.
+type entryLogger interface {
+	Log(entry Entry) error
+	slogHandle() *slog.Logger
+}
+
 // SlogLogger wraps slog for audit logging.
 type SlogLogger struct {
 	logger *slog.Logger
@@ -222,6 +232,12 @@ func NewSlogLogger(logger *slog.Logger) *SlogLogger {
 	return &SlogLogger{
 		logger: logger.With("component", "audit"),
 	}
+}
+
+// slogHandle returns the underlying *slog.Logger so BackendStore and
+// DAOAuditStore can pass it to handleWriteFailure.
+func (l *SlogLogger) slogHandle() *slog.Logger {
+	return l.logger
 }
 
 // Log writes an audit entry. SlogLogger has no persistent backing store to

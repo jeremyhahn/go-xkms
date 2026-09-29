@@ -196,6 +196,29 @@ func TestPlatformPolicy_Coverage_GetStatus_WithPolicy(t *testing.T) {
 	assert.Equal(t, []int{0, 7}, status.PCRs)
 	assert.Equal(t, "sha256", status.Bank)
 	assert.True(t, status.Valid)
+	assert.Empty(t, status.Error, "a successful verification must not report a reason")
+}
+
+// TestPlatformPolicy_Coverage_GetStatus_VerifyError_ReportsReason verifies
+// that when verifyDigests fails (e.g. the TPM cannot be read), GetStatus
+// keeps the underlying reason on the status instead of silently reporting
+// Valid=false as if it were a confirmed digest mismatch.
+func TestPlatformPolicy_Coverage_GetStatus_VerifyError_ReportsReason(t *testing.T) {
+	mock := defaultPolicyMock()
+	svc := newPolicyServiceWithMock(t, mock)
+
+	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
+	require.NoError(t, err)
+
+	// Break the live PCR read so verifyDigests can no longer confirm a
+	// match or mismatch.
+	mock.pcrBanksErr = errors.New("TPM communication failure")
+
+	status, err := svc.GetStatus()
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.False(t, status.Valid)
+	assert.Equal(t, ErrPolicyVerifyFailed.Error(), status.Error, "the verification failure reason must reach the status")
 }
 
 // ---------------------------------------------------------------------------

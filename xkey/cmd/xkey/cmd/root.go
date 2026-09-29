@@ -402,7 +402,11 @@ func checkLUKSVolume() error {
 	}
 
 	// Check if already mounted
-	if vol.IsMounted() {
+	mounted, err := vol.IsMounted()
+	if err != nil {
+		return &ConfigError{Operation: "check_mounted", Path: vol.MountPoint, Err: err}
+	}
+	if mounted {
 		// Already unlocked, nothing to do
 		return nil
 	}
