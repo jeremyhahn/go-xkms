@@ -46,42 +46,6 @@ func (s *Server) tenantBackend(ctx context.Context, backendName string) (xkms.Ba
 	return s.xkmsService.LookupTenantBackend(backendName, callerTenantID(ctx))
 }
 
-// importBackend resolves the backend a wrap or unwrap runs against and
-// asserts it supports the import half of the ceremony.
-//
-// A named backend is resolved through the tenant-scoped lookup, so a caller
-// naming one gets that backend viewed through its own tenant. An unnamed one
-// falls back to the server's configured keystore, which is what these handlers
-// have always used.
-//
-// The named case exists because the MCP wrap and unwrap params gained a
-// "backend" field in go-xkms#255: the transport request had always carried one
-// and the params struct could not represent it, so every wrap and unwrap ran
-// against the process default whatever the caller asked for. Resolving it here
-// is what makes that field a control rather than a decoration.
-//
-// This asserts backend.ImportBackend, not the full ImportExportBackend union:
-// WrapKey and UnwrapKey are both half of the import ceremony, so a backend
-// that cannot export (AWS KMS, by hardware design) must still be reachable
-// for them.
-func (s *Server) importBackend(ctx context.Context, backendName string) (backend.ImportBackend, error) {
-	provider := s.keystore.KeyProvider()
-
-	if backendName != "" {
-		ks, err := s.tenantBackend(ctx, backendName)
-		if err != nil {
-			return nil, mapKeyOpError(err)
-		}
-		provider = ks.KeyProvider()
-	}
-
-	importBackend, ok := provider.(backend.ImportBackend)
-	if !ok {
-		return nil, &KeyOpError{Code: ErrCodeMethodNotFound, Err: backend.ErrImportNotSupported}
-	}
-	return importBackend, nil
-}
-
 // keyByCN returns the attributes of the key whose common name is keyID, out of
 // the keys ks lists. It is the one place a key ID is matched against a common
 // name, so the tenant scope carried by ks is the only thing that decides which
@@ -1067,15 +1031,17 @@ func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequ
 	return result, nil
 }
 
+// handleWrapKey handles wrapping key material for a subsequent import.
+//
+// WrapKey belongs to the service layer, which resolves the named backend's
+// import capability (backend.ImportBackend, never the full
+// ImportExportBackend union -- see go-xkms#1216) the same way
+// handleImportKeyMaterial does, and carries KeySpec and Metadata through both
+// directions. An empty backend selects the caller's tenant-scoped default,
+// exactly as the former direct lookup through s.keystore did.
 func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params WrapKeyParams
 	if err := decodeParams(req, &params); err != nil {
-		return nil, err
-	}
-
-	// Check if backend supports import/export
-	importBackend, err := s.importBackend(ctx, params.Backend)
-	if err != nil {
 		return nil, err
 	}
 
@@ -1085,34 +1051,29 @@ func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interf
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "invalid wrapping public key PEM"}}
 	}
 
-	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "failed to parse public key", Err: err}}
-	}
-
-	// Build import parameters
-	importParams := &backend.ImportParameters{
-		WrappingPublicKey: pubKey,
+	resp, err := s.xkmsService.WrapKey(ctx, &transport.WrapKeyRequest{
+		Backend:           params.Backend,
+		KeyMaterial:       params.KeyMaterial,
+		Algorithm:         params.Algorithm,
+		WrappingPublicKey: block.Bytes,
 		ImportToken:       params.ImportToken,
-		Algorithm:         backend.WrappingAlgorithm(params.Algorithm),
 		KeySpec:           params.KeySpec,
-	}
-
-	// Wrap the key material
-	wrapped, err := importBackend.WrapKey(ctx, params.KeyMaterial, importParams)
+		TenantID:          callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, mapImportExportError("failed to wrap key", err)
+		return nil, mapKeyOpError(err)
 	}
 
 	return WrapKeyResult{
-		WrappedKey:  wrapped.WrappedKey,
-		Algorithm:   string(wrapped.Algorithm),
-		ImportToken: wrapped.ImportToken,
-		Metadata:    wrapped.Metadata,
+		WrappedKey:  resp.WrappedKeyMaterial,
+		Algorithm:   resp.Algorithm,
+		ImportToken: resp.ImportToken,
+		Metadata:    resp.Metadata,
 	}, nil
 }
 
-// handleUnwrapKey handles unwrapping key material
+// handleUnwrapKey handles unwrapping key material. UnwrapKey belongs to the
+// service layer for the same reason handleWrapKey does; see its doc comment.
 func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params UnwrapKeyParams
 	if err := decodeParams(req, &params); err != nil {
@@ -1129,46 +1090,28 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "algorithm is required"}}
 	}
 
-	// Check if backend supports import/export
-	importBackend, err := s.importBackend(ctx, params.Backend)
-	if err != nil {
-		return nil, err
-	}
-
 	// Parse wrapping public key from PEM
 	block, _ := pem.Decode([]byte(params.WrappingPublicKey))
 	if block == nil {
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "invalid wrapping public key PEM"}}
 	}
 
-	wrappingPubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	resp, err := s.xkmsService.UnwrapKey(ctx, &transport.UnwrapKeyRequest{
+		Backend:            params.Backend,
+		WrappedKeyMaterial: params.WrappedKey,
+		Algorithm:          params.Algorithm,
+		ImportToken:        params.ImportToken,
+		WrappingPublicKey:  block.Bytes,
+		KeySpec:            params.KeySpec,
+		Metadata:           params.Metadata,
+		TenantID:           callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "failed to parse wrapping public key", Err: err}}
-	}
-
-	// Build wrapped key material
-	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey:  params.WrappedKey,
-		Algorithm:   backend.WrappingAlgorithm(params.Algorithm),
-		ImportToken: params.ImportToken,
-		Metadata:    params.Metadata,
-	}
-
-	// Build import parameters
-	importParams := &backend.ImportParameters{
-		WrappingPublicKey: wrappingPubKey,
-		Algorithm:         backend.WrappingAlgorithm(params.Algorithm),
-		ImportToken:       params.ImportToken,
-		KeySpec:           params.KeySpec,
-	}
-
-	keyMaterial, err := importBackend.UnwrapKey(ctx, wrapped, importParams)
-	if err != nil {
-		return nil, mapImportExportError("failed to unwrap key", err)
+		return nil, mapKeyOpError(err)
 	}
 
 	return UnwrapKeyResult{
-		KeyMaterial: keyMaterial,
+		KeyMaterial: resp.KeyMaterial,
 	}, nil
 }
 

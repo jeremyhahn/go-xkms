@@ -113,8 +113,8 @@ func TestGetImportParameters_RunsAgainstTheNamedBackend(t *testing.T) {
 
 	_, err = server.handleGetImportParameters(context.Background(),
 		rpc(t, "xkms.getImportParameters", GetImportParametersParams{KeyID: "routed", Backend: "second", Algorithm: "RSAES_OAEP_SHA_256"}))
-	require.Error(t, err, "the named backend has no import/export capability")
-	assert.Contains(t, err.Error(), "does not support import/export")
+	require.Error(t, err, "the named backend has no import capability")
+	assert.Contains(t, err.Error(), "does not support import operations")
 	assert.False(t, errors.Is(err, ErrInvalidBackend), "a registered backend is not an invalid one")
 }
 

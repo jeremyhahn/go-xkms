@@ -687,11 +687,19 @@ func TestImportKeySymmetricRoundTripsThroughARealBackend(t *testing.T) {
 // TestImportKeySymmetricRejectsAnUnsupportedKeySize is the bad-input half: a
 // size with no AES algorithm must be refused at the boundary rather than stored
 // under attributes the rest of the system cannot interpret.
+//
+// Zero is deliberately excluded from this table: the service layer's
+// unwrapSymmetricAlgorithms table treats a zero size as "no size given,
+// default to AES-256-GCM" -- the same default REST, MCP and the embedded
+// transport have always applied for GetImportParameters and ImportKey. This
+// RPC used to reject size 0 with its own hand-rolled switch, a drift
+// go-xkms#1216 unifies by routing ImportKey through the service layer
+// (go-xkms#1214).
 func TestImportKeySymmetricRejectsAnUnsupportedKeySize(t *testing.T) {
 	service := setupFinalGapsTest(t)
 	defer xkms.Reset()
 
-	for _, size := range []int32{0, 1, 64, 127, 255, 512} {
+	for _, size := range []int32{1, 64, 127, 255, 512} {
 		_, err := service.ImportKey(context.Background(), &pb.ImportKeyRequest{
 			KeyId:       "grpc-bad-size",
 			Backend:     "software",

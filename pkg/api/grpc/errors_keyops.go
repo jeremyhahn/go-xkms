@@ -89,6 +89,16 @@ var keyOpSentinelCodes = []struct {
 // else is an internal fault. xkmsService is threaded through to notLeaderStatus
 // so a not-leader translation can resolve the leader's dialable gRPC endpoint;
 // it may be nil.
+//
+// apierrors.ImportExportSentinelClasses is also consulted, because WrapKey,
+// UnwrapKey, GetImportParameters and ImportKey now route through the service
+// layer (go-xkms#1216) rather than calling backend.ImportBackend /
+// backend.ExportBackend directly, so a backend-layer capability or policy
+// sentinel (backend.ErrKeyNotExportable, for instance) reaches here wrapped
+// in the service's own xkms.ErrOperationWrap rather than being classified by
+// mapImportExportError first. errors.Is/apierrors.ClassOf see through that
+// wrapping either way, so the classification is unchanged by which path the
+// error took.
 func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error) error {
 	if err == nil {
 		return nil
@@ -112,6 +122,10 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 		if errors.Is(err, entry.sentinel) {
 			return status.Error(entry.code, err.Error())
 		}
+	}
+
+	if class, ok := apierrors.ClassOf(apierrors.ImportExportSentinelClasses, err); ok {
+		return status.Error(grpcCodeForClass(class), err.Error())
 	}
 
 	return status.Error(codes.Internal, err.Error())

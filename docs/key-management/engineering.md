@@ -294,60 +294,138 @@ REST's `CopyKeyHandler` (`pkg/api/rest/handlers.go`) gained the same call for
 its destination attributes, since it builds them from caller-supplied
 `key_type`/`key_size`/`curve` fields exactly as `ImportKeyHandler` does.
 
-## Import and `GetImportParameters` stay transport-level (go-xkms#1214)
+## Import/export capability resolution is split by direction (go-xkms#1216)
 
-`ImportKeyHandler`, `GetImportParametersHandler` (REST) and `ImportKey`,
-`GetImportParameters` (gRPC) were evaluated for the same service-layer
-delegation `GenerateKey` received, and deliberately were not converted: the
-service's import/export capability resolution is a stricter check than the
-one these four handlers assert, and delegating would silently narrow which
-backends each RPC can reach.
+go-xkms#1214 left `ImportKeyHandler`/`GetImportParametersHandler` (REST) and
+`ImportKey`/`GetImportParameters` (gRPC) as independent, transport-local
+implementations, because the service's own capability resolution
+(`importExportFor`) required a backend to satisfy the *union* of
+`backend.ImportBackend` and `backend.ExportBackend`
+(`backend.ImportExportBackend`) even for an operation that only needed one
+half. Routing those four handlers through the service as it stood then would
+have silently refused an AWS-KMS-shaped import-only backend. go-xkms#1216
+closes that gap at its root: the service now resolves each direction
+independently, so every transport can be a thin adapter over it without
+narrowing which backends it reaches.
 
-`pkg/xkms/backend_importexport.go`'s `importExportFor` (line 81) resolves a
-`Backend` to `ImportExporter` (line 34), which is the *union* of
-`backend.ImportBackend` and `backend.ExportBackend` — every method both
-interfaces declare — via a single type assertion against
-`backend.ImportExportBackend`. `pkg/xkms/servicer_key.go`'s `ImportKey` (line
-288) and `GetImportParameters` (line 447) both resolve their backend through
-it. A backend that implements only `backend.ImportBackend` — AWS KMS's real
-shape, which cannot export by hardware design — fails that assertion, so
-`XKMSService.ImportKey` and `XKMSService.GetImportParameters` refuse it with
-`ErrOperationNotSupported` even though the import half works.
+`pkg/xkms/backend_importexport.go` declares two capability interfaces and two
+resolvers instead of one union type and one resolver:
 
-Every transport handler in this file asserts the narrower interface each
-call actually needs instead: `ks.KeyProvider().(backend.ImportBackend)` for
-REST's `ImportKeyHandler` (`pkg/api/rest/handlers.go:1612`) and
-`GetImportParametersHandler` (`pkg/api/rest/handlers.go:1312`), and the
-equivalent `backendImpl.(backend.ImportBackend)` for gRPC's `ImportKey`
-(`pkg/api/grpc/service.go:1423`) and `GetImportParameters`
-(`pkg/api/grpc/service.go:1133`), each with a comment tracing the rule to the
-AWS KMS shape it exists for. `pkg/api/rest/importexport_capability_split_test.go`'s
-`TestImportKeyHandler_ReachableWithoutExportSupport` is the regression test:
-an `importOnlyProvider` that satisfies `backend.ImportBackend` and
-deliberately does not satisfy `backend.ExportBackend` or
-`backend.ImportExportBackend` must still succeed an import. Routing
-`ImportKeyHandler` through `XKMSService.ImportKey` as written would fail
-that test, and the embedded transport and MCP already inherit this same
-narrowing — `pkg/api/transport/embedded/transport.go`'s `ImportKey` and
-`GetImportParameters` call `t.service.ImportKey` / `.GetImportParameters`
-directly, and `pkg/api/mcp/handlers.go`'s `handleImportKeyMaterial` and
-`handleGetImportParameters` do the same — so an AWS-KMS-shaped backend is
-reachable for import over REST and gRPC today but not over embedded or MCP.
+- `keyImporter` (line 35) is `backend.ImportBackend`'s four-method surface
+  without its embedded `types.KeyProvider`; `keyExporter` (line 56) is
+  `backend.ExportBackend`'s three-method mirror. Each exists apart from its
+  `backend.*Backend` counterpart for the same reason the old `ImportExporter`
+  union did: `TenantScopedBackend` cannot satisfy `backend.ImportBackend` or
+  `backend.ExportBackend` structurally (`Backend.RotateKey` and
+  `types.KeyProvider.RotateKey` share a name with different signatures, and
+  `GenerateRSA`/`GenerateECDSA`/`GenerateEd25519` have no
+  `KeyProvider.GenerateKey` equivalent at all), so it needs a narrower
+  interface it *can* implement to offer the capability itself rather than
+  through `KeyProvider()`, which would discard the tenant scope it stamps
+  (go-xkms#163).
+- `importBackendFor` (line 100) and `exportBackendFor` (line 116) each
+  resolve one direction: a `*TenantScopedBackend` recurses on its base and
+  answers only when the base supports that direction, stamping the tenant on
+  every attribute set exactly as its other key operations do; every other
+  `Backend` resolves through `b.KeyProvider().(backend.ImportBackend)` /
+  `.(backend.ExportBackend)` directly, exactly as the old union resolver did
+  for the half it asked for.
 
-Closing this requires `importExportFor` (and the `ImportExporter` type it
-returns) to expose an import-only and an export-only resolution path
-alongside the existing union one, which `TenantScopedBackend`
-(`pkg/xkms/backend_tenant.go:248`) and `pkg/xkms/piv_keygen_backend.go:221`
-also resolve through — roughly twenty call sites across `pkg/xkms/service.go`
-and `pkg/xkms/servicer_key.go` in total (`WrapKey`, `UnwrapKey`, `ExportKey`,
-`CopyKey`, `WrapKeyByID`/`UnwrapKeyByID`'s `importKeyMaterial` helper among
-them). That is a service-layer capability-resolution change, not a transport
-adapter rewrite, so it is filed as a follow-up (see the go-xkms#1214 PR
-description) rather than folded into this one. `WrapKeyHandler` and
-`UnwrapKeyHandler` on both transports have carried their own "the service
-layer's version drops fields this ceremony needs" comment since before
-go-xkms#1214 for the same underlying reason and are left exactly as they
-were.
+Every call site that used to resolve the union now resolves only the
+direction it uses, so a backend implementing only one half is reachable for
+that half regardless of the other:
+
+- `pkg/xkms/servicer_key.go`: `ImportKey` (`importBackendFor`, line 288),
+  `ExportKey` (`exportBackendFor`, line 361), `GetImportParameters`
+  (`importBackendFor`, line 461), `ExportKeyMaterial` (`exportBackendFor`,
+  line 661), `WrapKey` (`importBackendFor`, line 740) and `UnwrapKey`
+  (`importBackendFor`, line 805) — `WrapKey`/`UnwrapKey` resolve import
+  because both are half of the import ceremony (wrapping material for
+  `ImportKey`, and reversing a wrap `WrapKey` produced), never the export
+  one. `CopyKey` resolves the source as `exportBackendFor` (for
+  `ExportKeyTo`) and the destination as `importBackendFor` (for
+  `GetImportParameters`/`ImportKey`) — two different backends, two different
+  directions. `WrapKeyByID`/`UnwrapKeyByID`'s target-backend resolution
+  (`wrapTargetKeyMaterial`'s `exportBackendFor`, `UnwrapKeyByID`'s
+  `importBackendFor`) and the shared `importKeyMaterial` helper (now typed
+  `keyImporter`, not the deleted `ImportExporter`) follow the same rule.
+- `pkg/xkms/service.go` (the package-level "embedded" API): `GetImportParameters`,
+  `WrapKey`, `UnwrapKey` and `ImportKey` resolve `importBackendFor`; `ExportKey`
+  resolves `exportBackendFor`; `CopyKey` resolves the source as
+  `exportBackendFor` and the destination as `importBackendFor`, mirroring the
+  servicer.
+- `pkg/xkms/backend_tenant.go`'s `TenantScopedBackend` now has two accessors,
+  `importer()` (line 248) and `exporter()` (line 262), instead of one
+  `importExporter()`: `GetImportParameters`/`WrapKey`/`UnwrapKey`/`ImportKey`
+  call `importer()`, `ExportKey`/`ExportKeyTo`/`ExportKeyMaterial` call
+  `exporter()`. A tenant-scoped view of an import-only base now offers the
+  import half and refuses the export half with the typed
+  `ErrImportExportNotSupported` — and the reverse for an export-only base —
+  rather than refusing both because the base cannot satisfy the union.
+- `pkg/xkms/piv_keygen_backend.go`'s `ImportPIVKey` (line 224) resolves
+  `importBackendFor` — PIV key installation never exports, so it only ever
+  needed the import half, and the pre-fix union check blocked it on a
+  backend that could never have had an export half to offer.
+
+The `ImportExporter` union type is deleted: nothing in the codebase needs
+both halves through one value, since every real ceremony (`CopyKey` included)
+resolves each backend it touches for exactly one direction.
+
+REST, gRPC and MCP were converted to thin adapters over the service for the
+ceremony's request-building and capability-resolution logic, the same
+conversion `GenerateKey` received in go-xkms#1214:
+
+- REST's `GetImportParametersHandler` (`pkg/api/rest/handlers.go:1269`),
+  `WrapKeyHandler` (`:1352`), `UnwrapKeyHandler` (`:1428`) and
+  `ImportKeyHandler` (`:1502`) now call `h.xkmsService.{GetImportParameters,
+  WrapKey, UnwrapKey, ImportKey}` directly, after the same per-transport
+  400-class validation (required fields, backend-name format, key-ID format)
+  every other converted handler keeps ahead of the service call. The old
+  `resolveImportBackend` helper and the local `types.KeyAttributes`-building
+  switch are gone.
+- gRPC's `GetImportParameters` (`pkg/api/grpc/service.go:1105`), `WrapKey`
+  (`:1180`), `UnwrapKey` (`:1246`) and `ImportKey` (`:1304`) do the same,
+  after an explicit backend-existence probe
+  (`s.lookupBackend`/`status.Errorf(codes.NotFound, ...)`) that preserves the
+  RPC's existing "NotFound before any ceremony-specific validation" contract
+  for a name that does not resolve. The old `importBackend` helper and the
+  hand-rolled key-type switches (which had drifted from the service's own:
+  gRPC's `ImportKey` used to refuse `key_size: 0` for a symmetric import,
+  while the service's `unwrapSymmetricAlgorithms` table has always defaulted
+  it to AES-256-GCM, matching REST, MCP and embedded) are gone.
+- MCP's `handleGetImportParameters` and `handleImportKeyMaterial` already
+  called the service before this change; `handleWrapKey` and `handleUnwrapKey`
+  now do too, in place of the deleted `importBackend` helper.
+
+Converting `WrapKey`/`UnwrapKey` was conditional on the service's request
+types actually carrying every field those two ceremonies need — the
+"service drops fields" comment that justified leaving them transport-local
+was checked against the current code rather than assumed: `transport.WrapKeyRequest`/
+`WrapKeyResponse` and `UnwrapKeyRequest`/`UnwrapKeyResponse`
+(`pkg/api/transport/types.go`) already carry `KeySpec`, `Metadata`,
+`ImportToken` and `WrappingPublicKey` on both sides, so the comment was
+stale by the time this issue was filed and no transport request field had to
+be added to convert them. Wire shapes are unchanged: every REST/gRPC/MCP
+request and response field name, type and encoding is exactly what it was
+before this conversion, including MCP's PEM-vs-DER encoding of the wrapping
+key and REST's `wrapped_key`/`wrapping_public_key_pem` naming (see
+[api.md](api.md)).
+
+A backend-layer capability or policy sentinel (`backend.ErrKeyNotExportable`,
+`backend.ErrImportNotSupported`, `backend.ErrExportNotSupported`,
+`backend.ErrAsymmetricKeyExportNotAllowed`) can now reach a transport's error
+mapper wrapped in the service's own `xkms.ErrOperationWrap`, rather than only
+ever arriving as a bare error from a direct backend call. Each transport's
+`mapKeyOpError` was extended to classify it either way:
+`pkg/api/grpc/errors_keyops.go` and `pkg/api/mcp/errors_keyops.go` consult
+`apierrors.ImportExportSentinelClasses` as a fallback tier (the same table
+`mapImportExportError` already used for `ExportKey`/`CopyKey`, which still
+call backend methods directly); REST's `pkg/api/rest/errors_keyops.go` adds
+the same four sentinels to its own `keyOpSentinelStatus` table, matching
+`mapErrorToStatusCode`'s existing classification for the handlers that still
+call the backend directly. `errors.Is`/`apierrors.ClassOf` see through
+`ErrOperationWrap`'s wrapping either way, so the classification — and the
+wire status code — is unchanged by which path a given error took.
 
 ## Error semantics
 

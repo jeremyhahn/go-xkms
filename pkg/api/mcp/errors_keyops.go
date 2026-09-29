@@ -16,6 +16,7 @@ package mcp
 import (
 	"errors"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -72,7 +73,17 @@ var keyOpSentinelCodes = []struct {
 // key becomes Not found (sdkssh.JSONRPCCodeNotFound, matching gRPC's
 // codes.NotFound for all three); a backend that lacks the requested hardware
 // capability becomes Method not found, MCP's signal for "not implemented by
-// this backend". Anything else is an internal fault.
+// this backend".
+//
+// apierrors.ImportExportSentinelClasses is also consulted, because WrapKey,
+// UnwrapKey, GetImportParameters and ImportKey now route through the service
+// layer (go-xkms#1216) rather than calling backend.ImportBackend /
+// backend.ExportBackend directly, so a backend-layer capability or policy
+// sentinel (backend.ErrKeyNotExportable, for instance) reaches here wrapped
+// in the service's own xkms.ErrOperationWrap rather than being classified by
+// mapImportExportError first. errors.Is/apierrors.ClassOf see through that
+// wrapping either way, so the classification is unchanged by which path the
+// error took. Anything not covered by either table is an internal fault.
 func mapKeyOpError(err error) error {
 	if err == nil {
 		return nil
@@ -109,6 +120,10 @@ func mapKeyOpError(err error) error {
 		if errors.Is(err, entry.sentinel) {
 			return &KeyOpError{Code: entry.code, Err: err}
 		}
+	}
+
+	if class, ok := apierrors.ClassOf(apierrors.ImportExportSentinelClasses, err); ok {
+		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: err}
 	}
 
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}

@@ -242,28 +242,42 @@ func (t *TenantScopedBackend) CanSeal() bool {
 // identifier, could silently collide with an untenanted key of the same name,
 // and was invisible to the importing tenant's own ListKeys (go-xkms#163).
 
-// importExporter returns the base backend's import/export capability, or the
-// typed refusal when the base's key provider does not implement
-// backend.ImportExportBackend.
-func (t *TenantScopedBackend) importExporter() (ImportExporter, error) {
-	importExport, ok := importExportFor(t.base)
+// importer returns the base backend's import capability, or the typed
+// refusal when the base's key provider does not implement
+// backend.ImportBackend.
+func (t *TenantScopedBackend) importer() (keyImporter, error) {
+	importer, ok := importBackendFor(t.base)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
-			Detail:   "tenant-scoped base backend does not support import/export operations",
+			Detail:   "tenant-scoped base backend does not support import operations",
 		}
 	}
-	return importExport, nil
+	return importer, nil
+}
+
+// exporter returns the base backend's export capability, or the typed
+// refusal when the base's key provider does not implement
+// backend.ExportBackend.
+func (t *TenantScopedBackend) exporter() (keyExporter, error) {
+	exporter, ok := exportBackendFor(t.base)
+	if !ok {
+		return nil, &ErrBackendUnsupported{
+			Sentinel: ErrImportExportNotSupported,
+			Detail:   "tenant-scoped base backend does not support export operations",
+		}
+	}
+	return exporter, nil
 }
 
 // GetImportParameters retrieves import parameters for a key scoped to this
 // tenant.
 func (t *TenantScopedBackend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
-	importExport, err := t.importExporter()
+	importer, err := t.importer()
 	if err != nil {
 		return nil, err
 	}
-	return importExport.GetImportParameters(ctx, t.scopeAttrs(attrs), algorithm)
+	return importer.GetImportParameters(ctx, t.scopeAttrs(attrs), algorithm)
 }
 
 // WrapKey wraps key material for secure transport. The material carries no
@@ -271,61 +285,61 @@ func (t *TenantScopedBackend) GetImportParameters(ctx context.Context, attrs *ty
 // the capability so a scoped backend answers it the same way an unscoped one
 // does.
 func (t *TenantScopedBackend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
-	importExport, err := t.importExporter()
+	importer, err := t.importer()
 	if err != nil {
 		return nil, err
 	}
-	return importExport.WrapKey(ctx, keyMaterial, params)
+	return importer.WrapKey(ctx, keyMaterial, params)
 }
 
 // UnwrapKey unwraps key material previously wrapped with WrapKey. As with
 // WrapKey there are no key attributes to scope.
 func (t *TenantScopedBackend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
-	importExport, err := t.importExporter()
+	importer, err := t.importer()
 	if err != nil {
 		return nil, err
 	}
-	return importExport.UnwrapKey(ctx, wrapped, params)
+	return importer.UnwrapKey(ctx, wrapped, params)
 }
 
 // ImportKey imports externally generated key material scoped to this tenant.
 // The stamped TenantID reaches the stored identifier and the key's metadata
 // record, so the import is visible to — and only to — the tenant that made it.
 func (t *TenantScopedBackend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
-	importExport, err := t.importExporter()
+	importer, err := t.importer()
 	if err != nil {
 		return err
 	}
-	return importExport.ImportKey(ctx, t.scopeAttrs(attrs), wrapped)
+	return importer.ImportKey(ctx, t.scopeAttrs(attrs), wrapped)
 }
 
 // ExportKey exports a key in wrapped form, scoped to this tenant.
 func (t *TenantScopedBackend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
-	importExport, err := t.importExporter()
+	exporter, err := t.exporter()
 	if err != nil {
 		return nil, err
 	}
-	return importExport.ExportKey(ctx, t.scopeAttrs(attrs), algorithm)
+	return exporter.ExportKey(ctx, t.scopeAttrs(attrs), algorithm)
 }
 
 // ExportKeyTo exports a key wrapped for a destination's own import
 // parameters, scoped to this tenant.
 func (t *TenantScopedBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
-	importExport, err := t.importExporter()
+	exporter, err := t.exporter()
 	if err != nil {
 		return nil, err
 	}
-	return importExport.ExportKeyTo(ctx, t.scopeAttrs(attrs), dstParams)
+	return exporter.ExportKeyTo(ctx, t.scopeAttrs(attrs), dstParams)
 }
 
 // ExportKeyMaterial returns raw key material for an extractable symmetric key
 // scoped to this tenant.
 func (t *TenantScopedBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
-	importExport, err := t.importExporter()
+	exporter, err := t.exporter()
 	if err != nil {
 		return nil, err
 	}
-	return importExport.ExportKeyMaterial(ctx, t.scopeAttrs(attrs))
+	return exporter.ExportKeyMaterial(ctx, t.scopeAttrs(attrs))
 }
 
 // ========================================================================

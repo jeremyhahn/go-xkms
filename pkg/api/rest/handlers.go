@@ -18,11 +18,11 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -1258,6 +1258,14 @@ func (h *HandlerContext) GetTLSCertificateHandler(w http.ResponseWriter, r *http
 }
 
 // GetImportParametersHandler handles POST /api/v1/keys/import-params requests.
+//
+// The ceremony belongs to the service layer, which owns backend resolution
+// (tenant-scoped, per-direction capability assertion), the key-template
+// vocabulary and the RSA floor (go-xkms#1204). This handler used to assert
+// backend.ImportBackend and build its own key attributes, reachable only
+// through the untenanted backend map -- reimplementing what
+// XKMSService.GetImportParameters already does, and bypassing tenant scoping
+// in the process (go-xkms#1216).
 func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *http.Request) {
 	var req GetImportParametersRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1271,7 +1279,9 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Validate backend name
+	// Validate backend name. This stays here, ahead of the service call, for
+	// the same reason GenerateKeyHandler keeps it: a malformed name must fail
+	// closed as 400 rather than fall through to mapKeyOpError's 500 catch-all.
 	if err := validation.ValidateBackendName(req.Backend); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
@@ -1297,120 +1307,48 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Get the backend
-	ks, err := h.lookupBackend(req.Backend)
+	resp, err := h.xkmsService.GetImportParameters(r.Context(), &transport.GetImportParametersRequest{
+		Backend:   req.Backend,
+		KeyID:     req.KeyID,
+		Algorithm: req.Algorithm,
+		KeyType:   req.KeyType,
+		KeySize:   req.KeySize,
+		Curve:     req.Curve,
+		TenantID:  callerTenantID(r.Context()),
+	})
 	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+		mapKeyOpError(w, err)
 		return
 	}
 
-	// Check if the backend supports the import half of the ceremony. This
-	// asserts backend.ImportBackend, not the full ImportExportBackend union: a
-	// backend that cannot export (AWS KMS, by hardware design) must still be
-	// reachable here, since GetImportParameters is unrelated to whether the
-	// same backend can later export a key.
-	importBackend, ok := ks.KeyProvider().(backend.ImportBackend)
-	if !ok {
-		writeError(w, backend.ErrImportNotSupported, http.StatusNotImplemented)
-		return
-	}
+	// The service returns the wrapping public key as DER (transport is
+	// backend-agnostic); this transport's wire response carries PEM, as it
+	// always has.
+	wrappingKeyPEM := pem.EncodeToMemory(&pem.Block{Type: encoding.PEMTypePublicKey, Bytes: resp.WrappingPublicKey})
 
-	// Build key attributes
-	attrs, hashErr := buildKeyAttributes(req.KeyID, req.KeyType, req.KeySize, req.Curve, req.Hash, req.AESKeySize)
-	if hashErr != nil {
-		mapKeyOpError(w, hashErr)
-		return
-	}
-
-	// The service layer's buildKeyAttributes runs this same check
-	// (pkg/xkms/servicer_key.go's validateKeyAttributes) as the last step
-	// before generation or import, enforcing the 2048-bit RSA floor
-	// (go-xkms#1204) among other invariants. This ceremony negotiates the
-	// parameters for a key of the same shape ImportKeyHandler will later be
-	// asked to store, so it must refuse an undersized request just as early
-	// rather than hand back working import parameters for a key the import
-	// step will refuse anyway (go-xkms#1214).
-	if err := attrs.Validate(); err != nil {
-		writeError(w, &errs.Wrapped{Msg: "invalid key attributes", Err: err}, http.StatusBadRequest)
-		return
-	}
-
-	// Parse wrapping algorithm
-	wrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
-
-	// Get import parameters
-	params, err := importBackend.GetImportParameters(r.Context(), attrs, wrappingAlg)
-	if err != nil {
-		log.Printf("Failed to get import parameters: %v", err)
-		handleError(w, err)
-		return
-	}
-
-	// Encode wrapping public key to PEM
-	wrappingKeyPEM, err := encoding.EncodePublicKeyPEM(params.WrappingPublicKey)
-	if err != nil {
-		log.Printf("Failed to encode wrapping public key: %v", err)
-		writeError(w, ErrInternalError, http.StatusInternalServerError)
-		return
-	}
-
-	// Build response
-	resp := GetImportParametersResponse{
+	out := GetImportParametersResponse{
 		WrappingPublicKeyPEM: string(wrappingKeyPEM),
-		Algorithm:            string(params.Algorithm),
-		KeySpec:              params.KeySpec,
+		Algorithm:            resp.Algorithm,
+		KeySpec:              resp.KeySpec,
+		ExpiresAt:            resp.ExpiresAt,
 	}
 
 	// Add import token if present
-	if params.ImportToken != nil {
-		resp.ImportToken = json.RawMessage(params.ImportToken)
+	if resp.ImportToken != nil {
+		out.ImportToken = json.RawMessage(resp.ImportToken)
 	}
 
-	// Add expiration time if set
-	if !params.ExpiresAt.IsZero() {
-		resp.ExpiresAt = params.ExpiresAt.Format(time.RFC3339)
-	}
-
-	writeJSON(w, resp, http.StatusOK)
-}
-
-// resolveImportBackend resolves the named backend and asserts that it
-// implements backend.ImportBackend. It writes the mapped error response and
-// reports false when resolution fails, so callers only need to return.
-//
-// The backend is always named explicitly by the caller and is never inferred:
-// wrapping is backend specific (AWS KMS, GCP KMS and PKCS#11 each define their
-// own wrapping semantics and import tokens), so material wrapped by one
-// backend cannot be unwrapped or imported by another.
-//
-// This asserts backend.ImportBackend, not the full ImportExportBackend union.
-// WrapKey and UnwrapKey are both half of the import ceremony -- wrapping
-// material to hand to ImportKey, and unwrapping material previously produced
-// by WrapKey -- so a backend that cannot export (AWS KMS, by hardware design)
-// must still be reachable through this resolver.
-func (h *HandlerContext) resolveImportBackend(w http.ResponseWriter, name string) (backend.ImportBackend, bool) {
-	if err := validation.ValidateBackendName(name); err != nil {
-		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
-		return nil, false
-	}
-
-	ks, err := h.lookupBackend(name)
-	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
-		return nil, false
-	}
-
-	importBackend, ok := ks.KeyProvider().(backend.ImportBackend)
-	if !ok {
-		writeError(w, backend.ErrImportNotSupported, http.StatusNotImplemented)
-		return nil, false
-	}
-	return importBackend, true
+	writeJSON(w, out, http.StatusOK)
 }
 
 // WrapKeyHandler handles POST /api/v1/keys/wrap requests. The request must
 // name the backend whose wrapping semantics are used; an empty backend is
 // rejected with 400 rather than silently resolved, matching ImportKeyHandler.
+//
+// WrapKey belongs to the service layer, which resolves the named backend's
+// import capability (backend.ImportBackend, never the full union -- see
+// go-xkms#1216) the same way ImportKey does, and carries KeySpec and Metadata
+// through both directions.
 func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) {
 	var req WrapKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1436,6 +1374,15 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Validate backend name ahead of the service call, matching
+	// GetImportParametersHandler and ImportKeyHandler: a malformed name fails
+	// closed as 400 rather than falling through to mapKeyOpError's 500
+	// catch-all.
+	if err := validation.ValidateBackendName(req.Backend); err != nil {
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
+		return
+	}
+
 	// Decode wrapping public key from PEM
 	wrappingKey, err := encoding.DecodePublicKeyPEM([]byte(req.WrappingPublicKeyPEM))
 	if err != nil {
@@ -1443,43 +1390,41 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, &errs.Wrapped{Msg: "invalid wrapping public key", Err: err}, http.StatusBadRequest)
 		return
 	}
+	wrappingKeyDER, err := encoding.EncodePublicKeyPKIX(wrappingKey)
+	if err != nil {
+		writeError(w, &errs.Wrapped{Msg: "invalid wrapping public key", Err: err}, http.StatusBadRequest)
+		return
+	}
 
-	// Build import parameters
-	params := &backend.ImportParameters{
-		WrappingPublicKey: wrappingKey,
-		Algorithm:         backend.WrappingAlgorithm(req.Algorithm),
+	resp, err := h.xkmsService.WrapKey(r.Context(), &transport.WrapKeyRequest{
+		Backend:           req.Backend,
+		KeyMaterial:       req.KeyMaterial,
+		Algorithm:         req.Algorithm,
+		WrappingPublicKey: wrappingKeyDER,
 		ImportToken:       req.ImportToken,
 		KeySpec:           req.KeySpec,
-	}
-
-	// Wrap the key material with the caller-named backend.
-	importBackend, ok := h.resolveImportBackend(w, req.Backend)
-	if !ok {
-		return
-	}
-
-	wrapped, err := importBackend.WrapKey(r.Context(), req.KeyMaterial, params)
+		TenantID:          callerTenantID(r.Context()),
+	})
 	if err != nil {
-		log.Printf("Failed to wrap key: %v", err)
-		handleError(w, err)
+		mapKeyOpError(w, err)
 		return
 	}
 
-	// Build response
-	resp := WrapKeyResponse{
-		WrappedKey:  wrapped.WrappedKey,
-		Algorithm:   string(wrapped.Algorithm),
-		ImportToken: wrapped.ImportToken,
-		Metadata:    wrapped.Metadata,
-	}
-
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(w, WrapKeyResponse{
+		WrappedKey:  resp.WrappedKeyMaterial,
+		Algorithm:   resp.Algorithm,
+		ImportToken: resp.ImportToken,
+		Metadata:    resp.Metadata,
+	}, http.StatusOK)
 }
 
 // UnwrapKeyHandler handles POST /api/v1/keys/unwrap requests. The request must
 // name the backend that performs the unwrap -- it has to be the same backend
 // that produced the wrapped material -- so an empty backend is rejected with
 // 400 rather than silently resolved, matching ImportKeyHandler.
+//
+// UnwrapKey belongs to the service layer for the same reason WrapKeyHandler
+// does; see its doc comment.
 func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request) {
 	var req UnwrapKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1505,6 +1450,12 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Validate backend name ahead of the service call; see WrapKeyHandler.
+	if err := validation.ValidateBackendName(req.Backend); err != nil {
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
+		return
+	}
+
 	// Decode wrapping public key from PEM
 	wrappingKey, err := encoding.DecodePublicKeyPEM([]byte(req.WrappingPublicKeyPEM))
 	if err != nil {
@@ -1512,45 +1463,42 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, &errs.Wrapped{Msg: "invalid wrapping public key", Err: err}, http.StatusBadRequest)
 		return
 	}
-
-	// Build wrapped key material
-	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey:  req.WrappedKey,
-		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
-		ImportToken: req.ImportToken,
-		Metadata:    req.Metadata,
-	}
-
-	// Build import parameters
-	params := &backend.ImportParameters{
-		WrappingPublicKey: wrappingKey,
-		Algorithm:         backend.WrappingAlgorithm(req.Algorithm),
-		ImportToken:       req.ImportToken,
-		KeySpec:           req.KeySpec,
-	}
-
-	// Unwrap the key material with the caller-named backend.
-	importBackend, ok := h.resolveImportBackend(w, req.Backend)
-	if !ok {
-		return
-	}
-
-	keyMaterial, err := importBackend.UnwrapKey(r.Context(), wrapped, params)
+	wrappingKeyDER, err := encoding.EncodePublicKeyPKIX(wrappingKey)
 	if err != nil {
-		log.Printf("Failed to unwrap key: %v", err)
-		handleError(w, err)
+		writeError(w, &errs.Wrapped{Msg: "invalid wrapping public key", Err: err}, http.StatusBadRequest)
 		return
 	}
 
-	// Build response
-	resp := UnwrapKeyResponse{
-		KeyMaterial: json.RawMessage(keyMaterial),
+	resp, err := h.xkmsService.UnwrapKey(r.Context(), &transport.UnwrapKeyRequest{
+		Backend:            req.Backend,
+		WrappedKeyMaterial: req.WrappedKey,
+		Algorithm:          req.Algorithm,
+		ImportToken:        req.ImportToken,
+		WrappingPublicKey:  wrappingKeyDER,
+		KeySpec:            req.KeySpec,
+		Metadata:           req.Metadata,
+		TenantID:           callerTenantID(r.Context()),
+	})
+	if err != nil {
+		mapKeyOpError(w, err)
+		return
 	}
 
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(w, UnwrapKeyResponse{
+		KeyMaterial: json.RawMessage(resp.KeyMaterial),
+	}, http.StatusOK)
 }
 
 // ImportKeyHandler handles POST /api/v1/keys/import requests.
+//
+// Import belongs to the service layer, which owns backend resolution
+// (tenant-scoped, per-direction capability assertion -- backend.ImportBackend,
+// never the full ImportExportBackend union, so a backend that genuinely
+// cannot export, AWS KMS by hardware design, is never blocked from importing
+// because of that unrelated limitation), the key-template vocabulary, the RSA
+// floor (go-xkms#1204) and the exportability write-once default. This handler
+// used to reimplement all of that reachable only through the untenanted
+// backend map (go-xkms#1216).
 func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request) {
 	var req ImportKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1594,90 +1542,34 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get the backend
-	ks, err := h.lookupBackend(req.Backend)
+	resp, err := h.xkmsService.ImportKey(r.Context(), &transport.ImportKeyRequest{
+		Backend:            req.Backend,
+		KeyID:              req.KeyID,
+		KeyType:            req.KeyType,
+		KeySize:            req.KeySize,
+		Curve:              req.Curve,
+		Hash:               req.Hash,
+		AESKeySize:         req.AESKeySize,
+		WrappedKeyMaterial: req.WrappedKey,
+		Algorithm:          req.Algorithm,
+		ImportToken:        req.ImportToken,
+		Partition:          req.Partition,
+		Metadata:           req.Metadata,
+		Exportable:         req.Exportable,
+		Sensitive:          req.Sensitive,
+		TenantID:           callerTenantID(r.Context()),
+	})
 	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+		mapKeyOpError(w, err)
 		return
 	}
 
-	// Check if the backend supports the import half of the ceremony. Asserts
-	// backend.ImportBackend, not the full ImportExportBackend union: a
-	// backend that genuinely cannot export (AWS KMS, by hardware design)
-	// must not be blocked from importing because of that unrelated
-	// limitation. Before this assertion was split, a missing export method
-	// on any backend failed this check and every import through this
-	// handler returned "backend does not support import/export operations"
-	// regardless of whether import itself worked.
-	importBackend, ok := ks.KeyProvider().(backend.ImportBackend)
-	if !ok {
-		writeError(w, backend.ErrImportNotSupported, http.StatusNotImplemented)
-		return
-	}
-
-	// Build key attributes
-	attrs, hashErr := buildKeyAttributes(req.KeyID, req.KeyType, req.KeySize, req.Curve, req.Hash, req.AESKeySize)
-	if hashErr != nil {
-		mapKeyOpError(w, hashErr)
-		return
-	}
-
-	// Build wrapped key material
-	// The request decides whether the key may leave again; the write-once
-	// defaults apply only when it says nothing. This path never set the
-	// flag, so every symmetric key imported over REST was stored
-	// non-exportable while the same import over gRPC or MCP was exportable.
-	xkms.ApplyImportExportability(attrs, req.Exportable, req.Sensitive)
-	attrs.Partition = types.Partition(req.Partition)
-
-	// The service layer's buildKeyAttributes runs this same check
-	// (pkg/xkms/servicer_key.go's validateKeyAttributes) as the last step
-	// before generation or import, enforcing the 2048-bit RSA floor
-	// (go-xkms#1204) among other invariants. This path used to call
-	// importBackend.ImportKey directly from attributes that had never been
-	// through it, so an RSA-1024 import reached the backend unchecked while
-	// the same request to GenerateKey was refused (go-xkms#1214).
-	if err := attrs.Validate(); err != nil {
-		writeError(w, &errs.Wrapped{Msg: "invalid key attributes", Err: err}, http.StatusBadRequest)
-		return
-	}
-
-	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey:  req.WrappedKey,
-		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
-		ImportToken: req.ImportToken,
-		Metadata:    req.Metadata,
-	}
-
-	// Import the key
-	if err := importBackend.ImportKey(r.Context(), attrs, wrapped); err != nil {
-		log.Printf("Failed to import key: %v", err)
-		handleError(w, err)
-		return
-	}
-
-	// Build response
-	resp := ImportKeyResponse{
-		Success: true,
-		KeyID:   req.KeyID,
-		Message: fmt.Sprintf("Key %s imported successfully", req.KeyID),
-	}
-
-	// Try to get public key for asymmetric keys
-	if req.KeyType != "symmetric" {
-		privKey, err := ks.GetKey(r.Context(), attrs)
-		if err == nil {
-			pubKey := getPublicKey(privKey)
-			if pubKey != nil {
-				pubKeyPEM, err := encoding.EncodePublicKeyPEM(pubKey)
-				if err == nil {
-					resp.PublicKeyPEM = string(pubKeyPEM)
-				}
-			}
-		}
-	}
-
-	writeJSON(w, resp, http.StatusCreated)
+	writeJSON(w, ImportKeyResponse{
+		Success:      resp.Success,
+		KeyID:        resp.KeyID,
+		Message:      fmt.Sprintf("Key %s imported successfully", resp.KeyID),
+		PublicKeyPEM: resp.PublicKeyPEM,
+	}, http.StatusCreated)
 }
 
 // ExportKeyHandler handles POST /api/v1/keys/{id}/export requests.

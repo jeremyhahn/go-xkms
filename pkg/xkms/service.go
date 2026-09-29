@@ -1853,15 +1853,16 @@ func GetImportParameters(ctx context.Context, backendName string, attrs *types.K
 		return nil, err
 	}
 
-	importExportBackend, ok := importExportFor(b)
+	importer, ok := importBackendFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
 			Backend:  backendName,
+			Detail:   "does not support import operations",
 		}
 	}
 
-	return importExportBackend.GetImportParameters(ctx, attrs, algorithm)
+	return importer.GetImportParameters(ctx, attrs, algorithm)
 }
 
 // WrapKey wraps key material for secure transport using the specified parameters.
@@ -1875,15 +1876,16 @@ func WrapKey(ctx context.Context, backendName string, keyMaterial []byte, params
 		return nil, err
 	}
 
-	importExportBackend, ok := importExportFor(b)
+	importer, ok := importBackendFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
 			Backend:  backendName,
+			Detail:   "does not support import operations",
 		}
 	}
 
-	return importExportBackend.WrapKey(ctx, keyMaterial, params)
+	return importer.WrapKey(ctx, keyMaterial, params)
 }
 
 // UnwrapKey unwraps key material that was previously wrapped.
@@ -1897,15 +1899,16 @@ func UnwrapKey(ctx context.Context, backendName string, wrapped *backend.Wrapped
 		return nil, err
 	}
 
-	importExportBackend, ok := importExportFor(b)
+	importer, ok := importBackendFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
 			Backend:  backendName,
+			Detail:   "does not support import operations",
 		}
 	}
 
-	return importExportBackend.UnwrapKey(ctx, wrapped, params)
+	return importer.UnwrapKey(ctx, wrapped, params)
 }
 
 // ImportKey imports externally generated key material into a backend.
@@ -1925,15 +1928,16 @@ func ImportKey(ctx context.Context, backendName string, attrs *types.KeyAttribut
 		return err
 	}
 
-	importExportBackend, ok := importExportFor(b)
+	importer, ok := importBackendFor(b)
 	if !ok {
 		return &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
 			Backend:  backendName,
+			Detail:   "does not support import operations",
 		}
 	}
 
-	return importExportBackend.ImportKey(ctx, attrs, wrapped)
+	return importer.ImportKey(ctx, attrs, wrapped)
 }
 
 // ExportKey exports a key in wrapped form for secure transport.
@@ -1948,9 +1952,12 @@ func ExportKey(ctx context.Context, kid string, algorithm backend.WrappingAlgori
 		return nil, err
 	}
 
-	importExportBackend, ok := importExportFor(b)
+	exporter, ok := exportBackendFor(b)
 	if !ok {
-		return nil, &ErrBackendUnsupported{Sentinel: ErrImportExportNotSupported}
+		return nil, &ErrBackendUnsupported{
+			Sentinel: ErrImportExportNotSupported,
+			Detail:   "does not support export operations",
+		}
 	}
 
 	// attrs is reconstructed purely from the kid string, so its Exportable is
@@ -1962,7 +1969,7 @@ func ExportKey(ctx context.Context, kid string, algorithm backend.WrappingAlgori
 		return nil, err
 	}
 
-	return importExportBackend.ExportKey(ctx, storedAttrs, algorithm)
+	return exporter.ExportKey(ctx, storedAttrs, algorithm)
 }
 
 // ========================================================================
@@ -2003,7 +2010,7 @@ func CopyKey(ctx context.Context, sourceKID string, destBackend string, destAttr
 		return &ErrCopyKeyBackend{Role: "destination", Err: err}
 	}
 
-	sourceImportExport, ok := importExportFor(sourceB)
+	sourceExporter, ok := exportBackendFor(sourceB)
 	if !ok {
 		return &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
@@ -2011,7 +2018,7 @@ func CopyKey(ctx context.Context, sourceKID string, destBackend string, destAttr
 		}
 	}
 
-	destImportExport, ok := importExportFor(destB)
+	destImporter, ok := importBackendFor(destB)
 	if !ok {
 		return &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
@@ -2024,7 +2031,7 @@ func CopyKey(ctx context.Context, sourceKID string, destBackend string, destAttr
 	}
 
 	algorithm := backend.WrappingAlgorithmRSAES_OAEP_SHA_256
-	importParams, err := destImportExport.GetImportParameters(ctx, destAttrs, algorithm)
+	importParams, err := destImporter.GetImportParameters(ctx, destAttrs, algorithm)
 	if err != nil {
 		return &ErrImportExportOperation{Operation: "get import parameters", Err: err}
 	}
@@ -2037,12 +2044,12 @@ func CopyKey(ctx context.Context, sourceKID string, destBackend string, destAttr
 	// token named the destination's key, but the ciphertext was still
 	// encrypted under the source's self-minted one, so the destination's
 	// unwrap failed for every backend that honours its tokens (go-xkms#154).
-	wrappedKey, err := sourceImportExport.ExportKeyTo(ctx, sourceAttrs, importParams)
+	wrappedKey, err := sourceExporter.ExportKeyTo(ctx, sourceAttrs, importParams)
 	if err != nil {
 		return &ErrImportExportOperation{Operation: "export key", Err: err}
 	}
 
-	return destImportExport.ImportKey(ctx, destAttrs, wrappedKey)
+	return destImporter.ImportKey(ctx, destAttrs, wrappedKey)
 }
 
 // ========================================================================
