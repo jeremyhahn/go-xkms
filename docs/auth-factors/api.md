@@ -1,6 +1,6 @@
 # Auth Factors — API
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -24,6 +24,18 @@ What *is* on the wire is (a) the hardware operations each factor wraps, and
 | Register into an existing registry | `registry.Register(f)` for each of `DefaultFactors(cfg)` | the registry type is **go-qrdb's** |
 
 SDK access is `Security().Auth().FIDO2()` and `Security().Auth().PIV()`.
+
+### PIV factor signature verification
+
+The `piv` factor's `Verify` (`pkg/factor/piv/factor.go`) accepts every
+algorithm its `Enroll` can produce — `rsa2048`, `rsa4096`, `ecdsap256`,
+`ecdsap384`, `ed25519` — dispatching by the enrolled key's type:
+
+| Algorithm | Signature format |
+|---|---|
+| ECDSA (P-256, P-384) | ASN.1 DER `(r, s)` over SHA-256(nonce) |
+| RSA (2048 bits or larger) | PKCS#1 v1.5 over SHA-256(nonce); moduli under 2048 bits are refused |
+| Ed25519 | raw signature over the raw nonce — Ed25519 hashes its own input and does not accept a pre-hashed digest for standard (non-Ed25519ph) signing |
 
 ## The authentication surface that consumes them
 
