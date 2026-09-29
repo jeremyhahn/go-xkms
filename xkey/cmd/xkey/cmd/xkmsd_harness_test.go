@@ -144,7 +144,9 @@ func startTestXKMSd(t *testing.T) (address string, cleanup func()) {
 
 	svc := newTestXKMSService(t)
 
-	socketPath := filepath.Join(t.TempDir(), "xkmsd.sock")
+	// The unix gRPC server refuses a group- or world-writable socket
+	// directory (#1299), so the socket lives in a private directory.
+	socketPath := filepath.Join(privateTempDir(t), "xkmsd.sock")
 	srv, err := unixapi.NewGRPCServer(&unixapi.GRPCConfig{
 		SocketPath:  socketPath,
 		XKMSService: svc,

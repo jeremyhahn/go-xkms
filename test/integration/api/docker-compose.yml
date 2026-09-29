@@ -161,6 +161,9 @@ services:
       # Test configuration
       - INTEGRATION_TIMEOUT=60s
       - GO_TEST_FLAGS=-v -tags=integration,frost
+      # The xkmsctl frost share verbs encrypt their wrapping key under this
+      # passphrase (go-xkms#1324); the CLI subprocesses inherit it.
+      - XKMS_FROST_PASSPHRASE=frost-integration-passphrase
     working_dir: /workspace
     networks:
       - xkms-integration

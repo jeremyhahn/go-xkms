@@ -1,6 +1,6 @@
 # FROST Threshold Signing — Architecture
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1231)
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1337)
 
 ## The problem
 
@@ -52,15 +52,39 @@ client.NewFrostBackend(...)               XKMSService.Frost* (pkg/xkms/servicer_
 ### The CLI path is local-only, every subcommand
 
 `xkmsctl frost keygen|import|list|info|delete|round1|round2|aggregate|verify`
-all call `createFrostBackend` (`cmd/xkmsctl/frost.go:1146`), which builds a
-`frost.Config` from two directories under `--key-dir` —
-`<key-dir>/frost/public` (group public key, verification shares, metadata)
-and `<key-dir>/frost/secrets` (this operator's secret share, via a
-`pkcs8`-backed file secret store) — and opens a fresh `frost.FrostBackend`
-in the `xkmsctl` process itself. None of these subcommands call the SDK's
-network transports; `--server`/`--transport` has no effect on
-`xkmsctl frost`. The CLI names keys by bare key ID, so every key it writes is
-an untenanted (platform) key — see "Tenancy" below.
+all open a fresh `frost.FrostBackend` in the `xkmsctl` process itself, over
+two owner-only (`0700`) directories under `--key-dir`:
+
+- `<key-dir>/frost/public` — group public key, verification shares,
+  metadata, and each key's secret share **sealed** (AES-256-GCM under a key
+  HKDF-derived from the wrapping key).
+- `<key-dir>/frost/secrets` — the Ed25519 wrapping key and the ECDSA P-256
+  recipient key that dealer packages are encrypted to, both stored as
+  encrypted PKCS#8 under the operator's FROST passphrase by a PKCS#8 backend
+  that refuses plaintext keys (`newFrostWrapKeyProvider`,
+  `cmd/xkmsctl/frost.go:1412`).
+
+The share verbs (`keygen` in participant mode, `import`, `round1`, `round2`)
+go through `openFrostLocalStore` (`frost.go:1363`), which resolves the
+passphrase and decrypts the wrapping key with it. The public verbs go through
+`openFrostPublicBackend` (`frost.go:1333`), which never provisions or
+decrypts the wrapping key, so any unseal through it fails closed. The
+passphrase is what protects the shares at rest: the sealed envelopes and the
+wrapping key sit on the same disk, and before go-xkms#1324 the wrapping key
+was plaintext PKCS#8 beside them.
+
+xkmsctl builds no local TPM 2.0 or PKCS#11 key backend (`--backend` only
+names a backend for the service API and `--pkcs11-module` configures mTLS
+client authentication), so the passphrase-encrypted software key is the
+only wrapping key the CLI can hold; any other `--backend` is refused. A
+hardware-held wrapping key is available through `xkmsd`'s
+`backends.frost.secret_backend` (see
+[`engineering.md`](engineering.md) §"Provisioning").
+
+None of these subcommands call the SDK's network transports;
+`--server`/`--transport` has no effect on `xkmsctl frost`. The CLI names keys
+by bare key ID, so every key it writes is an untenanted (platform) key — see
+"Tenancy" below.
 
 ### The network API path goes through the service layer
 
@@ -166,6 +190,31 @@ must write and wire in themselves — see
 worked notes on the `KeyGenerator` interface (not re-verified for this
 folder; treat it as design notes, not a shipped API).
 
+The dealer's packages leave `xkmsctl` encrypted, never as a plaintext share
+(go-xkms#1337). Each participant first creates a recipient key with
+`frost recipient` and gives the dealer its public half; dealer-mode `keygen`
+encrypts each package to its participant's key as a JWE (`ECDH-ES+A256KW`,
+`A256GCM`), and `import` decrypts it with the key held in the participant's
+passphrase-protected store. The encryption reuses the SDK's JWE helper
+rather than a new envelope format.
+
+Recipient keys were chosen over per-participant passphrases:
+
+- **Only the participant can decrypt.** The private key never leaves the
+  participant's `--key-dir`. With a passphrase, the dealer chooses the
+  secret and has to deliver it to the participant alongside the package.
+- **No second secret.** `import` already needs the FROST passphrase to open
+  the store, and that passphrase also unlocks the recipient key. A per-package
+  passphrase would be a second secret competing for the same stdin, file and
+  environment sources.
+- **An existing, FIPS-approved helper.** `pkg/encoding/jwe` was already
+  re-exported by the SDK. A passphrase envelope would have needed a new
+  KDF-plus-AEAD format. An X25519 box, age-style, uses a curve FIPS 140-3
+  does not approve.
+
+What it costs: one extra step (`frost recipient`) before the dealer runs,
+and the operator must confirm each public key's `recipient_id` out of band.
+
 ## Two signing modes
 
 1. **Orchestrated** (`FrostBackend.Signer`) — returns a `crypto.Signer`.
@@ -191,11 +240,15 @@ for — it is only reachable by constructing `frost.Config` directly.
 
 ## Sessions
 
-An explicit-round signing session is created by `SignRound`'s first call for
-a given `(keyID, message)` pair and expires after
-`DefaultSessionTimeout = 5 * time.Minute` (`pkg/keyprovider/frost/rounds.go:44`).
-An expired session surfaces as `ErrSessionExpired`; an unknown one as
-`ErrSessionNotFound`.
+`FrostBackend` keeps no server-side signing session between rounds
+(go-xkms#1261). `GenerateNonces` returns a `NoncePackage` -- the participant's
+secret Round-1 nonces plus its public commitments -- directly to the caller,
+who holds it and passes it back to `SignRound` for Round 2; the caller is
+responsible for completing the round promptly and zeroizing the nonces once
+used (`docs/frost/security.md`). `EnableNonceTracking` (default `true`) still
+rejects reuse of any commitment across signing attempts regardless of who
+holds the nonces, which is what actually prevents the catastrophic case this
+section used to describe as session expiry.
 
 ## Rejected alternative: reusing the Shamir share-custody plane
 

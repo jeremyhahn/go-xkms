@@ -100,8 +100,11 @@
       } catch (e: unknown) {
         const status = (e as { status?: number }).status;
         if (status === 403) {
+          // One refusal for "no such account while sign-up is off" and
+          // "account already has a passkey" — the server does not say which
+          // (go-xkms#1294, go-xkms#1296).
           errorMessage =
-            'Self-service registration is not enabled on this server. Ask your admin for an invite.';
+            'Registration is not available for this address. If you already have a passkey, sign in and add another from your account; otherwise ask your admin.';
         } else if (status === 400 || status === 409) {
           errorMessage =
             (e as { message?: string }).message ??

@@ -14,6 +14,7 @@
 package webauthn
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -422,14 +423,19 @@ func (s *MemoryCredentialStore) GetByCredentialID(ctx context.Context, credID []
 	return cred, nil
 }
 
-// Update updates an existing credential.
+// Update updates an existing credential. The credential must exist and
+// belong to the user the update names (ErrCredentialOwnerMismatch).
 func (s *MemoryCredentialStore) Update(ctx context.Context, cred *Credential) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	credKey := hex.EncodeToString(cred.ID)
-	if _, ok := s.byID[credKey]; !ok {
+	existing, ok := s.byID[credKey]
+	if !ok {
 		return ErrCredentialNotFound
+	}
+	if !bytes.Equal(existing.UserID, cred.UserID) {
+		return ErrCredentialOwnerMismatch
 	}
 
 	s.byID[credKey] = cred

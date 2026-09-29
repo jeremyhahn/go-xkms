@@ -3575,6 +3575,7 @@ func TestCreateCompositeAuth_JWTMethod(t *testing.T) {
 			JWT: &config.JWTConfig{
 				PublicKeyFile: keyFile,
 				Issuer:        "test-issuer",
+				Audience:      []string{"test-audience"},
 			},
 			Composite: &config.CompositeAuthConfig{
 				Methods: []string{"jwt"},
@@ -3813,6 +3814,8 @@ func TestInitializeAuthentication_CompositeType(t *testing.T) {
 			Type:    "composite",
 			JWT: &config.JWTConfig{
 				PublicKeyFile: keyFile,
+				Issuer:        "test-issuer",
+				Audience:      []string{"test-audience"},
 			},
 			Composite: &config.CompositeAuthConfig{
 				Methods: []string{"jwt"},

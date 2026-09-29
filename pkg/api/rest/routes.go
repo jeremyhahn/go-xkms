@@ -48,8 +48,9 @@ const (
 	// exchange endpoints are unauthenticated (they ARE the
 	// authentication), the introspection endpoints require a session.
 	GroupAuthSession
-	// GroupWebAuthn routes sit behind the login rate limiter and are
-	// unauthenticated: WebAuthn is the auth mechanism.
+	// GroupWebAuthn routes sit behind the login rate limiter. The
+	// ceremonies are unauthenticated (WebAuthn is the auth mechanism);
+	// adding a passkey to an existing account requires a session.
 	GroupWebAuthn
 	// GroupUsers routes carry authentication only (no tenant middleware):
 	// the user plane is identity-scoped, not tenant-scoped.
@@ -474,22 +475,24 @@ func Routes() []RouteSpec {
 		RouteSpec{Method: "POST", Pattern: "/api/v1/auth/logout", Group: GroupAuthSession, Auth: RouteAuthSession, Enabled: hasIssuer, Handler: func(s *Server) http.HandlerFunc { return s.handleAuthLogout }},
 	)
 
-	// --- WebAuthn (unauthenticated: WebAuthn IS the auth mechanism).
-	// Browser ceremony routes mirror pkg/webauthn/http MountChi; the SDK
-	// ceremony routes delegate to the XKMSService. ---
+	// --- WebAuthn. The ceremonies are unauthenticated (WebAuthn IS the auth
+	// mechanism), except adding a passkey to an account that already has
+	// one: that requires a session authenticated as that account
+	// (go-xkms#1294). Browser ceremony routes mirror pkg/webauthn/http
+	// MountChi; the SDK ceremony routes delegate to the XKMSService. ---
 	hasWebAuthn := func(s *Server) bool { return s.webauthnHandler != nil }
 	wa := func(method, pattern string, h func(s *Server) http.HandlerFunc) {
 		specs = append(specs, RouteSpec{Method: method, Pattern: "/api/v1/webauthn" + pattern, Group: GroupWebAuthn, Auth: RouteAuthPublic, Enabled: hasWebAuthn, Handler: h})
 	}
 	wa("POST", "/registration/begin", func(s *Server) http.HandlerFunc { return s.webauthnHandler.BeginRegistration })
 	wa("POST", "/registration/finish", func(s *Server) http.HandlerFunc { return s.webauthnHandler.FinishRegistration })
-	wa("GET", "/registration/status", func(s *Server) http.HandlerFunc { return s.webauthnHandler.RegistrationStatus })
 	wa("POST", "/login/begin", func(s *Server) http.HandlerFunc { return s.webauthnHandler.BeginLogin })
 	wa("POST", "/login/finish", func(s *Server) http.HandlerFunc { return s.webauthnHandler.FinishLogin })
 	wa("POST", "/sdk/registration/begin", func(s *Server) http.HandlerFunc { return s.handleSDKBeginRegistration })
 	wa("POST", "/sdk/registration/finish", func(s *Server) http.HandlerFunc { return s.handleSDKFinishRegistration })
 	wa("POST", "/sdk/authentication/begin", func(s *Server) http.HandlerFunc { return s.handleSDKBeginAuthentication })
 	wa("POST", "/sdk/authentication/finish", func(s *Server) http.HandlerFunc { return s.handleSDKFinishAuthentication })
+	specs = append(specs, RouteSpec{Method: "POST", Pattern: "/api/v1/webauthn/credentials/begin", Group: GroupWebAuthn, Auth: RouteAuthSession, Enabled: hasWebAuthn, Handler: func(s *Server) http.HandlerFunc { return s.webauthnHandler.BeginAddCredential }})
 
 	// --- Users. xkms presents its own user API backed by the embedded
 	// qrdb node; authentication only, no tenant middleware. ---

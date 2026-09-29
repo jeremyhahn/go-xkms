@@ -36,8 +36,23 @@ type Config struct {
 	// Namespace is the Vault namespace (Enterprise feature, optional)
 	Namespace string
 
-	// TLSSkipVerify disables TLS certificate verification (not recommended for production)
-	TLSSkipVerify bool
+	// TLSCAFile is the path to a PEM-encoded CA certificate (or bundle)
+	// used to verify the Vault server's certificate. Takes precedence over
+	// TLSCAPath when both are set, matching vault.TLSConfig.CACert's
+	// precedence over CAPath.
+	TLSCAFile string
+
+	// TLSCAPath is the path to a directory of PEM-encoded CA certificates
+	// used to verify the Vault server's certificate.
+	TLSCAPath string
+
+	// TLSCertFile is the path to a client certificate for mTLS to Vault.
+	// Must be set together with TLSKeyFile.
+	TLSCertFile string
+
+	// TLSKeyFile is the path to the private key for TLSCertFile. Must be
+	// set together with TLSCertFile.
+	TLSKeyFile string
 
 	// KeyStorage is the storage backend for key metadata
 	KeyStorage storage.Backend
@@ -67,6 +82,9 @@ func (c *Config) Validate() error {
 	}
 	if c.CertStorage == nil {
 		return &errs.Message{Msg: "certificate storage is required"}
+	}
+	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
+		return &errs.Message{Msg: "vault TLSCertFile and TLSKeyFile must both be set or both be empty"}
 	}
 	return nil
 }

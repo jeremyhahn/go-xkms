@@ -1,6 +1,6 @@
 /**
  * auth.test.ts — session token endpoints and WebAuthn ceremony plumbing
- * (X-Session-Id / X-User-Id headers, credentials: 'include' on cert login).
+ * (X-Session-Id header, credentials: 'include' on cert login).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -150,35 +150,47 @@ describe('AuthClient WebAuthn ceremonies', () => {
     expect(call.body).toMatchObject({ rawId: 'AQ' });
   });
 
-  it('registration status passes user_id/email as query params', async () => {
-    const fake = newFakeFetch({ body: { registered: true } });
-    const c = client(fake);
-    const resp = await c.auth.webAuthnRegistrationStatus({ email: 'a@example.com' });
-    expect(resp.registered).toBe(true);
-    expect(fake.calls[0]?.url).toBe(
-      `${BASE}/api/v1/webauthn/registration/status?email=a%40example.com`,
-    );
+  it('add-credential begin rides the token provider and captures X-Session-Id', async () => {
+    const fake = newFakeFetch({
+      body: optionsEnvelope,
+      headers: { 'X-Session-Id': 'sess-add' },
+    });
+    const c = client(fake, () => 'live-token');
+    const start = await c.auth.webAuthnAddCredentialBegin();
+    expect(start.sessionId).toBe('sess-add');
+    expect(start.options).toEqual(optionsEnvelope);
+    const call = fake.calls[0]!;
+    expect(call.method).toBe('POST');
+    expect(call.url).toBe(`${BASE}/api/v1/webauthn/credentials/begin`);
+    expect(call.headers['Authorization']).toBe('Bearer live-token');
+    expect(call.body).toBeUndefined();
   });
 
-  it('login begin captures X-Session-Id and X-User-Id', async () => {
+  it('add-credential begin propagates a 401 as XkmsApiError', async () => {
+    const fake = newFakeFetch({ status: 401, body: { error: 'unauthenticated' } });
+    const c = client(fake);
+    const err = await c.auth.webAuthnAddCredentialBegin().catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: 'XkmsApiError', status: 401 });
+  });
+
+  it('login begin captures X-Session-Id and ignores any X-User-Id', async () => {
     const fake = newFakeFetch({
       body: optionsEnvelope,
       headers: { 'X-Session-Id': 'sess-2', 'X-User-Id': 'dXNlcg' },
     });
     const c = client(fake);
     const start = await c.auth.webAuthnBeginLogin({ email: 'a@example.com' });
-    expect(start.sessionId).toBe('sess-2');
-    expect(start.userId).toBe('dXNlcg');
+    expect(start).toEqual({ options: optionsEnvelope, sessionId: 'sess-2' });
   });
 
-  it('login begin omits userId when the header is absent (discoverable flow)', async () => {
+  it('login begin sends an empty body for the discoverable flow', async () => {
     const fake = newFakeFetch({
       body: optionsEnvelope,
       headers: { 'X-Session-Id': 'sess-3' },
     });
     const c = client(fake);
     const start = await c.auth.webAuthnBeginLogin();
-    expect(start.userId).toBeUndefined();
+    expect(start.sessionId).toBe('sess-3');
     expect(fake.calls[0]?.body).toEqual({});
   });
 
@@ -189,7 +201,7 @@ describe('AuthClient WebAuthn ceremonies', () => {
     expect(start.sessionId).toBe('');
   });
 
-  it('login finish echoes both session and user headers', async () => {
+  it('login finish echoes the session header only', async () => {
     const fake = newFakeFetch({ body: { token: 't', refresh_token: 'r', user_id: 'u' } });
     const c = client(fake);
     const cred = {
@@ -199,10 +211,11 @@ describe('AuthClient WebAuthn ceremonies', () => {
       response: { clientDataJSON: 'Ag', authenticatorData: 'Aw', signature: 'BA' },
       clientExtensionResults: {},
     } as AssertionCredentialJSON;
-    const resp = await c.auth.webAuthnFinishLogin('sess-2', cred, 'dXNlcg');
+    const resp = await c.auth.webAuthnFinishLogin('sess-2', cred);
     expect(resp.refresh_token).toBe('r');
+    expect(resp.user_id).toBe('u');
     const call = fake.calls[0]!;
     expect(call.headers['X-Session-Id']).toBe('sess-2');
-    expect(call.headers['X-User-Id']).toBe('dXNlcg');
+    expect(call.headers['X-User-Id']).toBeUndefined();
   });
 });

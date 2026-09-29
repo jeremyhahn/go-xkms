@@ -61,6 +61,10 @@ type Service struct {
 	logger      *slog.Logger
 	auditLogger audit.Logger // optional
 	configured  bool
+
+	// decoyKey keys the decoy login ceremonies (decoy.go). It is drawn
+	// once per process and never leaves memory.
+	decoyKey []byte
 }
 
 // ServiceParams contains dependencies for creating a WebAuthn service.
@@ -123,6 +127,11 @@ func NewService(params ServiceParams) (*Service, error) {
 		logger = slog.Default()
 	}
 
+	decoyKey, err := newDecoyKey()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Service{
 		webauthn:    wa,
 		config:      params.Config,
@@ -133,48 +142,108 @@ func NewService(params ServiceParams) (*Service, error) {
 		logger:      logger,
 		auditLogger: params.AuditLogger,
 		configured:  true,
+		decoyKey:    decoyKey,
 	}, nil
 }
 
-// BeginRegistration starts the WebAuthn registration ceremony.
-// Returns the registration options to be sent to the client and a session ID.
+// BeginRegistration starts the public (unauthenticated) WebAuthn
+// registration ceremony for email. Returns the registration options to be
+// sent to the client and a session ID.
+//
+// An unauthenticated caller may only ever enroll the FIRST passkey of an
+// account. An account that already holds one or more credentials is refused
+// with ErrRegistrationRefused: adding a passkey to it requires a session
+// authenticated as that account (BeginAddCredential, go-xkms#1294). An email
+// that names no account is refused with the same error when public
+// registration is off, so the refusal does not reveal whether the account
+// exists (go-xkms#1296).
 func (s *Service) BeginRegistration(ctx context.Context, email, displayName string) (*protocol.CredentialCreation, string, error) {
 	if !s.configured {
 		return nil, "", ErrNotConfigured
 	}
 
-	// Try to get existing user or create new one.
-	//
 	// The implicit Create below is precisely what "public registration" means:
 	// an email nobody has seen before becomes an account. When the relying
-	// party has open sign-up turned off, that one branch is withheld and
-	// everything else is untouched — an account provisioned through the
-	// authorized user-creation path is found by GetByEmail and enrolls its
-	// first passkey here exactly as before. That is what lets a closed
-	// deployment onboard users without a separate enrollment endpoint or an
-	// invite token.
+	// party has open sign-up turned off, that one branch is withheld.
 	user, err := s.users.GetByEmail(ctx, email)
 	if err != nil {
 		if !IsUserNotFound(err) {
 			return nil, "", WrapError("get user by email", err)
 		}
 		if !s.config.PublicRegistrationAllowed() {
-			return nil, "", ErrPublicRegistrationDisabled
+			return nil, "", ErrRegistrationRefused
 		}
-		// Create new user
 		user, err = s.users.Create(ctx, email, displayName)
 		if err != nil {
 			return nil, "", WrapError("create user", err)
 		}
 	}
 
-	// Get existing credentials to exclude
 	existingCreds, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
 	if err != nil {
 		return nil, "", WrapError("get credentials", err)
 	}
+	if len(existingCreds) > 0 {
+		return nil, "", ErrRegistrationRefused
+	}
 
-	// Convert to exclude list
+	// An existing account with ZERO credentials — one provisioned through
+	// the authorized user-creation path — still enrolls its first passkey
+	// here without authentication, exactly as before go-xkms#1294, provided
+	// the account is active (beginRegistrationFor, go-xkms#1298). Whether
+	// that first-passkey onboarding needs its own proof of possession
+	// (an enrollment token or an admin-issued ceremony) awaits the owner's
+	// ruling on go-xkms#1294 part B. Until then this path also answers
+	// differently from ErrRegistrationRefused, so a closed deployment still
+	// reveals that a provisioned-but-unenrolled account exists (#1296).
+	return s.beginRegistrationFor(ctx, user, existingCreds)
+}
+
+// BeginAddCredential starts a registration ceremony that adds a passkey to
+// the account an authenticated session belongs to. The account is taken from
+// the session, never from the request, so a session can only ever add a
+// passkey to its own account. It fails with ErrSessionAccountMismatch when
+// acct does not name an existing account whose email matches.
+func (s *Service) BeginAddCredential(ctx context.Context, acct SessionAccount) (*protocol.CredentialCreation, string, error) {
+	if !s.configured {
+		return nil, "", ErrNotConfigured
+	}
+	if len(acct.UserID) == 0 || acct.Email == "" {
+		return nil, "", ErrSessionAccountMismatch
+	}
+
+	user, err := s.users.GetByID(ctx, acct.UserID)
+	if err != nil {
+		if IsUserNotFound(err) {
+			return nil, "", ErrSessionAccountMismatch
+		}
+		return nil, "", WrapError("get user", err)
+	}
+	// The handle alone is not enough: a session minted by another
+	// authentication method could carry a subject that happens to decode to
+	// a valid handle. The email login key must name the same account.
+	if user.Email() != acct.Email {
+		return nil, "", ErrSessionAccountMismatch
+	}
+
+	existingCreds, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		return nil, "", WrapError("get credentials", err)
+	}
+	return s.beginRegistrationFor(ctx, user, existingCreds)
+}
+
+// beginRegistrationFor runs the registration ceremony for an already
+// resolved account, excluding the credentials it already holds. An account
+// that is not active is refused with ErrRegistrationRefused, the same answer
+// every other refused enrolment gets, so the refusal does not reveal the
+// account's state (go-xkms#1298).
+func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingCreds []*Credential) (*protocol.CredentialCreation, string, error) {
+	if err := checkLifecycle(user); err != nil {
+		s.logStandingRefusal("begin registration", err)
+		return nil, "", ErrRegistrationRefused
+	}
+
 	excludeList := make([]protocol.CredentialDescriptor, len(existingCreds))
 	for i, cred := range existingCreds {
 		excludeList[i] = protocol.CredentialDescriptor{
@@ -184,7 +253,6 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 		}
 	}
 
-	// Begin registration with exclude list
 	options, session, err := s.webauthn.BeginRegistration(user,
 		webauthn.WithExclusions(excludeList),
 	)
@@ -192,7 +260,6 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 		return nil, "", WrapError("begin registration", err)
 	}
 
-	// Store session
 	sessionID, err := s.sessions.Save(ctx, session)
 	if err != nil {
 		return nil, "", WrapError("save session", err)
@@ -255,6 +322,12 @@ func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, 
 		return nil, WrapError("get user", err)
 	}
 
+	// The account may have left the active state since the ceremony began.
+	if err := checkLifecycle(user); err != nil {
+		s.logStandingRefusal("finish registration", err)
+		return nil, ErrRegistrationRefused
+	}
+
 	// Finish registration
 	credential, err := s.webauthn.CreateCredential(user, *session, response)
 	if err != nil {
@@ -296,6 +369,12 @@ func (s *Service) BeginLogin(ctx context.Context, userID []byte) (*protocol.Cred
 		if userErr != nil {
 			return nil, "", WrapError("get user", userErr)
 		}
+		// An account that may not log in answers exactly like one that
+		// does not exist (go-xkms#1298).
+		if standingErr := CheckAccountStanding(user); standingErr != nil {
+			s.logStandingRefusal("begin login", standingErr)
+			return nil, "", WrapError("get user", ErrUserNotFound)
+		}
 
 		// Check if user has credentials
 		creds, credErr := s.creds.GetByUserID(ctx, userID)
@@ -313,12 +392,98 @@ func (s *Service) BeginLogin(ctx context.Context, userID []byte) (*protocol.Cred
 		return nil, "", WrapError("begin login", err)
 	}
 
-	// Store session
+	return s.saveLoginSession(ctx, options, session)
+}
+
+// BeginLoginForEmail starts a user-identified authentication ceremony for
+// the account email names. It never reveals whether that account exists:
+// an unknown email, or an account with no credentials, is answered with a
+// well-formed decoy ceremony (see beginDecoyLogin) instead of an error, so
+// the response is shaped exactly like a real one (go-xkms#1296).
+func (s *Service) BeginLoginForEmail(ctx context.Context, email string) (*protocol.CredentialAssertion, string, error) {
+	if !s.configured {
+		return nil, "", ErrNotConfigured
+	}
+	if email == "" {
+		return nil, "", NewError("begin login", ErrInvalidRequest)
+	}
+	user, err := s.users.GetByEmail(ctx, email)
+	return s.beginLoginOrDecoy(ctx, user, err, decoySubject(decoyKindEmail, []byte(email)))
+}
+
+// BeginLoginForHandle is BeginLoginForEmail for a caller that addresses the
+// account by its WebAuthn user handle. An unknown handle, or an account with
+// no credentials, is answered with a decoy ceremony.
+func (s *Service) BeginLoginForHandle(ctx context.Context, userID []byte) (*protocol.CredentialAssertion, string, error) {
+	if !s.configured {
+		return nil, "", ErrNotConfigured
+	}
+	if len(userID) == 0 {
+		return nil, "", NewError("begin login", ErrInvalidRequest)
+	}
+	user, err := s.users.GetByID(ctx, userID)
+	return s.beginLoginOrDecoy(ctx, user, err, decoySubject(decoyKindHandle, userID))
+}
+
+// beginLoginOrDecoy starts the real ceremony for a resolved account in good
+// standing (CheckAccountStanding) holding credentials, and the decoy ceremony
+// for subject otherwise. lookupErr is the account lookup's error; only "not
+// found" is answered with a decoy. An account that may not log in — not
+// active, or with WebAuthn withdrawn from its auth-method policy — is
+// answered with the decoy an unknown account gets, so begin does not reveal
+// its state (go-xkms#1298).
+func (s *Service) beginLoginOrDecoy(ctx context.Context, user User, lookupErr error, subject []byte) (*protocol.CredentialAssertion, string, error) {
+	if lookupErr != nil {
+		if !IsUserNotFound(lookupErr) {
+			return nil, "", WrapError("get user", lookupErr)
+		}
+		return s.beginDecoyLogin(ctx, subject)
+	}
+	if err := CheckAccountStanding(user); err != nil {
+		s.logStandingRefusal("begin login", err)
+		return s.beginDecoyLogin(ctx, subject)
+	}
+
+	creds, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		return nil, "", WrapError("get credentials", err)
+	}
+	if len(creds) == 0 {
+		return s.beginDecoyLogin(ctx, subject)
+	}
+
+	options, session, err := s.webauthn.BeginLogin(user)
+	if err != nil {
+		return nil, "", WrapError("begin login", err)
+	}
+	return s.saveLoginSession(ctx, options, session)
+}
+
+// beginDecoyLogin runs a real go-webauthn login ceremony against a decoy
+// account derived from subject (see decoyUser), and stores its session like
+// any other. The options are therefore built by the same code as a real
+// ceremony, the session ID comes from the same store, and a finish against
+// it fails verification exactly like a wrong assertion: the decoy handle
+// resolves to no account.
+func (s *Service) beginDecoyLogin(ctx context.Context, subject []byte) (*protocol.CredentialAssertion, string, error) {
+	user, err := s.decoyUser(subject)
+	if err != nil {
+		return nil, "", WrapError("derive decoy account", err)
+	}
+	options, session, err := s.webauthn.BeginLogin(user)
+	if err != nil {
+		return nil, "", WrapError("begin login", err)
+	}
+	return s.saveLoginSession(ctx, options, session)
+}
+
+// saveLoginSession stores a login ceremony's session and returns its ID
+// alongside the options.
+func (s *Service) saveLoginSession(ctx context.Context, options *protocol.CredentialAssertion, session *webauthn.SessionData) (*protocol.CredentialAssertion, string, error) {
 	sessionID, err := s.sessions.Save(ctx, session)
 	if err != nil {
 		return nil, "", WrapError("save session", err)
 	}
-
 	return options, sessionID, nil
 }
 
@@ -419,9 +584,15 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 			return nil, WrapError("get user", err)
 		}
 	} else {
-		// User-identified flow
+		// User-identified flow. A session whose handle names no account
+		// is a decoy ceremony (beginDecoyLogin) or an account deleted
+		// mid-ceremony; either way the assertion cannot verify, and it
+		// fails exactly like a wrong assertion so a decoy is not revealed.
 		user, err = s.users.GetByID(ctx, userID)
 		if err != nil {
+			if IsUserNotFound(err) {
+				return nil, NewVerificationError("get user", err)
+			}
 			return nil, WrapError("get user", err)
 		}
 
@@ -429,6 +600,18 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 		if err != nil {
 			return nil, verificationError("validate login", err)
 		}
+	}
+
+	// A valid assertion does not authenticate an account that may not log
+	// in: one that is not active, or has withdrawn WebAuthn from its
+	// auth-method policy. Begin already answers such an account with a decoy;
+	// this catches the discoverable flow, which names no account at begin,
+	// and an account whose standing changed mid-ceremony. The refusal is the
+	// bare verification failure, carrying no detail that would reveal the
+	// account's state (go-xkms#1298).
+	if standingErr := CheckAccountStanding(user); standingErr != nil {
+		s.logStandingRefusal("finish login", standingErr)
+		return nil, NewVerificationError("validate login", nil)
 	}
 
 	// Update credential sign counter
@@ -456,6 +639,15 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 	}
 
 	return user, nil
+}
+
+// logStandingRefusal records, for the operator, why a ceremony was refused
+// for an account not in good standing. The client only ever sees the
+// ceremony's generic refusal.
+func (s *Service) logStandingRefusal(op string, err error) {
+	s.logger.Warn("webauthn: ceremony refused for account not in good standing",
+		"op", op,
+		"error", err)
 }
 
 // IsRegistered checks if a user has any registered credentials.

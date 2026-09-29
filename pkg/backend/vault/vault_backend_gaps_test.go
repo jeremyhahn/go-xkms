@@ -18,10 +18,20 @@ package vault
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	vault "github.com/hashicorp/vault/api"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -29,23 +39,229 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// TestNewBackend_TLSSkipVerify proves NewBackend applies an insecure TLS
-// config when Config.TLSSkipVerify is set, without dialing the server
-// (vault.NewClient only builds the client, it never connects).
-func TestNewBackend_TLSSkipVerify(t *testing.T) {
+// generateSelfSignedPEM creates a self-signed ECDSA certificate/key pair for
+// TLS-configuration tests, returning the PEM-encoded certificate and key.
+func generateSelfSignedPEM(t *testing.T, cn string) (certPEM, keyPEM []byte) {
+	t.Helper()
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey() error = %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: cn},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		IsCA:         true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("x509.CreateCertificate() error = %v", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+
+	keyDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("x509.MarshalECPrivateKey() error = %v", err)
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	return certPEM, keyPEM
+}
+
+// vaultClientTLSConfig extracts the *tls.Config a Backend's underlying Vault
+// client was built with, so a test can assert on RootCAs/Certificates
+// without dialing a server.
+func vaultClientTLSConfig(t *testing.T, b *Backend) *tls.Config {
+	t.Helper()
+
+	dvc, ok := b.client.(*defaultVaultClient)
+	if !ok {
+		t.Fatalf("Backend.client is %T, want *defaultVaultClient", b.client)
+	}
+	return dvc.client.CloneConfig().TLSConfig()
+}
+
+// TestNewBackend_TLSCAFile proves NewBackend wires Config.TLSCAFile into the
+// underlying Vault client's RootCAs, without dialing the server (vault.NewClient
+// only builds the client, it never connects).
+func TestNewBackend_TLSCAFile(t *testing.T) {
+	certPEM, _ := generateSelfSignedPEM(t, "vault-test-ca")
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, certPEM, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
 	config := &Config{
-		Address:       "https://127.0.0.1:8200",
-		Token:         "test-token",
-		TLSSkipVerify: true,
-		KeyStorage:    storage.New(),
-		CertStorage:   storage.New(),
+		Address:     "https://127.0.0.1:8200",
+		Token:       "test-token",
+		TLSCAFile:   caFile,
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, err := NewBackend(config)
 	if err != nil {
 		t.Fatalf("NewBackend() error = %v", err)
 	}
-	if b == nil {
-		t.Fatal("NewBackend() returned nil backend")
+
+	tlsConfig := vaultClientTLSConfig(t, b)
+	if tlsConfig.RootCAs == nil {
+		t.Fatal("RootCAs is nil, want the configured CA to be loaded")
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(certPEM) {
+		t.Fatalf("failed to parse generated CA cert")
+	}
+	if !tlsConfig.RootCAs.Equal(pool) {
+		t.Error("RootCAs does not match the configured CA certificate")
+	}
+	if tlsConfig.InsecureSkipVerify {
+		t.Error("InsecureSkipVerify is true; CA configuration must not disable verification")
+	}
+}
+
+// TestNewBackend_TLSCAPath proves NewBackend wires Config.TLSCAPath (a
+// directory of PEM-encoded CA certificates) into the underlying Vault
+// client's RootCAs.
+func TestNewBackend_TLSCAPath(t *testing.T) {
+	certPEM, _ := generateSelfSignedPEM(t, "vault-test-ca-path")
+	caDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(caDir, "ca.pem"), certPEM, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	config := &Config{
+		Address:     "https://127.0.0.1:8200",
+		Token:       "test-token",
+		TLSCAPath:   caDir,
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("NewBackend() error = %v", err)
+	}
+
+	tlsConfig := vaultClientTLSConfig(t, b)
+	if tlsConfig.RootCAs == nil {
+		t.Fatal("RootCAs is nil, want the configured CA directory to be loaded")
+	}
+}
+
+// TestNewBackend_TLSClientCert proves NewBackend wires Config.TLSCertFile and
+// Config.TLSKeyFile into the underlying Vault client for mTLS.
+func TestNewBackend_TLSClientCert(t *testing.T) {
+	certPEM, keyPEM := generateSelfSignedPEM(t, "vault-test-client")
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "client.pem")
+	keyFile := filepath.Join(dir, "client-key.pem")
+	if err := os.WriteFile(certFile, certPEM, 0o600); err != nil {
+		t.Fatalf("os.WriteFile(cert) error = %v", err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
+		t.Fatalf("os.WriteFile(key) error = %v", err)
+	}
+
+	config := &Config{
+		Address:     "https://127.0.0.1:8200",
+		Token:       "test-token",
+		TLSCertFile: certFile,
+		TLSKeyFile:  keyFile,
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("NewBackend() error = %v", err)
+	}
+
+	tlsConfig := vaultClientTLSConfig(t, b)
+	if tlsConfig.GetClientCertificate == nil {
+		t.Fatal("GetClientCertificate is nil, want the configured client certificate to be loaded")
+	}
+	gotCert, err := tlsConfig.GetClientCertificate(&tls.CertificateRequestInfo{})
+	if err != nil {
+		t.Fatalf("GetClientCertificate() error = %v", err)
+	}
+	wantCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("tls.X509KeyPair() error = %v", err)
+	}
+	if len(gotCert.Certificate) == 0 || string(gotCert.Certificate[0]) != string(wantCert.Certificate[0]) {
+		t.Error("GetClientCertificate() returned a certificate that does not match the configured one")
+	}
+}
+
+// TestNewBackend_TLSNotConfigured proves NewBackend leaves the underlying
+// Vault client's default TLS config untouched (no RootCAs, no client
+// certificate, verification enabled) when no TLS options are set.
+func TestNewBackend_TLSNotConfigured(t *testing.T) {
+	config := &Config{
+		Address:     "https://127.0.0.1:8200",
+		Token:       "test-token",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("NewBackend() error = %v", err)
+	}
+
+	// ConfigureTLS is never called when no TLS option is set (see NewBackend),
+	// so the Vault client keeps its zero-value *tls.Config -- nil, meaning Go's
+	// default (system trust roots, no client certificate, verification
+	// enabled). tls.Config.Clone() returns nil for a nil receiver, so a nil
+	// result here is itself the assertion, not a setup failure.
+	tlsConfig := vaultClientTLSConfig(t, b)
+	if tlsConfig != nil {
+		if tlsConfig.RootCAs != nil {
+			t.Error("RootCAs is set, want nil when no CA is configured")
+		}
+		if tlsConfig.GetClientCertificate != nil {
+			t.Error("GetClientCertificate is set, want nil when no client cert is configured")
+		}
+		if tlsConfig.InsecureSkipVerify {
+			t.Error("InsecureSkipVerify is true, want false: this backend has no option to disable it")
+		}
+	}
+}
+
+// TestConfig_Validate_TLSCertKeyMismatch proves Validate rejects a Config
+// with only one of TLSCertFile/TLSKeyFile set, since Vault's mTLS setup
+// requires both or neither.
+func TestConfig_Validate_TLSCertKeyMismatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *Config
+	}{
+		{
+			name: "cert without key",
+			config: &Config{
+				Address: "https://127.0.0.1:8200", Token: "test-token",
+				TLSCertFile: "/tmp/cert.pem",
+				KeyStorage:  storage.New(), CertStorage: storage.New(),
+			},
+		},
+		{
+			name: "key without cert",
+			config: &Config{
+				Address: "https://127.0.0.1:8200", Token: "test-token",
+				TLSKeyFile: "/tmp/key.pem",
+				KeyStorage: storage.New(), CertStorage: storage.New(),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.config.Validate(); err == nil {
+				t.Error("Validate() error = nil, want error for mismatched TLS cert/key")
+			}
+		})
 	}
 }
 

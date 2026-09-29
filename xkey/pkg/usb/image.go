@@ -122,24 +122,24 @@ func createOnImageFile(cfg ImageConfig) error {
 		}
 	}
 
-	// Check if file already exists.
-	if _, err := os.Stat(cfg.Path); err == nil {
-		return &USBError{
-			Operation: "check_existing",
-			Path:      cfg.Path,
-			Err:       ErrImageExists,
-		}
-	}
-
 	// Create parent directory.
 	dir := filepath.Dir(cfg.Path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return &USBError{Operation: "create_dir", Path: dir, Err: err}
 	}
 
-	// Create sparse file.
-	f, err := os.Create(cfg.Path)
+	// Create sparse file. O_EXCL makes the existence check atomic with
+	// creation, closing the race window between a separate Stat check
+	// and a later create call.
+	f, err := os.OpenFile(cfg.Path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return &USBError{
+				Operation: "check_existing",
+				Path:      cfg.Path,
+				Err:       ErrImageExists,
+			}
+		}
 		return &USBError{Operation: "create_file", Path: cfg.Path, Err: err}
 	}
 	if err := f.Truncate(cfg.SizeBytes); err != nil {

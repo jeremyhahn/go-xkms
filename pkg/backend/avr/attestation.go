@@ -212,7 +212,18 @@ func (b *Backend) checkAliasCertificate(der, nonce []byte) (*Attestation, error)
 		return nil, err
 	}
 
-	level, _ := b.AttestLevel()
+	// Not fatal, and deliberately so -- see the identical fail-safe-to-
+	// unattested comment where AttestLevel is first read in NewBackend. The
+	// DICE chain above has already proved this evidence is genuine; a crypto
+	// tier this host cannot yet classify only degrades the reported trust
+	// level to Unattested, it does not invalidate the attestation itself.
+	level, err := b.AttestLevel()
+	if err != nil {
+		b.logger.Warn("device reports a crypto tier this host cannot classify",
+			"crypto_tier", uint8(b.caps.CryptoTier),
+			"error", err,
+		)
+	}
 	echoed := make([]byte, len(nonce))
 	copy(echoed, nonce)
 

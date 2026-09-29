@@ -169,6 +169,14 @@ const (
 
 	// Configuration operations.
 	OpConfigUpdated OperationType = "config_updated"
+
+	// Sync operations.
+	//
+	// OpSyncApplied records a paired device writing into this host's stores
+	// through remote.sync* (trust store, OATH, passwords). It is a security
+	// event: it is how a peer changes local data, so it is never
+	// informational.
+	OpSyncApplied OperationType = "sync_applied"
 )
 
 // Entry represents an audit log entry.

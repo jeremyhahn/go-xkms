@@ -81,7 +81,45 @@ var (
 	// no backend_id. Every blob written by this version sets it; a record
 	// without one predates that and cannot be read.
 	ErrSealBlobBackendIDMissing = errors.New("seal_service: sealed blob record has no backend_id")
+
+	// ErrSealInvalidBlobID indicates a blob ID supplied by the frontend is
+	// not a well-formed blob ID (see validateBlobID). Returned before the ID
+	// is joined into a filesystem path by blobPath.
+	ErrSealInvalidBlobID = errors.New("seal_service: invalid blob ID")
 )
+
+// maxBlobIDLength bounds the length of a blob ID. SealData generates IDs by
+// hex-encoding 16 random bytes (32 characters); this cap leaves headroom
+// for pre-existing on-disk blobs with hand-assigned, human-readable IDs
+// (e.g. records migrated from an earlier version) while still rejecting
+// pathological input before it reaches the filesystem.
+const maxBlobIDLength = 128
+
+// validateBlobID rejects blob IDs that are not a strict charset: ASCII
+// letters, digits, hyphens, and underscores only. Every ID SealData
+// generates (hex.EncodeToString of 16 random bytes) satisfies it, as does
+// every hand-assigned ID found in on-disk blobs from earlier versions. Blob
+// IDs arrive from the frontend and reach the filesystem via blobPath; every
+// exported method that accepts one calls validateBlobID first, so path
+// traversal segments and separators (e.g. "../../etc/passwd", "a/b", a
+// leading ".") can never reach os.Stat, os.Remove, or os.ReadFile.
+func validateBlobID(id string) error {
+	if id == "" || len(id) > maxBlobIDLength {
+		return ErrSealInvalidBlobID
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c == '-' || c == '_':
+		default:
+			return ErrSealInvalidBlobID
+		}
+	}
+	return nil
+}
 
 // pcrBankAlgMap maps user-facing PCR bank names to TPM algorithm identifiers.
 var pcrBankAlgMap = map[string]tpm2.TPMAlgID{
@@ -894,6 +932,9 @@ func (s *SealService) UnsealData(id string, password string) (result string, ret
 	if id == "" {
 		return "", ErrSealBlobNotFound
 	}
+	if err := validateBlobID(id); err != nil {
+		return "", err
+	}
 
 	s.mu.RLock()
 	blob, err := s.loadBlobByID(id)
@@ -972,6 +1013,9 @@ func (s *SealService) DeleteBlob(id string) error {
 	}
 	if id == "" {
 		return ErrSealBlobNotFound
+	}
+	if err := validateBlobID(id); err != nil {
+		return err
 	}
 
 	s.mu.Lock()

@@ -100,6 +100,31 @@ func TestFileStore_TLSRoots_ExcludesAttestationPurposes(t *testing.T) {
 	assert.Equal(t, "user ca", roots[0].Subject.CommonName)
 }
 
+// A self-signed CA imported under PurposeSynced keeps the caller's purpose
+// instead of being auto-classified as a user CA, and is withheld from the TLS
+// anchors (#1304): a certificate a paired device pushed is never a root.
+func TestFileStore_ImportPEM_SyncedSelfSignedCAIsNotATLSAnchor(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileStore(&FileStoreConfig{BaseDir: dir})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	certPEM := generateTestCertPEM(t, "phone planted ca")
+	result, err := store.ImportPEM(certPEM, &AddCertificateOptions{Purpose: PurposeSynced})
+	require.NoError(t, err)
+	require.Equal(t, ImportResult{Added: 1}, result)
+
+	certs, err := store.CertificatesByPurpose(PurposeSynced)
+	require.NoError(t, err)
+	require.Len(t, certs, 1)
+	require.Equal(t, PurposeUserCA, ClassifyCertificate(certs[0]),
+		"precondition: auto-classification would have made this a TLS anchor")
+
+	roots, err := store.TLSRoots()
+	require.NoError(t, err)
+	assert.Empty(t, roots)
+}
+
 // An empty store yields no anchors and no error: verification then rests on
 // the platform roots alone.
 func TestFileStore_TLSRoots_EmptyStore(t *testing.T) {
@@ -168,4 +193,40 @@ func TestBackendStore_ImportPEM_CountsSkips(t *testing.T) {
 	second, err := store.ImportPEM(certPEM, nil)
 	require.NoError(t, err)
 	assert.Equal(t, ImportResult{Skipped: 1}, second)
+}
+
+func TestBootstrapImportOptions(t *testing.T) {
+	tests := []struct {
+		name       string
+		server     string
+		wantSource string
+	}{
+		{"https URL with port", "https://kms.example.com:8443", "platform:kms.example.com:8443"},
+		{"URL with bundle path", "https://kms.example.com:8443/v1/ca/bootstrap", "platform:kms.example.com:8443"},
+		{"http URL", "http://127.0.0.1:9000", "platform:127.0.0.1:9000"},
+		{"noise host:port", "kms.example.com:8445", "platform:kms.example.com:8445"},
+		{"surrounding whitespace", "  https://kms.example.com  ", "platform:kms.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := BootstrapImportOptions(tt.server)
+			require.NotNil(t, opts)
+			assert.Equal(t, PurposeBootstrapCA, opts.Purpose)
+			assert.Equal(t, tt.wantSource, opts.Source)
+			assert.Empty(t, opts.Tags)
+		})
+	}
+}
+
+// TestBootstrapImportOptions_UnparseableServer checks that a server string
+// url.Parse rejects is still recorded verbatim rather than dropped, and the
+// purpose is still bootstrap-ca.
+func TestBootstrapImportOptions_UnparseableServer(t *testing.T) {
+	opts := BootstrapImportOptions("http://[::1")
+	assert.Equal(t, PurposeBootstrapCA, opts.Purpose)
+	assert.Equal(t, "platform:http://[::1", opts.Source)
+
+	empty := BootstrapImportOptions("")
+	assert.Equal(t, PurposeBootstrapCA, empty.Purpose)
+	assert.Equal(t, "platform:", empty.Source)
 }

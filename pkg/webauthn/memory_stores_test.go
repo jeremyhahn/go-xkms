@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -107,6 +108,8 @@ func (m *mockUser) SetSessionData(data []byte)                 {}
 func (m *mockUser) SessionData() []byte                        { return nil }
 func (m *mockUser) Email() string                              { return "mock@example.com" }
 func (m *mockUser) DisplayName() string                        { return "Mock" }
+func (m *mockUser) Lifecycle() qrdbsdk.Lifecycle               { return qrdbsdk.LifecycleActive }
+func (m *mockUser) AuthMethods() []string                      { return nil }
 
 func TestMemorySessionStore(t *testing.T) {
 	ctx := context.Background()

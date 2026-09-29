@@ -144,12 +144,13 @@ func TestPKCS11Factor_RoundTrip(t *testing.T) {
 				t.Fatalf("nonce length = %d, want %d", len(challenge.Nonce), nonceLength)
 			}
 
-			response := &qrdbsdk.AuthFactorResponse{
-				Value: sign(challenge.Nonce),
-				Metadata: map[string]string{
-					"public_key_der": base64.StdEncoding.EncodeToString(enrollment.PublicKey),
-				},
+			if got := challenge.MethodData[methodDataEnrolledKey]; got != pubDER {
+				t.Fatalf("challenge MethodData[%q] = %v, want the enrolled key", methodDataEnrolledKey, got)
 			}
+
+			// The response carries only the signature: the verification key
+			// comes from the challenge.
+			response := &qrdbsdk.AuthFactorResponse{Value: sign(challenge.Nonce)}
 			if err := f.Verify(ctx, challenge, response); err != nil {
 				t.Fatalf("Verify: %v", err)
 			}
@@ -200,15 +201,16 @@ func TestPKCS11Factor_Verify_RejectsExpiredChallenge(t *testing.T) {
 	challenge.ExpiresAt = challenge.ExpiresAt.Add(-time.Hour)
 
 	var expired *qrdbsdk.AuthFactorChallengeExpiredError
-	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Metadata: map[string]string{"public_key_der": pubDER},
-	})
+	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{})
 	if !errors.As(err, &expired) {
 		t.Fatalf("Verify(expired) err = %v, want ChallengeExpiredError", err)
 	}
 }
 
-func TestPKCS11Factor_Verify_RejectsMissingPublicKey(t *testing.T) {
+// TestPKCS11Factor_Verify_RejectsChallengeWithoutEnrolledKey proves Verify has
+// no second source for the key: with the enrolled key absent from the
+// challenge it refuses, even when the response carries the genuine one.
+func TestPKCS11Factor_Verify_RejectsChallengeWithoutEnrolledKey(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
 	pubDER, sign := ecKeyPair(t)
@@ -217,14 +219,15 @@ func TestPKCS11Factor_Verify_RejectsMissingPublicKey(t *testing.T) {
 		MethodParams: map[string]any{"public_key_der": pubDER},
 	})
 	challenge, _ := f.Challenge(ctx, enrollment)
+	delete(challenge.MethodData, methodDataEnrolledKey)
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
 		Value:    sign(challenge.Nonce),
-		Metadata: map[string]string{},
+		Metadata: map[string]string{"public_key_der": pubDER},
 	})
 	if !errors.As(err, &failed) {
-		t.Fatalf("Verify(no pubkey) err = %v, want VerificationFailedError", err)
+		t.Fatalf("Verify(no enrolled key) err = %v, want VerificationFailedError", err)
 	}
 }
 
@@ -240,8 +243,7 @@ func TestPKCS11Factor_Verify_RejectsBadSignature(t *testing.T) {
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value:    []byte("not-a-valid-DER-signature"),
-		Metadata: map[string]string{"public_key_der": pubDER},
+		Value: []byte("not-a-valid-DER-signature"),
 	})
 	if !errors.As(err, &failed) {
 		t.Fatalf("Verify(bad sig) err = %v, want VerificationFailedError", err)
@@ -264,20 +266,20 @@ func TestPKCS11Factor_Verify_RejectsTamperedNonce(t *testing.T) {
 	challenge.Nonce[0] ^= 0xFF
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
-	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value:    sig,
-		Metadata: map[string]string{"public_key_der": pubDER},
-	})
+	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{Value: sig})
 	if !errors.As(err, &failed) {
 		t.Fatalf("Verify(tampered nonce) err = %v, want VerificationFailedError", err)
 	}
 }
 
-func TestPKCS11Factor_Verify_RejectsWrongKeySignature(t *testing.T) {
+// TestPKCS11Factor_Verify_RejectsAttackerKeyInResponse is the #1282
+// regression: a response signed by a key the attacker controls, carrying that
+// key in its metadata, must not verify against the enrollment.
+func TestPKCS11Factor_Verify_RejectsAttackerKeyInResponse(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
 	pubDER, _ := ecKeyPair(t)
-	_, signOther := ecKeyPair(t)
+	attackerDER, signAttacker := ecKeyPair(t)
 	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
 		UserID:       "u1",
 		MethodParams: map[string]any{"public_key_der": pubDER},
@@ -286,11 +288,11 @@ func TestPKCS11Factor_Verify_RejectsWrongKeySignature(t *testing.T) {
 
 	var failed *qrdbsdk.AuthFactorVerificationFailedError
 	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
-		Value:    signOther(challenge.Nonce),
-		Metadata: map[string]string{"public_key_der": pubDER},
+		Value:    signAttacker(challenge.Nonce),
+		Metadata: map[string]string{"public_key_der": attackerDER},
 	})
 	if !errors.As(err, &failed) {
-		t.Fatalf("Verify(wrong key) err = %v, want VerificationFailedError", err)
+		t.Fatalf("Verify(attacker key) err = %v, want VerificationFailedError", err)
 	}
 }
 

@@ -503,8 +503,14 @@ func TestHandler_Decrypt_OAEPLabelArrives(t *testing.T) {
 
 // TestHandler_Decrypt_PKCS1v15Supported proves the padding default is honoured
 // and that a PKCS#1 v1.5 ciphertext -- previously undecryptable over this
-// transport -- now works.
+// transport -- now works once the operator has opted into
+// crypto.allow_legacy_key_wrap. Before go-xkms#1283 this ran unconditionally;
+// see TestHandler_Decrypt_PKCS1v15RefusedByDefault for the unset case.
 func TestHandler_Decrypt_PKCS1v15Supported(t *testing.T) {
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(true)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
 	server := createTestServer(t)
 	defer cleanupXKMS()
 
@@ -528,6 +534,28 @@ func TestHandler_Decrypt_PKCS1v15Supported(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, result.(DecryptResult).Plaintext)
+}
+
+// TestHandler_Decrypt_PKCS1v15RefusedByDefault is the MCP-transport refusal
+// test for go-xkms#1283: without crypto.allow_legacy_key_wrap set, a decrypt
+// request that names PKCS#1 v1.5 (explicitly or by leaving padding unnamed)
+// is refused rather than performed, and the JSON-RPC error carries no
+// backend-specific diagnostic text.
+func TestHandler_Decrypt_PKCS1v15RefusedByDefault(t *testing.T) {
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(false)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
+	server := createTestServer(t)
+	defer cleanupXKMS()
+
+	generateRSAKey(t, server, "mcp-v15-refused")
+
+	_, err := mcpCall(t, server.handleDecrypt, "xkms.decrypt", DecryptParams{
+		KeyID: "mcp-v15-refused", Backend: "software", Ciphertext: []byte("irrelevant"),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "allow_legacy_key_wrap")
 }
 
 // TestHandler_Decrypt_UnknownPaddingRefused proves a misspelled padding scheme

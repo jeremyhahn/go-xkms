@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Architecture
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## The problem
 
@@ -88,21 +88,30 @@ This is capability row **"WebAuthn relying party" (tier 1)**; SDK access is
 ## Data flow
 
 ```
-registration:
+registration (first passkey, unauthenticated):
   client → POST /api/v1/webauthn/registration/begin
              → Service.BeginRegistration(ctx, email, displayName)
+               → refused (403 registration_refused) if the account has a credential
                → SessionStore.Save   → sessionID
              ← CredentialCreation options
+
+adding a passkey (session):
+  client → POST /api/v1/webauthn/credentials/begin   (Authorization: Bearer …)
+             → SessionAccountFromIdentity(auth.GetIdentity(ctx))
+             → Service.BeginAddCredential(ctx, account)
+               → SessionStore.Save   → sessionID
+             ← CredentialCreation options, finished via registration/finish
   authenticator creates a credential (user gesture)
   client → POST /api/v1/webauthn/registration/finish
              → Service.FinishRegistration(ctx, sessionID, parsedResponse)
                → verify attestation, origin, challenge
-               → CredentialStore.Save
+               → CredentialStore.Save (refuses an ID already registered)
                → JWTGenerator / TokenPairGenerator
              ← token(s) + user
 
 login:
-  client → POST /api/v1/webauthn/login/begin   → Service.BeginLogin(ctx, userID)
+  client → POST /api/v1/webauthn/login/begin   → Service.BeginLoginForEmail / BeginLoginForHandle
+             (unknown account → decoy options; no email → BeginLogin(nil), discoverable)
   client → POST /api/v1/webauthn/login/finish  → Service.FinishLogin(...)
              → verify assertion, origin, challenge, signature counter
              → CredentialStore.Update (counter)
@@ -119,9 +128,28 @@ that is what the credential-store decorator hooks
 
 ## Trust boundaries
 
-- **The WebAuthn routes are unauthenticated because they *are* the
-  authentication.** `GroupWebAuthn` is `RouteAuthPublic`, behind the login rate
-  limiter.
+- **The WebAuthn ceremonies are unauthenticated because they *are* the
+  authentication.** `GroupWebAuthn` routes are `RouteAuthPublic`, behind the
+  login rate limiter — except `credentials/begin`, which is `RouteAuthSession`.
+  An unauthenticated caller can enrol only an account's first passkey; once an
+  account has one, only a session authenticated as that account can add another
+  (go-xkms#1294).
+- **The public routes do not reveal accounts.** Registration refusals are one
+  error for "has a passkey" and "unknown while sign-up is off"; login begin
+  answers an unknown account with decoy options; no user ID is returned before a
+  successful login (go-xkms#1296). A provisioned account with no passkey is the
+  known exception, pending go-xkms#1294 part B.
+- **Account standing gates every ceremony.** Login is refused unless the
+  account's lifecycle is `active` and its permitted-auth-method policy allows
+  `webauthn` — the qrdb record's own `Lifecycle` and `AuthMethods`, which the
+  qrdb store carries onto the materialized user. Begin answers such an account
+  with the decoy an unknown account gets; finish refuses a valid assertion
+  with the same `verification_failed` as a wrong one; enrolment through either
+  registration begin is refused with `registration_refused`. The reason goes
+  to the server log only (go-xkms#1298).
+- **A credential ID has one owner.** The stores refuse to create an ID that
+  exists under any account, and an update cannot change the owner
+  (go-xkms#1295).
 - **`RPID` and `RPOrigins` are the security parameters.** The RP id binds a
   credential to a domain; the origin list is what a ceremony response is checked
   against. Getting either wrong is what turns WebAuthn into a redirect

@@ -46,9 +46,9 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"encoding/base64"
-	"encoding/pem"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -60,14 +60,43 @@ const FactorName = "pkcs11"
 const (
 	defaultChallengeTTLSeconds = 5 * 60
 	defaultMechanism           = "CKM_ECDSA_SHA256"
-	nonceLength                = 32
+	// defaultRSAMechanism is the mechanism recorded when an RSA key is
+	// enrolled without an explicit "mechanism" MethodParam. defaultMechanism
+	// is ECDSA-only (CKM_ECDSA_SHA256), so an RSA enrollment needs its own
+	// default rather than inheriting one that fails the algorithm/mechanism
+	// consistency check below on every RSA enrollment.
+	defaultRSAMechanism = "CKM_SHA256_RSA_PKCS"
+	nonceLength         = 32
+
+	// methodDataEnrolledKey is the challenge MethodData key carrying the
+	// enrolled PKIX public key, standard-base64 DER. Verify reads the
+	// verification key from here and nowhere else, so a response can never
+	// substitute its own key.
+	methodDataEnrolledKey = "enrolled_public_key_der"
+
+	// methodDataMechanism is the challenge MethodData key carrying the
+	// enrolled PKCS#11 signing mechanism (e.g. "CKM_ECDSA_SHA256"). Verify
+	// checks a response against this mechanism, and this mechanism alone: it
+	// is fixed at enrollment and is never renegotiated at verification, nor
+	// chosen from anything the response supplies.
+	methodDataMechanism = "mechanism"
+
+	// responseMechanism is the qrdbsdk.AuthFactorResponse.Metadata key a
+	// response may use to state which mechanism it was produced with. Verify
+	// only ever compares it against the enrolled mechanism to refuse a
+	// mismatch — never to select how the signature is checked.
+	responseMechanism = "mechanism"
 )
 
 // Config configures a PKCS#11 Factor. The zero value is valid.
 type Config struct {
 	// DefaultMechanism is the PKCS#11 signing mechanism recorded on the
-	// enrollment when MethodParams["mechanism"] is not supplied. Defaults to
-	// "CKM_ECDSA_SHA256".
+	// enrollment when MethodParams["mechanism"] is not supplied and the
+	// enrolled key is ECDSA. Defaults to "CKM_ECDSA_SHA256". It applies only
+	// to ECDSA enrollments: an RSA key enrolled without an explicit
+	// "mechanism" gets the package's own RSA default (CKM_SHA256_RSA_PKCS)
+	// instead, since a mechanism inconsistent with the enrolled key's
+	// algorithm is refused at enrollment.
 	DefaultMechanism string
 
 	// ChallengeTTLSeconds controls how long issued challenges remain valid.
@@ -129,8 +158,16 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 	}
 
 	mechanism := f.cfg.DefaultMechanism
+	if algorithm == "rsa" && mechanismFamily(mechanism) != "rsa" {
+		mechanism = defaultRSAMechanism
+	}
 	if m, ok := params.MethodParams["mechanism"].(string); ok && m != "" {
 		mechanism = m
+	}
+	if fam := mechanismFamily(mechanism); fam != algorithm {
+		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{
+			Reason: "pkcs11: mechanism " + mechanism + " is inconsistent with the enrolled " + algorithm + " key",
+		}
 	}
 
 	metadata := map[string]string{
@@ -160,7 +197,11 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 }
 
 // Challenge produces a 32-byte random nonce the custodian must sign with the
-// private key on their PKCS#11 token.
+// private key on their PKCS#11 token. The enrolled public key is carried in
+// MethodData["enrolled_public_key_der"] (standard base64 of the PKIX DER) and
+// the enrolled mechanism is carried in MethodData["mechanism"], so Verify
+// authenticates against the server-held enrollment — key and mechanism alike
+// — rather than anything the response supplies.
 func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnrollment) (*qrdbsdk.AuthFactorChallenge, error) {
 	if enrollment == nil {
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "enrollment must not be nil"}
@@ -184,19 +225,28 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 		Nonce:        nonce,
 		ExpiresAt:    time.Now().UTC().Add(time.Duration(ttl) * time.Second),
 		MethodData: map[string]any{
-			"mechanism": enrollment.Metadata["mechanism"],
-			"algorithm": enrollment.Metadata["algorithm"],
-			"key_id":    enrollment.Metadata["key_id"],
+			methodDataEnrolledKey: base64.StdEncoding.EncodeToString(enrollment.PublicKey),
+			methodDataMechanism:   enrollment.Metadata["mechanism"],
+			"algorithm":           enrollment.Metadata["algorithm"],
+			"key_id":              enrollment.Metadata["key_id"],
 		},
 	}, nil
 }
 
-// Verify checks the DER-encoded signature in response.Value against the
-// challenge nonce using the enrolled public key. The enrolled public key is
-// taken from response.Metadata["public_key_der"] (base64 DER) when present,
-// otherwise the verifier must be given the enrollment's PublicKey out of band;
-// callers that hold the enrollment should set this field. ECDSA signatures are
-// ASN.1 DER (r,s); RSA signatures are PKCS#1 v1.5 over SHA-256 of the nonce.
+// Verify checks the signature in response.Value against the challenge nonce
+// using the enrolled public key. The key is read from
+// challenge.MethodData["enrolled_public_key_der"] — never from the response —
+// so an attacker cannot pass verification by signing with a key of their own
+// and presenting it alongside the signature. ECDSA signatures are ASN.1 DER
+// (r,s); RSA signatures are PKCS#1 v1.5; both are over SHA-256 of the nonce.
+//
+// The mechanism follows the same rule as the key: it is read from
+// challenge.MethodData["mechanism"] — the mechanism recorded at enrollment —
+// and is never chosen from anything response.Metadata names. Verify refuses
+// when the enrolled mechanism is inconsistent with the enrolled key's
+// algorithm (a corrupted or hand-edited enrollment), and refuses when the
+// response names a mechanism other than the enrolled one, even if the
+// signature itself is otherwise valid.
 func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChallenge, response *qrdbsdk.AuthFactorResponse) error {
 	if challenge == nil {
 		return &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "challenge must not be nil"}
@@ -208,13 +258,45 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 		return &qrdbsdk.AuthFactorChallengeExpiredError{ChallengeID: challenge.ChallengeID}
 	}
 
-	der, err := publicKeyDERFromResponse(response)
+	encoded, ok := challenge.MethodData[methodDataEnrolledKey].(string)
+	if !ok || encoded == "" {
+		return &qrdbsdk.AuthFactorVerificationFailedError{
+			FactorName: FactorName,
+			Reason:     methodDataEnrolledKey + " missing from challenge MethodData",
+		}
+	}
+	der, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: err.Error()}
+		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "decode " + methodDataEnrolledKey + ": " + err.Error()}
 	}
 	pub, err := x509.ParsePKIXPublicKey(der)
 	if err != nil {
 		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "parse public key: " + err.Error()}
+	}
+
+	// The mechanism check applies only once the key type is known (ecdsa or
+	// rsa); an unsupported key type is rejected by the type switch below with
+	// its own message, unchanged from before this check existed.
+	if algorithm := publicKeyAlgorithm(pub); algorithm != "" {
+		mechanism, ok := challenge.MethodData[methodDataMechanism].(string)
+		if !ok || mechanism == "" {
+			return &qrdbsdk.AuthFactorVerificationFailedError{
+				FactorName: FactorName,
+				Reason:     methodDataMechanism + " missing from challenge MethodData",
+			}
+		}
+		if fam := mechanismFamily(mechanism); fam != algorithm {
+			return &qrdbsdk.AuthFactorVerificationFailedError{
+				FactorName: FactorName,
+				Reason:     "enrolled mechanism " + mechanism + " is inconsistent with the enrolled " + algorithm + " key",
+			}
+		}
+		if named := response.Metadata[responseMechanism]; named != "" && named != mechanism {
+			return &qrdbsdk.AuthFactorVerificationFailedError{
+				FactorName: FactorName,
+				Reason:     "response named mechanism " + named + ", enrolled mechanism is " + mechanism,
+			}
+		}
 	}
 
 	digest := sha256.Sum256(challenge.Nonce)
@@ -229,28 +311,6 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 	default:
 		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "unsupported public key type"}
 	}
-}
-
-// publicKeyDERFromResponse resolves the enrolled DER public key. It prefers an
-// explicit base64 value in the response metadata (the verifier echoes the
-// enrolled key there) and falls back to a PEM PUBLIC KEY block for callers that
-// supply PEM.
-func publicKeyDERFromResponse(response *qrdbsdk.AuthFactorResponse) ([]byte, error) {
-	if v, ok := response.Metadata["public_key_der"]; ok && v != "" {
-		der, err := base64.StdEncoding.DecodeString(v)
-		if err != nil {
-			return nil, &derDecodeError{reason: "decode public_key_der: " + err.Error()}
-		}
-		return der, nil
-	}
-	if v, ok := response.Metadata["public_key_pem"]; ok && v != "" {
-		block, _ := pem.Decode([]byte(v))
-		if block == nil || block.Type != "PUBLIC KEY" {
-			return nil, &derDecodeError{reason: "public_key_pem is not a PUBLIC KEY block"}
-		}
-		return block.Bytes, nil
-	}
-	return nil, &derDecodeError{reason: "public_key_der missing from response metadata"}
 }
 
 // verifyECDSA verifies an ASN.1 DER (r,s) ECDSA signature over the pre-hashed
@@ -275,6 +335,25 @@ func publicKeyAlgorithm(pub any) string {
 	case *ecdsa.PublicKey:
 		return "ecdsa"
 	case *rsa.PublicKey:
+		return "rsa"
+	default:
+		return ""
+	}
+}
+
+// mechanismFamily classifies a PKCS#11 signing mechanism name by the public
+// key algorithm it applies to, returning "ecdsa", "rsa", or "" for a
+// mechanism belonging to neither family. It recognizes the mechanism by its
+// PKCS#11 naming convention (every CKM_ECDSA* mechanism names an EC
+// operation; every RSA mechanism carries "RSA" in its name, e.g.
+// CKM_RSA_PKCS, CKM_SHA256_RSA_PKCS, CKM_RSA_PKCS_PSS) rather than by an
+// exhaustive enumeration, so it does not need to be extended each time a new
+// hash-width variant is added to a token's supported mechanism list.
+func mechanismFamily(mechanism string) string {
+	switch {
+	case strings.HasPrefix(mechanism, "CKM_ECDSA"):
+		return "ecdsa"
+	case strings.Contains(mechanism, "RSA"):
 		return "rsa"
 	default:
 		return ""

@@ -90,6 +90,24 @@ var (
 	// disk as plaintext, so there is no fallback: pairing and connecting both
 	// refuse rather than writing or reading it unsealed.
 	ErrPhoneBarrierRequired = errors.New("phone_service: sealing/unsealing the local Noise private key requires an unsealed barrier")
+
+	// ErrPhoneInvalidDeviceName indicates the phone-confirmed pairing name
+	// failed validation: empty, too long, or containing a non-printable
+	// character. The name is untrusted input from the peer, and it becomes
+	// the persisted record's lookup key, so it is validated before it is
+	// ever stored or used (#1307). See pairing.ValidateDeviceName.
+	ErrPhoneInvalidDeviceName = errors.New("phone_service: invalid device name")
+
+	// ErrPhoneDeviceNameCollision indicates the phone-confirmed pairing name
+	// is already used by a different paired device -- one pinned to a
+	// different Noise static key, not the device being (re-)paired. See
+	// pairing.ConflictingPairedDevice.
+	ErrPhoneDeviceNameCollision = errors.New("phone_service: device name is already used by a different paired device")
+
+	// ErrPhoneDeviceNameAmbiguous indicates more than one paired device
+	// record has the requested name, so a lookup by name cannot choose
+	// between them. See pairing.FindPairedDeviceByName.
+	ErrPhoneDeviceNameAmbiguous = errors.New("phone_service: more than one paired device has this name")
 )
 
 // devicesConfigFileName is the config file shared with the CLI.
@@ -718,7 +736,14 @@ func (s *PhoneService) pairOverTransport(
 		return nil, phone.ErrPairingRejected
 	}
 
+	// phoneName is untrusted input the phone chose (and just confirmed over
+	// the encrypted channel), and it becomes this record's lookup key below,
+	// so it is validated before anything else uses it (#1307).
 	phoneName := pairingResult.DeviceName
+	if err := pairing.ValidateDeviceName(phoneName); err != nil {
+		s.log.Error("pairing refused: invalid device name", "error", err)
+		return nil, errors.Join(ErrPhoneInvalidDeviceName, err)
+	}
 	remotePublicKey := session.RemoteStaticPublicKey()
 
 	// The record is loaded BEFORE the attestation because the user plane of
@@ -781,16 +806,31 @@ func (s *PhoneService) pairOverTransport(
 		s.emitAttestationEvent(phoneName, true, "pairing attestation verified: "+attestResult.SecurityLevel)
 	}
 
-	// Replace existing device with same address, or append.
-	replaced := false
-	for i := range cfg.Devices {
-		if cfg.Devices[i].Address == address {
-			cfg.Devices[i] = cfgDevice
-			replaced = true
-			break
+	// Refuse a name that already belongs to a different, still-paired device
+	// (#1307). Re-pairing the SAME device -- matched below by address or by
+	// its pinned key -- is allowed; persisting a second device under a name
+	// already in use is not, because it would make every later name lookup
+	// ambiguous between them.
+	if conflict := pairing.ConflictingPairedDevice(cfg.Devices, phoneName, address, cfgDevice.NoisePublicKey); conflict != nil {
+		s.log.Error("pairing refused: device name already used by a different paired device",
+			"device", phoneName, "conflicting_address", conflict.Address)
+		return nil, &DetailError{
+			Err:    ErrPhoneDeviceNameCollision,
+			Detail: fmt.Sprintf(": %q is already paired at address %s", phoneName, conflict.Address),
 		}
 	}
-	if !replaced {
+
+	// Replace every existing record that identifies the SAME device --
+	// matched by address or by its pinned Noise key, which survives
+	// Android's RPA address rotation -- with the fresh record, rather than
+	// only by address: a phone reconnecting under a rotated address used to
+	// be appended as a second entry instead of replacing its stale one. The
+	// name collision above is refused outright, so this only ever needs to
+	// consider records that are provably the same device.
+	sameDevice := pairing.SamePairedDeviceIndices(cfg.Devices, address, cfgDevice.NoisePublicKey)
+	if len(sameDevice) > 0 {
+		cfg.Devices = pairing.ReplacePairedDevices(cfg.Devices, sameDevice, cfgDevice)
+	} else {
 		cfg.Devices = append(cfg.Devices, cfgDevice)
 	}
 	if cfg.DefaultDevice == "" {
@@ -895,17 +935,26 @@ func (s *PhoneService) Unpair(name string) error {
 		return ErrPhoneDeviceNotFound
 	}
 
+	// Looked up through pairing.FindPairedDeviceByName rather than taking the
+	// first name match (#1307): if the devices file ever holds two records
+	// with the same name, guessing which one to delete is exactly the wrong
+	// failure mode for an unpair.
+	device, err := pairing.FindPairedDeviceByName(cfg.Devices, name)
+	if err != nil {
+		s.log.Error("unpair refused: ambiguous device name", "device", name, "error", err)
+		return errors.Join(ErrPhoneDeviceNameAmbiguous, err)
+	}
+	if device == nil {
+		return ErrPhoneDeviceNotFound
+	}
+
 	idx := -1
 	for i := range cfg.Devices {
-		if cfg.Devices[i].Name == name {
+		if &cfg.Devices[i] == device {
 			idx = i
 			break
 		}
 	}
-	if idx == -1 {
-		return ErrPhoneDeviceNotFound
-	}
-
 	cfg.Devices = append(cfg.Devices[:idx], cfg.Devices[idx+1:]...)
 	if cfg.DefaultDevice == name {
 		if len(cfg.Devices) > 0 {
@@ -1044,12 +1093,14 @@ func (s *PhoneService) Connect(name string) error {
 		return ErrPhoneDeviceNotFound
 	}
 
-	var device *phoneConfigDevice
-	for i := range cfg.Devices {
-		if cfg.Devices[i].Name == name {
-			device = &cfg.Devices[i]
-			break
-		}
+	// Looked up through pairing.FindPairedDeviceByName rather than taking the
+	// first name match (#1307): this lookup decides which pinned Noise key
+	// the connection trusts, so an ambiguous name must refuse rather than
+	// silently connect against whichever record happens to be listed first.
+	device, err := pairing.FindPairedDeviceByName(cfg.Devices, name)
+	if err != nil {
+		s.log.Error("connect refused: ambiguous device name", "device", name, "error", err)
+		return errors.Join(ErrPhoneDeviceNameAmbiguous, err)
 	}
 	if device == nil {
 		return ErrPhoneDeviceNotFound

@@ -41,6 +41,9 @@ import (
 //     identifier (FactorID or MethodMetadata["credential_id"]).
 //  3. Drive xkms's webauthn.Service.FinishLogin with the supplied session
 //     id (carried in MethodMetadata["session_id"]) and assertion bytes.
+//     FinishLogin refuses an account that is not active or whose
+//     auth-method policy withdraws WebAuthn, so no factor is satisfied for
+//     it (go-xkms#1298).
 //
 // FactorClient.Enroll persists the credential record on the qrdb side and
 // is the canonical path for new factors. Hardware-side enrollment is
@@ -177,9 +180,12 @@ func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID st
 
 	// A non-empty hint (username/email) scopes the ceremony to that user's
 	// credentials; otherwise nil requests a discoverable-credential ceremony.
+	// An account that may not log in (xkmswebauthn.CheckAccountStanding) is
+	// treated exactly like an unknown hint, so the ceremony's shape does not
+	// reveal its state; Verify refuses it regardless (go-xkms#1298).
 	var userID []byte
 	if hint != "" {
-		if u, uErr := v.service.GetUserByEmail(ctx, hint); uErr == nil && u != nil {
+		if u, uErr := v.service.GetUserByEmail(ctx, hint); uErr == nil && u != nil && xkmswebauthn.CheckAccountStanding(u) == nil {
 			userID = u.WebAuthnID()
 		}
 	}

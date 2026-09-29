@@ -39,6 +39,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/importtoken"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -151,16 +152,23 @@ type Backend struct {
 	config        *Config
 	client        KeyVaultClient
 	secretsClient SecretsClient // lazily initialized by initSecretsClient; see azurekv_symmetric.go
-	// importTokens holds the transient RSA wrapping-key material generated
-	// by GetImportParameters for the GetImportParameters -> WrapKey ->
-	// ImportKey ceremony. It is deliberately never written through
-	// Config.KeyStorage: it is private key material, not key metadata, and
-	// the ceremony is expected to complete within one process's uptime --
-	// unlike the CN -> key descriptor records above, nothing relies on it
-	// surviving a restart.
-	importTokens map[string][]byte
+	// importTokens holds the sealed ephemeral RSA wrapping keypair, plus
+	// the algorithm it was issued for (go-xkms#1342), for each in-flight
+	// GetImportParameters -> WrapKey -> ImportKey ceremony, keyed by the
+	// random opaque handle returned as ImportParameters.ImportToken.
+	// The wrapping private key lives only here -- it is never handed to the
+	// caller (go-xkms#1340) and never written through Config.KeyStorage: it
+	// is private key material, not key metadata, and the ceremony is
+	// expected to complete within one process's uptime, so unlike the CN ->
+	// key descriptor records above nothing relies on it surviving a
+	// restart. It is a bounded, TTL-enforced, single-use store rather than a
+	// plain map (go-xkms#1261): a caller that requests import parameters and
+	// never completes the ceremony must not be able to grow this state
+	// without limit, and every evicted wrapping key is destroyed rather than
+	// left for the garbage collector.
+	importTokens *importtoken.Store[*importtoken.Entry]
 	tracker      types.AEADSafetyTracker
-	mu           sync.RWMutex // guards client/secretsClient initialization and importTokens
+	mu           sync.RWMutex // guards client/secretsClient initialization
 }
 
 // NewBackend creates a new Azure Key Vault backend instance.
@@ -178,7 +186,7 @@ func NewBackend(config *Config) (*Backend, error) {
 
 	b := &Backend{
 		config:       config,
-		importTokens: make(map[string][]byte),
+		importTokens: importtoken.New[*importtoken.Entry](0, 0, (*importtoken.Entry).Destroy),
 		tracker:      tracker,
 	}
 
@@ -201,7 +209,7 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 	b := &Backend{
 		config:       config,
 		client:       client,
-		importTokens: make(map[string][]byte),
+		importTokens: importtoken.New[*importtoken.Entry](0, 0, (*importtoken.Entry).Destroy),
 		tracker:      tracker,
 	}
 
@@ -421,13 +429,13 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 // Close releases any resources held by the backend. Config.KeyStorage's
 // lifecycle belongs to the caller that constructed it (it may be shared, or
 // outlive this backend across a restart), so Close never touches it -- only
-// the Azure client handles and the transient importTokens map are released
+// the Azure client handles and the transient importTokens store are released
 // here.
 func (b *Backend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.importTokens = make(map[string][]byte)
+	b.importTokens.Close()
 	if b.client != nil {
 		if err := b.client.Close(); err != nil {
 			return err

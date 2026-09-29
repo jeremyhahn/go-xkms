@@ -60,6 +60,10 @@ interface RegOpts {
   apiBase: string;
   email: string;
   displayName: string;
+  // Session token of the account. When set, the ceremony adds a passkey to
+  // that account through the session-authenticated /credentials/begin route
+  // instead of the public first-passkey route (go-xkms#1294).
+  token?: string;
 }
 
 interface AuthOpts {
@@ -106,7 +110,7 @@ async function prepare(page: Page, pageUrl: string): Promise<{ cdp: CDPSession; 
 // refuses to create the credential (e.g. excludeCredentials match), the thrown
 // DOMException is returned as clientError and finish is never called.
 async function runRegistration(page: Page, opts: RegOpts): Promise<CeremonyResult> {
-  return page.evaluate(async ({ apiBase, email, displayName }) => {
+  return page.evaluate(async ({ apiBase, email, displayName, token }) => {
     const b64urlToBuf = (s: string): ArrayBuffer => {
       s = s.replace(/-/g, '+').replace(/_/g, '/');
       const pad = s.length % 4;
@@ -123,11 +127,16 @@ async function runRegistration(page: Page, opts: RegOpts): Promise<CeremonyResul
       return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     };
 
-    const beginResp = await fetch(`${apiBase}/api/v1/webauthn/registration/begin`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, display_name: displayName }),
-    });
+    const beginResp = token
+      ? await fetch(`${apiBase}/api/v1/webauthn/credentials/begin`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        })
+      : await fetch(`${apiBase}/api/v1/webauthn/registration/begin`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, display_name: displayName }),
+        });
     if (!beginResp.ok) {
       return { status: beginResp.status, ok: false, body: await beginResp.text() };
     }
@@ -210,7 +219,6 @@ async function runAuthentication(page: Page, opts: AuthOpts): Promise<CeremonyRe
         return { status: beginResp.status, ok: false, body: await beginResp.text() };
       }
       const sessionId = beginResp.headers.get('X-Session-Id') ?? '';
-      const userIdHeader = beginResp.headers.get('X-User-Id');
       const { publicKey } = await beginResp.json();
 
       publicKey.challenge = b64urlToBuf(publicKey.challenge);
@@ -253,7 +261,6 @@ async function runAuthentication(page: Page, opts: AuthOpts): Promise<CeremonyRe
         'Content-Type': 'application/json',
         'X-Session-Id': sessionOverride !== undefined ? sessionOverride : sessionId,
       };
-      if (userIdHeader) headers['X-User-Id'] = userIdHeader;
 
       const finishResp = await fetch(`${apiBase}/api/v1/webauthn/login/finish`, {
         method: 'POST',
@@ -317,10 +324,21 @@ test.describe('xkms WebAuthn RP — Chrome virtual authenticator (same-origin)',
     const first = await runRegistration(page, { apiBase: '', email, displayName: 'Exclude Test' });
     expect(first.ok, `first registration failed: ${JSON.stringify(first.body ?? first.clientError)}`).toBeTruthy();
 
-    // A second registration for the same user returns excludeCredentials that
-    // include the credential already held by this authenticator, so the CTAP2
-    // authenticator refuses with InvalidStateError and finish is never reached.
-    const second = await runRegistration(page, { apiBase: '', email, displayName: 'Exclude Test' });
+    // The public route refuses an account that already has a passkey
+    // (go-xkms#1294).
+    const refused = await runRegistration(page, { apiBase: '', email, displayName: 'Exclude Test' });
+    expect(refused.status).toBe(403);
+
+    // Adding a passkey through the account's own session returns
+    // excludeCredentials that include the credential already held by this
+    // authenticator, so the CTAP2 authenticator refuses with InvalidStateError
+    // and finish is never reached.
+    const second = await runRegistration(page, {
+      apiBase: '',
+      email,
+      displayName: 'Exclude Test',
+      token: first.body.token,
+    });
     expect(second.clientError, 'expected the authenticator to refuse re-registration').toBeTruthy();
     expect(second.clientError).toContain('InvalidStateError');
   });

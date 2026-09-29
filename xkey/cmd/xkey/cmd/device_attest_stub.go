@@ -17,10 +17,8 @@ package cmd
 
 import (
 	"errors"
-	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // Device attest errors (stub).
@@ -67,15 +65,7 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(deviceAttestCmd)
 
-	deviceAttestCmd.Flags().String("device", "", "Specific paired device to use")
-	deviceAttestCmd.Flags().Bool("no-verify", false, "Skip certificate chain verification")
-	deviceAttestCmd.Flags().Bool("verbose", false, "Show full certificate chain details")
-	deviceAttestCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout (includes biometric wait)")
-
-	_ = viper.BindPFlag("device.attest.device", deviceAttestCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.attest.no-verify", deviceAttestCmd.Flags().Lookup("no-verify"))
-	_ = viper.BindPFlag("device.attest.verbose", deviceAttestCmd.Flags().Lookup("verbose"))
-	_ = viper.BindPFlag("device.attest.timeout", deviceAttestCmd.Flags().Lookup("timeout"))
+	registerDeviceAttestFlags(deviceAttestCmd)
 }
 
 // runDeviceAttestStub returns an error indicating BLE support is not available.

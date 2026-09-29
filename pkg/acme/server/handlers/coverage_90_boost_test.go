@@ -685,7 +685,6 @@ func TestParseChallengeAsDynamicPortAssignment_AllCases(t *testing.T) {
 		challengeTyp string
 		wantBase     string
 		wantPort     uint16
-		wantErr      bool
 	}{
 		{
 			name:         "standard http-01",
@@ -727,12 +726,7 @@ func TestParseChallengeAsDynamicPortAssignment_AllCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			base, port, err := parseChallengeAsDynamicPortAssignment(tt.challengeTyp)
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			assert.NoError(t, err)
+			base, port := parseChallengeAsDynamicPortAssignment(tt.challengeTyp)
 			assert.Equal(t, tt.wantBase, base)
 			assert.Equal(t, tt.wantPort, port)
 		})

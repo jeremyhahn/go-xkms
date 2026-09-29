@@ -104,7 +104,6 @@ describe('LoginPanel', () => {
     fake.mocks.webAuthnBeginLogin.mockResolvedValue({
       options: { publicKey: { challenge: 'Y2hhbGxlbmdl' } },
       sessionId: 'sess-1',
-      userId: 'user-1',
     });
     fake.mocks.webAuthnFinishLogin.mockResolvedValue({
       token: 'acc-1',
@@ -132,11 +131,7 @@ describe('LoginPanel', () => {
     expect(provider.getAssertion).toHaveBeenCalledWith({
       publicKey: { challenge: 'Y2hhbGxlbmdl' },
     });
-    expect(fake.mocks.webAuthnFinishLogin).toHaveBeenCalledWith(
-      'sess-1',
-      assertionJSON,
-      'user-1',
-    );
+    expect(fake.mocks.webAuthnFinishLogin).toHaveBeenCalledWith('sess-1', assertionJSON);
     // Tokens landed in the shared store.
     expect(window.localStorage.getItem(tokenKey())).toBe('acc-1');
   });

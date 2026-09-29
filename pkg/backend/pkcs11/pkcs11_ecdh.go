@@ -350,7 +350,7 @@ func (b *Backend) deriveECDH(
 	privKeyHandle pkcs11.ObjectHandle,
 	peerPoint []byte,
 	curve elliptic.Curve,
-) ([]byte, error) {
+) (secret []byte, err error) {
 	// Determine the expected shared secret size based on the curve
 	secretSize := (curve.Params().BitSize + 7) / 8
 
@@ -391,7 +391,23 @@ func (b *Backend) deriveECDH(
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "ECDH derivation failed", Err: err}
 	}
-	defer b.p11ctx.DestroyObject(session, derivedHandle)
+
+	// Deferred so the derived secret-key object is destroyed on every return
+	// path, including a failed attribute read, not only on success. A
+	// destroy that fails is reported rather than swallowed: the session
+	// object would otherwise persist, unnoticed, for the life of the
+	// session.
+	defer func() {
+		destroyErr := b.p11ctx.DestroyObject(session, derivedHandle)
+		if destroyErr == nil {
+			return
+		}
+		if err != nil {
+			err = &errs.Joined{Lead: err, Detail: ErrDerivedSecretNotDestroyed.Error(), Cause: destroyErr}
+			return
+		}
+		err = &errs.Joined{Lead: ErrDerivedSecretNotDestroyed, Cause: destroyErr}
+	}()
 
 	// Extract the shared secret value
 	secretAttrs, err := b.p11ctx.GetAttributeValue(session, derivedHandle, []*pkcs11.Attribute{
@@ -405,8 +421,22 @@ func (b *Backend) deriveECDH(
 		return nil, &errs.Message{Msg: "empty shared secret returned from HSM"}
 	}
 
+	if testHookDeriveECDHKeyDerived != nil {
+		testHookDeriveECDHKeyDerived(session, derivedHandle)
+	}
+
 	return secretAttrs[0].Value, nil
 }
+
+// testHookDeriveECDHKeyDerived runs after the shared secret has been
+// extracted from the derived object into the returned buffer, but before the
+// call returns and its destroy-on-return defer fires. It is nil in every
+// build; only this package's own tests set it, to destroy the object out
+// from under the deferred cleanup and prove a C_DestroyObject failure there
+// is reported rather than swallowed. The window cannot be reached from
+// outside the package or hit by timing -- it opens and closes inside one
+// call.
+var testHookDeriveECDHKeyDerived func(session pkcs11.SessionHandle, handle pkcs11.ObjectHandle)
 
 // curveForUncompressedPoint returns the curve an uncompressed EC point of the
 // given length belongs to. The length is unambiguous across the supported

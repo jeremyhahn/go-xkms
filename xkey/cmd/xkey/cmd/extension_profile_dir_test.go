@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/shellquote"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
@@ -92,7 +93,7 @@ func TestRunExtensionInstall_ProfileDirWritesManifestPinnedToInstance(t *testing
 	launcherContents, readErr := os.ReadFile(launcherPath)
 	require.NoError(t, readErr)
 	script := string(launcherContents)
-	assert.Contains(t, script, "export XKEY_HOME=\""+home+"\"")
+	assert.Contains(t, script, "export XKEY_HOME="+shellquote.SingleQuote(home))
 	assert.Contains(t, script, "extension host")
 }
 

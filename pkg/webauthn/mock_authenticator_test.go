@@ -717,10 +717,14 @@ func TestMockAuthenticator_MultipleCredentials(t *testing.T) {
 		t.Fatalf("FinishRegistration 1 failed: %v", err)
 	}
 
-	// Register with second authenticator
-	regOptions2, regSessionID2, err := svc.BeginRegistration(ctx, email, displayName)
+	// Register with second authenticator, through a session authenticated
+	// as the account (go-xkms#1294).
+	regOptions2, regSessionID2, err := svc.BeginAddCredential(ctx, SessionAccount{
+		UserID: user.WebAuthnID(),
+		Email:  email,
+	})
 	if err != nil {
-		t.Fatalf("BeginRegistration 2 failed: %v", err)
+		t.Fatalf("BeginAddCredential failed: %v", err)
 	}
 
 	// The exclude list should now contain the first credential

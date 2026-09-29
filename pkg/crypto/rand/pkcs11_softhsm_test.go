@@ -182,3 +182,30 @@ func TestPKCS11Resolver_LoginWithCorrectPIN(t *testing.T) {
 	require.NoError(t, r.Close())
 	assert.False(t, r.Available())
 }
+
+// TestPKCS11Resolver_CloseReportsUnderlyingFailures proves that a Logout or
+// CloseSession failure inside Close is reported to the caller instead of
+// being discarded (go-xkms#1347). Closing the session out from under the
+// resolver, from the same package's test, guarantees Close's own Logout and
+// CloseSession calls fail with CKR_SESSION_HANDLE_INVALID rather than racing
+// against the resolver's own concurrent use of the session.
+func TestPKCS11Resolver_CloseReportsUnderlyingFailures(t *testing.T) {
+	lib, slot, tok := provisionedSlot(t, "rand-close-err")
+
+	r, err := newPKCS11Resolver(&PKCS11Config{
+		Module:      lib,
+		SlotID:      slot,
+		PINRequired: true,
+		PIN:         mustSecret(t, tok.UserPIN),
+	})
+	require.NoError(t, err)
+
+	pr, ok := r.(*pkcs11Resolver)
+	require.True(t, ok, "expected the concrete *pkcs11Resolver")
+
+	require.NoError(t, pr.ctx.CloseSession(pr.session),
+		"closing the session directly must itself succeed to set up the failure")
+
+	err = r.Close()
+	require.Error(t, err, "Close must surface the Logout/CloseSession failures instead of discarding them")
+}

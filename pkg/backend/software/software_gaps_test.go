@@ -20,13 +20,16 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/importtoken"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -169,8 +172,7 @@ func TestUnwrapKey_ClosedBackend(t *testing.T) {
 }
 
 // TestUnwrapKey_EnclaveAlreadyDestroyed verifies UnwrapKey surfaces an
-// error when the sealed wrapping key enclave has already been destroyed
-// (Open() on a destroyed Secret fails).
+// error when the sealed wrapping key enclave has already been destroyed.
 func TestUnwrapKey_EnclaveAlreadyDestroyed(t *testing.T) {
 	be := createFullTestBackend(t)
 	defer func() { _ = be.Close() }()
@@ -182,13 +184,13 @@ func TestUnwrapKey_EnclaveAlreadyDestroyed(t *testing.T) {
 	wrapped, err := be.WrapKey(context.Background(), []byte("some key material"), params)
 	require.NoError(t, err)
 
-	be.importMu.Lock()
-	be.importTokens[string(wrapped.ImportToken)].privateKey.Destroy()
-	be.importMu.Unlock()
+	td, peekErr := be.importTokens.Peek(string(wrapped.ImportToken))
+	require.NoError(t, peekErr)
+	td.wrappingKey.Destroy()
 
 	_, err = be.UnwrapKey(context.Background(), wrapped, params)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to open wrapping key enclave")
+	assert.Contains(t, err.Error(), "wrapping key is not available")
 }
 
 // TestUnwrapKey_CorruptedEnclaveData verifies UnwrapKey surfaces a parse
@@ -207,10 +209,10 @@ func TestUnwrapKey_CorruptedEnclaveData(t *testing.T) {
 	garbage, err := secure.NewSecret([]byte("this is not a valid pkcs8 der blob"))
 	require.NoError(t, err)
 
-	be.importMu.Lock()
-	be.importTokens[string(wrapped.ImportToken)].privateKey.Destroy()
-	be.importTokens[string(wrapped.ImportToken)].privateKey = garbage
-	be.importMu.Unlock()
+	td, peekErr := be.importTokens.Peek(string(wrapped.ImportToken))
+	require.NoError(t, peekErr)
+	td.wrappingKey.Destroy()
+	td.wrappingKey = importtoken.NewSealedRSAKeyFromSecret(garbage, nil)
 
 	_, err = be.UnwrapKey(context.Background(), wrapped, params)
 	require.Error(t, err)
@@ -238,10 +240,10 @@ func TestUnwrapKey_EnclaveNotRSA(t *testing.T) {
 	sealedECDSA, err := secure.NewSecret(der)
 	require.NoError(t, err)
 
-	be.importMu.Lock()
-	be.importTokens[string(wrapped.ImportToken)].privateKey.Destroy()
-	be.importTokens[string(wrapped.ImportToken)].privateKey = sealedECDSA
-	be.importMu.Unlock()
+	td, peekErr := be.importTokens.Peek(string(wrapped.ImportToken))
+	require.NoError(t, peekErr)
+	td.wrappingKey.Destroy()
+	td.wrappingKey = importtoken.NewSealedRSAKeyFromSecret(sealedECDSA, nil)
 
 	_, err = be.UnwrapKey(context.Background(), wrapped, params)
 	require.Error(t, err)
@@ -294,6 +296,83 @@ func TestImportKey_UnwrapFailure(t *testing.T) {
 	err = be.ImportKey(context.Background(), wrapAttrs, wrapped)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to unwrap key material")
+}
+
+// TestUnwrapKey_TokenSingleUse verifies a used token is gone (go-xkms#1261):
+// a second UnwrapKey call with the same import token fails, because the
+// first call's Take removed and destroyed the wrapping key rather than
+// leaving it in the store for a replay.
+func TestUnwrapKey_TokenSingleUse(t *testing.T) {
+	be := createFullTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	attrs := createRSAAttrs("single-use.com", 2048)
+	params, err := be.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	require.NoError(t, err)
+
+	wrapped, err := be.WrapKey(context.Background(), []byte("some key material"), params)
+	require.NoError(t, err)
+
+	_, err = be.UnwrapKey(context.Background(), wrapped, params)
+	require.NoError(t, err)
+
+	_, err = be.UnwrapKey(context.Background(), wrapped, params)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
+}
+
+// TestImportKey_TokenConsumedOnSuccess verifies a successful ImportKey
+// removes the import token from the store (go-xkms#1261): the wrapping
+// key it named cannot be found afterward, whether by a second import
+// attempt or by Peek.
+func TestImportKey_TokenConsumedOnSuccess(t *testing.T) {
+	be := createFullTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	attrs := createAESAttrs("token-consumed", 256, types.SymmetricAES256GCM)
+	params, err := be.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	require.NoError(t, err)
+
+	keyMaterial := make([]byte, 32)
+	_, randErr := rand.Read(keyMaterial)
+	require.NoError(t, randErr)
+
+	wrapped, err := be.WrapKey(context.Background(), keyMaterial, params)
+	require.NoError(t, err)
+
+	require.NoError(t, be.ImportKey(context.Background(), attrs, wrapped))
+
+	_, peekErr := be.importTokens.Peek(string(wrapped.ImportToken))
+	require.Error(t, peekErr)
+
+	err = be.ImportKey(context.Background(), attrs, wrapped)
+	require.Error(t, err, "a second ImportKey with the same token must fail once it is consumed")
+}
+
+// TestGetImportParameters_CapEnforced verifies the hard cap holds: once
+// the import-token store is full, GetImportParameters reports a typed
+// *importtoken.LimitExceededError instead of growing past the limit
+// (go-xkms#1261). The backend's importTokens Store is swapped for one
+// with a cap of 2 so the test does not need to generate thousands of RSA
+// keys to observe the real DefaultMaxTokens limit.
+func TestGetImportParameters_CapEnforced(t *testing.T) {
+	be := createFullTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	be.importTokens = importtoken.New[*importTokenData](time.Hour, 2, (*importTokenData).destroy)
+
+	attrs := createRSAAttrs("cap-enforced.com", 2048)
+	for i := 0; i < 2; i++ {
+		_, err := be.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		require.NoError(t, err)
+	}
+
+	_, err := be.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	require.Error(t, err)
+	var limitErr *importtoken.LimitExceededError
+	require.True(t, errors.As(err, &limitErr), "expected *importtoken.LimitExceededError, got %T: %v", err, err)
+	assert.Equal(t, 2, limitErr.Limit)
+	assert.Equal(t, 2, be.importTokens.Len(), "the cap must hold rather than merely slow growth")
 }
 
 // TestExportKey_SymmetricKeyNotFound verifies ExportKey surfaces a "failed

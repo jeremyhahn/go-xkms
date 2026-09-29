@@ -19,7 +19,6 @@ import (
 	"errors"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // Device listen command errors - re-declared for stub builds.
@@ -59,15 +58,7 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(deviceListenCmd)
 
-	// Register flags even in stub mode for help text
-	deviceListenCmd.Flags().String("device", "", "Specific paired device to accept connections from")
-	deviceListenCmd.Flags().String("name", "", "Advertised device name (default: hostname)")
-	deviceListenCmd.Flags().Duration("timeout", 0, "Listen timeout (0 for indefinite)")
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("device.listen.device", deviceListenCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("device.listen.name", deviceListenCmd.Flags().Lookup("name"))
-	_ = viper.BindPFlag("device.listen.timeout", deviceListenCmd.Flags().Lookup("timeout"))
+	registerDeviceListenFlags(deviceListenCmd)
 }
 
 // runDeviceListenStub returns an error indicating BLE support is not available.

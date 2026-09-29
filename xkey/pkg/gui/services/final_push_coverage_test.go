@@ -32,7 +32,10 @@ func (m *fpMockTrustStore) AddCertificate(_ *x509.Certificate) error { return ni
 func (m *fpMockTrustStore) AddCertificateWithOptions(_ *x509.Certificate, _ *truststore.AddCertificateOptions) error {
 	return m.addCertWithOptsErr
 }
-func (m *fpMockTrustStore) AddPEM(_ []byte) (int, error)     { return 0, nil }
+func (m *fpMockTrustStore) AddPEM(_ []byte) (int, error) { return 0, nil }
+func (m *fpMockTrustStore) ImportPEM(_ []byte, _ *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
+	return truststore.ImportResult{}, nil
+}
 func (m *fpMockTrustStore) RemoveCertificate(_ string) error { return nil }
 func (m *fpMockTrustStore) Certificates() ([]*x509.Certificate, error) {
 	return nil, nil

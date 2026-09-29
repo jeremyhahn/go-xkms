@@ -26,7 +26,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -34,6 +33,7 @@ import (
 	"golang.org/x/crypto/argon2"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/importtoken"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	chacha20poly1305pkg "github.com/jeremyhahn/go-xkms/pkg/crypto/chacha20poly1305"
 	cryptorand "github.com/jeremyhahn/go-xkms/pkg/crypto/rand"
@@ -69,13 +69,19 @@ import (
 //   - Used for nonce generation in AEAD operations
 //   - Defaults to auto-detection (hardware preferred)
 type Backend struct {
-	storage           storage.Backend
-	wrappingKeys      map[string]*rsa.PrivateKey // Maps import token (UUID) to RSA private key
-	tracker           types.AEADSafetyTracker    // AEAD safety tracker for nonce/bytes tracking
-	rng               cryptorand.Resolver        // Configurable RNG for nonce generation
-	closed            bool
-	mu                sync.RWMutex
-	wrappingKeysMutex sync.RWMutex
+	storage storage.Backend
+	// wrappingKeys is a bounded, TTL-enforced, single-use store for the
+	// ephemeral RSA wrapping keypair, plus the algorithm it was issued
+	// for, each in-progress import ceremony holds between
+	// GetImportParameters and UnwrapKey (go-xkms#1261, go-xkms#1342). See
+	// importtoken.Store's doc comment for why it is bounded and swept
+	// rather than a plain map, which only ever grew here and was never
+	// zeroized on eviction.
+	wrappingKeys *importtoken.Store[*importtoken.Entry]
+	tracker      types.AEADSafetyTracker // AEAD safety tracker for nonce/bytes tracking
+	rng          cryptorand.Resolver     // Configurable RNG for nonce generation
+	closed       bool
+	mu           sync.RWMutex
 }
 
 // Config contains configuration for the symmetric Backend.
@@ -151,7 +157,7 @@ func NewBackend(config *Config) (types.SymmetricKeyProvider, error) {
 		storage:      config.KeyStorage,
 		tracker:      tracker,
 		rng:          rng,
-		wrappingKeys: make(map[string]*rsa.PrivateKey),
+		wrappingKeys: importtoken.New[*importtoken.Entry](0, 0, (*importtoken.Entry).Destroy),
 		closed:       false,
 	}, nil
 }
@@ -365,6 +371,11 @@ func (b *Backend) Close() error {
 	}
 
 	b.closed = true
+
+	// Destroy any pending import-token wrapping keys before releasing
+	// storage so leftover wrapping keys cannot survive a shutdown
+	// (go-xkms#1261: this backend previously never cleared them at all).
+	b.wrappingKeys.Close()
 
 	// Close RNG resolver
 	if b.rng != nil {
@@ -1375,16 +1386,23 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		return nil, &errs.Wrapped{Msg: "failed to generate RSA key pair", Err: err}
 	}
 
+	// Seal the private key; only the public key stays in plaintext.
+	wrappingKey, err := importtoken.NewSealedRSAKey(privateKey)
+	if err != nil {
+		return nil, err
+	}
+
 	// Generate UUID token for this import operation
 	token := uuid.New().String()
 
-	// Store the private key with the token
-	b.wrappingKeysMutex.Lock()
-	b.wrappingKeys[token] = privateKey
-	b.wrappingKeysMutex.Unlock()
-
-	// Set expiration to 24 hours from now
-	expiresAt := time.Now().Add(24 * time.Hour)
+	// Store the sealed private key, bound to the algorithm it was
+	// generated for. Put enforces the store's TTL and hard cap
+	// (go-xkms#1261) and sweeps expired ceremonies before inserting this
+	// one.
+	expiresAt, err := b.wrappingKeys.Put(token, &importtoken.Entry{Key: wrappingKey, Algorithm: algorithm})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to store import token", Err: err}
+	}
 
 	// Determine key spec from algorithm
 	keySpec := "AES_256" // Default
@@ -1398,7 +1416,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 	}
 
 	return &backend.ImportParameters{
-		WrappingPublicKey: &privateKey.PublicKey,
+		WrappingPublicKey: wrappingKey.PublicKey(),
 		ImportToken:       []byte(token),
 		Algorithm:         algorithm,
 		ExpiresAt:         &expiresAt,
@@ -1462,6 +1480,12 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 
 // UnwrapKey unwraps key material using the stored RSA private key.
 // The import token is used to retrieve the corresponding private key.
+//
+// The import token is single-use (go-xkms#1261): a call, successful or
+// not, Takes the token from b.wrappingKeys, so it cannot be replayed
+// against a second wrap of different key material, and the wrapping key
+// is destroyed once this call returns rather than left live until a
+// caller happens to finish ImportKey.
 func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapped key material cannot be nil"}
@@ -1475,38 +1499,20 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "import token cannot be nil or empty"}
 	}
 
-	// Retrieve the private key using the import token
-	/* Convert to string for map key */
-
-	b.wrappingKeysMutex.RLock()
-	privateKey, exists := b.wrappingKeys[string(wrapped.ImportToken)]
-	b.wrappingKeysMutex.RUnlock()
-
-	if !exists {
+	// Take the wrapping key: unknown, already-consumed, and expired
+	// tokens are indistinguishable, and this call owns destroying
+	// whatever it took.
+	entry, err := b.wrappingKeys.Take(string(wrapped.ImportToken))
+	if err != nil {
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "invalid or expired import token"}
 	}
+	defer entry.Destroy()
 
-	var unwrapped []byte
-	var err error
-
-	// Unwrap based on algorithm
-	switch wrapped.Algorithm {
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
-		backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
-		// Direct RSA-OAEP unwrapping
-		unwrapped, err = wrapping.UnwrapRSAOAEP(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
-
-	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
-		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
-		// Hybrid unwrapping (RSA + AES-KWP)
-		unwrapped, err = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
-
-	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: wrapped.Algorithm.String()}
-	}
-
+	// entry.Unwrap refuses wrapped.Algorithm unless it matches the
+	// algorithm GetImportParameters issued this token for (go-xkms#1342).
+	unwrapped, err := entry.Unwrap(wrapped.Algorithm, wrapped.WrappedKey)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
+		return nil, err
 	}
 
 	// Validate unwrapped key is a valid symmetric key size
@@ -1591,13 +1597,8 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		return err
 	}
 
-	// Clean up the wrapping key after successful import
-	if wrapped.ImportToken != nil {
-		token := string(wrapped.ImportToken)
-		b.wrappingKeysMutex.Lock()
-		delete(b.wrappingKeys, token)
-		b.wrappingKeysMutex.Unlock()
-	}
+	// The wrapping key is already gone: UnwrapKey's Take consumed it
+	// above, regardless of whether the import that followed succeeded.
 
 	return nil
 }

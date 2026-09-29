@@ -248,8 +248,9 @@ func TestNewCORSMiddleware(t *testing.T) {
 	})
 
 	// A cross-origin browser frontend completes the WebAuthn ceremony by
-	// sending X-Session-Id / X-User-Id on /finish and reading them from
-	// /begin responses. Those headers must be both allowed and exposed.
+	// sending X-Session-Id on /finish and reading it from /begin responses,
+	// so it must be both allowed and exposed. X-User-Id is gone
+	// (go-xkms#1296): the user ID comes only from a successful finish.
 	t.Run("Permits and exposes WebAuthn session headers", func(t *testing.T) {
 		middleware := NewCORSMiddleware(&CORSOptions{AllowedOrigins: []string{"*"}})(handler)
 
@@ -261,13 +262,14 @@ func TestNewCORSMiddleware(t *testing.T) {
 
 		allow := w.Header().Get("Access-Control-Allow-Headers")
 		expose := w.Header().Get("Access-Control-Expose-Headers")
-		for _, h := range []string{webauthnhttp.HeaderSessionID, webauthnhttp.HeaderUserID} {
-			if !strings.Contains(allow, h) {
-				t.Errorf("Access-Control-Allow-Headers missing %q: %q", h, allow)
-			}
-			if !strings.Contains(expose, h) {
-				t.Errorf("Access-Control-Expose-Headers missing %q: %q", h, expose)
-			}
+		if !strings.Contains(allow, webauthnhttp.HeaderSessionID) {
+			t.Errorf("Access-Control-Allow-Headers missing %q: %q", webauthnhttp.HeaderSessionID, allow)
+		}
+		if !strings.Contains(expose, webauthnhttp.HeaderSessionID) {
+			t.Errorf("Access-Control-Expose-Headers missing %q: %q", webauthnhttp.HeaderSessionID, expose)
+		}
+		if strings.Contains(allow+expose, "X-User-Id") {
+			t.Errorf("CORS must not carry the removed X-User-Id header: allow %q, expose %q", allow, expose)
 		}
 	})
 }

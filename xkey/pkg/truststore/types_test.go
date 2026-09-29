@@ -29,6 +29,7 @@ func TestIsValidPurpose(t *testing.T) {
 		{"user-ca", PurposeUserCA},
 		{"bootstrap-ca", PurposeBootstrapCA},
 		{"idevid-issuer", PurposeIDevIDIssuer},
+		{"synced", PurposeSynced},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -54,6 +55,30 @@ func TestIsValidPurpose_Invalid(t *testing.T) {
 				t.Errorf("IsValidPurpose(%q) = true, want false", tt.purpose)
 			}
 		})
+	}
+}
+
+// TestIsAnchorPurpose_EveryAnchorPurpose pins which purposes may anchor a
+// trust decision: every recognized purpose except the synced quarantine.
+func TestIsAnchorPurpose_EveryAnchorPurpose(t *testing.T) {
+	for _, purpose := range []CertPurpose{
+		PurposeGeneral, PurposeTPMManufacturer, PurposeAndroidHardware,
+		PurposeUserCA, PurposeBootstrapCA, PurposeIDevIDIssuer,
+	} {
+		if !IsAnchorPurpose(purpose) {
+			t.Errorf("IsAnchorPurpose(%q) = false, want true", purpose)
+		}
+	}
+}
+
+// TestIsAnchorPurpose_RejectsSyncedAndUnknown guards #1304: a certificate a
+// paired device pushed through sync must never be an anchor, and neither is
+// a purpose the store does not recognize.
+func TestIsAnchorPurpose_RejectsSyncedAndUnknown(t *testing.T) {
+	for _, purpose := range []CertPurpose{PurposeSynced, "", "foobar"} {
+		if IsAnchorPurpose(purpose) {
+			t.Errorf("IsAnchorPurpose(%q) = true, want false", purpose)
+		}
 	}
 }
 

@@ -124,6 +124,14 @@ gated by the *daemon's* `crypto.allow_legacy_key_wrap` policy (off by default).
 The module advertises them; the service layer refuses them. See
 [mechanisms.md](mechanisms.md#interaction-with-the-daemons-key-wrap-policy).
 
+Plain `C_Encrypt`/`C_Decrypt` under `CKM_RSA_PKCS` (as opposed to
+`C_WrapKey`/`C_UnwrapKey`) is gated by the same policy and for the same
+reason: both directions route through the daemon's `Encrypt`/`Decrypt` RPCs
+(`pkg/pkcs11/module/crypto.go`'s `CryptoManager.Encrypt`/`Decrypt`), whose
+RSA fallback is PKCS#1 v1.5 and is refused unless
+`crypto.allow_legacy_key_wrap: true` (go-xkms#1283). `CKM_RSA_PKCS_OAEP` is
+unaffected and requires no configuration change.
+
 ### Digests
 
 Pure digests take no key, so no key-size range applies (§6.1 Table 10). All are

@@ -40,9 +40,11 @@ DTO json tags exactly; Go `[]byte` members are standard-base64 strings.
 - `auth.loginCert()` — POST `/api/v1/auth/login/piv` with
   `credentials: 'include'` (mTLS certificate exchange) → token pair.
 - `auth.refresh(rt)` / `auth.me()` / `auth.validate()` / `auth.logout(rt)`.
-- WebAuthn ceremonies: `auth.webAuthnRegisterBegin/Finish`,
+- WebAuthn ceremonies: `auth.webAuthnRegisterBegin/Finish` (an account's
+  first passkey), `auth.webAuthnAddCredentialBegin` (a further passkey for the
+  signed-in account; finish with `webAuthnRegisterFinish`),
   `auth.webAuthnBeginLogin/FinishLogin`, session correlation via the
-  `X-Session-Id` / `X-User-Id` headers, with `parseCreationOptions`,
+  `X-Session-Id` header, with `parseCreationOptions`,
   `parseRequestOptions`, `encodeAttestationResponse`,
   `encodeAssertionResponse` bridging the browser credential API.
 

@@ -502,7 +502,6 @@ func TestLogin_Success(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/webauthn/login/begin":
 			w.Header().Set("X-Session-Id", "login-session-1")
-			w.Header().Set("X-User-Id", "user-id-encoded")
 			w.Header().Set("Content-Type", "application/json")
 			writeJSON(t, w, map[string]interface{}{
 				"publicKey": map[string]interface{}{
@@ -800,9 +799,15 @@ func TestLogin_WithAuthToken(t *testing.T) {
 }
 
 func TestAvailable_BothAvailable(t *testing.T) {
+	// The probe targets the server's public health endpoint; the WebAuthn
+	// registration-status route it used to probe no longer exists.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/health" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		writeJSON(t, w, map[string]bool{"registered": false})
+		writeJSON(t, w, map[string]string{"status": "healthy"})
 	}))
 	defer server.Close()
 
@@ -1127,14 +1132,17 @@ func TestParseServerError_ValidJSON(t *testing.T) {
 	}
 }
 
-func TestLogin_UserIDPropagated(t *testing.T) {
-	var capturedFinishUserID string
+// TestLogin_UserIDOnlyFromFinish pins go-xkms#1296: login/begin carries no
+// user identifier (it must not reveal whether the account exists), the finish
+// request sends none, and the user ID reaches the caller only from a
+// successful finish.
+func TestLogin_UserIDOnlyFromFinish(t *testing.T) {
+	var finishHeaders http.Header
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/webauthn/login/begin":
 			w.Header().Set("X-Session-Id", "login-sess")
-			w.Header().Set("X-User-Id", "propagated-user-id")
 			w.Header().Set("Content-Type", "application/json")
 			writeJSON(t, w, map[string]interface{}{
 				"publicKey": map[string]interface{}{
@@ -1143,11 +1151,11 @@ func TestLogin_UserIDPropagated(t *testing.T) {
 				},
 			})
 		case "/api/v1/webauthn/login/finish":
-			capturedFinishUserID = r.Header.Get("X-User-Id")
+			finishHeaders = r.Header.Clone()
 			w.Header().Set("Content-Type", "application/json")
 			writeJSON(t, w, map[string]string{
 				"token":   "jwt",
-				"user_id": "u",
+				"user_id": "finish-user-id",
 			})
 		}
 	}))
@@ -1168,13 +1176,19 @@ func TestLogin_UserIDPropagated(t *testing.T) {
 		t.Fatalf("NewClient() error: %v", err)
 	}
 
-	_, err = c.Login(context.Background(), &AuthenticationRequest{Username: "test@example.com"})
+	result, err := c.Login(context.Background(), &AuthenticationRequest{Username: "test@example.com"})
 	if err != nil {
 		t.Fatalf("Login() error: %v", err)
 	}
 
-	if capturedFinishUserID != "propagated-user-id" {
-		t.Errorf("finish X-User-Id = %q, want %q", capturedFinishUserID, "propagated-user-id")
+	if got := finishHeaders.Get("X-User-Id"); got != "" {
+		t.Errorf("finish sent X-User-Id = %q, want none", got)
+	}
+	if got := finishHeaders.Get("X-Session-Id"); got != "login-sess" {
+		t.Errorf("finish X-Session-Id = %q, want %q", got, "login-sess")
+	}
+	if result.UserID != "finish-user-id" {
+		t.Errorf("UserID = %q, want %q", result.UserID, "finish-user-id")
 	}
 }
 

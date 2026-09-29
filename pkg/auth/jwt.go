@@ -173,9 +173,13 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 	// ES* for ECDSA, EdDSA for Ed25519) so a token cannot select HS* and
 	// have its signature "verified" against publicKey's own bytes used
 	// as an HMAC secret.
+	// WithExpirationRequired refuses a token that omits the exp claim
+	// entirely: without it, jwt/v5's default expiry check is a no-op (a
+	// token with no exp claim never expires), which is the same as bearer
+	// authentication accepting a permanent credential.
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		return a.publicKey, nil
-	}, jwt.WithValidMethods(a.validMethods))
+	}, jwt.WithValidMethods(a.validMethods), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "invalid token", Err: err}
 	}

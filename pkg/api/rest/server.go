@@ -729,15 +729,17 @@ func (s *Server) registerRoutes(r chi.Router) {
 		}
 	})
 
-	// Session endpoints: login rate limiter; the exchange endpoints are
-	// unauthenticated, introspection requires a live session.
-	if specs := byGroup[GroupAuthSession]; len(specs) > 0 {
-		r.Route("/api/v1/auth", func(g chi.Router) {
+	// Rate-limited groups whose routes are unauthenticated by default (the
+	// exchange endpoints and ceremonies ARE the authentication); a
+	// RouteAuthSession route among them additionally requires a live
+	// session.
+	registerRateLimited := func(prefix string, specs []RouteSpec) {
+		r.Route(prefix, func(g chi.Router) {
 			if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
 				g.Use(ratelimit.Middleware(s.authRateLimiter, s.trustedProxies))
 			}
 			for _, spec := range specs {
-				spec.Pattern = relative(spec, "/api/v1/auth")
+				spec.Pattern = relative(spec, prefix)
 				if spec.Auth == RouteAuthSession {
 					g.With(s.AuthenticationMiddleware(), BodyLimitMiddleware(spec.bodyLimit())).
 						MethodFunc(spec.Method, spec.Pattern, spec.Handler(s))
@@ -748,17 +750,16 @@ func (s *Server) registerRoutes(r chi.Router) {
 		})
 	}
 
-	// WebAuthn: rate-limited, unauthenticated (WebAuthn IS the auth).
+	// Session endpoints: the exchange endpoints are unauthenticated,
+	// introspection requires a live session.
+	if specs := byGroup[GroupAuthSession]; len(specs) > 0 {
+		registerRateLimited("/api/v1/auth", specs)
+	}
+
+	// WebAuthn: the ceremonies are unauthenticated (WebAuthn IS the auth);
+	// adding a passkey to an existing account requires a session.
 	if specs := byGroup[GroupWebAuthn]; len(specs) > 0 {
-		r.Route("/api/v1/webauthn", func(g chi.Router) {
-			if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
-				g.Use(ratelimit.Middleware(s.authRateLimiter, s.trustedProxies))
-			}
-			for _, spec := range specs {
-				spec.Pattern = relative(spec, "/api/v1/webauthn")
-				register(g, spec)
-			}
-		})
+		registerRateLimited("/api/v1/webauthn", specs)
 	}
 
 	// Users: authentication only.

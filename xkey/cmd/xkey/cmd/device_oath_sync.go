@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
@@ -99,31 +98,9 @@ func init() {
 	OATHCmd.AddCommand(oathPushPhoneCmd)
 	OATHCmd.AddCommand(oathPullPhoneCmd)
 
-	// Sync flags
-	oathSyncPhoneCmd.Flags().String("device", "", "Paired device name")
-	oathSyncPhoneCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	oathSyncPhoneCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
-	addBarrierPasswordFlags(oathSyncPhoneCmd)
-
-	// Push flags
-	oathPushPhoneCmd.Flags().String("device", "", "Paired device name")
-	oathPushPhoneCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	oathPushPhoneCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
-	addBarrierPasswordFlags(oathPushPhoneCmd)
-
-	// Pull flags
-	oathPullPhoneCmd.Flags().String("device", "", "Paired device name")
-	oathPullPhoneCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	oathPullPhoneCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
-	addBarrierPasswordFlags(oathPullPhoneCmd)
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("oath.sync.device", oathSyncPhoneCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("oath.sync.timeout", oathSyncPhoneCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("oath.push.device", oathPushPhoneCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("oath.push.timeout", oathPushPhoneCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("oath.pull.device", oathPullPhoneCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("oath.pull.timeout", oathPullPhoneCmd.Flags().Lookup("timeout"))
+	registerOATHSyncPhoneFlags(oathSyncPhoneCmd)
+	registerOATHPushPhoneFlags(oathPushPhoneCmd)
+	registerOATHPullPhoneFlags(oathPullPhoneCmd)
 }
 
 // runOATHSync synchronizes OATH credentials between this device and a phone.
@@ -147,7 +124,10 @@ func runOATHSync(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
@@ -287,7 +267,10 @@ func runOATHPush(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
@@ -382,7 +365,10 @@ func runOATHPull(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}

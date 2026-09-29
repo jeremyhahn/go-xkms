@@ -20,6 +20,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -416,6 +417,156 @@ func TestMint_CarriesAttestLevelClaimAndRefreshPreservesIt(t *testing.T) {
 	require.NoError(t, err)
 	_, present := unverifiedClaims(t, plain.AccessToken)["attest_level"]
 	assert.False(t, present, "a login that recorded no level must not mint an empty claim")
+}
+
+// TestMint_CarriesSubjectKindClaimAndRefreshPreservesIt proves the login
+// flow's declared subject encoding (go-xkms#1297 review: auth.SubjectKindUsername
+// / auth.SubjectKindUserHandle) rides on both tokens and survives a
+// rotation, so QRDBUserResolver always has it to consult and is never left
+// to guess; an identity that never declared one mints no sub_kind claim at
+// all.
+func TestMint_CarriesSubjectKindClaimAndRefreshPreservesIt(t *testing.T) {
+	issuer := newTestIssuer(t)
+	ctx := context.Background()
+	id := testIdentity()
+	id.Metadata["sub_kind"] = "username"
+
+	pair, err := issuer.Mint(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "username", unverifiedClaims(t, pair.AccessToken)["sub_kind"])
+	assert.Equal(t, "username", unverifiedClaims(t, pair.RefreshToken)["sub_kind"])
+
+	rotated, err := issuer.Refresh(ctx, pair.RefreshToken)
+	require.NoError(t, err)
+	assert.Equal(t, "username", unverifiedClaims(t, rotated.AccessToken)["sub_kind"])
+	assert.Equal(t, "username", identityFromClaims(unverifiedClaims(t, rotated.RefreshToken)).Metadata["sub_kind"])
+
+	plain, err := issuer.Mint(ctx, testIdentity())
+	require.NoError(t, err)
+	_, present := unverifiedClaims(t, plain.AccessToken)["sub_kind"]
+	assert.False(t, present, "an identity that never declared a subject kind must not mint an empty claim")
+}
+
+// ---------------------------------------------------------------------------
+// UserResolver (go-xkms#1297): Refresh re-checks the CURRENT user record.
+// ---------------------------------------------------------------------------
+
+// fakeUserResolver is a scripted UserResolver: resolve maps a subject to
+// either a fresh identity or an error, so a test can drive every outcome
+// Refresh must handle without standing up a qrdb identity plane.
+type fakeUserResolver struct {
+	resolve func(ctx context.Context, id *auth.Identity) (*auth.Identity, error)
+	calls   int
+}
+
+func (f *fakeUserResolver) ResolveUser(ctx context.Context, id *auth.Identity) (*auth.Identity, error) {
+	f.calls++
+	return f.resolve(ctx, id)
+}
+
+func TestRefresh_UserResolver_DisabledAccountRefused(t *testing.T) {
+	resolver := &fakeUserResolver{
+		resolve: func(context.Context, *auth.Identity) (*auth.Identity, error) {
+			return nil, auth.ErrUserDisabled
+		},
+	}
+	issuer := newTestIssuer(t, func(c *Config) { c.UserResolver = resolver })
+	ctx := context.Background()
+
+	pair, err := issuer.Mint(ctx, testIdentity())
+	require.NoError(t, err)
+
+	_, err = issuer.Refresh(ctx, pair.RefreshToken)
+	var recheckErr *UserRecheckFailedError
+	require.ErrorAs(t, err, &recheckErr)
+	assert.ErrorIs(t, err, auth.ErrUserDisabled)
+	assert.Equal(t, 1, resolver.calls)
+
+	// Refusal must not rotate the token: mirrors the other refusal paths
+	// (garbage, foreign, expired) rather than burning the family.
+	rec, getErr := issuer.store.Get(ctx, unverifiedClaims(t, pair.RefreshToken)["fam"].(string),
+		unverifiedClaims(t, pair.RefreshToken)["jti"].(string))
+	require.NoError(t, getErr)
+	require.NotNil(t, rec)
+	assert.False(t, rec.Rotated)
+}
+
+func TestRefresh_UserResolver_DeletedAccountRefused(t *testing.T) {
+	resolver := &fakeUserResolver{
+		resolve: func(context.Context, *auth.Identity) (*auth.Identity, error) {
+			return nil, auth.ErrRefreshSubjectNotFound
+		},
+	}
+	issuer := newTestIssuer(t, func(c *Config) { c.UserResolver = resolver })
+	ctx := context.Background()
+
+	pair, err := issuer.Mint(ctx, testIdentity())
+	require.NoError(t, err)
+
+	_, err = issuer.Refresh(ctx, pair.RefreshToken)
+	var recheckErr *UserRecheckFailedError
+	require.ErrorAs(t, err, &recheckErr)
+}
+
+// TestRefresh_UserResolver_RoleChangeReflected proves a role granted or
+// revoked after login reaches the very next refresh, not just the next full
+// login.
+func TestRefresh_UserResolver_RoleChangeReflected(t *testing.T) {
+	resolver := &fakeUserResolver{
+		resolve: func(_ context.Context, id *auth.Identity) (*auth.Identity, error) {
+			fresh := *id
+			fresh.Roles = []string{"new-role"}
+			return &fresh, nil
+		},
+	}
+	issuer := newTestIssuer(t, func(c *Config) { c.UserResolver = resolver })
+	ctx := context.Background()
+
+	pair, err := issuer.Mint(ctx, testIdentity())
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"admin", "operator"}, unverifiedClaims(t, pair.AccessToken)["roles"])
+
+	rotated, err := issuer.Refresh(ctx, pair.RefreshToken)
+	require.NoError(t, err)
+	assert.Equal(t, []interface{}{"new-role"}, unverifiedClaims(t, rotated.AccessToken)["roles"],
+		"the rotated access token must carry the CURRENT roles the resolver returned, not the stale snapshot")
+}
+
+// TestRefresh_UserResolver_LookupOutageRefusesWithoutRotating proves a
+// resolver that cannot currently answer refuses the refresh exactly like a
+// disabled account -- an outage must never look like "trust the old claims".
+func TestRefresh_UserResolver_LookupOutageRefusesWithoutRotating(t *testing.T) {
+	sentinel := errors.New("qrdb unreachable")
+	resolver := &fakeUserResolver{
+		resolve: func(context.Context, *auth.Identity) (*auth.Identity, error) {
+			return nil, sentinel
+		},
+	}
+	issuer := newTestIssuer(t, func(c *Config) { c.UserResolver = resolver })
+	ctx := context.Background()
+
+	pair, err := issuer.Mint(ctx, testIdentity())
+	require.NoError(t, err)
+
+	_, err = issuer.Refresh(ctx, pair.RefreshToken)
+	var recheckErr *UserRecheckFailedError
+	require.ErrorAs(t, err, &recheckErr)
+	assert.ErrorIs(t, err, sentinel)
+}
+
+// TestRefresh_NoUserResolver_TrustsTokenClaims pins the pre-#1297 behavior
+// as intentional when no resolver is configured (no identity plane to
+// re-check against), mirroring MTLSAuthenticator's own optional UserStore.
+func TestRefresh_NoUserResolver_TrustsTokenClaims(t *testing.T) {
+	issuer := newTestIssuer(t)
+	ctx := context.Background()
+
+	pair, err := issuer.Mint(ctx, testIdentity())
+	require.NoError(t, err)
+
+	rotated, err := issuer.Refresh(ctx, pair.RefreshToken)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"admin", "operator"}, unverifiedClaims(t, rotated.AccessToken)["roles"])
 }
 
 // TestMintedRefreshTokenIsNotABearerCredential proves the pair's two halves

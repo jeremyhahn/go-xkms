@@ -3256,8 +3256,19 @@ func TestImportExport_MultipleAlgorithms(t *testing.T) {
 				t.Fatalf("Failed to wrap key: %v", err)
 			}
 
-			// Unwrap the key
-			unwrapped, err := symmetricBackend.UnwrapKey(context.Background(), wrapped, params)
+			// Unwrap the key with its own, throwaway import ceremony: an
+			// import token is single-use (go-xkms#1261), so verifying
+			// UnwrapKey's correctness here must not consume the token
+			// ImportKey needs below.
+			checkParams, err := symmetricBackend.GetImportParameters(context.Background(), attrs, alg)
+			if err != nil {
+				t.Fatalf("Failed to get import parameters for the unwrap check: %v", err)
+			}
+			checkWrapped, err := symmetricBackend.WrapKey(context.Background(), keyMaterial, checkParams)
+			if err != nil {
+				t.Fatalf("Failed to wrap key for the unwrap check: %v", err)
+			}
+			unwrapped, err := symmetricBackend.UnwrapKey(context.Background(), checkWrapped, checkParams)
 			if err != nil {
 				t.Fatalf("Failed to unwrap key: %v", err)
 			}
@@ -3267,7 +3278,7 @@ func TestImportExport_MultipleAlgorithms(t *testing.T) {
 				t.Error("Unwrapped key material doesn't match original")
 			}
 
-			// Import the key
+			// Import the key using the original, still-unconsumed token
 			err = symmetricBackend.ImportKey(context.Background(), attrs, wrapped)
 			if err != nil {
 				t.Fatalf("Failed to import key: %v", err)

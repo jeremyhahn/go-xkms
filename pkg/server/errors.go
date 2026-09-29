@@ -47,6 +47,14 @@ var (
 	// ErrJWTConfigRequired indicates JWT configuration is required but missing.
 	ErrJWTConfigRequired = errors.New("server: JWT configuration is required")
 
+	// ErrJWTKeyFileIssuerAudienceRequired indicates operator-supplied JWT
+	// public-key-file mode configured neither an issuer nor an audience.
+	// Without both, JWTAuthenticator skips the issuer and audience checks
+	// entirely (see pkg/auth.JWTAuthenticator.validateToken), so any token
+	// signed by the configured key -- regardless of who it was minted for --
+	// would be accepted.
+	ErrJWTKeyFileIssuerAudienceRequired = errors.New("server: auth.jwt.public_key_file requires both issuer and audience to be configured")
+
 	// ErrMTLSRequiresTLS indicates mTLS authentication requires TLS to be enabled.
 	ErrMTLSRequiresTLS = errors.New("server: mTLS authentication requires TLS to be enabled")
 

@@ -849,6 +849,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// A nil Authorizer means RBAC is disabled, as it does there.
 		svc.SetAuthorizer(s.rbacAuthorizer)
 		stores.Wire(svc)
+		if s.tokenIssuer != nil {
+			// So DisableUser/DeleteUser can revoke every refresh-token
+			// session an affected account holds the moment the lifecycle
+			// change lands, rather than only at its next refresh attempt
+			// (go-xkms#1297).
+			svc.SetTokenIssuer(s.tokenIssuer)
+		}
 		if s.webauthnService != nil {
 			svc.SetWebAuthn(s.webauthnService)
 		}
@@ -2015,6 +2022,9 @@ func (s *Server) createJWTAuthenticator() (*auth.JWTAuthenticator, error) {
 		parsed, err := parsePublicKey(pubKeyData)
 		if err != nil {
 			return nil, &ErrTLSCertOp{Operation: "parse public key", Err: err}
+		}
+		if s.config.Auth.JWT.Issuer == "" || len(s.config.Auth.JWT.Audience) == 0 {
+			return nil, ErrJWTKeyFileIssuerAudienceRequired
 		}
 		pubKey = parsed
 		issuer = s.config.Auth.JWT.Issuer

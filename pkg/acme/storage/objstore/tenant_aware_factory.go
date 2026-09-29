@@ -21,6 +21,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // Compile-time interface checks.
@@ -61,6 +62,12 @@ func (f *TenantAwareFactory) ForTenant(tenantID string) (storage.Factory, error)
 		return nil, qrdbsdk.DAOInvalidConfigError{
 			Field:  "tenantID",
 			Reason: "tenant ID is required",
+		}
+	}
+	if err := xkmsstorage.ValidateTenantID(tenantID); err != nil {
+		return nil, qrdbsdk.DAOInvalidConfigError{
+			Field:  "tenantID",
+			Reason: err.Error(),
 		}
 	}
 	prefix := fmt.Sprintf("acme/tenants/%s", tenantID)

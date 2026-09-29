@@ -52,6 +52,18 @@ func (e ErrChallengeCleanupFailed) Error() string {
 	return fmt.Sprintf("acme-client-service: challenge cleanup failed for %s: %s", e.ChallengeType, e.Reason)
 }
 
+// ErrInvalidHTTP01Token indicates that a server-supplied HTTP-01 challenge
+// token does not conform to RFC 8555 Section 8.3's base64url token format.
+// It is returned before the token is joined into a filesystem path.
+type ErrInvalidHTTP01Token struct {
+	Token  string
+	Reason string
+}
+
+func (e ErrInvalidHTTP01Token) Error() string {
+	return fmt.Sprintf("acme-client-service: invalid http-01 challenge token %q: %s", e.Token, e.Reason)
+}
+
 // ErrUnsupportedDNSProvider indicates that DNS01Config.Provider named a
 // provider this project does not implement. It is returned at configuration
 // time so a doomed DNS-01 validation is never attempted.

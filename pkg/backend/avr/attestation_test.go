@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -75,6 +76,37 @@ func TestAttestKeyVerifiesTheCertificateARealDeviceEmits(t *testing.T) {
 	require.True(t, ok, "the claims set carries a ueid at CWT key 256")
 	assert.Contains(t, hex.EncodeToString(ueid), vecAliasCertUeidHex)
 	assert.Contains(t, att.Claims.Other, int64(273), "and a measurement at key 273")
+}
+
+// TestCheckAliasCertificate_UnknownCryptoTierFailsSafeAndLogs proves that
+// checkAliasCertificate does not silently discard AttestLevel's error for a
+// crypto tier this host cannot classify: a cryptographically valid DICE chain
+// still comes back with AttestLevel stamped Unattested (the safe direction)
+// rather than the whole attestation being refused, and the reason is logged
+// rather than lost (go-xkms#1347).
+//
+// hasDeviceKey already refuses AttestKey for an unclassified tier through the
+// public entry point, so this drives checkAliasCertificate directly -- the
+// step that runs strictly after the chain is proved genuine -- to pin the
+// fallback for any future caller that reaches it without that guard.
+func TestCheckAliasCertificate_UnknownCryptoTierFailsSafeAndLogs(t *testing.T) {
+	der, err := hex.DecodeString(vecAliasCertHex)
+	require.NoError(t, err)
+	nonce, err := hex.DecodeString(vecAliasCertNonceHex)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	b := &Backend{
+		logger: slog.New(slog.NewTextHandler(&buf, nil)),
+		caps:   aggeneric.Caps{CryptoTier: aggeneric.CryptoTier(9)},
+	}
+
+	att, err := b.checkAliasCertificate(der, nonce)
+	require.NoError(t, err, "an unclassified crypto tier must not fail an otherwise-valid attestation")
+	assert.Equal(t, types.AttestLevelUnattested, att.AttestLevel,
+		"the attestation must fail safe to Unattested rather than assume a level")
+	assert.Contains(t, buf.String(), "device reports a crypto tier this host cannot classify",
+		"AttestLevel's error must be logged instead of discarded")
 }
 
 // The device's own certificate must page across the wire and reassemble byte

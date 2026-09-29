@@ -105,6 +105,13 @@ var (
 	// but no SO PIN was supplied. This surfaces the underlying PKCS#11
 	// CKR_USER_TYPE_INVALID error with actionable context for the caller.
 	ErrSOPINRequired = errors.New("pkcs11: SO PIN required for this operation on YubiKey PIV (provide management key)")
+
+	// ErrDerivedSecretNotDestroyed is returned, joined with the underlying
+	// C_DestroyObject failure, when the session object holding an ECDH
+	// derived shared secret could not be destroyed. It is folded into
+	// deriveECDH's return so the failure is reported rather than left for
+	// the object to linger, unnoticed, for the life of the session.
+	ErrDerivedSecretNotDestroyed = errors.New("pkcs11: derived shared secret object could not be destroyed")
 )
 
 // isCKR reports whether err is, or wraps, a pkcs11.Error carrying the given

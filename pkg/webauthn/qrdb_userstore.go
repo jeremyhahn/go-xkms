@@ -14,11 +14,13 @@
 package webauthn
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,7 +36,10 @@ type QRDBUserStoreOptions struct {
 
 	// KV is the qrdb KV client used for credential storage. The
 	// credential namespace lives under "__xkms:webauthn/" and is
-	// internal to xkms.
+	// internal to xkms. It must implement qrdbtransport.GuardedKVClient:
+	// credential creation is a PutIfAbsent and a counter update a
+	// CompareAndSwap, so a credential ID can be claimed by exactly one
+	// account (go-xkms#1295).
 	KV qrdbtransport.KVClient
 
 	// TenantID is the tenant scope for user creation and lookup. Use
@@ -48,7 +53,7 @@ type QRDBUserStoreOptions struct {
 // name clash on Save/Delete between UserStore and CredentialStore.
 type qrdbBackend struct {
 	users    qrdbtransport.UserClient
-	kv       qrdbtransport.KVClient
+	kv       qrdbtransport.GuardedKVClient
 	tenantID string
 
 	// mu serialises the read-modify-write pattern used when adding /
@@ -77,9 +82,16 @@ func NewQRDBUserStoreAdapter(opts QRDBUserStoreOptions) (UserStore, CredentialSt
 	if opts.TenantID == "" {
 		return nil, nil, &QRDBAdapterConfigError{Field: "TenantID"}
 	}
+	// The guarded verbs are a capability detected by type assertion, as the
+	// qrdb SDK prescribes. There is no degraded path: without PutIfAbsent a
+	// second account could overwrite a credential ID another account owns.
+	guarded, ok := opts.KV.(qrdbtransport.GuardedKVClient)
+	if !ok {
+		return nil, nil, &GuardedKVUnsupportedError{ClientType: fmt.Sprintf("%T", opts.KV)}
+	}
 	b := &qrdbBackend{
 		users:    opts.Users,
-		kv:       opts.KV,
+		kv:       guarded,
 		tenantID: opts.TenantID,
 	}
 	return &qrdbUserStore{b: b}, &qrdbCredentialStore{b: b}, nil
@@ -232,7 +244,10 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 
 // ----- CredentialStore -----
 
-// Save stores a credential and adds it to the user's credential index.
+// Save stores a NEW credential and adds it to the user's credential index.
+// The record is created with PutIfAbsent, so a credential ID that is already
+// registered — to this account or any other — is refused with
+// ErrCredentialAlreadyExists and the existing record is left untouched.
 func (s *qrdbCredentialStore) Save(ctx context.Context, cred *Credential) error {
 	if cred == nil {
 		return &QRDBAdapterConfigError{Field: "cred"}
@@ -252,8 +267,12 @@ func (s *qrdbCredentialStore) Save(ctx context.Context, cred *Credential) error 
 		return WrapError("encode credential", err)
 	}
 	credSeg := credIDToString(cred.ID)
-	if err := s.b.kv.Put(ctx, credKey(credSeg), blob); err != nil {
+	stored, err := s.b.kv.PutIfAbsent(ctx, credKey(credSeg), blob)
+	if err != nil {
 		return WrapError("persist credential", err)
+	}
+	if !stored {
+		return ErrCredentialAlreadyExists
 	}
 	ids, err := s.b.listUserCredIDs(ctx, id)
 	if err != nil {
@@ -319,19 +338,43 @@ func (s *qrdbCredentialStore) GetByCredentialID(ctx context.Context, credID []by
 	return &cred, nil
 }
 
-// Update overwrites an existing credential record.
+// Update overwrites an existing credential record: the sign counter, clone
+// flag and last-used time a login refreshes. The credential must exist and
+// belong to the user the update names (ErrCredentialNotFound,
+// ErrCredentialOwnerMismatch). The write is a CompareAndSwap against the
+// record that was checked, so a credential deleted or replaced concurrently
+// is never resurrected or reassigned by a stale update.
 func (s *qrdbCredentialStore) Update(ctx context.Context, cred *Credential) error {
 	if cred == nil {
 		return &QRDBAdapterConfigError{Field: "cred"}
 	}
-	if _, err := s.GetByCredentialID(ctx, cred.ID); err != nil {
-		return err
+	key := credKey(credIDToString(cred.ID))
+	current, err := s.b.kv.Get(ctx, key)
+	if err != nil {
+		return mapNotFoundCred(err)
+	}
+	if len(current) == 0 {
+		return ErrCredentialNotFound
+	}
+	var existing Credential
+	if err := json.Unmarshal(current, &existing); err != nil {
+		return WrapError("decode credential", err)
+	}
+	if !bytes.Equal(existing.UserID, cred.UserID) {
+		return ErrCredentialOwnerMismatch
 	}
 	blob, err := json.Marshal(cred)
 	if err != nil {
 		return WrapError("encode credential", err)
 	}
-	return s.b.kv.Put(ctx, credKey(credIDToString(cred.ID)), blob)
+	swapped, err := s.b.kv.CompareAndSwap(ctx, key, current, blob)
+	if err != nil {
+		return WrapError("update credential", err)
+	}
+	if !swapped {
+		return ErrCredentialUpdateConflict
+	}
+	return nil
 }
 
 // Delete removes a credential record (and detaches it from the user
@@ -416,6 +459,12 @@ func (b *qrdbBackend) materialize(ctx context.Context, u *qrdbtransport.User) (*
 	// u.Username, the display name from an xkms KV blob — which is what let the
 	// two drift.
 	user := NewDefaultUser(HandleFromUserID(u.ID), u.Email, u.Name)
+	// Account standing is qrdb's, carried verbatim: the service refuses a
+	// login or enrolment the record's lifecycle or auth-method policy does
+	// not allow (go-xkms#1298). A record with no lifecycle is not treated as
+	// active — only qrdbsdk.LifecycleActive authenticates.
+	user.SetLifecycle(qrdbsdk.Lifecycle(u.Lifecycle))
+	user.SetAuthMethods(u.AuthMethods)
 
 	// Load credentials via the cred-set index.
 	ids, err := b.listUserCredIDs(ctx, u.ID)
@@ -604,6 +653,18 @@ func isCanonicalUserNotFoundMessage(msg string) bool {
 		}
 	}
 	return false
+}
+
+// GuardedKVUnsupportedError is returned by NewQRDBUserStoreAdapter when the
+// KV client does not implement qrdbtransport.GuardedKVClient.
+type GuardedKVUnsupportedError struct {
+	// ClientType is the dynamic type of the rejected client.
+	ClientType string
+}
+
+// Error implements error.
+func (e *GuardedKVUnsupportedError) Error() string {
+	return "webauthn: qrdb adapter: KV client " + e.ClientType + " does not support guarded writes (PutIfAbsent, CompareAndSwap)"
 }
 
 // QRDBAdapterConfigError is returned when the adapter is constructed
