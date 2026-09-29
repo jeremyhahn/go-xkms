@@ -31,8 +31,8 @@ The WebAuthn package (`pkg/webauthn`) implements the server-side WebAuthn protoc
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/webauthn/registration/status` | GET | Check if user has registered credentials |
-| `/api/v1/webauthn/registration/begin` | POST | Start registration ceremony |
+| `/api/v1/webauthn/registration/begin` | POST | Start registration of an account's first passkey |
+| `/api/v1/webauthn/credentials/begin` | POST | Start adding a passkey to the signed-in account (bearer token required) |
 | `/api/v1/webauthn/registration/finish` | POST | Complete registration ceremony |
 | `/api/v1/webauthn/login/begin` | POST | Start authentication ceremony |
 | `/api/v1/webauthn/login/finish` | POST | Complete authentication ceremony |

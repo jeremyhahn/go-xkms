@@ -65,11 +65,6 @@ export interface WebAuthnBeginLoginRequest {
   email?: string;
 }
 
-/** Mirrors pkg/webauthn/http/types.go RegistrationStatusResponse. */
-export interface WebAuthnRegistrationStatusResponse {
-  registered: boolean;
-}
-
 /** Mirrors pkg/webauthn/http/types.go AuthResponse (finish registration/login). */
 export interface WebAuthnAuthResponse {
   token: string;
@@ -80,13 +75,11 @@ export interface WebAuthnAuthResponse {
 /**
  * A begin-ceremony result: the raw go-webauthn options envelope (feed it to
  * parseCreationOptions / parseRequestOptions) plus the session correlation
- * values the server returned via the X-Session-Id / X-User-Id headers.
+ * value the server returned via the X-Session-Id header.
  */
 export interface WebAuthnCeremonyStart {
   /** Raw options envelope ({ publicKey: { challenge, ... } }). */
   options: unknown;
   /** X-Session-Id header value; echo it back on the finish call. */
   sessionId: string;
-  /** X-User-Id header value (login/begin only, when resolvable). */
-  userId?: string;
 }

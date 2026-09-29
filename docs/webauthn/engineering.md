@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## Exported surface — `pkg/webauthn`
 
@@ -8,9 +8,12 @@
 
 ```go
 func (s *Service) BeginRegistration(ctx, email, displayName string) (*protocol.CredentialCreation, string, error)
+func (s *Service) BeginAddCredential(ctx, acct SessionAccount) (*protocol.CredentialCreation, string, error)
 func (s *Service) FinishRegistration(ctx, sessionID string, response *protocol.ParsedCredentialCreationData) (string, User, error)
 func (s *Service) FinishRegistrationPair(ctx, sessionID string, response *protocol.ParsedCredentialCreationData) (*TokenPair, User, error)
 func (s *Service) BeginLogin(ctx, userID []byte) (*protocol.CredentialAssertion, string, error)
+func (s *Service) BeginLoginForEmail(ctx, email string) (*protocol.CredentialAssertion, string, error)
+func (s *Service) BeginLoginForHandle(ctx, userID []byte) (*protocol.CredentialAssertion, string, error)
 func (s *Service) FinishLogin(ctx, sessionID string, userID []byte, response *protocol.ParsedCredentialAssertionData) (string, User, error)
 func (s *Service) FinishLoginPair(ctx, sessionID string, userID []byte, response *protocol.ParsedCredentialAssertionData) (*TokenPair, User, error)
 func (s *Service) IsRegistered(ctx, userID []byte) (bool, error)
@@ -22,6 +25,19 @@ func (s *Service) DeleteUser(ctx, userID []byte) error
 func (s *Service) Config() *Config
 ```
 
+`BeginRegistration` is the public first-passkey ceremony: it refuses an
+account that already holds a credential, and (public registration off) an
+unknown email, both with `ErrRegistrationRefused`. `BeginAddCredential` adds a
+passkey to the account a `SessionAccount` names; `SessionAccountFromIdentity`
+(`session_account.go`) builds one from an authenticated `auth.Identity` (base64url
+handle in `Subject`, `email` metadata, the inverse of `WebAuthnTokenAdapter`),
+and the service checks both name the same existing account
+(`ErrSessionAccountMismatch` otherwise). `BeginLoginForEmail` and
+`BeginLoginForHandle` answer an unknown account, or one without credentials,
+with a decoy ceremony (`decoy.go`) instead of an error; `BeginLogin` keeps
+returning `ErrUserNotFound` / `ErrNoCredentials` for in-process callers such as
+`pkg/auth_factors`. See [api.md](api.md) §"Registration and enumeration rules".
+
 The `…Pair` variants return access + refresh. Handlers select them by **type
 assertion** on the injected generator: a `TokenPairGenerator` gets the pair
 path, a plain `JWTGenerator` gets the single-token path. Both are supported;
@@ -32,6 +48,20 @@ neither is deprecated.
 `UserStore`, `SessionStore`, `CredentialStore` — method sets in
 [`architecture.md`](architecture.md). Implementations: `memory_stores.go`,
 `qrdb_userstore.go`, `backend_stores.go`.
+
+**`CredentialStore.Save` creates and `Update` edits (go-xkms#1295).** `Save`
+refuses a credential ID that is already stored, under any account, with
+`ErrCredentialAlreadyExists` and leaves the stored record alone: the qrdb store
+writes with `PutIfAbsent`, the backend store with `storage.Backend.PutIfAbsent`,
+the memory store under its lock. `Update` is the path a login's sign counter,
+clone flag and last-used time take: it requires the credential to exist
+(`ErrCredentialNotFound`) and to belong to the user the update names
+(`ErrCredentialOwnerMismatch`). The qrdb store's `Update` is a `CompareAndSwap`
+against the record it checked, so a credential deleted or replaced meanwhile is
+never resurrected (`ErrCredentialUpdateConflict`); the backend store checks and
+then writes. `NewQRDBUserStoreAdapter` therefore requires a
+`qrdbtransport.GuardedKVClient` and fails with `*GuardedKVUnsupportedError`
+without one — the same capability `token.NewQRDBRefreshStore` requires.
 
 **`SessionStore` contract change:** The interface now defines an atomic `Take`
 method that claims a session in one indivisible operation:
@@ -472,7 +502,6 @@ c, _ := webauthnclient.NewClient(&webauthnclient.Config{
 | Header | Direction | Purpose |
 |---|---|---|
 | `X-Session-Id` | server → client → server | correlates begin with finish |
-| `X-User-Id` | server → client → server | correlates the user during login |
 | `Authorization` | client → server | `Bearer <token>` on authenticated requests |
 
 `TransportRelyingParty` carries the equivalent correlation (session ID, email)

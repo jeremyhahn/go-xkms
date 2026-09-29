@@ -232,7 +232,7 @@ func TestModule_SelfBuiltSurfaceAuthenticatesJWT(t *testing.T) {
 // end to end through the composed-module path: a host that projects a WebAuthn
 // config WITHOUT deciding allow_public_registration gets the stack default —
 // registration closed — and an unknown email is refused with the documented
-// 403/registration_disabled contract rather than an account or a 500.
+// 403/registration_refused contract rather than an account or a 500.
 func TestModule_SelfBuiltSurfaceFailsClosedOnDefaultRegistration(t *testing.T) {
 	xkms.Reset()
 	t.Cleanup(xkms.Reset)
@@ -276,6 +276,6 @@ func TestModule_SelfBuiltSurfaceFailsClosedOnDefaultRegistration(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "registration_disabled", resp["error"],
+	assert.Equal(t, "registration_refused", resp["error"],
 		"the refusal must carry the documented error code")
 }

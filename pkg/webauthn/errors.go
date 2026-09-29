@@ -62,13 +62,32 @@ var (
 	// ErrNotConfigured is returned when the service is not properly configured.
 	ErrNotConfigured = errors.New("webauthn service not configured")
 
-	// ErrPublicRegistrationDisabled is returned by BeginRegistration when the
-	// relying party has open sign-up turned off
-	// (webauthn.allow_public_registration = false) and the email does not
-	// belong to an existing account. An account must first be provisioned
-	// through the authorized user-creation path; enrollment for accounts that
-	// already exist is unaffected.
-	ErrPublicRegistrationDisabled = errors.New("webauthn: public registration is disabled; the account must be provisioned by an administrator first")
+	// ErrRegistrationRefused is returned by the public BeginRegistration when
+	// the email may not start an unauthenticated registration ceremony: the
+	// account already has one or more credentials (adding a passkey to it
+	// requires a session authenticated as that account, see
+	// BeginAddCredential — go-xkms#1294), or the email names no account and
+	// the relying party has open sign-up turned off
+	// (webauthn.allow_public_registration = false). Both cases return this
+	// one error so the response does not reveal whether the account exists
+	// (go-xkms#1296).
+	ErrRegistrationRefused = errors.New("webauthn: registration refused; sign in to add a passkey to an existing account, or ask an administrator to provision one")
+
+	// ErrSessionAccountMismatch is returned by BeginAddCredential when the
+	// authenticated session does not identify an existing WebAuthn account:
+	// the session was not minted for a WebAuthn account, or the account it
+	// names no longer matches (unknown handle, or a different email).
+	ErrSessionAccountMismatch = errors.New("webauthn: the authenticated session does not identify a webauthn account")
+
+	// ErrCredentialOwnerMismatch is returned by CredentialStore.Update when
+	// the stored credential belongs to a different user than the update
+	// names. A credential's owner is fixed at registration.
+	ErrCredentialOwnerMismatch = errors.New("credential belongs to a different user")
+
+	// ErrCredentialUpdateConflict is returned by CredentialStore.Update when
+	// the credential record changed between the owner check and the write
+	// (a concurrent update or delete); the stale update is not applied.
+	ErrCredentialUpdateConflict = errors.New("credential changed concurrently; update not applied")
 )
 
 // SessionLimitError reports that the session store already holds its

@@ -80,7 +80,7 @@ export {
 
 export { HealthClient } from './clients/health.js';
 export { CapabilitiesClient } from './clients/capabilities.js';
-export { AuthClient, HEADER_SESSION_ID, HEADER_USER_ID } from './clients/auth.js';
+export { AuthClient, HEADER_SESSION_ID } from './clients/auth.js';
 export { BackendsClient } from './clients/backends.js';
 export { KeysClient } from './clients/keys.js';
 export { CertsClient } from './clients/certs.js';

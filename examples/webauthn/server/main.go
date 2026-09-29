@@ -138,7 +138,6 @@ func main() {
 	// Mount WebAuthn handlers
 	mux.HandleFunc("/api/v1/webauthn/registration/begin", handlers.BeginRegistration)
 	mux.HandleFunc("/api/v1/webauthn/registration/finish", handlers.FinishRegistration)
-	mux.HandleFunc("/api/v1/webauthn/registration/status", handlers.RegistrationStatus)
 	mux.HandleFunc("/api/v1/webauthn/login/begin", handlers.BeginLogin)
 	mux.HandleFunc("/api/v1/webauthn/login/finish", handlers.FinishLogin)
 	fmt.Println("   ✓ WebAuthn API mounted at /api/v1/webauthn")
@@ -247,7 +246,6 @@ func main() {
 	fmt.Println("WebAuthn API:")
 	fmt.Println("  POST /api/v1/webauthn/registration/begin   - Start registration")
 	fmt.Println("  POST /api/v1/webauthn/registration/finish  - Complete registration")
-	fmt.Println("  GET  /api/v1/webauthn/registration/status  - Check registration status")
 	fmt.Println("  POST /api/v1/webauthn/login/begin          - Start login")
 	fmt.Println("  POST /api/v1/webauthn/login/finish         - Complete login")
 	fmt.Println("  GET  /api/v1/webauthn/debug                - Debug/diagnostic info")

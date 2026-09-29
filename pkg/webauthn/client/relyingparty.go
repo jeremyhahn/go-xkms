@@ -29,11 +29,6 @@ type BeginResult struct {
 	// SessionID is the opaque server-side session identifier that must be
 	// echoed back to the matching finish call to correlate the ceremony.
 	SessionID string
-
-	// UserID is HTTPRelyingParty's optional X-User-Id response header, used
-	// by the non-discoverable login flow. Other RelyingParty implementations
-	// leave it empty.
-	UserID string
 }
 
 // RelyingParty is the server-side seam of a WebAuthn ceremony: it begins and

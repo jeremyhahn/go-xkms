@@ -240,7 +240,9 @@ func TestAuthenticationCeremony_EndToEnd(t *testing.T) {
 }
 
 // TestBeginAuthentication_UnknownUser ensures authenticating an unregistered
-// username is rejected with a wrapped ceremony error.
+// email is answered like a registered one — well-formed options and a
+// session — so the verb does not reveal whether the account exists
+// (go-xkms#1296).
 func TestBeginAuthentication_UnknownUser(t *testing.T) {
 	setupService(t)
 	svc, err := Get()
@@ -248,12 +250,61 @@ func TestBeginAuthentication_UnknownUser(t *testing.T) {
 
 	svc.SetWebAuthn(newConfiguredWebAuthnService(t))
 
-	_, err = svc.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{
+	resp, err := svc.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{
 		Email: "nobody@example.com",
 	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.SessionID)
+	assert.Contains(t, resp.OptionsJSON, "allowCredentials")
+}
+
+// TestBeginAuthentication_EmptyEmail is a malformed request, refused with a
+// wrapped ceremony error.
+func TestBeginAuthentication_EmptyEmail(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	svc.SetWebAuthn(newConfiguredWebAuthnService(t))
+
+	_, err = svc.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{})
 	require.Error(t, err)
 	var ceremonyErr *ErrWebAuthnCeremony
 	assert.True(t, errors.As(err, &ceremonyErr))
+}
+
+// TestFinishAuthentication_DecoySessionFailsVerification proves an unknown
+// email cannot be told apart at finish either: a real authenticator's
+// assertion against the decoy ceremony fails verification, exactly like a
+// wrong assertion, instead of failing to "resolve" the email (go-xkms#1296).
+func TestFinishAuthentication_DecoySessionFailsVerification(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	waSvc := newConfiguredWebAuthnService(t)
+	svc.SetWebAuthn(waSvc)
+
+	ctx := context.Background()
+	const origin = "https://example.com"
+	mockAuth, userID := registerCredentialForLogin(t, svc, waSvc, "real@example.com", "Real", "example.com", origin)
+
+	beginResp, err := svc.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{Email: "nobody@example.com"})
+	require.NoError(t, err)
+	var options waprotocol.CredentialAssertion
+	require.NoError(t, json.Unmarshal([]byte(beginResp.OptionsJSON), &options))
+
+	assertion, err := mockAuth.CreateAssertionResponse(options.Response.Challenge, userID, origin)
+	require.NoError(t, err)
+	assertionJSON, err := json.Marshal(assertion.Raw)
+	require.NoError(t, err)
+
+	_, err = svc.FinishAuthentication(ctx, &transport.FinishAuthenticationRequest{
+		SessionID:     beginResp.SessionID,
+		Email:         "nobody@example.com",
+		AssertionJSON: string(assertionJSON),
+	})
+	require.ErrorIs(t, err, webauthn.ErrVerificationFailed)
 }
 
 // TestFinishAuthentication_InvalidAssertion ensures malformed assertion JSON is
