@@ -312,9 +312,12 @@ func Routes() []RouteSpec {
 	permIf("PUT", "/tenants/{tenantID}/quotas", auth.ResourceTenants, auth.ActionSetQuotas, hasTenants, func(s *Server) http.HandlerFunc { return s.tenantHandlers.UpdateTenantQuotasHandler })
 
 	// --- Passwords. The passwords:* pairs of pkg/api/grpc/service_password.go
-	// and the MCP password.* methods. POST /passwords/access-mode has no
-	// counterpart on any other transport, so it has no canonical pair to
-	// adopt and stays session-authenticated until one is defined. ---
+	// and the MCP password.* methods; qrdb's coarse read/write model for this
+	// family (pkg/auth/permissions.go), not per-verb CRUD. POST
+	// /passwords/access-mode gates on passwords:write, matching gRPC's
+	// PasswordStoreSetAccessMode and MCP's password.setAccessMode
+	// (go-xkms#1249: it used to be the one route on this family left
+	// session-authenticated with no RBAC permission of its own). ---
 	hasPasswords := func(s *Server) bool { return s.passwordHandlers != nil }
 	permIf("POST", "/passwords/", auth.ResourcePasswords, auth.ActionWrite, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.AddPasswordHandler })
 	permIf("GET", "/passwords/", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.ListPasswordsHandler })
@@ -324,7 +327,7 @@ func Routes() []RouteSpec {
 	permIf("POST", "/passwords/unlock", auth.ResourcePasswords, auth.ActionUnlock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.UnlockHandler })
 	permIf("POST", "/passwords/lock", auth.ResourcePasswords, auth.ActionLock, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.LockHandler })
 	permIf("GET", "/passwords/status", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.StatusHandler })
-	session("POST", "/passwords/access-mode", hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.SetAccessModeHandler })
+	permIf("POST", "/passwords/access-mode", auth.ResourcePasswords, auth.ActionWrite, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.SetAccessModeHandler })
 	permIf("POST", "/passwords/generate", auth.ResourcePasswords, auth.ActionGenerate, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.GeneratePasswordHandler })
 
 	// --- PKCS#11 remote state. Records are a token's key/object state, so

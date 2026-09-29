@@ -182,6 +182,7 @@ var goldenRESTPermissions = map[string]string{
 	"POST /api/v1/keys/{id}/sign":                                "keys:sign",
 	"POST /api/v1/keys/{id}/verify":                              "keys:verify",
 	"POST /api/v1/passwords/":                                    "passwords:write",
+	"POST /api/v1/passwords/access-mode":                         "passwords:write",
 	"POST /api/v1/passwords/generate":                            "passwords:generate",
 	"POST /api/v1/passwords/lock":                                "passwords:lock",
 	"POST /api/v1/passwords/unlock":                              "passwords:unlock",

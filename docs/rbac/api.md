@@ -30,17 +30,16 @@ RPCs used to diverge the same way — REST already carried per-verb CRUD
 actions (`keys:create`/`get`/`list`/`update`/`delete`) while gRPC collapsed
 every family to a coarse `keys:write`/`keys:read` tiering — until
 go-xkms#1249 moved gRPC (and MCP's `sealStore.*` methods) onto the same
-per-verb actions REST already used, and split REST's user enable/disable
+per-verb actions REST already used, split REST's user enable/disable
 into their own routes carrying qrdb's own `users:enable`/`users:disable`
 (previously a single `PUT /api/v1/users/{username}` picked the direction
 from a request-body field the permission gate could not see, so it could
-only carry the coarser `users:update` for both). One known exception
-remains, tracked rather than silently allowed: `POST
-/api/v1/passwords/access-mode` is session-authenticated on REST with no
-RBAC permission, where gRPC's `PasswordStoreSetAccessMode` and MCP's
-`password.setAccessMode` both require `passwords:write`. It is allowlisted
-in the consistency golden pending a product decision; see engineering.md's
-Invariants.
+only carry the coarser `users:update` for both), and gated
+`POST /api/v1/passwords/access-mode` on `passwords:write` to match gRPC's
+`PasswordStoreSetAccessMode` and MCP's `password.setAccessMode` (it used to
+be session-authenticated on REST with no RBAC permission at all — closed by
+the owner's 2026-09-29 ruling that the password vault is not a login
+feature). No exceptions remain allowlisted in the consistency golden.
 
 ## User lifecycle — REST
 

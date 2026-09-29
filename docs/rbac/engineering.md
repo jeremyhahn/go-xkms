@@ -330,10 +330,12 @@ specific permission before assuming a non-Admin role holds it.
   by splitting REST into `POST /api/v1/users/{username}/enable` and
   `.../disable`, one route per qrdb-native permission
   (`users:enable`/`users:disable`), matching gRPC and MCP exactly; `PUT`
-  no longer touches `enabled` at all. One violation remains open, needing a
-  product decision rather than a mechanical fix: `POST
-  /api/v1/passwords/access-mode` serving under session-only auth where
-  gRPC/MCP require `passwords:write`.
+  no longer touches `enabled` at all. A third violation, `POST
+  /api/v1/passwords/access-mode` serving under session-only auth with no
+  RBAC permission where gRPC/MCP required `passwords:write`, was left open
+  pending a product decision until the owner ruled (2026-09-29) that the
+  password vault is not a login feature; REST now gates it on
+  `passwords:write` too. No violations remain allowlisted.
 - **A tenant named in a request is never the target tenant.** The gate
   resolves a self-scope permission against the caller's own tenant, so a
   handler that forwards a request tenant to a store or query escapes it. The
