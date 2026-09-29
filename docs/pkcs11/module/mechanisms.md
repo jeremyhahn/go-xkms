@@ -1124,6 +1124,16 @@ crypto:
   allow_legacy_key_wrap: true
 ```
 
+The same gate covers plain `C_Encrypt`/`C_Decrypt` under `CKM_RSA_PKCS`, not
+only `C_WrapKey`/`C_UnwrapKey`: `Decrypt`'s asymmetric fallback ran PKCS#1
+v1.5 unconditionally until go-xkms#1283, which is the identical
+Bleichenbacher/Marvin oracle shape reached with a plaintext result instead of
+unwrapped key material. `C_Decrypt` is reachable over the same transports as
+`C_UnwrapKey`, so it is gated by the same `crypto.allow_legacy_key_wrap`
+setting and reports the same undifferentiated failure on a rejected
+ciphertext; see [`../../key-management/api.md`](../../key-management/api.md)
+§"Decrypt's RSA fallback (PKCS#1 v1.5) is refused by default".
+
 This is an explicit opt-in, not a compliance gap: `Config.ComplianceGaps` does
 not report it, so `xkmsd` starts either way. Which algorithms are approved is a
 property of the binary's FIPS mode (`crypto/fips140.Enabled()` — a

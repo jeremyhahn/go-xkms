@@ -158,6 +158,36 @@ func TestDecryptHandler_RoundTripsWithEncryptHandler(t *testing.T) {
 	assert.Equal(t, plaintext, decResp.Plaintext)
 }
 
+// TestDecryptHandler_PKCS1v15RefusedByDefault is the REST refusal test for
+// go-xkms#1283: DecryptHandler's asymmetric fallback must refuse PKCS#1 v1.5
+// -- named explicitly or left unnamed -- unless crypto.allow_legacy_key_wrap
+// is set, mirroring EncryptHandler's own default refusal. Before this fix
+// Decrypt performed PKCS#1 v1.5 unconditionally.
+func TestDecryptHandler_PKCS1v15RefusedByDefault(t *testing.T) {
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(false)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
+	ks := setupTestService(t, "test-backend")
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	ks.SetKey("v15-refused", rsaKey)
+
+	ctx := newTestHandlerContext()
+	router := createRouterWithHandler(http.MethodPost, "/api/v1/keys/{id}/decrypt", ctx.DecryptHandler)
+
+	for _, padding := range []string{"", "pkcs1v15"} {
+		body, _ := json.Marshal(DecryptRequest{Ciphertext: []byte("irrelevant"), Padding: padding})
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/keys/v15-refused/decrypt?backend=test-backend", strings.NewReader(string(body)))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code, "padding %q: %s", padding, w.Body.String())
+		assert.Contains(t, w.Body.String(), "allow_legacy_key_wrap", "padding %q", padding)
+	}
+}
+
 // TestDecryptHandler_OAEPCiphertextWithoutPaddingFails is the bad-input
 // companion: an OAEP ciphertext offered without naming its padding must not
 // give the plaintext back, because an unnamed padding means PKCS#1 v1.5.
