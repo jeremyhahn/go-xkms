@@ -2678,7 +2678,8 @@ func (a *App) Run() error {
 	// Only set asset server if frontend assets are provided.
 	if Assets != nil {
 		appOpts.AssetServer = &assetserver.Options{
-			Assets: Assets,
+			Assets:     Assets,
+			Middleware: cspAssetServerMiddleware,
 		}
 	}
 

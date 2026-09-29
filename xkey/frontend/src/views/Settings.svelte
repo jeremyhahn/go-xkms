@@ -39,6 +39,7 @@
   import { isEnterpriseMode, enterprisePolicy } from '$lib/stores/auth';
   import { extensionPairingChanged } from '$lib/stores/events';
   import { setDevToolsEnabled, devToolsEnabled as devToolsStore } from '$lib/stores/app';
+  import { validateSandboxPolicy, SAFE_DEFAULT_SANDBOX_POLICY } from '$lib/utils/sandboxPolicy';
 
   type SettingsCategory = 'general' | 'appearance' | 'server' | 'phone' | 'security' | 'pin' | 'storage' | 'notifications' | 'browser' | 'api-explorer' | 'advanced' | 'identity' | 'ssh';
 
@@ -146,9 +147,11 @@
   let barrierAutoUnsealEnabled = false;
   let requireAuth = true;
   let clipboardTimeout = 30;
-  // API Explorer sandbox settings
-  let sandboxAllowSameOrigin = true;
-  let sandboxAllowScripts = true;
+  // API Explorer sandbox settings. allow-same-origin and allow-scripts
+  // default off: combined they let a previewed response's script reach the
+  // app's own Wails bindings (go-xkms#1274). See validateSandboxPolicy.
+  let sandboxAllowSameOrigin = false;
+  let sandboxAllowScripts = false;
   let sandboxAllowForms = true;
   let sandboxAllowPopups = true;
   let sandboxPolicyLocked = false; // enterprise policy override
@@ -416,8 +419,15 @@
         barrierAutoUnsealEnabled = cfg.barrier_auto_unseal_enabled ?? false;
         defaultBackend = cfg.sealer_backend || 'software';
 
-        // Initialize sandbox checkboxes from config.
-        const sp = cfg.api_explorer_sandbox_policy || 'allow-same-origin allow-scripts allow-forms allow-popups';
+        // Initialize sandbox checkboxes from config. An invalid stored
+        // policy (e.g. from a config file predating go-xkms#1274) is
+        // refused and replaced with the safe default rather than trusted.
+        const rawSp = cfg.api_explorer_sandbox_policy || SAFE_DEFAULT_SANDBOX_POLICY;
+        const spResult = validateSandboxPolicy(rawSp);
+        if (!spResult.valid) {
+          addNotification('warning', `Stored sandbox policy rejected: ${spResult.reason}`);
+        }
+        const sp = spResult.policy;
         sandboxAllowSameOrigin = sp.includes('allow-same-origin');
         sandboxAllowScripts = sp.includes('allow-scripts');
         sandboxAllowForms = sp.includes('allow-forms');
@@ -426,7 +436,12 @@
       }
       // Check enterprise policy override for sandbox.
       if ($isEnterpriseMode && $enterprisePolicy?.api_explorer_sandbox_policy) {
-        const ep = $enterprisePolicy.api_explorer_sandbox_policy as string;
+        const rawEp = $enterprisePolicy.api_explorer_sandbox_policy as string;
+        const epResult = validateSandboxPolicy(rawEp);
+        if (!epResult.valid) {
+          addNotification('warning', `Enterprise sandbox policy rejected: ${epResult.reason}`);
+        }
+        const ep = epResult.policy;
         sandboxAllowSameOrigin = ep.includes('allow-same-origin');
         sandboxAllowScripts = ep.includes('allow-scripts');
         sandboxAllowForms = ep.includes('allow-forms');
@@ -715,13 +730,31 @@
     addNotification('info', `Theme changed to ${target.value}`);
   }
 
+  /**
+   * Builds the sandbox policy string from the toggle state and validates it
+   * before it is ever persisted. An invalid combination (e.g. the user
+   * checked both allow-same-origin and allow-scripts) is refused: the
+   * toggles are reset to the safe default and a notice is shown, rather
+   * than saving a policy that lets a previewed response escape the sandbox.
+   */
   function buildSandboxPolicy(): string {
     const parts: string[] = [];
     if (sandboxAllowSameOrigin) parts.push('allow-same-origin');
     if (sandboxAllowScripts) parts.push('allow-scripts');
     if (sandboxAllowForms) parts.push('allow-forms');
     if (sandboxAllowPopups) parts.push('allow-popups');
-    return parts.join(' ');
+    const candidate = parts.join(' ');
+
+    const result = validateSandboxPolicy(candidate);
+    if (!result.valid) {
+      addNotification('warning', `Sandbox policy rejected: ${result.reason}`);
+      const safe = result.policy;
+      sandboxAllowSameOrigin = safe.includes('allow-same-origin');
+      sandboxAllowScripts = safe.includes('allow-scripts');
+      sandboxAllowForms = safe.includes('allow-forms');
+      sandboxAllowPopups = safe.includes('allow-popups');
+    }
+    return result.policy;
   }
 
   let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1103,6 +1136,9 @@
             <h2 class="text-title-medium section-heading">Security Settings</h2>
             <p class="text-body-small setting-desc" style="margin-bottom: 12px;">
               Configure the iframe sandbox policy for the API Explorer response preview.
+              allow-same-origin and allow-scripts cannot be enabled together: combined,
+              they let a previewed response's script reach xKey's own application
+              bindings, so that combination is always refused.
               {#if sandboxPolicyLocked}
                 <br /><em>(Set by organization policy)</em>
               {/if}

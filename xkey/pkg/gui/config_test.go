@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 func TestDefaultGUIConfig(t *testing.T) {
@@ -75,6 +77,49 @@ func TestGUIConfig_Validate_ZeroHeight(t *testing.T) {
 	err := cfg.Validate()
 	assert.NoError(t, err)
 	assert.Equal(t, DefaultWindowHeight, cfg.WindowHeight)
+}
+
+func TestDefaultGUIConfig_SandboxPolicyIsSafe(t *testing.T) {
+	cfg := DefaultGUIConfig()
+	assert.Equal(t, config.SafeDefaultAPIExplorerSandboxPolicy, cfg.APIExplorerSandboxPolicy)
+	assert.NotContains(t, cfg.APIExplorerSandboxPolicy, "allow-same-origin",
+		"the shipped default must never combine allow-same-origin with allow-scripts (go-xkms#1274)")
+}
+
+// TestGUIConfig_Validate_SandboxPolicyDangerousComboNormalized locks in the
+// self-healing behavior of Validate for the allow-scripts + allow-same-origin
+// combination: every installation created before go-xkms#1274 already has
+// the old dangerous default persisted on disk, so Validate normalizes the
+// field rather than failing the whole config load/save.
+func TestGUIConfig_Validate_SandboxPolicyDangerousComboNormalized(t *testing.T) {
+	cfg := DefaultGUIConfig()
+	cfg.APIExplorerSandboxPolicy = "allow-same-origin allow-scripts allow-forms allow-popups"
+
+	err := cfg.Validate()
+
+	require.NoError(t, err)
+	assert.Equal(t, config.SafeDefaultAPIExplorerSandboxPolicy, cfg.APIExplorerSandboxPolicy)
+}
+
+func TestGUIConfig_Validate_SandboxPolicyForbiddenDirectiveNormalized(t *testing.T) {
+	cfg := DefaultGUIConfig()
+	cfg.APIExplorerSandboxPolicy = "allow-forms allow-modals"
+
+	err := cfg.Validate()
+
+	require.NoError(t, err)
+	assert.Equal(t, config.SafeDefaultAPIExplorerSandboxPolicy, cfg.APIExplorerSandboxPolicy)
+}
+
+func TestGUIConfig_Validate_SandboxPolicySafeCombinationPreserved(t *testing.T) {
+	cfg := DefaultGUIConfig()
+	cfg.APIExplorerSandboxPolicy = "allow-same-origin allow-forms"
+
+	err := cfg.Validate()
+
+	require.NoError(t, err)
+	assert.Equal(t, "allow-same-origin allow-forms", cfg.APIExplorerSandboxPolicy,
+		"allow-same-origin without allow-scripts is not the dangerous combination")
 }
 
 func TestSaveAndLoadGUIConfig(t *testing.T) {
