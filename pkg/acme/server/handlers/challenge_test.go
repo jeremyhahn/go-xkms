@@ -509,9 +509,9 @@ func TestChallengeHandler_EnrollmentChallengeWithPermanentIdentifier(t *testing.
 	defer cleanup()
 	service.allowLoopbackIdentifier = true
 
-	// Add mock enrollment challenge verifier
-	// Use "enroll-01-9000" which will be parsed as base="enroll-01", port=9000
-	// The verifier needs to be registered with the FULL challenge type
+	// Add mock enrollment challenge verifier. The challenge type is looked
+	// up verbatim (no port-suffix parsing), so the verifier is registered
+	// under the exact type the authorization below is created with.
 	service.challengeMap["enroll-01-9000"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
 		// Verify we get the client IP instead of 127.0.0.1
 		if domain == "127.0.0.1" {
@@ -529,7 +529,8 @@ func TestChallengeHandler_EnrollmentChallengeWithPermanentIdentifier(t *testing.
 	}
 
 	order := createTestOrderWithIdentifiers(t, service, account, []entities.ACMEIdentifier{identifier})
-	// Use "enroll-01-9000" which will be recognized as an enrollment challenge
+	// "enroll-01-9000" is still recognized as an enrollment challenge type
+	// (isEnrollXChallenge matches on prefix), just not stripped of a port.
 	authz := createTestAuthorizationWithChallenges(t, service, account, order, identifier, []string{"enroll-01-9000"})
 
 	// Request challenge validation with X-Forwarded-For header
@@ -602,106 +603,26 @@ func TestChallengeHandler_LoopbackIdentifierRefusedByDefault(t *testing.T) {
 	assert.False(t, verifierCalled, "challenge verifier must not run when the loopback identifier is refused")
 }
 
-func TestParseChallengeAsDynamicPortAssignment_NoPort(t *testing.T) {
-	// Note: "-01" suffix is NOT treated as a port (port must be > 99 to avoid matching challenge version suffixes)
-	baseType, port := parseChallengeAsDynamicPortAssignment("http-01")
-	assert.Equal(t, "http-01", baseType)
-	assert.Equal(t, uint16(0), port)
-}
-
-func TestParseChallengeAsDynamicPortAssignment_WithPort(t *testing.T) {
-	baseType, port := parseChallengeAsDynamicPortAssignment("http-01-8080")
-	assert.Equal(t, "http-01", baseType)
-	assert.Equal(t, uint16(8080), port)
-}
-
-func TestParseChallengeAsDynamicPortAssignment_MultipleHyphens(t *testing.T) {
-	baseType, port := parseChallengeAsDynamicPortAssignment("device-attest-01-9443")
-	assert.Equal(t, "device-attest-01", baseType)
-	assert.Equal(t, uint16(9443), port)
-}
-
-func TestParseChallengeAsDynamicPortAssignment_InvalidPort(t *testing.T) {
-	baseType, port := parseChallengeAsDynamicPortAssignment("http-01-invalid")
-	assert.Equal(t, "http-01-invalid", baseType)
-	assert.Equal(t, uint16(0), port)
-}
-
-func TestParseChallengeAsDynamicPortAssignment_PortOutOfRange(t *testing.T) {
-	baseType, port := parseChallengeAsDynamicPortAssignment("http-01-99999")
-	// Port number out of uint16 range should be treated as not a port
-	assert.Equal(t, "http-01-99999", baseType)
-	assert.Equal(t, uint16(0), port)
-}
-
-func TestParseChallengeAsDynamicPortAssignment_SinglePart(t *testing.T) {
-	baseType, port := parseChallengeAsDynamicPortAssignment("http")
-	assert.Equal(t, "http", baseType)
-	assert.Equal(t, uint16(0), port)
-}
-
 func TestIsEnrollXChallenge_EnrollChallenge(t *testing.T) {
-	// "enroll-01" has -01 suffix which is NOT a port (port must be > 99)
-	// parseChallengeAsDynamicPortAssignment returns ("enroll-01", 0)
-	// isEnrollXChallenge uses HasPrefix to detect enrollment challenges
 	assert.True(t, isEnrollXChallenge("enroll-01"))
-	// With explicit port: "enroll-01-8080" becomes base="enroll-01", port=8080
-	assert.True(t, isEnrollXChallenge("enroll-01-8080"))
 }
 
 func TestIsEnrollXChallenge_EndorseChallenge(t *testing.T) {
 	assert.True(t, isEnrollXChallenge("endorse-01"))
-	assert.True(t, isEnrollXChallenge("endorse-01-9000"))
 }
 
 func TestIsEnrollXChallenge_DeviceAttestChallenge(t *testing.T) {
 	assert.True(t, isEnrollXChallenge("device-attest-01"))
-	assert.True(t, isEnrollXChallenge("device-attest-01-9443"))
 }
 
 func TestIsEnrollXChallenge_NonEnrollmentChallenge(t *testing.T) {
 	assert.False(t, isEnrollXChallenge("http-01"))
 	assert.False(t, isEnrollXChallenge("dns-01"))
 	assert.False(t, isEnrollXChallenge("tls-alpn-01"))
-	assert.False(t, isEnrollXChallenge("http-01-8080"))
 }
 
 func TestIsEnrollXChallenge_EmptyString(t *testing.T) {
 	assert.False(t, isEnrollXChallenge(""))
-}
-
-func TestChallengeHandler_DynamicPortAssignment(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Track which port was used in validation
-	var capturedPort string
-	// Register verifier for the FULL challenge type "http-01-8080"
-	service.challengeMap["http-01-8080"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
-		capturedPort = port
-		return nil
-	}
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	identifier := entities.ACMEIdentifier{
-		Type:  common.AuthzTypeDNS,
-		Value: "example.com",
-	}
-
-	order := createTestOrderWithIdentifiers(t, service, account, []entities.ACMEIdentifier{identifier})
-	authz := createTestAuthorizationWithChallenges(t, service, account, order, identifier, []string{"http-01-8080"})
-
-	// Request challenge validation
-	url := fmt.Sprintf("%s/acme/challenge/%d", service.baseRESTURI, authz.Challenges[0].ID)
-	req := createJWSRequest(t, service, key, url, map[string]interface{}{}, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.ChallengeHandler(resp, req)
-
-	require.Equal(t, http.StatusOK, resp.Code)
-	assert.Equal(t, "8080", capturedPort)
 }
 
 func TestChallengeHandler_RemoteAddrWithoutPort(t *testing.T) {
@@ -1371,46 +1292,6 @@ func TestChallengeHandler_MultipleAuthorizationsFirstInvalid(t *testing.T) {
 	updatedOrder, err := orderDAO.Get(ctx, order.ID)
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusInvalid, updatedOrder.Status)
-}
-
-// =============================================================================
-// Test: Endorse-01 With Port Suffix
-// =============================================================================
-
-// TestChallengeHandler_EndorseWithPortSuffix tests endorse-01-8443 challenge type
-// which should trigger EAB validation when EAB is required.
-func TestChallengeHandler_EndorseWithPortSuffix(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	// Enable endorse EAB requirement
-	service.endorseEABRequired = true
-
-	// Add a mock endorse-01 challenge verifier (registered with port suffix)
-	service.challengeMap["endorse-01-8443"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
-		return nil
-	}
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	identifier := entities.ACMEIdentifier{
-		Type:  common.AuthzTypePermanentIdentifier,
-		Value: "device-789",
-	}
-
-	order := createTestOrderWithIdentifiers(t, service, account, []entities.ACMEIdentifier{identifier})
-	authz := createTestAuthorizationWithChallenges(t, service, account, order, identifier, []string{"endorse-01-8443"})
-
-	// Request challenge - should fail EAB validation since no binding
-	url := fmt.Sprintf("%s/acme/challenge/%d", service.baseRESTURI, authz.Challenges[0].ID)
-	req := createJWSRequest(t, service, key, url, map[string]interface{}{}, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.ChallengeHandler(resp, req)
-
-	// Should return unauthorized error due to missing EAB
-	assertErrorType(t, resp, common.ErrTypeUnauthorized, http.StatusUnauthorized)
 }
 
 // =============================================================================

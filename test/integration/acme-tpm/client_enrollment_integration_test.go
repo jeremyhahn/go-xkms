@@ -503,22 +503,23 @@ func TestStartAttestServer_HTTPEndpoints(t *testing.T) {
 // This used to launch all three enrollments as goroutines, each on a
 // different local port (8880+idx), on the theory that the client picks
 // which port the server validates the enroll-01 challenge against. It does
-// not: pkg/acme/server/handlers/challenge.go's
-// parseChallengeAsDynamicPortAssignment can parse a port suffix out of a
-// challenge type ("enroll-01-8880"), but nothing on the offering side
-// (createChallenges in new_order.go, which always uses the bare registered
-// type string from buildChallengeMap) ever produces one -- every enroll-01
-// challenge this server offers defaults to port 8080
+// not: every enroll-01 challenge this server offers is the bare registered
+// type string (createChallenges in new_order.go never produces a
+// port-suffixed one), which defaults to port 8080
 // (isEnrollXChallenge's hardcoded fallback), regardless of what port the
 // client's own local responder happens to be listening on. Three goroutines
 // each listening on a different port were therefore never going to be
 // validated correctly; the observed 404s were the server's port-8080
 // validation request landing on whichever (or no) listener happened to be
-// there, not a real per-device answer. Running the three enrollments in
-// sequence, all on port 8080 like every other enroll-01 test in this
-// package, exercises the same "the server handles more than one enrollment"
-// behavior this test is named for without relying on a client-chosen-port
-// mechanism the server does not implement.
+// there, not a real per-device answer. go-xkms#1183 removed the
+// challenge.go port-suffix parser that made the port-suffixed form look
+// supported (parseChallengeAsDynamicPortAssignment): it was parsed but
+// never produced, so it could never actually route a challenge anywhere.
+// Running the three enrollments in sequence, all on port 8080 like every
+// other enroll-01 test in this package, exercises the same "the server
+// handles more than one enrollment" behavior this test is named for
+// without relying on a client-chosen-port mechanism the server does not
+// implement.
 func TestEnrollment_ConcurrentRequests(t *testing.T) {
 	RequireSwtpm(t)
 

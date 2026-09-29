@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## Exported surface
 
@@ -575,6 +575,23 @@ permanent identifier in the RFC 4043 otherName (`deviceAttestCSR`,
 part of the statement, so the device spec's `pcr-selection` does not reach the
 evidence.
 
+**`IAKCertificate()` must resolve for `Setup` to build a statement at all.**
+`EnrollDevice` installs the IAK certificate it receives at finalization via
+`TPMModule.ProvisionIAKCert` (`enrollment.go`, `tpm.go`) immediately after
+parsing it from the finalized chain, so a later `device-attest-01` --
+including one run against the same TPM in a separate process, the normal
+case on real hardware -- finds it. Before go-xkms#1100 this call did not
+exist: enrollment parsed and returned the certificate but never installed
+it, so `IAKCertificate()` only ever resolved on the in-process TPM simulator
+(`pkg/acme/client/service.openDeviceTPM`'s development-only
+`provisionSimulatorIAKCertificate`, which re-mints a throwaway certificate on
+every open regardless of what enrollment issued) or when an operator
+installed one some other way. A hardware device with no `IAK.CertHandle`
+configured also needs somewhere for `ProvisionIAKCert` to persist to:
+`openDeviceTPM`'s hardware branch is given `store.FileCertStore`
+(`pkg/tpm2/store`), backed by the same `storage.Backend` the device's key
+blobs already persist to, so the certificate survives a process restart.
+
 ## Challenge validation client
 
 Every verifier that contacts a target the ACME client named -- `http-01`,
@@ -826,6 +843,17 @@ cluster:
   `clusterca.ACMEOptions.ChallengeHost`, which becomes
   `acmeclient.EnrollmentConfig.ListenHost` and is joined with the port through
   `net.JoinHostPort` (#140).
+  **It must be `"8080"`** (or, for `endorse-01`/`device-attest-01`, that
+  challenge's own fixed default): the server always validates an enroll-01
+  family challenge against the challenge type's fixed default port
+  (`isEnrollXChallenge` in `pkg/acme/server/handlers/challenge.go`), never a
+  port the client advertises. A challenge type carries no port information —
+  `createChallenges` (`new_order.go`) only ever offers the bare registered
+  type string. A now-removed helper, `parseChallengeAsDynamicPortAssignment`,
+  could parse a port suffix out of a challenge type (`"enroll-01-8880"`), but
+  nothing ever produced one, so it never routed a challenge anywhere; it was
+  deleted rather than wired up; offering a client-chosen port is a protocol
+  change that needs its own design decision (#1183).
 - `Validate(keyBackend)` currently accepts any backend. The doc comment states
   why: in-process issuance on the first node stamps a key-provenance OID for any
   backend, and a joining node's challenge is selected by backend at runtime

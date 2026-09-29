@@ -207,29 +207,20 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		challenge.Error = common.IncorrectResponse("Failed to compute key authorization")
 	}
 
-	// Parse the challenge type to extract the port number used by the challenge
-	// selected by the client. The baseType is used for map lookup since challenges
-	// with ports (e.g., "enroll-01-8888") should use the same verifier as base type.
-	baseType, challengePort := parseChallengeAsDynamicPortAssignment(challenge.Type)
-
-	// Use default ports when no explicit port is specified
-	if challengePort == 0 {
-		if isEnrollXChallenge(challenge.Type) {
-			// Enrollment challenges default to port 8080
-			challengePort = 8080
-		} else if strings.HasPrefix(baseType, "http") {
-			// HTTP-01 defaults to port 80
-			challengePort = 80
-		}
+	// Every challenge this server offers is a registered, unsuffixed type
+	// (createChallenges never produces a port-suffixed challenge.Type -- see
+	// go-xkms#1183), so the port is always the type's fixed default and the
+	// verifier is always looked up by the literal type.
+	var challengePort uint16
+	if isEnrollXChallenge(challenge.Type) {
+		// Enrollment challenges default to port 8080
+		challengePort = 8080
+	} else if strings.HasPrefix(challenge.Type, "http") {
+		// HTTP-01 defaults to port 80
+		challengePort = 80
 	}
 
-	// Look up the challenge verifier from the challenge map using the base type.
-	// This allows challenges like "enroll-01-8888" to use the "enroll-01" verifier.
-	challengeVerifierFunc, ok := s.challengeMap[baseType]
-	if !ok {
-		// Fall back to exact match for challenges without port suffix
-		challengeVerifierFunc, ok = s.challengeMap[challenge.Type]
-	}
+	challengeVerifierFunc, ok := s.challengeMap[challenge.Type]
 	if !ok {
 		challenge.Status = common.StatusInvalid
 		errmsg := fmt.Sprintf("Unsupported challenge type: %s", challenge.Type)
@@ -332,13 +323,13 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 	// EventChallengeValidated / EventAuthorizationValidated events elsewhere
 	// in the flow.
 	if validationSuccessful {
-		// baseType, not the broader isEnrollXChallenge/IsEndorseChallengeType
-		// family checks: those both match "endorse-01" (isEnrollXChallenge
-		// matches every enrollment-family type, including endorse-01 and the
-		// unwired device-attest-01), so an exact match is required to tell
-		// enroll-01 and endorse-01 apart here.
+		// challenge.Type, not the broader isEnrollXChallenge/
+		// IsEndorseChallengeType family checks: those both match "endorse-01"
+		// (isEnrollXChallenge matches every enrollment-family type, including
+		// endorse-01 and the unwired device-attest-01), so an exact match is
+		// required to tell enroll-01 and endorse-01 apart here.
 		var eventType audit.EventType
-		switch baseType {
+		switch challenge.Type {
 		case "enroll-01":
 			eventType = audit.EventTPMAttestation
 		case "endorse-01":
@@ -525,50 +516,10 @@ func (s *RestService) writeChallengeResponse(w http.ResponseWriter, challenge *e
 	challengeResponse(w, challenge)
 }
 
-// parseChallengeAsDynamicPortAssignment parses a challenge type that may include a port number.
-// Format: "challenge-type-port" where port is optional and must be > 99 (to avoid matching -01 suffix).
-// Returns the base challenge type and the port number (0 if not specified).
-//
-// This never fails: every input a caller can pass -- with or without a
-// trailing port, with a non-numeric or out-of-range suffix -- resolves to
-// some (baseType, port) pair, so there is no error for a caller to check.
-// Examples:
-//   - "http-01" -> ("http-01", 0) - standard challenge, no port
-//   - "enroll-01" -> ("enroll-01", 0) - standard challenge, no port
-//   - "enroll-01-8080" -> ("enroll-01", 8080) - with explicit port
-//   - "device-attest-01-443" -> ("device-attest-01", 443) - with explicit port
-func parseChallengeAsDynamicPortAssignment(challengeType string) (string, uint16) {
-	parts := strings.Split(challengeType, "-")
-	if len(parts) < 2 {
-		// No port specified, return 0 for default
-		return challengeType, 0
-	}
-
-	// Try to parse the last part as a port number
-	lastPart := parts[len(parts)-1]
-	port, err := strconv.ParseUint(lastPart, 10, 16)
-	if err != nil {
-		// Last part is not a number, so no port specified
-		return challengeType, 0
-	}
-
-	// Port numbers <= 99 are reserved for challenge version suffixes (like -01)
-	// Real port numbers would be > 99 (e.g., 80, 443, 8080)
-	if port <= 99 {
-		return challengeType, 0
-	}
-
-	// Reconstruct the base challenge type without the port
-	baseType := strings.Join(parts[:len(parts)-1], "-")
-	return baseType, uint16(port)
-}
-
-// isEnrollXChallenge checks if the challenge type is an enrollment challenge.
-// Enrollment challenges include enroll-01, enroll-01-8080, endorse-01, device-attest-01, etc.
-// Uses HasPrefix to match both standard and port-suffixed challenge types.
+// isEnrollXChallenge checks if the challenge type is an enrollment challenge:
+// enroll-01, endorse-01 or device-attest-01.
 func isEnrollXChallenge(challengeType string) bool {
-	baseType, _ := parseChallengeAsDynamicPortAssignment(challengeType)
-	return strings.HasPrefix(baseType, "enroll") ||
-		strings.HasPrefix(baseType, "endorse") ||
-		strings.HasPrefix(baseType, "device-attest")
+	return strings.HasPrefix(challengeType, "enroll") ||
+		strings.HasPrefix(challengeType, "endorse") ||
+		strings.HasPrefix(challengeType, "device-attest")
 }

@@ -61,6 +61,28 @@ type FakeACMEDirectory struct {
 	// repeat request for the same key is answered per RFC 8555 §7.3.1
 	// rather than treated as a brand new account.
 	accountKeys map[string]bool
+
+	// certsFromCSR, when set with SetCertsFromCSR, overrides certs with
+	// certificates computed from the CSR bytes the client submits at
+	// finalize time, instead of the fixed bytes passed to
+	// NewFakeACMEDirectory. This is what lets a caller mint a certificate
+	// whose public key matches material the client only generates at run
+	// time -- e.g. an enroll-01 IAK certificate for the TPM simulator's
+	// real IAK public key -- which a certs slice fixed before the client
+	// even runs cannot do.
+	certsFromCSR func(csr []byte) ([][]byte, error)
+}
+
+// SetCertsFromCSR installs f as the source of finalize/cert response bodies,
+// overriding the certs passed to NewFakeACMEDirectory. f receives the raw
+// CSR bytes (DER, or a packed TCG-CSR-IDEVID for enroll-01) the client
+// submitted to the finalize endpoint and returns the certificate chain
+// (leaf-first) to serve back, mirroring NewFakeACMEDirectory's own certs
+// convention.
+func (d *FakeACMEDirectory) SetCertsFromCSR(f func(csr []byte) ([][]byte, error)) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.certsFromCSR = f
 }
 
 // NewFakeACMEDirectory starts a FakeACMEDirectory offering challengeTypes on
@@ -252,6 +274,38 @@ func parseACMEAccountJWS(r *http.Request) (jwk string, onlyReturnExisting bool, 
 	return string(protected.JWK), onlyReturnExisting, nil
 }
 
+// parseACMEFinalizeCSR extracts the raw CSR bytes from a JWS-wrapped
+// finalize request body, per RFC 8555 §7.4 (the payload is {"csr":
+// base64url(csrDER)} -- golang.org/x/crypto/acme.Client.CreateOrderCert's
+// exact request shape).
+func parseACMEFinalizeCSR(r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var jws struct {
+		Protected string `json:"protected"`
+		Payload   string `json:"payload"`
+	}
+	if err := json.Unmarshal(body, &jws); err != nil {
+		return nil, err
+	}
+
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(jws.Payload)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		CSR string `json:"csr"`
+	}
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		return nil, err
+	}
+
+	return base64.RawURLEncoding.DecodeString(payload.CSR)
+}
+
 func (d *FakeACMEDirectory) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 	d.setHeaders(w)
 
@@ -345,7 +399,37 @@ func (d *FakeACMEDirectory) handleChallenge(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (d *FakeACMEDirectory) handleFinalize(w http.ResponseWriter, _ *http.Request) {
+func (d *FakeACMEDirectory) handleFinalize(w http.ResponseWriter, r *http.Request) {
+	d.mu.Lock()
+	certsFromCSR := d.certsFromCSR
+	d.mu.Unlock()
+
+	if certsFromCSR != nil {
+		csr, err := parseACMEFinalizeCSR(r)
+		if err != nil {
+			d.setHeaders(w)
+			w.WriteHeader(http.StatusBadRequest)
+			d.encodeJSON(w, map[string]interface{}{
+				"type":   "urn:ietf:params:acme:error:malformed",
+				"detail": err.Error(),
+			})
+			return
+		}
+		certs, err := certsFromCSR(csr)
+		if err != nil {
+			d.setHeaders(w)
+			w.WriteHeader(http.StatusInternalServerError)
+			d.encodeJSON(w, map[string]interface{}{
+				"type":   "urn:ietf:params:acme:error:serverInternal",
+				"detail": err.Error(),
+			})
+			return
+		}
+		d.mu.Lock()
+		d.certs = certs
+		d.mu.Unlock()
+	}
+
 	d.setHeaders(w)
 
 	d.mu.Lock()
