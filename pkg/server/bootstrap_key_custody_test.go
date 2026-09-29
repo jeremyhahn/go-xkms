@@ -139,7 +139,7 @@ func TestNoiseKeyCustody_NoBarrierPersistsToFileAndReloads(t *testing.T) {
 	}
 
 	dataDir := t.TempDir()
-	cfg := &config.Config{Storage: config.StorageConfig{Path: dataDir}}
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: dataDir}}
 
 	var logBuf1 bytes.Buffer
 	s1 := &Server{config: cfg, logger: custodyCapturingLogger(&logBuf1), barrier: nil}
@@ -272,7 +272,7 @@ func TestP256KeyCustody_BarrierGetErrorWraps(t *testing.T) {
 // TestNoiseKeyCustody_NoBarrierPersistsToFileAndReloads's P-256 counterpart.
 func TestP256KeyCustody_NoBarrierPersistsToFileAndReloads(t *testing.T) {
 	dataDir := t.TempDir()
-	cfg := &config.Config{Storage: config.StorageConfig{Path: dataDir}}
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: dataDir}}
 
 	var logBuf1 bytes.Buffer
 	s1 := &Server{config: cfg, logger: custodyCapturingLogger(&logBuf1), barrier: nil}

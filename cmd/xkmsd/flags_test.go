@@ -42,8 +42,8 @@ tls:
   enabled: true
 auth:
   enabled: false
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data"
 default_backend: "pkcs8"
 backends:

@@ -27,7 +27,7 @@ const tpm2KeyDirSubdir = "tpm2-keys"
 // never fall back to a directory resolved relative to the process's working
 // directory: some callers of this package (embedded/programmatic
 // construction of *config.Config) never run config.Config.Validate, so an
-// empty Storage.Path cannot be assumed to have already been rejected.
+// empty Datastore.Path cannot be assumed to have already been rejected.
 func (s *Server) resolveTPM2KeyDir() (string, error) {
 	return resolveTPM2KeyDir(s.config)
 }

@@ -37,8 +37,8 @@ func newTestServerForPKCS11(t *testing.T, pkcs11Cfg *config.PKCS11Config) *Serve
 	t.Helper()
 	return &Server{
 		config: &config.Config{
-			Storage:  config.StorageConfig{Backend: "memory"},
-			Backends: config.BackendsConfig{PKCS11: pkcs11Cfg},
+			Datastore: config.DatastoreConfig{Engine: "memory"},
+			Backends:  config.BackendsConfig{PKCS11: pkcs11Cfg},
 		},
 		backends:     make(map[string]xkms.Backend),
 		keyProviders: make(map[string]types.KeyProvider),

@@ -24,6 +24,7 @@ the folder in the same commit that changes the behavior.
 | [certificate-authority](certificate-authority/) | `TrustedCA` — cross-signed root pool, AIA import, DANE TLSA publishing |
 | [clustering](clustering/) | Embedding a go-qrdb clustered node behind the `raft` build tag: Raft config mapping, inter-node mTLS provisioning, not-leader redirects, the `xkmsctl cluster`/`rebalance` control plane, the read-only REST cluster status/membership surface for the web console, and cluster CA key custody |
 | [crypto-backends](crypto-backends/) | The `Backend` contract and every software, hardware and cloud implementation |
+| [datastore](datastore/) | The single global, qrdb-backed datastore every xkms subsystem stores through: the `storage.Backend` interface, `datastore.engine` (memory/file/pebble) and `datastore.mode` (standalone/remote) configuration, and why there is no per-subsystem storage choice left |
 | [dice-device-identity](dice-device-identity/) | DICE-based device identity with a hardware root of trust: the TCG DICE certificate extensions, their verification, and the `dice-idevid` issuance profile |
 | [escrow](escrow/) | External key escrow (KMIP + xkms federation): the agent factory, daemon config, and service layer — reachable today only through the embedded Go SDK, pending an RBAC vocabulary decision for the network transports |
 | [fido2-ctap2](fido2-ctap2/) | The canonical FIDO2 CTAP2 implementation |
@@ -46,7 +47,6 @@ the folder in the same commit that changes the behavior.
 | [share-custody](share-custody/) | Shamir share custody, custodian groups and share collection |
 | [signing](signing/) | The embedded SDK's `Sign`/`Verify` — persisted per-blob checksums (`SignOptions.BlobCN`, `VerifyOpts.IntegrityCheck`) shared by every backend |
 | [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
-| [storage-engines](storage-engines/) | The `storage.Backend` interface and the `storage.backend` config choice: file, PebbleDB, memory, and the embedded/remote qrdb backend |
 | [ssh-keys](ssh-keys/) | SSH keys (software or backend-backed), host-key pins, and authorized_keys entries — key lifecycle, `pkg/ssh/keys`/`known_hosts`/`authorized`, and the REST/gRPC/MCP/CLI surface over them |
 | [ssh-sessions](ssh-sessions/) | Opening an outbound SSH connection: the interactive console (embedded-only), non-interactive `Run`/upload sessions (every SDK transport, by composing the `ssh-keys` sign/known-hosts endpoints), launching the system `ssh` client, connection profiles, session history, and local `ssh_config`/agent discovery — `pkg/ssh/{console,connect,session,sessions,profile,local}` |
 | [symmetric-aead](symmetric-aead/) | AES-GCM / ChaCha20-Poly1305 / AES-CBC / AES-ECB, the AEAD safety tracker, GCM nonce modes under FIPS |
@@ -136,7 +136,7 @@ by five and reports unconverted folders as converted.
 | [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
 | [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — **absorbed and deleted**. The legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions described a proxy plane that was since deleted; `ca-key-custody.md` is retained as a companion deep-dive, now [`clustering/ca-key-custody.md`](clustering/ca-key-custody.md), linked from [`clustering/architecture.md`](clustering/architecture.md). A separate `docs/cluster/` five-file folder landed briefly (go-xkms#847, the read-only REST cluster status/membership surface for the web console) and duplicated this one; it was merged into `clustering/` in the same pass rather than kept as two folders for one feature. |
 | [rbac](rbac/) | `architecture/rbac.md` |
-| [storage-engines](storage-engines/) | `storage/` — the legacy `README.md`'s `objstore` backend example (`storage.backend: objstore` with S3/GCS/Azure options) is not reachable through `xkmsd`'s own `storage.backend`; the feature folder documents where that engine is actually used |
+| [datastore](datastore/) | `storage/` — the legacy `README.md`'s `objstore` backend example (`storage.backend: objstore` with S3/GCS/Azure options) is not reachable through `xkmsd`'s own datastore, same as before. Also supersedes this repo's own now-deleted `storage-engines/` folder (go-xkms#1345): the old per-subsystem `storage.backend` (file/pebble/memory as private, unreplicated alternatives to `qrdb`) was replaced by one global, always-qrdb-backed `datastore.engine`/`datastore.mode`. |
 | [web-console](web-console/) | `web/` |
 
 Several of these need a note rather than a row:
@@ -286,7 +286,7 @@ module) by the time they were re-verified for this pass.
 | RBAC | [`rbac/`](rbac/) |
 | Browser trust injection | [`../xkey/docs/browser-trust-injection/`](../xkey/docs/browser-trust-injection/) — converted, but in the xkey module; see the note below |
 | LUKS | [`luks/`](luks/) |
-| Storage engines | [`storage-engines/`](storage-engines/) |
+| Datastore | [`datastore/`](datastore/) |
 
 [`frost-threshold-signing/`](frost-threshold-signing/),
 [`ssh-keys/`](ssh-keys/), [`ssh-agent-sessions/`](ssh-agent-sessions/) and

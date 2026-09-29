@@ -453,12 +453,13 @@ type AuthConfig struct {
 
 `auth.enable_rbac` defaults to `false` (no default set in `Defaults()`).
 Environment variable: `XKMS_AUTH_ENABLE_RBAC` (the general `XKMS_<PATH>`
-rule). RBAC requires `storage.backend: "qrdb"` — see architecture.md and
-[`../storage-engines/engineering.md`](../storage-engines/engineering.md).
+rule). RBAC works with every datastore configuration (standalone or
+remote) now that every deployment is qrdb-backed — see architecture.md and
+[`../datastore/engineering.md`](../datastore/engineering.md).
 
 ```yaml
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
 auth:
   enabled: true
   type: mtls

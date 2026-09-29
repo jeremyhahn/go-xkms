@@ -38,7 +38,7 @@ func embeddedNodeTestLogger() *slog.Logger {
 // over a fresh temp dir, unsealed, with the node-seal flip disabled.
 func TestOpenEmbeddedNode_StandaloneNoBarrier(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 	}
 
 	node, sealRes, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
@@ -59,8 +59,8 @@ func TestOpenEmbeddedNode_StandaloneNoBarrier(t *testing.T) {
 // at the (*Server) level.
 func TestOpenEmbeddedNode_BarrierNoneAutoUnseals(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: t.TempDir()},
-		Barrier: config.BarrierConfig{Enabled: true, Strategy: "none"},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "none"},
 	}
 
 	node, sealRes, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
@@ -81,8 +81,8 @@ func TestOpenEmbeddedNode_BarrierNoneAutoUnseals(t *testing.T) {
 // open hardware with a nil config.
 func TestOpenEmbeddedNode_ResolveNodeSealErrorPropagates(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: t.TempDir()},
-		Barrier: config.BarrierConfig{Enabled: true, Strategy: "tpm2"},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "tpm2"},
 	}
 
 	node, sealRes, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
@@ -107,7 +107,7 @@ func TestOpenEmbeddedNode_OverridesFactorRegistryAndAuditSink(t *testing.T) {
 	sink := qrdbsdk.NewAuditRingBuffer(16)
 
 	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 	}
 
 	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
@@ -129,7 +129,7 @@ func TestOpenEmbeddedNode_OverridesFactorRegistryAndAuditSink(t *testing.T) {
 // this package.
 func TestOpenEmbeddedNode_ExtraNodeAndServerOptionsApplied(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 	}
 
 	sink := qrdbsdk.NewAuditRingBuffer(8)

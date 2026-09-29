@@ -108,7 +108,7 @@ func TestInitTPM2Backend_SharedTPM_InvalidKeyStorageConfig(t *testing.T) {
 	t.Cleanup(func() { _ = shared.Close() })
 
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Path: ""}, // invalid: never configured
+		Datastore: config.DatastoreConfig{Path: ""}, // invalid: never configured
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{Enabled: true, UseSimulator: true},
 		},
@@ -125,6 +125,6 @@ func TestInitTPM2Backend_SharedTPM_InvalidKeyStorageConfig(t *testing.T) {
 
 	var cfgErr *ErrConfigRequired
 	require.True(t, errors.As(err, &cfgErr), "error must unwrap to *ErrConfigRequired, got %v", err)
-	assert.Equal(t, "storage.path", cfgErr.Field)
+	assert.Equal(t, "datastore.path", cfgErr.Field)
 	assert.Equal(t, "tpm2", cfgErr.Backend)
 }

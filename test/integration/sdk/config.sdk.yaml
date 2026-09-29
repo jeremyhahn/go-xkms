@@ -69,8 +69,8 @@ health:
   path: "/health"
 
 # Storage configuration
-storage:
-  backend: "filesystem"
+datastore:
+  engine: file
   path: "/data/xkms"
 
 # Default backend for key operations

@@ -34,7 +34,7 @@ import (
 func standaloneUnsealedNode(t *testing.T) *config.Config {
 	t.Helper()
 	return &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: t.TempDir()},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
 	}
 }
 
@@ -86,8 +86,8 @@ func TestRunFirstBoot_Idempotent(t *testing.T) {
 // with ErrFirstBootServicesUnavailable rather than silently doing nothing.
 func TestRunFirstBoot_NoServicesAvailable(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{Backend: "qrdb", Path: t.TempDir()},
-		Barrier: config.BarrierConfig{Enabled: true, Strategy: "passphrase"},
+		Datastore: config.DatastoreConfig{Path: t.TempDir()},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "passphrase"},
 	}
 	node, sealRes, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
 		Config: cfg,

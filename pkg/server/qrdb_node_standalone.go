@@ -36,7 +36,7 @@ func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.Se
 	res, err := daemon.NewNode(s.ctx, &daemon.Options{
 		QRDB:          qcfg,
 		Cluster:       daemon.ClusterOptions{Enabled: s.config.Cluster.Enabled},
-		StoragePath:   s.config.Storage.Path,
+		StoragePath:   s.config.Datastore.Path,
 		Logger:        s.logger,
 		ServerOptions: serverOpts,
 		NodeOptions:   nodeOpts,

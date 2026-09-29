@@ -60,8 +60,8 @@ health:
   enabled: true
   path: "/health"
 
-storage:
-  backend: "file"
+datastore:
+  engine: "file"
   path: "xkms-data/storage"
 
 rng:

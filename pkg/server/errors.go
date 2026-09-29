@@ -497,6 +497,19 @@ func (e *ErrUnsupportedStorageBackend) Error() string {
 	return fmt.Sprintf("unsupported storage backend: %s", e.Backend)
 }
 
+// ErrUnsupportedDatastoreMode indicates config.DatastoreConfig.Mode named a
+// value other than "standalone" or "remote". config.Validate rejects this
+// before Server.New is reachable, so this is defense-in-depth for an
+// embedded caller that constructs a *config.Config without validating it.
+type ErrUnsupportedDatastoreMode struct {
+	Mode string
+}
+
+// Error returns the error message.
+func (e *ErrUnsupportedDatastoreMode) Error() string {
+	return fmt.Sprintf("unsupported datastore mode: %s", e.Mode)
+}
+
 // ErrUnknownAuthType indicates the configured auth.type is not a recognized
 // authentication method. It is fatal: falling back to an unauthenticated server
 // would turn a configuration typo into a silently wide-open API. The only ways

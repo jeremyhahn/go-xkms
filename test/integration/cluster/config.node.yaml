@@ -48,8 +48,8 @@ health:
   path: "/health"
 
 # qrdb storage backend is required for Raft clustering.
-storage:
-  backend: "qrdb"
+datastore:
+  engine: pebble
   path: "/data/storage"
 
 default_backend: "pkcs8"

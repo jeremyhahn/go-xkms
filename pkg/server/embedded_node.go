@@ -36,7 +36,7 @@ import (
 //
 // It exists so two different composition roots -- (*Server).initEmbeddedQRDBNode
 // (xkmsd run) and cmd/xkmsd's `init` subcommand -- open byte-for-byte the same
-// on-disk identity for one Storage.Path: the same database engine, and the
+// on-disk identity for one Datastore.Path: the same database engine, and the
 // same barrier/seal/encryption-at-rest configuration. `xkmsd init` now opens
 // the durable node itself (to run first-boot and persist admin factors), and
 // if it resolved a different seal posture than `xkmsd run` will later resolve
@@ -59,9 +59,9 @@ const DefaultEmbeddedAuditRingCapacity = 1024
 type ResolvedNodeSeal struct {
 	// Enabled reports whether the qrdb node's own barrier is the single
 	// barrier for this deployment (the flip). False means either the
-	// deployment is not storage.backend=="qrdb", the barrier is disabled, or
-	// the configured strategy is not one NodeFlipWired covers -- in every
-	// case xkms's own (non-node) barrier is used instead.
+	// deployment is not datastore.mode=="standalone", the barrier is
+	// disabled, or the configured strategy is not one NodeFlipWired covers
+	// -- in every case xkms's own (non-node) barrier is used instead.
 	Enabled bool
 
 	// Strategy is the pre-built hardware SealingStrategy fed to the node via
@@ -79,17 +79,17 @@ type ResolvedNodeSeal struct {
 }
 
 // resolveTPM2KeyDir returns the directory the TPM2 seal strategy persists its
-// sealed key material under, derived from cfg.Storage.Path so it never
+// sealed key material under, derived from cfg.Datastore.Path so it never
 // resolves relative to the process working directory.
 func resolveTPM2KeyDir(cfg *config.Config) (string, error) {
-	if cfg.Storage.Path == "" {
+	if cfg.Datastore.Path == "" {
 		return "", &ErrConfigRequired{
-			Field:   "storage.path",
+			Field:   "datastore.path",
 			Backend: "tpm2",
-			Hint:    "the TPM2 key directory is derived from storage.path and must not resolve relative to the process working directory",
+			Hint:    "the TPM2 key directory is derived from datastore.path and must not resolve relative to the process working directory",
 		}
 	}
-	return filepath.Join(cfg.Storage.Path, tpm2KeyDirSubdir), nil
+	return filepath.Join(cfg.Datastore.Path, tpm2KeyDirSubdir), nil
 }
 
 // ResolveNodeSeal decides whether a deployment's qrdb node uses its OWN
@@ -102,7 +102,7 @@ func resolveTPM2KeyDir(cfg *config.Config) (string, error) {
 // both call it against the SAME *config.Config so they resolve an IDENTICAL
 // seal posture before either one opens the node.
 func ResolveNodeSeal(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal, error) {
-	if !storageBackendIsQRDB(cfg) || !cfg.Barrier.Enabled {
+	if !datastoreModeIsStandalone(cfg) || !cfg.Barrier.Enabled {
 		return ResolvedNodeSeal{}, nil
 	}
 
@@ -167,11 +167,13 @@ func ResolveNodeSeal(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal,
 	return ResolvedNodeSeal{Enabled: true}, nil
 }
 
-// storageBackendIsQRDB reports whether cfg selects qrdb hosting for the data
-// plane. Extracted so ResolveNodeSeal reads identically to
-// (*Server).resolveNodeSeal's original strings.EqualFold check.
-func storageBackendIsQRDB(cfg *config.Config) bool {
-	return strings.EqualFold(cfg.Storage.Backend, "qrdb")
+// datastoreModeIsStandalone reports whether cfg hosts the qrdb datastore in
+// this process (Datastore.Mode "standalone", the default). Extracted so
+// ResolveNodeSeal reads identically to (*Server).resolveNodeSeal's original
+// check.
+func datastoreModeIsStandalone(cfg *config.Config) bool {
+	mode := strings.ToLower(strings.TrimSpace(cfg.Datastore.Mode))
+	return mode == "" || mode == "standalone"
 }
 
 // EmbeddedNodeStorageConfig builds the storage+seal portion of the qrdb
@@ -192,14 +194,22 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 		qcfg.Auth.SPIFFETrustDomain = td
 	}
 
-	qcfg.Raft.DataDir = cfg.Storage.Path
+	qcfg.Raft.DataDir = cfg.Datastore.Path
 
-	innerBackend := "pebble"
-	if qcfg.Raft.DataDir == "" {
-		innerBackend = "memory"
+	// Engine selects the local qrdb database backend directly from the
+	// global datastore configuration -- xkms never hardcodes it. An empty
+	// Engine (a caller that skipped Validate) falls back to the same
+	// pebble/memory-by-path heuristic Validate would otherwise enforce.
+	engine := strings.ToLower(strings.TrimSpace(cfg.Datastore.Engine))
+	if engine == "" {
+		if qcfg.Raft.DataDir == "" {
+			engine = "memory"
+		} else {
+			engine = "pebble"
+		}
 	}
 	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: innerBackend},
+		{Name: "default", Engine: "mvcc", Backend: engine},
 	}
 
 	if sealRes.Enabled {
@@ -212,10 +222,10 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 		if cfg.Barrier.RootKeyPath != "" {
 			qcfg.Seal.RootKeyPath = cfg.Barrier.RootKeyPath
 		}
-		if cfg.Storage.Path != "" && len(qcfg.Storage.VolumePools) == 0 {
+		if cfg.Datastore.Path != "" && len(qcfg.Storage.VolumePools) == 0 {
 			qcfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{{
 				Name:  "default",
-				Paths: []string{filepath.Join(cfg.Storage.Path, "tenant-volumes")},
+				Paths: []string{filepath.Join(cfg.Datastore.Path, "tenant-volumes")},
 			}}
 		}
 	} else {
@@ -351,7 +361,7 @@ func OpenEmbeddedNode(ctx context.Context, opts EmbeddedNodeOptions) (*qrdbnode.
 	res, err := daemon.NewNode(ctx, &daemon.Options{
 		QRDB:             qcfg,
 		Cluster:          opts.Cluster,
-		StoragePath:      opts.Config.Storage.Path,
+		StoragePath:      opts.Config.Datastore.Path,
 		Logger:           opts.Logger,
 		ServerOptions:    serverOpts,
 		NodeOptions:      nodeOpts,

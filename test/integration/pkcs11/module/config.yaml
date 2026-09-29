@@ -36,8 +36,8 @@ logging:
   format: json
 
 # Storage configuration
-storage:
-  backend: filesystem
+datastore:
+  engine: file
   path: /data
 
 # Default backend (software, pkcs11, tpm2, awskms, gcpkms, azurekv)

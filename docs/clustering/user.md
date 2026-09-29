@@ -243,7 +243,7 @@ server-side: your identity is what reaches the leader, not the follower's.
 
 ## Where to go next
 
-- [Storage engines](../storage-engines/user.md) — the `qrdb` backend
+- [Datastore](../datastore/user.md) — the `qrdb` backend
   clustering requires
 - [RBAC](../rbac/user.md) — also requires `storage.backend: qrdb`
 - [Certificate authority](../certificate-authority/user.md) — the runtime

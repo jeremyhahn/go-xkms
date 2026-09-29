@@ -34,34 +34,33 @@ var remoteTransportFactory = map[string]func(...qrdbtransport.Option) (qrdbtrans
 	"grpc": func(opts ...qrdbtransport.Option) (qrdbtransport.Transport, error) { return qrdbgrpc.New(opts...) },
 }
 
-// initializeQRDBStorage builds the single shared qrdb storage backend when the
-// configured storage backend is "qrdb". It must be called once, early in New,
-// before the first createStorage call. For non-qrdb backends it is a no-op.
+// initializeQRDBStorage builds the single shared datastore backend every
+// subsystem stores through (see createStorage/createStorageAt). It must be
+// called once, early in New, before the first createStorage call.
 //
-// Transport selection:
+// Mode selection (config.DatastoreConfig.Mode, defaulted by config.Validate):
 //
-//	"embedded" / "" -> a persistent embedded qrdb stack rooted at Storage.Path
-//	                   (PebbleDB engine). Runs the whole qrdb stack in-process;
-//	                   used for standalone deployments.
-//	"rest" / "grpc" -> a remote client dialed at Storage.QRDB.Address with the
-//	                   configured TLS. Writes go through Raft consensus on the
-//	                   remote cluster; used for clustered deployments.
+//	"standalone" -> a persistent qrdb stack hosted in this process, rooted at
+//	                Datastore.Path and using the Datastore.Engine local
+//	                storage engine (memory, file, or pebble). Runs the whole
+//	                qrdb stack in-process, including Raft clustering when
+//	                Cluster.Enabled.
+//	"remote"     -> a remote client dialed at Datastore.Remote.Address over
+//	                Datastore.Remote.Transport (rest or grpc) with the
+//	                configured TLS. Writes go through Raft consensus on the
+//	                remote cluster; this process hosts no local engine.
 //
 // The resulting backend is stored on s.qrdbStorage and is owned by the server:
 // only Shutdown closes it. Per-subdir storage views are key-prefixed views over
 // this backend (see createStorage) whose Close is a no-op on the shared inner.
 func (s *Server) initializeQRDBStorage() error {
-	if !strings.EqualFold(s.config.Storage.Backend, "qrdb") {
-		return nil
+	mode := strings.ToLower(strings.TrimSpace(s.config.Datastore.Mode))
+	if mode == "" {
+		mode = "standalone"
 	}
 
-	transport := strings.ToLower(s.config.Storage.QRDB.Transport)
-	if transport == "" {
-		transport = "embedded"
-	}
-
-	switch transport {
-	case "embedded":
+	switch mode {
+	case "standalone":
 		// Host the qrdb engine in-process as xkms's single core (storage +
 		// identity + bootstrap + clustering). The server's storage backend is
 		// the node's KV; xkms's barrier (initializeBarrier) layers over it.
@@ -69,21 +68,23 @@ func (s *Server) initializeQRDBStorage() error {
 			return &ErrStorageCreate{Resource: "embedded qrdb node", Err: err}
 		}
 		s.qrdbStorage = qrdbstorage.NewBackend(s.qrdbClient.KV())
-		s.logger.Info("Initialized embedded qrdb storage", "path", s.config.Storage.Path)
+		s.logger.Info("Initialized standalone datastore",
+			"engine", s.config.Datastore.Engine, "path", s.config.Datastore.Path)
 		return nil
 
-	case "rest", "grpc":
+	case "remote":
+		transport := strings.ToLower(strings.TrimSpace(s.config.Datastore.Remote.Transport))
 		backend, err := s.newRemoteQRDBStorage(transport)
 		if err != nil {
-			return &ErrStorageCreate{Resource: "remote qrdb storage", Err: err}
+			return &ErrStorageCreate{Resource: "remote datastore", Err: err}
 		}
 		s.qrdbStorage = backend
-		s.logger.Info("Initialized remote qrdb storage",
-			"transport", transport, "address", s.config.Storage.QRDB.Address)
+		s.logger.Info("Initialized remote datastore",
+			"transport", transport, "address", s.config.Datastore.Remote.Address)
 		return nil
 
 	default:
-		return &ErrUnsupportedStorageBackend{Backend: "qrdb:" + transport}
+		return &ErrUnsupportedDatastoreMode{Mode: s.config.Datastore.Mode}
 	}
 }
 
@@ -122,10 +123,10 @@ func (s *Server) newRemoteQRDBStorage(transport string) (storage.Backend, error)
 	}, nil
 }
 
-// qrdbTransportOptions builds the qrdb transport options from the storage
-// config: address plus TLS when a CA file is configured.
+// qrdbTransportOptions builds the qrdb transport options from the datastore
+// remote config: address plus TLS when a CA file is configured.
 func (s *Server) qrdbTransportOptions() []qrdbtransport.Option {
-	qcfg := s.config.Storage.QRDB
+	qcfg := s.config.Datastore.Remote
 	opts := make([]qrdbtransport.Option, 0, 3)
 
 	if qcfg.Address != "" {

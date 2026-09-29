@@ -53,8 +53,8 @@ health:
   enabled: true
   path: /health
 
-storage:
-  backend: file
+datastore:
+  engine: file
   path: /var/lib/xkms/metadata
 
 # Default backend for key operations

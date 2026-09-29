@@ -47,8 +47,8 @@ import (
 // duplication this unification removes.
 //
 // Standalone hosting maps:
-//   - Storage.Path  -> Raft.DataDir (Pebble root)
-//   - embedded      -> Databases[0] = {default, mvcc, pebble|memory}
+//   - Datastore.Path   -> Raft.DataDir (local engine root)
+//   - Datastore.Engine -> Databases[0] = {default, mvcc, memory|file|pebble}
 func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	// The storage+seal shape (Auth, Raft.DataDir, Databases, Seal.*,
 	// Storage.VolumePools) comes from the shared, Server-independent builder
@@ -69,7 +69,17 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	// Alt-Svc). Enabling protocols here means node construction runs the
 	// full qrdb server start pipeline — module surfaces answer
 	// Unavailable/503 until xkmsd finishes composing the XKMSService.
-	if s.config.NetworkServing() {
+	//
+	// The loopback desktop engine (pkg/server/loopback) is exempt even
+	// though it forces Protocols.REST on (see Config.LoopbackDesktop): it
+	// serves REST itself on an injected, pre-bound 127.0.0.1 listener
+	// (Server.startREST, gated on s.restListener != nil), never through
+	// this node. The datastore is still always hosted -- LoopbackDesktop
+	// only means "this process is not the unified network API server",
+	// never "this process has no datastore" -- so createStorage still
+	// resolves through the node's KV below; only the node's OWN network
+	// listeners are skipped, avoiding a double bind on the same host.
+	if s.config.NetworkServing() && !s.config.LoopbackDesktop {
 		qcfg.Server.Host = s.config.Server.Host
 		qcfg.Server.AdminPort = s.config.Server.RESTPort
 		qcfg.Server.GRPCPort = s.config.Server.GRPCPort
@@ -157,8 +167,12 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	// material from the WithServerTLS option, not from the daemon config.
 	// The rotating provider serves operator files or a persisted bootstrap
 	// certificate immediately, then upgrades to the CA-issued certificate
-	// once the CA composes (upgradeUnifiedTLSCert).
-	if s.config.NetworkServing() {
+	// once the CA composes (upgradeUnifiedTLSCert). Skipped for the
+	// loopback desktop engine for the same reason as the protocol wiring
+	// above: it never serves through this node's transports, so building
+	// the unified TLS material (and persisting a bootstrap cert under
+	// Datastore.Path) would be pure waste.
+	if s.config.NetworkServing() && !s.config.LoopbackDesktop {
 		tlsCfg, err := s.buildUnifiedTLSConfig()
 		if err != nil {
 			return &QRDBNodeError{Stage: "build unified server TLS config", Err: err}

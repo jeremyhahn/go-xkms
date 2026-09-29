@@ -131,7 +131,7 @@ tenant, user, or service".
 
 ## Where to go next
 
-- [Storage engines](../storage-engines/user.md) — the `qrdb` backend RBAC
+- [Datastore](../datastore/user.md) — the `qrdb` backend RBAC
   requires
 - [Clustering](../clustering/user.md) — the control plane's different
   authorization posture

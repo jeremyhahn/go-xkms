@@ -45,7 +45,7 @@ func newSoftwareKeyProviderForTest(t *testing.T) types.KeyProvider {
 // enabled and its secret_backend is already initialized.
 func TestInitFrostBackend_Success(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 		Backends: config.BackendsConfig{
 			Frost: &config.FrostConfig{
 				Enabled:          true,
@@ -60,6 +60,12 @@ func TestInitFrostBackend_Success(t *testing.T) {
 	s.keyProviders = map[string]types.KeyProvider{
 		"software": newSoftwareKeyProviderForTest(t),
 	}
+	// newMinimalServer bypasses New(), so s.qrdbStorage -- the one shared
+	// datastore createStorage now always resolves through -- is never
+	// built; give this test a real one.
+	var qerr error
+	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	require.NoError(t, qerr)
 
 	err := s.initFrostBackend()
 	require.NoError(t, err)
@@ -86,8 +92,8 @@ func TestInitFrostBackend_Disabled(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newMinimalServer(t, &config.Config{
-				Storage:  config.StorageConfig{Backend: "memory"},
-				Backends: config.BackendsConfig{Frost: tt.frost},
+				Datastore: config.DatastoreConfig{Engine: "memory"},
+				Backends:  config.BackendsConfig{Frost: tt.frost},
 			})
 			s.keyProviders = map[string]types.KeyProvider{}
 
@@ -105,7 +111,7 @@ func TestInitFrostBackend_Disabled(t *testing.T) {
 // nowhere to keep the secret share.
 func TestInitFrostBackend_SecretBackendUnavailable(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 		Backends: config.BackendsConfig{
 			Frost: &config.FrostConfig{
 				Enabled:       true,
@@ -140,7 +146,7 @@ func TestInitFrostBackend_SecretBackendUnavailable(t *testing.T) {
 // accepts the wrapping key and the server starts.
 func TestInitializeBackends_FrostWithPKCS8SecretBackend_StartsCleanly(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Backend: "memory"},
+		Datastore: config.DatastoreConfig{Engine: "memory"},
 		Backends: config.BackendsConfig{
 			PKCS8: &config.PKCS8Config{
 				Enabled: true,
@@ -157,6 +163,12 @@ func TestInitializeBackends_FrostWithPKCS8SecretBackend_StartsCleanly(t *testing
 		},
 	})
 	s.keyProviders = map[string]types.KeyProvider{}
+	// newMinimalServer bypasses New(), so s.qrdbStorage -- the one shared
+	// datastore createStorage/createStorageAt now always resolve through --
+	// is never built; give this test a real one.
+	var qerr error
+	s.qrdbStorage, qerr = storage.NewMemoryBackend()
+	require.NoError(t, qerr)
 
 	require.NoError(t, s.initializeBackends())
 

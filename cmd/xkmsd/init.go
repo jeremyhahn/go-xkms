@@ -694,8 +694,8 @@ func resolveDataDir(flags *initFlags, cfg *config.Config) string {
 	if flags.dataDir != "" {
 		return flags.dataDir
 	}
-	if cfg != nil && cfg.Storage.Path != "" {
-		return cfg.Storage.Path
+	if cfg != nil && cfg.Datastore.Path != "" {
+		return cfg.Datastore.Path
 	}
 	return "/var/lib/xkms"
 }

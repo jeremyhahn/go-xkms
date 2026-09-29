@@ -29,7 +29,7 @@ import (
 // storage backend (fast, no filesystem) and the given credential strategy.
 func platformStoreTestConfig(strategy string) *config.Config {
 	return &config.Config{
-		Storage:     config.StorageConfig{Backend: "memory"},
+		Datastore:   config.DatastoreConfig{Engine: "memory"},
 		Credentials: config.CredentialsConfig{SealStrategy: strategy},
 	}
 }

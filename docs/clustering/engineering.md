@@ -330,7 +330,7 @@ Cluster CA key protection at rest, before the datastore exists
 ## Persistence
 
 Every node's data is the same replicated `qrdb` datastore described in
-[`../storage-engines/architecture.md`](../storage-engines/architecture.md);
+[`../datastore/architecture.md`](../datastore/architecture.md);
 clustering does not add a second store. The cluster CA's own bootstrap
 keystore is the one exception — it must exist **before** the replicated
 datastore does, so it lives node-local under

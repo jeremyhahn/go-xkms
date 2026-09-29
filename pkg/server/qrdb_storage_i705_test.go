@@ -50,9 +50,7 @@ func TestNewRemoteQRDBStorage_UnsupportedTransport(t *testing.T) {
 // rather than returning a half-built backend.
 func TestNewRemoteQRDBStorage_ConnectFails(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			QRDB: config.QRDBConfig{Address: "http://" + closedTCPAddr(t)},
-		},
+		Datastore: config.DatastoreConfig{},
 	}
 	s := &Server{config: cfg, logger: custodyQuietLogger()}
 
@@ -65,13 +63,7 @@ func TestNewRemoteQRDBStorage_ConnectFails(t *testing.T) {
 // leaking the bare underlying error.
 func TestInitializeQRDBStorage_RemoteConnectFailsWraps(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "qrdb",
-			QRDB: config.QRDBConfig{
-				Transport: "rest",
-				Address:   "http://" + closedTCPAddr(t),
-			},
-		},
+		Datastore: config.DatastoreConfig{Mode: "remote", Remote: config.DatastoreRemoteConfig{Transport: "rest", Address: "http://" + closedTCPAddr(t)}},
 	}
 	s := &Server{config: cfg, logger: custodyQuietLogger()}
 
@@ -79,5 +71,5 @@ func TestInitializeQRDBStorage_RemoteConnectFailsWraps(t *testing.T) {
 	require.Error(t, err)
 	var createErr *ErrStorageCreate
 	require.ErrorAs(t, err, &createErr)
-	require.Equal(t, "remote qrdb storage", createErr.Resource)
+	require.Equal(t, "remote datastore", createErr.Resource)
 }

@@ -81,8 +81,8 @@ health:
   enabled: true
   path: "/health"
 
-storage:
-  backend: "qrdb"
+datastore:
+  engine: "pebble"
   path: "/data/storage"
 
 rng:

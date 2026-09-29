@@ -37,8 +37,8 @@ import (
 // Node-open error types.
 var (
 	// ErrNodeConfigRequired is returned when neither a loaded config file nor
-	// --data-dir supplies a storage path for the durable node.
-	ErrNodeConfigRequired = errors.New("init: a storage path is required to open the durable node (set storage.path in --config or pass --data-dir)")
+	// --data-dir supplies a datastore path for the durable node.
+	ErrNodeConfigRequired = errors.New("init: a datastore path is required to open the durable node (set datastore.path in --config or pass --data-dir)")
 
 	// ErrNodeOpenFailed is returned when the durable qrdb node cannot be
 	// constructed.
@@ -68,9 +68,9 @@ var (
 // resolveInitNodeConfig derives the *config.Config the durable node is opened
 // with. It starts from the operator's loaded config (nil when `--config`
 // resolved to no file) and overlays the init-time flags that name what the
-// loaded config cannot: storage.backend defaults to "qrdb" (init always opens
-// the qrdb-backed store), storage.path falls back to the resolved data
-// directory, and barrier.enabled / barrier.strategy fall back to
+// loaded config cannot: datastore.mode defaults to "standalone" (init always
+// opens the datastore this process would host), datastore.path falls back to
+// the resolved data directory, and barrier.enabled / barrier.strategy fall back to
 // --barrier-strategy so a bare `xkmsd init --barrier-strategy passphrase` run
 // with no config file still resolves a seal posture. Values already present
 // in a loaded config always win: the config file is the same one `xkmsd run`
@@ -84,11 +84,11 @@ func resolveInitNodeConfig(cfg *config.Config, flags *initFlags, dataDir string)
 		nodeCfg = *config.Defaults()
 	}
 
-	if nodeCfg.Storage.Backend == "" {
-		nodeCfg.Storage.Backend = "qrdb"
+	if nodeCfg.Datastore.Mode == "" {
+		nodeCfg.Datastore.Mode = "standalone"
 	}
-	if nodeCfg.Storage.Path == "" {
-		nodeCfg.Storage.Path = dataDir
+	if nodeCfg.Datastore.Path == "" {
+		nodeCfg.Datastore.Path = dataDir
 	}
 	if !nodeCfg.Barrier.Enabled && flags.barrierStrategy != "" {
 		nodeCfg.Barrier.Enabled = true
@@ -113,7 +113,7 @@ func resolveInitNodeConfig(cfg *config.Config, flags *initFlags, dataDir string)
 // into. It is a standalone node: `xkmsd init` is a one-shot, single-process
 // bootstrap ceremony and is never a cluster member.
 func openDurableInitNode(ctx context.Context, nodeCfg *config.Config, logger *slog.Logger) (*qrdbnode.Node, xkmsserver.ResolvedNodeSeal, error) {
-	if nodeCfg == nil || nodeCfg.Storage.Path == "" {
+	if nodeCfg == nil || nodeCfg.Datastore.Path == "" {
 		return nil, xkmsserver.ResolvedNodeSeal{}, ErrNodeConfigRequired
 	}
 	node, sealRes, err := xkmsserver.OpenEmbeddedNode(ctx, xkmsserver.EmbeddedNodeOptions{

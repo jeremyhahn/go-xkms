@@ -33,7 +33,7 @@ import (
 // config.Config.Validate, so this cannot be assumed already rejected).
 func TestResolveTPM2KeyDir_EmptyStoragePath(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Path: ""},
+		Datastore: config.DatastoreConfig{Path: ""},
 	})
 
 	wd, err := os.Getwd()
@@ -47,7 +47,7 @@ func TestResolveTPM2KeyDir_EmptyStoragePath(t *testing.T) {
 
 	var cfgErr *ErrConfigRequired
 	require.True(t, errors.As(err, &cfgErr), "error must unwrap to *ErrConfigRequired, got %v", err)
-	assert.Equal(t, "storage.path", cfgErr.Field)
+	assert.Equal(t, "datastore.path", cfgErr.Field)
 	assert.Equal(t, "tpm2", cfgErr.Backend)
 
 	_, statErr = os.Stat(filepath.Join(wd, tpm2KeyDirSubdir))
@@ -59,7 +59,7 @@ func TestResolveTPM2KeyDir_EmptyStoragePath(t *testing.T) {
 func TestResolveTPM2KeyDir_Success(t *testing.T) {
 	storagePath := t.TempDir()
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Path: storagePath},
+		Datastore: config.DatastoreConfig{Path: storagePath},
 	})
 
 	dir, err := s.resolveTPM2KeyDir()
@@ -72,7 +72,7 @@ func TestResolveTPM2KeyDir_Success(t *testing.T) {
 // instead of writing key material under the process's working directory.
 func TestInitTPM2Backend_EmptyStoragePath(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
-		Storage: config.StorageConfig{Path: ""},
+		Datastore: config.DatastoreConfig{Path: ""},
 		Backends: config.BackendsConfig{
 			TPM2: &config.TPM2Config{
 				Enabled:      true,
@@ -91,5 +91,5 @@ func TestInitTPM2Backend_EmptyStoragePath(t *testing.T) {
 
 	var cfgErr *ErrConfigRequired
 	require.True(t, errors.As(err, &cfgErr), "error must unwrap to *ErrConfigRequired, got %v", err)
-	assert.Equal(t, "storage.path", cfgErr.Field)
+	assert.Equal(t, "datastore.path", cfgErr.Field)
 }

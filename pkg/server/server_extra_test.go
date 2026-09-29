@@ -211,7 +211,7 @@ func TestLoadNoiseStaticKey_FromPersistedFile_ReadError(t *testing.T) {
 	blocker := filepath.Join(tmpDir, "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0600))
 
-	cfg := &config.Config{Storage: config.StorageConfig{Path: filepath.Join(blocker, "data")}}
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: filepath.Join(blocker, "data")}}
 	s := newMinimalServer(t, cfg)
 
 	_, err := s.loadNoiseStaticKey()
@@ -230,8 +230,8 @@ func TestLoadNoiseStaticKey_FromPersistedFile_ReadError(t *testing.T) {
 
 func TestQRDBTransportOptions_Empty(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			QRDB: config.QRDBConfig{
+		Datastore: config.DatastoreConfig{
+			Remote: config.DatastoreRemoteConfig{
 				Address: "",
 				TLS:     config.TLSConfig{Enabled: false},
 			},
@@ -244,8 +244,8 @@ func TestQRDBTransportOptions_Empty(t *testing.T) {
 
 func TestQRDBTransportOptions_WithAddress(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			QRDB: config.QRDBConfig{
+		Datastore: config.DatastoreConfig{
+			Remote: config.DatastoreRemoteConfig{
 				Address: "localhost:63002",
 				TLS:     config.TLSConfig{Enabled: false},
 			},
@@ -258,8 +258,8 @@ func TestQRDBTransportOptions_WithAddress(t *testing.T) {
 
 func TestQRDBTransportOptions_WithAddressAndTLS(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			QRDB: config.QRDBConfig{
+		Datastore: config.DatastoreConfig{
+			Remote: config.DatastoreRemoteConfig{
 				Address: "localhost:63002",
 				TLS: config.TLSConfig{
 					Enabled:  true,
@@ -280,17 +280,17 @@ func TestQRDBTransportOptions_WithAddressAndTLS(t *testing.T) {
 // Tests — initializeQRDBStorage default/invalid transport
 // ============================================================================
 
-// config.Validate already rejects an unrecognized storage.qrdb.transport (the
-// "invalid qrdb transport" check), so this cannot reach New() with "ftp" any
-// more -- see TestNew_QRDBStorageFailure_WrapsAsErrServiceInit for that
-// Validate-level rejection. This exercises initializeQRDBStorage's own
-// default-branch error directly, using newMinimalServer to construct the
-// server without going through New()/Validate.
+// config.Validate already rejects an unrecognized datastore.remote.transport
+// (the "invalid datastore.remote.transport" check), so this cannot reach
+// New() with "ftp" any more -- see TestNew_QRDBStorageFailure_WrapsAsErrServiceInit
+// for that Validate-level rejection. This exercises initializeQRDBStorage's
+// own remote-transport-dispatch error directly, using newMinimalServer to
+// construct the server without going through New()/Validate.
 func TestInitializeQRDBStorage_InvalidTransport(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			Backend: "qrdb",
-			QRDB:    config.QRDBConfig{Transport: "ftp"}, // unsupported transport
+		Datastore: config.DatastoreConfig{
+			Mode:   "remote",
+			Remote: config.DatastoreRemoteConfig{Transport: "ftp"}, // unsupported transport
 		},
 	}
 	s := newMinimalServer(t, cfg)
@@ -323,6 +323,12 @@ func TestBuildHardwareSealStrategies_EmptyPreferenceOrder(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
+	// "pkcs11" is not NodeFlipWired, so this deployment keeps xkms's own
+	// (non-node) barrier -- buildHardwareSealStrategies, the function these
+	// tests exercise -- instead of adopting the qrdb node's barrier, which
+	// would skip it entirely and block boot on an operator unseal for the
+	// flip-wired default ("passphrase").
+	cfg.Barrier.Strategy = "pkcs11"
 	cfg.Barrier.PreferenceOrder = []string{}
 
 	server, err := New(cfg)
@@ -340,6 +346,8 @@ func TestBuildHardwareSealStrategies_SkipsMissingBackend(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
+	// See TestBuildHardwareSealStrategies_EmptyPreferenceOrder.
+	cfg.Barrier.Strategy = "pkcs11"
 	// Request TPM2 but TPM2 backend is not configured — should be skipped.
 	cfg.Barrier.PreferenceOrder = []string{"tpm2", "software"}
 
@@ -356,6 +364,8 @@ func TestBuildHardwareSealStrategies_DuplicateEntriesDeduped(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Barrier.Enabled = true
+	// See TestBuildHardwareSealStrategies_EmptyPreferenceOrder.
+	cfg.Barrier.Strategy = "pkcs11"
 	// Duplicate "software" entries: only first is honoured, second is skipped.
 	cfg.Barrier.PreferenceOrder = []string{"software", "software"}
 
@@ -375,9 +385,7 @@ func TestBuildHardwareSealStrategies_DuplicateEntriesDeduped(t *testing.T) {
 // "memory".
 func TestBuildXKMSQRDBConfig_StandaloneUsesMemory(t *testing.T) {
 	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			Path: "", // triggers innerBackend = "memory"
-		},
+		Datastore: config.DatastoreConfig{Path: ""}, // triggers the memory-engine fallback
 	}
 	s := newMinimalServer(t, cfg)
 	qcfg := s.buildXKMSQRDBConfig()

@@ -67,8 +67,8 @@ func (s *Server) allowNodeLocalPlaintextKeys() bool {
 // runs BEFORE the qrdb node is constructed so its result can be injected as
 // a node option and so a single TPM open is shared with the tpm2 backend.
 //
-// The flip engages for every embedded qrdb-node deployment
-// (Storage.Backend=="qrdb") with the barrier enabled AND a strategy
+// The flip engages for every deployment that hosts the datastore in this
+// process (Datastore.Mode=="standalone") with the barrier enabled AND a strategy
 // BarrierConfig.NodeFlipWired reports true for: "none", "passphrase",
 // "shamir" and "tpm2". go-qrdb's own node-embedded seal subsystem
 // (sdk/go/node's buildNodeSealSubsystem, driven by DaemonConfig.Seal alone)
@@ -95,8 +95,8 @@ func (s *Server) allowNodeLocalPlaintextKeys() bool {
 // backends' credentials are consumed by initializeBackends after this
 // function returns and the credential service does not exist yet at this
 // point (see Server.New's phase ordering) — the same structural cycle
-// documented on NodeFlipWired. Non-qrdb-storage deployments are unaffected
-// either way: the flip only ever applies to Storage.Backend=="qrdb".
+// documented on NodeFlipWired. Remote-datastore deployments are unaffected
+// either way: the flip only ever applies to Datastore.Mode=="standalone".
 func (s *Server) resolveNodeSeal() error {
 	res, err := ResolveNodeSeal(s.config, s.logger)
 	if err != nil {

@@ -15,8 +15,6 @@ package server
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -64,24 +62,23 @@ func TestNew_NodeSealFailure_WrapsAsErrServiceInit(t *testing.T) {
 }
 
 // TestNew_QRDBStorageFailure_WrapsAsErrServiceInit proves an unrecognized
-// qrdb storage transport fails New as *ErrServiceInit{Service:
+// remote datastore transport fails New as *ErrServiceInit{Service:
 // "configuration"} wrapping config.Validate's own typed error, rather than
 // the daemon discovering the typo only once it tries to actually reach the
 // transport: since go-xkms#666, New() calls Validate() before touching
 // storage, and Validate already rejects an unrecognized
-// storage.qrdb.transport (config.go's "invalid qrdb transport" check), so
-// initializeQRDBStorage's own *ErrUnsupportedStorageBackend wrapping for this
-// same typo is now unreachable through New() -- see
+// datastore.remote.transport (config.go's "invalid datastore.remote.transport"
+// check), so initializeQRDBStorage's own *ErrUnsupportedStorageBackend
+// wrapping for this same typo is now unreachable through New() -- see
 // TestInitializeQRDBStorage_InvalidTransport for that stage tested directly.
 func TestNew_QRDBStorageFailure_WrapsAsErrServiceInit(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	cfg.Storage = config.StorageConfig{
-		Backend: "qrdb",
-		Path:    t.TempDir(),
-		QRDB:    config.QRDBConfig{Transport: "not-a-real-transport"},
+	cfg.Datastore = config.DatastoreConfig{
+		Mode:   "remote",
+		Remote: config.DatastoreRemoteConfig{Address: "https://qrdb.example.com:63002", Transport: "ftp"},
 	}
 
 	srv, err := New(cfg)
@@ -91,7 +88,7 @@ func TestNew_QRDBStorageFailure_WrapsAsErrServiceInit(t *testing.T) {
 	var svcErr *ErrServiceInit
 	require.True(t, errors.As(err, &svcErr), "error must unwrap to *ErrServiceInit, got %T", err)
 	assert.Equal(t, "configuration", svcErr.Service)
-	assert.Contains(t, err.Error(), "invalid qrdb transport")
+	assert.Contains(t, err.Error(), "invalid datastore.remote.transport")
 }
 
 // TestNew_CredentialServiceFailure_WrapsAsErrServiceInit proves that
@@ -149,33 +146,19 @@ func TestNew_ConfigSecretResolutionFailure_WrapsAsErrServiceInit(t *testing.T) {
 	assert.True(t, errors.As(err, &secretErr), "error must unwrap to *ErrConfigSecretResolution, got %T", err)
 }
 
-// TestNew_BackendsFailure_WrapsAsErrServiceInit proves a software backend
-// whose configured path cannot be created (a regular file occupies where a
-// directory is required — ENOTDIR, which the kernel enforces for every user
-// including root, so this needs no permission-bit fault injection) fails New
-// as *ErrServiceInit{Service: "backends"} wrapping *ErrStorageCreate, and
-// that New releases the qrdb-storage/platform-store/credential-service
-// resources it had already built (abortAfterStorage) rather than leaking
-// them on this path.
-func TestNew_BackendsFailure_WrapsAsErrServiceInit(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	tmpDir := t.TempDir()
-	blocker := filepath.Join(tmpDir, "blocker")
-	require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0600))
-
-	cfg := createMinimalConfig(t)
-	cfg.Backends.Software.Path = filepath.Join(blocker, "software")
-
-	srv, err := New(cfg)
-	require.Error(t, err)
-	assert.Nil(t, srv)
-
-	var svcErr *ErrServiceInit
-	require.True(t, errors.As(err, &svcErr), "error must unwrap to *ErrServiceInit, got %T", err)
-	assert.Equal(t, "backends", svcErr.Service)
-
-	var storageErr *ErrStorageCreate
-	assert.True(t, errors.As(err, &storageErr), "error must unwrap to *ErrStorageCreate, got %T", err)
-}
+// TestNew_BackendsFailure_WrapsAsErrServiceInit used to prove a software
+// backend whose configured path could not be created (a regular file
+// occupying where a directory was required) failed New as
+// *ErrServiceInit{Service: "backends"} wrapping *ErrStorageCreate. That
+// fault injection is no longer reachable: createStorageAt
+// (pkg/server/storage_factory.go) no longer touches the filesystem at all
+// -- it derives a key namespace from filepath.Base(path) over the one
+// shared datastore, which cannot fail once initializeQRDBStorage has
+// already succeeded earlier in New's boot ordering (go-xkms#1345). The
+// "backends" stage's own error-wrapping ladder still exists
+// (ErrServiceInit{Service: "backends"} wrapping ErrBackendCreate, when a
+// backend constructor itself rejects its config) and New's
+// abortAfterStorage cleanup-on-failure path this test also covered remains
+// exercised by its siblings in this file (e.g.
+// TestNew_CredentialServiceFailure_WrapsAsErrServiceInit,
+// TestNew_ConfigSecretResolutionFailure_WrapsAsErrServiceInit).
