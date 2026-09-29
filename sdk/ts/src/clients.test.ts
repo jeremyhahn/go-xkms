@@ -256,8 +256,8 @@ describe('TenantsClient', () => {
   });
 });
 
-describe('PasswordsClient / PlatformClient / PoliciesClient', () => {
-  it('routes password, platform-store, and policy endpoints', async () => {
+describe('PasswordsClient / PlatformClient / TpmPolicyClient', () => {
+  it('routes password, platform-store, and TPM policy endpoints', async () => {
     const fake = newFakeFetch({ body: { passwords: [], total: 0 } });
     const c = make(fake);
     await c.passwords.list('work', 'tenant');
@@ -272,13 +272,15 @@ describe('PasswordsClient / PlatformClient / PoliciesClient', () => {
     expect(fake.calls[2]?.method).toBe('PUT');
     expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/platform/secrets/db-pass`);
 
-    fake.respond({ body: { policies: [], total: 0 } });
-    await c.policies.list();
-    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/policies/`);
+    fake.respond({ body: { policies: [] } });
+    await c.tpmPolicies.list();
+    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/tpm/policies`);
 
-    fake.respond({ body: { name: 'boot', valid: true, message: '' } });
-    await c.policies.verify('boot');
-    expect(fake.calls[4]?.url).toBe(`${BASE}/api/v1/policies/boot/verify`);
+    fake.respond({ body: { name: 'boot', match: true, approved: true } });
+    await c.tpmPolicies.verify('boot');
+    expect(fake.calls[4]?.method).toBe('POST');
+    expect(fake.calls[4]?.url).toBe(`${BASE}/api/v1/tpm/policies/boot/verify`);
+    expect(fake.calls[4]?.body).toEqual({ name: 'boot' });
   });
 });
 

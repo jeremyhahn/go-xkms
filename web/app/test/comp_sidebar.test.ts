@@ -117,7 +117,7 @@ describe("Sidebar RBAC and capability gating", () => {
   it("hides an entire section heading when every item in it is gated off", async () => {
     meMock.mockResolvedValue({
       subject: "u1",
-      permissions: {}, // keys:list and policies capability both absent
+      permissions: {}, // keys:list and tpm_policies capability both absent
       capabilities: {},
     });
     await loadSession();

@@ -31,9 +31,15 @@ try {
 
 Domain clients: `health`, `capabilities`, `auth`, `backends`, `keys`, `certs`,
 `seal`, `frost`, `barrier`, `pin`, `piv`, `ca`, `cluster`, `custodian`,
-`shares`, `tenants`, `passwords`, `platform`, `policies`, `init`,
+`shares`, `tenants`, `passwords`, `platform`, `tpmPolicies`, `init`,
 `credentials`, `users`, `ssh`. Every request/response type mirrors the Go
 DTO json tags exactly; Go `[]byte` members are standard-base64 strings.
+
+Named TPM policies (PCR-bank capture, approval lifecycle, auto-unseal, and
+the keys/sealed objects bound to them) are `tpmPolicies` — see
+`docs/tpm-policies/api.md`. A tenant's TPM mode and its vTPM are system-scope
+operations on `tenants` (`getTPMMode`, `setTPMMode`, `vtpmStatus`,
+`vtpmStart`, `vtpmStop`).
 
 ### Authentication
 

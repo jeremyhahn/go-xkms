@@ -183,7 +183,7 @@ describe('HttpCore', () => {
   it('decodes an empty 200 body as undefined rather than throwing a JSON parse error', async () => {
     const fake = newFakeFetch({ status: 200, text: '' });
     const core = new HttpCore({ baseURL: BASE, fetch: fake.fetch });
-    const out = await core.request('GET', '/api/v1/policies/boot/export');
+    const out = await core.request('GET', '/api/v1/tpm/policies/boot/objects');
     expect(out).toBeUndefined();
   });
 });

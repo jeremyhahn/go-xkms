@@ -39,7 +39,7 @@ describe("parseHash", () => {
       ["#/ssh", "ssh"],
       ["#/passwords", "passwords"],
       ["#/platform", "platform"],
-      ["#/policies", "policies"],
+      ["#/tpm/policies", "tpmPolicies"],
       ["#/users", "users"],
       ["#/cluster", "cluster"],
       ["#/ceremony", "ceremony"],

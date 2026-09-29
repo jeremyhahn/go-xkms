@@ -77,7 +77,7 @@ const ROUTES: [string, string][] = [
   ["/pin", "PIN"],
   ["/piv", "PIV"],
   ["/ssh", "SSH"],
-  ["/policies", "PCR Policies"],
+  ["/tpm/policies", "TPM Policies"],
   ["/users", "Users"],
   ["/factors", "Auth Factors"],
   ["/frost", "FROST"],
@@ -149,7 +149,7 @@ describe("App authentication guard", () => {
 
     // The keys screen must not render behind the login gate even though the
     // route points at it.
-    await waitFor(() => expect(screen.queryByText("PCR Policies")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("TPM Policies")).toBeNull());
     expect(document.querySelector("aside")).toBeNull();
   });
 

@@ -32,11 +32,11 @@ import { PasswordsClient } from './clients/passwords.js';
 import { PinClient } from './clients/pin.js';
 import { PivClient } from './clients/piv.js';
 import { PlatformClient } from './clients/platform.js';
-import { PoliciesClient } from './clients/policies.js';
 import { SealClient } from './clients/seal.js';
 import { SharesClient } from './clients/shares.js';
 import { SshClient } from './clients/ssh.js';
 import { TenantsClient } from './clients/tenants.js';
+import { TpmPolicyClient } from './clients/tpmPolicy.js';
 import { UsersClient } from './clients/users.js';
 
 /**
@@ -66,7 +66,7 @@ export class XkmsClient {
   readonly tenants: TenantsClient;
   readonly passwords: PasswordsClient;
   readonly platform: PlatformClient;
-  readonly policies: PoliciesClient;
+  readonly tpmPolicies: TpmPolicyClient;
   readonly init: InitClient;
   readonly credentials: CredentialsClient;
   readonly users: UsersClient;
@@ -96,7 +96,7 @@ export class XkmsClient {
     this.tenants = new TenantsClient(this.http);
     this.passwords = new PasswordsClient(this.http);
     this.platform = new PlatformClient(this.http);
-    this.policies = new PoliciesClient(this.http);
+    this.tpmPolicies = new TpmPolicyClient(this.http);
     this.init = new InitClient(this.http);
     this.credentials = new CredentialsClient(this.http);
     this.users = new UsersClient(this.http);

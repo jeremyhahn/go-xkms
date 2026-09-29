@@ -1066,42 +1066,6 @@ var PlatformClient = class {
   }
 };
 
-// src/clients/policies.ts
-var BASE16 = "/api/v1/policies";
-var PoliciesClient = class {
-  constructor(http) {
-    __publicField(this, "http", http);
-  }
-  /** POST /api/v1/policies/ */
-  create(req) {
-    return this.http.request("POST", `${BASE16}/`, { body: req });
-  }
-  /** GET /api/v1/policies/ */
-  list() {
-    return this.http.request("GET", `${BASE16}/`);
-  }
-  /** GET /api/v1/policies/{id} */
-  get(id) {
-    return this.http.request("GET", `${BASE16}/${encodeURIComponent(id)}`);
-  }
-  /** DELETE /api/v1/policies/{id} */
-  delete(id) {
-    return this.http.request("DELETE", `${BASE16}/${encodeURIComponent(id)}`);
-  }
-  /** POST /api/v1/policies/{id}/refresh */
-  refresh(id) {
-    return this.http.request("POST", `${BASE16}/${encodeURIComponent(id)}/refresh`);
-  }
-  /** POST /api/v1/policies/{id}/verify */
-  verify(id) {
-    return this.http.request("POST", `${BASE16}/${encodeURIComponent(id)}/verify`);
-  }
-  /** GET /api/v1/policies/{id}/export */
-  export(id) {
-    return this.http.request("GET", `${BASE16}/${encodeURIComponent(id)}/export`);
-  }
-};
-
 // src/clients/seal.ts
 var SealClient = class {
   constructor(http) {
@@ -1122,47 +1086,47 @@ var SealClient = class {
 };
 
 // src/clients/shares.ts
-var BASE17 = "/api/v1/shares";
+var BASE16 = "/api/v1/shares";
 var SharesClient = class {
   constructor(http) {
     __publicField(this, "http", http);
   }
   /** POST /api/v1/shares/submit */
   submit(req) {
-    return this.http.request("POST", `${BASE17}/submit`, { body: req });
+    return this.http.request("POST", `${BASE16}/submit`, { body: req });
   }
   /** GET /api/v1/shares/ */
   list(page) {
-    return this.http.request("GET", `${BASE17}/`, { query: { ...page } });
+    return this.http.request("GET", `${BASE16}/`, { query: { ...page } });
   }
   /** GET /api/v1/shares/{serverURL}/{groupID}/{shareIndex} (serverURL is path-escaped). */
   get(serverURL, groupId, shareIndex) {
     return this.http.request(
       "GET",
-      `${BASE17}/${encodePathSegment(serverURL)}/${encodePathSegment(groupId)}/${shareIndex}`
+      `${BASE16}/${encodePathSegment(serverURL)}/${encodePathSegment(groupId)}/${shareIndex}`
     );
   }
   /** DELETE /api/v1/shares/{serverURL}/{groupID}/{shareIndex} (204). */
   async delete(serverURL, groupId, shareIndex) {
     await this.http.request(
       "DELETE",
-      `${BASE17}/${encodePathSegment(serverURL)}/${encodePathSegment(groupId)}/${shareIndex}`,
+      `${BASE16}/${encodePathSegment(serverURL)}/${encodePathSegment(groupId)}/${shareIndex}`,
       { parse: "void" }
     );
   }
   /** GET /api/v1/shares/status/{groupID} */
   collectionStatus(groupId) {
-    return this.http.request("GET", `${BASE17}/status/${encodePathSegment(groupId)}`);
+    return this.http.request("GET", `${BASE16}/status/${encodePathSegment(groupId)}`);
   }
 };
 
 // src/clients/ssh.ts
-var BASE18 = "/xkms/v1/ssh";
+var BASE17 = "/xkms/v1/ssh";
 function keyPath2(scope, owner, name, suffix = "") {
-  return `${BASE18}/keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}${suffix}`;
+  return `${BASE17}/keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}${suffix}`;
 }
 function authorizedPath(scope, owner, name) {
-  return `${BASE18}/authorized-keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}`;
+  return `${BASE17}/authorized-keys/${encodePathSegment(scope)}/${encodePathSegment(owner)}/${encodePathSegment(name)}`;
 }
 var SshClient = class {
   constructor(http) {
@@ -1173,15 +1137,15 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/keys */
   generateKey(req) {
-    return this.http.request("POST", `${BASE18}/keys`, { body: req });
+    return this.http.request("POST", `${BASE17}/keys`, { body: req });
   }
   /** POST /xkms/v1/ssh/keys/import */
   importKey(req) {
-    return this.http.request("POST", `${BASE18}/keys/import`, { body: req });
+    return this.http.request("POST", `${BASE17}/keys/import`, { body: req });
   }
   /** GET /xkms/v1/ssh/keys?scope=&owner= */
   listKeys(scope, owner) {
-    return this.http.request("GET", `${BASE18}/keys`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE17}/keys`, { query: { scope, owner } });
   }
   /** GET /xkms/v1/ssh/keys/{scope}/{owner}/{name} */
   getKey(scope, owner, name) {
@@ -1204,18 +1168,18 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/known-hosts (201). */
   async addKnownHost(req) {
-    await this.http.request("POST", `${BASE18}/known-hosts`, {
+    await this.http.request("POST", `${BASE17}/known-hosts`, {
       body: req,
       parse: "void"
     });
   }
   /** GET /xkms/v1/ssh/known-hosts?scope=&owner= */
   listKnownHosts(scope, owner) {
-    return this.http.request("GET", `${BASE18}/known-hosts`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE17}/known-hosts`, { query: { scope, owner } });
   }
   /** DELETE /xkms/v1/ssh/known-hosts/{host}?scope=&owner= (204). */
   async removeKnownHost(host, scope, owner) {
-    await this.http.request("DELETE", `${BASE18}/known-hosts/${encodePathSegment(host)}`, {
+    await this.http.request("DELETE", `${BASE17}/known-hosts/${encodePathSegment(host)}`, {
       query: { scope, owner },
       parse: "void"
     });
@@ -1228,7 +1192,7 @@ var SshClient = class {
   async verifyKnownHost(host, req) {
     await this.http.request(
       "POST",
-      `${BASE18}/known-hosts/${encodePathSegment(host)}/verify`,
+      `${BASE17}/known-hosts/${encodePathSegment(host)}/verify`,
       { body: req, parse: "void" }
     );
   }
@@ -1237,14 +1201,14 @@ var SshClient = class {
   // ------------------------------------------------------------------
   /** POST /xkms/v1/ssh/authorized-keys (201). */
   async addAuthorizedKey(req) {
-    await this.http.request("POST", `${BASE18}/authorized-keys`, {
+    await this.http.request("POST", `${BASE17}/authorized-keys`, {
       body: req,
       parse: "void"
     });
   }
   /** GET /xkms/v1/ssh/authorized-keys?scope=&owner= */
   listAuthorizedKeys(scope, owner) {
-    return this.http.request("GET", `${BASE18}/authorized-keys`, { query: { scope, owner } });
+    return this.http.request("GET", `${BASE17}/authorized-keys`, { query: { scope, owner } });
   }
   /** GET /xkms/v1/ssh/authorized-keys/{scope}/{owner}/{name} */
   getAuthorizedKey(scope, owner, name) {
@@ -1258,18 +1222,18 @@ var SshClient = class {
   }
   /** POST /xkms/v1/ssh/authorized-keys/emit */
   emitAuthorizedKey(req) {
-    return this.http.request("POST", `${BASE18}/authorized-keys/emit`, { body: req });
+    return this.http.request("POST", `${BASE17}/authorized-keys/emit`, { body: req });
   }
   /** POST /xkms/v1/ssh/authorized-keys/verify — returns the matching entry. */
   verifyAuthorizedKey(req) {
-    return this.http.request("POST", `${BASE18}/authorized-keys/verify`, { body: req });
+    return this.http.request("POST", `${BASE17}/authorized-keys/verify`, { body: req });
   }
 };
 
 // src/clients/tenants.ts
-var BASE19 = "/api/v1/tenants";
+var BASE18 = "/api/v1/tenants";
 function tenantPath(id, suffix = "") {
-  return `${BASE19}/${encodeURIComponent(id)}${suffix}`;
+  return `${BASE18}/${encodeURIComponent(id)}${suffix}`;
 }
 var TenantsClient = class {
   constructor(http) {
@@ -1277,11 +1241,11 @@ var TenantsClient = class {
   }
   /** POST /api/v1/tenants/ */
   create(req) {
-    return this.http.request("POST", `${BASE19}/`, { body: req });
+    return this.http.request("POST", `${BASE18}/`, { body: req });
   }
   /** GET /api/v1/tenants/ */
   list(page) {
-    return this.http.request("GET", `${BASE19}/`, { query: { ...page } });
+    return this.http.request("GET", `${BASE18}/`, { query: { ...page } });
   }
   /** GET /api/v1/tenants/{tenantID} */
   get(tenantId) {
@@ -1310,6 +1274,111 @@ var TenantsClient = class {
   /** PUT /api/v1/tenants/{tenantID}/quotas */
   updateQuotas(tenantId, req) {
     return this.http.request("PUT", tenantPath(tenantId, "/quotas"), { body: req });
+  }
+  /**
+   * GET /api/v1/tenants/{tenantID}/tpm — a tenant's TPM mode. System-scope
+   * only.
+   */
+  getTPMMode(tenantId) {
+    return this.http.request("GET", tenantPath(tenantId, "/tpm"));
+  }
+  /**
+   * PUT /api/v1/tenants/{tenantID}/tpm — changes a tenant's TPM mode.
+   * Refused while the tenant's scope holds objects or policies.
+   */
+  setTPMMode(tenantId, req) {
+    return this.http.request("PUT", tenantPath(tenantId, "/tpm"), { body: req });
+  }
+  /** GET /api/v1/tenants/{tenantID}/tpm/vtpm — a vtpm-mode tenant's virtual TPM. */
+  vtpmStatus(tenantId) {
+    return this.http.request("GET", tenantPath(tenantId, "/tpm/vtpm"));
+  }
+  /** POST /api/v1/tenants/{tenantID}/tpm/vtpm/start */
+  vtpmStart(tenantId) {
+    return this.http.request("POST", tenantPath(tenantId, "/tpm/vtpm/start"));
+  }
+  /** POST /api/v1/tenants/{tenantID}/tpm/vtpm/stop */
+  vtpmStop(tenantId) {
+    return this.http.request("POST", tenantPath(tenantId, "/tpm/vtpm/stop"));
+  }
+};
+
+// src/clients/tpmPolicy.ts
+var BASE19 = "/api/v1/tpm/policies";
+function policyPath(name, action) {
+  const path = `${BASE19}/${encodeURIComponent(name)}`;
+  return action ? `${path}/${action}` : path;
+}
+var TpmPolicyClient = class {
+  constructor(http) {
+    __publicField(this, "http", http);
+  }
+  /** POST /api/v1/tpm/policies — captures the tenant's live PCR values. */
+  create(req) {
+    return this.http.request("POST", BASE19, { body: req });
+  }
+  /** GET /api/v1/tpm/policies?tenant_id= */
+  list(tenantId) {
+    return this.http.request("GET", BASE19, { query: { tenant_id: tenantId } });
+  }
+  /** GET /api/v1/tpm/policies/{name}?tenant_id= */
+  get(name, tenantId) {
+    return this.http.request("GET", policyPath(name), { query: { tenant_id: tenantId } });
+  }
+  /** POST /api/v1/tpm/policies/{name}/update — re-captures and re-approves. */
+  update(name, tenantId) {
+    return this.http.request("POST", policyPath(name, "update"), {
+      body: { tenant_id: tenantId, name }
+    });
+  }
+  /** POST /api/v1/tpm/policies/{name}/revoke — withdraws the approval. */
+  revoke(name, tenantId) {
+    return this.http.request("POST", policyPath(name, "revoke"), {
+      body: { tenant_id: tenantId, name }
+    });
+  }
+  /** POST /api/v1/tpm/policies/{name}/verify — compares captured vs. live PCR values. */
+  verify(name, tenantId) {
+    return this.http.request("POST", policyPath(name, "verify"), {
+      body: { tenant_id: tenantId, name }
+    });
+  }
+  /**
+   * DELETE /api/v1/tpm/policies/{name} (204). Refused with 409 while any
+   * object is assigned to the policy.
+   */
+  async delete(name, req = {}) {
+    await this.http.request("DELETE", policyPath(name), {
+      body: { tenant_id: req.tenant_id, owner_auth: req.owner_auth },
+      parse: "void"
+    });
+  }
+  /** GET /api/v1/tpm/policies/{name}/objects?tenant_id= — objects bound to the policy. */
+  objects(name, tenantId) {
+    return this.http.request("GET", policyPath(name, "objects"), {
+      query: { tenant_id: tenantId }
+    });
+  }
+  /**
+   * POST /api/v1/tpm/policies/{name}/auto-unseal — setting it clears the
+   * mark from every other policy of the tenant.
+   */
+  setAutoUnseal(name, enabled, tenantId) {
+    return this.http.request("POST", policyPath(name, "auto-unseal"), {
+      body: { tenant_id: tenantId, name, enabled }
+    });
+  }
+  /** GET /api/v1/keys/{id}/tpm-policy?tenant_id=&kind= — the policy an object was created under. */
+  keyPolicy(keyId, opts = {}) {
+    return this.http.request("GET", `/api/v1/keys/${encodeURIComponent(keyId)}/tpm-policy`, {
+      query: { tenant_id: opts.tenantId, kind: opts.kind }
+    });
+  }
+  /** POST /api/v1/tpm/authority/rotate — rotates a tenant's policy authority. */
+  rotateAuthority(tenantId) {
+    return this.http.request("POST", "/api/v1/tpm/authority/rotate", {
+      body: { tenant_id: tenantId }
+    });
   }
 };
 
@@ -1375,7 +1444,7 @@ var XkmsClient = class {
     __publicField(this, "tenants");
     __publicField(this, "passwords");
     __publicField(this, "platform");
-    __publicField(this, "policies");
+    __publicField(this, "tpmPolicies");
     __publicField(this, "init");
     __publicField(this, "credentials");
     __publicField(this, "users");
@@ -1402,7 +1471,7 @@ var XkmsClient = class {
     this.tenants = new TenantsClient(this.http);
     this.passwords = new PasswordsClient(this.http);
     this.platform = new PlatformClient(this.http);
-    this.policies = new PoliciesClient(this.http);
+    this.tpmPolicies = new TpmPolicyClient(this.http);
     this.init = new InitClient(this.http);
     this.credentials = new CredentialsClient(this.http);
     this.users = new UsersClient(this.http);
@@ -1563,11 +1632,11 @@ export {
   PinClient,
   PivClient,
   PlatformClient,
-  PoliciesClient,
   SealClient,
   SharesClient,
   SshClient,
   TenantsClient,
+  TpmPolicyClient,
   UsersClient,
   WebAuthnEnvelopeError,
   XkmsApiError,

@@ -16,9 +16,12 @@ import type { PageQuery } from '../types/common.js';
 import type {
   CreateTenantRequest,
   ListTenantsResponse,
+  SetTenantTPMModeRequest,
   TenantBarrierInitRequest,
   TenantBarrierStatusResponse,
   TenantBarrierUnsealRequest,
+  TenantTPMModeResponse,
+  TenantVTPMStatusResponse,
   UpdateTenantEntitlementsRequest,
   UpdateTenantEntitlementsResponse,
   UpdateTenantQuotasRequest,
@@ -91,5 +94,36 @@ export class TenantsClient {
     req: UpdateTenantQuotasRequest,
   ): Promise<UpdateTenantQuotasResponse> {
     return this.http.request('PUT', tenantPath(tenantId, '/quotas'), { body: req });
+  }
+
+  /**
+   * GET /api/v1/tenants/{tenantID}/tpm — a tenant's TPM mode. System-scope
+   * only.
+   */
+  getTPMMode(tenantId: string): Promise<TenantTPMModeResponse> {
+    return this.http.request('GET', tenantPath(tenantId, '/tpm'));
+  }
+
+  /**
+   * PUT /api/v1/tenants/{tenantID}/tpm — changes a tenant's TPM mode.
+   * Refused while the tenant's scope holds objects or policies.
+   */
+  setTPMMode(tenantId: string, req: SetTenantTPMModeRequest): Promise<TenantTPMModeResponse> {
+    return this.http.request('PUT', tenantPath(tenantId, '/tpm'), { body: req });
+  }
+
+  /** GET /api/v1/tenants/{tenantID}/tpm/vtpm — a vtpm-mode tenant's virtual TPM. */
+  vtpmStatus(tenantId: string): Promise<TenantVTPMStatusResponse> {
+    return this.http.request('GET', tenantPath(tenantId, '/tpm/vtpm'));
+  }
+
+  /** POST /api/v1/tenants/{tenantID}/tpm/vtpm/start */
+  vtpmStart(tenantId: string): Promise<TenantVTPMStatusResponse> {
+    return this.http.request('POST', tenantPath(tenantId, '/tpm/vtpm/start'));
+  }
+
+  /** POST /api/v1/tenants/{tenantID}/tpm/vtpm/stop */
+  vtpmStop(tenantId: string): Promise<TenantVTPMStatusResponse> {
+    return this.http.request('POST', tenantPath(tenantId, '/tpm/vtpm/stop'));
   }
 }

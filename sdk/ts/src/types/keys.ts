@@ -30,6 +30,8 @@ export interface GenerateKeyRequest {
   hash?: string;
   algorithm?: string;
   exportable?: boolean;
+  /** Names the TPM policy a TPM2 key is bound to; empty is the built-in "platform" policy. */
+  tpm_policy?: string;
 }
 
 /** Mirrors pkg/api/rest/types.go GenerateKeyResponse. */

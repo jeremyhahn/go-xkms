@@ -1536,6 +1536,8 @@ interface GenerateKeyRequest {
     hash?: string;
     algorithm?: string;
     exportable?: boolean;
+    /** Names the TPM policy a TPM2 key is bound to; empty is the built-in "platform" policy. */
+    tpm_policy?: string;
 }
 /** Mirrors pkg/api/rest/types.go GenerateKeyResponse. */
 interface GenerateKeyResponse {
@@ -2193,86 +2195,16 @@ declare class PlatformClient {
     status(): Promise<SealStoreStatusResponse>;
 }
 
-/** TPM PCR-policy DTOs. Mirrors pkg/api/rest/policy_handlers.go. */
-
-interface PolicyCreateRequest {
-    name: string;
-    bank: string;
-    pcr_indices: number[];
-}
-interface PolicyCreateResponse {
-    name: string;
-    bank: string;
-    pcr_indices: number[];
-    created_at: string;
-    message: string;
-}
-interface PolicyInfo {
-    name: string;
-    bank: string;
-    pcr_indices: number[];
-    created_at: string;
-    updated_at: string;
-}
-interface PolicyListResponse {
-    policies: PolicyInfo[];
-    total: number;
-}
-interface PolicyGetResponse {
-    name: string;
-    bank: string;
-    pcr_indices: number[];
-    /** PCR index -> base64 PCR value */
-    pcr_values: Record<string, Base64>;
-    created_at: string;
-    updated_at: string;
-}
-interface PolicyDeleteResponse {
-    message: string;
-}
-interface PolicyRefreshResponse {
-    name: string;
-    bank: string;
-    pcr_indices: number[];
-    updated_at: string;
-    message: string;
-}
-interface PolicyVerifyResponse {
-    name: string;
-    valid: boolean;
-    message: string;
-}
-interface PolicyExportResponse {
-    name: string;
-    policy_json: string;
-}
-
-/** TPM PCR policy management. */
-declare class PoliciesClient {
-    private readonly http;
-    constructor(http: HttpCore);
-    /** POST /api/v1/policies/ */
-    create(req: PolicyCreateRequest): Promise<PolicyCreateResponse>;
-    /** GET /api/v1/policies/ */
-    list(): Promise<PolicyListResponse>;
-    /** GET /api/v1/policies/{id} */
-    get(id: string): Promise<PolicyGetResponse>;
-    /** DELETE /api/v1/policies/{id} */
-    delete(id: string): Promise<PolicyDeleteResponse>;
-    /** POST /api/v1/policies/{id}/refresh */
-    refresh(id: string): Promise<PolicyRefreshResponse>;
-    /** POST /api/v1/policies/{id}/verify */
-    verify(id: string): Promise<PolicyVerifyResponse>;
-    /** GET /api/v1/policies/{id}/export */
-    export(id: string): Promise<PolicyExportResponse>;
-}
-
 /** Mirrors pkg/api/rest/types.go SealRequest. */
 interface SealRequest {
     backend: string;
     key_id?: string;
     data: Base64;
     aad?: Base64;
+    /** The sealed object's authorization value (TPM2-specific). */
+    password?: string;
+    /** Names the TPM policy a TPM2 sealed object is bound to (TPM2 backends only). */
+    tpm_policy?: string;
 }
 /** Mirrors pkg/api/rest/types.go SealResponse. */
 interface SealResponse {
@@ -2644,6 +2576,33 @@ interface UpdateTenantQuotasRequest {
 interface UpdateTenantQuotasResponse {
     tenant: TenantInfo;
 }
+/**
+ * Mirrors pkg/api/transport/types.go TenantTPMModeResponse. System-scope
+ * only: a tenant-scoped caller is refused even for its own tenant.
+ */
+interface TenantTPMModeResponse {
+    tenant_id: string;
+    /** "none", "shared" or "vtpm". */
+    mode: string;
+}
+/**
+ * Mirrors pkg/api/transport/types.go SetTenantTPMModeRequest. Refused while
+ * the tenant's scope holds objects or policies, which cannot move between
+ * TPMs.
+ */
+interface SetTenantTPMModeRequest {
+    tenant_id: string;
+    mode: string;
+    owner_auth?: Base64;
+}
+/** Mirrors pkg/api/transport/types.go TenantVTPMStatusResponse. */
+interface TenantVTPMStatusResponse {
+    tenant_id: string;
+    running: boolean;
+    pid?: number;
+    socket?: string;
+    restarts?: number;
+}
 
 /** Tenant lifecycle, per-tenant barriers, entitlements, and quotas. */
 declare class TenantsClient {
@@ -2667,6 +2626,164 @@ declare class TenantsClient {
     updateEntitlements(tenantId: string, req: UpdateTenantEntitlementsRequest): Promise<UpdateTenantEntitlementsResponse>;
     /** PUT /api/v1/tenants/{tenantID}/quotas */
     updateQuotas(tenantId: string, req: UpdateTenantQuotasRequest): Promise<UpdateTenantQuotasResponse>;
+    /**
+     * GET /api/v1/tenants/{tenantID}/tpm — a tenant's TPM mode. System-scope
+     * only.
+     */
+    getTPMMode(tenantId: string): Promise<TenantTPMModeResponse>;
+    /**
+     * PUT /api/v1/tenants/{tenantID}/tpm — changes a tenant's TPM mode.
+     * Refused while the tenant's scope holds objects or policies.
+     */
+    setTPMMode(tenantId: string, req: SetTenantTPMModeRequest): Promise<TenantTPMModeResponse>;
+    /** GET /api/v1/tenants/{tenantID}/tpm/vtpm — a vtpm-mode tenant's virtual TPM. */
+    vtpmStatus(tenantId: string): Promise<TenantVTPMStatusResponse>;
+    /** POST /api/v1/tenants/{tenantID}/tpm/vtpm/start */
+    vtpmStart(tenantId: string): Promise<TenantVTPMStatusResponse>;
+    /** POST /api/v1/tenants/{tenantID}/tpm/vtpm/stop */
+    vtpmStop(tenantId: string): Promise<TenantVTPMStatusResponse>;
+}
+
+/**
+ * TPM policy DTOs. Mirrors pkg/api/transport/types.go (the TPM policy
+ * section) — served over REST at /api/v1/tpm/policies,
+ * /api/v1/keys/{id}/tpm-policy, /api/v1/tpm/authority/rotate, and a
+ * tenant's TPM mode/vTPM under /api/v1/tenants/{tenantID}/tpm. See
+ * docs/tpm-policies/api.md.
+ */
+
+/** Mirrors pkg/api/transport/types.go TPMPolicy. */
+interface TPMPolicy {
+    name: string;
+    /** Empty for the system scope. */
+    tenant_id?: string;
+    /** PCR bank: sha1, sha256, sha384 or sha512. */
+    bank: string;
+    pcrs: number[];
+    /** Hex-encoded PCR values captured at create/update, keyed by PCR index. */
+    pcr_values?: Record<string, string>;
+    /** Hex-encoded PolicyPCR digest over pcr_values. */
+    pcr_digest?: string;
+    /** The policy's NV index; objects bound to it follow it. */
+    index: number;
+    /** False after a revoke until the next update. */
+    approved: boolean;
+    epoch?: number;
+    authority_generation?: number;
+    /** Marks the policy barrier auto-unseal uses. */
+    auto_unseal?: boolean;
+    created_at: RFC3339;
+    updated_at?: RFC3339;
+}
+/**
+ * Mirrors pkg/api/transport/types.go TPMPolicyCreateRequest. The PCR values
+ * are always captured live from the tenant's TPM; the caller never supplies
+ * them.
+ */
+interface TPMPolicyCreateRequest {
+    tenant_id?: string;
+    name: string;
+    bank: string;
+    pcrs: number[];
+    auto_unseal?: boolean;
+    /** The physical TPM's owner-hierarchy authorization; never logged. */
+    owner_auth?: Base64;
+}
+/** Mirrors pkg/api/transport/types.go TPMPolicyListResponse. */
+interface TPMPolicyListResponse {
+    policies: TPMPolicy[];
+}
+/**
+ * Mirrors pkg/api/transport/types.go TPMPolicyDeleteRequest. Deletion is
+ * refused (409) while any object is assigned to the policy.
+ */
+interface TPMPolicyDeleteRequest {
+    tenant_id?: string;
+    owner_auth?: Base64;
+}
+/**
+ * Mirrors pkg/api/transport/types.go TPMPolicyVerifyResponse. Advisory: the
+ * TPM itself enforces the policy on use.
+ */
+interface TPMPolicyVerifyResponse {
+    name: string;
+    /** True when every selected PCR still holds its captured value. */
+    match: boolean;
+    /** PCR indices that no longer match, ascending. */
+    mismatched?: number[];
+    /** Whether the policy's approval is current. */
+    approved: boolean;
+}
+/**
+ * Mirrors pkg/api/transport/types.go TPMPolicyObjectsResponse. Objects are
+ * "<kind>/<name>" IDs (kind is "key" or "sealed"), sorted.
+ */
+interface TPMPolicyObjectsResponse {
+    name: string;
+    objects: string[];
+}
+/** TPM object kinds a policy is assigned to (pkg/api/transport/types.go). */
+type TPMObjectKind = 'key' | 'sealed';
+/** Mirrors pkg/api/transport/types.go TPMObjectPolicyResponse. */
+interface TPMObjectPolicyResponse {
+    object_id: string;
+    kind: string;
+    policy: string;
+    /** Hex-encoded authPolicy digest at creation. */
+    auth_policy?: string;
+    created_at: RFC3339;
+}
+/** Mirrors pkg/api/transport/types.go TPMAuthorityRotateResponse. */
+interface TPMAuthorityRotateResponse {
+    tenant_id?: string;
+    /** Counts rotations. */
+    generation: number;
+    /** The new authority's hex-encoded TPM Name; every approval is now verified against it. */
+    authority_name: string;
+    /** The revocation counter's current value. */
+    epoch: number;
+}
+
+/**
+ * Named TPM policies: PCR-bank capture, approval lifecycle, auto-unseal, and
+ * the objects (keys / sealed data) bound to them. Mirrors
+ * pkg/api/rest/handlers_tpm_policy.go and pkg/api/rest/wire.TPMPolicyClient.
+ * See docs/tpm-policies/api.md.
+ */
+declare class TpmPolicyClient {
+    private readonly http;
+    constructor(http: HttpCore);
+    /** POST /api/v1/tpm/policies — captures the tenant's live PCR values. */
+    create(req: TPMPolicyCreateRequest): Promise<TPMPolicy>;
+    /** GET /api/v1/tpm/policies?tenant_id= */
+    list(tenantId?: string): Promise<TPMPolicyListResponse>;
+    /** GET /api/v1/tpm/policies/{name}?tenant_id= */
+    get(name: string, tenantId?: string): Promise<TPMPolicy>;
+    /** POST /api/v1/tpm/policies/{name}/update — re-captures and re-approves. */
+    update(name: string, tenantId?: string): Promise<TPMPolicy>;
+    /** POST /api/v1/tpm/policies/{name}/revoke — withdraws the approval. */
+    revoke(name: string, tenantId?: string): Promise<TPMPolicy>;
+    /** POST /api/v1/tpm/policies/{name}/verify — compares captured vs. live PCR values. */
+    verify(name: string, tenantId?: string): Promise<TPMPolicyVerifyResponse>;
+    /**
+     * DELETE /api/v1/tpm/policies/{name} (204). Refused with 409 while any
+     * object is assigned to the policy.
+     */
+    delete(name: string, req?: TPMPolicyDeleteRequest): Promise<void>;
+    /** GET /api/v1/tpm/policies/{name}/objects?tenant_id= — objects bound to the policy. */
+    objects(name: string, tenantId?: string): Promise<TPMPolicyObjectsResponse>;
+    /**
+     * POST /api/v1/tpm/policies/{name}/auto-unseal — setting it clears the
+     * mark from every other policy of the tenant.
+     */
+    setAutoUnseal(name: string, enabled: boolean, tenantId?: string): Promise<TPMPolicy>;
+    /** GET /api/v1/keys/{id}/tpm-policy?tenant_id=&kind= — the policy an object was created under. */
+    keyPolicy(keyId: string, opts?: {
+        tenantId?: string;
+        kind?: TPMObjectKind;
+    }): Promise<TPMObjectPolicyResponse>;
+    /** POST /api/v1/tpm/authority/rotate — rotates a tenant's policy authority. */
+    rotateAuthority(tenantId?: string): Promise<TPMAuthorityRotateResponse>;
 }
 
 /**
@@ -2775,7 +2892,7 @@ declare class XkmsClient {
     readonly tenants: TenantsClient;
     readonly passwords: PasswordsClient;
     readonly platform: PlatformClient;
-    readonly policies: PoliciesClient;
+    readonly tpmPolicies: TpmPolicyClient;
     readonly init: InitClient;
     readonly credentials: CredentialsClient;
     readonly users: UsersClient;
@@ -2787,4 +2904,4 @@ declare class XkmsClient {
 /** createClient constructs an XkmsClient from a config. */
 declare function createClient(config: XkmsClientConfig): XkmsClient;
 
-export { type AddCustodianMemberRequest, type AddCustodianMemberResponse, type AlgorithmInfo, type AlgorithmsResponse, type AssertionCredentialJSON, type AttestKeyRequest, type AttestKeyResponse, type AttestationCredentialJSON, AuditClient, type AuditEvent, type AuditFilter, type AuditPage, AuthClient, type AuthFactorAddRequest, type AuthFactorAddResponse, type AuthFactorGetResponse, type AuthFactorListResponse, type AuthFactorLoginRequest, type AuthFactorLoginResponse, type AuthFactorRecord, type AuthFactorRelabelRequest, type AuthFactorRelabelResponse, type AuthFactorRemoveResponse, type AuthFactorRotateRequest, type AuthFactorRotateResponse, type AuthFactorType, type AuthMeResponse, type AuthPaths, type AuthValidateResponse, type BackendCapabilities, type BackendInfo, BackendsClient, BarrierClient, type BarrierEnableEncryptionRequest, type BarrierEnableEncryptionResponse, type BarrierGenerateRecoveryKeysRequest, type BarrierGenerateRootTokenRequest, type BarrierInitializeRequest, type BarrierInitializeShamirRequest, type BarrierRecoverWithKeysRequest, type BarrierRekeyRequest, type BarrierStatusResponse, type BarrierUnsealRequest, type BarrierUnsealShareRequest, type BarrierUnsealSharesRequest, type Base64, type BindUserCertRequest, CaClient, type CanSealResponse, CapabilitiesClient, type CertificateInfo, CertsClient, type ChangeSOPINRequest, type ChangeUserPINRequest, type ClaimCertBeginRequest, type ClaimCertBeginResponse, type ClaimCertCompleteRequest, type ClaimCertCompleteResponse, type ClaimShareBeginRequest, type ClaimShareBeginResponse, type ClaimShareCompleteRequest, type ClaimShareCompleteResponse, ClusterClient, type ClusterMemberInfo, type ClusterStatusInfo, type ClusterStatusResponse, type CopyKeyRequest, type CopyKeyResponse, type CreateCustodianGroupRequest, type CreateCustodianGroupResponse, type CreateTenantRequest, type CreateUserRequest, type CredentialStrategyResponse, type CredentialSubmitRequest, type CredentialSubmitResponse, CredentialsClient, CustodianClient, type CustodianGroupInfo, type CustodianMemberInfo, DEFAULT_AUTH_PATHS, type DecryptRequest, type DecryptResponse, type DeleteKeyResponse, type DeriveKeyECDHRequest, type DeriveKeyECDHResponse, type DistributeSharesResponse, type EncryptAsymRequest, type EncryptAsymResponse, type EncryptRequest, type EncryptResponse, type EnrollDeviceRequest, type EnrollDeviceResponse, type ErrorEnvelope, type ExportKeyMaterialResponse, type ExportKeyRequest, type ExportKeyResponse, FactorsClient, type FrostAggregateRequest, type FrostAggregateResponse, FrostClient, type FrostCommitment, type FrostDeleteKeyResponse, type FrostGenerateKeyRequest, type FrostGenerateKeyResponse, type FrostGenerateNoncesResponse, type FrostImportKeyRequest, type FrostImportKeyResponse, type FrostKeyInfo, type FrostKeyPackage, type FrostListKeysResponse, type FrostSignRoundRequest, type FrostSignRoundResponse, type FrostSignatureShare, type FrostVerifyRequest, type FrostVerifyResponse, type GenerateCRLRequest, type GenerateCRLResponse, type GenerateKeyRequest, type GenerateKeyResponse, type GeneratePIVCSRRequest, type GeneratePIVCSRResponse, type GeneratePIVKeyRequest, type GeneratePIVKeyResponse, type GetCABundleResponse, type GetCACertificateResponse, type GetCertChainResponse, type GetCertResponse, type GetCustodianGroupResponse, type GetImportParametersRequest, type GetImportParametersResponse, type GetKeyResponse, type GetPIVCertificateResponse, type GetTLSCertificateResponse, HEADER_SESSION_ID, type HealthCheckResponse, type HealthCheckResult, HealthClient, type HealthResponse, type HostKeyMode, HttpCore, type HttpMethod, type HttpResult, type ImportKeyRequest, type ImportKeyResponse, InitClient, type InitStatusResponse, type IsRevokedResponse, type IssueAKCertificateRequest, type IssueAKCertificateResponse, type IssueCertificateRequest, type IssueCertificateResponse, type IssueEKCertificateRequest, type IssueEKCertificateResponse, type KeyInfo, KeysClient, type ListBackendsResponse, type ListCertsResponse, type ListClusterMembersResponse, type ListCustodianGroupsResponse, type ListKeysResponse, type ListPIVSlotsResponse, type ListSharesResponse, type ListTenantsResponse, type ListUserCredentialsResponse, type ListUsersResponse, type LockoutStatusResponse, type PIVSlotStatus, type PageQuery, type PageResponse, type PasswordAddRequest, type PasswordAddResponse, type PasswordDeleteResponse, type PasswordDetailResponse, type PasswordGenerateRequest, type PasswordGenerateResponse, type PasswordInfo, type PasswordListResponse, type PasswordStoreAccessModeRequest, type PasswordStoreAccessModeResponse, type PasswordStoreStatusResponse, type PasswordStoreUnlockRequest, type PasswordUpdateRequest, type PasswordUpdateResponse, PasswordsClient, PinClient, PivClient, PlatformClient, PoliciesClient, type PolicyCreateRequest, type PolicyCreateResponse, type PolicyDeleteResponse, type PolicyExportResponse, type PolicyGetResponse, type PolicyInfo, type PolicyListResponse, type PolicyRefreshResponse, type PolicyVerifyResponse, type QueryParams, type QuorumProgress, type RFC3339, type RecoveryKeyResult, type RefreshRequest, type RequestOptions, type ResetLockoutRequest, type RevokeCertificateRequest, type RevokeCertificateResponse, type RootToken, type RotateKeyResponse, type SSHAddAuthorizedKeyRequest, type SSHAddKnownHostRequest, type SSHAuthorizedEntry, type SSHAuthorizedListResponse, type SSHEmitRequest, type SSHEmitResponse, type SSHGenerateKeyRequest, type SSHImportKeyRequest, type SSHKey, type SSHKeyListResponse, type SSHPin, type SSHPinListResponse, type SSHPublicKey, type SSHSignRequest, type SSHSignResponse, type SSHVerifyAuthorizedRequest, type SSHVerifyKnownHostRequest, type SaveCertChainRequest, type SaveCertRequest, SealClient, type SealRequest, type SealResponse, type SealStoreDeleteResponse, type SealStoreGetResponse, type SealStoreListResponse, type SealStorePutRequest, type SealStorePutResponse, type SealStoreResealResponse, type SealStoreStatusResponse, type ServerControl, type SetSOPINRequest, type SetUserPINRequest, type ShamirInitParams, type ShamirInitResult, type ShareCollectionStatusResponse, type ShareStatusResponse, SharesClient, type SignCSRInitRequest, type SignCSRInitResponse, type SignCSRRequest, type SignCSRResponse, type SignRequest, type SignResponse, type SignTCGCSRRequest, type SignTCGCSRResponse, SshClient, type StorePIVCertificateRequest, type SubmitShareRequest, type SuccessResponse, type TenantBarrierInitRequest, type TenantBarrierStatusResponse, type TenantBarrierUnsealRequest, type TenantEntitlements, type TenantInfo, type TenantInfoResponse, type TenantQuotas, TenantsClient, type TokenProvider, type TokenResponse, type UnsealRequest, type UnsealResponse, type UnwrapKeyByIDRequest, type UnwrapKeyByIDResponse, type UnwrapKeyRequest, type UnwrapKeyResponse, type UpdateTenantEntitlementsRequest, type UpdateTenantEntitlementsResponse, type UpdateTenantQuotasRequest, type UpdateTenantQuotasResponse, type UpdateUserRequest, type UserCredentialItem, type UserInfo, type UserStatusResponse, UsersClient, type VerifyPINRequest, type VerifyRequest, type VerifyResponse, type WebAuthnAuthResponse, type WebAuthnBeginLoginRequest, type WebAuthnBeginRegistrationRequest, type WebAuthnCeremonyStart, WebAuthnEnvelopeError, type WrapKeyByIDRequest, type WrapKeyByIDResponse, type WrapKeyRequest, type WrapKeyResponse, type WrappedTenantResponse, XkmsApiError, XkmsClient, type XkmsClientConfig, XkmsNetworkError, base64urlToBuffer, bufferToBase64url, buildURL, createClient, encodeAssertionResponse, encodeAttestationResponse, encodeHostKeyResponse, encodePathSegment, encodeResize, isWailsRuntime, parseControl, parseCreationOptions, parseErrorEnvelope, parseRequestOptions, resolveAuthPaths };
+export { type AddCustodianMemberRequest, type AddCustodianMemberResponse, type AlgorithmInfo, type AlgorithmsResponse, type AssertionCredentialJSON, type AttestKeyRequest, type AttestKeyResponse, type AttestationCredentialJSON, AuditClient, type AuditEvent, type AuditFilter, type AuditPage, AuthClient, type AuthFactorAddRequest, type AuthFactorAddResponse, type AuthFactorGetResponse, type AuthFactorListResponse, type AuthFactorLoginRequest, type AuthFactorLoginResponse, type AuthFactorRecord, type AuthFactorRelabelRequest, type AuthFactorRelabelResponse, type AuthFactorRemoveResponse, type AuthFactorRotateRequest, type AuthFactorRotateResponse, type AuthFactorType, type AuthMeResponse, type AuthPaths, type AuthValidateResponse, type BackendCapabilities, type BackendInfo, BackendsClient, BarrierClient, type BarrierEnableEncryptionRequest, type BarrierEnableEncryptionResponse, type BarrierGenerateRecoveryKeysRequest, type BarrierGenerateRootTokenRequest, type BarrierInitializeRequest, type BarrierInitializeShamirRequest, type BarrierRecoverWithKeysRequest, type BarrierRekeyRequest, type BarrierStatusResponse, type BarrierUnsealRequest, type BarrierUnsealShareRequest, type BarrierUnsealSharesRequest, type Base64, type BindUserCertRequest, CaClient, type CanSealResponse, CapabilitiesClient, type CertificateInfo, CertsClient, type ChangeSOPINRequest, type ChangeUserPINRequest, type ClaimCertBeginRequest, type ClaimCertBeginResponse, type ClaimCertCompleteRequest, type ClaimCertCompleteResponse, type ClaimShareBeginRequest, type ClaimShareBeginResponse, type ClaimShareCompleteRequest, type ClaimShareCompleteResponse, ClusterClient, type ClusterMemberInfo, type ClusterStatusInfo, type ClusterStatusResponse, type CopyKeyRequest, type CopyKeyResponse, type CreateCustodianGroupRequest, type CreateCustodianGroupResponse, type CreateTenantRequest, type CreateUserRequest, type CredentialStrategyResponse, type CredentialSubmitRequest, type CredentialSubmitResponse, CredentialsClient, CustodianClient, type CustodianGroupInfo, type CustodianMemberInfo, DEFAULT_AUTH_PATHS, type DecryptRequest, type DecryptResponse, type DeleteKeyResponse, type DeriveKeyECDHRequest, type DeriveKeyECDHResponse, type DistributeSharesResponse, type EncryptAsymRequest, type EncryptAsymResponse, type EncryptRequest, type EncryptResponse, type EnrollDeviceRequest, type EnrollDeviceResponse, type ErrorEnvelope, type ExportKeyMaterialResponse, type ExportKeyRequest, type ExportKeyResponse, FactorsClient, type FrostAggregateRequest, type FrostAggregateResponse, FrostClient, type FrostCommitment, type FrostDeleteKeyResponse, type FrostGenerateKeyRequest, type FrostGenerateKeyResponse, type FrostGenerateNoncesResponse, type FrostImportKeyRequest, type FrostImportKeyResponse, type FrostKeyInfo, type FrostKeyPackage, type FrostListKeysResponse, type FrostSignRoundRequest, type FrostSignRoundResponse, type FrostSignatureShare, type FrostVerifyRequest, type FrostVerifyResponse, type GenerateCRLRequest, type GenerateCRLResponse, type GenerateKeyRequest, type GenerateKeyResponse, type GeneratePIVCSRRequest, type GeneratePIVCSRResponse, type GeneratePIVKeyRequest, type GeneratePIVKeyResponse, type GetCABundleResponse, type GetCACertificateResponse, type GetCertChainResponse, type GetCertResponse, type GetCustodianGroupResponse, type GetImportParametersRequest, type GetImportParametersResponse, type GetKeyResponse, type GetPIVCertificateResponse, type GetTLSCertificateResponse, HEADER_SESSION_ID, type HealthCheckResponse, type HealthCheckResult, HealthClient, type HealthResponse, type HostKeyMode, HttpCore, type HttpMethod, type HttpResult, type ImportKeyRequest, type ImportKeyResponse, InitClient, type InitStatusResponse, type IsRevokedResponse, type IssueAKCertificateRequest, type IssueAKCertificateResponse, type IssueCertificateRequest, type IssueCertificateResponse, type IssueEKCertificateRequest, type IssueEKCertificateResponse, type KeyInfo, KeysClient, type ListBackendsResponse, type ListCertsResponse, type ListClusterMembersResponse, type ListCustodianGroupsResponse, type ListKeysResponse, type ListPIVSlotsResponse, type ListSharesResponse, type ListTenantsResponse, type ListUserCredentialsResponse, type ListUsersResponse, type LockoutStatusResponse, type PIVSlotStatus, type PageQuery, type PageResponse, type PasswordAddRequest, type PasswordAddResponse, type PasswordDeleteResponse, type PasswordDetailResponse, type PasswordGenerateRequest, type PasswordGenerateResponse, type PasswordInfo, type PasswordListResponse, type PasswordStoreAccessModeRequest, type PasswordStoreAccessModeResponse, type PasswordStoreStatusResponse, type PasswordStoreUnlockRequest, type PasswordUpdateRequest, type PasswordUpdateResponse, PasswordsClient, PinClient, PivClient, PlatformClient, type QueryParams, type QuorumProgress, type RFC3339, type RecoveryKeyResult, type RefreshRequest, type RequestOptions, type ResetLockoutRequest, type RevokeCertificateRequest, type RevokeCertificateResponse, type RootToken, type RotateKeyResponse, type SSHAddAuthorizedKeyRequest, type SSHAddKnownHostRequest, type SSHAuthorizedEntry, type SSHAuthorizedListResponse, type SSHEmitRequest, type SSHEmitResponse, type SSHGenerateKeyRequest, type SSHImportKeyRequest, type SSHKey, type SSHKeyListResponse, type SSHPin, type SSHPinListResponse, type SSHPublicKey, type SSHSignRequest, type SSHSignResponse, type SSHVerifyAuthorizedRequest, type SSHVerifyKnownHostRequest, type SaveCertChainRequest, type SaveCertRequest, SealClient, type SealRequest, type SealResponse, type SealStoreDeleteResponse, type SealStoreGetResponse, type SealStoreListResponse, type SealStorePutRequest, type SealStorePutResponse, type SealStoreResealResponse, type SealStoreStatusResponse, type ServerControl, type SetSOPINRequest, type SetTenantTPMModeRequest, type SetUserPINRequest, type ShamirInitParams, type ShamirInitResult, type ShareCollectionStatusResponse, type ShareStatusResponse, SharesClient, type SignCSRInitRequest, type SignCSRInitResponse, type SignCSRRequest, type SignCSRResponse, type SignRequest, type SignResponse, type SignTCGCSRRequest, type SignTCGCSRResponse, SshClient, type StorePIVCertificateRequest, type SubmitShareRequest, type SuccessResponse, type TPMAuthorityRotateResponse, type TPMObjectKind, type TPMObjectPolicyResponse, type TPMPolicy, type TPMPolicyCreateRequest, type TPMPolicyDeleteRequest, type TPMPolicyListResponse, type TPMPolicyObjectsResponse, type TPMPolicyVerifyResponse, type TenantBarrierInitRequest, type TenantBarrierStatusResponse, type TenantBarrierUnsealRequest, type TenantEntitlements, type TenantInfo, type TenantInfoResponse, type TenantQuotas, type TenantTPMModeResponse, type TenantVTPMStatusResponse, TenantsClient, type TokenProvider, type TokenResponse, TpmPolicyClient, type UnsealRequest, type UnsealResponse, type UnwrapKeyByIDRequest, type UnwrapKeyByIDResponse, type UnwrapKeyRequest, type UnwrapKeyResponse, type UpdateTenantEntitlementsRequest, type UpdateTenantEntitlementsResponse, type UpdateTenantQuotasRequest, type UpdateTenantQuotasResponse, type UpdateUserRequest, type UserCredentialItem, type UserInfo, type UserStatusResponse, UsersClient, type VerifyPINRequest, type VerifyRequest, type VerifyResponse, type WebAuthnAuthResponse, type WebAuthnBeginLoginRequest, type WebAuthnBeginRegistrationRequest, type WebAuthnCeremonyStart, WebAuthnEnvelopeError, type WrapKeyByIDRequest, type WrapKeyByIDResponse, type WrapKeyRequest, type WrapKeyResponse, type WrappedTenantResponse, XkmsApiError, XkmsClient, type XkmsClientConfig, XkmsNetworkError, base64urlToBuffer, bufferToBase64url, buildURL, createClient, encodeAssertionResponse, encodeAttestationResponse, encodeHostKeyResponse, encodePathSegment, encodeResize, isWailsRuntime, parseControl, parseCreationOptions, parseErrorEnvelope, parseRequestOptions, resolveAuthPaths };

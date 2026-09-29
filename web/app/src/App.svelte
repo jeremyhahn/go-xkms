@@ -15,7 +15,7 @@
   import CertificatesView from "$views/CertificatesView.svelte";
   import BarrierView from "$views/BarrierView.svelte";
   import PinView from "$views/PinView.svelte";
-  import PoliciesView from "$views/PoliciesView.svelte";
+  import TpmPoliciesView from "$views/TpmPoliciesView.svelte";
   import UsersView from "$views/UsersView.svelte";
   import TenantsView from "$views/TenantsView.svelte";
   import PasswordsView from "$views/PasswordsView.svelte";
@@ -68,8 +68,8 @@
       <PivView />
     {:else if routerStore.name === "ssh"}
       <SshView />
-    {:else if routerStore.name === "policies"}
-      <PoliciesView />
+    {:else if routerStore.name === "tpmPolicies"}
+      <TpmPoliciesView />
     {:else if routerStore.name === "users"}
       <UsersView />
     {:else if routerStore.name === "factors"}

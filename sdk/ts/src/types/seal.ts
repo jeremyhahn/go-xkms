@@ -19,6 +19,10 @@ export interface SealRequest {
   key_id?: string;
   data: Base64;
   aad?: Base64;
+  /** The sealed object's authorization value (TPM2-specific). */
+  password?: string;
+  /** Names the TPM policy a TPM2 sealed object is bound to (TPM2 backends only). */
+  tpm_policy?: string;
 }
 
 /** Mirrors pkg/api/rest/types.go SealResponse. */

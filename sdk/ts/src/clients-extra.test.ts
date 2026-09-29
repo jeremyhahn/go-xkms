@@ -504,28 +504,98 @@ describe('PlatformClient (get/delete/list/reseal/status)', () => {
   });
 });
 
-describe('PoliciesClient (create/get/delete/refresh/export)', () => {
-  it('routes the PCR-policy lifecycle', async () => {
+describe('TpmPolicyClient (named TPM policy lifecycle)', () => {
+  it('routes create/get/update/revoke/objects/auto-unseal/rotate, scoping cross-tenant calls by tenant_id', async () => {
     const fake = newFakeFetch({ body: {} });
     const c = make(fake);
-    await c.policies.create({ name: 'boot', bank: 'sha256', pcr_indices: [0, 1, 7] });
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/policies/`);
-    expect(fake.calls[0]?.body).toEqual({ name: 'boot', bank: 'sha256', pcr_indices: [0, 1, 7] });
 
-    await c.policies.get('boot');
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/policies/boot`);
+    await c.tpmPolicies.create({ name: 'boot', bank: 'sha256', pcrs: [0, 1, 7], auto_unseal: true });
+    expect(fake.calls[0]?.method).toBe('POST');
+    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/tpm/policies`);
+    expect(fake.calls[0]?.body).toEqual({ name: 'boot', bank: 'sha256', pcrs: [0, 1, 7], auto_unseal: true });
 
-    await c.policies.delete('boot');
-    expect(fake.calls[2]?.method).toBe('DELETE');
-    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/policies/boot`);
+    await c.tpmPolicies.get('boot', 't1');
+    expect(fake.calls[1]?.method).toBe('GET');
+    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/tpm/policies/boot?tenant_id=t1`);
 
-    await c.policies.refresh('boot');
+    await c.tpmPolicies.update('boot', 't1');
+    expect(fake.calls[2]?.method).toBe('POST');
+    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/tpm/policies/boot/update`);
+    expect(fake.calls[2]?.body).toEqual({ tenant_id: 't1', name: 'boot' });
+
+    await c.tpmPolicies.revoke('boot');
     expect(fake.calls[3]?.method).toBe('POST');
-    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/policies/boot/refresh`);
+    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/tpm/policies/boot/revoke`);
+    expect(fake.calls[3]?.body).toEqual({ name: 'boot' });
 
-    await c.policies.export('boot');
+    fake.respond({ body: { name: 'boot', objects: ['key/db-key'] } });
+    await c.tpmPolicies.objects('boot', 't1');
     expect(fake.calls[4]?.method).toBe('GET');
-    expect(fake.calls[4]?.url).toBe(`${BASE}/api/v1/policies/boot/export`);
+    expect(fake.calls[4]?.url).toBe(`${BASE}/api/v1/tpm/policies/boot/objects?tenant_id=t1`);
+
+    await c.tpmPolicies.setAutoUnseal('boot', true);
+    expect(fake.calls[5]?.method).toBe('POST');
+    expect(fake.calls[5]?.url).toBe(`${BASE}/api/v1/tpm/policies/boot/auto-unseal`);
+    expect(fake.calls[5]?.body).toEqual({ name: 'boot', enabled: true });
+
+    fake.respond({ body: { generation: 2, authority_name: 'ab12', epoch: 1 } });
+    await c.tpmPolicies.rotateAuthority('t1');
+    expect(fake.calls[6]?.method).toBe('POST');
+    expect(fake.calls[6]?.url).toBe(`${BASE}/api/v1/tpm/authority/rotate`);
+    expect(fake.calls[6]?.body).toEqual({ tenant_id: 't1' });
+
+    fake.respond({ body: { object_id: 'db-key', kind: 'key', policy: 'boot', created_at: '2026-01-01T00:00:00Z' } });
+    await c.tpmPolicies.keyPolicy('db-key', { tenantId: 't1', kind: 'sealed' });
+    expect(fake.calls[7]?.method).toBe('GET');
+    expect(fake.calls[7]?.url).toBe(`${BASE}/api/v1/keys/db-key/tpm-policy?tenant_id=t1&kind=sealed`);
+  });
+
+  it('deletes a policy (204, no body) and surfaces a 409 conflict listing its assigned objects', async () => {
+    const fake = newFakeFetch({ status: 204 });
+    const c = make(fake);
+    await c.tpmPolicies.delete('boot', { tenant_id: 't1' });
+    expect(fake.calls[0]?.method).toBe('DELETE');
+    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/tpm/policies/boot`);
+    expect(fake.calls[0]?.body).toEqual({ tenant_id: 't1' });
+
+    fake.respond({
+      status: 409,
+      body: { error: 'tpmpolicy: policy in use', message: 'policy "boot" is assigned to key/db-key, sealed/backup' },
+    });
+    const err = await c.tpmPolicies.delete('boot').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(XkmsApiError);
+    expect((err as XkmsApiError).status).toBe(409);
+    expect((err as XkmsApiError).message).toBe('policy "boot" is assigned to key/db-key, sealed/backup');
+  });
+});
+
+describe('TenantsClient (TPM mode and vTPM)', () => {
+  it('routes get/set TPM mode and vTPM status/start/stop', async () => {
+    const fake = newFakeFetch({ body: { tenant_id: 't1', mode: 'shared' } });
+    const c = make(fake);
+
+    await c.tenants.getTPMMode('t1');
+    expect(fake.calls[0]?.method).toBe('GET');
+    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/tenants/t1/tpm`);
+
+    await c.tenants.setTPMMode('t1', { tenant_id: 't1', mode: 'vtpm' });
+    expect(fake.calls[1]?.method).toBe('PUT');
+    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/tenants/t1/tpm`);
+    expect(fake.calls[1]?.body).toEqual({ tenant_id: 't1', mode: 'vtpm' });
+
+    fake.respond({ body: { tenant_id: 't1', running: false } });
+    await c.tenants.vtpmStatus('t1');
+    expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/tenants/t1/tpm/vtpm`);
+
+    fake.respond({ body: { tenant_id: 't1', running: true, pid: 42 } });
+    await c.tenants.vtpmStart('t1');
+    expect(fake.calls[3]?.method).toBe('POST');
+    expect(fake.calls[3]?.url).toBe(`${BASE}/api/v1/tenants/t1/tpm/vtpm/start`);
+
+    fake.respond({ body: { tenant_id: 't1', running: false } });
+    await c.tenants.vtpmStop('t1');
+    expect(fake.calls[4]?.method).toBe('POST');
+    expect(fake.calls[4]?.url).toBe(`${BASE}/api/v1/tenants/t1/tpm/vtpm/stop`);
   });
 });
 

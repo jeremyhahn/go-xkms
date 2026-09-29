@@ -138,3 +138,33 @@ export interface UpdateTenantQuotasRequest {
 export interface UpdateTenantQuotasResponse {
   tenant: TenantInfo;
 }
+
+/**
+ * Mirrors pkg/api/transport/types.go TenantTPMModeResponse. System-scope
+ * only: a tenant-scoped caller is refused even for its own tenant.
+ */
+export interface TenantTPMModeResponse {
+  tenant_id: string;
+  /** "none", "shared" or "vtpm". */
+  mode: string;
+}
+
+/**
+ * Mirrors pkg/api/transport/types.go SetTenantTPMModeRequest. Refused while
+ * the tenant's scope holds objects or policies, which cannot move between
+ * TPMs.
+ */
+export interface SetTenantTPMModeRequest {
+  tenant_id: string;
+  mode: string;
+  owner_auth?: Base64;
+}
+
+/** Mirrors pkg/api/transport/types.go TenantVTPMStatusResponse. */
+export interface TenantVTPMStatusResponse {
+  tenant_id: string;
+  running: boolean;
+  pid?: number;
+  socket?: string;
+  restarts?: number;
+}

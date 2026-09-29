@@ -69,7 +69,7 @@ export const ALL_PERMISSIONS: Record<string, boolean> = {
 /** Every capability flag nav.ts gates on, all wired. */
 export const ALL_CAPABILITIES: Record<string, boolean> = {
   frost: true,
-  policies: true,
+  tpm_policies: true,
   ca: true,
   ssh: true,
   passwords: true,

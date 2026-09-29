@@ -26,8 +26,15 @@
   let gKeySize = $state(2048);
   let gAlgorithm = $state("aes-256-gcm");
   let gExportable = $state(false);
+  let gTpmPolicy = $state("platform");
   let gBusy = $state(false);
   let gError = $state<string | null>(null);
+
+  // Named TPM policies beyond the built-in "platform" default, offered in
+  // the generate dialog's TPM policy select. Fetched lazily when the dialog
+  // opens; a deployment with no TPM policy service configured (or a caller
+  // without list permission) simply falls back to "platform" only.
+  let tpmPolicyOptions = $state<string[]>([]);
 
   const columns = [
     { key: "key_id", label: "Key ID" },
@@ -60,16 +67,38 @@
         ...(gKeyType === "rsa" ? { key_size: gKeySize } : {}),
         ...(gKeyType === "ecdsa" ? { curve: gCurve } : {}),
         ...(gKeyType === "symmetric" ? { algorithm: gAlgorithm } : {}),
+        // "platform" is the built-in default the server assumes for an
+        // absent tpm_policy, so it is only sent when the operator picked
+        // something else.
+        ...(gTpmPolicy !== "platform" ? { tpm_policy: gTpmPolicy } : {}),
       };
       await getSDKClient().keys.generate(req);
       showToast("success", `Key "${gKeyId}" generated.`);
       showGenerate = false;
       gKeyId = "";
+      gTpmPolicy = "platform";
       await load();
     } catch (e) {
       gError = e instanceof Error ? e.message : String(e);
     } finally {
       gBusy = false;
+    }
+  }
+
+  /** openGenerate shows the dialog and refreshes its TPM policy options. */
+  function openGenerate(): void {
+    showGenerate = true;
+    void loadTpmPolicyOptions();
+  }
+
+  async function loadTpmPolicyOptions(): Promise<void> {
+    try {
+      const resp = await getSDKClient().tpmPolicies.list();
+      tpmPolicyOptions = resp.policies.map((p) => p.name).filter((name) => name !== "platform");
+    } catch {
+      // TPM policies are an optional capability (TPM2 backend only); a
+      // deployment without one simply offers "platform" alone.
+      tpmPolicyOptions = [];
     }
   }
 
@@ -91,7 +120,7 @@
       <button class="btn btn-sm" onclick={() => (showImport = true)}>Import</button>
     {/if}
     {#if can("keys", "create")}
-      <button class="btn btn-primary btn-sm" onclick={() => (showGenerate = true)}>
+      <button class="btn btn-primary btn-sm" onclick={openGenerate}>
         + Generate
       </button>
     {/if}
@@ -156,6 +185,13 @@
             </select>
           </label>
         {/if}
+        <label class="form-control">
+          <span class="label-text">TPM policy</span>
+          <select class="select select-bordered" bind:value={gTpmPolicy}>
+            <option value="platform">platform</option>
+            {#each tpmPolicyOptions as p (p)}<option value={p}>{p}</option>{/each}
+          </select>
+        </label>
         <label class="label cursor-pointer justify-start gap-2">
           <input type="checkbox" class="checkbox" bind:checked={gExportable} />
           <span class="label-text">Exportable</span>

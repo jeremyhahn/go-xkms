@@ -53,7 +53,7 @@ export const DEFAULT_RESPONSES: Record<RouteKey, unknown> = {
   'GET /api/v1/audit/': { events: [], next: '', total: 0 },
   'GET /api/v1/users/': { users: [], page: 1, page_size: 20, total: 0 },
   'GET /api/v1/tenants/': { tenants: [], pagination: { total: 0 } },
-  'GET /api/v1/policies/': { policies: [], total: 0 },
+  'GET /api/v1/tpm/policies': { policies: [] },
   'GET /api/v1/factors/': { factors: [], total: 0 },
   'GET /api/v1/shares/': { shares: [], pagination: { total: 0 } },
   'GET /api/v1/custodian/groups/': { groups: [], pagination: { total: 0 } },

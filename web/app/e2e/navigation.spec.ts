@@ -42,7 +42,7 @@ const ROUTES: Array<[string, string]> = [
   ['/pin', 'PIN'],
   ['/piv', 'PIV'],
   ['/ssh', 'SSH'],
-  ['/policies', 'PCR Policies'],
+  ['/tpm/policies', 'TPM Policies'],
   ['/users', 'Users'],
   ['/factors', 'Auth Factors'],
   ['/frost', 'FROST'],

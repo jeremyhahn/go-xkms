@@ -13,14 +13,15 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
-import type { ListKeysResponse } from "@go-xkms/sdk";
+import type { ListKeysResponse, TPMPolicyListResponse } from "@go-xkms/sdk";
 
 const list = vi.fn<() => Promise<ListKeysResponse>>();
 const generate = vi.fn();
 const rotate = vi.fn();
+const tpmPolicyList = vi.fn<() => Promise<TPMPolicyListResponse>>();
 
 vi.mock("../src/stores/sdkClient.ts", () => ({
-  getSDKClient: () => ({ keys: { list, generate, rotate } }),
+  getSDKClient: () => ({ keys: { list, generate, rotate }, tpmPolicies: { list: tpmPolicyList } }),
   resetSDKClient: () => {},
 }));
 
@@ -47,6 +48,7 @@ beforeEach(() => {
   toasts.length = 0;
   // Default: every action permitted, matching the "signed-in admin" case.
   canMock.mockReturnValue(true);
+  tpmPolicyList.mockResolvedValue({ policies: [] });
 });
 
 describe("KeysView", () => {
@@ -157,6 +159,63 @@ describe("KeysView", () => {
       exportable: false,
       algorithm: "aes-256-gcm",
     });
+  });
+
+  it("defaults the TPM policy select to platform and omits tpm_policy from the request", async () => {
+    list.mockResolvedValue({ keys: [], pagination: { page: 1, page_size: 50, total: 0, has_more: false } });
+    tpmPolicyList.mockResolvedValue({
+      policies: [{ name: "high-assurance", bank: "sha256", pcrs: [0, 7], index: 1, approved: true, created_at: "" }],
+    });
+    generate.mockResolvedValue({ key_id: "new-ec", key_type: "ecdsa" });
+
+    render(KeysView);
+    await screen.findByText("No keys yet. Generate one to get started.");
+    await fireEvent.click(screen.getByRole("button", { name: "+ Generate" }));
+
+    await waitFor(() => expect(tpmPolicyList).toHaveBeenCalledOnce());
+    expect(await screen.findByDisplayValue("platform")).toBeInTheDocument();
+    // The named policy fetched from the server is offered alongside it.
+    expect(screen.getByRole("option", { name: "high-assurance", hidden: true })).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByPlaceholderText("my-key"), { target: { value: "my-ec-key" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Generate", hidden: true }));
+
+    await waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    expect(generate.mock.calls[0]![0]).not.toHaveProperty("tpm_policy");
+  });
+
+  it("binds the generated key to the selected named TPM policy", async () => {
+    list.mockResolvedValue({ keys: [], pagination: { page: 1, page_size: 50, total: 0, has_more: false } });
+    tpmPolicyList.mockResolvedValue({
+      policies: [{ name: "high-assurance", bank: "sha256", pcrs: [0, 7], index: 1, approved: true, created_at: "" }],
+    });
+    generate.mockResolvedValue({ key_id: "new-ec", key_type: "ecdsa" });
+
+    render(KeysView);
+    await screen.findByText("No keys yet. Generate one to get started.");
+    await fireEvent.click(screen.getByRole("button", { name: "+ Generate" }));
+    await screen.findByDisplayValue("platform");
+
+    await fireEvent.input(screen.getByPlaceholderText("my-key"), { target: { value: "my-ec-key" } });
+    const tpmPolicySelect = screen.getByDisplayValue("platform");
+    await fireEvent.change(tpmPolicySelect, { target: { value: "high-assurance" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Generate", hidden: true }));
+
+    await waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    expect(generate.mock.calls[0]![0]).toMatchObject({ tpm_policy: "high-assurance" });
+  });
+
+  it("falls back to the platform-only TPM policy option when the list call fails", async () => {
+    list.mockResolvedValue({ keys: [], pagination: { page: 1, page_size: 50, total: 0, has_more: false } });
+    tpmPolicyList.mockRejectedValue(new Error("tpm policy service unavailable"));
+
+    render(KeysView);
+    await screen.findByText("No keys yet. Generate one to get started.");
+    await fireEvent.click(screen.getByRole("button", { name: "+ Generate" }));
+
+    // The dialog still renders and defaults to "platform" despite the
+    // failed fetch; the TPM policy capability is optional.
+    expect(await screen.findByDisplayValue("platform")).toBeInTheDocument();
   });
 
   it("keeps the dialog open and shows the error when generation fails", async () => {

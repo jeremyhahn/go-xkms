@@ -34,7 +34,7 @@ export type RouteName =
   | "ssh"
   | "passwords"
   | "platform"
-  | "policies"
+  | "tpmPolicies"
   | "users"
   | "factors"
   | "frost"
@@ -71,7 +71,7 @@ const staticRoutes: Record<string, RouteName> = {
   "/ssh": "ssh",
   "/passwords": "passwords",
   "/platform": "platform",
-  "/policies": "policies",
+  "/tpm/policies": "tpmPolicies",
   "/users": "users",
   "/factors": "factors",
   "/frost": "frost",
