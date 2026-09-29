@@ -37,9 +37,9 @@ import (
 // is now an opaque random handle naming a sealed wrapping key that never
 // leaves the backend.
 
-// newTestSealedRSAKey returns a freshly generated sealed wrapping key for
-// tests that populate b.importTokens directly.
-func newTestSealedRSAKey(t *testing.T) *importtoken.SealedRSAKey {
+// newTestImportEntry returns a freshly generated import-token entry, bound
+// to alg, for tests that populate b.importTokens directly.
+func newTestImportEntry(t *testing.T, alg backend.WrappingAlgorithm) *importtoken.Entry {
 	t.Helper()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -49,7 +49,7 @@ func newTestSealedRSAKey(t *testing.T) *importtoken.SealedRSAKey {
 	if err != nil {
 		t.Fatalf("NewSealedRSAKey() error = %v", err)
 	}
-	return sealed
+	return &importtoken.Entry{Key: sealed, Algorithm: alg}
 }
 
 // importHandleParams runs GetImportParameters for a throwaway RSA key.
@@ -94,7 +94,7 @@ func TestGetImportParameters_TokenCarriesNoPrivateKey(t *testing.T) {
 	if !ok {
 		t.Fatalf("WrappingPublicKey is %T, want *rsa.PublicKey", params.WrappingPublicKey)
 	}
-	if !pub.Equal(stored.PublicKey()) {
+	if !pub.Equal(stored.Key.PublicKey()) {
 		t.Error("WrappingPublicKey does not match the stored wrapping key")
 	}
 }
@@ -160,6 +160,31 @@ func TestUnwrapKey_RoundTripThroughHandle(t *testing.T) {
 				t.Error("UnwrapKey() must consume the import token")
 			}
 		})
+	}
+}
+
+// TestUnwrapKey_AlgorithmMismatchRefused verifies UnwrapKey refuses key
+// material that claims a different wrapping algorithm than the one
+// GetImportParameters issued the handle for (go-xkms#1342): this backend
+// previously accepted any algorithm claimed by the caller-supplied
+// WrappedKeyMaterial.
+func TestUnwrapKey_AlgorithmMismatchRefused(t *testing.T) {
+	b, _ := testBackend(t)
+	params := importHandleParams(t, b, "algorithm-mismatch", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+
+	wrapped, err := b.WrapKey(context.Background(), []byte("0123456789abcdef"), params)
+	if err != nil {
+		t.Fatalf("WrapKey() error = %v", err)
+	}
+	wrapped.Algorithm = backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256
+
+	_, err = b.UnwrapKey(context.Background(), wrapped, params)
+	var mismatch *importtoken.AlgorithmMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("UnwrapKey() error = %v, want *importtoken.AlgorithmMismatchError", err)
+	}
+	if !errors.Is(err, backend.ErrInvalidAlgorithm) {
+		t.Errorf("UnwrapKey() error does not wrap backend.ErrInvalidAlgorithm: %v", err)
 	}
 }
 
@@ -254,7 +279,7 @@ func TestUnwrapKey_FailedUnwrapConsumesHandle(t *testing.T) {
 // refused like an unknown one.
 func TestUnwrapKey_RefusesExpiredHandle(t *testing.T) {
 	b, _ := testBackend(t)
-	b.importTokens = importtoken.New[*importtoken.SealedRSAKey](time.Nanosecond, importtoken.DefaultMaxTokens, (*importtoken.SealedRSAKey).Destroy)
+	b.importTokens = importtoken.New[*importtoken.Entry](time.Nanosecond, importtoken.DefaultMaxTokens, (*importtoken.Entry).Destroy)
 	params := importHandleParams(t, b, "expired", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 
 	wrapped, err := b.WrapKey(context.Background(), []byte("0123456789abcdef"), params)

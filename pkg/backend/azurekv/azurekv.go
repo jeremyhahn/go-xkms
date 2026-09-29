@@ -152,9 +152,10 @@ type Backend struct {
 	config        *Config
 	client        KeyVaultClient
 	secretsClient SecretsClient // lazily initialized by initSecretsClient; see azurekv_symmetric.go
-	// importTokens holds the sealed ephemeral RSA wrapping keypair for each
-	// in-flight GetImportParameters -> WrapKey -> ImportKey ceremony, keyed
-	// by the random opaque handle returned as ImportParameters.ImportToken.
+	// importTokens holds the sealed ephemeral RSA wrapping keypair, plus
+	// the algorithm it was issued for (go-xkms#1342), for each in-flight
+	// GetImportParameters -> WrapKey -> ImportKey ceremony, keyed by the
+	// random opaque handle returned as ImportParameters.ImportToken.
 	// The wrapping private key lives only here -- it is never handed to the
 	// caller (go-xkms#1340) and never written through Config.KeyStorage: it
 	// is private key material, not key metadata, and the ceremony is
@@ -165,7 +166,7 @@ type Backend struct {
 	// never completes the ceremony must not be able to grow this state
 	// without limit, and every evicted wrapping key is destroyed rather than
 	// left for the garbage collector.
-	importTokens *importtoken.Store[*importtoken.SealedRSAKey]
+	importTokens *importtoken.Store[*importtoken.Entry]
 	tracker      types.AEADSafetyTracker
 	mu           sync.RWMutex // guards client/secretsClient initialization
 }
@@ -185,7 +186,7 @@ func NewBackend(config *Config) (*Backend, error) {
 
 	b := &Backend{
 		config:       config,
-		importTokens: importtoken.New[*importtoken.SealedRSAKey](0, 0, (*importtoken.SealedRSAKey).Destroy),
+		importTokens: importtoken.New[*importtoken.Entry](0, 0, (*importtoken.Entry).Destroy),
 		tracker:      tracker,
 	}
 
@@ -208,7 +209,7 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 	b := &Backend{
 		config:       config,
 		client:       client,
-		importTokens: importtoken.New[*importtoken.SealedRSAKey](0, 0, (*importtoken.SealedRSAKey).Destroy),
+		importTokens: importtoken.New[*importtoken.Entry](0, 0, (*importtoken.Entry).Destroy),
 		tracker:      tracker,
 	}
 

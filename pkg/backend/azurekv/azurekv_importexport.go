@@ -95,8 +95,10 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 
 	// Put enforces the store's TTL and hard cap and sweeps expired
 	// ceremonies before inserting this one; on refusal it destroys
-	// wrappingKey itself.
-	expiresAt, err := b.importTokens.Put(token, wrappingKey)
+	// wrappingKey itself. The entry records algorithm alongside it, so
+	// UnwrapKey can refuse a mismatched algorithm before it ever opens
+	// the wrapping key's enclave (go-xkms#1342).
+	expiresAt, err := b.importTokens.Put(token, &importtoken.Entry{Key: wrappingKey, Algorithm: algorithm})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to store import token", Err: err}
 	}
@@ -208,36 +210,15 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 	}
 
 	// Take the wrapping key: this call owns destroying whatever it took.
-	wrappingKey, err := b.importTokens.Take(string(wrapped.ImportToken))
+	entry, err := b.importTokens.Take(string(wrapped.ImportToken))
 	if err != nil {
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "invalid or expired import token"}
 	}
-	defer wrappingKey.Destroy()
+	defer entry.Destroy()
 
-	var keyMaterial []byte
-	useErr := wrappingKey.Use(func(privateKey *rsa.PrivateKey) error {
-		var unwrapErr error
-		switch wrapped.Algorithm {
-		case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
-			backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
-			// Use simple RSA-OAEP unwrapping
-			keyMaterial, unwrapErr = wrapping.UnwrapRSAOAEP(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
-
-		case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
-			backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
-			// Use hybrid RSA + AES-KWP unwrapping
-			keyMaterial, unwrapErr = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
-
-		default:
-			return &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
-		}
-		return unwrapErr
-	})
-	if useErr != nil {
-		return nil, &errs.Wrapped{Msg: "failed to unwrap key material", Err: useErr}
-	}
-
-	return keyMaterial, nil
+	// entry.Unwrap refuses wrapped.Algorithm unless it matches the
+	// algorithm GetImportParameters issued this token for (go-xkms#1342).
+	return entry.Unwrap(wrapped.Algorithm, wrapped.WrappedKey)
 }
 
 // ImportKey imports externally generated key material into Azure Key Vault.

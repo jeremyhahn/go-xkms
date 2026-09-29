@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## Exported surface
 
@@ -210,6 +210,18 @@ Two consequences follow directly from this table:
   (`pkg/backend/azurekv/azurekv_importexport.go:62`, `:199`). Azure Key Vault
   unwraps locally and imports the result as a JWK; it does not use Key
   Vault's native key-exchange-key BYOK flow.
+- **The RSA-OAEP / RSA-AES-KEY-WRAP unwrap step lives in one place,
+  `importtoken.Unwrap`, and every token binds the algorithm it was issued
+  for.** `importtoken.Entry{Key, Algorithm}` is the `Store` value type the
+  symmetric and Azure Key Vault backends use (the software backend keeps its
+  own richer per-token struct, which also tracks `keySpec`, but calls
+  `importtoken.Unwrap` the same way). `Unwrap` refuses a `WrappedKeyMaterial`
+  whose `Algorithm` does not match the algorithm `GetImportParameters` issued
+  the token for, before the wrapping key's enclave is ever opened, with a
+  typed `*importtoken.AlgorithmMismatchError` wrapping
+  `backend.ErrInvalidAlgorithm`. Before #1342 only the software backend
+  checked this; the symmetric and Azure Key Vault backends accepted any
+  algorithm the caller's `WrappedKeyMaterial` claimed.
 - **`ExportBackend.ExportKeyTo(ctx, attrs, dstParams)` wraps for a
   caller-supplied destination, `ExportKey` for a wrapping key the backend
   mints and tracks for itself.** The two are not interchangeable for a

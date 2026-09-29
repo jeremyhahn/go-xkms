@@ -68,6 +68,35 @@ func TestUnwrapKey_TokenSingleUse(t *testing.T) {
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
 
+// TestUnwrapKey_AlgorithmMismatchRefused verifies UnwrapKey refuses key
+// material that claims a different wrapping algorithm than the one
+// GetImportParameters issued the token for (go-xkms#1342): the symmetric
+// backend previously accepted any algorithm claimed by the caller-supplied
+// WrappedKeyMaterial.
+func TestUnwrapKey_AlgorithmMismatchRefused(t *testing.T) {
+	b := createTestBackend(t)
+	defer func() { _ = b.Close() }()
+
+	attrs := testSymmetricAttrs("algorithm-mismatch")
+	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	require.NoError(t, err)
+
+	keyMaterial := make([]byte, 32)
+	_, err = rand.Read(keyMaterial)
+	require.NoError(t, err)
+
+	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
+	require.NoError(t, err)
+
+	wrapped.Algorithm = backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256
+
+	_, err = b.UnwrapKey(context.Background(), wrapped, params)
+	require.Error(t, err)
+	var mismatch *importtoken.AlgorithmMismatchError
+	assert.True(t, errors.As(err, &mismatch), "expected *importtoken.AlgorithmMismatchError, got %T: %v", err, err)
+	assert.ErrorIs(t, err, backend.ErrInvalidAlgorithm)
+}
+
 // TestImportKey_TokenConsumedRegardlessOfOutcome verifies a successful
 // ImportKey leaves its token consumed, so a second ImportKey attempt with
 // the same wrapped material fails rather than silently reusing the
@@ -103,7 +132,7 @@ func TestUnwrapKey_ExpiredTokenIsSwept(t *testing.T) {
 	// Swap in a Store with a TTL so short the entry is already past
 	// expiry by the time UnwrapKey looks it up, exercising the real
 	// sweep-on-Take path.
-	b.wrappingKeys = importtoken.New[*importtoken.SealedRSAKey](time.Nanosecond, importtoken.DefaultMaxTokens, (*importtoken.SealedRSAKey).Destroy)
+	b.wrappingKeys = importtoken.New[*importtoken.Entry](time.Nanosecond, importtoken.DefaultMaxTokens, (*importtoken.Entry).Destroy)
 
 	attrs := testSymmetricAttrs("expiring")
 	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -133,7 +162,7 @@ func TestGetImportParameters_CapEnforced(t *testing.T) {
 	b := createTestBackend(t)
 	defer func() { _ = b.Close() }()
 
-	b.wrappingKeys = importtoken.New[*importtoken.SealedRSAKey](time.Hour, 2, (*importtoken.SealedRSAKey).Destroy)
+	b.wrappingKeys = importtoken.New[*importtoken.Entry](time.Hour, 2, (*importtoken.Entry).Destroy)
 
 	attrs := testSymmetricAttrs("cap-enforced")
 	for i := 0; i < 2; i++ {
