@@ -14,6 +14,7 @@
 package transport
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -29,6 +30,18 @@ const SortOrderDesc = 1
 
 // DefaultPageSize is used when PageSize is not specified.
 const DefaultPageSize = 25
+
+// MaxPageSize is the largest PageSize a caller may request through
+// Normalize. Requests above it are capped, not rejected -- a caller asking
+// for "as many as possible" gets the largest page this API hands back in
+// one response, not an error. Capping it also keeps ApplyPagination's
+// (page-1)*pageSize slice arithmetic within a range that cannot overflow
+// int on any platform Go supports, which combined with the ceilings
+// ApplyPagination applies is what turned a page_size large enough to
+// overflow the multiplication into an ordinary bounded page instead of a
+// panic (go-xkms#1262). qrdbsdk.PageQuery, the DAO-level equivalent this
+// package converts to, defines no such ceiling of its own.
+const MaxPageSize = 1000
 
 // PageRequest represents pagination parameters for list endpoints.
 // Page==0 means return all results (backward compatibility).
@@ -107,10 +120,14 @@ func BuildPageRequest(opts ...ListOption) PageRequest {
 }
 
 // Normalize applies defaults to a PageRequest. If PageSize is not set it
-// defaults to DefaultPageSize. Negative Page values are clamped to zero.
+// defaults to DefaultPageSize. PageSize above MaxPageSize is capped to
+// MaxPageSize. Negative Page values are clamped to zero.
 func (p *PageRequest) Normalize() {
 	if p.PageSize <= 0 {
 		p.PageSize = DefaultPageSize
+	}
+	if p.PageSize > MaxPageSize {
+		p.PageSize = MaxPageSize
 	}
 	if p.Page < 0 {
 		p.Page = 0
@@ -124,7 +141,15 @@ func (p *PageRequest) IsUnpaginated() bool {
 
 // ToDAOPageQuery converts a PageRequest to a qrdbsdk.PageQuery.
 // When unpaginated, it returns a query for a single large page so that callers
-// that only speak PageQuery still receive every entity.
+// that only speak PageQuery still receive every entity. That page size is
+// deliberately not MaxPageSize-capped like Normalize's paginated path: no
+// production caller converts an unpaginated PageRequest through this method
+// today (every list handler paginates in memory through ApplyPagination
+// instead), and capping it would silently truncate a future caller's "give
+// me everything" query to MaxPageSize entities with no error -- trading a
+// panic for silent data loss is not a fix. A caller that starts exercising
+// this path for a real DAO query should size it deliberately for that
+// query, not inherit an in-memory-pagination default.
 func (p *PageRequest) ToDAOPageQuery() qrdbsdk.PageQuery {
 	if p.IsUnpaginated() {
 		return qrdbsdk.PageQuery{
@@ -155,6 +180,20 @@ func PageResponseFromDAO[E any](result qrdbsdk.PageResult[E]) PageResponse {
 // ApplyPagination slices an in-memory list according to the given PageRequest
 // and returns the page of items along with pagination metadata.
 // When the request is unpaginated (Page==0), all items are returned.
+//
+// pr is treated as untrusted regardless of where it came from -- a validated
+// HTTP query, or a PageRequest built programmatically with a ListOption,
+// which callers such as pkg/xkms's servicers and the MCP handlers can
+// construct with any Page or PageSize at all. Normalize applies its usual
+// defaults and caps PageSize at MaxPageSize; Page is checked again
+// afterward because Normalize clamps a negative Page to zero, which is
+// IsUnpaginated's value for "return everything", not a valid first page --
+// left unchecked here that zero produced a negative slice start
+// (go-xkms#1262). The final range arithmetic is overflow-checked before it
+// indexes items, since Page carries no upper bound of its own. A caller
+// that wants negative input rejected outright, rather than silently
+// clamped to the first page, should validate the PageRequest before calling
+// ApplyPagination; see ValidatePageRequest.
 func ApplyPagination[T any](items []T, pr PageRequest) ([]T, PageResponse) {
 	total := len(items)
 
@@ -168,9 +207,12 @@ func ApplyPagination[T any](items []T, pr PageRequest) ([]T, PageResponse) {
 	}
 
 	pr.Normalize()
+	if pr.Page < 1 {
+		pr.Page = 1
+	}
 
-	start := (pr.Page - 1) * pr.PageSize
-	if start >= total {
+	start, overflowed := multiplyWithoutOverflow(pr.Page-1, pr.PageSize)
+	if overflowed || start < 0 || start >= total {
 		return nil, PageResponse{
 			Page:     pr.Page,
 			PageSize: pr.PageSize,
@@ -179,8 +221,8 @@ func ApplyPagination[T any](items []T, pr PageRequest) ([]T, PageResponse) {
 		}
 	}
 
-	end := start + pr.PageSize
-	if end > total {
+	end, overflowed := addWithoutOverflow(start, pr.PageSize)
+	if overflowed || end > total {
 		end = total
 	}
 
@@ -192,18 +234,47 @@ func ApplyPagination[T any](items []T, pr PageRequest) ([]T, PageResponse) {
 	}
 }
 
-// InvalidPaginationParamError reports an HTTP query pagination parameter
-// that could not be parsed as an integer. Silently treating it as absent
-// used to turn a caller's typo into an unpaginated "return everything"
-// request instead of a rejection.
+// multiplyWithoutOverflow returns a*b and whether the multiplication
+// overflowed the int type. ApplyPagination uses it to keep
+// (Page-1)*PageSize from wrapping into a value it would then use, wrapped or
+// not, to slice a Go slice.
+func multiplyWithoutOverflow(a, b int) (product int, overflowed bool) {
+	if a == 0 || b == 0 {
+		return 0, false
+	}
+	product = a * b
+	return product, product/b != a
+}
+
+// addWithoutOverflow returns a+b and whether the addition overflowed the int
+// type. ApplyPagination uses it to keep start+PageSize from wrapping past
+// the platform's maximum int before it is used to slice items.
+func addWithoutOverflow(a, b int) (sum int, overflowed bool) {
+	sum = a + b
+	return sum, (b > 0 && sum < a) || (b < 0 && sum > a)
+}
+
+// ErrNegativePaginationValue is the Err a *InvalidPaginationParamError
+// carries when a page or page_size parameter parsed as an integer but was
+// negative. Unlike an oversized page_size, which Normalize caps rather than
+// rejects, a negative value has no sensible page to clamp to, so it is
+// reported rather than silently reinterpreted (go-xkms#1262).
+var ErrNegativePaginationValue = errors.New("must not be negative")
+
+// InvalidPaginationParamError reports an HTTP query pagination parameter,
+// or a PageRequest field validated through ValidatePageRequest, that either
+// could not be parsed as an integer or parsed to a negative value. Silently
+// treating it as absent, or as its clamped-to-zero equivalent, used to turn
+// a caller's typo or malicious input into an unpaginated "return
+// everything" request, or a panic, instead of a rejection.
 type InvalidPaginationParamError struct {
-	// Param is the query parameter name.
+	// Param is the query parameter, or PageRequest field, name.
 	Param string
 
-	// Value is the unparsable value that was supplied.
+	// Value is the invalid value that was supplied.
 	Value string
 
-	// Err is the underlying strconv error.
+	// Err is the underlying strconv error, or ErrNegativePaginationValue.
 	Err error
 }
 
@@ -212,18 +283,39 @@ func (e *InvalidPaginationParamError) Error() string {
 	return fmt.Sprintf("transport: invalid %s query parameter %q: %v", e.Param, e.Value, e.Err)
 }
 
-// Unwrap returns the underlying strconv error.
+// Unwrap returns the underlying error.
 func (e *InvalidPaginationParamError) Unwrap() error { return e.Err }
+
+// ValidatePageRequest rejects a PageRequest whose Page or PageSize is
+// negative. It is PageRequestFromQuery's rejection, exported for a
+// transport that decodes a PageRequest from somewhere other than an HTTP
+// query string -- the MCP JSON-RPC server decodes one directly from a
+// request's JSON params -- so every transport rejects the same malformed
+// input instead of only the HTTP query path doing so and every other
+// caller depending on ApplyPagination's more permissive clamp-to-first-page
+// behavior for defense in depth alone.
+func ValidatePageRequest(pr PageRequest) error {
+	if pr.Page < 0 {
+		return &InvalidPaginationParamError{Param: "page", Value: strconv.Itoa(pr.Page), Err: ErrNegativePaginationValue}
+	}
+	if pr.PageSize < 0 {
+		return &InvalidPaginationParamError{Param: "page_size", Value: strconv.Itoa(pr.PageSize), Err: ErrNegativePaginationValue}
+	}
+	return nil
+}
 
 // PageRequestFromQuery extracts pagination parameters from HTTP query
 // strings. This is the one implementation every HTTP-based transport --
 // REST, QUIC, and any other package that receives pagination via URL query
 // parameters -- calls; none of them keeps its own copy. page and page_size
-// must be integers; sort_order accepts either an integer (SortOrderAsc/
-// SortOrderDesc) or the "asc"/"desc" strings the REST API and its
-// TypeScript SDK use on the wire. A parameter that is present but matches
-// none of its accepted forms is reported as an *InvalidPaginationParamError
-// rather than silently defaulting to zero.
+// must be non-negative integers; sort_order accepts either an integer
+// (SortOrderAsc/SortOrderDesc) or the "asc"/"desc" strings the REST API and
+// its TypeScript SDK use on the wire. A parameter that is present but
+// matches none of its accepted forms, including a negative page or
+// page_size, is reported as an *InvalidPaginationParamError rather than
+// silently defaulting to zero or clamping (go-xkms#1262). page_size has no
+// upper bound rejected here -- an oversized one is capped by Normalize
+// instead of failing the request.
 func PageRequestFromQuery(r *http.Request) (PageRequest, error) {
 	var pr PageRequest
 
@@ -250,6 +342,10 @@ func PageRequestFromQuery(r *http.Request) (PageRequest, error) {
 			return PageRequest{}, &InvalidPaginationParamError{Param: "sort_order", Value: v, Err: err}
 		}
 		pr.SortOrder = n
+	}
+
+	if err := ValidatePageRequest(pr); err != nil {
+		return PageRequest{}, err
 	}
 
 	return pr, nil

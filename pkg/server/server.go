@@ -3241,10 +3241,10 @@ func (s *Server) startMetrics() {
 	mux.Handle(s.config.Metrics.Path, promhttp.HandlerFor(serverGatherer{s: s}, promhttp.HandlerOpts{}))
 
 	server := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second, // Prevent Slowloris attacks
+		Addr:    addr,
+		Handler: mux,
 	}
+	ApplyHardenedTimeouts(server) // Prevent Slowloris and idle-connection exhaustion attacks
 
 	// Publish the server so Shutdown can stop it. Guard against a Shutdown that
 	// already began (ctx cancelled): in that case do not start serving, so this
