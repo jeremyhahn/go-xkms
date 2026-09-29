@@ -76,14 +76,22 @@ type OCSPResponderConfig struct {
 	// NextUpdate is the interval baked into the OCSP response that tells
 	// relying parties when to next poll. Zero uses the default (7 days).
 	NextUpdate time.Duration
+
+	// MaxCacheEntries caps the number of distinct serials the in-memory
+	// response cache holds at once. An OCSP request names any serial
+	// number the caller chooses, so without a cap a client that probes
+	// serials it holds no certificate for grows this cache without bound
+	// (go-xkms#1263). Zero uses DefaultOCSPResponderConfig().MaxCacheEntries.
+	MaxCacheEntries int
 }
 
 // DefaultOCSPResponderConfig returns sensible production defaults: 1-hour
-// cache, 7-day NextUpdate.
+// cache, 7-day NextUpdate, 10000-entry cache cap.
 func DefaultOCSPResponderConfig() OCSPResponderConfig {
 	return OCSPResponderConfig{
-		CacheTTL:   1 * time.Hour,
-		NextUpdate: 7 * 24 * time.Hour,
+		CacheTTL:        1 * time.Hour,
+		NextUpdate:      7 * 24 * time.Hour,
+		MaxCacheEntries: 10000,
 	}
 }
 
@@ -116,6 +124,9 @@ type cachedOCSPResponse struct {
 func NewOCSPResponder(ca *CA, config OCSPResponderConfig) *OCSPResponder {
 	if config.CacheTTL == 0 {
 		config = DefaultOCSPResponderConfig()
+	}
+	if config.MaxCacheEntries <= 0 {
+		config.MaxCacheEntries = DefaultOCSPResponderConfig().MaxCacheEntries
 	}
 	return &OCSPResponder{
 		ca:     ca,
@@ -218,7 +229,7 @@ func (o *OCSPResponder) createResponse(ctx context.Context, req *ocsp.Request) (
 		return nil, &errs.Detail{Err: ErrOCSPResponseFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	o.cacheResponse(cacheKey, responseBytes)
+	o.cacheResponse(cacheKey, responseBytes, template.NextUpdate)
 	return responseBytes, nil
 }
 
@@ -263,13 +274,51 @@ func (o *OCSPResponder) getCachedResponse(key string) []byte {
 	return cached.response
 }
 
-// cacheResponse stores a signed OCSP response in the cache.
-func (o *OCSPResponder) cacheResponse(key string, response []byte) {
+// cacheResponse stores a signed OCSP response in the cache. The entry
+// expires at the earlier of CacheTTL and the response's own NextUpdate: an
+// operator-configured CacheTTL longer than NextUpdate must never keep the
+// cache serving a response RFC 6960 already tells relying parties to
+// consider stale.
+func (o *OCSPResponder) cacheResponse(key string, response []byte, nextUpdate time.Time) {
 	o.cacheMu.Lock()
 	defer o.cacheMu.Unlock()
+
+	expiresAt := time.Now().Add(o.config.CacheTTL)
+	if nextUpdate.Before(expiresAt) {
+		expiresAt = nextUpdate
+	}
+
+	if _, exists := o.cache[key]; !exists && len(o.cache) >= o.config.MaxCacheEntries {
+		o.evictLocked()
+	}
+
 	o.cache[key] = &cachedOCSPResponse{
 		response:  response,
-		expiresAt: time.Now().Add(o.config.CacheTTL),
+		expiresAt: expiresAt,
+	}
+}
+
+// evictLocked frees room in the cache for one new entry. The caller must
+// hold cacheMu for writing. It first drops every entry whose TTL has
+// already passed; if that alone does not free enough room (a burst of
+// entries that are all still fresh), it evicts arbitrary entries until the
+// cache is back under its cap -- Go's randomized map iteration order makes
+// this an effectively random eviction without the bookkeeping a true LRU
+// list would need, which is enough to bound memory against a client probing
+// distinct serials (go-xkms#1263) without adding an eviction data structure
+// this responder otherwise has no use for.
+func (o *OCSPResponder) evictLocked() {
+	now := time.Now()
+	for key, entry := range o.cache {
+		if now.After(entry.expiresAt) {
+			delete(o.cache, key)
+		}
+	}
+	for key := range o.cache {
+		if len(o.cache) < o.config.MaxCacheEntries {
+			return
+		}
+		delete(o.cache, key)
 	}
 }
 

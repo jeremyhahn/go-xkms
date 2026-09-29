@@ -19,7 +19,7 @@
 // The package ships with multiple notifier backends:
 //   - LogNotifier: logs via slog (always available as fallback)
 //   - DBusNotifier: sends desktop notifications via org.freedesktop.Notifications
-//   - CommandNotifier: executes a user-provided shell command
+//   - CommandNotifier: executes an operator-provided command (argv, no shell)
 //   - MultiNotifier: fans out to multiple notifiers in parallel
 //
 // All notifier implementations are safe for concurrent use.

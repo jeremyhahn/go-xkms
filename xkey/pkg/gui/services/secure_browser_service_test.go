@@ -458,6 +458,40 @@ func TestLaunchBrowserEmptyURL(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSecureBrowserEmptyURL)
 }
 
+// TestLaunchBrowserInvalidURL_DoesNotExec verifies that a URL failing
+// launch validation is rejected before any subprocess is created -- the
+// dangerous case being a scheme like javascript:/file: or a leading '-'
+// reaching the browser binary's argv (go-xkms#1275).
+func TestLaunchBrowserInvalidURL_DoesNotExec(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "javascript scheme", url: "javascript:alert(1)"},
+		{name: "file scheme", url: "file:///etc/passwd"},
+		{name: "leading dash", url: "-x"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cert := testSecureBrowserCA(t, "Invalid URL CA")
+			svc, _ := newTestSecureBrowserService(t, []*x509.Certificate{cert})
+			svc.SetContext(context.Background())
+
+			execCalled := false
+			svc.execCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+				execCalled = true
+				return exec.CommandContext(ctx, "true")
+			}
+
+			_, err := svc.LaunchBrowser("/usr/bin/google-chrome", tt.url)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrSecureBrowserInvalidURL)
+			assert.False(t, execCalled, "no subprocess should be created for a rejected URL")
+		})
+	}
+}
+
 // TestLaunchBrowserUnknownFamily verifies error for unrecognized browser.
 func TestLaunchBrowserUnknownFamily(t *testing.T) {
 	cert := testSecureBrowserCA(t, "Unknown CA")
@@ -753,8 +787,11 @@ func TestBuildLaunchArgsChromeShared(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, env)
 	assert.Equal(t, "/usr/bin/google-chrome", args[0])
-	assert.Equal(t, "https://example.com", args[1])
-	assert.Len(t, args, 2)
+	// "--" marks the end of Chromium's own switches, guaranteeing url is
+	// never parsed as one even if it somehow began with '-'.
+	assert.Equal(t, "--", args[1])
+	assert.Equal(t, "https://example.com", args[2])
+	assert.Len(t, args, 3)
 }
 
 // TestBuildLaunchArgsFirefoxIsolated verifies Firefox isolated launch args.
@@ -769,7 +806,10 @@ func TestBuildLaunchArgsFirefoxIsolated(t *testing.T) {
 	assert.Equal(t, "/usr/bin/firefox", args[0])
 	assert.Equal(t, "--profile", args[1])
 	assert.Equal(t, filepath.Join(baseDir, "firefox", "profile"), args[2])
-	assert.Equal(t, "https://example.com", args[3])
+	// "--" marks the end of Firefox's own switches, guaranteeing url is
+	// never parsed as one even if it somehow began with '-'.
+	assert.Equal(t, "--", args[3])
+	assert.Equal(t, "https://example.com", args[4])
 }
 
 // TestBuildLaunchArgsFirefoxShared verifies Firefox shared launch args.
@@ -783,8 +823,11 @@ func TestBuildLaunchArgsFirefoxShared(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, env, "firefox shared launch must not set any env vars")
 	assert.Equal(t, "/usr/bin/firefox", args[0])
-	assert.Equal(t, "https://example.com", args[1])
-	assert.Len(t, args, 2)
+	// "--" marks the end of Firefox's own switches, guaranteeing url is
+	// never parsed as one even if it somehow began with '-'.
+	assert.Equal(t, "--", args[1])
+	assert.Equal(t, "https://example.com", args[2])
+	assert.Len(t, args, 3)
 }
 
 // TestBuildLaunchArgsUnknownFamily verifies error for unknown browser family.

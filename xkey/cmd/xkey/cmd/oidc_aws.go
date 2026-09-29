@@ -32,7 +32,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/handlers"
-	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
 
@@ -185,7 +184,7 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 			return
 		}
 		_, _ = fmt.Fprintln(out, "Opening browser for AWS authentication...")
-		if err := browser.OpenURL(authURL); err != nil {
+		if err := openLaunchURL(authURL); err != nil {
 			_, _ = fmt.Fprintf(out, "Failed to open browser: %v\n", err)
 			_, _ = fmt.Fprintln(out, "Please open the following URL manually:")
 			_, _ = fmt.Fprintln(out)
