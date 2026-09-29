@@ -383,6 +383,17 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS13,
+		// Session tickets are disabled as defence in depth: this server's
+		// agent connections are long-lived and reconnect with their own
+		// backoff (Client.monitorConnection), so there is no latency-
+		// sensitive case here that needs 0-RTT resumption, and disabling
+		// tickets means no connection can ever reach the wire without
+		// running the full handshake - and therefore verifyConnection -
+		// below. VerifyConnection alone (see verifyConnection) is already
+		// resumption-safe, but the two together mean a future change that
+		// re-enables tickets elsewhere in this config cannot silently
+		// reopen the gap fixed here (go-xkms#1285).
+		SessionTicketsDisabled: true,
 	}
 
 	// If a CA file is configured, require and verify client certificates (mTLS).
@@ -397,25 +408,36 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 		}
 		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 		tlsConfig.ClientCAs = caCertPool
-		tlsConfig.VerifyPeerCertificate = s.verifyPeerCertificate
+		tlsConfig.VerifyConnection = s.verifyConnection
 	}
 
 	return tlsConfig, nil
 }
 
-// verifyPeerCertificate runs after Go's TLS stack has already verified the
-// connecting agent's certificate chains to a trusted CA (tls.Config.ClientCAs).
-// It adds the two checks chain validation alone cannot make: that the
-// certificate has not been revoked, and that it belongs to an agent still
-// present in the enrollment store (a removed agent has no record there,
-// regardless of what its certificate says). Both checks are delegated to
+// verifyConnection is installed as tls.Config.VerifyConnection, not
+// VerifyPeerCertificate: Go calls VerifyConnection on every handshake,
+// including one that resumes a prior session from a ticket, whereas
+// VerifyPeerCertificate is skipped whenever a session resumes because no
+// certificate message is exchanged on that path. A revoked or removed
+// agent holding a still-valid ticket would otherwise keep access for the
+// life of the ticket (go-xkms#1285). Go's TLS stack restores the original
+// handshake's verified chain into ConnectionState.VerifiedChains on a
+// resumed connection as well as a full one, so this runs the same checks
+// either way.
+//
+// By the time this runs, Go has already verified the connecting agent's
+// certificate chain to a trusted CA (tls.Config.ClientCAs). It adds the two
+// checks chain validation alone cannot make: that the certificate has not
+// been revoked, and that it belongs to an agent still present in the
+// enrollment store (a removed agent has no record there, regardless of what
+// its certificate says). Both checks are delegated to
 // EnrollmentService.VerifyAgentCertificate, which fails closed.
-func (s *Server) verifyPeerCertificate(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
-	if len(verifiedChains) == 0 || len(verifiedChains[0]) == 0 {
+func (s *Server) verifyConnection(cs tls.ConnectionState) error {
+	if len(cs.VerifiedChains) == 0 || len(cs.VerifiedChains[0]) == 0 {
 		return ErrCertificateInvalid
 	}
 
-	leaf := verifiedChains[0][0]
+	leaf := cs.VerifiedChains[0][0]
 	if err := s.enrollment.VerifyAgentCertificate(leaf); err != nil {
 		s.logger.Warn("rejected agent connection",
 			"subject", leaf.Subject.String(),
