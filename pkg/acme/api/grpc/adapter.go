@@ -73,7 +73,7 @@ func NewAdapter(config *api.AdapterConfig) (*Adapter, error) {
 
 	if isUnixSocket {
 		// Unix socket connection - no TLS needed for local IPC
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials())) // insecure-ok: Unix domain socket, no network path for a MITM. Allowlisted in Makefile check-insecure-tls.
 
 		// Extract socket path, stripping unix:// prefix if present
 		socketPath := stripUnixPrefix(addr)
@@ -112,7 +112,8 @@ func NewAdapter(config *api.AdapterConfig) (*Adapter, error) {
 
 			opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 		} else {
-			opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			// config.TLSConfig == nil is the caller's own explicit api.AdapterConfig choice.
+			opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials())) // insecure-ok: explicit-config transport. Allowlisted in Makefile check-insecure-tls.
 		}
 	}
 

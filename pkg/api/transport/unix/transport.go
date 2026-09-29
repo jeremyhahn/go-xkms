@@ -148,7 +148,9 @@ func (t *Transport) Connect(ctx context.Context) error {
 
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	} else {
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// This package dials only "unix://" addresses (see grpc.NewClient below):
+		// a Unix domain socket, with no network path for a MITM.
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials())) // insecure-ok: Unix domain socket. Allowlisted in Makefile check-insecure-tls.
 	}
 
 	conn, err := grpc.NewClient("unix://"+t.config.Address, opts...)

@@ -19,12 +19,14 @@
 //
 // Enrollment captures the credential's COSE-encoded public key (the
 // authenticatorData attested credential key) plus the credential id and rp id.
-// Challenge issues a random WebAuthn challenge nonce. Verify reconstructs the
-// WebAuthn signed message -- authenticatorData || SHA-256(clientDataJSON) --
-// from the response and verifies the assertion signature against the enrolled
-// COSE public key using the canonical go-webauthn webauthncose verifier. This
-// is the same signature check the go-xkms WebAuthn relying party performs in
-// FinishLogin; there is no stubbed always-pass path.
+// Challenge issues a random WebAuthn challenge nonce and carries the enrolled
+// COSE key and rp id with it. Verify checks the assertion's rpIdHash and
+// user-presence flag, the clientDataJSON ceremony type and challenge, then
+// reconstructs the WebAuthn signed message -- authenticatorData ||
+// SHA-256(clientDataJSON) -- and verifies the assertion signature against the
+// enrolled COSE public key using the canonical go-webauthn webauthncose
+// verifier. This is the same signature check the go-xkms WebAuthn relying
+// party performs in FinishLogin; there is no stubbed always-pass path.
 //
 // Usage:
 //
@@ -33,14 +35,16 @@
 package fido2
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"strconv"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
@@ -52,6 +56,17 @@ const (
 	defaultChallengeTTLSeconds = 5 * 60
 	defaultRPID                = "localhost"
 	challengeLength            = 32
+
+	// methodDataEnrolledKey is the challenge MethodData key carrying the
+	// enrolled COSE credential public key, standard base64. Verify reads the
+	// verification key from here and nowhere else, so a response can never
+	// substitute its own key.
+	methodDataEnrolledKey = "enrolled_cose_public_key"
+
+	// methodDataRPID is the challenge MethodData key carrying the enrolled
+	// relying-party id, whose SHA-256 the assertion's authenticatorData must
+	// begin with.
+	methodDataRPID = "rp_id"
 )
 
 // Config configures a FIDO2 Factor. The zero value is valid.
@@ -150,12 +165,10 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 		rpID = v
 	}
 
-	hash := sha256.Sum256(cose)
 	metadata := map[string]string{
-		"credential_id":   credentialID,
-		"rp_id":           rpID,
-		"public_key_hash": base64.StdEncoding.EncodeToString(hash[:]),
-		"ttl":             strconv.Itoa(f.cfg.ChallengeTTLSeconds),
+		"credential_id": credentialID,
+		"rp_id":         rpID,
+		"ttl":           strconv.Itoa(f.cfg.ChallengeTTLSeconds),
 	}
 	if v := stringParam(params.MethodParams["aaguid"]); v != "" {
 		metadata["aaguid"] = v
@@ -173,7 +186,11 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 }
 
 // Challenge produces a 32-byte random WebAuthn challenge the authenticator must
-// sign as part of an assertion (navigator.credentials.get).
+// sign as part of an assertion (navigator.credentials.get). The enrolled COSE
+// public key (MethodData["enrolled_cose_public_key"], standard base64) and rp
+// id (MethodData["rp_id"]) travel with the challenge so Verify checks the
+// assertion against the server-held enrollment rather than anything the
+// response supplies.
 func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnrollment) (*qrdbsdk.AuthFactorChallenge, error) {
 	if enrollment == nil {
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "enrollment must not be nil"}
@@ -197,25 +214,31 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 		Nonce:        nonce,
 		ExpiresAt:    time.Now().UTC().Add(time.Duration(ttl) * time.Second),
 		MethodData: map[string]any{
-			"challenge_base64": base64.RawURLEncoding.EncodeToString(nonce),
-			"rp_id":            enrollment.Metadata["rp_id"],
-			"credential_id":    enrollment.Metadata["credential_id"],
+			"challenge_base64":    base64.RawURLEncoding.EncodeToString(nonce),
+			methodDataRPID:        enrollment.Metadata["rp_id"],
+			"credential_id":       enrollment.Metadata["credential_id"],
+			methodDataEnrolledKey: base64.StdEncoding.EncodeToString(enrollment.PublicKey),
 		},
 	}, nil
 }
 
-// Verify validates a WebAuthn assertion against the enrolled credential public
-// key. The response carries the signed message components in metadata:
+// Verify validates a WebAuthn assertion against the enrolled credential. The
+// response carries only the assertion itself:
 //
-//	"authenticator_data" string  base64 raw authenticatorData
-//	"client_data"        string  base64 raw clientDataJSON
-//	"cose_public_key"    string  base64 enrolled COSE public key
+//	response.Value                  assertion signature (ASN.1 DER for EC2/RSA, raw for OKP)
+//	Metadata["authenticator_data"]  base64 raw authenticatorData
+//	Metadata["client_data"]         base64 raw clientDataJSON
 //
-// response.Value holds the assertion signature (ASN.1 DER for EC2/RSA, raw for
-// OKP/Ed25519). Verify reconstructs authenticatorData || SHA-256(clientDataJSON)
-// and checks the signature with the canonical webauthncose verifier. It also
-// binds the assertion to the challenge by requiring the clientDataJSON to embed
-// the challenge nonce (base64url, per the WebAuthn CollectedClientData format).
+// The verification key and rp id come from the challenge
+// (MethodData["enrolled_cose_public_key"] and MethodData["rp_id"]) — never from
+// the response — so an attacker cannot pass verification by signing with a
+// credential of their own and presenting its key alongside the assertion.
+//
+// Checks, following the WebAuthn assertion procedure: authenticatorData begins
+// with SHA-256 of the enrolled rp id and has the user-present flag set;
+// clientDataJSON is a "webauthn.get" ceremony whose challenge is the issued
+// nonce (base64url); the signature over authenticatorData ||
+// SHA-256(clientDataJSON) verifies under the enrolled COSE key.
 func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChallenge, response *qrdbsdk.AuthFactorResponse) error {
 	if challenge == nil {
 		return &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "challenge must not be nil"}
@@ -227,31 +250,54 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 		return &qrdbsdk.AuthFactorChallengeExpiredError{ChallengeID: challenge.ChallengeID}
 	}
 
+	key, err := enrolledKey(challenge)
+	if err != nil {
+		return err
+	}
+	rpID, ok := challenge.MethodData[methodDataRPID].(string)
+	if !ok || rpID == "" {
+		return verificationFailed(methodDataRPID + " missing from challenge MethodData")
+	}
+
 	authData, err := decodeB64(response.Metadata["authenticator_data"])
 	if err != nil {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "authenticator_data: " + err.Error()}
+		return verificationFailed("authenticator_data: " + err.Error())
 	}
 	clientData, err := decodeB64(response.Metadata["client_data"])
 	if err != nil {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "client_data: " + err.Error()}
-	}
-	cose, err := decodeB64(response.Metadata["cose_public_key"])
-	if err != nil {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "cose_public_key: " + err.Error()}
+		return verificationFailed("client_data: " + err.Error())
 	}
 
-	// Bind the assertion to this challenge: the clientDataJSON must embed the
-	// exact challenge nonce, base64url-encoded, per the WebAuthn
-	// CollectedClientData "challenge" member. This prevents replay of an
-	// assertion produced for a different challenge.
+	// The authenticator scopes each credential to one relying party, and
+	// records which in the rpIdHash. An assertion made for another RP, or
+	// without the user touching the authenticator, is refused.
+	var parsed protocol.AuthenticatorData
+	if err := parsed.Unmarshal(authData); err != nil {
+		return verificationFailed("authenticator_data: " + err.Error())
+	}
+	rpIDHash := sha256.Sum256([]byte(rpID))
+	if subtle.ConstantTimeCompare(parsed.RPIDHash, rpIDHash[:]) != 1 {
+		return verificationFailed("authenticator_data rpIdHash does not match the enrolled rp id")
+	}
+	if !parsed.Flags.UserPresent() {
+		return verificationFailed("authenticator_data user-present flag is not set")
+	}
+
+	// Bind the assertion to this challenge: clientDataJSON must describe an
+	// assertion ceremony over the exact challenge nonce, base64url-encoded per
+	// the WebAuthn CollectedClientData format. This prevents replay of an
+	// assertion produced for a different challenge, and the substitution of a
+	// registration signature for an assertion.
+	var collected protocol.CollectedClientData
+	if err := json.Unmarshal(clientData, &collected); err != nil {
+		return verificationFailed("client_data: " + err.Error())
+	}
+	if collected.Type != protocol.AssertCeremony {
+		return verificationFailed("clientDataJSON type is " + string(collected.Type) + ", want " + string(protocol.AssertCeremony))
+	}
 	wantChallenge := base64.RawURLEncoding.EncodeToString(challenge.Nonce)
-	if !containsChallenge(clientData, wantChallenge) {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "clientDataJSON does not bind the issued challenge"}
-	}
-
-	key, err := webauthncose.ParsePublicKey(cose)
-	if err != nil {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "parse COSE public key: " + err.Error()}
+	if subtle.ConstantTimeCompare([]byte(collected.Challenge), []byte(wantChallenge)) != 1 {
+		return verificationFailed("clientDataJSON does not bind the issued challenge")
 	}
 
 	// WebAuthn signs authenticatorData || SHA-256(clientDataJSON).
@@ -262,20 +308,35 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 
 	valid, err := webauthncose.VerifySignature(key, signed, response.Value)
 	if err != nil {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "verify signature: " + err.Error()}
+		return verificationFailed("verify signature: " + err.Error())
 	}
 	if !valid {
-		return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: "assertion signature invalid"}
+		return verificationFailed("assertion signature invalid")
 	}
 	return nil
 }
 
-// containsChallenge reports whether the clientDataJSON embeds the supplied
-// base64url challenge string. The challenge member is a JSON string value, so a
-// quoted substring match is sufficient and avoids a full JSON parse coupling to
-// a specific struct shape.
-func containsChallenge(clientDataJSON []byte, challenge string) bool {
-	return bytes.Contains(clientDataJSON, []byte(`"`+challenge+`"`))
+// enrolledKey parses the enrolled COSE credential public key the challenge
+// carries. A challenge without one is refused: there is no other source.
+func enrolledKey(challenge *qrdbsdk.AuthFactorChallenge) (any, error) {
+	encoded, ok := challenge.MethodData[methodDataEnrolledKey].(string)
+	if !ok || encoded == "" {
+		return nil, verificationFailed(methodDataEnrolledKey + " missing from challenge MethodData")
+	}
+	cose, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, verificationFailed("decode " + methodDataEnrolledKey + ": " + err.Error())
+	}
+	key, err := webauthncose.ParsePublicKey(cose)
+	if err != nil {
+		return nil, verificationFailed("parse COSE public key: " + err.Error())
+	}
+	return key, nil
+}
+
+// verificationFailed builds the factor's verification refusal.
+func verificationFailed(reason string) *qrdbsdk.AuthFactorVerificationFailedError {
+	return &qrdbsdk.AuthFactorVerificationFailedError{FactorName: FactorName, Reason: reason}
 }
 
 // decodeB64 decodes a metadata value that may be standard or raw-url base64.

@@ -1,6 +1,6 @@
 # Auth Factors — Architecture
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## The problem
 
@@ -106,6 +106,11 @@ and qrdb composes the answers into an authentication decision.
 - **Challenges are qrdb's and are time-bounded.** Default TTL is five minutes
   per factor; `Config.ChallengeTTLSeconds` overrides it for all four uniformly.
   A long TTL is a replay window.
+- **The enrollment is the only source of a verification key.** Each factor's
+  challenge carries the enrolled public key, and `Verify` reads it from the
+  stored challenge. A response carries a signature (and, for FIDO2, the
+  assertion's authenticatorData and clientDataJSON), never a key. A key the
+  client could supply would let anyone sign with a key of their own.
 - **`FIDO2RPID` is a security parameter, not a label.** The relying-party id
   recorded at enrollment is what binds a credential to an origin; changing it
   invalidates existing enrollments, and setting it too broadly widens where a
