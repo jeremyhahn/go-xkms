@@ -103,7 +103,11 @@ func TestRouter_ClientFaultKeepsMessage(t *testing.T) {
 	server.server.Handler.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, notFound.Error(), decodeErrorResponse(t, w).Error)
+	// The service layer prefixes its own context (go-xkms#1218); the
+	// client-facing text is kept, not replaced by the internal-error text.
+	msg := decodeErrorResponse(t, w).Error
+	assert.Contains(t, msg, notFound.Error())
+	assert.NotEqual(t, ErrInternalError.Error(), msg)
 	assert.NotContains(t, logs.String(), withheldErrorLogMessage)
 }
 

@@ -1185,7 +1185,9 @@ func TestCopyKeyHandler_ExportError(t *testing.T) {
 		ctx.CopyKeyHandler(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "export key failed during copy")
+		// A 500's text is withheld from the client and logged (go-xkms#1118).
+		assert.NotContains(t, w.Body.String(), "export key failed during copy")
+		assert.Contains(t, w.Body.String(), ErrInternalError.Error())
 	})
 }
 
