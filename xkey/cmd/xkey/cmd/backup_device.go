@@ -392,7 +392,10 @@ func resolvePairedDevice(deviceName string) (*PairedDevice, error) {
 		return nil, ErrDeviceNotPaired
 	}
 
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return nil, err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return nil, &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}

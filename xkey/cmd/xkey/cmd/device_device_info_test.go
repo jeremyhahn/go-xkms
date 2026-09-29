@@ -232,6 +232,23 @@ func TestRunDeviceInfo_DeviceNotFound(t *testing.T) {
 	require.Contains(t, detail.Detail, "Nonexistent")
 }
 
+// TestRunDeviceInfo_AmbiguousNameRefused pins #1315: two paired records
+// sharing a name must refuse `device device-info` instead of silently
+// displaying whichever record happens to be first in the file.
+func TestRunDeviceInfo_AmbiguousNameRefused(t *testing.T) {
+	deviceInfoTestHome(t)
+	require.NoError(t, saveDevicesConfig(&DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "Phone A", Address: "11:22:33:44:55:66", PairedAt: time.Now()},
+			{Name: "Phone A", Address: "AA:BB:CC:DD:EE:FF", PairedAt: time.Now()},
+		},
+	}))
+
+	cmd := &cobra.Command{}
+	err := runDeviceInfo(cmd, []string{"Phone A"})
+	require.ErrorIs(t, err, ErrDeviceNameAmbiguous)
+}
+
 func TestRunDeviceInfo_DefaultDeviceSucceeds(t *testing.T) {
 	deviceInfoTestHome(t)
 	require.NoError(t, saveDevicesConfig(&DevicesConfig{

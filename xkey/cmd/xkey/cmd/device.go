@@ -67,6 +67,16 @@ var (
 
 	// ErrSecurityLevelInsufficient indicates the device security level is too low.
 	ErrSecurityLevelInsufficient = errors.New("device: security level insufficient")
+
+	// ErrDeviceNameAmbiguous indicates more than one paired device record
+	// shares the requested name, so a lookup by name cannot choose which
+	// pinned key to trust. This is declared here, not build-tagged behind
+	// "ble" like most of the commands that return it, because
+	// findDeviceByName -- the one place every one of those commands
+	// resolves a name through -- is itself always built. See
+	// pairing.FindPairedDeviceByName, and #1315 (the propagation of this
+	// error to every findDeviceByName/selectDevice caller).
+	ErrDeviceNameAmbiguous = errors.New("device: more than one paired device has this name; re-pair or remove the duplicate")
 )
 
 // Default device configuration values.
@@ -486,13 +496,22 @@ func truncateKey(key string) string {
 }
 
 // findDeviceByName finds a paired device by name.
-func findDeviceByName(cfg *DevicesConfig, name string) *PairedDevice {
-	for i := range cfg.Devices {
-		if cfg.Devices[i].Name == name {
-			return &cfg.Devices[i]
-		}
+//
+// It delegates to pairing.FindPairedDeviceByName, which owns the paired
+// device set (#130), so there is exactly one implementation of the lookup.
+// A device's Name is peer-chosen, untrusted input (the CLI stores the
+// BLE-advertised local name; the GUI stores the name the phone returns in
+// the pairing confirmation RPC), so resolving more than one record sharing
+// a name by taking the first match would let an attacker who controls when
+// their device pairs decide silently which pinned key every later caller
+// trusts. When that happens, findDeviceByName returns a non-nil error
+// wrapping ErrDeviceNameAmbiguous instead of guessing (#1315).
+func findDeviceByName(cfg *DevicesConfig, name string) (*PairedDevice, error) {
+	device, err := pairing.FindPairedDeviceByName(cfg.Devices, name)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrDeviceNameAmbiguous, Cause: err}
 	}
-	return nil
+	return device, nil
 }
 
 // findDeviceByAddress finds a paired device by BLE address.

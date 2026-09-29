@@ -187,7 +187,10 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
@@ -308,7 +311,10 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
@@ -398,7 +404,10 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
@@ -508,7 +517,10 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Select device
-	device := selectDevice(cfg, deviceName)
+	device, err := selectDevice(cfg, deviceName)
+	if err != nil {
+		return err
+	}
 	if device == nil {
 		if deviceName != "" {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
