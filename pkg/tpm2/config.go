@@ -17,6 +17,15 @@ import (
 
 type PCRBankAlgo string
 
+// DefaultPlatformPCR is the PCR the golden platform measurement is extended
+// into, and so the PCR every platform policy (the Platform SRK's, and any
+// key or sealed object bound to it) is computed over, when a configuration
+// leaves it unset. PCR 16 is the TCG "debug" PCR: resettable and never
+// extended by firmware or the OS, so the measurement xkms extends is the
+// only thing in it. xkmsd and xkey both resolve an unset platform PCR to
+// this value; a zero value never means PCR 0 (the firmware PCR).
+const DefaultPlatformPCR uint = 16
+
 var (
 	PCRBankSHA1   = "sha1"
 	PCRBankSHA256 = "sha256"
@@ -135,7 +144,7 @@ var (
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
 		},
-		PlatformPCR:     16,
+		PlatformPCR:     DefaultPlatformPCR,
 		PlatformPCRBank: PCRBankSHA256,
 		SSRK: &SRKConfig{
 			Debug:  false,

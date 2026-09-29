@@ -148,8 +148,8 @@ func openTPM() (xkms.TrustedPlatformModule, error) {
 			Model:              "xkey",
 			Serial:             "001",
 		},
-		PlatformPCR:     16,
-		PlatformPCRBank: "sha256",
+		PlatformPCR:     xkms.DefaultPlatformPCR,
+		PlatformPCRBank: xkms.PCRBankSHA256,
 	}
 
 	params := &xkms.TPMParams{
@@ -178,7 +178,7 @@ func openTPMForProvisioning() (xkms.TrustedPlatformModule, error) {
 // own --device/--simulator flags (tpmCfg).
 // - pcrBank: override the platform PCR bank (empty string uses default "sha256")
 // - goldenPCRs: override which PCRs to include in golden measurement (nil uses config default)
-// - platformPCR: override which PCR to extend with golden measurement (0 uses default 16)
+// - platformPCR: override which PCR to extend with golden measurement (0 uses xkms.DefaultPlatformPCR)
 func openTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
 	return openTPMForProvisioningWithDeviceAndPCROverrides(tpmCfg.device, tpmCfg.useSimulator, pcrBank, goldenPCRs, platformPCR)
 }
@@ -194,8 +194,8 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 	}))
 
 	// Set defaults
-	effectivePCRBank := "sha256"
-	effectivePlatformPCR := uint(16)
+	effectivePCRBank := xkms.PCRBankSHA256
+	effectivePlatformPCR := xkms.DefaultPlatformPCR
 
 	// Apply overrides if provided
 	if pcrBank != "" {

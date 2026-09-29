@@ -472,11 +472,44 @@ func TestConfig_Validate_DefaultValues(t *testing.T) {
 	if config.Hash != "SHA-256" {
 		t.Errorf("Hash default: expected SHA-256, got %q", config.Hash)
 	}
-	if config.PlatformPCRBank != "SHA256" {
+	if config.PlatformPCRBank != pkgtpm2.PCRBankSHA256 {
 		t.Errorf("PlatformPCRBank default: expected SHA256, got %q", config.PlatformPCRBank)
 	}
 	if config.CN != "xkms" {
 		t.Errorf("CN default: expected xkms, got %q", config.CN)
+	}
+}
+
+// TestConfig_Validate_PlatformPCRDefault verifies an unset platform PCR takes
+// the pkg/tpm2 library default, the same PCR xkey extends, rather than PCR 0
+// (the firmware PCR). xkmsd's backends.tpm2 path and xkey must agree on the
+// PCR a Platform SRK policy is computed over, or a TPM enrolled by one is not
+// usable by the other.
+func TestConfig_Validate_PlatformPCRDefault(t *testing.T) {
+	config := &Config{UseSimulator: true, KeyDir: t.TempDir()}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if config.PlatformPCR != pkgtpm2.DefaultPlatformPCR {
+		t.Errorf("PlatformPCR default = %d, want %d", config.PlatformPCR, pkgtpm2.DefaultPlatformPCR)
+	}
+	if got := config.ToTPMConfig().PlatformPCR; got != pkgtpm2.DefaultPlatformPCR {
+		t.Errorf("ToTPMConfig().PlatformPCR = %d, want %d", got, pkgtpm2.DefaultPlatformPCR)
+	}
+	if pkgtpm2.DefaultConfig.PlatformPCR != pkgtpm2.DefaultPlatformPCR {
+		t.Errorf("DefaultConfig.PlatformPCR = %d, want %d", pkgtpm2.DefaultConfig.PlatformPCR, pkgtpm2.DefaultPlatformPCR)
+	}
+}
+
+// TestConfig_Validate_PlatformPCRExplicit verifies an operator-chosen platform
+// PCR is kept, not overwritten by the default.
+func TestConfig_Validate_PlatformPCRExplicit(t *testing.T) {
+	config := &Config{UseSimulator: true, KeyDir: t.TempDir(), PlatformPCR: 23}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if config.PlatformPCR != 23 {
+		t.Errorf("PlatformPCR = %d, want 23", config.PlatformPCR)
 	}
 }
 
@@ -1894,8 +1927,8 @@ func TestNewBackend_VerifyConfigDefaults(t *testing.T) {
 	if config.Hash != "SHA-256" {
 		t.Errorf("Hash default: got %q, want %q", config.Hash, "SHA-256")
 	}
-	if config.PlatformPCRBank != "SHA256" {
-		t.Errorf("PlatformPCRBank default: got %q, want %q", config.PlatformPCRBank, "SHA256")
+	if config.PlatformPCRBank != pkgtpm2.PCRBankSHA256 {
+		t.Errorf("PlatformPCRBank default: got %q, want %q", config.PlatformPCRBank, pkgtpm2.PCRBankSHA256)
 	}
 	if config.CN != "xkms" {
 		t.Errorf("CN default: got %q, want %q", config.CN, "xkms")

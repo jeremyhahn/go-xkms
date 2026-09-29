@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -204,8 +205,8 @@ func TestConfig_Validate_AllDefaults(t *testing.T) {
 	if config.Hash != "SHA-256" {
 		t.Errorf("Hash: expected SHA-256, got %s", config.Hash)
 	}
-	if config.PlatformPCRBank != "SHA256" {
-		t.Errorf("PlatformPCRBank: expected SHA256, got %s", config.PlatformPCRBank)
+	if config.PlatformPCRBank != pkgtpm2.PCRBankSHA256 {
+		t.Errorf("PlatformPCRBank: expected %s, got %s", pkgtpm2.PCRBankSHA256, config.PlatformPCRBank)
 	}
 	if config.CN != "xkms" {
 		t.Errorf("CN: expected xkms, got %s", config.CN)

@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 ## Exported surface — `pkg/tpm2`
 
@@ -580,6 +580,15 @@ lengths against the input before allocating. Regression and fuzz coverage:
   Policy NV Index with the platform Delegation Policy (see Invariants). The
   default configuration sets it on the IDevID. It does not alter the key.
 - **PCR selection and policy** — `pkg/seal/policy` and `pcr.go`.
+- **Platform PCR** (`platform-pcr`, backend `platform_pcr`) — the PCR the
+  golden measurement is extended into and every platform policy is computed
+  over. Unset (zero) means `DefaultPlatformPCR` (16) on every path: the
+  library `DefaultConfig`, `pkg/backend/tpm2.Config.Validate` (xkmsd's
+  `backends.tpm2`, node-seal and platform-store opens), and xKey's CLI and
+  GUI. It never means PCR 0, the firmware PCR. An unset bank means
+  `PCRBankSHA256`. Before 2026-09-29, xkmsd left an unset `platform_pcr` at 0
+  while xKey used 16, so the two computed different platform policies on one
+  TPM.
 - **Session encryption** — not configurable. Every secret crosses the TPM bus
   encrypted, always; the `encrypt-sessions` / `EncryptSession` switch was
   removed (#1147). See [Bus protection](#bus-protection).

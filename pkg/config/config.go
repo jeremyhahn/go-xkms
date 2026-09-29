@@ -1120,7 +1120,9 @@ type TPM2Config struct {
 	SRKHandle uint32 `yaml:"srk_handle,omitempty"`
 
 	// PlatformPolicy binds sealed objects to a PCR policy; PlatformPCR /
-	// PlatformPCRBank select the PCR index and bank.
+	// PlatformPCRBank select the PCR index and bank. An unset PlatformPCR
+	// resolves to tpm2.DefaultPlatformPCR (16) and an unset bank to sha256,
+	// the same defaults xkey applies -- zero never selects PCR 0.
 	PlatformPolicy  bool   `yaml:"platform_policy,omitempty"`
 	PlatformPCR     uint   `yaml:"platform_pcr,omitempty"`
 	PlatformPCRBank string `yaml:"platform_pcr_bank,omitempty"`

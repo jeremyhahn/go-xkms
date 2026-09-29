@@ -76,10 +76,11 @@ type Config struct {
 	// PlatformPolicy enables platform PCR policy authorization
 	PlatformPolicy bool `yaml:"platform_policy" json:"platform_policy"`
 
-	// PlatformPCR is the PCR index used for platform policy (default: 0)
+	// PlatformPCR is the PCR index used for platform policy. Zero means
+	// unset and resolves to pkgtpm2.DefaultPlatformPCR (16), never PCR 0.
 	PlatformPCR uint `yaml:"platform_pcr" json:"platform_pcr"`
 
-	// PlatformPCRBank is the PCR bank hash algorithm (default: "SHA256")
+	// PlatformPCRBank is the PCR bank hash algorithm (default: pkgtpm2.PCRBankSHA256)
 	PlatformPCRBank string `yaml:"platform_pcr_bank" json:"platform_pcr_bank"`
 
 	// CN is the common name prefix for keys created by this backend
@@ -126,8 +127,12 @@ func (c *Config) Validate() error {
 		c.Hash = "SHA-256"
 	}
 
+	if c.PlatformPCR == 0 {
+		c.PlatformPCR = pkgtpm2.DefaultPlatformPCR
+	}
+
 	if c.PlatformPCRBank == "" {
-		c.PlatformPCRBank = "SHA256"
+		c.PlatformPCRBank = pkgtpm2.PCRBankSHA256
 	}
 
 	if c.CN == "" {

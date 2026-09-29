@@ -360,6 +360,10 @@ var (
 	DefaultTPMConfig = tpm2.DefaultConfig
 )
 
+// DefaultPlatformPCR is the PCR an unset platform PCR resolves to, in xkmsd
+// and xkey alike.
+const DefaultPlatformPCR = tpm2.DefaultPlatformPCR
+
 // ---------------------------------------------------------------------------
 // TPM public key template variables
 // ---------------------------------------------------------------------------
