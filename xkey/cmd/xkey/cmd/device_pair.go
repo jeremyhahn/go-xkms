@@ -541,11 +541,20 @@ func performPairingAttestation(
 }
 
 // loadPairingAttestationTrust builds this machine's Android hardware
-// attestation trust material.
+// attestation trust material: the trust store's roots and devices.yaml's
+// attested-application allow-list (#1305).
 //
 // It is the CLI's half of a decision whose other half is shared: WHICH store
-// to open is per-surface, what to do with the pool is not.
+// and file to read is per-surface, what to do with them is not. A missing
+// devices.yaml allow-lists nothing, so LoadTrust refuses with
+// pairing.ErrApplicationPolicyUnconfigured; one that cannot be read refuses
+// outright rather than being mistaken for an absent policy.
 func loadPairingAttestationTrust() (_ *attestation.Trust, err error) {
+	devices, err := loadDevicesConfig()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
+	}
+
 	store, err := openTrustStore()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: attestation.ErrDeviceAttestVerifyFailed, Cause: err}
@@ -556,7 +565,7 @@ func loadPairingAttestationTrust() (_ *attestation.Trust, err error) {
 		}
 	}()
 
-	return attestation.LoadTrust(store)
+	return attestation.LoadTrust(store, devices.applicationPolicy())
 }
 
 // newPairedDeviceRecord builds the persisted record for a freshly paired

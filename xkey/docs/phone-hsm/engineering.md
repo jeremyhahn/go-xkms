@@ -1,6 +1,6 @@
 # Phone as HSM — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## Exported surface — `xkey/pkg/pairing`
 
@@ -376,6 +376,47 @@ defect and the shape of the fix is what the current design is for.
    asserting `GENERATED`. An authorization list making neither claim — an
    absent extension, or evidence from a device with no TEE at all — therefore
    fails closed exactly as a wrong value would.
+
+   **`RequireAttestedApplication` requires the attestation to name an
+   allow-listed application build (#1305).** Everything above says the key
+   lives in a locked, verified-boot handset's secure hardware and was
+   generated there; none of it says *which application* asked for it. Without
+   this check any app on any genuine handset — or a repackaged xkey-android
+   signed with someone else's key — produces evidence that passes. The
+   `attestationApplicationId` (`softwareEnforced` tag 709) is written by the
+   Keystore daemon, not by the calling app, and carries the package name and
+   the SHA-256 digest of each signing certificate.
+
+   `RequireAttestedApplication` (`xkey/pkg/attestation/device.go`) matches it
+   with `pairing.ApplicationPolicy.Match` (`xkey/pkg/pairing/application_policy.go`)
+   — the one implementation, also used by `EnrollmentPolicy.Evaluate` for LDevID
+   enrollment. A package matches only by exact name **and** one of the
+   entry's signing digests; an entry with no digests is honoured only when
+   `allow_unpinned_signatures` is set. Refusals wrap
+   `pairing.ErrApplicationDenied` (wrong package, wrong signer, or no
+   application named) under `ErrDeviceAttestVerifyFailed`.
+
+   The allow-list travels in `attestation.Trust.Applications`, so every path
+   that judges a device — `device pair`, `device attest-device`, the reconnect
+   proof in `device_session.go`, the backend's `NewLiveAttestor`, and the GUI's
+   Pair, Connect and Attest — applies it through `VerifyDeviceAttestation`.
+   Both surfaces read it from `devices.yaml`:
+
+   ```yaml
+   attestation_policy:
+     allowed_applications:
+       - package_name: com.automatethethings.xkey
+         signing_digests:
+           - <hex SHA-256 of the release signing certificate>
+     allow_unpinned_signatures: false
+   ```
+
+   **There is no built-in default.** No official xkey-android package and
+   signing digest are defined in this repository, so an empty allow-list
+   refuses every device: `attestation.LoadTrust` returns
+   `pairing.ErrApplicationPolicyUnconfigured` before any phone is asked for
+   evidence. A `devices.yaml` that exists but cannot be parsed refuses too,
+   rather than reading as "no policy".
 
    A device that fails any of those is **unattestable**, which is a policy
    question with the policy answer above — not a silent admission.

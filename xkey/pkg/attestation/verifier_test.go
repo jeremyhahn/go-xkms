@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -1077,7 +1078,7 @@ func TestEmbeddedLoader_PurposeFiltering(t *testing.T) {
 // makes NewVerifier refuse, and LoadTrust must surface that as its own
 // umbrella refusal rather than panicking on a nil receiver later.
 func TestLoadTrust_NilStoreRefuses(t *testing.T) {
-	trust, err := LoadTrust(nil)
+	trust, err := LoadTrust(nil, testApplications())
 
 	if err == nil {
 		t.Fatal("LoadTrust(nil) succeeded, want a refusal")
@@ -1101,7 +1102,7 @@ func TestLoadTrust_StoreQueryFailureRefuses(t *testing.T) {
 	store := newMockTrustStore()
 	store.err = storeErr
 
-	trust, err := LoadTrust(store)
+	trust, err := LoadTrust(store, testApplications())
 
 	if err == nil {
 		t.Fatal("LoadTrust succeeded against a broken store, want a refusal")
@@ -1114,5 +1115,49 @@ func TestLoadTrust_StoreQueryFailureRefuses(t *testing.T) {
 	}
 	if trust != nil {
 		t.Error("LoadTrust returned non-nil trust material on failure")
+	}
+}
+
+// testApplications is a configured allow-list, so the LoadTrust tests reach
+// the branch they name rather than the unconfigured-policy refusal.
+func testApplications() pairing.ApplicationPolicy {
+	return pairing.ApplicationPolicy{AllowedApplications: []pairing.AllowedApplication{{
+		PackageName:    "com.automatethethings.xkey",
+		SigningDigests: []string{"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"},
+	}}}
+}
+
+// TestLoadTrust_UnconfiguredApplicationsRefuses pins #1305's early refusal:
+// with no application allow-listed, LoadTrust refuses before any phone is
+// asked for evidence it could only reject, naming the missing configuration.
+func TestLoadTrust_UnconfiguredApplicationsRefuses(t *testing.T) {
+	trust, err := LoadTrust(newMockTrustStore(), pairing.ApplicationPolicy{})
+
+	if !errors.Is(err, ErrDeviceAttestVerifyFailed) {
+		t.Errorf("error = %v, want wrapping %v", err, ErrDeviceAttestVerifyFailed)
+	}
+	if !errors.Is(err, pairing.ErrApplicationPolicyUnconfigured) {
+		t.Errorf("error = %v, want wrapping %v", err, pairing.ErrApplicationPolicyUnconfigured)
+	}
+	if trust != nil {
+		t.Error("LoadTrust returned non-nil trust material on failure")
+	}
+}
+
+// TestLoadTrust_CarriesTheApplicationPolicy pins that the allow-list LoadTrust
+// was given is the one VerifyDeviceAttestation will judge against.
+func TestLoadTrust_CarriesTheApplicationPolicy(t *testing.T) {
+	apps := testApplications()
+
+	trust, err := LoadTrust(newMockTrustStore(), apps)
+	if err != nil {
+		t.Fatalf("LoadTrust: %v", err)
+	}
+	if len(trust.Applications.AllowedApplications) != 1 ||
+		trust.Applications.AllowedApplications[0].PackageName != apps.AllowedApplications[0].PackageName {
+		t.Errorf("trust applications = %+v, want %+v", trust.Applications, apps)
+	}
+	if trust.Pool == nil {
+		t.Error("trust pool is nil")
 	}
 }

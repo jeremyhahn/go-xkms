@@ -177,7 +177,7 @@ func TestEnrollmentPolicy_RefusesAnEmptyAllowList(t *testing.T) {
 		AttestationChain: []string{"ignored"},
 	}, []byte("nonce"), time.Now())
 
-	assert.ErrorIs(t, err, ErrEnrollmentApplicationDenied)
+	assert.ErrorIs(t, err, ErrApplicationPolicyUnconfigured)
 }
 
 func TestDecodeAttestationChain_RefusesALoneCertificate(t *testing.T) {
@@ -252,92 +252,6 @@ func TestBytesEqual(t *testing.T) {
 	}
 }
 
-func TestEnrollmentPolicy_MatchApplication(t *testing.T) {
-	const goodDigest = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
-
-	digest := func(hexStr string) []byte {
-		out := make([]byte, len(hexStr)/2)
-		for i := range out {
-			var b byte
-			for j := 0; j < 2; j++ {
-				c := hexStr[i*2+j]
-				var v byte
-				switch {
-				case c >= '0' && c <= '9':
-					v = c - '0'
-				case c >= 'a' && c <= 'f':
-					v = c - 'a' + 10
-				}
-				b = b<<4 | v
-			}
-			out[i] = b
-		}
-		return out
-	}
-
-	appID := &android.AttestationApplicationID{
-		Packages:         []android.AttestationPackageInfo{{Name: testPackage, Version: 1}},
-		SignatureDigests: [][]byte{digest(goodDigest)},
-	}
-
-	t.Run("accepts a pinned build", func(t *testing.T) {
-		p := NewEnrollmentPolicy()
-		p.AllowedApplications = []AllowedApplication{{
-			PackageName:    testPackage,
-			SigningDigests: []string{goodDigest},
-		}}
-
-		pkg, got, err := p.matchApplication(appID)
-		require.NoError(t, err)
-		assert.Equal(t, testPackage, pkg)
-		assert.Equal(t, goodDigest, got)
-	})
-
-	t.Run("refuses a rebuild signed with another key", func(t *testing.T) {
-		p := NewEnrollmentPolicy()
-		p.AllowedApplications = []AllowedApplication{{
-			PackageName:    testPackage,
-			SigningDigests: []string{"00" + goodDigest[2:]},
-		}}
-
-		// The package name is trivially forgeable -- anybody can build an APK
-		// claiming it. The signing digest is what makes it an identity.
-		_, _, err := p.matchApplication(appID)
-		assert.ErrorIs(t, err, ErrEnrollmentApplicationDenied)
-	})
-
-	t.Run("refuses an unpinned entry unless explicitly allowed", func(t *testing.T) {
-		p := NewEnrollmentPolicy()
-		p.AllowedApplications = []AllowedApplication{{PackageName: testPackage}}
-
-		_, _, err := p.matchApplication(appID)
-		assert.ErrorIs(t, err, ErrEnrollmentApplicationDenied)
-
-		p.AllowUnpinnedSignatures = true
-		pkg, _, err := p.matchApplication(appID)
-		require.NoError(t, err)
-		assert.Equal(t, testPackage, pkg)
-	})
-
-	t.Run("refuses an unlisted package", func(t *testing.T) {
-		p := NewEnrollmentPolicy()
-		p.AllowedApplications = []AllowedApplication{{
-			PackageName:    "com.example.other",
-			SigningDigests: []string{goodDigest},
-		}}
-
-		_, _, err := p.matchApplication(appID)
-		assert.ErrorIs(t, err, ErrEnrollmentApplicationDenied)
-	})
-
-	t.Run("refuses evidence naming no application", func(t *testing.T) {
-		p := newTestPolicy()
-
-		_, _, err := p.matchApplication(nil)
-		assert.ErrorIs(t, err, ErrEnrollmentApplicationDenied)
-	})
-}
-
 // TestEnrollmentPolicy_ValidityIsTheReattestationCadence records the design
 // decision: there is no separate "re-attest every N days" knob.
 //
@@ -382,7 +296,8 @@ func TestEnrollmentPolicy_ErrorsAreDistinguishable(t *testing.T) {
 		ErrEnrollmentKeyMismatch,
 		ErrEnrollmentBootState,
 		ErrEnrollmentSecurityLevel,
-		ErrEnrollmentApplicationDenied,
+		ErrApplicationDenied,
+		ErrApplicationPolicyUnconfigured,
 	}
 	for i, a := range sentinels {
 		for j, b := range sentinels {

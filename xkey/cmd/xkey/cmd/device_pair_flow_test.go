@@ -142,7 +142,7 @@ func newPairFlow(t *testing.T, phoneCA, trustCA *attesttest.CA, existing *Device
 			return nil
 		},
 		loadTrust: func() (*attestation.Trust, error) {
-			return &attestation.Trust{Pool: trustCA.Pool()}, nil
+			return &attestation.Trust{Pool: trustCA.Pool(), Applications: attesttest.Applications()}, nil
 		},
 		openBarrier: func(*cobra.Command) (pairing.NoiseKeyBarrier, func(), error) {
 			return xorTestBarrier{key: 0x5A}, func() {}, nil

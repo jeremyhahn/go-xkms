@@ -122,6 +122,22 @@ type AttestationPolicy struct {
 	// LockPairingAttestationPolicy is set, this field is ignored and
 	// PairingAllowUnattestableDevices governs instead.
 	AllowUnattestableDevices bool `yaml:"allow_unattestable_devices"`
+
+	// ApplicationPolicy is the allow-list of xkey-android builds -- package
+	// name plus signing certificate digest -- whose attestation pairing and
+	// every re-attestation accept (#1305). Its keys, allowed_applications and
+	// allow_unpinned_signatures, sit directly in this block. Empty refuses
+	// every device: see pairing.ErrApplicationPolicyUnconfigured.
+	pairing.ApplicationPolicy `yaml:",inline"`
+}
+
+// applicationPolicy returns the attested-application allow-list devices.yaml
+// configures; an absent attestation_policy block allow-lists nothing.
+func (c *DevicesConfig) applicationPolicy() pairing.ApplicationPolicy {
+	if c == nil || c.AttestationPolicy == nil {
+		return pairing.ApplicationPolicy{}
+	}
+	return c.AttestationPolicy.ApplicationPolicy
 }
 
 // PairedDevice represents a paired device.

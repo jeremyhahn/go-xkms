@@ -221,6 +221,11 @@ type devicesAttestationPolicy struct {
 	// enterprise plane.
 	AllowUnattestableDevices bool `yaml:"allow_unattestable_devices"`
 
+	// ApplicationPolicy is the attested-application allow-list pairing and
+	// every re-attestation judge the phone against (#1305) -- the same keys,
+	// by the same type, the CLI reads from this block.
+	pairing.ApplicationPolicy `yaml:",inline"`
+
 	Rest map[string]any `yaml:",inline"`
 }
 
@@ -229,6 +234,15 @@ type phoneConfig struct {
 	Devices           []phoneConfigDevice       `yaml:"devices"`
 	DefaultDevice     string                    `yaml:"default_device"`
 	AttestationPolicy *devicesAttestationPolicy `yaml:"attestation_policy,omitempty"`
+}
+
+// applicationPolicy is the attested-application allow-list devices.yaml
+// configures. An absent block allow-lists nothing.
+func (c *phoneConfig) applicationPolicy() pairing.ApplicationPolicy {
+	if c == nil || c.AttestationPolicy == nil {
+		return pairing.ApplicationPolicy{}
+	}
+	return c.AttestationPolicy.ApplicationPolicy
 }
 
 // allowsUnattestablePairing is the user plane as devices.yaml states it. An
@@ -833,7 +847,7 @@ func (s *PhoneService) attestForPairing(
 		return nil, ErrPhoneAttestFailed
 	}
 
-	trust, err := xkeyAttestation.LoadTrust(s.trustStore)
+	trust, err := s.loadAttestationTrust()
 	if err != nil {
 		s.log.Error("pairing attestation impossible: trust material unavailable", "error", err)
 		return nil, err
@@ -1236,7 +1250,7 @@ func (s *PhoneService) proveDeviceLiveness(
 		return ErrPhoneAttestationRequired
 	}
 
-	trust, err := xkeyAttestation.LoadTrust(s.trustStore)
+	trust, err := s.loadAttestationTrust()
 	if err != nil {
 		return err
 	}
@@ -1472,7 +1486,7 @@ func (s *PhoneService) attestOverTransport(
 		s.log.Error("attestation impossible: no trust store is configured", "device", device.Name)
 		return nil, ErrPhoneAttestFailed
 	}
-	trust, err := xkeyAttestation.LoadTrust(s.trustStore)
+	trust, err := s.loadAttestationTrust()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
 	}
@@ -2143,6 +2157,23 @@ func (s *PhoneService) awaitNoticesDelivered() bool {
 // wedged systray handler into a wedged service, which is the same
 // bound-the-wait reasoning as every drain on this branch.
 var noticeDeliveryTimeout = 30 * time.Second
+
+// loadAttestationTrust builds what every attestation this service performs is
+// judged against: the trust store's Android hardware roots and devices.yaml's
+// attested-application allow-list (#1305), through the same
+// attestation.LoadTrust the CLI calls.
+//
+// A missing devices.yaml allow-lists nothing, so LoadTrust refuses with
+// pairing.ErrApplicationPolicyUnconfigured. One that exists but cannot be read
+// refuses outright: it may well be the file that lists the allowed builds, and
+// guessing that it does not is how an unreadable policy becomes no policy.
+func (s *PhoneService) loadAttestationTrust() (*xkeyAttestation.Trust, error) {
+	cfg, err := s.loadConfig()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, &SentinelCauseError{Sentinel: ErrPhoneAttestFailed, Cause: err}
+	}
+	return xkeyAttestation.LoadTrust(s.trustStore, cfg.applicationPolicy())
+}
 
 // loadConfig loads the phone config from the shared YAML file.
 func (s *PhoneService) loadConfig() (*phoneConfig, error) {
