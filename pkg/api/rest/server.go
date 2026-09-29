@@ -666,6 +666,11 @@ func (s *Server) setupRouter() *chi.Mux {
 		s.logger.Info("Rate limiting enabled for REST API")
 	}
 
+	// Innermost global middleware: binds the request to the ResponseWriter
+	// so writeError can log an internal error it withholds from the client
+	// with the request's method, path and correlation ID (go-xkms#1118).
+	r.Use(s.errorLogMiddleware())
+
 	// Route registration is table-driven: Routes() (routes.go) is the
 	// single source of truth for the REST surface, shared with the
 	// unified-API-server ServiceModule (pkg/apimodule). Routes are grouped

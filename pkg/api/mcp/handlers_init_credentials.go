@@ -96,7 +96,7 @@ func mapCeremonyError(err error) error {
 	}
 	for _, entry := range ceremonySentinelCodes {
 		if errors.Is(err, entry.sentinel) {
-			return &KeyOpError{Code: entry.code, Err: err}
+			return classified(entry.code, err)
 		}
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}
@@ -135,7 +135,7 @@ func mapCredentialError(err error) error {
 	}
 	for _, entry := range credentialSentinelCodes {
 		if errors.Is(err, entry.sentinel) {
-			return &KeyOpError{Code: entry.code, Err: err}
+			return classified(entry.code, err)
 		}
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}

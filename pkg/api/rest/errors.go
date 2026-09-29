@@ -85,28 +85,25 @@ var (
 	ErrAuthenticatorChainEmpty = errors.New("rest: no session-vehicle input available (need a token issuer or a qrdb client)")
 )
 
-// writeError writes an error response to the client.
+// writeError writes an error response to the client. The body carries
+// err's text only when statusCode classifies it as a client-facing condition;
+// an internal status (see isInternalStatus) carries ErrInternalError instead,
+// and err itself is logged server-side (see clientErrorText). Every direct
+// writeError(w, err, http.StatusInternalServerError) call is scrubbed here,
+// so no call site can leak internal detail by forgetting to (go-xkms#1118).
 func writeError(w http.ResponseWriter, err error, statusCode int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-
-	resp := ErrorResponse{
-		Error: err.Error(),
-		Code:  statusCode,
-	}
-
-	if encErr := json.NewEncoder(w).Encode(resp); encErr != nil {
-		log.Printf("Failed to encode error response: %v", encErr)
-	}
+	writeErrorWithMessage(w, err, "", statusCode)
 }
 
-// writeErrorWithMessage writes an error response with a custom message.
+// writeErrorWithMessage writes an error response with a custom message. The
+// error field is scrubbed exactly as writeError scrubs it; message is always
+// a caller-chosen literal and is written as given.
 func writeErrorWithMessage(w http.ResponseWriter, err error, message string, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 
 	resp := ErrorResponse{
-		Error:   err.Error(),
+		Error:   clientErrorText(w, err, statusCode),
 		Message: message,
 		Code:    statusCode,
 	}
@@ -114,6 +111,41 @@ func writeErrorWithMessage(w http.ResponseWriter, err error, message string, sta
 	if encErr := json.NewEncoder(w).Encode(resp); encErr != nil {
 		log.Printf("Failed to encode error response: %v", encErr)
 	}
+}
+
+// isInternalStatus reports whether statusCode is the server-fault floor
+// whose error text is withheld from the client. Every 5xx status is, except
+// the two this package assigns only to a named, client-facing sentinel:
+// 501 Not Implemented (a backend capability boundary such as
+// backend.ErrExportNotSupported or xkms.ErrOperationNotSupported,
+// apierrors.ClassUnimplemented) and 503 Service Unavailable (an unconfigured
+// subsystem or a sealed barrier such as ErrBarrierNotConfigured or
+// seal.ErrSealed, apierrors.ClassUnavailable). A 500 is by construction the
+// unclassified floor mapErrorToStatusCode, mapKeyOpError and every handler
+// switch fall through to.
+func isInternalStatus(statusCode int) bool {
+	return statusCode >= http.StatusInternalServerError &&
+		statusCode != http.StatusNotImplemented &&
+		statusCode != http.StatusServiceUnavailable
+}
+
+// clientErrorText returns the text an error response may carry for err at
+// statusCode. A client-facing status returns err's own text: those errors
+// are the classified sentinels and validation failures written for the
+// caller. An internal status returns ErrInternalError's fixed text and logs
+// err with the request's method, path and correlation ID (see
+// errorLogMiddleware), so the detail -- a storage path, a backend or library
+// message, a barrier state -- reaches the operator and never the caller
+// (go-xkms#1118). An err that already is ErrInternalError was withheld by
+// its call site, which logged its own detail, so it is not logged again.
+func clientErrorText(w http.ResponseWriter, err error, statusCode int) string {
+	if !isInternalStatus(statusCode) {
+		return err.Error()
+	}
+	if !errors.Is(err, ErrInternalError) {
+		logWithheldError(w, err, statusCode)
+	}
+	return ErrInternalError.Error()
 }
 
 // mapErrorToStatusCode maps errors to HTTP status codes.

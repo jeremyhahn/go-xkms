@@ -57,7 +57,10 @@ func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 		}
 	}
 
-	return h
+	// Outermost on the route chain: binds the request to the ResponseWriter
+	// so writeError can log an internal error it withholds from the client
+	// (go-xkms#1118), matching setupRouter on the legacy router.
+	return s.errorLogMiddleware()(h)
 }
 
 // AuthenticateHTTP authenticates a request with xkms's configured

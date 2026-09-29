@@ -44,7 +44,7 @@ func mapSealStoreError(err error) error {
 		return nil
 	}
 	if class, ok := apierrors.ClassOf(apierrors.SealStoreSentinelClasses, err); ok {
-		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: err}
+		return classified(jsonRPCCodeForClass(class), err)
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}
 }
