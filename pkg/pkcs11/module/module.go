@@ -5616,11 +5616,40 @@ func (m *Module) VerifyMessageNext(sessionHandle SessionHandle, data []byte, sig
 	// call: VerifyFinal must run and answer with a signature or length error
 	// rather than the operation silently staying open as if more messages were
 	// coming.
-	if final {
-		return m.VerifyFinal(sessionHandle, signature)
+	if !final {
+		return CKR_OK
 	}
 
-	return CKR_OK
+	// VerifyFinal unconditionally finalizes the operation it is given --
+	// unlike EncryptFinal/DecryptFinal/SignFinal, it has no cache-based
+	// two-call convention to fall back on, since a verification returns no
+	// output bytes to query the length of. VerifyMessage (the single-part
+	// sibling this function mirrors) exists specifically to paper over that:
+	// its own doc comment quotes v3.2 §5.16.2, "C_MessageVerifyInit
+	// establishes a mechanism and key that outlive any one message ... only
+	// C_MessageVerifyFinal tears the process down," and captures the operation
+	// before delegating to Verify so it can be restored afterward. The same
+	// rule governs a message that arrived in parts rather than one call, and
+	// VerifyMessageNext must give it the same treatment: without this, the
+	// first multi-part message's terminal call tore the process down, and a
+	// second C_VerifyMessageBegin under the same C_MessageVerifyInit failed
+	// with CKR_OPERATION_NOT_INITIALIZED regardless of whether the first
+	// message's signature was genuine or corrupted.
+	opState, rv := m.messageOperationBinding(sessionHandle, OperationVerify)
+	if rv != CKR_OK {
+		return rv
+	}
+
+	verifyRV := m.VerifyFinal(sessionHandle, signature)
+
+	// A verification that merely reports a bad signature leaves the process
+	// usable, so it is re-established regardless of the verdict. Only a
+	// failure to re-establish it is reported in place of that verdict.
+	if rv := m.restoreMessageOperation(sessionHandle, opState); rv != CKR_OK && verifyRV == CKR_OK {
+		return rv
+	}
+
+	return verifyRV
 }
 
 // MessageVerifyFinal finishes a message-based verification operation.
