@@ -981,8 +981,11 @@ func (t *BLETransport) Close() (err error) {
 
 	// Wake up anything blocked in Receive (or selecting on StatusChannel)
 	// before disconnecting. responseChan and statusChan are deliberately
-	// never closed; see the done field comment.
-	close(t.done)
+	// never closed; see the done field comment. A zero-value transport
+	// (never built by NewBLETransport) has no done channel to close.
+	if t.done != nil {
+		close(t.done)
+	}
 
 	if disconnectErr := t.Disconnect(); disconnectErr != nil {
 		err = disconnectErr
