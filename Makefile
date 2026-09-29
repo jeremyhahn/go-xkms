@@ -3654,21 +3654,10 @@ fmt-check:
 	@echo "$(GREEN)✓ Code is properly formatted$(RESET)"
 
 .PHONY: check-insecure-tls
-## check-insecure-tls: Enforce InsecureSkipVerify allowlist (fails on unapproved use)
+## check-insecure-tls: Enforce insecure-TLS/transport allowlist (fails on unapproved use)
 check-insecure-tls:
-	@echo "$(CYAN)$(BOLD)→ Checking InsecureSkipVerify allowlist...$(RESET)"
-	@violations=$$(grep -rPn 'InsecureSkipVerify[[:space:]]*:[[:space:]]*true' --include="*.go" . \
-		| grep -Pv '^[^:]+:[0-9]+:[[:space:]]*//' \
-		| grep -v 'pkg/crypto/spki/spki.go' \
-		| grep -v 'pkg/trust/fetcher/spki.go' \
-		| grep -v 'pkg/trust/bootstrap/tofu_tls.go' \
-		|| true); \
-	if [ -n "$$violations" ]; then \
-		echo "$(RED)$(BOLD)✗ FORBIDDEN InsecureSkipVerify outside allowlist:$(RESET)"; \
-		printf '%s\n' "$$violations"; \
-		exit 1; \
-	fi
-	@echo "$(GREEN)✓ InsecureSkipVerify allowlist check passed$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Checking insecure TLS/transport allowlist...$(RESET)"
+	@bash scripts/check-insecure-tls.sh
 
 .PHONY: check-public-literals
 ## check-public-literals: Public-release readiness gate -- no lab/fleet/owner literals (go-xkms#1030)

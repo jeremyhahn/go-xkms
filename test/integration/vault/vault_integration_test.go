@@ -56,12 +56,11 @@ func TestVaultIntegration(t *testing.T) {
 
 	// Create backend
 	cfg := &vault.Config{
-		Address:       address,
-		Token:         token,
-		TransitPath:   "transit",
-		TLSSkipVerify: true,
-		KeyStorage:    keyStorage,
-		CertStorage:   certStorage,
+		Address:     address,
+		Token:       token,
+		TransitPath: "transit",
+		KeyStorage:  keyStorage,
+		CertStorage: certStorage,
 	}
 
 	b, err := vault.NewBackend(cfg)

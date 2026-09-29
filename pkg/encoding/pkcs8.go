@@ -19,25 +19,44 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/youmark/pkcs8"
 )
 
-// pkcs8EncryptOpts pins the PBKDF2 salt size youmark/pkcs8 uses to encrypt a
-// PKCS#8 key, instead of leaving MarshalPrivateKey to fall back to its own
-// package-level pkcs8.DefaultOpts.
+// pbkdf2IterationCount is the PBKDF2-HMAC-SHA256 iteration count used to
+// encrypt a PKCS#8 key: 600,000, OWASP's 2023 recommendation for
+// PBKDF2-SHA256 (go-xkms#1286), replacing this package's prior default of
+// 10,000. A key already encrypted at a lower iteration count stays
+// decryptable: PBES2 records its own iteration count in the encrypted blob,
+// and DecodePKCS8/youmark/pkcs8 read it from there rather than assuming this
+// constant.
+const pbkdf2IterationCount = 600000
+
+// Compile-time assertion that pbkdf2IterationCount does not regress below
+// the package-wide PBKDF2 floor.
+var _ [pbkdf2IterationCount - kdf.MinPBKDF2Iterations]struct{}
+
+// PKCS8EncryptOpts pins the PBKDF2 salt size and iteration count
+// youmark/pkcs8 uses to encrypt a PKCS#8 key, instead of leaving
+// MarshalPrivateKey to fall back to its own package-level pkcs8.DefaultOpts.
+// It is the single shared options value for this backend and
+// pkg/keyprovider/pkcs8; the two package-level duplicates that used to exist
+// were consolidated here (go-xkms#1286) since a divergence between them
+// would give one caller a weaker iteration count than the other with no
+// signal that they had drifted.
 //
 // DefaultOpts.KDFOpts.SaltSize is 8 bytes (64 bits). Go's crypto/pbkdf2
 // refuses any salt under 128 bits under GODEBUG=fips140=only, and it refuses
 // by panicking (golang.org/x/crypto/pbkdf2.Key converts the stdlib's error
 // return into a panic) -- a wrong-salt-size call otherwise crashes the
-// process instead of returning an error. The cipher and iteration count are
-// carried over unchanged from DefaultOpts; only the salt grows to the FIPS
-// floor.
-var pkcs8EncryptOpts = &pkcs8.Opts{
+// process instead of returning an error. The cipher is carried over
+// unchanged from DefaultOpts; the salt grows to the FIPS floor and the
+// iteration count to pbkdf2IterationCount.
+var PKCS8EncryptOpts = &pkcs8.Opts{
 	Cipher: pkcs8.AES256CBC,
 	KDFOpts: pkcs8.PBKDF2Opts{
 		SaltSize:       16,
-		IterationCount: 10000,
+		IterationCount: pbkdf2IterationCount,
 		HMACHash:       crypto.SHA256,
 	},
 }
@@ -57,7 +76,7 @@ func EncodePKCS8(privateKey crypto.PrivateKey, password []byte) ([]byte, error) 
 	}
 
 	// Use youmark/pkcs8 package which handles encryption
-	der, err := pkcs8.MarshalPrivateKey(privateKey, password, pkcs8EncryptOpts)
+	der, err := pkcs8.MarshalPrivateKey(privateKey, password, PKCS8EncryptOpts)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to marshal PKCS#8", Err: err}
 	}
