@@ -176,6 +176,12 @@ hold only the service (`pkg/api/rest/policy_handlers.go`). The refusal is
 REST `404` with the unknown-tenant message (`pkg/api/rest/policy_handlers.go:367`),
 gRPC `NotFound` and MCP `JSONRPCCodeNotFound` (`pkg/api/apierrors/tables.go:192`).
 
+The policy manager exists only where a PCR reader is supplied: an embedding
+host passes one with `WithServiceModulePCRReader`
+([`../host-embedding/`](../host-embedding/)); `xkmsd` has no PCR reader source
+and answers "not configured". Definitions persist durably through
+`policy.BackendPolicyStore` (`pkg/seal/policy/backend_store.go`).
+
 ## Tenant barriers
 
 Per-tenant barrier operations live under the tenant routes and are documented in
