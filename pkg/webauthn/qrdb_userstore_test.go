@@ -76,13 +76,17 @@ func (f *fakeUserClient) CreateUser(ctx context.Context, req *qrdbtransport.Crea
 			return nil, errors.New("already exists")
 		}
 	}
+	lifecycle := qrdbsdk.LifecycleActive
+	if req.Pending || req.Lifecycle == string(qrdbsdk.LifecyclePending) {
+		lifecycle = qrdbsdk.LifecyclePending
+	}
 	u := &qrdbtransport.User{
 		ID:        f.nextID,
 		Username:  req.Username,
 		Email:     email,
 		Name:      req.Name,
 		TenantID:  req.TenantID,
-		Lifecycle: string(qrdbsdk.LifecycleActive),
+		Lifecycle: string(lifecycle),
 	}
 	f.nextID++
 	f.byID[u.ID] = u
@@ -143,6 +147,9 @@ func (f *fakeUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.Upda
 	}
 	if req.Name != "" {
 		u.Name = req.Name
+	}
+	if req.Lifecycle != "" {
+		u.Lifecycle = req.Lifecycle
 	}
 	if newEmail := qrdbsdk.NormalizeEmail(req.Email); newEmail != "" && newEmail != u.Email {
 		nk := f.emailKeyFor(u.TenantID, newEmail)

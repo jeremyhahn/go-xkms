@@ -920,6 +920,22 @@ func (m *mockXKMSService) FinishAuthentication(ctx context.Context, req *transpo
 	return &transport.FinishAuthenticationResponse{}, nil
 }
 
+func (m *mockXKMSService) GetInvite(ctx context.Context, req *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	return &transport.GetInviteResponse{}, nil
+}
+
+func (m *mockXKMSService) BeginInviteRegistration(ctx context.Context, req *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	return &transport.BeginInviteRegistrationResponse{}, nil
+}
+
+func (m *mockXKMSService) FinishInviteRegistration(ctx context.Context, req *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	return &transport.FinishInviteRegistrationResponse{}, nil
+}
+
+func (m *mockXKMSService) ActivateInvitePIV(ctx context.Context, req *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	return &transport.ActivateInvitePIVResponse{}, nil
+}
+
 func (m *mockXKMSService) DeriveKey(ctx context.Context, req *transport.DeriveKeyRequest) (*transport.DeriveKeyResponse, error) {
 	return &transport.DeriveKeyResponse{}, nil
 }

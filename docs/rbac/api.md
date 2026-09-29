@@ -57,7 +57,8 @@ Base path `/api/v1/users` (`pkg/api/rest/routes.go`):
 	"display_name": "Alice",
 	"role": "operator",
 	"tenant_id": "",
-	"without_email_login_key": false
+	"without_email_login_key": false,
+	"invite_ttl_seconds": 0
 }
 ```
 
@@ -65,6 +66,12 @@ Base path `/api/v1/users` (`pkg/api/rest/routes.go`):
 or any custom role created through the SDK) — an unresolvable name fails
 the request server-side with the wrapped `*ErrUnknownRole` from
 engineering.md, surfaced as a 4xx.
+
+Unless `without_email_login_key` is set, the account is created
+`LifecyclePending` (not active) and the response carries a one-time
+activation invitation — see
+[`../user-onboarding/api.md`](../user-onboarding/api.md) (go-xkms#1294 part
+B). `invite_ttl_seconds` overrides its default TTL.
 
 ## User lifecycle — gRPC
 

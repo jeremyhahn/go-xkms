@@ -190,11 +190,13 @@ func TestFinishAuthentication_ServerErr(t *testing.T) {
 
 func TestCreateUser_Success(t *testing.T) {
 	tr, cleanup := newRecordingTransport(t, http.MethodPost, "/api/v1/users/", func(w http.ResponseWriter) {
-		writeJSONResponse(t, w, http.StatusOK, transport.UserInfo{
-			ID:       1,
-			Username: "bob",
-			Role:     "admin",
-			Enabled:  true,
+		writeJSONResponse(t, w, http.StatusOK, transport.GetUserResponse{
+			User: transport.UserInfo{
+				ID:       1,
+				Username: "bob",
+				Role:     "admin",
+				Enabled:  true,
+			},
 		})
 	})
 	defer cleanup()

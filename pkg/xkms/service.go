@@ -220,6 +220,27 @@ type XKMSService struct {
 	// mutex rather than relying on the single-assignment-before-use pattern
 	// the Set* methods otherwise share.
 	bootstrapListenerKeys bootstrapListenerKeyState
+
+	// inviteStore mints and redeems the single-use enrollment invitations
+	// issued by CreateUser (go-xkms#1294 part B). Nil until SetInviteStore
+	// is called, in which case CreateUser refuses to create an invited
+	// account with ErrNotConfigured rather than create one no invitation
+	// can ever activate.
+	//
+	// InviteStore is satisfied by two implementations pkg/server chooses
+	// between: qrdb's own *qrdbsdk.TenantInviteStore when the embedded node
+	// exposes a per-tenant StoreResolver (barrier registry configured —
+	// invitations then live under each tenant's own barrier, same as the
+	// rest of that tenant's identity data), and a createStorage-backed one
+	// otherwise, so a default deployment with no barrier registry still has
+	// invitations — see pkg/server/invite_store.go.
+	inviteStore InviteStore
+
+	// inviteConfig holds the operator-configured invitation link base URL
+	// and TTL bounds. The zero value is usable: an empty PublicBaseURL
+	// yields a link with no origin, and empty TTL bounds fall back to
+	// qrdbsdk.DefaultInviteTTL and a 7-day cap (see effectiveInviteTTL).
+	inviteConfig InviteConfig
 }
 
 // ServiceConfig configures the xkms service
@@ -305,6 +326,17 @@ func (s *XKMSService) SetEscrowRegistry(r *escrow.Registry) { s.escrow = r }
 
 // SetWebAuthn sets the WebAuthn/FIDO2 subsystem.
 func (s *XKMSService) SetWebAuthn(w *webauthn.Service) { s.webauthnService = w }
+
+// SetInviteStore wires the per-tenant enrollment-invitation store
+// (go-xkms#1294 part B) into the service. Nil leaves invitations
+// unconfigured: CreateUser then refuses to create an account it cannot
+// issue an activation link for, and every invite-redemption entry point
+// reports ErrNotConfigured.
+func (s *XKMSService) SetInviteStore(store InviteStore) { s.inviteStore = store }
+
+// SetInviteConfig wires the operator-configured invitation link base URL
+// and TTL bounds. The zero value is usable (see InviteConfig).
+func (s *XKMSService) SetInviteConfig(cfg InviteConfig) { s.inviteConfig = cfg }
 
 // SetCustodianClient wires the embedded qrdb node's custodian group client
 // into the service. xkms presents its own custodian API on top of it; qrdb is

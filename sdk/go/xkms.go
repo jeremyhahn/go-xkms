@@ -465,6 +465,20 @@ type (
 	ListUsersResponse           = transport.ListUsersResponse
 	GetUserResponse             = transport.GetUserResponse
 	ListUserCredentialsResponse = transport.ListUserCredentialsResponse
+	// InviteInfo is the one-time account-activation invitation CreateUser
+	// mints for an account with an email login key (go-xkms#1294 part B).
+	InviteInfo = transport.InviteInfo
+
+	// Invite redemption Operations. Public, unauthenticated capabilities
+	// available on every transport (go-xkms#1294 part B).
+	GetInviteRequest                 = transport.GetInviteRequest
+	GetInviteResponse                = transport.GetInviteResponse
+	BeginInviteRegistrationRequest   = transport.BeginInviteRegistrationRequest
+	BeginInviteRegistrationResponse  = transport.BeginInviteRegistrationResponse
+	FinishInviteRegistrationRequest  = transport.FinishInviteRegistrationRequest
+	FinishInviteRegistrationResponse = transport.FinishInviteRegistrationResponse
+	ActivateInvitePIVRequest         = transport.ActivateInvitePIVRequest
+	ActivateInvitePIVResponse        = transport.ActivateInvitePIVResponse
 
 	// Password Store Operations
 	PasswordAddRequest                = transport.PasswordAddRequest

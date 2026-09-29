@@ -181,6 +181,21 @@ type ListUsersResponse = pkgtransport.ListUsersResponse
 type GetUserResponse = pkgtransport.GetUserResponse
 type ListUserCredentialsResponse = pkgtransport.ListUserCredentialsResponse
 
+// InviteInfo is the one-time account-activation invitation CreateUser mints
+// for an account with an email login key (go-xkms#1294 part B).
+type InviteInfo = pkgtransport.InviteInfo
+
+// Invite redemption types. These are public, unauthenticated capabilities
+// available on every transport (go-xkms#1294 part B).
+type GetInviteRequest = pkgtransport.GetInviteRequest
+type GetInviteResponse = pkgtransport.GetInviteResponse
+type BeginInviteRegistrationRequest = pkgtransport.BeginInviteRegistrationRequest
+type BeginInviteRegistrationResponse = pkgtransport.BeginInviteRegistrationResponse
+type FinishInviteRegistrationRequest = pkgtransport.FinishInviteRegistrationRequest
+type FinishInviteRegistrationResponse = pkgtransport.FinishInviteRegistrationResponse
+type ActivateInvitePIVRequest = pkgtransport.ActivateInvitePIVRequest
+type ActivateInvitePIVResponse = pkgtransport.ActivateInvitePIVResponse
+
 // Password types.
 type PasswordAddRequest = pkgtransport.PasswordAddRequest
 type PasswordAddResponse = pkgtransport.PasswordAddResponse

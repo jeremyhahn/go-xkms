@@ -941,6 +941,37 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.tenantService != nil {
 			svc.SetTenantService(s.tenantService)
 		}
+		// Wire the enrollment-invitation store (go-xkms#1294 part B).
+		//
+		// ONE path, unconditionally: a tenantPrefixedInviteStore
+		// (invite_store.go) built over the same createStorage seam every
+		// other xkmsd subsystem's persistent metadata uses — never a
+		// StoreResolver/BarrierRegistry-gated path with a fallback. The
+		// owner's standing rule is "never use fallbacks without approval";
+		// this also used to try qrdbsdk.TenantInviteStore over the embedded
+		// node's per-tenant StoreResolver first (non-nil only when a
+		// BarrierRegistry was configured) and fall back to a
+		// createStorage-backed store otherwise. That gave a barrier-routed
+		// deployment per-tenant barrier encryption for its invitations at
+		// the cost of a second storage path only some deployments ever
+		// populated — removed in favor of the one every other xkmsd
+		// subsystem already uses, which is also what makes invitations work
+		// in xkmsd's default configuration (no barrier registry required).
+		// CreateUser fails closed (xkms.ErrNotConfigured) if this
+		// construction fails; it is not fatal to server startup.
+		inviteBackend, inviteErr := s.createStorage("invites")
+		if inviteErr != nil {
+			s.logger.Warn("Failed to create invite storage; user invitations are unavailable", "error", inviteErr)
+		} else {
+			svc.SetInviteStore(newTenantPrefixedInviteStore(inviteBackend))
+		}
+		if s.config.Invite != nil {
+			inviteCfg, inviteErr := xkmsInviteConfigFromOperator(s.config.Invite)
+			if inviteErr != nil {
+				return nil, inviteErr
+			}
+			svc.SetInviteConfig(inviteCfg)
+		}
 		if s.credentialService != nil {
 			svc.SetCredentialService(s.credentialService)
 		}

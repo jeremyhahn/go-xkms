@@ -19,6 +19,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -57,11 +58,27 @@ func (s *Service) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*p
 		DisplayName:          req.DisplayName,
 		Role:                 req.Role,
 		TenantID:             req.TenantId,
+		InviteTTLSeconds:     req.InviteTtlSeconds,
 	})
 	if cErr != nil {
 		return nil, status.Error(createUserErrorCode(cErr), cErr.Error())
 	}
-	return &pb.UserResponse{User: userInfoToProto(resp.User)}, nil
+	return &pb.UserResponse{User: userInfoToProto(resp.User), Invite: inviteInfoToProto(resp.Invite)}, nil
+}
+
+// inviteInfoToProto projects a transport.InviteInfo onto its protobuf form.
+// nil in (no invitation minted -- a certificate-only/bootstrap create) stays
+// nil out, rather than a zero-valued message that would look like an empty
+// token.
+func inviteInfoToProto(i *transport.InviteInfo) *pb.InviteInfo {
+	if i == nil {
+		return nil
+	}
+	return &pb.InviteInfo{
+		Token:     i.Token,
+		Url:       i.URL,
+		ExpiresAt: timestamppb.New(i.ExpiresAt),
+	}
 }
 
 // ListUsers lists xkms users.

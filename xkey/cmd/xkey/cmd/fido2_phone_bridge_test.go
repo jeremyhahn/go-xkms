@@ -297,6 +297,22 @@ func (b *baseSDKClient) FinishAuthentication(ctx context.Context, req *transport
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) GetInvite(ctx context.Context, req *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) BeginInviteRegistration(ctx context.Context, req *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) FinishInviteRegistration(ctx context.Context, req *transport.FinishInviteRegistrationRequest) (*transport.FinishInviteRegistrationResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) ActivateInvitePIV(ctx context.Context, req *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (b *baseSDKClient) GetCABundle(ctx context.Context, req *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
 	return nil, errNotImplemented
 }

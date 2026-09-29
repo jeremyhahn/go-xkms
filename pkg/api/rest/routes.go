@@ -57,6 +57,12 @@ const (
 	// GroupSSH routes carry authentication + tenant enforcement; each
 	// route additionally gates on its own ssh:* permission.
 	GroupSSH
+	// GroupInvite routes sit behind the login rate limiter, like
+	// GroupWebAuthn: every route is unauthenticated by design (a
+	// newly-provisioned account holds no credential yet to authenticate a
+	// request with) and is authorized instead by possession of a
+	// single-use invitation token (go-xkms#1294 part B).
+	GroupInvite
 )
 
 // RouteSpec describes one REST route: the wire surface, its authorization
@@ -469,6 +475,20 @@ func Routes() []RouteSpec {
 	wa("POST", "/sdk/authentication/begin", func(s *Server) http.HandlerFunc { return s.handleSDKBeginAuthentication })
 	wa("POST", "/sdk/authentication/finish", func(s *Server) http.HandlerFunc { return s.handleSDKFinishAuthentication })
 	specs = append(specs, RouteSpec{Method: "POST", Pattern: "/api/v1/webauthn/credentials/begin", Group: GroupWebAuthn, Auth: RouteAuthSession, Enabled: hasWebAuthn, Handler: func(s *Server) http.HandlerFunc { return s.webauthnHandler.BeginAddCredential }})
+
+	// --- Invite redemption (go-xkms#1294 part B): how an account CreateUser
+	// provisioned with zero credentials enrolls its first one. Every route
+	// is unauthenticated by design (there is no credential yet to
+	// authenticate a request with) and is authorized instead by possession
+	// of the single-use invitation token; see pkg/api/rest/handlers_invite.go. ---
+	hasUsers := func(s *Server) bool { return s.xkmsService != nil }
+	invite := func(method, pattern string, h func(s *Server) http.HandlerFunc) {
+		specs = append(specs, RouteSpec{Method: method, Pattern: "/api/v1/invites" + pattern, Group: GroupInvite, Auth: RouteAuthPublic, Enabled: hasUsers, Handler: h})
+	}
+	invite("GET", "/{tenant_id}/{token}", func(s *Server) http.HandlerFunc { return s.handleGetInvite })
+	invite("POST", "/{tenant_id}/{token}/fido2/begin", func(s *Server) http.HandlerFunc { return s.handleInviteBeginFIDO2 })
+	invite("POST", "/{tenant_id}/{token}/fido2/finish", func(s *Server) http.HandlerFunc { return s.handleInviteFinishFIDO2 })
+	invite("POST", "/{tenant_id}/{token}/piv/activate", func(s *Server) http.HandlerFunc { return s.handleInviteActivatePIV })
 
 	// --- Users. xkms presents its own user API backed by the embedded
 	// qrdb node; authentication only, no tenant middleware. ---

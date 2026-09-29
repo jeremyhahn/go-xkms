@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/descope/virtualwebauthn"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -74,14 +75,17 @@ func TestQRDBAdapter_RegisterThenLogin_SameProcess(t *testing.T) {
 
 	const email = "admin@system.qrdb.local"
 
-	// Pre-create the user exactly as first-boot does: a qrdb user in the
-	// "system" tenant whose username is the admin email. BeginRegistration
-	// must then resolve THIS user, not create a second one.
-	if _, err := users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+	// Pre-create the user exactly as CreateUser does for an invited account
+	// (go-xkms#1294 part B): a PENDING qrdb user in the "system" tenant whose
+	// username is the admin email. BeginInviteRegistration must then resolve
+	// THIS user, not create a second one.
+	created, err := users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
 		Username: email,
 		Email:    email,
 		TenantID: "system",
-	}); err != nil {
+		Pending:  true,
+	})
+	if err != nil {
 		t.Fatalf("pre-create admin user: %v", err)
 	}
 
@@ -94,9 +98,9 @@ func TestQRDBAdapter_RegisterThenLogin_SameProcess(t *testing.T) {
 	credential := newEC2Credential(t)
 
 	// === REGISTRATION (invite activation) ===
-	regOptions, regSessionID, err := svc.BeginRegistration(ctx, email, email)
+	regOptions, regSessionID, err := svc.BeginInviteRegistration(ctx, email)
 	if err != nil {
-		t.Fatalf("BeginRegistration: %v", err)
+		t.Fatalf("BeginInviteRegistration: %v", err)
 	}
 	regOptionsJSON, err := json.Marshal(regOptions.Response)
 	if err != nil {
@@ -111,10 +115,20 @@ func TestQRDBAdapter_RegisterThenLogin_SameProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse attestation response: %v", err)
 	}
-	if _, _, err := svc.FinishRegistration(ctx, regSessionID, parsedAttResponse); err != nil {
-		t.Fatalf("FinishRegistration: %v", err)
+	if _, err := svc.FinishInviteRegistration(ctx, regSessionID, parsedAttResponse); err != nil {
+		t.Fatalf("FinishInviteRegistration: %v", err)
 	}
 	authenticator.AddCredential(credential)
+
+	// Activation is the invite orchestration layer's job (pkg/xkms), not
+	// webauthn.Service's; reproduce it directly against the fake client so
+	// the account can log in below, exactly as a real redemption leaves it.
+	if _, err := users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{
+		ID:        created.ID,
+		Lifecycle: string(qrdbsdk.LifecycleActive),
+	}); err != nil {
+		t.Fatalf("activate invited user: %v", err)
+	}
 
 	// === LOGIN (immediately after, same process, same service instance) ===
 	// Resolve the user by email exactly as quicbaas BeginLogin does, then

@@ -164,13 +164,17 @@ func TestService_BeginRegistration(t *testing.T) {
 	assert.Equal(t, "test@example.com", options.Response.User.Name)
 	assert.Equal(t, "Test User", options.Response.User.DisplayName)
 
-	// Begin registration for existing user (should work, adding new credential)
+	// A second BeginRegistration for the SAME email is refused: the public
+	// (unauthenticated) entry point never enrolls a credential for an
+	// account that already existed before the call, whether or not it holds
+	// one yet (go-xkms#1294 part B). Adding a credential to an existing
+	// account requires an authenticated session (BeginAddCredential) or, for
+	// a provisioned account's first credential, invite redemption
+	// (BeginInviteRegistration).
 	options2, sessionID2, err := svc.BeginRegistration(ctx, "test@example.com", "Test User Updated")
-	require.NoError(t, err)
-	assert.NotNil(t, options2)
-	assert.NotEmpty(t, sessionID2)
-	// Should use existing user
-	assert.Equal(t, options.Response.User.ID, options2.Response.User.ID)
+	require.ErrorIs(t, err, ErrRegistrationRefused)
+	assert.Nil(t, options2)
+	assert.Empty(t, sessionID2)
 }
 
 func TestService_BeginLogin_Discoverable(t *testing.T) {
@@ -374,7 +378,7 @@ func TestService_WithJWTGenerator(t *testing.T) {
 	assert.NotNil(t, user)
 }
 
-func TestService_BeginRegistration_CreateUserError(t *testing.T) {
+func TestService_BeginRegistration_RefusesSecondCallForSameEmail(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a service where user already exists
@@ -384,11 +388,13 @@ func TestService_BeginRegistration_CreateUserError(t *testing.T) {
 	_, _, err := svc.BeginRegistration(ctx, "test@example.com", "Test User")
 	require.NoError(t, err)
 
-	// Second registration for same user should work (adding new credential)
+	// A second call for the SAME email is refused (go-xkms#1294 part B): the
+	// account now exists, and the public entry point never enrolls a
+	// credential for an account that already existed before the call.
 	options, sessionID, err := svc.BeginRegistration(ctx, "test@example.com", "Test User 2")
-	require.NoError(t, err)
-	assert.NotNil(t, options)
-	assert.NotEmpty(t, sessionID)
+	require.ErrorIs(t, err, ErrRegistrationRefused)
+	assert.Nil(t, options)
+	assert.Empty(t, sessionID)
 }
 
 func TestService_DeleteUser_WithCredentials(t *testing.T) {

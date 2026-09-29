@@ -505,7 +505,12 @@ func TestEnrollFIDO2Admin_ConnectError(t *testing.T) {
 	}
 }
 
-func TestEnrollFIDO2Admin_ReachesDevice(t *testing.T) {
+// TestEnrollFIDO2Admin_CreatesInvitedAccount is the go-xkms#1294 part B
+// regression guard: enrollFIDO2Admin creates the account and stops — it no
+// longer drives a local FIDO2 ceremony inline (an admin cannot enroll a
+// credential on an invitee's behalf), so it succeeds off the mock's
+// CreateUser alone, with no FIDO2 device involved at all.
+func TestEnrollFIDO2Admin_CreatesInvitedAccount(t *testing.T) {
 	mock := &mockAdminClient{}
 	cfg := &Config{
 		OutputFormat: "text",
@@ -516,20 +521,9 @@ func TestEnrollFIDO2Admin_ReachesDevice(t *testing.T) {
 	cmd := newAdminCreateCmdCopy()
 	printer := NewPrinter("text", io.Discard)
 
-	out := captureStdout(t, func() {
-		err := enrollFIDO2Admin(cmd, "root", cfg, printer, "")
-		if err == nil {
-			t.Fatal("expected error (no real FIDO2 device present)")
-		}
-		// The hardware CTAP2 authenticator adapter is opened lazily, after
-		// CreateUser and BeginRegistration have already succeeded against the
-		// mock client, and fails closed here because this test environment has
-		// no attached FIDO2 device.
-		if !strings.Contains(err.Error(), "failed to create FIDO2 handler") {
-			t.Errorf("error %q does not mention the authenticator step", err.Error())
-		}
-	})
-	_ = out
+	if err := enrollFIDO2Admin(cmd, "root", cfg, printer, ""); err != nil {
+		t.Fatalf("expected success (no local ceremony is attempted): %v", err)
+	}
 }
 
 // FIDO2 admin enrollment must refuse to run without the canonical login key.
