@@ -204,6 +204,19 @@ func NewSetupWizardService(pinSvc *PINService) (*SetupWizardService, error) {
 // specified length using crypto/rand, sampling uniformly from pinCharset.
 // The generated PIN is guaranteed to contain at least one character from
 // each class (uppercase, lowercase, digit, special) when length >= 4.
+//
+// Candidates are drawn by rejection sampling: each candidate is uniform
+// over pinCharset^length, and one that fails the complexity check is
+// discarded and redrawn. This keeps the result uniformly distributed over
+// the set of complexity-satisfying PINs, and the loop has no attempt cap
+// -- a bounded cap can fail outright, however rarely, and for length 4 the
+// per-attempt acceptance rate is only ~7% (a 4-character PIN must place a
+// distinct character class in each of its 4 positions), so a 100-attempt
+// cap failed with probability on the order of 1 in 1,300 calls, which is
+// exactly the flake observed in CI (#1210). Every accepted length has a
+// strictly positive per-attempt success probability, so the loop below
+// terminates with certainty; the only error path left is a genuine
+// crypto/rand failure.
 func generateRandomPIN(length int) (string, error) {
 	if length <= 0 {
 		return "", nil
@@ -211,10 +224,7 @@ func generateRandomPIN(length int) (string, error) {
 
 	charsetLen := big.NewInt(int64(len(pinCharset)))
 
-	// Generate candidate until complexity requirements are met.
-	// With a 90-char charset and lengths >= 8, failure probability per
-	// attempt is negligible, so this rarely loops more than once.
-	for attempts := 0; attempts < 100; attempts++ {
+	for {
 		b := make([]byte, length)
 		for i := range b {
 			idx, err := rand.Int(rand.Reader, charsetLen)
@@ -233,9 +243,6 @@ func generateRandomPIN(length int) (string, error) {
 
 		return pin, nil
 	}
-
-	// Should never reach here with reasonable lengths.
-	return "", ErrSetupPINGenerationFailed
 }
 
 // pinMeetsComplexity checks that the PIN contains at least one character
