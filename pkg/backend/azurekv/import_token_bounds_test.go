@@ -38,7 +38,7 @@ import (
 // *importtoken.LimitExceededError instead of growing past the limit.
 func TestGetImportParameters_CapEnforced(t *testing.T) {
 	b, _ := testBackend(t)
-	b.importTokens = importtoken.New[*importtoken.SealedRSAKey](time.Hour, 2, (*importtoken.SealedRSAKey).Destroy)
+	b.importTokens = importtoken.New[*importtoken.Entry](time.Hour, 2, (*importtoken.Entry).Destroy)
 
 	for i := 0; i < 2; i++ {
 		attrs := &types.KeyAttributes{
@@ -74,7 +74,7 @@ func TestGetImportParameters_CapEnforced(t *testing.T) {
 // second Put runs the sweep.
 func TestGetImportParameters_ExpiredTokenSwept(t *testing.T) {
 	b, _ := testBackend(t)
-	b.importTokens = importtoken.New[*importtoken.SealedRSAKey](time.Nanosecond, importtoken.DefaultMaxTokens, (*importtoken.SealedRSAKey).Destroy)
+	b.importTokens = importtoken.New[*importtoken.Entry](time.Nanosecond, importtoken.DefaultMaxTokens, (*importtoken.Entry).Destroy)
 
 	attrs := &types.KeyAttributes{CN: "expiring", KeyAlgorithm: x509.RSA}
 	params, err := b.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -91,19 +91,19 @@ func TestGetImportParameters_ExpiredTokenSwept(t *testing.T) {
 
 // TestImportTokens_EvictionDestroysWrappingKey verifies eviction destroys
 // the sealed wrapping key: the Store's destroy callback
-// ((*importtoken.SealedRSAKey).Destroy) is wired in for production use, so
-// a deleted entry's enclave can no longer be opened.
+// ((*importtoken.Entry).Destroy) is wired in for production use, so a
+// deleted entry's enclave can no longer be opened.
 func TestImportTokens_EvictionDestroysWrappingKey(t *testing.T) {
 	b, _ := testBackend(t)
 
-	sealed := newTestSealedRSAKey(t)
-	if _, err := b.importTokens.Put("evict-me", sealed); err != nil {
+	entry := newTestImportEntry(t, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	if _, err := b.importTokens.Put("evict-me", entry); err != nil {
 		t.Fatalf("Put() unexpected error = %v", err)
 	}
 
 	b.importTokens.Delete("evict-me")
 
-	err := sealed.Use(func(*rsa.PrivateKey) error { return nil })
+	err := entry.Key.Use(func(*rsa.PrivateKey) error { return nil })
 	var unavailable *importtoken.UnavailableError
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("Use() after Delete: expected *importtoken.UnavailableError, got %T: %v", err, err)

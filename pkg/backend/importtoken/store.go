@@ -28,6 +28,12 @@
 //   - destroyed: eviction -- by sweep, by Take, or by Close -- always runs
 //     the caller-supplied destroy callback, so key material does not
 //     outlive the token that names it.
+//
+// The package also holds the one copy of the RSA-OAEP / RSA-AES-KEY-WRAP
+// unwrap logic every ImportBackend needs once it has resolved a token to a
+// wrapping keypair: Unwrap, and the Entry type that binds a SealedRSAKey to
+// the algorithm GetImportParameters issued it for so a mismatched algorithm
+// is refused before the keypair is ever used (go-xkms#1342).
 package importtoken
 
 import (

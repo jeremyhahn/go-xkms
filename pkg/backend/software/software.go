@@ -642,38 +642,10 @@ func (b *SoftwareBackend) unwrapKey(wrapped *backend.WrappedKeyMaterial) ([]byte
 	}
 	defer tokenData.destroy()
 
-	// Verify algorithm matches
-	if wrapped.Algorithm != tokenData.algorithm {
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("wrapped with %s but token expects %s", wrapped.Algorithm, tokenData.algorithm)}
-	}
-
-	var unwrapped []byte
-	useErr := tokenData.wrappingKey.Use(func(privateKey *rsa.PrivateKey) error {
-		var unwrapErr error
-		switch wrapped.Algorithm {
-		case backend.WrappingAlgorithmRSAES_OAEP_SHA_1, backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
-			unwrapped, unwrapErr = wrapping.UnwrapRSAOAEP(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
-		case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
-			unwrapped, unwrapErr = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
-		default:
-			return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: wrapped.Algorithm.String()}
-		}
-		return unwrapErr
-	})
-	if useErr != nil {
-		// SealedRSAKey.Use reports a non-RSA enclave generically, since
-		// every ImportBackend using it holds an RSA wrapping key by
-		// construction; translate it to this package's own sentinel so
-		// UnwrapKey's error contract is unchanged for callers checking
-		// errors.Is(err, backend.ErrInvalidKeyType).
-		var notRSA *importtoken.NotRSAKeyError
-		if errors.As(useErr, &notRSA) {
-			return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "wrapping key is not RSA"}
-		}
-		return nil, &errs.Wrapped{Msg: "failed to unwrap key", Err: useErr}
-	}
-
-	return unwrapped, nil
+	// importtoken.Unwrap refuses wrapped.Algorithm unless it matches
+	// tokenData.algorithm -- the algorithm GetImportParameters issued
+	// this token for -- before it ever opens the wrapping key's enclave.
+	return importtoken.Unwrap(tokenData.wrappingKey, tokenData.algorithm, wrapped.Algorithm, wrapped.WrappedKey)
 }
 
 // ImportKey imports externally generated key material into the backend.

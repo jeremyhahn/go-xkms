@@ -13,7 +13,11 @@
 
 package importtoken
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+)
 
 // NotFoundError reports that a token is unknown to the Store, either
 // because it was never issued, it was already consumed by Take, or it
@@ -82,3 +86,29 @@ type NotRSAKeyError struct{}
 func (e *NotRSAKeyError) Error() string {
 	return "importtoken: wrapping key is not RSA"
 }
+
+// AlgorithmMismatchError reports that Unwrap was asked to unwrap key
+// material under a different wrapping algorithm than the one
+// GetImportParameters issued the token for. Refusing the mismatch here,
+// before the wrapping key's enclave is even opened, keeps the algorithm a
+// caller wrapped with bound to the algorithm the wrapping keypair was
+// generated for -- a caller cannot request an RSA-OAEP wrapping key and
+// then unwrap as RSA-AES-KEY-WRAP (or vice versa) against the same
+// keypair.
+type AlgorithmMismatchError struct {
+	// Issued is the algorithm GetImportParameters recorded for this
+	// token.
+	Issued backend.WrappingAlgorithm
+	// Requested is the algorithm the caller's WrappedKeyMaterial claims.
+	Requested backend.WrappingAlgorithm
+}
+
+// Error implements the error interface.
+func (e *AlgorithmMismatchError) Error() string {
+	return fmt.Sprintf("importtoken: wrapped with %s but token was issued for %s", e.Requested, e.Issued)
+}
+
+// Unwrap returns backend.ErrInvalidAlgorithm, so callers checking
+// errors.Is(err, backend.ErrInvalidAlgorithm) see the same sentinel every
+// invalid-algorithm path in the backend package reports.
+func (e *AlgorithmMismatchError) Unwrap() error { return backend.ErrInvalidAlgorithm }
