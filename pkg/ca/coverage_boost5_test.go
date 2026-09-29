@@ -93,7 +93,7 @@ func TestOCSPCreateResponse_CacheHit(t *testing.T) {
 	serial := big.NewInt(42)
 	cacheKey := ocspCacheKey(serial)
 	fakeResp := []byte("cached-ocsp-response")
-	resp.cacheResponse(cacheKey, fakeResp)
+	resp.cacheResponse(cacheKey, fakeResp, time.Now().Add(time.Hour))
 
 	// getCachedResponse should return the cached value immediately.
 	got := resp.getCachedResponse(cacheKey)
