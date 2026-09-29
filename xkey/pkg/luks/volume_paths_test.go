@@ -79,7 +79,9 @@ func TestVolume_Unlock_AlreadyMounted(t *testing.T) {
 	require.NoError(t, os.WriteFile(luksPath, []byte("container"), 0600))
 
 	v := NewVolumeWithPaths(luksPath, "/")
-	require.True(t, v.IsMounted(), "/ must be reported as mounted")
+	mounted, err := v.IsMounted()
+	require.NoError(t, err)
+	require.True(t, mounted, "/ must be reported as mounted")
 
 	assert.ErrorIs(t, v.Unlock("passphrase"), ErrVolumeAlreadyMounted)
 	assert.Empty(t, v.LoopDevice, "no loop device may be attached when the mount check fails")

@@ -86,7 +86,7 @@ enroll:   user + hardware  →  factor.Enroll  →  enrollment record  →  qrdb
                                  └── records the factor's parameters:
                                      PIV slot + certificate
                                      PKCS#11 mechanism (default CKM_ECDSA_SHA256)
-                                     FIDO2 RP id + credential
+                                     FIDO2 RP id + origin(s) + UV requirement + credential
                                      mTLS certificate thumbprint
 
 auth:     qrdb issues a challenge (TTL: 5 minutes by default)
@@ -115,6 +115,11 @@ and qrdb composes the answers into an authentication decision.
   recorded at enrollment is what binds a credential to an origin; changing it
   invalidates existing enrollments, and setting it too broadly widens where a
   credential can be used.
+- **FIDO2's expected origin(s) and user-verification requirement are also
+  recorded at enrollment**, not renegotiated at verification. `Verify`
+  refuses a clientDataJSON `origin` outside the enrolled set and, by default,
+  an assertion that only proves user presence without verification — the
+  WebAuthn/CTAP2 best practice for a factor used to unseal or authenticate.
 - **`PKCS11Mechanism` is recorded on the enrollment**, not chosen at
   verification. Default `CKM_ECDSA_SHA256`. `Verify` enforces this: it reads
   the mechanism from the challenge (never the response) and refuses when the

@@ -105,13 +105,14 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 
 	// Determine key spec from attributes
 	keySpec := ""
-	if attrs.KeyAlgorithm == x509.RSA {
+	switch attrs.KeyAlgorithm {
+	case x509.RSA:
 		if attrs.RSAAttributes != nil && attrs.RSAAttributes.KeySize > 0 {
 			keySpec = fmt.Sprintf("RSA_%d", attrs.RSAAttributes.KeySize)
 		} else {
 			keySpec = "RSA_2048"
 		}
-	} else if attrs.KeyAlgorithm == x509.ECDSA {
+	case x509.ECDSA:
 		if attrs.ECCAttributes != nil {
 			keySpec = fmt.Sprintf("ECC_%s", attrs.ECCAttributes.Curve)
 		} else {
@@ -167,7 +168,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		wrappedKey, err = wrapping.WrapRSAAES(keyMaterial, rsaPubKey, params.Algorithm)
 
 	default:
-		return nil, &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
+		return nil, &errs.Detail{Err: ErrInvalidAlgorithm, Detail: string(params.Algorithm)}
 	}
 
 	if err != nil {
@@ -323,12 +324,13 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 
 	// Set key operations based on key type
 	var keyOps []*azkeys.KeyOperation
-	if attrs.KeyType == backend.KEY_TYPE_SIGNING {
+	switch attrs.KeyType {
+	case backend.KEY_TYPE_SIGNING:
 		keyOps = []*azkeys.KeyOperation{
 			ptrKeyOp(azkeys.KeyOperationSign),
 			ptrKeyOp(azkeys.KeyOperationVerify),
 		}
-	} else if attrs.KeyType == backend.KEY_TYPE_ENCRYPTION {
+	case backend.KEY_TYPE_ENCRYPTION:
 		keyOps = []*azkeys.KeyOperation{
 			ptrKeyOp(azkeys.KeyOperationEncrypt),
 			ptrKeyOp(azkeys.KeyOperationDecrypt),

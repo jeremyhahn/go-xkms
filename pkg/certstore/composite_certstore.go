@@ -386,13 +386,10 @@ func (cs *compositeCertStore) isRevokedLocked(cert *x509.Certificate) (bool, err
 		return false, nil
 	}
 
-	// Check if CRL is still valid
-	now := time.Now()
-	if crl.NextUpdate.Before(now) || crl.NextUpdate.Equal(now) { //nolint:staticcheck // SA4017: checking expiration
-		//nolint:staticcheck // SA4017: intentional expiration check
-		// CRL is expired, should be refreshed
-		// For now, we'll still check it
-	}
+	// A stale CRL (NextUpdate in the past) should be refreshed, but a cache
+	// refresh failure must not make revocation checking fail open: the
+	// revoked-entries check below still runs against whatever CRL is
+	// cached, stale or not.
 
 	// Check if certificate serial number is in the revoked list
 	for _, entry := range crl.RevokedCertificateEntries {

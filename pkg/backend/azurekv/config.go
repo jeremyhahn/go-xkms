@@ -90,14 +90,14 @@ func (c *Config) Validate() error {
 
 	// Validate vault URL format
 	if !isValidVaultURL(c.VaultURL) {
-		return &errs.Detail{Err: ErrInvalidVaultURL, Detail: fmt.Sprintf("%s", c.VaultURL)}
+		return &errs.Detail{Err: ErrInvalidVaultURL, Detail: c.VaultURL}
 	}
 
 	// A localhost/127.0.0.1 vault URL is only well-formed for local
 	// development against an emulator or mock; it requires an explicit
 	// opt-in so a production configuration can never reach it silently.
 	if isLocalVaultURL(c.VaultURL) && !c.AllowLocalVaultURL {
-		return &errs.Detail{Err: ErrLocalVaultURLNotAllowed, Detail: fmt.Sprintf("%s", c.VaultURL)}
+		return &errs.Detail{Err: ErrLocalVaultURLNotAllowed, Detail: c.VaultURL}
 	}
 
 	// If service principal credentials are provided, all three must be present

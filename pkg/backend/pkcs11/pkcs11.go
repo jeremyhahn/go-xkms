@@ -381,7 +381,7 @@ func (b *Backend) deleteKeyInSession(session pkcs11.SessionHandle, id []byte, cn
 	}
 
 	if len(privObjs) == 0 && len(pubObjs) == 0 {
-		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", cn)}
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: cn}
 	}
 
 	return b.verifyKeyRemoved(session, id, cn)
@@ -1427,7 +1427,7 @@ func (b *Backend) FindSecretKey(attrs *types.KeyAttributes) (pkcs11.ObjectHandle
 			return &errs.Wrapped{Msg: "failed to find objects", Err: searchErr}
 		}
 		if found == 0 {
-			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 		}
 		handle = found
 		return nil
@@ -1502,7 +1502,7 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 	if signer == nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	return signer, nil
@@ -1548,7 +1548,7 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 		return &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 	if signer == nil {
-		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	return verifyPublicKey(signer.Public(), attrs, digest, signature)
@@ -1752,7 +1752,7 @@ func (b *Backend) findKey(attrs *types.KeyAttributes) (crypto.Signer, error) {
 		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 	if signer == nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	return signer, nil

@@ -429,7 +429,7 @@ func TestSign_NilRandReader(t *testing.T) {
 	// ECDSA can sign with a nil rand reader on some platforms (uses
 	// crypto/internal/randutil); on others it panics. Use recover.
 	func() {
-		defer func() { recover() }() //nolint:errcheck
+		defer func() { recover() }()
 		ca.Sign(nil, make([]byte, 32), crypto.SHA256)
 	}()
 }

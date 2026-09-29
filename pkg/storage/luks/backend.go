@@ -130,7 +130,11 @@ func (b *Backend) Attach() error {
 		return ErrVolumeNotInitialized
 	}
 
-	if !b.volume.IsMounted() {
+	mounted, err := b.volume.IsMounted()
+	if err != nil {
+		return &VolumeMountCheckError{Err: err}
+	}
+	if !mounted {
 		return ErrVolumeNotMounted
 	}
 

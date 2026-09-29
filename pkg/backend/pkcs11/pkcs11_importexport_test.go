@@ -28,7 +28,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"math/big"
-	"os"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -791,7 +790,7 @@ func TestImportKey_RSAPrivateKeyIsTheSameKey(t *testing.T) {
 		pkcs11.NewAttribute(pkcs11.CKA_MODULUS, nil),
 	})
 	require.NoError(t, err)
-	assert.Zero(t, new(big.Int).SetBytes(modulus[0].Value).Cmp(original.PublicKey.N),
+	assert.Zero(t, new(big.Int).SetBytes(modulus[0].Value).Cmp(original.N),
 		"the imported private key must carry the original modulus")
 
 	flags := readBoolAttributes(t, b, session, handle, pkcs11.CKA_SENSITIVE, pkcs11.CKA_EXTRACTABLE)
@@ -2004,47 +2003,6 @@ func TestCapabilities(t *testing.T) {
 	assert.True(t, caps.Import, "Import capability should be true")
 	assert.True(t, caps.Export, "Export capability should be true")
 	assert.True(t, caps.SupportsImportExport(), "SupportsImportExport() should return true")
-}
-
-// Helper function to get SoftHSM library path
-func getSoftHSMLibrary(t *testing.T) string {
-	// Try common SoftHSM2 library paths
-	paths := []string{
-		"/usr/lib/softhsm/libsofthsm2.so",
-		"/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so",
-		"/usr/local/lib/softhsm/libsofthsm2.so",
-		"/opt/homebrew/lib/softhsm/libsofthsm2.so", // macOS with Homebrew
-		"/usr/lib64/pkcs11/libsofthsm2.so",         // RHEL/CentOS
-	}
-
-	for _, path := range paths {
-		if fileExists(path) {
-			return path
-		}
-	}
-
-	return ""
-}
-
-// Helper function to check if file exists
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-// Helper function to check if string contains substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // TestGenerateWrappingKeyPairAttributes verifies that the wrapping key pair

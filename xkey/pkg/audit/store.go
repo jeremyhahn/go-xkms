@@ -16,6 +16,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -56,7 +57,7 @@ type QueryFilter struct {
 // fast queries.
 type BackendStore struct {
 	mu      sync.RWMutex
-	slog    *SlogLogger
+	slog    entryLogger
 	backend xkms.StorageBackend
 	prefix  string
 	cache   []Entry
@@ -124,8 +125,10 @@ func (s *BackendStore) Log(entry Entry) error {
 
 	var slogger *slog.Logger
 	if s.slog != nil {
-		_ = s.slog.Log(entry)
-		slogger = s.slog.logger
+		if slogErr := s.slog.Log(entry); slogErr != nil {
+			writeErr = errors.Join(writeErr, slogErr)
+		}
+		slogger = s.slog.slogHandle()
 	}
 
 	return handleWriteFailure(slogger, entry.Operation, writeErr)

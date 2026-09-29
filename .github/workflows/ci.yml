@@ -166,6 +166,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   # PINNED (devops.md §9, documented): Go 1.27.0 reached actions/go-versions on
   # 2026-08-19 and 'stable' started resolving to it mid-branch — a green run at
@@ -217,6 +220,7 @@ env:
   # guarded nothing. Raise it as coverage grows; 90%+ remains the
   # CLAUDE.md target and the Makefile's own gate stays at 80.
   COVERAGE_THRESHOLD: 89
+  TRIVY_DIGEST: 'sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969'
   REGISTRY: ghcr.io
   IMAGE_NAME: jeremyhahn/xkms-cli
   # NO GOPROXY / GOSUMDB overrides here (ci-template v1.1 prohibition). The
@@ -248,7 +252,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # pr-scope.sh diffs against the merge-base with the PR's base
           # branch (or the push's previous sha); a shallow clone can leave
@@ -258,7 +262,7 @@ jobs:
           # break correctness, only quietly disable the skip. Full history
           # keeps the skip working.
           fetch-depth: 0
-
+          persist-credentials: false
       - name: Classify this run (docs-only? which tier?)
         id: scope
         env:
@@ -286,14 +290,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       - name: Install dependencies
         run: go mod download
 
@@ -392,7 +396,7 @@ jobs:
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         continue-on-error: true
         with:
           files: ./build/coverage/coverage.out
@@ -400,14 +404,13 @@ jobs:
           name: go-xkms-coverage
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
-
       # upload-artifact v4+ refuses to run against any server that is not
       # github.com -- it detects one and reports "not currently supported on
       # GHES", and Gitea presents as such (devops.md §1). Every such step in
       # this file is guarded; the work it captures has already run.
       - name: Upload coverage reports
         if: github.server_url == 'https://github.com'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: coverage-reports
           path: |
@@ -420,11 +423,14 @@ jobs:
         # Skip for Dependabot PRs (no write permissions) and continue on error for forks
         if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
         continue-on-error: true
-        uses: actions/github-script@v7
+        env:
+          COVERAGE: ${{ steps.coverage.outputs.coverage }}
+          THRESHOLD: ${{ env.COVERAGE_THRESHOLD }}
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
-            const coverage = '${{ steps.coverage.outputs.coverage }}';
-            const threshold = '${{ env.COVERAGE_THRESHOLD }}';
+            const coverage = process.env.COVERAGE;
+            const threshold = process.env.THRESHOLD;
             const status = parseFloat(coverage) >= parseFloat(threshold) ? '✅' : '❌';
 
             const comment = `## Coverage Report ${status}
@@ -483,14 +489,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       # Same cgo deps the Unit Tests job installs, for the same reason:
       # libicu-dev (dolthub/go-icu-regex) and libusb-1.0-0-dev (google/gousb
       # via go-qrdb) are unconditional deps of the module graph, and
@@ -772,14 +778,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       # Same cgo deps nested-module-test installs, for the same reason:
       # dolthub/go-icu-regex and google/gousb are unconditional deps of the
       # module graph whenever CGO_ENABLED defaults to 1.
@@ -821,8 +827,9 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           # changed-go-packages.sh diffs against needs.changes.outputs.merge_base,
           # a commit that has to actually be present in this job's own clone
           # (a fresh runner, possibly a different host than the `changes`
@@ -830,11 +837,10 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       # Same SoftHSM2 setup as the `test` job, for the same reason: the
       # changed-package set can legitimately include pkcs11-backed code.
       - name: Install and configure SoftHSM2
@@ -872,7 +878,8 @@ jobs:
         env:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -race -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" ${{ steps.pkgs.outputs.packages }}
+          PACKAGES: ${{ steps.pkgs.outputs.packages }}
+        run: go test -race -timeout 15m -tags="codec_cbor codec_json codec_msgpack tpm_simulator frost" $PACKAGES
 
       - name: No root-module Go changes
         if: steps.pkgs.outputs.packages == ''
@@ -893,14 +900,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       # go vet (and golangci-lint below, which type-checks the same graph)
       # need to compile every package reached by `./...`, including cgo
       # packages pulled in unconditionally by the module graph
@@ -1056,14 +1063,14 @@ jobs:
       GOMAXPROCS: 8
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       - name: Install cgo dependencies
         run: |
           sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
@@ -1111,12 +1118,11 @@ jobs:
             -fmt sarif -out gosec-results.sarif ./...
 
       - name: Upload gosec results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
         if: github.server_url == 'https://github.com'
         with:
           sarif_file: gosec-results.sarif
           category: gosec
-
       - name: Require govulncheck at the pinned version
         run: |
           .github/scripts/require-tool.sh \
@@ -1154,14 +1160,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       - name: Install build dependencies
         run: |
           # libicu-dev: github.com/dolthub/go-icu-regex (pulled in transitively
@@ -1265,12 +1271,11 @@ jobs:
 
       - name: Upload build artifacts
         if: github.server_url == 'https://github.com'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: binaries-${{ matrix.binary }}
           path: build/${{ matrix.output }}
           retention-days: 7
-
   # Job 5b: Clustering build-tag matrix — the raft-gated clustering code must
   # compile and pass its unit tests in BOTH the default (standalone) and
   # `-tags raft` (clustered) configurations.
@@ -1291,14 +1296,14 @@ jobs:
         tags: [ "codec_json", "raft codec_json" ]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       # See the "build" job's comment: dolthub/go-icu-regex and google/gousb
       # are unconditional cgo deps of the module graph, not gated by any tag
       # here, so they're needed even for this codec-only tag matrix whenever
@@ -1330,8 +1335,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       # Gates target PRODUCTION Go (the shipped binary). Test files (_test.go)
       # may legitimately reach into pkg/* for fixtures, and docs are excluded.
       - name: xkmsctl is sdk/go-only (production)
@@ -1378,13 +1384,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # ghcr.io is GitHub's registry. On Gitea, secrets.GITHUB_TOKEN is the
       # LOCAL Gitea Actions token -- it authenticates to nothing on
@@ -1393,15 +1400,14 @@ jobs:
       # every other GitHub-only step in this file (SARIF uploads etc.).
       - name: Log in to GitHub Container Registry
         if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.server_url == 'https://github.com'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -1433,7 +1439,7 @@ jobs:
           fi
 
       - name: Build Docker image for scanning (amd64 only)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: Dockerfile.cli
@@ -1463,7 +1469,7 @@ jobs:
       # API is GitHub-only, so both steps are guarded. Neither gates -- the
       # gate is the CLI step below, which runs on both servers.
       - name: Run Trivy vulnerability scanner (SARIF for code scanning)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         if: github.server_url == 'https://github.com'
         with:
           version: v0.74.0
@@ -1471,14 +1477,12 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
-
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
         if: github.server_url == 'https://github.com'
         with:
           sarif_file: trivy-results.sarif
           category: trivy
-
       # THE GATE (devops.md §8): every image this repo builds is scanned and a
       # CRITICAL/HIGH finding fails the job, on both servers. Trivy runs from
       # its own image rather than the action, because the action installs
@@ -1488,9 +1492,12 @@ jobs:
       # bump every trivy pin in ci.yml/release.yml/nightly.yml together.
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
+          # Pull trivy image by digest to ensure exact version
+          docker pull "aquasec/trivy:0.74.0@${TRIVY_DIGEST}"
+
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.74.0 image \
+            "aquasec/trivy:0.74.0@${TRIVY_DIGEST}" image \
               --format table \
               --severity CRITICAL,HIGH \
               --ignore-unfixed \
@@ -1500,27 +1507,26 @@ jobs:
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          TRIVY_DIGEST: ${{ env.TRIVY_DIGEST }}
 
       - name: Run Grype vulnerability scanner
-        uses: anchore/scan-action@v3
+        uses: anchore/scan-action@3343887d815d7b07465f6fdcd395bd66508d486a # v3
         id: grype
         continue-on-error: true
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           fail-build: false
           severity-cutoff: high
-
       - name: Upload Grype results
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
         if: github.server_url == 'https://github.com'
         continue-on-error: true
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
           category: grype
-
       - name: Push Docker image
         if: false  # Disabled - Docker publishing is handled by release workflow only
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: Dockerfile.cli
@@ -1550,14 +1556,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       - name: Install dependencies for hardware backends
         run: |
           # libicu-dev/libusb-1.0-0-dev: see the "build" job's comment --
@@ -1631,14 +1637,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       - name: Install dependencies
         run: go mod download
 

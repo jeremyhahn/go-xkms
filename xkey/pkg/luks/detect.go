@@ -53,10 +53,11 @@ func IsLUKSVolume(path string) bool {
 	return true
 }
 
-// IsMounted checks if the data directory is currently mounted.
-func IsMounted(mountPoint string) bool {
-	mounted, _ := luks2.IsMounted(mountPoint)
-	return mounted
+// IsMounted checks if the data directory is currently mounted. It returns
+// an error when the mount state could not be determined; callers must not
+// treat that as "not mounted".
+func IsMounted(mountPoint string) (bool, error) {
+	return luks2.IsMounted(mountPoint)
 }
 
 // IsLUKSOpen checks if the LUKS volume is currently unlocked.

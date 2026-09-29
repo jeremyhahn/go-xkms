@@ -277,6 +277,27 @@ func TestTokenResponse_ToTokenData(t *testing.T) {
 		}
 	})
 
+	t.Run("invalid expiration format propagates error", func(t *testing.T) {
+		resp := &TokenResponse{
+			TokenType: "Bearer",
+			ExpiresIn: 900,
+			Credentials: &Credentials{
+				AccessKeyID:     "AKIAEXAMPLE",
+				SecretAccessKey: "secret",
+				SessionToken:    "token",
+				Expiration:      "not-a-date",
+			},
+		}
+
+		data, err := resp.ToTokenData("us-east-1")
+		if !errors.Is(err, ErrInvalidResponse) {
+			t.Errorf("expected ErrInvalidResponse, got %v", err)
+		}
+		if data != nil {
+			t.Error("expected nil TokenData when the expiration cannot be parsed")
+		}
+	})
+
 	t.Run("calculates expiry", func(t *testing.T) {
 		resp := &TokenResponse{
 			ExpiresIn: 900,

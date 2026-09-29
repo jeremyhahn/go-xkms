@@ -84,7 +84,11 @@ func runUnseal(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if already mounted
-	if vol.IsMounted() {
+	mounted, err := vol.IsMounted()
+	if err != nil {
+		return &UnsealError{Operation: "check_mounted", Err: err}
+	}
+	if mounted {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Volume already unlocked and mounted at %s\n", vol.MountPoint)
 		return nil
 	}

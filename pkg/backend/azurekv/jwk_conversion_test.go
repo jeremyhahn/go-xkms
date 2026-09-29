@@ -57,19 +57,19 @@ func TestConvertToAzureJWK_RSA(t *testing.T) {
 	}
 
 	// Verify required fields are present
-	if azureJWK.N == nil || len(azureJWK.N) == 0 {
+	if len(azureJWK.N) == 0 {
 		t.Error("N should not be empty")
 	}
-	if azureJWK.E == nil || len(azureJWK.E) == 0 {
+	if len(azureJWK.E) == 0 {
 		t.Error("E should not be empty")
 	}
-	if azureJWK.D == nil || len(azureJWK.D) == 0 {
+	if len(azureJWK.D) == 0 {
 		t.Error("D should not be empty for private key")
 	}
-	if azureJWK.P == nil || len(azureJWK.P) == 0 {
+	if len(azureJWK.P) == 0 {
 		t.Error("P should not be empty for private key")
 	}
-	if azureJWK.Q == nil || len(azureJWK.Q) == 0 {
+	if len(azureJWK.Q) == 0 {
 		t.Error("Q should not be empty for private key")
 	}
 
@@ -126,13 +126,13 @@ func TestConvertToAzureJWK_ECDSA(t *testing.T) {
 			}
 
 			// Verify required fields are present
-			if azureJWK.X == nil || len(azureJWK.X) == 0 {
+			if len(azureJWK.X) == 0 {
 				t.Error("X should not be empty")
 			}
-			if azureJWK.Y == nil || len(azureJWK.Y) == 0 {
+			if len(azureJWK.Y) == 0 {
 				t.Error("Y should not be empty")
 			}
-			if azureJWK.D == nil || len(azureJWK.D) == 0 {
+			if len(azureJWK.D) == 0 {
 				t.Error("D should not be empty for private key")
 			}
 		})
@@ -339,7 +339,7 @@ func TestConvertRoundTrip_ECDSA(t *testing.T) {
 	if originalEC.Y.Cmp(recoveredEC.Y) != 0 {
 		t.Error("Y coordinate doesn't match")
 	}
-	if originalEC.D.Cmp(recoveredEC.D) != 0 {
+	if originalEC.D.Cmp(recoveredEC.D) != 0 { //nolint:staticcheck // SA1019: comparing the raw private scalar round-tripped through the JWK conversion under test
 		t.Error("Private key D doesn't match")
 	}
 }
