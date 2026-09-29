@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -372,11 +373,26 @@ func TestEndorse01Challenge(t *testing.T) {
 		// ekPublicKey was already obtained in Step 0
 		require.NotNil(t, ekPublicKey, "EK public key should have been obtained in Step 0")
 
+		// pkg/acme/server/handlers/order_finalize.go's endorse01TPMManufacturer
+		// refuses finalize with BadCSR unless the CSR itself asserts the TPM's
+		// manufacturer code (tcg-at-tpmManufacturer, read from the CSR's own
+		// Subject DN or subjectAltName -- pkg/ca/tcg_devid_name.go's
+		// manufacturerFromNames checks the Subject first). Without it, finalize
+		// is rejected but sendJWSRequest only surfaces transport errors, not
+		// ACME problem documents, so the order silently stayed "ready" forever
+		// instead of progressing -- the missing attribute, not a key mismatch,
+		// is why finalize never reached "valid".
+		props, err := swtpm.GetTPMModule().FixedProperties()
+		require.NoError(t, err, "Failed to read TPM fixed properties")
+
 		// Create CSR template with the EK public key
 		csrTemplate := &x509.CertificateRequest{
 			Subject: pkix.Name{
 				CommonName:   deviceIdentifier,
 				Organization: []string{"Test Organization"},
+				ExtraNames: []pkix.AttributeTypeAndValue{
+					{Type: ca.OIDTCGAttributeTPMManufacturer, Value: props.ManufacturerCode},
+				},
 			},
 		}
 
@@ -462,13 +478,20 @@ func TestEndorse01Challenge(t *testing.T) {
 		t.Log("")
 		t.Log("Step 8: Verifying TCG and Trusted Platform OIDs...")
 
-		// Define expected OIDs
+		// Define expected OIDs. tcg-kp-EKCertificate and OIDPermanentIdentifier
+		// are not standalone certificate extensions, so they are looked up
+		// separately below, not through this map/loop: tcg-kp-EKCertificate
+		// (2.23.133.8.1) is an Extended Key Usage purpose (WebAuthn L2 §8.3.1-
+		// style encoding, pkg/ca/profiles.go's tcgEKCertificateExtKeyUsage),
+		// read from UnknownExtKeyUsage; OIDPermanentIdentifier is an RFC 4043
+		// otherName inside subjectAltName (pkg/ca/tcg.go), read via
+		// ca.ParseOtherNames -- both are the same class of mistake this
+		// package's other TCG-extension checks made and were fixed to avoid
+		// (see ca_tcgcsr_integration_test.go / attestation_integration_test.go).
 		tcgOIDs := map[string]asn1.ObjectIdentifier{
-			"tcg-kp-EKCertificate":   {2, 23, 133, 8, 1},
-			"tcg-TPMSpecification":   {2, 23, 133, 2, 16},
-			"OIDPermanentIdentifier": {1, 3, 6, 1, 5, 5, 7, 8, 3},
-			"tp-keyStore":            {1, 3, 6, 1, 4, 1, 29377, 101, 2},
-			"tp-issuerKeyStore":      {1, 3, 6, 1, 4, 1, 29377, 101, 1},
+			"tcg-TPMSpecification": {2, 23, 133, 2, 16},
+			"tp-keyStore":          {1, 3, 6, 1, 4, 1, 29377, 101, 2},
+			"tp-issuerKeyStore":    {1, 3, 6, 1, 4, 1, 29377, 101, 1},
 		}
 
 		foundOIDs := make(map[string]bool)
@@ -481,8 +504,26 @@ func TestEndorse01Challenge(t *testing.T) {
 			}
 		}
 
+		hasEKCertificateEKU := false
+		for _, oid := range issuedCert.UnknownExtKeyUsage {
+			if oid.Equal(ca.OIDTCGKpEKCertificate) {
+				hasEKCertificateEKU = true
+				t.Logf("  ✓ Found OID tcg-kp-EKCertificate (%v)", ca.OIDTCGKpEKCertificate)
+				break
+			}
+		}
+
+		others, err := ca.ParseOtherNames(issuedCert.Extensions)
+		require.NoError(t, err, "decode subjectAltName otherNames")
+		for _, other := range others {
+			if other.TypeID.Equal(ca.OIDPermanentIdentifier) {
+				t.Logf("  ✓ Found OID OIDPermanentIdentifier (%v)", ca.OIDPermanentIdentifier)
+				break
+			}
+		}
+
 		// Verify key TCG OIDs are present
-		assert.True(t, foundOIDs["tcg-kp-EKCertificate"], "Certificate should have tcg-kp-EKCertificate OID")
+		assert.True(t, hasEKCertificateEKU, "Certificate should have tcg-kp-EKCertificate OID")
 		assert.True(t, foundOIDs["tp-keyStore"], "Certificate should have tp-keyStore OID")
 		assert.True(t, foundOIDs["tp-issuerKeyStore"], "Certificate should have tp-issuerKeyStore OID")
 

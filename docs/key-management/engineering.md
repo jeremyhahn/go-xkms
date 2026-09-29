@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -68,7 +68,9 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
 ## Invariants
 
 - **A key ID is scoped to `{tenant, backend}`.** The same string in two
-  backends names two different keys; `ListKeys` always takes a backend.
+  backends names two different keys; `ListKeys` always takes a backend. The
+  tenant half is enforced in the service, for every transport: see *Key
+  lifecycle RPCs resolve inside the caller's tenant* below.
 - **Generation is not idempotent.** `GenerateKey` on an existing ID returns
   `ErrKeyAlreadyExists` rather than replacing material. Replacement is
   `RotateKey`.
@@ -121,6 +123,17 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
 - **Wrap/unwrap by ID never materialises plaintext outside the service.**
   `WrapKeyByID` reads the KEK and the target inside the process and returns
   only ciphertext.
+- **`KeyAttributes.String()` never renders `Password` or `SealData`,
+  regardless of `Debug`.** (`pkg/types/types.go:1223-1256`). Before the
+  2026-09-28 crypto audit a `Debug`-gated "Secrets" block printed both
+  verbatim; `Debug` also defaulted to `true` for TPM2 EK/IAK/IDevID/SSRK
+  keys (`pkg/tpm2/config.go`, see `docs/tpm2/engineering.md`
+  "Configuration"), so any future `%v` or `slog.Any` over a `KeyAttributes`
+  value would have leaked them by default. `String()` has no way to know
+  whether its caller is a trusted diagnostic path or an untrusted sink (an
+  error message, a log line), so the block is gone unconditionally — a
+  caller that genuinely needs the secret value reads `attrs.Password` or
+  `attrs.SealData` directly.
 - **Rotation preserves the key ID.** Callers keep referring to the same
   identifier; the backend decides how versions are represented.
 - **Concurrency.** The composite is safe for concurrent use. Ordering across
@@ -222,6 +235,277 @@ as a documented PKCS#11-edge exception, because it is not one: no consumer at
 that edge reads the field, and a backend releases raw key material only for a
 single-family symmetric key, so both of the copy's extra branches were
 unreachable there. **There is no fourth formatter.**
+
+## RSA modulus size floor is enforced project-wide (go-xkms#1204)
+
+`types.RSAKeySize2048` (`pkg/types/algorithms.go`) is the minimum RSA modulus
+this project generates or imports anywhere, and `types.ValidateRSAKeySize`
+(`pkg/types/algorithms.go:641`) is the one function that judges a size
+against it, returning the typed `*types.RSAKeySizeError`
+(`pkg/types/algorithms.go:629`) rather than an `fmt.Errorf`. It performs no
+substitution: a zero size is refused exactly like any other undersized
+value, so a call site that wants zero to mean "use the default" resolves
+that itself before calling it.
+
+Before go-xkms#1204, `KeyAttributes.Validate` (`pkg/types/types.go:1271`)
+already enforced the floor for anything that called it, but the RPC service
+layer never did: `buildKeyAttributes` and the shared import-template
+resolver both built a `*types.KeyAttributes` and handed it straight to a
+backend. PKCS#11's `GenerateRSAWithSize` only raised sizes below 512, and
+TPM's `CreateRSA` applied no floor at all, so a `GenerateKeyRequest` or
+`ImportKeyRequest` naming 1024 bits reached hardware key generation
+unchecked on both backends. The fix is layered, not single-point, because
+the RPC service is not the only caller of any of these:
+
+- **Service boundary.** `pkg/xkms/servicer_key.go`'s `validateKeyAttributes`
+  (line 1290) wraps `KeyAttributes.Validate` in the service's own
+  `ErrValidation{Sentinel: ErrInvalidKeyAttributes}` so every transport maps
+  the refusal onto the same 400-class response every other validation
+  failure gets. `buildKeyAttributes` (GenerateKey, line 1430) and
+  `applyKeyTemplate` (the template resolver shared by `ImportKey`,
+  `GetImportParameters` and `UnwrapKeyByID`, line 1412) both call it as the
+  last step before returning attributes.
+- **PKCS#11.** `Backend.GenerateRSAWithSize`
+  (`pkg/backend/pkcs11/pkcs11.go:1161`) resolves a zero size to
+  `types.RSAKeySize2048` and then calls `types.ValidateRSAKeySize` before
+  touching `b.pool`, so the refusal is reachable — and unit-testable —
+  without a live HSM session. A size between 1 and 511 bits used to be
+  silently promoted to 2048; it is now refused like any other undersized
+  request, matching this project's "refuse, never silently substitute"
+  convention elsewhere in the same file.
+- **TPM.** `TPM2.CreateRSA` (`pkg/tpm2/rsa.go:71`) validates the resolved
+  `spec.KeyBits` immediately after applying the `DefaultRSAKeyBits` default
+  and before calling `KeyTemplate`. This is a different question from
+  `rsaTemplate`'s own `definedRSAKeyBits` check (`pkg/tpm2/template.go`),
+  which asks whether TPM 2.0 defines a modulus size at all — and still
+  includes 1024, since TCG's reference implementation does. `ValidateRSAKeySize`
+  is this project's minimum-strength policy, not a device-capability
+  question, so it runs first and independently.
+- **Composite Backend.** `compositeBackend.GenerateRSA`
+  (`pkg/xkms/composite_keys.go:34`) is the one `xkms.Backend` implementation
+  every caller in this module reaches before a concrete backend ever sees a
+  request, and the CA and PIV key-generation helpers (`pkg/ca/ca.go`,
+  `pkg/xkms/piv_keygen_backend.go`) reach it the same way. It refuses an
+  explicitly-requested undersized modulus and leaves `RSAAttributes == nil`
+  or `KeySize == 0` alone, since resolving that to the default is the
+  concrete backend's job, not this layer's.
+
+**go-xkms#1214 closed the transport-level half of this gap.**
+`pkg/api/rest/handlers.go`'s `GenerateKeyHandler` and `pkg/api/grpc/service.go`'s
+`GenerateKey` no longer build their own `types.KeyAttributes`: both now call
+`XKMSService.GenerateKey` directly, so `buildKeyAttributes`'s
+`validateKeyAttributes` step is the only place either transport's generate
+path can reach a backend from. `ImportKeyHandler`, `GetImportParametersHandler`
+(REST) and `ImportKey`, `GetImportParameters` (gRPC) still build their own
+`types.KeyAttributes` — see "Import and GetImportParameters stay
+transport-level" below for why — but each now calls
+`types.KeyAttributes.Validate()` directly on the attributes it built, before
+calling the backend, closing the specific gap this section used to document:
+an RSA-1024 `ImportKeyRequest` or `GetImportParametersRequest` is refused
+with 400 / `InvalidArgument` on every transport, the same as `GenerateKey`.
+REST's `CopyKeyHandler` (`pkg/api/rest/handlers.go`) gained the same call for
+its destination attributes, since it builds them from caller-supplied
+`key_type`/`key_size`/`curve` fields exactly as `ImportKeyHandler` does.
+
+## Import/export capability resolution is split by direction (go-xkms#1216)
+
+go-xkms#1214 left `ImportKeyHandler`/`GetImportParametersHandler` (REST) and
+`ImportKey`/`GetImportParameters` (gRPC) as independent, transport-local
+implementations, because the service's own capability resolution
+(`importExportFor`) required a backend to satisfy the *union* of
+`backend.ImportBackend` and `backend.ExportBackend`
+(`backend.ImportExportBackend`) even for an operation that only needed one
+half. Routing those four handlers through the service as it stood then would
+have silently refused an AWS-KMS-shaped import-only backend. go-xkms#1216
+closes that gap at its root: the service now resolves each direction
+independently, so every transport can be a thin adapter over it without
+narrowing which backends it reaches.
+
+`pkg/xkms/backend_importexport.go` declares two capability interfaces and two
+resolvers instead of one union type and one resolver:
+
+- `keyImporter` (line 35) is `backend.ImportBackend`'s four-method surface
+  without its embedded `types.KeyProvider`; `keyExporter` (line 56) is
+  `backend.ExportBackend`'s three-method mirror. Each exists apart from its
+  `backend.*Backend` counterpart for the same reason the old `ImportExporter`
+  union did: `TenantScopedBackend` cannot satisfy `backend.ImportBackend` or
+  `backend.ExportBackend` structurally (`Backend.RotateKey` and
+  `types.KeyProvider.RotateKey` share a name with different signatures, and
+  `GenerateRSA`/`GenerateECDSA`/`GenerateEd25519` have no
+  `KeyProvider.GenerateKey` equivalent at all), so it needs a narrower
+  interface it *can* implement to offer the capability itself rather than
+  through `KeyProvider()`, which would discard the tenant scope it stamps
+  (go-xkms#163).
+- `importBackendFor` (line 100) and `exportBackendFor` (line 116) each
+  resolve one direction: a `*TenantScopedBackend` recurses on its base and
+  answers only when the base supports that direction, stamping the tenant on
+  every attribute set exactly as its other key operations do; every other
+  `Backend` resolves through `b.KeyProvider().(backend.ImportBackend)` /
+  `.(backend.ExportBackend)` directly, exactly as the old union resolver did
+  for the half it asked for.
+
+Every call site that used to resolve the union now resolves only the
+direction it uses, so a backend implementing only one half is reachable for
+that half regardless of the other:
+
+- `pkg/xkms/servicer_key.go`: `ImportKey` (`importBackendFor`, line 288),
+  `ExportKey` (`exportBackendFor`, line 361), `GetImportParameters`
+  (`importBackendFor`, line 461), `ExportKeyMaterial` (`exportBackendFor`,
+  line 661), `WrapKey` (`importBackendFor`, line 740) and `UnwrapKey`
+  (`importBackendFor`, line 805) — `WrapKey`/`UnwrapKey` resolve import
+  because both are half of the import ceremony (wrapping material for
+  `ImportKey`, and reversing a wrap `WrapKey` produced), never the export
+  one. `CopyKey` resolves the source as `exportBackendFor` (for
+  `ExportKeyTo`) and the destination as `importBackendFor` (for
+  `GetImportParameters`/`ImportKey`) — two different backends, two different
+  directions. `WrapKeyByID`/`UnwrapKeyByID`'s target-backend resolution
+  (`wrapTargetKeyMaterial`'s `exportBackendFor`, `UnwrapKeyByID`'s
+  `importBackendFor`) and the shared `importKeyMaterial` helper (now typed
+  `keyImporter`, not the deleted `ImportExporter`) follow the same rule.
+- `pkg/xkms/service.go` (the package-level "embedded" API): `GetImportParameters`,
+  `WrapKey`, `UnwrapKey` and `ImportKey` resolve `importBackendFor`; `ExportKey`
+  resolves `exportBackendFor`; `CopyKey` resolves the source as
+  `exportBackendFor` and the destination as `importBackendFor`, mirroring the
+  servicer.
+- `pkg/xkms/backend_tenant.go`'s `TenantScopedBackend` now has two accessors,
+  `importer()` (line 248) and `exporter()` (line 262), instead of one
+  `importExporter()`: `GetImportParameters`/`WrapKey`/`UnwrapKey`/`ImportKey`
+  call `importer()`, `ExportKey`/`ExportKeyTo`/`ExportKeyMaterial` call
+  `exporter()`. A tenant-scoped view of an import-only base now offers the
+  import half and refuses the export half with the typed
+  `ErrImportExportNotSupported` — and the reverse for an export-only base —
+  rather than refusing both because the base cannot satisfy the union.
+- `pkg/xkms/piv_keygen_backend.go`'s `ImportPIVKey` (line 224) resolves
+  `importBackendFor` — PIV key installation never exports, so it only ever
+  needed the import half, and the pre-fix union check blocked it on a
+  backend that could never have had an export half to offer.
+
+The `ImportExporter` union type is deleted: nothing in the codebase needs
+both halves through one value, since every real ceremony (`CopyKey` included)
+resolves each backend it touches for exactly one direction.
+
+REST, gRPC and MCP were converted to thin adapters over the service for the
+ceremony's request-building and capability-resolution logic, the same
+conversion `GenerateKey` received in go-xkms#1214:
+
+- REST's `GetImportParametersHandler` (`pkg/api/rest/handlers.go:1269`),
+  `WrapKeyHandler` (`:1352`), `UnwrapKeyHandler` (`:1428`) and
+  `ImportKeyHandler` (`:1502`) now call `h.xkmsService.{GetImportParameters,
+  WrapKey, UnwrapKey, ImportKey}` directly, after the same per-transport
+  400-class validation (required fields, backend-name format, key-ID format)
+  every other converted handler keeps ahead of the service call. The old
+  `resolveImportBackend` helper and the local `types.KeyAttributes`-building
+  switch are gone.
+- gRPC's `GetImportParameters` (`pkg/api/grpc/service.go:1105`), `WrapKey`
+  (`:1180`), `UnwrapKey` (`:1246`) and `ImportKey` (`:1304`) do the same,
+  after an explicit backend-existence probe
+  (`s.lookupBackend`/`status.Errorf(codes.NotFound, ...)`) that preserves the
+  RPC's existing "NotFound before any ceremony-specific validation" contract
+  for a name that does not resolve. The old `importBackend` helper and the
+  hand-rolled key-type switches (which had drifted from the service's own:
+  gRPC's `ImportKey` used to refuse `key_size: 0` for a symmetric import,
+  while the service's `unwrapSymmetricAlgorithms` table has always defaulted
+  it to AES-256-GCM, matching REST, MCP and embedded) are gone.
+- MCP's `handleGetImportParameters` and `handleImportKeyMaterial` already
+  called the service before this change; `handleWrapKey` and `handleUnwrapKey`
+  now do too, in place of the deleted `importBackend` helper.
+
+Converting `WrapKey`/`UnwrapKey` was conditional on the service's request
+types actually carrying every field those two ceremonies need — the
+"service drops fields" comment that justified leaving them transport-local
+was checked against the current code rather than assumed: `transport.WrapKeyRequest`/
+`WrapKeyResponse` and `UnwrapKeyRequest`/`UnwrapKeyResponse`
+(`pkg/api/transport/types.go`) already carry `KeySpec`, `Metadata`,
+`ImportToken` and `WrappingPublicKey` on both sides, so the comment was
+stale by the time this issue was filed and no transport request field had to
+be added to convert them. Wire shapes are unchanged: every REST/gRPC/MCP
+request and response field name, type and encoding is exactly what it was
+before this conversion, including MCP's PEM-vs-DER encoding of the wrapping
+key and REST's `wrapped_key`/`wrapping_public_key_pem` naming (see
+[api.md](api.md)).
+
+A backend-layer capability or policy sentinel (`backend.ErrKeyNotExportable`,
+`backend.ErrImportNotSupported`, `backend.ErrExportNotSupported`,
+`backend.ErrAsymmetricKeyExportNotAllowed`) can now reach a transport's error
+mapper wrapped in the service's own `xkms.ErrOperationWrap`, rather than only
+ever arriving as a bare error from a direct backend call. Each transport's
+`mapKeyOpError` was extended to classify it either way:
+`pkg/api/grpc/errors_keyops.go` and `pkg/api/mcp/errors_keyops.go` consult
+`apierrors.ImportExportSentinelClasses` as a fallback tier (the same table
+`mapImportExportError` already used for `ExportKey`/`CopyKey`, which still
+call backend methods directly); REST's `pkg/api/rest/errors_keyops.go` adds
+the same four sentinels to its own `keyOpSentinelStatus` table, matching
+`mapErrorToStatusCode`'s existing classification for the handlers that still
+call the backend directly. `errors.Is`/`apierrors.ClassOf` see through
+`ErrOperationWrap`'s wrapping either way, so the classification — and the
+wire status code — is unchanged by which path a given error took.
+
+## Key lifecycle RPCs resolve inside the caller's tenant (go-xkms#1218)
+
+REST's and gRPC's `GetKey`, `ListKeys`, `DeleteKey`, `RotateKey`,
+`ExportKey` and `CopyKey` are thin adapters over the `XKMSService` method of
+the same name (REST `pkg/api/rest/handlers.go:327`–`:1660`, gRPC
+`pkg/api/grpc/service.go:430`–`:1675`). Before, they resolved the key over
+the unscoped backend themselves. On REST any tenant could read, list,
+delete, rotate, export and copy any other tenant's key; on gRPC it could
+read and list them, and a copy landed with no tenant.
+
+Where the tenant comes from:
+
+- `RotateKey`, `ExportKey` and `CopyKey` take `TenantID` in their request
+  struct. The transports fill it from the authenticated identity
+  (`callerTenantID`), never from the wire.
+- `GetKey`, `DeleteKey` and `ListKeys` take no request struct; the service
+  reads the tenant from the identity on `ctx` with
+  `scopedTenantIDFromContext` (`pkg/xkms/servicer_password.go:93`) at
+  `pkg/xkms/servicer_key.go:162`, `:271` and `:302`. The `KeyServicer`
+  signatures are unchanged, so MCP's `getKey` and the embedded transport are
+  scoped by the same change.
+
+Both routes end at `tenantScopes` (`pkg/xkms/servicer_helpers.go:65`): a real
+tenant gets a `TenantScopedBackend`, whose `ListKeys`
+(`pkg/xkms/backend_tenant.go:94`) returns only that tenant's keys, and the
+system tenant or no identity gets the unscoped backend. The lookup by common
+name is `findKeyAttrs` (`pkg/xkms/servicer_helpers.go:140`) over that view,
+so another tenant's key is the same bare `ErrKeyNotFound` a missing key is.
+The refusal equals a genuine miss because nothing takes a different path for
+it, not because an error is rewritten. The transports map it with
+`mapKeyOpError` (`pkg/api/rest/errors_keyops.go:66`,
+`pkg/api/grpc/errors_keyops.go:96`) to 404 / `NotFound`.
+
+`ListKeys` paginates before it reads any public key: it collects the scoped
+backend with each key, applies the page, then fills `PublicKeyPEM` for that
+page only (`publicKeyPEMOf`, `pkg/xkms/servicer_key.go:244`). The transports
+hand their decoded pagination to the service with
+`transport.WithPageRequest` (`pkg/api/transport/pagination.go:93`).
+`keyInfoFromAttrs` (`pkg/xkms/servicer_key.go:1673`) renders algorithm, RSA
+size, curve and partition, so gRPC's `KeyInfo` keeps every field it had.
+
+`ExportKey` and `CopyKey` still resolve import/export through the union
+`importExportFor`; see the section above. A backend missing it is refused
+by `unsupportedHalf` (`pkg/xkms/servicer_key.go:1661`), which matches both
+`ErrOperationNotSupported` and the precise `backend.ErrExportNotSupported` /
+`backend.ErrImportNotSupported`, so the refusal says which half was
+missing. An import-only backend is therefore not a `CopyKey` destination on
+any transport until the capability split lands. REST's and gRPC's own
+copies asserted only `backend.ImportBackend` for the destination, but they
+wrapped under the source's token (plain `ExportKey`), so a copy between two
+backend instances never succeeded on them anyway.
+
+`mapKeyOpError` gained two classifications for causes the service wraps
+rather than replaces. `xkms.ErrBackendNameValidation` is 400 /
+`InvalidArgument`. REST falls back to `mapErrorToStatusCode`, so a wrapped
+`backend.ErrKeyNotExportable` stays 403 and a wrapped
+`storage.ErrAlreadyExists` 409. gRPC falls back to
+`apierrors.ImportExportSentinelClasses`, as `mapImportExportError` does.
+
+Tests: `pkg/api/rest/handlers_keyops_crosstenant_test.go` and
+`pkg/api/grpc/service_keyops_crosstenant_test.go` drive each RPC as tenant A
+against tenant B's key and compare the answer, byte for byte, with the one
+for the same key ID in a deployment where no tenant holds it. They also
+assert tenant B's key survives, and that a tenant's copy lands in its own
+tenant. `pkg/xkms/servicer_key_tenant_lifecycle_test.go` pins the service
+side.
 
 ## Error semantics
 

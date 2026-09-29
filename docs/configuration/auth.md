@@ -11,6 +11,24 @@
 | Composite | `CompositeAuthenticator` | Chain multiple methods (first success wins) |
 | Adaptive | `AdaptiveAuthenticator` | Bootstrap-to-production transition |
 
+### JWT and OIDC algorithm pinning
+
+`JWTAuthenticator` and `OIDCAuthenticator` both pin `jwt.Parse` to
+`jwt.WithValidMethods`, scoped to the verification key's own type —
+RS\*/PS\* for an RSA key, ES\* for ECDSA, EdDSA for Ed25519
+(`pkg/auth/jwtalg.go`, `pkg/auth/jwt.go:160`, `pkg/auth/oidc.go:384`). This
+closes the classic algorithm-confusion attack, where a token forged with
+`alg: HS256` and signed with the verification key's own bytes as an HMAC
+secret would otherwise "verify" if the key function handed those bytes to
+an algorithm-agnostic parser. HS\* is never accepted on a public-key path:
+`validMethodsForKey` returns `UnsupportedVerificationKeyError` for anything
+that is not an RSA, ECDSA or Ed25519 public key, including the raw `[]byte`
+go-jose represents a JWKS `"oct"` entry as. For OIDC, when the discovery
+document publishes `id_token_signing_alg_values_supported`, the key's
+permitted methods are further narrowed to their intersection with that
+list; an empty intersection is refused as `NoCommonSigningAlgorithmError`
+rather than falling back to every algorithm either side would accept alone.
+
 ## PKCS#11 Client Authentication
 
 Hardware tokens (YubiKey, SmartCard, HSM) can provide mTLS client certificates

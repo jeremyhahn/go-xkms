@@ -17,7 +17,7 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Barrier parameter types for JSON-RPC requests.
@@ -69,18 +69,18 @@ type BarrierGenerateRootTokenParams struct {
 	Shares []string `json:"shares"`
 }
 
-// errBarrierNotConfigured classifies ErrBarrierNotConfigured as an internal
-// fault: JSON-RPC has no FailedPrecondition code, so this matches
-// pkg/api/mcp's other sentinel tables' established floor for that gRPC code
-// (keyOpSentinelCodes' doc comment; mapPasswordUnlockError's ErrStoreNotLocked
-// / seal.ErrTenantSealed cases) rather than reusing a code whose wire.Code
-// rendering would claim a more specific condition. Wrapping it in a
-// *KeyOpError still matters even at this floor: an unwrapped sentinel never
-// reaches pkg/apimodule's *KeyOpError unwrap (module_mcp.go), so the caller
-// saw the generic "xkms: internal error" placeholder with no detail at all,
-// rather than this message.
-func errBarrierNotConfigured() error {
-	return &KeyOpError{Code: ErrCodeInternalError, Err: ErrBarrierNotConfigured}
+// barrierService returns the composed XKMSService, or the Service
+// unavailable error a barrier method answers when none is composed. Every
+// system-barrier method delegates to the service: the system barrier is
+// platform-global, and the service's requirePlatformScope is what refuses a
+// tenant-scoped caller (go-xkms#1227). The RBAC gate cannot, because a
+// tenant-local Admin's self-scoped seal:* grants resolve against its own
+// tenant.
+func (s *Server) barrierService() (*xkms.XKMSService, error) {
+	if s.xkmsService == nil {
+		return nil, &KeyOpError{Code: ErrCodeServiceUnavailable, Err: ErrBarrierNotConfigured}
+	}
+	return s.xkmsService, nil
 }
 
 // barrierValidationError classifies a request-field validation failure this
@@ -95,28 +95,20 @@ func barrierValidationError(err error) error {
 // handleBarrierInitialize handles the barrier.initialize method.
 // It initializes the barrier with a secret-based sealing strategy.
 func (s *Server) handleBarrierInitialize(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
 	var params BarrierInitializeParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-
 	if params.Secret == "" {
 		return nil, barrierValidationError(ErrBarrierSecretRequired)
 	}
-
-	creds, err := seal.CredentialsFor([]byte(params.Secret))
-	if err != nil {
-		return nil, mapBarrierError(err, "barrier credentials")
-	}
-	defer creds.Secret.Destroy()
-	if err := s.barrier.Initialize(ctx, creds); err != nil {
+	if err := svc.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{Secret: params.Secret}); err != nil {
 		return nil, mapBarrierError(err, "barrier initialize")
 	}
-
 	return map[string]interface{}{
 		"success": true,
 		"message": "barrier initialized",
@@ -129,25 +121,18 @@ func (s *Server) handleBarrierInitialize(ctx context.Context, req *JSONRPCReques
 // CeremonyDistributor (qrdb share-free contract) and only the threshold,
 // total, and officer share count are reported.
 func (s *Server) handleBarrierInitializeShamir(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
 	var params BarrierInitializeShamirParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-
-	creds, err := seal.CredentialsFor([]byte(params.Secret))
-	if err != nil {
-		return nil, mapBarrierError(err, "barrier credentials")
-	}
-	defer creds.Secret.Destroy()
-	result, err := s.barrier.InitializeShamir(ctx, creds)
+	result, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{Secret: params.Secret})
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier initialize shamir")
 	}
-
 	return map[string]interface{}{
 		"success":      true,
 		"threshold":    result.Threshold,
@@ -159,28 +144,20 @@ func (s *Server) handleBarrierInitializeShamir(ctx context.Context, req *JSONRPC
 // handleBarrierUnseal handles the barrier.unseal method.
 // It unseals the barrier using a secret credential.
 func (s *Server) handleBarrierUnseal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
 	var params BarrierUnsealParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-
 	if params.Secret == "" {
 		return nil, barrierValidationError(ErrBarrierSecretRequired)
 	}
-
-	creds, err := seal.CredentialsFor([]byte(params.Secret))
-	if err != nil {
-		return nil, mapBarrierError(err, "barrier credentials")
-	}
-	defer creds.Secret.Destroy()
-	if err := s.barrier.Unseal(ctx, creds); err != nil {
+	if err := svc.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{Secret: params.Secret}); err != nil {
 		return nil, mapBarrierError(err, "barrier unseal")
 	}
-
 	return map[string]interface{}{
 		"success": true,
 		"message": "barrier unsealed",
@@ -190,24 +167,21 @@ func (s *Server) handleBarrierUnseal(ctx context.Context, req *JSONRPCRequest) (
 // handleBarrierUnsealShare handles the barrier.unsealShare method.
 // It submits a single Shamir share for quorum-based unsealing.
 func (s *Server) handleBarrierUnsealShare(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
 	var params BarrierUnsealShareParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-
 	if params.Share == "" {
 		return nil, barrierValidationError(ErrBarrierShareRequired)
 	}
-
-	progress, err := s.barrier.UnsealWithShare(ctx, params.Share)
+	progress, err := svc.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{Share: params.Share})
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier unseal share")
 	}
-
 	return map[string]interface{}{
 		"required":  progress.Required,
 		"submitted": progress.Submitted,
@@ -218,23 +192,20 @@ func (s *Server) handleBarrierUnsealShare(ctx context.Context, req *JSONRPCReque
 // handleBarrierUnsealShares handles the barrier.unsealShares method.
 // It performs batch unsealing with all required shares at once.
 func (s *Server) handleBarrierUnsealShares(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
 	var params BarrierUnsealSharesParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-
 	if len(params.Shares) == 0 {
 		return nil, barrierValidationError(ErrBarrierSharesRequired)
 	}
-
-	if err := s.barrier.UnsealWithShares(ctx, params.Shares); err != nil {
+	if err := svc.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{Shares: params.Shares}); err != nil {
 		return nil, mapBarrierError(err, "barrier unseal shares")
 	}
-
 	return map[string]interface{}{
 		"success": true,
 		"message": "barrier unsealed with shares",
@@ -243,15 +214,14 @@ func (s *Server) handleBarrierUnsealShares(ctx context.Context, req *JSONRPCRequ
 
 // handleBarrierSeal handles the barrier.seal method.
 // It transitions the barrier to sealed state.
-func (s *Server) handleBarrierSeal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+func (s *Server) handleBarrierSeal(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
-	if err := s.barrier.Seal(); err != nil {
+	if err := svc.BarrierSeal(ctx); err != nil {
 		return nil, mapBarrierError(err, "barrier seal")
 	}
-
 	return map[string]interface{}{
 		"success": true,
 		"message": "barrier sealed",
@@ -260,15 +230,18 @@ func (s *Server) handleBarrierSeal(ctx context.Context, req *JSONRPCRequest) (in
 
 // handleBarrierStatus handles the barrier.status method.
 // It returns the current barrier status.
-func (s *Server) handleBarrierStatus(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+func (s *Server) handleBarrierStatus(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
-	status := s.barrier.Status()
+	status, err := svc.BarrierStatus(ctx)
+	if err != nil {
+		return nil, mapBarrierError(err, "barrier status")
+	}
 	return map[string]interface{}{
 		"sealed":          status.Sealed,
-		"strategy":        string(status.Strategy),
+		"strategy":        status.Strategy,
 		"hardware_backed": status.HardwareBacked,
 	}, nil
 }
@@ -276,28 +249,24 @@ func (s *Server) handleBarrierStatus(ctx context.Context, req *JSONRPCRequest) (
 // handleBarrierRekey handles the barrier.rekey method.
 // It generates new Shamir shares with a new threshold and total.
 func (s *Server) handleBarrierRekey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
 	var params BarrierRekeyParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-
 	if params.Threshold < 2 {
 		return nil, barrierValidationError(ErrBarrierThresholdInvalid)
 	}
-
 	if params.Total < params.Threshold {
 		return nil, barrierValidationError(ErrBarrierTotalInvalid)
 	}
-
-	result, err := s.barrier.Rekey(ctx, params.Threshold, params.Total)
+	result, err := svc.BarrierRekey(ctx, &transport.BarrierRekeyRequest{Threshold: params.Threshold, Total: params.Total})
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier rekey")
 	}
-
 	return map[string]interface{}{
 		"success":      true,
 		"threshold":    result.Threshold,
@@ -309,28 +278,24 @@ func (s *Server) handleBarrierRekey(ctx context.Context, req *JSONRPCRequest) (i
 // handleBarrierGenerateRecoveryKeys handles the barrier.generateRecoveryKeys method.
 // It generates a set of recovery key shares for disaster recovery.
 func (s *Server) handleBarrierGenerateRecoveryKeys(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
 	var params BarrierGenerateRecoveryKeysParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-
 	if params.Threshold < 2 {
 		return nil, barrierValidationError(ErrBarrierThresholdInvalid)
 	}
-
 	if params.Total < params.Threshold {
 		return nil, barrierValidationError(ErrBarrierTotalInvalid)
 	}
-
-	result, err := s.barrier.GenerateRecoveryKeys(ctx, params.Threshold, params.Total)
+	result, err := svc.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{Threshold: params.Threshold, Total: params.Total})
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier generate recovery keys")
 	}
-
 	return map[string]interface{}{
 		"success":      true,
 		"threshold":    result.Threshold,
@@ -342,51 +307,41 @@ func (s *Server) handleBarrierGenerateRecoveryKeys(ctx context.Context, req *JSO
 // handleBarrierEnableEncryption handles the barrier.enableEncryption method. It
 // migrates a previously-unencrypted barrier to a keyed strategy in place. The
 // migration runs asynchronously; the response acknowledges the start and
-// clients poll barrier.status for completion.
+// clients poll barrier.status for completion. The target barrier is named in
+// the request, and the service binds it to the caller's tenant.
 func (s *Server) handleBarrierEnableEncryption(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.xkmsService == nil {
-		// Mirrors pkg/api/grpc/service_barrier_shamir.go's
-		// BarrierEnableEncryption, which checks s.xkmsService == nil (not
-		// the package-level barrier) and reports it as codes.Unavailable:
-		// ErrCodeServiceUnavailable, unlike the FailedPrecondition-mapped
-		// s.barrier == nil check every other barrier handler in this file
-		// uses.
-		return nil, &KeyOpError{Code: ErrCodeServiceUnavailable, Err: ErrBarrierNotConfigured}
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
 	var params transport.BarrierEnableEncryptionRequest
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-
-	resp, err := s.xkmsService.BarrierEnableEncryption(ctx, &params)
+	resp, err := svc.BarrierEnableEncryption(ctx, &params)
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier enable encryption")
 	}
-
 	return resp, nil
 }
 
 // handleBarrierRecoverWithKeys handles the barrier.recoverWithKeys method.
 // It recovers the barrier using recovery key shares.
 func (s *Server) handleBarrierRecoverWithKeys(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
 	var params BarrierRecoverWithKeysParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-
 	if len(params.Keys) == 0 {
 		return nil, barrierValidationError(ErrBarrierRecoveryKeysRequired)
 	}
-
-	if err := s.barrier.RecoverWithKeys(ctx, params.Keys); err != nil {
+	if err := svc.BarrierRecoverWithKeys(ctx, &transport.BarrierRecoverWithKeysRequest{Keys: params.Keys}); err != nil {
 		return nil, mapBarrierError(err, "barrier recover with keys")
 	}
-
 	return map[string]interface{}{
 		"success": true,
 		"message": "barrier recovered with recovery keys",
@@ -395,15 +350,14 @@ func (s *Server) handleBarrierRecoverWithKeys(ctx context.Context, req *JSONRPCR
 
 // handleBarrierDeleteRecoveryKeys handles the barrier.deleteRecoveryKeys method.
 // It deletes recovery key metadata from storage.
-func (s *Server) handleBarrierDeleteRecoveryKeys(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+func (s *Server) handleBarrierDeleteRecoveryKeys(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
-	if err := s.barrier.DeleteRecoveryKeys(ctx); err != nil {
+	if err := svc.BarrierDeleteRecoveryKeys(ctx); err != nil {
 		return nil, mapBarrierError(err, "barrier delete recovery keys")
 	}
-
 	return map[string]interface{}{
 		"success": true,
 		"message": "recovery keys deleted",
@@ -414,18 +368,17 @@ func (s *Server) handleBarrierDeleteRecoveryKeys(ctx context.Context, req *JSONR
 // reports whether recovery keys have been provisioned for the barrier, matching
 // the gRPC/unix transport's BarrierHasRecoveryKeys RPC so MCP clients reach the
 // same capability.
-func (s *Server) handleBarrierHasRecoveryKeys(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+func (s *Server) handleBarrierHasRecoveryKeys(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
-	hasKeys, err := s.barrier.HasRecoveryKeys(ctx)
+	resp, err := svc.BarrierHasRecoveryKeys(ctx)
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier has recovery keys")
 	}
-
 	return map[string]interface{}{
-		"has_keys": hasKeys,
+		"has_keys": resp.HasKeys,
 	}, nil
 }
 
@@ -433,27 +386,24 @@ func (s *Server) handleBarrierHasRecoveryKeys(ctx context.Context, req *JSONRPCR
 // It generates a one-time root token by proving knowledge of the master key
 // through Shamir share reconstruction.
 func (s *Server) handleBarrierGenerateRootToken(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, errBarrierNotConfigured()
+	svc, err := s.barrierService()
+	if err != nil {
+		return nil, err
 	}
-
 	var params BarrierGenerateRootTokenParams
 	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
-
 	if len(params.Shares) == 0 {
 		return nil, barrierValidationError(ErrBarrierSharesRequired)
 	}
-
-	token, err := s.barrier.GenerateRootToken(ctx, params.Shares)
+	token, err := svc.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{Shares: params.Shares})
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier generate root token")
 	}
-
 	return map[string]interface{}{
 		"success":    true,
 		"token":      token.Token,
-		"created_at": token.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		"created_at": token.CreatedAt,
 	}, nil
 }

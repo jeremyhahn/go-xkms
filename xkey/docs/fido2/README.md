@@ -15,7 +15,7 @@ sudo xkey fido2 --backend tpm2
 sudo xkey fido2 --backend phone
 
 # With PIN and interactive mode
-sudo xkey fido2 --backend software --pin --set-pin 123456 --interactive
+echo 123456 | sudo xkey fido2 --backend software --pin --set-pin-stdin --interactive
 
 # Unattended: a PIN-verified ceremony asks for no touch; the client sends the PIN
 sudo xkey fido2 --require-touch=false --notify none
@@ -43,11 +43,13 @@ between the bare form and `start` unchanged.
 |------|---------|-------------|
 | `--storage` | `memory` | Storage type: `memory`, `file` or `barrier` |
 | `--storage-path` | `./data` | Path for file storage |
-| `--barrier-password` | (none) | Barrier password for the credential store |
+| `--barrier-password-stdin` | `false` | Read the barrier password for the credential store from standard input |
 | `--barrier-password-file` | (none) | File to read the barrier password from |
 
 Any other `--storage` value is rejected. `file` requires `--storage-path`, and
-`barrier` requires one of `--barrier-password` / `--barrier-password-file`.
+`barrier` requires one of `--barrier-password-stdin` / `--barrier-password-file`
+/ `XKEY_BARRIER_PASSWORD`. There is no `--barrier-password` value flag: a value
+on the command line is visible to every other process on the host via `ps`.
 
 ### Device Options
 
@@ -61,7 +63,7 @@ Any other `--storage` value is rejected. `file` requires `--storage-path`, and
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--pin` | `true` | Enable PIN support (required for FIDO 2.1 credential management) |
-| `--set-pin` | (none) | Set initial PIN (requires `--pin`) |
+| `--set-pin-stdin` | `false` | Read the initial PIN to establish from standard input (requires `--pin`) |
 | `--unified-pin` | `true` | Propagate the host PIN service's user PIN to this authenticator's CTAP2 PIN hash (not a PKCS#11/file sync -- go-xkms has one governing PIN backend per device, see go-xkms#307) |
 
 The Security Officer PIN is **not** configured from `xkey fido2`. It is managed
@@ -253,17 +255,21 @@ When running in daemon mode, xkey sends desktop notifications when touch is requ
 
 ### Custom Notification Command
 
-Use `--notify-command` with template variables:
+`--notify-command` is split into argv on whitespace (quote with `'` or `"`
+to include a space in one argument) and run exactly as given — never through
+a shell, and never modified. Request data reaches the command only through
+environment variables, since RP name and user name come from the calling
+web page and are never safe to splice into a command string:
 
 | Variable | Description |
 |----------|-------------|
-| `%o` | Operation (`register` or `authenticate`) |
-| `%r` | Relying Party ID |
-| `%n` | Relying Party Name |
-| `%u` | User Name |
+| `XKEY_OPERATION` | Operation (`register` or `authenticate`) |
+| `XKEY_RP_ID` | Relying Party ID |
+| `XKEY_RP_NAME` | Relying Party Name |
+| `XKEY_USER_NAME` | User Name |
 
 ```bash
-sudo xkey fido2 --notify-command 'notify-send -u critical "xkey" "Touch for %n (%o)"'
+sudo xkey fido2 --notify-command 'sh -c "notify-send -u critical xkey \"Touch for \$XKEY_RP_NAME (\$XKEY_OPERATION)\""'
 ```
 
 ## Key Backends
@@ -396,10 +402,10 @@ sudo xkey fido2 \
 
 ```bash
 make build-xkey && \
-sudo ./build/bin/xkey fido2 \
+echo 123456 | sudo ./build/bin/xkey fido2 \
   --backend software \
   --pin \
-  --set-pin 123456 \
+  --set-pin-stdin \
   --interactive \
   --log-level debug \
   --storage memory \
@@ -421,7 +427,7 @@ sudo ./build/bin/xkey fido2 \
 1. Start xkey with interactive mode:
 
 ```bash
-sudo xkey fido2 --interactive --pin --set-pin 123456 --log-level debug
+echo 123456 | sudo xkey fido2 --interactive --pin --set-pin-stdin --log-level debug
 ```
 
 2. Open Chrome, Edge, Brave, or Firefox and navigate to the test site
@@ -455,7 +461,7 @@ Resident credentials allow usernameless authentication:
 For CI/CD, run in auto-grant mode:
 
 ```bash
-sudo xkey fido2 --pin --set-pin 123456 --log-file /var/log/xkey.log &
+echo 123456 | sudo xkey fido2 --pin --set-pin-stdin --log-file /var/log/xkey.log &
 
 # Run browser automation (Playwright, Selenium, etc.)
 ```
@@ -639,9 +645,9 @@ xkey pin set-so
 xkey pin set-user
 
 # Start the device with persistent storage
-sudo xkey fido2 \
+echo 123456 | sudo xkey fido2 \
   --backend tpm2 \
-  --pin --set-pin 123456 \
+  --pin --set-pin-stdin \
   --storage file \
   --storage-path /var/lib/xkey
 ```

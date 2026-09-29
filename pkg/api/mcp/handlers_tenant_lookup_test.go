@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -220,7 +221,7 @@ func TestHandler_Unseal_RefusesAnotherTenantsKey(t *testing.T) {
 		}))
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key not found: payments-dek")
+	assert.ErrorIs(t, err, xkms.ErrKeyNotFound, "another tenant's key reads as a key nobody holds")
 }
 
 // TestHandler_Seal_RefusesAnotherTenantsKey is the seal-side counterpart.
@@ -235,5 +236,5 @@ func TestHandler_Seal_RefusesAnotherTenantsKey(t *testing.T) {
 		}))
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key not found: payments-dek")
+	assert.ErrorIs(t, err, xkms.ErrKeyNotFound, "another tenant's key reads as a key nobody holds")
 }

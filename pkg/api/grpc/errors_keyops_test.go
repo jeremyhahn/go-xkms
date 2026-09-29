@@ -23,7 +23,10 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // TestGrpcCodeForClass_UnmappedClassFallsBackToInternal proves the
@@ -93,5 +96,93 @@ func TestMapImportExportError_UnclassifiedErrorFallsBackToInternal(t *testing.T)
 	}
 	if got := st.Message(); got != "export key: disk on fire" {
 		t.Fatalf("message = %q, want %q", got, "export key: disk on fire")
+	}
+}
+
+// TestMapKeyOpError_ServiceWrappedCauses pins the two classifications
+// mapKeyOpError gained when the key lifecycle RPCs became service adapters
+// (go-xkms#1218): a malformed backend name is the caller's fault, and a
+// backend import/export sentinel the service wraps as an operation failure's
+// cause keeps the code mapImportExportError gives it when reported directly.
+func TestMapKeyOpError_ServiceWrappedCauses(t *testing.T) {
+	tests := map[string]struct {
+		err  error
+		want codes.Code
+	}{
+		"malformed backend name": {
+			err:  &xkms.ErrBackendNameValidation{Err: errors.New("contains '/'")},
+			want: codes.InvalidArgument,
+		},
+		"wrapped key-not-exportable": {
+			err:  &xkms.ErrOperationWrap{Sentinel: xkms.ErrOperationFailed, Err: backend.ErrKeyNotExportable},
+			want: codes.PermissionDenied,
+		},
+		"wrapped asymmetric export refusal": {
+			err:  &xkms.ErrKeyOperation{Operation: "export key", Err: backend.ErrAsymmetricKeyExportNotAllowed},
+			want: codes.InvalidArgument,
+		},
+		"unclassified cause stays internal": {
+			err:  &xkms.ErrOperationWrap{Sentinel: xkms.ErrOperationFailed, Err: errors.New("disk on fire")},
+			want: codes.Internal,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := status.Code(mapKeyOpError(context.Background(), nil, tt.err))
+			if got != tt.want {
+				t.Fatalf("code = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMapKeyOpError_AEADNonceSentinels pins go-xkms#1223: a reused AEAD
+// nonce and a full nonce tracker reach mapKeyOpError wrapped exactly as
+// pkg/xkms's claimAEADNonce / claimGeneratedAEADNonce actually wrap them
+// (*xkms.ErrKeyOperation), from both the generic Encrypt RPC and
+// WrapKeyByID's AES-GCM wrap path, and must render as AlreadyExists and
+// ResourceExhausted respectively rather than falling through to the
+// codes.Internal catch-all a caller cannot distinguish from a genuine
+// server fault.
+func TestMapKeyOpError_AEADNonceSentinels(t *testing.T) {
+	tests := map[string]struct {
+		err  error
+		want codes.Code
+	}{
+		"nonce reuse via Encrypt": {
+			err:  &xkms.ErrKeyOperation{Operation: "aead encrypt", KeyID: "k1", Err: aead.ErrNonceReuse},
+			want: codes.AlreadyExists,
+		},
+		"nonce reuse via WrapKeyByID": {
+			err:  &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrNonceReuse},
+			want: codes.AlreadyExists,
+		},
+		"nonce tracker full via Encrypt": {
+			err:  &xkms.ErrKeyOperation{Operation: "aead encrypt", KeyID: "k1", Err: aead.ErrNonceTrackerFull},
+			want: codes.ResourceExhausted,
+		},
+		"nonce tracker full via WrapKeyByID": {
+			err:  &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrNonceTrackerFull},
+			want: codes.ResourceExhausted,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := status.Code(mapKeyOpError(context.Background(), nil, tt.err))
+			if got != tt.want {
+				t.Fatalf("code = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMapKeyOpError_CallerNonceNotSupported pins go-xkms#1223: a symmetric
+// backend that refuses a caller-supplied nonce (AWS KMS, GCP KMS, Vault
+// Transit, the paired phone) reports InvalidArgument, matching the 400 REST
+// reports for the same sentinel.
+func TestMapKeyOpError_CallerNonceNotSupported(t *testing.T) {
+	got := status.Code(mapKeyOpError(context.Background(), nil, backend.ErrCallerNonceNotSupported))
+	if got != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", got)
 	}
 }

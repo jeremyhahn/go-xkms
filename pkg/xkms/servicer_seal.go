@@ -79,6 +79,13 @@ func buildPCRSelection(pcrs []int, hashAlg tpm2.TPMIAlgHash) (tpm2.TPMLPCRSelect
 // defaultSealingKeyAttributes builds KeyAttributes for an auto-generated
 // sealing key on the given backend. The CN is deterministic so the same
 // key is reused across seal/unseal operations.
+//
+// The attributes carry no tenant. Seal and Unseal hand them to a backend
+// resolved through the caller's tenant, and a tenant-scoped backend stamps
+// its tenant on every key it generates, loads or seals under -- so each
+// tenant's default sealing key is its own key, stored under its own
+// identifier, and a platform-scoped caller's is the untenanted one
+// (go-xkms#1228).
 func defaultSealingKeyAttributes(backendType types.BackendType) *types.KeyAttributes {
 	return &types.KeyAttributes{
 		CN:           fmt.Sprintf("%s-%s", sealingKeyCNPrefix, backendType),
@@ -91,13 +98,13 @@ func defaultSealingKeyAttributes(backendType types.BackendType) *types.KeyAttrib
 	}
 }
 
-// ensureSealingKey guarantees a sealing key exists in the backend. It first
+// ensureSealingKey guarantees the default sealing key exists in b. It first
 // attempts to load the key via GetKey; if the key does not exist it generates
-// a new one. This is a no-op for TPM2 backends which handle sealing keys
-// internally via the SRK.
-func ensureSealingKey(ctx context.Context, kp types.KeyProvider, attrs *types.KeyAttributes) error {
-	if _, err := kp.GetKey(ctx, attrs); err != nil {
-		if _, genErr := kp.GenerateKey(ctx, attrs); genErr != nil {
+// a new one. b is the caller's tenant view of the backend, so the key is
+// loaded from, and generated into, the caller's tenant.
+func ensureSealingKey(ctx context.Context, b Backend, attrs *types.KeyAttributes) error {
+	if _, err := b.GetKey(ctx, attrs); err != nil {
+		if _, genErr := b.GenerateECDSA(ctx, attrs); genErr != nil {
 			return &ErrSealOperation{
 				Operation: "auto-generate sealing key",
 				Err:       genErr,
@@ -107,12 +114,44 @@ func ensureSealingKey(ctx context.Context, kp types.KeyProvider, attrs *types.Ke
 	return nil
 }
 
+// sealingKey resolves the key a seal or unseal runs under, within b -- the
+// caller's tenant view of the backend.
+//
+// A key ID names a key the way every other key operation names one: the
+// reference is parsed (a malformed one is ErrKeyIDParse) and its key name is
+// resolved against the keys b lists, which for a tenant caller are that
+// tenant's keys only. Another tenant's key is the same ErrKeyNotFound a key
+// no tenant holds produces, so the answer does not reveal that it exists.
+// The transports used to resolve the name over the unscoped backend, which
+// sealed under -- and unsealed with -- any tenant's key of that name.
+//
+// Without a key ID a key-based backend uses the default sealing key; see
+// defaultSealingKeyAttributes. TPM 2.0 seals under its storage root and needs
+// no key, so the answer is nil.
+func sealingKey(ctx context.Context, b Backend, keyID string) (*types.KeyAttributes, error) {
+	if keyID != "" {
+		parsed, err := ParseKeyIDToAttributes(keyID)
+		if err != nil {
+			return nil, &ErrKeyIDParse{Err: err}
+		}
+		return findKeyAttrs(ctx, b, parsed.CN)
+	}
+	kp := b.KeyProvider()
+	if kp == nil || kp.Type() == types.BackendTypeTPM2 {
+		return nil, nil
+	}
+	return defaultSealingKeyAttributes(kp.Type()), nil
+}
+
 // Seal encrypts/protects data using the specified backend's sealing mechanism.
 // If req.Backend is empty, the default backend is used.
 //
-// When no KeyID is provided and the backend is not TPM2, a dedicated sealing
-// key is auto-generated (or reused if it already exists) so that the caller
-// does not need to manage sealing keys explicitly.
+// The backend is viewed through req.TenantID, the caller's tenant, which each
+// transport fills from the authenticated identity: the sealing key is found
+// within that tenant (see sealingKey), and when no KeyID is provided on a
+// key-based backend the tenant's own default sealing key is generated on
+// first use and reused after that. A platform-scoped caller seals on the
+// unscoped backend.
 //
 // Implements the SealServicer interface.
 func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
@@ -124,35 +163,24 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 		return nil, ErrNilData
 	}
 
-	b, err := s.resolveBackend(req.Backend)
+	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
 
+	attrs, err := sealingKey(ctx, b, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	if attrs != nil && req.KeyID == "" {
+		if sealErr := ensureSealingKey(ctx, b, attrs); sealErr != nil {
+			return nil, sealErr
+		}
+	}
+
 	opts := &types.SealOptions{
-		AAD: req.AAD,
-	}
-
-	if req.KeyID != "" {
-		attrs, parseErr := ParseKeyIDToAttributes(req.KeyID)
-		if parseErr != nil {
-			return nil, &ErrKeyIDParse{Err: parseErr}
-		}
-		opts.KeyAttributes = attrs
-	}
-
-	// Auto-generate a sealing key for backends that require KeyAttributes
-	// (software, PKCS#11) when the caller did not provide a KeyID.
-	// TPM2 handles this internally via defaultSealKeyAttributes().
-	if opts.KeyAttributes == nil {
-		kp := b.KeyProvider()
-		if kp != nil && kp.Type() != types.BackendTypeTPM2 {
-			attrs := defaultSealingKeyAttributes(kp.Type())
-			if sealErr := ensureSealingKey(ctx, kp, attrs); sealErr != nil {
-				return nil, sealErr
-			}
-			opts.KeyAttributes = attrs
-		}
+		AAD:           req.AAD,
+		KeyAttributes: attrs,
 	}
 
 	// Map PCR selection to TPM seal policy.
@@ -201,8 +229,9 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 // Unseal decrypts/recovers data that was previously sealed.
 // If req.Backend is empty, the default backend is used.
 //
-// When no KeyID is provided and the backend is not TPM2, the well-known
-// auto-generated sealing key CN is used to locate the sealing key.
+// The key is resolved within req.TenantID exactly as Seal resolves it, so a
+// blob sealed under another tenant's key -- named or default -- does not
+// unseal for this caller.
 //
 // Implements the SealServicer interface.
 func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) (*transport.UnsealResponse, error) {
@@ -216,7 +245,12 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 		return nil, ErrInvalidSealedData
 	}
 
-	b, err := s.resolveBackend(req.Backend)
+	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	attrs, err := sealingKey(ctx, b, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -233,25 +267,8 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 	}
 
 	opts := &types.UnsealOptions{
-		AAD: req.AAD,
-	}
-
-	if req.KeyID != "" {
-		attrs, parseErr := ParseKeyIDToAttributes(req.KeyID)
-		if parseErr != nil {
-			return nil, &ErrKeyIDParse{Err: parseErr}
-		}
-		opts.KeyAttributes = attrs
-	}
-
-	// Auto-resolve sealing key for software/PKCS11 backends when no KeyID
-	// was provided. Use the well-known sealing key CN so it matches the key
-	// that was auto-generated during Seal().
-	if opts.KeyAttributes == nil {
-		kp := b.KeyProvider()
-		if kp != nil && kp.Type() != types.BackendTypeTPM2 {
-			opts.KeyAttributes = defaultSealingKeyAttributes(kp.Type())
-		}
+		AAD:           req.AAD,
+		KeyAttributes: attrs,
 	}
 
 	// Map password for TPM sealed object authentication.

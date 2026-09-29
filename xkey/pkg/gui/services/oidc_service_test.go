@@ -69,6 +69,43 @@ func TestOIDCService_SetBrowserOpen(t *testing.T) {
 	assert.True(t, called)
 }
 
+func TestValidatedBrowserOpen_RejectsInvalidURL_DoesNotCallOpen(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "javascript scheme", url: "javascript:alert(document.cookie)"},
+		{name: "file scheme", url: "file:///etc/passwd"},
+		{name: "leading dash", url: "-x"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			wrapped := validatedBrowserOpen(func(url string) error {
+				called = true
+				return nil
+			})
+
+			err := wrapped(tt.url)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrOIDCInvalidLaunchURL)
+			assert.False(t, called, "the wrapped opener must not run for a rejected URL")
+		})
+	}
+}
+
+func TestValidatedBrowserOpen_PassesNormalizedURL(t *testing.T) {
+	var received string
+	wrapped := validatedBrowserOpen(func(url string) error {
+		received = url
+		return nil
+	})
+
+	require.NoError(t, wrapped("HTTPS://Example.com/authorize?state=abc"))
+	assert.Equal(t, "https://Example.com/authorize?state=abc", received)
+}
+
 func TestOIDCService_Close_NoTokenStore(t *testing.T) {
 	svc := NewOIDCService(nil)
 	err := svc.Close()

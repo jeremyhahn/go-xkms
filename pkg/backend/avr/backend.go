@@ -299,11 +299,17 @@ func (b *Backend) Identity(ctx context.Context) (*Identity, error) {
 		return nil, ErrBackendClosed
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
-	defer cancel()
-
+	// The deadline is set AFTER the wire is acquired, not before: RequestTimeout
+	// bounds this call's own exchange with the device, and a queue of other
+	// legitimate callers serialised ahead of it on the same wire is not part of
+	// that exchange. A deadline started before Lock would count time spent
+	// waiting behind them against the caller that did the waiting, so enough
+	// concurrent callers would make every one but the first fail on a device
+	// that answered every request it received.
 	b.wire.Lock()
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	info, err := b.device.ProvInfo(ctx)
+	cancel()
 	b.wire.Unlock()
 	if err != nil {
 		return nil, deviceError(err)
@@ -321,11 +327,13 @@ func (b *Backend) Health(ctx context.Context) (*Health, error) {
 		return nil, ErrBackendClosed
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
-	defer cancel()
-
+	// See the comment in Identity: the deadline starts once the wire is ours,
+	// not before, so queueing behind other concurrent callers is not charged
+	// against this call's own timeout.
 	b.wire.Lock()
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	info, err := b.device.SysInfo(ctx)
+	cancel()
 	b.wire.Unlock()
 	if err != nil {
 		return nil, deviceError(err)
@@ -370,15 +378,18 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, ErrNoDeviceKey
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
-	defer cancel()
-
 	// ProvPubKey RECOMPUTES the public point from the private key already in
 	// the slot. It generates nothing, which is what makes it safe to call
 	// against a provisioned part -- unlike ProvGenKey, which would replace the
 	// identity it was asked about.
+	//
+	// See the comment in Identity: the deadline starts once the wire is ours,
+	// not before, so queueing behind other concurrent callers is not charged
+	// against this call's own timeout.
 	b.wire.Lock()
+	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	point, err := b.device.ProvPubKey(ctx, b.config.Slot)
+	cancel()
 	b.wire.Unlock()
 	if err != nil {
 		return nil, deviceError(err)

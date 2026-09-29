@@ -7,12 +7,10 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/asn1"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
-	"math/big"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -1112,15 +1110,12 @@ func (tpm *TPM2) CreateIAK(
 			return nil, err
 		}
 
-		r := big.NewInt(0).SetBytes(sig.SignatureR.Buffer)
-		s := big.NewInt(0).SetBytes(sig.SignatureS.Buffer)
-		asn1Struct := struct{ R, S *big.Int }{r, s}
-
-		asn1Sig, err := asn1.Marshal(asn1Struct)
+		// TCG-CSR-IDEVID carries this as the raw r||s pair, not ASN.1 DER --
+		// see packRawECDSASignature.
+		signature, err = packRawECDSASignature(iakPub, sig.SignatureR.Buffer, sig.SignatureS.Buffer)
 		if err != nil {
 			return nil, err
 		}
-		signature = asn1Sig
 	}
 
 	akPublicDER, err := store.EncodePubKey(akPublic)
@@ -1729,15 +1724,12 @@ func (tpm *TPM2) CreateIDevID(
 		if err != nil {
 			return nil, nil, err
 		}
-		r := big.NewInt(0).SetBytes(sig.SignatureR.Buffer)
-		s := big.NewInt(0).SetBytes(sig.SignatureS.Buffer)
-		asn1Struct := struct{ R, S *big.Int }{r, s}
-
-		asn1Sig, err := asn1.Marshal(asn1Struct)
+		// TCG-CSR-IDEVID carries this as the raw r||s pair, not ASN.1 DER --
+		// see packRawECDSASignature.
+		signature, err = packRawECDSASignature(akPub, sig.SignatureR.Buffer, sig.SignatureS.Buffer)
 		if err != nil {
 			return nil, nil, err
 		}
-		signature = asn1Sig
 
 	default:
 		return nil, nil, ErrUnsupportedCertifyScheme

@@ -105,6 +105,14 @@ func TestEncryptAsymHandler_HashNONERefusedNotPanic(t *testing.T) {
 // the ciphertext one REST call produced could not be read back by the next --
 // asymmetric encrypt/decrypt over REST could not round-trip at all.
 func TestDecryptHandler_RoundTripsWithEncryptHandler(t *testing.T) {
+	// EncryptHandler's asymmetric fallback is PKCS#1 v1.5 and is refused
+	// unless crypto.allow_legacy_key_wrap is set (pkg/xkms/servicer_crypto.go
+	// Encrypt); this test's whole premise is exercising that construction, so
+	// it must opt in explicitly.
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(true)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
 	ks := setupTestService(t, "test-backend")
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -121,12 +129,14 @@ func TestDecryptHandler_RoundTripsWithEncryptHandler(t *testing.T) {
 	encRouter.ServeHTTP(encW, encReq)
 
 	if fips140.Enforced() {
-		// EncryptHandler's asymmetric fallback deliberately mirrors
-		// PKCS#11's CKM_RSA_PKCS mechanism -- raw PKCS#1 v1.5 encryption
-		// (see pkg/xkms/servicer_crypto.go's Encrypt) -- which
-		// rsa.EncryptPKCS1v15 refuses outright under
-		// GODEBUG=fips140=only, so this round trip cannot start.
-		require.Equal(t, http.StatusInternalServerError, encW.Code, encW.Body.String())
+		// SetAllowLegacyKeyWrap(true) above is a deliberate no-op under
+		// GODEBUG=fips140=only (pkg/types/wrappolicy.go): the Go
+		// Cryptographic Module's approved-mechanism boundary is a ceiling
+		// this repository's own policy switch must never re-open. The
+		// service layer's crypto.allow_legacy_key_wrap gate therefore still
+		// refuses PKCS#1 v1.5 with a 400, before rsa.EncryptPKCS1v15 (which
+		// also refuses it under FIPS) is ever reached.
+		require.Equal(t, http.StatusBadRequest, encW.Code, encW.Body.String())
 		return
 	}
 

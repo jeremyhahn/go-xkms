@@ -189,6 +189,33 @@ func setupSealableServiceWithBackendType(t *testing.T, name string, bt types.Bac
 	return sealer
 }
 
+// sealableStore returns the mock key store backing the named backend, where
+// the service generates and looks up sealing keys.
+func sealableStore(t *testing.T, name string) *mockKeyStore {
+	t.Helper()
+	svc, err := Get()
+	require.NoError(t, err)
+	b, err := svc.LookupBackend(name)
+	require.NoError(t, err)
+	store, ok := b.(*mockKeyStore)
+	require.True(t, ok, "%T", b)
+	return store
+}
+
+// storeSealingKey creates the ECDSA key cn in the named backend's store, so
+// a seal or unseal naming it resolves.
+func storeSealingKey(t *testing.T, name, cn string) {
+	t.Helper()
+	_, err := sealableStore(t, name).GenerateECDSA(context.Background(), &types.KeyAttributes{
+		CN:            cn,
+		KeyType:       types.KeyTypeEncryption,
+		StoreType:     types.StoreSoftware,
+		KeyAlgorithm:  x509.ECDSA,
+		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+	})
+	require.NoError(t, err)
+}
+
 // --- Seal ---
 
 func TestSeal_NilRequest(t *testing.T) {
@@ -570,6 +597,7 @@ func TestUnseal_WithoutPassword(t *testing.T) {
 
 func TestUnseal_WithKeyID(t *testing.T) {
 	sealer := setupSealableService(t)
+	storeSealingKey(t, "software", "my-key")
 	svc, err := Get()
 	require.NoError(t, err)
 
@@ -972,13 +1000,14 @@ func TestSeal_SoftwareBackend_AutoGeneratesKey(t *testing.T) {
 	assert.Equal(t, types.KeyTypeEncryption, sealer.lastSealOpts.KeyAttributes.KeyType)
 	assert.Equal(t, types.StoreSoftware, sealer.lastSealOpts.KeyAttributes.StoreType)
 
-	// Verify the sealing key was persisted in the mock key provider.
-	_, keyErr := sealer.GetKey(context.Background(), &types.KeyAttributes{CN: expectedCN})
+	// Verify the sealing key was persisted in the backend's key store.
+	_, keyErr := sealableStore(t, "software").GetKey(context.Background(), &types.KeyAttributes{CN: expectedCN})
 	assert.NoError(t, keyErr)
 }
 
 func TestSeal_SoftwareBackend_AutoKeyReusedOnSecondCall(t *testing.T) {
-	sealer := setupSealableService(t)
+	setupSealableService(t)
+	store := sealableStore(t, "software")
 	svc, err := Get()
 	require.NoError(t, err)
 
@@ -990,7 +1019,7 @@ func TestSeal_SoftwareBackend_AutoKeyReusedOnSecondCall(t *testing.T) {
 	require.NoError(t, err)
 
 	// Record the key count after first seal.
-	keyCountAfterFirst := len(sealer.keys)
+	keyCountAfterFirst := len(store.keys)
 
 	// Second seal should reuse the existing key (GetKey succeeds).
 	_, err = svc.Seal(context.Background(), &transport.SealRequest{
@@ -1000,12 +1029,12 @@ func TestSeal_SoftwareBackend_AutoKeyReusedOnSecondCall(t *testing.T) {
 	require.NoError(t, err)
 
 	// Key count should not have changed.
-	assert.Equal(t, keyCountAfterFirst, len(sealer.keys))
+	assert.Equal(t, keyCountAfterFirst, len(store.keys))
 }
 
 func TestSeal_SoftwareBackend_AutoGenerateKeyFailure(t *testing.T) {
-	sealer := setupSealableService(t)
-	sealer.generateErr = errors.New("key generation hardware failure")
+	setupSealableService(t)
+	sealableStore(t, "software").generateErr = errors.New("key generation hardware failure")
 	svc, err := Get()
 	require.NoError(t, err)
 
@@ -1021,6 +1050,7 @@ func TestSeal_SoftwareBackend_AutoGenerateKeyFailure(t *testing.T) {
 
 func TestSeal_WithExplicitKeyID_SkipsAutoGenerate(t *testing.T) {
 	sealer := setupSealableService(t)
+	storeSealingKey(t, "software", "my-explicit-key")
 	svc, err := Get()
 	require.NoError(t, err)
 
@@ -1037,7 +1067,7 @@ func TestSeal_WithExplicitKeyID_SkipsAutoGenerate(t *testing.T) {
 	assert.Equal(t, "my-explicit-key", sealer.lastSealOpts.KeyAttributes.CN)
 
 	// Verify no auto-generated key was created.
-	_, keyErr := sealer.GetKey(context.Background(), &types.KeyAttributes{CN: "xkms-sealing-key-software"})
+	_, keyErr := sealableStore(t, "software").GetKey(context.Background(), &types.KeyAttributes{CN: "xkms-sealing-key-software"})
 	assert.Error(t, keyErr)
 }
 
@@ -1068,6 +1098,7 @@ func TestUnseal_SoftwareBackend_AutoResolvesKey(t *testing.T) {
 
 func TestUnseal_WithExplicitKeyID_SkipsAutoResolve(t *testing.T) {
 	sealer := setupSealableService(t)
+	storeSealingKey(t, "software", "my-unseal-key")
 	svc, err := Get()
 	require.NoError(t, err)
 
@@ -1146,39 +1177,39 @@ func TestDefaultSealingKeyAttributes_PKCS11(t *testing.T) {
 // --- ensureSealingKey unit tests ---
 
 func TestEnsureSealingKey_KeyAlreadyExists(t *testing.T) {
-	provider := newMockSealerKeyProvider(types.BackendTypeSoftware)
+	store := newMockKeyStore("software")
 	attrs := defaultSealingKeyAttributes(types.BackendTypeSoftware)
 
 	// Pre-populate the key.
-	_, err := provider.GenerateKey(context.Background(), attrs)
+	_, err := store.GenerateECDSA(context.Background(), attrs)
 	require.NoError(t, err)
 
-	keyCountBefore := len(provider.keys)
+	keyCountBefore := len(store.keys)
 
 	// ensureSealingKey should succeed without generating a new key.
-	err = ensureSealingKey(context.Background(), provider, attrs)
+	err = ensureSealingKey(context.Background(), store, attrs)
 	require.NoError(t, err)
-	assert.Equal(t, keyCountBefore, len(provider.keys))
+	assert.Equal(t, keyCountBefore, len(store.keys))
 }
 
 func TestEnsureSealingKey_GeneratesNewKey(t *testing.T) {
-	provider := newMockSealerKeyProvider(types.BackendTypeSoftware)
+	store := newMockKeyStore("software")
 	attrs := defaultSealingKeyAttributes(types.BackendTypeSoftware)
 
-	err := ensureSealingKey(context.Background(), provider, attrs)
+	err := ensureSealingKey(context.Background(), store, attrs)
 	require.NoError(t, err)
 
 	// Verify the key was generated.
-	_, keyErr := provider.GetKey(context.Background(), attrs)
+	_, keyErr := store.GetKey(context.Background(), attrs)
 	assert.NoError(t, keyErr)
 }
 
 func TestEnsureSealingKey_GenerateFailure(t *testing.T) {
-	provider := newMockSealerKeyProvider(types.BackendTypeSoftware)
-	provider.generateErr = errors.New("hardware not available")
+	store := newMockKeyStore("software")
+	store.generateErr = errors.New("hardware not available")
 	attrs := defaultSealingKeyAttributes(types.BackendTypeSoftware)
 
-	err := ensureSealingKey(context.Background(), provider, attrs)
+	err := ensureSealingKey(context.Background(), store, attrs)
 	require.Error(t, err)
 
 	var sealErr *ErrSealOperation

@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 No build tag gates any symbol in this document — see
 [`architecture.md`](architecture.md).
@@ -18,7 +18,55 @@ No build tag gates any symbol in this document — see
 | `BackendStore` (`store.go:94`) | The `storage.Backend`-backed `Store` implementation. `NewBackendStore(backend storage.Backend) (*BackendStore, error)`. Storage prefix `"ssh/keys/"` (`store.go:31`) — "changing this string is a disk-layout break that requires a migration." Envelope version `v2`; v1 (software-only, pre-backend-key) envelopes still load. |
 | `Fingerprint(pub ssh.PublicKey) string` | `fingerprint.go:26`. OpenSSH `SHA256:<base64-no-padding>` form. |
 | `ParsePEM(ctx, pemBuf *secure.Buffer, provider secure.PassphraseProvider) (*Key, error)` | `parse.go:51`. An encrypted PEM with no matching provider is `*PassphraseRequiredError`. |
-| Typed errors (`errors.go`) | `NilInputError`, `UnsupportedAlgorithmError`, `InvalidKeySizeError`, `PassphraseRequiredError`, `PEMParseError`, `KeyMaterialError`, `KeyNotFoundError`, `StorageError`, `SerializationError`, `ClosedSignerError`. |
+| Typed errors (`errors.go`) | `NilInputError`, `UnsupportedAlgorithmError`, `InvalidKeySizeError`, `PassphraseRequiredError`, `PEMParseError`, `KeyMaterialError`, `KeyNotFoundError`, `StorageError`, `SerializationError`, `ClosedSignerError`, `BackendKeyIDTooLongError`. |
+
+### `backendKeyID` — the backend CN encoding (go-xkms#1238)
+
+`backendKeyID(sc scope.Scope, owner, name string) (string, error)`
+(`generate.go:270`) derives `GenerateOnBackend`'s `types.KeyAttributes.CN`
+from an SSH key's `(scope, owner, name)` identity. It is unexported —
+`GenerateOnBackend` (`generate.go:186`) is the only caller — but the
+encoding is a correctness invariant every backend-backed SSH key depends on,
+so it is documented here rather than left to the source comment alone.
+
+- **Injective.** `owner` and `name` are hex-encoded independently
+  (`encoding/hex`) and joined as `"ssh-" + scope + "-" + hex(owner) + "-" +
+  hex(name)` (`generate.go:270-283`). `hex.EncodeToString` only ever emits
+  `[0-9a-f]`, so a `-` in the result can only be one of the three literal
+  separators `backendKeyID` writes — it can never occur inside a hex segment
+  — making the join unambiguous for any bytes `owner` or `name` contain. The
+  prior encoding (`"ssh-" + strings.ReplaceAll("<scope>/<owner>/<name>",
+  "/", "-")`) was not: `owner="a-b", name="c"` and `owner="a",
+  name="b-c"` both flattened to `"ssh-user-a-b-c"`, so one caller's key
+  could silently address, and overwrite, another's backend CN. See
+  `pkg/ssh/keys/backend_keyid_test.go` (`TestBackendKeyID_InjectiveAcrossHyphenBoundary`,
+  `TestBackendKeyID_PropertyNoCollisions`, `FuzzBackendKeyID_Injective`) and
+  the end-to-end regression `pkg/ssh/tenancy/client_test.go`
+  (`TestBackendKeys_DistinctAddressesDoNotCollide`).
+- **Validated before encoding.** `scope.BuildKeyID(sc, owner, name)`
+  (`generate.go:271`, `pkg/ssh/scope/scope.go:79`) is called first purely
+  for its checks — non-empty `owner`/`name`, a valid `scope`, no embedded
+  `/` — so callers keep seeing the same `*scope.ScopeInvalidError` /
+  `*scope.KeyIDMalformedError` the old implementation returned; its
+  `"<scope>/<owner>/<name>"` result is discarded, not reused for the CN.
+- **Character set.** The result contains only `[a-z0-9-]` (the fixed `"ssh-"`
+  prefix, the fixed scope word, and lowercase hex). That is colon-free,
+  which the unified xkms key ID format requires — `types.KeyAttributes.ID()`
+  (`pkg/types/types.go:1351`) and `pkg/keyprovider/pkcs8`'s
+  `parseStorageKeyID` (`pkg/keyprovider/pkcs8/pkcs8.go:422`) split on `:`,
+  so a `:` inside a CN shifts every field after it — and `/`-free, which the
+  software and tpm2 backends require because they use the CN directly as a
+  storage key (`pkg/storage.KeyPath`, `pkg/storage/namespace.go:24`;
+  `pkg/tpm2/store.storageKey`, `pkg/tpm2/store/file_backend.go:48`), where an
+  embedded `/` would nest a path instead of naming one key.
+- **Bounded length.** `maxBackendKeyIDLen = 255` (`generate.go:240`) matches
+  `pkg/validation.ValidateKeyID`'s own limit on every other xkms key
+  identifier (`pkg/validation/validation.go:130`) and stays inside
+  `NAME_MAX` on the filesystems the software/tpm2 file-per-key storage is
+  deployed on. An identity whose encoded CN would exceed it is refused with
+  `*BackendKeyIDTooLongError{Length, Max}` (`errors.go:22`) rather than
+  truncated — truncation could itself collide two identities the same way
+  the bug being fixed did.
 
 ## Exported surface — `pkg/ssh/backend`
 
@@ -51,6 +99,19 @@ No build tag gates any symbol in this document — see
 | `ParseLine` / `Emit` | Parse an `authorized_keys`-format line into an `Entry`; render an `Entry` back to a line. |
 | Typed errors (`errors.go`) | `NilInputError`, `MalformedLineError`, `NotFoundError`, `DuplicateError`, `InvalidNameError`, `StorageError`, `SerializationError`, `UnsupportedVersionError`. |
 
+## Exported surface — `pkg/ssh/tenancy` (the server-side SSH service)
+
+| Symbol | Contract |
+|---|---|
+| `Options{Storage, Resolver}` / `New(opts) (sdkssh.Client, error)` | `client.go:72-116`. `Storage` is required (`*NilInputError` otherwise) and owned: `Close` closes it, idempotently. `Resolver` is optional and unscoped; the client narrows it per partition. |
+| Owner binding | `client.go:170-182`. A tenant-scoped caller owns `scope=tenant` only for `owner == identity.TenantID`, and `scope=user`/`service` only for `owner == identity.Subject`. A platform caller (`auth.IsCrossTenant`) owns every address. |
+| Partition choice | `client.go:217-266`. Tenant-scoped callers: their own tenant, always. Platform callers: the tenant a `scope=tenant` owner names, else the platform (unprefixed) partition. A platform owner no tenant can have (`storage.ValidateTenantID` fails) has no partition and is refused. Tenant partitions are `tenants/<id>/` prefixes of `Storage` (`client.go:69,283-301`). |
+| Backend namespace | `client.go:306-320`, `keyprovider.go:33-105`. A tenant partition's `KeyProvider` sets `KeyAttributes.TenantID` on every call, never mutating the caller's attributes; `ListKeys` returns only its tenant's keys; `Close` releases nothing (the provider is shared). A resolver that returns no provider is `*backend.BackendNotFoundError`. |
+| Refusals | Reads, deletes, `Verify` and `Callback` on an address the caller does not own are served by the empty partition and wrapped in `*OwnerBindingError` (`client.go:324-346`). Writes (`Generate`, `Import`, known-hosts `Add`, authorized-keys `Add`) are answered with the empty partition's lookup of the same address and never touch a store or backend (`ops.go:38-59,135-138,152-163,237-248`). `Emit` addresses no asset and is not bound (`ops.go:297-299`). |
+| Listings | `ops.go:76-92,166-182,264-280`. The listing reads the caller's partition and drops every item the caller does not own; filters never widen it. |
+| Sessions / console | `ops.go:327-352`: key and host-key pins must both be owned and in one partition. `client.go:133-143`: the console binds `(KeyScope, KeyOwner)`, which addresses both. |
+| Typed errors (`errors.go`) | `NilInputError`; `CallerTenantError` (a tenant-scoped identity whose tenant fails `storage.ValidateTenantID`: an internal invariant failure); `OwnerBindingError{Op, Scope, Owner, CallerTenantID, CallerSubject, Err}` — `Error()` is `Err.Error()` and `Unwrap()` is `Err`, the genuine-miss answer, so every transport's classifier maps it exactly as the miss; `EmptyPartitionError` (the empty partition answered a lookup — still a refusal, reported as internal). |
+
 ## Exported surface — `sdk/go/client/ssh` (the transport-agnostic client)
 
 `Client` interface (`client.go:26`): `Keys() KeysClient`, `KnownHosts()
@@ -75,21 +136,21 @@ device.
 
 ## Daemon wiring (`pkg/server/server.go`)
 
-`ensureSSHClient()` (`server.go:417`, `sync.Once`-guarded) is the only place
-an `sdkssh.Client` is constructed for `xkmsd`. It:
+`ensureSSHClient()` (`server.go:486-512`, `sync.Once`-guarded) is the only
+place an `sdkssh.Client` is constructed for `xkmsd`. It:
 
 1. Returns `nil` immediately if `s.xkmsService == nil` — every REST/gRPC/MCP
    SSH route is `Enabled: hasSSH` (`s.sshHandlers != nil`), so the whole
    feature is absent, not erroring, when there is no `XKMSService`.
 2. Creates a `"ssh"`-prefixed `storage.Backend` view via
    `s.createStorage("ssh")` for key envelopes.
-3. Builds a `sshbackend.ResolverFunc` closing over
+3. Builds an unscoped `sshbackend.ResolverFunc` closing over
    `s.xkmsService.LookupBackend(backendID)`.
-4. Constructs `sdkssh.NewEmbedded(EmbeddedOptions{Backend: sshStorage,
-   BackendProvider: provider})` and stores it as `s.sshClient`.
+4. Constructs `tenancy.New(tenancy.Options{Storage: sshStorage, Resolver:
+   resolver})` and stores it as `s.sshClient`.
 
 Every transport's SSH handlers hold a reference to this one client; none
-constructs its own.
+constructs its own, and none performs its own owner check.
 
 ## REST/gRPC/MCP handler files (thin, transport-only)
 
@@ -97,12 +158,31 @@ constructs its own.
 (`Service`), `pkg/api/mcp/handlers_ssh.go` (`Server`) each decode a
 transport-specific request into the corresponding `sdkssh` request struct
 and call the matching `s.sshClient`/`h.client` method. None re-implements
-key generation, storage, or verification logic — see architecture.md for
+key generation, storage, verification, or owner binding logic — see architecture.md for
 the one exception (gRPC's client-side `Verify`/`Emit`), which lives in the
 SDK client, not the server handler.
 
 ## Testing
 
+- Backend CN injectivity (go-xkms#1238): `pkg/ssh/keys/backend_keyid_test.go`
+  covers the exact reported collision, a property test over adversarial
+  owner/name fragments, a native Go fuzz target
+  (`FuzzBackendKeyID_Injective`), the backend character-set/length
+  constraints, and the `*BackendKeyIDTooLongError` refusal.
+  `pkg/ssh/tenancy/client_test.go`'s `TestBackendKeys_DistinctAddressesDoNotCollide`
+  is the end-to-end regression: it generates, signs and `Get`s both
+  previously-colliding addresses through the real software backend.
+- Owner binding (go-xkms#1230): `pkg/ssh/tenancy/client_test.go` and
+  `keyprovider_test.go` cover every operation across the owner matrix, the
+  partition rules, platform reach, the per-tenant backend namespace and the
+  refusal errors. Each transport repeats the attack matrix end to end —
+  `pkg/api/rest/handlers_ssh_crosstenant_test.go`,
+  `pkg/api/grpc/service_ssh_crosstenant_test.go`,
+  `pkg/api/mcp/handlers_ssh_crosstenant_test.go`: tenant A's alice against
+  tenant B's assets, against bob's, and against the same-subject alice of
+  tenant B. Every read must equal the genuine-miss response byte for byte and
+  leave the asset in place; no listing may show it; no write may land.
+  `pkg/api/rest/server_ssh_authz_test.go` pins each REST route's permission.
 - Unit: `make test-ssh` runs `pkg/ssh/...`. Also
   `go test -tags codec_json ./xkey/pkg/gui/services/ -run SSH` and the SDK +
   gRPC-service SSH test files (`sdk/go/client/ssh/*_test.go`,

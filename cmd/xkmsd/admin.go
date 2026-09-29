@@ -78,6 +78,14 @@ var _ acmeqrdb.Service = (*embeddedQRDBService)(nil)
 // deployment that deliberately has RBAC disabled).
 var ErrAdminQRDBClientRequired = errors.New("admin: qrdb client is required to build the ACME admin authorizer")
 
+// ErrAdminXKMSServiceRequired is returned by finalizeAdminModule when the
+// server has not composed its XKMSService (server.Server.XKMSService returns
+// nil). The admin plane's /admin/barrier/* routes operate the system barrier
+// only through the XKMSService, whose platform-scope check refuses a
+// tenant-scoped caller (go-xkms#1244); there is no other barrier handle to
+// give them.
+var ErrAdminXKMSServiceRequired = errors.New("admin: xkms service is required to mount the ACME admin barrier routes")
+
 // adminUIPrefix is the admin SPA's mount prefix on the unified server.
 // Deliberately distinct from the crypto-plane Module's "/ui" (WithWebUI in
 // pkg/apimodule/module.go): the two SPAs are independent applications with
@@ -90,6 +98,14 @@ const adminUIPrefix = "/admin-ui"
 // registered as public routes on the unified server's qrdb module boundary
 // (apimodule.AdminModule) because the admin package authenticates and
 // authorizes every request itself — see admin_router_state below.
+//
+// Public routes get no tenant binding from qrdb's middleware, so the admin
+// package binds it: its authentication boundary binds the caller's tenant as
+// the context's qrdb tenant (pkg/acme/admin withUser), which confines every
+// identity-plane call the admin service makes through the embedded client,
+// and its service binds every tenant, role, user, account and certificate the
+// request names to that tenant (pkg/acme/admin tenant_binding.go,
+// go-xkms#1225).
 var adminAPIPrefixes = []string{"/admin", "/api/v1/tenants"}
 
 // adminRouterState holds the ACME admin surface's fully-assembled,
@@ -163,8 +179,23 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 	}
 	adminSvc.SetTenantService(srv.TenantService())
 
+	// The barrier routes operate the system barrier through the XKMSService,
+	// never through a barrier handle of their own: the service's
+	// requirePlatformScope is what refuses a tenant-scoped caller, which the
+	// routes' seal:* / barrier:* grants cannot (go-xkms#1244).
+	xkmsSvc := srv.XKMSService()
+	if xkmsSvc == nil {
+		return &acmeInitError{
+			Stage:    "resolve xkms service for admin barrier routes",
+			Sentinel: ErrAdminXKMSServiceRequired,
+		}
+	}
+	barrierSvc := admin.NewBarrierService(xkmsSvc, logger)
+	adminSvc.SetBarrierService(barrierSvc)
+
 	handlers := admin.NewHandlers(adminSvc, logger)
 	tenantHandlers := admin.NewTenantHandlers(adminSvc, logger)
+	barrierHandlers := admin.NewBarrierHandlers(barrierSvc, logger)
 
 	// The client certificate is resolved to its qrdb user through the same
 	// SPKI-thumbprint store the crypto plane's mTLS authenticator uses, so the
@@ -180,6 +211,7 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 	router := mux.NewRouter()
 	handlers.RegisterRoutes(router, authHandler, gate)
 	tenantHandlers.RegisterRoutes(router, authHandler, gate)
+	barrierHandlers.RegisterRoutes(router, authHandler, gate)
 
 	var h http.Handler = router
 	adminRouterState.Store(&h)

@@ -15,6 +15,7 @@ package transport
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"net/url"
 	"testing"
@@ -601,5 +602,215 @@ func TestAppendPaginationQuery_UnpaginatedWithExistingQuery(t *testing.T) {
 	path := AppendPaginationQuery("/api/v1/keys?backend=software", pr, true)
 	if path != "/api/v1/keys?backend=software" {
 		t.Errorf("expected unchanged path for unpaginated request, got %s", path)
+	}
+}
+
+// TestWithPageRequest_AppliesEveryField proves the option copies a decoded
+// PageRequest whole, so a transport handing its caller's pagination to a
+// servicer loses neither the page nor the sort.
+func TestWithPageRequest_AppliesEveryField(t *testing.T) {
+	want := PageRequest{Page: 3, PageSize: 10, SortField: "KeyID", SortOrder: SortOrderDesc}
+	if got := BuildPageRequest(WithPageRequest(want)); got != want {
+		t.Fatalf("BuildPageRequest(WithPageRequest(%+v)) = %+v", want, got)
+	}
+}
+
+// TestWithPageRequest_ZeroValueIsUnpaginated proves the zero PageRequest --
+// what a transport decodes when its caller sent no pagination -- still asks
+// for every result.
+func TestWithPageRequest_ZeroValueIsUnpaginated(t *testing.T) {
+	got := BuildPageRequest(WithPageSize(5), WithPageRequest(PageRequest{}))
+	if !got.IsUnpaginated() || got.PageSize != 0 {
+		t.Fatalf("expected an unpaginated request, got %+v", got)
+	}
+}
+
+// Tests for hostile input to ApplyPagination (go-xkms#1262).
+//
+// ApplyPagination used to check IsUnpaginated (Page==0) before calling
+// Normalize, which clamps a negative Page to zero. A Page of -1 was not
+// unpaginated when checked, so it fell through to Normalize, came out as
+// zero, and start := (0-1)*PageSize went negative -- items[start:end] then
+// panicked. A page_size large enough that (Page-1)*PageSize itself
+// overflowed int reached the same panic from the other direction. These
+// prove every one of those inputs, plus the case actually reported in the
+// issue, returns a PageResponse instead of panicking.
+
+func TestApplyPagination_NoPanicOnHostileInput(t *testing.T) {
+	items := []int{1, 2, 3, 4, 5}
+
+	for _, tc := range []struct {
+		name string
+		pr   PageRequest
+	}{
+		{"negative page", PageRequest{Page: -1, PageSize: 10}},
+		{"negative page with normal page_size", PageRequest{Page: -1, PageSize: 2}},
+		{"page one, negative page_size", PageRequest{Page: 1, PageSize: -10}},
+		{"page zero is unpaginated, not hostile", PageRequest{Page: 0, PageSize: -10}},
+		{"page_size larger than MaxPageSize", PageRequest{Page: 1, PageSize: math.MaxInt}},
+		{"page far beyond range with oversized page_size", PageRequest{Page: 3, PageSize: math.MaxInt}},
+		{"page large enough to overflow (page-1)*page_size", PageRequest{Page: math.MaxInt, PageSize: 10}},
+		{"both page and page_size at their max", PageRequest{Page: math.MaxInt, PageSize: math.MaxInt}},
+		{"page two beyond MaxInt/PageSize, would overflow with an uncapped page_size", PageRequest{Page: math.MaxInt / 5, PageSize: math.MaxInt}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("ApplyPagination(%+v) panicked: %v", tc.pr, r)
+				}
+			}()
+
+			result, resp := ApplyPagination(items, tc.pr)
+
+			if len(result) > len(items) {
+				t.Errorf("ApplyPagination(%+v) returned %d items, more than the %d available", tc.pr, len(result), len(items))
+			}
+			if resp.Total != len(items) {
+				t.Errorf("ApplyPagination(%+v) resp.Total = %d, want %d", tc.pr, resp.Total, len(items))
+			}
+			if resp.PageSize > MaxPageSize {
+				t.Errorf("ApplyPagination(%+v) resp.PageSize = %d, want <= MaxPageSize (%d)", tc.pr, resp.PageSize, MaxPageSize)
+			}
+		})
+	}
+}
+
+// TestApplyPagination_NegativePageClampsToFirstPage proves the specific
+// regression from the issue: a negative Page returns page one instead of
+// panicking on a negative slice start.
+func TestApplyPagination_NegativePageClampsToFirstPage(t *testing.T) {
+	items := []int{1, 2, 3}
+	result, resp := ApplyPagination(items, PageRequest{Page: -1, PageSize: 2})
+
+	if resp.Page != 1 {
+		t.Errorf("expected Page=1, got %d", resp.Page)
+	}
+	if len(result) != 2 || result[0] != 1 || result[1] != 2 {
+		t.Errorf("expected first page [1,2], got %v", result)
+	}
+}
+
+// TestApplyPagination_PageSizeCappedAtMaxPageSize proves ApplyPagination
+// never hands back a page larger than MaxPageSize, even when the caller
+// asked for one, regardless of how the PageRequest was built.
+func TestApplyPagination_PageSizeCappedAtMaxPageSize(t *testing.T) {
+	items := make([]int, MaxPageSize+500)
+	for i := range items {
+		items[i] = i
+	}
+
+	result, resp := ApplyPagination(items, PageRequest{Page: 1, PageSize: math.MaxInt})
+
+	if len(result) != MaxPageSize {
+		t.Errorf("expected %d items, got %d", MaxPageSize, len(result))
+	}
+	if resp.PageSize != MaxPageSize {
+		t.Errorf("expected resp.PageSize=%d, got %d", MaxPageSize, resp.PageSize)
+	}
+	if !resp.HasMore {
+		t.Error("expected HasMore=true with more items than MaxPageSize")
+	}
+}
+
+func TestPageRequest_Normalize_CapsPageSizeAtMax(t *testing.T) {
+	p := PageRequest{Page: 1, PageSize: MaxPageSize + 1}
+	p.Normalize()
+
+	if p.PageSize != MaxPageSize {
+		t.Errorf("expected PageSize capped to MaxPageSize (%d), got %d", MaxPageSize, p.PageSize)
+	}
+}
+
+func TestPageRequest_Normalize_PreservesPageSizeAtMax(t *testing.T) {
+	p := PageRequest{Page: 1, PageSize: MaxPageSize}
+	p.Normalize()
+
+	if p.PageSize != MaxPageSize {
+		t.Errorf("expected PageSize to stay at MaxPageSize (%d), got %d", MaxPageSize, p.PageSize)
+	}
+}
+
+// Tests for ValidatePageRequest and PageRequestFromQuery's negative-value
+// rejection (go-xkms#1262).
+
+func TestValidatePageRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pr      PageRequest
+		wantErr bool
+		param   string
+	}{
+		{"zero page is valid (unpaginated)", PageRequest{Page: 0, PageSize: 0}, false, ""},
+		{"page one is valid", PageRequest{Page: 1, PageSize: 25}, false, ""},
+		{"negative page is invalid", PageRequest{Page: -1, PageSize: 25}, true, "page"},
+		{"negative page_size is invalid", PageRequest{Page: 1, PageSize: -1}, true, "page_size"},
+		{"huge page_size is valid, capping happens later", PageRequest{Page: 1, PageSize: math.MaxInt}, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidatePageRequest(tc.pr)
+			if tc.wantErr {
+				var invalid *InvalidPaginationParamError
+				if !errors.As(err, &invalid) {
+					t.Fatalf("expected *InvalidPaginationParamError, got %v (%T)", err, err)
+				}
+				if invalid.Param != tc.param {
+					t.Errorf("expected Param=%s, got %s", tc.param, invalid.Param)
+				}
+				if !errors.Is(err, ErrNegativePaginationValue) {
+					t.Errorf("expected errors.Is(err, ErrNegativePaginationValue), got %v", err)
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestPageRequestFromQuery_NegativeValuesRejected(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		rawQuery  string
+		wantParam string
+	}{
+		{"negative page", "page=-1", "page"},
+		{"negative page_size", "page_size=-1", "page_size"},
+		{"negative page with a huge page_size, page checked first", "page=-1&page_size=999999999", "page"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &http.Request{URL: &url.URL{RawQuery: tc.rawQuery}}
+
+			_, err := PageRequestFromQuery(r)
+			if err == nil {
+				t.Fatal("expected an error for a negative pagination parameter")
+			}
+
+			var invalid *InvalidPaginationParamError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("expected *InvalidPaginationParamError, got %T", err)
+			}
+			if invalid.Param != tc.wantParam {
+				t.Errorf("expected Param=%s, got %s", tc.wantParam, invalid.Param)
+			}
+			if !errors.Is(err, ErrNegativePaginationValue) {
+				t.Errorf("expected errors.Is(err, ErrNegativePaginationValue), got %v", err)
+			}
+		})
+	}
+}
+
+// TestPageRequestFromQuery_OversizedPageSizeAccepted proves an oversized
+// page_size is not rejected at parse time -- it is capped downstream by
+// Normalize (see TestPageRequest_Normalize_CapsPageSizeAtMax), consistent
+// with MaxPageSize's doc: a caller asking for "as many as possible" gets
+// the largest page this API is willing to hand back, not an error.
+func TestPageRequestFromQuery_OversizedPageSizeAccepted(t *testing.T) {
+	r := &http.Request{URL: &url.URL{RawQuery: "page_size=999999999"}}
+
+	pr, err := PageRequestFromQuery(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr.PageSize != 999999999 {
+		t.Errorf("expected the raw PageSize to survive parsing uncapped, got %d", pr.PageSize)
 	}
 }

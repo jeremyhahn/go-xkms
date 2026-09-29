@@ -24,32 +24,6 @@ import (
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
-// TestCertOperationError classifies a certificate-storage failure as
-// internal, mirroring pkg/api/grpc/service.go's unconditional codes.Internal
-// for SaveCert/DeleteCert/ListCerts/CertExists/SaveCertChain/GetCertChain.
-func TestCertOperationError(t *testing.T) {
-	cause := errors.New("disk full")
-	err := certOperationError("failed to save certificate", cause)
-
-	var keyErr *KeyOpError
-	require.ErrorAs(t, err, &keyErr)
-	assert.Equal(t, ErrCodeInternalError, keyErr.Code)
-	assert.ErrorIs(t, err, cause)
-}
-
-// TestGetCertError classifies any GetCert failure as Not found, mirroring
-// pkg/api/grpc/service.go's GetCert, which reports codes.NotFound
-// unconditionally.
-func TestGetCertError(t *testing.T) {
-	cause := errors.New("storage: not found")
-	err := getCertError("failed to get certificate", cause)
-
-	var keyErr *KeyOpError
-	require.ErrorAs(t, err, &keyErr)
-	assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyErr.Code)
-	assert.ErrorIs(t, err, cause)
-}
-
 // TestMapCAError_DomainSentinels asserts the JSON-RPC code for each sentinel
 // mapCAError classifies, matching pkg/api/grpc/service_ca.go's classification
 // of the same conditions (a nil CA instance -> Unavailable; a missing

@@ -23,6 +23,12 @@ var (
 	// ErrSecureBrowserEmptyPath indicates an empty browser path was provided.
 	ErrSecureBrowserEmptyPath = errors.New("secure_browser: browser path cannot be empty")
 
+	// ErrSecureBrowserInvalidURL indicates the URL provided to
+	// LaunchBrowser/LaunchBrowserWithOptions failed launch validation
+	// (disallowed scheme, missing host, a leading '-', or a control
+	// character). See pkg/urlsafety.ValidateLaunchURL.
+	ErrSecureBrowserInvalidURL = errors.New("secure_browser: URL failed launch validation")
+
 	// ErrSecureBrowserUnknownFamily indicates the browser binary could not be
 	// classified as Chrome or Firefox family.
 	ErrSecureBrowserUnknownFamily = errors.New("secure_browser: unrecognized browser family")

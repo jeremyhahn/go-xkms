@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -57,6 +58,9 @@ var (
 
 	// ErrFIDO2InvalidBackend indicates an unsupported key backend was specified.
 	ErrFIDO2InvalidBackend = errors.New("fido2: invalid backend type (must be 'software', 'tpm2', or 'phone')")
+	// ErrFIDO2InvalidNotifyCommand is returned when notify_command cannot be
+	// used; startup stops rather than running without touch notifications.
+	ErrFIDO2InvalidNotifyCommand = errors.New("fido2: invalid notify command")
 
 	// ErrFIDO2InvalidAttestationFormat indicates an unsupported attestation format.
 	ErrFIDO2InvalidAttestationFormat = errors.New("fido2: invalid attestation format (must be 'none', 'packed', or 'tpm')")
@@ -65,7 +69,7 @@ var (
 	ErrFIDO2TPMAttestationRequiresTPMBackend = errors.New("fido2: TPM attestation requires tpm2 backend")
 
 	// ErrFIDO2SetPINRequiresPINEnabled indicates --set-pin requires --pin to be enabled.
-	ErrFIDO2SetPINRequiresPINEnabled = errors.New("fido2: --set-pin requires --pin to be enabled")
+	ErrFIDO2SetPINRequiresPINEnabled = errors.New("fido2: --set-pin-stdin requires --pin to be enabled")
 
 	// ErrFIDO2StorageCreationFailed indicates the storage backend could not be created.
 	ErrFIDO2StorageCreationFailed = errors.New("fido2: storage creation failed")
@@ -82,10 +86,10 @@ var (
 	// ErrFIDO2PINSetFailed indicates the initial PIN could not be set.
 	ErrFIDO2PINSetFailed = errors.New("fido2: PIN set failed")
 
-	// ErrFIDO2PINAlreadySet indicates --set-pin was given for a store that
-	// already holds a PIN. --set-pin establishes the first PIN only; an
+	// ErrFIDO2PINAlreadySet indicates --set-pin-stdin was given for a store that
+	// already holds a PIN. --set-pin-stdin establishes the first PIN only; an
 	// existing PIN is changed through the CTAP changePIN ceremony.
-	ErrFIDO2PINAlreadySet = errors.New("fido2: --set-pin refused: a PIN is already configured in this store; drop --set-pin or change the PIN through the FIDO2 client")
+	ErrFIDO2PINAlreadySet = errors.New("fido2: --set-pin-stdin refused: a PIN is already configured in this store; drop --set-pin-stdin or change the PIN through the FIDO2 client")
 
 	// ErrFIDO2BackendCreationFailed indicates the key backend could not be created.
 	ErrFIDO2BackendCreationFailed = errors.New("fido2: backend creation failed")
@@ -203,7 +207,7 @@ type FIDO2Config struct {
 	DeviceName   string
 	SerialNumber string
 
-	// PIN configuration. PIN is nil when --set-pin was not provided.
+	// PIN configuration. PIN is nil when --set-pin-stdin was not provided.
 	EnablePIN bool
 	PIN       *secure.Secret
 
@@ -335,7 +339,7 @@ Examples:
   sudo xkey fido2 --storage file --storage-path /var/lib/xkey
 
   # Run with PIN protection in interactive mode
-  sudo xkey fido2 --pin --set-pin 123456 --interactive
+  echo 123456 | sudo xkey fido2 --pin --set-pin-stdin --interactive
 
   # Run with TPM2 hardware-backed keys
   sudo xkey fido2 --backend tpm2 --tpm-device /dev/tpmrm0
@@ -352,8 +356,8 @@ Examples:
   # Run with a default password for bare touch
   sudo xkey fido2 --default-password "DatabaseProd"
 
-  # Run with custom notification command
-  sudo xkey fido2 --notify-command "notify-send xKey '%o for %r'"
+  # Run with custom notification command (request data via XKEY_* env vars)
+  sudo xkey fido2 --notify-command 'sh -c "notify-send xKey \"$XKEY_RP_ID\""'
 
 Only --storage, --storage-path, --name and --attestation can also be set via
 the xkey config file's fido2: section or the environment variables
@@ -375,8 +379,7 @@ func init() {
 		"Storage type: memory, file, or barrier")
 	fido2Cmd.Flags().String("storage-path", "",
 		"Path for file storage and the authenticator profile (default: ~/.xkey/data/fido2, see --data-dir/XKEY_DATA_DIR)")
-	fido2Cmd.Flags().String("barrier-password", "",
-		"Barrier password for encrypted storage")
+	barrierPasswordSource.addFlags(fido2Cmd)
 	fido2Cmd.Flags().String("barrier-password-file", "",
 		"Read barrier password from file (first line)")
 
@@ -389,8 +392,7 @@ func init() {
 	// PIN configuration flags
 	fido2Cmd.Flags().Bool("pin", true,
 		"Enable PIN support (required for FIDO 2.1 credential management)")
-	fido2Cmd.Flags().String("set-pin", "",
-		"Establish the initial PIN when the store has none (requires --pin; refused if a PIN is already set)")
+	fido2SetPINSource.addFlags(fido2Cmd)
 
 	// User presence configuration flags
 	fido2Cmd.Flags().Bool("interactive", false,
@@ -416,7 +418,11 @@ func init() {
 	fido2Cmd.Flags().String("default-password", "",
 		"Password name to type on bare touch")
 	fido2Cmd.Flags().String("notify-command", "",
-		"Custom notification command (overrides built-in notifications)")
+		"Custom notification command (overrides built-in notifications). Split into argv on whitespace "+
+			"(quote with ' or \" to include a space in one argument); run exactly as given, never through a "+
+			"shell, and never modified. Request data (operation, RP ID, RP name, user name) reaches the "+
+			"command only via the XKEY_OPERATION/XKEY_RP_ID/XKEY_RP_NAME/XKEY_USER_NAME environment "+
+			"variables, for example: sh -c 'notify-send \"Touch required\" \"$XKEY_RP_ID\"'")
 	fido2Cmd.Flags().String("notify", "dialog",
 		"Notification type: dialog (interactive), passive (desktop notification), log (log-only), or none")
 
@@ -433,12 +439,12 @@ func init() {
 	// Bind flags to viper for unified configuration access
 	_ = viper.BindPFlag("fido2.storage", fido2Cmd.Flags().Lookup("storage"))
 	_ = viper.BindPFlag("fido2.storage_path", fido2Cmd.Flags().Lookup("storage-path"))
-	_ = viper.BindPFlag("fido2.barrier_password", fido2Cmd.Flags().Lookup("barrier-password"))
+	_ = viper.BindPFlag("fido2.barrier_password_stdin", fido2Cmd.Flags().Lookup("barrier-password-stdin"))
 	_ = viper.BindPFlag("fido2.barrier_password_file", fido2Cmd.Flags().Lookup("barrier-password-file"))
 	_ = viper.BindPFlag("fido2.name", fido2Cmd.Flags().Lookup("name"))
 	_ = viper.BindPFlag("fido2.serial", fido2Cmd.Flags().Lookup("serial"))
 	_ = viper.BindPFlag("fido2.pin", fido2Cmd.Flags().Lookup("pin"))
-	_ = viper.BindPFlag("fido2.set_pin", fido2Cmd.Flags().Lookup("set-pin"))
+	_ = viper.BindPFlag("fido2.set_pin_stdin", fido2Cmd.Flags().Lookup("set-pin-stdin"))
 	_ = viper.BindPFlag("fido2.interactive", fido2Cmd.Flags().Lookup("interactive"))
 	_ = viper.BindPFlag("fido2.require_touch", fido2Cmd.Flags().Lookup("require-touch"))
 	_ = viper.BindPFlag("fido2.timeout", fido2Cmd.Flags().Lookup("timeout"))
@@ -569,12 +575,12 @@ func buildFIDO2Config() *FIDO2Config {
 	cfg := &FIDO2Config{
 		StorageType:         FIDO2StorageType(viper.GetString("fido2.storage")),
 		StoragePath:         viper.GetString("fido2.storage_path"),
-		BarrierPassword:     viper.GetString("fido2.barrier_password"),
+		BarrierPassword:     resolveFIDO2BarrierPassword(),
 		BarrierPasswordFile: viper.GetString("fido2.barrier_password_file"),
 		DeviceName:          viper.GetString("fido2.name"),
 		SerialNumber:        viper.GetString("fido2.serial"),
 		EnablePIN:           viper.GetBool("fido2.pin"),
-		PIN:                 fido2PINSecret(viper.GetString("fido2.set_pin")),
+		PIN:                 resolveFIDO2SetPINSecret(),
 		Interactive:         viper.GetBool("fido2.interactive"),
 		RequireTouch:        viper.GetBool("fido2.require_touch"),
 		UserPresenceTimeout: viper.GetDuration("fido2.timeout"),
@@ -602,8 +608,57 @@ func buildFIDO2Config() *FIDO2Config {
 	return cfg
 }
 
+// fido2SetPINSource is the one way the initial FIDO2 PIN to establish enters
+// the CLI. It follows the PIN convention (pin_input.go): standard input,
+// never a "--set-pin" value flag -- a value on the command line is visible to
+// every other process on the host via 'ps' (go-xkms#1209). Unlike the other
+// pinSources in this package it has no environment variable: --set-pin was
+// CLI-only before this change (see fido2Cmd's doc comment), and establishing
+// a brand-new PIN is rare enough, and consequential enough, that it does not
+// need a headless/env path the way an existing PIN's authentication does.
+var fido2SetPINSource = pinSource{
+	label:      "PIN to establish",
+	stdinFlag:  "set-pin-stdin",
+	stdinEmpty: ErrPINInputStdinEmpty,
+	stdinRead:  ErrPINInputStdinRead,
+}
+
+// resolveFIDO2BarrierPassword resolves the barrier password
+// buildFIDO2Config populates FIDO2Config.BarrierPassword with: read from
+// standard input when --barrier-password-stdin was given, otherwise
+// XKEY_BARRIER_PASSWORD. buildFIDO2Config has no *cobra.Command (see its doc
+// comment) and no error return, so a resolution failure is logged and
+// treated as "no password provided" rather than propagated -- the same
+// non-fallible contract fido2PINSecret already follows.
+func resolveFIDO2BarrierPassword() string {
+	secret, err := barrierPasswordSource.resolveBytesFrom(viper.GetBool("fido2.barrier_password_stdin"))
+	if err != nil {
+		slog.Default().Error("fido2: failed to resolve --barrier-password-stdin", "error", err)
+		return ""
+	}
+	defer enclave.Wipe(secret)
+	return string(secret)
+}
+
+// resolveFIDO2SetPINSecret resolves the initial PIN to establish
+// (--set-pin-stdin) and seals it into a *secure.Secret for FIDO2Config.PIN.
+// A PIN that was never supplied returns nil, matching fido2PINSecret's
+// historical "no --set-pin" contract.
+func resolveFIDO2SetPINSecret() *secure.Secret {
+	secret, err := fido2SetPINSource.resolveBytesFrom(viper.GetBool("fido2.set_pin_stdin"))
+	if err != nil {
+		slog.Default().Error("fido2: failed to resolve --set-pin-stdin", "error", err)
+		return nil
+	}
+	if len(secret) == 0 {
+		return nil
+	}
+	defer enclave.Wipe(secret)
+	return fido2PINSecret(string(secret))
+}
+
 // fido2PINSecret seals s into a *secure.Secret for FIDO2Config.PIN. An
-// empty s returns nil: no --set-pin was provided.
+// empty s returns nil: no --set-pin-stdin was provided.
 //
 // buildFIDO2Config has no error return -- it is called from more than a
 // dozen commands that are not themselves fallible at this point -- so a
@@ -617,7 +672,7 @@ func fido2PINSecret(s string) *secure.Secret {
 	}
 	secret, err := secure.NewSecret([]byte(s))
 	if err != nil {
-		slog.Default().Error("fido2: failed to seal --set-pin into protected memory", "error", err)
+		slog.Default().Error("fido2: failed to seal --set-pin-stdin into protected memory", "error", err)
 		return nil
 	}
 	return secret
@@ -801,7 +856,7 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 	// persistent store to fail, so it never refuses an operation.
 	auth.SetAuditLogger(audit.NewSlogLogger(logger))
 
-	// Establish the initial PIN if configured. --set-pin is the operator
+	// Establish the initial PIN if configured. --set-pin-stdin is the operator
 	// seeding a first PIN, so it goes through the authenticator's
 	// SetInitialPIN: the same policy, retry-reset and pinUvAuthToken
 	// invalidation as the CTAP setPIN ceremony, minus the wire-level proof
@@ -1607,7 +1662,10 @@ func createFIDO2UserPresenceHandler(cfg *FIDO2Config, logger *slog.Logger) (auth
 
 	// Default: socket-based handler for daemon mode
 	logger.Info("using socket-based user presence handler")
-	notifier := createNotifier(cfg, logger)
+	notifier, err := createNotifier(cfg, logger)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	socketHandler := authenticator.NewSocketHandler(notifier, logger)
 	return socketHandler, socketHandler, notifier, nil
 }
@@ -1622,19 +1680,19 @@ func createFIDO2UserPresenceHandler(cfg *FIDO2Config, logger *slog.Logger) (auth
 //
 // When running as root via sudo, notifications are sent as the original user.
 // The --notify-command flag overrides all built-in notification types.
-func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
+func createNotifier(cfg *FIDO2Config, logger *slog.Logger) (notify.Notifier, error) {
 	var notifiers []notify.Notifier
 
 	// Handle "none" - no notifications at all
 	if cfg.NotifyType == "none" {
 		logger.Info("notifications disabled")
-		return notify.NewMultiNotifier() // Empty notifier
+		return notify.NewMultiNotifier(), nil // Empty notifier
 	}
 
 	// Always add log notifier for "log" type or as fallback
 	if cfg.NotifyType == "log" {
 		logger.Info("using log-only notifications")
-		return notify.NewLogNotifier(logger)
+		return notify.NewLogNotifier(logger), nil
 	}
 
 	// Add log notifier as baseline for other types
@@ -1643,14 +1701,12 @@ func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
 	// Custom command overrides everything
 	if cfg.NotifyCommand != "" {
 		cmdNotifier, err := notify.NewCommandNotifier(cfg.NotifyCommand, logger)
-		if err == nil {
-			logger.Info("using custom notification command")
-			notifiers = append(notifiers, cmdNotifier)
-		} else {
-			logger.Warn("invalid notify command, using log-only",
-				slog.String("error", err.Error()))
+		if err != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrFIDO2InvalidNotifyCommand, Cause: err}
 		}
-		return notify.NewMultiNotifier(notifiers...)
+		logger.Info("using custom notification command")
+		notifiers = append(notifiers, cmdNotifier)
+		return notify.NewMultiNotifier(notifiers...), nil
 	}
 
 	// Determine if running as root via sudo
@@ -1672,19 +1728,15 @@ func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
 	switch cfg.NotifyType {
 	case "dialog":
 		if isRootViaSudo {
-			// Interactive zenity dialog that uses xkey touch command (no external dependencies)
-			notifyCmd := fmt.Sprintf(
-				`su -c 'DISPLAY=:0 zenity --question --icon-name=security-high --title="xKey: Touch Required" --text="<b>%%o</b> request from <b>%%r</b>\n\nUser: %%u\n\nClick Approve to authorize this action." --ok-label="✓ Approve" --cancel-label="✗ Deny" --width=350 --timeout=30 && %s touch --socket %s' %s`,
-				execPath, socketPath, sudoUser,
-			)
+			// Interactive zenity dialog that runs the xkey touch command on
+			// approval. Both steps run directly via runuser -- neither is
+			// ever handed to a shell, so nothing in the request (operation,
+			// RP ID, user name) can be interpreted as shell syntax. See
+			// sudoDialogNotifier and buildSudoDialogArgv.
 			logger.Info("using zenity dialog notifications (root via sudo)",
 				slog.String("sudo_user", sudoUser),
 				slog.String("socket_path", socketPath))
-
-			cmdNotifier, err := notify.NewCommandNotifier(notifyCmd, logger)
-			if err == nil {
-				notifiers = append(notifiers, cmdNotifier)
-			}
+			notifiers = append(notifiers, newSudoDialogNotifier(sudoUser, execPath, socketPath, defaultFIDO2Timeout, logger))
 		} else {
 			// Non-root: try D-Bus, fall back to zenity
 			dbusNotifier, err := notify.NewDBusNotifier(logger)
@@ -1699,18 +1751,12 @@ func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
 
 	case "passive":
 		if isRootViaSudo {
-			// Passive notification via notify-send (no interaction)
-			notifyCmd := fmt.Sprintf(
-				`su -c 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/%s/bus" notify-send -u critical "xKey: Touch Required" "%%o request from %%r\nUser: %%u\nRun: xkey touch"' %s`,
-				sudoUID, sudoUser,
-			)
+			// Passive notification via notify-send (no interaction), run
+			// directly via runuser -- no shell is involved. See
+			// sudoPassiveNotifier and buildSudoPassiveArgv.
 			logger.Info("using notify-send notifications (root via sudo)",
 				slog.String("sudo_user", sudoUser))
-
-			cmdNotifier, err := notify.NewCommandNotifier(notifyCmd, logger)
-			if err == nil {
-				notifiers = append(notifiers, cmdNotifier)
-			}
+			notifiers = append(notifiers, newSudoPassiveNotifier(sudoUser, sudoUID, logger))
 		} else {
 			// Non-root: use D-Bus directly
 			dbusNotifier, err := notify.NewDBusNotifier(logger)
@@ -1728,7 +1774,7 @@ func createNotifier(cfg *FIDO2Config, logger *slog.Logger) notify.Notifier {
 			slog.String("notify_type", cfg.NotifyType))
 	}
 
-	return notify.NewMultiNotifier(notifiers...)
+	return notify.NewMultiNotifier(notifiers...), nil
 }
 
 // createFIDO2KeyBackend creates the appropriate key backend based on config.

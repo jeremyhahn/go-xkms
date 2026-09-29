@@ -99,7 +99,7 @@ func newMalformedParamsTestServer(t *testing.T) *Server {
 	server.passwordManager = createPasswordManager(t)
 
 	barrier, _, _ := createTestBarrier(t)
-	server.SetBarrier(barrier)
+	server.xkmsService.SetBarrier(barrier)
 
 	backend, err := storage.NewMemoryBackend()
 	require.NoError(t, err)

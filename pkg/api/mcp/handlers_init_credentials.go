@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
@@ -96,7 +98,7 @@ func mapCeremonyError(err error) error {
 	}
 	for _, entry := range ceremonySentinelCodes {
 		if errors.Is(err, entry.sentinel) {
-			return &KeyOpError{Code: entry.code, Err: err}
+			return classified(entry.code, err)
 		}
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}
@@ -115,6 +117,11 @@ var credentialSentinelCodes = []struct {
 	{credentialspkg.ErrEmptyCredentialValue, ErrCodeInvalidParams},
 	{credentialspkg.ErrCredentialAlreadySubmitted, sdkssh.JSONRPCCodeDuplicate},
 	{credentialspkg.ErrCredentialNotFound, sdkssh.JSONRPCCodeNotFound},
+	// Credential submission is platform-scoped: a tenant-scoped caller is
+	// refused with xkms.TenantBindingError, which unwraps to go-qrdb's
+	// unknown-tenant sentinel and answers exactly as a genuine miss
+	// (go-xkms#1226).
+	{qrdbsdk.ErrTenantMissing, sdkssh.JSONRPCCodeNotFound},
 	// ErrManualEntryRequired, ErrInvalidStrategy, ErrNilBarrier and
 	// ErrNilPlatformStore report a server-side configuration or state fault
 	// the caller cannot resolve by retrying with different parameters; they
@@ -135,7 +142,7 @@ func mapCredentialError(err error) error {
 	}
 	for _, entry := range credentialSentinelCodes {
 		if errors.Is(err, entry.sentinel) {
-			return &KeyOpError{Code: entry.code, Err: err}
+			return classified(entry.code, err)
 		}
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}

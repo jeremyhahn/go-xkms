@@ -21,13 +21,14 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // classToGRPCCode translates apierrors.Class onto its gRPC status code. It is
 // total over every Class the apierrors tables this package reads
-// (ImportExportSentinelClasses, and the PIV, barrier, seal store, PIN,
-// custodian and policy tables consumed by service_piv.go,
+// (ImportExportSentinelClasses, AEADSentinelClasses, and the PIV, barrier,
+// seal store, PIN, custodian and policy tables consumed by service_piv.go,
 // service_barrier_pin.go, service_seal_store.go,
 // service_custodian_share_tenant.go and service_policy.go) can produce, so
 // a table entry can never resolve to an unmapped Class silently;
@@ -74,21 +75,46 @@ var keyOpSentinelCodes = []struct {
 	// failed.
 	{xkms.ErrWeakOAEPHash, codes.InvalidArgument},
 	{xkms.ErrInvalidHashFunction, codes.InvalidArgument},
+	// A malformed certificate, an empty chain, or sealed data missing its
+	// payload is a fault in the request (go-xkms#1228).
+	{xkms.ErrInvalidEncodingPEM, codes.InvalidArgument},
+	{xkms.ErrInvalidCertificate, codes.InvalidArgument},
+	{xkms.ErrEmptyChain, codes.InvalidArgument},
+	{xkms.ErrInvalidSealedData, codes.InvalidArgument},
+	{xkms.ErrNilData, codes.InvalidArgument},
 	{xkms.ErrOperationNotSupported, codes.Unimplemented},
+	{xkms.ErrSealingNotSupported, codes.Unimplemented},
 	{xkms.ErrExportKeyMaterialFailed, codes.FailedPrecondition},
 	{xkms.ErrBackendNotFound, codes.NotFound},
 	{xkms.ErrKeyNotFound, codes.NotFound},
+	{xkms.ErrCertNotFound, codes.NotFound},
+	{xkms.ErrCertChainNotFound, codes.NotFound},
+	{storage.ErrNotFound, codes.NotFound},
 	{xkms.ErrNotInitialized, codes.Unavailable},
 }
 
 // mapKeyOpError converts an error returned by the xkms service layer into a
 // gRPC status error. Validation failures report the offending field verbatim so
-// callers see the same wire-level field name they sent; capability boundaries
-// (a backend that cannot attest, or cannot export) become Unimplemented or
-// FailedPrecondition; unresolved backends and keys become NotFound. Anything
-// else is an internal fault. xkmsService is threaded through to notLeaderStatus
+// callers see the same wire-level field name they sent; a malformed backend
+// name is InvalidArgument; capability boundaries (a backend that cannot
+// attest, or cannot export) become Unimplemented or FailedPrecondition;
+// unresolved backends and keys become NotFound. A backend-layer import/export
+// sentinel the service wraps as an operation failure's cause -- ExportKey and
+// CopyKey report ErrKeyNotExportable and ErrExportNotSupported that way -- is
+// classified by apierrors.ImportExportSentinelClasses, exactly as
+// mapImportExportError classifies it. Anything else is an internal fault. xkmsService is threaded through to notLeaderStatus
 // so a not-leader translation can resolve the leader's dialable gRPC endpoint;
 // it may be nil.
+//
+// apierrors.ImportExportSentinelClasses is also consulted, because WrapKey,
+// UnwrapKey, GetImportParameters and ImportKey now route through the service
+// layer (go-xkms#1216) rather than calling backend.ImportBackend /
+// backend.ExportBackend directly, so a backend-layer capability or policy
+// sentinel (backend.ErrKeyNotExportable, for instance) reaches here wrapped
+// in the service's own xkms.ErrOperationWrap rather than being classified by
+// mapImportExportError first. errors.Is/apierrors.ClassOf see through that
+// wrapping either way, so the classification is unchanged by which path the
+// error took.
 func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error) error {
 	if err == nil {
 		return nil
@@ -103,15 +129,40 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 		return status.Error(codes.NotFound, role.Error())
 	}
 
+	// A key or certificate ID that does not parse -- including one naming
+	// another tenant's namespace ("tenant-b/web") -- is malformed input. It
+	// is matched before ErrValidation, which the parse failure may wrap, so
+	// the message names the key ID as the field at fault.
+	var keyID *xkms.ErrKeyIDParse
+	if errors.As(err, &keyID) {
+		return status.Error(codes.InvalidArgument, keyID.Error())
+	}
+
 	var validation *xkms.ErrValidation
 	if errors.As(err, &validation) {
 		return status.Error(codes.InvalidArgument, validationMessage(validation))
+	}
+
+	var backendName *xkms.ErrBackendNameValidation
+	if errors.As(err, &backendName) {
+		return status.Error(codes.InvalidArgument, backendName.Error())
 	}
 
 	for _, entry := range keyOpSentinelCodes {
 		if errors.Is(err, entry.sentinel) {
 			return status.Error(entry.code, err.Error())
 		}
+	}
+
+	if class, ok := apierrors.ClassOf(apierrors.ImportExportSentinelClasses, err); ok {
+		return status.Error(grpcCodeForClass(class), err.Error())
+	}
+
+	// aead.ErrNonceReuse and aead.ErrNonceTrackerFull reach here wrapped in
+	// pkg/xkms's ErrKeyOperation from Encrypt's and WrapKeyByID's AEAD nonce
+	// guard; see apierrors.AEADSentinelClasses.
+	if class, ok := apierrors.ClassOf(apierrors.AEADSentinelClasses, err); ok {
+		return status.Error(grpcCodeForClass(class), err.Error())
 	}
 
 	return status.Error(codes.Internal, err.Error())

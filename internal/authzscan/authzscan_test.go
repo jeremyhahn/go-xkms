@@ -295,4 +295,146 @@ func TestErrorMessages(t *testing.T) {
 	assert.Contains(t, (&ParseError{File: "a.go", Err: errors.New("boom")}).Error(), "parse a.go: boom")
 	assert.Contains(t, (&RawLiteralError{Pos: "a.go:1", Literal: `"keys"`}).Error(), `raw authorization literal "keys"`)
 	assert.Contains(t, (&UnknownConstantError{Pos: "a.go:1", Name: "Nope"}).Error(), `unknown pkg/auth constant "Nope"`)
+	assert.Contains(t, (&VarNotFoundError{Dir: "pkg/x", Name: "table"}).Error(), `pkg/x: variable "table" not found`)
+	assert.Contains(t, (&MapEntryError{Pos: "a.go:1", Msg: "boom"}).Error(), "a.go:1: boom")
+	assert.Contains(t, (&LabelArgError{Pos: "a.go:1", Index: 2}).Error(), "label argument index 2")
+}
+
+// restLikeSeams mirrors pkg/api/rest's route-table shape: a bare local
+// closure call (not a method selector) whose literal HTTP method and path
+// arguments build the Key instead of the enclosing function's name.
+var restLikeSeams = []Seam{
+	{Method: "perm", Args: 4, ResourceArg: 2, ActionArg: 3, Bare: true, LabelArgs: []int{0, 1}, LabelPrefix: "/api/v1"},
+}
+
+func TestScan_BareCallMatchesLocalClosure(t *testing.T) {
+	dir := writePkg(t, map[string]string{
+		"routes.go": `package rest
+
+func Routes() {
+	perm := func(method, pattern, resource, action string) {}
+	perm("GET", "/backends", auth.ResourceBackends, auth.ActionList)
+	perm("POST", "/keys", auth.ResourceKeys, auth.ActionCreate)
+}
+`,
+	})
+
+	sites, err := Scan(dir, restLikeSeams)
+	require.NoError(t, err)
+	require.Len(t, sites, 2)
+
+	got := map[string]string{}
+	for _, s := range sites {
+		got[s.Key] = s.Pair()
+	}
+	assert.Equal(t, map[string]string{
+		"GET /api/v1/backends": auth.ResourceBackends + ":" + auth.ActionList,
+		"POST /api/v1/keys":    auth.ResourceKeys + ":" + auth.ActionCreate,
+	}, got)
+}
+
+func TestScan_NonBareSeamIgnoresIdentifierCall(t *testing.T) {
+	// grpcSeams' "authorize" seam does not set Bare, so a bare identifier
+	// call of the same name and arity must not be treated as a gate — only
+	// x.authorize(...) may. This is the regression the Bare field exists to
+	// opt out of by default: without it, every package's existing seams
+	// would start matching an unrelated free function of the same name.
+	dir := writePkg(t, map[string]string{
+		"svc.go": `package svc
+
+func (s *Service) GetKey() error {
+	return authorize(ctx, auth.ResourceKeys, auth.ActionGet, "id")
+}
+`,
+	})
+
+	sites, err := Scan(dir, grpcSeams)
+	require.NoError(t, err, "a bare identifier call must not match a seam that does not opt into Bare")
+	assert.Empty(t, sites)
+}
+
+func TestScan_LabelArgsRejectsUnresolvableArgument(t *testing.T) {
+	dir := writePkg(t, map[string]string{
+		"routes.go": `package rest
+
+func Routes() {
+	perm := func(method, pattern, resource, action string) {}
+	perm(methodVar, "/backends", auth.ResourceBackends, auth.ActionList)
+}
+`,
+	})
+
+	sites, err := Scan(dir, restLikeSeams)
+	require.Error(t, err, "a label argument that is neither a literal nor a selector must be rejected")
+	assert.Nil(t, sites)
+
+	var labelErr *LabelArgError
+	require.True(t, errors.As(err, &labelErr), "want *LabelArgError, got %T", err)
+	assert.Equal(t, 0, labelErr.Index)
+}
+
+func TestScanMap_ResolvesPositionalMapLiteral(t *testing.T) {
+	dir := writePkg(t, map[string]string{
+		"authz.go": `package mcp
+
+var methodPermissions = map[string]permission{
+	"xkms.sign": {auth.ResourceKeys, auth.ActionSign},
+	"xkms.get":  {auth.ResourceKeys, auth.ActionGet},
+}
+`,
+	})
+
+	sites, err := ScanMap(dir, "methodPermissions")
+	require.NoError(t, err)
+	require.Len(t, sites, 2)
+
+	got := map[string]string{}
+	for _, s := range sites {
+		got[s.Key] = s.Pair()
+		assert.NotEmpty(t, s.Pos)
+	}
+	assert.Equal(t, map[string]string{
+		"xkms.sign": auth.ResourceKeys + ":" + auth.ActionSign,
+		"xkms.get":  auth.ResourceKeys + ":" + auth.ActionGet,
+	}, got)
+}
+
+func TestScanMap_RejectsRawLiteralValue(t *testing.T) {
+	dir := writePkg(t, map[string]string{
+		"authz.go": `package mcp
+
+var methodPermissions = map[string]permission{
+	"xkms.sign": {auth.ResourceKeys, "sign"},
+}
+`,
+	})
+
+	sites, err := ScanMap(dir, "methodPermissions")
+	require.Error(t, err, "a raw literal action in the map must be rejected, not scanned")
+	assert.Nil(t, sites)
+
+	var rawErr *RawLiteralError
+	require.True(t, errors.As(err, &rawErr), "want *RawLiteralError, got %T", err)
+}
+
+func TestScanMap_ReturnsVarNotFoundErrorWhenVariableIsAbsent(t *testing.T) {
+	dir := writePkg(t, map[string]string{
+		"authz.go": `package mcp
+
+var somethingElse = 1
+`,
+	})
+
+	sites, err := ScanMap(dir, "methodPermissions")
+	require.Error(t, err)
+	assert.Nil(t, sites)
+
+	var notFound *VarNotFoundError
+	require.True(t, errors.As(err, &notFound), "want *VarNotFoundError, got %T", err)
+	assert.Equal(t, "methodPermissions", notFound.Name)
+}
+
+func TestMapSite_Pair(t *testing.T) {
+	assert.Equal(t, "keys:get", MapSite{Resource: "keys", Action: "get"}.Pair())
+	assert.Equal(t, ":", MapSite{}.Pair(), "a zero MapSite must not pretend to be a valid pair")
 }

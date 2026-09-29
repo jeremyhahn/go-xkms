@@ -1,6 +1,6 @@
 # RBAC — Architecture
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1228, #1230, #1231, #1232)
 
 ## The problem
 
@@ -98,6 +98,36 @@ for every transport:
 - **Key operations** reject a request `tenant_id` at the transport
   (`tenantForRequest` in `pkg/api/rest/handlers_keyops.go:54` and
   `pkg/api/mcp/handlers.go:1393`). gRPC has no such field.
+- **Key lookups and listings** resolve inside the caller's tenant in the
+  service, on every transport. Another tenant's key is `ErrKeyNotFound`, the
+  same answer a missing key gets, so a `keys:*` grant never reaches past the
+  holder's tenant (go-xkms#1218; see
+  [`../key-management/engineering.md`](../key-management/engineering.md)
+  §"Key lifecycle RPCs resolve inside the caller's tenant").
+- **FROST threshold keys** are stored per tenant and resolved inside the
+  caller's tenant for every route that names one — get, delete, Round 1 and
+  Round 2 signing, aggregate, verify — and a FROST listing holds only the
+  caller's keys (`frostKeyAttrs` and `FrostListKeys`,
+  `pkg/xkms/servicer_frost.go:207` and `:406`; go-xkms#1231). The FROST
+  routes carry the ordinary `keys:*` permissions
+  (`pkg/api/rest/routes.go:174-182`), so without this a tenant Admin's
+  `keys:sign` reached every tenant's key shares. See
+  [`../frost-threshold-signing/architecture.md`](../frost-threshold-signing/architecture.md)
+  §"Tenancy".
+- **Certificates and data-level sealing** resolve inside the caller's tenant
+  in the service, on every transport (go-xkms#1228). A tenant's certificates
+  live under `{tenant}/{keyID}` (`pkg/xkms/backend_tenant.go:58`) and the
+  `XKMSService` certificate methods only ever open that namespace
+  (`pkg/xkms/servicer_cert.go:29-284`); a key ID containing `/` is refused.
+  Seal and Unseal find a named key among the caller's keys and use the
+  caller's own default sealing key (`pkg/xkms/servicer_seal.go:131-237`,
+  `pkg/xkms/backend_tenant.go:243`). Another owner's certificate or key reads
+  exactly as a missing one, so a `certs:*` or `keys:encrypt`/`keys:decrypt`
+  grant never reaches past the holder's tenant. See
+  [`../certificate-authority/api.md`](../certificate-authority/api.md)
+  §"Certificate storage is tenant-scoped" and
+  [`../sealing-and-barrier/api.md`](../sealing-and-barrier/api.md)
+  §"Data-level sealing is tenant-scoped".
 - **PKCS#11 remote state** accepts a `tenant_id` only when it names the
   caller's own tenant, because the module states its configured tenant
   (`pkcs11StateScope`, `pkg/xkms/servicer_pkcs11state.go:79`). See
@@ -109,6 +139,18 @@ for every transport:
   permission is the question "may this identity reach other tenants?", and the
   answer changes what the service does rather than whether the call proceeds.
   See [`../audit-log/api.md`](../audit-log/api.md) §"Tenant scoping".
+- **SSH keys, host pins and authorized_keys entries** are addressed by
+  `(scope, owner, name)`, where the owner is a tenant ID or a subject. The SSH
+  service every transport calls binds the owner to the caller
+  (`pkg/ssh/tenancy/client.go:170-182`) and serves each tenant from its own
+  storage partition and backend-key namespace, so equal subjects in two
+  tenants never meet. Another owner's asset answers as a missing one; a
+  write under it creates nothing (go-xkms#1230; see
+  [`../ssh-keys/architecture.md`](../ssh-keys/architecture.md) §"Owner
+  binding and tenant partitions"). REST's SSH routes also gate per verb now
+  — `ssh:read` to read, `ssh:write` to create/import/sign, `ssh:delete` to
+  remove (`pkg/api/rest/routes.go:496-512`) — instead of one blanket
+  permission. `ssh:use` never gated anything and was removed (go-xkms#1232).
 ## Identities carry role identifiers, never role names
 
 Every authenticated identity carries qrdb role **identifiers** in `Roles`:

@@ -11,7 +11,7 @@ Mechanics that apply everywhere:
 
 - Home is `~/.xkey`. `XKEY_HOME` overrides it, and is what makes an xKey instance yours: every path — data, config, barrier, and the IPC socket a bare command connects to — resolves relative to it. Data lives in `<home>/data`, which `XKEY_DATA_DIR` overrides (as does `--data-dir` on `barrier` and `pin`). The config file is `~/.config/xkey/xkey.yaml` unless you pass `--config`. You can set any config key as an `XKEY_`-prefixed environment variable.
 - Every command accepts these global flags: `--xkmsd-url` (unix://, grpc://, grpcs://, https://, quic://, or `XKMSD_URL`), `--backend software|tpm2|pkcs11`, `--log-level`, `--log-file`, and `--socket` (or `XKEY_IPC_SOCKET`) to name the IPC socket explicitly instead of deriving it from `XKEY_HOME`. `XKMSD_TOKEN` supplies a bearer token and `XKMSD_TLS_CA` the CA bundle for TLS transports.
-- `ps` shows argv to every process on the host. Keep secrets off it with `--barrier-password-file`, `XKEY_BARRIER_PASSWORD`, `--pin-stdin`/`XKEY_PIN`, `--so-pin-stdin`/`XKEY_SO_PIN`, or piped stdin. Flags such as `--password`, `--pin`, `--secret` and `--value` put the value on argv. Use `--file` variants where they exist.
+- `ps` shows argv to every process on the host, so no `xkey` command accepts a secret as a flag value: no `--password`, `--pin`, `--secret`, `--value`, `--key` or `--barrier-password`. Every secret-bearing flag instead has a `-stdin` boolean form that reads the value from standard input (e.g. `--pin-stdin`/`XKEY_PIN`, `--so-pin-stdin`/`XKEY_SO_PIN`, `--password-stdin`/`XKEY_STATIC_PASSWORD`, `--secret-stdin`/`XKEY_OATH_SECRET`, `--value-stdin`/`XKEY_PLATFORM_STORE_VALUE`, `--key-stdin`/`XKEY_BACKUP_KEY`, `--barrier-password-stdin`/`XKEY_BARRIER_PASSWORD`), plus a `--barrier-password-file` where a file path applies. Standard input is one stream, so only one secret per invocation may come from it — supply any others via environment variable or file.
 - Daemons (`fido2`, `extension serve`, `agent start`, `device listen`, `usb device start`) run in the foreground. Start them in the background and check them with their `status` verb.
 - `/dev/uhid`, LUKS, USB-image and TPM-clear operations need root. Run them with `sudo`.
 
@@ -91,7 +91,7 @@ for it elsewhere — never one standing in for another: the user PIN
 (`--pin-stdin`/`XKEY_PIN`) becomes the host PIN service's User PIN; the SO
 PIN (`--so-pin-stdin`/`XKEY_SO_PIN`) becomes both the host PIN service's SO
 PIN and the FIDO2 authenticator's own, separate Security Officer PIN; the
-barrier password (`--barrier-password`/`--barrier-password-file`/
+barrier password (`--barrier-password-stdin`/`--barrier-password-file`/
 `XKEY_BARRIER_PASSWORD`) initializes the barrier. Making the SO PIN equal
 the user PIN would erase the separation the host PIN service exists to
 enforce (the SO can reset or unblock the user; the user cannot reset the
@@ -150,7 +150,7 @@ xkey touch                          # approve the pending WebAuthn presence requ
 xkey fido2 start --cdp --cdp-port 9222 --storage barrier --barrier-password-file <file> &
 ```
 
-The `--cdp` form is for automated Chrome and replaces the USB device. xKey connects to a Chrome instance started with remote debugging on `--cdp-port`, loads its stored credentials into Chrome, and saves new credentials back to `--storage`. The default `--storage memory` loses credentials on exit. Other start flags are `--backend software|tpm2|phone`, `--attestation none|packed|tpm`, `--require-touch`, `--set-pin` (sets the first PIN only) and `--default-password`.
+The `--cdp` form is for automated Chrome and replaces the USB device. xKey connects to a Chrome instance started with remote debugging on `--cdp-port`, loads its stored credentials into Chrome, and saves new credentials back to `--storage`. The default `--storage memory` loses credentials on exit. Other start flags are `--backend software|tpm2|phone`, `--attestation none|packed|tpm`, `--require-touch`, `--set-pin-stdin` (sets the first PIN only, read from standard input) and `--default-password`.
 
 FIDO2 administration (stop the daemon before the SO operations):
 
@@ -215,7 +215,7 @@ WebAuthn login needs a CTAP2 authenticator, and a running `xkey fido2` counts as
 
 ```bash
 xkey password add --name GitHubWork --username agent --url https://github.com --generate --length 32
-xkey password add --name DatabaseProd --title "Prod DB" --password "$DB_PASS" --notes "rotated monthly"
+XKEY_STATIC_PASSWORD="$DB_PASS" xkey password add --name DatabaseProd --title "Prod DB" --notes "rotated monthly"
 xkey password list                  # values masked
 xkey password list --source disk --show-passwords
 xkey password get [name]            # prints only the value, for piping
@@ -223,11 +223,11 @@ xkey password remove --force [name...]
 xkey password status
 ```
 
-The browser extension matches entries to sites by `--url`. The `unlock`, `lock` and `access-mode` verbs act on an xkmsd session and need `--xkmsd-url`. `unlock` takes its PIN only from `--pin`.
+The browser extension matches entries to sites by `--url`. The `unlock`, `lock` and `access-mode` verbs act on an xkmsd session and need `--xkmsd-url`. There is no `--password` or `--pin` value flag -- a value on the command line is visible to every other process on the host via `ps` -- so the password and PIN come from `--password-stdin`/`XKEY_STATIC_PASSWORD` and `--pin-stdin`/`XKEY_PIN`.
 
 ```bash
 xkey password access-mode --mode session_based --xkmsd-url <url>   # or pin_per_operation
-xkey password unlock --pin "$PIN" --xkmsd-url <url>
+XKEY_PIN="$PIN" xkey password unlock --xkmsd-url <url>
 xkey password lock --xkmsd-url <url>
 xkey password status --source xkmsd --xkmsd-url <url>
 ```
@@ -237,7 +237,7 @@ xkey password status --source xkmsd --xkmsd-url <url>
 The platform store holds key-value secrets that xkmsd seals with TPM2, PKCS#11 or software.
 
 ```bash
-xkey platform-store put <name> --file <path>        # or --value <secret>
+xkey platform-store put <name> --file <path>              # or --value-stdin / XKEY_PLATFORM_STORE_VALUE
 xkey platform-store get <name> --output <path>      # stdout by default
 xkey platform-store list
 xkey platform-store delete <name>
@@ -248,7 +248,7 @@ xkey platform-store status
 ## One-time codes (TOTP/HOTP)
 
 ```bash
-xkey oath add --uri "otpauth://totp/..."            # or --name --issuer --secret --type totp|hotp --digits --period --algorithm
+xkey oath add --uri "otpauth://totp/..."            # or --name --issuer --secret-stdin/XKEY_OATH_SECRET --type totp|hotp --digits --period --algorithm
 xkey oath scan --yes                                # read an otpauth QR code from the screen
 xkey oath generate [name]                           # or --all
 xkey oath list --uri                                # --secrets shows the shared secrets
@@ -422,14 +422,16 @@ xkey share delete --server <url> --group-id <id> --share-index 1
 
 ## Backup and restore
 
-A backup holds the trust store, OATH credentials and passwords, sealed with XChaCha20-Poly1305.
+A backup holds the trust store, OATH credentials and passwords, sealed with XChaCha20-Poly1305. A backup password (Argon2id, salted) comes from `--password-stdin` or `XKEY_BACKUP_PASSWORD`; there is no `--password` flag. Version 1 (unsalted) backups are refused.
 
 ```bash
-xkey backup create --barrier-password-file <file> --output ~/xkey.xkb   # without --password, prints a random hex key
-xkey backup contents <file> --key <hex>              # backup list shows ~/.xkey/backups
-xkey backup restore <file> --key <hex> --barrier-password-file <file>
+xkey backup create --barrier-password-file <file> --output ~/xkey.xkb   # no password: prints a random hex key
+xkey backup create --password-stdin --output ~/xkey.xkb < pw.txt
+xkey backup contents <file> --password-stdin < pw.txt
+XKEY_BACKUP_KEY=<hex> xkey backup contents <file>    # backup list shows ~/.xkey/backups
+XKEY_BACKUP_KEY=<hex> xkey backup restore <file> --barrier-password-file <file>
 xkey backup to-device --device "<name>" --barrier-password-file <file>
-xkey backup from-device --device "<name>" --key <hex> --barrier-password-file <file>
+XKEY_BACKUP_KEY=<hex> xkey backup from-device --device "<name>" --barrier-password-file <file>
 ```
 
 ## Encrypted storage: LUKS2 and USB

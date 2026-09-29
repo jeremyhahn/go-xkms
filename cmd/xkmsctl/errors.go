@@ -795,6 +795,9 @@ var (
 	// ErrQueryAuditFailed is the sentinel error "failed to query audit log".
 	ErrQueryAuditFailed = errors.New("failed to query audit log")
 
+	// ErrRSAKeySizeTooLarge is the sentinel error "RSA key size must be at most 4096 bits".
+	ErrRSAKeySizeTooLarge = errors.New("RSA key size must be at most 4096 bits")
+
 	// ErrRSAKeySizeTooSmall is the sentinel error "RSA key size must be at least 2048 bits".
 	ErrRSAKeySizeTooSmall = errors.New("RSA key size must be at least 2048 bits")
 

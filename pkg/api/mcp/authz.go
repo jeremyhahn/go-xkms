@@ -70,30 +70,36 @@ var publicMethods = map[string]struct{}{
 }
 
 // methodPermissions maps every privileged JSON-RPC method to the qrdb
-// resource:action grant the caller must hold. Sources, per namespace:
+// resource:action grant the caller must hold. Sources, per namespace: every
+// pair below is taken verbatim from pkg/api/grpc's own s.authorize calls
+// and/or pkg/api/rest/routes.go's route decorators for the identical
+// operation, cross-checked by pkg/api/rest's, pkg/api/grpc's, and this
+// package's own authz_golden_test.go goldens so the three tables cannot
+// drift apart silently (go-xkms#1232). There is no separate QUIC transport:
+// the legacy per-transport listeners (including pkg/api/quic) were removed
+// wholesale in favor of HTTP/3 on the REST port.
 //
 //   - xkms.* key/backend/cert methods — pkg/api/grpc/service.go's
-//     s.authorize(ctx, "keys"|"certs"|"backends", ...) calls, which
-//     pkg/api/quic/handlers.go mirrors one-for-one.
+//     s.authorize(ctx, "keys"|"certs"|"backends", ...) calls.
 //   - xkms.attestKey / deriveKeyECDH / exportKeyMaterial / wrapKeyByID /
-//     unwrapKeyByID — pkg/api/quic/handlers_keyops.go and the matching
-//     pkg/api/rest/server.go route decorators (keys:get, keys:derive,
+//     unwrapKeyByID — pkg/api/grpc/service.go and the matching
+//     pkg/api/rest/routes.go route decorators (keys:get, keys:derive,
 //     keys:export, keys:wrap, keys:unwrap).
-//   - xkms.seal / unseal / canSeal — pkg/api/quic/handlers_seal.go
-//     (keys:encrypt, keys:decrypt, keys:get), identical to the REST
-//     /seal, /unseal, /seal/capability decorators.
-//   - xkms.*PIV* — pkg/api/quic/handlers_piv.go (piv:read/write/delete/use).
-//   - xkms.ca.* and xkms.ca.tcg.* — pkg/api/quic/handlers_ca.go and
-//     handlers_ca_tcg.go (certs:read/generate/revoke).
-//   - barrier.* — pkg/api/quic/handlers_barrier_pin.go and
-//     handlers_barrier_shamir.go (seal:* plus barrier:unseal-share).
-//   - init.* and credentials.* — pkg/api/quic/handlers_init_credentials.go
-//     (ceremony:*, credentials:*).
-//   - password.* — pkg/api/quic/handlers_password.go, whose
-//     operationForMethod maps GET to read, POST/PUT to write, DELETE to
-//     delete, plus the explicit unlock/lock/generate actions.
-//   - ssh.* — pkg/api/quic/handlers_ssh.go (ssh:read/write/delete).
-//   - frost.* — pkg/api/quic/handlers_frost.go, which gates the FROST
+//   - xkms.seal / unseal / canSeal — pkg/api/grpc/service.go's Seal/Unseal/
+//     CanSeal RPCs (keys:encrypt, keys:decrypt, keys:get), identical to the
+//     REST /seal, /unseal, /seal/capability decorators.
+//   - xkms.*PIV* — pkg/api/grpc/service_piv.go (piv:read/write/delete/use).
+//   - xkms.ca.* and xkms.ca.tcg.* — pkg/api/grpc/service_ca.go and
+//     service_ca_tcg.go (certs:read/generate/revoke).
+//   - barrier.* — pkg/api/grpc/service_barrier_pin.go and
+//     service_barrier_shamir.go (seal:* plus barrier:unseal-share).
+//   - init.* and credentials.* — pkg/api/rest/routes.go's /init and
+//     /credentials route decorators (ceremony:*, credentials:*).
+//   - password.* — pkg/api/grpc/service_password.go and the matching
+//     pkg/api/rest/routes.go /passwords decorators (passwords:*).
+//   - ssh.* — pkg/api/grpc/service_ssh.go and pkg/api/rest/routes.go's
+//     /xkms/v1/ssh decorators (ssh:read/write/delete).
+//   - frost.* — pkg/api/grpc/service_frost.go, which gates the FROST
 //     surface with the ordinary keys:* actions. The entries live here rather
 //     than in the frost-tagged handlers so a `frost` build cannot ship an
 //     unenforced FROST surface.
@@ -103,11 +109,10 @@ var publicMethods = map[string]struct{}{
 //     pkg/api/grpc/service_barrier_pin.go and
 //     service_custodian_share_tenant.go's s.authorize calls (pin:*,
 //     ceremony:*, tenants:*, tenant_barrier:*), and service.go's DeriveKey
-//     (keys:derive). REST serves the PIN, custodian, and tenant routes
-//     under session-only auth with no RBAC permission of their own
-//     (pkg/api/rest/routes.go); gRPC's authorize calls are the only
-//     transport that already enforces a specific grant for these
-//     operations, so they are this table's source (go-xkms#773).
+//     (keys:derive). pkg/api/rest/routes.go's PIN, custodian, and tenant
+//     routes carry the identical pin:*/ceremony:*/tenants:*/tenant_barrier:*
+//     pairs (go-xkms#773 added the gRPC gates; REST already carried its own
+//     and the two were verified to agree, go-xkms#1232).
 var methodPermissions = map[string]permission{
 	// Backends.
 	"xkms.listBackends": {auth.ResourceBackends, auth.ActionList},

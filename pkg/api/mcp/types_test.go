@@ -334,9 +334,7 @@ func TestCopyKeyParams_MarshalJSON(t *testing.T) {
 		SourceKeyID:   "source-key",
 		DestBackend:   "tpm2",
 		DestKeyID:     "dest-key",
-		KeyType:       "rsa",
 		Algorithm:     "RSA_OAEP_SHA256",
-		KeySize:       2048,
 	}
 
 	data, err := json.Marshal(params)
@@ -355,8 +353,8 @@ func TestCopyKeyParams_MarshalJSON(t *testing.T) {
 	if decoded.DestBackend != params.DestBackend {
 		t.Errorf("DestBackend mismatch: got %v, want %v", decoded.DestBackend, params.DestBackend)
 	}
-	if decoded.KeySize != params.KeySize {
-		t.Errorf("KeySize mismatch: got %v, want %v", decoded.KeySize, params.KeySize)
+	if decoded.Algorithm != params.Algorithm {
+		t.Errorf("Algorithm mismatch: got %v, want %v", decoded.Algorithm, params.Algorithm)
 	}
 }
 

@@ -605,16 +605,16 @@ type AsymmetricDecryptResult struct {
 	Plaintext []byte `json:"plaintext"`
 }
 
-// CopyKeyParams represents parameters for copying a key from one backend to another
+// CopyKeyParams represents parameters for copying a key from one backend to
+// another. It used to also carry KeyType, KeySize and Curve, which the
+// service ignores outright: the copy takes its attributes from the source
+// key. They were removed rather than left as dead input (go-xkms#1223).
 type CopyKeyParams struct {
 	SourceBackend string `json:"source_backend"` // Source backend name
 	SourceKeyID   string `json:"source_key_id"`
 	DestBackend   string `json:"dest_backend"` // Destination backend name
 	DestKeyID     string `json:"dest_key_id"`
-	KeyType       string `json:"key_type"`  // "rsa", "ecdsa", "ed25519", "symmetric"
 	Algorithm     string `json:"algorithm"` // Wrapping algorithm
-	KeySize       int    `json:"key_size,omitempty"`
-	Curve         string `json:"curve,omitempty"`
 	Hash          string `json:"hash,omitempty"`
 	AESKeySize    int    `json:"aes_key_size,omitempty"`
 	// TenantID is refused when set. Both ends of a copy are the authenticated

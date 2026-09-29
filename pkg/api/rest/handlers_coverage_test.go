@@ -138,8 +138,9 @@ func TestGetCertHandler_CertNotFound(t *testing.T) {
 		"/api/v1/keys/nonexistent/cert?backend=test-backend", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	// The mock returns an internal error for cert not found (not storage.ErrNotFound).
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// The mock reports a missing certificate as xkms.ErrCertNotFound, which
+	// is a 404 like the storage layer's own not-found.
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // --- CertExistsHandler ---

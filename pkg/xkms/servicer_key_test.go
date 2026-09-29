@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -47,6 +48,74 @@ func TestGenerateKey_RSA_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "rsa-key", resp.KeyID)
 	assert.NotEmpty(t, resp.PublicKeyPEM)
+}
+
+// TestGenerateKey_RSA_RefusesUndersizedModulus proves the RPC surface itself
+// refuses an RSA request under types.RSAKeySize2048: buildKeyAttributes now
+// runs KeyAttributes.Validate before any backend is asked to generate a key.
+// Before that call existed, this request reached the backend unchecked and,
+// on PKCS#11 or TPM, produced a real 1024-bit key (go-xkms#1204).
+func TestGenerateKey_RSA_RefusesUndersizedModulus(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	_, err = svc.GenerateKey(context.Background(), &transport.GenerateKeyRequest{
+		KeyID:     "undersized-rsa-key",
+		Algorithm: "rsa",
+		Backend:   "software",
+		KeySize:   1024,
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
+	assert.Contains(t, err.Error(), "RSA key size must be at least 2048")
+}
+
+// TestGenerateKey_RSA_RefusesOversizedModulus proves the RPC surface refuses
+// an RSA request above types.RSAKeySize4096 before any backend is ever asked
+// to generate a key. rsa.GenerateKey cannot be cancelled and its cost grows
+// with the cube of the modulus size, so an unbounded caller-chosen size
+// (65536, the size the original report used) let a single request pin a CPU
+// core for minutes to hours (go-xkms#1260). This test proves the refusal
+// happens in validation, not after keygen: if it regressed to only clamping
+// or omitting the ceiling, this test would hang rather than fail fast.
+func TestGenerateKey_RSA_RefusesOversizedModulus(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	_, err = svc.GenerateKey(context.Background(), &transport.GenerateKeyRequest{
+		KeyID:     "oversized-rsa-key",
+		Algorithm: "rsa",
+		Backend:   "software",
+		KeySize:   65536,
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
+	assert.Contains(t, err.Error(), "RSA key size must be at most 4096")
+}
+
+// TestGenerateKey_RSA_AcceptsDocumentedSizes proves the go-xkms#1204 floor is
+// a floor and not an accidental rejection of every RSA request: 2048, 3072
+// and 4096 -- the three sizes this project documents as supported -- must
+// all still succeed.
+func TestGenerateKey_RSA_AcceptsDocumentedSizes(t *testing.T) {
+	for _, keySize := range []int{types.RSAKeySize2048, types.RSAKeySize3072, types.RSAKeySize4096} {
+		t.Run(fmt.Sprintf("%d", keySize), func(t *testing.T) {
+			setupService(t)
+			svc, err := Get()
+			require.NoError(t, err)
+
+			resp, err := svc.GenerateKey(context.Background(), &transport.GenerateKeyRequest{
+				KeyID:     fmt.Sprintf("rsa-%d-key", keySize),
+				Algorithm: "rsa",
+				Backend:   "software",
+				KeySize:   keySize,
+			})
+			require.NoError(t, err)
+			assert.NotEmpty(t, resp.PublicKeyPEM)
+		})
+	}
 }
 
 // TestGenerateKey_MissingAlgorithm verifies Algorithm is required: it no

@@ -150,27 +150,28 @@ func (g *PermissionGate) Wrap(resource, action string, next http.HandlerFunc) ht
 		case errors.Is(err, auth.ErrUnauthenticated):
 			writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Authentication required")
 		default:
-			writeProblem(w, http.StatusForbidden, problemForbidden, "Access denied: insufficient permissions")
+			writePermissionDenied(w)
 		}
 	})
 }
 
+// writePermissionDenied writes the single response for a caller that may not
+// perform an operation: the gate's denial, and the platform-scope refusal
+// (PlatformScopeError) that must read exactly like it.
+func writePermissionDenied(w http.ResponseWriter) {
+	writeProblem(w, http.StatusForbidden, problemForbidden, "Access denied: insufficient permissions")
+}
+
 // RequireTenantScope reports whether the identity on ctx may act on
-// targetTenantID. It applies qrdb's canonical system-tenant rule: an identity
-// rooted in the reserved system tenant is platform-scoped and reaches every
-// tenant, anything else is confined to its own tenant. This replaces the
-// deleted ACME-local "super-admin can access any tenant" check; the role that
-// confers platform scope is now decided by qrdb, not by a local role name.
+// targetTenantID. It applies qrdb's canonical system-tenant rule through the
+// tenant binding (bindTenantTarget): an identity rooted in the reserved system
+// tenant is platform-scoped and reaches every tenant, anything else is
+// confined to its own tenant and refused with a *TenantBindingError, which
+// reads as a missing tenant. A request that carries no identity is
+// auth.ErrUnauthenticated.
 func RequireTenantScope(ctx context.Context, targetTenantID string) error {
-	identity := auth.GetIdentity(ctx)
-	if identity == nil {
+	if auth.GetIdentity(ctx) == nil {
 		return auth.ErrUnauthenticated
 	}
-	if auth.IsCrossTenant(identity) {
-		return nil
-	}
-	if identity.TenantID == targetTenantID {
-		return nil
-	}
-	return ErrForbidden
+	return bindTenantTarget(ctx, "require tenant scope", targetTenantID)
 }

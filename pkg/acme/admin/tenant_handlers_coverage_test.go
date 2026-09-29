@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -35,9 +34,11 @@ func TestCheckTenantAccess_SuperAdmin(t *testing.T) {
 	user := createPlatformAdminUser()
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/any-tenant", nil)
-	err := handlers.checkTenantAccess(withUser(context.Background(), user), req, user, "any-tenant", auth.ActionRead)
+	req = req.WithContext(withUser(context.Background(), user))
+	w := httptest.NewRecorder()
 
-	assert.NoError(t, err)
+	assert.True(t, handlers.checkTenantAccess(w, req, "get tenant", "any-tenant"))
+	assert.Equal(t, 0, w.Body.Len(), "an admitted request must not be answered")
 }
 
 func TestCheckTenantAccess_SameTenant(t *testing.T) {
@@ -45,19 +46,39 @@ func TestCheckTenantAccess_SameTenant(t *testing.T) {
 	user := createAdminUser("tenant-1")
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1", nil)
-	err := handlers.checkTenantAccess(withUser(context.Background(), user), req, user, "tenant-1", auth.ActionRead)
+	req = req.WithContext(withUser(context.Background(), user))
+	w := httptest.NewRecorder()
 
-	assert.NoError(t, err)
+	assert.True(t, handlers.checkTenantAccess(w, req, "get tenant", "tenant-1"))
+	assert.Equal(t, 0, w.Body.Len(), "an admitted request must not be answered")
 }
 
+// TestCheckTenantAccess_CrossTenantDenied proves a foreign tenant is answered
+// exactly as a missing one (go-xkms#1112, #1225).
 func TestCheckTenantAccess_CrossTenantDenied(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 	user := createAdminUser("tenant-1")
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-2", nil)
-	err := handlers.checkTenantAccess(withUser(context.Background(), user), req, user, "tenant-2", auth.ActionRead)
+	req = req.WithContext(withUser(context.Background(), user))
+	w := httptest.NewRecorder()
 
-	assert.Equal(t, ErrForbidden, err)
+	assert.False(t, handlers.checkTenantAccess(w, req, "get tenant", "tenant-2"))
+	missing := httptest.NewRecorder()
+	writeTenantNotFound(missing)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, missing.Body.String(), w.Body.String())
+}
+
+// TestCheckTenantAccess_Unauthenticated proves a request with no caller is
+// answered 401 and not admitted.
+func TestCheckTenantAccess_Unauthenticated(t *testing.T) {
+	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
+	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1", nil)
+	w := httptest.NewRecorder()
+
+	assert.False(t, handlers.checkTenantAccess(w, req, "get tenant", "tenant-1"))
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestGetTenant_Unauthorized(t *testing.T) {
@@ -73,7 +94,7 @@ func TestGetTenant_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestGetTenant_Forbidden(t *testing.T) {
+func TestGetTenant_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/other-tenant", nil)
@@ -83,7 +104,7 @@ func TestGetTenant_Forbidden(t *testing.T) {
 
 	handlers.GetTenant(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestGetTenantHandler_InternalError(t *testing.T) {
@@ -118,7 +139,7 @@ func TestUpdateTenant_Unauthorized(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestUpdateTenant_Forbidden(t *testing.T) {
+func TestUpdateTenant_ForeignTenantNotFound(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	body := `{"name": "Updated Tenant"}`
@@ -129,7 +150,7 @@ func TestUpdateTenant_Forbidden(t *testing.T) {
 
 	handlers.UpdateTenant(w, req)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestCreateTenant_InternalError(t *testing.T) {

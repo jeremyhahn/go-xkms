@@ -69,4 +69,27 @@
 // No compatibility shim and no legacy mode flag exist by design: a caller
 // that needs the old bytes was never getting SP 800-108 and should ask for
 // HKDF explicitly.
+//
+// # Output length
+//
+// This package enforces no caller-facing ceiling on KDFParams.KeyLength of
+// its own. Each adapter keeps only the ceiling its own construction's wire
+// format requires: the ANSI X9.63 / NIST SP 800-56A concatenation KDFs
+// refuse a request that would need more than 2^32 hash blocks (their
+// counter is 32 bits), NIST SP 800-108 refuses one whose bit length would
+// not fit the 32-bit [L]_2 field (roughly 512 MiB), and HKDF (via the
+// standard library) refuses one beyond RFC 5869's 255*HashLen bound. None of
+// those is a capacity policy, and none of them prevents a single request
+// from asking an adapter to preallocate hundreds of megabytes before
+// returning an error.
+//
+// types.MaxDerivedKeyLength is the caller-facing gate: types.KDFParams.Derive
+// and types.DeriveFromKeyMaterial -- the only two entry points anything
+// outside this package uses to reach an adapter here -- refuse a KeyLength
+// above it before either constructs a kdf.KDFParams or calls DeriveKey, so
+// every caller-supplied length this package's adapters ever see is already
+// well inside all of their own, much larger, construction-specific ceilings
+// (go-xkms#1259). A future caller of this package directly, bypassing
+// pkg/types, inherits only the per-adapter ceilings above; anything that
+// takes a KeyLength from an untrusted request should go through pkg/types.
 package kdf

@@ -1155,18 +1155,28 @@ func quantumKeyTemplates(keyType uint, id []byte) (public, private []*pkcs11.Att
 //   - attrs: Key attributes (CN, key type, algorithm, etc.)
 //   - keySize: RSA key size in bits (e.g., 2048, 3072, 4096)
 //
-// Default key size is 2048 bits if keySize is 0 or invalid.
+// Default key size is types.RSAKeySize2048 if keySize is 0. Any other size
+// below types.RSAKeySize2048 is refused rather than silently promoted
+// (go-xkms#1204).
 func (b *Backend) GenerateRSAWithSize(attrs *types.KeyAttributes, keySize int) (crypto.Signer, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.pool == nil {
-		return nil, ErrNotInitialized
+	// Apply the default key size when none was named, then refuse anything
+	// smaller than types.RSAKeySize2048 outright: a caller that named a
+	// specific undersized modulus is told so, not handed an HSM key it never
+	// asked for. This runs before the pool-initialized check below so the
+	// refusal is reachable -- and unit-testable -- without a live HSM
+	// session (go-xkms#1204).
+	if keySize == 0 {
+		keySize = types.RSAKeySize2048
+	}
+	if err := types.ValidateRSAKeySize(keySize); err != nil {
+		return nil, err
 	}
 
-	// Apply default key size if not specified or invalid
-	if keySize == 0 || keySize < 512 {
-		keySize = 2048
+	if b.pool == nil {
+		return nil, ErrNotInitialized
 	}
 
 	id, err := b.resolveKeyID(attrs)

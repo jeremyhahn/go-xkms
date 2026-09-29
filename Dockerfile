@@ -233,14 +233,14 @@ USER testuser
 
 # Build the server binary with all backends enabled
 RUN mkdir -p /app && \
-    CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,frost,gms_pure_go" \
+    CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,frost,gms_pure_go,codec_cbor,codec_json,codec_msgpack" \
     -o /app/xkmsd ./cmd/xkmsd/
 
 # Validate that the server binary exists
 RUN test -f /app/xkmsd || (echo "ERROR: Server binary not built" && exit 1)
 
 # Build the application with all backends enabled
-RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,frost,gms_pure_go" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true
+RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,frost,gms_pure_go,codec_cbor,codec_json,codec_msgpack" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true
 
 # Health check to verify SoftHSM is accessible
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

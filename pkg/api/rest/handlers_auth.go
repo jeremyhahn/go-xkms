@@ -263,7 +263,7 @@ var uiPermissionMatrix = [][2]string{
 	{auth.ResourceSeal, auth.ActionRekey},
 	{auth.ResourcePIN, auth.ActionRead},
 	{auth.ResourcePIV, auth.ActionRead},
-	{auth.ResourceSSH, auth.ActionUse},
+	{auth.ResourceSSH, auth.ActionRead},
 	{auth.ResourcePasswords, auth.ActionRead},
 	{auth.ResourceCA, auth.ActionRead},
 	{auth.ResourceCeremony, auth.ActionStatus},

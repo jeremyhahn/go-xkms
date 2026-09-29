@@ -649,21 +649,43 @@ func TestBuildImportKeyAttributes_SymmetricZeroSizeDefaults(t *testing.T) {
 	assert.Equal(t, types.KeyTypeSecret, attrs.KeyType)
 }
 
-// --- attrsToKeyInfoList tests ---
+// --- keyInfoFromAttrs tests ---
 
-func TestAttrsToKeyInfoList_Empty(t *testing.T) {
-	result := attrsToKeyInfoList(nil, "software")
-	assert.Empty(t, result)
+func TestKeyInfoFromAttrs_ECDSA(t *testing.T) {
+	info := keyInfoFromAttrs(&types.KeyAttributes{
+		CN:            "key-1",
+		KeyAlgorithm:  x509.ECDSA,
+		KeyType:       types.KeyTypeSigning,
+		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+		Partition:     types.Partition("tenant-data"),
+	}, "software")
+	assert.Equal(t, "key-1", info.KeyID)
+	assert.Equal(t, "software", info.Backend)
+	assert.Equal(t, "ECDSA", info.Algorithm)
+	assert.Equal(t, "P-256", info.Curve)
+	assert.Equal(t, "tenant-data", info.Partition)
+	assert.Zero(t, info.KeySize)
 }
 
-func TestAttrsToKeyInfoList_MultipleKeys(t *testing.T) {
-	attrs := []*types.KeyAttributes{
-		{CN: "key-1", KeyAlgorithm: x509.ECDSA, KeyType: types.KeyTypeSigning},
-		{CN: "key-2", KeyAlgorithm: x509.RSA, KeyType: types.KeyTypeSigning},
-	}
-	result := attrsToKeyInfoList(attrs, "software")
-	assert.Len(t, result, 2)
-	assert.Equal(t, "key-1", result[0].KeyID)
-	assert.Equal(t, "software", result[0].Backend)
-	assert.Equal(t, "key-2", result[1].KeyID)
+func TestKeyInfoFromAttrs_RSAReportsKeySizeAndNoCurve(t *testing.T) {
+	info := keyInfoFromAttrs(&types.KeyAttributes{
+		CN:            "key-2",
+		KeyAlgorithm:  x509.RSA,
+		KeyType:       types.KeyTypeSigning,
+		RSAAttributes: &types.RSAAttributes{KeySize: 3072},
+	}, "software")
+	assert.Equal(t, "RSA", info.Algorithm)
+	assert.Equal(t, 3072, info.KeySize)
+	assert.Empty(t, info.Curve)
+}
+
+func TestKeyInfoFromAttrs_SymmetricAlgorithm(t *testing.T) {
+	info := keyInfoFromAttrs(&types.KeyAttributes{
+		CN:                 "aes",
+		KeyType:            types.KeyTypeSecret,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}, "software")
+	assert.Equal(t, string(types.SymmetricAES256GCM), info.Algorithm)
+	assert.Zero(t, info.KeySize)
+	assert.Empty(t, info.Curve)
 }

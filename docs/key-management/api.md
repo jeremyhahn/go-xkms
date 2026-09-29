@@ -98,6 +98,22 @@ clients; while full it refuses new clients until idle ones are cleaned up.
 | Health | `GET /health`, `/health/live`, `/health/ready`, `/health/startup` | `Health` | same as REST | `xkms.health` | `Health` | public |
 | Capabilities | `GET /api/v1/capabilities` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | public |
 
+### Encrypt's RSA fallback is PKCS#1 v1.5, and is refused by default
+
+`Encrypt` dispatches on the named key's type: a symmetric key uses the
+backend's AEAD (`pkg/xkms/servicer_crypto.go:613`); an RSA key falls back to
+raw PKCS#1 v1.5 encryption (`pkg/xkms/servicer_crypto.go:699`), the
+construction `CKM_RSA_PKCS` names. PKCS#1 v1.5 authenticates nothing and its
+conformance check is the Bleichenbacher/Marvin decryption oracle (RFC 8017
+§7.2.2), so as of the 2026-09-28 crypto audit this fallback is refused
+(`pkg/xkms/servicer_crypto.go:689`) unless `crypto.allow_legacy_key_wrap: true`
+is set — the same operator setting that already gated the matching
+`WrapKeyByID` mechanism (`pkg/xkms/servicer_wrapkey.go:105`). A caller that
+needs to encrypt under an RSA key should call `EncryptAsym`
+(`pkg/xkms/servicer_crypto.go:856`, `POST /api/v1/keys/{id}/encrypt-asym`)
+instead: RSA-OAEP is unconditionally available and requires no configuration
+change.
+
 ### MCP names some import/export fields differently from the request struct
 
 The MCP params structs and the `transport.*Request` structs are two views of
@@ -154,6 +170,61 @@ response came back with no wrapping key, and `partition`, `metadata` and
 have worked; the REST body also now carries `partition`, `metadata` and
 `key_spec`, and `GenerateKeyRequest` carries `partition`.
 
+### The key lifecycle RPCs are service adapters on every transport (go-xkms#1218)
+
+`GetKey`, `ListKeys`, `DeleteKey`, `RotateKey`, `ExportKey` and `CopyKey` on
+REST (`pkg/api/rest/handlers.go:327`, `:369`, `:522`, `:557`, `:1600`,
+`:1660`) and gRPC (`pkg/api/grpc/service.go:430`, `:469`, `:594`, `:625`,
+`:1500`, `:1675`) validate their request, authorize it, and call the
+matching `XKMSService` method; they no longer touch a backend. MCP and the
+embedded transport already reached the service for `GetKey`, `RotateKey` and
+`CopyKey`.
+
+**Tenancy.** Every one of these resolves the key, or lists keys, inside the
+caller's tenant, taken from the authenticated identity — never from the
+request. A tenant naming another tenant's key gets exactly the response a key
+no tenant holds gets: REST `404` with the same body, gRPC `NotFound` with the
+same message. A listing returns the caller's keys only, and its `total`
+counts only those. A platform-scoped caller (no identity, or the reserved
+system tenant) sees every tenant's keys, as before. Before go-xkms#1218, REST
+let any tenant read, list, delete, rotate, export and copy any other tenant's
+keys, and gRPC let any tenant read and list them.
+
+**`CopyKey` semantics.** A copy is the same key under a new name: the
+destination takes the source key's algorithm, size, curve, hash and partition
+(`pkg/xkms/servicer_key.go:566`), and — since go-xkms#1223 —
+`types.ValidateRSAKeySize` refuses a source whose RSA modulus is below 2048
+bits before the export/import runs (`pkg/xkms/servicer_key.go:614`), reported
+as `400` / `InvalidArgument` on every transport through the same
+`*xkms.ErrValidation` path every other key-op validation failure uses. The
+copy lands in the caller's tenant in the destination backend, and the
+material is wrapped for the destination's own import parameters
+(`ExportKeyTo`). REST's, gRPC's and MCP's `CopyKeyRequest` / `CopyKeyParams`
+never had, or (as of go-xkms#1223) no longer have, `key_type`, `key_size` or
+`curve`: the service has always ignored them, so they were removed from the
+wire types, the xkmsctl `key copy` flags and the TypeScript SDK mirror rather
+than kept as dead input. `hash` and `aes_key_size` remain on MCP's
+`CopyKeyParams` only — see the "still outstanding" note above (#155).
+
+**Wire changes.** Response shapes are unchanged except:
+
+| RPC | Transport | Change |
+|---|---|---|
+| not-found on Get, Delete, Rotate, Export | REST | body `error` is `keystore: key not found` (was `backend: key not found`) |
+| not-found on Copy | REST | body `error` is `source key backend: keystore: key not found` (was `source key not found: <id>`) |
+| not-found on Delete, Rotate, Export, Get | gRPC | message is `keystore: key not found` (was `key not found: key <id> not found`) |
+| unknown backend | REST, gRPC | message is `keystore: backend not found: <name>` (Copy: prefixed `source backend: ` / `destination backend: `) |
+| malformed backend name | REST, gRPC | `400` / `InvalidArgument` (REST was `404`, gRPC `NotFound`) |
+| backend with no import/export support | REST, gRPC | `501` / `Unimplemented` with `keystore: operation not supported: backend <name>: backend: key export not supported` (or `key import not supported` for a Copy destination) |
+| Get whose key handle cannot be read | REST | `200` with the metadata and no `public_key_pem` (was `500`) |
+| Get | gRPC | `public_key_pem` is filled for every asymmetric key, not only signing keys |
+| Rotate of a key with no encodable public key | gRPC | `OK` with an empty `public_key_pem` (was `Internal`) |
+| no service wired | REST, gRPC | `503` / `Unavailable` |
+
+`transport.KeyInfo` gained `key_size`, `curve` and `partition`, and
+`transport.RotateKeyResponse` gained `key_type`, so the service carries what
+gRPC's `KeyInfo` and both transports' rotate responses already reported.
+
 ### Import names the key's algorithm, on every transport
 
 `ImportKey` takes the algorithm of the key being imported in a `key_type` field
@@ -164,6 +235,20 @@ under an identifier that does not describe it.
 
 Do not confuse it with `algorithm`, which on every import request names the
 **wrapping** algorithm the material arrived under.
+
+REST's and gRPC's `ImportKey` and `GetImportParameters` handlers now call
+`XKMSService.ImportKey` / `.GetImportParameters` directly, the same
+service-layer delegation `GenerateKey` received in go-xkms#1214: the
+service's capability resolution now asserts only the import half
+(`backend.ImportBackend`), never the full `backend.ImportExportBackend`
+union, so an AWS-KMS-shaped import-only backend reaches it exactly as it
+reaches the handlers' pre-go-xkms#1216 local implementation
+(go-xkms#1216). The service enforces the same 2048-bit RSA floor
+`GenerateKey` does (go-xkms#1204) as part of building the key's attributes,
+so no transport-level `types.KeyAttributes.Validate()` call is needed
+anymore. See
+[engineering.md § Import/export capability resolution is split by direction](engineering.md#importexport-capability-resolution-is-split-by-direction-go-xkms1216)
+for the capability-resolution detail.
 
 | Transport | field |
 |---|---|
@@ -407,17 +492,20 @@ vocabulary with a small, total, package-local map (`classToGRPCCode` /
 `classToJSONRPCCode`): the judgment of "which sentinel means what" is written
 down once; only the mechanical `Class` → local-code step is duplicated.
 
-CA (`errors_cert.go`'s `mapCAError`) and certificate storage
-(`certOperationError`, `getCertError`) do **not** read a shared table: gRPC's
-own classification for these two families (`pkg/api/grpc/service_ca.go`,
-`service.go`'s `SaveCert`/`GetCert`/…) is not sentinel-driven — each RPC
-pre-validates its own request fields and checks a package-level CA instance
-for nil, then reports any servicer failure as a fixed `codes.Internal` (or,
-for `GetCert` only, a fixed `codes.NotFound` regardless of cause). There is
-no gRPC-side table to share; MCP's two functions reproduce the same wire
-*outcome* by checking the sentinels its own call path can actually produce
-(`xkms.ErrNotConfigured`, `*xkms.ErrValidation`, `xkms.ErrNilRequest`,
-`xkms.ErrNilData`) instead.
+CA (`errors_cert.go`'s `mapCAError`) does **not** read a shared table:
+gRPC's own classification for it (`pkg/api/grpc/service_ca.go`) is not
+sentinel-driven — each RPC pre-validates its own request fields and checks a
+package-level CA instance for nil, then reports any servicer failure as a
+fixed `codes.Internal`. There is no gRPC-side table to share; MCP's function
+reproduces the same wire *outcome* by checking the sentinels its own call
+path can actually produce (`xkms.ErrNotConfigured`, `*xkms.ErrValidation`,
+`xkms.ErrNilRequest`, `xkms.ErrNilData`) instead.
+
+Certificate storage and data-level sealing are adapters over the service on
+every transport (go-xkms#1228), so they classify through each transport's
+`mapKeyOpError` like every other key operation. MCP's former
+`certOperationError` and `getCertError` — which reported every storage
+failure as Internal, and every `GetCert` failure as Not found — are deleted.
 
 | Family | Sentinel(s) | MCP code | gRPC code |
 |---|---|---|---|
@@ -437,8 +525,10 @@ no gRPC-side table to share; MCP's two functions reproduce the same wire
 | barrier | `seal.ErrShamirQuorumExpired` | `ErrCodeInternalError` (no JSON-RPC DeadlineExceeded) | `DeadlineExceeded` |
 | CA / cert | `xkms.ErrNotConfigured` (`mapCAError`) | `ErrCodeServiceUnavailable` | `Unavailable` (nil CA instance check) |
 | CA / cert | `*xkms.ErrValidation`, `xkms.ErrNilRequest`, `xkms.ErrNilData` (`mapCAError`) | `ErrCodeInvalidParams` | `InvalidArgument` (pre-validated request field) |
-| cert | any `GetCert` failure (`getCertError`) | `sdkssh.JSONRPCCodeNotFound` | `NotFound` (unconditional) |
-| cert | any other cert-storage failure (`certOperationError`) | `ErrCodeInternalError` | `Internal` (unconditional) |
+| cert / seal | `*xkms.ErrKeyIDParse` (`mapKeyOpError`) | `ErrCodeInvalidParams` | `InvalidArgument` |
+| cert / seal | `xkms.ErrInvalidEncodingPEM`, `ErrInvalidCertificate`, `ErrEmptyChain`, `ErrInvalidSealedData`, `ErrNilData` (`mapKeyOpError`) | `ErrCodeInvalidParams` | `InvalidArgument` |
+| cert | `xkms.ErrCertNotFound`, `ErrCertChainNotFound`, `storage.ErrNotFound` (`mapKeyOpError`) | `sdkssh.JSONRPCCodeNotFound` | `NotFound` |
+| seal | `xkms.ErrSealingNotSupported` (`mapKeyOpError`) | `ErrCodeMethodNotFound` | `Unimplemented` |
 
 **`*xkms.ErrRoleLookup` now classifies as Not found, not Invalid params, on
 MCP (#912)**, resolving a divergence from gRPC: `pkg/api/grpc/errors_keyops.go`'s
@@ -673,10 +763,10 @@ condition.
   handler that forwards a request-supplied `tenant_id`) — is now
   `ErrCodeInvalidParams`, matching each one's gRPC counterpart in
   `pkg/api/grpc/service.go`. `handleCopyKey`'s terminal
-  `XKMSService.CopyKey` failure, which gRPC has no counterpart for (its
-  `CopyKey` is a from-scratch implementation, not a delegation to the same
-  service method), now routes through `mapKeyOpError` like every other
-  service-layer delegation in this file, rather than a fixed-code wrap; its
+  `XKMSService.CopyKey` failure now routes through `mapKeyOpError` like
+  every other service-layer delegation in this file, rather than a
+  fixed-code wrap — the same service method REST's and gRPC's `CopyKey`
+  delegate to as of go-xkms#1218; its
   `ErrCopyKeyIncomplete` contract-violation sentinel (a nil error with
   `Success: false`) is `ErrCodeInternalError`.
 - **`pkg/api/mcp/handlers_bootstrap.go`**'s `bootstrap.showKeys` — found by
@@ -717,7 +807,7 @@ calls the same handler function through the same
 from real dispatch behaviour the way a lexical pattern match over source
 text could — a static check would have to re-derive, by tracing call graphs
 across interface boundaries, that every "safe" mapper function
-(`mapKeyOpError`, `mapShareError`, `certOperationError`, …) itself only ever
+(`mapKeyOpError`, `mapShareError`, `mapCAError`, …) itself only ever
 returns nil or `*KeyOpError`, which a direct runtime call proves for free.
 Second, it is exactly the architecture this package already committed to
 for the sibling gate (#774): a table a reviewer watches shrink or grow, not

@@ -100,6 +100,25 @@ func (e *KeyNotFoundError) Unwrap() error {
 	return ErrKeyNotFound
 }
 
+// KeyIDError reports a FROST key ID, or the tenant it is scoped to, that
+// cannot name a stored key: empty, too long, or carrying a character that
+// would reach outside the key's own storage path.
+type KeyIDError struct {
+	KeyID string
+	Err   error
+}
+
+// Error implements the error interface.
+func (e *KeyIDError) Error() string {
+	return fmt.Sprintf("frost: invalid key ID %q: %v", e.KeyID, e.Err)
+}
+
+// Unwrap returns ErrInvalidAttributes and the validation failure, so both
+// errors.Is(err, ErrInvalidAttributes) and a check for the cause succeed.
+func (e *KeyIDError) Unwrap() []error {
+	return []error{ErrInvalidAttributes, e.Err}
+}
+
 // ShareNotFoundError provides detailed information about a missing share.
 type ShareNotFoundError struct {
 	KeyID         string

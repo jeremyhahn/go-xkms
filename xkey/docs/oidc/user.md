@@ -72,9 +72,11 @@ xkey oidc login --provider google --auto-refresh 840 --background \
 ```
 
 (`XKEY_BARRIER_PASSWORD` in your environment also works, and is inherited by
-the background process automatically. Don't pass `--barrier-password`
-directly for a backgrounded login — the value would be visible to anything
-that can list processes on the machine.)
+the background process automatically. `--barrier-password-stdin` is no use
+here either — the detached background process has no standard input to read
+a piped value from. There is no `--barrier-password` value flag at all: a
+value on the command line would be visible to anything that can list
+processes on the machine.)
 
 ## Run a script on login or refresh
 

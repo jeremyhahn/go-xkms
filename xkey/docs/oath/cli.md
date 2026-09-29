@@ -11,20 +11,26 @@ Every flag below is read from `cmd/xkey/cmd/oath.go`'s `init()` and matches
 |---|---|---|
 | `--name` | (required unless `--uri` supplies one) | Credential name (e.g., "GitHub") |
 | `--issuer` | | Service issuer name |
-| `--secret` | | Base32-encoded secret key |
+| `--secret-stdin` | `false` | Read the base32-encoded secret key from standard input |
 | `--uri` | | `otpauth://` URI (from a QR code) |
 | `--type` | `totp` | `totp` or `hotp` |
 | `--algorithm` | `SHA1` | `SHA1`, `SHA256`, `SHA512` |
 | `--digits` | `6` | `6`, `7`, or `8` |
 | `--period` | `30` | TOTP time step, seconds |
 | `--store` | `~/.xkey/data/oath.json` (resolved via `resolveDataDir`, go-xkms#929) | Store path. An explicit value always selects a plain file, bypassing the barrier — see [architecture.md](architecture.md) |
-| `--barrier-password` | | Barrier password, when the default store resolves to the barrier |
+| `--barrier-password-stdin` | `false` | Read the barrier password from standard input, when the default store resolves to the barrier |
 | `--barrier-password-file` | | Read the barrier password from a file (first line) |
 
+There is no `--secret` or `--barrier-password` value flag: a value on the
+command line is visible to every other process on the host via `ps`. The
+secret comes from `--secret-stdin` or `XKEY_OATH_SECRET`; the barrier
+password from `--barrier-password-stdin`, `--barrier-password-file`, or
+`XKEY_BARRIER_PASSWORD`.
+
 ```bash
-xkey oath add --name "GitHub" --secret JBSWY3DPEHPK3PXP --issuer "GitHub"
-xkey oath add --name "AWS" --secret JBSWY3DPEHPK3PXP --algorithm SHA256 --digits 8
-xkey oath add --name "MyService" --secret JBSWY3DPEHPK3PXP --type hotp
+echo JBSWY3DPEHPK3PXP | xkey oath add --name "GitHub" --secret-stdin --issuer "GitHub"
+XKEY_OATH_SECRET=JBSWY3DPEHPK3PXP xkey oath add --name "AWS" --algorithm SHA256 --digits 8
+echo JBSWY3DPEHPK3PXP | xkey oath add --name "MyService" --secret-stdin --type hotp
 xkey oath add --uri "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
 xkey oath add --uri "otpauth://totp/..." --name "My GitHub"
 ```
@@ -36,7 +42,7 @@ xkey oath add --uri "otpauth://totp/..." --name "My GitHub"
 | `--store` | `~/.xkey/data/oath.json` | Store path |
 | `--secrets` | `false` | Show secret keys |
 | `--uri` | `false` | Show `otpauth://` URIs |
-| `--barrier-password`, `--barrier-password-file` | | Same as `add` |
+| `--barrier-password-stdin`, `--barrier-password-file` | | Same as `add` |
 
 ```bash
 xkey oath list
@@ -50,7 +56,7 @@ xkey oath list --uri
 |---|---|---|
 | `--store` | `~/.xkey/data/oath.json` | Store path |
 | `--all` | `false` | Generate codes for every credential |
-| `--barrier-password`, `--barrier-password-file` | | Same as `add` |
+| `--barrier-password-stdin`, `--barrier-password-file` | | Same as `add` |
 
 ```bash
 xkey oath generate "GitHub"
@@ -64,7 +70,7 @@ xkey oath generate "GitHub" "AWS"
 |---|---|---|
 | `--store` | `~/.xkey/data/oath.json` | Store path |
 | `--force` | `false` | Skip the confirmation prompt |
-| `--barrier-password`, `--barrier-password-file` | | Same as `add` |
+| `--barrier-password-stdin`, `--barrier-password-file` | | Same as `add` |
 
 ```bash
 xkey oath remove "GitHub"
@@ -84,7 +90,7 @@ Captures the desktop display(s) and decodes a QR code into a credential.
 | `--list-displays` | `false` | List available displays and exit |
 | `-y, --yes` | `false` | Skip the confirmation prompt |
 | `--index` | `-1` | Select a QR code by index when multiple are found |
-| `--barrier-password`, `--barrier-password-file` | | Same as `add` |
+| `--barrier-password-stdin`, `--barrier-password-file` | | Same as `add` |
 
 ```bash
 xkey oath scan
@@ -119,7 +125,7 @@ Shared by every verb above (`openOATHStore`, `cmd/xkey/cmd/oath.go`):
 
 `xkey oath sync`, `xkey oath push <name-or-id>` and `xkey oath pull` move
 credentials to and from a paired phone. They take the same `--store`,
-`--barrier-password`/`--barrier-password-file` flags as above, plus
+`--barrier-password-stdin`/`--barrier-password-file` flags as above, plus
 `--device` (paired device name) and `--timeout` (default `1m0s`). Documented
 in full, alongside the rest of the phone-pairing verb catalog, in
 [phone-hsm/cli.md](../phone-hsm/cli.md#oath-sharing-and-sync).

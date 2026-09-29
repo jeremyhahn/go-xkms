@@ -51,7 +51,7 @@ func TestPolicy_RESTAndGRPCAgree(t *testing.T) {
 	require.NoError(t, err)
 	svc.SetPolicyManager(mgr)
 
-	restHandler := newPolicyRESTServer(t, svc, mgr)
+	restHandler := newPolicyRESTServer(t, svc)
 	grpcService := grpcapi.NewService(nil, nil, svc)
 
 	// Create over REST, read back over gRPC: both transports must resolve
@@ -126,7 +126,7 @@ func TestPolicy_ValidationAgrees(t *testing.T) {
 	require.NoError(t, err)
 	svc.SetPolicyManager(mgr)
 
-	restHandler := newPolicyRESTServer(t, svc, mgr)
+	restHandler := newPolicyRESTServer(t, svc)
 	grpcService := grpcapi.NewService(nil, nil, svc)
 
 	body, err := json.Marshal(map[string]interface{}{
@@ -162,15 +162,16 @@ func (fakePCRReader) ReadPCRs(_ string, indices []int) (map[int][]byte, error) {
 	return values, nil
 }
 
-// newPolicyRESTServer builds a REST server over the shared service and
-// policy manager, returning its HTTP handler. Authentication is explicitly
+// newPolicyRESTServer builds a REST server over the shared service (which
+// carries the policy manager the routes reach through it), returning its HTTP
+// handler. Authentication is explicitly
 // NoOp and RBAC is off, matching newRESTServer: this test's subject is
 // result parity, not authorization (the policy:* RequirePermission gate on
 // /api/v1/policies is exercised by pkg/api/rest's own
 // TestPolicyCreateRoute_RequiresPolicyCreate). The server still requires at
 // least one backend to construct even though policy management does not
 // use one, so this borrows setupService's.
-func newPolicyRESTServer(t *testing.T, svc *xkms.XKMSService, mgr *policy.Manager) http.Handler {
+func newPolicyRESTServer(t *testing.T, svc *xkms.XKMSService) http.Handler {
 	t.Helper()
 
 	backends := make(map[string]xkms.Backend, len(svc.BackendNames()))
@@ -185,7 +186,6 @@ func newPolicyRESTServer(t *testing.T, svc *xkms.XKMSService, mgr *policy.Manage
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends:      backends,
 		XKMSService:   svc,
-		PolicyManager: mgr,
 	})
 	require.NoError(t, err)
 	return server.Handler()

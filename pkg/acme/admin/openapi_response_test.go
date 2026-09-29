@@ -466,6 +466,7 @@ func TestOpenAPIResponses_Tenants(t *testing.T) {
 		}, logger)
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/acme-corp", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.DeleteTenant(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -478,6 +479,7 @@ func TestOpenAPIResponses_Tenants(t *testing.T) {
 		}, logger)
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/acme-corp/status", bytes.NewBufferString(`{"status":"suspended"}`))
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.UpdateTenantStatus(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -702,6 +704,7 @@ func TestOpenAPIResponses_Roles(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme-corp/roles",
 			bytes.NewBufferString(`{"name":"endorser","permissions":["acme_eab:create"]}`))
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.CreateTenantRole(w, req)
 		require.Equal(t, http.StatusCreated, w.Code)
@@ -717,6 +720,7 @@ func TestOpenAPIResponses_Roles(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme-corp/roles",
 			bytes.NewBufferString(`{"name":"endorser","permissions":["acme_eab:create"]}`))
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.CreateTenantRole(w, req)
 		require.Equal(t, http.StatusInternalServerError, w.Code)
@@ -729,6 +733,7 @@ func TestOpenAPIResponses_Roles(t *testing.T) {
 		}, logger)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme-corp/roles/role-1", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp", "roleID": "role-1"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.GetTenantRole(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -738,11 +743,12 @@ func TestOpenAPIResponses_Roles(t *testing.T) {
 	t.Run("get_not_found", func(t *testing.T) {
 		h := NewTenantHandlers(&mockTenantService{
 			getTenantRoleFunc: func(context.Context, string, string) (*db.Role, error) {
-				return nil, errors.New("qrdb: role not found")
+				return nil, ErrRoleNotFound
 			},
 		}, logger)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme-corp/roles/missing", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp", "roleID": "missing"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.GetTenantRole(w, req)
 		require.Equal(t, http.StatusNotFound, w.Code)
@@ -756,6 +762,7 @@ func TestOpenAPIResponses_Roles(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/acme-corp/roles/role-1",
 			bytes.NewBufferString(`{"permissions":["acme_eab:create","acme_eab:list"]}`))
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp", "roleID": "role-1"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.UpdateTenantRole(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -768,6 +775,7 @@ func TestOpenAPIResponses_Roles(t *testing.T) {
 		}, logger)
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/acme-corp/roles/role-1", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp", "roleID": "role-1"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.DeleteTenantRole(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -782,6 +790,7 @@ func TestOpenAPIResponses_Roles(t *testing.T) {
 		}, logger)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme-corp/roles", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.ListTenantRoles(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -803,6 +812,7 @@ func TestOpenAPIResponses_Users(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme-corp/users",
 			bytes.NewBufferString(`{"username":"jdoe","email":"jdoe@example.com"}`))
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.CreateTenantUser(w, req)
 		require.Equal(t, http.StatusCreated, w.Code)
@@ -818,6 +828,7 @@ func TestOpenAPIResponses_Users(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme-corp/users",
 			bytes.NewBufferString(`{"username":"jdoe","email":"jdoe@example.com"}`))
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.CreateTenantUser(w, req)
 		require.Equal(t, http.StatusInternalServerError, w.Code)
@@ -830,6 +841,7 @@ func TestOpenAPIResponses_Users(t *testing.T) {
 		}, logger)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme-corp/users/123456789012345", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp", "userID": "123456789012345"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.GetTenantUser(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -839,11 +851,12 @@ func TestOpenAPIResponses_Users(t *testing.T) {
 	t.Run("get_not_found", func(t *testing.T) {
 		h := NewTenantHandlers(&mockTenantService{
 			getTenantUserFunc: func(context.Context, string, string) (*db.User, error) {
-				return nil, errors.New("qrdb: user not found")
+				return nil, ErrUserNotFound
 			},
 		}, logger)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme-corp/users/999", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp", "userID": "999"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.GetTenantUser(w, req)
 		require.Equal(t, http.StatusNotFound, w.Code)
@@ -857,6 +870,7 @@ func TestOpenAPIResponses_Users(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/acme-corp/users/123456789012345",
 			bytes.NewBufferString(`{"name":"Jane Doe"}`))
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp", "userID": "123456789012345"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.UpdateTenantUser(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -869,6 +883,7 @@ func TestOpenAPIResponses_Users(t *testing.T) {
 		}, logger)
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/acme-corp/users/123456789012345", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp", "userID": "123456789012345"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.DeleteTenantUser(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -883,6 +898,7 @@ func TestOpenAPIResponses_Users(t *testing.T) {
 		}, logger)
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme-corp/users", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "acme-corp"})
+		req = addUserToRequest(req, createAdminUser("acme-corp"))
 		w := httptest.NewRecorder()
 		h.ListTenantUsers(w, req)
 		require.Equal(t, http.StatusOK, w.Code)

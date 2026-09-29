@@ -124,3 +124,47 @@ func TestInitFrostBackend_SecretBackendUnavailable(t *testing.T) {
 	require.True(t, errors.As(err, &unavailableErr), "error must unwrap to *ErrFrostSecretBackendUnavailable, got %v", err)
 	assert.Equal(t, "tpm2", unavailableErr.Backend)
 }
+
+// TestInitializeBackends_FrostWithPKCS8SecretBackend_StartsCleanly is the
+// go-xkms#1237 regression test at the xkmsd level: it drives the real
+// Server.initializeBackends -- the same call Server.New makes -- with
+// backends.pkcs8 and backends.frost both enabled and secret_backend set to
+// "pkcs8", the exact combination #1237 worried could never start because
+// pkg/xkms's standalone FROST factory (fixed separately in this change)
+// built an unusable pkcs8 store. This path never went through that factory:
+// initializeBackends constructs the real "pkcs8" keyProviders entry with
+// AllowPlaintextKeys from s.allowNodeLocalPlaintextKeys() (server.go), and
+// initFrostBackend's ensureFrostSecretSealKey provisions the FROST wrapping
+// key through that same already-registered backend. With no barrier
+// configured, allowNodeLocalPlaintextKeys() is true, so the pkcs8 store
+// accepts the wrapping key and the server starts.
+func TestInitializeBackends_FrostWithPKCS8SecretBackend_StartsCleanly(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{
+		Storage: config.StorageConfig{Backend: "memory"},
+		Backends: config.BackendsConfig{
+			PKCS8: &config.PKCS8Config{
+				Enabled: true,
+				Path:    "pkcs8",
+			},
+			Frost: &config.FrostConfig{
+				Enabled:          true,
+				PublicPath:       "frost/public",
+				SecretBackend:    "pkcs8",
+				Algorithm:        "FROST-Ed25519-SHA512",
+				DefaultThreshold: 2,
+				DefaultTotal:     3,
+			},
+		},
+	})
+	s.keyProviders = map[string]types.KeyProvider{}
+
+	require.NoError(t, s.initializeBackends())
+
+	pkcs8Backend, ok := s.keyProviders["pkcs8"]
+	require.True(t, ok, "expected \"pkcs8\" to be registered in s.keyProviders")
+	assert.Equal(t, types.BackendTypeSoftware, pkcs8Backend.Type())
+
+	frostBackend, ok := s.keyProviders["frost"]
+	require.True(t, ok, "expected \"frost\" to be registered in s.keyProviders")
+	assert.Equal(t, types.BackendTypeFrost, frostBackend.Type())
+}

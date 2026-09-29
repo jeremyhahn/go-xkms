@@ -16,10 +16,13 @@
 // asks go-qrdb to decide.
 //
 // The transports that gate per call site rather than per table — pkg/api/grpc
-// and pkg/api/quic — have no in-process table a golden test can compare
+// and pkg/acme/admin — have no in-process table a golden test can compare
 // against, the way pkg/api/mcp compares against its methodPermissions map. This
 // package builds that table from the source, so those transports can be pinned
-// to a checked-in wire contract with the same strength.
+// to a checked-in wire contract with the same strength. pkg/api/rest carries
+// its own in-process table (routes.go's RouteSpec slice), but its permission
+// arguments are scanned the same way, so a raw string literal cannot slip past
+// the route table either.
 //
 // Two properties are enforced while scanning:
 //
@@ -40,6 +43,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -49,12 +53,38 @@ import (
 // arguments that call carries, and which of them hold the resource and the
 // action. A helper that pins the resource itself reports ResourceArg < 0 and
 // names the constant in FixedResource.
+//
+// By default a seam only matches a method-selector call (x.Method(...)),
+// which is how every scanned package so far calls its own authorize helper.
+// Bare opts a seam into also matching a plain identifier call (Method(...)),
+// which pkg/api/rest's route table needs: its permission-carrying helpers
+// (perm, permBulk, permIf, user, ssh) are local closures, not methods.
+//
+// LabelArgs names the argument indices that build a Site's Key instead of the
+// enclosing function's name. Each argument must be a string literal (its
+// unquoted text is used) or a selector expression (its selector name is
+// used) — the two shapes a call site actually carries for a human-readable
+// label: a REST route's literal HTTP method and path, or the handler
+// function value an ACME admin route registers. A seam with no LabelArgs
+// keeps the original behavior of keying by enclosing function name, which is
+// the right label when one function holds exactly one gate.
+//
+// LabelPrefix is prepended to the last LabelArgs entry only. It exists
+// because a REST route helper's literal pattern argument is itself a
+// suffix — the helper's caller ("/api/v1", "/api/v1/users", "/xkms/v1/ssh")
+// prepends the mount point in the closure body, not at the call site — so
+// two helpers can be called with the identical literal pattern ("/keys")
+// while registering entirely different routes. LabelPrefix restores that
+// mount point to the Key so the two cannot collide.
 type Seam struct {
 	Method        string
 	Args          int
 	ResourceArg   int
 	ActionArg     int
 	FixedResource string
+	Bare          bool
+	LabelArgs     []int
+	LabelPrefix   string
 }
 
 // Site is one authorization gate: the wire pair it requests, keyed by the
@@ -166,6 +196,7 @@ func Constants() map[string]string {
 		"ActionUse":                auth.ActionUse,
 		"ActionDisable":            auth.ActionDisable,
 		"ActionStatus":             auth.ActionStatus,
+		"ActionPeers":              auth.ActionPeers,
 		"ActionCapabilities":       auth.ActionCapabilities,
 		"ActionBootstrap":          auth.ActionBootstrap,
 		"ActionSeal":               auth.ActionSeal,
@@ -275,12 +306,23 @@ func scanFunc(fset *token.FileSet, fn *ast.FuncDecl, seams []Seam, constants map
 		if !ok {
 			return true
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
+
+		var (
+			methodName string
+			bareCall   bool
+		)
+		switch fun := call.Fun.(type) {
+		case *ast.SelectorExpr:
+			methodName = fun.Sel.Name
+		case *ast.Ident:
+			methodName = fun.Name
+			bareCall = true
+		default:
 			return true
 		}
-		seam, ok := matchSeam(seams, sel.Sel.Name, len(call.Args))
-		if !ok {
+
+		seam, ok := matchSeam(seams, methodName, len(call.Args))
+		if !ok || (bareCall && !seam.Bare) {
 			return true
 		}
 		pos := position(fset, call.Lparen)
@@ -304,8 +346,16 @@ func scanFunc(fset *token.FileSet, fn *ast.FuncDecl, seams []Seam, constants map
 			return false
 		}
 
+		key := fn.Name.Name
+		if len(seam.LabelArgs) > 0 {
+			key, fail = label(pos, call.Args, seam.LabelArgs, seam.LabelPrefix)
+			if fail != nil {
+				return false
+			}
+		}
+
 		sites = append(sites, Site{
-			Key:      fn.Name.Name,
+			Key:      key,
 			Resource: resource,
 			Action:   action,
 			Pos:      pos,
@@ -323,6 +373,50 @@ func matchSeam(seams []Seam, method string, args int) (Seam, bool) {
 		}
 	}
 	return Seam{}, false
+}
+
+// LabelArgError reports a Seam.LabelArgs index that a call site cannot
+// resolve to a label: either the index is out of range for the call, or the
+// argument at that index is not a string literal or a selector expression.
+type LabelArgError struct {
+	Pos   string
+	Index int
+}
+
+func (e *LabelArgError) Error() string {
+	return fmt.Sprintf("authzscan: %s: label argument index %d cannot be resolved to a label", e.Pos, e.Index)
+}
+
+// label builds a Site's Key from the given argument indices of a call,
+// joining each argument's resolved text with a space. A string literal
+// contributes its unquoted text (a REST route's HTTP method or path); a
+// selector expression contributes its selector name (an ACME admin route's
+// handler function).
+func label(pos string, args []ast.Expr, indices []int, prefix string) (string, error) {
+	parts := make([]string, len(indices))
+	for i, idx := range indices {
+		if idx < 0 || idx >= len(args) {
+			return "", &LabelArgError{Pos: pos, Index: idx}
+		}
+		var part string
+		switch arg := args[idx].(type) {
+		case *ast.BasicLit:
+			s, err := strconv.Unquote(arg.Value)
+			if err != nil {
+				return "", &LabelArgError{Pos: pos, Index: idx}
+			}
+			part = s
+		case *ast.SelectorExpr:
+			part = arg.Sel.Name
+		default:
+			return "", &LabelArgError{Pos: pos, Index: idx}
+		}
+		if i == len(indices)-1 {
+			part = prefix + part
+		}
+		parts[i] = part
+	}
+	return strings.Join(parts, " "), nil
 }
 
 // resolve turns an authorization argument into its wire value. A pkg/auth
@@ -362,4 +456,138 @@ func resolve(fset *token.FileSet, arg ast.Expr, constants map[string]string) (st
 func position(fset *token.FileSet, pos token.Pos) string {
 	p := fset.Position(pos)
 	return fmt.Sprintf("%s:%d", filepath.Base(p.Filename), p.Line)
+}
+
+// MapSite is one authorization entry pulled from a package-level permission
+// map, keyed by the map's own key (a JSON-RPC method name, for MCP). The key
+// is a wire-facing identifier the caller already dispatches on, not an
+// authorization argument, so it is never scanned for a raw literal the way
+// Resource and Action are.
+type MapSite struct {
+	Key      string
+	Resource string
+	Action   string
+	Pos      string
+}
+
+// Pair returns the wire-level "resource:action" string the entry requests.
+func (s MapSite) Pair() string { return s.Resource + ":" + s.Action }
+
+// VarNotFoundError reports that ScanMap's target variable does not exist,
+// under any name, anywhere in the scanned directory.
+type VarNotFoundError struct {
+	Dir  string
+	Name string
+}
+
+func (e *VarNotFoundError) Error() string {
+	return fmt.Sprintf("authzscan: %s: variable %q not found", e.Dir, e.Name)
+}
+
+// MapEntryError reports a map entry that is not shaped like a permission
+// entry: a non-literal key, or a value that is not a two-element positional
+// composite literal.
+type MapEntryError struct {
+	Pos string
+	Msg string
+}
+
+func (e *MapEntryError) Error() string {
+	return fmt.Sprintf("authzscan: %s: %s", e.Pos, e.Msg)
+}
+
+// ScanMap reads every non-test Go file in dir, finds the package-level
+// variable named varName, and resolves every entry of its
+// map[string]T{"key": {resource, action}, ...} literal to the wire-level
+// resource:action pair it names. T must fill its two fields positionally,
+// which is how pkg/api/mcp's methodPermissions is written.
+//
+// Every entry's resource and action are resolved exactly as Scan resolves a
+// call argument: a pkg/auth constant becomes the constant's value, and a raw
+// string literal is rejected with *RawLiteralError. This is the map-literal
+// counterpart of Scan's call-site scanning, for the one transport (MCP) that
+// declares its whole permission table as data rather than a sequence of gate
+// calls.
+func ScanMap(dir, varName string) ([]MapSite, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, &ParseError{File: dir, Err: err}
+	}
+	var names []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	constants := Constants()
+	fset := token.NewFileSet()
+
+	var lit *ast.CompositeLit
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return nil, &ParseError{File: path, Err: err}
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, ident := range value.Names {
+					if ident.Name != varName || i >= len(value.Values) {
+						continue
+					}
+					found, ok := value.Values[i].(*ast.CompositeLit)
+					if !ok {
+						return nil, &MapEntryError{Pos: position(fset, value.Values[i].Pos()), Msg: fmt.Sprintf("variable %q is not a composite literal", varName)}
+					}
+					lit = found
+				}
+			}
+		}
+	}
+	if lit == nil {
+		return nil, &VarNotFoundError{Dir: dir, Name: varName}
+	}
+
+	sites := make([]MapSite, 0, len(lit.Elts))
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			return nil, &MapEntryError{Pos: position(fset, elt.Pos()), Msg: "map entry is not a key:value pair"}
+		}
+		keyLit, ok := kv.Key.(*ast.BasicLit)
+		if !ok {
+			return nil, &MapEntryError{Pos: position(fset, kv.Key.Pos()), Msg: "map key is not a string literal"}
+		}
+		key, err := strconv.Unquote(keyLit.Value)
+		if err != nil {
+			return nil, &MapEntryError{Pos: position(fset, kv.Key.Pos()), Msg: "map key is not a valid string literal"}
+		}
+		val, ok := kv.Value.(*ast.CompositeLit)
+		if !ok || len(val.Elts) != 2 {
+			return nil, &MapEntryError{Pos: position(fset, kv.Value.Pos()), Msg: fmt.Sprintf("value for key %q is not a two-field positional literal", key)}
+		}
+		pos := position(fset, kv.Value.Pos())
+		resource, err := resolve(fset, val.Elts[0], constants)
+		if err != nil {
+			return nil, err
+		}
+		action, err := resolve(fset, val.Elts[1], constants)
+		if err != nil {
+			return nil, err
+		}
+		sites = append(sites, MapSite{Key: key, Resource: resource, Action: action, Pos: pos})
+	}
+	return sites, nil
 }

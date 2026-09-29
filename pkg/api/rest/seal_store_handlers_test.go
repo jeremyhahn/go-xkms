@@ -27,6 +27,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,7 +37,26 @@ func newTestSealStoreHandlers(t *testing.T) *SealStoreHandlers {
 	store := storage.NewMemory()
 	ps, err := seal.NewPlatformStore(store, slog.Default())
 	require.NoError(t, err)
-	return NewSealStoreHandlers(ps)
+	return sealStoreHandlersOver(ps)
+}
+
+// sealStoreHandlersOver returns the handlers over an XKMSService composed
+// with store: the handlers reach the platform store only through the
+// service, which enforces its platform scope.
+func sealStoreHandlersOver(store seal.PlatformStore) *SealStoreHandlers {
+	svc := &xkms.XKMSService{}
+	svc.SetPlatformStore(store)
+	return NewSealStoreHandlers(svc)
+}
+
+// TestSealStore_NotConfiguredIsUnavailable: a service without a platform
+// store answers 503.
+func TestSealStore_NotConfiguredIsUnavailable(t *testing.T) {
+	h := NewSealStoreHandlers(&xkms.XKMSService{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/platform-store", nil)
+	w := httptest.NewRecorder()
+	h.ListSecretsHandler(w, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func sealStoreRouter(h *SealStoreHandlers) *chi.Mux {
@@ -360,7 +380,7 @@ func (m *mockPlatformStore) List(_ context.Context) ([]string, error) {
 func (m *mockPlatformStore) Reseal(_ context.Context, _ string) error { return m.resealErr }
 
 func TestSealStore_PutSecret_InvalidSecretName(t *testing.T) {
-	h := NewSealStoreHandlers(&mockPlatformStore{putErr: seal.ErrInvalidSecretName})
+	h := sealStoreHandlersOver(&mockPlatformStore{putErr: seal.ErrInvalidSecretName})
 	r := chi.NewRouter()
 	r.Put("/api/v1/platform-store/{name}", h.PutSecretHandler)
 
@@ -374,7 +394,7 @@ func TestSealStore_PutSecret_InvalidSecretName(t *testing.T) {
 }
 
 func TestSealStore_PutSecret_InternalError(t *testing.T) {
-	h := NewSealStoreHandlers(&mockPlatformStore{putErr: errors.New("internal")})
+	h := sealStoreHandlersOver(&mockPlatformStore{putErr: errors.New("internal")})
 	r := chi.NewRouter()
 	r.Put("/api/v1/platform-store/{name}", h.PutSecretHandler)
 
@@ -388,7 +408,7 @@ func TestSealStore_PutSecret_InternalError(t *testing.T) {
 }
 
 func TestSealStore_GetSecret_InvalidSecretName(t *testing.T) {
-	h := NewSealStoreHandlers(&mockPlatformStore{getErr: seal.ErrInvalidSecretName})
+	h := sealStoreHandlersOver(&mockPlatformStore{getErr: seal.ErrInvalidSecretName})
 	r := chi.NewRouter()
 	r.Get("/api/v1/platform-store/{name}", h.GetSecretHandler)
 
@@ -400,7 +420,7 @@ func TestSealStore_GetSecret_InvalidSecretName(t *testing.T) {
 }
 
 func TestSealStore_GetSecret_InternalError(t *testing.T) {
-	h := NewSealStoreHandlers(&mockPlatformStore{getErr: errors.New("internal")})
+	h := sealStoreHandlersOver(&mockPlatformStore{getErr: errors.New("internal")})
 	r := chi.NewRouter()
 	r.Get("/api/v1/platform-store/{name}", h.GetSecretHandler)
 
@@ -412,7 +432,7 @@ func TestSealStore_GetSecret_InternalError(t *testing.T) {
 }
 
 func TestSealStore_DeleteSecret_InvalidSecretName(t *testing.T) {
-	h := NewSealStoreHandlers(&mockPlatformStore{deleteErr: seal.ErrInvalidSecretName})
+	h := sealStoreHandlersOver(&mockPlatformStore{deleteErr: seal.ErrInvalidSecretName})
 	r := chi.NewRouter()
 	r.Delete("/api/v1/platform-store/{name}", h.DeleteSecretHandler)
 
@@ -424,7 +444,7 @@ func TestSealStore_DeleteSecret_InvalidSecretName(t *testing.T) {
 }
 
 func TestSealStore_DeleteSecret_InternalError(t *testing.T) {
-	h := NewSealStoreHandlers(&mockPlatformStore{deleteErr: errors.New("internal")})
+	h := sealStoreHandlersOver(&mockPlatformStore{deleteErr: errors.New("internal")})
 	r := chi.NewRouter()
 	r.Delete("/api/v1/platform-store/{name}", h.DeleteSecretHandler)
 
@@ -436,7 +456,7 @@ func TestSealStore_DeleteSecret_InternalError(t *testing.T) {
 }
 
 func TestSealStore_ListSecrets_Error(t *testing.T) {
-	h := NewSealStoreHandlers(&mockPlatformStore{listErr: errors.New("internal")})
+	h := sealStoreHandlersOver(&mockPlatformStore{listErr: errors.New("internal")})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/platform-store", nil)
 	w := httptest.NewRecorder()
@@ -446,7 +466,7 @@ func TestSealStore_ListSecrets_Error(t *testing.T) {
 }
 
 func TestSealStore_ResealSecret_ResealFailed(t *testing.T) {
-	h := NewSealStoreHandlers(&mockPlatformStore{resealErr: seal.ErrResealFailed})
+	h := sealStoreHandlersOver(&mockPlatformStore{resealErr: seal.ErrResealFailed})
 	r := chi.NewRouter()
 	r.Post("/api/v1/platform-store/{name}/reseal", h.ResealSecretHandler)
 
@@ -458,7 +478,7 @@ func TestSealStore_ResealSecret_ResealFailed(t *testing.T) {
 }
 
 func TestSealStore_ResealSecret_InternalError(t *testing.T) {
-	h := NewSealStoreHandlers(&mockPlatformStore{resealErr: errors.New("internal")})
+	h := sealStoreHandlersOver(&mockPlatformStore{resealErr: errors.New("internal")})
 	r := chi.NewRouter()
 	r.Post("/api/v1/platform-store/{name}/reseal", h.ResealSecretHandler)
 
@@ -470,7 +490,7 @@ func TestSealStore_ResealSecret_InternalError(t *testing.T) {
 }
 
 func TestSealStore_Status_Error(t *testing.T) {
-	h := NewSealStoreHandlers(&mockPlatformStore{listErr: errors.New("internal")})
+	h := sealStoreHandlersOver(&mockPlatformStore{listErr: errors.New("internal")})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/platform-store/status", nil)
 	w := httptest.NewRecorder()

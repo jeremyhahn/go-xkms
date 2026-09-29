@@ -265,6 +265,53 @@ func TestListBackendsHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
+
+	// "returns 400 for a negative page parameter" proves go-xkms#1262: a
+	// negative page used to reach ApplyPagination, which computed a negative
+	// slice start and panicked, crashing the handler's goroutine instead of
+	// returning a 400. PageRequestFromQuery now rejects it before
+	// ApplyPagination ever sees it.
+	t.Run("returns 400 for a negative page parameter", func(t *testing.T) {
+		setupTestService(t, "test-backend")
+		ctx := newTestHandlerContext()
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends?page=-1", nil)
+		w := httptest.NewRecorder()
+
+		ctx.ListBackendsHandler(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	// "returns 400 for a negative page_size parameter" covers page_size's own
+	// negative-value rejection alongside page's.
+	t.Run("returns 400 for a negative page_size parameter", func(t *testing.T) {
+		setupTestService(t, "test-backend")
+		ctx := newTestHandlerContext()
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends?page=1&page_size=-1", nil)
+		w := httptest.NewRecorder()
+
+		ctx.ListBackendsHandler(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	// "does not panic on a huge page with a huge page_size" covers the
+	// overflow combination the issue also reported: a page and page_size far
+	// enough into int range that (page-1)*page_size would overflow before
+	// MaxPageSize capping and ApplyPagination's overflow check applied.
+	t.Run("does not panic on a huge page with a huge page_size", func(t *testing.T) {
+		setupTestService(t, "test-backend")
+		ctx := newTestHandlerContext()
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends?page=9223372036854775807&page_size=9223372036854775807", nil)
+		w := httptest.NewRecorder()
+
+		ctx.ListBackendsHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 }
 
 // TestGetBackendHandler tests getting a specific backend
@@ -2063,7 +2110,7 @@ func TestCopyKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing source_backend", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"source_key_id": "test", "dest_backend": "dest", "dest_key_id": "test", "key_type": "rsa", "algorithm": "RSA-OAEP"}`
+		body := `{"source_key_id": "test", "dest_backend": "dest", "dest_key_id": "test", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -2074,7 +2121,7 @@ func TestCopyKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing source_key_id", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"source_backend": "src", "dest_backend": "dest", "dest_key_id": "test", "key_type": "rsa", "algorithm": "RSA-OAEP"}`
+		body := `{"source_backend": "src", "dest_backend": "dest", "dest_key_id": "test", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -2085,7 +2132,7 @@ func TestCopyKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing dest_backend", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"source_backend": "src", "source_key_id": "test", "dest_key_id": "test", "key_type": "rsa", "algorithm": "RSA-OAEP"}`
+		body := `{"source_backend": "src", "source_key_id": "test", "dest_key_id": "test", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -2096,18 +2143,7 @@ func TestCopyKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing dest_key_id", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"source_backend": "src", "source_key_id": "test", "dest_backend": "dest", "key_type": "rsa", "algorithm": "RSA-OAEP"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
-		w := httptest.NewRecorder()
-
-		ctx.CopyKeyHandler(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("returns error for missing key_type", func(t *testing.T) {
-		ctx := newTestHandlerContext()
-		body := `{"source_backend": "src", "source_key_id": "test", "dest_backend": "dest", "dest_key_id": "test", "algorithm": "RSA-OAEP"}`
+		body := `{"source_backend": "src", "source_key_id": "test", "dest_backend": "dest", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -2118,7 +2154,7 @@ func TestCopyKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing algorithm", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"source_backend": "src", "source_key_id": "test", "dest_backend": "dest", "dest_key_id": "test", "key_type": "rsa"}`
+		body := `{"source_backend": "src", "source_key_id": "test", "dest_backend": "dest", "dest_key_id": "test"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -2130,7 +2166,7 @@ func TestCopyKeyHandler(t *testing.T) {
 	t.Run("returns error for non-existent source backend", func(t *testing.T) {
 		setupTestService(t, "test-backend")
 		ctx := newTestHandlerContext()
-		body := `{"source_backend": "nonexistent", "source_key_id": "test", "dest_backend": "test-backend", "dest_key_id": "test", "key_type": "rsa", "algorithm": "RSA-OAEP"}`
+		body := `{"source_backend": "nonexistent", "source_key_id": "test", "dest_backend": "test-backend", "dest_key_id": "test", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
 		w := httptest.NewRecorder()
 

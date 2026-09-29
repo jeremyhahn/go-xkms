@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -60,6 +61,28 @@ func (m *mockPINManager) IsInitialized() bool                         { return m
 func (m *mockPINManager) SOPINSet() bool                              { return m.soPINSet }
 func (m *mockPINManager) UserPINSet() bool                            { return m.userPINSet }
 
+// handlerOverBarrier returns a HandlerContext over an XKMSService composed
+// with b: the barrier handlers reach the barrier only through the service,
+// which enforces its platform scope.
+func handlerOverBarrier(b *seal.Barrier) *HandlerContext {
+	svc := &xkms.XKMSService{}
+	svc.SetBarrier(b)
+	h := NewHandlerContext("test")
+	h.SetXKMSService(svc)
+	return h
+}
+
+// handlerOverPINManager returns a HandlerContext over an XKMSService composed
+// with pm: the PIN handlers reach the PIN backend only through the service,
+// which enforces its platform scope.
+func handlerOverPINManager(pm qrdbsdk.PINBackend) *HandlerContext {
+	svc := &xkms.XKMSService{}
+	svc.SetPINManager(pm)
+	h := NewHandlerContext("test")
+	h.SetXKMSService(svc)
+	return h
+}
+
 // newTestBarrierHandler creates a HandlerContext with a real barrier backed by memory storage.
 func newTestBarrierHandler(t *testing.T) (*HandlerContext, *seal.Barrier) {
 	t.Helper()
@@ -75,8 +98,7 @@ func newTestBarrierHandler(t *testing.T) (*HandlerContext, *seal.Barrier) {
 	)
 	require.NoError(t, err)
 
-	h := NewHandlerContext("test")
-	h.SetBarrier(barrier)
+	h := handlerOverBarrier(barrier)
 	return h, barrier
 }
 
@@ -273,7 +295,7 @@ func TestBarrierStatusHandler_Success(t *testing.T) {
 	h.BarrierStatusHandler(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp BarrierStatusResponse
+	var resp transport.BarrierStatusResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.False(t, resp.Sealed)
 }
@@ -292,8 +314,7 @@ func TestBarrierStatusHandler_NilBarrier(t *testing.T) {
 // --- SetSOPINHandler ---
 
 func TestSetSOPINHandler_Success(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin",
 		strings.NewReader(`{"current_so_pin":"","new_so_pin":"123456"}`))
@@ -317,8 +338,7 @@ func TestSetSOPINHandler_NilManager(t *testing.T) {
 }
 
 func TestSetSOPINHandler_InvalidJSON(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin",
 		strings.NewReader(`{bad`))
@@ -330,8 +350,7 @@ func TestSetSOPINHandler_InvalidJSON(t *testing.T) {
 }
 
 func TestSetSOPINHandler_MissingNewSOPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin",
 		strings.NewReader(`{"new_so_pin":""}`))
@@ -343,8 +362,7 @@ func TestSetSOPINHandler_MissingNewSOPIN(t *testing.T) {
 }
 
 func TestSetSOPINHandler_PINError(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{setSOPINErr: qrdbsdk.ErrPINTooShort})
+	h := handlerOverPINManager(&mockPINManager{setSOPINErr: qrdbsdk.ErrPINTooShort})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin",
 		strings.NewReader(`{"new_so_pin":"123456"}`))
@@ -358,8 +376,7 @@ func TestSetSOPINHandler_PINError(t *testing.T) {
 // --- SetUserPINHandler ---
 
 func TestSetUserPINHandler_Success(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin",
 		strings.NewReader(`{"so_pin":"654321","new_user_pin":"123456"}`))
@@ -383,8 +400,7 @@ func TestSetUserPINHandler_NilManager(t *testing.T) {
 }
 
 func TestSetUserPINHandler_InvalidJSON(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin",
 		strings.NewReader(`{bad`))
@@ -396,8 +412,7 @@ func TestSetUserPINHandler_InvalidJSON(t *testing.T) {
 }
 
 func TestSetUserPINHandler_MissingSOPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin",
 		strings.NewReader(`{"so_pin":"","new_user_pin":"123456"}`))
@@ -409,8 +424,7 @@ func TestSetUserPINHandler_MissingSOPIN(t *testing.T) {
 }
 
 func TestSetUserPINHandler_MissingNewPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin",
 		strings.NewReader(`{"so_pin":"654321","new_user_pin":""}`))
@@ -422,8 +436,7 @@ func TestSetUserPINHandler_MissingNewPIN(t *testing.T) {
 }
 
 func TestSetUserPINHandler_Error(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{setUserPINErr: qrdbsdk.ErrSOPINRequired})
+	h := handlerOverPINManager(&mockPINManager{setUserPINErr: qrdbsdk.ErrSOPINRequired})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin",
 		strings.NewReader(`{"so_pin":"wrong","new_user_pin":"123456"}`))
@@ -437,8 +450,7 @@ func TestSetUserPINHandler_Error(t *testing.T) {
 // --- ChangeSOPINHandler ---
 
 func TestChangeSOPINHandler_Success(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/change",
 		strings.NewReader(`{"current_so_pin":"old123","new_so_pin":"new123"}`))
@@ -462,8 +474,7 @@ func TestChangeSOPINHandler_NilManager(t *testing.T) {
 }
 
 func TestChangeSOPINHandler_InvalidJSON(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/change",
 		strings.NewReader(`{`))
@@ -475,8 +486,7 @@ func TestChangeSOPINHandler_InvalidJSON(t *testing.T) {
 }
 
 func TestChangeSOPINHandler_MissingCurrentSOPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/change",
 		strings.NewReader(`{"current_so_pin":"","new_so_pin":"new123"}`))
@@ -488,8 +498,7 @@ func TestChangeSOPINHandler_MissingCurrentSOPIN(t *testing.T) {
 }
 
 func TestChangeSOPINHandler_MissingNewSOPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/change",
 		strings.NewReader(`{"current_so_pin":"old123","new_so_pin":""}`))
@@ -501,8 +510,7 @@ func TestChangeSOPINHandler_MissingNewSOPIN(t *testing.T) {
 }
 
 func TestChangeSOPINHandler_Error(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{changeSOPINErr: qrdbsdk.ErrInvalidCurrentPIN})
+	h := handlerOverPINManager(&mockPINManager{changeSOPINErr: qrdbsdk.ErrInvalidCurrentPIN})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/change",
 		strings.NewReader(`{"current_so_pin":"wrong","new_so_pin":"new123"}`))
@@ -516,8 +524,7 @@ func TestChangeSOPINHandler_Error(t *testing.T) {
 // --- ChangeUserPINHandler ---
 
 func TestChangeUserPINHandler_Success(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/change",
 		strings.NewReader(`{"current_user_pin":"old123","new_user_pin":"new123"}`))
@@ -541,8 +548,7 @@ func TestChangeUserPINHandler_NilManager(t *testing.T) {
 }
 
 func TestChangeUserPINHandler_InvalidJSON(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/change",
 		strings.NewReader(`{`))
@@ -554,8 +560,7 @@ func TestChangeUserPINHandler_InvalidJSON(t *testing.T) {
 }
 
 func TestChangeUserPINHandler_MissingCurrentPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/change",
 		strings.NewReader(`{"current_user_pin":"","new_user_pin":"new123"}`))
@@ -567,8 +572,7 @@ func TestChangeUserPINHandler_MissingCurrentPIN(t *testing.T) {
 }
 
 func TestChangeUserPINHandler_MissingNewPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/change",
 		strings.NewReader(`{"current_user_pin":"old123","new_user_pin":""}`))
@@ -580,8 +584,7 @@ func TestChangeUserPINHandler_MissingNewPIN(t *testing.T) {
 }
 
 func TestChangeUserPINHandler_Error(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{changeUserErr: qrdbsdk.ErrPINLocked})
+	h := handlerOverPINManager(&mockPINManager{changeUserErr: qrdbsdk.ErrPINLocked})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/change",
 		strings.NewReader(`{"current_user_pin":"old123","new_user_pin":"new123"}`))
@@ -595,8 +598,7 @@ func TestChangeUserPINHandler_Error(t *testing.T) {
 // --- VerifySOPINHandler ---
 
 func TestVerifySOPINHandler_Success(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/verify",
 		strings.NewReader(`{"pin":"123456"}`))
@@ -620,8 +622,7 @@ func TestVerifySOPINHandler_NilManager(t *testing.T) {
 }
 
 func TestVerifySOPINHandler_InvalidJSON(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/verify",
 		strings.NewReader(`{`))
@@ -633,8 +634,7 @@ func TestVerifySOPINHandler_InvalidJSON(t *testing.T) {
 }
 
 func TestVerifySOPINHandler_MissingPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/verify",
 		strings.NewReader(`{"pin":""}`))
@@ -646,8 +646,7 @@ func TestVerifySOPINHandler_MissingPIN(t *testing.T) {
 }
 
 func TestVerifySOPINHandler_InvalidPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{verifySOPINErr: qrdbsdk.ErrPINInvalid})
+	h := handlerOverPINManager(&mockPINManager{verifySOPINErr: qrdbsdk.ErrPINInvalid})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/verify",
 		strings.NewReader(`{"pin":"wrong1"}`))
@@ -661,8 +660,7 @@ func TestVerifySOPINHandler_InvalidPIN(t *testing.T) {
 // --- VerifyUserPINHandler ---
 
 func TestVerifyUserPINHandler_Success(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/verify",
 		strings.NewReader(`{"pin":"123456"}`))
@@ -686,8 +684,7 @@ func TestVerifyUserPINHandler_NilManager(t *testing.T) {
 }
 
 func TestVerifyUserPINHandler_InvalidJSON(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/verify",
 		strings.NewReader(`{`))
@@ -699,8 +696,7 @@ func TestVerifyUserPINHandler_InvalidJSON(t *testing.T) {
 }
 
 func TestVerifyUserPINHandler_MissingPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/verify",
 		strings.NewReader(`{"pin":""}`))
@@ -712,8 +708,7 @@ func TestVerifyUserPINHandler_MissingPIN(t *testing.T) {
 }
 
 func TestVerifyUserPINHandler_Error(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{verifyUserErr: qrdbsdk.ErrPINNotSet})
+	h := handlerOverPINManager(&mockPINManager{verifyUserErr: qrdbsdk.ErrPINNotSet})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/verify",
 		strings.NewReader(`{"pin":"123456"}`))
@@ -727,8 +722,7 @@ func TestVerifyUserPINHandler_Error(t *testing.T) {
 // --- GetLockoutStatusHandler ---
 
 func TestGetLockoutStatusHandler_Success(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{
+	h := handlerOverPINManager(&mockPINManager{
 		lockoutStatus: &qrdbsdk.PINLockoutStatus{
 			FailedAttempts: 2,
 			MaxAttempts:    10,
@@ -742,7 +736,7 @@ func TestGetLockoutStatusHandler_Success(t *testing.T) {
 	h.GetLockoutStatusHandler(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp LockoutStatusResponse
+	var resp transport.LockoutStatusResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, 2, resp.FailedAttempts)
 	assert.Equal(t, 10, resp.MaxAttempts)
@@ -763,8 +757,7 @@ func TestGetLockoutStatusHandler_NilManager(t *testing.T) {
 // --- ResetLockoutHandler ---
 
 func TestResetLockoutHandler_Success(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/lockout/reset",
 		strings.NewReader(`{"so_pin":"123456"}`))
@@ -788,8 +781,7 @@ func TestResetLockoutHandler_NilManager(t *testing.T) {
 }
 
 func TestResetLockoutHandler_InvalidJSON(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/lockout/reset",
 		strings.NewReader(`{`))
@@ -801,8 +793,7 @@ func TestResetLockoutHandler_InvalidJSON(t *testing.T) {
 }
 
 func TestResetLockoutHandler_MissingSOPIN(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{})
+	h := handlerOverPINManager(&mockPINManager{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/lockout/reset",
 		strings.NewReader(`{"so_pin":""}`))
@@ -814,8 +805,7 @@ func TestResetLockoutHandler_MissingSOPIN(t *testing.T) {
 }
 
 func TestResetLockoutHandler_Error(t *testing.T) {
-	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{resetErr: qrdbsdk.ErrPINInvalid})
+	h := handlerOverPINManager(&mockPINManager{resetErr: qrdbsdk.ErrPINInvalid})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/lockout/reset",
 		strings.NewReader(`{"so_pin":"wrong1"}`))

@@ -116,7 +116,7 @@ once, to the externally visible base.
 
 - **The admin plane resolves every mTLS caller to its qrdb user before the
   permission gate runs.** xkmsd builds the admin plane's authenticator with
-  the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:175-178`), so the
+  the qrdb SPKI-thumbprint user store (`cmd/xkmsd/admin.go:206-209`), so the
   identity `PermissionGate.Authorize` (`pkg/acme/admin/authz.go:83`) hands to
   qrdb's RBAC carries the user's tenant and **qrdb role IDs** — every role,
   verbatim (`pkg/auth/qrdb_userstore.go:50-59`, `pkg/auth/mtls.go:220`).
@@ -136,20 +136,20 @@ once, to the externally visible base.
   allow-all authorizer (go-xkms#1075).** `finalizeAdminModule` always
   constructs the admin service, even with ACME disabled: `acme.CA()` and
   `acme.StorageFactory()` are nil for a nil `*acmeServer`
-  (`cmd/xkmsd/admin.go:154-160`). Every `AdminService` method that reads
+  (`cmd/xkmsd/admin.go:170-176`). Every `AdminService` method that reads
   the CA or storage factory — certificate, account, and order
   listing/lookup, revoke, and `GetStatus`/`GetStats`
   (`pkg/acme/admin/service.go`) — guards its dependency and returns the
   typed `ErrCANotConfigured` / `ErrStorageNotConfigured`
   (`pkg/acme/admin/types.go:40-54`) instead of dereferencing a nil
   interface. `Handlers`' `writeUnavailableIfNotConfigured`
-  (`pkg/acme/admin/handlers.go:567`) answers both with RFC 7807's 501 Not
+  (`pkg/acme/admin/handlers.go:576`) answers both with RFC 7807's 501 Not
   Implemented, the same shape `ListAuditLogs` already used for a missing
   audit trail. Separately, a nil qrdb client (`srv.QRDBClient() == nil`,
   reachable only if the admin surface is composed without the embedded
   qrdb node it always ships with) is not a degrade-and-continue case:
   `finalizeAdminModule` refuses construction with the typed
-  `ErrAdminQRDBClientRequired` (`cmd/xkmsd/admin.go:79,146-151`) rather
+  `ErrAdminQRDBClientRequired` (`cmd/xkmsd/admin.go:79,161-167`) rather
   than building `auth.NewAuthorizer(nil)`, which is legitimate
   "RBAC disabled: allow all" elsewhere in the stack but has no such
   meaning on a plane whose `PermissionGate` has no optional-authorization
@@ -157,6 +157,80 @@ once, to the externally visible base.
   ACME disabled and proves every route answers without panicking, that
   the CA/storage-backed routes answer 501, and that a nil qrdb client is
   refused at construction.
+- **The admin plane binds every tenant, role, user, account and certificate a
+  request names to the caller's tenant (go-xkms#1225).** The gate binds the
+  caller's *own* tenant as the target, so a tenant Admin's self-scoped grants
+  pass it for a request naming any tenant; the confinement is the admin
+  service's, applied for every transport (REST handlers, the gRPC admin
+  server, MCP), in `pkg/acme/admin/tenant_binding.go`:
+  - `bindTenantTarget` (`tenant_binding.go:103`) admits a cross-tenant
+    caller (`auth.IsCrossTenant`: no identity, empty or system tenant) to
+    any tenant and a tenant-scoped caller to its own only. Its refusal,
+    `*TenantBindingError` (`:36`), unwraps to `ErrTenantNotFound` and renders
+    its message (`:47`, `:53`), so a foreign tenant reads exactly like a
+    missing one — the go-xkms#1112 convention `pkg/xkms` follows. Every
+    `{id}`-scoped `TenantAwareAdminService` method calls it after the
+    empty-ID check (lifecycle, CA hierarchy, EAB, roles, users;
+    `tenant_service.go`), and every `{id}` handler repeats it through
+    `checkTenantAccess` (`tenant_handlers.go:139`) before the body is read,
+    answering `writeTenantNotFound` (`:159`).
+  - `requirePlatformScope` (`tenant_binding.go:113`) reserves tenant
+    creation (`tenant_service.go:192`, `tenant_handlers.go:185`) and the
+    audit trail (`handlers.go:447`) — whose events carry no tenant to
+    filter by — to a cross-tenant caller. Its refusal, `*PlatformScopeError`
+    (`tenant_binding.go:63`), unwraps to `ErrForbidden` and is answered with
+    the gate's own denial body (`writePermissionDenied`, `authz.go:161`).
+  - Every `/admin/barrier/*` route operates the **system** barrier, which
+    protects every tenant, so all eleven are platform operations
+    (go-xkms#1244). The admin plane holds no barrier handle: its
+    `BarrierService` (`NewBarrierService`, `barrier_service.go:227`) runs
+    every operation through `SystemBarrier` (`barrier_service.go:199`), the
+    XKMSService's system-barrier methods, each of which calls
+    `pkg/xkms`'s `requirePlatformScope` (`pkg/xkms/tenant_binding.go:88`,
+    e.g. `pkg/xkms/servicer_barrier.go:128`) before touching the barrier.
+    The gate cannot do it: qrdb grants a tenant's own Admin, SO and
+    Custodian roles every `seal:*` / `barrier:*` permission the routes
+    declare. `translateBarrierError` (`barrier_service.go:245`) turns the
+    service's `*xkms.TenantBindingError` into this plane's
+    `*PlatformScopeError`, which `writeBarrierError`
+    (`barrier_handlers.go:279`) answers with the gate's denial body, like
+    tenant creation and the audit trail. It also maps
+    `xkms.ErrNotConfigured` to `*BarrierNotEnabledError` (409, and
+    `enabled: false` on status) and `seal.ErrNotInitialized` to
+    `*BarrierNotInitializedError` (409). xkmsd hands the routes the
+    server's XKMSService (`cmd/xkmsd/admin.go:186-194`,
+    `pkg/server/server.go:2820`) and mounts them on the admin router
+    (`cmd/xkmsd/admin.go:214`); a server with no composed XKMSService is
+    refused at construction with `ErrAdminXKMSServiceRequired`
+    (`cmd/xkmsd/admin.go:87`). `MultiProtocolServer` mounts the same
+    handlers whenever its admin service carries a `BarrierService`
+    (`pkg/acme/api/server/server.go:642`).
+  - `ListTenants` returns only the caller's tenant, and counts only it
+    (`tenant_service.go:547`).
+  - A role or user is looked up before it is returned, updated or deleted,
+    and must belong to the tenant the path names — for the platform as for a
+    tenant caller (`tenantRole`, `tenant_service.go:1598`; `tenantUser`,
+    `:1705`). A foreign one and a missing one are the same
+    `ErrRoleNotFound` / `ErrUserNotFound` (`types.go:550`, `:555`). qrdb's
+    two role-miss shapes (the embedded role service's and the wire
+    transports') are both recognized (`isRoleNotFound`,
+    `tenant_binding.go:130`).
+  - `/admin/*` certificates, accounts, orders and stats are scoped by the
+    caller's tenant. An account belongs to the tenant its `TenantID` names
+    (set from the EAB at registration); a tenant-less account is
+    platform-owned (`visibleAccounts`, `service.go:551`; `visibleAccount`,
+    `:576`). A certificate row records no owner, so a tenant caller sees the
+    certificates its accounts' orders were issued (`order.Certificate`,
+    `ownedCertificateURLs`, `service.go:669`; `visibleCertificates`, `:635`).
+    Get, revoke and disable of anything outside that set are
+    `ErrCertificateNotFound` / `ErrAccountNotFound` / `ErrOrderNotFound`,
+    as for a missing one (`visibleCertificate`, `service.go:694`).
+  - The authentication boundary binds the caller's tenant as the context's
+    qrdb tenant (`withUser`, `auth.go:98-101`), because the admin routes are
+    public qrdb module routes and qrdb's middleware binds none
+    (`cmd/xkmsd/admin.go:109`). qrdb's `EffectiveTenant` enforcement then
+    confines every role and user call the service makes through the
+    embedded client as well.
 - **`PermissionGate.Authorize` (`pkg/acme/admin/authz.go:93`) is the one place
   that logs an admin authorization denial, for every transport.** REST
   (`Wrap`, `authz.go:142-156`), gRPC (`UnaryAuthorizationInterceptor`,
@@ -1088,6 +1162,28 @@ storage. Changing the storage layout requires a data migration step.
 
 ## Test strategy
 
+- **Admin-plane tenant binding (go-xkms#1225)** —
+  `pkg/acme/admin/tenant_binding_test.go` drives the service with an
+  identity on the context and a qrdb double that enforces nothing, so no
+  transport or qrdb check can mask a missing service check: every
+  `{id}`-scoped operation refused as not-found, foreign/missing equivalence,
+  role/user ownership under the caller's own path, tenant-scoped
+  certificate/account/order lists, revoke and disable, the audit trail and
+  tenant creation reserved to the platform, and the platform's cross-tenant
+  reach. `cmd/xkmsd/admin_tenant_binding_test.go` repeats the exploit set
+  over HTTP against a real embedded qrdb node with the node barrier engaged,
+  asserting tenant-b's tenant, role and user are left untouched.
+- **Admin-plane system barrier (go-xkms#1244)** —
+  `pkg/acme/admin/barrier_service_test.go` runs the barrier routes over a
+  real XKMSService holding a real passphrase barrier: a tenant Admin/SO/
+  Custodian is refused `403` on all eleven routes, both behind qrdb's
+  grants (which admit it to every route,
+  `TestBarrierRoutes_TenantGateAdmitsEveryRoute`) and with RBAC disabled,
+  and the barrier's seal state is unchanged; the platform identity seals,
+  unseals with the passphrase and reads status. `cmd/xkmsd/admin_barrier_scope_test.go`
+  repeats both against xkmsd's composed admin router on a real embedded
+  qrdb node, including a platform seal/unseal round trip of the node
+  barrier.
 - **Unit** — `pkg/acme/**` is heavily covered; the handler package carries an
   explicit 90%+ coverage push (`coverage_90_*_test.go`) plus per-object suites
   (`account_test.go`, `authorization_test.go`, `challenge_test.go`,

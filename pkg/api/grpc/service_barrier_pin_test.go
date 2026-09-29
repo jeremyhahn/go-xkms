@@ -23,6 +23,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -35,8 +36,26 @@ func testBarrierLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-// setupBarrier creates an in-memory barrier for testing and registers it
-// with the package-level variable. Returns the barrier and a cleanup function.
+// The barrier and PIN backend the barrier and PIN tests compose onto the
+// XKMSService newPlatformTestService serves over. The RPCs reach both only
+// through the service, which is where the platform scope is enforced.
+var (
+	testBarrier    *seal.Barrier
+	testPINManager qrdbsdk.PINBackend
+)
+
+// newPlatformTestService returns a Service (no-op authz and audit) over an
+// XKMSService composed with the current testBarrier and testPINManager; either
+// may be nil, which the service reports as not configured.
+func newPlatformTestService() *Service {
+	svc := &xkms.XKMSService{}
+	svc.SetBarrier(testBarrier)
+	svc.SetPINManager(testPINManager)
+	return NewService(nil, nil, svc)
+}
+
+// setupBarrier creates an in-memory barrier for testing and composes it as
+// the barrier newPlatformTestService serves over.
 func setupBarrier(t *testing.T) *seal.Barrier {
 	t.Helper()
 
@@ -52,22 +71,29 @@ func setupBarrier(t *testing.T) *seal.Barrier {
 	)
 	require.NoError(t, err)
 
-	SetBarrier(b)
-	t.Cleanup(func() { SetBarrier(nil) })
+	testBarrier = b
+	t.Cleanup(func() { testBarrier = nil })
 	return b
 }
 
-// setupPINManager creates an in-memory PIN backend for testing
-// and registers it with the package-level variable.
+// setupPINManager creates an in-memory PIN backend for testing and composes
+// it as the PIN backend newPlatformTestService serves over.
 func setupPINManager(t *testing.T) qrdbsdk.PINBackend {
 	t.Helper()
 
 	backend, err := qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.DefaultHashConfig())
 	require.NoError(t, err)
 
-	SetPINManager(backend)
-	t.Cleanup(func() { SetPINManager(nil) })
+	useTestPINManager(t, backend)
 	return backend
+}
+
+// useTestPINManager composes pm as the PIN backend newPlatformTestService
+// serves over, for the duration of the test.
+func useTestPINManager(t *testing.T, pm qrdbsdk.PINBackend) {
+	t.Helper()
+	testPINManager = pm
+	t.Cleanup(func() { testPINManager = nil })
 }
 
 // newTestService returns a Service with no-op authz and audit.
@@ -75,36 +101,11 @@ func newTestService() *Service {
 	return NewService(nil, nil, nil)
 }
 
-// ==================== Setter/Getter Tests ====================
-
-func TestSetGetBarrier(t *testing.T) {
-	// Initially nil after cleanup.
-	original := GetBarrier()
-	defer SetBarrier(original)
-
-	SetBarrier(nil)
-	assert.Nil(t, GetBarrier())
-
-	b := setupBarrier(t)
-	assert.Equal(t, b, GetBarrier())
-}
-
-func TestSetGetPINManager(t *testing.T) {
-	original := GetPINManager()
-	defer SetPINManager(original)
-
-	SetPINManager(nil)
-	assert.Nil(t, GetPINManager())
-
-	pm := setupPINManager(t)
-	assert.Equal(t, pm, GetPINManager())
-}
-
 // ==================== Barrier Handler Tests ====================
 
 func TestBarrierInitialize_Success(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	resp, err := svc.BarrierInitialize(ctx, &pb.BarrierInitializeRequest{
@@ -114,13 +115,11 @@ func TestBarrierInitialize_Success(t *testing.T) {
 	assert.NotNil(t, resp)
 
 	// Barrier should now be unsealed after init.
-	assert.False(t, barrier.IsSealed())
+	assert.False(t, testBarrier.IsSealed())
 }
 
 func TestBarrierInitialize_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierInitialize(context.Background(), &pb.BarrierInitializeRequest{
 		Secret: "test-secret-123456",
@@ -128,13 +127,13 @@ func TestBarrierInitialize_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-	assert.Contains(t, st.Message(), "barrier not configured")
+	assert.Equal(t, codes.Unavailable, st.Code())
+	assert.Contains(t, st.Message(), "subsystem not configured")
 }
 
 func TestBarrierInitialize_AlreadyInitialized(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// First init succeeds.
@@ -155,7 +154,7 @@ func TestBarrierInitialize_AlreadyInitialized(t *testing.T) {
 
 func TestBarrierUnseal_Success(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 	secret := "test-secret-123456"
 
@@ -166,18 +165,16 @@ func TestBarrierUnseal_Success(t *testing.T) {
 	// Seal.
 	_, err = svc.BarrierSeal(ctx, &emptypb.Empty{})
 	require.NoError(t, err)
-	assert.True(t, barrier.IsSealed())
+	assert.True(t, testBarrier.IsSealed())
 
 	// Unseal.
 	_, err = svc.BarrierUnseal(ctx, &pb.BarrierUnsealRequest{Secret: secret})
 	require.NoError(t, err)
-	assert.False(t, barrier.IsSealed())
+	assert.False(t, testBarrier.IsSealed())
 }
 
 func TestBarrierUnseal_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierUnseal(context.Background(), &pb.BarrierUnsealRequest{
 		Secret: "test",
@@ -185,12 +182,12 @@ func TestBarrierUnseal_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestBarrierUnseal_InvalidCredentials(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Initialize.
@@ -211,36 +208,34 @@ func TestBarrierUnseal_InvalidCredentials(t *testing.T) {
 
 func TestBarrierSeal_Success(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Initialize.
 	_, err := svc.BarrierInitialize(ctx, &pb.BarrierInitializeRequest{Secret: "test-secret-123456"})
 	require.NoError(t, err)
-	assert.False(t, barrier.IsSealed())
+	assert.False(t, testBarrier.IsSealed())
 
 	// Seal.
 	resp, err := svc.BarrierSeal(ctx, &emptypb.Empty{})
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
-	assert.True(t, barrier.IsSealed())
+	assert.True(t, testBarrier.IsSealed())
 }
 
 func TestBarrierSeal_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierSeal(context.Background(), &emptypb.Empty{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestBarrierSeal_Idempotent(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Barrier starts sealed. Sealing again should be idempotent.
@@ -251,7 +246,7 @@ func TestBarrierSeal_Idempotent(t *testing.T) {
 
 func TestBarrierStatus_Success(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Initially sealed.
@@ -272,22 +267,20 @@ func TestBarrierStatus_Success(t *testing.T) {
 }
 
 func TestBarrierStatus_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.BarrierStatus(context.Background(), &emptypb.Empty{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 // ==================== PIN Handler Tests ====================
 
 func TestSetSOPIN_Success(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	resp, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{
@@ -299,9 +292,7 @@ func TestSetSOPIN_Success(t *testing.T) {
 }
 
 func TestSetSOPIN_NotConfigured(t *testing.T) {
-	SetPINManager(nil)
-	defer SetPINManager(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.SetSOPIN(context.Background(), &pb.SetSOPINRequest{
 		NewSoPin: "so-pin-123456",
@@ -309,12 +300,12 @@ func TestSetSOPIN_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestSetSOPIN_TooShort(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{
@@ -328,7 +319,7 @@ func TestSetSOPIN_TooShort(t *testing.T) {
 
 func TestSetUserPIN_Success(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Must set SO PIN first.
@@ -347,9 +338,7 @@ func TestSetUserPIN_Success(t *testing.T) {
 }
 
 func TestSetUserPIN_NotConfigured(t *testing.T) {
-	SetPINManager(nil)
-	defer SetPINManager(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.SetUserPIN(context.Background(), &pb.SetUserPINRequest{
 		SoPin:      "so-pin-123456",
@@ -358,12 +347,12 @@ func TestSetUserPIN_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestChangeSOPIN_Success(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Set initial SO PIN.
@@ -382,9 +371,7 @@ func TestChangeSOPIN_Success(t *testing.T) {
 }
 
 func TestChangeSOPIN_NotConfigured(t *testing.T) {
-	SetPINManager(nil)
-	defer SetPINManager(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.ChangeSOPIN(context.Background(), &pb.ChangeSOPINRequest{
 		CurrentSoPin: "old",
@@ -393,12 +380,12 @@ func TestChangeSOPIN_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestChangeSOPIN_InvalidCurrent(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Set initial SO PIN.
@@ -420,7 +407,7 @@ func TestChangeSOPIN_InvalidCurrent(t *testing.T) {
 
 func TestChangeUserPIN_Success(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	soPIN := "so-pin-123456"
@@ -442,9 +429,7 @@ func TestChangeUserPIN_Success(t *testing.T) {
 }
 
 func TestChangeUserPIN_NotConfigured(t *testing.T) {
-	SetPINManager(nil)
-	defer SetPINManager(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.ChangeUserPIN(context.Background(), &pb.ChangeUserPINRequest{
 		CurrentUserPin: "old",
@@ -453,12 +438,12 @@ func TestChangeUserPIN_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestVerifySOPIN_Success(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	soPIN := "so-pin-123456"
@@ -474,9 +459,7 @@ func TestVerifySOPIN_Success(t *testing.T) {
 }
 
 func TestVerifySOPIN_NotConfigured(t *testing.T) {
-	SetPINManager(nil)
-	defer SetPINManager(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.VerifySOPIN(context.Background(), &pb.VerifySOPINRequest{
 		SoPin: "test-pin-123456",
@@ -484,12 +467,12 @@ func TestVerifySOPIN_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestVerifySOPIN_Invalid(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Set SO PIN.
@@ -506,7 +489,7 @@ func TestVerifySOPIN_Invalid(t *testing.T) {
 
 func TestVerifyUserPIN_Success(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	soPIN := "so-pin-123456"
@@ -525,9 +508,7 @@ func TestVerifyUserPIN_Success(t *testing.T) {
 }
 
 func TestVerifyUserPIN_NotConfigured(t *testing.T) {
-	SetPINManager(nil)
-	defer SetPINManager(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.VerifyUserPIN(context.Background(), &pb.VerifyUserPINRequest{
 		UserPin: "test-pin-123456",
@@ -535,12 +516,12 @@ func TestVerifyUserPIN_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestVerifyUserPIN_Invalid(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	soPIN := "so-pin-123456"
@@ -562,7 +543,7 @@ func TestVerifyUserPIN_Invalid(t *testing.T) {
 
 func TestGetLockoutStatus_Success(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	resp, err := svc.GetLockoutStatus(ctx, &emptypb.Empty{})
@@ -574,20 +555,18 @@ func TestGetLockoutStatus_Success(t *testing.T) {
 }
 
 func TestGetLockoutStatus_NotConfigured(t *testing.T) {
-	SetPINManager(nil)
-	defer SetPINManager(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.GetLockoutStatus(context.Background(), &emptypb.Empty{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestResetLockout_Success(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	soPIN := "so-pin-123456"
@@ -603,9 +582,7 @@ func TestResetLockout_Success(t *testing.T) {
 }
 
 func TestResetLockout_NotConfigured(t *testing.T) {
-	SetPINManager(nil)
-	defer SetPINManager(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	_, err := svc.ResetLockout(context.Background(), &pb.ResetLockoutRequest{
 		SoPin: "test-pin-123456",
@@ -613,12 +590,12 @@ func TestResetLockout_NotConfigured(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestResetLockout_InvalidSOPIN(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Set SO PIN.
@@ -718,7 +695,7 @@ func TestMapPINError_UnknownError(t *testing.T) {
 
 func TestBarrier_FullLifecycle(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 	secret := "lifecycle-secret-123"
 
@@ -758,7 +735,7 @@ func TestBarrier_FullLifecycle(t *testing.T) {
 
 func TestPIN_FullLifecycle(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	soPIN := "so-pin-123456"

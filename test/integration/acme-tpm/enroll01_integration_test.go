@@ -26,6 +26,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"testing"
@@ -478,14 +479,39 @@ func startChallengeServer(t *testing.T, port, token string, packedCSR []byte, sw
 		Handler: mux,
 	}
 
+	// Bind synchronously, with a short retry, rather than the previous
+	// ListenAndServe-in-a-goroutine-and-sleep(100ms)-and-hope pattern: that
+	// logged a bind failure (t.Logf, not t.Fatal/require) and returned the
+	// *http.Server regardless, so the caller had no way to notice its
+	// responder never actually started -- the observed symptom was always a
+	// downstream "challenge status: invalid" several steps later, never the
+	// real "address already in use" cause. Every enroll01/endorse01/
+	// device-attest01 test in this package binds the same server-hardcoded
+	// port (challenge.go's 8080 default; see TestEnrollment_ConcurrentRequests's
+	// doc comment for why the client cannot choose a different one), so
+	// even with tests running serially (never t.Parallel in this package) a
+	// listener from the previous test can still hold the port for a moment
+	// after that test's own Close() returns -- net.Listen's own OS-level
+	// socket teardown is not synchronous with the Go-level call that
+	// triggered it. The retry absorbs exactly that window; it is not
+	// papering over a real bind conflict between two responders that are
+	// both supposed to be listening at the same time.
+	var listener net.Listener
+	var listenErr error
+	for attempt := 0; attempt < 20; attempt++ {
+		listener, listenErr = net.Listen("tcp", server.Addr)
+		if listenErr == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.NoError(t, listenErr, "failed to bind challenge server to port %s", port)
+
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			t.Logf("Challenge server error: %v", err)
 		}
 	}()
-
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
 
 	return server
 }

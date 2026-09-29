@@ -126,6 +126,14 @@ type oidcDiscoveryDocument struct {
 	UserInfoEndpoint      string   `json:"userinfo_endpoint"`
 	JWKSUri               string   `json:"jwks_uri"`
 	ScopesSupported       []string `json:"scopes_supported"`
+
+	// IDTokenSigningAlgValuesSupported is the IdP's advertised set of ID
+	// token signing algorithms (OIDC Discovery 1.0 section 3, REQUIRED
+	// metadata field). When present, validateIDToken intersects it with
+	// the algorithms permitted by the verification key's own type, so a
+	// key served with an algorithm the IdP never advertised is refused
+	// even if that algorithm would otherwise be valid for the key type.
+	IDTokenSigningAlgValuesSupported []string `json:"id_token_signing_alg_values_supported"`
 }
 
 // jwksCache holds cached JWKS keys with expiration.
@@ -400,10 +408,38 @@ func (a *OIDCAuthenticator) validateIDToken(ctx context.Context, tokenString str
 	key := keys[0]
 	publicKey := key.Key
 
+	// Pin the accepted alg header values to publicKey's actual type. This
+	// refuses HS* outright (validMethodsForKey never returns it, and
+	// returns UnsupportedVerificationKeyError for anything that isn't an
+	// RSA/ECDSA/Ed25519 public key, including the []byte go-jose would
+	// hand back for a JWKS "oct" entry) -- so a JWKS response smuggling a
+	// symmetric key can never be used to verify an HS*-signed token
+	// against a public key's own bytes.
+	validMethods, err := validMethodsForKey(publicKey)
+	if err != nil {
+		return nil, &OIDCAuthenticatorError{Message: ErrOIDCTokenValidation.Message, Cause: err}
+	}
+
+	// Further narrow to the algorithms the IdP's discovery document
+	// advertised, when it published id_token_signing_alg_values_supported.
+	if discovery := a.discovery.Load(); discovery != nil {
+		narrowed := intersectSigningAlgorithms(validMethods, discovery.IDTokenSigningAlgValuesSupported)
+		if len(narrowed) == 0 && len(discovery.IDTokenSigningAlgValuesSupported) > 0 {
+			return nil, &OIDCAuthenticatorError{
+				Message: ErrOIDCTokenValidation.Message,
+				Cause: &NoCommonSigningAlgorithmError{
+					KeyAlgorithms:        validMethods,
+					AdvertisedAlgorithms: discovery.IDTokenSigningAlgValuesSupported,
+				},
+			}
+		}
+		validMethods = narrowed
+	}
+
 	// Parse and verify the token
 	verifiedToken, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		return publicKey, nil
-	})
+	}, jwt.WithValidMethods(validMethods))
 	if err != nil {
 		return nil, &OIDCAuthenticatorError{Message: ErrOIDCTokenValidation.Message, Cause: err}
 	}

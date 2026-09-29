@@ -635,6 +635,11 @@ func TestGetKeyHandler_KeyNotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// TestGetKeyHandler_GetKeyError pins the service layer's GetKey contract,
+// which this handler adopted in go-xkms#1218: the key's metadata is the
+// answer, and its public key is reported when the backend can hand out the
+// key's handle. A handle the backend cannot read leaves the public key out
+// rather than failing a lookup that found the key.
 func TestGetKeyHandler_GetKeyError(t *testing.T) {
 	ks := setupTestService(t, "test-backend")
 	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -649,7 +654,12 @@ func TestGetKeyHandler_GetKeyError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/keys/key-err?backend=test-backend", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp GetKeyResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "key-err", resp.KeyID)
+	assert.Empty(t, resp.PublicKeyPEM)
 }
 
 func TestGetKeyHandler_ListKeysError(t *testing.T) {
@@ -697,15 +707,10 @@ func TestGetTLSCertificateHandler_WithChain(t *testing.T) {
 	require.NoError(t, err)
 	cert := generateTestCertificate(t, ecKey)
 
-	// Build a TLS certificate with a chain (cert + intermediate).
-	ks.GetTLSCertificateFunc = func(_ string, _ *types.KeyAttributes) (tls.Certificate, error) {
-		return tls.Certificate{
-			Certificate: [][]byte{cert.Raw, cert.Raw}, // leaf + fake intermediate
-			PrivateKey:  ecKey,
-			Leaf:        cert,
-		}, nil
-	}
-	ks.SetKey("chain-tls", ecKey)
+	// The bundle is the stored leaf and the stored chain above it: the chain
+	// is stored leaf first, and the leaf is not repeated in chain_pem.
+	ks.SetCert("chain-tls", cert)
+	ks.SetCertChain("chain-tls", []*x509.Certificate{cert, cert}) // leaf + fake intermediate
 
 	ctx := newTestHandlerContext()
 	router := createRouterWithHandler(http.MethodGet, "/api/v1/keys/{id}/tls-cert", ctx.GetTLSCertificateHandler)
@@ -737,10 +742,10 @@ func TestGetTLSCertificateHandler_GetTLSCertError(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
-func TestGetTLSCertificateHandler_ListKeysError(t *testing.T) {
+func TestGetTLSCertificateHandler_CertStoreError(t *testing.T) {
 	ks := setupTestService(t, "test-backend")
-	ks.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
-		return nil, errors.New("list error")
+	ks.GetCertFunc = func(string) (*x509.Certificate, error) {
+		return nil, errors.New("cert store failure")
 	}
 
 	ctx := newTestHandlerContext()

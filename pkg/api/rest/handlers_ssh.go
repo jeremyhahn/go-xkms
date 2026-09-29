@@ -120,7 +120,7 @@ func (h *SSHHandlers) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, http.StatusCreated)
 }
 
-// handleImport consumes a restImportDTO whose PassphraseB64 field uses
+// handleImport consumes a restImportDTO whose Passphrase field (wire name passphrase_b64) uses
 // a custom json.Unmarshaler that lands the decoded bytes directly into
 // a *secure.Buffer. No Go string carries the plaintext passphrase on
 // this path — see SSHPassphraseField below.
@@ -567,11 +567,13 @@ func (e *SSHBadBodyError) Error() string {
 func (e *SSHBadBodyError) Unwrap() error { return e.Err }
 
 // writeSSHError serializes err to the SSH error envelope and routes
-// through the shared SDK status-code table.
+// through the shared SDK status-code table. The envelope's error text is
+// scrubbed by clientErrorText exactly as writeError scrubs its own: an
+// internal status carries ErrInternalError and err is logged server-side.
 func writeSSHError(w http.ResponseWriter, err error) {
 	status := classifySSHError(err)
 	env := sshErrorEnvelope{
-		Error:    err.Error(),
+		Error:    clientErrorText(w, err, status),
 		Resource: sshErrorResource(err),
 	}
 	// Known-host mismatch carries extra fields.

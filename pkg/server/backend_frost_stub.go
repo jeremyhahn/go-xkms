@@ -19,7 +19,7 @@ package server
 // the warn-and-continue stubs for the other build-tagged backends, this one
 // fails closed: a threshold-signing backend an operator has configured and
 // believes is protecting key material must never silently vanish into "no
-// FROST backend configured" (pkg/api/*/handlers_frost.go's getFrostBackend)
+// FROST backend configured" (xkms.ErrFrostNotConfigured, pkg/xkms/servicer_frost.go)
 // just because this binary was built without -tags frost. A build without
 // the tag that also has no backends.frost configured is unaffected.
 func (s *Server) initFrostBackend() error {

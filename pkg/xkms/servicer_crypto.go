@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -640,15 +641,39 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 			// selects the key's native AEAD default, and an unrecognized Mode
 			// string is left for SymmetricEncrypter.Encrypt to reject as a typed
 			// error rather than silently running the default cipher.
+			mode := types.CipherMode(strings.ToLower(req.Mode))
+
+			// The empty Mode is the key's AEAD (AES-GCM or ChaCha20-Poly1305).
+			// A caller-supplied nonce for it is claimed before the seal, and a
+			// claim that fails refuses the request before any ciphertext
+			// exists; see claimAEADNonce.
+			aeadMode := mode == ""
+			if aeadMode && len(req.Nonce) > 0 {
+				if err := claimAEADNonce(ctx, b, attrs, aeadEncryptOperation, req.Nonce); err != nil {
+					return nil, err
+				}
+			}
+
 			encrypted, err := encrypter.Encrypt(req.Plaintext, &types.EncryptOptions{
 				AdditionalData: req.AdditionalData,
 				Nonce:          req.Nonce,
-				Mode:           types.CipherMode(strings.ToLower(req.Mode)),
+				Mode:           mode,
 				IV:             req.IV,
 				TagSize:        req.TagSize,
 			})
 			if err != nil {
 				return nil, wrapOperationError(ErrEncryptionFailed, "", err)
+			}
+
+			// Any nonce the caller did not claim above -- one the provider
+			// generated -- is recorded now that it is known, so nobody can
+			// present it later as their own. Providers that keep the nonce
+			// inside their own ciphertext format return none, and have
+			// nothing to record.
+			if aeadMode && len(encrypted.Nonce) > 0 && !bytes.Equal(encrypted.Nonce, req.Nonce) {
+				if err := claimGeneratedAEADNonce(ctx, b, attrs, encrypted.Nonce); err != nil {
+					return nil, err
+				}
 			}
 			return &transport.EncryptResponse{
 				Ciphertext:   encrypted.Ciphertext,
@@ -666,12 +691,37 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 	// this same RPC for CKM_RSA_PKCS, and previously had no branch to reach
 	// here at all -- every asymmetric-KEK wrap failed with "backend does not
 	// support symmetric encryption" regardless of the key it was given.
+	//
 	rsaPub, err := asymEncrypterKey(ctx, b, attrs)
 	if err != nil {
 		return nil, err
 	}
 
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, req.Plaintext) //nolint:staticcheck // SA1019: CKM_RSA_PKCS is PKCS#1 v1.5 by definition
+	// PKCS#1 v1.5 encryption authenticates nothing and its conformance check
+	// is the Bleichenbacher/Marvin decryption oracle (RFC 8017 section
+	// 7.2.2) -- the same reasoning servicer_wrapkey.go gates
+	// types.WrapRSAPKCS1v15 on. This RPC has no wrap/unwrap algorithm
+	// parameter to dispatch resolveWrapMechanism on, so the process-wide
+	// policy accessor is read directly: one operator setting,
+	// crypto.allow_legacy_key_wrap, governs every PKCS#1 v1.5 construction
+	// this service performs. EncryptAsym (RSA-OAEP) is the unconditionally
+	// available replacement and requires no configuration change.
+	//
+	// Checked after asymEncrypterKey resolves an RSA key, not before: a
+	// caller whose key cannot even reach this construction (not RSA, no
+	// crypto.Signer) should see that error, not a policy refusal for a
+	// construction that was never going to run anyway.
+	if !types.AllowLegacyKeyWrap() {
+		reason, _ := types.LegacyKeyWrapReason(types.WrapRSAPKCS1v15)
+		return nil, &ErrValidation{
+			Sentinel: ErrLegacyWrapDisabled,
+			Detail: "Encrypt's asymmetric fallback (PKCS#1 v1.5) is refused: " + reason +
+				". Use EncryptAsym (RSA-OAEP) instead, or set crypto.allow_legacy_key_wrap=true to re-admit it" +
+				" (ignored in FIPS mode, where the validated module's approved mechanism set applies)",
+		}
+	}
+
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, req.Plaintext) //nolint:staticcheck // SA1019: CKM_RSA_PKCS is PKCS#1 v1.5 by definition; gated on crypto.allow_legacy_key_wrap
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrEncryptionFailed, Err: err}
 	}
@@ -1107,6 +1157,19 @@ func (s *XKMSService) DeriveKey(ctx context.Context, req *transport.DeriveKeyReq
 	if keyLength <= 0 {
 		keyLength = defaultDerivedKeyLength
 	}
+	// Refused before any KDF parameter assembly or backend work: a caller
+	// that names an oversized key_length must not cause an adapter in
+	// pkg/crypto/kdf to preallocate on its behalf. types.KDFParams.Derive and
+	// types.DeriveFromKeyMaterial enforce the same ceiling as the actual
+	// gate; this is the same check, reported as request validation instead of
+	// an operation failure so it surfaces as InvalidArgument, matching every
+	// other malformed KDF field this function reports (go-xkms#1259).
+	if keyLength > types.MaxDerivedKeyLength {
+		return nil, &ErrValidation{
+			Sentinel: ErrInvalidKeyAttributes,
+			Detail:   fmt.Sprintf("key_length %d exceeds the maximum of %d bytes", keyLength, types.MaxDerivedKeyLength),
+		}
+	}
 
 	params, err := bridge.params(req, keyLength, h)
 	if err != nil {
@@ -1168,6 +1231,22 @@ func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKe
 	}
 	if len(req.PeerPublicKey) == 0 {
 		return nil, requiredField("peer_public_key")
+	}
+
+	// Refused before any backend or key lookup: a caller that names an
+	// oversized key_length must not cause the backend to be resolved, the
+	// key attributes fetched, or (once it runs) ECDH computed, only to have
+	// the result handed to a KDF adapter that preallocates on the caller's
+	// behalf. types.KDFParams.Derive enforces the same ceiling as the actual
+	// gate (every DeriveKeyECDH backend validates through it); this is the
+	// same check, reported as request validation instead of the generic
+	// ErrKeyAgreementFailed so it surfaces as InvalidArgument, matching every
+	// other malformed request field this function reports (go-xkms#1259).
+	if req.KeyLength > types.MaxDerivedKeyLength {
+		return nil, &ErrValidation{
+			Sentinel: ErrInvalidKeyAttributes,
+			Detail:   fmt.Sprintf("key_length %d exceeds the maximum of %d bytes", req.KeyLength, types.MaxDerivedKeyLength),
+		}
 	}
 
 	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)

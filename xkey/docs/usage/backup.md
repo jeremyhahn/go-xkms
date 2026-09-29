@@ -14,16 +14,32 @@ credentials, and static passwords.
 
 ## Credentials
 
-`create` takes `--password`; when it is omitted a random 256-bit key is
-generated and printed once in hex:
+The backup password is read from standard input (`--password-stdin`) or the
+`XKEY_BACKUP_PASSWORD` environment variable, in that order. There is no
+`--password` value flag: a value on the command line is visible to every
+process on the host through `ps` (go-xkms#1202, the same rule as `--pin`,
+`cmd/xkey/cmd/backup.go:1352-1370`). The password bytes are wiped once the
+key is derived.
+
+When `create` gets no password a random 256-bit key is generated and printed
+once in hex:
 
 ```
 Generated encryption key (save this):
   9f2c...<64 hex chars>
 ```
 
-`contents` and `restore` accept either `--password` or `--key <hex>`. The key
-is the SHA-256 of the password, or the 32 raw bytes decoded from `--key`.
+`contents` and `restore` accept the backup password or a raw key (the 32 hex
+bytes) supplied through `--key-stdin` or the `XKEY_BACKUP_KEY` environment
+variable, the same convention as the password; a password takes precedence.
+There is no `--key` value flag either.
+
+A password is stretched with Argon2id (t=3, m=64 MiB, p=4) under a fresh
+32-byte random salt, or PBKDF2-SHA256 when the Go FIPS 140 module is
+enabled — the canonical go-xkms password hasher, reached through
+`backup.NewPasswordKey` (`pkg/backup/key.go:63-71`). The salt and parameters
+are stored in the file (see [File format](#file-format)), so the same
+password gives a different key for every backup.
 
 A wrong password or key fails with
 `backup: decryption failed: incorrect password or key` and nothing is written.
@@ -73,7 +89,10 @@ before go-xkms#936.
 | Default source never written to (`create`/`to-device`) | Not an error: the category is listed under `Not included:` and left out, instead of being auto-created empty |
 | `--trust-store`/`--oath-store`/`--password-store` names a path that does not exist (`create`/`to-device`) | Fails with `backup: source does not exist`, naming the category and path |
 | Store cannot be opened | Fails with `backup: data store unavailable`, naming the category and path |
-| Wrong password/key, tampered ciphertext, or truncated file | Fails with `backup: decryption failed` |
+| Wrong password/key, tampered header or ciphertext, or truncated file | Fails with `backup: decryption failed` |
+| Version 1 file (unsalted SHA-256 password key) | Fails with `backup: decryption failed: unsalted version 1 backup format is no longer supported; re-create the backup` (`backup.ErrLegacyBackupFormat`); never migrated |
+| KDF parameters in the file altered | Fails with `backup: decryption failed: the backup's key-derivation record is invalid or has been altered`, before any key is derived |
+| Password given for a random-key backup | Fails with `backup: decryption failed: backup was sealed with a raw key; supply it with --key-stdin or XKEY_BACKUP_KEY` |
 | Backup holds a category the CLI cannot write | Restores the rest, then exits with `backup: restore incomplete` |
 
 Entries that already exist in a target store are reported per category as
@@ -87,28 +106,44 @@ A `.xkb` file is the JSON encoding of the backup envelope:
 ```json
 {
   "magic": "XKBK",
-  "version": 1,
+  "version": 2,
+  "kdf": {
+    "version": 1,
+    "algorithm": "Argon2id",
+    "salt": "<base64, 32 bytes>",
+    "time": 3,
+    "memory_kib": 65536,
+    "threads": 4,
+    "key_length": 32
+  },
   "nonce": "<base64, 24 bytes>",
   "ciphertext": "<base64>"
 }
 ```
 
-The ciphertext is the archive — manifest, certificates, credentials, and
+`kdf` is absent for a backup sealed with a random or `--key-stdin`/`XKEY_BACKUP_KEY` key. The
+ciphertext is the archive — manifest, certificates, credentials, and
 passwords — serialized to JSON and sealed with XChaCha20-Poly1305 under the
-password-derived or supplied key. The archive carries a SHA-256 checksum of
-its own payload, verified on decrypt. Only the magic value, format version,
-and nonce are readable without the key.
+password-derived or supplied key (`pkg/backup/service.go:437-460`). The
+header (`magic`, `version`, `kdf`) is the AEAD additional data, so editing
+any of it makes decryption fail. A `kdf` record whose costs differ from the
+ones its version pins is refused before derivation, so a crafted file cannot
+weaken the KDF or demand unbounded memory. The archive carries a SHA-256
+checksum of its own payload, verified on decrypt. Only the header and nonce
+are readable without the key.
+
+Version 1 files, keyed with an unsalted SHA-256 of the password, are refused
+(`pkg/backup/service.go:958-969`).
 
 ## Example
 
 ```bash
-# Back up to an explicit path
-xkey backup create --password 'correct horse battery staple' \
-  --output ~/.xkey/backups/laptop.xkb
+# Back up to an explicit path, password from a file on stdin
+xkey backup create --password-stdin --output ~/.xkey/backups/laptop.xkb < backup-password.txt
 
 # Inspect without restoring
-xkey backup contents ~/.xkey/backups/laptop.xkb --password 'correct horse battery staple'
+xkey backup contents ~/.xkey/backups/laptop.xkb --password-stdin < backup-password.txt
 
 # Restore onto a new machine
-xkey backup restore ~/.xkey/backups/laptop.xkb --password 'correct horse battery staple'
+xkey backup restore ~/.xkey/backups/laptop.xkb --password-stdin < backup-password.txt
 ```

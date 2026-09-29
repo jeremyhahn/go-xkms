@@ -20,6 +20,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,6 +52,7 @@ func newTestTransport(adapterPresent bool) *BLETransport {
 		reassembler:  pairing.NewReassembler(),
 		responseChan: make(chan []byte, 16),
 		statusChan:   make(chan []byte, 16),
+		done:         make(chan struct{}),
 	}
 	if adapterPresent {
 		t.adapter = &bluetooth.Adapter{}
@@ -138,6 +140,36 @@ func TestBLETransport_Receive_ContextDeadline(t *testing.T) {
 
 	if _, err := tr.Receive(ctx); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("Receive() error = %v, want %v", err, ErrTimeout)
+	}
+}
+
+// TestBLETransport_Receive_UnblocksOnClose pins that a Receive already
+// blocked when Close runs is woken up via done rather than left hanging
+// until its context expires.
+func TestBLETransport_Receive_UnblocksOnClose(t *testing.T) {
+	tr := newTestTransport(true)
+	tr.connected.Store(true)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := tr.Receive(context.Background())
+		errCh <- err
+	}()
+
+	// Give Receive a moment to reach its select before closing.
+	time.Sleep(20 * time.Millisecond)
+
+	if err := tr.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, ErrBackendClosed) {
+			t.Fatalf("Receive() error = %v, want %v", err, ErrBackendClosed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Receive() did not unblock after Close()")
 	}
 }
 
@@ -343,8 +375,11 @@ func TestBLETransport_Disconnect_NotConnectedIsANoop(t *testing.T) {
 }
 
 // TestBLETransport_Close_IdleTransport drives the whole Close path on a
-// transport that was never connected: Disconnect is a no-op, and both
-// channels are closed.
+// transport that was never connected: Disconnect is a no-op, and done is
+// closed to wake up any blocked receivers. responseChan and statusChan are
+// deliberately left open (see the done field comment on BLETransport) since
+// BLE notification handlers may still be in flight and must never send on a
+// closed channel.
 func TestBLETransport_Close_IdleTransport(t *testing.T) {
 	tr := newTestTransport(true)
 
@@ -352,11 +387,20 @@ func TestBLETransport_Close_IdleTransport(t *testing.T) {
 		t.Fatalf("Close() error = %v, want nil", err)
 	}
 
-	if _, open := <-tr.responseChan; open {
-		t.Fatal("responseChan was not closed")
+	select {
+	case <-tr.done:
+	default:
+		t.Fatal("done was not closed")
 	}
-	if _, open := <-tr.statusChan; open {
-		t.Fatal("statusChan was not closed")
+
+	select {
+	case _, open := <-tr.responseChan:
+		if !open {
+			t.Fatal("responseChan must never be closed")
+		}
+	default:
+		// No message queued, which is expected; the point is the channel
+		// must not be closed (the case above would fire with open == false).
 	}
 }
 
@@ -371,6 +415,49 @@ func TestBLETransport_Close_Idempotent(t *testing.T) {
 
 	if err := tr.Close(); err != nil {
 		t.Fatalf("second Close() error = %v, want nil", err)
+	}
+}
+
+// TestBLETransport_NotificationsRaceClose is a regression test for #1271:
+// handleResponseNotification and handleStatusNotification run on BlueZ
+// goroutines and can still be delivering notifications after Close begins
+// (the connEpoch note on BLETransport explains why). The old Close closed
+// responseChan/statusChan; a handler that passed its closed.Load() check
+// and then lost the race to Close's swap+close would panic sending on a
+// closed channel. Close no longer closes those channels (see the done field
+// comment), so this must run clean under -race no matter how Close and the
+// notification handlers interleave.
+func TestBLETransport_NotificationsRaceClose(t *testing.T) {
+	statusPayload := []byte("status-update")
+	fragments, err := pairing.NewFragmenter(DefaultMTU).Fragment([]byte("response"))
+	if err != nil {
+		t.Fatalf("fragment: %v", err)
+	}
+
+	for i := 0; i < 200; i++ {
+		tr := newTestTransport(true)
+
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				for _, frag := range fragments {
+					tr.handleResponseNotification(frag)
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				tr.handleStatusNotification(statusPayload)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			_ = tr.Close()
+		}()
+		wg.Wait()
 	}
 }
 

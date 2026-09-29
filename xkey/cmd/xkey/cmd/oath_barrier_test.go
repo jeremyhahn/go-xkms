@@ -94,7 +94,7 @@ func TestRunOATHAdd_NoBarrier_WarnsAndUsesFileStore(t *testing.T) {
 
 	cmd, out := newDetachedOATHCmd(t, oathAddCmd)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Slack"))
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
+	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "issuer", "Slack"))
 
 	require.NoError(t, runOATHAdd(cmd, nil))
@@ -125,9 +125,9 @@ func TestRunOATHAdd_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T
 
 	addCmd, addOut := newDetachedOATHCmd(t, oathAddCmd)
 	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "name", "GitHub"))
-	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
+	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
 	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "issuer", "GitHub"))
-	require.NoError(t, setFlagForTest(t, addCmd.Flags(), "barrier-password", password))
+	t.Setenv("XKEY_BARRIER_PASSWORD", password)
 
 	require.NoError(t, runOATHAdd(addCmd, nil))
 	assert.Contains(t, addOut.String(), "Added OATH credential: GitHub")
@@ -146,7 +146,7 @@ func TestRunOATHAdd_BarrierInitialized_WritesCiphertextNotPlaintext(t *testing.T
 	// like a separate process) must unseal and read the credential back.
 	listCmd, listOut := newDetachedOATHCmd(t, oathListCmd)
 	require.NoError(t, setFlagForTest(t, listCmd.Flags(), "secrets", "true"))
-	require.NoError(t, setFlagForTest(t, listCmd.Flags(), "barrier-password", password))
+	t.Setenv("XKEY_BARRIER_PASSWORD", password)
 
 	require.NoError(t, runOATHList(listCmd, nil))
 	assert.Contains(t, listOut.String(), "Name:      GitHub")
@@ -160,8 +160,8 @@ func TestRunOATHAdd_BarrierWrongPassword_TypedRefusal(t *testing.T) {
 
 	cmd, _ := newDetachedOATHCmd(t, oathAddCmd)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "GitHub"))
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "barrier-password", "wrong-password"))
+	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
+	t.Setenv("XKEY_BARRIER_PASSWORD", "wrong-password")
 
 	err := runOATHAdd(cmd, nil)
 	require.Error(t, err)
@@ -184,7 +184,7 @@ func TestRunOATHAdd_BarrierNoPasswordSupplied_TypedRefusal(t *testing.T) {
 	// has nothing left to try.
 	cmd, _ := newDetachedOATHCmd(t, oathAddCmd)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "GitHub"))
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
+	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
 
 	err := runOATHAdd(cmd, nil)
 	require.Error(t, err)
@@ -199,7 +199,7 @@ func TestRunOATHAdd_ExplicitStoreFlagBypassesBarrier(t *testing.T) {
 	store := oathStorePath(t)
 	cmd, out := newOATHCmd(t, oathAddCmd, store)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Explicit"))
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
+	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
 
 	// No --barrier-password is supplied; this must still succeed because an
 	// explicit --store bypasses barrier auto-detection entirely.

@@ -21,9 +21,10 @@ import (
 
 // classToJSONRPCCode translates apierrors.Class onto this transport's
 // JSON-RPC error code. It is total over every Class the apierrors tables
-// this package reads (ImportExportSentinelClasses, PIVSentinelClasses,
-// BarrierSentinelClasses, PINSentinelClasses, SealStoreSentinelClasses,
-// CustodianSentinelClasses, PolicySentinelClasses) can produce;
+// this package reads (ImportExportSentinelClasses, AEADSentinelClasses,
+// PIVSentinelClasses, BarrierSentinelClasses, PINSentinelClasses,
+// SealStoreSentinelClasses, CustodianSentinelClasses, PolicySentinelClasses)
+// can produce;
 // jsonRPCCodeForClass's ErrCodeInternalError floor exists only for a Class a
 // future apierrors table introduces without a row here.
 //
@@ -85,7 +86,7 @@ func mapImportExportError(msg string, err error) error {
 		return nil
 	}
 	if class, ok := apierrors.ClassOf(apierrors.ImportExportSentinelClasses, err); ok {
-		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: &errs.Wrapped{Msg: msg, Err: err}}
+		return classified(jsonRPCCodeForClass(class), &errs.Wrapped{Msg: msg, Err: err})
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: msg, Err: err}}
 }
@@ -99,7 +100,7 @@ func mapPIVError(err error, operation string) error {
 		return nil
 	}
 	if class, ok := apierrors.ClassOf(apierrors.PIVSentinelClasses, err); ok {
-		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: &errs.Wrapped{Msg: operation, Err: err}}
+		return classified(jsonRPCCodeForClass(class), &errs.Wrapped{Msg: operation, Err: err})
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
 }
@@ -114,7 +115,7 @@ func mapBarrierError(err error, operation string) error {
 		return nil
 	}
 	if class, ok := apierrors.ClassOf(apierrors.BarrierSentinelClasses, err); ok {
-		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: &errs.Wrapped{Msg: operation, Err: err}}
+		return classified(jsonRPCCodeForClass(class), &errs.Wrapped{Msg: operation, Err: err})
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
 }
@@ -129,7 +130,7 @@ func mapPINError(err error, operation string) error {
 		return nil
 	}
 	if class, ok := apierrors.ClassOf(apierrors.PINSentinelClasses, err); ok {
-		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: &errs.Wrapped{Msg: operation, Err: err}}
+		return classified(jsonRPCCodeForClass(class), &errs.Wrapped{Msg: operation, Err: err})
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
 }
@@ -145,7 +146,7 @@ func mapPolicyError(err error, operation string) error {
 		return nil
 	}
 	if class, ok := apierrors.ClassOf(apierrors.PolicySentinelClasses, err); ok {
-		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: &errs.Wrapped{Msg: operation, Err: err}}
+		return classified(jsonRPCCodeForClass(class), &errs.Wrapped{Msg: operation, Err: err})
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
 }

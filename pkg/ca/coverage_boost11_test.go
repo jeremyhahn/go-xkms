@@ -548,14 +548,6 @@ func TestCreatePlatformModelExtension_Success_B11(t *testing.T) {
 	assert.NotEmpty(t, ext.Value)
 }
 
-// TestCreatePlatformVersionExtension_Success_B11 exercises the success path.
-func TestCreatePlatformVersionExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreatePlatformVersionExtension("1.0")
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
 // TestCreateTPKeyStoreExtension_Success_B11 exercises the success path.
 func TestCreateTPKeyStoreExtension_Success_B11(t *testing.T) {
 	t.Parallel()

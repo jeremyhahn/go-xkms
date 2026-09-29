@@ -1,6 +1,6 @@
 # Key Management — CLI
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Binary: `xkmsctl`. Command groups covered here: `key`, `backends`,
 `algorithms`. Source: `cmd/xkmsctl/key.go`, `cmd/xkmsctl/root.go`,
@@ -134,13 +134,24 @@ xkmsctl key import imported-signer wrapped.bin --key-type rsa --key-size 3072
 
 ### `key copy <key-id> <dest-key-id>`
 
-`--dest-backend` (default `software`), `--dest-keydir`, `--key-type` (`tls`),
-`--key-algorithm` (`rsa`), `--key-size` (`2048`), `--curve` (`P-256`),
+`--dest-backend` (default `software`), `--dest-keydir`,
 `--algorithm` (`RSAES_OAEP_SHA_256`).
 
 ```
-xkmsctl key copy web-tls web-tls-backup --dest-backend awskms
+xkmsctl key copy web-tls web-tls-backup --dest-backend software
 ```
+
+The copy takes its algorithm, size, curve, hash and partition from the source
+key, on every transport (go-xkms#1218). `--key-type`, `--key-algorithm`,
+`--key-size` and `--curve` used to be accepted here too and silently ignored;
+they were removed from the flags, the request and the TypeScript SDK mirror
+rather than left as dead input (go-xkms#1223). The destination must support
+both halves of import/export; an import-only backend such as `awskms` is refused
+with `501` / `Unimplemented` (`key import not supported`). A source key whose
+RSA modulus is smaller than 2048 bits is refused with `400` /
+`InvalidArgument` before any material is exported (go-xkms#1223). See
+[engineering.md](engineering.md) §"Key lifecycle RPCs resolve inside the
+caller's tenant".
 
 ### `key get-import-params <key-id>`
 

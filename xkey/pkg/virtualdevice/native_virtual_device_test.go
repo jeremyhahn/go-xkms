@@ -509,6 +509,39 @@ func TestNativeVirtualDevice_HandleResponseWhenClosed(t *testing.T) {
 	device.handleResponse([]byte{0x01, 0x02, 0x03})
 }
 
+// TestNativeVirtualDevice_HandleResponseRacesClose is a regression test for
+// #1271: the CTAPHID keepalive goroutine (hid_adapter.go's sendKeepalives)
+// calls handleResponse via the response-handler callback and can still be
+// running when the caller closes the device. handleResponse used to check
+// d.closed.Load() and then send on d.respChan, while Close closed d.respChan
+// under d.mu without any lock serializing against handleResponse; a send
+// that lost that race panicked with "send on closed channel". respChan is
+// now never closed (Read/Close coordinate through done instead), so this
+// must run clean under -race no matter how Close and handleResponse
+// interleave.
+func TestNativeVirtualDevice_HandleResponseRacesClose(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		device, err := NewNativeVirtualDevice(nil)
+		if err != nil {
+			t.Fatalf("failed to create device: %v", err)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				device.handleResponse([]byte{byte(j)})
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			_ = device.Close()
+		}()
+		wg.Wait()
+	}
+}
+
 // TestNativeVirtualDevice_ResponseChannelOverflow tests the response channel
 // overflow handling in handleResponse.
 func TestNativeVirtualDevice_ResponseChannelOverflow(t *testing.T) {

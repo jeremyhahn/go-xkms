@@ -220,12 +220,12 @@ Defaults are constants at `xkey/cmd/xkey/cmd/fido2.go:164-170`.
 |---|---|---|
 | `--storage` | `memory` | `memory`, `file`, or `barrier` |
 | `--storage-path` | `~/.xkey/data/fido2` | path for file storage and the authenticator profile, resolved through the shared xkey data-directory chain (`resolveFIDO2StoragePath`, `fido2.go`; honors `XKEY_HOME`/`XKEY_DATA_DIR`) rather than the process's working directory (go-xkms#929) |
-| `--barrier-password` | `""` | barrier password for encrypted storage |
+| `--barrier-password-stdin` | `false` | read the barrier password for encrypted storage from standard input |
 | `--barrier-password-file` | `""` | read it from a file's first line |
 | `--name` | `xKey (go-xkms)` | device name the OS sees |
 | `--serial` | `""` | device serial; generated when empty |
 | `--pin` | `true` | require a PIN |
-| `--set-pin` | `""` | establish the initial PIN when the store has none (needs `--pin`; refused if a PIN is already set) |
+| `--set-pin-stdin` | `false` | read the initial PIN to establish from standard input (needs `--pin`; refused if a PIN is already set) |
 | `--interactive` | `false` | interactive setup |
 | `--require-touch` | `true` | require user presence |
 | `--timeout` | `30s` | operation timeout |
@@ -328,12 +328,12 @@ first run and the wrong one for daily use.
   authenticator's own credential, distinct from the barrier or the OS.
 - **A first PIN has one establishment path.** The CTAP `setPIN` subcommand
   (after its wire-level `pinUvAuthParam` proof) and the in-process
-  `Authenticator.SetInitialPIN` (the `--set-pin` seeding) both end in
+  `Authenticator.SetInitialPIN` (the `--set-pin-stdin` seeding) both end in
   `establishPINLocked` (`cmd_clientpin.go`): minimum length, retry-counter
   reset, outstanding `pinUvAuthToken` invalidation, then persistence. Neither
   replaces an existing PIN — `SetInitialPIN` refuses with `ErrPINAlreadySet`,
   and the daemon surfaces that as `ErrFIDO2PINAlreadySet` — so a restart with
-  `--set-pin` against a persistent store cannot silently rewrite the PIN or
+  `--set-pin-stdin` against a persistent store cannot silently rewrite the PIN or
   reset its retry counter. There is no testing-only PIN setter (#377).
 - **A first SO PIN has one establishment path too.** The CTAP
   `authenticatorConfig` vendor subcommand `setSOPIN` and the in-process

@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	oidcaws "github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/handlers"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/urlsafety"
 	"github.com/pkg/browser"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -45,8 +46,6 @@ import (
 const (
 	oidcCallbackTimeout = 5 * time.Minute
 	oidcProvidersFile   = "oidc-providers.json"
-	oidcTokensFile      = "tokens.json"
-	oidcTokenEncKey     = "xkey-oidc-token-store-encryption"
 	oidcScriptsDir      = "oidc-scripts"
 
 	// oidcProvidersBackendKey is the storage key used for provider
@@ -180,6 +179,23 @@ type refreshProcess struct {
 // BrowserOpenFunc allows tests to replace the browser open call.
 type BrowserOpenFunc func(url string) error
 
+// validatedBrowserOpen wraps open so that every URL it is handed passes
+// urlsafety.ValidateLaunchURL first. The authorization URL it launches is
+// built around an authorization_endpoint that provider discovery already
+// requires to be https-or-loopback (see the oidc package), but this is the
+// point where it actually reaches a subprocess -- including for providers
+// configured with SkipDiscovery, which bypass that check -- so it gets its
+// own guard rather than trusting the caller (go-xkms#1275).
+func validatedBrowserOpen(open BrowserOpenFunc) BrowserOpenFunc {
+	return func(rawURL string) error {
+		validated, err := urlsafety.ValidateLaunchURL(rawURL)
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrOIDCInvalidLaunchURL, Cause: err}
+		}
+		return open(validated.String())
+	}
+}
+
 // OIDCService manages OIDC authentication for the xKey GUI. It is bound
 // to the Wails runtime so every exported method is callable from the frontend.
 type OIDCService struct {
@@ -215,7 +231,7 @@ func NewOIDCService(log *slog.Logger) *OIDCService {
 		log:          log.With("service", "oidc"),
 		providers:    make(map[string]*OIDCProviderEntry),
 		refreshProcs: make(map[string]*refreshProcess),
-		browserOpen:  browser.OpenURL,
+		browserOpen:  validatedBrowserOpen(browser.OpenURL),
 		callback:     oidc.Callback{Host: defaults.CallbackHost, Port: defaults.CallbackPort},
 	}
 }
@@ -254,22 +270,23 @@ func (s *OIDCService) callbackReady() error {
 	return s.callbackErr
 }
 
-// SetDataDir initializes the token store and loads providers from the
-// specified data directory. This is the plain filesystem fallback used
-// when no barrier backend is available.
+// SetDataDir points provider configuration and saved scripts at the given
+// data directory and loads any existing providers. This is the fallback
+// path used when no barrier backend is available.
+//
+// go-qrdb's seal barrier is the ONE at-rest encryption xkey relies on; there
+// is no independent key this process can use to encrypt an OIDC token file
+// on disk, and a file "encrypted" with a key compiled into the binary is not
+// encrypted at all. So without a barrier, OIDC access and refresh tokens are
+// held in an in-memory store only: they never touch disk, and they do not
+// survive a restart (go-xkms#1203). SetBackend is the barrier-backed path,
+// which persists tokens for real.
 func (s *OIDCService) SetDataDir(dir string) {
 	s.dataDir = dir
 
-	tokensPath := filepath.Join(dir, oidcTokensFile)
-	store, err := oidc.NewFileTokenStore(tokensPath, []byte(oidcTokenEncKey))
-	if err != nil {
-		s.log.Warn("failed to open OIDC token store", "error", err)
-		store, err = oidc.NewFileTokenStore(tokensPath, nil)
-		if err != nil {
-			s.log.Error("failed to open OIDC token store without encryption; OIDC tokens will not persist", "error", err)
-		}
-	}
-	s.tokenStore = store
+	s.tokenStore = oidc.NewMemoryTokenStore()
+	s.log.Warn("no barrier available: OIDC tokens are kept in memory only and will not survive a restart",
+		"remedy", "run 'xkey barrier init' to persist OIDC tokens encrypted at rest")
 
 	if err := s.loadProviders(); err != nil {
 		s.log.Warn("failed to load OIDC providers", "error", err)

@@ -1,6 +1,6 @@
 # PKCS#11 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `pkcs11` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Exported surface
 
@@ -68,6 +68,22 @@ redeclared in xkey — `PKCS11Service.SetManager` /
 
 - `EmbeddedTransport` requires `xkms.IsInitialized()` at construction
   time; it never lazily initializes the service.
+- `EmbeddedTransport.WrapKeyByID`/`UnwrapKeyByID` (`service.go`) are the
+  in-process routes for the PKCS#11 `C_WrapKey`/`C_UnwrapKey` primitives.
+  They delegate directly to the `sdk/go` re-exports `xkms.WrapKeyByID` /
+  `xkms.UnwrapKeyByID` (`sdk/go/xkms_service.go`), which are process-
+  singleton wrappers over `pkg/xkms.WrapKeyByID`/`UnwrapKeyByID`
+  (`pkg/xkms/service.go:1916,1930`) and in turn over
+  `XKMSService.WrapKeyByID`/`UnwrapKeyByID`
+  (`pkg/xkms/servicer_key.go:854,998`). That implementation encrypts the
+  target key material directly under the caller-designated wrapping key
+  (`wrapKeyMaterial`/`unwrapKeyMaterial`, `pkg/xkms/servicer_wrapkey.go`).
+  It is deliberately independent of the key-IMPORT ceremony
+  (`xkms.ExportKey`/`WrapKey`/`GetImportParameters`), which serves an
+  unrelated feature (bringing externally generated material into a
+  backend) and always wraps under a freshly generated ephemeral key pair
+  — never the caller's own wrapping key — so it can never produce or
+  consume a `C_WrapKey`/`C_UnwrapKey` blob (go-xkms#1195).
 - `IPCTransport.Close` and `EmbeddedTransport.Close`/`Connect` are no-ops
   by contract: the embedded transport has no connection to hold, and the
   IPC transport opens and closes a fresh socket connection per request
@@ -126,6 +142,17 @@ above.
   missing base key / nil request / uninitialized service), and
   `ExportKeyMaterial` (canonical algorithm-family reporting, unexportable
   key refusal, bad requests).
+- `xkey/pkg/pkcs11/service_embeddedtransport_test.go` —
+  `WrapKeyByID`/`UnwrapKeyByID` round trips under RFC 3394 AES Key Wrap
+  and RSA-OAEP-SHA-256 (wrapped blob differs from the plaintext, unwrapped
+  material matches the original via `ExportKeyMaterial`), and their error
+  paths (nil request, unresolvable target/wrapping/unwrapping key,
+  unsupported algorithm — every failure surfaces as `ErrWrappingFailed`
+  with the `pkg/xkms` cause attached and reachable through
+  `errors.Is`/`errors.As`). `pkg/xkms/service_wrapkeybyid_test.go` covers
+  the `pkg/xkms.WrapKeyByID`/`UnwrapKeyByID` free functions these delegate
+  through: success against an initialized service and `ErrNotInitialized`
+  before one.
 - `xkey/pkg/gui/services/pkcs11_service_test.go`,
   `pkcs11_service_coverage_test.go`, `pkcs11_service_yubikey_test.go` —
   construction, validation errors, module/slot/token/connection CRUD

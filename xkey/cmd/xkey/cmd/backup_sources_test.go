@@ -135,11 +135,55 @@ func seedBackupStores(t *testing.T, home string) {
 // setBackupFlags applies flag values to a command and restores the previous
 // values when the test ends, so the shared cobra command objects do not leak
 // state between tests.
+// backupPasswordTestKey is the setBackupFlags key that supplies the backup
+// password. There is no --password value flag (go-xkms#1202): the value is
+// routed through XKEY_BACKUP_PASSWORD, one of the two sources the backup
+// commands read. An empty value supplies no password.
+const backupPasswordTestKey = "password"
+
+// backupKeyTestKey is the setBackupFlags key that supplies the backup's raw
+// hex key. There is no --key value flag (go-xkms#1209): the value is routed
+// through XKEY_BACKUP_KEY, one of the two sources "backup restore",
+// "backup contents" and "backup from-device" read. An empty value supplies
+// no key.
+const backupKeyTestKey = "key"
+
+// backupBarrierPasswordTestKey is the setBackupFlags key that supplies the
+// barrier password. There is no --barrier-password value flag
+// (go-xkms#1209): the value is routed through XKEY_BARRIER_PASSWORD, one of
+// the sources resolveBarrierPassword reads.
+const backupBarrierPasswordTestKey = "barrier-password"
+
+// setBackupPassword supplies password to the backup commands through the
+// XKEY_BACKUP_PASSWORD environment source for the rest of the test.
+func setBackupPassword(t *testing.T, password string) {
+	t.Helper()
+	t.Setenv(backupPasswordSource.envVar, password)
+}
+
+// setBackupKey supplies the raw hex key to the backup commands through the
+// XKEY_BACKUP_KEY environment source for the rest of the test.
+func setBackupKey(t *testing.T, keyHex string) {
+	t.Helper()
+	t.Setenv(backupKeySource.envVar, keyHex)
+}
+
 func setBackupFlags(t *testing.T, cmd *cobra.Command, values map[string]string) {
 	t.Helper()
 
 	previous := make(map[string]string, len(values))
 	for name, value := range values {
+		switch name {
+		case backupPasswordTestKey:
+			setBackupPassword(t, value)
+			continue
+		case backupKeyTestKey:
+			setBackupKey(t, value)
+			continue
+		case backupBarrierPasswordTestKey:
+			t.Setenv(barrierPasswordSource.envVar, value)
+			continue
+		}
 		flag := cmd.Flags().Lookup(name)
 		require.NotNil(t, flag, "flag %q must exist", name)
 		previous[name] = flag.Value.String()
@@ -204,6 +248,9 @@ func TestClassifyBackupDecryptError_KnownReasons(t *testing.T) {
 		{"corrupt", backup.ErrCorruptedBackup, "checksum mismatch"},
 		{"version", backup.ErrVersionMismatch, "unsupported backup format version"},
 		{"not_a_backup", backup.ErrInvalidBackup, "not an xkey backup envelope"},
+		{"legacy_unsalted", backup.ErrLegacyBackupFormat, "re-create the backup"},
+		{"raw_key_envelope", backup.ErrNotPasswordSealed, "--key"},
+		{"kdf_record", backup.ErrKeyDerivationFailed, "key-derivation record"},
 	}
 
 	for _, tc := range tests {
@@ -211,6 +258,7 @@ func TestClassifyBackupDecryptError_KnownReasons(t *testing.T) {
 			err := classifyBackupDecryptError(tc.cause)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrBackupDecryptFailed)
+			assert.ErrorIs(t, err, tc.cause, "the classified cause must stay in the chain")
 			assert.Contains(t, err.Error(), tc.contains)
 		})
 	}
@@ -954,7 +1002,9 @@ func TestBackupCreate_ExplicitPasswordStoreWins(t *testing.T) {
 	require.NoError(t, err)
 	encrypted, err := readEncryptedBackup(output)
 	require.NoError(t, err)
-	archive, err := svc.DecryptBackup(encrypted, deriveKey("pw"))
+	key, err := encrypted.PasswordKey([]byte("pw"))
+	require.NoError(t, err)
+	archive, err := svc.DecryptBackup(encrypted, key)
 	require.NoError(t, err)
 	require.Len(t, archive.Passwords, 1)
 	assert.Equal(t, "ExplicitEntry", archive.Passwords[0].Name,

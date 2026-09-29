@@ -1,6 +1,6 @@
 # FROST Threshold Signing — User Guide
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1231)
 
 ## What this is for
 
@@ -10,12 +10,18 @@ signing time. Use it when a single signing key would be too sensitive to
 trust to one machine or one operator: a code-signing root, a treasury key,
 a CA intermediate.
 
-**This is a local, operator-run tool today.** Everything in this guide runs
+**This guide covers the local, operator-run tool.** Everything in it runs
 on your own machine and stores key material under a local `--key-dir`. It
-does not talk to a remote `xkms` server — see
-[`architecture.md`](architecture.md) if you were expecting the network API
-your `xkmsd` exposes to work out of the box; it currently has no supported
-way to be turned on.
+does not talk to a remote `xkms` server. The network API (REST, gRPC, MCP)
+answers only when `xkmsd` has `backends.frost.enabled` set — see
+[`architecture.md`](architecture.md).
+
+**On a server, FROST keys belong to your tenant.** Keys you generate or
+import over the network API are stored in your tenant, and every call that
+names a key looks for it only there. Other tenants cannot list, read, delete
+or sign with your key shares, and you cannot see theirs: naming another
+tenant's key gets the same "not found" as naming a key that does not exist.
+Two tenants may each use the same key ID.
 
 ## Prerequisites
 
@@ -137,6 +143,19 @@ form on their own. This is the same protection `xkmsd` applies when
 mechanism differs by backend (TPM PCR-bound sealing, HSM/KMS envelope
 encryption, or the software HKDF+AES-GCM path this CLI uses), but every
 `secret_backend` protects the share the same way — none stores it verbatim.
+
+If you are embedding go-xkms directly in a Go program instead of using
+`xkmsctl` — `xkms.AutoInitialize` with `BackendConfigs[xkms.BackendFROST]`,
+rather than the CLI's own `createFrostBackend`
+(`cmd/xkmsctl/frost.go:1146`), which xkmsctl uses instead and is unaffected
+— the same fail-closed rule applies one level lower: its internal `pkcs8`
+secret store refuses to persist the wrapping key at all unless you set
+`"allow_plaintext_keys": true` in that backend's config
+(`pkg/xkms/register_frost.go:53`), and you accept that this in-memory,
+per-process store has no other encryption-at-rest layer underneath it (see
+[`engineering.md`](engineering.md)'s "Daemon backend registration" section).
+There is no way to make it silently store the wrapping key in the clear —
+go-xkms#1237.
 
 ## Things that will surprise you
 

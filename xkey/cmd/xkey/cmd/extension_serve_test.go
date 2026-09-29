@@ -41,8 +41,7 @@ func newTestServeCmd() *cobra.Command {
 		Use:  "serve",
 		RunE: func(cmd *cobra.Command, args []string) error { return nil },
 	}
-	cmd.Flags().String("barrier-password", "", "")
-	cmd.Flags().String("barrier-password-file", "", "")
+	addBarrierPasswordFlags(cmd)
 	cmd.Flags().Bool("no-barrier", false, "")
 	cmd.Flags().String("socket", "", "")
 	cmd.Flags().String("log-level", "info", "")
@@ -57,9 +56,14 @@ func newTestServeCmd() *cobra.Command {
 	return cmd
 }
 
-func TestResolveBarrierPassword_Flag(t *testing.T) {
+// TestResolveBarrierPassword_Stdin pins the top-precedence source:
+// --barrier-password-stdin. There is no "--barrier-password" value flag
+// (go-xkms#1209): a value on the command line is visible to every other
+// process on the host via 'ps'.
+func TestResolveBarrierPassword_Stdin(t *testing.T) {
 	cmd := newTestServeCmd()
-	if err := setFlagForTest(t, cmd.Flags(), "barrier-password", "test-flag-pw"); err != nil {
+	stubStdin(t, []byte("test-stdin-pw\n"), nil)
+	if err := setFlagForTest(t, cmd.Flags(), barrierPasswordSource.stdinFlag, "true"); err != nil {
 		t.Fatal(err)
 	}
 	// Clear env to avoid interference.
@@ -69,8 +73,19 @@ func TestResolveBarrierPassword_Flag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pw != "test-flag-pw" {
-		t.Fatalf("expected 'test-flag-pw', got %q", pw)
+	if pw != "test-stdin-pw" {
+		t.Fatalf("expected 'test-stdin-pw', got %q", pw)
+	}
+}
+
+// TestResolveBarrierPassword_NoValueFlag pins go-xkms#1209: "xkey extension
+// serve" does not accept the barrier password as a flag value.
+func TestResolveBarrierPassword_NoValueFlag(t *testing.T) {
+	if extensionServeCmd.Flags().Lookup("barrier-password") != nil {
+		t.Fatal("--barrier-password value flag must not exist")
+	}
+	if extensionServeCmd.Flags().Lookup("barrier-password-stdin") == nil {
+		t.Fatal("--barrier-password-stdin flag must exist")
 	}
 }
 
@@ -125,14 +140,19 @@ func TestResolveBarrierPassword_FileNotExist(t *testing.T) {
 	}
 }
 
-func TestResolveBarrierPassword_Priority_FlagOverFile(t *testing.T) {
+// TestResolveBarrierPassword_Priority_StdinOverFile pins that
+// --barrier-password-stdin outranks --barrier-password-file (and the
+// environment), the same precedence the old "--barrier-password" value flag
+// held before it was removed (go-xkms#1209).
+func TestResolveBarrierPassword_Priority_StdinOverFile(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "barrier-pw.txt")
 	if err := os.WriteFile(tmpFile, []byte("file-pw\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	cmd := newTestServeCmd()
-	if err := setFlagForTest(t, cmd.Flags(), "barrier-password", "flag-pw"); err != nil {
+	stubStdin(t, []byte("stdin-pw\n"), nil)
+	if err := setFlagForTest(t, cmd.Flags(), barrierPasswordSource.stdinFlag, "true"); err != nil {
 		t.Fatal(err)
 	}
 	if err := setFlagForTest(t, cmd.Flags(), "barrier-password-file", tmpFile); err != nil {
@@ -144,8 +164,8 @@ func TestResolveBarrierPassword_Priority_FlagOverFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pw != "flag-pw" {
-		t.Fatalf("expected 'flag-pw' (flag takes priority), got %q", pw)
+	if pw != "stdin-pw" {
+		t.Fatalf("expected 'stdin-pw' (stdin takes priority), got %q", pw)
 	}
 }
 
@@ -357,8 +377,7 @@ func TestExtensionServeCmd_NoBarrier_IPCConnectivity(t *testing.T) {
 	cmd.Flags().String("socket", socketPath, "")
 	cmd.Flags().String("log-level", "error", "")
 	cmd.Flags().String("log-file", "", "")
-	cmd.Flags().String("barrier-password", "", "")
-	cmd.Flags().String("barrier-password-file", "", "")
+	addBarrierPasswordFlags(cmd)
 	cmd.Flags().Bool("no-barrier", true, "")
 	cmd.Flags().Int("auto-lock-minutes", 0, "")
 	cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
@@ -457,11 +476,12 @@ func TestExtensionServeCmd_BarrierMode_IPCConnectivity(t *testing.T) {
 		Use:  "serve",
 		RunE: runExtensionServe,
 	}
+	t.Setenv(barrierPasswordSource.envVar, barrierPassword)
+
 	cmd.Flags().String("socket", socketPath, "")
 	cmd.Flags().String("log-level", "error", "")
 	cmd.Flags().String("log-file", "", "")
-	cmd.Flags().String("barrier-password", barrierPassword, "")
-	cmd.Flags().String("barrier-password-file", "", "")
+	addBarrierPasswordFlags(cmd)
 	cmd.Flags().Bool("no-barrier", false, "")
 	cmd.Flags().Int("auto-lock-minutes", 0, "")
 	cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
@@ -776,8 +796,7 @@ func TestExtensionServe_PKCS11Strategy_Refused(t *testing.T) {
 	cmd.Flags().String("socket", filepath.Join(privateTempDir(t), "test.sock"), "")
 	cmd.Flags().String("log-level", "error", "")
 	cmd.Flags().String("log-file", "", "")
-	cmd.Flags().String("barrier-password", "", "")
-	cmd.Flags().String("barrier-password-file", "", "")
+	addBarrierPasswordFlags(cmd)
 	cmd.Flags().Bool("no-barrier", false, "")
 	cmd.Flags().Int("auto-lock-minutes", 0, "")
 	cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
@@ -805,8 +824,7 @@ func TestExtensionServe_ShamirStrategy_Refused(t *testing.T) {
 	cmd.Flags().String("socket", filepath.Join(privateTempDir(t), "test.sock"), "")
 	cmd.Flags().String("log-level", "error", "")
 	cmd.Flags().String("log-file", "", "")
-	cmd.Flags().String("barrier-password", "", "")
-	cmd.Flags().String("barrier-password-file", "", "")
+	addBarrierPasswordFlags(cmd)
 	cmd.Flags().Bool("no-barrier", false, "")
 	cmd.Flags().Int("auto-lock-minutes", 0, "")
 	cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
@@ -842,8 +860,7 @@ func TestExtensionServe_CloudKMSStrategy_Attempted(t *testing.T) {
 			cmd.Flags().String("socket", filepath.Join(privateTempDir(t), "test.sock"), "")
 			cmd.Flags().String("log-level", "error", "")
 			cmd.Flags().String("log-file", "", "")
-			cmd.Flags().String("barrier-password", "", "")
-			cmd.Flags().String("barrier-password-file", "", "")
+			addBarrierPasswordFlags(cmd)
 			cmd.Flags().Bool("no-barrier", false, "")
 			cmd.Flags().Int("auto-lock-minutes", 0, "")
 			cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
@@ -993,8 +1010,7 @@ func TestExtensionServeCmd_NoAuth_NoBarrier(t *testing.T) {
 	cmd.Flags().String("socket", socketPath, "")
 	cmd.Flags().String("log-level", "error", "")
 	cmd.Flags().String("log-file", "", "")
-	cmd.Flags().String("barrier-password", "", "")
-	cmd.Flags().String("barrier-password-file", "", "")
+	addBarrierPasswordFlags(cmd)
 	cmd.Flags().Bool("no-barrier", true, "")
 	cmd.Flags().Int("auto-lock-minutes", 0, "")
 	cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")

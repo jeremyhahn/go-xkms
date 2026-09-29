@@ -1,6 +1,6 @@
 # Platform Secrets — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1226)
 
 ## Exported surface — `pkg/seal`
 
@@ -72,6 +72,19 @@ Note the asymmetry: the Go interface has `Exists`, the transport interface has
 - **`List` returns names without the internal storage prefix.** Callers must not
   reconstruct raw storage keys.
 - **All operations take a read-write mutex** — safe for concurrent use.
+- **The store is platform-scoped, and reached only through the service.**
+  Every `XKMSService.SealStore*` method refuses a tenant-scoped caller with
+  `*xkms.TenantBindingError` before the store is touched
+  (`pkg/xkms/servicer_seal_store.go:40,54,75,89,106,120`, go-xkms#1226), and
+  no transport holds the `PlatformStore`: REST
+  (`pkg/api/rest/seal_store_handlers.go`), gRPC/Unix
+  (`pkg/api/grpc/service_seal_store.go`) and MCP
+  (`pkg/api/mcp/handlers_seal_store.go`) hold the service. `rest.Config` has
+  no `PlatformStore` field. The routes' `keys:*` grants are self-scoped, so
+  without this a tenant-local Admin could read and overwrite the platform's
+  backend credentials. Tests: `pkg/xkms/platform_scope_test.go`, and the
+  per-transport `platform_scope_test.go` in `pkg/api/rest`, `pkg/api/grpc`,
+  `pkg/api/mcp`.
 - **`ErrSecretNotFound` distinguishes absent from unreadable.** A sealed secret
   that will not unseal is not "not found", and code that collapses the two makes
   a PCR mismatch look like a missing configuration key.

@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Compile-time interface check.
@@ -256,9 +257,17 @@ var signerGenerators = map[string]signerGenerator{
 		return key, nil
 	},
 	"RSA": func(keyCfg *KeyConfig) (crypto.Signer, error) {
-		keySize := 2048
+		keySize := types.RSAKeySize2048
 		if keyCfg.RSA != nil && keyCfg.RSA.KeySize > 0 {
 			keySize = keyCfg.RSA.KeySize
+		}
+		// types.ValidateRSAKeySize enforces both the NIST-required floor and
+		// the go-xkms#1260 ceiling before rsa.GenerateKey ever runs: that
+		// call cannot be cancelled and its cost grows with the cube of the
+		// modulus size, so an account or certificate KeyConfig naming an
+		// unbounded size would otherwise pin a CPU core for minutes to hours.
+		if err := types.ValidateRSAKeySize(keySize); err != nil {
+			return nil, ErrKeyGeneration{Algorithm: "RSA", Err: err}
 		}
 		key, err := rsa.GenerateKey(rand.Reader, keySize)
 		if err != nil {

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
@@ -286,8 +287,11 @@ func TestPhoneSymmetricKey_Raw_NotSupported(t *testing.T) {
 	}
 
 	_, err := key.Raw()
-	if err != ErrExportNotSupported {
+	if !errors.Is(err, ErrExportNotSupported) {
 		t.Errorf("expected ErrExportNotSupported, got %v", err)
+	}
+	if !errors.Is(err, backend.ErrNotSupported) {
+		t.Errorf("a sealed key must also report backend.ErrNotSupported, got %v", err)
 	}
 }
 
@@ -376,6 +380,56 @@ func TestPhoneSymmetricEncrypter_Encrypt_WithAAD(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+	}
+}
+
+// TestPhoneSymmetricEncrypter_Encrypt_RejectsCallerNonce proves Encrypt
+// refuses a caller-supplied nonce rather than silently dropping it: the
+// phone's secure hardware generates its own nonce for
+// local.symmetricEncrypt and the protocol carries no field to override it
+// (go-xkms#1223).
+func TestPhoneSymmetricEncrypter_Encrypt_RejectsCallerNonce(t *testing.T) {
+	sender := &mockSender{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			t.Fatal("Encrypt() should not reach the phone when a caller nonce is refused locally")
+			return nil, nil
+		},
+	}
+
+	b := newTestBackend(t, sender)
+	enc := &phoneSymmetricEncrypter{
+		backend:   b,
+		keyID:     "sym-key",
+		algorithm: "AES256-GCM",
+	}
+
+	_, err := enc.Encrypt([]byte("plaintext"), &types.EncryptOptions{Nonce: []byte("123456789012")})
+	if !errors.Is(err, backend.ErrCallerNonceNotSupported) {
+		t.Errorf("Encrypt() error = %v, want backend.ErrCallerNonceNotSupported", err)
+	}
+}
+
+// TestPhoneSymmetricEncrypter_Encrypt_AllowsNilNonce proves the new
+// caller-nonce refusal does not reject the ordinary case of an empty
+// EncryptOptions.
+func TestPhoneSymmetricEncrypter_Encrypt_AllowsNilNonce(t *testing.T) {
+	sender := &mockSender{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalSymmetricEncryptResult{
+				Ciphertext: []byte("encrypted"),
+			}), nil
+		},
+	}
+
+	b := newTestBackend(t, sender)
+	enc := &phoneSymmetricEncrypter{
+		backend:   b,
+		keyID:     "sym-key",
+		algorithm: "AES256-GCM",
+	}
+
+	if _, err := enc.Encrypt([]byte("plaintext"), &types.EncryptOptions{}); err != nil {
+		t.Errorf("Encrypt() with no nonce should not be refused: %v", err)
 	}
 }
 

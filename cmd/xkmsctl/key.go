@@ -924,10 +924,6 @@ var keyCopyCmd = &cobra.Command{
 
 		fr := newFlagReader(cmd)
 		destBackend := fr.String("dest-backend")
-		keyType := fr.String("key-type")
-		keyAlgorithm := fr.String("key-algorithm")
-		keySize := fr.Int("key-size")
-		curve := fr.String("curve")
 		algorithmStr := fr.String("algorithm")
 		if err := fr.Err(); err != nil {
 			handleError(err)
@@ -939,12 +935,15 @@ var keyCopyCmd = &cobra.Command{
 		algorithm := client.WrappingAlgorithm(algorithmStr)
 		printVerbose("Using wrapping algorithm: %s", algorithm)
 
-		copyKey(cfg, printer, sourceKeyID, destKeyID, destBackend, keyType, keyAlgorithm, keySize, curve, algorithm)
+		copyKey(cfg, printer, sourceKeyID, destKeyID, destBackend, algorithm)
 	},
 }
 
-// copyKey copies a key using the SDK client
-func copyKey(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend, keyType, keyAlgorithm string, keySize int, curve string, algorithm client.WrappingAlgorithm) {
+// copyKey copies a key using the SDK client. The copy takes its algorithm,
+// size, curve, hash and partition from the source key (XKMSService.CopyKey);
+// this command names only the source, the destination and the wrapping
+// algorithm.
+func copyKey(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend string, algorithm client.WrappingAlgorithm) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -960,21 +959,12 @@ func copyKey(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend,
 
 	printVerbose("Connected to xkmsd")
 
-	// Determine the key type to use (prefer key-algorithm if provided, fall back to key-type)
-	keyTypeForRequest := keyAlgorithm
-	if keyTypeForRequest == "" {
-		keyTypeForRequest = keyType
-	}
-
 	req := &client.CopyKeyRequest{
 		SourceBackend: cfg.Backend,
 		SourceKeyID:   sourceKeyID,
 		DestBackend:   destBackend,
 		DestKeyID:     destKeyID,
 		Algorithm:     string(algorithm),
-		KeyType:       keyTypeForRequest,
-		KeySize:       keySize,
-		Curve:         curve,
 	}
 
 	_, err = cl.CopyKey(ctx, req)
@@ -1921,10 +1911,6 @@ func init() {
 	// Flags for copy command
 	keyCopyCmd.Flags().String("dest-backend", "software", "Destination backend (software, pkcs11, tpm2, awskms, etc.)")
 	keyCopyCmd.Flags().String("dest-keydir", "", "Destination key directory (for file-based backends)")
-	keyCopyCmd.Flags().String("key-type", "tls", "Key type")
-	keyCopyCmd.Flags().String("key-algorithm", "rsa", "Key algorithm")
-	keyCopyCmd.Flags().Int("key-size", 2048, "Key size in bits (for RSA)")
-	keyCopyCmd.Flags().String("curve", "P-256", "Elliptic curve (for ECDSA: P-256, P-384, P-521)")
 	keyCopyCmd.Flags().String("algorithm", "RSAES_OAEP_SHA_256", "Wrapping algorithm")
 
 	// Flags for get-import-params command
@@ -2004,8 +1990,11 @@ func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize in
 	// Set algorithm-specific attributes
 	switch ka {
 	case x509.RSA:
-		if keySize < 2048 {
+		if keySize < client.RSAKeySize2048 {
 			return nil, ErrRSAKeySizeTooSmall
+		}
+		if keySize > client.RSAKeySize4096 {
+			return nil, ErrRSAKeySizeTooLarge
 		}
 		attrs.RSAAttributes = &client.RSAAttributes{
 			KeySize: keySize,

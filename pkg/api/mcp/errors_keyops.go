@@ -16,9 +16,16 @@ package mcp
 import (
 	"errors"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
+
+// ErrInternal is the fixed message a client receives in place of an
+// internal error's text (see ClientError). The detail is logged server-side
+// by InvokeMethod instead (go-xkms#1118).
+var ErrInternal = errors.New("xkms: internal error")
 
 // KeyOpError carries a JSON-RPC error code alongside the underlying error
 // returned by the xkms service layer. InvokeMethod unwraps it via errors.As
@@ -31,13 +38,60 @@ type KeyOpError struct {
 
 	// Err is the underlying error returned by the xkms service layer.
 	Err error
+
+	// Classified reports that Err matched a named sentinel in one of this
+	// package's classification tables, so its text is a client-facing
+	// message. It matters only when Code is ErrCodeInternalError: JSON-RPC
+	// has no FailedPrecondition, DataLoss or ResourceExhausted member, so a
+	// classified condition such as a sealed barrier shares that code with
+	// the unclassified floor, and Classified is what tells them apart. The
+	// zero value is unclassified, so an error nobody classified is withheld.
+	Classified bool
 }
 
-// Error returns the underlying error's message.
+// Error returns the underlying error's message. It is the server-side
+// detail; the text a client may see is ClientError's.
 func (e *KeyOpError) Error() string { return e.Err.Error() }
 
 // Unwrap returns the underlying error.
 func (e *KeyOpError) Unwrap() error { return e.Err }
+
+// Internal reports whether e is an unclassified server fault, whose text is
+// withheld from the client.
+func (e *KeyOpError) Internal() bool {
+	return e.Code == ErrCodeInternalError && !e.Classified
+}
+
+// classified returns a *KeyOpError for an err a classification table (or a
+// handler's own sentinel switch) matched, marking its text client-facing
+// even when code is the ErrCodeInternalError floor.
+func classified(code int, err error) *KeyOpError {
+	return &KeyOpError{Code: code, Err: err, Classified: true}
+}
+
+// ClientError returns the JSON-RPC code and the message a client may see for
+// an error InvokeMethod returned. A *KeyOpError keeps its code; its message
+// is its own text unless it is Internal, in which case the message is
+// ErrInternal's fixed text. Any other error was never classified and
+// reports ErrCodeInternalError with ErrInternal's text. InvokeMethod logs
+// the withheld detail with the method and request ID (go-xkms#1118).
+func ClientError(err error) (code int, message string) {
+	var keyErr *KeyOpError
+	if !errors.As(err, &keyErr) {
+		return ErrCodeInternalError, ErrInternal.Error()
+	}
+	if keyErr.Internal() {
+		return keyErr.Code, ErrInternal.Error()
+	}
+	return keyErr.Code, keyErr.Error()
+}
+
+// withheld reports whether ClientError withholds err's text from the
+// client.
+func withheld(err error) bool {
+	var keyErr *KeyOpError
+	return !errors.As(err, &keyErr) || keyErr.Internal()
+}
 
 // keyOpSentinelCodes maps the service-layer sentinels raised by the key and
 // crypto operations onto JSON-RPC error codes. It is an ordered slice rather
@@ -59,10 +113,21 @@ var keyOpSentinelCodes = []struct {
 	sentinel error
 	code     int
 }{
+	// A malformed certificate, an empty chain, or sealed data missing its
+	// payload is a fault in the request (go-xkms#1228).
+	{xkms.ErrInvalidEncodingPEM, ErrCodeInvalidParams},
+	{xkms.ErrInvalidCertificate, ErrCodeInvalidParams},
+	{xkms.ErrEmptyChain, ErrCodeInvalidParams},
+	{xkms.ErrInvalidSealedData, ErrCodeInvalidParams},
+	{xkms.ErrNilData, ErrCodeInvalidParams},
 	{xkms.ErrOperationNotSupported, ErrCodeMethodNotFound},
+	{xkms.ErrSealingNotSupported, ErrCodeMethodNotFound},
 	{xkms.ErrExportKeyMaterialFailed, ErrCodeInternalError},
 	{xkms.ErrBackendNotFound, sdkssh.JSONRPCCodeNotFound},
 	{xkms.ErrKeyNotFound, sdkssh.JSONRPCCodeNotFound},
+	{xkms.ErrCertNotFound, sdkssh.JSONRPCCodeNotFound},
+	{xkms.ErrCertChainNotFound, sdkssh.JSONRPCCodeNotFound},
+	{storage.ErrNotFound, sdkssh.JSONRPCCodeNotFound},
 	{xkms.ErrNotInitialized, ErrCodeInternalError},
 }
 
@@ -72,7 +137,17 @@ var keyOpSentinelCodes = []struct {
 // key becomes Not found (sdkssh.JSONRPCCodeNotFound, matching gRPC's
 // codes.NotFound for all three); a backend that lacks the requested hardware
 // capability becomes Method not found, MCP's signal for "not implemented by
-// this backend". Anything else is an internal fault.
+// this backend".
+//
+// apierrors.ImportExportSentinelClasses is also consulted, because WrapKey,
+// UnwrapKey, GetImportParameters and ImportKey now route through the service
+// layer (go-xkms#1216) rather than calling backend.ImportBackend /
+// backend.ExportBackend directly, so a backend-layer capability or policy
+// sentinel (backend.ErrKeyNotExportable, for instance) reaches here wrapped
+// in the service's own xkms.ErrOperationWrap rather than being classified by
+// mapImportExportError first. errors.Is/apierrors.ClassOf see through that
+// wrapping either way, so the classification is unchanged by which path the
+// error took. Anything not covered by either table is an internal fault.
 func mapKeyOpError(err error) error {
 	if err == nil {
 		return nil
@@ -92,6 +167,15 @@ func mapKeyOpError(err error) error {
 		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: err}
 	}
 
+	// A key or certificate ID that does not parse -- including one naming
+	// another tenant's namespace ("tenant-b/web") -- is malformed input. It
+	// is matched before ErrValidation, which the parse failure may wrap, so
+	// the message names the key ID as the field at fault.
+	var keyID *xkms.ErrKeyIDParse
+	if errors.As(err, &keyID) {
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: keyID}
+	}
+
 	var validation *xkms.ErrValidation
 	if errors.As(err, &validation) {
 		// The validation error is carried through rather than flattened into
@@ -107,8 +191,24 @@ func mapKeyOpError(err error) error {
 
 	for _, entry := range keyOpSentinelCodes {
 		if errors.Is(err, entry.sentinel) {
-			return &KeyOpError{Code: entry.code, Err: err}
+			return classified(entry.code, err)
 		}
+	}
+
+	if class, ok := apierrors.ClassOf(apierrors.ImportExportSentinelClasses, err); ok {
+		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: err}
+	}
+
+	// aead.ErrNonceReuse and aead.ErrNonceTrackerFull reach here wrapped in
+	// pkg/xkms's ErrKeyOperation from Encrypt's and WrapKeyByID's AEAD nonce
+	// guard; see apierrors.AEADSentinelClasses. classified is used rather
+	// than the bare *KeyOpError literal above: ClassResourceExhausted has no
+	// dedicated JSON-RPC code and renders through the same ErrCodeInternalError
+	// floor an unclassified fault does, so Classified is what keeps a nonce
+	// tracker at capacity from being reported with the internal-fault text
+	// ClientError withholds for a genuinely unclassified error.
+	if class, ok := apierrors.ClassOf(apierrors.AEADSentinelClasses, err); ok {
+		return classified(jsonRPCCodeForClass(class), err)
 	}
 
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}

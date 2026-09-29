@@ -35,9 +35,11 @@ package main
 //
 // A pointer field is written as the numeric address of a second, independent
 // byte slice. Go's non-cgo-aware GC cannot see that relationship -- the
-// address is just an integer to it -- so every test calls runtime.KeepAlive
-// on each referenced slice after the decode call returns, guaranteeing the
-// backing storage survives at least that long.
+// address is just an integer to it -- so putPtr pins the memory that address
+// points into (see pin) for the lifetime of the test, which is what actually
+// keeps the referenced slice's backing storage from being collected or moved
+// out from under the raw pointer value while a decoder still reads through
+// it.
 
 import (
 	"bytes"
@@ -72,10 +74,31 @@ func putULong(buf []byte, offset int, v uint64) {
 	binary.LittleEndian.PutUint64(buf[offset:offset+8], v)
 }
 
+// pin pins the Go allocation p points into for the remainder of t, so the
+// pointer putPtr writes as a raw integer stays valid regardless of how long
+// the buffer that carries it remains in use. A []byte buffer built by hand to
+// mimic a C struct's layout has no field the GC recognizes as a pointer --
+// only a variable's static type tells the collector which words to trace --
+// so nothing else here keeps p's target reachable once its address has been
+// copied into buf as bytes. This is the cgo pointer-passing rule (a Go
+// pointer the runtime cannot see as a pointer must be pinned) applied to
+// Go-only test helpers that reproduce a C struct's byte layout without ever
+// crossing into C.
+func pin(t testing.TB, p unsafe.Pointer) {
+	if p == nil {
+		return
+	}
+	var pinner runtime.Pinner
+	pinner.Pin(p)
+	t.Cleanup(pinner.Unpin)
+}
+
 // putPtr writes p's address as an 8-byte little-endian pointer field at
-// buf[offset:]. A nil p writes the null pointer.
-func putPtr(buf []byte, offset int, p unsafe.Pointer) {
+// buf[offset:], pinning p's target for the rest of t (see pin). A nil p
+// writes the null pointer and pins nothing.
+func putPtr(t testing.TB, buf []byte, offset int, p unsafe.Pointer) {
 	binary.LittleEndian.PutUint64(buf[offset:offset+8], uint64(uintptr(p)))
+	pin(t, p)
 }
 
 // bytePtr returns a pointer to b's first byte, or nil for an empty/nil slice
@@ -99,24 +122,22 @@ func bytePtr(b []byte) unsafe.Pointer {
 // total 40 bytes, matching the decoder's StructSize.
 // ---------------------------------------------------------------------------
 
-func buildECDH1DeriveParams(kdf module.KDFType, sharedData, publicData []byte) []byte {
+func buildECDH1DeriveParams(t testing.TB, kdf module.KDFType, sharedData, publicData []byte) []byte {
 	buf := newAlignedBuf(40)
 	putULong(buf, 0, uint64(kdf))
 	putULong(buf, 8, uint64(len(sharedData)))
-	putPtr(buf, 16, bytePtr(sharedData))
+	putPtr(t, buf, 16, bytePtr(sharedData))
 	putULong(buf, 24, uint64(len(publicData)))
-	putPtr(buf, 32, bytePtr(publicData))
+	putPtr(t, buf, 32, bytePtr(publicData))
 	return buf
 }
 
 func TestDecodeECDH1DeriveParams_WellFormed(t *testing.T) {
 	shared := []byte("shared-info")
 	public := []byte("uncompressed-point")
-	buf := buildECDH1DeriveParams(module.CKD_SHA256_KDF, shared, public)
+	buf := buildECDH1DeriveParams(t, module.CKD_SHA256_KDF, shared, public)
 
 	got, ok := decodeECDH1DeriveParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(shared)
-	runtime.KeepAlive(public)
 	if !ok {
 		t.Fatal("decodeECDH1DeriveParams(well-formed) ok = false, want true")
 	}
@@ -140,7 +161,7 @@ func TestDecodeECDH1DeriveParams_WellFormed(t *testing.T) {
 // ulSharedDataLen with a NULL pSharedData decodes to a nil slice rather than
 // being refused, distinguishing an absent optional field from a malformed one.
 func TestDecodeECDH1DeriveParams_ZeroLengthFieldsAreEmpty(t *testing.T) {
-	buf := buildECDH1DeriveParams(module.CKD_NULL, nil, nil)
+	buf := buildECDH1DeriveParams(t, module.CKD_NULL, nil, nil)
 
 	got, ok := decodeECDH1DeriveParams(unsafe.Pointer(&buf[0]))
 	if !ok {
@@ -159,7 +180,7 @@ func TestDecodeECDH1DeriveParams_ZeroLengthFieldsAreEmpty(t *testing.T) {
 // declared length with no buffer behind it is refused rather than
 // dereferencing a NULL pointer, mirroring cBytes's contract.
 func TestDecodeECDH1DeriveParams_DanglingSharedDataLenIsRefused(t *testing.T) {
-	buf := buildECDH1DeriveParams(module.CKD_NULL, nil, []byte("public"))
+	buf := buildECDH1DeriveParams(t, module.CKD_NULL, nil, []byte("public"))
 	putULong(buf, 8, 16) // ulSharedDataLen says 16 bytes; pSharedData is still NULL.
 
 	_, ok := decodeECDH1DeriveParams(unsafe.Pointer(&buf[0]))
@@ -172,7 +193,7 @@ func TestDecodeECDH1DeriveParams_DanglingSharedDataLenIsRefused(t *testing.T) {
 // check for the second byte-buffer pair, proving the function does not stop
 // checking after the first field succeeds.
 func TestDecodeECDH1DeriveParams_DanglingPublicDataLenIsRefused(t *testing.T) {
-	buf := buildECDH1DeriveParams(module.CKD_NULL, []byte("shared"), nil)
+	buf := buildECDH1DeriveParams(t, module.CKD_NULL, []byte("shared"), nil)
 	putULong(buf, 24, 16) // ulPublicDataLen says 16 bytes; pPublicData is still NULL.
 
 	_, ok := decodeECDH1DeriveParams(unsafe.Pointer(&buf[0]))
@@ -220,22 +241,21 @@ func TestDecodeRSAPSSParams(t *testing.T) {
 // total 40 bytes.
 // ---------------------------------------------------------------------------
 
-func buildRSAOAEPParams(hashAlg module.MechanismType, mgf module.MGFType, source uint32, sourceData []byte) []byte {
+func buildRSAOAEPParams(t testing.TB, hashAlg module.MechanismType, mgf module.MGFType, source uint32, sourceData []byte) []byte {
 	buf := newAlignedBuf(40)
 	putULong(buf, 0, uint64(hashAlg))
 	putULong(buf, 8, uint64(mgf))
 	putULong(buf, 16, uint64(source))
-	putPtr(buf, 24, bytePtr(sourceData))
+	putPtr(t, buf, 24, bytePtr(sourceData))
 	putULong(buf, 32, uint64(len(sourceData)))
 	return buf
 }
 
 func TestDecodeRSAOAEPParams_WellFormed(t *testing.T) {
 	label := []byte("oaep-label")
-	buf := buildRSAOAEPParams(module.CKM_SHA256, module.CKG_MGF1_SHA256, module.CKZ_DATA_SPECIFIED, label)
+	buf := buildRSAOAEPParams(t, module.CKM_SHA256, module.CKG_MGF1_SHA256, module.CKZ_DATA_SPECIFIED, label)
 
 	got, ok := decodeRSAOAEPParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(label)
 	if !ok {
 		t.Fatal("decodeRSAOAEPParams(well-formed) ok = false, want true")
 	}
@@ -254,7 +274,7 @@ func TestDecodeRSAOAEPParams_WellFormed(t *testing.T) {
 // not here): a zero ulSourceDataLen and NULL pSourceData is CKZ_DATA_SPECIFIED
 // with no label, which section 6.1.7 permits.
 func TestDecodeRSAOAEPParams_NoSourceDataIsEmpty(t *testing.T) {
-	buf := buildRSAOAEPParams(module.CKM_SHA256, module.CKG_MGF1_SHA256, module.CKZ_DATA_SPECIFIED, nil)
+	buf := buildRSAOAEPParams(t, module.CKM_SHA256, module.CKG_MGF1_SHA256, module.CKZ_DATA_SPECIFIED, nil)
 
 	got, ok := decodeRSAOAEPParams(unsafe.Pointer(&buf[0]))
 	if !ok {
@@ -268,7 +288,7 @@ func TestDecodeRSAOAEPParams_NoSourceDataIsEmpty(t *testing.T) {
 // TestDecodeRSAOAEPParams_DanglingSourceDataLenIsRefused proves a declared
 // source-data length with no buffer behind it is refused rather than read.
 func TestDecodeRSAOAEPParams_DanglingSourceDataLenIsRefused(t *testing.T) {
-	buf := buildRSAOAEPParams(module.CKM_SHA256, module.CKG_MGF1_SHA256, module.CKZ_DATA_SPECIFIED, nil)
+	buf := buildRSAOAEPParams(t, module.CKM_SHA256, module.CKG_MGF1_SHA256, module.CKZ_DATA_SPECIFIED, nil)
 	putULong(buf, 32, 8) // ulSourceDataLen says 8 bytes; pSourceData is still NULL.
 
 	_, ok := decodeRSAOAEPParams(unsafe.Pointer(&buf[0]))
@@ -290,12 +310,12 @@ func TestDecodeRSAOAEPParams_DanglingSourceDataLenIsRefused(t *testing.T) {
 // total 48 bytes.
 // ---------------------------------------------------------------------------
 
-func buildGCMParams(iv []byte, ivBits uint64, aad []byte, tagBits uint32) []byte {
+func buildGCMParams(t testing.TB, iv []byte, ivBits uint64, aad []byte, tagBits uint32) []byte {
 	buf := newAlignedBuf(48)
-	putPtr(buf, 0, bytePtr(iv))
+	putPtr(t, buf, 0, bytePtr(iv))
 	putULong(buf, 8, uint64(len(iv)))
 	putULong(buf, 16, ivBits)
-	putPtr(buf, 24, bytePtr(aad))
+	putPtr(t, buf, 24, bytePtr(aad))
 	putULong(buf, 32, uint64(len(aad)))
 	putULong(buf, 40, uint64(tagBits))
 	return buf
@@ -304,11 +324,9 @@ func buildGCMParams(iv []byte, ivBits uint64, aad []byte, tagBits uint32) []byte
 func TestDecodeGCMParams_WellFormed(t *testing.T) {
 	iv := []byte("111122223333")
 	aad := []byte("additional-data")
-	buf := buildGCMParams(iv, 96, aad, 128)
+	buf := buildGCMParams(t, iv, 96, aad, 128)
 
 	got, ok := decodeGCMParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(iv)
-	runtime.KeepAlive(aad)
 	if !ok {
 		t.Fatal("decodeGCMParams(well-formed) ok = false, want true")
 	}
@@ -328,10 +346,9 @@ func TestDecodeGCMParams_WellFormed(t *testing.T) {
 // optional, decodes to nil rather than being refused when absent.
 func TestDecodeGCMParams_NoAADIsEmpty(t *testing.T) {
 	iv := []byte("111122223333")
-	buf := buildGCMParams(iv, 96, nil, 128)
+	buf := buildGCMParams(t, iv, 96, nil, 128)
 
 	got, ok := decodeGCMParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(iv)
 	if !ok {
 		t.Fatal("decodeGCMParams(no AAD) ok = false, want true")
 	}
@@ -343,7 +360,7 @@ func TestDecodeGCMParams_NoAADIsEmpty(t *testing.T) {
 // TestDecodeGCMParams_DanglingIvLenIsRefused proves the IV field is checked
 // before AAD is ever read.
 func TestDecodeGCMParams_DanglingIvLenIsRefused(t *testing.T) {
-	buf := buildGCMParams(nil, 96, []byte("aad"), 128)
+	buf := buildGCMParams(t, nil, 96, []byte("aad"), 128)
 	putULong(buf, 8, 12) // ulIvLen says 12 bytes; pIv is still NULL.
 
 	_, ok := decodeGCMParams(unsafe.Pointer(&buf[0]))
@@ -356,11 +373,10 @@ func TestDecodeGCMParams_DanglingIvLenIsRefused(t *testing.T) {
 // checked, after a well-formed IV.
 func TestDecodeGCMParams_DanglingAADLenIsRefused(t *testing.T) {
 	iv := []byte("111122223333")
-	buf := buildGCMParams(iv, 96, nil, 128)
+	buf := buildGCMParams(t, iv, 96, nil, 128)
 	putULong(buf, 32, 5) // ulAADLen says 5 bytes; pAAD is still NULL.
 
 	_, ok := decodeGCMParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(iv)
 	if ok {
 		t.Error("decodeGCMParams(dangling ulAADLen, NULL pAAD) ok = true, want false")
 	}
@@ -383,7 +399,7 @@ func TestDecodeGCMParams_DanglingAADLenIsRefused(t *testing.T) {
 // total 64 bytes.
 // ---------------------------------------------------------------------------
 
-func buildHKDFParams(extract, expand bool, prf module.MechanismType, saltType module.HKDFSaltType, salt []byte, saltKey module.ObjectHandle, info []byte) []byte {
+func buildHKDFParams(t testing.TB, extract, expand bool, prf module.MechanismType, saltType module.HKDFSaltType, salt []byte, saltKey module.ObjectHandle, info []byte) []byte {
 	buf := newAlignedBuf(64)
 	if extract {
 		buf[0] = 1
@@ -393,10 +409,10 @@ func buildHKDFParams(extract, expand bool, prf module.MechanismType, saltType mo
 	}
 	putULong(buf, 8, uint64(prf))
 	putULong(buf, 16, uint64(saltType))
-	putPtr(buf, 24, bytePtr(salt))
+	putPtr(t, buf, 24, bytePtr(salt))
 	putULong(buf, 32, uint64(len(salt)))
 	putULong(buf, 40, uint64(saltKey))
-	putPtr(buf, 48, bytePtr(info))
+	putPtr(t, buf, 48, bytePtr(info))
 	putULong(buf, 56, uint64(len(info)))
 	return buf
 }
@@ -404,11 +420,9 @@ func buildHKDFParams(extract, expand bool, prf module.MechanismType, saltType mo
 func TestDecodeHKDFParams_WellFormed(t *testing.T) {
 	salt := []byte("hkdf-salt")
 	info := []byte("hkdf-info")
-	buf := buildHKDFParams(true, true, module.CKM_SHA256, module.CKF_HKDF_SALT_DATA, salt, module.ObjectHandle(0x1234), info)
+	buf := buildHKDFParams(t, true, true, module.CKM_SHA256, module.CKF_HKDF_SALT_DATA, salt, module.ObjectHandle(0x1234), info)
 
 	got, ok := decodeHKDFParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(salt)
-	runtime.KeepAlive(info)
 	if !ok {
 		t.Fatal("decodeHKDFParams(well-formed) ok = false, want true")
 	}
@@ -438,7 +452,7 @@ func TestDecodeHKDFParams_WellFormed(t *testing.T) {
 // (CKF_HKDF_SALT_NULL, no salt, no info -- section 6.62.2's "no salt" case)
 // still decodes cleanly with nil Salt/Info.
 func TestDecodeHKDFParams_ExtractOnlyHasNoSaltOrInfo(t *testing.T) {
-	buf := buildHKDFParams(true, false, module.CKM_SHA256, module.CKF_HKDF_SALT_NULL, nil, 0, nil)
+	buf := buildHKDFParams(t, true, false, module.CKM_SHA256, module.CKF_HKDF_SALT_NULL, nil, 0, nil)
 
 	got, ok := decodeHKDFParams(unsafe.Pointer(&buf[0]))
 	if !ok {
@@ -456,7 +470,7 @@ func TestDecodeHKDFParams_ExtractOnlyHasNoSaltOrInfo(t *testing.T) {
 // TestDecodeHKDFParams_DanglingSaltLenIsRefused proves the salt field is
 // checked before info is read.
 func TestDecodeHKDFParams_DanglingSaltLenIsRefused(t *testing.T) {
-	buf := buildHKDFParams(true, true, module.CKM_SHA256, module.CKF_HKDF_SALT_DATA, nil, 0, []byte("info"))
+	buf := buildHKDFParams(t, true, true, module.CKM_SHA256, module.CKF_HKDF_SALT_DATA, nil, 0, []byte("info"))
 	putULong(buf, 32, 16) // ulSaltLen says 16 bytes; pSalt is still NULL.
 
 	_, ok := decodeHKDFParams(unsafe.Pointer(&buf[0]))
@@ -469,11 +483,10 @@ func TestDecodeHKDFParams_DanglingSaltLenIsRefused(t *testing.T) {
 // also checked, after a well-formed salt.
 func TestDecodeHKDFParams_DanglingInfoLenIsRefused(t *testing.T) {
 	salt := []byte("hkdf-salt")
-	buf := buildHKDFParams(true, true, module.CKM_SHA256, module.CKF_HKDF_SALT_DATA, salt, 0, nil)
+	buf := buildHKDFParams(t, true, true, module.CKM_SHA256, module.CKF_HKDF_SALT_DATA, salt, 0, nil)
 	putULong(buf, 56, 16) // ulInfoLen says 16 bytes; pInfo is still NULL.
 
 	_, ok := decodeHKDFParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(salt)
 	if ok {
 		t.Error("decodeHKDFParams(dangling ulInfoLen, NULL pInfo) ok = true, want false")
 	}
@@ -503,22 +516,22 @@ func TestDecodeHKDFParams_DanglingInfoLenIsRefused(t *testing.T) {
 // returning the array bytes alongside the count -- convertSP800108DataParams
 // reads count as a separate CK_ULONG field on the enclosing struct, not a
 // terminator within the array itself.
-func buildPRFDataParams(entries []module.SP800108DataParam) []byte {
+func buildPRFDataParams(t testing.TB, entries []module.SP800108DataParam) []byte {
 	buf := newAlignedBuf(24 * len(entries))
 	for i, e := range entries {
 		off := 24 * i
 		putULong(buf, off, uint64(e.Type))
-		putPtr(buf, off+8, bytePtr(e.Value))
+		putPtr(t, buf, off+8, bytePtr(e.Value))
 		putULong(buf, off+16, uint64(len(e.Value)))
 	}
 	return buf
 }
 
-func buildSP800108KDFParams(prf module.MechanismType, dataParams []byte, count int) []byte {
+func buildSP800108KDFParams(t testing.TB, prf module.MechanismType, dataParams []byte, count int) []byte {
 	buf := newAlignedBuf(40)
 	putULong(buf, 0, uint64(prf))
 	putULong(buf, 8, uint64(count))
-	putPtr(buf, 16, bytePtr(dataParams))
+	putPtr(t, buf, 16, bytePtr(dataParams))
 	return buf
 }
 
@@ -529,13 +542,10 @@ func TestDecodeSP800108KDFParams_WellFormed(t *testing.T) {
 		{Type: module.SP800108ByteArray, Value: segA},
 		{Type: module.SP800108ByteArray, Value: segB},
 	}
-	dataParams := buildPRFDataParams(entries)
-	buf := buildSP800108KDFParams(module.CKM_SHA256_HMAC, dataParams, len(entries))
+	dataParams := buildPRFDataParams(t, entries)
+	buf := buildSP800108KDFParams(t, module.CKM_SHA256_HMAC, dataParams, len(entries))
 
 	got, ok := decodeSP800108KDFParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(dataParams)
-	runtime.KeepAlive(segA)
-	runtime.KeepAlive(segB)
 	if !ok {
 		t.Fatal("decodeSP800108KDFParams(well-formed) ok = false, want true")
 	}
@@ -553,7 +563,7 @@ func TestDecodeSP800108KDFParams_WellFormed(t *testing.T) {
 // rather than being refused -- convertSP800108DataParams's own nil/zero
 // short-circuit.
 func TestDecodeSP800108KDFParams_NoDataParamsIsEmpty(t *testing.T) {
-	buf := buildSP800108KDFParams(module.CKM_SHA256_HMAC, nil, 0)
+	buf := buildSP800108KDFParams(t, module.CKM_SHA256_HMAC, nil, 0)
 
 	got, ok := decodeSP800108KDFParams(unsafe.Pointer(&buf[0]))
 	if !ok {
@@ -569,12 +579,11 @@ func TestDecodeSP800108KDFParams_NoDataParamsIsEmpty(t *testing.T) {
 // fails the whole decode, rather than truncating that one segment.
 func TestDecodeSP800108KDFParams_DanglingEntryValueLenIsRefused(t *testing.T) {
 	entries := []module.SP800108DataParam{{Type: module.SP800108ByteArray, Value: nil}}
-	dataParams := buildPRFDataParams(entries)
+	dataParams := buildPRFDataParams(t, entries)
 	putULong(dataParams, 16, 8) // entry 0's ulValueLen says 8 bytes; pValue is still NULL.
-	buf := buildSP800108KDFParams(module.CKM_SHA256_HMAC, dataParams, 1)
+	buf := buildSP800108KDFParams(t, module.CKM_SHA256_HMAC, dataParams, 1)
 
 	_, ok := decodeSP800108KDFParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(dataParams)
 	if ok {
 		t.Error("decodeSP800108KDFParams(dangling entry ulValueLen) ok = true, want false")
 	}
@@ -585,7 +594,7 @@ func TestDecodeSP800108KDFParams_DanglingEntryValueLenIsRefused(t *testing.T) {
 // larger than the largest addressable Go slice index is refused rather than
 // used to index into memory, even though pDataParams is non-NULL.
 func TestDecodeSP800108KDFParams_UnaddressableCountIsRefused(t *testing.T) {
-	buf := buildSP800108KDFParams(module.CKM_SHA256_HMAC, buf40Placeholder(), 0)
+	buf := buildSP800108KDFParams(t, module.CKM_SHA256_HMAC, buf40Placeholder(), 0)
 	putULong(buf, 8, uint64(math.MaxInt32)+1) // ulNumberOfDataParams exceeds math.MaxInt32.
 
 	_, ok := decodeSP800108KDFParams(unsafe.Pointer(&buf[0]))
@@ -614,27 +623,24 @@ func buf40Placeholder() []byte { return newAlignedBuf(8) }
 // total 56 bytes.
 // ---------------------------------------------------------------------------
 
-func buildSP800108FeedbackKDFParams(prf module.MechanismType, dataParams []byte, count int, iv []byte) []byte {
+func buildSP800108FeedbackKDFParams(t testing.TB, prf module.MechanismType, dataParams []byte, count int, iv []byte) []byte {
 	buf := newAlignedBuf(56)
 	putULong(buf, 0, uint64(prf))
 	putULong(buf, 8, uint64(count))
-	putPtr(buf, 16, bytePtr(dataParams))
+	putPtr(t, buf, 16, bytePtr(dataParams))
 	putULong(buf, 24, uint64(len(iv)))
-	putPtr(buf, 32, bytePtr(iv))
+	putPtr(t, buf, 32, bytePtr(iv))
 	return buf
 }
 
 func TestDecodeSP800108FeedbackKDFParams_WellFormed(t *testing.T) {
 	seg := []byte("label")
 	entries := []module.SP800108DataParam{{Type: module.SP800108ByteArray, Value: seg}}
-	dataParams := buildPRFDataParams(entries)
+	dataParams := buildPRFDataParams(t, entries)
 	iv := []byte("0123456789ABCDEF")
-	buf := buildSP800108FeedbackKDFParams(module.CKM_SHA256_HMAC, dataParams, len(entries), iv)
+	buf := buildSP800108FeedbackKDFParams(t, module.CKM_SHA256_HMAC, dataParams, len(entries), iv)
 
 	got, ok := decodeSP800108FeedbackKDFParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(dataParams)
-	runtime.KeepAlive(seg)
-	runtime.KeepAlive(iv)
 	if !ok {
 		t.Fatal("decodeSP800108FeedbackKDFParams(well-formed) ok = false, want true")
 	}
@@ -656,12 +662,11 @@ func TestDecodeSP800108FeedbackKDFParams_WellFormed(t *testing.T) {
 // it must not silently keep the IV and drop the malformed segments.
 func TestDecodeSP800108FeedbackKDFParams_DataParamsFailurePropagates(t *testing.T) {
 	entries := []module.SP800108DataParam{{Type: module.SP800108ByteArray, Value: nil}}
-	dataParams := buildPRFDataParams(entries)
+	dataParams := buildPRFDataParams(t, entries)
 	putULong(dataParams, 16, 8) // entry 0's ulValueLen says 8 bytes; pValue is still NULL.
-	buf := buildSP800108FeedbackKDFParams(module.CKM_SHA256_HMAC, dataParams, 1, []byte("0123456789ABCDEF"))
+	buf := buildSP800108FeedbackKDFParams(t, module.CKM_SHA256_HMAC, dataParams, 1, []byte("0123456789ABCDEF"))
 
 	_, ok := decodeSP800108FeedbackKDFParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(dataParams)
 	if ok {
 		t.Error("decodeSP800108FeedbackKDFParams(dangling entry ulValueLen) ok = true, want false")
 	}
@@ -671,7 +676,7 @@ func TestDecodeSP800108FeedbackKDFParams_DataParamsFailurePropagates(t *testing.
 // field, unique to the feedback variant, is checked after a well-formed
 // (here, empty) data-params array.
 func TestDecodeSP800108FeedbackKDFParams_DanglingIVLenIsRefused(t *testing.T) {
-	buf := buildSP800108FeedbackKDFParams(module.CKM_SHA256_HMAC, nil, 0, nil)
+	buf := buildSP800108FeedbackKDFParams(t, module.CKM_SHA256_HMAC, nil, 0, nil)
 	putULong(buf, 24, 16) // ulIVLen says 16 bytes; pIV is still NULL.
 
 	_, ok := decodeSP800108FeedbackKDFParams(unsafe.Pointer(&buf[0]))
@@ -691,22 +696,21 @@ func TestDecodeSP800108FeedbackKDFParams_DanglingIVLenIsRefused(t *testing.T) {
 // total 24 bytes.
 // ---------------------------------------------------------------------------
 
-func buildEdDSAParams(phFlag bool, context []byte) []byte {
+func buildEdDSAParams(t testing.TB, phFlag bool, context []byte) []byte {
 	buf := newAlignedBuf(24)
 	if phFlag {
 		buf[0] = 1
 	}
 	putULong(buf, 8, uint64(len(context)))
-	putPtr(buf, 16, bytePtr(context))
+	putPtr(t, buf, 16, bytePtr(context))
 	return buf
 }
 
 func TestDecodeEdDSAParams_WellFormed(t *testing.T) {
 	ctx := []byte("domain-separation-context")
-	buf := buildEdDSAParams(true, ctx)
+	buf := buildEdDSAParams(t, true, ctx)
 
 	got, ok := decodeEdDSAParams(unsafe.Pointer(&buf[0]))
-	runtime.KeepAlive(ctx)
 	if !ok {
 		t.Fatal("decodeEdDSAParams(well-formed) ok = false, want true")
 	}
@@ -723,7 +727,7 @@ func TestDecodeEdDSAParams_WellFormed(t *testing.T) {
 // empty context (phFlag false, ulContextDataLen 0, per Table 73) decodes
 // with a nil Context rather than being refused.
 func TestDecodeEdDSAParams_NoContextIsEmpty(t *testing.T) {
-	buf := buildEdDSAParams(false, nil)
+	buf := buildEdDSAParams(t, false, nil)
 
 	got, ok := decodeEdDSAParams(unsafe.Pointer(&buf[0]))
 	if !ok {
@@ -741,7 +745,7 @@ func TestDecodeEdDSAParams_NoContextIsEmpty(t *testing.T) {
 // TestDecodeEdDSAParams_DanglingContextLenIsRefused proves a declared
 // context length with no buffer behind it is refused rather than read.
 func TestDecodeEdDSAParams_DanglingContextLenIsRefused(t *testing.T) {
-	buf := buildEdDSAParams(true, nil)
+	buf := buildEdDSAParams(t, true, nil)
 	putULong(buf, 8, 16) // ulContextDataLen says 16 bytes; pContextData is still NULL.
 
 	_, ok := decodeEdDSAParams(unsafe.Pointer(&buf[0]))

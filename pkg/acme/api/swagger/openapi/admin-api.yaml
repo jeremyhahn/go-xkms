@@ -745,6 +745,8 @@ paths:
           $ref: '#/components/responses/ProblemUnauthorized'
         '403':
           $ref: '#/components/responses/ProblemForbidden'
+        '404':
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
           $ref: '#/components/responses/ProblemInternalError'
     post:
@@ -777,6 +779,8 @@ paths:
           $ref: '#/components/responses/ProblemUnauthorized'
         '403':
           $ref: '#/components/responses/ProblemForbidden'
+        '404':
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
           $ref: '#/components/responses/ProblemInternalError'
 
@@ -833,6 +837,8 @@ paths:
           $ref: '#/components/responses/ProblemUnauthorized'
         '403':
           $ref: '#/components/responses/ProblemForbidden'
+        '404':
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
           $ref: '#/components/responses/ProblemInternalError'
     delete:
@@ -859,6 +865,8 @@ paths:
           $ref: '#/components/responses/ProblemUnauthorized'
         '403':
           $ref: '#/components/responses/ProblemForbidden'
+        '404':
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
           $ref: '#/components/responses/ProblemInternalError'
 
@@ -887,6 +895,8 @@ paths:
           $ref: '#/components/responses/ProblemUnauthorized'
         '403':
           $ref: '#/components/responses/ProblemForbidden'
+        '404':
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
           $ref: '#/components/responses/ProblemInternalError'
     post:
@@ -924,6 +934,8 @@ paths:
           $ref: '#/components/responses/ProblemUnauthorized'
         '403':
           $ref: '#/components/responses/ProblemForbidden'
+        '404':
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
           $ref: '#/components/responses/ProblemInternalError'
 
@@ -944,6 +956,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserInfo'
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
           $ref: '#/components/responses/ProblemUnauthorized'
         '403':
@@ -980,6 +994,8 @@ paths:
           $ref: '#/components/responses/ProblemUnauthorized'
         '403':
           $ref: '#/components/responses/ProblemForbidden'
+        '404':
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
           $ref: '#/components/responses/ProblemInternalError'
     delete:
@@ -1002,10 +1018,14 @@ paths:
                   message:
                     type: string
                     example: "User deleted successfully"
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
           $ref: '#/components/responses/ProblemUnauthorized'
         '403':
           $ref: '#/components/responses/ProblemForbidden'
+        '404':
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
           $ref: '#/components/responses/ProblemInternalError'
 
@@ -1479,10 +1499,14 @@ paths:
   # ============================================================================
   # Barrier Endpoints (seal:*, barrier:*)
   #
-  # Every mutating operation answers 409 Conflict (problem+json) when the
-  # barrier is remote-managed, not yet initialized, or otherwise refuses the
-  # requested transition; see BarrierRemoteModeError / BarrierNotInitializedError
-  # in pkg/acme/admin/barrier_service.go.
+  # The system barrier protects every tenant, so every barrier route is a
+  # platform operation: the admin plane operates the barrier only through the
+  # XKMSService, which refuses a tenant-scoped caller whatever grants it holds,
+  # and the refusal is answered 403 exactly as a missing grant (go-xkms#1244).
+  # A mutating operation answers 409 Conflict (problem+json) when the server
+  # has no barrier or the barrier is not initialized; see
+  # BarrierNotEnabledError / BarrierNotInitializedError in
+  # pkg/acme/admin/barrier_service.go.
   # ============================================================================
   /admin/barrier/status:
     get:
@@ -1510,7 +1534,7 @@ paths:
       tags:
         - Barrier
       summary: Initialize the barrier
-      description: Initializes the barrier with a single passphrase (embedded mode only). Requires seal:bootstrap.
+      description: Initializes the barrier with a single passphrase. Requires seal:bootstrap.
       operationId: initializeBarrier
       requestBody:
         required: true
@@ -1545,7 +1569,7 @@ paths:
       tags:
         - Barrier
       summary: Seal the barrier
-      description: Seals the barrier, blocking storage access until unsealed (embedded mode only). Requires seal:seal.
+      description: Seals the barrier, blocking storage access until unsealed. Requires seal:seal.
       operationId: sealBarrier
       responses:
         '200':
@@ -1572,7 +1596,7 @@ paths:
       tags:
         - Barrier
       summary: Unseal the barrier
-      description: Unseals the barrier with the passphrase set at initialize (embedded mode only). Requires seal:unseal.
+      description: Unseals the barrier with the passphrase set at initialize. Requires seal:unseal.
       operationId: unsealBarrier
       requestBody:
         required: true
@@ -1609,7 +1633,7 @@ paths:
       summary: Initialize the barrier with Shamir secret sharing
       description: >-
         Initializes the barrier under a Shamir quorum instead of a single
-        passphrase (embedded mode only). Share material is never returned;
+        passphrase. Share material is never returned;
         shares are sealed to enrolled Security Officers. Requires
         seal:initialize_shamir.
       operationId: initializeBarrierShamir
@@ -1643,8 +1667,8 @@ paths:
         - Barrier
       summary: Submit a Shamir unseal share
       description: >-
-        Submits one Shamir share toward the unseal threshold (embedded mode
-        only). Requires barrier:unseal-share.
+        Submits one Shamir share toward the unseal threshold. Requires
+        barrier:unseal-share.
       operationId: submitBarrierUnsealShare
       requestBody:
         required: true
@@ -1676,7 +1700,7 @@ paths:
         - Barrier
       summary: Rekey the barrier's Shamir shares
       description: >-
-        Generates a new Shamir quorum (embedded mode only). New shares are
+        Generates a new Shamir quorum. New shares are
         sealed to enrolled Security Officers and never returned. Requires
         seal:rekey.
       operationId: rekeyBarrier
@@ -1710,7 +1734,7 @@ paths:
         - Barrier
       summary: Generate disaster recovery keys
       description: >-
-        Generates a new disaster-recovery Shamir quorum (embedded mode only).
+        Generates a new disaster-recovery Shamir quorum.
         Recovery shares are sealed to enrolled recovery officers and never
         returned. Requires seal:generate_recovery.
       operationId: generateBarrierRecoveryKeys
@@ -1745,7 +1769,7 @@ paths:
       summary: Recover the barrier with recovery keys
       description: >-
         Recovers the barrier using previously generated disaster-recovery
-        keys (embedded mode only). Requires seal:recover_with_keys.
+        keys. Requires seal:recover_with_keys.
       operationId: recoverBarrierWithKeys
       requestBody:
         required: true
@@ -1804,8 +1828,8 @@ paths:
         - Barrier
       summary: Generate a root token from Shamir shares
       description: >-
-        Exchanges a quorum of Shamir shares for a time-limited root token
-        (embedded mode only). Requires seal:rotate_root_key.
+        Exchanges a quorum of Shamir shares for a time-limited root token.
+        Requires seal:rotate_root_key.
       operationId: generateBarrierRootToken
       requestBody:
         required: true
@@ -2851,7 +2875,10 @@ components:
       properties:
         mode:
           type: string
-          enum: [embedded, remote]
+          enum: [embedded]
+          description: >-
+            Always "embedded": the admin plane operates the server's own
+            system barrier through the XKMSService.
         enabled:
           type: boolean
         sealed:

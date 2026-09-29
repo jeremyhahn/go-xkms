@@ -450,6 +450,23 @@ func TestDeriveKeyECDHHandler_ValidationError(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestDeriveKeyECDHHandler_KeyLengthExceedsMaximum proves an oversized
+// key_length surfaces as 400 Bad Request rather than the 500 Internal Server
+// Error every DeriveKeyECDH backend's own KDF validation failure fell to
+// before this fix wrapped it as request validation (go-xkms#1259).
+func TestDeriveKeyECDHHandler_KeyLengthExceedsMaximum(t *testing.T) {
+	h, _ := setupKeyOpsHandlerContext(t)
+
+	w := doJSONRequest(t, h.DeriveKeyECDHHandler, http.MethodPost, "/api/v1/keys/derive-ecdh", &transport.DeriveKeyECDHRequest{
+		KeyID:         "ecdh-key",
+		Backend:       "hardware",
+		PeerPublicKey: []byte("peer"),
+		KeyLength:     types.MaxDerivedKeyLength + 1,
+	})
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestDeriveKeyECDHHandler_NotInitialized(t *testing.T) {
 	h := NewHandlerContext("1.0.0")
 
@@ -854,6 +871,21 @@ func TestMapKeyOpError(t *testing.T) {
 			name:       "service not initialized",
 			err:        xkms.ErrNotInitialized,
 			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:       "malformed backend name is a bad request",
+			err:        &xkms.ErrBackendNameValidation{Err: errors.New("contains '/'")},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "wrapped key-not-exportable cause is forbidden",
+			err:        &xkms.ErrOperationWrap{Sentinel: xkms.ErrOperationFailed, Err: backend.ErrKeyNotExportable},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "wrapped existing destination key is a conflict",
+			err:        &xkms.ErrKeyOperation{Operation: "import key", Err: storage.ErrAlreadyExists},
+			wantStatus: http.StatusConflict,
 		},
 		{
 			name:       "anything else is internal",

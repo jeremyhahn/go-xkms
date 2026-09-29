@@ -17,6 +17,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -33,6 +34,10 @@ var SealStoreSentinelClasses = []SentinelClass{
 	{seal.ErrSecretNotFound, ClassNotFound},
 	{seal.ErrInvalidSecretName, ClassInvalidArgument},
 	{seal.ErrResealFailed, ClassInternal},
+	// Every operation on this platform-global state is platform-scoped: a
+	// tenant-scoped caller is refused with xkms.TenantBindingError, which
+	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1226).
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 }
 
 // ImportExportSentinelClasses classifies the backend-layer capability
@@ -48,6 +53,27 @@ var ImportExportSentinelClasses = []SentinelClass{
 	{backend.ErrImportNotSupported, ClassUnimplemented},
 	{backend.ErrAsymmetricKeyExportNotAllowed, ClassInvalidArgument},
 	{backend.ErrKeyNotExportable, ClassPermissionDenied},
+	// ErrCallerNonceNotSupported is a malformed request against a backend
+	// whose remote encryption service manages its own nonces (AWS KMS, GCP
+	// KMS, Vault Transit, the paired phone): the caller asked for a
+	// guarantee this backend cannot give, not a capability the backend
+	// categorically lacks the way export/import are (go-xkms#1223).
+	{backend.ErrCallerNonceNotSupported, ClassInvalidArgument},
+}
+
+// AEADSentinelClasses classifies the pkg/crypto/aead nonce-safety domain
+// errors that reach the key and crypto operations (Encrypt, WrapKeyByID)
+// through pkg/xkms's process-wide AEAD nonce guard (claimAEADNonce,
+// claimGeneratedAEADNonce): a nonce this process has already consumed under
+// this key is the caller's request repeating a value that must never repeat,
+// not a fault in the server, and a full guard is a resource limit reached
+// rather than a permanent refusal. Both pkg/api/grpc's mapKeyOpError and
+// pkg/api/mcp's mirror of it read this table (go-xkms#1223), mirroring
+// pkg/api/rest/errors_keyops.go's keyOpSentinelStatus entries for the same
+// two sentinels.
+var AEADSentinelClasses = []SentinelClass{
+	{aead.ErrNonceReuse, ClassAlreadyExists},
+	{aead.ErrNonceTrackerFull, ClassResourceExhausted},
 }
 
 // PIVSentinelClasses classifies the PIV domain errors pkg/xkms's PIV
@@ -61,6 +87,10 @@ var PIVSentinelClasses = []SentinelClass{
 	{xkms.ErrPIVInvalidSlot, ClassInvalidArgument},
 	{xkms.ErrPIVInvalidFormat, ClassInvalidArgument},
 	{xkms.ErrPIVKeyNotFound, ClassNotFound},
+	// Every operation on this platform-global state is platform-scoped: a
+	// tenant-scoped caller is refused with xkms.TenantBindingError, which
+	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1227).
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 }
 
 // PINSentinelClasses classifies the go-qrdb PIN backend domain errors
@@ -82,6 +112,10 @@ var PINSentinelClasses = []SentinelClass{
 	{qrdbsdk.ErrInvalidCurrentPIN, ClassUnauthenticated},
 	{qrdbsdk.ErrPINStateCorrupted, ClassDataLoss},
 	{qrdbsdk.ErrPINStrategyNotSet, ClassFailedPrecondition},
+	// Every operation on this platform-global state is platform-scoped: a
+	// tenant-scoped caller is refused with xkms.TenantBindingError, which
+	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1227).
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 }
 
 // CustodianSentinelClasses classifies the go-qrdb custodian-group domain
@@ -128,9 +162,13 @@ var BarrierSentinelClasses = []SentinelClass{
 	{seal.ErrCorruptRootKey, ClassDataLoss},
 	{seal.ErrEncryptorNotAvailable, ClassFailedPrecondition},
 	// BarrierEnableEncryption's target tenant is caller-supplied; XKMSService's
-	// tenant binding refuses a foreign one with an error that unwraps to
-	// go-qrdb's unknown-tenant sentinel (xkms.TenantBindingError).
+	// tenant binding refuses a foreign one, and every system-barrier operation
+	// refuses a tenant-scoped caller outright (go-xkms#1227), with an error
+	// that unwraps to go-qrdb's unknown-tenant sentinel
+	// (xkms.TenantBindingError).
 	{qrdbsdk.ErrTenantMissing, ClassNotFound},
+	// XKMSService returns ErrNotConfigured when no system barrier is composed.
+	{xkms.ErrNotConfigured, ClassUnavailable},
 
 	// Shamir secret sharing errors.
 	{seal.ErrShamirNotConfigured, ClassFailedPrecondition},
@@ -170,4 +208,8 @@ var PolicySentinelClasses = []SentinelClass{
 	{policy.ErrPCRIndexOutOfRange, ClassInvalidArgument},
 	{policy.ErrDuplicatePCRIndex, ClassInvalidArgument},
 	{policy.ErrExportFailed, ClassInternal},
+	// Every operation on this platform-global state is platform-scoped: a
+	// tenant-scoped caller is refused with xkms.TenantBindingError, which
+	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1227).
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 }

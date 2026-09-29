@@ -110,7 +110,7 @@ func TestRunOATHAdd_FromIndividualFlags(t *testing.T) {
 	cmd, buf := newOATHCmd(t, oathAddCmd, store)
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "GitHub"))
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "issuer", "GitHub Inc"))
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "jbswy3dpehpk3pxp"))
+	t.Setenv("XKEY_OATH_SECRET", "jbswy3dpehpk3pxp")
 
 	require.NoError(t, runOATHAdd(cmd, nil))
 	assert.Contains(t, buf.String(), "Added OATH credential: GitHub")
@@ -184,10 +184,39 @@ func TestRunOATHAdd_RequiresNameAndSecret(t *testing.T) {
 	assert.ErrorIs(t, runOATHAdd(cmd, nil), ErrOATHMissingSecret)
 }
 
+// TestRunOATHAdd_SecretFromStdin pins the stdin source for the base32
+// secret: piped input, trimmed of its trailing newline, is normalised to
+// upper case and stored the same as the environment source.
+func TestRunOATHAdd_SecretFromStdin(t *testing.T) {
+	store := oathStorePath(t)
+	cmd, buf := newOATHCmd(t, oathAddCmd, store)
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Stdin"))
+	stubStdin(t, []byte("jbswy3dpehpk3pxp\n"), nil)
+	require.NoError(t, cmd.Flags().Set("secret-stdin", "true"))
+
+	require.NoError(t, runOATHAdd(cmd, nil))
+	assert.Contains(t, buf.String(), "Added OATH credential: Stdin")
+
+	fs, err := oath.NewFileStore(store)
+	require.NoError(t, err)
+	defer func() { _ = fs.Close() }()
+	cred, err := fs.Get("stdin")
+	require.NoError(t, err)
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString())
+}
+
+// TestOATHAddCmd_NoSecretValueFlag pins go-xkms#1209: "xkey oath add" does
+// not accept the base32 secret as a flag value, which every other process on
+// the host could read through 'ps'.
+func TestOATHAddCmd_NoSecretValueFlag(t *testing.T) {
+	assert.Nil(t, oathAddCmd.Flags().Lookup("secret"), "--secret value flag must not exist")
+	assert.NotNil(t, oathAddCmd.Flags().Lookup("secret-stdin"), "--secret-stdin flag must exist")
+}
+
 func TestRunOATHAdd_RejectsInvalidCredential(t *testing.T) {
 	cmd, _ := newOATHCmd(t, oathAddCmd, oathStorePath(t))
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "name", "Bad"))
-	require.NoError(t, setFlagForTest(t, cmd.Flags(), "secret", "JBSWY3DPEHPK3PXP"))
+	t.Setenv("XKEY_OATH_SECRET", "JBSWY3DPEHPK3PXP")
 	require.NoError(t, setFlagForTest(t, cmd.Flags(), "digits", "9"))
 
 	err := runOATHAdd(cmd, nil)

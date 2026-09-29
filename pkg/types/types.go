@@ -1221,20 +1221,14 @@ type KeyAttributes struct {
 }
 
 // String returns a human-readable representation of the key attributes.
+//
+// It never renders Password or SealData: those are secrets, and this
+// method has no way to know whether its caller is a trusted diagnostic
+// path or an untrusted sink (an error message, a log line, a %v format
+// verb). Callers that need the secret value must read attrs.Password or
+// attrs.SealData directly.
 func (attrs KeyAttributes) String() string {
 	var sb strings.Builder
-
-	var password, sealDataStr string
-	if attrs.Debug && attrs.Password != nil {
-		if p, err := attrs.Password.String(); err == nil {
-			password = p
-		}
-	}
-	if attrs.Debug && attrs.SealData != nil {
-		if s := attrs.SealData.Bytes(); s != nil {
-			sealDataStr = string(s)
-		}
-	}
 
 	sb.WriteString("Key Attributes\n")
 	fmt.Fprintf(&sb, "  Common Name: %s\n", attrs.CN)
@@ -1256,12 +1250,6 @@ func (attrs KeyAttributes) String() string {
 	case attrs.X25519Attributes != nil:
 		sb.WriteString("X25519 Attributes\n")
 		sb.WriteString("  Curve: X25519 (Curve25519)\n")
-	}
-
-	if attrs.Debug {
-		sb.WriteString("Secrets\n")
-		fmt.Fprintf(&sb, "  Password: %s\n", password)
-		fmt.Fprintf(&sb, "  SealData: %s\n", sealDataStr)
 	}
 
 	return sb.String()
@@ -1304,8 +1292,8 @@ func (attrs *KeyAttributes) Validate() error {
 			if attrs.RSAAttributes == nil {
 				return &errs.Message{Msg: "RSA attributes are required for RSA keys"}
 			}
-			if attrs.RSAAttributes.KeySize < 2048 {
-				return &errs.Message{Msg: "RSA key size must be at least 2048 bits"}
+			if err := ValidateRSAKeySize(attrs.RSAAttributes.KeySize); err != nil {
+				return err
 			}
 		case x509.ECDSA:
 			if attrs.ECCAttributes == nil {
@@ -2162,8 +2150,8 @@ type KDFParams struct {
 	// first PRF invocation chains an empty value.
 	IV []byte
 
-	// KeyLength specifies the desired output key length in bytes.
-	// Must be positive and appropriate for the intended use.
+	// KeyLength specifies the desired output key length in bytes. Must be
+	// positive and no greater than MaxDerivedKeyLength.
 	// For example: 16 for AES-128, 32 for AES-256.
 	KeyLength int
 
@@ -2212,6 +2200,12 @@ func (p *KDFParams) Validate() error {
 		if p.KeyLength <= 0 {
 			return &errs.Message{Msg: fmt.Sprintf("key length must be positive, got %d", p.KeyLength)}
 		}
+		if p.KeyLength > MaxDerivedKeyLength {
+			return &errs.Detail{
+				Err:    ErrKeyLengthTooLarge,
+				Detail: fmt.Sprintf("requested %d bytes, maximum is %d bytes", p.KeyLength, MaxDerivedKeyLength),
+			}
+		}
 		if !p.DerivationMode.IsValid() {
 			return &errs.Message{Msg: fmt.Sprintf("invalid derivation mode: %d", p.DerivationMode)}
 		}
@@ -2237,8 +2231,11 @@ func (p *KDFParams) Validate() error {
 	if p.KeyLength <= 0 {
 		return &errs.Message{Msg: fmt.Sprintf("key length must be positive, got %d", p.KeyLength)}
 	}
-	if p.KeyLength > 1024 {
-		return &errs.Message{Msg: fmt.Sprintf("key length %d exceeds maximum of 1024 bytes", p.KeyLength)}
+	if p.KeyLength > MaxDerivedKeyLength {
+		return &errs.Detail{
+			Err:    ErrKeyLengthTooLarge,
+			Detail: fmt.Sprintf("requested %d bytes, maximum is %d bytes", p.KeyLength, MaxDerivedKeyLength),
+		}
 	}
 
 	// Validate derivation mode

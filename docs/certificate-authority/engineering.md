@@ -137,6 +137,24 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
 
 ## Invariants
 
+- **Certificate storage is confined to the caller's tenant** (go-xkms#1228).
+  The `XKMSService` certificate methods resolve the backend with
+  `resolveTenantBackend` (`pkg/xkms/servicer_cert.go:29-284`), so a tenant's
+  certificates live under `{tenant}/{keyID}` (`pkg/xkms/backend_tenant.go:58`)
+  and its listing is filtered to that prefix
+  (`pkg/xkms/backend_tenant.go:162`). REST, gRPC and MCP call these methods and
+  nothing else; none may reach the certificate store through an unscoped
+  backend. A key ID is validated before use and `/` is refused, so no ID
+  crosses a namespace. Another owner's certificate must answer exactly as a
+  missing one; the cross-tenant tests compare the two responses byte for byte
+  (`pkg/api/rest/handlers_certseal_crosstenant_test.go`,
+  `pkg/api/grpc/service_certseal_crosstenant_test.go`,
+  `pkg/api/mcp/handlers_certseal_crosstenant_test.go`).
+- **A malformed certificate is a request fault.** `certFromPEM`
+  (`pkg/xkms/servicer_cert.go:340`) returns `ErrInvalidEncodingPEM` (via
+  `ErrPEMBlock` for a wrong block type) or `ErrCertificateParse`, which matches
+  `ErrInvalidCertificate` (`pkg/xkms/errors.go:169`, `:775`); every transport
+  maps both to its invalid-argument code.
 - **`Init` is once.** A second `Init` returns `ErrAlreadyInitialized` rather
   than replacing the root. `Load` is the idempotent startup path.
 - **`Load` resolves every identity's key attributes through the same

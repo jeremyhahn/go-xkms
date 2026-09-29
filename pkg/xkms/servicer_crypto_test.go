@@ -942,6 +942,42 @@ func TestDeriveKeyECDH_RawRefusesInputsItCannotConsume(t *testing.T) {
 	require.Error(t, err, "RAW cannot stretch a 32-byte shared secret to 64 bytes")
 }
 
+// TestDeriveKeyECDH_KeyLengthExceedsMaximum proves a caller-chosen key_length
+// above types.MaxDerivedKeyLength is refused as request validation before any
+// backend or key lookup runs -- neither the named backend nor the named key
+// need exist for this to be refused, which is itself part of what the fix
+// proves: the request is rejected before ECDH or a KDF adapter ever sees it
+// (go-xkms#1259).
+func TestDeriveKeyECDH_KeyLengthExceedsMaximum(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	t.Run("one byte over the maximum", func(t *testing.T) {
+		_, err := svc.DeriveKeyECDH(context.Background(), &transport.DeriveKeyECDHRequest{
+			Backend:       "software",
+			KeyID:         "nonexistent-key",
+			PeerPublicKey: []byte("not-a-real-point"),
+			KeyLength:     types.MaxDerivedKeyLength + 1,
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidKeyAttributes))
+		var validation *ErrValidation
+		require.True(t, errors.As(err, &validation), "want *ErrValidation, got %T", err)
+	})
+
+	t.Run("the go-xkms#1259 report's own value", func(t *testing.T) {
+		_, err := svc.DeriveKeyECDH(context.Background(), &transport.DeriveKeyECDHRequest{
+			Backend:       "software",
+			KeyID:         "nonexistent-key",
+			PeerPublicKey: []byte("not-a-real-point"),
+			KeyLength:     100_000_000_000,
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidKeyAttributes))
+	})
+}
+
 // --- DeriveKey ---
 
 func TestDeriveKey_HKDF_Success(t *testing.T) {
@@ -1038,6 +1074,41 @@ func TestDeriveKey_SP800108Counter(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Len(t, resp.DerivedKey, 32)
+}
+
+// TestDeriveKey_KeyLengthExceedsMaximum proves a caller-chosen key_length
+// above types.MaxDerivedKeyLength is refused as request validation before
+// any KDF parameter assembly or base-key resolution, matching the classic
+// go-xkms#1259 report: an unbounded key_length must never reach a
+// pkg/crypto/kdf adapter, which would preallocate on the caller's behalf.
+func TestDeriveKey_KeyLengthExceedsMaximum(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	t.Run("one byte over the maximum", func(t *testing.T) {
+		_, err := svc.DeriveKey(context.Background(), &transport.DeriveKeyRequest{
+			Algorithm:        "hkdf",
+			InputKeyMaterial: []byte("secret-input-key-material-32byte"),
+			KeyLength:        types.MaxDerivedKeyLength + 1,
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidKeyAttributes))
+		var validation *ErrValidation
+		require.True(t, errors.As(err, &validation), "want *ErrValidation, got %T", err)
+	})
+
+	t.Run("the go-xkms#1259 report's own value", func(t *testing.T) {
+		_, err := svc.DeriveKey(context.Background(), &transport.DeriveKeyRequest{
+			Algorithm:        "sp800-108-counter",
+			InputKeyMaterial: []byte("secret-input-key-material-32byte"),
+			Label:            []byte("test-label"),
+			Context:          []byte("test-context"),
+			KeyLength:        100_000_000_000,
+		})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidKeyAttributes))
+	})
 }
 
 // --- Stub operations ---
@@ -1326,7 +1397,45 @@ func TestEncrypt_UnrecognizedMode_TypedErrorNotGCMFallback(t *testing.T) {
 // default): if Encrypt's new branch used a different scheme than Decrypt
 // expects, this round trip would fail even though Encrypt itself reported
 // success.
+// TestEncrypt_RSA_PKCS1v15_Refused_Default is the failure test for the
+// crypto audit's PKCS#1 v1.5 Encrypt finding: Encrypt's asymmetric fallback
+// must refuse to run PKCS#1 v1.5 unless the operator has opted into
+// crypto.allow_legacy_key_wrap. Without a symmetric backend and with no
+// legacy opt-in, a caller who used to get a Bleichenbacher-oracle-shaped
+// ciphertext back now gets a typed refusal that names EncryptAsym instead.
+func TestEncrypt_RSA_PKCS1v15_Refused_Default(t *testing.T) {
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(false)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
+	software, _ := setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	_, err = software.GenerateRSA(context.Background(), &types.KeyAttributes{
+		CN:            "encrypt-rsa-pkcs1v15-refused",
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.Encrypt(context.Background(), &transport.EncryptRequest{
+		Backend:   "software",
+		KeyID:     "encrypt-rsa-pkcs1v15-refused",
+		Plaintext: []byte("must not be PKCS#1 v1.5 encrypted"),
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrLegacyWrapDisabled))
+}
+
+// TestEncrypt_RSA_PKCS1v15_RoundTrip is the success test: with
+// crypto.allow_legacy_key_wrap enabled, Encrypt's asymmetric fallback still
+// performs PKCS#1 v1.5 and Decrypt still reads it back.
 func TestEncrypt_RSA_PKCS1v15_RoundTrip(t *testing.T) {
+	if !allowLegacyWrap(t) {
+		return
+	}
+
 	software, _ := setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
@@ -1370,6 +1479,10 @@ func TestEncrypt_RSA_PKCS1v15_RoundTrip(t *testing.T) {
 // rather than silently truncating it. A 2048-bit (256-byte) RSA key can
 // carry at most 256-11=245 bytes under PKCS#1 v1.5.
 func TestEncrypt_RSA_PlaintextTooLarge(t *testing.T) {
+	if !allowLegacyWrap(t) {
+		return
+	}
+
 	software, _ := setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)

@@ -14,17 +14,19 @@
 package ssh
 
 // restImportRequest is the wire form of ImportRequest with a
-// passphrase field included. The client populates PassphraseB64 via
-// base64-encoding a secure.Buffer; the server decodes with a custom
-// json.Unmarshaler that lands the bytes directly in a *secure.Buffer
-// without ever materializing a Go string.
+// passphrase field included. Passphrase carries the raw passphrase
+// bytes copied out of a secure.Buffer; encoding/json marshals a []byte
+// field as standard base64, which is exactly the form the server's
+// custom json.Unmarshaler (SSHPassphraseField) decodes back into a
+// *secure.Buffer without ever materializing a Go string. The client
+// wipes Passphrase after the request returns — see restKeysClient.Import.
 type restImportRequest struct {
-	Scope         string `json:"scope"`
-	Owner         string `json:"owner"`
-	Name          string `json:"name"`
-	Comment       string `json:"comment,omitempty"`
-	PEM           []byte `json:"pem"`
-	PassphraseB64 string `json:"passphrase_b64,omitempty"`
+	Scope      string `json:"scope"`
+	Owner      string `json:"owner"`
+	Name       string `json:"name"`
+	Comment    string `json:"comment,omitempty"`
+	PEM        []byte `json:"pem"`
+	Passphrase []byte `json:"passphrase_b64,omitempty"`
 }
 
 // restSignRequest is the JSON body of POST /keys/.../sign.

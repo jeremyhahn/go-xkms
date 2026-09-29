@@ -79,8 +79,8 @@ func wireCodeForKeyOp(code int) wire.Code {
 // codedToolResult renders a failed tool call as an MCP tool result carrying
 // both the prose a human reads and the go-qrdb wire code a client branches
 // on, in the exact shape go-qrdb's own MCP server produces (toolErrorResult
-// in pkg/api/mcp/status.go): the text content is the error message,
-// unchanged from what this transport returned before this code existed, and
+// in pkg/api/mcp/status.go): the text content is the client-facing message
+// (xkmsmcp.ClientError's, which withholds an internal error's detail), and
 // the structured content is the classified envelope.
 func codedToolResult(tool string, code wire.Code, message string) *mcpgo.CallToolResult {
 	res := mcpgo.NewToolResultError(message)

@@ -194,7 +194,12 @@ func TestRequireTenantScope_TenantLocalIsConfined(t *testing.T) {
 		identityWithRoles("tenant-a", qrdbsdk.RoleNameAdmin))
 
 	require.NoError(t, RequireTenantScope(ctx, "tenant-a"))
-	require.ErrorIs(t, RequireTenantScope(ctx, "tenant-b"), ErrForbidden)
+	err := RequireTenantScope(ctx, "tenant-b")
+	var bindErr *TenantBindingError
+	require.ErrorAs(t, err, &bindErr)
+	require.ErrorIs(t, err, ErrTenantNotFound)
+	assert.Equal(t, "tenant-a", bindErr.CallerTenantID)
+	assert.Equal(t, "tenant-b", bindErr.TargetTenantID)
 }
 
 // TestRequireTenantScope_NoIdentity verifies the error path: no identity means

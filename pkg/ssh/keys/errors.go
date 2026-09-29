@@ -13,6 +13,23 @@
 
 package keys
 
+import "strconv"
+
+// BackendKeyIDTooLongError is returned by backendKeyID when the encoded CN
+// for a backend-backed SSH key would exceed Max bytes. It is refused rather
+// than truncated: a truncated CN could collide with another key's, and
+// truncation silently narrows the identity the caller asked to address.
+type BackendKeyIDTooLongError struct {
+	Length int
+	Max    int
+}
+
+// Error implements the error interface.
+func (e *BackendKeyIDTooLongError) Error() string {
+	return "ssh/keys: backend key id too long: " + strconv.Itoa(e.Length) +
+		" bytes exceeds max " + strconv.Itoa(e.Max)
+}
+
 // NilInputError is returned when a required argument is nil or zero.
 // Field names the offending argument so callers can surface precise
 // diagnostics.
@@ -38,7 +55,7 @@ func (e *UnsupportedAlgorithmError) Error() string {
 
 // InvalidKeySizeError is returned when a key-generation request
 // specifies a size that is not valid for the chosen algorithm (e.g.,
-// RSA < 2048 bits).
+// RSA outside [types.RSAKeySize2048, types.RSAKeySize4096]).
 type InvalidKeySizeError struct {
 	Algorithm string
 	Size      int

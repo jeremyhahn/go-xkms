@@ -1510,10 +1510,10 @@ coverage-pkcs11-tagged:
 
 .PHONY: coverage-packages
 ## coverage-packages: Merge every per-package coverage lane (main unit lane,
-## tpm2 simulator, pkcs11-tagged) into one profile (issue #703). Requires
+## tpm2 simulator, pkcs11-tagged, GODEBUG=fips140=on for pkg/crypto/fips) into one profile (issue #703). Requires
 ## $(COVERAGE_FILE) to already exist -- run `make coverage` (or `test-go`)
 ## first; this target only runs the lanes `test-go` cannot reach itself.
-coverage-packages: coverage-tpm2-simulator coverage-pkcs11-tagged
+coverage-packages: coverage-tpm2-simulator coverage-pkcs11-tagged coverage-fips
 	@if [ ! -f "$(COVERAGE_FILE)" ]; then \
 		echo "$(RED)✗ $(COVERAGE_FILE) not found -- run 'make coverage' first$(RESET)"; \
 		exit 1; \
@@ -1523,6 +1523,7 @@ coverage-packages: coverage-tpm2-simulator coverage-pkcs11-tagged
 	@tail -n +2 $(COVERAGE_FILE) >> $(COVERAGE_DIR)/all-packages.out
 	@tail -n +2 $(COVERAGE_DIR)/tpm2-simulator.out >> $(COVERAGE_DIR)/all-packages.out
 	@tail -n +2 $(COVERAGE_DIR)/pkcs11-tagged.out >> $(COVERAGE_DIR)/all-packages.out
+	@tail -n +2 $(COVERAGE_DIR)/fips.out >> $(COVERAGE_DIR)/all-packages.out
 	@echo "$(GREEN)✓ Merged coverage profile: $(COVERAGE_DIR)/all-packages.out$(RESET)"
 
 .PHONY: test-importexport
@@ -1672,7 +1673,7 @@ coverage-xkmsctl:
 # lane used to be represented here by integration-test-pkcs11-conformance alone,
 # which left the C ABI and the whole OpenSSL/OpenSSH interop surface out of every
 # default run -- the exact surface real callers reach the module through.
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
+integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-run-images
@@ -2241,6 +2242,42 @@ integration-test-tpm2:
 	@cd test/integration/tpm2 && trap '$(call compose,tpm2) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
 		$(call compose,tpm2) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test
 	@echo "$(GREEN)✓ TPM2 integration tests complete$(RESET)"
+
+.PHONY: integration-test-acme-tpm
+# Not in the integration-test aggregate yet: its device-attest-01 tests need
+# the challenge wired (go-xkms#737, pending an owner ruling on #828). Run it
+# on its own; add it to the aggregate when #737 lands.
+## integration-test-acme-tpm: Run the ACME+TPM integration suite (device-attest-01, enroll-01, permanent-identifier end-to-end)
+# test/integration/acme-tpm (build tags `integration tpm2`) dials swtpm
+# directly AND a real ACME server (xkmsd with its embedded ACME listener
+# enabled, see config.acme-tpm.yaml) -- unlike integration-test-tpm2, which
+# only needs the simulator. Brings both dependency services up first so the
+# `test` service's own depends_on/healthcheck conditions do not race a cold
+# build; see docker-compose.yml for why the image is shared between
+# acme-server and test (one Dockerfile build, two roles).
+integration-test-acme-tpm:
+	@echo "$(CYAN)$(BOLD)→ Running ACME+TPM integration tests...$(RESET)"
+	@cd test/integration/acme-tpm && $(call compose,acme-tpm) down -v >/dev/null 2>&1 || true
+	@cd test/integration/acme-tpm && $(call compose,acme-tpm) up -d --build tpm-simulator acme-server
+	@echo "$(CYAN)  Waiting for swtpm and the ACME server to be ready...$(RESET)"
+	@cd test/integration/acme-tpm && trap '$(call compose,acme-tpm) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,acme-tpm) run --build --rm test
+	@echo "$(GREEN)✓ ACME+TPM integration tests complete$(RESET)"
+
+.PHONY: integration-test-challenges
+## integration-test-challenges: Run the ACME challenge-framework integration suite (enroll01/endorse01 availability, no TPM)
+# dns01 and http01 are deliberately NOT part of this target: they are their
+# own multi-service E2E stacks (docker-compose.dns01.yml /
+# docker-compose.http01.yml) that still build against the pre-merge
+# go-trusted-ca sibling checkout; see test/integration/challenges/docker-compose.yml.
+integration-test-challenges:
+	@echo "$(CYAN)$(BOLD)→ Running ACME challenge-framework integration tests...$(RESET)"
+	@cd test/integration/challenges && $(call compose,challenges) down -v >/dev/null 2>&1 || true
+	@cd test/integration/challenges && $(call compose,challenges) up -d --build acme-server
+	@echo "$(CYAN)  Waiting for the ACME server to be ready...$(RESET)"
+	@cd test/integration/challenges && trap '$(call compose,challenges) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,challenges) run --build --rm test
+	@echo "$(GREEN)✓ ACME challenge-framework integration tests complete$(RESET)"
 
 .PHONY: test-tpm2-encryption
 ## test-tpm2-encryption: Run TPM2 session encryption verification tests with packet capture

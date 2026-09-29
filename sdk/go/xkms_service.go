@@ -82,6 +82,15 @@ var UnwrapKey = pkgxkms.UnwrapKey
 // ExportKey exports a key as wrapped material using the given algorithm.
 var ExportKey = pkgxkms.ExportKey
 
+// WrapKeyByID wraps a server-side target key with a server-side wrapping
+// key, both identified by key ID and backend (the PKCS#11 C_WrapKey
+// primitive).
+var WrapKeyByID = pkgxkms.WrapKeyByID
+
+// UnwrapKeyByID unwraps key material with a server-side unwrapping key and
+// imports the result as a new key (the PKCS#11 C_UnwrapKey primitive).
+var UnwrapKeyByID = pkgxkms.UnwrapKeyByID
+
 // --- PIV manager ---
 
 // PIVKeyGenerator generates PIV keys for the PIV manager.

@@ -16,7 +16,9 @@ package phone
 import (
 	"context"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
@@ -66,9 +68,12 @@ func (k *phoneSymmetricKey) KeySize() int {
 }
 
 // Raw returns ErrExportNotSupported because hardware-backed symmetric keys
-// cannot expose their key material.
+// cannot expose their key material. The error also matches
+// backend.ErrNotSupported, the refusal every sealed backend gives, so callers
+// that treat a sealed key specially -- the service's AEAD nonce guard
+// identifies such a key by name -- recognise this one too.
 func (k *phoneSymmetricKey) Raw() ([]byte, error) {
-	return nil, ErrExportNotSupported
+	return nil, &errs.Joined{Lead: ErrExportNotSupported, Cause: backend.ErrNotSupported}
 }
 
 // phoneSymmetricEncrypter proxies symmetric encrypt/decrypt operations to the
@@ -206,6 +211,15 @@ func (e *phoneSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 	if opts != nil {
 		if err := aead.RequireDefaultTagSize(opts.TagSize, "the paired phone"); err != nil {
 			return nil, err
+		}
+		// The phone's secure hardware generates its own nonce for
+		// local.symmetricEncrypt and the protocol carries no field to
+		// override it. A caller-supplied nonce used to be accepted here and
+		// silently dropped, which let a caller believe its own nonce
+		// discipline governed this encryption when the phone's did instead.
+		// Refused outright rather than ignored.
+		if opts.Nonce != nil {
+			return nil, backend.ErrCallerNonceNotSupported
 		}
 	}
 

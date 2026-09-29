@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/qrscan"
 	"github.com/spf13/cobra"
@@ -37,7 +38,7 @@ const oathStoreFilename = "oath.json"
 // OATH command errors.
 var (
 	ErrOATHMissingName        = errors.New("oath: --name is required")
-	ErrOATHMissingSecret      = errors.New("oath: --secret or --uri is required")
+	ErrOATHMissingSecret      = errors.New("oath: a secret (--secret-stdin or XKEY_OATH_SECRET) or --uri is required")
 	ErrOATHMissingCredential  = errors.New("oath: specify credential name or use --all")
 	ErrOATHMissingRemoveArg   = errors.New("oath: specify credential name to remove")
 	ErrOATHStoreOpenFailed    = errors.New("oath: failed to open store")
@@ -51,7 +52,28 @@ var (
 	ErrOATHScanFailed         = errors.New("oath: failed to scan screen for QR code")
 	ErrOATHNoQRFound          = errors.New("oath: no QR code found on screen")
 	ErrOATHMultipleQRFound    = errors.New("oath: multiple QR codes found, use --index to select one")
+
+	// ErrOATHSecretStdinEmpty indicates --secret-stdin was given but standard
+	// input carried no secret.
+	ErrOATHSecretStdinEmpty = errors.New("oath: --secret-stdin was given but standard input carried no secret")
+
+	// ErrOATHSecretStdinRead indicates standard input could not be read for
+	// --secret-stdin.
+	ErrOATHSecretStdinRead = errors.New("oath: failed to read the secret from standard input")
 )
+
+// oathSecretSource is the one way an OATH credential's base32 shared secret
+// enters the CLI for "oath add". It follows the PIN convention
+// (pin_input.go): standard input or the environment, never a "--secret"
+// value flag -- a value on the command line is visible to every other
+// process on the host via 'ps' (go-xkms#1209).
+var oathSecretSource = pinSource{
+	label:      "OATH secret",
+	stdinFlag:  "secret-stdin",
+	envVar:     "XKEY_OATH_SECRET",
+	stdinEmpty: ErrOATHSecretStdinEmpty,
+	stdinRead:  ErrOATHSecretStdinRead,
+}
 
 // OATHCmd represents the oath parent command.
 var OATHCmd = &cobra.Command{
@@ -67,7 +89,7 @@ Examples:
   xkey oath scan
 
   # Add credential from secret
-  xkey oath add --name "GitHub" --secret JBSWY3DPEHPK3PXP --issuer "GitHub"
+  echo JBSWY3DPEHPK3PXP | xkey oath add --name "GitHub" --secret-stdin --issuer "GitHub"
 
   # Add credential from QR code URI
   xkey oath add --uri "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
@@ -92,17 +114,20 @@ var oathAddCmd = &cobra.Command{
 	Long: `Add a new OATH TOTP or HOTP credential.
 
 You can add a credential either by providing individual parameters or by
-providing an otpauth:// URI (typically from a QR code).
+providing an otpauth:// URI (typically from a QR code). The base32 secret is
+supplied through --secret-stdin or XKEY_OATH_SECRET; there is no "--secret"
+value flag, since a value on the command line is visible to every other
+process on the host via 'ps'.
 
 Examples:
   # Add TOTP credential with secret
-  xkey oath add --name "GitHub" --secret JBSWY3DPEHPK3PXP --issuer "GitHub"
+  echo JBSWY3DPEHPK3PXP | xkey oath add --name "GitHub" --secret-stdin --issuer "GitHub"
 
   # Add TOTP credential with SHA256 and 8 digits
-  xkey oath add --name "AWS" --secret JBSWY3DPEHPK3PXP --algorithm SHA256 --digits 8
+  XKEY_OATH_SECRET=JBSWY3DPEHPK3PXP xkey oath add --name "AWS" --algorithm SHA256 --digits 8
 
   # Add HOTP credential
-  xkey oath add --name "MyService" --secret JBSWY3DPEHPK3PXP --type hotp
+  echo JBSWY3DPEHPK3PXP | xkey oath add --name "MyService" --secret-stdin --type hotp
 
   # Add from otpauth:// URI
   xkey oath add --uri "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
@@ -263,7 +288,12 @@ func runOATHAdd(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	name, _ := cmd.Flags().GetString("name")
 	issuer, _ := cmd.Flags().GetString("issuer")
-	secret, _ := cmd.Flags().GetString("secret")
+	secretBytes, err := oathSecretSource.resolveBytes(cmd)
+	if err != nil {
+		return err
+	}
+	defer enclave.Wipe(secretBytes)
+	secret := string(secretBytes)
 	uri, _ := cmd.Flags().GetString("uri")
 	otpType, _ := cmd.Flags().GetString("type")
 	algorithm, _ := cmd.Flags().GetString("algorithm")
@@ -701,7 +731,7 @@ func init() {
 	// oath add flags
 	oathAddCmd.Flags().String("name", "", "Credential name (e.g., GitHub)")
 	oathAddCmd.Flags().String("issuer", "", "Service issuer name")
-	oathAddCmd.Flags().String("secret", "", "Base32-encoded secret key")
+	oathSecretSource.addFlags(oathAddCmd)
 	oathAddCmd.Flags().String("uri", "", "otpauth:// URI (from QR code)")
 	oathAddCmd.Flags().String("type", "totp", "OTP type: totp or hotp")
 	oathAddCmd.Flags().String("algorithm", "SHA1", "Hash algorithm: SHA1, SHA256, SHA512")

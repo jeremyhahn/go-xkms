@@ -200,8 +200,8 @@ Usage: `xkey backup contents <file> [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--key` | string |  | Hex-encoded decryption key |
-| `--password` | string |  | Decryption password |
+| `--key-stdin` | bool | false | Read the backup key from standard input |
+| `--password-stdin` | bool | false | Read the backup password from standard input |
 
 ## xkey backup create
 
@@ -211,11 +211,11 @@ Usage: `xkey backup create [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--oath-store` | string |  | OATH credential store file, bypassing the barrier (default: the barrier-encrypted store when a barrier is initialized, otherwise {xkey-home}/data/oath.json) |
 | `--output`, `-o` | string |  | Output file path (default: ~/.xkey/backups/backup-{timestamp}.xkb) |
-| `--password` | string |  | Encryption password (if not set, a random key is generated) |
+| `--password-stdin` | bool | false | Read the backup password from standard input |
 | `--password-store` | string |  | Static password store directory (default: {xkey-home}/data/staticpw) |
 | `--trust-store` | string |  | Trust store directory (default: {xkey-home}/data/trust) |
 
@@ -227,12 +227,12 @@ Usage: `xkey backup from-device [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Paired device name to restore from |
-| `--key` | string |  | Hex-encoded decryption key |
+| `--key-stdin` | bool | false | Read the backup key from standard input |
 | `--oath-store` | string |  | OATH credential store file, bypassing the barrier (default: the barrier-encrypted store when a barrier is initialized, otherwise {xkey-home}/data/oath.json) |
-| `--password` | string |  | Decryption password |
+| `--password-stdin` | bool | false | Read the backup password from standard input |
 | `--password-store` | string |  | Static password store directory (default: {xkey-home}/data/staticpw) |
 | `--timeout` | duration | 1m0s | Operation timeout |
 | `--trust-store` | string |  | Trust store directory (default: {xkey-home}/data/trust) |
@@ -251,11 +251,11 @@ Usage: `xkey backup restore <file> [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
-| `--key` | string |  | Hex-encoded decryption key |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
+| `--key-stdin` | bool | false | Read the backup key from standard input |
 | `--oath-store` | string |  | OATH credential store file, bypassing the barrier (default: the barrier-encrypted store when a barrier is initialized, otherwise {xkey-home}/data/oath.json) |
-| `--password` | string |  | Decryption password |
+| `--password-stdin` | bool | false | Read the backup password from standard input |
 | `--password-store` | string |  | Static password store directory (default: {xkey-home}/data/staticpw) |
 | `--trust-store` | string |  | Trust store directory (default: {xkey-home}/data/trust) |
 
@@ -267,11 +267,11 @@ Usage: `xkey backup to-device [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Paired device name to send backup to |
 | `--oath-store` | string |  | OATH credential store file, bypassing the barrier (default: the barrier-encrypted store when a barrier is initialized, otherwise {xkey-home}/data/oath.json) |
-| `--password` | string |  | Encryption password (if not set, a random key is generated) |
+| `--password-stdin` | bool | false | Read the backup password from standard input |
 | `--password-store` | string |  | Static password store directory (default: {xkey-home}/data/staticpw) |
 | `--timeout` | duration | 1m0s | Operation timeout |
 | `--trust-store` | string |  | Trust store directory (default: {xkey-home}/data/trust) |
@@ -547,8 +547,8 @@ Usage: `xkey device attest-device [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (or XKEY_BARRIER_PASSWORD) |
-| `--barrier-password-file` | string |  | Path to a file containing the barrier password |
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Device name to attest (uses default if not specified) |
 | `--force` | bool | false | Ignore grace period and re-attest anyway |
 | `--set-grace-period` | duration | 0s | Set the attestation grace period for this device (e.g., 5m, 30m) |
@@ -630,8 +630,8 @@ Usage: `xkey device listen [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--attestation-mode` | string | auto | Attestation mode: auto, tpm2, software |
-| `--barrier-password` | string |  | Barrier password (or XKEY_BARRIER_PASSWORD) |
-| `--barrier-password-file` | string |  | Path to a file containing the barrier password |
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Specific paired device to accept connections from |
 | `--name` | string |  | Advertised device name (default: hostname) |
 | `--timeout` | duration | 0s | Listen timeout (0 for indefinite) |
@@ -647,8 +647,8 @@ Usage: `xkey device pair [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (or XKEY_BARRIER_PASSWORD) |
-| `--barrier-password-file` | string |  | Path to a file containing the barrier password |
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Specific device name or address to pair |
 | `--force` | bool | false | Force re-pairing even if already paired |
 | `--so-pin-stdin` | bool | false | Read the SO PIN from standard input |
@@ -738,8 +738,8 @@ Usage: `xkey device sync [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | bool | true | Sync all stores (default) |
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Paired device name |
 | `--dry-run` | bool | false | Show what would be synced without applying |
 | `--oath` | bool | false | Sync OATH credentials |
@@ -756,8 +756,8 @@ Usage: `xkey device sync-pull [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | bool | true | Pull all stores (default) |
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Paired device name |
 | `--dry-run` | bool | false | Show what would be pulled without applying |
 | `--oath` | bool | false | Pull OATH credentials |
@@ -774,8 +774,8 @@ Usage: `xkey device sync-push [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | bool | true | Push all stores (default) |
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Paired device name |
 | `--dry-run` | bool | false | Show what would be pushed without applying |
 | `--oath` | bool | false | Push OATH credentials |
@@ -791,8 +791,8 @@ Usage: `xkey device sync-status [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Paired device name |
 | `--timeout` | duration | 1m0s | Operation timeout |
 
@@ -838,8 +838,8 @@ Usage: `xkey extension serve [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--auto-lock-minutes` | int | 15 | Inactivity lock timeout (0=disabled) |
-| `--barrier-password` | string |  | Barrier password |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--log-file` | string |  | Log file path (default: stderr) |
 | `--log-level` | string | info | Log level (debug, info, warn, error) |
 | `--no-auth` | bool | false | Disable CTAP2 authentication for autofill (credentials returned without PIN/touch) |
@@ -884,8 +884,8 @@ Aliases: fido
 |---|---|---|---|
 | `--attestation` | string | none | Attestation format: none, packed, or tpm |
 | `--backend` | string | software | Key backend: software, tpm2, or phone |
-| `--barrier-password` | string |  | Barrier password for encrypted storage |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--cdp` | bool | false | Enable Chrome DevTools virtual authenticator bridge |
 | `--cdp-host` | string | localhost | Chrome DevTools host |
 | `--cdp-port` | int | 9222 | Chrome DevTools debugging port |
@@ -893,13 +893,13 @@ Aliases: fido
 | `--interactive` | bool | false | Enable interactive mode (prompt for touch/PIN) |
 | `--name` | string | xKey (go-xkms) | Device name visible to OS |
 | `--notify` | string | dialog | Notification type: dialog (interactive), passive (desktop notification), log (log-only), or none |
-| `--notify-command` | string |  | Custom notification command (overrides built-in notifications) |
+| `--notify-command` | string |  | Custom notification command (overrides built-in notifications). Split into argv on whitespace (quote with ' or " to include a space in one argument); run exactly as given, never through a shell, and never modified. Request data (operation, RP ID, RP name, user name) reaches the command only via the XKEY_OPERATION/XKEY_RP_ID/XKEY_RP_NAME/XKEY_USER_NAME environment variables, for example: sh -c 'notify-send "Touch required" "$XKEY_RP_ID"' |
 | `--password-store` | string |  | Path to static password store (default: ~/.xkey/data/staticpw, the same store `xkey password` uses) |
 | `--phone-device` | string |  | Specific phone name or address to use (default: use default paired phone) |
 | `--pin` | bool | true | Enable PIN support (required for FIDO 2.1 credential management) |
 | `--require-touch` | bool | true | Require touch even after PIN verification (like hardware YubiKey) |
 | `--serial` | string |  | Device serial number (auto-generated if empty) |
-| `--set-pin` | string |  | Establish the initial PIN when the store has none (requires --pin; refused if a PIN is already set) |
+| `--set-pin-stdin` | bool | false | Read the PIN to establish from standard input |
 | `--storage` | string | memory | Storage type: memory, file, or barrier |
 | `--storage-path` | string |  | Path for file storage and the authenticator profile (default: ~/.xkey/data/fido2, see --data-dir/XKEY_DATA_DIR) |
 | `--timeout` | duration | 30s | Timeout for user presence requests |
@@ -1013,8 +1013,8 @@ Usage: `xkey fido2 start [flags]`
 |---|---|---|---|
 | `--attestation` | string | none | Attestation format: none, packed, or tpm |
 | `--backend` | string | software | Key backend: software, tpm2, or phone |
-| `--barrier-password` | string |  | Barrier password for encrypted storage |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--cdp` | bool | false | Enable Chrome DevTools virtual authenticator bridge |
 | `--cdp-host` | string | localhost | Chrome DevTools host |
 | `--cdp-port` | int | 9222 | Chrome DevTools debugging port |
@@ -1022,13 +1022,13 @@ Usage: `xkey fido2 start [flags]`
 | `--interactive` | bool | false | Enable interactive mode (prompt for touch/PIN) |
 | `--name` | string | xKey (go-xkms) | Device name visible to OS |
 | `--notify` | string | dialog | Notification type: dialog (interactive), passive (desktop notification), log (log-only), or none |
-| `--notify-command` | string |  | Custom notification command (overrides built-in notifications) |
+| `--notify-command` | string |  | Custom notification command (overrides built-in notifications). Split into argv on whitespace (quote with ' or " to include a space in one argument); run exactly as given, never through a shell, and never modified. Request data (operation, RP ID, RP name, user name) reaches the command only via the XKEY_OPERATION/XKEY_RP_ID/XKEY_RP_NAME/XKEY_USER_NAME environment variables, for example: sh -c 'notify-send "Touch required" "$XKEY_RP_ID"' |
 | `--password-store` | string |  | Path to static password store (default: ~/.xkey/data/staticpw, the same store `xkey password` uses) |
 | `--phone-device` | string |  | Specific phone name or address to use (default: use default paired phone) |
 | `--pin` | bool | true | Enable PIN support (required for FIDO 2.1 credential management) |
 | `--require-touch` | bool | true | Require touch even after PIN verification (like hardware YubiKey) |
 | `--serial` | string |  | Device serial number (auto-generated if empty) |
-| `--set-pin` | string |  | Establish the initial PIN when the store has none (requires --pin; refused if a PIN is already set) |
+| `--set-pin-stdin` | bool | false | Read the PIN to establish from standard input |
 | `--storage` | string | memory | Storage type: memory, file, or barrier |
 | `--storage-path` | string |  | Path for file storage and the authenticator profile (default: ~/.xkey/data/fido2, see --data-dir/XKEY_DATA_DIR) |
 | `--timeout` | duration | 30s | Timeout for user presence requests |
@@ -1141,13 +1141,13 @@ Usage: `xkey oath add [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--algorithm` | string | SHA1 | Hash algorithm: SHA1, SHA256, SHA512 |
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--digits` | int | 6 | Number of digits (6, 7, or 8) |
 | `--issuer` | string |  | Service issuer name |
 | `--name` | string |  | Credential name (e.g., GitHub) |
 | `--period` | int | 30 | Time period in seconds (TOTP only) |
-| `--secret` | string |  | Base32-encoded secret key |
+| `--secret-stdin` | bool | false | Read the OATH secret from standard input |
 | `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--type` | string | totp | OTP type: totp or hotp |
 | `--uri` | string |  | otpauth:// URI (from QR code) |
@@ -1163,8 +1163,8 @@ Aliases: gen, code
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | bool | false | Generate codes for all credentials |
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 
 ## xkey oath list
@@ -1177,8 +1177,8 @@ Aliases: ls
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--secrets` | bool | false | Show secret keys |
 | `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--uri` | bool | false | Show otpauth:// URIs |
@@ -1191,8 +1191,8 @@ Usage: `xkey oath pull [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Paired device name |
 | `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--timeout` | duration | 1m0s | Operation timeout |
@@ -1205,8 +1205,8 @@ Usage: `xkey oath push <name-or-id> [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Paired device name |
 | `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--timeout` | duration | 1m0s | Operation timeout |
@@ -1221,8 +1221,8 @@ Aliases: rm, delete
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--force` | bool | false | Don't prompt for confirmation |
 | `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 
@@ -1234,8 +1234,8 @@ Usage: `xkey oath scan [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--display` | int | -1 | Display index to scan (-1 for all displays) |
 | `--index` | int | -1 | Select QR code by index when multiple are found |
 | `--list-displays` | bool | false | List available displays and exit |
@@ -1251,8 +1251,8 @@ Usage: `xkey oath sync [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--device` | string |  | Paired device name |
 | `--store` | string |  | Path to credential store (default: ~/.xkey/data/oath.json) |
 | `--timeout` | duration | 1m0s | Operation timeout |
@@ -1296,8 +1296,8 @@ Usage: `xkey oidc login [flags]`
 | `--authorization-endpoint` | string |  | Manual authorization endpoint (skips discovery; requires --token-endpoint and --jwks-uri) |
 | `--auto-refresh` | int | 0 | Auto-refresh interval in seconds (0 to disable) |
 | `--background` | bool | false | Run auto-refresh in background (requires --auto-refresh) |
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--callback-host` | string |  | Host the local callback listener binds (default: oidc.callback_host, localhost) |
 | `--callback-port` | int | 0 | Port of the default redirect URL (default: oidc.callback_port, 8085) |
 | `--client-id` | string |  | OAuth2 client ID |
@@ -1324,8 +1324,8 @@ Usage: `xkey oidc logout [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | bool | false | Clear all stored tokens |
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
 
 ## xkey oidc providers
@@ -1400,8 +1400,8 @@ Usage: `xkey oidc refresh [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--provider` | string |  | Use saved provider configuration by name (required for manual-endpoint providers) |
 | `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
 
@@ -1434,8 +1434,8 @@ Usage: `xkey oidc token [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--show-full` | bool | false | Show full token values |
 | `--token-store` | string | ~/.xkey/tokens.json | Path to token store |
 
@@ -1468,7 +1468,7 @@ Usage: `xkey password add [flags]`
 | `--length` | int | 32 | Generated password length |
 | `--name` | string |  | Password name (e.g., DatabaseProd) |
 | `--notes` | string |  | Optional notes |
-| `--password` | string |  | The password to store |
+| `--password-stdin` | bool | false | Read the password from standard input |
 | `--store` | string |  | Path to password store (default: ~/.xkey/data/staticpw) |
 | `--title` | string |  | Display title for credential |
 | `--url` | string |  | Website URL for domain matching |
@@ -1546,7 +1546,7 @@ Usage: `xkey password unlock [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--pin` | string |  | User PIN for unlocking the store |
+| `--pin-stdin` | bool | false | Read the PIN from standard input |
 
 ## xkey pin
 
@@ -1824,7 +1824,7 @@ Usage: `xkey platform-store put <name> [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--file` | string |  | Path to file containing the secret |
-| `--value` | string |  | Secret value to store |
+| `--value-stdin` | bool | false | Read the secret value from standard input |
 
 ## xkey platform-store reseal
 
@@ -1933,8 +1933,8 @@ Usage: `xkey provision [flags]`
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--agent` | string |  | the agent's display name (required) |
-| `--barrier-password` | string |  | Barrier password (for barrier-encrypted storage) |
 | `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--chrome-profile-dir` | string |  | also pair a Chrome profile with this instance (see 'xkey extension install chrome --profile-dir') |
 | `--force` | bool | false | provision a home that is already initialized |
 | `--home` | string |  | xkey home to provision (default: XKEY_HOME; one of the two is required) |
@@ -1950,8 +1950,8 @@ Usage: `xkey secret-service [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--barrier-password` | string |  | barrier password used to unlock on demand (or XKEY_BARRIER_PASSWORD) |
-| `--barrier-password-file` | string |  | path to a file containing the barrier password |
+| `--barrier-password-file` | string |  | Read barrier password from file (first line) |
+| `--barrier-password-stdin` | bool | false | Read the barrier password from standard input |
 | `--bus` | string | session | D-Bus bus to own org.freedesktop.secrets on (session or system) |
 | `--data-dir` | string |  | data directory for barrier storage (default: ~/.xkey/data) |
 | `--strategy` | string |  | barrier seal strategy override (default: the strategy the barrier was initialized with) |

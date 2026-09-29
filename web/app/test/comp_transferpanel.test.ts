@@ -127,7 +127,12 @@ describe("TransferPanel", () => {
       source_key_id: "vault-aes",
       dest_backend: "tpm2",
       dest_key_id: "vault-aes-copy",
+      algorithm: "RSAES_OAEP_SHA_256",
     });
+    // Copy takes the key's attributes from the source (go-xkms#1223).
+    expect(copyKey.mock.calls[0]![0]).not.toHaveProperty("key_type");
+    expect(copyKey.mock.calls[0]![0]).not.toHaveProperty("key_size");
+    expect(copyKey.mock.calls[0]![0]).not.toHaveProperty("curve");
     expect(onChanged).toHaveBeenCalledOnce();
     expect(toasts.some((t) => t.kind === "success")).toBe(true);
   });

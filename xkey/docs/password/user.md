@@ -1,19 +1,23 @@
 # Static Passwords — User Guide
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Store a password
 
 ```bash
-xkey password add --name "DatabaseProd" --password "s3cretP@ss!"
+xkey password add --name "DatabaseProd" --password-stdin < password.txt
 
 # With metadata the browser extension uses for autofill matching
-xkey password add --name "GitHubWork" --password "tok_abc123" \
+XKEY_STATIC_PASSWORD="tok_abc123" xkey password add --name "GitHubWork" \
   --title "GitHub (Work)" --username "jdoe" --url "https://github.com"
 
 # Generate one instead of typing it
 xkey password add --name "ServiceAccount" --generate --length 64
 ```
+
+There is no `--password` value flag: a value on the command line is visible
+to every other process on the host via `ps`. The password comes from
+`--password-stdin` or `XKEY_STATIC_PASSWORD` instead.
 
 ## Retrieve a password
 
@@ -68,12 +72,24 @@ the local store's location:
 # Switch to session mode: one PIN entry unlocks everything until locked
 xkey password access-mode --mode session_based --xkmsd-url https://xkms.example.com
 
-xkey password unlock --pin "1234" --xkmsd-url https://xkms.example.com
+XKEY_PIN="1234" xkey password unlock --xkmsd-url https://xkms.example.com
 xkey password lock --xkmsd-url https://xkms.example.com
 
 # See the session's access mode and lock state
 xkey password status --source xkmsd --xkmsd-url https://xkms.example.com
 ```
+
+## Back up the vault from the GUI
+
+**Passwords → Backup** writes either plain JSON or, with **Encrypt**
+checked, an encrypted `.enc` file under a password you choose. The password
+is stretched with Argon2id (64 MiB, random salt), so a stolen backup file
+resists offline guessing. **Restore** needs the same password and the same
+AES size you chose when backing up.
+
+Encrypted backups made before go-xkms#1202 are refused ("not a salted
+password backup"): they used an unsalted hash of the password. Restore is
+not possible from them in this release; make a fresh backup.
 
 ## At-rest protection
 

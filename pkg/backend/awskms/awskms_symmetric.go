@@ -296,6 +296,14 @@ func (e *awsKMSSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		if err := aead.RequireDefaultTagSize(opts.TagSize, "AWS KMS"); err != nil {
 			return nil, err
 		}
+		// AWS KMS's Encrypt API manages nonce generation server-side and
+		// exposes no parameter to override it. A caller-supplied nonce used
+		// to be accepted here and silently dropped, which let a caller
+		// believe its own nonce discipline governed this encryption when AWS
+		// KMS's did instead. Refused outright rather than ignored.
+		if opts.Nonce != nil {
+			return nil, backend.ErrCallerNonceNotSupported
+		}
 	}
 
 	ctx := context.Background()

@@ -55,6 +55,8 @@ type mockKeyStore struct {
 	listKeysErr error
 	// storeType overrides Type()'s default of StoreSoftware when set.
 	storeType types.StoreType
+	// generateErr, when set, is returned by GenerateECDSA instead of a key.
+	generateErr error
 }
 
 func newMockKeyStore(name string) *mockKeyStore {
@@ -77,6 +79,9 @@ func (m *mockKeyStore) GenerateRSA(_ context.Context, attrs *types.KeyAttributes
 }
 
 func (m *mockKeyStore) GenerateECDSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	if m.generateErr != nil {
+		return nil, m.generateErr
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -3428,6 +3433,17 @@ func TestErrBackendUnsupported_Error_AllBranches(t *testing.T) {
 	}
 	assert.Equal(t, ErrOperationNotSupported.Error(), e3.Error())
 	assert.ErrorIs(t, e3, ErrOperationNotSupported)
+
+	// With a precise cause: both the sentinel and the cause match.
+	e4 := &ErrBackendUnsupported{
+		Sentinel: ErrOperationNotSupported,
+		Backend:  "awskms",
+		Detail:   backend.ErrExportNotSupported.Error(),
+		Cause:    backend.ErrExportNotSupported,
+	}
+	assert.ErrorIs(t, e4, ErrOperationNotSupported)
+	assert.ErrorIs(t, e4, backend.ErrExportNotSupported)
+	assert.NotErrorIs(t, e3, backend.ErrExportNotSupported)
 }
 
 func TestErrOperationWrap_Error_AllBranches(t *testing.T) {

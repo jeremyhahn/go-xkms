@@ -53,7 +53,8 @@ func NewAdminService(
 	}
 }
 
-// ListCertificates retrieves a paginated list of certificates
+// ListCertificates retrieves a paginated list of the certificates visible to
+// the caller (see visibleCertificates).
 func (s *AdminService) ListCertificates(ctx context.Context, req ListCertificatesRequest) ([]*CertificateInfo, *Pagination, error) {
 	if s.storageFactory == nil {
 		return nil, nil, ErrStorageNotConfigured
@@ -70,19 +71,9 @@ func (s *AdminService) ListCertificates(ctx context.Context, req ListCertificate
 		req.PerPage = 100
 	}
 
-	certDAO, err := s.storageFactory.CertificateDAO()
+	allCerts, err := s.visibleCertificates(ctx)
 	if err != nil {
-		return nil, nil, caerrors.StorageFailureError("failed to get certificate DAO: %s", err)
-	}
-
-	// List all certificates
-	var allCerts []*entities.ACMECertificate
-	err = certDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMECertificate]) error {
-		allCerts = append(allCerts, page.Entities...)
-		return nil
-	})
-	if err != nil {
-		return nil, nil, caerrors.StorageFailureError("failed to list certificates: %s", err)
+		return nil, nil, err
 	}
 
 	// Filter certificates
@@ -149,42 +140,24 @@ func (s *AdminService) ListCertificates(ctx context.Context, req ListCertificate
 	return result, pagination, nil
 }
 
-// GetCertificate retrieves a certificate by serial number
+// GetCertificate retrieves a certificate by serial number. A certificate the
+// caller may not see is ErrCertificateNotFound, exactly like one that does
+// not exist.
 func (s *AdminService) GetCertificate(ctx context.Context, serial string) (*CertificateInfo, error) {
 	if s.storageFactory == nil {
 		return nil, ErrStorageNotConfigured
 	}
 
-	certDAO, err := s.storageFactory.CertificateDAO()
+	cert, _, err := s.visibleCertificate(ctx, serial)
 	if err != nil {
-		return nil, caerrors.StorageFailureError("failed to get certificate DAO: %s", err)
+		return nil, err
 	}
-
-	// List all certificates and find by serial
-	var certs []*entities.ACMECertificate
-	err = certDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMECertificate]) error {
-		certs = append(certs, page.Entities...)
-		return nil
-	})
-	if err != nil {
-		return nil, caerrors.StorageFailureError("failed to list certificates: %s", err)
-	}
-
-	for _, cert := range certs {
-		x509Cert, err := parsePEMCertificate(cert.PEM)
-		if err != nil {
-			continue
-		}
-
-		if x509Cert.SerialNumber.String() == serial {
-			return s.convertToCertificateInfo(cert)
-		}
-	}
-
-	return nil, ErrCertificateNotFound
+	return s.convertToCertificateInfo(cert)
 }
 
-// RevokeCertificate revokes a certificate by serial number
+// RevokeCertificate revokes a certificate by serial number. A tenant-scoped
+// caller may revoke only its own tenant's certificates; any other serial is
+// ErrCertificateNotFound, exactly like one that does not exist.
 func (s *AdminService) RevokeCertificate(ctx context.Context, serial string, reason string) error {
 	if s.storageFactory == nil {
 		return ErrStorageNotConfigured
@@ -198,34 +171,9 @@ func (s *AdminService) RevokeCertificate(ctx context.Context, serial string, rea
 		return caerrors.StorageFailureError("failed to get certificate DAO: %s", err)
 	}
 
-	// Find certificate by serial
-	var certs []*entities.ACMECertificate
-	err = certDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMECertificate]) error {
-		certs = append(certs, page.Entities...)
-		return nil
-	})
+	targetCert, x509Cert, err := s.visibleCertificate(ctx, serial)
 	if err != nil {
-		return caerrors.StorageFailureError("failed to list certificates: %s", err)
-	}
-
-	var targetCert *entities.ACMECertificate
-	var x509Cert *x509.Certificate
-
-	for _, cert := range certs {
-		parsed, err := parsePEMCertificate(cert.PEM)
-		if err != nil {
-			continue
-		}
-
-		if parsed.SerialNumber.String() == serial {
-			targetCert = cert
-			x509Cert = parsed
-			break
-		}
-	}
-
-	if targetCert == nil {
-		return ErrCertificateNotFound
+		return err
 	}
 
 	// Revoke the certificate using CA
@@ -256,7 +204,8 @@ func (s *AdminService) ListExpiringCertificates(ctx context.Context, days int, p
 	return s.ListCertificates(ctx, req)
 }
 
-// ListAccounts retrieves a paginated list of ACME accounts
+// ListAccounts retrieves a paginated list of the ACME accounts visible to
+// the caller (see visibleAccounts).
 func (s *AdminService) ListAccounts(ctx context.Context, req ListAccountsRequest) ([]*AccountInfo, *Pagination, error) {
 	if s.storageFactory == nil {
 		return nil, nil, ErrStorageNotConfigured
@@ -273,19 +222,9 @@ func (s *AdminService) ListAccounts(ctx context.Context, req ListAccountsRequest
 		req.PerPage = 100
 	}
 
-	accountDAO, err := s.storageFactory.AccountDAO()
+	allAccounts, err := s.visibleAccounts(ctx)
 	if err != nil {
-		return nil, nil, caerrors.StorageFailureError("failed to get account DAO: %s", err)
-	}
-
-	// List all accounts
-	var allAccounts []*entities.ACMEAccount
-	err = accountDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEAccount]) error {
-		allAccounts = append(allAccounts, page.Entities...)
-		return nil
-	})
-	if err != nil {
-		return nil, nil, caerrors.StorageFailureError("failed to list accounts: %s", err)
+		return nil, nil, err
 	}
 
 	// Filter accounts
@@ -334,26 +273,23 @@ func (s *AdminService) ListAccounts(ctx context.Context, req ListAccountsRequest
 	return result, pagination, nil
 }
 
-// GetAccount retrieves an account by ID
+// GetAccount retrieves an account by ID. An account the caller may not see is
+// ErrAccountNotFound, exactly like one that does not exist.
 func (s *AdminService) GetAccount(ctx context.Context, accountID uint64) (*AccountInfo, error) {
 	if s.storageFactory == nil {
 		return nil, ErrStorageNotConfigured
 	}
 
-	accountDAO, err := s.storageFactory.AccountDAO()
+	account, err := s.visibleAccount(ctx, accountID)
 	if err != nil {
-		return nil, caerrors.StorageFailureError("failed to get account DAO: %s", err)
-	}
-
-	account, err := accountDAO.Get(ctx, accountID)
-	if err != nil {
-		return nil, caerrors.StorageFailureError("failed to get account: %s", err)
+		return nil, err
 	}
 
 	return s.convertToAccountInfo(ctx, account)
 }
 
-// DisableAccount disables an ACME account
+// DisableAccount disables an ACME account. A tenant-scoped caller may disable
+// only its own tenant's accounts; any other ID is ErrAccountNotFound.
 func (s *AdminService) DisableAccount(ctx context.Context, accountID uint64) error {
 	if s.storageFactory == nil {
 		return ErrStorageNotConfigured
@@ -364,9 +300,9 @@ func (s *AdminService) DisableAccount(ctx context.Context, accountID uint64) err
 		return caerrors.StorageFailureError("failed to get account DAO: %s", err)
 	}
 
-	account, err := accountDAO.Get(ctx, accountID)
+	account, err := s.visibleAccount(ctx, accountID)
 	if err != nil {
-		return caerrors.StorageFailureError("failed to get account: %s", err)
+		return err
 	}
 
 	account.Status = "deactivated"
@@ -378,7 +314,10 @@ func (s *AdminService) DisableAccount(ctx context.Context, accountID uint64) err
 	return nil
 }
 
-// ListOrders retrieves a paginated list of orders
+// ListOrders retrieves a paginated list of the orders visible to the caller:
+// the orders of the accounts it may see (see visibleAccounts). Filtering by an
+// account the caller may not see yields an empty page, exactly as filtering
+// by an account that does not exist does.
 func (s *AdminService) ListOrders(ctx context.Context, req ListOrdersRequest) ([]*OrderInfo, *Pagination, error) {
 	if s.storageFactory == nil {
 		return nil, nil, ErrStorageNotConfigured
@@ -398,50 +337,29 @@ func (s *AdminService) ListOrders(ctx context.Context, req ListOrdersRequest) ([
 	var allOrders []*entities.ACMEOrder
 
 	if req.AccountID > 0 {
-		// Get orders for specific account (DAO is already account-scoped)
-		orderDAO, err := s.storageFactory.OrderDAO(req.AccountID)
+		visible, err := s.accountVisibleByID(ctx, req.AccountID)
 		if err != nil {
-			return nil, nil, caerrors.StorageFailureError("failed to get order DAO: %s", err)
+			return nil, nil, err
 		}
-
-		err = orderDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEOrder]) error {
-			allOrders = append(allOrders, page.Entities...)
-			return nil
-		})
-		if err != nil {
-			return nil, nil, caerrors.StorageFailureError("failed to list orders: %s", err)
+		if visible {
+			allOrders, err = s.accountOrders(ctx, req.AccountID)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 	} else {
-		// Get all accounts and their orders
-		accountDAO, err := s.storageFactory.AccountDAO()
+		accounts, err := s.visibleAccounts(ctx)
 		if err != nil {
-			return nil, nil, caerrors.StorageFailureError("failed to get account DAO: %s", err)
-		}
-
-		var accounts []*entities.ACMEAccount
-		err = accountDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEAccount]) error {
-			accounts = append(accounts, page.Entities...)
-			return nil
-		})
-		if err != nil {
-			return nil, nil, caerrors.StorageFailureError("failed to list accounts: %s", err)
+			return nil, nil, err
 		}
 
 		allOrders = make([]*entities.ACMEOrder, 0)
 		for _, account := range accounts {
-			orderDAO, err := s.storageFactory.OrderDAO(account.ID)
+			orders, err := s.accountOrders(ctx, account.ID)
 			if err != nil {
 				continue
 			}
-
-			// Scan all orders for this account (the DAO is already account-scoped)
-			err = orderDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEOrder]) error {
-				allOrders = append(allOrders, page.Entities...)
-				return nil
-			})
-			if err != nil {
-				continue
-			}
+			allOrders = append(allOrders, orders...)
 		}
 	}
 
@@ -486,10 +404,19 @@ func (s *AdminService) ListOrders(ctx context.Context, req ListOrdersRequest) ([
 	return result, pagination, nil
 }
 
-// GetOrder retrieves an order by ID
+// GetOrder retrieves an order by ID. An order of an account the caller may
+// not see is ErrOrderNotFound, exactly like an order that does not exist.
 func (s *AdminService) GetOrder(ctx context.Context, orderID uint64, accountID uint64) (*OrderInfo, error) {
 	if s.storageFactory == nil {
 		return nil, ErrStorageNotConfigured
+	}
+
+	visible, err := s.accountVisibleByID(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if !visible {
+		return nil, ErrOrderNotFound
 	}
 
 	orderDAO, err := s.storageFactory.OrderDAO(accountID)
@@ -499,6 +426,9 @@ func (s *AdminService) GetOrder(ctx context.Context, orderID uint64, accountID u
 
 	order, err := orderDAO.Get(ctx, orderID)
 	if err != nil {
+		if isNotFoundError(err) {
+			return nil, ErrOrderNotFound
+		}
 		return nil, caerrors.StorageFailureError("failed to get order: %s", err)
 	}
 
@@ -550,7 +480,9 @@ func (s *AdminService) GetStatus(ctx context.Context) (*CAStatus, error) {
 	return status, nil
 }
 
-// GetStats retrieves CA statistics
+// GetStats retrieves CA statistics over the certificates, accounts and orders
+// visible to the caller: a tenant-scoped caller's statistics count only its
+// own tenant.
 func (s *AdminService) GetStats(ctx context.Context) (*CAStats, error) {
 	if s.storageFactory == nil {
 		return nil, ErrStorageNotConfigured
@@ -558,19 +490,9 @@ func (s *AdminService) GetStats(ctx context.Context) (*CAStats, error) {
 
 	stats := &CAStats{}
 
-	// Get certificate statistics
-	certDAO, err := s.storageFactory.CertificateDAO()
+	certs, err := s.visibleCertificates(ctx)
 	if err != nil {
-		return nil, caerrors.StorageFailureError("failed to get certificate DAO: %s", err)
-	}
-
-	var certs []*entities.ACMECertificate
-	err = certDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMECertificate]) error {
-		certs = append(certs, page.Entities...)
-		return nil
-	})
-	if err != nil {
-		return nil, caerrors.StorageFailureError("failed to list certificates: %s", err)
+		return nil, err
 	}
 
 	stats.TotalCertificates = len(certs)
@@ -589,19 +511,9 @@ func (s *AdminService) GetStats(ctx context.Context) (*CAStats, error) {
 		}
 	}
 
-	// Get account statistics
-	accountDAO, err := s.storageFactory.AccountDAO()
+	accounts, err := s.visibleAccounts(ctx)
 	if err != nil {
-		return nil, caerrors.StorageFailureError("failed to get account DAO: %s", err)
-	}
-
-	var accounts []*entities.ACMEAccount
-	err = accountDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEAccount]) error {
-		accounts = append(accounts, page.Entities...)
-		return nil
-	})
-	if err != nil {
-		return nil, caerrors.StorageFailureError("failed to list accounts: %s", err)
+		return nil, err
 	}
 
 	stats.TotalAccounts = len(accounts)
@@ -611,19 +523,11 @@ func (s *AdminService) GetStats(ctx context.Context) (*CAStats, error) {
 		}
 	}
 
-	// Get order statistics from all accounts
+	// Get order statistics from the visible accounts
 	for _, account := range accounts {
-		orderDAO, err := s.storageFactory.OrderDAO(account.ID)
+		orders, err := s.accountOrders(ctx, account.ID)
 		if err != nil {
-			continue
-		}
-
-		var orders []*entities.ACMEOrder
-		if err := orderDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEOrder]) error {
-			orders = append(orders, page.Entities...)
-			return nil
-		}); err != nil {
-			return nil, caerrors.StorageFailureError("failed to list orders for account %d: %s", account.ID, err)
+			return nil, err
 		}
 
 		stats.TotalOrders += len(orders)
@@ -638,6 +542,171 @@ func (s *AdminService) GetStats(ctx context.Context) (*CAStats, error) {
 	}
 
 	return stats, nil
+}
+
+// visibleAccounts returns every ACME account the caller may see: all of them
+// for a cross-tenant caller, and only the accounts bound to its tenant (the
+// account's TenantID, set from the EAB at registration) for a tenant-scoped
+// one. An account with no tenant is platform-owned.
+func (s *AdminService) visibleAccounts(ctx context.Context) ([]*entities.ACMEAccount, error) {
+	accountDAO, err := s.storageFactory.AccountDAO()
+	if err != nil {
+		return nil, caerrors.StorageFailureError("failed to get account DAO: %s", err)
+	}
+
+	caller, confined := callerTenant(ctx)
+	var accounts []*entities.ACMEAccount
+	err = accountDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEAccount]) error {
+		for _, account := range page.Entities {
+			if !confined || account.TenantID == caller {
+				accounts = append(accounts, account)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, caerrors.StorageFailureError("failed to list accounts: %s", err)
+	}
+	return accounts, nil
+}
+
+// visibleAccount returns the account accountID when the caller may see it.
+// An account that does not exist and one the caller may not see are the same
+// ErrAccountNotFound.
+func (s *AdminService) visibleAccount(ctx context.Context, accountID uint64) (*entities.ACMEAccount, error) {
+	accountDAO, err := s.storageFactory.AccountDAO()
+	if err != nil {
+		return nil, caerrors.StorageFailureError("failed to get account DAO: %s", err)
+	}
+
+	account, err := accountDAO.Get(ctx, accountID)
+	if err != nil {
+		if isNotFoundError(err) {
+			return nil, ErrAccountNotFound
+		}
+		return nil, caerrors.StorageFailureError("failed to get account: %s", err)
+	}
+	if caller, confined := callerTenant(ctx); confined && account.TenantID != caller {
+		return nil, ErrAccountNotFound
+	}
+	return account, nil
+}
+
+// accountVisibleByID reports whether the caller may see the orders of
+// accountID. A cross-tenant caller may see every account's orders, so no
+// account lookup is made for it; for a tenant-scoped caller an account that
+// does not exist is simply not visible.
+func (s *AdminService) accountVisibleByID(ctx context.Context, accountID uint64) (bool, error) {
+	if _, confined := callerTenant(ctx); !confined {
+		return true, nil
+	}
+	if _, err := s.visibleAccount(ctx, accountID); err != nil {
+		if errors.Is(err, ErrAccountNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// accountOrders returns every order of accountID.
+func (s *AdminService) accountOrders(ctx context.Context, accountID uint64) ([]*entities.ACMEOrder, error) {
+	orderDAO, err := s.storageFactory.OrderDAO(accountID)
+	if err != nil {
+		return nil, caerrors.StorageFailureError("failed to get order DAO: %s", err)
+	}
+
+	var orders []*entities.ACMEOrder
+	err = orderDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEOrder]) error {
+		orders = append(orders, page.Entities...)
+		return nil
+	})
+	if err != nil {
+		return nil, caerrors.StorageFailureError("failed to list orders for account %d: %s", accountID, err)
+	}
+	return orders, nil
+}
+
+// visibleCertificates returns every issued certificate the caller may see:
+// all of them for a cross-tenant caller. A certificate row records no owner;
+// the order that produced it does (order.Certificate holds the certificate's
+// URL, order.AccountID its account), so a tenant-scoped caller sees exactly
+// the certificates its own tenant's accounts' orders were issued.
+func (s *AdminService) visibleCertificates(ctx context.Context) ([]*entities.ACMECertificate, error) {
+	certDAO, err := s.storageFactory.CertificateDAO()
+	if err != nil {
+		return nil, caerrors.StorageFailureError("failed to get certificate DAO: %s", err)
+	}
+
+	var owned map[string]struct{}
+	if _, confined := callerTenant(ctx); confined {
+		owned, err = s.ownedCertificateURLs(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var certs []*entities.ACMECertificate
+	err = certDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMECertificate]) error {
+		for _, cert := range page.Entities {
+			if owned != nil {
+				if _, ok := owned[cert.CertURL]; !ok {
+					continue
+				}
+			}
+			certs = append(certs, cert)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, caerrors.StorageFailureError("failed to list certificates: %s", err)
+	}
+	return certs, nil
+}
+
+// ownedCertificateURLs returns the URLs of the certificates issued to the
+// orders of the accounts visible to the caller.
+func (s *AdminService) ownedCertificateURLs(ctx context.Context) (map[string]struct{}, error) {
+	accounts, err := s.visibleAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	owned := make(map[string]struct{})
+	for _, account := range accounts {
+		orders, err := s.accountOrders(ctx, account.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, order := range orders {
+			if order.Certificate != "" {
+				owned[order.Certificate] = struct{}{}
+			}
+		}
+	}
+	return owned, nil
+}
+
+// visibleCertificate returns the certificate with the given decimal serial
+// number, and its parsed form, when the caller may see it. A certificate that
+// does not exist and one the caller may not see are the same
+// ErrCertificateNotFound.
+func (s *AdminService) visibleCertificate(ctx context.Context, serial string) (*entities.ACMECertificate, *x509.Certificate, error) {
+	certs, err := s.visibleCertificates(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for _, cert := range certs {
+		parsed, err := parsePEMCertificate(cert.PEM)
+		if err != nil {
+			continue
+		}
+		if parsed.SerialNumber.String() == serial {
+			return cert, parsed, nil
+		}
+	}
+	return nil, nil, ErrCertificateNotFound
 }
 
 // Helper functions

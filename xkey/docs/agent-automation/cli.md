@@ -188,7 +188,7 @@ implementation of any of those ceremonies.
 | `--force` | bool | `false` | provision a home that is already initialized |
 | `--pin-stdin` | bool | `false` | read the user PIN from standard input |
 | `--so-pin-stdin` | bool | `false` | read the SO PIN from standard input |
-| `--barrier-password` | string | `""` | the barrier password |
+| `--barrier-password-stdin` | bool | `false` | read the barrier password from standard input |
 | `--barrier-password-file` | string | `""` | read the barrier password from a file (first line) |
 | `--chrome-profile-dir` | string | `""` | also pair a Chrome profile with this instance |
 | `--json` | bool | `false` | print the report as JSON |

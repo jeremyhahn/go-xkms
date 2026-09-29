@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — User Guide
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## What this is for
 
@@ -107,6 +107,26 @@ service's keys separate from an individual operator's:
 xkmsctl ssh keys generate --name ci --scope service --owner ci-pipeline
 xkmsctl ssh keys list --scope service --owner ci-pipeline
 ```
+
+Against a server, the owner must be yours. If you sign in to a tenant
+(anything but the system tenant), `xkmsd` lets you address only:
+
+- `--scope tenant --owner <your tenant ID>`, and
+- `--scope user` or `--scope service` with `--owner <your subject>` — the
+  name you authenticated as.
+
+Anything else answers exactly like a key that does not exist (`404` /
+`NotFound`), and a `generate`, `import` or `add` under someone else's owner
+creates nothing. `list` shows only what you own, whatever `--scope`/`--owner`
+you pass. So the example above, run by a tenant user, is refused unless that
+user's subject is `ci-pipeline`; the default `--owner default` is refused for
+the same reason. Signing in to the system tenant lifts the restriction: a
+platform administrator can manage any tenant's `--scope tenant` keys.
+
+Two tenants never share SSH assets, even when their users have the same
+name: `alice` in one tenant and `alice` in another each see only their own
+`--scope user --owner alice` keys. See
+[`architecture.md`](architecture.md) §"Owner binding and tenant partitions".
 
 ## Things that will surprise you
 

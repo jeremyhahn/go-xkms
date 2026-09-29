@@ -1,6 +1,6 @@
 # Init Ceremony — API
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1226)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -41,13 +41,25 @@ transports, so it is recorded as tracked debt rather than left implicit.
 |---|---|---|---|---|---|---|
 | Submit credential | `POST /api/v1/credentials/submit` | **MISSING — docs/13** | same as REST | `credentials.submit` | `SubmitCredential` | `credentials:submit` |
 | Credential strategy | `GET /api/v1/credentials/strategy` | **MISSING — docs/13** | same as REST | `credentials.strategy` | `GetCredentialStrategy` | `credentials:strategy` |
-| List credentials | `GET /api/v1/credentials/` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | session |
+| List credentials | `GET /api/v1/credentials/` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | `ListCredentials` | session |
 
 Submit and strategy demand the `credentials:*` pair the MCP methods are gated
 with; neither is on the pre-operational `initgate` allowlist, so the gate never
 blocks an account-less officer. Admin and Owner hold both by default. Listing
 credentials has no counterpart on any other transport, so it has no canonical
 permission to adopt and stays session-authenticated.
+
+**Submit and list are platform-scoped** (go-xkms#1226). Submitted credentials
+are the platform's backend credentials, sealed into the platform store under
+`credentials/<name>`, so `XKMSService.SubmitCredential` and `ListCredentials`
+refuse every tenant-scoped caller -- a tenant-local Admin included -- before
+the credential service is touched (`pkg/xkms/servicer_credentials.go:32,73`).
+The REST handlers reach the credential service only through those methods
+(`pkg/api/rest/handlers_credentials.go`). The refusal reads as a missing
+tenant: REST `404` (`pkg/api/rest/handlers_credentials.go:90`), MCP
+`JSONRPCCodeNotFound` (`pkg/api/mcp/handlers_init_credentials.go:124`).
+`GetCredentialStrategy` is not scoped: it reports the strategy name and
+whether auto-unseal is available, nothing tenant-sensitive.
 
 The ceremony status and claim routes above stay `RouteAuthSession` rather than
 carrying MCP's `ceremony:*` pairs: the REST permission decorator has no

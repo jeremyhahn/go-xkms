@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — CLI
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 Binary: `xkey`. Groups: `fido2` (the daemon, token lifecycle, and per-RP
 policy) and `uhid` (device setup). Sources: `xkey/cmd/xkey/cmd/fido2.go`,
@@ -22,7 +22,7 @@ xkey fido2 --storage file --storage-path ~/.local/share/xkey --pin --require-tou
 |---|---|---|
 | `--storage` | `memory` | `memory`, `file`, `barrier` |
 | `--storage-path` | `~/.xkey/data/fido2` | for `file`; resolved through the shared xkey data-directory chain (`XKEY_HOME`/`XKEY_DATA_DIR`), never the working directory (go-xkms#929) |
-| `--barrier-password` | `""` | for `barrier` |
+| `--barrier-password-stdin` | `false` | read the barrier password from standard input, for `barrier` |
 | `--barrier-password-file` | `""` | first line of a file |
 
 **The default is `memory`, and credentials do not survive a restart.** That is
@@ -86,21 +86,21 @@ empty precisely so an unconfigured `xkey fido2` keeps behaving as this page's
 | Flag | Default | Notes |
 |---|---|---|
 | `--pin` | `true` | require a PIN |
-| `--set-pin` | `""` | establish the initial PIN when the store has none (needs `--pin`; refused if a PIN is already set) |
+| `--set-pin-stdin` | `false` | read the initial PIN to establish from standard input (needs `--pin`; refused if a PIN is already set) |
 | `--require-touch` | `true` | **require a touch even after a verified PIN** |
 | `--unified-pin` | `true` | propagate the host PIN service's user PIN to this authenticator's CTAP2 PIN hash — not a separate PKCS#11/file sync; see [the setup-wizard doc on the one governing PIN backend](../setup-wizard/engineering.md#shared-governing-pin-strategy-go-xkms307) |
 | `--timeout` | `30s` | how long to wait for presence |
 
-`--set-pin` is a first-PIN operation. It runs the authenticator's
+`--set-pin-stdin` is a first-PIN operation. It runs the authenticator's
 `SetInitialPIN`, the in-process counterpart of the CTAP `setPIN` ceremony,
 and refuses to start when the store already holds a PIN:
 
 ```
-fido2: --set-pin refused: a PIN is already configured in this store; drop --set-pin or change the PIN through the FIDO2 client
+fido2: --set-pin-stdin refused: a PIN is already configured in this store; drop --set-pin-stdin or change the PIN through the FIDO2 client
 ```
 
 With `--storage memory` every start is a first start. With `--storage file`
-or `--storage barrier`, pass `--set-pin` once; on later starts drop it, and
+or `--storage barrier`, pass `--set-pin-stdin` once; on later starts drop it, and
 change the PIN through any FIDO2 client (`changePIN`), which proves the
 current PIN before replacing it.
 
@@ -121,6 +121,12 @@ waits for a touch, which `xkey touch` can supply.
 | `--notify-command` | `""` — custom command, overrides built-in notifications |
 | `--socket` | `$XDG_RUNTIME_DIR/xkey/xkey.sock` |
 | `--interactive` | `false` |
+
+`--notify-command` is split into argv and run exactly as given — never
+through a shell. Request data (operation, RP ID, RP name, user name) reaches
+it only via the `XKEY_OPERATION`/`XKEY_RP_ID`/`XKEY_RP_NAME`/`XKEY_USER_NAME`
+environment variables, since RP name and user name come from the calling web
+page: `--notify-command 'sh -c "notify-send xkey \"$XKEY_RP_ID\""'`.
 
 **`--notify none` with `--require-touch true` is the configuration that looks
 broken**: the authenticator waits for a touch nobody was prompted for, and the

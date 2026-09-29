@@ -16,9 +16,11 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -286,6 +288,148 @@ func TestFileAuditLogger_RapidFlushCycles(t *testing.T) {
 		assert.Equal(t, expectedSoFar, actualEvents,
 			"cycle %d: should have %d events written", cycle, expectedSoFar)
 	}
+}
+
+// TestFileAuditLogger_LogCloseRace is a regression test for #1255: Log
+// checked l.closed.Load() and then sent on l.buffer as two separate,
+// unsynchronized steps, so a Close running between the check and the send
+// could close the channel while a Log call was still writing to it,
+// panicking with "send on closed channel". Log now holds closeMu for
+// read across the whole check-then-send, and Close takes the write lock
+// before closing buffer, so the two can no longer interleave. Run with
+// -race: it panics reliably on the pre-fix code within a few iterations.
+func TestFileAuditLogger_LogCloseRace(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "audit-race.log")
+
+	config := &Config{
+		Enabled:              true,
+		LogPath:              logPath,
+		MaxSizeMB:            10,
+		MaxAgeDays:           30,
+		BufferSize:           1, // small buffer forces the writeEvent fallback too
+		FlushIntervalSeconds: 10,
+	}
+
+	logger, err := NewFileAuditLogger(config)
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+
+	ctx := context.Background()
+
+	const workers = 50
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				event := &AuditEvent{
+					EventType: EventCertificateIssued,
+					Actor:     "account:race",
+					Resource:  "order:race",
+					Action:    "issue",
+					Result:    ResultSuccess,
+				}
+				// The only requirement is that this never panics. Either
+				// outcome below is a legitimate race result.
+				if err := logger.Log(ctx, event); err != nil {
+					require.ErrorIs(t, err, ErrLoggerClosed)
+				}
+			}
+		}()
+	}
+
+	// Close concurrently with the Log calls above.
+	require.NoError(t, logger.Close())
+
+	wg.Wait()
+}
+
+// TestFileAuditLogger_CloseFlushesBufferedEvents verifies that every event
+// accepted by Log before Close is still written to disk, even though Close
+// no longer relies on a Flush call to drain the buffer.
+func TestFileAuditLogger_CloseFlushesBufferedEvents(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "audit-close-flush.log")
+
+	config := &Config{
+		Enabled:              true,
+		LogPath:              logPath,
+		MaxSizeMB:            10,
+		MaxAgeDays:           30,
+		BufferSize:           50,
+		FlushIntervalSeconds: 10, // long interval: only Close should flush these
+	}
+
+	logger, err := NewFileAuditLogger(config)
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+
+	ctx := context.Background()
+	const expectedEvents = 25
+	for i := 0; i < expectedEvents; i++ {
+		event := &AuditEvent{
+			EventType: EventCertificateIssued,
+			Actor:     "account:close-flush",
+			Resource:  "order:close-flush",
+			Action:    "issue",
+			Result:    ResultSuccess,
+			Details: map[string]interface{}{
+				"index": i,
+			},
+		}
+		require.NoError(t, logger.Log(ctx, event))
+	}
+
+	require.NoError(t, logger.Close())
+
+	data, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	actualEvents := 0
+	for _, line := range lines {
+		if line != "" {
+			actualEvents++
+		}
+	}
+	assert.Equal(t, expectedEvents, actualEvents,
+		"every event logged before Close should be flushed to disk")
+}
+
+// TestFileAuditLogger_LogAfterClose verifies that Log refuses with
+// ErrLoggerClosed once Close has run, rather than attempting to send on
+// the now-closed buffer channel.
+func TestFileAuditLogger_LogAfterClose(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "audit-after-close.log")
+
+	config := &Config{
+		Enabled:              true,
+		LogPath:              logPath,
+		MaxSizeMB:            10,
+		MaxAgeDays:           30,
+		BufferSize:           10,
+		FlushIntervalSeconds: 10,
+	}
+
+	logger, err := NewFileAuditLogger(config)
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+
+	require.NoError(t, logger.Close())
+
+	event := &AuditEvent{
+		EventType: EventCertificateIssued,
+		Actor:     "account:after-close",
+		Resource:  "order:after-close",
+		Action:    "issue",
+		Result:    ResultSuccess,
+	}
+	err = logger.Log(context.Background(), event)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrLoggerClosed))
 }
 
 // TestNewCodec tests the NewCodec function with various codec types

@@ -1,6 +1,6 @@
 # SSH Keys, Known Hosts & Authorized Keys — API
 
-> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `ssh-keys` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Transport model: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped". Unlike FROST and the PKCS#11 backend,
@@ -12,34 +12,66 @@ only on `s.sshHandlers != nil` (the `hasSSH` gate,
 config carries an SSH client (`cfg.SSHClient != nil`,
 `pkg/api/rest/server.go:489`).
 
-Permission: every route uses `auth.ResourceSSH` / `auth.ActionUse` — one
-blanket permission for the whole feature (`pkg/api/rest/routes.go:450-455`),
-unlike the generic key-management routes, which vary the action per verb.
+Permission: each route gates on its own `auth.ResourceSSH` action
+(`pkg/api/rest/routes.go:476-503`) — `ssh:read` to read, `ssh:write` to
+create, `ssh:delete` to remove, the same pairs the MCP `ssh.*` methods
+(`pkg/api/mcp/authz.go:321-341`) and the gRPC `qrdb.v1.permission` options
+(`pkg/api/grpc/proto/xkmsv1/xkms.proto:853-915`) carry. Signing is `ssh:write` on
+every transport: REST (`pkg/api/rest/routes.go:493`), MCP `ssh.keys.sign`
+and gRPC `SSHSign`. Before go-xkms#1230 every REST route, delete and import
+included, gated on the single `ssh:use`.
+
+**Owner binding (every transport).** The permission admits the operation,
+not the asset: `auth.Authorizer` binds the caller's own tenant as the
+target, so it cannot see the `scope`/`owner` a request names. The SSH
+service every transport is wired with (`pkg/ssh/tenancy`, built by
+`pkg/server/server.go:486-512`) binds them instead
+(`pkg/ssh/tenancy/client.go:170-182`):
+
+| Scope | A tenant-scoped caller may address |
+|---|---|
+| `tenant` | only `owner` = its own tenant ID |
+| `user`, `service` | only `owner` = its own subject |
+
+A platform identity (no identity, or the system tenant —
+`auth.IsCrossTenant`) may address any owner. A request for an asset the
+caller does not own answers exactly as a missing asset does — REST `404`,
+gRPC `NotFound`, MCP `JSONRPCCodeNotFound`, with the genuine-miss body
+(`pkg/ssh/tenancy/errors.go:44-71`). That includes writes: a `generate`,
+`import`, known-hosts `add` or authorized-keys `add` under a foreign owner is
+the not-found answer for the address it names, and nothing is written or
+generated (`pkg/ssh/tenancy/ops.go:38-59,152-163,237-248`). Listings return
+only what the caller owns, whatever `scope`/`owner` filters they carry
+(`pkg/ssh/tenancy/ops.go:76-92`).
 
 ## REST (`pkg/api/rest/handlers_ssh.go`, base path `/xkms/v1/ssh`)
 
 Note the base path: SSH uses `/xkms/v1/ssh`, not the `/api/v1` prefix the
 generic key/FROST routes use (`pkg/api/rest/routes.go:455`).
 
-| Method | Path | Client call |
-|---|---|---|
-| `POST` | `/keys` | `Keys().Generate` |
-| `POST` | `/keys/import` | `Keys().Import` |
-| `GET` | `/keys` | `Keys().List` |
-| `GET` | `/keys/{scope}/{owner}/{name}` | `Keys().Get` |
-| `DELETE` | `/keys/{scope}/{owner}/{name}` | `Keys().Delete` |
-| `GET` | `/keys/{scope}/{owner}/{name}/public` | `Keys().ExportPublic` |
-| `POST` | `/keys/{scope}/{owner}/{name}/sign` | `Keys().Signer` (one signature) |
-| `POST` | `/known-hosts` | `KnownHosts().Add` |
-| `GET` | `/known-hosts` | `KnownHosts().List` |
-| `DELETE` | `/known-hosts/{host}` | `KnownHosts().Remove` |
-| `POST` | `/known-hosts/{host}/verify` | `KnownHosts().Verify` |
-| `POST` | `/authorized-keys` | `AuthorizedKeys().Add` |
-| `GET` | `/authorized-keys` | `AuthorizedKeys().List` |
-| `GET` | `/authorized-keys/{scope}/{owner}/{name}` | `AuthorizedKeys().Get` |
-| `DELETE` | `/authorized-keys/{scope}/{owner}/{name}` | `AuthorizedKeys().Remove` |
-| `POST` | `/authorized-keys/emit` | `AuthorizedKeys().Emit` |
-| `POST` | `/authorized-keys/verify` | `AuthorizedKeys().Verify` |
+| Method | Path | Client call | Permission |
+|---|---|---|---|
+| `POST` | `/keys` | `Keys().Generate` | `ssh:write` |
+| `POST` | `/keys/import` | `Keys().Import` | `ssh:write` |
+| `GET` | `/keys` | `Keys().List` | `ssh:read` |
+| `GET` | `/keys/{scope}/{owner}/{name}` | `Keys().Get` | `ssh:read` |
+| `DELETE` | `/keys/{scope}/{owner}/{name}` | `Keys().Delete` | `ssh:delete` |
+| `GET` | `/keys/{scope}/{owner}/{name}/public` | `Keys().ExportPublic` | `ssh:read` |
+| `POST` | `/keys/{scope}/{owner}/{name}/sign` | `Keys().Signer` (one signature) | `ssh:use` |
+| `POST` | `/known-hosts` | `KnownHosts().Add` | `ssh:write` |
+| `GET` | `/known-hosts` | `KnownHosts().List` | `ssh:read` |
+| `DELETE` | `/known-hosts/{host}` | `KnownHosts().Remove` | `ssh:delete` |
+| `POST` | `/known-hosts/{host}/verify` | `KnownHosts().Verify` | `ssh:read` |
+| `POST` | `/authorized-keys` | `AuthorizedKeys().Add` | `ssh:write` |
+| `GET` | `/authorized-keys` | `AuthorizedKeys().List` | `ssh:read` |
+| `GET` | `/authorized-keys/{scope}/{owner}/{name}` | `AuthorizedKeys().Get` | `ssh:read` |
+| `DELETE` | `/authorized-keys/{scope}/{owner}/{name}` | `AuthorizedKeys().Remove` | `ssh:delete` |
+| `POST` | `/authorized-keys/emit` | `AuthorizedKeys().Emit` | `ssh:read` |
+| `POST` | `/authorized-keys/verify` | `AuthorizedKeys().Verify` | `ssh:read` |
+
+The table is pinned by `pkg/api/rest/server_ssh_authz_test.go`: every route
+is refused without its grant, admitted with it alone, and refused to a caller
+holding every other `ssh:*` action.
 
 ### `Key` (response shape for generate/import/get/list)
 
@@ -132,6 +164,8 @@ transport"). It is out of this folder's scope regardless.
 Any Go program can use `pkg/ssh/keys`, `pkg/ssh/known_hosts`,
 `pkg/ssh/authorized` directly, or obtain an `sdkssh.Client` via
 `sdkssh.NewEmbedded(EmbeddedOptions{Backend: storageBackend, BackendProvider:
-provider})` without a running `xkmsd` at all — this is exactly what
-`ensureSSHClient` does inside the daemon (see architecture.md), and it is
-equally available to any embedder.
+provider})` without a running `xkmsd` at all. The embedded client trusts its
+caller: it applies no owner binding. A multi-tenant server wraps storage and
+backends in `tenancy.New(tenancy.Options{Storage, Resolver})`
+(`pkg/ssh/tenancy/client.go:103-116`), exactly as `ensureSSHClient` does
+inside the daemon (see architecture.md).

@@ -365,8 +365,11 @@ func TestResponder_CloseStopsTheResponder(t *testing.T) {
 func TestResponder_ShutdownContextExpired(t *testing.T) {
 	// A body far larger than any socket buffer keeps the server blocked in
 	// its response write while the test refuses to read, so the connection is
-	// unambiguously active when Shutdown runs.
-	keyAuth := strings.Repeat("k", 8<<20)
+	// unambiguously active when Shutdown runs. The drain check below allows
+	// half the body: loopback receive and send buffers autotune to several MB
+	// on a loaded host, and a closed socket still flushes its send buffer, so
+	// half of 8 MiB was within reach of buffered bytes alone (CI run 21302).
+	keyAuth := strings.Repeat("k", 32<<20)
 
 	responder, err := NewResponder(ResponderConfig{
 		Addr:         "127.0.0.1:0",
@@ -448,7 +451,8 @@ func TestResponder_ShutdownContextExpired(t *testing.T) {
 			break
 		}
 		// A killed connection yields at most what the socket buffers already
-		// held, which is orders of magnitude below half the body. Reaching
+		// held (receive plus the server's flushed send buffer), well below
+		// half the body. Reaching
 		// this much means the server kept streaming, so Close did nothing.
 		if drained > len(keyAuth)/2 {
 			t.Fatalf("drained %d bytes of an %d-byte body; Close did not stop the response",

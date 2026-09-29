@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/keyprovider/symmetric`
 
@@ -57,6 +57,42 @@ ChaCha20/XChaCha20 keys with `ErrCBCRequiresAES`/`ErrECBRequiresAES`.
   uniqueness check runs on the produced ciphertext's nonce and a collision
   discards that ciphertext rather than ever returning it
   (`backend.go:667-675`).
+- **Every AEAD nonce on the Encrypt RPC is claimed in the process-wide
+  guard.** A caller-supplied nonce is claimed before the seal, and a generated
+  one after it (`pkg/xkms/servicer_crypto.go:650-677`). Both go through
+  `claimAEADNonce` (`pkg/xkms/aead_nonce_guard.go:103-125`), the same function
+  the AES-GCM wrap uses (`servicer_wrapkey.go:519`, `:551`), keyed by
+  `aeadKeyIdentity` (`aead_nonce_guard.go:67-81`). A reuse is an
+  `*ErrKeyOperation` wrapping `aead.ErrNonceReuse`, and no ciphertext is
+  returned. A full guard refuses caller-supplied nonces with
+  `aead.ErrNonceTrackerFull` but not generated ones
+  (`aead_nonce_guard.go:144-160`). Tests:
+  `pkg/xkms/servicer_crypto_nonce_test.go:120-505` (reuse, ChaCha20-Poly1305,
+  concurrency, keys that predate the process, aliasing, generated-nonce
+  replay, wrap/encrypt sharing, sealed keys, identity failure, full-guard
+  policy, PKCS#11 end to end).
+- **`aead.ErrNonceReuse` and `aead.ErrNonceTrackerFull` classify to
+  `ClassAlreadyExists` / `ClassResourceExhausted` on every transport**,
+  through `apierrors.AEADSentinelClasses` (`pkg/api/apierrors/tables.go`),
+  consulted from `pkg/api/grpc/errors_keyops.go`'s and `pkg/api/mcp`'s
+  `mapKeyOpError`, and mirrored by REST's `keyOpSentinelStatus`
+  (`pkg/api/rest/errors_keyops.go`) — `409`/`AlreadyExists`/the MCP
+  duplicate code for a reuse, `503`/`ResourceExhausted`/the MCP internal
+  floor (with `Classified` set so the text is not withheld) for a full
+  guard (go-xkms#1223). Both `Encrypt` and `WrapKeyByID` (the AES-GCM wrap)
+  go through the same table. Tests: `TestMapKeyOpError_AEADNonceSentinels`
+  in each of `pkg/api/grpc`, `pkg/api/mcp` and `pkg/api/rest`, plus the
+  `"aead"` sub-test in each package's `TestClassification_MatchesSharedTables`.
+- **A caller-supplied nonce against a backend whose encryption always
+  happens remotely is refused, not silently dropped.** AWS KMS, GCP KMS,
+  Vault Transit and the paired phone's symmetric `Encrypt` all manage nonce
+  generation themselves and expose no parameter to override it; a non-nil
+  `EncryptOptions.Nonce` is refused with `backend.ErrCallerNonceNotSupported`
+  before the remote call is ever made (`pkg/backend/awskms/awskms_symmetric.go`,
+  `pkg/backend/gcpkms/gcpkms.go`, `pkg/backend/vault/vault_symmetric.go`,
+  `pkg/backend/phone/symmetric.go`), classified as `ClassInvalidArgument` via
+  `apierrors.ImportExportSentinelClasses` — `400`/`InvalidArgument`/MCP
+  Invalid params (go-xkms#1223).
 - **CBC/ECB carry no AEAD safety tracking at all** — they are not AEAD
   modes, so `IncrementBytes`/`CheckNonce`/`RecordNonce` are never called on
   that path (`backend.go:556-569`, `:750-759`).
@@ -89,7 +125,11 @@ All declared as typed sentinels in `errors.go`, never inline `fmt.Errorf`:
 `ErrCiphertextNotBlockAligned`, `ErrKeyMetadataNotFound`,
 `ErrInvalidPadding`. `pkg/backend/errors.go` separately declares
 `ErrNonceReused` and `ErrBytesLimitExceeded`, returned by the
-`AEADSafetyTracker` implementation, not by this package.
+`AEADSafetyTracker` implementation, not by this package, and
+`ErrCallerNonceNotSupported` (go-xkms#1223), returned by the AWS KMS, GCP
+KMS, Vault Transit and paired-phone symmetric `Encrypt` implementations when
+the caller supplies a nonce those backends' remote encryption service cannot
+honor.
 
 ## AEAD safety tracker — `types.AEADSafetyTracker`
 
@@ -127,6 +167,10 @@ recognizes exactly one configuration key, `"key_dir"` (string): empty or
 
 ## What is absent, half-built, or misdescribed
 
+- **The Encrypt/wrap nonce guard is per-process.** `aead.SharedAEADNonceGuard`
+  lives in memory with a per-process salt. It forgets every claim on restart
+  and is not shared between cluster nodes. A persistent guard is awaiting an
+  owner ruling on issue #1201.
 - **No persistent `AEADSafetyTracker`.** Every deployment that constructs a
   `symmetric.Backend` (or `quantum.QuantumBackend`) without supplying its own
   `types.AEADSafetyTracker` implementation loses all nonce-reuse history and

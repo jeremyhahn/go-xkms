@@ -306,3 +306,19 @@ func secureElementLink() *fakeLink {
 		aggeneric.AlgECDSAP256SHA256|aggeneric.AlgHMACSHA256,
 	))
 }
+
+// delayedLink adds a fixed cost to every write on top of a fakeLink, standing
+// in for a slower device or a race-detector-instrumented run: something that
+// makes a real exchange take measurably longer without changing what it
+// answers. A test drives several callers at a link like this to make the
+// QUEUE, not the device, the thing that takes longer than one caller's
+// RequestTimeout.
+type delayedLink struct {
+	*fakeLink
+	delay time.Duration
+}
+
+func (l *delayedLink) Write(p []byte) (int, error) {
+	time.Sleep(l.delay)
+	return l.fakeLink.Write(p)
+}

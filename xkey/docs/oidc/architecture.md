@@ -1,6 +1,6 @@
 # OIDC — Architecture
 
-Status: current. Last verified: 2026-09-23.
+Status: current. Last verified: 2026-09-28.
 
 ## Scope
 
@@ -17,7 +17,11 @@ scope here; see the package's own doc comments.
 The xkey GUI's OIDC service (`pkg/gui/services/oidc_service.go`) is a
 separate consumer of the same `pkg/oidc.TokenStore` interface with its own
 storage wiring (`SetDataDir`/`SetBackend`); this document is about the CLI's
-`xkey oidc login`/`token`/`refresh`/`logout` commands only.
+`xkey oidc login`/`token`/`refresh`/`logout` commands only. See
+[engineering.md](engineering.md#gui-token-store-go-xkms1203) for the GUI's
+own barrier-first decision, which — unlike the CLI's plain-file fallback
+below — keeps tokens in memory only rather than on disk when no barrier is
+available (go-xkms#1203).
 
 The AWS login *mechanism* itself (not its storage) is shared rather than
 duplicated: `xkey/pkg/oidc/aws.Login` runs the DPoP-bound PKCE authorization
@@ -143,22 +147,29 @@ once per process lifetime, not once per refresh interval.
 
 The detached background process is a separate `os/exec` invocation with no
 controlling terminal, so it cannot satisfy an interactive barrier password
-prompt. `startBackgroundRefresh` forwards `--barrier-password-file <path>`
-on the child's argv when the parent had it set; a bare `--barrier-password`
-value is never forwarded on argv (it would appear in that process's `ps`
-output for any local user to read), and `XKEY_BARRIER_PASSWORD` reaches the
-child through ordinary environment inheritance (`exec.Command` with no
+prompt, and it has no standard input to read a piped
+`--barrier-password-stdin` value from either (there is no `--barrier-password`
+value flag to forward in the first place: a value on the command line would
+be visible in that process's `ps` output to any local user).
+`startBackgroundRefresh` forwards `--barrier-password-file <path>` on the
+child's argv when the parent had it set, and `XKEY_BARRIER_PASSWORD` reaches
+the child through ordinary environment inheritance (`exec.Command` with no
 `Env` override inherits the parent's environment) rather than an explicit
 argument.
 
 ## Rejected alternatives
 
-- **A second, OIDC-specific encryption scheme** (e.g. `pkg/oidc.FileTokenStore`'s
-  own AES-GCM keyed by a fixed or derived key). The GUI already does this for
-  its own no-barrier fallback; the CLI's other secret stores (`xkey oath`,
-  `xkey fido2 --storage barrier`) do not, and reusing `resolveSecretStoreBackend`
-  instead keeps exactly one CLI mechanism that decides "is the barrier
-  initialized," rather than a second, independently-drifting one.
+- **A second, OIDC-specific encryption scheme** (e.g. an AES-GCM key fixed or
+  derived independently of the barrier). The GUI's own `pkg/oidc.FileTokenStore`
+  no-barrier fallback did exactly this through go-xkms#1203 — a key compiled
+  into the binary is not a secret, so it gave `tokens.json` no real
+  confidentiality — and was replaced by an in-memory-only store rather than
+  fixed by inventing a better independent key (see
+  [engineering.md](engineering.md#gui-token-store-go-xkms1203)). The CLI's
+  other secret stores (`xkey oath`, `xkey fido2 --storage barrier`) never had
+  this second scheme; reusing `resolveSecretStoreBackend` here keeps exactly
+  one CLI mechanism that decides "is the barrier initialized," rather than a
+  second, independently-drifting one.
 - **Migrating the pre-#4 plaintext file automatically.** Rejected per the
   stack's no-backward-compatibility policy during the pre-release alpha: an
   automatic migration path is itself a legacy read path this stack does not

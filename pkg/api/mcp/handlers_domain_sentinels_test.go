@@ -129,10 +129,12 @@ func TestInvokeMethod_BarrierDomainSentinel_NotConfigured(t *testing.T) {
 	_, dispatchErr := server.InvokeMethod(context.Background(), "barrier.initialize", params)
 	require.Error(t, dispatchErr)
 
+	// The service carries no barrier, which it reports as ErrNotConfigured;
+	// the shared barrier table classifies that as unavailable.
 	var keyErr *KeyOpError
 	require.ErrorAs(t, dispatchErr, &keyErr)
-	assert.Equal(t, ErrCodeInternalError, keyErr.Code)
-	assert.ErrorIs(t, dispatchErr, ErrBarrierNotConfigured)
+	assert.Equal(t, ErrCodeServiceUnavailable, keyErr.Code)
+	assert.ErrorIs(t, dispatchErr, xkms.ErrNotConfigured)
 }
 
 // TestInvokeMethod_BarrierDomainSentinel_AlreadyInitialized proves a real

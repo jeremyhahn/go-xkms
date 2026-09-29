@@ -1,6 +1,6 @@
 # PIN Management — API
 
-> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -29,16 +29,26 @@ siblings) with the same `pin:read` / `pin:write` pairs when RBAC is enabled.
 | Lockout status | `GET /api/v1/pin/lockout` | `GetLockoutStatus` | same as REST | `xkms.getLockoutStatus` | `GetLockoutStatus` | `pin:read` |
 | Reset lockout | `POST /api/v1/pin/lockout/reset` | `ResetLockout` | same as REST | `xkms.resetLockout` | `ResetLockout` | `pin:write` |
 
-**MCP now carries the full PIN surface** (go-xkms#773). Every method
-delegates to `XKMSService`'s own `SetSOPIN` / `SetUserPIN` / `ChangeSOPIN` /
-`ChangeUserPIN` / `VerifySOPIN` / `VerifyUserPIN` / `GetLockoutStatus` /
-`ResetLockout` — the same servicer methods REST calls through `PINManager`
-and gRPC calls through its composed `qrdbsdk.PINBackend` — so behaviour,
-including the backend-dependent table below, is identical across all four
-transports.
+**Every transport delegates to `XKMSService`'s own `SetSOPIN` / `SetUserPIN`
+/ `ChangeSOPIN` / `ChangeUserPIN` / `VerifySOPIN` / `VerifyUserPIN` /
+`GetLockoutStatus` / `ResetLockout`** and none holds the PIN backend, so
+behaviour, including the backend-dependent table below, is identical across
+all four transports. Before go-xkms#1227 REST called its own `PINManager` and
+gRPC a package-level backend that production never set.
 
 Handlers: `pkg/api/rest/handlers_barrier_pin.go`,
 `pkg/api/grpc/service_barrier_pin.go`, `pkg/api/mcp/handlers_pin.go`.
+
+## Platform scope
+
+The PINs guard the platform's own token, so every method is refused to a
+tenant-scoped caller -- a tenant-local Admin whose self-scoped `pin:*` grants
+pass the RBAC gate included -- before the PIN backend is touched
+(`pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136`, go-xkms#1227). A
+refused attempt does not reach the backend, so it does not count toward the
+lockout. The answer is the one a missing tenant gets: REST `404`
+(`pkg/api/rest/handlers_barrier_pin.go:564`), gRPC `NotFound` and MCP
+`JSONRPCCodeNotFound` (`pkg/api/apierrors/tables.go:96`).
 
 ## Backend-dependent behaviour
 
@@ -84,6 +94,8 @@ response.** Nothing in this feature echoes a PIN back.
 | device locked out | 423 | `FailedPrecondition` |
 | platform not provisioned (`IsInitialized()` false) | 409 | `FailedPrecondition` |
 | device absent or unreadable | 503 | `Unavailable` |
+| tenant-scoped caller (platform scope) | 404 | `NotFound` |
+| no PIN backend composed on the service | 503 | `Unavailable` |
 
 Locked-out and wrong-PIN are deliberately distinct: retrying a wrong PIN is
 reasonable, retrying against a locked-out device is how a token gets bricked.

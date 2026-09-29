@@ -24,16 +24,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/acme"
 
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
@@ -120,7 +123,7 @@ func (ec *EnrollmentConfig) Validate() error {
 	}
 
 	if !validChallenges[ec.Challenge] {
-		return caerrors.MalformedError("invalid challenge type: %s", ec.Challenge)
+		return caerrors.Wrap(caerrors.Malformed, ErrInvalidChallenge, "invalid challenge type: %s", ec.Challenge)
 	}
 
 	if ec.TPMModule == nil {
@@ -159,7 +162,7 @@ func expandEnvVars(input string) (string, error) {
 		varValue := os.Getenv(varName)
 
 		if varValue == "" {
-			return "", caerrors.MalformedError("environment variable not found: %s", varName)
+			return "", caerrors.Wrap(caerrors.Malformed, ErrEnvVarNotFound, "environment variable not found: %s", varName)
 		}
 
 		result = strings.ReplaceAll(result, match[0], varValue)
@@ -172,13 +175,13 @@ func expandEnvVars(input string) (string, error) {
 // Returns an EnrollmentResult containing both the IAK and IDevID certificates.
 func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*EnrollmentResult, error) {
 	if err := config.Validate(); err != nil {
-		return nil, caerrors.MalformedError("invalid enrollment config: %v", err)
+		return nil, caerrors.Wrap(caerrors.Malformed, err, "invalid enrollment config")
 	}
 
 	// Expand environment variables in IP address
 	ipAddress, err := expandEnvVars(config.IPAddress)
 	if err != nil {
-		return nil, caerrors.MalformedError("failed to expand IP address: %v", err)
+		return nil, caerrors.Wrap(caerrors.Malformed, err, "failed to expand IP address")
 	}
 
 	c.logger.Info("starting device enrollment",
@@ -216,6 +219,13 @@ func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*E
 	// Store the TCG-CSR-IDEVID for finalization - the server expects
 	// the TCG-CSR-IDEVID to be sent during finalization, not a standard x509 CSR
 	var tcgCSRDER []byte
+
+	// enrollSrv holds the challenge server for the authorization currently
+	// being processed. The deferred shutdown below runs on every return
+	// path -- success or error -- so the configured port is always free
+	// again by the time EnrollDevice returns.
+	var enrollSrv *challengeServer
+	defer func() { enrollSrv.shutdown() }()
 
 	// Process authorizations
 	for _, authzURL := range order.AuthzURLs {
@@ -257,11 +267,18 @@ func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*E
 		// Store the TCG-CSR-IDEVID for finalization
 		tcgCSRDER = idevidCSR.CSR
 
-		// Start HTTP server to handle challenge
-		go c.startEnrollServer(config, idevidCSR, enrollChallenge.Token)
-
-		// Give server time to start
-		time.Sleep(100 * time.Millisecond)
+		// Start HTTP server to handle challenge. The listener binds
+		// synchronously inside startEnrollServer, so a port conflict fails
+		// fast here instead of surfacing later as an opaque
+		// WaitAuthorization timeout, and no artificial delay is needed
+		// before the ACME server can reach it. A prior iteration's server
+		// (a second authzURL on the same order) is shut down first: both
+		// bind the same configured address.
+		enrollSrv.shutdown()
+		enrollSrv, err = c.startEnrollServer(config, idevidCSR, enrollChallenge.Token)
+		if err != nil {
+			return nil, caerrors.Wrap(caerrors.InternalServer, err, "enrollment failed: failed to start challenge server")
+		}
 
 		c.logger.Debug("challenge setup complete",
 			"csr_length", len(idevidCSR.CSR),
@@ -355,8 +372,79 @@ func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*E
 	}, nil
 }
 
-// startEnrollServer starts an HTTP server for enroll-01 challenge handling
-func (c *Client) startEnrollServer(config *EnrollmentConfig, idevidCSR *IDevIDCSR, token string) {
+// challengeServer is a challenge-response HTTP server for the enroll-01 and
+// device-attest-01 TPM enrollment challenges.
+//
+// newChallengeServer binds the listener synchronously, so a port conflict
+// is reported to the caller immediately as a typed error instead of being
+// discarded in a background goroutine's log line. shutdown blocks until the
+// listener is closed and the serve goroutine has exited, so the port is
+// free again the instant shutdown returns -- a long-running agent that
+// enrolls twice never finds its own first attempt still holding the port.
+type challengeServer struct {
+	server       *http.Server
+	done         chan struct{}
+	shutdownOnce sync.Once
+	logger       *slog.Logger
+	label        string
+}
+
+// newChallengeServer binds addr synchronously via net.Listen and starts
+// serving mux on a background goroutine. The returned *challengeServer must
+// be released with shutdown to free addr; shutdown is nil-safe so it can be
+// deferred unconditionally even when newChallengeServer returned an error.
+func newChallengeServer(addr string, mux *http.ServeMux, logger *slog.Logger, label string) (*challengeServer, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, caerrors.ConnectionFailureError("failed to bind %s challenge listener on %s: %v", label, addr, err)
+	}
+
+	server := &http.Server{
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	cs := &challengeServer{
+		server: server,
+		done:   make(chan struct{}),
+		logger: logger,
+		label:  label,
+	}
+
+	go func() {
+		defer close(cs.done)
+		logger.Debug("starting challenge HTTP server", "server", label, "addr", addr)
+		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
+			logger.Error("HTTP server error", "server", label, "error", err)
+		}
+	}()
+
+	return cs, nil
+}
+
+// shutdown gracefully stops the server and waits for its serve goroutine to
+// exit before returning, guaranteeing the listener's port is free by the
+// time shutdown returns. Idempotent and nil-receiver safe.
+func (cs *challengeServer) shutdown() {
+	if cs == nil {
+		return
+	}
+	cs.shutdownOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := cs.server.Shutdown(ctx); err != nil {
+			cs.logger.Error("challenge server shutdown error", "server", cs.label, "error", err)
+		}
+		<-cs.done
+	})
+}
+
+// startEnrollServer builds the enroll-01 challenge mux and binds it to
+// config.listenAddr() synchronously, returning a *challengeServer the
+// caller must shut down (see challengeServer.shutdown) to release the port.
+func (c *Client) startEnrollServer(config *EnrollmentConfig, idevidCSR *IDevIDCSR, token string) (*challengeServer, error) {
 	mux := http.NewServeMux()
 
 	// Challenge endpoint - serves the packed TCG-CSR-IDEVID
@@ -388,8 +476,20 @@ func (c *Client) startEnrollServer(config *EnrollmentConfig, idevidCSR *IDevIDCS
 			return
 		}
 
+		// Limit the size of the request body to prevent abuse. This must run
+		// before any read of r.Body: reading first and wrapping afterward
+		// never applies the limit, since the unbounded read has already
+		// buffered the whole body in memory (mirrors enroll01.activateCredentialHandlerWithShutdown).
+		r.Body = http.MaxBytesReader(w, r.Body, acmeserver.MaxRequestBodySize)
+		defer func() { _ = r.Body.Close() }()
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "failed to read body", http.StatusBadRequest)
 			return
 		}
@@ -428,20 +528,7 @@ func (c *Client) startEnrollServer(config *EnrollmentConfig, idevidCSR *IDevIDCS
 		}
 	})
 
-	addr := config.listenAddr()
-	server := &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
-
-	c.logger.Debug("starting enroll-01 HTTP server", "addr", addr)
-
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		c.logger.Error("HTTP server error", "error", err)
-	}
+	return newChallengeServer(config.listenAddr(), mux, c.logger, "enroll-01")
 }
 
 // RequestEndorsementKeyCertificate requests an EK certificate via endorse-01 challenge.
@@ -450,7 +537,7 @@ func (c *Client) startEnrollServer(config *EnrollmentConfig, idevidCSR *IDevIDCS
 // validates the request via EAB or server policy (the endorse-01 verifier returns nil).
 func (c *Client) RequestEndorsementKeyCertificate(ctx context.Context, config *EnrollmentConfig) (*x509.Certificate, error) {
 	if err := config.Validate(); err != nil {
-		return nil, caerrors.MalformedError("invalid enrollment config: %v", err)
+		return nil, caerrors.Wrap(caerrors.Malformed, err, "invalid enrollment config")
 	}
 
 	// Get EK public key directly from TPM
@@ -677,8 +764,20 @@ func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, tok
 			return
 		}
 
+		// Limit the size of the request body to prevent abuse. This must run
+		// before any read of r.Body: reading first and wrapping afterward
+		// never applies the limit, since the unbounded read has already
+		// buffered the whole body in memory (mirrors enroll01.activateCredentialHandlerWithShutdown).
+		r.Body = http.MaxBytesReader(w, r.Body, acmeserver.MaxRequestBodySize)
+		defer func() { _ = r.Body.Close() }()
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "failed to read body", http.StatusBadRequest)
 			return
 		}
@@ -741,13 +840,13 @@ func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, tok
 // what lets the server bind the one to the other.
 func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x509.Certificate, error) {
 	if err := config.Validate(); err != nil {
-		return nil, caerrors.MalformedError("invalid enrollment config: %v", err)
+		return nil, caerrors.Wrap(caerrors.Malformed, err, "invalid enrollment config")
 	}
 
 	// Expand environment variables in IP address
 	ipAddress, err := expandEnvVars(config.IPAddress)
 	if err != nil {
-		return nil, caerrors.MalformedError("failed to expand IP address: %v", err)
+		return nil, caerrors.Wrap(caerrors.Malformed, err, "failed to expand IP address")
 	}
 
 	c.logger.Info("starting device attestation",
@@ -773,6 +872,14 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x
 	// Process authorizations. Every one is answered for the same key, the
 	// one the CSR is signed with below.
 	var attested *AttestedKey
+
+	// attestSrv holds the challenge server for the authorization currently
+	// being processed. The deferred shutdown below runs on every return
+	// path -- success or error -- so the configured port is always free
+	// again by the time DeviceAttest returns.
+	var attestSrv *challengeServer
+	defer func() { attestSrv.shutdown() }()
+
 	for _, authzURL := range order.AuthzURLs {
 		authz, err := c.client.GetAuthorization(ctx, authzURL)
 		if err != nil {
@@ -809,11 +916,18 @@ func (c *Client) DeviceAttest(ctx context.Context, config *EnrollmentConfig) (*x
 			return nil, caerrors.InternalServerError("attestation failed: challenge setup failed: %v", err)
 		}
 
-		// Start HTTP server to serve attestation
-		go c.startAttestServer(config, attested.Statement, attestChallenge.Token)
-
-		// Give server time to start
-		time.Sleep(100 * time.Millisecond)
+		// Start HTTP server to serve attestation. The listener binds
+		// synchronously inside startAttestServer, so a port conflict fails
+		// fast here instead of surfacing later as an opaque
+		// WaitAuthorization timeout, and no artificial delay is needed
+		// before the ACME server can reach it. A prior iteration's server
+		// (a second authzURL on the same order) is shut down first: both
+		// bind the same configured address.
+		attestSrv.shutdown()
+		attestSrv, err = c.startAttestServer(config, attested.Statement, attestChallenge.Token)
+		if err != nil {
+			return nil, caerrors.Wrap(caerrors.InternalServer, err, "attestation failed: failed to start challenge server")
+		}
 
 		c.logger.Debug("challenge setup complete", "port", config.Port)
 
@@ -913,10 +1027,12 @@ func (c *Client) setupAttestChallenge(config *EnrollmentConfig, keyAuth string) 
 	return attested, nil
 }
 
-// startAttestServer starts an HTTP server for device-attest-01 challenge
-// handling. statement is served as it is: it is already the JSON request the
-// server's verifier decodes.
-func (c *Client) startAttestServer(config *EnrollmentConfig, statement []byte, token string) {
+// startAttestServer builds the device-attest-01 challenge mux and binds it
+// to config.listenAddr() synchronously, returning a *challengeServer the
+// caller must shut down (see challengeServer.shutdown) to release the port.
+// statement is served as it is: it is already the JSON request the server's
+// verifier decodes.
+func (c *Client) startAttestServer(config *EnrollmentConfig, statement []byte, token string) (*challengeServer, error) {
 	mux := http.NewServeMux()
 
 	// Challenge endpoint - serves attestation statement
@@ -933,20 +1049,7 @@ func (c *Client) startAttestServer(config *EnrollmentConfig, statement []byte, t
 		}
 	})
 
-	addr := config.listenAddr()
-	server := &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
-
-	c.logger.Debug("starting device-attest-01 HTTP server", "addr", addr)
-
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		c.logger.Error("HTTP server error", "error", err)
-	}
+	return newChallengeServer(config.listenAddr(), mux, c.logger, "device-attest-01")
 }
 
 // parseIssuingChain parses the certificates a server appended after the

@@ -132,7 +132,7 @@ func (b *remoteBackend) PutIfAbsent(ctx context.Context, key string, value []byt
 //
 // A swap cannot create (#186): expected — nil included — is forwarded as an
 // ordinary value compare. The create-if-absent precondition is PutIfAbsent,
-// above, which the caller (ModuleStorage.incrementViaCAS) uses directly
+// above, which the caller (ModuleStorage.updateViaCAS) uses directly
 // instead of asking this RPC to do double duty.
 func (b *remoteBackend) CompareAndSwap(ctx context.Context, key string, expected, newValue []byte) (bool, []byte, error) {
 	resp, err := b.client.PKCS11StateCAS(ctx, &transport.PKCS11StateCASRequest{

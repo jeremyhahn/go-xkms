@@ -60,7 +60,7 @@ case — there is nothing to unseal.
 **A barrier that exists but cannot currently be opened is always a
 refusal.** A wrong or missing password against an initialized barrier
 refuses the command; there is no fallback to plaintext once you have opted
-into protecting this key. Supply the password with `--barrier-password`, a
+into protecting this key. Supply the password with `--barrier-password-stdin`, a
 file via `--barrier-password-file`, or `XKEY_BARRIER_PASSWORD` for unattended
 use (e.g. `device listen` run from a service unit):
 

@@ -30,6 +30,12 @@ import (
 type JWTAuthenticator struct {
 	// publicKey is used to verify token signatures
 	publicKey crypto.PublicKey
+	// validMethods is the set of jwt.SigningMethod names accepted for
+	// publicKey's type, pinned at construction time. It never includes an
+	// HS* method, so a token forged with alg: HS256 and signed with
+	// publicKey's own bytes as an HMAC secret is refused before the key
+	// function even runs.
+	validMethods []string
 	// issuer is the expected issuer claim
 	issuer string
 	// audience is the expected audience claim
@@ -64,11 +70,17 @@ func NewJWTAuthenticator(config *JWTConfig) (*JWTAuthenticator, error) {
 		headerName = "Authorization"
 	}
 
+	validMethods, err := validMethodsForKey(config.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+
 	return &JWTAuthenticator{
-		publicKey:  config.PublicKey,
-		issuer:     config.Issuer,
-		audience:   config.Audience,
-		headerName: headerName,
+		publicKey:    config.PublicKey,
+		validMethods: validMethods,
+		issuer:       config.Issuer,
+		audience:     config.Audience,
+		headerName:   headerName,
 	}, nil
 }
 
@@ -156,10 +168,14 @@ func (a *JWTAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD)
 const RefreshTokenType = "refresh"
 
 func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) {
-	// Parse token with verification
+	// Parse token with verification. WithValidMethods pins the accepted
+	// alg header values to publicKey's actual type (RS*/PS* for RSA,
+	// ES* for ECDSA, EdDSA for Ed25519) so a token cannot select HS* and
+	// have its signature "verified" against publicKey's own bytes used
+	// as an HMAC secret.
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		return a.publicKey, nil
-	})
+	}, jwt.WithValidMethods(a.validMethods))
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "invalid token", Err: err}
 	}
