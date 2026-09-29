@@ -72,14 +72,14 @@ a code change.
   for its own tenant; it guards `GetTenant`, `DeleteTenant`,
   `TenantBarrierInit`, `TenantBarrierUnseal`, `TenantBarrierStatus`
   (`pkg/xkms/servicer_tenant.go:94,144,191,246,283`),
-  `BarrierEnableEncryption` (`pkg/xkms/servicer_barrier.go:310`; an empty
+  `BarrierEnableEncryption` (`pkg/xkms/servicer_barrier.go:384`; an empty
   `TenantID` is the system barrier and is refused to a tenant) and the SPIFFE
   tenant of `SignCSR` (`pkg/xkms/servicer_ca.go:178`). `ListTenants` filters
   to the caller's tenant (`pkg/xkms/servicer_tenant.go:127`). The gRPC
   tenant RPCs no longer carry a barrier-registry fallback that bypassed the
   servicer; with no `XKMSService` they answer `Unavailable`.
 - **Plan changes are platform-only** (go-xkms#1113).
-  `requirePlatformScope` (`pkg/xkms/tenant_binding.go:80`) refuses every
+  `requirePlatformScope` (`pkg/xkms/tenant_binding.go:88`) refuses every
   tenant-scoped caller, including one naming its own tenant
   (`pkg/xkms/servicer_tenant.go:313,340`); the transports gate on
   `tenants:set_entitlements` / `tenants:set_quotas`

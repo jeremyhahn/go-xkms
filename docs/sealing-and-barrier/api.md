@@ -1,6 +1,6 @@
 # Sealing and Barrier — API
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -36,6 +36,34 @@ The one gap is `BarrierHasRecoveryKeys`, which has a gRPC RPC and an MCP method
 but no REST route. That is an inconsistency rather than a design decision:
 `DELETE /api/v1/barrier/recovery/keys` exists, so a REST caller can destroy
 recovery keys but cannot ask whether any exist.
+
+### The system barrier is platform-scoped
+
+Every row above except enable-encryption operates the **system** barrier,
+which protects every tenant. Each is refused to a tenant-scoped caller -- a
+tenant-local Admin whose self-scoped `seal:*` / `barrier:*` grants pass the
+RBAC gate included -- with the answer a missing tenant gets (go-xkms#1227):
+
+| Transport | Answer | Mapping site |
+|---|---|---|
+| REST / QUIC | `404`, the unknown-tenant message | `pkg/api/rest/handlers_barrier_pin.go:504` |
+| gRPC / Unix | `codes.NotFound` | `pkg/api/apierrors/tables.go:147` |
+| MCP | `JSONRPCCodeNotFound` | `pkg/api/apierrors/tables.go:147` |
+
+The refusal is raised in `XKMSService` (`pkg/xkms/servicer_barrier.go:89,117,
+128,139,170,205,236,253,278,300,314,325,342`), and every transport reaches
+the barrier only through it: REST `pkg/api/rest/handlers_barrier_pin.go`,
+`handlers_barrier_shamir.go`; gRPC/Unix `pkg/api/grpc/service_barrier_pin.go`,
+`service_barrier_shamir.go`; MCP `pkg/api/mcp/handlers_barrier_shamir.go`.
+Before this change gRPC and MCP held their own barrier reference that
+production never set, so their barrier methods answered "not configured";
+they now serve the service's barrier. A service with no barrier composed
+answers `503` / `Unavailable` / `ErrCodeServiceUnavailable`.
+
+**Enable encryption keeps its tenant binding** (`pkg/xkms/servicer_barrier.go:384`):
+a tenant may migrate its own barrier; naming another tenant or the system
+barrier (empty `tenant_id`) is refused as not-found. The per-tenant barrier
+operations (`TenantBarrier*`, below) keep theirs.
 
 ## Data-level sealing
 
@@ -83,7 +111,17 @@ response types straight onto the HTTP body): its JSON field names
 diverge from `transport.Policy*` (`pcrs`, `values` as a hex-encoded map).
 The REST and QUIC client transports translate between the two;
 `pkg/api/rest/wire`'s PCR Policy types document the mapping in full so it
-lives in exactly one place.
+lives in exactly one place. The REST handlers now call the service and
+decode its hex values back into that wire shape (`pcrValuesFromHex`,
+`pkg/api/rest/policy_handlers.go`).
+
+**PCR policies are platform-scoped** (go-xkms#1227). They bind the platform's
+sealed secrets to its measured boot state, so every `Policy*` service method
+refuses a tenant-scoped caller before the policy manager is touched
+(`pkg/xkms/servicer_policy.go:42,66,84,106,120,138,160`); the REST handlers
+hold only the service (`pkg/api/rest/policy_handlers.go`). The refusal is
+REST `404` with the unknown-tenant message (`pkg/api/rest/policy_handlers.go:367`),
+gRPC `NotFound` and MCP `JSONRPCCodeNotFound` (`pkg/api/apierrors/tables.go:192`).
 
 ## Tenant barriers
 
@@ -114,6 +152,8 @@ There is no "list shares" operation and there will not be one.
 | strategy hardware or provider unreachable | 503 | `Unavailable` | error object |
 | sealed-blob format version unknown | 500 | `Internal` | error object |
 | RBAC denial | 403 | `PermissionDenied` | error object |
+| tenant-scoped caller (platform scope) | 404 | `NotFound` | `JSONRPCCodeNotFound` |
+| no barrier composed on the service | 503 | `Unavailable` | `ErrCodeServiceUnavailable` |
 
 `GET /api/v1/barrier/status` returning "sealed" is **200, not an error**. A
 client that treats a sealed barrier as a transport failure will retry forever.

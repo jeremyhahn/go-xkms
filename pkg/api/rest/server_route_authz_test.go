@@ -224,21 +224,21 @@ func newGatedRouteServer(t *testing.T, rbac qrdbtransport.RBACClient, authn auth
 
 	policyMgr, err := policy.NewManager(fakePCRReader{}, policy.NewMemoryPolicyStore())
 	require.NoError(t, err)
+	svc.SetPolicyManager(policyMgr)
+	svc.SetCredentialService(&credentialspkg.Service{})
 
 	server, err := NewServer(&Config{
-		Authenticator:     authn,
-		Backends:          map[string]xkms.Backend{"test": ks},
-		Logger:            logger,
-		XKMSService:       svc,
-		CustodianEnabled:  true,
-		ShareEnabled:      true,
-		BarrierRegistry:   registry,
-		PasswordStore:     staticpw.NewStore(storage.NewMemory()),
-		CredentialService: &credentialspkg.Service{},
-		CA:                ca,
-		PolicyManager:     policyMgr,
-		EnableRBAC:        true,
-		RBACAuthorizer:    auth.NewAuthorizer(rbac),
+		Authenticator:    authn,
+		Backends:         map[string]xkms.Backend{"test": ks},
+		Logger:           logger,
+		XKMSService:      svc,
+		CustodianEnabled: true,
+		ShareEnabled:     true,
+		BarrierRegistry:  registry,
+		PasswordStore:    staticpw.NewStore(storage.NewMemory()),
+		CA:               ca,
+		EnableRBAC:       true,
+		RBACAuthorizer:   auth.NewAuthorizer(rbac),
 	})
 	require.NoError(t, err)
 	return server

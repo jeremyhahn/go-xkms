@@ -38,12 +38,3 @@ func TestAlgorithmsHandler_ReturnsJSON(t *testing.T) {
 	var resp types.AlgorithmsResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 }
-
-func TestSetPINManager(t *testing.T) {
-	h := newTestHandlerContext()
-	assert.Nil(t, h.PINManager)
-
-	mock := &mockPINManager{strategy: "software"}
-	h.SetPINManager(mock)
-	assert.NotNil(t, h.PINManager)
-}

@@ -33,13 +33,9 @@ import (
 // BarrierEnableEncryption.
 
 func TestServiceBarrierHasRecoveryKeys_NotConfigured(t *testing.T) {
-	old := GetBarrier()
-	SetBarrier(nil)
-	defer SetBarrier(old)
-
-	svc := newTestService()
+	svc := newPlatformTestService()
 	_, err := svc.BarrierHasRecoveryKeys(context.Background(), &emptypb.Empty{})
-	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 func TestServiceBarrierHasRecoveryKeys_ReportsNoneBeforeGeneration(t *testing.T) {
@@ -48,7 +44,7 @@ func TestServiceBarrierHasRecoveryKeys_ReportsNoneBeforeGeneration(t *testing.T)
 	creds := seal.MustCredentials([]byte("test-password"))
 	defer creds.Secret.Destroy()
 	require.NoError(t, b.Initialize(ctx, creds))
-	svc := newTestService()
+	svc := newPlatformTestService()
 
 	resp, err := svc.BarrierHasRecoveryKeys(ctx, &emptypb.Empty{})
 	require.NoError(t, err)

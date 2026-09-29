@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/internal/shamirtest"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,9 +73,9 @@ func createTestBarrierServer(t *testing.T) (*Server, *shamirtest.CaptureDistribu
 
 	barrier, dist, recoveryDist := createTestBarrier(t)
 
+	svc.SetBarrier(barrier)
 	server, err := NewServer(&Config{
 		Authenticator: auth.NewNoOpAuthenticator(),
-		Barrier:       barrier,
 		XKMSService:   svc,
 	})
 	require.NoError(t, err)
@@ -106,7 +107,7 @@ func TestBarrierInitialize(t *testing.T) {
 		req := makeReq("barrier.initialize", BarrierInitializeParams{Secret: "test"})
 		_, err := server.handleBarrierInitialize(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
@@ -157,7 +158,7 @@ func TestBarrierInitializeShamir(t *testing.T) {
 		req := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
 		_, err := server.handleBarrierInitializeShamir(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
@@ -203,7 +204,7 @@ func TestBarrierUnseal(t *testing.T) {
 		req := makeReq("barrier.unseal", BarrierUnsealParams{Secret: "test"})
 		_, err := server.handleBarrierUnseal(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
@@ -249,7 +250,7 @@ func TestBarrierUnsealShare(t *testing.T) {
 		req := makeReq("barrier.unsealShare", BarrierUnsealShareParams{Share: "abc"})
 		_, err := server.handleBarrierUnsealShare(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
@@ -321,7 +322,7 @@ func TestBarrierUnsealShares(t *testing.T) {
 		req := makeReq("barrier.unsealShares", BarrierUnsealSharesParams{Shares: []string{"a", "b"}})
 		_, err := server.handleBarrierUnsealShares(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
@@ -381,7 +382,7 @@ func TestBarrierSeal(t *testing.T) {
 		req := makeReq("barrier.seal", nil)
 		_, err := server.handleBarrierSeal(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("succeeds on unsealed barrier", func(t *testing.T) {
@@ -426,7 +427,7 @@ func TestBarrierStatus(t *testing.T) {
 		req := makeReq("barrier.status", nil)
 		_, err := server.handleBarrierStatus(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("returns sealed status before initialization", func(t *testing.T) {
@@ -470,7 +471,7 @@ func TestBarrierRekey(t *testing.T) {
 		req := makeReq("barrier.rekey", BarrierRekeyParams{Threshold: 2, Total: 3})
 		_, err := server.handleBarrierRekey(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
@@ -542,7 +543,7 @@ func TestBarrierGenerateRecoveryKeys(t *testing.T) {
 		req := makeReq("barrier.generateRecoveryKeys", BarrierGenerateRecoveryKeysParams{Threshold: 2, Total: 3})
 		_, err := server.handleBarrierGenerateRecoveryKeys(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
@@ -614,7 +615,7 @@ func TestBarrierRecoverWithKeys(t *testing.T) {
 		req := makeReq("barrier.recoverWithKeys", BarrierRecoverWithKeysParams{Keys: []string{"a"}})
 		_, err := server.handleBarrierRecoverWithKeys(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
@@ -679,7 +680,7 @@ func TestBarrierDeleteRecoveryKeys(t *testing.T) {
 		req := makeReq("barrier.deleteRecoveryKeys", nil)
 		_, err := server.handleBarrierDeleteRecoveryKeys(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("succeeds after generating recovery keys", func(t *testing.T) {
@@ -718,7 +719,7 @@ func TestBarrierHasRecoveryKeys(t *testing.T) {
 		req := makeReq("barrier.hasRecoveryKeys", nil)
 		_, err := server.handleBarrierHasRecoveryKeys(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("reports false before and true after generating recovery keys", func(t *testing.T) {
@@ -758,7 +759,7 @@ func TestBarrierGenerateRootToken(t *testing.T) {
 		req := makeReq("barrier.generateRootToken", BarrierGenerateRootTokenParams{Shares: []string{"a"}})
 		_, err := server.handleBarrierGenerateRootToken(context.Background(), req)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
+		assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 	})
 
 	t.Run("returns error with invalid JSON params", func(t *testing.T) {
@@ -860,44 +861,30 @@ func TestBarrierMethodRouting(t *testing.T) {
 
 }
 
-// TestBarrierSetBarrier tests the SetBarrier method.
-func TestBarrierSetBarrier(t *testing.T) {
+// TestBarrierReachedOnlyThroughTheService pins that the barrier methods
+// operate the barrier composed on the XKMSService -- the only path, since the
+// service's platform scope is what refuses a tenant-scoped caller
+// (go-xkms#1227) -- and that a service without one answers Service
+// unavailable rather than reaching any other barrier.
+func TestBarrierReachedOnlyThroughTheService(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
-	// Initially no barrier
-	assert.Nil(t, server.barrier)
+	_, err = server.handleBarrierStatus(context.Background(), makeReq("barrier.status", nil))
+	var keyErr *KeyOpError
+	require.ErrorAs(t, err, &keyErr)
+	assert.Equal(t, ErrCodeServiceUnavailable, keyErr.Code)
+	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
 
-	// Set barrier
 	barrier, _, _ := createTestBarrier(t)
-	server.SetBarrier(barrier)
-	assert.NotNil(t, server.barrier)
-
-	// Barrier operations should now work
-	req := makeReq("barrier.status", nil)
-	result, err := server.handleBarrierStatus(context.Background(), req)
+	svc.SetBarrier(barrier)
+	result, err := server.handleBarrierStatus(context.Background(), makeReq("barrier.status", nil))
 	require.NoError(t, err)
-
 	resultMap := result.(map[string]interface{})
 	assert.True(t, resultMap["sealed"].(bool))
-}
-
-// TestBarrierConfigPassthrough tests that barrier is passed through Config.
-func TestBarrierConfigPassthrough(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	barrier, _, _ := createTestBarrier(t)
-	server, err := NewServer(&Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Barrier:       barrier,
-		XKMSService:   svc,
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, server.barrier)
 }
 
 // TestBarrierFullLifecycle tests the complete barrier lifecycle through MCP handlers:

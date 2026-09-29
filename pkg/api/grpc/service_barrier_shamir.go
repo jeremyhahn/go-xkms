@@ -15,7 +15,6 @@ package grpc
 
 import (
 	"context"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -24,35 +23,26 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
 // ==================== Shamir Barrier Operations ====================
 
 // BarrierInitializeShamir generates a root key and splits it into Shamir
 // shares. The barrier transitions to unsealed state after initialization.
+// Share material is never returned: shares are sealed to enrolled Security
+// Officers via the CeremonyDistributor (qrdb share-free contract). Only the
+// threshold/total metadata is reported.
 func (s *Service) BarrierInitializeShamir(ctx context.Context, req *pb.BarrierInitializeShamirRequest) (*pb.BarrierShamirInitResponse, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionInitializeShamir, "initialize-shamir"); err != nil {
 		return nil, err
 	}
-
-	creds, err := seal.CredentialsFor([]byte(req.GetSecret()))
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	result, err := s.xkmsService.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{Secret: req.GetSecret()})
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier initialize shamir")
 	}
-	defer creds.Secret.Destroy()
-	result, err := barrier.InitializeShamir(ctx, creds)
-	if err != nil {
-		return nil, mapBarrierError(err, "barrier initialize shamir")
-	}
-
-	// Share material is never returned: shares are sealed to enrolled
-	// Security Officers via the CeremonyDistributor (qrdb share-free
-	// contract). Only the threshold/total metadata is reported.
 	return &pb.BarrierShamirInitResponse{
 		Threshold:   int32(result.Threshold),   // #nosec G115 - Threshold fits in int32
 		TotalShares: int32(result.TotalShares), // #nosec G115 - TotalShares fits in int32
@@ -62,73 +52,60 @@ func (s *Service) BarrierInitializeShamir(ctx context.Context, req *pb.BarrierIn
 
 // BarrierUnsealShare submits a single share for stateful quorum-based
 // unsealing. When enough shares have been submitted (reaching the threshold),
-// the barrier automatically unseals. Returns progress information.
+// the barrier automatically unseals. Returns progress information, alongside
+// the error when the barrier reports one.
 func (s *Service) BarrierUnsealShare(ctx context.Context, req *pb.BarrierUnsealShareRequest) (*pb.BarrierQuorumProgressResponse, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceBarrier, auth.ActionUnsealShare, "unseal-share"); err != nil {
 		return nil, err
 	}
-
-	progress, err := barrier.UnsealWithShare(ctx, req.GetShare())
-	if err != nil {
-		// Return progress alongside the error when available.
-		if progress != nil {
-			return &pb.BarrierQuorumProgressResponse{
-				Required:  int32(progress.Required),  // #nosec G115 - Required fits in int32
-				Submitted: int32(progress.Submitted), // #nosec G115 - Submitted fits in int32
-				Complete:  progress.Complete,
-			}, mapBarrierError(err, "barrier unseal share")
-		}
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	progress, err := s.xkmsService.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{Share: req.GetShare()})
+	if progress == nil {
 		return nil, mapBarrierError(err, "barrier unseal share")
 	}
-
 	return &pb.BarrierQuorumProgressResponse{
 		Required:  int32(progress.Required),  // #nosec G115 - Required fits in int32
 		Submitted: int32(progress.Submitted), // #nosec G115 - Submitted fits in int32
 		Complete:  progress.Complete,
-	}, nil
+	}, mapBarrierError(err, "barrier unseal share")
 }
 
 // BarrierUnsealShares performs stateless batch unsealing with all shares
 // provided in a single call. All required shares must be present.
 func (s *Service) BarrierUnsealShares(ctx context.Context, req *pb.BarrierUnsealSharesRequest) (*emptypb.Empty, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionUnseal, "unseal-shares"); err != nil {
 		return nil, err
 	}
-
-	if err := barrier.UnsealWithShares(ctx, req.GetShares()); err != nil {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	if err := s.xkmsService.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{Shares: req.GetShares()}); err != nil {
 		return nil, mapBarrierError(err, "barrier unseal shares")
 	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // BarrierRekey generates a new set of Shamir shares for the existing root key.
 // The barrier must be unsealed and StrategyShamir must be registered. Old
 // shares are deleted and replaced with new shares using the given parameters.
+// New shares are sealed to enrolled Security Officers and never returned;
+// only the threshold/total metadata is reported.
 func (s *Service) BarrierRekey(ctx context.Context, req *pb.BarrierRekeyRequest) (*pb.BarrierShamirInitResponse, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionRekey, "rekey"); err != nil {
 		return nil, err
 	}
-
-	result, err := barrier.Rekey(ctx, int(req.GetThreshold()), int(req.GetTotal()))
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	result, err := s.xkmsService.BarrierRekey(ctx, &transport.BarrierRekeyRequest{
+		Threshold: int(req.GetThreshold()),
+		Total:     int(req.GetTotal()),
+	})
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier rekey")
 	}
-
-	// New shares are sealed to enrolled Security Officers and never
-	// returned; only the threshold/total metadata is reported.
 	return &pb.BarrierShamirInitResponse{
 		Threshold:   int32(result.Threshold),   // #nosec G115 - Threshold fits in int32
 		TotalShares: int32(result.TotalShares), // #nosec G115 - TotalShares fits in int32
@@ -143,21 +120,19 @@ func (s *Service) BarrierRekey(ctx context.Context, req *pb.BarrierRekeyRequest)
 // Recovery shares are sealed to enrolled recovery officers and never
 // returned (qrdb share-free contract).
 func (s *Service) BarrierGenerateRecoveryKeys(ctx context.Context, req *pb.BarrierGenerateRecoveryKeysRequest) (*pb.BarrierRecoveryKeysResponse, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionGenerateRecovery, "generate-recovery-keys"); err != nil {
 		return nil, err
 	}
-
-	result, err := barrier.GenerateRecoveryKeys(ctx, int(req.GetThreshold()), int(req.GetTotal()))
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	result, err := s.xkmsService.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{
+		Threshold: int(req.GetThreshold()),
+		Total:     int(req.GetTotal()),
+	})
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier generate recovery keys")
 	}
-
-	// Recovery shares are sealed to enrolled recovery officers and never
-	// returned; only the threshold/total metadata is reported.
 	return &pb.BarrierRecoveryKeysResponse{
 		Threshold:   int32(result.Threshold),   // #nosec G115 - Threshold fits in int32
 		TotalShares: int32(result.TotalShares), // #nosec G115 - TotalShares fits in int32
@@ -168,55 +143,46 @@ func (s *Service) BarrierGenerateRecoveryKeys(ctx context.Context, req *pb.Barri
 // BarrierRecoverWithKeys reconstructs the DEK from recovery key shares
 // and unseals the barrier. The barrier must be sealed.
 func (s *Service) BarrierRecoverWithKeys(ctx context.Context, req *pb.BarrierRecoverWithKeysRequest) (*emptypb.Empty, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionRecoverWithKeys, "recover-with-keys"); err != nil {
 		return nil, err
 	}
-
-	if err := barrier.RecoverWithKeys(ctx, req.GetKeys()); err != nil {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	if err := s.xkmsService.BarrierRecoverWithKeys(ctx, &transport.BarrierRecoverWithKeysRequest{Keys: req.GetKeys()}); err != nil {
 		return nil, mapBarrierError(err, "barrier recover with keys")
 	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // BarrierDeleteRecoveryKeys removes recovery key metadata from storage.
 // The actual shares are not stored -- only the metadata is deleted.
 func (s *Service) BarrierDeleteRecoveryKeys(ctx context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionGenerateRecovery, "delete-recovery-keys"); err != nil {
 		return nil, err
 	}
-
-	if err := barrier.DeleteRecoveryKeys(ctx); err != nil {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	if err := s.xkmsService.BarrierDeleteRecoveryKeys(ctx); err != nil {
 		return nil, mapBarrierError(err, "barrier delete recovery keys")
 	}
-
 	return &emptypb.Empty{}, nil
 }
 
 // BarrierHasRecoveryKeys reports whether recovery keys have been generated.
 func (s *Service) BarrierHasRecoveryKeys(ctx context.Context, _ *emptypb.Empty) (*pb.BarrierHasRecoveryKeysResponse, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionStatus, "has-recovery-keys"); err != nil {
 		return nil, err
 	}
-
-	hasKeys, err := barrier.HasRecoveryKeys(ctx)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	resp, err := s.xkmsService.BarrierHasRecoveryKeys(ctx)
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier has recovery keys")
 	}
-
-	return &pb.BarrierHasRecoveryKeysResponse{HasKeys: hasKeys}, nil
+	return &pb.BarrierHasRecoveryKeysResponse{HasKeys: resp.HasKeys}, nil
 }
 
 // ==================== Root Token Operations ====================
@@ -224,22 +190,19 @@ func (s *Service) BarrierHasRecoveryKeys(ctx context.Context, _ *emptypb.Empty) 
 // BarrierGenerateRootToken generates a one-time root token by proving
 // knowledge of the master key through Shamir share reconstruction.
 func (s *Service) BarrierGenerateRootToken(ctx context.Context, req *pb.BarrierGenerateRootTokenRequest) (*pb.BarrierRootTokenResponse, error) {
-	if barrier == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
-	}
-
 	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionRotateRootKey, "generate-root-token"); err != nil {
 		return nil, err
 	}
-
-	token, err := barrier.GenerateRootToken(ctx, req.GetShares())
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrBarrierNotConfigured.Error())
+	}
+	token, err := s.xkmsService.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{Shares: req.GetShares()})
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier generate root token")
 	}
-
 	return &pb.BarrierRootTokenResponse{
 		Token:     token.Token,
-		CreatedAt: token.CreatedAt.Format(time.RFC3339),
+		CreatedAt: token.CreatedAt,
 	}, nil
 }
 

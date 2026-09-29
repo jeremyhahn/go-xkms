@@ -27,7 +27,27 @@ import (
 // PIV handler typed errors.
 var (
 	ErrPIVMissingSlot = errors.New("rest: missing slot parameter")
+
+	// ErrPIVServiceNotConfigured is returned when no XKMSService is composed
+	// to serve the PIV routes.
+	ErrPIVServiceNotConfigured = errors.New("rest: PIV service not configured")
 )
+
+// The PIV handlers delegate to the XKMSService's PIV methods and never to the
+// package-level PIV operations: the PIV card is the server's own hardware,
+// and the service's requirePlatformScope is what refuses a tenant-scoped
+// caller (go-xkms#1227). The refusal is xkms.TenantBindingError, which
+// handleError answers 404 exactly as a genuine miss.
+
+// pivServiceReady reports whether an XKMSService is composed, answering 503
+// when it is not.
+func (h *HandlerContext) pivServiceReady(w http.ResponseWriter) bool {
+	if h.xkmsService == nil {
+		writeError(w, ErrPIVServiceNotConfigured, http.StatusServiceUnavailable)
+		return false
+	}
+	return true
+}
 
 // ListPIVSlotsHandler handles GET /api/v1/piv/slots requests.
 // Returns the status of all PIV slots for the specified backend.
@@ -45,7 +65,10 @@ func (h *HandlerContext) ListPIVSlotsHandler(w http.ResponseWriter, r *http.Requ
 		Backend: backendID,
 	}
 
-	resp, err := xkms.ListPIVSlots(r.Context(), req)
+	if !h.pivServiceReady(w) {
+		return
+	}
+	resp, err := h.xkmsService.ListPIVSlots(r.Context(), req)
 	if err != nil {
 		log.Printf("Failed to list PIV slots: %v", err)
 		handlePIVError(w, err)
@@ -97,7 +120,10 @@ func (h *HandlerContext) GetPIVCertificateHandler(w http.ResponseWriter, r *http
 		Format:  format,
 	}
 
-	resp, err := xkms.GetPIVCertificate(r.Context(), req)
+	if !h.pivServiceReady(w) {
+		return
+	}
+	resp, err := h.xkmsService.GetPIVCertificate(r.Context(), req)
 	if err != nil {
 		log.Printf("Failed to get PIV certificate: %v", err)
 		handlePIVError(w, err)
@@ -141,7 +167,10 @@ func (h *HandlerContext) StorePIVCertificateHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if err := xkms.StorePIVCertificate(r.Context(), &req); err != nil {
+	if !h.pivServiceReady(w) {
+		return
+	}
+	if err := h.xkmsService.StorePIVCertificate(r.Context(), &req); err != nil {
 		log.Printf("Failed to store PIV certificate: %v", err)
 		handlePIVError(w, err)
 		return
@@ -179,7 +208,10 @@ func (h *HandlerContext) DeletePIVCertificateHandler(w http.ResponseWriter, r *h
 		Slot:    slot,
 	}
 
-	if err := xkms.DeletePIVCertificate(r.Context(), req); err != nil {
+	if !h.pivServiceReady(w) {
+		return
+	}
+	if err := h.xkmsService.DeletePIVCertificate(r.Context(), req); err != nil {
 		log.Printf("Failed to delete PIV certificate: %v", err)
 		handlePIVError(w, err)
 		return
@@ -225,7 +257,10 @@ func (h *HandlerContext) GeneratePIVKeyHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	resp, err := xkms.GeneratePIVKey(r.Context(), &req)
+	if !h.pivServiceReady(w) {
+		return
+	}
+	resp, err := h.xkmsService.GeneratePIVKey(r.Context(), &req)
 	if err != nil {
 		log.Printf("Failed to generate PIV key: %v", err)
 		handlePIVError(w, err)
@@ -269,7 +304,10 @@ func (h *HandlerContext) ImportPIVCertificateHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	if err := xkms.ImportPIVCertificate(r.Context(), &req); err != nil {
+	if !h.pivServiceReady(w) {
+		return
+	}
+	if err := h.xkmsService.ImportPIVCertificate(r.Context(), &req); err != nil {
 		log.Printf("Failed to import PIV certificate: %v", err)
 		handlePIVError(w, err)
 		return
@@ -314,7 +352,10 @@ func (h *HandlerContext) ExportPIVCertificateHandler(w http.ResponseWriter, r *h
 		Format:  format,
 	}
 
-	resp, err := xkms.ExportPIVCertificate(r.Context(), req)
+	if !h.pivServiceReady(w) {
+		return
+	}
+	resp, err := h.xkmsService.ExportPIVCertificate(r.Context(), req)
 	if err != nil {
 		log.Printf("Failed to export PIV certificate: %v", err)
 		handlePIVError(w, err)
@@ -357,7 +398,10 @@ func (h *HandlerContext) GeneratePIVCSRHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	resp, err := xkms.GeneratePIVCSR(r.Context(), &req)
+	if !h.pivServiceReady(w) {
+		return
+	}
+	resp, err := h.xkmsService.GeneratePIVCSR(r.Context(), &req)
 	if err != nil {
 		log.Printf("Failed to generate PIV CSR: %v", err)
 		handlePIVError(w, err)

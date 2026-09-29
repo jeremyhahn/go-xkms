@@ -73,10 +73,18 @@ func bindTenantTarget(ctx context.Context, op, target string) error {
 }
 
 // requirePlatformScope admits only a cross-tenant identity to an operation on
-// target. Plan management (entitlements and quotas) decides what a tenant is
-// allowed to consume, so a tenant-scoped caller may not change even its own
-// tenant's plan; the refusal is the same TenantBindingError the binding
-// raises, so it adds nothing a probe could enumerate.
+// target. It guards two kinds of operation:
+//
+//   - plan management (entitlements and quotas), which decides what a tenant
+//     is allowed to consume, so a tenant-scoped caller may not change even its
+//     own tenant's plan (go-xkms#1113);
+//   - platform-global state that belongs to no tenant -- the sealed platform
+//     store and credential submission (go-xkms#1226), the system barrier, the
+//     token PINs, the server's PIV card and the PCR policies (go-xkms#1227).
+//     These pass an empty target, the system scope.
+//
+// The refusal is the same TenantBindingError the binding raises, so it adds
+// nothing a probe could enumerate.
 func requirePlatformScope(ctx context.Context, op, target string) error {
 	identity := auth.GetIdentity(ctx)
 	if auth.IsCrossTenant(identity) {

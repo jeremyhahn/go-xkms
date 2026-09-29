@@ -27,7 +27,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/go-chi/chi/v5"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -36,8 +35,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
-	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
@@ -199,20 +196,8 @@ type Config struct {
 	// AuditLogger is the audit logger (optional)
 	AuditLogger interface{}
 
-	// Barrier is the optional barrier for seal/unseal lifecycle management
-	Barrier *seal.Barrier
-
-	// PINManager is the optional PIN backend for SO/User PIN operations
-	PINManager qrdbsdk.PINBackend
-
 	// PasswordStore is the optional static password store
 	PasswordStore *staticpw.BackendStore
-
-	// PlatformStore is the optional sealed platform credential store
-	PlatformStore seal.PlatformStore
-
-	// PolicyManager is the optional policy manager
-	PolicyManager *policy.Manager
 
 	// BarrierRegistry is the optional barrier registry for multi-tenant isolation
 	BarrierRegistry *seal.BarrierRegistry
@@ -232,16 +217,17 @@ type Config struct {
 	// CeremonyService is the optional init ceremony service
 	CeremonyService *initialize.CeremonyService
 
-	// CredentialService is the optional credential management service
-	CredentialService *credentialspkg.Service
-
 	// CA is the optional CA instance for certificate authority operations.
 	// Stored as any to break import cycles. Must implement caServicer methods.
 	CA any
 
 	// XKMSService is the injected XKMS service; replaces the package singleton
 	// lookup. When set, all handler methods that previously called xkms.Get()
-	// will use this service directly.
+	// will use this service directly. The platform-global subsystems -- the
+	// system barrier, the PIN backend, the platform store, the PCR policy
+	// manager and the credential service -- are reached only through it,
+	// because its requirePlatformScope is what refuses a tenant-scoped caller
+	// (go-xkms#1226, #1227).
 	XKMSService *xkms.XKMSService
 
 	// SSHClient is the SSH SDK client backing the /xkms/v1/ssh routes. When
@@ -364,16 +350,6 @@ func NewServer(cfg *Config) (*Server, error) {
 	// Wire the injected XKMS service so handlers do not use the global singleton.
 	if cfg.XKMSService != nil {
 		handlers.SetXKMSService(cfg.XKMSService)
-	}
-
-	// Set barrier on handler context if provided
-	if cfg.Barrier != nil {
-		handlers.SetBarrier(cfg.Barrier)
-	}
-
-	// Set PIN manager on handler context if provided
-	if cfg.PINManager != nil {
-		handlers.SetPINManager(cfg.PINManager)
 	}
 
 	// Create server instance
@@ -573,28 +549,22 @@ func NewServer(cfg *Config) (*Server, error) {
 		server.pkcs11StateHandlers = NewPKCS11StateHandlers(cfg.XKMSService)
 	}
 
-	// Set up platform store handlers if platform store is configured
-	if cfg.PlatformStore != nil {
-		server.platformHandlers = NewSealStoreHandlers(cfg.PlatformStore)
-		log.Info("Platform store handlers enabled")
-	}
-
-	// Set up policy handlers if policy manager is configured
-	if cfg.PolicyManager != nil {
-		server.policyHandlers = NewPolicyHandlers(cfg.PolicyManager)
-		log.Info("Policy handlers enabled")
+	// The platform store, PCR policy and credential handlers are enabled
+	// whenever the service is present, exactly as the PKCS#11 remote-state
+	// handlers are: they reach their subsystem only through the service, whose
+	// requirePlatformScope refuses a tenant-scoped caller (go-xkms#1226,
+	// #1227) and which answers ErrNotConfigured (503) for a subsystem this
+	// deployment does not compose.
+	if cfg.XKMSService != nil {
+		server.platformHandlers = NewSealStoreHandlers(cfg.XKMSService)
+		server.policyHandlers = NewPolicyHandlers(cfg.XKMSService)
+		server.credentialHandlers = NewCredentialHandlers(cfg.XKMSService, log)
 	}
 
 	// Set up init ceremony handlers if ceremony service is configured
 	if cfg.CeremonyService != nil {
 		server.initHandlers = NewInitHandlers(cfg.CeremonyService, log)
 		log.Info("Init ceremony handlers enabled")
-	}
-
-	// Set up credential handlers if credential service is configured
-	if cfg.CredentialService != nil {
-		server.credentialHandlers = NewCredentialHandlers(cfg.CredentialService, log)
-		log.Info("Credential handlers enabled")
 	}
 
 	// Set up auth-factor handlers when the embedded qrdb node is available.

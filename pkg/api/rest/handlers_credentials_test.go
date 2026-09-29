@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,10 +43,19 @@ func credTestService(t *testing.T) *credentials.Service {
 	return svc
 }
 
+// credentialServiceOver returns an XKMSService composed with creds: the
+// handlers reach the credential service only through it, which enforces its
+// platform scope.
+func credentialServiceOver(creds *credentials.Service) *xkms.XKMSService {
+	svc := &xkms.XKMSService{}
+	svc.SetCredentialService(creds)
+	return svc
+}
+
 // credTestHandlers creates CredentialHandlers with a manual-strategy service.
 func credTestHandlers(t *testing.T) *CredentialHandlers {
 	t.Helper()
-	return NewCredentialHandlers(credTestService(t), initTestLogger())
+	return NewCredentialHandlers(credentialServiceOver(credTestService(t)), initTestLogger())
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +231,7 @@ func TestCredentialHandleGetStrategy_Barrier(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	handlers := NewCredentialHandlers(svc, initTestLogger())
+	handlers := NewCredentialHandlers(credentialServiceOver(svc), initTestLogger())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/credentials/strategy", nil)
 	rec := httptest.NewRecorder()
@@ -244,7 +254,7 @@ func TestCredentialHandleGetStrategy_Barrier(t *testing.T) {
 // TestNewCredentialHandlers_NilLogger verifies that NewCredentialHandlers
 // uses a default logger when nil is passed.
 func TestNewCredentialHandlers_NilLogger(t *testing.T) {
-	handlers := NewCredentialHandlers(credTestService(t), nil)
+	handlers := NewCredentialHandlers(credentialServiceOver(credTestService(t)), nil)
 	assert.NotNil(t, handlers)
 	assert.NotNil(t, handlers.logger)
 }
@@ -267,6 +277,9 @@ func TestMapCredentialError_KnownCodes(t *testing.T) {
 		{credentials.ErrCredentialNotFound, http.StatusNotFound},
 		{credentials.ErrCredentialAlreadySubmitted, http.StatusConflict},
 		{credentials.ErrInvalidStrategy, http.StatusBadRequest},
+		{xkms.ErrInvalidEncoding, http.StatusBadRequest},
+		{xkms.ErrNotConfigured, http.StatusServiceUnavailable},
+		{&xkms.TenantBindingError{Op: "submit credential", CallerTenantID: "tenant-a"}, http.StatusNotFound},
 	}
 
 	for _, tt := range tests {
@@ -303,7 +316,7 @@ func TestCredentialHandleList_Empty(t *testing.T) {
 // credentials appear in the listing.
 func TestCredentialHandleList_ReportsSubmittedNames(t *testing.T) {
 	svc := credTestService(t)
-	handlers := NewCredentialHandlers(svc, initTestLogger())
+	handlers := NewCredentialHandlers(credentialServiceOver(svc), initTestLogger())
 
 	require.NoError(t, svc.SubmitCredential(context.Background(), "pkcs11-user-pin", []byte("secret-value")))
 
@@ -322,7 +335,7 @@ func TestCredentialHandleList_ReportsSubmittedNames(t *testing.T) {
 // HTTP boundary: the response body must not contain the credential value.
 func TestCredentialHandleList_NeverLeaksValues(t *testing.T) {
 	svc := credTestService(t)
-	handlers := NewCredentialHandlers(svc, initTestLogger())
+	handlers := NewCredentialHandlers(credentialServiceOver(svc), initTestLogger())
 
 	const secret = "TOP-SECRET-PIN-VALUE"
 	require.NoError(t, svc.SubmitCredential(context.Background(), "pkcs11-user-pin", []byte(secret)))

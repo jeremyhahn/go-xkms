@@ -32,7 +32,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -44,10 +43,6 @@ type HandlerContext struct {
 	Version string
 	// HealthChecker manages health check probes
 	HealthChecker HealthChecker
-	// Barrier is the optional barrier for seal/unseal lifecycle management
-	Barrier *seal.Barrier
-	// PINManager is the optional PIN backend for SO/User PIN operations
-	PINManager qrdbsdk.PINBackend
 	// xkmsService is the injected XKMS service; replaces package-singleton lookups.
 	xkmsService *xkms.XKMSService
 }
@@ -70,16 +65,6 @@ func NewHandlerContext(version string) *HandlerContext {
 // SetHealthChecker sets the health checker for the handler context.
 func (h *HandlerContext) SetHealthChecker(checker HealthChecker) {
 	h.HealthChecker = checker
-}
-
-// SetBarrier sets the barrier for the handler context.
-func (h *HandlerContext) SetBarrier(barrier *seal.Barrier) {
-	h.Barrier = barrier
-}
-
-// SetPINManager sets the PIN backend for the handler context.
-func (h *HandlerContext) SetPINManager(manager qrdbsdk.PINBackend) {
-	h.PINManager = manager
 }
 
 // SetXKMSService sets the injected XKMS service on the handler context.

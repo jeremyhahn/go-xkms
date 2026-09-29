@@ -1,6 +1,6 @@
 # PIV Smartcard — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227)
 
 ## Exported surface — `pkg/pivcert`
 
@@ -231,6 +231,15 @@ whether there is any evidence to check.
   survive. Code that allocates `9a` for a general-purpose key is a defect.
 - **`IsValid()` closes the storage-type set.** Three types, no others.
 - **Export returns certificates, never private keys.**
+- **The network slot operations are platform-scoped and reach the card only
+  through the service** (go-xkms#1227). Each `XKMSService` PIV method calls
+  `requirePlatformScope` before delegating to the package-level operation
+  (`pkg/xkms/servicer_piv.go:31,40,49,58,67,76,85,94`); REST
+  (`pkg/api/rest/handlers_piv.go`), gRPC/Unix (`pkg/api/grpc/service_piv.go`)
+  and MCP (`pkg/api/mcp/handlers_piv.go`) call the service methods, never
+  `xkms.ListPIVSlots` and its siblings directly. A new network PIV verb adds
+  a service method with the check and an entry to `platformScopedOps`
+  (`pkg/xkms/platform_scope_test.go`).
 - **The `f9` attestation certificate is evidence, not proof.** Run
   `VerifyChain` before believing it.
 - **An attestation over an imported key asserts residency, not exclusivity.**

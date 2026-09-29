@@ -227,12 +227,14 @@ func (c *capturingPlatformStore) Reseal(_ context.Context, name string) error {
 // secret operation an empty name.
 func TestPlatformSecretRoutes_URLParamReachesHandler(t *testing.T) {
 	store := &capturingPlatformStore{}
+	svc := &xkms.XKMSService{}
+	svc.SetPlatformStore(store)
 
 	cfg := &Config{
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends:      map[string]xkms.Backend{"test": newMockKeyStore()},
 		Logger:        testLogger(),
-		PlatformStore: store,
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)

@@ -20,51 +20,80 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
+// The PIV methods operate the server's own PIV card, platform-global
+// hardware, so each is platform-scoped (requirePlatformScope, go-xkms#1227): a
+// tenant-scoped caller is refused with a *TenantBindingError that reads as
+// not-found, before the card is touched.
+
 // ListPIVSlots returns the status of all PIV slots for the specified backend.
 // Implements the PIVServicer interface.
 func (s *XKMSService) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
+	if err := requirePlatformScope(ctx, "list PIV slots", ""); err != nil {
+		return nil, err
+	}
 	return ListPIVSlots(ctx, req)
 }
 
 // GetPIVCertificate retrieves a certificate from a PIV slot.
 // Implements the PIVServicer interface.
 func (s *XKMSService) GetPIVCertificate(ctx context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error) {
+	if err := requirePlatformScope(ctx, "get PIV certificate", ""); err != nil {
+		return nil, err
+	}
 	return GetPIVCertificate(ctx, req)
 }
 
 // StorePIVCertificate stores a certificate in a PIV slot.
 // Implements the PIVServicer interface.
 func (s *XKMSService) StorePIVCertificate(ctx context.Context, req *transport.StorePIVCertificateRequest) error {
+	if err := requirePlatformScope(ctx, "store PIV certificate", ""); err != nil {
+		return err
+	}
 	return StorePIVCertificate(ctx, req)
 }
 
 // DeletePIVCertificate removes a certificate from a PIV slot.
 // Implements the PIVServicer interface.
 func (s *XKMSService) DeletePIVCertificate(ctx context.Context, req *transport.DeletePIVCertificateRequest) error {
+	if err := requirePlatformScope(ctx, "delete PIV certificate", ""); err != nil {
+		return err
+	}
 	return DeletePIVCertificate(ctx, req)
 }
 
 // GeneratePIVKey generates a new key pair in a PIV slot with a self-signed certificate.
 // Implements the PIVServicer interface.
 func (s *XKMSService) GeneratePIVKey(ctx context.Context, req *transport.GeneratePIVKeyRequest) (*transport.GeneratePIVKeyResponse, error) {
+	if err := requirePlatformScope(ctx, "generate PIV key", ""); err != nil {
+		return nil, err
+	}
 	return GeneratePIVKey(ctx, req)
 }
 
 // ImportPIVCertificate imports a certificate into a PIV slot.
 // Implements the PIVServicer interface.
 func (s *XKMSService) ImportPIVCertificate(ctx context.Context, req *transport.StorePIVCertificateRequest) error {
+	if err := requirePlatformScope(ctx, "import PIV certificate", ""); err != nil {
+		return err
+	}
 	return ImportPIVCertificate(ctx, req)
 }
 
 // ExportPIVCertificate exports a certificate from a PIV slot.
 // Implements the PIVServicer interface.
 func (s *XKMSService) ExportPIVCertificate(ctx context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error) {
+	if err := requirePlatformScope(ctx, "export PIV certificate", ""); err != nil {
+		return nil, err
+	}
 	return ExportPIVCertificate(ctx, req)
 }
 
 // GeneratePIVCSR generates a certificate signing request for a PIV slot key.
 // Implements the PIVServicer interface.
 func (s *XKMSService) GeneratePIVCSR(ctx context.Context, req *transport.GeneratePIVCSRRequest) (*transport.GeneratePIVCSRResponse, error) {
+	if err := requirePlatformScope(ctx, "generate PIV CSR", ""); err != nil {
+		return nil, err
+	}
 	return GeneratePIVCSR(ctx, req)
 }
 

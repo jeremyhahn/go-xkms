@@ -31,7 +31,7 @@ import (
 func TestServiceGetPIVCertificate_Success(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
-	svc := NewService(nil, nil, nil)
+	svc := newPIVTestService()
 	ctx := context.Background()
 
 	genResp, err := svc.GeneratePIVKey(ctx, &pb.GeneratePIVKeyRequest{Backend: "software", Slot: "9a", Subject: "Test Key"})
@@ -47,7 +47,7 @@ func TestServiceGetPIVCertificate_Success(t *testing.T) {
 func TestServiceStorePIVCertificate_Success(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
-	svc := NewService(nil, nil, nil)
+	svc := newPIVTestService()
 	ctx := context.Background()
 
 	genResp, err := svc.GeneratePIVKey(ctx, &pb.GeneratePIVKeyRequest{Backend: "software", Slot: "9c", Subject: "Test Key"})
@@ -66,7 +66,7 @@ func TestServiceStorePIVCertificate_Success(t *testing.T) {
 func TestServiceImportPIVCertificate_Success(t *testing.T) {
 	cleanup := setupPIVTest(t)
 	defer cleanup()
-	svc := NewService(nil, nil, nil)
+	svc := newPIVTestService()
 	ctx := context.Background()
 
 	genResp, err := svc.GeneratePIVKey(ctx, &pb.GeneratePIVKeyRequest{Backend: "software", Slot: "9d", Subject: "Test Key"})
