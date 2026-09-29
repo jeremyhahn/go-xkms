@@ -297,7 +297,7 @@ func TestCopyKey_Validation(t *testing.T) {
 			name:     "source backend not found",
 			req:      &pb.CopyKeyRequest{SourceBackend: "nonexistent", SourceKeyId: "k", DestBackend: "software", DestKeyId: "k", WrappingAlgorithm: "a"},
 			wantCode: codes.NotFound,
-			wantMsg:  "source backend not found",
+			wantMsg:  "source backend: " + xkms.ErrBackendNotFound.Error(),
 		},
 	}
 

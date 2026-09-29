@@ -139,8 +139,16 @@ xkmsctl key import imported-signer wrapped.bin --key-type rsa --key-size 3072
 `--algorithm` (`RSAES_OAEP_SHA_256`).
 
 ```
-xkmsctl key copy web-tls web-tls-backup --dest-backend awskms
+xkmsctl key copy web-tls web-tls-backup --dest-backend software
 ```
+
+The copy takes its algorithm, size, curve, hash and partition from the source
+key, on every transport (go-xkms#1218), so `--key-type`, `--key-algorithm`,
+`--key-size` and `--curve` do not change the copy. The destination must support
+both halves of import/export; an import-only backend such as `awskms` is refused
+with `501` / `Unimplemented` (`key import not supported`). See
+[engineering.md](engineering.md) §"Key lifecycle RPCs resolve inside the
+caller's tenant".
 
 ### `key get-import-params <key-id>`
 
