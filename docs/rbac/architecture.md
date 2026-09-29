@@ -1,10 +1,6 @@
 # RBAC — Architecture
 
-<<<<<<< HEAD
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1230)
-=======
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1231)
->>>>>>> origin/security/1231-frost-tenant
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1230, #1231)
 
 ## The problem
 
