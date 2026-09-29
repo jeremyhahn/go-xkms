@@ -217,7 +217,12 @@ from xkmsd's own keystore/control-plane surface. Every verb goes through the
 ACME admin SDK (`sdk/go/acme`, `sdk/go/acme/client/admin`), never through
 `pkg/acme/admin` directly, and the admin API is permission-gated
 (`pkg/acme/admin`'s `PermissionGate`): a caller lacking the required role
-gets a typed permission-denied error rather than a generic failure.
+gets a typed permission-denied error rather than a generic failure. A
+tenant-scoped caller is additionally confined to its own tenant: naming
+another tenant, or another tenant's role, user, account or certificate,
+fails exactly as a missing one does (not found), and creating a tenant and
+reading the audit trail are platform-only (go-xkms#1225; see
+[`api.md`](api.md#admin-api-tenant-binding-responses)).
 
 ### Connecting
 

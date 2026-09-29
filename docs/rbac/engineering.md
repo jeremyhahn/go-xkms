@@ -66,6 +66,18 @@ The binding is applied once, in `XKMSService`, and no transport repeats it:
 | `UpdateTenantQuotas` | `requirePlatformScope` | `pkg/xkms/servicer_tenant.go:340` |
 | `BarrierEnableEncryption` | `bindTenantTarget` (empty `TenantID` = system barrier) | `pkg/xkms/servicer_barrier.go:310` |
 | `SignCSR` | `bindTenantTarget` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:178` |
+The ACME admin plane (`pkg/acme/admin`) is served by its own service, not
+`XKMSService`, and carries its own binding with the same convention
+(go-xkms#1225): `bindTenantTarget` and `requirePlatformScope`
+(`pkg/acme/admin/tenant_binding.go:103`, `:113`), whose
+`*TenantBindingError` unwraps to that package's `ErrTenantNotFound` and reads
+as a missing tenant. It also checks that a role or user belongs to the tenant
+the path names before touching it, scopes ACME certificates, accounts and
+orders by the caller's tenant, and binds the caller's tenant as the qrdb
+context tenant at its authentication boundary (`pkg/acme/admin/auth.go:101`).
+The full contract is in
+[`../acme-issuance/engineering.md`](../acme-issuance/engineering.md#invariants).
+
 ### `pkg/auth/rolemembership.go` — role membership
 
 var ErrRoleClientRequired error

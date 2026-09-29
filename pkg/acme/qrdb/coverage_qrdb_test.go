@@ -42,7 +42,7 @@ func TestIsServiceInit_False_NilError(t *testing.T) {
 }
 
 func TestIsServiceInit_False_NonTypedError(t *testing.T) {
-	assert.False(t, IsServiceInit(errRoleNotFound))
+	assert.False(t, IsServiceInit(roleNotFound("role-x")))
 }
 
 // ==========================================================================
@@ -154,7 +154,7 @@ func TestMemoryRoleClient_GetRole_NotFound(t *testing.T) {
 
 	_, err := c.GetRole(ctx, "nonexistent-role")
 	require.Error(t, err)
-	assert.Equal(t, errRoleNotFound, err)
+	assertRoleNotFound(t, err)
 }
 
 func TestMemoryRoleClient_UpdateRole_Success(t *testing.T) {
@@ -180,7 +180,7 @@ func TestMemoryRoleClient_UpdateRole_NotFound(t *testing.T) {
 
 	_, err := c.UpdateRole(ctx, &db.UpdateRoleRequest{ID: "ghost-id", Name: "x"})
 	require.Error(t, err)
-	assert.Equal(t, errRoleNotFound, err)
+	assertRoleNotFound(t, err)
 }
 
 func TestMemoryRoleClient_DeleteRole_Success(t *testing.T) {
@@ -203,7 +203,7 @@ func TestMemoryRoleClient_DeleteRole_NotFound(t *testing.T) {
 
 	err := c.DeleteRole(ctx, "no-such-id")
 	require.Error(t, err)
-	assert.Equal(t, errRoleNotFound, err)
+	assertRoleNotFound(t, err)
 }
 
 func TestMemoryRoleClient_ListRoles(t *testing.T) {
@@ -282,7 +282,7 @@ func TestMemoryRoleClient_GetRoleByName_TenantMismatch(t *testing.T) {
 
 	_, err = c.GetRoleByName(ctx, &db.GetRoleByNameRequest{Name: "editor", TenantID: "other-tenant"})
 	require.Error(t, err)
-	assert.Equal(t, errRoleNotFound, err)
+	assertRoleNotFound(t, err)
 }
 
 func TestMemoryRoleClient_GetRoleByName_NilRequest(t *testing.T) {
@@ -291,7 +291,7 @@ func TestMemoryRoleClient_GetRoleByName_NilRequest(t *testing.T) {
 
 	_, err := c.GetRoleByName(ctx, nil)
 	require.Error(t, err)
-	assert.Equal(t, errRoleNotFound, err)
+	assertRoleNotFound(t, err)
 }
 
 func TestMemoryRoleClient_GetRoleByName_NoTenantFilter(t *testing.T) {
@@ -404,7 +404,7 @@ func TestMemoryUserClient_GetUser_NotFound(t *testing.T) {
 
 	_, err := c.GetUser(ctx, 99999)
 	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
+	assertUserNotFound(t, err)
 }
 
 func TestMemoryUserClient_GetUserByUsername_Success(t *testing.T) {
@@ -425,7 +425,7 @@ func TestMemoryUserClient_GetUserByUsername_NotFound(t *testing.T) {
 
 	_, err := c.GetUserByUsername(ctx, "t1", "nobody")
 	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
+	assertUserNotFound(t, err)
 }
 
 func TestMemoryUserClient_GetUserByUsername_TenantMismatch(t *testing.T) {
@@ -437,7 +437,7 @@ func TestMemoryUserClient_GetUserByUsername_TenantMismatch(t *testing.T) {
 
 	_, err = c.GetUserByUsername(ctx, "t2", "dave")
 	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
+	assertUserNotFound(t, err)
 }
 
 func TestMemoryUserClient_GetUserByCertThumbprint_AlwaysNotFound(t *testing.T) {
@@ -446,7 +446,7 @@ func TestMemoryUserClient_GetUserByCertThumbprint_AlwaysNotFound(t *testing.T) {
 
 	_, err := c.GetUserByCertThumbprint(ctx, "sha256:abcdef")
 	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
+	assertUserNotFound(t, err)
 }
 
 func TestMemoryUserClient_UpdateUser_Success(t *testing.T) {
@@ -472,7 +472,7 @@ func TestMemoryUserClient_UpdateUser_NotFound(t *testing.T) {
 
 	_, err := c.UpdateUser(ctx, &db.UpdateUserRequest{ID: 99999, Username: "ghost"})
 	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
+	assertUserNotFound(t, err)
 }
 
 func TestMemoryUserClient_DeleteUser_Success(t *testing.T) {
@@ -495,7 +495,7 @@ func TestMemoryUserClient_DeleteUser_NotFound(t *testing.T) {
 
 	err := c.DeleteUser(ctx, 99999)
 	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
+	assertUserNotFound(t, err)
 }
 
 func TestMemoryUserClient_ListUsers(t *testing.T) {
@@ -551,7 +551,7 @@ func TestMemoryUserClient_EnableUser_NotFound(t *testing.T) {
 
 	err := c.EnableUser(ctx, 99999)
 	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
+	assertUserNotFound(t, err)
 }
 
 func TestMemoryUserClient_DisableUser_NotFound(t *testing.T) {
@@ -560,7 +560,7 @@ func TestMemoryUserClient_DisableUser_NotFound(t *testing.T) {
 
 	err := c.DisableUser(ctx, 99999)
 	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
+	assertUserNotFound(t, err)
 }
 
 func TestMemoryUserClient_AddCertBinding_Success(t *testing.T) {
@@ -581,7 +581,7 @@ func TestMemoryUserClient_AddCertBinding_NotFound(t *testing.T) {
 
 	_, err := c.AddCertBinding(ctx, 99999, "sha256:dead", 0)
 	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
+	assertUserNotFound(t, err)
 }
 
 // ==========================================================================
@@ -685,4 +685,20 @@ func TestTestAdminClient_GetTopology(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.NotEmpty(t, resp.NodeID)
+}
+
+// assertRoleNotFound asserts err is the typed role miss every qrdb transport
+// returns, which the memory double mirrors.
+func assertRoleNotFound(t *testing.T, err error) {
+	t.Helper()
+	var miss *db.RoleNotFoundError
+	assert.ErrorAs(t, err, &miss)
+}
+
+// assertUserNotFound asserts err is the typed user miss every qrdb transport
+// returns, which the memory double mirrors.
+func assertUserNotFound(t *testing.T, err error) {
+	t.Helper()
+	var miss *db.UserNotFoundError
+	assert.ErrorAs(t, err, &miss)
 }

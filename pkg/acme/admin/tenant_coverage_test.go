@@ -121,7 +121,7 @@ func TestTenantHandlers_GetTenantRole_EmptyIDs(t *testing.T) {
 func TestTenantHandlers_GetTenantRole_NotFound(t *testing.T) {
 	svc := &mockTenantService{
 		getTenantRoleFunc: func(_ context.Context, _ string, _ string) (*db.Role, error) {
-			return nil, errors.New("not found")
+			return nil, ErrRoleNotFound
 		},
 	}
 	h := NewTenantHandlers(svc, slog.Default())
@@ -266,7 +266,7 @@ func TestTenantHandlers_ListTenantRoles_ServiceError(t *testing.T) {
 func TestTenantHandlers_DeleteTenantUser_Success(t *testing.T) {
 	h := NewTenantHandlers(&mockTenantService{}, slog.Default())
 	req := newAuthedTenantRequest(http.MethodDelete, "/api/v1/tenants/t1/users/u1", nil)
-	req = mux.SetURLVars(req, map[string]string{"id": "t1", "userID": "u1"})
+	req = mux.SetURLVars(req, map[string]string{"id": "t1", "userID": "1"})
 	w := httptest.NewRecorder()
 	h.DeleteTenantUser(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -289,7 +289,7 @@ func TestTenantHandlers_DeleteTenantUser_ServiceError(t *testing.T) {
 	}
 	h := NewTenantHandlers(svc, slog.Default())
 	req := newAuthedTenantRequest(http.MethodDelete, "/api/v1/tenants/t1/users/u1", nil)
-	req = mux.SetURLVars(req, map[string]string{"id": "t1", "userID": "u1"})
+	req = mux.SetURLVars(req, map[string]string{"id": "t1", "userID": "1"})
 	w := httptest.NewRecorder()
 	h.DeleteTenantUser(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -421,7 +421,7 @@ func TestTenantHandlers_GetTenantUser_EmptyIDs(t *testing.T) {
 func TestTenantHandlers_GetTenantUser_NotFound(t *testing.T) {
 	svc := &mockTenantService{
 		getTenantUserFunc: func(_ context.Context, _ string, _ string) (*db.User, error) {
-			return nil, errors.New("not found")
+			return nil, ErrUserNotFound
 		},
 	}
 	h := NewTenantHandlers(svc, slog.Default())

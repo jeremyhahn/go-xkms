@@ -59,6 +59,7 @@ func TestCreateTenantRole_Success(t *testing.T) {
 	body := `{"name": "editor", "description": "Can edit resources"}`
 	req := httptest.NewRequest("POST", "/api/v1/tenants/tenant-1/roles", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.CreateTenantRole(w, req)
@@ -71,6 +72,7 @@ func TestCreateTenantRole_InvalidJSON(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/v1/tenants/tenant-1/roles", bytes.NewBufferString("invalid json"))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.CreateTenantRole(w, req)
@@ -84,6 +86,7 @@ func TestCreateTenantRole_EmptyTenantID(t *testing.T) {
 	body := `{"name": "editor"}`
 	req := httptest.NewRequest("POST", "/api/v1/tenants//roles", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": ""})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.CreateTenantRole(w, req)
@@ -102,6 +105,7 @@ func TestCreateTenantRole_ServiceError(t *testing.T) {
 	body := `{"name": "editor"}`
 	req := httptest.NewRequest("POST", "/api/v1/tenants/tenant-1/roles", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.CreateTenantRole(w, req)
@@ -123,6 +127,7 @@ func TestGetTenantRole_Success(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/roles/role-1", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "roleID": "role-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.GetTenantRole(w, req)
@@ -133,13 +138,14 @@ func TestGetTenantRole_Success(t *testing.T) {
 func TestGetTenantRole_NotFound(t *testing.T) {
 	service := &mockTenantService{
 		getTenantRoleFunc: func(ctx context.Context, tenantID string, roleID string) (*db.Role, error) {
-			return nil, errors.New("not found")
+			return nil, ErrRoleNotFound
 		},
 	}
 	handlers := NewTenantHandlers(service, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/roles/nonexistent", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "roleID": "nonexistent"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.GetTenantRole(w, req)
@@ -153,6 +159,7 @@ func TestGetTenantRole_EmptyTenantOrRoleID(t *testing.T) {
 	// Empty tenant ID
 	req := httptest.NewRequest("GET", "/api/v1/tenants//roles/role-1", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "", "roleID": "role-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 	handlers.GetTenantRole(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -160,6 +167,7 @@ func TestGetTenantRole_EmptyTenantOrRoleID(t *testing.T) {
 	// Empty role ID
 	req = httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/roles/", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "roleID": ""})
+	req = authenticated(req)
 	w = httptest.NewRecorder()
 	handlers.GetTenantRole(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -180,6 +188,7 @@ func TestUpdateTenantRole_Success(t *testing.T) {
 	body := `{"name": "updated-editor"}`
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/roles/role-1", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "roleID": "role-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantRole(w, req)
@@ -192,6 +201,7 @@ func TestUpdateTenantRole_InvalidJSON(t *testing.T) {
 
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/roles/role-1", bytes.NewBufferString("bad json"))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "roleID": "role-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantRole(w, req)
@@ -205,6 +215,7 @@ func TestUpdateTenantRole_EmptyTenantOrRoleID(t *testing.T) {
 	body := `{"name": "updated"}`
 	req := httptest.NewRequest("PUT", "/api/v1/tenants//roles/role-1", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "", "roleID": "role-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 	handlers.UpdateTenantRole(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -221,6 +232,7 @@ func TestUpdateTenantRole_ServiceError(t *testing.T) {
 	body := `{"name": "updated"}`
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/roles/role-1", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "roleID": "role-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantRole(w, req)
@@ -238,6 +250,7 @@ func TestDeleteTenantRole_Success(t *testing.T) {
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants/tenant-1/roles/role-1", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "roleID": "role-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.DeleteTenantRole(w, req)
@@ -250,6 +263,7 @@ func TestDeleteTenantRole_EmptyTenantOrRoleID(t *testing.T) {
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants//roles/role-1", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "", "roleID": "role-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 	handlers.DeleteTenantRole(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -265,6 +279,7 @@ func TestDeleteTenantRole_ServiceError(t *testing.T) {
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants/tenant-1/roles/role-1", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "roleID": "role-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.DeleteTenantRole(w, req)
@@ -288,6 +303,7 @@ func TestListTenantRoles_Success(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/roles?page=1&page_size=20", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.ListTenantRoles(w, req)
@@ -300,6 +316,7 @@ func TestListTenantRoles_EmptyTenantID(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants//roles", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": ""})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.ListTenantRoles(w, req)
@@ -317,6 +334,7 @@ func TestListTenantRoles_ServiceError(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/roles", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.ListTenantRoles(w, req)
@@ -343,6 +361,7 @@ func TestCreateTenantUser_Success(t *testing.T) {
 	body := `{"username": "newuser", "email": "newuser@example.com"}`
 	req := httptest.NewRequest("POST", "/api/v1/tenants/tenant-1/users", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.CreateTenantUser(w, req)
@@ -355,6 +374,7 @@ func TestCreateTenantUser_InvalidJSON(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/v1/tenants/tenant-1/users", bytes.NewBufferString("not json"))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.CreateTenantUser(w, req)
@@ -368,6 +388,7 @@ func TestCreateTenantUser_EmptyTenantID(t *testing.T) {
 	body := `{"username": "newuser"}`
 	req := httptest.NewRequest("POST", "/api/v1/tenants//users", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": ""})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.CreateTenantUser(w, req)
@@ -386,6 +407,7 @@ func TestCreateTenantUser_ServiceError(t *testing.T) {
 	body := `{"username": "newuser"}`
 	req := httptest.NewRequest("POST", "/api/v1/tenants/tenant-1/users", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.CreateTenantUser(w, req)
@@ -406,7 +428,8 @@ func TestGetTenantUser_Success(t *testing.T) {
 	handlers := NewTenantHandlers(service, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/users/user-1", nil)
-	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "user-1"})
+	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.GetTenantUser(w, req)
@@ -417,13 +440,14 @@ func TestGetTenantUser_Success(t *testing.T) {
 func TestGetTenantUser_NotFound(t *testing.T) {
 	service := &mockTenantService{
 		getTenantUserFunc: func(ctx context.Context, tenantID string, userID string) (*db.User, error) {
-			return nil, errors.New("not found")
+			return nil, ErrUserNotFound
 		},
 	}
 	handlers := NewTenantHandlers(service, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/users/nonexistent", nil)
-	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "nonexistent"})
+	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "999"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.GetTenantUser(w, req)
@@ -435,13 +459,15 @@ func TestGetTenantUser_EmptyTenantOrUserID(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants//users/user-1", nil)
-	req = mux.SetURLVars(req, map[string]string{"id": "", "userID": "user-1"})
+	req = mux.SetURLVars(req, map[string]string{"id": "", "userID": "1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 	handlers.GetTenantUser(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	req = httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/users/", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": ""})
+	req = authenticated(req)
 	w = httptest.NewRecorder()
 	handlers.GetTenantUser(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -462,6 +488,7 @@ func TestUpdateTenantUser_Success(t *testing.T) {
 	body := `{"username": "updated-user"}`
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/users/1", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantUser(w, req)
@@ -473,7 +500,8 @@ func TestUpdateTenantUser_InvalidJSON(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/users/user-1", bytes.NewBufferString("bad"))
-	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "user-1"})
+	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantUser(w, req)
@@ -486,7 +514,8 @@ func TestUpdateTenantUser_EmptyTenantOrUserID(t *testing.T) {
 
 	body := `{"username": "updated"}`
 	req := httptest.NewRequest("PUT", "/api/v1/tenants//users/user-1", bytes.NewBufferString(body))
-	req = mux.SetURLVars(req, map[string]string{"id": "", "userID": "user-1"})
+	req = mux.SetURLVars(req, map[string]string{"id": "", "userID": "1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 	handlers.UpdateTenantUser(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -503,6 +532,7 @@ func TestUpdateTenantUser_ServiceError(t *testing.T) {
 	body := `{"username": "updated"}`
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/users/1", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantUser(w, req)
@@ -519,7 +549,8 @@ func TestDeleteTenantUser_Success(t *testing.T) {
 	handlers := NewTenantHandlers(service, slog.Default())
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants/tenant-1/users/user-1", nil)
-	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "user-1"})
+	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.DeleteTenantUser(w, req)
@@ -531,7 +562,8 @@ func TestDeleteTenantUser_EmptyTenantOrUserID(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants//users/user-1", nil)
-	req = mux.SetURLVars(req, map[string]string{"id": "", "userID": "user-1"})
+	req = mux.SetURLVars(req, map[string]string{"id": "", "userID": "1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 	handlers.DeleteTenantUser(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -546,7 +578,8 @@ func TestDeleteTenantUser_ServiceError(t *testing.T) {
 	handlers := NewTenantHandlers(service, slog.Default())
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants/tenant-1/users/user-1", nil)
-	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "user-1"})
+	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.DeleteTenantUser(w, req)
@@ -570,6 +603,7 @@ func TestListTenantUsers_Success(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/users?page=1&page_size=20", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.ListTenantUsers(w, req)
@@ -582,6 +616,7 @@ func TestListTenantUsers_EmptyTenantID(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants//users", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": ""})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.ListTenantUsers(w, req)
@@ -599,6 +634,7 @@ func TestListTenantUsers_ServiceError(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/users", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.ListTenantUsers(w, req)
@@ -1289,6 +1325,7 @@ func TestListTenantRoles_WithCustomPagination(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/roles?page=3&page_size=50", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.ListTenantRoles(w, req)
@@ -1311,6 +1348,7 @@ func TestListTenantUsers_WithCustomPagination(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1/users?page=2&page_size=25", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
+	req = authenticated(req)
 	w := httptest.NewRecorder()
 
 	handlers.ListTenantUsers(w, req)

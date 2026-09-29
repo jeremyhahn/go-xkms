@@ -439,7 +439,16 @@ func (h *Handlers) GetStats(w http.ResponseWriter, r *http.Request) {
 // answer: it either reports the events the configured trail holds, or it
 // reports that no trail is configured. It never returns "no events" for a
 // server whose audit trail it cannot read.
+//
+// The trail records no tenant for its events, so it cannot be confined to one:
+// reading it is a platform operation, and a tenant-scoped caller is answered
+// exactly as a caller lacking audit:read is (PlatformScopeError).
 func (h *Handlers) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
+	if err := requirePlatformScope(r.Context(), "list audit logs"); err != nil {
+		writePermissionDenied(w)
+		return
+	}
+
 	if h.auditQuerier == nil {
 		h.logger.Warn("audit log query rejected: no audit trail is configured")
 		writeProblem(w, http.StatusNotImplemented, "urn:trusted-ca:error:not-implemented",
