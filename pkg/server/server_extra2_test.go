@@ -711,14 +711,25 @@ func TestInitializePlatformStore_ManualStrategySkipsRegardlessOfBarrier(t *testi
 // enrollment harness, which needs the tpm_simulator build tag.
 
 // ============================================================================
-// Tests — initializePolicyManager (always logs + returns nil)
+// Tests — initializePolicyManager without a TPM (policies stay off)
 // ============================================================================
 
-func TestInitializePolicyManager_NoOp(t *testing.T) {
+// With no TPM2 backend there is no PCR reader, so policies stay off. The
+// TPM-backed path lives in backend_tpm2_simulator_test.go.
+func TestInitializePolicyManager_NoTPMLeavesPoliciesOff(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
 	err := s.initializePolicyManager()
 	require.NoError(t, err)
 	assert.Nil(t, s.policyManager)
+}
+
+// TestTPMPCRReader_NoTPM2Backend verifies the reader is absent, not an error,
+// when xkmsd has no TPM2 backend.
+func TestTPMPCRReader_NoTPM2Backend(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{})
+	reader, err := s.tpmPCRReader()
+	require.NoError(t, err)
+	assert.Nil(t, reader)
 }
 
 // ============================================================================

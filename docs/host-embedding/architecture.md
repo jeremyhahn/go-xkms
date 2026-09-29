@@ -97,5 +97,3 @@ choice: it always backs per-tenant Password Manager stores.
   running daemon composes today (xkmsd drives it offline through `xkmsd init`).
 - **MCP tools** register only behind a host-supplied MCP server
   (`WithMCPServer`); a self-built module has no MCP surface.
-- **PCR policies in xkmsd**: xkmsd has no PCR reader source, so its policy
-  manager stays off. A host supplies one with `WithPCRReader`.

@@ -1890,12 +1890,26 @@ func (s *Server) initializeCredentialService() error {
 	return nil
 }
 
-// initializePolicyManager leaves the PCR policy manager off. The manager
-// needs a PCR reader, and xkmsd has no PCR reader source yet; once it has
-// one, it builds through compose.BuildPolicyManager -- the path an
-// embedding host's WithPCRReader already takes.
+// initializePolicyManager builds the PCR policy manager (/api/v1/policies/*)
+// through compose.BuildPolicyManager, the path an embedding host's
+// WithPCRReader takes. The PCR reader is xkmsd's configured TPM; without
+// one, policies stay off and the typed reason is logged.
 func (s *Server) initializePolicyManager() error {
-	s.logger.Info("PCR policies are off: xkmsd has no PCR reader source")
+	reader, err := s.tpmPCRReader()
+	if err != nil {
+		return &ErrServiceInit{Service: "policy manager", Err: err}
+	}
+	if reader == nil {
+		disabled := &compose.FeatureDisabledError{Feature: compose.FeaturePolicies, Missing: "PCR reader (no TPM is configured)"}
+		s.logger.Info("xkms feature off", "feature", compose.FeaturePolicies, "reason", disabled.Error())
+		return nil
+	}
+	manager, err := compose.BuildPolicyManager(s.createStorage, reader)
+	if err != nil {
+		return &ErrServiceInit{Service: "policy manager", Err: err}
+	}
+	s.policyManager = manager
+	s.logger.Info("xkms feature on", "feature", compose.FeaturePolicies, "pcr_reader", "tpm2")
 	return nil
 }
 
