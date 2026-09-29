@@ -252,7 +252,12 @@ func buildOfficerConfigs(officerFlags []string) ([]initialize.OfficerConfig, err
 // strategy-specific flag combinations, loads configuration, creates
 // the barrier and credential service, and validates the ceremony
 // configuration.
-func runInit(args []string) {
+//
+// runInit reports its exit code as a return value rather than calling
+// os.Exit directly, so it performs no process-wide teardown of its own --
+// mirroring run() (main.go) and, like it, safe for tests to call directly.
+// Only main, via runProcess, turns the returned code into a process exit.
+func runInit(args []string) int {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -260,14 +265,14 @@ func runInit(args []string) {
 	flags, err := parseInitFlags(args)
 	if err != nil {
 		logger.Error("flag parsing failed", slog.Any("error", err))
-		os.Exit(1)
+		return 1
 	}
 
 	resolveInitEnvFallbacks(flags)
 
 	if err := validateInitFlags(flags); err != nil {
 		logger.Error("validation failed", slog.Any("error", err))
-		os.Exit(1)
+		return 1
 	}
 
 	// Load configuration if a config file is specified and exists.
@@ -278,7 +283,7 @@ func runInit(args []string) {
 			logger.Error("configuration load failed",
 				slog.String("config", flags.configPath),
 				slog.Any("error", err))
-			os.Exit(1)
+			return 1
 		}
 		logger.Info("configuration loaded",
 			slog.String("config", flags.configPath),
@@ -311,7 +316,7 @@ func runInit(args []string) {
 	)
 	if err != nil {
 		logger.Error("barrier creation failed", slog.Any("error", err))
-		os.Exit(1)
+		return 1
 	}
 
 	// A freshly constructed barrier is SEALED. The ceremony stores the SO and
@@ -328,24 +333,24 @@ func runInit(args []string) {
 	barrierCreds, cerr := seal.CredentialsFor([]byte(flags.soPin))
 	if cerr != nil {
 		logger.Error("barrier credentials failed", slog.Any("error", &WrappedError{Sentinel: ErrBarrierCredentialsFailed, Err: cerr}))
-		os.Exit(1)
+		return 1
 	}
 	if berr := barrier.Initialize(context.Background(), barrierCreds); berr != nil {
 		logger.Error("barrier initialization failed", slog.Any("error", berr))
-		exitInit(barrierCreds, nil, 1)
+		return exitInit(barrierCreds, nil, 1)
 	}
 	// Initialize may leave the barrier already unsealed; that is success, not
 	// a failure to tolerate silently elsewhere.
 	if berr := barrier.Unseal(context.Background(), barrierCreds); berr != nil && !errors.Is(berr, seal.ErrAlreadyUnsealed) {
 		logger.Error("barrier unseal failed", slog.Any("error", berr))
-		exitInit(barrierCreds, nil, 1)
+		return exitInit(barrierCreds, nil, 1)
 	}
 
 	// Create platform store backed by in-memory storage.
 	platformStore, err := seal.NewPlatformStore(memBackend, logger)
 	if err != nil {
 		logger.Error("platform store creation failed", slog.Any("error", err))
-		exitInit(barrierCreds, nil, 1)
+		return exitInit(barrierCreds, nil, 1)
 	}
 
 	// Create credential service.
@@ -357,7 +362,7 @@ func runInit(args []string) {
 	)
 	if err != nil {
 		logger.Error("credential service creation failed", slog.Any("error", err))
-		exitInit(barrierCreds, nil, 1)
+		return exitInit(barrierCreds, nil, 1)
 	}
 
 	// Parse and validate officer CSR files for M-of-N mode.
@@ -366,7 +371,7 @@ func runInit(args []string) {
 		officers, err = buildOfficerConfigs(flags.officers)
 		if err != nil {
 			logger.Error("officer CSR validation failed", slog.Any("error", err))
-			exitInit(barrierCreds, nil, 1)
+			return exitInit(barrierCreds, nil, 1)
 		}
 	}
 
@@ -391,7 +396,7 @@ func runInit(args []string) {
 	)
 	if err != nil {
 		logger.Error("ceremony service creation failed", slog.Any("error", err))
-		exitInit(barrierCreds, nil, 1)
+		return exitInit(barrierCreds, nil, 1)
 	}
 
 	// Print validated configuration summary.
@@ -417,13 +422,13 @@ func runInit(args []string) {
 	plan, planErr := qrdbsdk.ParseAdminFactors(flags.adminFactors)
 	if planErr != nil {
 		logger.Error("invalid --admin-factor", slog.Any("error", planErr))
-		exitInit(barrierCreds, nil, 1)
+		return exitInit(barrierCreds, nil, 1)
 	}
 
 	passkeyPIN, pinErr := resolvePasskeyPIN(flags, os.Stdin)
 	if pinErr != nil {
 		logger.Error("passkey PIN unavailable", slog.Any("error", pinErr))
-		exitInit(barrierCreds, nil, 1)
+		return exitInit(barrierCreds, nil, 1)
 	}
 
 	rpID, rpName := resolveRelyingParty(cfg, hostname)
@@ -446,7 +451,7 @@ func runInit(args []string) {
 		handler, herr := pkgfido2.NewHandler(nil, pkgfido2.NewDefaultEnumerator())
 		if herr != nil {
 			logger.Error("FIDO2 subsystem unavailable", slog.Any("error", herr))
-			exitInit(barrierCreds, env, 1)
+			return exitInit(barrierCreds, env, 1)
 		}
 		env.fido2Handler = handler
 	}
@@ -456,12 +461,12 @@ func runInit(args []string) {
 	// midway leaves an initialized barrier with a half-enrolled administrator.
 	if pfErr := preflightAdminFactors(context.Background(), env); pfErr != nil {
 		logger.Error("admin factor preflight failed", slog.Any("error", pfErr))
-		exitInit(barrierCreds, env, 1)
+		return exitInit(barrierCreds, env, 1)
 	}
 	result, err := executeCeremony(context.Background(), cs, env)
 	if err != nil {
 		logger.Error("ceremony execution failed", slog.Any("error", err))
-		exitInit(barrierCreds, env, 1)
+		return exitInit(barrierCreds, env, 1)
 	}
 	closeFIDO2Handler(env)
 	barrierCreds.Secret.Destroy()
@@ -472,30 +477,33 @@ func runInit(args []string) {
 		slog.String("state", string(result.State)),
 		slog.String("spki_pin", result.SPKIPin),
 		slog.Int("shares_generated", result.ShareCount))
+
+	return 0
 }
 
-// exitInit releases everything runInit holds and then terminates. Deferred
-// cleanup does not run under os.Exit, so every exit after the barrier
-// credential is built goes through here rather than calling os.Exit directly.
-//
-// This exists because the credential lives in PROTECTED MEMORY: a
-// `defer barrierCreds.Secret.Destroy()` sat above eleven os.Exit paths and ran
-// on none of them, leaving the SO PIN resident on every error exit -- the exact
-// exposure moving credentials into an enclave was meant to close. One function
-// that knows what must be released means a twelfth exit point releases it by
-// construction instead of by remembering.
+// exitInit releases everything runInit holds and returns the exit code to
+// report. It exists because the credential lives in PROTECTED MEMORY: a
+// `defer barrierCreds.Secret.Destroy()` sat above eleven early-return paths
+// when those paths called os.Exit directly and ran on none of them, leaving
+// the SO PIN resident on every error exit -- the exact exposure moving
+// credentials into an enclave was meant to close. One function that knows
+// what must be released means a twelfth exit point releases it by
+// construction instead of by remembering. runInit itself performs no
+// process-wide teardown -- callers propagate the returned code with
+// `return exitInit(...)` -- so this function does not call os.Exit either;
+// only main (via runProcess) does.
 //
 // env is nil for the exits that precede its construction; the credential is
 // built earlier in runInit than the ceremony environment, so its lifetime
 // spans and precedes env's.
-func exitInit(creds seal.Credentials, env *ceremonyEnv, code int) {
+func exitInit(creds seal.Credentials, env *ceremonyEnv, code int) int {
 	if creds.Secret != nil {
 		creds.Secret.Destroy()
 	}
 	if env != nil {
 		closeFIDO2Handler(env)
 	}
-	os.Exit(code)
+	return code
 }
 
 // closeFIDO2Handler closes the ceremony's FIDO2 handler, if one was opened.
