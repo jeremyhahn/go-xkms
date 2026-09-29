@@ -285,12 +285,16 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
 		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidSession, "session not found")
 	case errors.Is(err, webauthn.ErrSessionExpired):
 		h.writeError(w, http.StatusBadRequest, ErrorCodeSessionExpired, "session expired")
+	// A verification failure is checked before ErrUserNotFound: it may wrap
+	// the account lookup that failed it (a decoy ceremony's handle names no
+	// account), and the client must see the generic 401 a wrong assertion
+	// gets, never 404 user_not_found (go-xkms#1296, go-xkms#1298).
+	case errors.Is(err, webauthn.ErrVerificationFailed):
+		h.writeError(w, http.StatusUnauthorized, ErrorCodeVerificationFailed, "verification failed")
 	case errors.Is(err, webauthn.ErrUserNotFound):
 		h.writeError(w, http.StatusNotFound, ErrorCodeUserNotFound, "user not found")
 	case errors.Is(err, webauthn.ErrNoCredentials):
 		h.writeError(w, http.StatusBadRequest, ErrorCodeNoCredentials, "user has no registered credentials")
-	case errors.Is(err, webauthn.ErrVerificationFailed):
-		h.writeError(w, http.StatusUnauthorized, ErrorCodeVerificationFailed, "verification failed")
 	case errors.Is(err, webauthn.ErrInvalidRequest):
 		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, err.Error())
 	case errors.Is(err, webauthn.ErrInvalidResponse):

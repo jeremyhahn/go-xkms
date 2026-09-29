@@ -139,6 +139,14 @@ that is what the credential-store decorator hooks
   answers an unknown account with decoy options; no user ID is returned before a
   successful login (go-xkms#1296). A provisioned account with no passkey is the
   known exception, pending go-xkms#1294 part B.
+- **Account standing gates every ceremony.** Login is refused unless the
+  account's lifecycle is `active` and its permitted-auth-method policy allows
+  `webauthn` — the qrdb record's own `Lifecycle` and `AuthMethods`, which the
+  qrdb store carries onto the materialized user. Begin answers such an account
+  with the decoy an unknown account gets; finish refuses a valid assertion
+  with the same `verification_failed` as a wrong one; enrolment through either
+  registration begin is refused with `registration_refused`. The reason goes
+  to the server log only (go-xkms#1298).
 - **A credential ID has one owner.** The stores refuse to create an ID that
   exists under any account, and an update cannot change the owner
   (go-xkms#1295).

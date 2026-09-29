@@ -189,7 +189,8 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 
 	// An existing account with ZERO credentials — one provisioned through
 	// the authorized user-creation path — still enrolls its first passkey
-	// here without authentication, exactly as before go-xkms#1294. Whether
+	// here without authentication, exactly as before go-xkms#1294, provided
+	// the account is active (beginRegistrationFor, go-xkms#1298). Whether
 	// that first-passkey onboarding needs its own proof of possession
 	// (an enrollment token or an admin-issued ceremony) awaits the owner's
 	// ruling on go-xkms#1294 part B. Until then this path also answers
@@ -233,8 +234,16 @@ func (s *Service) BeginAddCredential(ctx context.Context, acct SessionAccount) (
 }
 
 // beginRegistrationFor runs the registration ceremony for an already
-// resolved account, excluding the credentials it already holds.
+// resolved account, excluding the credentials it already holds. An account
+// that is not active is refused with ErrRegistrationRefused, the same answer
+// every other refused enrolment gets, so the refusal does not reveal the
+// account's state (go-xkms#1298).
 func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingCreds []*Credential) (*protocol.CredentialCreation, string, error) {
+	if err := checkLifecycle(user); err != nil {
+		s.logStandingRefusal("begin registration", err)
+		return nil, "", ErrRegistrationRefused
+	}
+
 	excludeList := make([]protocol.CredentialDescriptor, len(existingCreds))
 	for i, cred := range existingCreds {
 		excludeList[i] = protocol.CredentialDescriptor{
@@ -313,6 +322,12 @@ func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, 
 		return nil, WrapError("get user", err)
 	}
 
+	// The account may have left the active state since the ceremony began.
+	if err := checkLifecycle(user); err != nil {
+		s.logStandingRefusal("finish registration", err)
+		return nil, ErrRegistrationRefused
+	}
+
 	// Finish registration
 	credential, err := s.webauthn.CreateCredential(user, *session, response)
 	if err != nil {
@@ -353,6 +368,12 @@ func (s *Service) BeginLogin(ctx context.Context, userID []byte) (*protocol.Cred
 		user, userErr := s.users.GetByID(ctx, userID)
 		if userErr != nil {
 			return nil, "", WrapError("get user", userErr)
+		}
+		// An account that may not log in answers exactly like one that
+		// does not exist (go-xkms#1298).
+		if standingErr := CheckAccountStanding(user); standingErr != nil {
+			s.logStandingRefusal("begin login", standingErr)
+			return nil, "", WrapError("get user", ErrUserNotFound)
 		}
 
 		// Check if user has credentials
@@ -404,14 +425,22 @@ func (s *Service) BeginLoginForHandle(ctx context.Context, userID []byte) (*prot
 	return s.beginLoginOrDecoy(ctx, user, err, decoySubject(decoyKindHandle, userID))
 }
 
-// beginLoginOrDecoy starts the real ceremony for a resolved account holding
-// credentials, and the decoy ceremony for subject otherwise. lookupErr is the
-// account lookup's error; only "not found" is answered with a decoy.
+// beginLoginOrDecoy starts the real ceremony for a resolved account in good
+// standing (CheckAccountStanding) holding credentials, and the decoy ceremony
+// for subject otherwise. lookupErr is the account lookup's error; only "not
+// found" is answered with a decoy. An account that may not log in — not
+// active, or with WebAuthn withdrawn from its auth-method policy — is
+// answered with the decoy an unknown account gets, so begin does not reveal
+// its state (go-xkms#1298).
 func (s *Service) beginLoginOrDecoy(ctx context.Context, user User, lookupErr error, subject []byte) (*protocol.CredentialAssertion, string, error) {
 	if lookupErr != nil {
 		if !IsUserNotFound(lookupErr) {
 			return nil, "", WrapError("get user", lookupErr)
 		}
+		return s.beginDecoyLogin(ctx, subject)
+	}
+	if err := CheckAccountStanding(user); err != nil {
+		s.logStandingRefusal("begin login", err)
 		return s.beginDecoyLogin(ctx, subject)
 	}
 
@@ -573,6 +602,18 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 		}
 	}
 
+	// A valid assertion does not authenticate an account that may not log
+	// in: one that is not active, or has withdrawn WebAuthn from its
+	// auth-method policy. Begin already answers such an account with a decoy;
+	// this catches the discoverable flow, which names no account at begin,
+	// and an account whose standing changed mid-ceremony. The refusal is the
+	// bare verification failure, carrying no detail that would reveal the
+	// account's state (go-xkms#1298).
+	if standingErr := CheckAccountStanding(user); standingErr != nil {
+		s.logStandingRefusal("finish login", standingErr)
+		return nil, NewVerificationError("validate login", nil)
+	}
+
 	// Update credential sign counter
 	cred, err := s.creds.GetByCredentialID(ctx, credential.ID)
 	if err != nil {
@@ -598,6 +639,15 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 	}
 
 	return user, nil
+}
+
+// logStandingRefusal records, for the operator, why a ceremony was refused
+// for an account not in good standing. The client only ever sees the
+// ceremony's generic refusal.
+func (s *Service) logStandingRefusal(op string, err error) {
+	s.logger.Warn("webauthn: ceremony refused for account not in good standing",
+		"op", op,
+		"error", err)
 }
 
 // IsRegistered checks if a user has any registered credentials.

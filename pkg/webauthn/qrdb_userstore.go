@@ -459,6 +459,12 @@ func (b *qrdbBackend) materialize(ctx context.Context, u *qrdbtransport.User) (*
 	// u.Username, the display name from an xkms KV blob — which is what let the
 	// two drift.
 	user := NewDefaultUser(HandleFromUserID(u.ID), u.Email, u.Name)
+	// Account standing is qrdb's, carried verbatim: the service refuses a
+	// login or enrolment the record's lifecycle or auth-method policy does
+	// not allow (go-xkms#1298). A record with no lifecycle is not treated as
+	// active — only qrdbsdk.LifecycleActive authenticates.
+	user.SetLifecycle(qrdbsdk.Lifecycle(u.Lifecycle))
+	user.SetAuthMethods(u.AuthMethods)
 
 	// Load credentials via the cred-set index.
 	ids, err := b.listUserCredIDs(ctx, u.ID)

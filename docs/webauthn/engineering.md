@@ -38,6 +38,21 @@ with a decoy ceremony (`decoy.go`) instead of an error; `BeginLogin` keeps
 returning `ErrUserNotFound` / `ErrNoCredentials` for in-process callers such as
 `pkg/auth_factors`. See [api.md](api.md) §"Registration and enumeration rules".
 
+**Account standing (go-xkms#1298).** `User` carries `Lifecycle()
+qrdbsdk.Lifecycle` and `AuthMethods() []string`; the qrdb store copies both
+from the qrdb record, and `DefaultUser` starts `active` with no restriction
+(`SetLifecycle`, `SetAuthMethods`). `CheckAccountStanding(user)`
+(`account_standing.go`) returns `*AccountNotActiveError` unless
+`Lifecycle().CanAuthenticate()`, and otherwise applies
+`auth.CheckAuthMethod(…, auth.MethodWebAuthn)` — the one permitted-method
+check the mTLS authenticator also uses. The service applies it at every login
+begin (a refused account gets the decoy, or `ErrUserNotFound` from
+`BeginLogin`) and at `finishLoginUser` after the assertion validates (a bare
+`ErrVerificationFailed`); registration begin, add-passkey and registration
+finish check the lifecycle and refuse with `ErrRegistrationRefused`.
+`pkg/auth_factors`'s `BeginChallenge` treats a hint naming such an account as
+an unknown hint. The detailed reason is logged at Warn, never returned.
+
 The `…Pair` variants return access + refresh. Handlers select them by **type
 assertion** on the injected generator: a `TokenPairGenerator` gets the pair
 path, a plain `JWTGenerator` gets the single-token path. Both are supported;

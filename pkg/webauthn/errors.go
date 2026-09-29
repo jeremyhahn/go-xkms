@@ -90,6 +90,23 @@ var (
 	ErrCredentialUpdateConflict = errors.New("credential changed concurrently; update not applied")
 )
 
+// AccountNotActiveError reports an account whose lifecycle state does not
+// permit authentication or passkey enrolment: anything other than
+// qrdbsdk.LifecycleActive. It is operator detail; the Service never returns
+// it to a client (see CheckAccountStanding).
+type AccountNotActiveError struct {
+	// Account is the account's WebAuthn name (its email login key).
+	Account string
+
+	// Lifecycle is the account's state, as the store reports it.
+	Lifecycle string
+}
+
+// Error names the account and its state.
+func (e *AccountNotActiveError) Error() string {
+	return "webauthn: account " + e.Account + " is not active (lifecycle " + e.Lifecycle + ")"
+}
+
 // SessionLimitError reports that the session store already holds its
 // maximum number of unfinished ceremonies, so a new ceremony cannot begin
 // until sessions complete or expire. Transports serve it as 503 Service

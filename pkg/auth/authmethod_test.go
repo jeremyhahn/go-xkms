@@ -47,11 +47,11 @@ func TestCheckAuthMethod_Permits(t *testing.T) {
 		{name: "policy naming mtls", policy: []string{"mtls"}, method: qrdbsdk.MethodMTLS},
 		{name: "mtls among several", policy: []string{"webauthn", "mtls"}, method: qrdbsdk.MethodMTLS},
 		{name: "method name is normalized", policy: []string{"mtls"}, method: "  MTLS "},
+		{name: "policy naming webauthn admits the relying party", policy: []string{"piv", "webauthn"}, method: MethodWebAuthn},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			u := MTLSUser{Username: "alice", TenantID: "tenant-a", AuthMethods: tt.policy}
-			assert.NoError(t, checkAuthMethod(u, tt.method))
+			assert.NoError(t, CheckAuthMethod("alice", "tenant-a", tt.policy, tt.method))
 		})
 	}
 }
@@ -68,14 +68,14 @@ func TestCheckAuthMethod_Refuses(t *testing.T) {
 		wantMethod string
 	}{
 		{name: "fido2-only refuses mtls", policy: []string{"fido2"}, method: qrdbsdk.MethodMTLS, wantMethod: "mtls"},
+		{name: "mtls-only refuses webauthn", policy: []string{"mtls"}, method: MethodWebAuthn, wantMethod: "webauthn"},
 		{name: "refused method is reported normalized", policy: []string{"webauthn"}, method: "MTLS", wantMethod: "mtls"},
 		{name: "blank method matches nothing", policy: []string{"mtls"}, method: "", wantMethod: ""},
 		{name: "whitespace method matches nothing", policy: []string{"mtls"}, method: "   ", wantMethod: "   "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			u := MTLSUser{Username: "alice", TenantID: "tenant-a", AuthMethods: tt.policy}
-			err := checkAuthMethod(u, tt.method)
+			err := CheckAuthMethod("alice", "tenant-a", tt.policy, tt.method)
 
 			var refused *AuthMethodNotPermittedError
 			require.True(t, errors.As(err, &refused), "want *AuthMethodNotPermittedError, got %v", err)

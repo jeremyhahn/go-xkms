@@ -244,7 +244,7 @@ func (a *MTLSAuthenticator) userIdentity(ctx context.Context, cert *x509.Certifi
 	// but the account may still withdraw mTLS as a way in (a FIDO2-only
 	// user, say). qrdb enforces this in its own middleware; the xkms planes
 	// must too, or withdrawal fails open.
-	if err := checkAuthMethod(user, a.Name()); err != nil {
+	if err := CheckAuthMethod(user.Username, user.TenantID, user.AuthMethods, a.Name()); err != nil {
 		return nil, err
 	}
 
