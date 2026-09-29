@@ -484,9 +484,9 @@ func TestCreateKeySession(t *testing.T) {
 	t.Run("WithNilPassword", func(t *testing.T) {
 		// Create minimal key attributes without password
 		keyAttrs := &types.KeyAttributes{
-			CN:             "test-key",
-			PlatformPolicy: false,
-			Password:       nil,
+			CN: "test-key",
+
+			Password: nil,
 		}
 
 		session, closer, err := tpmInstance.CreateKeySession(keyAttrs)

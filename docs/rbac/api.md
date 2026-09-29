@@ -157,7 +157,7 @@ no identity, reaches them:
 | system barrier | `/api/v1/barrier/*` except `enable-encryption` | `Barrier*` except `BarrierEnableEncryption` | `barrier.*` except `barrier.enableEncryption` |
 | token PINs | `/api/v1/pin/*` | `SetSOPIN` … `ResetLockout` | `xkms.setSOPIN` … `xkms.resetLockout` |
 | server PIV card | `/api/v1/piv/slots*` | `*PIV*` | `xkms.*PIV*` |
-| PCR policies | `/api/v1/policies/*` | `Policy*` | `policy.*` |
+| tenant TPM modes and vTPMs | `/api/v1/tenants/{tenantID}/tpm*` | `*TenantTPMMode`, `TenantVTPM*` | `xkms.*TenantTPMMode`, `xkms.tenantVTPM*` |
 
 The refusal is raised in the service (`pkg/xkms/tenant_binding.go:88`) and
 mapped by: REST `pkg/api/rest/seal_store_handlers.go:268`,

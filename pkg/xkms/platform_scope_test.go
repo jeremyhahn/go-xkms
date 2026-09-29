@@ -26,14 +26,15 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmpolicytest"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 )
 
 // Platform-scope tests for go-xkms#1226 and #1227. The sealed platform store,
 // credential submission, the system barrier, the token PINs, the server's PIV
-// card and the PCR policies are platform-global state: the RBAC gate admits a
+// card and the tenants' TPM modes are platform-global state: the RBAC gate admits a
 // tenant-local Admin to all of them (its ScopeSelf grants resolve against its
 // own tenant), so the service's requirePlatformScope is what confines them to
 // a cross-tenant identity. These tests drive the service directly so no
@@ -43,13 +44,13 @@ const (
 	platformScopeSecretName = "credentials/pkcs11-pin"
 	platformScopeSOPIN      = "so-pin-123456"
 	platformScopeUserPIN    = "user-pin-123456"
-	platformScopePolicy     = "boot"
+	platformScopeTPMTenant  = "tenant-b"
 )
 
 // newPlatformScopeService returns an XKMSService composed with every
 // platform-global subsystem over in-memory state: an initialized, unsealed
 // system barrier; a software PIN backend with both PINs set; a platform store
-// holding one secret; a PCR policy manager holding one policy; a manual
+// holding one secret; a TPM policy service; a manual
 // credential service; and a PIV manager over the "software" store.
 func newPlatformScopeService(t *testing.T) *XKMSService {
 	t.Helper()
@@ -81,10 +82,7 @@ func newPlatformScopeService(t *testing.T) *XKMSService {
 	require.NoError(t, err)
 	require.NoError(t, store.Put(ctx, platformScopeSecretName, []byte("platform-secret")))
 
-	policies, err := policy.NewManager(&mockPCRReader{}, policy.NewMemoryPolicyStore())
-	require.NoError(t, err)
-	_, err = policies.CreatePolicy(platformScopePolicy, "sha256", []int{0, 7})
-	require.NoError(t, err)
+	policies, _ := tpmpolicytest.NewOffline(t)
 
 	credSvc, err := credentialspkg.New(&credentialspkg.Config{Strategy: credentialspkg.StrategyManual}, nil, nil, logger)
 	require.NoError(t, err)
@@ -95,7 +93,7 @@ func newPlatformScopeService(t *testing.T) *XKMSService {
 	svc.SetBarrier(barrier)
 	svc.SetPINManager(pins)
 	svc.SetPlatformStore(store)
-	svc.SetPolicyManager(policies)
+	svc.SetTPMPolicyService(policies)
 	svc.SetCredentialService(credSvc)
 	return svc
 }
@@ -246,32 +244,25 @@ var platformScopedOps = map[string]platformScopedOp{
 		return err
 	},
 
-	// PCR policies (#1227).
-	"PolicyCreate": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.PolicyCreate(ctx, &transport.PolicyCreateRequest{Name: "attacker", Bank: "sha256", PCRs: []int{0}})
+	// A tenant's TPM mode and vTPM: the physical TPM is the platform's.
+	"GetTenantTPMMode": func(ctx context.Context, s *XKMSService) error {
+		_, err := s.GetTenantTPMMode(ctx, platformScopeTPMTenant)
 		return err
 	},
-	"PolicyGet": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.PolicyGet(ctx, &transport.PolicyGetRequest{Name: platformScopePolicy})
+	"SetTenantTPMMode": func(ctx context.Context, s *XKMSService) error {
+		_, err := s.SetTenantTPMMode(ctx, &transport.SetTenantTPMModeRequest{TenantID: platformScopeTPMTenant, Mode: "none"})
 		return err
 	},
-	"PolicyList": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.PolicyList(ctx)
+	"TenantVTPMStatus": func(ctx context.Context, s *XKMSService) error {
+		_, err := s.TenantVTPMStatus(ctx, platformScopeTPMTenant)
 		return err
 	},
-	"PolicyDelete": func(ctx context.Context, s *XKMSService) error {
-		return s.PolicyDelete(ctx, &transport.PolicyDeleteRequest{Name: platformScopePolicy})
-	},
-	"PolicyRefresh": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.PolicyRefresh(ctx, &transport.PolicyRefreshRequest{Name: platformScopePolicy})
+	"TenantVTPMStart": func(ctx context.Context, s *XKMSService) error {
+		_, err := s.TenantVTPMStart(ctx, platformScopeTPMTenant)
 		return err
 	},
-	"PolicyVerify": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.PolicyVerify(ctx, &transport.PolicyVerifyRequest{Name: platformScopePolicy})
-		return err
-	},
-	"PolicyExport": func(ctx context.Context, s *XKMSService) error {
-		_, err := s.PolicyExport(ctx, &transport.PolicyExportRequest{Name: platformScopePolicy})
+	"TenantVTPMStop": func(ctx context.Context, s *XKMSService) error {
+		_, err := s.TenantVTPMStop(ctx, platformScopeTPMTenant)
 		return err
 	},
 }
@@ -292,7 +283,7 @@ func TestPlatformScope_TenantAdminRefusedOnEveryOperation(t *testing.T) {
 // TestPlatformScope_RefusalLeavesPlatformStateUntouched proves the refusal
 // happens before the operation: after a tenant Admin's attempts to read,
 // overwrite and delete the platform credential, seal the barrier, delete the
-// recovery keys, take over the PINs and delete the policy, every piece of
+// recovery keys, take over the PINs and switch a tenant's TPM off, every piece of
 // platform state is exactly as the platform left it.
 func TestPlatformScope_RefusalLeavesPlatformStateUntouched(t *testing.T) {
 	svc := newPlatformScopeService(t)
@@ -312,17 +303,16 @@ func TestPlatformScope_RefusalLeavesPlatformStateUntouched(t *testing.T) {
 	require.NoError(t, svc.VerifySOPIN(ctx, &transport.VerifySOPINRequest{SOPIN: platformScopeSOPIN}))
 	require.NoError(t, svc.VerifyUserPIN(ctx, &transport.VerifyUserPINRequest{UserPIN: platformScopeUserPIN}))
 
-	_, err = svc.PolicyGet(ctx, &transport.PolicyGetRequest{Name: platformScopePolicy})
+	mode, err := svc.GetTenantTPMMode(ctx, platformScopeTPMTenant)
 	require.NoError(t, err)
-	_, err = svc.PolicyGet(ctx, &transport.PolicyGetRequest{Name: "attacker"})
-	require.ErrorIs(t, err, policy.ErrPolicyNotFound)
+	assert.Equal(t, string(tpmpolicy.DefaultMode), mode.Mode, "a refused mode change must leave the tenant's TPM mode as it was")
 }
 
 // TestPlatformScope_SystemIdentityPassesEveryGate proves the refusal is
 // scoped: the platform's own identity -- and a context with no identity at
 // all, the in-process boot path -- still reach every operation. Past the gate
 // some operations fail on their own preconditions (an initialized barrier
-// cannot be initialized again, a deleted policy cannot be refreshed); none may
+// cannot be initialized again, a vTPM cannot start without a supervisor); none may
 // fail with the binding's refusal, so the operations share one fixture.
 func TestPlatformScope_SystemIdentityPassesEveryGate(t *testing.T) {
 	callers := map[string]context.Context{
@@ -368,7 +358,9 @@ func TestPlatformScope_SystemIdentityCompletesTheExploitedOperations(t *testing.
 	_, err = svc.ListPIVSlots(ctx, &transport.ListPIVSlotsRequest{Backend: "software"})
 	require.NoError(t, err)
 
-	require.NoError(t, svc.PolicyDelete(ctx, &transport.PolicyDeleteRequest{Name: platformScopePolicy}))
+	changed, err := svc.SetTenantTPMMode(ctx, &transport.SetTenantTPMModeRequest{TenantID: platformScopeTPMTenant, Mode: "none"})
+	require.NoError(t, err)
+	assert.Equal(t, string(tpmpolicy.ModeNone), changed.Mode)
 
 	require.NoError(t, svc.BarrierSeal(ctx))
 	status, err := svc.BarrierStatus(ctx)

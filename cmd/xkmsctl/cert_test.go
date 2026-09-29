@@ -3078,32 +3078,67 @@ func (m *mockCertClient) RevokeEscrow(ctx context.Context, escrowID string) erro
 	return nil
 }
 
-// PolicyService stub implementations
-func (m *mockCertClient) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+func (m *mockCertClient) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }
 
-func (m *mockCertClient) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+func (m *mockCertClient) TPMPolicyGet(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }
 
-func (m *mockCertClient) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
+func (m *mockCertClient) TPMPolicyList(context.Context, *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
 	return nil, nil
 }
 
-func (m *mockCertClient) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
+func (m *mockCertClient) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) TPMPolicyRevoke(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) TPMPolicyVerify(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) TPMPolicyDelete(context.Context, *transport.TPMPolicyDeleteRequest) error {
 	return nil
 }
 
-func (m *mockCertClient) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+func (m *mockCertClient) TPMPolicyObjects(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
 	return nil, nil
 }
 
-func (m *mockCertClient) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+func (m *mockCertClient) TPMPolicySetAutoUnseal(context.Context, *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }
 
-func (m *mockCertClient) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+func (m *mockCertClient) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) TPMPolicyRotateAuthority(context.Context, *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) GetTenantTPMMode(context.Context, string) (*transport.TenantTPMModeResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) SetTenantTPMMode(context.Context, *transport.SetTenantTPMModeRequest) (*transport.TenantTPMModeResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) TenantVTPMStatus(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) TenantVTPMStart(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) TenantVTPMStop(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
 	return nil, nil
 }
 

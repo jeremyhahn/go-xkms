@@ -25,9 +25,9 @@ package auth
 // A small number of resources have no qrdb counterpart at all — qrdb's
 // registry simply does not know the name — so xkms both mints and scopes
 // them itself: bootstrap (the trust-bootstrap listener's own public keys,
-// go-xkms#632) and policy (PCR-bank sealed-secret authorization,
-// go-xkms#691). pkg/apimodule/module_scopes.go registers each one's
-// tenancy scope explicitly for the same reason it does for the four
+// go-xkms#632), tpm_policy (named TPM policies) and tenants:set_tpm_mode.
+// pkg/apimodule/module_scopes.go registers each one's tenancy scope
+// explicitly for the same reason it does for the four
 // keys/ssh exceptions documented there: go-qrdb#504 refuses to admit an
 // unscoped permission at all, rather than default it to ScopeSelf.
 //
@@ -48,13 +48,13 @@ const (
 	ResourceSeal     = "seal"
 	ResourceBarrier  = "barrier"
 
-	// ResourcePolicy is TPM 2.0 PCR-bank sealed-secret authorization policy
-	// management (pkg/seal/policy): capturing, reading, refreshing,
-	// verifying, and exporting the PCR-value snapshots sealed secrets bind
-	// to. go-qrdb's canonical registry has no permission family for it
-	// (go-xkms#691), so xkms owns the name and declares its own tenancy
-	// scope (pkg/apimodule/module_scopes.go).
-	ResourcePolicy = "policy"
+	// ResourceTPMPolicy is named TPM policy management (pkg/tpmpolicy):
+	// creating, reading, updating, revoking, verifying and deleting the
+	// policies a tenant's TPM keys and sealed objects are bound to, and
+	// rotating the tenant's policy authority. go-qrdb's canonical registry
+	// has no permission family for it, so xkms owns the name and declares
+	// its tenancy scope (pkg/apimodule/module_scopes.go).
+	ResourceTPMPolicy = "tpm_policy"
 
 	// Hardware and vault resources. Each is its own qrdb resource family so a
 	// deployment can mint a role that reaches, for example, the PIV slots
@@ -119,10 +119,6 @@ const (
 	ActionImport  = "import"
 	ActionExport  = "export"
 
-	// ActionRefresh re-captures a resource's current state, as PolicyRefresh
-	// re-reads current PCR values into an existing PCR policy.
-	ActionRefresh = "refresh"
-
 	// Key-transport and key-agreement actions. Wrapping and unwrapping move
 	// key material under a wrapping key; deriving produces new key material
 	// from an existing one (ECDH / KDF). None of them is implied by
@@ -153,6 +149,13 @@ const (
 	// implied by it.
 	ActionSetEntitlements = "set_entitlements"
 	ActionSetQuotas       = "set_quotas"
+
+	// ActionSetTPMMode changes a tenant's TPM mode (none, shared, vtpm) and
+	// starts or stops its vTPM (tenants:set_tpm_mode). The physical TPM
+	// belongs to the system tenant, so it is a cross-tenant permission that
+	// xkms owns and declares (pkg/apimodule/module_scopes.go); qrdb does not
+	// know it.
+	ActionSetTPMMode = "set_tpm_mode"
 
 	// ActionWrite is the coarse mutating action of the resource families that
 	// do not model create/update separately (piv:write, ssh:write,

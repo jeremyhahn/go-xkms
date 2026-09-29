@@ -30,9 +30,9 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmpolicytest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -92,30 +92,18 @@ var platformScopeRoutes = map[string]platformScopeRoute{
 	"piv export":      {http.MethodGet, "/piv/slots/9a/export?backend=software&format=pem", ""},
 	"piv csr":         {http.MethodPost, "/piv/slots/9a/csr", `{"backend":"software","subject":"server"}`},
 
-	"policy create":  {http.MethodPost, "/policies/", `{"name":"attacker","bank":"sha256","pcr_indices":[0]}`},
-	"policy list":    {http.MethodGet, "/policies/", ""},
-	"policy get":     {http.MethodGet, "/policies/boot", ""},
-	"policy delete":  {http.MethodDelete, "/policies/boot", ""},
-	"policy refresh": {http.MethodPost, "/policies/boot/refresh", ""},
-	"policy verify":  {http.MethodPost, "/policies/boot/verify", ""},
-	"policy export":  {http.MethodGet, "/policies/boot/export", ""},
-}
-
-// platformScopePCRReader returns a fixed value for every PCR.
-type platformScopePCRReader struct{}
-
-func (platformScopePCRReader) ReadPCRs(_ string, indices []int) (map[int][]byte, error) {
-	values := make(map[int][]byte, len(indices))
-	for _, idx := range indices {
-		values[idx] = make([]byte, 32)
-	}
-	return values, nil
+	"tenant tpm mode get": {http.MethodGet, "/tenants/tenant-b/tpm", ""},
+	"tenant tpm mode set": {http.MethodPut, "/tenants/tenant-b/tpm", `{"mode":"none"}`},
+	"tenant vtpm status":  {http.MethodGet, "/tenants/tenant-b/tpm/vtpm", ""},
+	"tenant vtpm start":   {http.MethodPost, "/tenants/tenant-b/tpm/vtpm/start", ""},
+	"tenant vtpm stop":    {http.MethodPost, "/tenants/tenant-b/tpm/vtpm/stop", ""},
 }
 
 // newPlatformScopeService returns an XKMSService composed with the
 // platform-global state behind the routes: an unsealed system barrier, a PIN
-// backend with both PINs set, a platform store holding one credential, a PCR
-// policy manager holding the "boot" policy and a manual credential service.
+// backend with both PINs set, a platform store holding one credential, a TPM
+// policy service (whose tenant TPM mode and vTPM routes are platform-scoped)
+// and a manual credential service.
 func newPlatformScopeService(t *testing.T) *xkms.XKMSService {
 	t.Helper()
 	ctx := context.Background()
@@ -144,10 +132,7 @@ func newPlatformScopeService(t *testing.T) *xkms.XKMSService {
 	require.NoError(t, err)
 	require.NoError(t, store.Put(ctx, platformScopeREST, []byte("platform-secret")))
 
-	policies, err := policy.NewManager(platformScopePCRReader{}, policy.NewMemoryPolicyStore())
-	require.NoError(t, err)
-	_, err = policies.CreatePolicy("boot", "sha256", []int{0, 7})
-	require.NoError(t, err)
+	policies, _ := tpmpolicytest.NewOffline(t)
 
 	credSvc, err := credentialspkg.New(&credentialspkg.Config{Strategy: credentialspkg.StrategyManual}, nil, nil, logger)
 	require.NoError(t, err)
@@ -156,7 +141,7 @@ func newPlatformScopeService(t *testing.T) *xkms.XKMSService {
 	svc.SetBarrier(barrier)
 	svc.SetPINManager(pins)
 	svc.SetPlatformStore(store)
-	svc.SetPolicyManager(policies)
+	svc.SetTPMPolicyService(policies)
 	svc.SetCredentialService(credSvc)
 	return svc
 }
@@ -169,7 +154,7 @@ func platformScopeRouter(t *testing.T, svc *xkms.XKMSService, identity *auth.Ide
 	h := NewHandlerContext("test")
 	h.SetXKMSService(svc)
 	platform := NewSealStoreHandlers(svc)
-	policies := NewPolicyHandlers(svc)
+	tpm := NewTPMPolicyHandlers(svc)
 	creds := NewCredentialHandlers(svc, nil)
 
 	r := chi.NewRouter()
@@ -218,13 +203,11 @@ func platformScopeRouter(t *testing.T, svc *xkms.XKMSService, identity *auth.Ide
 	r.Get("/piv/slots/{slot}/export", h.ExportPIVCertificateHandler)
 	r.Post("/piv/slots/{slot}/csr", h.GeneratePIVCSRHandler)
 
-	r.Post("/policies/", policies.CreatePolicyHandler)
-	r.Get("/policies/", policies.ListPoliciesHandler)
-	r.Get("/policies/{name}", policies.GetPolicyHandler)
-	r.Delete("/policies/{name}", policies.DeletePolicyHandler)
-	r.Post("/policies/{name}/refresh", policies.RefreshPolicyHandler)
-	r.Post("/policies/{name}/verify", policies.VerifyPolicyHandler)
-	r.Get("/policies/{name}/export", policies.ExportPolicyHandler)
+	r.Get("/tenants/{tenantID}/tpm", tpm.GetTenantModeHandler)
+	r.Put("/tenants/{tenantID}/tpm", tpm.SetTenantModeHandler)
+	r.Get("/tenants/{tenantID}/tpm/vtpm", tpm.VTPMStatusHandler)
+	r.Post("/tenants/{tenantID}/tpm/vtpm/start", tpm.VTPMStartHandler)
+	r.Post("/tenants/{tenantID}/tpm/vtpm/stop", tpm.VTPMStopHandler)
 	return r
 }
 

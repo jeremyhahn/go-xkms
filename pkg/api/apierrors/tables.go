@@ -14,12 +14,15 @@
 package apierrors
 
 import (
+	"errors"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -187,29 +190,81 @@ var BarrierSentinelClasses = []SentinelClass{
 	{seal.ErrRootTokenVerificationFailed, ClassUnauthenticated},
 }
 
-// PolicySentinelClasses classifies the TPM 2.0 PCR-bank sealed-secret
-// authorization policy domain errors pkg/seal/policy's Manager operations
-// (CreatePolicy, GetPolicy, RefreshPolicy, VerifyPolicy, DeletePolicy,
-// ListPolicies, ExportPolicy) return, plus the xkms.ErrNotConfigured /
-// xkms.ErrNilRequest sentinels pkg/xkms's Policy* servicer methods return
-// when no policy manager is composed or the request is nil. Both
-// pkg/api/grpc/service_policy.go's mapPolicyError and pkg/api/mcp's mirror
-// of it read this table (go-xkms#691, following the go-xkms#912 precedent
-// set for PIV and barrier).
-var PolicySentinelClasses = []SentinelClass{
+// TPMPolicySentinelClasses classifies the sentinel errors of the TPM policy
+// API (pkg/xkms's TPMPolicy* servicer methods over pkg/tpmpolicy) and of TPM2
+// key operations routed to a tenant's TPM scope (pkg/backend/tpm2). The typed
+// errors of the same domain are classified by TPMPolicyClassOf, which every
+// transport reads: the gRPC and MCP servers' TPM policy handlers, the REST
+// TPM policy handlers, and each transport's key-operation mapper for the
+// scope errors a key operation surfaces.
+var TPMPolicySentinelClasses = []SentinelClass{
 	{xkms.ErrNotConfigured, ClassUnavailable},
 	{xkms.ErrNilRequest, ClassInvalidArgument},
-	{policy.ErrPolicyNotFound, ClassNotFound},
-	{policy.ErrPolicyExists, ClassAlreadyExists},
-	{policy.ErrInvalidName, ClassInvalidArgument},
-	{policy.ErrInvalidBank, ClassInvalidArgument},
-	{policy.ErrUnsupportedBank, ClassInvalidArgument},
-	{policy.ErrNoPCRsSelected, ClassInvalidArgument},
-	{policy.ErrPCRIndexOutOfRange, ClassInvalidArgument},
-	{policy.ErrDuplicatePCRIndex, ClassInvalidArgument},
-	{policy.ErrExportFailed, ClassInternal},
-	// Every operation on this platform-global state is platform-scoped: a
-	// tenant-scoped caller is refused with xkms.TenantBindingError, which
-	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1227).
+	{xkms.ErrTenantIDRequired, ClassInvalidArgument},
+	{xkms.ErrTPMPolicyNotSupported, ClassInvalidArgument},
+	// A tenant-scoped caller naming another tenant, or any tenant-scoped
+	// caller of a system-scope operation, is refused with
+	// xkms.TenantBindingError, which unwraps to go-qrdb's unknown-tenant
+	// sentinel: the target reads as not found.
 	{qrdbsdk.ErrTenantMissing, ClassNotFound},
+	{tpmpolicy.ErrPolicyNotFound, ClassNotFound},
+	{tpmpolicy.ErrScopeNotFound, ClassNotFound},
+	{tpmpolicy.ErrNotAssigned, ClassNotFound},
+	{tpmpolicy.ErrPolicyExists, ClassAlreadyExists},
+	{tpmpolicy.ErrReservedPolicy, ClassInvalidArgument},
+	{tpmpolicy.ErrEmptyPCRSelection, ClassInvalidArgument},
+	{tpmpolicy.ErrSystemScopeMode, ClassInvalidArgument},
+	{tpmpolicy.ErrTPMModeNone, ClassFailedPrecondition},
+	{tpmpolicy.ErrVTPMUnavailable, ClassFailedPrecondition},
+	{tpmpolicy.ErrNotVTPMMode, ClassFailedPrecondition},
+	{tpmpolicy.ErrPolicyRevoked, ClassFailedPrecondition},
+	{tpm2backend.ErrReservedObject, ClassInvalidArgument},
+	{tpm2backend.ErrTenantSymmetricKeyUnsupported, ClassUnimplemented},
+	{tpm2backend.ErrTenantImportUnsupported, ClassUnimplemented},
+}
+
+// TypedClass classifies a typed error: Match reports whether an error's
+// chain holds the type.
+type TypedClass struct {
+	// Match reports whether err's chain holds an error of the class's type.
+	Match func(err error) bool
+	// Class is the classification the type carries.
+	Class Class
+}
+
+// As reports whether err's chain holds an error of type T.
+func As[T error](err error) bool {
+	var target T
+	return errors.As(err, &target)
+}
+
+// TPMPolicyTypedClasses classifies the typed errors of the TPM policy API.
+// A policy still assigned to objects, and a scope still holding objects or
+// policies, are refusals of the current state (their messages list the
+// objects), not faults in the request.
+var TPMPolicyTypedClasses = []TypedClass{
+	{As[*tpmpolicy.PolicyInUseError], ClassFailedPrecondition},
+	{As[*tpmpolicy.ScopeInUseError], ClassFailedPrecondition},
+	{As[*tpmpolicy.PCRBankUnavailableError], ClassFailedPrecondition},
+	{As[*tpmpolicy.InvalidNameError], ClassInvalidArgument},
+	{As[*tpmpolicy.InvalidModeError], ClassInvalidArgument},
+	{As[*tpmpolicy.InvalidTenantError], ClassInvalidArgument},
+	{As[*tpmpolicy.InvalidPCRBankError], ClassInvalidArgument},
+	{As[*tpmpolicy.InvalidPCRError], ClassInvalidArgument},
+	{As[*xkms.InvalidTPMObjectKindError], ClassInvalidArgument},
+	{As[*xkms.ErrKeyIDParse], ClassInvalidArgument},
+}
+
+// TPMPolicyClassOf classifies an error of the TPM policy API: its typed
+// errors first, then its sentinels.
+func TPMPolicyClassOf(err error) (Class, bool) {
+	if err == nil {
+		return ClassInternal, false
+	}
+	for _, entry := range TPMPolicyTypedClasses {
+		if entry.Match(err) {
+			return entry.Class, true
+		}
+	}
+	return ClassOf(TPMPolicySentinelClasses, err)
 }

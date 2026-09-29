@@ -53,6 +53,9 @@ type GenerateKeyRequest struct {
 	// Partition names the sub-namespace the key is stored in, as it does on
 	// every other transport; part of the key's identity.
 	Partition string `json:"partition,omitempty"`
+	// TPMPolicy names the TPM policy a TPM2 key is bound to; empty is the
+	// built-in "platform" policy.
+	TPMPolicy string `json:"tpm_policy,omitempty"`
 }
 
 // GenerateKeyResponse represents the response for key generation.
@@ -354,27 +357,39 @@ type SealRequest struct {
 	KeyID   string `json:"key_id,omitempty"` // Optional key ID for sealing key
 	Data    []byte `json:"data"`             // Data to seal (base64 encoded in JSON)
 	AAD     []byte `json:"aad,omitempty"`    // Additional Authenticated Data (base64 encoded)
+	// Password is the sealed object's authorization value (TPM2).
+	Password string `json:"password,omitempty"`
+	// TPMPolicy names the TPM policy a TPM2 sealed object is bound to.
+	TPMPolicy string `json:"tpm_policy,omitempty"`
 }
 
 // SealResponse represents the response from a seal operation.
 type SealResponse struct {
-	Backend    string            `json:"backend"`            // Backend that performed the sealing
-	Ciphertext []byte            `json:"ciphertext"`         // Encrypted data (base64 encoded)
-	Nonce      []byte            `json:"nonce,omitempty"`    // Nonce/IV if applicable (base64 encoded)
-	Tag        []byte            `json:"tag,omitempty"`      // Authentication tag if applicable (base64 encoded)
-	Metadata   map[string][]byte `json:"metadata,omitempty"` // Backend-specific metadata
+	Backend    string            `json:"backend"`               // Backend that performed the sealing
+	Ciphertext []byte            `json:"ciphertext"`            // Encrypted data (base64 encoded)
+	Nonce      []byte            `json:"nonce,omitempty"`       // Nonce/IV if applicable (base64 encoded)
+	Tag        []byte            `json:"tag,omitempty"`         // Authentication tag if applicable (base64 encoded)
+	Metadata   map[string][]byte `json:"metadata,omitempty"`    // Backend-specific metadata
+	TPMPublic  []byte            `json:"tpm_public,omitempty"`  // TPM2 sealed object's public area
+	TPMPrivate []byte            `json:"tpm_private,omitempty"` // TPM2 sealed object's private area
+	WrappedDEK []byte            `json:"wrapped_dek,omitempty"` // Envelope-sealing backend's wrapped key
+	KeyID      string            `json:"key_id,omitempty"`      // Key or TPM2 sealed object that sealed
 }
 
 // UnsealRequest represents a request to unseal data.
 // The sealed data must have been created by the same backend type.
 type UnsealRequest struct {
-	Backend    string            `json:"backend"`            // Backend to use for unsealing
-	KeyID      string            `json:"key_id,omitempty"`   // Optional key ID for unsealing key
-	Ciphertext []byte            `json:"ciphertext"`         // Encrypted data (base64 encoded)
-	Nonce      []byte            `json:"nonce,omitempty"`    // Nonce/IV if applicable (base64 encoded)
-	Tag        []byte            `json:"tag,omitempty"`      // Authentication tag if applicable (base64 encoded)
-	AAD        []byte            `json:"aad,omitempty"`      // Additional Authenticated Data (base64 encoded)
-	Metadata   map[string][]byte `json:"metadata,omitempty"` // Backend-specific metadata from seal response
+	Backend    string            `json:"backend"`               // Backend to use for unsealing
+	KeyID      string            `json:"key_id,omitempty"`      // Optional key ID for unsealing key
+	Ciphertext []byte            `json:"ciphertext"`            // Encrypted data (base64 encoded)
+	Nonce      []byte            `json:"nonce,omitempty"`       // Nonce/IV if applicable (base64 encoded)
+	Tag        []byte            `json:"tag,omitempty"`         // Authentication tag if applicable (base64 encoded)
+	AAD        []byte            `json:"aad,omitempty"`         // Additional Authenticated Data (base64 encoded)
+	Metadata   map[string][]byte `json:"metadata,omitempty"`    // Backend-specific metadata from seal response
+	TPMPublic  []byte            `json:"tpm_public,omitempty"`  // TPM2 sealed object's public area
+	TPMPrivate []byte            `json:"tpm_private,omitempty"` // TPM2 sealed object's private area
+	WrappedDEK []byte            `json:"wrapped_dek,omitempty"` // Envelope-sealing backend's wrapped key
+	Password   string            `json:"password,omitempty"`    // Sealed object's authorization value (TPM2)
 }
 
 // UnsealResponse represents the response from an unseal operation.

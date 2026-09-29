@@ -2326,162 +2326,137 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 // ListEscrowed/RevokeEscrow at all. transport.EscrowService is no longer
 // part of transport.Client — see docs/escrow/architecture.md.
 
-// Policy Operations
+// TPM Policy Operations
 //
-// QUIC is REST served over HTTP/3 on the same chi router (see
-// pkg/api/rest/routes.go), so these translate the same wire shapes the REST
-// client transport does; pkg/api/rest/wire's PCR Policy types document why a
-// translation is needed at all.
+// The TPM policy API is served by wire.TPMPolicyClient, shared with the
+// REST transport, over the REST routes.
 
-// PolicyCreate creates a new PCR policy.
-func (t *Transport) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+// TPMPolicyCreate creates a named TPM policy.
+func (t *Transport) TPMPolicyCreate(ctx context.Context, req *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/policies/", &wire.PolicyCreateRequest{
-		Name:       req.Name,
-		Bank:       req.Bank,
-		PCRIndices: req.PCRs,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var resp wire.PolicyCreateResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-	return &transport.PolicyCreateResponse{
-		Name:      resp.Name,
-		Bank:      resp.Bank,
-		PCRs:      resp.PCRIndices,
-		Values:    wire.PCRValuesToHex(resp.PCRValues),
-		CreatedAt: resp.CreatedAt,
-	}, nil
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMPolicyCreate(ctx, req)
 }
 
-// PolicyGet retrieves a policy by name.
-func (t *Transport) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+// TPMPolicyGet returns a named TPM policy.
+func (t *Transport) TPMPolicyGet(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	path := fmt.Sprintf("/api/v1/policies/%s", url.PathEscape(req.Name))
-	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp wire.PolicyGetResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-	return &transport.PolicyGetResponse{
-		Name:      resp.Name,
-		Bank:      resp.Bank,
-		PCRs:      resp.PCRIndices,
-		Values:    wire.PCRValuesToHex(resp.PCRValues),
-		CreatedAt: resp.CreatedAt,
-		UpdatedAt: resp.UpdatedAt,
-	}, nil
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMPolicyGet(ctx, req)
 }
 
-// PolicyList lists all policies.
-func (t *Transport) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
+// TPMPolicyList returns a tenant's TPM policies.
+func (t *Transport) TPMPolicyList(ctx context.Context, req *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	data, err := t.doRawRequest(ctx, http.MethodGet, "/api/v1/policies/", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp wire.PolicyListResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-	policies := make([]transport.PolicyGetResponse, 0, len(resp.Policies))
-	for _, p := range resp.Policies {
-		policies = append(policies, transport.PolicyGetResponse{
-			Name:      p.Name,
-			Bank:      p.Bank,
-			PCRs:      p.PCRIndices,
-			CreatedAt: p.CreatedAt,
-			UpdatedAt: p.UpdatedAt,
-		})
-	}
-	return &transport.PolicyListResponse{
-		Policies:     policies,
-		PageResponse: transport.PageResponse{Total: resp.Total},
-	}, nil
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMPolicyList(ctx, req)
 }
 
-// PolicyDelete deletes a policy.
-func (t *Transport) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
+// TPMPolicyUpdate re-captures and re-approves a TPM policy.
+func (t *Transport) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMPolicyUpdate(ctx, req)
+}
+
+// TPMPolicyRevoke withdraws a TPM policy's approval.
+func (t *Transport) TPMPolicyRevoke(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMPolicyRevoke(ctx, req)
+}
+
+// TPMPolicyVerify compares a TPM policy's PCR values with the live ones.
+func (t *Transport) TPMPolicyVerify(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMPolicyVerify(ctx, req)
+}
+
+// TPMPolicyDelete deletes a TPM policy no object is assigned to.
+func (t *Transport) TPMPolicyDelete(ctx context.Context, req *transport.TPMPolicyDeleteRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	path := fmt.Sprintf("/api/v1/policies/%s", url.PathEscape(req.Name))
-	_, err := t.doRawRequest(ctx, http.MethodDelete, path, nil)
-	return err
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMPolicyDelete(ctx, req)
 }
 
-// PolicyRefresh refreshes a policy with current PCR values.
-func (t *Transport) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+// TPMPolicyObjects lists the objects assigned to a TPM policy.
+func (t *Transport) TPMPolicyObjects(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	path := fmt.Sprintf("/api/v1/policies/%s/refresh", url.PathEscape(req.Name))
-	data, err := t.doRawRequest(ctx, http.MethodPost, path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp wire.PolicyRefreshResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-	return &transport.PolicyGetResponse{
-		Name:      resp.Name,
-		Bank:      resp.Bank,
-		PCRs:      resp.PCRIndices,
-		UpdatedAt: resp.UpdatedAt,
-	}, nil
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMPolicyObjects(ctx, req)
 }
 
-// PolicyVerify verifies a policy against current PCR values.
-func (t *Transport) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+// TPMPolicySetAutoUnseal sets or clears a TPM policy's auto-unseal mark.
+func (t *Transport) TPMPolicySetAutoUnseal(ctx context.Context, req *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	path := fmt.Sprintf("/api/v1/policies/%s/verify", url.PathEscape(req.Name))
-	data, err := t.doRawRequest(ctx, http.MethodPost, path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp transport.PolicyVerifyResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
-	}
-	return &resp, nil
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMPolicySetAutoUnseal(ctx, req)
 }
 
-// PolicyExport exports a policy.
-func (t *Transport) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+// TPMObjectPolicy returns the TPM policy a key or sealed object was created under.
+func (t *Transport) TPMObjectPolicy(ctx context.Context, req *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	path := fmt.Sprintf("/api/v1/policies/%s/export", url.PathEscape(req.Name))
-	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMObjectPolicy(ctx, req)
+}
 
-	var resp wire.PolicyExportResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+// TPMPolicyRotateAuthority rotates a tenant's TPM policy authority.
+func (t *Transport) TPMPolicyRotateAuthority(ctx context.Context, req *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
 	}
-	return &transport.PolicyExportResponse{Data: resp.PolicyJSON}, nil
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TPMPolicyRotateAuthority(ctx, req)
+}
+
+// GetTenantTPMMode returns a tenant's TPM mode.
+func (t *Transport) GetTenantTPMMode(ctx context.Context, tenantID string) (*transport.TenantTPMModeResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.GetTenantTPMMode(ctx, tenantID)
+}
+
+// SetTenantTPMMode changes a tenant's TPM mode.
+func (t *Transport) SetTenantTPMMode(ctx context.Context, req *transport.SetTenantTPMModeRequest) (*transport.TenantTPMModeResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.SetTenantTPMMode(ctx, req)
+}
+
+// TenantVTPMStatus reports a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStatus(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TenantVTPMStatus(ctx, tenantID)
+}
+
+// TenantVTPMStart starts a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStart(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TenantVTPMStart(ctx, tenantID)
+}
+
+// TenantVTPMStop stops a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return wire.TPMPolicyClient{Do: t.doRawRequest}.TenantVTPMStop(ctx, tenantID)
 }
 
 // CustodianGroupService methods.

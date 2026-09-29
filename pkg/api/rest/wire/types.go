@@ -3,8 +3,6 @@
 
 package wire
 
-import "encoding/hex"
-
 // GetImportParametersRequest represents a request to get import parameters.
 type GetImportParametersRequest struct {
 	Backend    string `json:"backend"`
@@ -106,83 +104,4 @@ type ImportKeyResponse struct {
 	KeyID        string `json:"key_id"`
 	Message      string `json:"message,omitempty"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
-}
-
-// PCR Policy wire shapes. pkg/api/rest/policy_handlers.go predates the
-// convention (used everywhere else in this package's REST surface) of
-// wiring pkg/api/transport request/response types straight onto the HTTP
-// body, so its JSON field names and PCR-value encoding diverge from
-// transport.Policy*: pcr_indices vs. pcrs, and pcr_values as a raw-byte map
-// (Go's default []byte-to-base64 JSON encoding) vs. values as a
-// hex-encoded string map. The REST and QUIC client transports (QUIC is REST
-// served over HTTP/3 on the same router) share these shapes to translate
-// between the two without duplicating the translation in both packages.
-
-// PolicyCreateRequest is the wire request body for POST /api/v1/policies/.
-type PolicyCreateRequest struct {
-	Name       string `json:"name"`
-	Bank       string `json:"bank"`
-	PCRIndices []int  `json:"pcr_indices"`
-}
-
-// PolicyCreateResponse is the wire response body for POST /api/v1/policies/.
-type PolicyCreateResponse struct {
-	Name       string         `json:"name"`
-	Bank       string         `json:"bank"`
-	PCRIndices []int          `json:"pcr_indices"`
-	PCRValues  map[int][]byte `json:"pcr_values"`
-	CreatedAt  string         `json:"created_at"`
-}
-
-// PolicyInfo is the wire summary of a policy in a list response.
-type PolicyInfo struct {
-	Name       string `json:"name"`
-	Bank       string `json:"bank"`
-	PCRIndices []int  `json:"pcr_indices"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
-}
-
-// PolicyListResponse is the wire response body for GET /api/v1/policies/.
-type PolicyListResponse struct {
-	Policies []PolicyInfo `json:"policies"`
-	Total    int          `json:"total"`
-}
-
-// PolicyGetResponse is the wire response body for
-// GET /api/v1/policies/{name}.
-type PolicyGetResponse struct {
-	Name       string         `json:"name"`
-	Bank       string         `json:"bank"`
-	PCRIndices []int          `json:"pcr_indices"`
-	PCRValues  map[int][]byte `json:"pcr_values"`
-	CreatedAt  string         `json:"created_at"`
-	UpdatedAt  string         `json:"updated_at"`
-}
-
-// PolicyRefreshResponse is the wire response body for
-// POST /api/v1/policies/{name}/refresh.
-type PolicyRefreshResponse struct {
-	Name       string `json:"name"`
-	Bank       string `json:"bank"`
-	PCRIndices []int  `json:"pcr_indices"`
-	UpdatedAt  string `json:"updated_at"`
-	Message    string `json:"message"`
-}
-
-// PolicyExportResponse is the wire response body for
-// GET /api/v1/policies/{name}/export.
-type PolicyExportResponse struct {
-	Name       string `json:"name"`
-	PolicyJSON string `json:"policy_json"`
-}
-
-// PCRValuesToHex converts a raw-byte PCR value map (the REST wire shape) to
-// the SDK's hex-encoded map[int]string representation.
-func PCRValuesToHex(values map[int][]byte) map[int]string {
-	out := make(map[int]string, len(values))
-	for idx, v := range values {
-		out[idx] = hex.EncodeToString(v)
-	}
-	return out
 }

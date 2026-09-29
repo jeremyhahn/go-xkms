@@ -10,11 +10,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 )
 
 func TestSubsystem_ZeroValueHoldsNothing(t *testing.T) {
-	var manager subsystem[*policy.Manager]
+	var manager subsystem[*tpmpolicy.Service]
 	assert.Nil(t, manager.load())
 
 	var reader subsystem[io.Reader]

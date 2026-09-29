@@ -64,9 +64,9 @@ var wireExpectationForClass = map[apierrors.Class]wireExpectation{
 // TestClassification_MatchesSharedTables walks every sentinel in
 // apierrors.ImportExportSentinelClasses, PIVSentinelClasses,
 // BarrierSentinelClasses, SealStoreSentinelClasses, PINSentinelClasses,
-// CustodianSentinelClasses and PolicySentinelClasses and asserts this
+// CustodianSentinelClasses and TPMPolicySentinelClasses and asserts this
 // package's mapImportExportError / mapPIVError / mapBarrierError /
-// mapSealStoreError / mapPINError / mapCustodianError / mapPolicyError
+// mapSealStoreError / mapPINError / mapCustodianError / mapTPMPolicyError
 // renders the gRPC status code wireExpectationForClass names for that
 // sentinel's Class. It is the gRPC half of the cross-transport parity
 // pinned by go-xkms#912; see this file's wireExpectationForClass doc
@@ -139,13 +139,15 @@ func TestClassification_MatchesSharedTables(t *testing.T) {
 		}
 	})
 
-	t.Run("policy", func(t *testing.T) {
-		for _, entry := range apierrors.PolicySentinelClasses {
+	t.Run("tpm policy", func(t *testing.T) {
+		for _, entry := range apierrors.TPMPolicySentinelClasses {
 			want, ok := wireExpectationForClass[entry.Class]
 			require.True(t, ok, "no wire expectation for class %v", entry.Class)
 			t.Run(want.name, func(t *testing.T) {
-				err := mapPolicyError(entry.Sentinel)
-				assert.Equal(t, want.grpcCode, status.Code(err))
+				assert.Equal(t, want.grpcCode, status.Code(mapTPMPolicyError(entry.Sentinel)))
+				// A TPM2 key operation routed to a tenant scope surfaces the
+				// same errors through the key-op mapper.
+				assert.Equal(t, want.grpcCode, status.Code(mapKeyOpError(context.Background(), nil, entry.Sentinel)))
 			})
 		}
 	})

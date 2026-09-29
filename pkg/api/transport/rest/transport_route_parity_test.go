@@ -241,20 +241,20 @@ var collectionRouteCases = []collectionRouteCase{
 		},
 	},
 	{
-		name:   "PolicyCreate",
+		name:   "TPMPolicyCreate",
 		method: http.MethodPost,
-		base:   "/api/v1/policies",
+		base:   "/api/v1/tpm/policies",
 		call: func(ctx context.Context, tr *Transport) error {
-			_, err := tr.PolicyCreate(ctx, &transport.PolicyCreateRequest{Name: "p", Bank: "sha256", PCRs: []int{0}})
+			_, err := tr.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{Name: "p", Bank: "sha256", PCRs: []uint{0}})
 			return err
 		},
 	},
 	{
-		name:   "PolicyList",
+		name:   "TPMPolicyList",
 		method: http.MethodGet,
-		base:   "/api/v1/policies",
+		base:   "/api/v1/tpm/policies",
 		call: func(ctx context.Context, tr *Transport) error {
-			_, err := tr.PolicyList(ctx)
+			_, err := tr.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{})
 			return err
 		},
 	},

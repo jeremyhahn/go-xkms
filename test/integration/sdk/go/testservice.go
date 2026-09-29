@@ -1179,31 +1179,67 @@ func (s *TestXKMSService) RevokeEscrow(ctx context.Context, escrowID string) err
 
 // Policy operations
 
-func (s *TestXKMSService) PolicyCreate(ctx context.Context, req *xkms.PolicyCreateRequest) (*xkms.PolicyCreateResponse, error) {
+func (s *TestXKMSService) TPMPolicyCreate(context.Context, *xkms.TPMPolicyCreateRequest) (*xkms.TPMPolicy, error) {
 	return nil, ErrNotImplemented
 }
 
-func (s *TestXKMSService) PolicyGet(ctx context.Context, req *xkms.PolicyGetRequest) (*xkms.PolicyGetResponse, error) {
+func (s *TestXKMSService) TPMPolicyGet(context.Context, *xkms.TPMPolicyRequest) (*xkms.TPMPolicy, error) {
 	return nil, ErrNotImplemented
 }
 
-func (s *TestXKMSService) PolicyList(ctx context.Context) (*xkms.PolicyListResponse, error) {
+func (s *TestXKMSService) TPMPolicyList(context.Context, *xkms.TPMPolicyListRequest) (*xkms.TPMPolicyListResponse, error) {
 	return nil, ErrNotImplemented
 }
 
-func (s *TestXKMSService) PolicyDelete(ctx context.Context, req *xkms.PolicyDeleteRequest) error {
+func (s *TestXKMSService) TPMPolicyUpdate(context.Context, *xkms.TPMPolicyRequest) (*xkms.TPMPolicy, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) TPMPolicyRevoke(context.Context, *xkms.TPMPolicyRequest) (*xkms.TPMPolicy, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) TPMPolicyVerify(context.Context, *xkms.TPMPolicyRequest) (*xkms.TPMPolicyVerifyResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) TPMPolicyDelete(context.Context, *xkms.TPMPolicyDeleteRequest) error {
 	return ErrNotImplemented
 }
 
-func (s *TestXKMSService) PolicyRefresh(ctx context.Context, req *xkms.PolicyRefreshRequest) (*xkms.PolicyGetResponse, error) {
+func (s *TestXKMSService) TPMPolicyObjects(context.Context, *xkms.TPMPolicyRequest) (*xkms.TPMPolicyObjectsResponse, error) {
 	return nil, ErrNotImplemented
 }
 
-func (s *TestXKMSService) PolicyVerify(ctx context.Context, req *xkms.PolicyVerifyRequest) (*xkms.PolicyVerifyResponse, error) {
+func (s *TestXKMSService) TPMPolicySetAutoUnseal(context.Context, *xkms.TPMPolicyAutoUnsealRequest) (*xkms.TPMPolicy, error) {
 	return nil, ErrNotImplemented
 }
 
-func (s *TestXKMSService) PolicyExport(ctx context.Context, req *xkms.PolicyExportRequest) (*xkms.PolicyExportResponse, error) {
+func (s *TestXKMSService) TPMObjectPolicy(context.Context, *xkms.TPMObjectPolicyRequest) (*xkms.TPMObjectPolicyResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) TPMPolicyRotateAuthority(context.Context, *xkms.TPMAuthorityRotateRequest) (*xkms.TPMAuthorityRotateResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) GetTenantTPMMode(context.Context, string) (*xkms.TenantTPMModeResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) SetTenantTPMMode(context.Context, *xkms.SetTenantTPMModeRequest) (*xkms.TenantTPMModeResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) TenantVTPMStatus(context.Context, string) (*xkms.TenantVTPMStatusResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) TenantVTPMStart(context.Context, string) (*xkms.TenantVTPMStatusResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) TenantVTPMStop(context.Context, string) (*xkms.TenantVTPMStatusResponse, error) {
 	return nil, ErrNotImplemented
 }
 

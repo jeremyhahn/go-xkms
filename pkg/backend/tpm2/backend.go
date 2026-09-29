@@ -36,6 +36,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -52,6 +53,10 @@ type Backend struct {
 	mu          sync.RWMutex
 	closed      bool
 	externalTPM bool // If true, TPM was provided externally and should not be closed
+
+	// scopes, when set, routes every key and seal operation to the TPM
+	// scope of KeyAttributes.TenantID (see SetScopeProvider).
+	scopes ScopeProvider
 }
 
 // ExternalTPMConfig holds configuration for creating a backend with an external TPM.
@@ -265,8 +270,10 @@ func (b *Backend) Capabilities() types.Capabilities {
 }
 
 // GenerateKey generates a new key in the TPM with the given attributes.
-// The private key never leaves the TPM hardware.
-func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+// The private key never leaves the TPM hardware. With a scope provider the
+// key is created in the TPM scope of attrs.TenantID, bound to attrs.TPMPolicy
+// ("platform" when empty), and its policy assignment is recorded.
+func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (_ crypto.PrivateKey, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -277,29 +284,12 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
-
-	// Set parent to SRK if not specified
-	if attrs.Parent == nil {
-		attrs.Parent = b.srkAttrs
+	if err := b.refuseReserved(attrs); err != nil {
+		return nil, err
 	}
-
-	// Set store type
-	attrs.StoreType = types.StoreTPM2
-	applyDefaultTPMPolicy(attrs)
 
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		pub, err := b.tpm.CreateRSA(attrs, b.keyBackend, false)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to create RSA key", Err: err}
-		}
-		// Return a TPM signer that wraps the key
-		return &tpm2Signer{
-			backend:   b,
-			attrs:     attrs,
-			publicKey: pub,
-		}, nil
-
 	case x509.ECDSA:
 		// Set default curve if not specified
 		if attrs.ECCAttributes == nil || attrs.ECCAttributes.Curve == nil {
@@ -307,20 +297,68 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 				Curve: elliptic.P256(),
 			}
 		}
-		pub, err := b.tpm.CreateECDSA(attrs, b.keyBackend, false)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to create ECDSA key", Err: err}
-		}
-		// Return a TPM signer that wraps the key
-		return &tpm2Signer{
-			backend:   b,
-			attrs:     attrs,
-			publicKey: pub,
-		}, nil
-
 	default:
 		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
+
+	// Set store type
+	attrs.StoreType = types.StoreTPM2
+	applyDefaultTPMPolicy(attrs)
+
+	scope, err := b.scope(ctx, attrs.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, scope.close()) }()
+
+	bound := scope.bind(attrs)
+	pub, err := createKey(scope.tpm, bound, scope.keys)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.recordKey(ctx, scope, bound); err != nil {
+		return nil, err
+	}
+	// Return a TPM signer that wraps the key
+	return &tpm2Signer{
+		backend:   b,
+		attrs:     attrs,
+		publicKey: pub,
+	}, nil
+}
+
+// createKey creates the asymmetric key attrs describes on tpm, storing its
+// blobs in keys.
+func createKey(tpm pkgtpm2.TrustedPlatformModule, attrs *types.KeyAttributes, keys store.KeyBackend) (crypto.PublicKey, error) {
+	if attrs.KeyAlgorithm == x509.RSA {
+		pub, err := tpm.CreateRSA(attrs, keys, false)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to create RSA key", Err: err}
+		}
+		return pub, nil
+	}
+	pub, err := tpm.CreateECDSA(attrs, keys, false)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create ECDSA key", Err: err}
+	}
+	return pub, nil
+}
+
+// recordKey records the policy assignment of the key just created in scope.
+// When it cannot be recorded the key is deleted again, so the registry never
+// misses an object that exists.
+func (b *Backend) recordKey(ctx context.Context, scope *keyScope, attrs *types.KeyAttributes) error {
+	if !scope.scoped {
+		return nil
+	}
+	authPolicy, err := authPolicyOf(scope.keys, attrs)
+	if err == nil {
+		err = b.assign(ctx, scope, tpmpolicy.ObjectKey, attrs, authPolicy)
+	}
+	if err != nil {
+		return errors.Join(err, scope.tpm.DeleteKey(attrs, scope.keys))
+	}
+	return nil
 }
 
 // applyDefaultTPMPolicy binds a key whose caller named no TPM policy to the
@@ -345,8 +383,14 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, ErrInvalidKeyAttributes
 	}
 
-	// Set parent to SRK if not specified
-	if attrs.Parent == nil {
+	keys, err := b.keyStore(attrs.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set parent to SRK if not specified. A tenant scope's parent is bound
+	// per operation instead (see keyScope.bind).
+	if attrs.Parent == nil && (b.scopes == nil || isSystemTenant(attrs.TenantID)) {
 		attrs.Parent = b.srkAttrs
 	}
 
@@ -361,7 +405,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	// be conflated with "key does not exist yet", since callers such as
 	// getOrGenerateCAKey use that distinction to decide whether it is safe
 	// to generate a replacement key.
-	_, err := b.keyBackend.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	_, err = keys.Get(attrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
@@ -370,7 +414,7 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	}
 
 	// Get the public blob to determine key type
-	pubData, err := b.keyBackend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	pubData, err := keys.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
@@ -391,8 +435,10 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	}, nil
 }
 
-// DeleteKey removes a key from the TPM and its associated storage.
-func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
+// DeleteKey removes a key from the TPM and its associated storage. With a
+// scope provider the key is deleted from the TPM scope of attrs.TenantID and
+// its policy assignment removed.
+func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) (err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -403,21 +449,41 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 	if attrs == nil {
 		return ErrInvalidKeyAttributes
 	}
-
-	// Set parent to SRK if not specified
-	if attrs.Parent == nil {
-		attrs.Parent = b.srkAttrs
+	if err := b.refuseReserved(attrs); err != nil {
+		return err
 	}
+
+	scope, err := b.scope(ctx, attrs.TenantID)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, scope.close()) }()
 
 	// Delete the key using TPM2 library
-	if err := b.tpm.DeleteKey(attrs, b.keyBackend); err != nil {
+	bound := scope.bind(attrs)
+	if err := scope.tpm.DeleteKey(bound, scope.keys); err != nil {
 		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}
-
-	return nil
+	return b.unassign(ctx, scope, bound)
 }
 
-// ListKeys returns attributes for all keys managed by this backend.
+// keyStore returns the key store of tenant's objects for a read that loads
+// nothing into the TPM: the backend's own store without a scope provider.
+func (b *Backend) keyStore(tenant string) (store.KeyBackend, error) {
+	if b.scopes == nil {
+		return b.keyBackend, nil
+	}
+	keys, err := b.scopes.KeyStore(tenant)
+	if err != nil {
+		return nil, &ScopeError{Tenant: tenant, Err: err}
+	}
+	return keys, nil
+}
+
+// ListKeys returns attributes for all keys managed by this backend. With a
+// scope provider it lists the system scope's keys, then every tenant scope's
+// keys with TenantID set, each carrying the TPM policy its registry
+// assignment records; the policy service's own objects are never listed.
 func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -426,6 +492,33 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		return nil, ErrNotInitialized
 	}
 
+	keys, err := b.listSystemKeys()
+	if err != nil || b.scopes == nil {
+		return keys, err
+	}
+	if err := b.applyAssignments(ctx, "", keys); err != nil {
+		return nil, err
+	}
+	scopes, err := b.scopes.Scopes(ctx)
+	if err != nil {
+		return nil, &ScopeError{Err: err}
+	}
+	for _, tenant := range scopes {
+		if isSystemTenant(tenant) {
+			continue
+		}
+		tenantKeys, err := b.listTenantKeys(ctx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, tenantKeys...)
+	}
+	return keys, nil
+}
+
+// listSystemKeys enumerates the private blobs in the backend's key
+// directory: the system scope's keys.
+func (b *Backend) listSystemKeys() ([]*types.KeyAttributes, error) {
 	// List files in the key directory with .blob extension (private blobs).
 	// Prefer the keyDir field (set by both constructors); fall back to the
 	// config for backends built directly with a Config. When a backend is
@@ -454,59 +547,113 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		}
 		name := entry.Name()
 		// Look for private blob files
-		if ext := filepath.Ext(name); ext == store.FSEXT_PRIVATE_BLOB {
-			cn := name[:len(name)-len(ext)]
-			attrs := &types.KeyAttributes{
-				CN:        cn,
-				StoreType: types.StoreTPM2,
+		ext := filepath.Ext(name)
+		if ext != store.FSEXT_PRIVATE_BLOB {
+			continue
+		}
+		cn := name[:len(name)-len(ext)]
+		if b.scopes != nil && tpmpolicy.IsReservedObject(cn) {
+			continue
+		}
+		keys = append(keys, listedKey(b.keyBackend, cn, ""))
+	}
+	return keys, nil
+}
 
-				// Exportable is unconditionally false and Sensitive is
-				// unconditionally true for every key this backend enumerates,
-				// truthfully reporting what this backend's API surface can
-				// ever do rather than echoing whatever policy a caller once
-				// asked for at creation (go-xkms#932).
-				//
-				// GenerateKey builds every key from KeyTemplateSpec.Template
-				// (pkg/tpm2/template.go), which sets FixedTPM=true and
-				// FixedParent=true unconditionally -- TCG TPM 2.0 Library
-				// Part 2 12.2.3.5's flags for "may never leave this TPM" and
-				// "may never leave this parent" -- so a generated key is
-				// hardware-non-duplicable regardless of what attrs.Exportable
-				// the caller requested. ImportKey's sealed-keyedhash objects
-				// (buildSealedDuplicate) are built without those flags and so
-				// are duplicable at the TPM level, but ExportKey
-				// (importexport.go) refuses every key unconditionally with
-				// ErrExportNotSupported once the Exportable policy check
-				// passes -- there is no code path through this backend's API
-				// that ever returns key material for any key, generated or
-				// imported. Exportable=true would therefore be a promise this
-				// backend cannot keep for any key it manages.
-				//
-				// Sensitive=true mirrors the same fact from the other
-				// direction: ExportKeyMaterial (importexport.go) refuses
-				// every key unconditionally too, so plaintext is never
-				// released through this backend's API for any key.
-				Exportable: false,
-				Sensitive:  true,
-			}
-			// Recover the key algorithm from the persisted public blob so that
-			// downstream consumers (e.g. DeleteKey, which branches on
-			// KeyAlgorithm to choose the load-vs-unseal delete path) operate on
-			// the correct key type. This is best-effort: a missing or malformed
-			// public blob, or a sealed/keyedhash object, leaves KeyAlgorithm
-			// unset and must not fail enumeration.
-			if algo, ok := b.keyAlgorithmFromPublicBlob(cn); ok {
-				attrs.KeyAlgorithm = algo
-			}
-			// Recover the PIV slot from the "piv-<slot>" CN convention.
-			if strings.HasPrefix(cn, pivCNPrefix) {
-				attrs.PIVSlot = cn[len(pivCNPrefix):]
-			}
-			keys = append(keys, attrs)
+// listTenantKeys returns the keys the registry records in tenant's scope.
+func (b *Backend) listTenantKeys(ctx context.Context, tenant string) ([]*types.KeyAttributes, error) {
+	assignments, err := b.scopes.Assignments(ctx, tenant)
+	if err != nil {
+		return nil, &ScopeError{Tenant: tenant, Err: err}
+	}
+	keyStore, err := b.keyStore(tenant)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]*types.KeyAttributes, 0, len(assignments))
+	for _, a := range assignments {
+		if a.Kind != tpmpolicy.ObjectKey {
+			continue
+		}
+		attrs := listedKey(keyStore, strings.TrimPrefix(a.ObjectID, string(a.Kind)+"/"), tenant)
+		attrs.TPMPolicy = a.Policy
+		keys = append(keys, attrs)
+	}
+	return keys, nil
+}
+
+// applyAssignments sets the TPM policy the registry records on each of
+// tenant's listed keys that has an assignment.
+func (b *Backend) applyAssignments(ctx context.Context, tenant string, keys []*types.KeyAttributes) error {
+	assignments, err := b.scopes.Assignments(ctx, tenant)
+	if err != nil {
+		return &ScopeError{Tenant: tenant, Err: err}
+	}
+	policies := make(map[string]string, len(assignments))
+	for _, a := range assignments {
+		if a.Kind == tpmpolicy.ObjectKey {
+			policies[strings.TrimPrefix(a.ObjectID, string(a.Kind)+"/")] = a.Policy
 		}
 	}
+	for _, attrs := range keys {
+		if policy, ok := policies[attrs.CN]; ok {
+			attrs.TPMPolicy = policy
+		}
+	}
+	return nil
+}
 
-	return keys, nil
+// listedKey returns the attributes a key listing reports for the key cn of
+// tenant, whose blobs are in keys.
+func listedKey(keys store.KeyBackend, cn, tenant string) *types.KeyAttributes {
+	attrs := &types.KeyAttributes{
+		CN:        cn,
+		TenantID:  tenant,
+		StoreType: types.StoreTPM2,
+
+		// Exportable is unconditionally false and Sensitive is
+		// unconditionally true for every key this backend enumerates,
+		// truthfully reporting what this backend's API surface can
+		// ever do rather than echoing whatever policy a caller once
+		// asked for at creation (go-xkms#932).
+		//
+		// GenerateKey builds every key from KeyTemplateSpec.Template
+		// (pkg/tpm2/template.go), which sets FixedTPM=true and
+		// FixedParent=true unconditionally -- TCG TPM 2.0 Library
+		// Part 2 12.2.3.5's flags for "may never leave this TPM" and
+		// "may never leave this parent" -- so a generated key is
+		// hardware-non-duplicable regardless of what attrs.Exportable
+		// the caller requested. ImportKey's sealed-keyedhash objects
+		// (buildSealedDuplicate) are built without those flags and so
+		// are duplicable at the TPM level, but ExportKey
+		// (importexport.go) refuses every key unconditionally with
+		// ErrExportNotSupported once the Exportable policy check
+		// passes -- there is no code path through this backend's API
+		// that ever returns key material for any key, generated or
+		// imported. Exportable=true would therefore be a promise this
+		// backend cannot keep for any key it manages.
+		//
+		// Sensitive=true mirrors the same fact from the other
+		// direction: ExportKeyMaterial (importexport.go) refuses
+		// every key unconditionally too, so plaintext is never
+		// released through this backend's API for any key.
+		Exportable: false,
+		Sensitive:  true,
+	}
+	// Recover the key algorithm from the persisted public blob so that
+	// downstream consumers (e.g. DeleteKey, which branches on
+	// KeyAlgorithm to choose the load-vs-unseal delete path) operate on
+	// the correct key type. This is best-effort: a missing or malformed
+	// public blob, or a sealed/keyedhash object, leaves KeyAlgorithm
+	// unset and must not fail enumeration.
+	if algo, ok := keyAlgorithmFromPublicBlob(keys, cn); ok {
+		attrs.KeyAlgorithm = algo
+	}
+	// Recover the PIV slot from the "piv-<slot>" CN convention.
+	if strings.HasPrefix(cn, pivCNPrefix) {
+		attrs.PIVSlot = cn[len(pivCNPrefix):]
+	}
+	return attrs
 }
 
 // pivCNPrefix is the common-name prefix used for TPM2-backed PIV keys. The
@@ -515,15 +662,16 @@ const pivCNPrefix = "piv-"
 
 // keyAlgorithmFromPublicBlob recovers the X.509 public-key algorithm of a
 // persisted key by unmarshaling its stored TPM2B_PUBLIC blob
-// (store.FSEXT_PUBLIC_BLOB). It is best-effort: any failure, or a non-asymmetric
-// object such as a sealed/keyedhash key, returns (UnknownPublicKeyAlgorithm,
-// false) so that callers fall back to their existing behavior without erroring.
-func (b *Backend) keyAlgorithmFromPublicBlob(cn string) (x509.PublicKeyAlgorithm, bool) {
-	if b.keyBackend == nil {
+// (store.FSEXT_PUBLIC_BLOB) from keys. It is best-effort: any failure, or a
+// non-asymmetric object such as a sealed/keyedhash key, returns
+// (UnknownPublicKeyAlgorithm, false) so that callers fall back to their
+// existing behavior without erroring.
+func keyAlgorithmFromPublicBlob(keys store.KeyBackend, cn string) (x509.PublicKeyAlgorithm, bool) {
+	if keys == nil {
 		return x509.UnknownPublicKeyAlgorithm, false
 	}
 
-	pubBytes, err := b.keyBackend.Get(&types.KeyAttributes{CN: cn}, store.FSEXT_PUBLIC_BLOB)
+	pubBytes, err := keys.Get(&types.KeyAttributes{CN: cn}, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
 		return x509.UnknownPublicKeyAlgorithm, false
 	}
@@ -645,8 +793,10 @@ func (s *tpm2Signer) Public() crypto.PublicKey {
 	return s.publicKey
 }
 
-// Sign signs digest with the private key using the TPM.
-func (s *tpm2Signer) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+// Sign signs digest with the private key using the TPM. The key's TPM scope
+// is opened for this call only, so a signer held across calls never pins a
+// tenant's storage key in the TPM.
+func (s *tpm2Signer) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (_ []byte, err error) {
 	s.backend.mu.RLock()
 	defer s.backend.mu.RUnlock()
 
@@ -654,19 +804,25 @@ func (s *tpm2Signer) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts)
 		return nil, ErrNotInitialized
 	}
 
-	// Create TPM signer opts
-	signerOpts := &store.SignerOpts{
-		KeyAttributes: s.attrs,
-		Backend:       s.backend.keyBackend,
-	}
-
 	// If opts contains hash info, use it
 	if opts != nil {
 		s.attrs.Hash = opts.HashFunc()
 	}
 
+	scope, err := s.backend.scope(context.Background(), s.attrs.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, scope.close()) }()
+
+	// Create TPM signer opts
+	signerOpts := &store.SignerOpts{
+		KeyAttributes: scope.bind(s.attrs),
+		Backend:       scope.keys,
+	}
+
 	// Sign using TPM
-	signature, err := s.backend.tpm.Sign(rand, digest, signerOpts)
+	signature, err := scope.tpm.Sign(rand, digest, signerOpts)
 	if err != nil {
 		// A TPM that cannot perform the requested operation at all is a
 		// capability boundary, not a device fault, and callers have to be able
@@ -699,8 +855,9 @@ type tpm2Decrypter struct {
 	*tpm2Signer
 }
 
-// Decrypt decrypts ciphertext with the private key using the TPM.
-func (d *tpm2Decrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.DecrypterOpts) ([]byte, error) {
+// Decrypt decrypts ciphertext with the private key using the TPM. Like Sign,
+// it opens the key's TPM scope for this call only.
+func (d *tpm2Decrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.DecrypterOpts) (_ []byte, err error) {
 	d.backend.mu.RLock()
 	defer d.backend.mu.RUnlock()
 
@@ -708,32 +865,38 @@ func (d *tpm2Decrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.D
 		return nil, ErrNotInitialized
 	}
 
-	// For RSA keys, use TPM's RSADecrypt
-	if d.attrs.KeyAlgorithm == x509.RSA {
-		// Load the key first to get the handle
-		loadResp, err := d.backend.tpm.LoadKeyPair(d.attrs, nil, d.backend.keyBackend)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to load key", Err: err}
-		}
-		defer d.backend.tpm.Flush(loadResp.ObjectHandle)
-
-		// Read the public to get the name
-		pub, err := tpm2.ReadPublic{
-			ObjectHandle: loadResp.ObjectHandle,
-		}.Execute(d.backend.tpm.Transport())
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to read public", Err: err}
-		}
-
-		// Decrypt
-		plaintext, err := d.backend.tpm.RSADecrypt(loadResp.ObjectHandle, pub.Name, ciphertext)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "TPM decrypt failed", Err: err}
-		}
-		return plaintext, nil
+	// Only RSA keys decrypt, through the TPM's RSADecrypt.
+	if d.attrs.KeyAlgorithm != x509.RSA {
+		return nil, &errs.Detail{Err: ErrDecryptionNotSupported, Detail: "only RSA decryption is supported"}
 	}
 
-	return nil, &errs.Detail{Err: ErrDecryptionNotSupported, Detail: "only RSA decryption is supported"}
+	scope, err := d.backend.scope(context.Background(), d.attrs.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, scope.close()) }()
+
+	// Load the key first to get the handle
+	loadResp, err := scope.tpm.LoadKeyPair(scope.bind(d.attrs), nil, scope.keys)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to load key", Err: err}
+	}
+	defer scope.tpm.Flush(loadResp.ObjectHandle)
+
+	// Read the public to get the name
+	pub, err := tpm2.ReadPublic{
+		ObjectHandle: loadResp.ObjectHandle,
+	}.Execute(scope.tpm.Transport())
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to read public", Err: err}
+	}
+
+	// Decrypt
+	plaintext, err := scope.tpm.RSADecrypt(loadResp.ObjectHandle, pub.Name, ciphertext)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "TPM decrypt failed", Err: err}
+	}
+	return plaintext, nil
 }
 
 // =============================================================================
@@ -756,7 +919,7 @@ func (d *tpm2Decrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.D
 // Per TCG TPM 2.0 specification Part 3, section 14.5, the TPM2_ECDH_ZGen
 // command computes Z = [privateKey]Q where Q is the peer's public key point.
 // The shared secret is the X coordinate of Z (per NIST SP 800-56A).
-func (b *Backend) DeriveKeyECDH(ctx context.Context, privateKeyAttrs *types.KeyAttributes, peerPublicKey []byte, kdfParams *types.KDFParams) ([]byte, error) {
+func (b *Backend) DeriveKeyECDH(ctx context.Context, privateKeyAttrs *types.KeyAttributes, peerPublicKey []byte, kdfParams *types.KDFParams) (_ []byte, err error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -781,10 +944,11 @@ func (b *Backend) DeriveKeyECDH(ctx context.Context, privateKeyAttrs *types.KeyA
 		return nil, &errs.Wrapped{Msg: "invalid KDF parameters", Err: err}
 	}
 
-	// Set parent to SRK if not specified
-	if privateKeyAttrs.Parent == nil {
-		privateKeyAttrs.Parent = b.srkAttrs
+	scope, err := b.scope(ctx, privateKeyAttrs.TenantID)
+	if err != nil {
+		return nil, err
 	}
+	defer func() { err = errors.Join(err, scope.close()) }()
 
 	// Set store type
 	privateKeyAttrs.StoreType = types.StoreTPM2
@@ -803,7 +967,7 @@ func (b *Backend) DeriveKeyECDH(ctx context.Context, privateKeyAttrs *types.KeyA
 	}
 
 	// Perform ECDH key agreement using TPM2_ECDH_ZGen
-	sharedSecret, err := b.tpm.ECDHZGen(privateKeyAttrs, eccPoint, b.keyBackend)
+	sharedSecret, err := scope.tpm.ECDHZGen(scope.bind(privateKeyAttrs), eccPoint, scope.keys)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "ECDH key agreement failed", Err: err}
 	}
@@ -892,8 +1056,10 @@ func (b *Backend) applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte
 	return params.Derive(sharedSecret)
 }
 
-// GenerateSymmetricKey generates a new symmetric key in the TPM.
-func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+// GenerateSymmetricKey generates a new symmetric key in the TPM. With a scope
+// provider it is generated in the TPM scope of attrs.TenantID and its policy
+// assignment is recorded.
+func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (_ types.SymmetricKey, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -904,23 +1070,37 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
-
-	// The key is sealed under the Platform SRK: b.srkAttrs carries its USER
-	// PIN when the PlatformKeyStore has one, otherwise creation is authorized
-	// through its platform PCR policy. pkg/tpm2 refuses any other parent
-	// (ErrSymmetricKeyParent).
-	if attrs.Parent == nil {
-		attrs.Parent = b.srkAttrs
+	if err := b.refuseReserved(attrs); err != nil {
+		return nil, err
 	}
 
 	attrs.StoreType = types.StoreTPM2
 	applyDefaultTPMPolicy(attrs)
 
-	return b.tpm.GenerateSymmetricKey(attrs)
+	// The key is sealed under the scope's Platform SRK: its attributes carry
+	// its USER PIN when the PlatformKeyStore has one, otherwise creation is
+	// authorized through its platform PCR policy. pkg/tpm2 refuses any other
+	// parent (ErrSymmetricKeyParent), which is why a shared tenant is
+	// refused here.
+	scope, err := b.symmetricScope(ctx, attrs.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, scope.close()) }()
+
+	bound := scope.bind(attrs)
+	key, err := scope.tpm.GenerateSymmetricKey(bound)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.recordKey(ctx, scope, bound); err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 
 // GetSymmetricKey retrieves an existing symmetric key from the TPM.
-func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttributes) (_ types.SymmetricKey, err error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -932,17 +1112,19 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		return nil, ErrInvalidKeyAttributes
 	}
 
-	if attrs.Parent == nil {
-		attrs.Parent = b.srkAttrs
+	scope, err := b.symmetricScope(ctx, attrs.TenantID)
+	if err != nil {
+		return nil, err
 	}
+	defer func() { err = errors.Join(err, scope.close()) }()
 
 	attrs.StoreType = types.StoreTPM2
 
-	return b.tpm.GetSymmetricKey(attrs)
+	return scope.tpm.GetSymmetricKey(scope.bind(attrs))
 }
 
 // SymmetricEncrypter returns a SymmetricEncrypter for the key identified by attrs.
-func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (_ types.SymmetricEncrypter, err error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -955,14 +1137,30 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 	}
 
 	// Every Encrypt and Decrypt loads the sealed key under this parent, the
-	// Platform SRK, with its USER PIN or platform PCR policy.
-	if attrs.Parent == nil {
-		attrs.Parent = b.srkAttrs
+	// scope's Platform SRK, with its USER PIN or platform PCR policy. It is
+	// persistent, so the encrypter outlives the scope's close.
+	scope, err := b.symmetricScope(ctx, attrs.TenantID)
+	if err != nil {
+		return nil, err
 	}
+	defer func() { err = errors.Join(err, scope.close()) }()
 
 	attrs.StoreType = types.StoreTPM2
 
-	return b.tpm.SymmetricEncrypter(attrs)
+	return scope.tpm.SymmetricEncrypter(scope.bind(attrs))
+}
+
+// symmetricScope resolves the scope of a symmetric key operation, refusing a
+// shared tenant, which owns no Platform SRK to seal the key under.
+func (b *Backend) symmetricScope(ctx context.Context, tenant string) (*keyScope, error) {
+	scope, err := b.scope(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	if err := scope.refuseSymmetric(); err != nil {
+		return nil, errors.Join(err, scope.close())
+	}
+	return scope, nil
 }
 
 // GetTracker returns the AEAD safety tracker for this backend.

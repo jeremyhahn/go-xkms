@@ -65,10 +65,10 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	clustercapkg "github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -329,8 +329,9 @@ type Server struct {
 	// was never built.
 	platformStoreTPMClose func() error
 
-	// Policy manager
-	policyManager *policy.Manager
+	// tpmPolicies is the TPM policy service over the TPM2 key backend; nil
+	// without one. See initTPMPolicyService.
+	tpmPolicies *tpmpolicy.Service
 
 	// Health checker
 	healthChecker *qrdbsdk.HealthChecker
@@ -771,11 +772,11 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "pkcs11 state store", Err: err}
 	}
 
-	// Initialize policy manager
-	if err := s.initializePolicyManager(); err != nil {
+	// Initialize the TPM policy service
+	if err := s.initTPMPolicyService(); err != nil {
 		cancel()
 		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "policy manager", Err: err}
+		return nil, &ErrServiceInit{Service: "tpm policy service", Err: err}
 	}
 
 	// Initialize external key escrow agents (optional)
@@ -949,7 +950,7 @@ func (s *Server) composedStores() *compose.Stores {
 		PlatformStore:   s.platformStore,
 		Credentials:     s.credentialService,
 		CA:              s.ca,
-		Policies:        s.policyManager,
+		TPMPolicies:     s.tpmPolicies,
 		Barrier:         s.barrier,
 	}
 	// xkmsd serves share custody over its own node whenever it has one.
@@ -1831,29 +1832,6 @@ func (s *Server) initializeCredentialService() error {
 	return nil
 }
 
-// initializePolicyManager builds the PCR policy manager (/api/v1/policies/*)
-// through compose.BuildPolicyManager, the path an embedding host's
-// WithPCRReader takes. The PCR reader is xkmsd's configured TPM; without
-// one, policies stay off and the typed reason is logged.
-func (s *Server) initializePolicyManager() error {
-	reader, err := s.tpmPCRReader()
-	if err != nil {
-		return &ErrServiceInit{Service: "policy manager", Err: err}
-	}
-	if reader == nil {
-		disabled := &compose.FeatureDisabledError{Feature: compose.FeaturePolicies, Missing: "PCR reader (no TPM is configured)"}
-		s.logger.Info("xkms feature off", "feature", compose.FeaturePolicies, "reason", disabled.Error())
-		return nil
-	}
-	manager, err := compose.BuildPolicyManager(s.createStorage, reader)
-	if err != nil {
-		return &ErrServiceInit{Service: "policy manager", Err: err}
-	}
-	s.policyManager = manager
-	s.logger.Info("xkms feature on", "feature", compose.FeaturePolicies, "pcr_reader", "tpm2")
-	return nil
-}
-
 // initializeEscrow builds the external key-escrow agent registry
 // (pkg/escrow) from config.Escrow. Escrow is optional: when the section is
 // nil or Enabled is false, NewRegistryFromConfig returns a nil registry and
@@ -1929,11 +1907,6 @@ func (s *Server) PasswordStore() *staticpw.BackendStore {
 // PlatformStore returns the platform store instance.
 func (s *Server) PlatformStore() seal.PlatformStore {
 	return s.platformStore
-}
-
-// PolicyManager returns the policy manager instance.
-func (s *Server) PolicyManager() *policy.Manager {
-	return s.policyManager
 }
 
 // SetCA sets the Certificate Authority for CA-backed TLS and certificate operations.
@@ -3805,6 +3778,7 @@ func (s *Server) shutdown() error {
 // shared qrdb storage backend. closeQRDBStorage is idempotent, so callers may
 // invoke closeBackends on any error path without double-close concerns.
 func (s *Server) closeBackends() {
+	s.closeTPMPolicies()
 	for name, backend := range s.keyProviders {
 		s.logger.Info("Closing key provider...", "key_provider", name)
 		if err := backend.Close(); err != nil {

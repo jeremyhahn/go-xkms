@@ -14,13 +14,20 @@
 package server
 
 import (
+	"path/filepath"
+
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
-	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 )
 
-// A TPM's BankPCRReader is the PCR reader PCR policies take.
-var _ policy.PCRReader = (*pkgtpm2.BankPCRReader)(nil)
+// vtpmStateSubdir and vtpmRunSubdir are the default vTPM state and socket
+// directories under the configured storage path.
+const (
+	vtpmStateSubdir = "vtpm"
+	vtpmRunSubdir   = "vtpm-run"
+)
 
 // tpm2KeyDirSubdir is the fixed subdirectory, under the configured storage
 // path, where the TPM2 backend and the TPM2 node-barrier seal strategy
@@ -116,17 +123,71 @@ func (s *Server) initTPM2Backend() error {
 	return nil
 }
 
-// tpmPCRReader returns a PCR reader over the TPM the TPM2 backend opened, or
-// nil when xkmsd has no TPM2 backend. It reads through the backend's single
-// TPM open, so policies never open the device a second time.
-func (s *Server) tpmPCRReader() (policy.PCRReader, error) {
+// initTPMPolicyService builds the TPM policy service (pkg/tpmpolicy) over
+// the TPM2 key backend through compose.BuildTPMPolicyService -- the path an
+// embedding host's module takes -- and installs it as the backend's scope
+// provider, so every TPM2 key and seal runs in its tenant's TPM scope.
+// Without a TPM2 backend the service stays off and the typed reason is
+// logged.
+func (s *Server) initTPMPolicyService() error {
 	backend, ok := s.keyProviders["tpm2"].(*tpm2backend.Backend)
 	if !ok {
-		return nil, nil
+		disabled := &compose.FeatureDisabledError{Feature: compose.FeatureTPMPolicies, Missing: "TPM2 backend (backends.tpm2 is not enabled)"}
+		s.logger.Info("xkms feature off", "feature", compose.FeatureTPMPolicies, "reason", disabled.Error())
+		return nil
 	}
-	reader, err := pkgtpm2.NewBankPCRReader(backend.TPM())
+	svc, err := compose.BuildTPMPolicyService(compose.TPMPolicyParams{
+		Backend: backend,
+		Storage: s.createStorage,
+		VTPM:    s.vtpmConfig(),
+		Logger:  s.logger,
+	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return reader, nil
+	s.tpmPolicies = svc
+	s.logger.Info("xkms feature on", "feature", compose.FeatureTPMPolicies, "vtpm", s.vtpmConfig() != nil)
+	return nil
+}
+
+// vtpmConfig resolves backends.tpm2.vtpm into the vTPM supervisor's
+// configuration, applying the storage-path defaults. It is nil -- vtpm mode
+// unavailable -- unless the section enables vTPMs.
+func (s *Server) vtpmConfig() *vtpm.Config {
+	tpmCfg := s.config.Backends.TPM2
+	if tpmCfg == nil || tpmCfg.VTPM == nil || !tpmCfg.VTPM.Enabled {
+		return nil
+	}
+	cfg := &vtpm.Config{
+		Binary:   tpmCfg.VTPM.Binary,
+		StateDir: tpmCfg.VTPM.StateDir,
+		RunDir:   tpmCfg.VTPM.RunDir,
+		Logger:   s.logger,
+	}
+	if cfg.StateDir == "" {
+		cfg.StateDir = filepath.Join(s.config.Storage.Path, vtpmStateSubdir)
+	}
+	if cfg.RunDir == "" {
+		cfg.RunDir = filepath.Join(s.config.Storage.Path, vtpmRunSubdir)
+	}
+	return cfg
+}
+
+// closeTPMPolicies closes the TPM policy service -- its open scopes and
+// vTPMs -- before the TPM it runs over is closed. Idempotent.
+func (s *Server) closeTPMPolicies() {
+	if s.tpmPolicies == nil {
+		return
+	}
+	svc := s.tpmPolicies
+	s.tpmPolicies = nil
+	if err := svc.Close(); err != nil {
+		s.logger.Error("Error closing the TPM policy service", "error", err)
+	}
+}
+
+// TPMPolicyService returns the TPM policy service, or nil when xkmsd has no
+// TPM2 backend.
+func (s *Server) TPMPolicyService() *tpmpolicy.Service {
+	return s.tpmPolicies
 }

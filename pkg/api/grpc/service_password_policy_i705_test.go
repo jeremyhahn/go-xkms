@@ -27,21 +27,19 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// This file covers pkg/api/grpc/service_password.go and service_policy.go
-// (go-xkms#705, batch 4): every existing test in service_password_test.go
-// and service_policy_test.go builds its Service around either a nil
-// xkmsService (proving only the "unavailable" guard) or a nil request
-// (proving only validation), so the RPC bodies that actually call into
-// XKMSService and translate its response/error back to protobuf were never
-// exercised. These tests wire a real XKMSService backed by an in-memory
-// password store and a PCR policy manager with a fake PCRReader, so the
-// success paths and the domain-error -> gRPC-status mappings run for real.
+// This file covers pkg/api/grpc/service_password.go (go-xkms#705, batch 4):
+// every existing test in service_password_test.go builds its Service around
+// either a nil xkmsService (proving only the "unavailable" guard) or a nil
+// request (proving only validation), so the RPC bodies that actually call
+// into XKMSService and translate its response/error back to protobuf were
+// never exercised. These tests wire a real XKMSService backed by an
+// in-memory password store, so the success paths and the domain-error ->
+// gRPC-status mappings run for real.
 
 // --- Password success/error-mapping coverage ---
 
@@ -230,172 +228,6 @@ func TestServicePasswordStoreSetAccessMode_UnsupportedOnSystemStore(t *testing.T
 	// the effective one and is reported as unsupported rather than applied.
 	_, err := svc.PasswordStoreSetAccessMode(context.Background(), &pb.PasswordStoreSetAccessModeRequest{Mode: string(staticpw.AccessSessionBased)})
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-// --- Policy success/error-mapping coverage ---
-
-// fakePCRReader is a minimal policy.PCRReader that returns configured PCR
-// values without touching real TPM hardware.
-type fakePCRReader struct {
-	values map[int][]byte
-}
-
-func (f *fakePCRReader) ReadPCRs(_ string, indices []int) (map[int][]byte, error) {
-	out := make(map[int][]byte, len(indices))
-	for _, idx := range indices {
-		if v, ok := f.values[idx]; ok {
-			out[idx] = v
-		} else {
-			out[idx] = []byte{0x00, 0x01, 0x02, 0x03}
-		}
-	}
-	return out, nil
-}
-
-// newPolicyGRPCService wires a fresh XKMSService over a PCR policy manager
-// backed by an in-memory policy store and a fake PCR reader.
-func newPolicyGRPCService(t *testing.T) *Service {
-	t.Helper()
-	reader := &fakePCRReader{values: map[int][]byte{0: {0xaa}, 7: {0xbb}}}
-	mgr, err := policy.NewManager(reader, policy.NewMemoryPolicyStore())
-	require.NoError(t, err)
-	xkmsSvc := &xkms.XKMSService{}
-	xkmsSvc.SetPolicyManager(mgr)
-	return NewService(nil, nil, xkmsSvc)
-}
-
-func TestServicePolicyCreate_Success(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	resp, err := svc.PolicyCreate(context.Background(), &pb.PolicyCreateRequest{
-		Name: "boot-policy", Bank: "sha256", Pcrs: []int32{0, 7},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "boot-policy", resp.Name)
-	assert.Equal(t, "sha256", resp.Bank)
-	assert.ElementsMatch(t, []int32{0, 7}, resp.Pcrs)
-	assert.NotEmpty(t, resp.CreatedAt)
-}
-
-func TestServicePolicyCreate_Duplicate(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	req := &pb.PolicyCreateRequest{Name: "boot-policy", Bank: "sha256", Pcrs: []int32{0}}
-	_, err := svc.PolicyCreate(context.Background(), req)
-	require.NoError(t, err)
-
-	_, err = svc.PolicyCreate(context.Background(), req)
-	assert.Equal(t, codes.AlreadyExists, status.Code(err))
-}
-
-func TestServicePolicyCreate_InvalidBank(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyCreate(context.Background(), &pb.PolicyCreateRequest{
-		Name: "boot-policy", Bank: "sha1-legacy", Pcrs: []int32{0},
-	})
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServicePolicyGet_Success(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyCreate(context.Background(), &pb.PolicyCreateRequest{Name: "boot-policy", Bank: "sha256", Pcrs: []int32{0}})
-	require.NoError(t, err)
-
-	resp, err := svc.PolicyGet(context.Background(), &pb.PolicyGetRequest{Name: "boot-policy"})
-	require.NoError(t, err)
-	assert.Equal(t, "boot-policy", resp.Name)
-}
-
-func TestServicePolicyGet_NotFound(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyGet(context.Background(), &pb.PolicyGetRequest{Name: "missing"})
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestServicePolicyList_Success(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyCreate(context.Background(), &pb.PolicyCreateRequest{Name: "a", Bank: "sha256", Pcrs: []int32{0}})
-	require.NoError(t, err)
-	_, err = svc.PolicyCreate(context.Background(), &pb.PolicyCreateRequest{Name: "b", Bank: "sha256", Pcrs: []int32{7}})
-	require.NoError(t, err)
-
-	resp, err := svc.PolicyList(context.Background(), &pb.PolicyListRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, int32(2), resp.Total)
-	assert.Len(t, resp.Policies, 2)
-}
-
-func TestServicePolicyList_EmptyStore(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	resp, err := svc.PolicyList(context.Background(), &pb.PolicyListRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, int32(0), resp.Total)
-	assert.Empty(t, resp.Policies)
-}
-
-func TestServicePolicyDelete_Success(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyCreate(context.Background(), &pb.PolicyCreateRequest{Name: "boot-policy", Bank: "sha256", Pcrs: []int32{0}})
-	require.NoError(t, err)
-
-	_, err = svc.PolicyDelete(context.Background(), &pb.PolicyDeleteRequest{Name: "boot-policy"})
-	require.NoError(t, err)
-
-	_, err = svc.PolicyGet(context.Background(), &pb.PolicyGetRequest{Name: "boot-policy"})
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestServicePolicyDelete_NotFound(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyDelete(context.Background(), &pb.PolicyDeleteRequest{Name: "missing"})
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestServicePolicyRefresh_Success(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyCreate(context.Background(), &pb.PolicyCreateRequest{Name: "boot-policy", Bank: "sha256", Pcrs: []int32{0}})
-	require.NoError(t, err)
-
-	resp, err := svc.PolicyRefresh(context.Background(), &pb.PolicyRefreshRequest{Name: "boot-policy"})
-	require.NoError(t, err)
-	assert.Equal(t, "boot-policy", resp.Name)
-}
-
-func TestServicePolicyRefresh_NotFound(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyRefresh(context.Background(), &pb.PolicyRefreshRequest{Name: "missing"})
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestServicePolicyVerify_Success(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyCreate(context.Background(), &pb.PolicyCreateRequest{Name: "boot-policy", Bank: "sha256", Pcrs: []int32{0}})
-	require.NoError(t, err)
-
-	resp, err := svc.PolicyVerify(context.Background(), &pb.PolicyVerifyRequest{Name: "boot-policy"})
-	require.NoError(t, err)
-	assert.True(t, resp.Valid)
-	assert.Equal(t, "boot-policy", resp.Name)
-}
-
-func TestServicePolicyVerify_NotFound(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyVerify(context.Background(), &pb.PolicyVerifyRequest{Name: "missing"})
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestServicePolicyExport_Success(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyCreate(context.Background(), &pb.PolicyCreateRequest{Name: "boot-policy", Bank: "sha256", Pcrs: []int32{0}})
-	require.NoError(t, err)
-
-	resp, err := svc.PolicyExport(context.Background(), &pb.PolicyExportRequest{Name: "boot-policy"})
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.Data)
-}
-
-func TestServicePolicyExport_NotFound(t *testing.T) {
-	svc := newPolicyGRPCService(t)
-	_, err := svc.PolicyExport(context.Background(), &pb.PolicyExportRequest{Name: "missing"})
-	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 // --- mapBootstrapError / mapSealStoreError pure-function coverage ---

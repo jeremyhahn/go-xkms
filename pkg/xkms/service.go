@@ -35,11 +35,11 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -112,7 +112,7 @@ type XKMSService struct {
 	users           qrdbtransport.UserClient
 	roles           qrdbtransport.RoleClient
 	platformStore   subsystem[seal.PlatformStore]
-	policyManager   subsystem[*policy.Manager]
+	tpmPolicies     subsystem[*tpmpolicy.Service]
 	webauthnService *webauthn.Service
 	custodians      subsystem[qrdbtransport.CustodianGroupClient]
 	shares          subsystem[qrdbtransport.ShareClient]
@@ -295,9 +295,6 @@ func (s *XKMSService) SetTokenIssuer(issuer *token.Issuer) { s.tokenIssuer = iss
 
 // SetPlatformStore sets the sealed platform credential store subsystem.
 func (s *XKMSService) SetPlatformStore(p seal.PlatformStore) { s.platformStore.store(p) }
-
-// SetPolicyManager sets the PCR policy management subsystem.
-func (s *XKMSService) SetPolicyManager(p *policy.Manager) { s.policyManager.store(p) }
 
 // SetEscrowRegistry wires the external key-escrow agent registry
 // (pkg/escrow) into the service.

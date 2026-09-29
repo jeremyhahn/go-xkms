@@ -267,7 +267,7 @@ Per-strategy credentials:
 | `shamir` | M-of-N shares |
 | `none` | none — encryption disabled |
 
-Seal policy (PCR selection, rebinding rules) is `pkg/seal/policy`.
+A TPM2 sealed object is bound to a named TPM policy (`pkg/tpmpolicy`, [`../tpm-policies/`](../tpm-policies/)) through `SealRequest.TPMPolicy`; the old PCR-selection seal fields were removed because they bound nothing.
 
 **TPM2 key directory.** Both the general TPM2 backend
 (`pkg/server/backend_tpm2.go`) and the node-barrier flip's `tpm2` strategy

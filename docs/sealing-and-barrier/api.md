@@ -126,65 +126,14 @@ Verified by `pkg/api/rest/handlers_certseal_crosstenant_test.go`,
 `pkg/xkms/servicer_certseal_tenant_test.go` and
 `pkg/xkms/backend_tenant_seal_test.go`.
 
-## PCR policy management
+## TPM policies
 
-TPM 2.0 PCR-bank sealed-secret authorization policies (`pkg/seal/policy`),
-wired onto every network transport by go-xkms#691. All seven RPCs gate on
-the `policy:*` permission family (`pkg/auth.ResourcePolicy`) — a resource
-name go-qrdb's canonical registry does not declare, so xkms mints and
-scopes it itself the way it already does for `bootstrap:read`
-(`pkg/apimodule/module_scopes.go`).
-
-| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`PolicyServicer.`) | Permission |
-|---|---|---|---|---|---|---|
-| Create | `POST /api/v1/policies/` | `PolicyCreate` | same as REST | `policy.create` | `PolicyCreate` | `policy:create` |
-| Get | `GET /api/v1/policies/{name}` | `PolicyGet` | same as REST | `policy.get` | `PolicyGet` | `policy:get` |
-| List | `GET /api/v1/policies/` | `PolicyList` | same as REST | `policy.list` | `PolicyList` | `policy:list` |
-| Delete | `DELETE /api/v1/policies/{name}` | `PolicyDelete` | same as REST | `policy.delete` | `PolicyDelete` | `policy:delete` |
-| Refresh | `POST /api/v1/policies/{name}/refresh` | `PolicyRefresh` | same as REST | `policy.refresh` | `PolicyRefresh` | `policy:refresh` |
-| Verify | `POST /api/v1/policies/{name}/verify` | `PolicyVerify` | same as REST | `policy.verify` | `PolicyVerify` | `policy:verify` |
-| Export | `GET /api/v1/policies/{name}/export` | `PolicyExport` | same as REST | `policy.export` | `PolicyExport` | `policy:export` |
-
-**Not served over USB.** The USB transport's counterparty is the xkey
-Android companion app — a Noise-encrypted JSON-RPC peer, not xkmsd, and one
-with no TPM to read PCRs from — so the entire Password/SealStore/Escrow/
-Policy administrative surface is out of scope there structurally, not by
-omission.
-
-**Escrow is a separate, open question.** `pkg/escrow`'s four operations
-(`EscrowKey`, `RecoverKey`, `ListEscrowed`, `RevokeEscrow`) remain stubbed
-`ErrNotSupported` on every transport pending go-xkms#692; they are unrelated
-to policy management beyond sharing a file section header in the transport
-source.
-
-`pkg/api/rest/policy_handlers.go` predates the convention every other REST
-handler group in this file follows (wiring `pkg/api/transport` request/
-response types straight onto the HTTP body): its JSON field names
-(`pcr_indices`, `pcr_values` as raw bytes) and its own local response types
-diverge from `transport.Policy*` (`pcrs`, `values` as a hex-encoded map).
-The REST and QUIC client transports translate between the two;
-`pkg/api/rest/wire`'s PCR Policy types document the mapping in full so it
-lives in exactly one place. The REST handlers now call the service and
-decode its hex values back into that wire shape (`pcrValuesFromHex`,
-`pkg/api/rest/policy_handlers.go`).
-
-**PCR policies are platform-scoped** (go-xkms#1227). They bind the platform's
-sealed secrets to its measured boot state, so every `Policy*` service method
-refuses a tenant-scoped caller before the policy manager is touched
-(`pkg/xkms/servicer_policy.go:42,66,84,106,120,138,160`); the REST handlers
-hold only the service (`pkg/api/rest/policy_handlers.go`). The refusal is
-REST `404` with the unknown-tenant message (`pkg/api/rest/policy_handlers.go:367`),
-gRPC `NotFound` and MCP `JSONRPCCodeNotFound` (`pkg/api/apierrors/tables.go:192`).
-
-The policy manager exists only where a PCR reader is supplied: an embedding
-host passes one with `WithServiceModulePCRReader`
-([`../host-embedding/`](../host-embedding/)); `xkmsd` uses its configured TPM
-(`backends.tpm2.enabled`) through `tpm2.BankPCRReader`
-(`pkg/tpm2/pcr_reader.go`, wired in `pkg/server/backend_tpm2.go`). Without a
-TPM, `xkmsd` logs `xkms feature off feature=policies` with the
-`compose.FeatureDisabledError` reason and the policy routes answer "not
-configured". Definitions persist durably through
-`policy.BackendPolicyStore` (`pkg/seal/policy/backend_store.go`).
+Named TPM policies that TPM2 keys and sealed objects are bound to
+(`pkg/tpmpolicy`) replaced the PCR snapshot store (`pkg/seal/policy`,
+`/api/v1/policies/*`, `Policy*`, `policy.*`), which bound nothing. The
+surface, its tenancy and its error mapping are in
+[`../tpm-policies/api.md`](../tpm-policies/api.md). A TPM2 seal names its
+policy in `SealRequest.TPMPolicy` on every transport.
 
 ## Tenant barriers
 

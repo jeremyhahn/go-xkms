@@ -215,16 +215,30 @@ func (t *TenantScopedBackend) GetDecrypterByID(ctx context.Context, keyID string
 // Sealing Operations
 // ========================================================================
 
+// TenantBoundSealer is implemented by a key provider that can report whether
+// the objects it seals are bound to the tenant that sealed them.
+type TenantBoundSealer interface {
+	// TenantBoundSealing reports whether a sealed object can be unsealed
+	// only in the tenant that sealed it.
+	TenantBoundSealing() bool
+}
+
 // sealBound refuses a base backend whose sealing is not bound to a key.
 //
 // Every key-based sealer (software, PKCS#11, the cloud KMSs) derives or
 // resolves its sealing key from KeyAttributes, so stamping this tenant on the
 // attributes confines a blob to the tenant that sealed it. TPM 2.0 sealing is
-// different: the blob is a keyed-hash object under the platform storage root,
-// and it unseals for anyone who presents it, whatever key they name. Passing
-// that through a tenant view would let one tenant unseal another's blob, so
-// the view refuses it instead (go-xkms#1228).
+// different: without TPM scopes the blob is a keyed-hash object under the
+// platform storage root, and it unseals for anyone who presents it, whatever
+// key they name. Passing that through a tenant view would let one tenant
+// unseal another's blob, so the view refuses it instead (go-xkms#1228). A TPM
+// backend with TPM scopes (pkg/tpmpolicy) seals each tenant's objects under
+// that tenant's own storage parent, which no other tenant can authorize, and
+// reports so through TenantBoundSealer.
 func (t *TenantScopedBackend) sealBound() error {
+	if bound, ok := t.base.KeyProvider().(TenantBoundSealer); ok && bound.TenantBoundSealing() {
+		return nil
+	}
 	if t.base.Type() == types.StoreTPM2 {
 		return &ErrBackendUnsupported{
 			Sentinel: ErrSealingNotSupported,

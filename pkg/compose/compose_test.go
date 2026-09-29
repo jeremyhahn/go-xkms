@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -60,7 +61,7 @@ func memoryStorage(t *testing.T) StorageFactory {
 func failingStorage(string) (storage.Backend, error) { return nil, errStorageDown }
 
 // platformCtx is a system-tenant caller: the platform-scoped subsystems
-// (platform store, policies, barrier) refuse every other caller.
+// (platform store, barrier) refuse every other caller.
 func platformCtx() context.Context {
 	return auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject:  "admin",
@@ -80,7 +81,6 @@ func fullDeps(t *testing.T, svc *xkms.XKMSService) Deps {
 		PlatformSealer:     &PlatformSealer{Strategy: "passphrase", Sealer: hostdeps.NewSealer(t)},
 		CredentialStrategy: "barrier",
 		CA:                 hostdeps.NewCAConfig("Compose Test Root"),
-		PCRReader:          hostdeps.PCRReader{0: {0xAA}},
 		Custodians:         custodians{},
 		Shares:             shares{},
 		ServeBarrier:       true,
@@ -97,12 +97,17 @@ func TestBuild_RequiresService(t *testing.T) {
 
 // TestBuild_EveryDependencyComposesEveryFeature proves a host that supplies
 // every dependency gets every feature, and that Wire makes each one answer
-// through the XKMSService rather than its "not configured" error.
+// through the XKMSService rather than its "not configured" error. The TPM
+// policy service needs a TPM, which only the simulator tests supply
+// (compose_tpm_sim_test.go), so here it is the one feature off.
 func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	svc := hostdeps.NewService(t)
 	st, err := Build(context.Background(), fullDeps(t, svc))
 	require.NoError(t, err)
-	require.Empty(t, st.Disabled, "no feature may be off when every dependency is supplied")
+	require.Len(t, st.Disabled, 1, "only the TPM policy service may be off: no TPM2 backend is supplied")
+	var disabled *FeatureDisabledError
+	require.ErrorAs(t, st.Disabled[0], &disabled)
+	assert.Equal(t, FeatureTPMPolicies, disabled.Feature)
 
 	assert.NotNil(t, st.PasswordStore)
 	assert.NotNil(t, st.PasswordManager)
@@ -111,7 +116,7 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	assert.NotNil(t, st.Credentials)
 	assert.NotNil(t, st.SSH)
 	assert.NotNil(t, st.CA)
-	assert.NotNil(t, st.Policies)
+	assert.Nil(t, st.TPMPolicies)
 	assert.NotNil(t, st.Barrier)
 	assert.NotNil(t, st.Custodians)
 	assert.NotNil(t, st.Shares)
@@ -124,9 +129,6 @@ func TestBuild_EveryDependencyComposesEveryFeature(t *testing.T) {
 	got, err := svc.SealStoreGet(ctx, &transport.SealStoreGetRequest{Name: "k"})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("v"), got.Secret)
-
-	_, err = svc.PolicyCreate(ctx, &transport.PolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []int{0}})
-	require.NoError(t, err)
 
 	caCert, err := svc.GetCACertificate(ctx, &transport.GetCACertificateRequest{})
 	require.NoError(t, err)
@@ -167,7 +169,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 		FeatureCredentials:   "barrier registry",
 		FeatureSSH:           "storage",
 		FeatureCA:            "CA configuration",
-		FeaturePolicies:      "PCR reader",
+		FeatureTPMPolicies:   "TPM2 backend",
 		FeatureBarrier:       "barrier registry",
 		FeatureCustody:       "custody clients",
 	}, missing)
@@ -177,7 +179,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 	assert.Nil(t, st.Credentials)
 	assert.Nil(t, st.SSH)
 	assert.Nil(t, st.CA)
-	assert.Nil(t, st.Policies)
+	assert.Nil(t, st.TPMPolicies)
 	assert.Nil(t, st.Barrier)
 
 	// Wiring an empty composition leaves the service answering "not
@@ -185,8 +187,9 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 	st.Wire(svc)
 	_, err = svc.SealStoreStatus(platformCtx())
 	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
-	_, err = svc.PolicyList(platformCtx())
+	_, err = svc.TPMPolicyList(platformCtx(), &transport.TPMPolicyListRequest{})
 	assert.ErrorIs(t, err, xkms.ErrNotConfigured)
+	assert.NoError(t, st.Close(), "closing stores without a TPM policy service is a no-op")
 }
 
 // TestBuild_BarrierStaysOffByDefault proves a host's barrier is only served
@@ -255,7 +258,7 @@ func TestBuild_StorageFailureIsABuildErrorPerFeature(t *testing.T) {
 			assert.ErrorIs(t, reason, errStorageDown)
 		}
 	}
-	for _, f := range []Feature{FeaturePasswords, FeaturePlatformStore, FeatureSSH, FeatureCA, FeaturePolicies} {
+	for _, f := range []Feature{FeaturePasswords, FeaturePlatformStore, FeatureSSH, FeatureCA} {
 		assert.True(t, failed[f], "%s must fail on storage", f)
 	}
 	// Features with no storage of their own still compose.
@@ -381,11 +384,12 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 	assert.ErrorAs(t, err, &nilDep)
 	_, err = BuildSSHClient(memoryStorage(t), nil)
 	assert.ErrorAs(t, err, &nilDep)
-	_, err = BuildPolicyManager(nil, nil)
+	_, err = BuildTPMPolicyService(TPMPolicyParams{Storage: memoryStorage(t)})
 	assert.ErrorAs(t, err, &nilDep)
-	_, err = BuildPolicyManager(memoryStorage(t), nil)
+	assert.Contains(t, err.Error(), "TPM2 backend")
+	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}})
 	assert.ErrorAs(t, err, &nilDep)
-	assert.Contains(t, err.Error(), "PCR reader")
+	assert.Contains(t, err.Error(), "storage factory")
 }
 
 func TestBuilders_StorageFailureIsFeatureBuildError(t *testing.T) {
@@ -404,11 +408,13 @@ func TestBuilders_StorageFailureIsFeatureBuildError(t *testing.T) {
 	require.ErrorAs(t, err, &buildErr)
 	assert.Equal(t, FeatureSSH, buildErr.Feature)
 
-	_, err = BuildPolicyManager(failingStorage, hostdeps.PCRReader{})
+	// A backend whose TPM is not a pkg/tpm2 TPM cannot run the TPM policy
+	// service; it is refused before any storage is opened.
+	_, err = BuildTPMPolicyService(TPMPolicyParams{Backend: &tpm2backend.Backend{}, Storage: failingStorage})
 	require.ErrorAs(t, err, &buildErr)
-	assert.Equal(t, FeaturePolicies, buildErr.Feature)
-	assert.ErrorIs(t, err, errStorageDown)
-	assert.Contains(t, err.Error(), "policies failed to build")
+	assert.Equal(t, FeatureTPMPolicies, buildErr.Feature)
+	assert.ErrorIs(t, err, ErrUnsupportedTPM)
+	assert.Contains(t, err.Error(), "tpm-policies failed to build")
 }
 
 func TestErrorMessages(t *testing.T) {
@@ -460,4 +466,10 @@ type shares struct {
 
 func (shares) ListShares(context.Context) (*qrdbtransport.ListSharesResponse, error) {
 	return &qrdbtransport.ListSharesResponse{}, nil
+}
+
+// TestTPM2Backend_NoneRegistered proves a service without a TPM2 backend
+// yields none, leaving the TPM policy service off in a host composition.
+func TestTPM2Backend_NoneRegistered(t *testing.T) {
+	assert.Nil(t, TPM2Backend(hostdeps.NewService(t)))
 }

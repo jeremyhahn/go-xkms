@@ -766,25 +766,70 @@ func (n *noopClient) ListEscrowed(context.Context) ([]transport.EscrowRecord, er
 func (n *noopClient) RevokeEscrow(context.Context, string) error {
 	return nil
 }
-func (n *noopClient) PolicyCreate(context.Context, *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+func (n *noopClient) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }
-func (n *noopClient) PolicyGet(context.Context, *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+
+func (n *noopClient) TPMPolicyGet(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }
-func (n *noopClient) PolicyList(context.Context) (*transport.PolicyListResponse, error) {
+
+func (n *noopClient) TPMPolicyList(context.Context, *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
 	return nil, nil
 }
-func (n *noopClient) PolicyDelete(context.Context, *transport.PolicyDeleteRequest) error { return nil }
-func (n *noopClient) PolicyRefresh(context.Context, *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+
+func (n *noopClient) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }
-func (n *noopClient) PolicyVerify(context.Context, *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+
+func (n *noopClient) TPMPolicyRevoke(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	return nil, nil
 }
-func (n *noopClient) PolicyExport(context.Context, *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+
+func (n *noopClient) TPMPolicyVerify(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
 	return nil, nil
 }
+
+func (n *noopClient) TPMPolicyDelete(context.Context, *transport.TPMPolicyDeleteRequest) error {
+	return nil
+}
+
+func (n *noopClient) TPMPolicyObjects(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) TPMPolicySetAutoUnseal(context.Context, *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
+	return nil, nil
+}
+
+func (n *noopClient) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) TPMPolicyRotateAuthority(context.Context, *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) GetTenantTPMMode(context.Context, string) (*transport.TenantTPMModeResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) SetTenantTPMMode(context.Context, *transport.SetTenantTPMModeRequest) (*transport.TenantTPMModeResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) TenantVTPMStatus(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) TenantVTPMStart(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) TenantVTPMStop(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	return nil, nil
+}
+
 func (n *noopClient) CreateCustodianGroup(context.Context, *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	return nil, nil
 }

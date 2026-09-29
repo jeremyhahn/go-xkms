@@ -18,9 +18,6 @@ import (
 	"crypto/elliptic"
 	"crypto/x509"
 	"fmt"
-	"strings"
-
-	"github.com/google/go-tpm/tpm2"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -30,51 +27,6 @@ import (
 // A deterministic CN is used so the same key is reused across seal operations
 // on the same backend.
 const sealingKeyCNPrefix = "xkms-sealing-key"
-
-// pcrHashAlgMap maps lowercase hash algorithm strings to TPM algorithm IDs.
-var pcrHashAlgMap = map[string]tpm2.TPMIAlgHash{
-	"sha1":   tpm2.TPMAlgSHA1,
-	"sha256": tpm2.TPMAlgSHA256,
-	"sha384": tpm2.TPMAlgSHA384,
-	"sha512": tpm2.TPMAlgSHA512,
-}
-
-// parsePCRHashAlg converts a hash algorithm string to a TPM algorithm ID.
-// Returns TPMAlgSHA256 when alg is empty (default).
-// Returns an ErrPCRHashAlgParse error for unrecognized algorithms.
-func parsePCRHashAlg(alg string) (tpm2.TPMIAlgHash, error) {
-	if alg == "" {
-		return tpm2.TPMAlgSHA256, nil
-	}
-	hashAlg, ok := pcrHashAlgMap[strings.ToLower(alg)]
-	if !ok {
-		return 0, &ErrPCRHashAlgParse{
-			Algorithm: alg,
-			Err:       ErrInvalidHashFunction,
-		}
-	}
-	return hashAlg, nil
-}
-
-// buildPCRSelection converts a slice of PCR indices and a hash algorithm
-// into a TPMLPCRSelection suitable for use in TPM seal policies.
-func buildPCRSelection(pcrs []int, hashAlg tpm2.TPMIAlgHash) (tpm2.TPMLPCRSelection, error) {
-	upcrs := make([]uint, 0, len(pcrs))
-	for _, pcr := range pcrs {
-		if pcr < 0 || pcr > 23 {
-			return tpm2.TPMLPCRSelection{}, ErrInvalidPCRIndex
-		}
-		upcrs = append(upcrs, uint(pcr))
-	}
-	return tpm2.TPMLPCRSelection{
-		PCRSelections: []tpm2.TPMSPCRSelection{
-			{
-				Hash:      hashAlg,
-				PCRSelect: tpm2.PCClientCompatible.PCRs(upcrs...),
-			},
-		},
-	}, nil
-}
 
 // defaultSealingKeyAttributes builds KeyAttributes for an auto-generated
 // sealing key on the given backend. The CN is deterministic so the same
@@ -126,9 +78,17 @@ func ensureSealingKey(ctx context.Context, b Backend, attrs *types.KeyAttributes
 // sealed under -- and unsealed with -- any tenant's key of that name.
 //
 // Without a key ID a key-based backend uses the default sealing key; see
-// defaultSealingKeyAttributes. TPM 2.0 seals under its storage root and needs
-// no key, so the answer is nil.
-func sealingKey(ctx context.Context, b Backend, keyID string) (*types.KeyAttributes, error) {
+// defaultSealingKeyAttributes. TPM 2.0 seals a keyed-hash object of its own
+// rather than under a key; see tpmSealedObject. tpmPolicy names the TPM policy
+// a TPM2 sealed object is bound to, and any other backend refuses one.
+func sealingKey(ctx context.Context, b Backend, keyID, tpmPolicy string) (*types.KeyAttributes, error) {
+	kp := b.KeyProvider()
+	if kp != nil && kp.Type() == types.BackendTypeTPM2 {
+		return tpmSealedObject(keyID, tpmPolicy)
+	}
+	if tpmPolicy != "" {
+		return nil, &ErrValidation{Sentinel: ErrTPMPolicyNotSupported, Detail: "tpm_policy is only valid on a TPM2 backend"}
+	}
 	if keyID != "" {
 		parsed, err := ParseKeyIDToAttributes(keyID)
 		if err != nil {
@@ -136,11 +96,32 @@ func sealingKey(ctx context.Context, b Backend, keyID string) (*types.KeyAttribu
 		}
 		return findKeyAttrs(ctx, b, parsed.CN)
 	}
-	kp := b.KeyProvider()
-	if kp == nil || kp.Type() == types.BackendTypeTPM2 {
+	if kp == nil {
 		return nil, nil
 	}
 	return defaultSealingKeyAttributes(kp.Type()), nil
+}
+
+// tpmSealedObject returns the attributes of the TPM2 sealed object a seal
+// creates, or an unseal authorizes: the object keyID names, or the backend's
+// default sealed object when keyID is empty. It is created under the storage
+// parent of the scope the tenant view selects, bound to tpmPolicy -- a named
+// policy of that scope, "platform" for the built-in platform policy, or empty
+// for none, leaving its password as its only authorization.
+func tpmSealedObject(keyID, tpmPolicy string) (*types.KeyAttributes, error) {
+	cn := fmt.Sprintf("%s-%s", sealingKeyCNPrefix, types.BackendTypeTPM2)
+	if keyID != "" {
+		parsed, err := ParseKeyIDToAttributes(keyID)
+		if err != nil {
+			return nil, &ErrKeyIDParse{Err: err}
+		}
+		cn = parsed.CN
+	}
+	return &types.KeyAttributes{
+		CN:        cn,
+		StoreType: types.StoreTPM2,
+		TPMPolicy: tpmPolicy,
+	}, nil
 }
 
 // Seal encrypts/protects data using the specified backend's sealing mechanism.
@@ -168,11 +149,11 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 		return nil, err
 	}
 
-	attrs, err := sealingKey(ctx, b, req.KeyID)
+	attrs, err := sealingKey(ctx, b, req.KeyID, req.TPMPolicy)
 	if err != nil {
 		return nil, err
 	}
-	if attrs != nil && req.KeyID == "" {
+	if attrs != nil && req.KeyID == "" && attrs.StoreType != types.StoreTPM2 {
 		if sealErr := ensureSealingKey(ctx, b, attrs); sealErr != nil {
 			return nil, sealErr
 		}
@@ -181,22 +162,6 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 	opts := &types.SealOptions{
 		AAD:           req.AAD,
 		KeyAttributes: attrs,
-	}
-
-	// Map PCR selection to TPM seal policy.
-	if len(req.PCRs) > 0 {
-		hashAlg, hashErr := parsePCRHashAlg(req.PCRHashAlg)
-		if hashErr != nil {
-			return nil, hashErr
-		}
-		pcrSelection, pcrErr := buildPCRSelection(req.PCRs, hashAlg)
-		if pcrErr != nil {
-			return nil, pcrErr
-		}
-		opts.TPMPolicy = &types.TPMSealPolicy{
-			PCRSelection: pcrSelection,
-			HashAlg:      hashAlg,
-		}
 	}
 
 	// Map password for TPM sealed object authentication.
@@ -250,7 +215,7 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 		return nil, err
 	}
 
-	attrs, err := sealingKey(ctx, b, req.KeyID)
+	attrs, err := sealingKey(ctx, b, req.KeyID, "")
 	if err != nil {
 		return nil, err
 	}

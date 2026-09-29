@@ -376,28 +376,29 @@ func Routes() []RouteSpec {
 	permIf("POST", "/platform/secrets/{name}/reseal", auth.ResourceKeys, auth.ActionWrite, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.ResealSecretHandler })
 	permIf("GET", "/platform/status", auth.ResourceKeys, auth.ActionRead, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.StatusHandler })
 
-	// --- Policies ---
-	// The {name} placeholder must match the "name" key policy_handlers.go's
-	// chi.URLParam(r, "name") calls look up; go-xkms#691 found these routes
-	// registered as {id}, which left every named-policy REST route (get,
-	// delete, refresh, verify, export) answering 400 "Policy name is
-	// required" for every real request, since chi.URLParam(r, "name")
-	// never resolved.
-	//
-	// go-xkms#691 also moved these off the session helper (authenticated,
-	// no RBAC permission) onto policy:*: the unified gRPC server denies any
-	// RPC with no (qrdb.v1.permission) option by default, so a transport
-	// this module also serves over gRPC cannot rely on a permission-free
-	// tier -- see pkg/api/grpc/proto/xkmsv1/xkms.proto's PCR Policy
-	// Operations RPCs and pkg/auth.ResourcePolicy.
-	hasPolicies := func(s *Server) bool { return s.policyHandlers != nil }
-	permIf("POST", "/policies/", auth.ResourcePolicy, auth.ActionCreate, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.CreatePolicyHandler })
-	permIf("GET", "/policies/", auth.ResourcePolicy, auth.ActionList, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.ListPoliciesHandler })
-	permIf("GET", "/policies/{name}", auth.ResourcePolicy, auth.ActionGet, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.GetPolicyHandler })
-	permIf("DELETE", "/policies/{name}", auth.ResourcePolicy, auth.ActionDelete, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.DeletePolicyHandler })
-	permIf("POST", "/policies/{name}/refresh", auth.ResourcePolicy, auth.ActionRefresh, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.RefreshPolicyHandler })
-	permIf("POST", "/policies/{name}/verify", auth.ResourcePolicy, auth.ActionVerify, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.VerifyPolicyHandler })
-	permIf("GET", "/policies/{name}/export", auth.ResourcePolicy, auth.ActionExport, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.ExportPolicyHandler })
+	// --- TPM policies (pkg/tpmpolicy). tpm_policy:* is an xkms-owned
+	// permission family (pkg/auth.ResourceTPMPolicy) whose tenancy scope
+	// pkg/apimodule/module_scopes.go declares; the service binds each call
+	// to the caller's tenant. A tenant's TPM mode and vTPM are system-scope
+	// only: tenants:set_tpm_mode is a cross-tenant permission, and the
+	// service refuses a tenant-scoped caller of the read routes too. ---
+	hasTPMPolicies := func(s *Server) bool { return s.tpmPolicyHandlers != nil }
+	permIf("POST", "/tpm/policies", auth.ResourceTPMPolicy, auth.ActionCreate, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.CreatePolicyHandler })
+	permIf("GET", "/tpm/policies", auth.ResourceTPMPolicy, auth.ActionList, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.ListPoliciesHandler })
+	permIf("GET", "/tpm/policies/{name}", auth.ResourceTPMPolicy, auth.ActionGet, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.GetPolicyHandler })
+	permIf("DELETE", "/tpm/policies/{name}", auth.ResourceTPMPolicy, auth.ActionDelete, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.DeletePolicyHandler })
+	permIf("POST", "/tpm/policies/{name}/update", auth.ResourceTPMPolicy, auth.ActionUpdate, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.UpdatePolicyHandler })
+	permIf("POST", "/tpm/policies/{name}/revoke", auth.ResourceTPMPolicy, auth.ActionRevoke, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.RevokePolicyHandler })
+	permIf("POST", "/tpm/policies/{name}/verify", auth.ResourceTPMPolicy, auth.ActionVerify, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.VerifyPolicyHandler })
+	permIf("GET", "/tpm/policies/{name}/objects", auth.ResourceTPMPolicy, auth.ActionGet, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.ObjectsHandler })
+	permIf("POST", "/tpm/policies/{name}/auto-unseal", auth.ResourceTPMPolicy, auth.ActionUpdate, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.AutoUnsealHandler })
+	permIf("POST", "/tpm/authority/rotate", auth.ResourceTPMPolicy, auth.ActionRotate, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.RotateAuthorityHandler })
+	permIf("GET", "/keys/{id}/tpm-policy", auth.ResourceTPMPolicy, auth.ActionGet, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.ObjectPolicyHandler })
+	permIf("GET", "/tenants/{tenantID}/tpm", auth.ResourceTenants, auth.ActionRead, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.GetTenantModeHandler })
+	permIf("PUT", "/tenants/{tenantID}/tpm", auth.ResourceTenants, auth.ActionSetTPMMode, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.SetTenantModeHandler })
+	permIf("GET", "/tenants/{tenantID}/tpm/vtpm", auth.ResourceTenants, auth.ActionRead, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.VTPMStatusHandler })
+	permIf("POST", "/tenants/{tenantID}/tpm/vtpm/start", auth.ResourceTenants, auth.ActionSetTPMMode, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.VTPMStartHandler })
+	permIf("POST", "/tenants/{tenantID}/tpm/vtpm/stop", auth.ResourceTenants, auth.ActionSetTPMMode, hasTPMPolicies, func(s *Server) http.HandlerFunc { return s.tpmPolicyHandlers.VTPMStopHandler })
 
 	// --- Init ceremony. status and the claim-* halves are reachable
 	// without an account while the ceremony has not reached the

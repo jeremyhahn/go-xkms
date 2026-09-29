@@ -205,18 +205,29 @@ type SealStoreListResponse = pkgtransport.SealStoreListResponse
 type SealStoreResealRequest = pkgtransport.SealStoreResealRequest
 type SealStoreStatusResponse = pkgtransport.SealStoreStatusResponse
 
-// Policy types.
-type PolicyCreateRequest = pkgtransport.PolicyCreateRequest
-type PolicyCreateResponse = pkgtransport.PolicyCreateResponse
-type PolicyGetRequest = pkgtransport.PolicyGetRequest
-type PolicyGetResponse = pkgtransport.PolicyGetResponse
-type PolicyListResponse = pkgtransport.PolicyListResponse
-type PolicyDeleteRequest = pkgtransport.PolicyDeleteRequest
-type PolicyRefreshRequest = pkgtransport.PolicyRefreshRequest
-type PolicyVerifyRequest = pkgtransport.PolicyVerifyRequest
-type PolicyVerifyResponse = pkgtransport.PolicyVerifyResponse
-type PolicyExportRequest = pkgtransport.PolicyExportRequest
-type PolicyExportResponse = pkgtransport.PolicyExportResponse
+// TPM policy types.
+type TPMPolicy = pkgtransport.TPMPolicy
+type TPMPolicyCreateRequest = pkgtransport.TPMPolicyCreateRequest
+type TPMPolicyRequest = pkgtransport.TPMPolicyRequest
+type TPMPolicyListRequest = pkgtransport.TPMPolicyListRequest
+type TPMPolicyListResponse = pkgtransport.TPMPolicyListResponse
+type TPMPolicyDeleteRequest = pkgtransport.TPMPolicyDeleteRequest
+type TPMPolicyVerifyResponse = pkgtransport.TPMPolicyVerifyResponse
+type TPMPolicyObjectsResponse = pkgtransport.TPMPolicyObjectsResponse
+type TPMPolicyAutoUnsealRequest = pkgtransport.TPMPolicyAutoUnsealRequest
+type TPMObjectPolicyRequest = pkgtransport.TPMObjectPolicyRequest
+type TPMObjectPolicyResponse = pkgtransport.TPMObjectPolicyResponse
+type TPMAuthorityRotateRequest = pkgtransport.TPMAuthorityRotateRequest
+type TPMAuthorityRotateResponse = pkgtransport.TPMAuthorityRotateResponse
+type TenantTPMModeResponse = pkgtransport.TenantTPMModeResponse
+type SetTenantTPMModeRequest = pkgtransport.SetTenantTPMModeRequest
+type TenantVTPMStatusResponse = pkgtransport.TenantVTPMStatusResponse
+
+// TPM object kinds a policy is assigned to.
+const (
+	TPMObjectKindKey    = pkgtransport.TPMObjectKindKey
+	TPMObjectKindSealed = pkgtransport.TPMObjectKindSealed
+)
 
 // Audit types.
 type AuditEvent = pkgtransport.AuditEvent

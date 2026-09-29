@@ -32,32 +32,11 @@ func mockHandler() http.Handler {
 		switch {
 		case path == "/health":
 			respond(map[string]string{"status": "healthy", "version": "1.0.0"})
-		// Policy cases sit ahead of the generic /keys/.../export suffix match
-		// below: chi-style prefix/suffix matching means a shared suffix like
-		// "/export" must be resolved by the more specific path first.
-		case path == "/api/v1/policies/" && r.Method == http.MethodPost:
-			respond(wire.PolicyCreateResponse{
-				Name: "boot", Bank: "sha256", PCRIndices: []int{0, 7},
-				PCRValues: map[int][]byte{0: {0xAA}, 7: {0xBB}}, CreatedAt: "2026-01-01T00:00:00Z",
+		case strings.HasPrefix(path, "/api/v1/tpm/policies/") && r.Method == http.MethodGet:
+			respond(transport.TPMPolicy{
+				Name: strings.TrimPrefix(path, "/api/v1/tpm/policies/"), TenantID: r.URL.Query().Get("tenant_id"),
+				Bank: "sha256", PCRs: []uint{7}, Approved: true,
 			})
-		case path == "/api/v1/policies/" && r.Method == http.MethodGet:
-			respond(wire.PolicyListResponse{
-				Policies: []wire.PolicyInfo{{Name: "boot", Bank: "sha256", PCRIndices: []int{0, 7}}},
-				Total:    1,
-			})
-		case strings.HasPrefix(path, "/api/v1/policies/") && strings.HasSuffix(path, "/verify"):
-			respond(transport.PolicyVerifyResponse{Name: "boot", Valid: true})
-		case strings.HasPrefix(path, "/api/v1/policies/") && strings.HasSuffix(path, "/export"):
-			respond(wire.PolicyExportResponse{Name: "boot", PolicyJSON: `{"name":"boot"}`})
-		case strings.HasPrefix(path, "/api/v1/policies/") && strings.HasSuffix(path, "/refresh"):
-			respond(wire.PolicyRefreshResponse{Name: "boot", Bank: "sha256", PCRIndices: []int{0, 7}})
-		case strings.HasPrefix(path, "/api/v1/policies/") && r.Method == http.MethodGet:
-			respond(wire.PolicyGetResponse{
-				Name: "boot", Bank: "sha256", PCRIndices: []int{0, 7},
-				PCRValues: map[int][]byte{0: {0xAA}}, CreatedAt: "2026-01-01T00:00:00Z",
-			})
-		case strings.HasPrefix(path, "/api/v1/policies/") && r.Method == http.MethodDelete:
-			respond(map[string]string{"message": "deleted"})
 		case path == "/api/v1/backends" && r.Method == http.MethodGet:
 			respond(transport.ListBackendsResponse{
 				Backends: []transport.BackendInfo{{ID: "software", Type: "software"}},
@@ -543,48 +522,6 @@ func TestClose_MockConnected(t *testing.T) {
 	}
 	require.NoError(t, tr.Close())
 	assert.False(t, tr.connected)
-}
-
-// --- Policy ---
-//
-// go-xkms#691 moved Policy off the ErrNotSupported stub table this file
-// used to carry (TestErrNotSupported_StubMethods): QUIC is REST served over
-// HTTP/3 on the same router, so the client's wire translation (see
-// pkg/api/rest/wire's PCR Policy types) is exercised end to end here,
-// mirroring the REST transport's own TestPolicy_RoundTrip.
-
-func TestPolicy_RoundTrip(t *testing.T) {
-	tr, cleanup := newMockTransport(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	createResp, err := tr.PolicyCreate(ctx, &transport.PolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []int{0, 7}})
-	require.NoError(t, err)
-	assert.Equal(t, "boot", createResp.Name)
-	assert.Equal(t, "aa", createResp.Values[0])
-
-	getResp, err := tr.PolicyGet(ctx, &transport.PolicyGetRequest{Name: "boot"})
-	require.NoError(t, err)
-	assert.Equal(t, "boot", getResp.Name)
-
-	listResp, err := tr.PolicyList(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, 1, listResp.Total)
-
-	verifyResp, err := tr.PolicyVerify(ctx, &transport.PolicyVerifyRequest{Name: "boot"})
-	require.NoError(t, err)
-	assert.True(t, verifyResp.Valid)
-
-	exportResp, err := tr.PolicyExport(ctx, &transport.PolicyExportRequest{Name: "boot"})
-	require.NoError(t, err)
-	assert.Equal(t, `{"name":"boot"}`, exportResp.Data)
-
-	refreshResp, err := tr.PolicyRefresh(ctx, &transport.PolicyRefreshRequest{Name: "boot"})
-	require.NoError(t, err)
-	assert.Equal(t, "boot", refreshResp.Name)
-
-	require.NoError(t, tr.PolicyDelete(ctx, &transport.PolicyDeleteRequest{Name: "boot"}))
 }
 
 func TestDoRequest_NilResult(t *testing.T) {

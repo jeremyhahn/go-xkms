@@ -23,7 +23,7 @@ import (
 // JSON-RPC error code. It is total over every Class the apierrors tables
 // this package reads (ImportExportSentinelClasses, AEADSentinelClasses,
 // PIVSentinelClasses, BarrierSentinelClasses, PINSentinelClasses,
-// SealStoreSentinelClasses, CustodianSentinelClasses, PolicySentinelClasses)
+// SealStoreSentinelClasses, CustodianSentinelClasses, and TPMPolicyClassOf)
 // can produce;
 // jsonRPCCodeForClass's ErrCodeInternalError floor exists only for a Class a
 // future apierrors table introduces without a row here.
@@ -135,17 +135,15 @@ func mapPINError(err error, operation string) error {
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
 }
 
-// mapPolicyError converts a TPM 2.0 PCR-bank sealed-secret authorization
-// policy domain error into a *KeyOpError, classifying it through
-// apierrors.PolicySentinelClasses -- the table go-xkms#691 made this package
-// share with pkg/api/grpc/service_policy.go's mapPolicyError, following the
-// go-xkms#912 precedent set for PIV and barrier. Anything not in that table
-// is an internal fault.
-func mapPolicyError(err error, operation string) error {
+// mapTPMPolicyError converts a TPM policy API error into a *KeyOpError,
+// classifying it through apierrors.TPMPolicyClassOf -- the classification
+// pkg/api/grpc and pkg/api/rest read for the same API. Anything it does not
+// classify is an internal fault.
+func mapTPMPolicyError(err error, operation string) error {
 	if err == nil {
 		return nil
 	}
-	if class, ok := apierrors.ClassOf(apierrors.PolicySentinelClasses, err); ok {
+	if class, ok := apierrors.TPMPolicyClassOf(err); ok {
 		return classified(jsonRPCCodeForClass(class), &errs.Wrapped{Msg: operation, Err: err})
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}

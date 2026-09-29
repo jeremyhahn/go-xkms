@@ -124,19 +124,6 @@ func NewCAConfig(commonName string) *ca.MultiIdentityCAConfig {
 	}
 }
 
-// PCRReader is a PCR reader returning fixed digests, standing in for a
-// host's TPM.
-type PCRReader map[int][]byte
-
-// ReadPCRs returns the fixed digest of every requested index.
-func (r PCRReader) ReadPCRs(_ string, indices []int) (map[int][]byte, error) {
-	out := make(map[int][]byte, len(indices))
-	for _, i := range indices {
-		out[i] = r[i]
-	}
-	return out, nil
-}
-
 // Sealer is an AES-256-GCM types.Sealer over a random in-memory key,
 // standing in for a host's hardware sealer. Like a TPM sealer it carries its
 // own key, so it seals with nil options.

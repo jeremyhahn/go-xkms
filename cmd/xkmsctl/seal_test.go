@@ -36,6 +36,10 @@ type mockSealClient struct {
 	connectErr  error
 	closeErr    error
 	closeCalled bool
+
+	// lastSeal and lastUnseal are the last requests received.
+	lastSeal   *client.SealRequest
+	lastUnseal *client.UnsealRequest
 }
 
 func (m *mockSealClient) Connect(ctx context.Context) error {
@@ -48,10 +52,12 @@ func (m *mockSealClient) Close() error {
 }
 
 func (m *mockSealClient) Seal(ctx context.Context, req *client.SealRequest) (*client.SealResponse, error) {
+	m.lastSeal = req
 	return m.sealResp, m.sealErr
 }
 
 func (m *mockSealClient) Unseal(ctx context.Context, req *client.UnsealRequest) (*client.UnsealResponse, error) {
+	m.lastUnseal = req
 	return m.unsealResp, m.unsealErr
 }
 
@@ -134,7 +140,7 @@ func TestSealData_Success(t *testing.T) {
 		},
 	}
 
-	sealData(cfg, printer, "test-key", []byte("test data"), []byte("aad"))
+	sealData(cfg, printer, "test-key", []byte("test data"), []byte("aad"), sealTPMParams{})
 
 	output := buf.String()
 	if !strings.Contains(output, "software") {
@@ -166,7 +172,7 @@ func TestSealData_WithNonceAndTag(t *testing.T) {
 		},
 	}
 
-	sealData(cfg, printer, "test-key-id", []byte("plaintext"), nil)
+	sealData(cfg, printer, "test-key-id", []byte("plaintext"), nil, sealTPMParams{})
 
 	output := buf.String()
 	if !strings.Contains(output, "nonce") {
@@ -196,7 +202,7 @@ func TestSealData_WithKeyID(t *testing.T) {
 		},
 	}
 
-	sealData(cfg, printer, "my-seal-key", []byte("data"), nil)
+	sealData(cfg, printer, "my-seal-key", []byte("data"), nil, sealTPMParams{})
 
 	output := buf.String()
 	if !strings.Contains(output, "key_id") {
@@ -222,7 +228,7 @@ func TestSealData_ClientCreateError(t *testing.T) {
 		},
 	}
 
-	sealData(cfg, printer, "", []byte("data"), nil)
+	sealData(cfg, printer, "", []byte("data"), nil, sealTPMParams{})
 	// Should not panic
 }
 
@@ -245,7 +251,7 @@ func TestSealData_ConnectError(t *testing.T) {
 		},
 	}
 
-	sealData(cfg, printer, "", []byte("data"), nil)
+	sealData(cfg, printer, "", []byte("data"), nil, sealTPMParams{})
 	// Should not panic
 }
 
@@ -268,7 +274,7 @@ func TestSealData_SealError(t *testing.T) {
 		},
 	}
 
-	sealData(cfg, printer, "", []byte("data"), nil)
+	sealData(cfg, printer, "", []byte("data"), nil, sealTPMParams{})
 	// Should not panic
 }
 
@@ -297,7 +303,7 @@ func TestSealData_AllFormats(t *testing.T) {
 				},
 			}
 
-			sealData(cfg, printer, "test-key", []byte("data"), nil)
+			sealData(cfg, printer, "test-key", []byte("data"), nil, sealTPMParams{})
 
 			if buf.Len() == 0 {
 				t.Errorf("sealData with %s format should produce output", format)
@@ -329,7 +335,7 @@ func TestUnsealData_Success(t *testing.T) {
 	tag := []byte("tag")
 	aad := []byte("aad")
 
-	unsealData(cfg, printer, "test-key", ciphertext, nonce, tag, aad)
+	unsealData(cfg, printer, "test-key", ciphertext, nonce, tag, aad, unsealTPMParams{})
 
 	output := buf.String()
 	if !strings.Contains(output, "plaintext") {
@@ -355,7 +361,7 @@ func TestUnsealData_ClientCreateError(t *testing.T) {
 		},
 	}
 
-	unsealData(cfg, printer, "", []byte("ct"), nil, nil, nil)
+	unsealData(cfg, printer, "", []byte("ct"), nil, nil, nil, unsealTPMParams{})
 	// Should not panic
 }
 
@@ -378,7 +384,7 @@ func TestUnsealData_ConnectError(t *testing.T) {
 		},
 	}
 
-	unsealData(cfg, printer, "", []byte("ct"), nil, nil, nil)
+	unsealData(cfg, printer, "", []byte("ct"), nil, nil, nil, unsealTPMParams{})
 	// Should not panic
 }
 
@@ -401,7 +407,7 @@ func TestUnsealData_UnsealError(t *testing.T) {
 		},
 	}
 
-	unsealData(cfg, printer, "", []byte("ct"), nil, nil, nil)
+	unsealData(cfg, printer, "", []byte("ct"), nil, nil, nil, unsealTPMParams{})
 	// Should not panic
 }
 
@@ -427,7 +433,7 @@ func TestUnsealData_AllFormats(t *testing.T) {
 				},
 			}
 
-			unsealData(cfg, printer, "", []byte("ct"), nil, nil, nil)
+			unsealData(cfg, printer, "", []byte("ct"), nil, nil, nil, unsealTPMParams{})
 
 			if buf.Len() == 0 {
 				t.Errorf("unsealData with %s format should produce output", format)
@@ -612,7 +618,7 @@ func TestSealData_EmptyData(t *testing.T) {
 		},
 	}
 
-	sealData(cfg, printer, "", []byte(""), nil)
+	sealData(cfg, printer, "", []byte(""), nil, sealTPMParams{})
 
 	// Should succeed even with empty data
 	if buf.Len() == 0 {
@@ -641,7 +647,7 @@ func TestSealData_WithEmptyNonceAndTag(t *testing.T) {
 		},
 	}
 
-	sealData(cfg, printer, "", []byte("data"), nil)
+	sealData(cfg, printer, "", []byte("data"), nil, sealTPMParams{})
 
 	output := buf.String()
 	// Empty nonce/tag should not be included in output
@@ -672,7 +678,7 @@ func TestSealData_ClientCloseIsCalled(t *testing.T) {
 		},
 	}
 
-	sealData(cfg, printer, "", []byte("data"), nil)
+	sealData(cfg, printer, "", []byte("data"), nil, sealTPMParams{})
 
 	if !mockClient.closeCalled {
 		t.Error("sealData should call client.Close()")
@@ -701,7 +707,8 @@ func TestUnsealData_WithAllParameters(t *testing.T) {
 		[]byte("ciphertext"),
 		[]byte("nonce-value"),
 		[]byte("tag-value"),
-		[]byte("additional-data"))
+		[]byte("additional-data"),
+		unsealTPMParams{})
 
 	output := buf.String()
 	if !strings.Contains(output, "full-decryption") {
@@ -734,7 +741,7 @@ func TestSealData_Base64EncodingInOutput(t *testing.T) {
 		},
 	}
 
-	sealData(cfg, printer, "key", []byte("data"), nil)
+	sealData(cfg, printer, "key", []byte("data"), nil, sealTPMParams{})
 
 	output := buf.String()
 

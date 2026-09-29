@@ -56,6 +56,7 @@ var keyGenerateCmd = &cobra.Command{
 		curve := fr.String("curve")
 		exportable := fr.Bool("exportable")
 		sensitive := fr.Bool("sensitive")
+		tpmPolicy := fr.String("tpm-policy")
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
@@ -64,12 +65,38 @@ var keyGenerateCmd = &cobra.Command{
 		printVerbose("Generating %s key with ID: %s (exportable: %v, sensitive: %v)",
 			keyType, keyID, exportable, sensitive)
 
-		generateKey(cfg, printer, keyID, keyType, algorithm, keyAlgorithm, keySize, curve, exportable, sensitive)
+		generateKey(cfg, printer, keyID, keyType, keyGenOptions{
+			Algorithm:    algorithm,
+			KeyAlgorithm: keyAlgorithm,
+			KeySize:      keySize,
+			Curve:        curve,
+			Exportable:   exportable,
+			Sensitive:    sensitive,
+			TPMPolicy:    tpmPolicy,
+		})
 	},
 }
 
+// keyGenOptions are the parameters of key generate beyond the key's ID and
+// type.
+type keyGenOptions struct {
+	// Algorithm names a symmetric cipher; KeyAlgorithm an asymmetric one.
+	Algorithm    string
+	KeyAlgorithm string
+	KeySize      int
+	Curve        string
+	Exportable   bool
+	Sensitive    bool
+
+	// TPMPolicy names the TPM policy a TPM2 key is bound to.
+	TPMPolicy string
+}
+
 // generateKey generates a key using the SDK client
-func generateKey(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAlgorithm string, keySize int, curve string, exportable, sensitive bool) {
+func generateKey(cfg *Config, printer *Printer, keyID, keyType string, opts keyGenOptions) {
+	algorithm, keyAlgorithm := opts.Algorithm, opts.KeyAlgorithm
+	keySize, curve := opts.KeySize, opts.Curve
+	exportable, sensitive := opts.Exportable, opts.Sensitive
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -110,6 +137,7 @@ func generateKey(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAl
 		Algorithm:  algoForRequest,
 		Exportable: exportable,
 		Sensitive:  sensitive,
+		TPMPolicy:  opts.TPMPolicy,
 	}
 
 	printVerbose("Generating key with exportable=%v sensitive=%v", exportable, sensitive)
@@ -1870,6 +1898,8 @@ func init() {
 	// from the PKCS#11 module.
 	keyGenerateCmd.Flags().Bool("sensitive", false,
 		"Never release the key's plaintext (PKCS#11 CKA_SENSITIVE); the key may still be wrapped if --exportable")
+	keyGenerateCmd.Flags().String("tpm-policy", "",
+		"TPM policy a TPM2 key is bound to (default: the built-in platform policy); see 'xkmsctl tpm policy'")
 
 	// Flags for get command (simplified - no longer needs algorithm params for SDK)
 	keyGetCmd.Flags().String("key-type", "tls", "Key type")

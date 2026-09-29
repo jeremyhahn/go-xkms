@@ -1127,6 +1127,30 @@ type TPM2Config struct {
 	// policy name), not a backend setting.
 	PlatformPCR     uint   `yaml:"platform_pcr,omitempty"`
 	PlatformPCRBank string `yaml:"platform_pcr_bank,omitempty"`
+
+	// VTPM configures the per-tenant virtual TPMs (swtpm) of tenants in
+	// vtpm TPM mode. vTPMs are off unless enabled here: a tenant set to vtpm
+	// mode is then refused (tpmpolicy.ErrVTPMUnavailable).
+	VTPM *VTPMConfig `yaml:"vtpm,omitempty"`
+}
+
+// VTPMConfig configures the node's per-tenant vTPM supervisor
+// (pkg/tpm2/vtpm), which runs one swtpm process per vtpm-mode tenant.
+type VTPMConfig struct {
+	// Enabled turns vtpm mode on. It must be set explicitly.
+	Enabled bool `yaml:"enabled"`
+
+	// StateDir holds one vTPM state directory per tenant. Default
+	// <storage.path>/vtpm.
+	StateDir string `yaml:"state_dir,omitempty"`
+
+	// RunDir holds the vTPM sockets and is created with mode 0700. Default
+	// <storage.path>/vtpm-run. A Unix socket path is limited to 107 bytes,
+	// so a deep storage path needs a shorter run_dir.
+	RunDir string `yaml:"run_dir,omitempty"`
+
+	// Binary is the swtpm executable. Default "swtpm", resolved from PATH.
+	Binary string `yaml:"binary,omitempty"`
 }
 
 // PKCS11Config contains PKCS#11 backend settings

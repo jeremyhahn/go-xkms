@@ -440,14 +440,23 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"sealStore.reseal": (*Server).handleSealStoreReseal,
 	"sealStore.status": (*Server).handleSealStoreStatus,
 
-	// PCR policy management (pkg/seal/policy)
-	"policy.create":  (*Server).handlePolicyCreate,
-	"policy.get":     (*Server).handlePolicyGet,
-	"policy.list":    (*Server).handlePolicyList,
-	"policy.delete":  (*Server).handlePolicyDelete,
-	"policy.refresh": (*Server).handlePolicyRefresh,
-	"policy.verify":  (*Server).handlePolicyVerify,
-	"policy.export":  (*Server).handlePolicyExport,
+	// TPM policy management (pkg/tpmpolicy)
+	"tpm.policy.create":     (*Server).handleTPMPolicyCreate,
+	"tpm.policy.get":        (*Server).handleTPMPolicyGet,
+	"tpm.policy.list":       (*Server).handleTPMPolicyList,
+	"tpm.policy.update":     (*Server).handleTPMPolicyUpdate,
+	"tpm.policy.revoke":     (*Server).handleTPMPolicyRevoke,
+	"tpm.policy.verify":     (*Server).handleTPMPolicyVerify,
+	"tpm.policy.delete":     (*Server).handleTPMPolicyDelete,
+	"tpm.policy.objects":    (*Server).handleTPMPolicyObjects,
+	"tpm.policy.autoUnseal": (*Server).handleTPMPolicyAutoUnseal,
+	"tpm.object.policy":     (*Server).handleTPMObjectPolicy,
+	"tpm.authority.rotate":  (*Server).handleTPMAuthorityRotate,
+	"xkms.getTenantTPMMode": (*Server).handleGetTenantTPMMode,
+	"xkms.setTenantTPMMode": (*Server).handleSetTenantTPMMode,
+	"xkms.tenantVTPMStatus": (*Server).handleTenantVTPMStatus,
+	"xkms.tenantVTPMStart":  (*Server).handleTenantVTPMStart,
+	"xkms.tenantVTPMStop":   (*Server).handleTenantVTPMStop,
 
 	// SSH key operations
 	"ssh.keys.generate": (*Server).handleSSHKeysGenerate,

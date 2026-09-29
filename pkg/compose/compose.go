@@ -21,12 +21,14 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -42,7 +44,7 @@ type Deps struct {
 
 	// Storage opens the backend each feature persists under. Enables the
 	// Password Manager, SSH, and — together with their own dependency —
-	// the platform store, CA and PCR policies.
+	// the platform store, CA and TPM policies.
 	Storage StorageFactory
 
 	// BarrierRegistry is the tenant barrier registry. Enables per-tenant
@@ -67,8 +69,13 @@ type Deps struct {
 	// backends by each CA key's store type.
 	CA *ca.MultiIdentityCAConfig
 
-	// PCRReader enables PCR policies.
-	PCRReader policy.PCRReader
+	// TPMBackend is the TPM2 key backend. With Storage it enables the TPM
+	// policy service, which Build installs as the backend's scope provider.
+	TPMBackend *tpm2backend.Backend
+
+	// VTPM configures the TPM policy service's per-tenant vTPMs. Nil
+	// leaves vtpm mode unavailable.
+	VTPM *vtpm.Config
 
 	// Custodians and Shares are the host's qrdb node custody clients
 	// (qrdb Client.CustodianGroups / Client.Shares). With ServeBarrier they
@@ -111,8 +118,9 @@ type Stores struct {
 	// CA is the Certificate Authority.
 	CA ca.TrustedCA
 
-	// Policies is the PCR policy manager.
-	Policies *policy.Manager
+	// TPMPolicies is the TPM policy service. Its owner closes it at
+	// shutdown.
+	TPMPolicies *tpmpolicy.Service
 
 	// Barrier is the system barrier the barrier routes operate on.
 	Barrier *seal.Barrier
@@ -188,9 +196,14 @@ func Build(ctx context.Context, d Deps) (*Stores, error) {
 		})
 	}
 
-	if b.need(FeaturePolicies, d.PCRReader != nil, "PCR reader") && b.need(FeaturePolicies, d.Storage != nil, "storage") {
-		st.Policies = built(b, FeaturePolicies, func() (*policy.Manager, error) {
-			return BuildPolicyManager(d.Storage, d.PCRReader)
+	if b.need(FeatureTPMPolicies, d.TPMBackend != nil, "TPM2 backend") && b.need(FeatureTPMPolicies, d.Storage != nil, "storage") {
+		st.TPMPolicies = built(b, FeatureTPMPolicies, func() (*tpmpolicy.Service, error) {
+			return BuildTPMPolicyService(TPMPolicyParams{
+				Backend: d.TPMBackend,
+				Storage: d.Storage,
+				VTPM:    d.VTPM,
+				Logger:  b.logger,
+			})
 		})
 	}
 
@@ -226,8 +239,8 @@ func (st *Stores) Wire(svc *xkms.XKMSService) {
 	if st.Credentials != nil {
 		svc.SetCredentialService(st.Credentials)
 	}
-	if st.Policies != nil {
-		svc.SetPolicyManager(st.Policies)
+	if st.TPMPolicies != nil {
+		svc.SetTPMPolicyService(st.TPMPolicies)
 	}
 	// ca.TrustedCA does not carry the transport-shaped *Raw methods; the
 	// concrete CA satisfies provider.CA through them (pkg/ca
@@ -305,6 +318,30 @@ func built[T any](b *builder, feature Feature, build func() (T, error)) T {
 	}
 	b.logger.Info("xkms feature on", "feature", feature)
 	return v
+}
+
+// TPM2Backend returns svc's TPM2 key backend -- the key provider of the
+// backend registered as "tpm2" -- or nil when svc has none.
+func TPM2Backend(svc *xkms.XKMSService) *tpm2backend.Backend {
+	b, err := svc.LookupBackend(string(types.StoreTPM2))
+	if err != nil {
+		return nil
+	}
+	tpm, ok := b.KeyProvider().(*tpm2backend.Backend)
+	if !ok {
+		return nil
+	}
+	return tpm
+}
+
+// Close releases what the stores hold open beyond their storage: the TPM
+// policy service's scopes and vTPMs. The owner of the stores calls it at
+// shutdown.
+func (st *Stores) Close() error {
+	if st.TPMPolicies == nil {
+		return nil
+	}
+	return st.TPMPolicies.Close()
 }
 
 // backendForStore resolves each CA key's keystore from svc's backends by

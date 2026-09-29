@@ -78,7 +78,7 @@ transports through `initialize.NewCeremonyAdapter`
 11. PasswordStore
 12. PlatformStore     (sealed credential store)
 13. CredentialService
-14. PolicyManager     (PCR policy management)
+14. TPM policy service (named TPM policies; with a TPM2 backend)
 15. Health
 16. CA
 17. FactorRegistry    (PIV / FIDO2 / PKCS#11 factors)

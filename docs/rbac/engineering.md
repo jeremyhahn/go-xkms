@@ -72,7 +72,8 @@ The binding is applied once, in `XKMSService`, and no transport repeats it:
 | system barrier: `BarrierInitialize[WithCredentials]`, `BarrierUnseal[WithCredentials]`, `BarrierSeal`, `BarrierStatus`, `BarrierInitializeShamir`, `BarrierUnsealWithShare(s)`, `BarrierRekey`, `BarrierGenerateRecoveryKeys`, `BarrierRecoverWithKeys`, `BarrierDeleteRecoveryKeys`, `BarrierHasRecoveryKeys`, `BarrierGenerateRootToken` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_barrier.go:89,117,128,139,170,205,236,253,278,300,314,325,342` |
 | `SetSOPIN`, `SetUserPIN`, `ChangeSOPIN`, `ChangeUserPIN`, `VerifySOPIN`, `VerifyUserPIN`, `GetLockoutStatus`, `ResetLockout` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_pin.go:43,54,65,76,87,98,109,136` |
 | `ListPIVSlots`, `GetPIVCertificate`, `StorePIVCertificate`, `DeletePIVCertificate`, `GeneratePIVKey`, `ImportPIVCertificate`, `ExportPIVCertificate`, `GeneratePIVCSR` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_piv.go:31,40,49,58,67,76,85,94` |
-| `PolicyCreate` / `Get` / `List` / `Delete` / `Refresh` / `Verify` / `Export` | `requirePlatformScope` (#1227) | `pkg/xkms/servicer_policy.go:42,66,84,106,120,138,160` |
+| `GetTenantTPMMode`, `SetTenantTPMMode`, `TenantVTPMStatus` / `Start` / `Stop` | `requirePlatformScope` | `pkg/xkms/servicer_tpm_policy.go` (`tenantTPMService`) |
+| `TPMPolicy*`, `TPMObjectPolicy` | `bindTenantTarget` (tenant callers act on their own tenant) | `pkg/xkms/servicer_tpm_policy.go` (`tpmPolicyTarget`) |
 
 The platform-scoped rows are reached on every transport only through the
 service: the REST handlers (`pkg/api/rest/seal_store_handlers.go`,

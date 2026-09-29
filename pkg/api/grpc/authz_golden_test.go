@@ -134,17 +134,28 @@ var goldenRPCPermissions = map[string]string{
 	"PasswordStoreStatus":         "passwords:read",
 	"PasswordStoreUnlock":         "passwords:unlock",
 	"PasswordUpdate":              "passwords:write",
-	// PCR policy management (go-xkms#691) -- pkg/auth.ResourcePolicy, a
-	// resource family go-qrdb's canonical registry does not declare
+	// TPM policy management (pkg/tpmpolicy) -- pkg/auth.ResourceTPMPolicy,
+	// a resource family go-qrdb's canonical registry does not declare
 	// upstream; xkms owns it and scopes it in
 	// pkg/apimodule/module_scopes.go.
-	"PolicyCreate":  "policy:create",
-	"PolicyGet":     "policy:get",
-	"PolicyList":    "policy:list",
-	"PolicyDelete":  "policy:delete",
-	"PolicyRefresh": "policy:refresh",
-	"PolicyVerify":  "policy:verify",
-	"PolicyExport":  "policy:export",
+	"TPMPolicyCreate":          "tpm_policy:create",
+	"TPMPolicyGet":             "tpm_policy:get",
+	"TPMPolicyList":            "tpm_policy:list",
+	"TPMPolicyUpdate":          "tpm_policy:update",
+	"TPMPolicyRevoke":          "tpm_policy:revoke",
+	"TPMPolicyVerify":          "tpm_policy:verify",
+	"TPMPolicyDelete":          "tpm_policy:delete",
+	"TPMPolicyObjects":         "tpm_policy:get",
+	"TPMPolicySetAutoUnseal":   "tpm_policy:update",
+	"TPMObjectPolicy":          "tpm_policy:get",
+	"TPMPolicyRotateAuthority": "tpm_policy:rotate",
+	// A tenant's TPM mode and vTPM (system scope only; tenants:set_tpm_mode
+	// is a cross-tenant permission xkms declares).
+	"GetTenantTPMMode": "tenants:read",
+	"SetTenantTPMMode": "tenants:set_tpm_mode",
+	"TenantVTPMStatus": "tenants:read",
+	"TenantVTPMStart":  "tenants:set_tpm_mode",
+	"TenantVTPMStop":   "tenants:set_tpm_mode",
 	// PKCS#11 remote-state RPCs persist a token's key/object state, so they gate
 	// on the keys resource: writes for mutation, reads for retrieval/listing.
 	"PKCS11StateDelete":      "keys:write",

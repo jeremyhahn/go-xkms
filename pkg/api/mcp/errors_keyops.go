@@ -211,5 +211,12 @@ func mapKeyOpError(err error) error {
 		return classified(jsonRPCCodeForClass(class), err)
 	}
 
+	// A TPM2 key or seal routed to a tenant's TPM scope surfaces the TPM
+	// policy service's errors: an unknown named policy, a tenant whose TPM
+	// mode is none, a name reserved for the service's own objects.
+	if class, ok := apierrors.TPMPolicyClassOf(err); ok {
+		return classified(jsonRPCCodeForClass(class), err)
+	}
+
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}
 }

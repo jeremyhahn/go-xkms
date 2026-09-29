@@ -85,6 +85,10 @@ type GenerateKeyRequest struct {
 	// GenerateKeyRequest message has always carried a partition field, which
 	// this struct could not represent.
 	Partition string `json:"partition,omitempty"`
+	// TPMPolicy names the TPM policy of the tenant's scope a TPM2 key is
+	// bound to. Empty binds it to the built-in "platform" policy; any other
+	// backend refuses a non-empty value.
+	TPMPolicy string `json:"tpm_policy,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -386,13 +390,12 @@ type SealRequest struct {
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 
-	// PCRs specifies TPM Platform Configuration Register indices to bind sealed data to.
-	// The data can only be unsealed when these PCRs have the same values.
-	PCRs []int `json:"pcrs,omitempty"`
-
-	// PCRHashAlg specifies the hash algorithm for PCR policy (e.g., "SHA256").
-	// Defaults to SHA-256 if PCRs are specified but this is empty.
-	PCRHashAlg string `json:"pcr_hash_alg,omitempty"`
+	// TPMPolicy names the TPM policy of the tenant's scope the sealed object
+	// is bound to (TPM2 backends only; any other backend refuses it):
+	// "platform" for the built-in platform policy, the name of a policy
+	// created with the TPM policy API, or empty for none, leaving Password as
+	// the object's only authorization.
+	TPMPolicy string `json:"tpm_policy,omitempty"`
 
 	// Password provides authentication for the sealed object (TPM-specific).
 	// This is the UserAuth value set during sealing.
@@ -1985,75 +1988,189 @@ type SealStoreStatusResponse struct {
 	SecretNames []string `json:"secret_names,omitempty"`
 }
 
-// PCR Policy Operations
+// TPM Policy Operations
+//
+// A TPM policy is a named, TPM-authorized policy that many TPM keys and
+// sealed objects of one tenant share (pkg/tpmpolicy). Every request names its
+// tenant in TenantID: a tenant-scoped caller may leave it empty (its own
+// tenant) or name its own tenant; a cross-tenant (system) caller may name any
+// tenant, and empty is the system scope. OwnerAuth is the physical TPM's
+// owner-hierarchy authorization; it is never logged or echoed.
 
-// PolicyCreateRequest contains parameters for creating a PCR policy.
-type PolicyCreateRequest struct {
+// TPMPolicy describes a named TPM policy.
+type TPMPolicy struct {
+	// Name is the policy's name, unique within its tenant's scope.
 	Name string `json:"name"`
+
+	// TenantID is the tenant whose scope holds the policy; empty for the
+	// system scope.
+	TenantID string `json:"tenant_id,omitempty"`
+
+	// Bank is the PCR bank (sha1, sha256, sha384, sha512) and PCRs the
+	// selected PCR indices.
 	Bank string `json:"bank"`
-	PCRs []int  `json:"pcrs"`
+	PCRs []uint `json:"pcrs"`
+
+	// PCRValues are the hex-encoded values captured when the policy was
+	// created or last updated, keyed by PCR index; PCRDigest is the
+	// hex-encoded PolicyPCR digest over them.
+	PCRValues map[uint]string `json:"pcr_values,omitempty"`
+	PCRDigest string          `json:"pcr_digest,omitempty"`
+
+	// Index is the policy's NV index, which objects bound to it follow.
+	Index uint32 `json:"index"`
+
+	// Approved reports whether the policy holds an approval; it is false
+	// after a revoke until the next update. Epoch is the revocation-counter
+	// value the approval was signed at, and AuthorityGeneration the policy
+	// authority that signed it.
+	Approved            bool   `json:"approved"`
+	Epoch               uint64 `json:"epoch,omitempty"`
+	AuthorityGeneration uint64 `json:"authority_generation,omitempty"`
+
+	// AutoUnseal marks the policy barrier auto-unseal uses.
+	AutoUnseal bool `json:"auto_unseal,omitempty"`
+
+	// CreatedAt and UpdatedAt are RFC 3339 timestamps.
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
-// PolicyCreateResponse contains the result of creating a policy.
-type PolicyCreateResponse struct {
-	Name      string         `json:"name"`
-	Bank      string         `json:"bank"`
-	PCRs      []int          `json:"pcrs"`
-	Values    map[int]string `json:"values"`
-	CreatedAt string         `json:"created_at"`
+// TPMPolicyCreateRequest creates a named TPM policy over the live PCR values
+// of the tenant's TPM. The values are never supplied by the caller.
+type TPMPolicyCreateRequest struct {
+	TenantID   string `json:"tenant_id,omitempty"`
+	Name       string `json:"name"`
+	Bank       string `json:"bank"`
+	PCRs       []uint `json:"pcrs"`
+	AutoUnseal bool   `json:"auto_unseal,omitempty"`
+	OwnerAuth  []byte `json:"owner_auth,omitempty"`
 }
 
-// PolicyGetRequest contains parameters for retrieving a policy.
-type PolicyGetRequest struct {
+// TPMPolicyRequest names one TPM policy of a tenant. It is the request of
+// get, update, revoke, verify and objects.
+type TPMPolicyRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	Name     string `json:"name"`
+}
+
+// TPMPolicyListRequest lists a tenant's TPM policies.
+type TPMPolicyListRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+}
+
+// TPMPolicyListResponse contains a tenant's TPM policies, sorted by name.
+type TPMPolicyListResponse struct {
+	Policies []TPMPolicy `json:"policies"`
+}
+
+// TPMPolicyDeleteRequest deletes a TPM policy. It is refused while any
+// object is assigned to the policy.
+type TPMPolicyDeleteRequest struct {
+	TenantID  string `json:"tenant_id,omitempty"`
+	Name      string `json:"name"`
+	OwnerAuth []byte `json:"owner_auth,omitempty"`
+}
+
+// TPMPolicyVerifyResponse compares a policy's captured PCR values with the
+// live ones. It is advisory: the TPM itself enforces the policy on use.
+type TPMPolicyVerifyResponse struct {
 	Name string `json:"name"`
+
+	// Match reports whether every selected PCR still holds its captured
+	// value; Mismatched lists those that do not, ascending.
+	Match      bool   `json:"match"`
+	Mismatched []uint `json:"mismatched,omitempty"`
+
+	// Approved reports whether the policy's approval is current, so its
+	// approved branch can be satisfied.
+	Approved bool `json:"approved"`
 }
 
-// PolicyGetResponse contains a policy definition.
-type PolicyGetResponse struct {
-	Name      string         `json:"name"`
-	Bank      string         `json:"bank"`
-	PCRs      []int          `json:"pcrs"`
-	Values    map[int]string `json:"values"`
-	CreatedAt string         `json:"created_at"`
-	UpdatedAt string         `json:"updated_at,omitempty"`
+// TPMPolicyObjectsResponse lists the objects assigned to a policy, as
+// "<kind>/<name>" IDs (kind is key or sealed), sorted.
+type TPMPolicyObjectsResponse struct {
+	Name    string   `json:"name"`
+	Objects []string `json:"objects"`
 }
 
-// PolicyListResponse contains a list of policies.
-type PolicyListResponse struct {
-	Policies []PolicyGetResponse `json:"policies"`
-	PageResponse
+// TPMPolicyAutoUnsealRequest sets or clears a policy's auto-unseal mark.
+// Setting it clears it from every other policy of the tenant.
+type TPMPolicyAutoUnsealRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	Name     string `json:"name"`
+	Enabled  bool   `json:"enabled"`
 }
 
-// PolicyDeleteRequest contains parameters for deleting a policy.
-type PolicyDeleteRequest struct {
-	Name string `json:"name"`
+// TPM object kinds a policy is assigned to.
+const (
+	// TPMObjectKindKey is a TPM key.
+	TPMObjectKindKey = "key"
+
+	// TPMObjectKindSealed is a TPM sealed data object.
+	TPMObjectKindSealed = "sealed"
+)
+
+// TPMObjectPolicyRequest asks which policy a TPM object was created under.
+// KeyID is a key ID or a bare key name; Kind is TPMObjectKindKey (the
+// default) or TPMObjectKindSealed.
+type TPMObjectPolicyRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	KeyID    string `json:"key_id"`
+	Kind     string `json:"kind,omitempty"`
 }
 
-// PolicyRefreshRequest contains parameters for refreshing a policy.
-type PolicyRefreshRequest struct {
-	Name string `json:"name"`
+// TPMObjectPolicyResponse reports the policy an object was created under and
+// its authPolicy digest (hex) at creation.
+type TPMObjectPolicyResponse struct {
+	ObjectID   string `json:"object_id"`
+	Kind       string `json:"kind"`
+	Policy     string `json:"policy"`
+	AuthPolicy string `json:"auth_policy,omitempty"`
+	CreatedAt  string `json:"created_at"`
 }
 
-// PolicyVerifyRequest contains parameters for verifying a policy.
-type PolicyVerifyRequest struct {
-	Name string `json:"name"`
+// TPMAuthorityRotateRequest rotates a tenant's policy authority.
+type TPMAuthorityRotateRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
-// PolicyVerifyResponse contains the result of verifying a policy.
-type PolicyVerifyResponse struct {
-	Name    string `json:"name"`
-	Valid   bool   `json:"valid"`
-	Message string `json:"message,omitempty"`
+// TPMAuthorityRotateResponse describes the policy authority a rotation
+// installed.
+type TPMAuthorityRotateResponse struct {
+	TenantID string `json:"tenant_id,omitempty"`
+
+	// Generation counts rotations; AuthorityName is the new authority's
+	// hex-encoded TPM Name, which every approval is now verified against.
+	Generation    uint64 `json:"generation"`
+	AuthorityName string `json:"authority_name"`
+
+	// Epoch is the revocation counter's current value.
+	Epoch uint64 `json:"epoch"`
 }
 
-// PolicyExportRequest contains parameters for exporting a policy.
-type PolicyExportRequest struct {
-	Name string `json:"name"`
+// TenantTPMModeResponse reports a tenant's TPM mode: none, shared or vtpm.
+type TenantTPMModeResponse struct {
+	TenantID string `json:"tenant_id"`
+	Mode     string `json:"mode"`
 }
 
-// PolicyExportResponse contains the exported policy data.
-type PolicyExportResponse struct {
-	Data string `json:"data"`
+// SetTenantTPMModeRequest changes a tenant's TPM mode. It is refused while
+// the tenant's scope holds objects or policies, which cannot move between
+// TPMs.
+type SetTenantTPMModeRequest struct {
+	TenantID  string `json:"tenant_id"`
+	Mode      string `json:"mode"`
+	OwnerAuth []byte `json:"owner_auth,omitempty"`
+}
+
+// TenantVTPMStatusResponse reports a vtpm-mode tenant's virtual TPM.
+type TenantVTPMStatusResponse struct {
+	TenantID string `json:"tenant_id"`
+	Running  bool   `json:"running"`
+	PID      int    `json:"pid,omitempty"`
+	Socket   string `json:"socket,omitempty"`
+	Restarts int64  `json:"restarts,omitempty"`
 }
 
 // Algorithm discovery types are aliased from pkg/types, which is where the

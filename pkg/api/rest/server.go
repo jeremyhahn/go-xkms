@@ -65,7 +65,7 @@ type Server struct {
 	passwordHandlers    *PasswordHandlers
 	pkcs11StateHandlers *PKCS11StateHandlers
 	platformHandlers    *SealStoreHandlers
-	policyHandlers      *PolicyHandlers
+	tpmPolicyHandlers   *TPMPolicyHandlers
 	initHandlers        *InitHandlers
 	credentialHandlers  *CredentialHandlers
 	authFactorHandlers  *AuthFactorHandlers
@@ -231,8 +231,8 @@ type Config struct {
 	// XKMSService is the injected XKMS service; replaces the package singleton
 	// lookup. When set, all handler methods that previously called xkms.Get()
 	// will use this service directly. The platform-global subsystems -- the
-	// system barrier, the PIN backend, the platform store, the PCR policy
-	// manager and the credential service -- are reached only through it,
+	// system barrier, the PIN backend, the platform store, the tenants' TPM
+	// modes and the credential service -- are reached only through it,
 	// because its requirePlatformScope is what refuses a tenant-scoped caller
 	// (go-xkms#1226, #1227).
 	XKMSService *xkms.XKMSService
@@ -556,7 +556,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		server.pkcs11StateHandlers = NewPKCS11StateHandlers(cfg.XKMSService)
 	}
 
-	// The platform store, PCR policy and credential handlers are enabled
+	// The platform store, TPM policy and credential handlers are enabled
 	// whenever the service is present, exactly as the PKCS#11 remote-state
 	// handlers are: they reach their subsystem only through the service, whose
 	// requirePlatformScope refuses a tenant-scoped caller (go-xkms#1226,
@@ -564,7 +564,7 @@ func NewServer(cfg *Config) (*Server, error) {
 	// deployment does not compose.
 	if cfg.XKMSService != nil {
 		server.platformHandlers = NewSealStoreHandlers(cfg.XKMSService)
-		server.policyHandlers = NewPolicyHandlers(cfg.XKMSService)
+		server.tpmPolicyHandlers = NewTPMPolicyHandlers(cfg.XKMSService)
 		server.credentialHandlers = NewCredentialHandlers(cfg.XKMSService, log)
 	}
 

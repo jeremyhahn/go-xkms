@@ -27,14 +27,14 @@ configuration file. A host therefore served routes that answered 404, 501 or
  PIN backend        ──WithPINBackend─────────┤      hostStores() — once
  sealer             ──WithPlatformSealer─────┼──►   │
  CA identity config ──WithCA─────────────────┤      ▼
- PCR reader (TPM)   ──WithPCRReader──────────┤    pkg/compose.Build(Deps)
+ vTPM supervisor    ──WithVTPM───────────────┤    pkg/compose.Build(Deps)
  credential strategy ─WithCredentialStrategy─┤      │  BuildPasswordStore
  opt-in             ──WithBarrierRoutes──────┘      │  BuildTenantPasswordManager
                                                     │  BuildPlatformStore
  xkmsd (pkg/server) ──── calls the same ───────────►│  BuildCredentialService
                          Build* functions at        │  BuildSSHClient
                          its own start-up points    │  BuildCA
-                                                    │  BuildPolicyManager
+                                                    │  BuildTPMPolicyService (tpm2 backend)
                                                     ▼
                                            Stores.Wire(XKMSService)
 ```

@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/pbconv"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -313,6 +314,7 @@ func (t *Transport) GenerateKey(ctx context.Context, req *transport.GenerateKeyR
 		Algorithm:  req.Algorithm,
 		Exportable: req.Exportable,
 		Sensitive:  req.Sensitive,
+		TpmPolicy:  req.TPMPolicy,
 	}
 
 	resp, err := t.client.GenerateKey(ctx, pbReq)
@@ -1049,22 +1051,11 @@ func (t *Transport) Seal(ctx context.Context, req *transport.SealRequest) (*tran
 		return nil, ErrNotConnected
 	}
 
-	resp, err := t.client.Seal(ctx, &pb.SealRequest{
-		Backend: req.Backend,
-		KeyId:   req.KeyID,
-		Data:    req.Data,
-		Aad:     req.AAD,
-	})
+	resp, err := t.client.Seal(ctx, pbconv.SealRequestToProto(req))
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "seal failed", Err: err}
 	}
-
-	return &transport.SealResponse{
-		Backend:    resp.Backend,
-		Ciphertext: resp.Ciphertext,
-		Nonce:      resp.Nonce,
-		Tag:        resp.Tag,
-	}, nil
+	return pbconv.SealResponseFromProto(resp)
 }
 
 // Unseal unseals previously sealed data.
@@ -1073,14 +1064,7 @@ func (t *Transport) Unseal(ctx context.Context, req *transport.UnsealRequest) (*
 		return nil, ErrNotConnected
 	}
 
-	resp, err := t.client.Unseal(ctx, &pb.UnsealRequest{
-		Backend:    req.Backend,
-		KeyId:      req.KeyID,
-		Ciphertext: req.Ciphertext,
-		Nonce:      req.Nonce,
-		Tag:        req.Tag,
-		Aad:        req.AAD,
-	})
+	resp, err := t.client.Unseal(ctx, pbconv.UnsealRequestToProto(req))
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "unseal failed", Err: err}
 	}
@@ -2358,150 +2342,137 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 // ListEscrowed/RevokeEscrow at all. transport.EscrowService is no longer
 // part of transport.Client — see docs/escrow/architecture.md.
 
-// Policy Operations
+// TPM Policy Operations
+//
+// The TPM policy API is served by pbconv.TPMPolicyClient, shared with the
+// gRPC transport, once this transport holds a connection.
 
-// PolicyCreate creates a new PCR policy.
-func (t *Transport) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+// TPMPolicyCreate creates a named TPM policy.
+func (t *Transport) TPMPolicyCreate(ctx context.Context, req *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	if t.client == nil {
 		return nil, ErrNotConnected
 	}
-	resp, err := t.client.PolicyCreate(ctx, &pb.PolicyCreateRequest{
-		Name: req.Name,
-		Bank: req.Bank,
-		Pcrs: pcrsToProto(req.PCRs),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &transport.PolicyCreateResponse{
-		Name:      resp.Name,
-		Bank:      resp.Bank,
-		PCRs:      pcrsFromProto(resp.Pcrs),
-		Values:    pcrValuesFromProto(resp.Values),
-		CreatedAt: resp.CreatedAt,
-	}, nil
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicyCreate(ctx, req)
 }
 
-// PolicyGet retrieves a policy by name.
-func (t *Transport) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+// TPMPolicyGet returns a named TPM policy.
+func (t *Transport) TPMPolicyGet(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	if t.client == nil {
 		return nil, ErrNotConnected
 	}
-	resp, err := t.client.PolicyGet(ctx, &pb.PolicyGetRequest{Name: req.Name})
-	if err != nil {
-		return nil, err
-	}
-	return policyGetResponseFromProto(resp), nil
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicyGet(ctx, req)
 }
 
-// PolicyList lists all policies.
-func (t *Transport) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
+// TPMPolicyList returns a tenant's TPM policies.
+func (t *Transport) TPMPolicyList(ctx context.Context, req *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
 	if t.client == nil {
 		return nil, ErrNotConnected
 	}
-	resp, err := t.client.PolicyList(ctx, &pb.PolicyListRequest{})
-	if err != nil {
-		return nil, err
-	}
-	policies := make([]transport.PolicyGetResponse, 0, len(resp.Policies))
-	for _, p := range resp.Policies {
-		policies = append(policies, *policyGetResponseFromProto(p))
-	}
-	return &transport.PolicyListResponse{
-		Policies:     policies,
-		PageResponse: transport.PageResponse{Total: int(resp.Total)},
-	}, nil
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicyList(ctx, req)
 }
 
-// PolicyDelete deletes a policy.
-func (t *Transport) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
+// TPMPolicyUpdate re-captures and re-approves a TPM policy.
+func (t *Transport) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicyUpdate(ctx, req)
+}
+
+// TPMPolicyRevoke withdraws a TPM policy's approval.
+func (t *Transport) TPMPolicyRevoke(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicyRevoke(ctx, req)
+}
+
+// TPMPolicyVerify compares a TPM policy's PCR values with the live ones.
+func (t *Transport) TPMPolicyVerify(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicyVerify(ctx, req)
+}
+
+// TPMPolicyDelete deletes a TPM policy no object is assigned to.
+func (t *Transport) TPMPolicyDelete(ctx context.Context, req *transport.TPMPolicyDeleteRequest) error {
 	if t.client == nil {
 		return ErrNotConnected
 	}
-	_, err := t.client.PolicyDelete(ctx, &pb.PolicyDeleteRequest{Name: req.Name})
-	return err
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicyDelete(ctx, req)
 }
 
-// PolicyRefresh refreshes a policy with current PCR values.
-func (t *Transport) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+// TPMPolicyObjects lists the objects assigned to a TPM policy.
+func (t *Transport) TPMPolicyObjects(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
 	if t.client == nil {
 		return nil, ErrNotConnected
 	}
-	resp, err := t.client.PolicyRefresh(ctx, &pb.PolicyRefreshRequest{Name: req.Name})
-	if err != nil {
-		return nil, err
-	}
-	return policyGetResponseFromProto(resp), nil
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicyObjects(ctx, req)
 }
 
-// PolicyVerify verifies a policy against current PCR values.
-func (t *Transport) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+// TPMPolicySetAutoUnseal sets or clears a TPM policy's auto-unseal mark.
+func (t *Transport) TPMPolicySetAutoUnseal(ctx context.Context, req *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
 	if t.client == nil {
 		return nil, ErrNotConnected
 	}
-	resp, err := t.client.PolicyVerify(ctx, &pb.PolicyVerifyRequest{Name: req.Name})
-	if err != nil {
-		return nil, err
-	}
-	return &transport.PolicyVerifyResponse{
-		Name:    resp.Name,
-		Valid:   resp.Valid,
-		Message: resp.Message,
-	}, nil
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicySetAutoUnseal(ctx, req)
 }
 
-// PolicyExport exports a policy.
-func (t *Transport) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+// TPMObjectPolicy returns the TPM policy a key or sealed object was created under.
+func (t *Transport) TPMObjectPolicy(ctx context.Context, req *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	if t.client == nil {
 		return nil, ErrNotConnected
 	}
-	resp, err := t.client.PolicyExport(ctx, &pb.PolicyExportRequest{Name: req.Name})
-	if err != nil {
-		return nil, err
-	}
-	return &transport.PolicyExportResponse{Data: resp.Data}, nil
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMObjectPolicy(ctx, req)
 }
 
-// policyGetResponseFromProto converts a proto PolicyGetResponse to its
-// transport wire representation.
-func policyGetResponseFromProto(resp *pb.PolicyGetResponse) *transport.PolicyGetResponse {
-	return &transport.PolicyGetResponse{
-		Name:      resp.Name,
-		Bank:      resp.Bank,
-		PCRs:      pcrsFromProto(resp.Pcrs),
-		Values:    pcrValuesFromProto(resp.Values),
-		CreatedAt: resp.CreatedAt,
-		UpdatedAt: resp.UpdatedAt,
+// TPMPolicyRotateAuthority rotates a tenant's TPM policy authority.
+func (t *Transport) TPMPolicyRotateAuthority(ctx context.Context, req *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
 	}
+	return pbconv.TPMPolicyClient{Client: t.client}.TPMPolicyRotateAuthority(ctx, req)
 }
 
-// pcrsToProto converts a PCR index slice to its proto (int32) representation.
-func pcrsToProto(pcrs []int) []int32 {
-	out := make([]int32, len(pcrs))
-	for i, v := range pcrs {
-		out[i] = int32(v) // #nosec G115 - PCR indices are 0-23
+// GetTenantTPMMode returns a tenant's TPM mode.
+func (t *Transport) GetTenantTPMMode(ctx context.Context, tenantID string) (*transport.TenantTPMModeResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
 	}
-	return out
+	return pbconv.TPMPolicyClient{Client: t.client}.GetTenantTPMMode(ctx, tenantID)
 }
 
-// pcrsFromProto converts a proto (int32) PCR index slice to the SDK's native
-// []int representation.
-func pcrsFromProto(pcrs []int32) []int {
-	out := make([]int, len(pcrs))
-	for i, v := range pcrs {
-		out[i] = int(v)
+// SetTenantTPMMode changes a tenant's TPM mode.
+func (t *Transport) SetTenantTPMMode(ctx context.Context, req *transport.SetTenantTPMModeRequest) (*transport.TenantTPMModeResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
 	}
-	return out
+	return pbconv.TPMPolicyClient{Client: t.client}.SetTenantTPMMode(ctx, req)
 }
 
-// pcrValuesFromProto converts a proto (int32 key) PCR index-to-hex-value map
-// to the SDK's native map[int]string representation.
-func pcrValuesFromProto(values map[int32]string) map[int]string {
-	out := make(map[int]string, len(values))
-	for idx, v := range values {
-		out[int(idx)] = v
+// TenantVTPMStatus reports a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStatus(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
 	}
-	return out
+	return pbconv.TPMPolicyClient{Client: t.client}.TenantVTPMStatus(ctx, tenantID)
+}
+
+// TenantVTPMStart starts a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStart(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.TPMPolicyClient{Client: t.client}.TenantVTPMStart(ctx, tenantID)
+}
+
+// TenantVTPMStop stops a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	return pbconv.TPMPolicyClient{Client: t.client}.TenantVTPMStop(ctx, tenantID)
 }
 
 // CustodianGroup Operations

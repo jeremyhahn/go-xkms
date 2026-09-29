@@ -507,22 +507,22 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 // scanner cannot fingerprint the deployment shape.
 func (s *Server) capabilityFlags() map[string]bool {
 	return map[string]bool{
-		"webauthn":   s.webauthnHandler != nil,
-		"piv_login":  s.pivLogin != nil && s.pivLogin.Enabled,
-		"rbac":       s.rbacMiddleware != nil,
-		"ca":         s.caHandlers != nil,
-		"custodians": s.custodianHandlers != nil,
-		"shares":     s.shareHandlers != nil,
-		"tenants":    s.tenantHandlers != nil,
-		"passwords":  s.passwordHandlers != nil,
-		"platform":   s.platformHandlers != nil,
-		"policies":   s.policyHandlers != nil,
-		"ceremony":   s.initHandlers != nil,
-		"ssh":        s.sshHandlers != nil,
-		"frost":      frostEnabled,
-		"factors":    s.authFactorHandlers != nil,
-		"audit":      s.auditHandlers != nil,
-		"cluster":    s.xkmsService != nil && s.xkmsService.Clustered(),
+		"webauthn":     s.webauthnHandler != nil,
+		"piv_login":    s.pivLogin != nil && s.pivLogin.Enabled,
+		"rbac":         s.rbacMiddleware != nil,
+		"ca":           s.caHandlers != nil,
+		"custodians":   s.custodianHandlers != nil,
+		"shares":       s.shareHandlers != nil,
+		"tenants":      s.tenantHandlers != nil,
+		"passwords":    s.passwordHandlers != nil,
+		"platform":     s.platformHandlers != nil,
+		"tpm_policies": s.xkmsService != nil && s.xkmsService.TPMPolicyService() != nil,
+		"ceremony":     s.initHandlers != nil,
+		"ssh":          s.sshHandlers != nil,
+		"frost":        frostEnabled,
+		"factors":      s.authFactorHandlers != nil,
+		"audit":        s.auditHandlers != nil,
+		"cluster":      s.xkmsService != nil && s.xkmsService.Clustered(),
 	}
 }
 

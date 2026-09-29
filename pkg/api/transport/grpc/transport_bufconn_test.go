@@ -599,41 +599,10 @@ func (s *mockKeystoreServer) PasswordStoreSetAccessMode(_ context.Context, req *
 	return &pb.PasswordStoreSetAccessModeResponse{Mode: req.Mode, Message: "ok"}, nil
 }
 
-func (s *mockKeystoreServer) PolicyCreate(_ context.Context, req *pb.PolicyCreateRequest) (*pb.PolicyCreateResponse, error) {
-	return &pb.PolicyCreateResponse{
-		Name: req.Name, Bank: req.Bank, Pcrs: req.Pcrs,
-		Values: map[int32]string{0: "aa"}, CreatedAt: "2026-01-01T00:00:00Z",
-	}, nil
-}
-
-func (s *mockKeystoreServer) PolicyGet(_ context.Context, req *pb.PolicyGetRequest) (*pb.PolicyGetResponse, error) {
-	return &pb.PolicyGetResponse{
-		Name: req.Name, Bank: "sha256", Pcrs: []int32{0, 7},
-		Values: map[int32]string{0: "aa"}, CreatedAt: "2026-01-01T00:00:00Z",
-	}, nil
-}
-
-func (s *mockKeystoreServer) PolicyList(_ context.Context, _ *pb.PolicyListRequest) (*pb.PolicyListResponse, error) {
-	return &pb.PolicyListResponse{
-		Policies: []*pb.PolicyGetResponse{{Name: "boot", Bank: "sha256", Pcrs: []int32{0, 7}}},
-		Total:    1,
-	}, nil
-}
-
-func (s *mockKeystoreServer) PolicyDelete(_ context.Context, _ *pb.PolicyDeleteRequest) (*pb.PolicyDeleteResponse, error) {
-	return &pb.PolicyDeleteResponse{}, nil
-}
-
-func (s *mockKeystoreServer) PolicyRefresh(_ context.Context, req *pb.PolicyRefreshRequest) (*pb.PolicyGetResponse, error) {
-	return &pb.PolicyGetResponse{Name: req.Name, Bank: "sha256", Pcrs: []int32{0, 7}, UpdatedAt: "2026-01-01T00:00:00Z"}, nil
-}
-
-func (s *mockKeystoreServer) PolicyVerify(_ context.Context, req *pb.PolicyVerifyRequest) (*pb.PolicyVerifyResponse, error) {
-	return &pb.PolicyVerifyResponse{Name: req.Name, Valid: true}, nil
-}
-
-func (s *mockKeystoreServer) PolicyExport(_ context.Context, req *pb.PolicyExportRequest) (*pb.PolicyExportResponse, error) {
-	return &pb.PolicyExportResponse{Data: `{"name":"` + req.Name + `"}`}, nil
+// TPMPolicyGet echoes the requested policy, so a client test can see the
+// request's tenant and name arrive.
+func (s *mockKeystoreServer) TPMPolicyGet(_ context.Context, req *pb.TPMPolicyRequest) (*pb.TPMPolicy, error) {
+	return &pb.TPMPolicy{Name: req.GetName(), TenantId: req.GetTenantId(), Bank: "sha256", Pcrs: []uint32{7}, Approved: true}, nil
 }
 
 // newBufconnTransport creates an in-memory gRPC server + connected Transport for testing.
@@ -1626,40 +1595,6 @@ func TestPasswordStoreSetAccessMode_Connected(t *testing.T) {
 
 	err := tr.PasswordStoreSetAccessMode(context.Background(), &transport.PasswordStoreSetAccessModeRequest{Mode: "session_based"})
 	assert.NoError(t, err)
-}
-
-func TestPolicy_RoundTrip(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	createResp, err := tr.PolicyCreate(ctx, &transport.PolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []int{0, 7}})
-	require.NoError(t, err)
-	assert.Equal(t, "boot", createResp.Name)
-	assert.ElementsMatch(t, []int{0, 7}, createResp.PCRs)
-
-	getResp, err := tr.PolicyGet(ctx, &transport.PolicyGetRequest{Name: "boot"})
-	require.NoError(t, err)
-	assert.Equal(t, "boot", getResp.Name)
-
-	listResp, err := tr.PolicyList(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, 1, listResp.Total)
-
-	verifyResp, err := tr.PolicyVerify(ctx, &transport.PolicyVerifyRequest{Name: "boot"})
-	require.NoError(t, err)
-	assert.True(t, verifyResp.Valid)
-
-	exportResp, err := tr.PolicyExport(ctx, &transport.PolicyExportRequest{Name: "boot"})
-	require.NoError(t, err)
-	assert.Equal(t, `{"name":"boot"}`, exportResp.Data)
-
-	refreshResp, err := tr.PolicyRefresh(ctx, &transport.PolicyRefreshRequest{Name: "boot"})
-	require.NoError(t, err)
-	assert.Equal(t, "boot", refreshResp.Name)
-
-	require.NoError(t, tr.PolicyDelete(ctx, &transport.PolicyDeleteRequest{Name: "boot"}))
 }
 
 // TestRegistration_RPCWired confirms the FIDO2 registration and authentication

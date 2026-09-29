@@ -90,21 +90,34 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// name; xkms owns it.
 		qrdbsdk.Permission(auth.ResourceBootstrap + ":" + auth.ActionRead),
 
-		// policy:* (go-xkms#691) is TPM 2.0 PCR-bank sealed-secret
-		// authorization policy management (pkg/seal/policy): capturing,
-		// reading, refreshing, verifying, and exporting the PCR-value
-		// snapshots sealed secrets bind to. It is platform/hardware state,
-		// not per-tenant key material -- the same reasoning keys:read/write
-		// above give for the PKCS#11 remote-state and seal stores -- so it
-		// takes the same ScopeSelf reach. qrdb does not declare this name;
-		// xkms owns it. PIN EACH MEMBER: a family helper here would tag a
-		// future policy action nobody reviewed.
-		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionCreate),
-		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionGet),
-		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionList),
-		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionDelete),
-		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionRefresh),
-		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionVerify),
-		qrdbsdk.Permission(auth.ResourcePolicy + ":" + auth.ActionExport),
+		// tpm_policy:* is named TPM policy management (pkg/tpmpolicy):
+		// the policies a tenant's TPM keys and sealed objects are bound to,
+		// and the tenant's policy authority. Every call acts on the
+		// identity's own tenant -- XKMSService binds it -- and a
+		// system-tenant identity may address any tenant, which is ScopeSelf.
+		// qrdb does not declare this name; xkms owns it. PIN EACH MEMBER: a
+		// family helper here would tag a future action nobody reviewed.
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionCreate),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionUpdate),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionRevoke),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionVerify),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionDelete),
+		qrdbsdk.Permission(auth.ResourceTPMPolicy + ":" + auth.ActionRotate),
+	}
+}
+
+// crossScopedPermissions returns the permissions xkms declares ScopeCross:
+// exercisable only by a system-tenant identity.
+//
+// tenants:set_tpm_mode changes a tenant's TPM mode and starts or stops its
+// vTPM. The physical TPM belongs to the system tenant, and a tenant cannot
+// be allowed to move its own objects onto -- or off -- it, so only a
+// platform operator may hold it. qrdb does not declare this name; xkms owns
+// it.
+func crossScopedPermissions() []qrdbsdk.Permission {
+	return []qrdbsdk.Permission{
+		qrdbsdk.Permission(auth.ResourceTenants + ":" + auth.ActionSetTPMMode),
 	}
 }

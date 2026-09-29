@@ -17,6 +17,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -145,7 +146,15 @@ func mapKeyOpError(w http.ResponseWriter, err error) {
 		}
 	}
 
-	writeError(w, err, mapErrorToStatusCode(err))
+	// A TPM2 key or seal routed to a tenant's TPM scope surfaces the TPM
+	// policy service's errors (an unknown named policy, a tenant whose TPM
+	// mode is none, a name reserved for the service's own objects), which
+	// the package table does not know.
+	status := mapErrorToStatusCode(err)
+	if class, ok := apierrors.TPMPolicyClassOf(err); ok && status == http.StatusInternalServerError {
+		status = classToHTTPStatus[class]
+	}
+	writeError(w, err, status)
 }
 
 // keyOpValidationMessage renders a service-layer validation error for the

@@ -722,47 +722,90 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 	return &resp, nil
 }
 
-// Policy Operations
+// TPM Policy Operations
 //
 // The USB transport's counterparty is the xkey Android companion app (a
 // Noise-encrypted JSON-RPC peer, not xkmsd), and it exposes no TPM: the
-// entire Password/SealStore/Escrow/Policy administrative surface is
-// unimplemented over this transport for that structural reason, not as an
-// oversight. Wiring PCR policy management to a phone with no TPM to read
-// PCRs from would need a phone-side (xkey Android) change, which is outside
-// this repository per the cross-project boundary. See go-xkms#691.
+// TPM policy surface is unavailable over this transport for that structural
+// reason, as the Password/SealStore/Escrow administrative surface is. Serving
+// it would need a phone-side (xkey Android) change, outside this repository.
 
-// PolicyCreate creates a new PCR policy.
-func (t *Transport) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+// TPMPolicyCreate creates a named TPM policy. It is not available over USB.
+func (t *Transport) TPMPolicyCreate(_ context.Context, _ *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	return nil, ErrNotSupported
 }
 
-// PolicyGet retrieves a policy by name.
-func (t *Transport) PolicyGet(_ context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+// TPMPolicyGet returns a named TPM policy. It is not available over USB.
+func (t *Transport) TPMPolicyGet(_ context.Context, _ *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	return nil, ErrNotSupported
 }
 
-// PolicyList lists all policies.
-func (t *Transport) PolicyList(_ context.Context) (*transport.PolicyListResponse, error) {
+// TPMPolicyList returns a tenant's TPM policies. It is not available over USB.
+func (t *Transport) TPMPolicyList(_ context.Context, _ *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
 	return nil, ErrNotSupported
 }
 
-// PolicyDelete deletes a policy.
-func (t *Transport) PolicyDelete(_ context.Context, _ *transport.PolicyDeleteRequest) error {
+// TPMPolicyUpdate re-captures and re-approves a TPM policy. It is not available over USB.
+func (t *Transport) TPMPolicyUpdate(_ context.Context, _ *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	return nil, ErrNotSupported
+}
+
+// TPMPolicyRevoke withdraws a TPM policy's approval. It is not available over USB.
+func (t *Transport) TPMPolicyRevoke(_ context.Context, _ *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	return nil, ErrNotSupported
+}
+
+// TPMPolicyVerify compares a TPM policy's PCR values with the live ones. It is not available over USB.
+func (t *Transport) TPMPolicyVerify(_ context.Context, _ *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// TPMPolicyDelete deletes a TPM policy no object is assigned to. It is not available over USB.
+func (t *Transport) TPMPolicyDelete(_ context.Context, _ *transport.TPMPolicyDeleteRequest) error {
 	return ErrNotSupported
 }
 
-// PolicyRefresh refreshes a policy with current PCR values.
-func (t *Transport) PolicyRefresh(_ context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+// TPMPolicyObjects lists the objects assigned to a TPM policy. It is not available over USB.
+func (t *Transport) TPMPolicyObjects(_ context.Context, _ *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
 	return nil, ErrNotSupported
 }
 
-// PolicyVerify verifies a policy against current PCR values.
-func (t *Transport) PolicyVerify(_ context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+// TPMPolicySetAutoUnseal sets or clears a TPM policy's auto-unseal mark. It is not available over USB.
+func (t *Transport) TPMPolicySetAutoUnseal(_ context.Context, _ *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
 	return nil, ErrNotSupported
 }
 
-// PolicyExport exports a policy.
-func (t *Transport) PolicyExport(_ context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+// TPMObjectPolicy returns the TPM policy a key or sealed object was created under. It is not available over USB.
+func (t *Transport) TPMObjectPolicy(_ context.Context, _ *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// TPMPolicyRotateAuthority rotates a tenant's TPM policy authority. It is not available over USB.
+func (t *Transport) TPMPolicyRotateAuthority(_ context.Context, _ *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// GetTenantTPMMode returns a tenant's TPM mode. It is not available over USB.
+func (t *Transport) GetTenantTPMMode(_ context.Context, _ string) (*transport.TenantTPMModeResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// SetTenantTPMMode changes a tenant's TPM mode. It is not available over USB.
+func (t *Transport) SetTenantTPMMode(_ context.Context, _ *transport.SetTenantTPMModeRequest) (*transport.TenantTPMModeResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// TenantVTPMStatus reports a tenant's virtual TPM. It is not available over USB.
+func (t *Transport) TenantVTPMStatus(_ context.Context, _ string) (*transport.TenantVTPMStatusResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// TenantVTPMStart starts a tenant's virtual TPM. It is not available over USB.
+func (t *Transport) TenantVTPMStart(_ context.Context, _ string) (*transport.TenantVTPMStatusResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// TenantVTPMStop stops a tenant's virtual TPM. It is not available over USB.
+func (t *Transport) TenantVTPMStop(_ context.Context, _ string) (*transport.TenantVTPMStatusResponse, error) {
 	return nil, ErrNotSupported
 }

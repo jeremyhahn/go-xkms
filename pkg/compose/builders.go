@@ -19,16 +19,19 @@ import (
 	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/tenancy"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sealedstorage "github.com/jeremyhahn/go-xkms/pkg/storage/sealed"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -45,7 +48,8 @@ const (
 	StorageCA             = "ca"
 	StorageCASerials      = "ca-serials"
 	StorageCARevocations  = "ca-revocations"
-	StoragePolicies       = "policies"
+	StorageTPMPolicies    = "tpm-policies"
+	StorageTPMKeys        = "tpm-keys"
 	defaultCredentialMode = credentialspkg.StrategyManual
 )
 
@@ -281,28 +285,71 @@ func BuildCA(ctx context.Context, p CAParams) (ca.TrustedCA, error) {
 	return trustedCA, nil
 }
 
-// BuildPolicyManager builds the PCR policy manager: current PCR values come
-// from reader, and policy definitions persist under StoragePolicies.
-func BuildPolicyManager(open StorageFactory, reader policy.PCRReader) (*policy.Manager, error) {
-	if open == nil {
-		return nil, &NilDependencyError{Feature: FeaturePolicies, Dependency: "storage factory"}
+// TPMPolicyParams are the dependencies of the TPM policy service.
+type TPMPolicyParams struct {
+	// Backend is the TPM2 key backend. The service runs over its TPM,
+	// Platform SRK and key store (the system scope), and is installed as its
+	// scope provider, so its key operations run in the scope of each key's
+	// tenant. Required.
+	Backend *tpm2backend.Backend
+
+	// Storage opens the service's registry (StorageTPMPolicies) and the
+	// store of every tenant's TPM object blobs (StorageTPMKeys). Required.
+	Storage StorageFactory
+
+	// VTPM configures the per-tenant vTPM supervisor. Nil leaves vtpm mode
+	// unavailable: a tenant set to it is refused with
+	// tpmpolicy.ErrVTPMUnavailable.
+	VTPM *vtpm.Config
+
+	// Logger receives the service's lifecycle events. Nil selects
+	// slog.Default().
+	Logger *slog.Logger
+}
+
+// BuildTPMPolicyService builds the TPM policy service (pkg/tpmpolicy) over
+// the TPM2 key backend and installs it as the backend's scope provider. The
+// service seals each scope's secrets with the backend's own TPM, under the
+// built-in platform policy the service names on every sealed object. The
+// caller closes the service at shutdown, which also removes it from the TPM.
+func BuildTPMPolicyService(p TPMPolicyParams) (*tpmpolicy.Service, error) {
+	if p.Backend == nil {
+		return nil, &NilDependencyError{Feature: FeatureTPMPolicies, Dependency: "TPM2 backend"}
 	}
-	if reader == nil {
-		return nil, &NilDependencyError{Feature: FeaturePolicies, Dependency: "PCR reader"}
+	if p.Storage == nil {
+		return nil, &NilDependencyError{Feature: FeatureTPMPolicies, Dependency: "storage factory"}
 	}
-	backend, err := open(StoragePolicies)
+	tpm, ok := p.Backend.TPM().(*pkgtpm2.TPM2)
+	if !ok {
+		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: ErrUnsupportedTPM}
+	}
+	registryStore, err := p.Storage(StorageTPMPolicies)
 	if err != nil {
-		return nil, &FeatureBuildError{Feature: FeaturePolicies, Err: err}
+		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}
 	}
-	store, err := policy.NewBackendPolicyStore(backend)
+	registry, err := tpmpolicy.NewRegistry(registryStore)
 	if err != nil {
-		return nil, &FeatureBuildError{Feature: FeaturePolicies, Err: err}
+		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}
 	}
-	manager, err := policy.NewManager(reader, store)
+	keyStorage, err := p.Storage(StorageTPMKeys)
 	if err != nil {
-		return nil, &FeatureBuildError{Feature: FeaturePolicies, Err: err}
+		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}
 	}
-	return manager, nil
+	svc, err := tpmpolicy.NewService(tpmpolicy.Config{
+		Registry:    registry,
+		TPM:         tpm,
+		PlatformSRK: p.Backend.SRKAttributes(),
+		Keys:        p.Backend.KeyBackend(),
+		KeyStorage:  keyStorage,
+		Sealer:      tpm,
+		VTPM:        p.VTPM,
+		Logger:      orDefault(p.Logger),
+	})
+	if err != nil {
+		return nil, &FeatureBuildError{Feature: FeatureTPMPolicies, Err: err}
+	}
+	p.Backend.SetScopeProvider(svc)
+	return svc, nil
 }
 
 // orDefault returns logger, or slog.Default() when it is nil.

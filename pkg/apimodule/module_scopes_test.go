@@ -29,10 +29,10 @@ import (
 // scope gate. Every assertion below is inside a loop over
 // modulePermissions(), and an empty loop reports success — so the gate first
 // insists the derived set is at least as large as it was when the gate was
-// written. Measured 2026-09-23 (go-xkms#691 added the policy:* family): 81.
-// Raise it when the API surface grows; a drop below it is a red run, which
-// is the point.
-const minModulePermissions = 81
+// written. Measured 2026-09-29 (tpm_policy:* replaced policy:*, and
+// tenants:set_tpm_mode was added): 85. Raise it when the API surface grows;
+// a drop below it is a red run, which is the point.
+const minModulePermissions = 85
 
 // upstreamDeclared records which of this module's permissions already had a
 // scope BEFORE registerRoleGrants ran — that is, the ones go-qrdb declares
@@ -131,7 +131,7 @@ func TestEveryModulePermissionDeclaresItsScope(t *testing.T) {
 		counts[qrdbsdk.PermissionScopeSelf],
 		counts[qrdbsdk.PermissionScopeCross],
 		counts[qrdbsdk.PermissionScopeTenantOnly],
-		len(selfScopedPermissions()),
+		len(ownedScopedPermissions()),
 		len(upstreamDeclared))
 }
 
@@ -151,7 +151,7 @@ func TestModuleDeclaresOnlyItsOwnScopes(t *testing.T) {
 	}
 
 	var overrides []string
-	for _, p := range selfScopedPermissions() {
+	for _, p := range ownedScopedPermissions() {
 		if scope, ok := upstreamDeclared[p]; ok {
 			overrides = append(overrides, string(p)+" (go-qrdb declares it "+scope.String()+")")
 		}
@@ -175,7 +175,7 @@ func TestModuleScopeDeclarationsAreAllContributed(t *testing.T) {
 	}
 
 	var strays []string
-	for _, p := range selfScopedPermissions() {
+	for _, p := range ownedScopedPermissions() {
 		if _, ok := contributed[p]; !ok {
 			strays = append(strays, string(p))
 		}
@@ -209,5 +209,38 @@ func TestUndeclaredPermissionHasNoScope(t *testing.T) {
 	}
 	if undeclaredErr.Permission != never {
 		t.Errorf("error names permission %q, want %q", undeclaredErr.Permission, never)
+	}
+}
+
+// ownedScopedPermissions is every permission module_scopes.go declares, of
+// any scope.
+func ownedScopedPermissions() []qrdbsdk.Permission {
+	return append(selfScopedPermissions(), crossScopedPermissions()...)
+}
+
+// TestTenantTPMModeIsCrossScoped proves tenants:set_tpm_mode resolves to
+// ScopeCross, so only a system-tenant identity can hold it, while the
+// tpm_policy:* family resolves to ScopeSelf.
+func TestTenantTPMModeIsCrossScoped(t *testing.T) {
+	registerRoleGrants()
+	resolver, err := testutil.NewPermissionScopeResolver()
+	if err != nil {
+		t.Fatalf("NewPermissionScopeResolver: %v", err)
+	}
+	ctx := context.Background()
+
+	scope, err := resolver.Scope(ctx, qrdbsdk.Permission("tenants:set_tpm_mode"))
+	if err != nil {
+		t.Fatalf("Scope(tenants:set_tpm_mode): %v", err)
+	}
+	if scope != qrdbsdk.PermissionScopeCross {
+		t.Fatalf("tenants:set_tpm_mode scope = %v, want cross", scope)
+	}
+	scope, err = resolver.Scope(ctx, qrdbsdk.Permission("tpm_policy:create"))
+	if err != nil {
+		t.Fatalf("Scope(tpm_policy:create): %v", err)
+	}
+	if scope != qrdbsdk.PermissionScopeSelf {
+		t.Fatalf("tpm_policy:create scope = %v, want self", scope)
 	}
 }

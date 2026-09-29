@@ -694,15 +694,24 @@ var goldenMethodPermissions = map[string]string{
 	"sealStore.reseal": "keys:write",
 	"sealStore.status": "keys:read",
 
-	// PCR policy management (go-xkms#691) — pkg/api/grpc's PolicyCreate/
-	// Get/... RPCs' (qrdb.v1.permission) options.
-	"policy.create":  "policy:create",
-	"policy.get":     "policy:get",
-	"policy.list":    "policy:list",
-	"policy.delete":  "policy:delete",
-	"policy.refresh": "policy:refresh",
-	"policy.verify":  "policy:verify",
-	"policy.export":  "policy:export",
+	// TPM policy management — pkg/api/grpc's TPMPolicy*/
+	// RPCs' (qrdb.v1.permission) options.
+	"tpm.policy.create":     "tpm_policy:create",
+	"tpm.policy.get":        "tpm_policy:get",
+	"tpm.policy.list":       "tpm_policy:list",
+	"tpm.policy.update":     "tpm_policy:update",
+	"tpm.policy.revoke":     "tpm_policy:revoke",
+	"tpm.policy.verify":     "tpm_policy:verify",
+	"tpm.policy.delete":     "tpm_policy:delete",
+	"tpm.policy.objects":    "tpm_policy:get",
+	"tpm.policy.autoUnseal": "tpm_policy:update",
+	"tpm.object.policy":     "tpm_policy:get",
+	"tpm.authority.rotate":  "tpm_policy:rotate",
+	"xkms.getTenantTPMMode": "tenants:read",
+	"xkms.setTenantTPMMode": "tenants:set_tpm_mode",
+	"xkms.tenantVTPMStatus": "tenants:read",
+	"xkms.tenantVTPMStart":  "tenants:set_tpm_mode",
+	"xkms.tenantVTPMStop":   "tenants:set_tpm_mode",
 
 	// SSH key, known-host, and authorized-key stores —
 	// pkg/api/quic/handlers_ssh.go.
@@ -803,8 +812,8 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceBarrier: {}, auth.ResourceCeremony: {},
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
-		auth.ResourcePolicy: {},
-		auth.ResourcePIN:    {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
+		auth.ResourceTPMPolicy: {},
+		auth.ResourcePIN:       {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
 		auth.ResourceUsers: {},
 	}
 

@@ -49,7 +49,7 @@ type XKMSServicer interface {
 	UserServicer
 	PasswordServicer
 	SealStoreServicer
-	PolicyServicer
+	TPMPolicyServicer
 	CustodianGroupServicer
 	ShareServicer
 	TenantServicer
@@ -246,15 +246,11 @@ type SealStoreServicer interface {
 	SealStoreStatus(ctx context.Context) (*SealStoreStatusResponse, error)
 }
 
-// PolicyServicer handles PCR policy management.
-type PolicyServicer interface {
-	PolicyCreate(ctx context.Context, req *PolicyCreateRequest) (*PolicyCreateResponse, error)
-	PolicyGet(ctx context.Context, req *PolicyGetRequest) (*PolicyGetResponse, error)
-	PolicyList(ctx context.Context) (*PolicyListResponse, error)
-	PolicyDelete(ctx context.Context, req *PolicyDeleteRequest) error
-	PolicyRefresh(ctx context.Context, req *PolicyRefreshRequest) (*PolicyGetResponse, error)
-	PolicyVerify(ctx context.Context, req *PolicyVerifyRequest) (*PolicyVerifyResponse, error)
-	PolicyExport(ctx context.Context, req *PolicyExportRequest) (*PolicyExportResponse, error)
+// TPMPolicyServicer manages named TPM policies and tenant TPM modes. Its
+// method set is TPMPolicyService's: every transport calls through it
+// unchanged.
+type TPMPolicyServicer interface {
+	TPMPolicyService
 }
 
 // EscrowServicer provides external key-escrow operations (pkg/escrow):

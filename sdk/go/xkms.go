@@ -497,18 +497,23 @@ type (
 	RecoverResponse = transport.RecoverResponse
 	EscrowRecord    = transport.EscrowRecord
 
-	// Policy Operations
-	PolicyCreateRequest  = transport.PolicyCreateRequest
-	PolicyCreateResponse = transport.PolicyCreateResponse
-	PolicyGetRequest     = transport.PolicyGetRequest
-	PolicyGetResponse    = transport.PolicyGetResponse
-	PolicyListResponse   = transport.PolicyListResponse
-	PolicyDeleteRequest  = transport.PolicyDeleteRequest
-	PolicyRefreshRequest = transport.PolicyRefreshRequest
-	PolicyVerifyRequest  = transport.PolicyVerifyRequest
-	PolicyVerifyResponse = transport.PolicyVerifyResponse
-	PolicyExportRequest  = transport.PolicyExportRequest
-	PolicyExportResponse = transport.PolicyExportResponse
+	// TPM Policy Operations
+	TPMPolicy                  = transport.TPMPolicy
+	TPMPolicyCreateRequest     = transport.TPMPolicyCreateRequest
+	TPMPolicyRequest           = transport.TPMPolicyRequest
+	TPMPolicyListRequest       = transport.TPMPolicyListRequest
+	TPMPolicyListResponse      = transport.TPMPolicyListResponse
+	TPMPolicyDeleteRequest     = transport.TPMPolicyDeleteRequest
+	TPMPolicyVerifyResponse    = transport.TPMPolicyVerifyResponse
+	TPMPolicyObjectsResponse   = transport.TPMPolicyObjectsResponse
+	TPMPolicyAutoUnsealRequest = transport.TPMPolicyAutoUnsealRequest
+	TPMObjectPolicyRequest     = transport.TPMObjectPolicyRequest
+	TPMObjectPolicyResponse    = transport.TPMObjectPolicyResponse
+	TPMAuthorityRotateRequest  = transport.TPMAuthorityRotateRequest
+	TPMAuthorityRotateResponse = transport.TPMAuthorityRotateResponse
+	TenantTPMModeResponse      = transport.TenantTPMModeResponse
+	SetTenantTPMModeRequest    = transport.SetTenantTPMModeRequest
+	TenantVTPMStatusResponse   = transport.TenantVTPMStatusResponse
 
 	// Audit Operations
 	AuditEvent  = transport.AuditEvent

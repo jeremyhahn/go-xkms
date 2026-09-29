@@ -975,60 +975,134 @@ func (t *Transport) RevokeEscrow(ctx context.Context, escrowID string) error {
 	return t.service.RevokeEscrow(ctx, escrowID)
 }
 
-// PolicyCreate creates a new PCR policy.
-func (t *Transport) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+// TPM Policy Operations
+
+// TPMPolicyCreate creates a named TPM policy.
+func (t *Transport) TPMPolicyCreate(ctx context.Context, req *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	return t.service.PolicyCreate(ctx, req)
+	return t.service.TPMPolicyCreate(ctx, req)
 }
 
-// PolicyGet retrieves a policy by name.
-func (t *Transport) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+// TPMPolicyGet returns a named TPM policy.
+func (t *Transport) TPMPolicyGet(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	return t.service.PolicyGet(ctx, req)
+	return t.service.TPMPolicyGet(ctx, req)
 }
 
-// PolicyList lists all policies.
-func (t *Transport) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
+// TPMPolicyList returns a tenant's TPM policies.
+func (t *Transport) TPMPolicyList(ctx context.Context, req *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	return t.service.PolicyList(ctx)
+	return t.service.TPMPolicyList(ctx, req)
 }
 
-// PolicyDelete deletes a policy.
-func (t *Transport) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
+// TPMPolicyUpdate re-captures and re-approves a TPM policy.
+func (t *Transport) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TPMPolicyUpdate(ctx, req)
+}
+
+// TPMPolicyRevoke withdraws a TPM policy's approval.
+func (t *Transport) TPMPolicyRevoke(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TPMPolicyRevoke(ctx, req)
+}
+
+// TPMPolicyVerify compares a TPM policy's PCR values with the live ones.
+func (t *Transport) TPMPolicyVerify(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TPMPolicyVerify(ctx, req)
+}
+
+// TPMPolicyDelete deletes a TPM policy no object is assigned to.
+func (t *Transport) TPMPolicyDelete(ctx context.Context, req *transport.TPMPolicyDeleteRequest) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	return t.service.PolicyDelete(ctx, req)
+	return t.service.TPMPolicyDelete(ctx, req)
 }
 
-// PolicyRefresh refreshes a policy with current PCR values.
-func (t *Transport) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+// TPMPolicyObjects lists the objects assigned to a TPM policy.
+func (t *Transport) TPMPolicyObjects(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	return t.service.PolicyRefresh(ctx, req)
+	return t.service.TPMPolicyObjects(ctx, req)
 }
 
-// PolicyVerify verifies a policy against current PCR values.
-func (t *Transport) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+// TPMPolicySetAutoUnseal sets or clears a TPM policy's auto-unseal mark.
+func (t *Transport) TPMPolicySetAutoUnseal(ctx context.Context, req *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	return t.service.PolicyVerify(ctx, req)
+	return t.service.TPMPolicySetAutoUnseal(ctx, req)
 }
 
-// PolicyExport exports a policy.
-func (t *Transport) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+// TPMObjectPolicy returns the TPM policy a key or sealed object was created under.
+func (t *Transport) TPMObjectPolicy(ctx context.Context, req *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	return t.service.PolicyExport(ctx, req)
+	return t.service.TPMObjectPolicy(ctx, req)
+}
+
+// TPMPolicyRotateAuthority rotates a tenant's TPM policy authority.
+func (t *Transport) TPMPolicyRotateAuthority(ctx context.Context, req *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TPMPolicyRotateAuthority(ctx, req)
+}
+
+// GetTenantTPMMode returns a tenant's TPM mode.
+func (t *Transport) GetTenantTPMMode(ctx context.Context, tenantID string) (*transport.TenantTPMModeResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.GetTenantTPMMode(ctx, tenantID)
+}
+
+// SetTenantTPMMode changes a tenant's TPM mode.
+func (t *Transport) SetTenantTPMMode(ctx context.Context, req *transport.SetTenantTPMModeRequest) (*transport.TenantTPMModeResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.SetTenantTPMMode(ctx, req)
+}
+
+// TenantVTPMStatus reports a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStatus(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TenantVTPMStatus(ctx, tenantID)
+}
+
+// TenantVTPMStart starts a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStart(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TenantVTPMStart(ctx, tenantID)
+}
+
+// TenantVTPMStop stops a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.TenantVTPMStop(ctx, tenantID)
 }
 
 // CreateCustodianGroup creates a new custodian group.

@@ -309,18 +309,29 @@ var methodPermissions = map[string]permission{
 	"sealStore.reseal": {auth.ResourceKeys, auth.ActionWrite},
 	"sealStore.status": {auth.ResourceKeys, auth.ActionRead},
 
-	// PCR policy management (go-xkms#691) -- pkg/auth.ResourcePolicy, a
-	// resource family go-qrdb's canonical registry does not declare
+	// TPM policy management (pkg/tpmpolicy) -- pkg/auth.ResourceTPMPolicy,
+	// a resource family go-qrdb's canonical registry does not declare
 	// upstream; xkms owns it and scopes it in
-	// pkg/apimodule/module_scopes.go. Mirrors the gRPC PolicyCreate/Get/...
-	// RPCs' (qrdb.v1.permission) options one-for-one.
-	"policy.create":  {auth.ResourcePolicy, auth.ActionCreate},
-	"policy.get":     {auth.ResourcePolicy, auth.ActionGet},
-	"policy.list":    {auth.ResourcePolicy, auth.ActionList},
-	"policy.delete":  {auth.ResourcePolicy, auth.ActionDelete},
-	"policy.refresh": {auth.ResourcePolicy, auth.ActionRefresh},
-	"policy.verify":  {auth.ResourcePolicy, auth.ActionVerify},
-	"policy.export":  {auth.ResourcePolicy, auth.ActionExport},
+	// pkg/apimodule/module_scopes.go. Mirrors the gRPC TPMPolicy* RPCs'
+	// (qrdb.v1.permission) options one-for-one.
+	"tpm.policy.create":     {auth.ResourceTPMPolicy, auth.ActionCreate},
+	"tpm.policy.get":        {auth.ResourceTPMPolicy, auth.ActionGet},
+	"tpm.policy.list":       {auth.ResourceTPMPolicy, auth.ActionList},
+	"tpm.policy.update":     {auth.ResourceTPMPolicy, auth.ActionUpdate},
+	"tpm.policy.revoke":     {auth.ResourceTPMPolicy, auth.ActionRevoke},
+	"tpm.policy.verify":     {auth.ResourceTPMPolicy, auth.ActionVerify},
+	"tpm.policy.delete":     {auth.ResourceTPMPolicy, auth.ActionDelete},
+	"tpm.policy.objects":    {auth.ResourceTPMPolicy, auth.ActionGet},
+	"tpm.policy.autoUnseal": {auth.ResourceTPMPolicy, auth.ActionUpdate},
+	"tpm.object.policy":     {auth.ResourceTPMPolicy, auth.ActionGet},
+	"tpm.authority.rotate":  {auth.ResourceTPMPolicy, auth.ActionRotate},
+
+	// A tenant's TPM mode and vTPM (system scope only).
+	"xkms.getTenantTPMMode": {auth.ResourceTenants, auth.ActionRead},
+	"xkms.setTenantTPMMode": {auth.ResourceTenants, auth.ActionSetTPMMode},
+	"xkms.tenantVTPMStatus": {auth.ResourceTenants, auth.ActionRead},
+	"xkms.tenantVTPMStart":  {auth.ResourceTenants, auth.ActionSetTPMMode},
+	"xkms.tenantVTPMStop":   {auth.ResourceTenants, auth.ActionSetTPMMode},
 
 	// SSH keys.
 	"ssh.keys.generate": {auth.ResourceSSH, auth.ActionWrite},

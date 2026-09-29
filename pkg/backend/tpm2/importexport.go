@@ -235,6 +235,12 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	if wrapped == nil || len(wrapped.WrappedKey) == 0 {
 		return &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "wrapped key material is empty"}
 	}
+	if b.scopes != nil && !isSystemTenant(attrs.TenantID) {
+		return ErrTenantImportUnsupported
+	}
+	if err := b.refuseReserved(attrs); err != nil {
+		return err
+	}
 
 	public, outPrivate, err := b.importDuplicate(wrapped.WrappedKey)
 	if err != nil {

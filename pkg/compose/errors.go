@@ -13,6 +13,13 @@
 
 package compose
 
+import "errors"
+
+// ErrUnsupportedTPM is returned by BuildTPMPolicyService when the TPM2
+// backend's TPM is not a pkg/tpm2 TPM, whose authorized-policy primitives
+// the TPM policy service needs.
+var ErrUnsupportedTPM = errors.New("compose: the TPM2 backend's TPM is not a pkg/tpm2 TPM")
+
 // Feature names a store-backed subsystem this package composes.
 type Feature string
 
@@ -41,8 +48,10 @@ const (
 	// FeatureCA is the Certificate Authority.
 	FeatureCA Feature = "ca"
 
-	// FeaturePolicies is the PCR policy manager.
-	FeaturePolicies Feature = "policies"
+	// FeatureTPMPolicies is the TPM policy service: named TPM policies,
+	// the registry of which TPM object uses which, and each tenant's TPM
+	// scope (pkg/tpmpolicy).
+	FeatureTPMPolicies Feature = "tpm-policies"
 
 	// FeatureBarrier is the system barrier served by the barrier routes.
 	FeatureBarrier Feature = "barrier"

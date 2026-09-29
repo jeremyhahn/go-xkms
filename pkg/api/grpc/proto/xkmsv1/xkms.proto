@@ -708,49 +708,96 @@ service KeystoreService {
     option (qrdb.v1.permission) = "passwords:write";
   }
 
-  // ==================== PCR Policy Operations ====================
-  // TPM 2.0 PCR-bank sealed-secret authorization policies (pkg/seal/policy).
-  // go-xkms#691 minted the policy:* resource family: go-qrdb's canonical
-  // registry does not declare it upstream (pkg/auth.ResourcePolicy), so
-  // pkg/apimodule's module_scopes.go declares its tenancy scope the way it
-  // does for keys:read/write, ssh:use, and bootstrap:read.
+  // ==================== TPM Policy Operations ====================
+  // Named TPM policies that many TPM keys and sealed objects of a tenant
+  // share, the registry of which object uses which policy, and each
+  // tenant's TPM mode (pkg/tpmpolicy). tpm_policy:* is an xkms-owned
+  // permission family (pkg/auth.ResourceTPMPolicy) whose tenancy scope
+  // pkg/apimodule's module_scopes.go declares; tenants:set_tpm_mode is
+  // system-scope only.
 
-  // PolicyCreate creates a new PCR policy, capturing the current PCR values
-  // for the specified bank and indices.
-  rpc PolicyCreate(PolicyCreateRequest) returns (PolicyCreateResponse) {
-    option (qrdb.v1.permission) = "policy:create";
+  // TPMPolicyCreate creates a named policy over the live PCR values of the
+  // tenant's TPM.
+  rpc TPMPolicyCreate(TPMPolicyCreateRequest) returns (TPMPolicy) {
+    option (qrdb.v1.permission) = "tpm_policy:create";
   }
 
-  // PolicyGet retrieves a PCR policy by name.
-  rpc PolicyGet(PolicyGetRequest) returns (PolicyGetResponse) {
-    option (qrdb.v1.permission) = "policy:get";
+  // TPMPolicyGet returns a named policy.
+  rpc TPMPolicyGet(TPMPolicyRequest) returns (TPMPolicy) {
+    option (qrdb.v1.permission) = "tpm_policy:get";
   }
 
-  // PolicyList returns all registered PCR policies.
-  rpc PolicyList(PolicyListRequest) returns (PolicyListResponse) {
-    option (qrdb.v1.permission) = "policy:list";
+  // TPMPolicyList returns the tenant's named policies.
+  rpc TPMPolicyList(TPMPolicyListRequest) returns (TPMPolicyListResponse) {
+    option (qrdb.v1.permission) = "tpm_policy:list";
   }
 
-  // PolicyDelete deletes a PCR policy by name.
-  rpc PolicyDelete(PolicyDeleteRequest) returns (PolicyDeleteResponse) {
-    option (qrdb.v1.permission) = "policy:delete";
+  // TPMPolicyUpdate re-captures a policy's PCR values and re-approves it.
+  rpc TPMPolicyUpdate(TPMPolicyRequest) returns (TPMPolicy) {
+    option (qrdb.v1.permission) = "tpm_policy:update";
   }
 
-  // PolicyRefresh re-captures a PCR policy from the platform's current PCR
-  // values.
-  rpc PolicyRefresh(PolicyRefreshRequest) returns (PolicyGetResponse) {
-    option (qrdb.v1.permission) = "policy:refresh";
+  // TPMPolicyRevoke withdraws a policy's current approval.
+  rpc TPMPolicyRevoke(TPMPolicyRequest) returns (TPMPolicy) {
+    option (qrdb.v1.permission) = "tpm_policy:revoke";
   }
 
-  // PolicyVerify verifies a PCR policy against the platform's current PCR
-  // values.
-  rpc PolicyVerify(PolicyVerifyRequest) returns (PolicyVerifyResponse) {
-    option (qrdb.v1.permission) = "policy:verify";
+  // TPMPolicyVerify compares a policy's captured PCR values with the live
+  // ones.
+  rpc TPMPolicyVerify(TPMPolicyRequest) returns (TPMPolicyVerifyResponse) {
+    option (qrdb.v1.permission) = "tpm_policy:verify";
   }
 
-  // PolicyExport serializes a named policy to a JSON document.
-  rpc PolicyExport(PolicyExportRequest) returns (PolicyExportResponse) {
-    option (qrdb.v1.permission) = "policy:export";
+  // TPMPolicyDelete deletes a policy no object is assigned to.
+  rpc TPMPolicyDelete(TPMPolicyDeleteRequest) returns (TPMPolicyDeleteResponse) {
+    option (qrdb.v1.permission) = "tpm_policy:delete";
+  }
+
+  // TPMPolicyObjects lists the objects assigned to a policy.
+  rpc TPMPolicyObjects(TPMPolicyRequest) returns (TPMPolicyObjectsResponse) {
+    option (qrdb.v1.permission) = "tpm_policy:get";
+  }
+
+  // TPMPolicySetAutoUnseal sets or clears a policy's auto-unseal mark.
+  rpc TPMPolicySetAutoUnseal(TPMPolicyAutoUnsealRequest) returns (TPMPolicy) {
+    option (qrdb.v1.permission) = "tpm_policy:update";
+  }
+
+  // TPMObjectPolicy returns the policy a TPM key or sealed object was
+  // created under.
+  rpc TPMObjectPolicy(TPMObjectPolicyRequest) returns (TPMObjectPolicyResponse) {
+    option (qrdb.v1.permission) = "tpm_policy:get";
+  }
+
+  // TPMPolicyRotateAuthority replaces the tenant's policy authority.
+  rpc TPMPolicyRotateAuthority(TPMAuthorityRotateRequest) returns (TPMAuthorityRotateResponse) {
+    option (qrdb.v1.permission) = "tpm_policy:rotate";
+  }
+
+  // GetTenantTPMMode returns a tenant's TPM mode. System scope only.
+  rpc GetTenantTPMMode(TenantTPMModeRequest) returns (TenantTPMModeResponse) {
+    option (qrdb.v1.permission) = "tenants:read";
+  }
+
+  // SetTenantTPMMode changes a tenant's TPM mode. System scope only.
+  rpc SetTenantTPMMode(SetTenantTPMModeRequest) returns (TenantTPMModeResponse) {
+    option (qrdb.v1.permission) = "tenants:set_tpm_mode";
+  }
+
+  // TenantVTPMStatus reports a tenant's virtual TPM. System scope only.
+  rpc TenantVTPMStatus(TenantVTPMRequest) returns (TenantVTPMStatusResponse) {
+    option (qrdb.v1.permission) = "tenants:read";
+  }
+
+  // TenantVTPMStart starts a vtpm-mode tenant's virtual TPM. System scope
+  // only.
+  rpc TenantVTPMStart(TenantVTPMRequest) returns (TenantVTPMStatusResponse) {
+    option (qrdb.v1.permission) = "tenants:set_tpm_mode";
+  }
+
+  // TenantVTPMStop stops a vtpm-mode tenant's virtual TPM. System scope only.
+  rpc TenantVTPMStop(TenantVTPMRequest) returns (TenantVTPMStatusResponse) {
+    option (qrdb.v1.permission) = "tenants:set_tpm_mode";
   }
 
   // ==================== PKCS#11 State Operations ====================
@@ -1074,6 +1121,9 @@ message GenerateKeyRequest {
   // Independent of exportable: a sensitive key may still be wrapped out, but
   // ExportKeyMaterial refuses it.
   bool sensitive = 10;
+  // The TPM policy of the tenant's scope a TPM2 key is bound to; empty is
+  // the built-in "platform" policy.
+  string tpm_policy = 11;
 }
 
 // GenerateKeyResponse contains the generated key information
@@ -2060,18 +2110,32 @@ message SealRequest {
   string key_id = 2;
   bytes data = 3;
   bytes aad = 4; // Additional authenticated data (optional)
+  // The sealed object's authorization value (TPM2).
+  string password = 5;
+  // The TPM policy of the tenant's scope a TPM2 sealed object is bound to;
+  // empty is the built-in "platform" policy.
+  string tpm_policy = 6;
 }
 
-// SealResponse contains the sealed data
+// SealResponse contains the sealed data. metadata values are base64.
 message SealResponse {
   string backend = 1;
   bytes ciphertext = 2;
   bytes nonce = 3;
   bytes tag = 4;
   map<string, string> metadata = 5;
+  // The TPM2 sealed object's public and private areas.
+  bytes tpm_public = 6;
+  bytes tpm_private = 7;
+  // The wrapped data-encryption key of an envelope-sealing backend.
+  bytes wrapped_dek = 8;
+  // The key (or TPM2 sealed object) that performed the sealing.
+  string key_id = 9;
 }
 
-// UnsealRequest requests unsealing (decryption) of previously sealed data
+// UnsealRequest requests unsealing (decryption) of previously sealed data:
+// a ciphertext, or a TPM2 sealed object's public and private areas.
+// metadata values are base64, as SealResponse returns them.
 message UnsealRequest {
   string backend = 1;
   string key_id = 2;
@@ -2079,6 +2143,12 @@ message UnsealRequest {
   bytes nonce = 4;
   bytes tag = 5;
   bytes aad = 6;
+  bytes tpm_public = 7;
+  bytes tpm_private = 8;
+  bytes wrapped_dek = 9;
+  map<string, string> metadata = 10;
+  // The sealed object's authorization value (TPM2).
+  string password = 11;
 }
 
 // UnsealResponse contains the unsealed (decrypted) data
@@ -3400,82 +3470,147 @@ message PasswordStoreSetAccessModeResponse {
   string message = 2;
 }
 
-// ==================== PCR Policy Operations ====================
+// ==================== TPM Policy Operations ====================
 
-// PolicyCreateRequest requests creating a new PCR policy.
-message PolicyCreateRequest {
+// TPMPolicy describes a named TPM policy. pcr_values and pcr_digest are
+// hex-encoded; created_at and updated_at are RFC 3339.
+message TPMPolicy {
   string name = 1;
-  string bank = 2;
-  repeated int32 pcrs = 3;
+  string tenant_id = 2;
+  string bank = 3;
+  repeated uint32 pcrs = 4;
+  map<uint32, string> pcr_values = 5;
+  string pcr_digest = 6;
+  uint32 index = 7;
+  bool approved = 8;
+  uint64 epoch = 9;
+  uint64 authority_generation = 10;
+  bool auto_unseal = 11;
+  string created_at = 12;
+  string updated_at = 13;
 }
 
-// PolicyCreateResponse contains the result of creating a PCR policy.
-message PolicyCreateResponse {
+// TPMPolicyCreateRequest creates a named policy over the live PCR values of
+// the tenant's TPM. owner_auth authorizes the physical TPM's owner hierarchy.
+message TPMPolicyCreateRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string bank = 3;
+  repeated uint32 pcrs = 4;
+  bool auto_unseal = 5;
+  bytes owner_auth = 6;
+}
+
+// TPMPolicyRequest names one policy of a tenant.
+message TPMPolicyRequest {
+  string tenant_id = 1;
+  string name = 2;
+}
+
+// TPMPolicyListRequest lists a tenant's policies.
+message TPMPolicyListRequest {
+  string tenant_id = 1;
+}
+
+// TPMPolicyListResponse contains a tenant's policies, sorted by name.
+message TPMPolicyListResponse {
+  repeated TPMPolicy policies = 1;
+}
+
+// TPMPolicyDeleteRequest deletes a policy no object is assigned to.
+message TPMPolicyDeleteRequest {
+  string tenant_id = 1;
+  string name = 2;
+  bytes owner_auth = 3;
+}
+
+// TPMPolicyDeleteResponse confirms a policy was deleted.
+message TPMPolicyDeleteResponse {}
+
+// TPMPolicyVerifyResponse compares a policy's captured PCR values with the
+// live ones.
+message TPMPolicyVerifyResponse {
   string name = 1;
-  string bank = 2;
-  repeated int32 pcrs = 3;
-  map<int32, string> values = 4;
+  bool match = 2;
+  repeated uint32 mismatched = 3;
+  bool approved = 4;
+}
+
+// TPMPolicyObjectsResponse lists the "<kind>/<name>" IDs of the objects
+// assigned to a policy.
+message TPMPolicyObjectsResponse {
+  string name = 1;
+  repeated string objects = 2;
+}
+
+// TPMPolicyAutoUnsealRequest sets or clears a policy's auto-unseal mark.
+message TPMPolicyAutoUnsealRequest {
+  string tenant_id = 1;
+  string name = 2;
+  bool enabled = 3;
+}
+
+// TPMObjectPolicyRequest asks which policy an object was created under.
+// kind is "key" (the default) or "sealed".
+message TPMObjectPolicyRequest {
+  string tenant_id = 1;
+  string key_id = 2;
+  string kind = 3;
+}
+
+// TPMObjectPolicyResponse reports an object's policy and its hex-encoded
+// authPolicy digest at creation.
+message TPMObjectPolicyResponse {
+  string object_id = 1;
+  string kind = 2;
+  string policy = 3;
+  string auth_policy = 4;
   string created_at = 5;
 }
 
-// PolicyGetRequest requests a PCR policy by name.
-message PolicyGetRequest {
-  string name = 1;
+// TPMAuthorityRotateRequest rotates a tenant's policy authority.
+message TPMAuthorityRotateRequest {
+  string tenant_id = 1;
 }
 
-// PolicyGetResponse contains a PCR policy definition.
-message PolicyGetResponse {
-  string name = 1;
-  string bank = 2;
-  repeated int32 pcrs = 3;
-  map<int32, string> values = 4;
-  string created_at = 5;
-  string updated_at = 6;
+// TPMAuthorityRotateResponse describes the new policy authority.
+message TPMAuthorityRotateResponse {
+  string tenant_id = 1;
+  uint64 generation = 2;
+  string authority_name = 3;
+  uint64 epoch = 4;
 }
 
-// PolicyListRequest requests all registered PCR policies.
-message PolicyListRequest {}
-
-// PolicyListResponse contains all registered PCR policies.
-message PolicyListResponse {
-  repeated PolicyGetResponse policies = 1;
-  int32 total = 2;
+// TenantTPMModeRequest names the tenant whose TPM mode is read.
+message TenantTPMModeRequest {
+  string tenant_id = 1;
 }
 
-// PolicyDeleteRequest requests deleting a PCR policy by name.
-message PolicyDeleteRequest {
-  string name = 1;
+// TenantTPMModeResponse reports a tenant's TPM mode: none, shared or vtpm.
+message TenantTPMModeResponse {
+  string tenant_id = 1;
+  string mode = 2;
 }
 
-// PolicyDeleteResponse confirms a PCR policy was deleted.
-message PolicyDeleteResponse {}
-
-// PolicyRefreshRequest requests re-capturing a PCR policy's PCR values.
-message PolicyRefreshRequest {
-  string name = 1;
+// SetTenantTPMModeRequest changes a tenant's TPM mode.
+message SetTenantTPMModeRequest {
+  string tenant_id = 1;
+  string mode = 2;
+  bytes owner_auth = 3;
 }
 
-// PolicyVerifyRequest requests verifying a PCR policy against current PCR
-// values.
-message PolicyVerifyRequest {
-  string name = 1;
+// TenantVTPMRequest names the tenant whose virtual TPM is addressed.
+message TenantVTPMRequest {
+  string tenant_id = 1;
 }
 
-// PolicyVerifyResponse contains the result of verifying a PCR policy.
-message PolicyVerifyResponse {
-  string name = 1;
-  bool valid = 2;
-  string message = 3;
-}
-
-// PolicyExportRequest requests exporting a PCR policy.
-message PolicyExportRequest {
-  string name = 1;
-}
-
-// PolicyExportResponse contains the exported policy document.
-message PolicyExportResponse {
-  string data = 1;
+// TenantVTPMStatusResponse reports a tenant's virtual TPM.
+message TenantVTPMStatusResponse {
+  string tenant_id = 1;
+  bool running = 2;
+  int64 pid = 3;
+  string socket = 4;
+  int64 restarts = 5;
 }
 
 // ==================== FIDO2/WebAuthn Registration ====================

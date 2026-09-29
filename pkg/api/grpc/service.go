@@ -17,13 +17,13 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/pbconv"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
@@ -403,6 +403,7 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		Algorithm:  req.Algorithm,
 		Exportable: req.Exportable,
 		Sensitive:  req.GetSensitive(),
+		TPMPolicy:  req.GetTpmPolicy(),
 		Partition:  req.Partition,
 		TenantID:   callerTenantID(ctx),
 	})
@@ -1515,30 +1516,11 @@ func (s *Service) Seal(ctx context.Context, req *pb.SealRequest) (*pb.SealRespon
 		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	sealed, err := s.xkmsService.Seal(ctx, &transport.SealRequest{
-		Backend:  req.Backend,
-		KeyID:    req.KeyId,
-		Data:     req.Data,
-		AAD:      req.Aad,
-		TenantID: callerTenantID(ctx),
-	})
+	sealed, err := s.xkmsService.Seal(ctx, pbconv.SealRequestFromProto(req, callerTenantID(ctx)))
 	if err != nil {
 		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
-
-	// Convert metadata from map[string][]byte to map[string]string (base64 encoded)
-	metadata := make(map[string]string, len(sealed.Metadata))
-	for k, v := range sealed.Metadata {
-		metadata[k] = base64.StdEncoding.EncodeToString(v)
-	}
-
-	return &pb.SealResponse{
-		Backend:    sealed.Backend,
-		Ciphertext: sealed.Ciphertext,
-		Nonce:      sealed.Nonce,
-		Tag:        sealed.Tag,
-		Metadata:   metadata,
-	}, nil
+	return pbconv.SealResponseToProto(sealed), nil
 }
 
 // Unseal decrypts previously sealed data.
@@ -1553,8 +1535,8 @@ func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.Unseal
 	if req.Backend == "" {
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
-	if len(req.Ciphertext) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "ciphertext is required")
+	if len(req.Ciphertext) == 0 && (len(req.TpmPublic) == 0 || len(req.TpmPrivate) == 0) {
+		return nil, status.Error(codes.InvalidArgument, "ciphertext is required (or tpm_public and tpm_private for a TPM2 sealed object)")
 	}
 
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionDecrypt, ""); err != nil {
@@ -1565,15 +1547,11 @@ func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.Unseal
 		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	resp, err := s.xkmsService.Unseal(ctx, &transport.UnsealRequest{
-		Backend:    req.Backend,
-		KeyID:      req.KeyId,
-		Ciphertext: req.Ciphertext,
-		Nonce:      req.Nonce,
-		Tag:        req.Tag,
-		AAD:        req.Aad,
-		TenantID:   callerTenantID(ctx),
-	})
+	unsealReq, err := pbconv.UnsealRequestFromProto(req, callerTenantID(ctx))
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	resp, err := s.xkmsService.Unseal(ctx, unsealReq)
 	if err != nil {
 		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}

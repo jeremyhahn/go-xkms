@@ -16,6 +16,7 @@ package tpm2
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,7 +36,7 @@ import (
 // in the TPM, signed by the IAK.
 //
 // The returned interface{} is an *attestation.AttestationStatement.
-func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, nonce []byte) (interface{}, error) {
+func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, nonce []byte) (_ interface{}, err error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -47,16 +48,18 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 		return nil, ErrInvalidKeyAttributes
 	}
 
-	// Set parent to SRK if not specified
-	if attrs.Parent == nil {
-		attrs.Parent = b.srkAttrs
+	scope, err := b.scope(ctx, attrs.TenantID)
+	if err != nil {
+		return nil, err
 	}
+	defer func() { err = errors.Join(err, scope.close()) }()
 
 	// Set store type
 	attrs.StoreType = types.StoreTPM2
 
-	// Perform TPM2_Certify via the low-level TPM interface
-	result, err := b.tpm.CertifyKey(attrs, nonce, b.keyBackend)
+	// Perform TPM2_Certify via the low-level TPM interface, in the key's
+	// scope: a vtpm tenant's key is certified by its own vTPM.
+	result, err := scope.tpm.CertifyKey(scope.bind(attrs), nonce, scope.keys)
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrAttestationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -64,7 +67,7 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 	// Build certificate chain: [IAK cert, EK cert]
 	var certChain []*x509.Certificate
 
-	iakCert, err := b.tpm.IAKCertificate()
+	iakCert, err := scope.tpm.IAKCertificate()
 	if err != nil {
 		b.logger.Debug("IAK certificate not available, attestation will lack certificate chain",
 			"error", err.Error())
@@ -72,7 +75,7 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 		certChain = append(certChain, iakCert)
 	}
 
-	ekCert, err := b.tpm.EKCertificate()
+	ekCert, err := scope.tpm.EKCertificate()
 	if err != nil {
 		b.logger.Debug("EK certificate not available",
 			"error", err.Error())

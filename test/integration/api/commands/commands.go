@@ -597,95 +597,95 @@ func SealingCommands() []CommandDefinition {
 	}
 }
 
-// PolicyCommands returns PCR policy management commands.
+// PolicyCommands returns TPM policy management commands.
 //
-// These manage TPM 2.0 PCR-bank sealed-secret authorization policies
-// (pkg/seal/policy) through xkmsctl's `policy` verb group, which go-xkms#691
-// wired onto every network transport's servicer (previously REST-only, and
-// even there behind a mismatched route parameter -- see
-// pkg/api/rest/routes.go). Every command but policy-create depends on the
-// "it-policy-test" policy that command creates, so they carry
-// RequiresSetup like the sealing workflow's unseal/can-seal above.
+// These manage named TPM policies (pkg/tpmpolicy) through xkmsctl's
+// "tpm policy" verb group, served on every transport. Every command but
+// tpm-policy-create depends on the "it-tpm-policy" policy that command
+// creates, so they carry RequiresSetup like the sealing workflow's
+// unseal/can-seal above.
 func PolicyCommands() []CommandDefinition {
 	return []CommandDefinition{
 		{
-			Name:           "policy-create",
+			Name:           "tpm-policy-create",
 			Category:       CategoryPolicy,
-			Command:        []string{"policy", "create"},
-			Description:    "Create a new PCR policy from current PCR values",
+			Command:        []string{"tpm", "policy", "create"},
+			Description:    "Create a TPM policy over the live PCR values",
 			RequiresServer: true,
 			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
 			},
 			OptionalArgs: []ArgDefinition{
-				{Flag: "bank", Value: "sha256", Description: "PCR bank algorithm"},
-				{Flag: "pcrs", Value: "0,7", Description: "Comma-separated PCR indices"},
+				{Flag: "bank", Value: "sha256", Description: "PCR bank"},
+				{Flag: "pcrs", Value: "23", Description: "Comma-separated PCR indices"},
 			},
-			ExpectedOutputContains: []string{"it-policy-test"},
+			ExpectedOutputContains: []string{"it-tpm-policy"},
 		},
 		{
-			Name:           "policy-list",
-			Category:       CategoryPolicy,
-			Command:        []string{"policy", "list"},
-			Description:    "List all PCR policies",
-			RequiresServer: true,
-			RequiresSetup:  true,
+			Name:                   "tpm-policy-list",
+			Category:               CategoryPolicy,
+			Command:                []string{"tpm", "policy", "list"},
+			Description:            "List TPM policies",
+			RequiresServer:         true,
+			RequiresSetup:          true,
+			ExpectedOutputContains: []string{"it-tpm-policy"},
 		},
 		{
-			Name:           "policy-get",
+			Name:           "tpm-policy-get",
 			Category:       CategoryPolicy,
-			Command:        []string{"policy", "get"},
-			Description:    "Show a PCR policy",
+			Command:        []string{"tpm", "policy", "get"},
+			Description:    "Show a TPM policy",
 			RequiresServer: true,
 			RequiresSetup:  true,
 			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
 			},
-			ExpectedOutputContains: []string{"it-policy-test"},
+			ExpectedOutputContains: []string{"it-tpm-policy"},
 		},
 		{
-			Name:           "policy-verify",
+			Name:           "tpm-policy-verify",
 			Category:       CategoryPolicy,
-			Command:        []string{"policy", "verify"},
-			Description:    "Verify a PCR policy against current PCR values",
+			Command:        []string{"tpm", "policy", "verify"},
+			Description:    "Compare a TPM policy with the live PCR values",
 			RequiresServer: true,
 			RequiresSetup:  true,
 			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
 			},
 		},
 		{
-			Name:           "policy-refresh",
+			Name:           "tpm-policy-update",
 			Category:       CategoryPolicy,
-			Command:        []string{"policy", "refresh"},
-			Description:    "Refresh a PCR policy with current PCR values",
+			Command:        []string{"tpm", "policy", "update"},
+			Description:    "Re-capture a TPM policy and re-approve it",
 			RequiresServer: true,
 			RequiresSetup:  true,
 			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
 			},
-			ExpectedOutputContains: []string{"it-policy-test"},
+			ExpectedOutputContains: []string{"it-tpm-policy"},
 		},
 		{
-			Name:           "policy-export",
+			Name:           "tpm-policy-objects",
 			Category:       CategoryPolicy,
-			Command:        []string{"policy", "export"},
-			Description:    "Export a PCR policy",
+			Command:        []string{"tpm", "policy", "objects"},
+			Description:    "List the objects bound to a TPM policy",
 			RequiresServer: true,
 			RequiresSetup:  true,
 			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
 			},
+			ExpectedOutputContains: []string{"it-tpm-policy"},
 		},
 		{
-			Name:           "policy-delete",
+			Name:           "tpm-policy-delete",
 			Category:       CategoryPolicy,
-			Command:        []string{"policy", "delete"},
-			Description:    "Delete a PCR policy",
+			Command:        []string{"tpm", "policy", "delete"},
+			Description:    "Delete a TPM policy",
 			RequiresServer: true,
 			RequiresSetup:  true,
 			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-policy-test", Description: "Policy name", IsPositional: true},
+				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
 			},
 		},
 	}

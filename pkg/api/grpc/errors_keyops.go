@@ -165,6 +165,13 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 		return status.Error(grpcCodeForClass(class), err.Error())
 	}
 
+	// A TPM2 key or seal routed to a tenant's TPM scope surfaces the TPM
+	// policy service's errors: an unknown named policy, a tenant whose TPM
+	// mode is none, a name reserved for the service's own objects.
+	if class, ok := apierrors.TPMPolicyClassOf(err); ok {
+		return status.Error(grpcCodeForClass(class), err.Error())
+	}
+
 	return status.Error(codes.Internal, err.Error())
 }
 

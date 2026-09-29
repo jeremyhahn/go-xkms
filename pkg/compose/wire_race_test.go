@@ -30,7 +30,6 @@ import (
 // Stores.Wire publishes.
 func storeReaders(ctx context.Context, svc *xkms.XKMSService) map[string]func() error {
 	return map[string]func() error{
-		"policies": func() error { _, err := svc.PolicyList(ctx); return err },
 		"platform store": func() error {
 			_, err := svc.SealStoreList(ctx)
 			return err
@@ -62,7 +61,7 @@ func TestWire_ConcurrentWithServiceReads(t *testing.T) {
 	svc := hostdeps.NewService(t)
 	st, err := Build(context.Background(), fullDeps(t, svc))
 	require.NoError(t, err)
-	require.Empty(t, st.Disabled)
+	require.Len(t, st.Disabled, 1, "only the TPM policy service, which needs a TPM, is off")
 
 	ctx := platformCtx()
 	readers := storeReaders(ctx, svc)

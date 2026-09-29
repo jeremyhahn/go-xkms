@@ -87,7 +87,7 @@ Rejected alternatives:
 | Hardware encryptor | `pkg/seal/hardware_encryptor.go` | go-xkms |
 | Platform secret store | `pkg/seal/platform_store.go`, `platform_sealer.go`, `platform_store_tenant.go` | go-xkms |
 | Secret sealer | `pkg/seal/secret_sealer.go` | go-xkms |
-| Seal policy | `pkg/seal/policy` | go-xkms |
+| TPM policies (named, TPM-authorized) | `pkg/tpmpolicy` — see [`../tpm-policies/`](../tpm-policies/) | go-xkms |
 | Autodetection | `pkg/seal/autodetect.go` | go-xkms |
 | Seal audit | `pkg/seal/audit.go` | go-xkms |
 | Sealed blob store | `pkg/sealblobstore` | go-xkms |

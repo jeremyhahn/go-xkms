@@ -26,9 +26,9 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmpolicytest"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -38,21 +38,10 @@ import (
 
 const platformScopeSecret = "credentials/pkcs11-pin"
 
-// platformScopePCRReader returns a fixed value for every PCR.
-type platformScopePCRReader struct{}
-
-func (platformScopePCRReader) ReadPCRs(_ string, indices []int) (map[int][]byte, error) {
-	values := make(map[int][]byte, len(indices))
-	for _, idx := range indices {
-		values[idx] = make([]byte, 32)
-	}
-	return values, nil
-}
-
 // newPlatformScopeMCP returns a Server whose XKMSService is composed with an
 // unsealed system barrier, a PIN backend with both PINs set, a platform store
-// holding one credential, a PCR policy manager holding the "boot" policy and
-// a manual credential service.
+// holding one credential, a TPM policy service (whose tenant TPM mode and
+// vTPM methods are platform-scoped) and a manual credential service.
 func newPlatformScopeMCP(t *testing.T) *Server {
 	t.Helper()
 	ctx := context.Background()
@@ -82,10 +71,7 @@ func newPlatformScopeMCP(t *testing.T) *Server {
 	require.NoError(t, err)
 	require.NoError(t, store.Put(ctx, platformScopeSecret, []byte("platform-secret")))
 
-	policies, err := policy.NewManager(platformScopePCRReader{}, policy.NewMemoryPolicyStore())
-	require.NoError(t, err)
-	_, err = policies.CreatePolicy("boot", "sha256", []int{0, 7})
-	require.NoError(t, err)
+	policies, _ := tpmpolicytest.NewOffline(t)
 
 	credSvc, err := credentialspkg.New(&credentialspkg.Config{Strategy: credentialspkg.StrategyManual}, nil, nil, logger)
 	require.NoError(t, err)
@@ -93,7 +79,7 @@ func newPlatformScopeMCP(t *testing.T) *Server {
 	server.xkmsService.SetBarrier(b)
 	server.xkmsService.SetPINManager(pins)
 	server.xkmsService.SetPlatformStore(store)
-	server.xkmsService.SetPolicyManager(policies)
+	server.xkmsService.SetTPMPolicyService(policies)
 	server.xkmsService.SetCredentialService(credSvc)
 	return server
 }
@@ -141,13 +127,11 @@ var platformScopeMethods = map[string]string{
 	"xkms.exportPIVCertificate": `{"backend":"software","slot":"9a","format":"pem"}`,
 	"xkms.generatePIVCSR":       `{"backend":"software","slot":"9a","subject":"server"}`,
 
-	"policy.create":  `{"name":"attacker","bank":"sha256","pcrs":[0]}`,
-	"policy.get":     `{"name":"boot"}`,
-	"policy.list":    `{}`,
-	"policy.delete":  `{"name":"boot"}`,
-	"policy.refresh": `{"name":"boot"}`,
-	"policy.verify":  `{"name":"boot"}`,
-	"policy.export":  `{"name":"boot"}`,
+	"xkms.getTenantTPMMode": `{"tenant_id":"tenant-b"}`,
+	"xkms.setTenantTPMMode": `{"tenant_id":"tenant-b","mode":"none"}`,
+	"xkms.tenantVTPMStatus": `{"tenant_id":"tenant-b"}`,
+	"xkms.tenantVTPMStart":  `{"tenant_id":"tenant-b"}`,
+	"xkms.tenantVTPMStop":   `{"tenant_id":"tenant-b"}`,
 }
 
 func platformScopeMCPCtx(tenantID string) context.Context {

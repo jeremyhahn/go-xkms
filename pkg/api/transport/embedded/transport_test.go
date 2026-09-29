@@ -740,53 +740,116 @@ func (m *mockService) RevokeEscrow(_ context.Context, _ string) error {
 	return nil
 }
 
-func (m *mockService) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+func (m *mockService) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	if m.shouldFail {
 		return nil, errMock
 	}
-	return &transport.PolicyCreateResponse{}, nil
+	return &transport.TPMPolicy{}, nil
 }
 
-func (m *mockService) PolicyGet(_ context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+func (m *mockService) TPMPolicyGet(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	if m.shouldFail {
 		return nil, errMock
 	}
-	return &transport.PolicyGetResponse{}, nil
+	return &transport.TPMPolicy{}, nil
 }
 
-func (m *mockService) PolicyList(_ context.Context) (*transport.PolicyListResponse, error) {
+func (m *mockService) TPMPolicyList(context.Context, *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
 	if m.shouldFail {
 		return nil, errMock
 	}
-	return &transport.PolicyListResponse{}, nil
+	return &transport.TPMPolicyListResponse{}, nil
 }
 
-func (m *mockService) PolicyDelete(_ context.Context, _ *transport.PolicyDeleteRequest) error {
+func (m *mockService) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.TPMPolicy{}, nil
+}
+
+func (m *mockService) TPMPolicyRevoke(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.TPMPolicy{}, nil
+}
+
+func (m *mockService) TPMPolicyVerify(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.TPMPolicyVerifyResponse{}, nil
+}
+
+func (m *mockService) TPMPolicyDelete(context.Context, *transport.TPMPolicyDeleteRequest) error {
 	if m.shouldFail {
 		return errMock
 	}
 	return nil
 }
 
-func (m *mockService) PolicyRefresh(_ context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+func (m *mockService) TPMPolicyObjects(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
 	if m.shouldFail {
 		return nil, errMock
 	}
-	return &transport.PolicyGetResponse{}, nil
+	return &transport.TPMPolicyObjectsResponse{}, nil
 }
 
-func (m *mockService) PolicyVerify(_ context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+func (m *mockService) TPMPolicySetAutoUnseal(context.Context, *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
 	if m.shouldFail {
 		return nil, errMock
 	}
-	return &transport.PolicyVerifyResponse{}, nil
+	return &transport.TPMPolicy{}, nil
 }
 
-func (m *mockService) PolicyExport(_ context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+func (m *mockService) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	if m.shouldFail {
 		return nil, errMock
 	}
-	return &transport.PolicyExportResponse{}, nil
+	return &transport.TPMObjectPolicyResponse{}, nil
+}
+
+func (m *mockService) TPMPolicyRotateAuthority(context.Context, *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.TPMAuthorityRotateResponse{}, nil
+}
+
+func (m *mockService) GetTenantTPMMode(context.Context, string) (*transport.TenantTPMModeResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.TenantTPMModeResponse{}, nil
+}
+
+func (m *mockService) SetTenantTPMMode(context.Context, *transport.SetTenantTPMModeRequest) (*transport.TenantTPMModeResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.TenantTPMModeResponse{}, nil
+}
+
+func (m *mockService) TenantVTPMStatus(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.TenantVTPMStatusResponse{}, nil
+}
+
+func (m *mockService) TenantVTPMStart(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.TenantVTPMStatusResponse{}, nil
+}
+
+func (m *mockService) TenantVTPMStop(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.TenantVTPMStatusResponse{}, nil
 }
 
 func (m *mockService) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
@@ -1402,13 +1465,28 @@ func TestAllMethods_NotConnected(t *testing.T) {
 		{"SealStoreList", func() error { _, e := tr.SealStoreList(ctx); return e }},
 		{"SealStoreReseal", func() error { return tr.SealStoreReseal(ctx, &transport.SealStoreResealRequest{}) }},
 		{"SealStoreStatus", func() error { _, e := tr.SealStoreStatus(ctx); return e }},
-		{"PolicyCreate", func() error { _, e := tr.PolicyCreate(ctx, &transport.PolicyCreateRequest{}); return e }},
-		{"PolicyGet", func() error { _, e := tr.PolicyGet(ctx, &transport.PolicyGetRequest{}); return e }},
-		{"PolicyList", func() error { _, e := tr.PolicyList(ctx); return e }},
-		{"PolicyDelete", func() error { return tr.PolicyDelete(ctx, &transport.PolicyDeleteRequest{}) }},
-		{"PolicyRefresh", func() error { _, e := tr.PolicyRefresh(ctx, &transport.PolicyRefreshRequest{}); return e }},
-		{"PolicyVerify", func() error { _, e := tr.PolicyVerify(ctx, &transport.PolicyVerifyRequest{}); return e }},
-		{"PolicyExport", func() error { _, e := tr.PolicyExport(ctx, &transport.PolicyExportRequest{}); return e }},
+		{"TPMPolicyCreate", func() error { _, e := tr.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{}); return e }},
+		{"TPMPolicyGet", func() error { _, e := tr.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyList", func() error { _, e := tr.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{}); return e }},
+		{"TPMPolicyUpdate", func() error { _, e := tr.TPMPolicyUpdate(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyRevoke", func() error { _, e := tr.TPMPolicyRevoke(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyVerify", func() error { _, e := tr.TPMPolicyVerify(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyDelete", func() error { return tr.TPMPolicyDelete(ctx, &transport.TPMPolicyDeleteRequest{}) }},
+		{"TPMPolicyObjects", func() error { _, e := tr.TPMPolicyObjects(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicySetAutoUnseal", func() error {
+			_, e := tr.TPMPolicySetAutoUnseal(ctx, &transport.TPMPolicyAutoUnsealRequest{})
+			return e
+		}},
+		{"TPMObjectPolicy", func() error { _, e := tr.TPMObjectPolicy(ctx, &transport.TPMObjectPolicyRequest{}); return e }},
+		{"TPMPolicyRotateAuthority", func() error {
+			_, e := tr.TPMPolicyRotateAuthority(ctx, &transport.TPMAuthorityRotateRequest{})
+			return e
+		}},
+		{"GetTenantTPMMode", func() error { _, e := tr.GetTenantTPMMode(ctx, "tenant-a"); return e }},
+		{"SetTenantTPMMode", func() error { _, e := tr.SetTenantTPMMode(ctx, &transport.SetTenantTPMModeRequest{}); return e }},
+		{"TenantVTPMStatus", func() error { _, e := tr.TenantVTPMStatus(ctx, "tenant-a"); return e }},
+		{"TenantVTPMStart", func() error { _, e := tr.TenantVTPMStart(ctx, "tenant-a"); return e }},
+		{"TenantVTPMStop", func() error { _, e := tr.TenantVTPMStop(ctx, "tenant-a"); return e }},
 		{"CreateCustodianGroup", func() error { _, e := tr.CreateCustodianGroup(ctx, &transport.CreateCustodianGroupRequest{}); return e }},
 		{"GetCustodianGroup", func() error { _, e := tr.GetCustodianGroup(ctx, "g1"); return e }},
 		{"ListCustodianGroups", func() error { _, e := tr.ListCustodianGroups(ctx); return e }},
@@ -1557,13 +1635,28 @@ func TestAllMethods_Connected(t *testing.T) {
 		{"SealStoreList", func() error { _, e := tr.SealStoreList(ctx); return e }},
 		{"SealStoreReseal", func() error { return tr.SealStoreReseal(ctx, &transport.SealStoreResealRequest{}) }},
 		{"SealStoreStatus", func() error { _, e := tr.SealStoreStatus(ctx); return e }},
-		{"PolicyCreate", func() error { _, e := tr.PolicyCreate(ctx, &transport.PolicyCreateRequest{}); return e }},
-		{"PolicyGet", func() error { _, e := tr.PolicyGet(ctx, &transport.PolicyGetRequest{}); return e }},
-		{"PolicyList", func() error { _, e := tr.PolicyList(ctx); return e }},
-		{"PolicyDelete", func() error { return tr.PolicyDelete(ctx, &transport.PolicyDeleteRequest{}) }},
-		{"PolicyRefresh", func() error { _, e := tr.PolicyRefresh(ctx, &transport.PolicyRefreshRequest{}); return e }},
-		{"PolicyVerify", func() error { _, e := tr.PolicyVerify(ctx, &transport.PolicyVerifyRequest{}); return e }},
-		{"PolicyExport", func() error { _, e := tr.PolicyExport(ctx, &transport.PolicyExportRequest{}); return e }},
+		{"TPMPolicyCreate", func() error { _, e := tr.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{}); return e }},
+		{"TPMPolicyGet", func() error { _, e := tr.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyList", func() error { _, e := tr.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{}); return e }},
+		{"TPMPolicyUpdate", func() error { _, e := tr.TPMPolicyUpdate(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyRevoke", func() error { _, e := tr.TPMPolicyRevoke(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyVerify", func() error { _, e := tr.TPMPolicyVerify(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyDelete", func() error { return tr.TPMPolicyDelete(ctx, &transport.TPMPolicyDeleteRequest{}) }},
+		{"TPMPolicyObjects", func() error { _, e := tr.TPMPolicyObjects(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicySetAutoUnseal", func() error {
+			_, e := tr.TPMPolicySetAutoUnseal(ctx, &transport.TPMPolicyAutoUnsealRequest{})
+			return e
+		}},
+		{"TPMObjectPolicy", func() error { _, e := tr.TPMObjectPolicy(ctx, &transport.TPMObjectPolicyRequest{}); return e }},
+		{"TPMPolicyRotateAuthority", func() error {
+			_, e := tr.TPMPolicyRotateAuthority(ctx, &transport.TPMAuthorityRotateRequest{})
+			return e
+		}},
+		{"GetTenantTPMMode", func() error { _, e := tr.GetTenantTPMMode(ctx, "tenant-a"); return e }},
+		{"SetTenantTPMMode", func() error { _, e := tr.SetTenantTPMMode(ctx, &transport.SetTenantTPMModeRequest{}); return e }},
+		{"TenantVTPMStatus", func() error { _, e := tr.TenantVTPMStatus(ctx, "tenant-a"); return e }},
+		{"TenantVTPMStart", func() error { _, e := tr.TenantVTPMStart(ctx, "tenant-a"); return e }},
+		{"TenantVTPMStop", func() error { _, e := tr.TenantVTPMStop(ctx, "tenant-a"); return e }},
 		{"CreateCustodianGroup", func() error { _, e := tr.CreateCustodianGroup(ctx, &transport.CreateCustodianGroupRequest{}); return e }},
 		{"GetCustodianGroup", func() error { _, e := tr.GetCustodianGroup(ctx, "g1"); return e }},
 		{"ListCustodianGroups", func() error { _, e := tr.ListCustodianGroups(ctx); return e }},

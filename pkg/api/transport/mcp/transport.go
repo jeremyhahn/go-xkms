@@ -1620,83 +1620,195 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 // ListEscrowed/RevokeEscrow at all. transport.EscrowService is no longer
 // part of transport.Client — see docs/escrow/architecture.md.
 
-// Policy Operations
+// TPM Policy Operations
+//
+// Each method calls the MCP tool of the same operation (tpm.policy.*,
+// tpm.object.policy, tpm.authority.rotate, xkms.*TenantTPMMode and
+// xkms.tenantVTPM*) with the transport request as its parameters.
 
-// PolicyCreate creates a new PCR policy.
-func (t *Transport) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+// TPMPolicyCreate creates a named TPM policy.
+func (t *Transport) TPMPolicyCreate(ctx context.Context, req *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
-	var result transport.PolicyCreateResponse
-	if err := t.rpcCall(ctx, "policy.create", req, &result); err != nil {
+	var result transport.TPMPolicy
+	if err := t.rpcCall(ctx, "tpm.policy.create", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-// PolicyGet retrieves a policy by name.
-func (t *Transport) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+// TPMPolicyGet returns a named TPM policy.
+func (t *Transport) TPMPolicyGet(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
-	var result transport.PolicyGetResponse
-	if err := t.rpcCall(ctx, "policy.get", req, &result); err != nil {
+	var result transport.TPMPolicy
+	if err := t.rpcCall(ctx, "tpm.policy.get", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-// PolicyList lists all policies.
-func (t *Transport) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
+// TPMPolicyList returns a tenant's TPM policies.
+func (t *Transport) TPMPolicyList(ctx context.Context, req *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
 	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
-	var result transport.PolicyListResponse
-	if err := t.rpcCall(ctx, "policy.list", nil, &result); err != nil {
+	var result transport.TPMPolicyListResponse
+	if err := t.rpcCall(ctx, "tpm.policy.list", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-// PolicyDelete deletes a policy.
-func (t *Transport) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
+// TPMPolicyUpdate re-captures and re-approves a TPM policy.
+func (t *Transport) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TPMPolicy
+	if err := t.rpcCall(ctx, "tpm.policy.update", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TPMPolicyRevoke withdraws a TPM policy's approval.
+func (t *Transport) TPMPolicyRevoke(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TPMPolicy
+	if err := t.rpcCall(ctx, "tpm.policy.revoke", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TPMPolicyVerify compares a TPM policy's PCR values with the live ones.
+func (t *Transport) TPMPolicyVerify(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TPMPolicyVerifyResponse
+	if err := t.rpcCall(ctx, "tpm.policy.verify", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TPMPolicyDelete deletes a TPM policy no object is assigned to.
+func (t *Transport) TPMPolicyDelete(ctx context.Context, req *transport.TPMPolicyDeleteRequest) error {
 	if !t.IsConnected() {
 		return ErrNotConnected
 	}
-	return t.rpcCall(ctx, "policy.delete", req, nil)
+	return t.rpcCall(ctx, "tpm.policy.delete", req, nil)
 }
 
-// PolicyRefresh refreshes a policy with current PCR values.
-func (t *Transport) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+// TPMPolicyObjects lists the objects assigned to a TPM policy.
+func (t *Transport) TPMPolicyObjects(ctx context.Context, req *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
 	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
-	var result transport.PolicyGetResponse
-	if err := t.rpcCall(ctx, "policy.refresh", req, &result); err != nil {
+	var result transport.TPMPolicyObjectsResponse
+	if err := t.rpcCall(ctx, "tpm.policy.objects", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-// PolicyVerify verifies a policy against current PCR values.
-func (t *Transport) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+// TPMPolicySetAutoUnseal sets or clears a TPM policy's auto-unseal mark.
+func (t *Transport) TPMPolicySetAutoUnseal(ctx context.Context, req *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
 	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
-	var result transport.PolicyVerifyResponse
-	if err := t.rpcCall(ctx, "policy.verify", req, &result); err != nil {
+	var result transport.TPMPolicy
+	if err := t.rpcCall(ctx, "tpm.policy.autoUnseal", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-// PolicyExport exports a policy.
-func (t *Transport) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+// TPMObjectPolicy returns the TPM policy a key or sealed object was created under.
+func (t *Transport) TPMObjectPolicy(ctx context.Context, req *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
 	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
-	var result transport.PolicyExportResponse
-	if err := t.rpcCall(ctx, "policy.export", req, &result); err != nil {
+	var result transport.TPMObjectPolicyResponse
+	if err := t.rpcCall(ctx, "tpm.object.policy", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TPMPolicyRotateAuthority rotates a tenant's TPM policy authority.
+func (t *Transport) TPMPolicyRotateAuthority(ctx context.Context, req *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TPMAuthorityRotateResponse
+	if err := t.rpcCall(ctx, "tpm.authority.rotate", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetTenantTPMMode returns a tenant's TPM mode.
+func (t *Transport) GetTenantTPMMode(ctx context.Context, tenantID string) (*transport.TenantTPMModeResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TenantTPMModeResponse
+	if err := t.rpcCall(ctx, "xkms.getTenantTPMMode", map[string]string{"tenant_id": tenantID}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// SetTenantTPMMode changes a tenant's TPM mode.
+func (t *Transport) SetTenantTPMMode(ctx context.Context, req *transport.SetTenantTPMModeRequest) (*transport.TenantTPMModeResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TenantTPMModeResponse
+	if err := t.rpcCall(ctx, "xkms.setTenantTPMMode", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TenantVTPMStatus reports a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStatus(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TenantVTPMStatusResponse
+	if err := t.rpcCall(ctx, "xkms.tenantVTPMStatus", map[string]string{"tenant_id": tenantID}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TenantVTPMStart starts a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStart(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TenantVTPMStatusResponse
+	if err := t.rpcCall(ctx, "xkms.tenantVTPMStart", map[string]string{"tenant_id": tenantID}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TenantVTPMStop stops a tenant's virtual TPM.
+func (t *Transport) TenantVTPMStop(ctx context.Context, tenantID string) (*transport.TenantVTPMStatusResponse, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var result transport.TenantVTPMStatusResponse
+	if err := t.rpcCall(ctx, "xkms.tenantVTPMStop", map[string]string{"tenant_id": tenantID}, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

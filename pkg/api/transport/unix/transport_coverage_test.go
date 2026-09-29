@@ -321,43 +321,6 @@ func TestSealStoreStatus_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-// --- Policy ---
-
-func TestPolicyCreate_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).PolicyCreate(context.Background(), &transport.PolicyCreateRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestPolicyGet_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).PolicyGet(context.Background(), &transport.PolicyGetRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestPolicyList_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).PolicyList(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestPolicyDelete_NotConnected(t *testing.T) {
-	err := newDisconnected(t).PolicyDelete(context.Background(), &transport.PolicyDeleteRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestPolicyRefresh_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).PolicyRefresh(context.Background(), &transport.PolicyRefreshRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestPolicyVerify_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).PolicyVerify(context.Background(), &transport.PolicyVerifyRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestPolicyExport_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).PolicyExport(context.Background(), &transport.PolicyExportRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 // --- Password ---
 
 func TestPasswordAdd_NotConnected(t *testing.T) {

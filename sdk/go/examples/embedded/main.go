@@ -641,31 +641,67 @@ func (m *MockXKMSService) RevokeEscrow(ctx context.Context, escrowID string) err
 
 // Policy operations
 
-func (m *MockXKMSService) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+func (m *MockXKMSService) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
-func (m *MockXKMSService) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+func (m *MockXKMSService) TPMPolicyGet(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
-func (m *MockXKMSService) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
+func (m *MockXKMSService) TPMPolicyList(context.Context, *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
-func (m *MockXKMSService) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
+func (m *MockXKMSService) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	return nil, &mockUnsupportedError{capability: "policy"}
+}
+
+func (m *MockXKMSService) TPMPolicyRevoke(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	return nil, &mockUnsupportedError{capability: "policy"}
+}
+
+func (m *MockXKMSService) TPMPolicyVerify(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
+	return nil, &mockUnsupportedError{capability: "policy"}
+}
+
+func (m *MockXKMSService) TPMPolicyDelete(context.Context, *transport.TPMPolicyDeleteRequest) error {
 	return &mockUnsupportedError{capability: "policy"}
 }
 
-func (m *MockXKMSService) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+func (m *MockXKMSService) TPMPolicyObjects(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
-func (m *MockXKMSService) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+func (m *MockXKMSService) TPMPolicySetAutoUnseal(context.Context, *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 
-func (m *MockXKMSService) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+func (m *MockXKMSService) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
+	return nil, &mockUnsupportedError{capability: "policy"}
+}
+
+func (m *MockXKMSService) TPMPolicyRotateAuthority(context.Context, *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	return nil, &mockUnsupportedError{capability: "policy"}
+}
+
+func (m *MockXKMSService) GetTenantTPMMode(context.Context, string) (*transport.TenantTPMModeResponse, error) {
+	return nil, &mockUnsupportedError{capability: "policy"}
+}
+
+func (m *MockXKMSService) SetTenantTPMMode(context.Context, *transport.SetTenantTPMModeRequest) (*transport.TenantTPMModeResponse, error) {
+	return nil, &mockUnsupportedError{capability: "policy"}
+}
+
+func (m *MockXKMSService) TenantVTPMStatus(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	return nil, &mockUnsupportedError{capability: "policy"}
+}
+
+func (m *MockXKMSService) TenantVTPMStart(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	return nil, &mockUnsupportedError{capability: "policy"}
+}
+
+func (m *MockXKMSService) TenantVTPMStop(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
 	return nil, &mockUnsupportedError{capability: "policy"}
 }
 

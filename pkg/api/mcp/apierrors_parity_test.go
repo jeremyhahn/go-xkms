@@ -61,9 +61,9 @@ var wireExpectationForClass = map[apierrors.Class]wireExpectation{
 // TestClassification_MatchesSharedTables walks every sentinel in
 // apierrors.ImportExportSentinelClasses, PIVSentinelClasses,
 // BarrierSentinelClasses, SealStoreSentinelClasses, PINSentinelClasses,
-// CustodianSentinelClasses and PolicySentinelClasses and asserts this
+// CustodianSentinelClasses and TPMPolicySentinelClasses and asserts this
 // package's mapImportExportError / mapPIVError / mapBarrierError /
-// mapSealStoreError / mapPINError / mapCustodianError / mapPolicyError
+// mapSealStoreError / mapPINError / mapCustodianError / mapTPMPolicyError
 // renders the JSON-RPC code wireExpectationForClass names for that
 // sentinel's Class. It is the MCP half of the cross-transport parity
 // pinned by go-xkms#912; see pkg/api/grpc/apierrors_parity_test.go for the
@@ -147,12 +147,12 @@ func TestClassification_MatchesSharedTables(t *testing.T) {
 		}
 	})
 
-	t.Run("policy", func(t *testing.T) {
-		for _, entry := range apierrors.PolicySentinelClasses {
+	t.Run("tpm policy", func(t *testing.T) {
+		for _, entry := range apierrors.TPMPolicySentinelClasses {
 			want, ok := wireExpectationForClass[entry.Class]
 			require.True(t, ok, "no wire expectation for class %v", entry.Class)
 			t.Run(want.name, func(t *testing.T) {
-				err := mapPolicyError(entry.Sentinel, "op")
+				err := mapTPMPolicyError(entry.Sentinel, "op")
 				var keyErr *KeyOpError
 				require.ErrorAs(t, err, &keyErr)
 				assert.Equal(t, want.mcpCode, keyErr.Code)

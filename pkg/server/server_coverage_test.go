@@ -91,7 +91,7 @@ func TestServer_PlatformStore_NilWithoutBarrier(t *testing.T) {
 	assert.Nil(t, server.PlatformStore())
 }
 
-func TestServer_PolicyManager_NilByDefault(t *testing.T) {
+func TestServer_TPMPolicyService_NilByDefault(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -100,7 +100,7 @@ func TestServer_PolicyManager_NilByDefault(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
-	assert.Nil(t, server.PolicyManager())
+	assert.Nil(t, server.TPMPolicyService())
 }
 
 // ============================================================================

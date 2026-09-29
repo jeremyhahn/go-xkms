@@ -343,13 +343,13 @@ func TestIntegration_CreateSession_WithPlatformPolicy(t *testing.T) {
 
 		// Create key attributes with platform policy
 		keyAttrs := &types.KeyAttributes{
-			CN:             "test-policy-session-key",
-			Parent:         srkAttrs,
-			PlatformPolicy: true,
+			CN:        "test-policy-session-key",
+			Parent:    srkAttrs,
+			TPMPolicy: types.TPMPolicyPlatform,
 		}
 
 		// Mark parent as having platform policy
-		keyAttrs.Parent.PlatformPolicy = true
+		keyAttrs.Parent.TPMPolicy = types.TPMPolicyPlatform
 
 		// Create session - should create platform policy session
 		session, closer, err := tpmInstance.CreateSession(keyAttrs)
@@ -495,7 +495,7 @@ func TestIntegration_Session_PasswordAuth(t *testing.T) {
 		}
 
 		// Ensure parent doesn't have platform policy (use password auth)
-		keyAttrs.Parent.PlatformPolicy = false
+		keyAttrs.Parent.TPMPolicy = ""
 
 		// Create session
 		session, closer, err := tpmInstance.CreateSession(keyAttrs)

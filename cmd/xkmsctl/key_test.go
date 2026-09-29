@@ -310,7 +310,7 @@ func TestGenerateKey_Success(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false, false)
+	generateKey(cfg, printer, "test-key", "tls", keyGenOptions{Algorithm: "", KeyAlgorithm: "rsa", KeySize: 2048, Curve: "", Exportable: false, Sensitive: false})
 
 	output := buf.String()
 	if !strings.Contains(output, "Successfully generated") {
@@ -336,7 +336,7 @@ func TestGenerateKey_SymmetricKey(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "sym-key", "symmetric", "aes-256-gcm", "", 256, "", false, false)
+	generateKey(cfg, printer, "sym-key", "symmetric", keyGenOptions{Algorithm: "aes-256-gcm", KeyAlgorithm: "", KeySize: 256, Curve: "", Exportable: false, Sensitive: false})
 
 	output := buf.String()
 	if !strings.Contains(output, "Successfully generated") {
@@ -370,7 +370,7 @@ func TestGenerateKey_SymmetricKeyDefaultAlgorithm(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "sym-key", "symmetric", "", "", 256, "", false, false)
+	generateKey(cfg, printer, "sym-key", "symmetric", keyGenOptions{Algorithm: "", KeyAlgorithm: "", KeySize: 256, Curve: "", Exportable: false, Sensitive: false})
 
 	if mockClient.generateKeyReq == nil || mockClient.generateKeyReq.Algorithm == "" {
 		t.Fatalf("Algorithm must never be empty, got %+v", mockClient.generateKeyReq)
@@ -394,7 +394,7 @@ func TestGenerateKey_ClientCreateError(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false, false)
+	generateKey(cfg, printer, "test-key", "tls", keyGenOptions{Algorithm: "", KeyAlgorithm: "rsa", KeySize: 2048, Curve: "", Exportable: false, Sensitive: false})
 }
 
 func TestGenerateKey_ConnectError(t *testing.T) {
@@ -417,7 +417,7 @@ func TestGenerateKey_ConnectError(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false, false)
+	generateKey(cfg, printer, "test-key", "tls", keyGenOptions{Algorithm: "", KeyAlgorithm: "rsa", KeySize: 2048, Curve: "", Exportable: false, Sensitive: false})
 }
 
 func TestGenerateKey_GenerateError(t *testing.T) {
@@ -438,7 +438,7 @@ func TestGenerateKey_GenerateError(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false, false)
+	generateKey(cfg, printer, "test-key", "tls", keyGenOptions{Algorithm: "", KeyAlgorithm: "rsa", KeySize: 2048, Curve: "", Exportable: false, Sensitive: false})
 }
 
 // Test listKeys function
@@ -2908,7 +2908,7 @@ func TestGenerateKey_AllFormats(t *testing.T) {
 				},
 			}
 
-			generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false, false)
+			generateKey(cfg, printer, "test-key", "tls", keyGenOptions{Algorithm: "", KeyAlgorithm: "rsa", KeySize: 2048, Curve: "", Exportable: false, Sensitive: false})
 
 			if buf.Len() == 0 {
 				t.Errorf("generateKey with %s format should produce output", format)

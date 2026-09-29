@@ -665,13 +665,28 @@ func TestPolicyOperationsNotSupported(t *testing.T) {
 		name string
 		fn   func() error
 	}{
-		{"PolicyCreate", func() error { _, e := tr.PolicyCreate(ctx, nil); return e }},
-		{"PolicyGet", func() error { _, e := tr.PolicyGet(ctx, nil); return e }},
-		{"PolicyList", func() error { _, e := tr.PolicyList(ctx); return e }},
-		{"PolicyDelete", func() error { return tr.PolicyDelete(ctx, nil) }},
-		{"PolicyRefresh", func() error { _, e := tr.PolicyRefresh(ctx, nil); return e }},
-		{"PolicyVerify", func() error { _, e := tr.PolicyVerify(ctx, nil); return e }},
-		{"PolicyExport", func() error { _, e := tr.PolicyExport(ctx, nil); return e }},
+		{"TPMPolicyCreate", func() error { _, e := tr.TPMPolicyCreate(ctx, &transport.TPMPolicyCreateRequest{}); return e }},
+		{"TPMPolicyGet", func() error { _, e := tr.TPMPolicyGet(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyList", func() error { _, e := tr.TPMPolicyList(ctx, &transport.TPMPolicyListRequest{}); return e }},
+		{"TPMPolicyUpdate", func() error { _, e := tr.TPMPolicyUpdate(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyRevoke", func() error { _, e := tr.TPMPolicyRevoke(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyVerify", func() error { _, e := tr.TPMPolicyVerify(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicyDelete", func() error { return tr.TPMPolicyDelete(ctx, &transport.TPMPolicyDeleteRequest{}) }},
+		{"TPMPolicyObjects", func() error { _, e := tr.TPMPolicyObjects(ctx, &transport.TPMPolicyRequest{}); return e }},
+		{"TPMPolicySetAutoUnseal", func() error {
+			_, e := tr.TPMPolicySetAutoUnseal(ctx, &transport.TPMPolicyAutoUnsealRequest{})
+			return e
+		}},
+		{"TPMObjectPolicy", func() error { _, e := tr.TPMObjectPolicy(ctx, &transport.TPMObjectPolicyRequest{}); return e }},
+		{"TPMPolicyRotateAuthority", func() error {
+			_, e := tr.TPMPolicyRotateAuthority(ctx, &transport.TPMAuthorityRotateRequest{})
+			return e
+		}},
+		{"GetTenantTPMMode", func() error { _, e := tr.GetTenantTPMMode(ctx, "tenant-a"); return e }},
+		{"SetTenantTPMMode", func() error { _, e := tr.SetTenantTPMMode(ctx, &transport.SetTenantTPMModeRequest{}); return e }},
+		{"TenantVTPMStatus", func() error { _, e := tr.TenantVTPMStatus(ctx, "tenant-a"); return e }},
+		{"TenantVTPMStart", func() error { _, e := tr.TenantVTPMStart(ctx, "tenant-a"); return e }},
+		{"TenantVTPMStop", func() error { _, e := tr.TenantVTPMStop(ctx, "tenant-a"); return e }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

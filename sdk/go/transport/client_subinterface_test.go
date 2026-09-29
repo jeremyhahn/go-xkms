@@ -329,21 +329,67 @@ func (s *stubClient) RevokeEscrow(context.Context, string) error {
 	panic("stub")
 }
 
-func (s *stubClient) PolicyCreate(context.Context, *PolicyCreateRequest) (*PolicyCreateResponse, error) {
+func (s *stubClient) TPMPolicyCreate(context.Context, *TPMPolicyCreateRequest) (*TPMPolicy, error) {
 	panic("stub")
 }
-func (s *stubClient) PolicyGet(context.Context, *PolicyGetRequest) (*PolicyGetResponse, error) {
+
+func (s *stubClient) TPMPolicyGet(context.Context, *TPMPolicyRequest) (*TPMPolicy, error) {
 	panic("stub")
 }
-func (s *stubClient) PolicyList(context.Context) (*PolicyListResponse, error)  { panic("stub") }
-func (s *stubClient) PolicyDelete(context.Context, *PolicyDeleteRequest) error { panic("stub") }
-func (s *stubClient) PolicyRefresh(context.Context, *PolicyRefreshRequest) (*PolicyGetResponse, error) {
+
+func (s *stubClient) TPMPolicyList(context.Context, *TPMPolicyListRequest) (*TPMPolicyListResponse, error) {
 	panic("stub")
 }
-func (s *stubClient) PolicyVerify(context.Context, *PolicyVerifyRequest) (*PolicyVerifyResponse, error) {
+
+func (s *stubClient) TPMPolicyUpdate(context.Context, *TPMPolicyRequest) (*TPMPolicy, error) {
 	panic("stub")
 }
-func (s *stubClient) PolicyExport(context.Context, *PolicyExportRequest) (*PolicyExportResponse, error) {
+
+func (s *stubClient) TPMPolicyRevoke(context.Context, *TPMPolicyRequest) (*TPMPolicy, error) {
+	panic("stub")
+}
+
+func (s *stubClient) TPMPolicyVerify(context.Context, *TPMPolicyRequest) (*TPMPolicyVerifyResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) TPMPolicyDelete(context.Context, *TPMPolicyDeleteRequest) error {
+	panic("stub")
+}
+
+func (s *stubClient) TPMPolicyObjects(context.Context, *TPMPolicyRequest) (*TPMPolicyObjectsResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) TPMPolicySetAutoUnseal(context.Context, *TPMPolicyAutoUnsealRequest) (*TPMPolicy, error) {
+	panic("stub")
+}
+
+func (s *stubClient) TPMObjectPolicy(context.Context, *TPMObjectPolicyRequest) (*TPMObjectPolicyResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) TPMPolicyRotateAuthority(context.Context, *TPMAuthorityRotateRequest) (*TPMAuthorityRotateResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) GetTenantTPMMode(context.Context, string) (*TenantTPMModeResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) SetTenantTPMMode(context.Context, *SetTenantTPMModeRequest) (*TenantTPMModeResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) TenantVTPMStatus(context.Context, string) (*TenantVTPMStatusResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) TenantVTPMStart(context.Context, string) (*TenantVTPMStatusResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) TenantVTPMStop(context.Context, string) (*TenantVTPMStatusResponse, error) {
 	panic("stub")
 }
 
@@ -488,7 +534,7 @@ var (
 	_ UserService                 = (*stubClient)(nil)
 	_ PasswordService             = (*stubClient)(nil)
 	_ SealStoreService            = (*stubClient)(nil)
-	_ PolicyService               = (*stubClient)(nil)
+	_ TPMPolicyService            = (*stubClient)(nil)
 	_ CustodianGroupService       = (*stubClient)(nil)
 	_ ShareService                = (*stubClient)(nil)
 	_ TenantService               = (*stubClient)(nil)
@@ -520,7 +566,7 @@ func TestClientComposesAllSubInterfaces(t *testing.T) {
 		{"PINService", func() bool { var v PINService = c; return v != nil }},
 		{"PasswordService", func() bool { var v PasswordService = c; return v != nil }},
 		{"SealStoreService", func() bool { var v SealStoreService = c; return v != nil }},
-		{"PolicyService", func() bool { var v PolicyService = c; return v != nil }},
+		{"TPMPolicyService", func() bool { var v TPMPolicyService = c; return v != nil }},
 		{"CustodianGroupService", func() bool { var v CustodianGroupService = c; return v != nil }},
 		{"ShareService", func() bool { var v ShareService = c; return v != nil }},
 		{"TenantService", func() bool { var v TenantService = c; return v != nil }},

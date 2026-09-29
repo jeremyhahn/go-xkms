@@ -1428,6 +1428,16 @@ func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string, s
 		Partition: types.Partition(req.Partition),
 	}
 
+	// A TPM policy binds a TPM2 key's authPolicy to a named policy of the
+	// tenant's TPM scope. Any other backend has no such binding, so naming
+	// one there is refused rather than silently ignored.
+	if req.TPMPolicy != "" {
+		if storeType != types.StoreTPM2 {
+			return nil, &ErrValidation{Sentinel: ErrTPMPolicyNotSupported, Detail: "tpm_policy is only valid on a TPM2 backend"}
+		}
+		attrs.TPMPolicy = req.TPMPolicy
+	}
+
 	// The request's hash was accepted and then discarded, so a caller that
 	// asked for an SHA-384 key received one whose attributes named no digest
 	// at all.

@@ -14,7 +14,7 @@
 // Package compose builds xkms's store-backed subsystems — the Password
 // Manager (pkg/staticpw), the platform sealed-secret store, the backend
 // credential service, SSH (pkg/ssh), the Certificate Authority (pkg/ca) and
-// PCR policies (pkg/seal/policy) — from the dependencies a process supplies,
+// the TPM policy service (pkg/tpmpolicy) — from the dependencies a process supplies,
 // and wires them into an *xkms.XKMSService.
 //
 // It is the single construction path for those subsystems. xkmsd

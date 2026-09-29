@@ -228,7 +228,7 @@ func TestIntegration_CreateRSA(t *testing.T) {
 				Password:           mustPassword(nil),
 				StoreType:          types.StoreTPM2,
 				SignatureAlgorithm: tc.sigAlg,
-				PlatformPolicy:     tc.platformPolicy,
+				TPMPolicy:          platformPolicyName(tc.platformPolicy),
 				TPMAttributes: &types.TPMAttributes{
 					Hierarchy: tpm2.TPMRHOwner,
 				},
@@ -346,13 +346,13 @@ func TestIntegration_CreateECDSA(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			keyAttrs := &types.KeyAttributes{
-				CN:             "integration-test-ecdsa-" + tc.name,
-				KeyAlgorithm:   x509.ECDSA,
-				KeyType:        types.KeyTypeCA,
-				Parent:         srkAttrs,
-				Password:       mustPassword(nil),
-				StoreType:      types.StoreTPM2,
-				PlatformPolicy: tc.platformPolicy,
+				CN:           "integration-test-ecdsa-" + tc.name,
+				KeyAlgorithm: x509.ECDSA,
+				KeyType:      types.KeyTypeCA,
+				Parent:       srkAttrs,
+				Password:     mustPassword(nil),
+				StoreType:    types.StoreTPM2,
+				TPMPolicy:    platformPolicyName(tc.platformPolicy),
 				ECCAttributes: &types.ECCAttributes{
 					Curve: tc.curve,
 				},
@@ -494,13 +494,13 @@ func TestIntegration_CreateSecretKey(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			keyAttrs := &types.KeyAttributes{
-				CN:             "integration-test-secretkey-" + tc.name,
-				KeyAlgorithm:   0, // Use 0 instead of UnknownSignatureAlgorithm
-				KeyType:        types.KeyTypeHMAC,
-				Parent:         srkAttrs,
-				Password:       mustPassword(nil),
-				StoreType:      types.StoreTPM2,
-				PlatformPolicy: tc.platformPolicy,
+				CN:           "integration-test-secretkey-" + tc.name,
+				KeyAlgorithm: 0, // Use 0 instead of UnknownSignatureAlgorithm
+				KeyType:      types.KeyTypeHMAC,
+				Parent:       srkAttrs,
+				Password:     mustPassword(nil),
+				StoreType:    types.StoreTPM2,
+				TPMPolicy:    platformPolicyName(tc.platformPolicy),
 				TPMAttributes: &types.TPMAttributes{
 					Hierarchy: tpm2.TPMRHOwner,
 				},
@@ -766,4 +766,13 @@ func TestIntegration_CryptoOperations_Sequential(t *testing.T) {
 			t.Logf("Iteration %d: Successfully encrypted and decrypted message", i)
 		})
 	}
+}
+
+// platformPolicyName maps a test case's platform-policy switch to the TPM
+// policy reference a key carries.
+func platformPolicyName(enabled bool) string {
+	if enabled {
+		return types.TPMPolicyPlatform
+	}
+	return ""
 }

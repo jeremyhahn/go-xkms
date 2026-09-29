@@ -25,13 +25,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -46,7 +44,7 @@ import (
 
 // TestNewServer_PlatformHandlersComposeOverTheService pins that the
 // platform-global handler groups -- the system barrier and PINs (on the
-// handler context), the platform store, the PCR policies and the credentials
+// handler context), the platform store, the TPM policies and the credentials
 // -- are wired over the XKMSService and nothing else, so each operation passes
 // the service's platform scope (go-xkms#1226, #1227). Without a service none
 // of them is mounted.
@@ -62,7 +60,7 @@ func TestNewServer_PlatformHandlersComposeOverTheService(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, svc, server.handlers.xkmsService)
 	assert.NotNil(t, server.platformHandlers)
-	assert.NotNil(t, server.policyHandlers)
+	assert.NotNil(t, server.tpmPolicyHandlers)
 	assert.NotNil(t, server.credentialHandlers)
 
 	bare, err := NewServer(&Config{
@@ -71,7 +69,7 @@ func TestNewServer_PlatformHandlersComposeOverTheService(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Nil(t, bare.platformHandlers)
-	assert.Nil(t, bare.policyHandlers)
+	assert.Nil(t, bare.tpmPolicyHandlers)
 	assert.Nil(t, bare.credentialHandlers)
 }
 
@@ -461,84 +459,6 @@ func TestDeletePasswordHandler_StoreClosed(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-// ==========================================================================
-// policy_handlers.go - VerifyPolicy internal error
-// ==========================================================================
-
-func TestPolicy_VerifyPolicy_InternalError(t *testing.T) {
-	// Create a policy handler with a mock reader that returns errors.
-	store := newMockPolicyStore()
-	reader := &mockPCRReader{err: errors.New("pcr read error")}
-	mgr, err := policy.NewManager(reader, store)
-	require.NoError(t, err)
-	h := policyHandlersOver(mgr)
-
-	// Create the policy directly in the store.
-	store.policies["boot"] = &policy.PolicyDefinition{
-		Name:       "boot",
-		Bank:       "sha256",
-		PCRIndices: []int{0},
-		PCRValues:  map[int][]byte{0: {0x01}},
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-	}
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/policies/{name}/verify", h.VerifyPolicyHandler)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/policies/boot/verify", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestPolicy_ExportPolicy_InternalError(t *testing.T) {
-	// Create a handler where the underlying store returns an unexpected error.
-	store := &errorPolicyStore{}
-	reader := &mockPCRReader{values: map[int][]byte{0: make([]byte, 32)}}
-	mgr, err := policy.NewManager(reader, store)
-	require.NoError(t, err)
-	h := policyHandlersOver(mgr)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/policies/{name}/export", h.ExportPolicyHandler)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies/boot/export", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	// Policy not found or internal error.
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestPolicy_ListPolicies_Error(t *testing.T) {
-	store := &errorPolicyStore{}
-	reader := &mockPCRReader{values: map[int][]byte{0: make([]byte, 32)}}
-	mgr, err := policy.NewManager(reader, store)
-	require.NoError(t, err)
-	h := policyHandlersOver(mgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil)
-	w := httptest.NewRecorder()
-	h.ListPoliciesHandler(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-// errorPolicyStore always returns errors.
-type errorPolicyStore struct{}
-
-func (s *errorPolicyStore) SavePolicy(_ string, _ *policy.PolicyDefinition) error {
-	return errors.New("store error")
-}
-func (s *errorPolicyStore) LoadPolicy(_ string) (*policy.PolicyDefinition, error) {
-	return nil, errors.New("store error")
-}
-func (s *errorPolicyStore) DeletePolicy(_ string) error {
-	return errors.New("store error")
-}
-func (s *errorPolicyStore) ListPolicies() ([]*policy.PolicyDefinition, error) {
-	return nil, errors.New("store error")
 }
 
 // ==========================================================================

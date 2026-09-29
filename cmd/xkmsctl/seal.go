@@ -39,6 +39,7 @@ The result is output as base64-encoded ciphertext.`,
 		keyID := fr.String("key-id")
 		dataFile := fr.String("data-file")
 		aadStr := fr.String("aad")
+		tpm := sealTPMParams{Policy: fr.String("tpm-policy"), Password: fr.String("password")}
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
@@ -62,12 +63,30 @@ The result is output as base64-encoded ciphertext.`,
 
 		printVerbose("Sealing %d bytes of data", len(data))
 
-		sealData(cfg, printer, keyID, data, []byte(aadStr))
+		sealData(cfg, printer, keyID, data, []byte(aadStr), tpm)
 	},
 }
 
+// sealTPMParams are the seal parameters of a TPM2 sealed object.
+type sealTPMParams struct {
+	// Policy names the TPM policy the sealed object is bound to.
+	Policy string
+
+	// Password is the sealed object's authorization value.
+	Password string
+}
+
+// unsealTPMParams are the unseal parameters of a TPM2 sealed object.
+type unsealTPMParams struct {
+	// Public and Private are the sealed object's areas, as seal output them.
+	Public, Private []byte
+
+	// Password is the sealed object's authorization value.
+	Password string
+}
+
 // sealData seals data using the SDK client (handles both embedded and remote protocols)
-func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte) {
+func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte, tpm sealTPMParams) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -85,10 +104,12 @@ func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte) {
 
 	// Prepare seal request
 	req := &client.SealRequest{
-		Backend: cfg.Backend,
-		KeyID:   keyID,
-		Data:    data,
-		AAD:     aad,
+		Backend:   cfg.Backend,
+		KeyID:     keyID,
+		Data:      data,
+		AAD:       aad,
+		TPMPolicy: tpm.Policy,
+		Password:  tpm.Password,
 	}
 
 	// Seal the data
@@ -109,8 +130,19 @@ func sealData(cfg *Config, printer *Printer, keyID string, data, aad []byte) {
 	if len(resp.Tag) > 0 {
 		result["tag"] = base64.StdEncoding.EncodeToString(resp.Tag)
 	}
-	if keyID != "" {
+	// A TPM2 sealed object is its public and private areas; unseal needs
+	// both back (--tpm-public, --tpm-private).
+	if len(resp.TPMPublic) > 0 {
+		result["tpm_public"] = base64.StdEncoding.EncodeToString(resp.TPMPublic)
+	}
+	if len(resp.TPMPrivate) > 0 {
+		result["tpm_private"] = base64.StdEncoding.EncodeToString(resp.TPMPrivate)
+	}
+	switch {
+	case keyID != "":
 		result["key_id"] = keyID
+	case resp.KeyID != "":
+		result["key_id"] = resp.KeyID
 	}
 
 	if err := printer.PrintJSON(result); err != nil {
@@ -138,7 +170,16 @@ Use --nonce and --tag for algorithms that require them.`,
 		nonceStr := fr.String("nonce")
 		tagStr := fr.String("tag")
 		aadStr := fr.String("aad")
+		tpmPublic := fr.String("tpm-public")
+		tpmPrivate := fr.String("tpm-private")
+		password := fr.String("password")
 		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
+
+		tpm, err := decodeUnsealTPMParams(tpmPublic, tpmPrivate, password)
+		if err != nil {
 			handleError(err)
 			return
 		}
@@ -156,7 +197,7 @@ Use --nonce and --tag for algorithms that require them.`,
 				return
 			}
 			ciphertextB64 = string(data)
-		} else {
+		} else if len(tpm.Public) == 0 {
 			handleError(ErrCiphertextInputRequired)
 			return
 		}
@@ -187,12 +228,32 @@ Use --nonce and --tag for algorithms that require them.`,
 
 		printVerbose("Unsealing %d bytes of ciphertext", len(ciphertext))
 
-		unsealData(cfg, printer, keyID, ciphertext, nonce, tag, []byte(aadStr))
+		unsealData(cfg, printer, keyID, ciphertext, nonce, tag, []byte(aadStr), tpm)
 	},
 }
 
+// decodeUnsealTPMParams decodes the base64 --tpm-public and --tpm-private
+// areas of a TPM2 sealed object; both or neither must be given.
+func decodeUnsealTPMParams(public, private, password string) (unsealTPMParams, error) {
+	params := unsealTPMParams{Password: password}
+	if (public == "") != (private == "") {
+		return params, ErrTPMAreasRequired
+	}
+	if public == "" {
+		return params, nil
+	}
+	var err error
+	if params.Public, err = base64.StdEncoding.DecodeString(public); err != nil {
+		return params, &WrappedError{Sentinel: ErrInvalidBase64TPMArea, Err: err}
+	}
+	if params.Private, err = base64.StdEncoding.DecodeString(private); err != nil {
+		return params, &WrappedError{Sentinel: ErrInvalidBase64TPMArea, Err: err}
+	}
+	return params, nil
+}
+
 // unsealData unseals data using the SDK client (handles both embedded and remote protocols)
-func unsealData(cfg *Config, printer *Printer, keyID string, ciphertext, nonce, tag, aad []byte) {
+func unsealData(cfg *Config, printer *Printer, keyID string, ciphertext, nonce, tag, aad []byte, tpm unsealTPMParams) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -216,6 +277,9 @@ func unsealData(cfg *Config, printer *Printer, keyID string, ciphertext, nonce, 
 		Nonce:      nonce,
 		Tag:        tag,
 		AAD:        aad,
+		TPMPublic:  tpm.Public,
+		TPMPrivate: tpm.Private,
+		Password:   tpm.Password,
 	}
 
 	// Unseal the data
@@ -289,6 +353,8 @@ func init() {
 	sealCmd.Flags().String("key-id", "", "Key ID to use for sealing (optional)")
 	sealCmd.Flags().String("data-file", "", "File containing data to seal")
 	sealCmd.Flags().String("aad", "", "Additional authenticated data (optional)")
+	sealCmd.Flags().String("tpm-policy", "", "TPM policy a TPM2 sealed object is bound to: 'platform' or a policy from 'xkmsctl tpm policy' (default: none)")
+	sealCmd.Flags().String("password", "", "Authorization value of a TPM2 sealed object (optional)")
 
 	// Unseal command flags
 	unsealDataCmd.Flags().String("key-id", "", "Key ID to use for unsealing (optional)")
@@ -297,6 +363,9 @@ func init() {
 	unsealDataCmd.Flags().String("nonce", "", "Nonce/IV in base64 (if required)")
 	unsealDataCmd.Flags().String("tag", "", "Authentication tag in base64 (if required)")
 	unsealDataCmd.Flags().String("aad", "", "Additional authenticated data (optional)")
+	unsealDataCmd.Flags().String("tpm-public", "", "TPM2 sealed object's public area in base64, as seal output it")
+	unsealDataCmd.Flags().String("tpm-private", "", "TPM2 sealed object's private area in base64, as seal output it")
+	unsealDataCmd.Flags().String("password", "", "Authorization value of a TPM2 sealed object (optional)")
 
 	// can-seal has no additional flags beyond global backend flag
 }

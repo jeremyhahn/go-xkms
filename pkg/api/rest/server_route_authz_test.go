@@ -32,10 +32,11 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmpolicytest"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -131,14 +132,23 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodPost, "/api/v1/credentials/submit", "credentials", "submit"},
 	{http.MethodGet, "/api/v1/credentials/strategy", "credentials", "strategy"},
 
-	// PCR policies — service_policy.go.
-	{http.MethodPost, "/api/v1/policies/", "policy", "create"},
-	{http.MethodGet, "/api/v1/policies/", "policy", "list"},
-	{http.MethodGet, "/api/v1/policies/boot", "policy", "get"},
-	{http.MethodDelete, "/api/v1/policies/boot", "policy", "delete"},
-	{http.MethodPost, "/api/v1/policies/boot/refresh", "policy", "refresh"},
-	{http.MethodPost, "/api/v1/policies/boot/verify", "policy", "verify"},
-	{http.MethodGet, "/api/v1/policies/boot/export", "policy", "export"},
+	// TPM policies — service_tpm_policy.go.
+	{http.MethodPost, "/api/v1/tpm/policies", "tpm_policy", "create"},
+	{http.MethodGet, "/api/v1/tpm/policies", "tpm_policy", "list"},
+	{http.MethodGet, "/api/v1/tpm/policies/boot", "tpm_policy", "get"},
+	{http.MethodDelete, "/api/v1/tpm/policies/boot", "tpm_policy", "delete"},
+	{http.MethodPost, "/api/v1/tpm/policies/boot/update", "tpm_policy", "update"},
+	{http.MethodPost, "/api/v1/tpm/policies/boot/revoke", "tpm_policy", "revoke"},
+	{http.MethodPost, "/api/v1/tpm/policies/boot/verify", "tpm_policy", "verify"},
+	{http.MethodGet, "/api/v1/tpm/policies/boot/objects", "tpm_policy", "get"},
+	{http.MethodPost, "/api/v1/tpm/policies/boot/auto-unseal", "tpm_policy", "update"},
+	{http.MethodPost, "/api/v1/tpm/authority/rotate", "tpm_policy", "rotate"},
+	{http.MethodGet, "/api/v1/keys/k1/tpm-policy", "tpm_policy", "get"},
+	{http.MethodGet, "/api/v1/tenants/tenant-b/tpm", "tenants", "read"},
+	{http.MethodPut, "/api/v1/tenants/tenant-b/tpm", "tenants", "set_tpm_mode"},
+	{http.MethodGet, "/api/v1/tenants/tenant-b/tpm/vtpm", "tenants", "read"},
+	{http.MethodPost, "/api/v1/tenants/tenant-b/tpm/vtpm/start", "tenants", "set_tpm_mode"},
+	{http.MethodPost, "/api/v1/tenants/tenant-b/tpm/vtpm/stop", "tenants", "set_tpm_mode"},
 }
 
 // sessionOnlyRoutes is the golden set of REST routes that still require only
@@ -225,9 +235,11 @@ func newGatedRouteServer(t *testing.T, rbac qrdbtransport.RBACClient, authn auth
 	require.NoError(t, err)
 	svc.SetTenantService(tenantSvc)
 
-	policyMgr, err := policy.NewManager(fakePCRReader{}, policy.NewMemoryPolicyStore())
-	require.NoError(t, err)
-	svc.SetPolicyManager(policyMgr)
+	// The TPM policy service runs without a TPM; the caller's tenant is in
+	// TPM mode none, so every TPM policy route answers from the registry.
+	tpmPolicies, tpmRegistry := tpmpolicytest.NewOffline(t)
+	require.NoError(t, tpmRegistry.PutScope(context.Background(), &tpmpolicy.Scope{Tenant: "tenant-a", Mode: tpmpolicy.ModeNone}))
+	svc.SetTPMPolicyService(tpmPolicies)
 	svc.SetCredentialService(&credentialspkg.Service{})
 
 	server, err := NewServer(&Config{

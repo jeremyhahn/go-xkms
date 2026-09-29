@@ -10,7 +10,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -722,64 +721,30 @@ func TestUnseal_CiphertextWithTPMBlobs_Succeeds(t *testing.T) {
 	assert.Equal(t, []byte("priv"), sealer.lastUnsealData.TPMPrivate)
 }
 
-// --- PCR mapping tests ---
+// --- TPM policy mapping tests ---
 
-func TestSeal_PCRMapping_DefaultHashAlg(t *testing.T) {
+// TestSeal_TPMPolicyRefusedOffTPM proves a TPM policy named for a backend
+// that is not a TPM is refused as a malformed request, not silently ignored.
+func TestSeal_TPMPolicyRefusedOffTPM(t *testing.T) {
 	sealer := setupSealableService(t)
 	svc, err := Get()
 	require.NoError(t, err)
 
 	_, err = svc.Seal(context.Background(), &transport.SealRequest{
-		Backend: "software",
-		Data:    []byte("secret"),
-		PCRs:    []int{0, 7},
+		Backend:   "software",
+		Data:      []byte("secret"),
+		TPMPolicy: "boot",
 	})
-	require.NoError(t, err)
-
-	require.NotNil(t, sealer.lastSealOpts)
-	require.NotNil(t, sealer.lastSealOpts.TPMPolicy)
-	assert.Equal(t, tpm2.TPMAlgSHA256, sealer.lastSealOpts.TPMPolicy.HashAlg)
-	assert.Len(t, sealer.lastSealOpts.TPMPolicy.PCRSelection.PCRSelections, 1)
-	assert.Equal(t, tpm2.TPMAlgSHA256,
-		sealer.lastSealOpts.TPMPolicy.PCRSelection.PCRSelections[0].Hash)
+	require.ErrorIs(t, err, ErrTPMPolicyNotSupported)
+	var validation *ErrValidation
+	require.ErrorAs(t, err, &validation)
+	assert.Nil(t, sealer.lastSealOpts, "a refused request never reaches the backend")
 }
 
-func TestSeal_PCRMapping_SHA384(t *testing.T) {
-	sealer := setupSealableService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	_, err = svc.Seal(context.Background(), &transport.SealRequest{
-		Backend:    "software",
-		Data:       []byte("secret"),
-		PCRs:       []int{7},
-		PCRHashAlg: "sha384",
-	})
-	require.NoError(t, err)
-
-	require.NotNil(t, sealer.lastSealOpts)
-	require.NotNil(t, sealer.lastSealOpts.TPMPolicy)
-	assert.Equal(t, tpm2.TPMAlgSHA384, sealer.lastSealOpts.TPMPolicy.HashAlg)
-}
-
-func TestSeal_PCRMapping_InvalidHashAlg(t *testing.T) {
-	setupSealableService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	_, err = svc.Seal(context.Background(), &transport.SealRequest{
-		Backend:    "software",
-		Data:       []byte("secret"),
-		PCRs:       []int{0},
-		PCRHashAlg: "md5",
-	})
-	require.Error(t, err)
-	var hashErr *ErrPCRHashAlgParse
-	assert.True(t, errors.As(err, &hashErr))
-	assert.Equal(t, "md5", hashErr.Algorithm)
-}
-
-func TestSeal_PCRMapping_NoPCRs_NoPolicySet(t *testing.T) {
+// TestSeal_NoTPMPolicyCarriesNoSealPolicy proves a seal without a TPM policy
+// carries no PCR seal policy: the PCR-selection path that bound nothing was
+// removed.
+func TestSeal_NoTPMPolicyCarriesNoSealPolicy(t *testing.T) {
 	sealer := setupSealableService(t)
 	svc, err := Get()
 	require.NoError(t, err)
@@ -794,32 +759,24 @@ func TestSeal_PCRMapping_NoPCRs_NoPolicySet(t *testing.T) {
 	assert.Nil(t, sealer.lastSealOpts.TPMPolicy)
 }
 
-func TestSeal_PCRMapping_InvalidPCRIndex_Negative(t *testing.T) {
-	setupSealableService(t)
-	svc, err := Get()
+// TestTPMSealedObject names the TPM2 sealed object a seal creates: the
+// backend's default object, or the one a key ID names, bound to the policy
+// the request named.
+func TestTPMSealedObject(t *testing.T) {
+	def, err := tpmSealedObject("", "")
 	require.NoError(t, err)
+	assert.Equal(t, sealingKeyCNPrefix+"-"+string(types.BackendTypeTPM2), def.CN)
+	assert.Equal(t, types.StoreTPM2, def.StoreType)
+	assert.Empty(t, def.TPMPolicy)
 
-	_, err = svc.Seal(context.Background(), &transport.SealRequest{
-		Backend: "software",
-		Data:    []byte("secret"),
-		PCRs:    []int{-1},
-	})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPCRIndex))
-}
-
-func TestSeal_PCRMapping_InvalidPCRIndex_TooHigh(t *testing.T) {
-	setupSealableService(t)
-	svc, err := Get()
+	named, err := tpmSealedObject("vault-key", "boot")
 	require.NoError(t, err)
+	assert.Equal(t, "vault-key", named.CN)
+	assert.Equal(t, "boot", named.TPMPolicy)
 
-	_, err = svc.Seal(context.Background(), &transport.SealRequest{
-		Backend: "software",
-		Data:    []byte("secret"),
-		PCRs:    []int{24},
-	})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPCRIndex))
+	_, err = tpmSealedObject("tpm2:not-a-type:x:y", "")
+	var parseErr *ErrKeyIDParse
+	require.ErrorAs(t, err, &parseErr)
 }
 
 // --- Password mapping tests ---
@@ -867,109 +824,6 @@ func TestCanSeal_SealableBackend(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.CanSeal)
 	assert.Equal(t, "software", resp.Backend)
-}
-
-// --- parsePCRHashAlg unit tests ---
-
-func TestParsePCRHashAlg_EmptyDefaultsSHA256(t *testing.T) {
-	alg, err := parsePCRHashAlg("")
-	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMAlgSHA256, alg)
-}
-
-func TestParsePCRHashAlg_AllValid(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected tpm2.TPMIAlgHash
-	}{
-		{"sha1", tpm2.TPMAlgSHA1},
-		{"SHA1", tpm2.TPMAlgSHA1},
-		{"sha256", tpm2.TPMAlgSHA256},
-		{"SHA256", tpm2.TPMAlgSHA256},
-		{"sha384", tpm2.TPMAlgSHA384},
-		{"SHA384", tpm2.TPMAlgSHA384},
-		{"sha512", tpm2.TPMAlgSHA512},
-		{"SHA512", tpm2.TPMAlgSHA512},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.input, func(t *testing.T) {
-			alg, err := parsePCRHashAlg(tc.input)
-			require.NoError(t, err)
-			assert.Equal(t, tc.expected, alg)
-		})
-	}
-}
-
-func TestParsePCRHashAlg_Invalid(t *testing.T) {
-	tests := []string{"md5", "blake2b", "unknown", "SHA-256"}
-
-	for _, input := range tests {
-		t.Run(input, func(t *testing.T) {
-			_, err := parsePCRHashAlg(input)
-			require.Error(t, err)
-			var hashErr *ErrPCRHashAlgParse
-			assert.True(t, errors.As(err, &hashErr))
-			assert.Equal(t, input, hashErr.Algorithm)
-			assert.True(t, errors.Is(err, ErrInvalidHashFunction))
-		})
-	}
-}
-
-// --- buildPCRSelection unit tests ---
-
-func TestBuildPCRSelection_ValidPCRs(t *testing.T) {
-	sel, err := buildPCRSelection([]int{0, 7, 14}, tpm2.TPMAlgSHA256)
-	require.NoError(t, err)
-	assert.Len(t, sel.PCRSelections, 1)
-	assert.Equal(t, tpm2.TPMAlgSHA256, sel.PCRSelections[0].Hash)
-	assert.NotEmpty(t, sel.PCRSelections[0].PCRSelect)
-}
-
-func TestBuildPCRSelection_SinglePCR(t *testing.T) {
-	sel, err := buildPCRSelection([]int{23}, tpm2.TPMAlgSHA384)
-	require.NoError(t, err)
-	assert.Len(t, sel.PCRSelections, 1)
-	assert.Equal(t, tpm2.TPMAlgSHA384, sel.PCRSelections[0].Hash)
-}
-
-func TestBuildPCRSelection_InvalidNegative(t *testing.T) {
-	_, err := buildPCRSelection([]int{-1}, tpm2.TPMAlgSHA256)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPCRIndex))
-}
-
-func TestBuildPCRSelection_InvalidTooHigh(t *testing.T) {
-	_, err := buildPCRSelection([]int{24}, tpm2.TPMAlgSHA256)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPCRIndex))
-}
-
-func TestBuildPCRSelection_BoundaryValid(t *testing.T) {
-	// PCR 0 and 23 are the boundary valid values.
-	sel, err := buildPCRSelection([]int{0, 23}, tpm2.TPMAlgSHA256)
-	require.NoError(t, err)
-	assert.Len(t, sel.PCRSelections, 1)
-}
-
-// --- ErrPCRHashAlgParse tests ---
-
-func TestErrPCRHashAlgParse_ErrorMessage(t *testing.T) {
-	err := &ErrPCRHashAlgParse{
-		Algorithm: "md5",
-		Err:       ErrInvalidHashFunction,
-	}
-	assert.Contains(t, err.Error(), "md5")
-	assert.Contains(t, err.Error(), "invalid PCR hash algorithm")
-}
-
-func TestErrPCRHashAlgParse_Unwrap(t *testing.T) {
-	inner := ErrInvalidHashFunction
-	err := &ErrPCRHashAlgParse{
-		Algorithm: "md5",
-		Err:       inner,
-	}
-	assert.True(t, errors.Is(err, inner))
 }
 
 // --- Auto-generate sealing key tests ---
@@ -1120,17 +974,21 @@ func TestSeal_TPM2Backend_NoAutoGenerate(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	// Seal without KeyID on TPM2 backend -- auto-generation should NOT happen.
-	// TPM2 handles sealing keys internally via the SRK.
+	// Seal without KeyID on TPM2 backend -- no sealing key is generated:
+	// TPM2 seals a keyed-hash object of its own under the scope's storage
+	// parent, and the attributes name that object, not a key.
 	_, err = svc.Seal(context.Background(), &transport.SealRequest{
-		Backend: "tpm2",
-		Data:    []byte("secret"),
+		Backend:   "tpm2",
+		Data:      []byte("secret"),
+		TPMPolicy: "boot",
 	})
 	require.NoError(t, err)
 
-	// Verify no KeyAttributes were auto-generated for TPM2.
 	require.NotNil(t, sealer.lastSealOpts)
-	assert.Nil(t, sealer.lastSealOpts.KeyAttributes)
+	require.NotNil(t, sealer.lastSealOpts.KeyAttributes)
+	assert.Equal(t, sealingKeyCNPrefix+"-tpm2", sealer.lastSealOpts.KeyAttributes.CN)
+	assert.Equal(t, "boot", sealer.lastSealOpts.KeyAttributes.TPMPolicy)
+	assert.Zero(t, sealer.lastSealOpts.KeyAttributes.KeyAlgorithm, "no key was generated")
 }
 
 func TestUnseal_TPM2Backend_NoAutoResolve(t *testing.T) {
@@ -1138,16 +996,19 @@ func TestUnseal_TPM2Backend_NoAutoResolve(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	// Unseal without KeyID on TPM2 backend -- auto-resolution should NOT happen.
+	// Unseal without KeyID on TPM2 backend -- no key is resolved: the
+	// attributes name the default sealed object, whose binding record the
+	// scope's store holds.
 	_, err = svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "tpm2",
 		Ciphertext: []byte("encrypted"),
 	})
 	require.NoError(t, err)
 
-	// Verify no KeyAttributes were auto-generated for TPM2.
 	require.NotNil(t, sealer.lastUnsealOpts)
-	assert.Nil(t, sealer.lastUnsealOpts.KeyAttributes)
+	require.NotNil(t, sealer.lastUnsealOpts.KeyAttributes)
+	assert.Equal(t, sealingKeyCNPrefix+"-tpm2", sealer.lastUnsealOpts.KeyAttributes.CN)
+	assert.Empty(t, sealer.lastUnsealOpts.KeyAttributes.TPMPolicy)
 }
 
 // --- defaultSealingKeyAttributes unit tests ---

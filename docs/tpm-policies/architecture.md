@@ -1,6 +1,6 @@
 # TPM Policies and TPM Tenancy — Architecture
 
-> **Status: DESIGN (not yet implemented)** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-29
+> **Status: NORMATIVE** · Feature: `tpm-policies` · Repo: `go-xkms` · Last verified: 2026-09-29
 
 This is the design for named TPM policies that many keys and sealed objects
 share, for a registry that records which keys use which policy, and for

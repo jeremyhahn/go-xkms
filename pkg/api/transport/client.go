@@ -411,28 +411,64 @@ type SealStoreService interface {
 	SealStoreStatus(ctx context.Context) (*SealStoreStatusResponse, error)
 }
 
-// PolicyService handles PCR policy management.
-type PolicyService interface {
-	// PolicyCreate creates a new PCR policy.
-	PolicyCreate(ctx context.Context, req *PolicyCreateRequest) (*PolicyCreateResponse, error)
+// TPMPolicyService manages named TPM policies, the registry of which TPM
+// object uses which policy, and each tenant's TPM mode (pkg/tpmpolicy).
+//
+// Policy operations act on the caller's own tenant; a cross-tenant (system)
+// caller may address any tenant through the request's TenantID. The tenant
+// TPM mode and vTPM operations are system-scope only.
+type TPMPolicyService interface {
+	// TPMPolicyCreate creates a named policy over the live PCR values of
+	// the tenant's TPM.
+	TPMPolicyCreate(ctx context.Context, req *TPMPolicyCreateRequest) (*TPMPolicy, error)
 
-	// PolicyGet retrieves a policy by name.
-	PolicyGet(ctx context.Context, req *PolicyGetRequest) (*PolicyGetResponse, error)
+	// TPMPolicyGet returns a named policy.
+	TPMPolicyGet(ctx context.Context, req *TPMPolicyRequest) (*TPMPolicy, error)
 
-	// PolicyList lists all policies.
-	PolicyList(ctx context.Context) (*PolicyListResponse, error)
+	// TPMPolicyList returns the tenant's named policies.
+	TPMPolicyList(ctx context.Context, req *TPMPolicyListRequest) (*TPMPolicyListResponse, error)
 
-	// PolicyDelete deletes a policy.
-	PolicyDelete(ctx context.Context, req *PolicyDeleteRequest) error
+	// TPMPolicyUpdate re-captures a policy's PCR values and re-approves
+	// it. No object is re-keyed.
+	TPMPolicyUpdate(ctx context.Context, req *TPMPolicyRequest) (*TPMPolicy, error)
 
-	// PolicyRefresh refreshes a policy with current PCR values.
-	PolicyRefresh(ctx context.Context, req *PolicyRefreshRequest) (*PolicyGetResponse, error)
+	// TPMPolicyRevoke withdraws a policy's current approval.
+	TPMPolicyRevoke(ctx context.Context, req *TPMPolicyRequest) (*TPMPolicy, error)
 
-	// PolicyVerify verifies a policy against current PCR values.
-	PolicyVerify(ctx context.Context, req *PolicyVerifyRequest) (*PolicyVerifyResponse, error)
+	// TPMPolicyVerify compares a policy's captured PCR values with the
+	// live ones.
+	TPMPolicyVerify(ctx context.Context, req *TPMPolicyRequest) (*TPMPolicyVerifyResponse, error)
 
-	// PolicyExport exports a policy.
-	PolicyExport(ctx context.Context, req *PolicyExportRequest) (*PolicyExportResponse, error)
+	// TPMPolicyDelete deletes a policy no object is assigned to.
+	TPMPolicyDelete(ctx context.Context, req *TPMPolicyDeleteRequest) error
+
+	// TPMPolicyObjects lists the objects assigned to a policy.
+	TPMPolicyObjects(ctx context.Context, req *TPMPolicyRequest) (*TPMPolicyObjectsResponse, error)
+
+	// TPMPolicySetAutoUnseal sets or clears a policy's auto-unseal mark.
+	TPMPolicySetAutoUnseal(ctx context.Context, req *TPMPolicyAutoUnsealRequest) (*TPMPolicy, error)
+
+	// TPMObjectPolicy returns the policy a TPM key or sealed object was
+	// created under.
+	TPMObjectPolicy(ctx context.Context, req *TPMObjectPolicyRequest) (*TPMObjectPolicyResponse, error)
+
+	// TPMPolicyRotateAuthority replaces the tenant's policy authority.
+	TPMPolicyRotateAuthority(ctx context.Context, req *TPMAuthorityRotateRequest) (*TPMAuthorityRotateResponse, error)
+
+	// GetTenantTPMMode returns a tenant's TPM mode.
+	GetTenantTPMMode(ctx context.Context, tenantID string) (*TenantTPMModeResponse, error)
+
+	// SetTenantTPMMode changes a tenant's TPM mode.
+	SetTenantTPMMode(ctx context.Context, req *SetTenantTPMModeRequest) (*TenantTPMModeResponse, error)
+
+	// TenantVTPMStatus reports a tenant's virtual TPM.
+	TenantVTPMStatus(ctx context.Context, tenantID string) (*TenantVTPMStatusResponse, error)
+
+	// TenantVTPMStart starts a vtpm-mode tenant's virtual TPM.
+	TenantVTPMStart(ctx context.Context, tenantID string) (*TenantVTPMStatusResponse, error)
+
+	// TenantVTPMStop stops a vtpm-mode tenant's virtual TPM.
+	TenantVTPMStop(ctx context.Context, tenantID string) (*TenantVTPMStatusResponse, error)
 }
 
 // InitCeremonyService handles init ceremony operations.
@@ -612,7 +648,7 @@ type Client interface {
 	UserService
 	PasswordService
 	SealStoreService
-	PolicyService
+	TPMPolicyService
 	CustodianGroupService
 	ShareService
 	TenantService

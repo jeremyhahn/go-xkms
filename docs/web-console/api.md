@@ -71,7 +71,7 @@ and the console screen.
 | PIV | `/api/v1/piv/slots/*` | `piv` | PIV (slot view only; cert ops via CLI) |
 | SSH keys | `/xkms/v1/ssh/keys*` | `ssh keys` | SSH (list/generate/delete only) |
 | SSH known-hosts / authorized-keys | `/xkms/v1/ssh/known-hosts*`, `/authorized-keys*` | `ssh known-hosts`, `ssh authorized-keys` | CLI-only |
-| PCR Policies | `/api/v1/policies/*` | `policy` | PCR Policies |
+| TPM Policies | `/api/v1/tpm/*` | `tpm policy` | not yet in the console (the PCR Policies view targeted the removed `/api/v1/policies/*`) |
 | FROST (keys only, not signing rounds) | `/api/v1/frost/keys*`, `/frost/verify` | `frost` | FROST |
 | Audit log | `/api/v1/audit/` | `audit query` | Audit — see the permission-matrix gap above |
 | Users | `/api/v1/users*` | `user`, `admin` | Users |

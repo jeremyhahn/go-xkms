@@ -122,6 +122,9 @@ type GenerateKeyParams struct {
 	Algorithm  string `json:"algorithm"`
 	Exportable bool   `json:"exportable,omitempty"`
 	Sensitive  bool   `json:"sensitive,omitempty"` // CKA_SENSITIVE: plaintext is never released
+	// TPMPolicy names the TPM policy a TPM2 key is bound to; empty is the
+	// built-in "platform" policy.
+	TPMPolicy string `json:"tpm_policy,omitempty"`
 }
 
 // GenerateKeyResult represents the result of key generation
@@ -636,6 +639,10 @@ type SealParams struct {
 	KeyID   string `json:"key_id,omitempty"`  // Key ID to use for sealing (backend-specific)
 	Data    []byte `json:"data"`              // Data to seal
 	AAD     []byte `json:"aad,omitempty"`     // Additional Authenticated Data
+	// Password is the sealed object's authorization value (TPM2).
+	Password string `json:"password,omitempty"`
+	// TPMPolicy names the TPM policy a TPM2 sealed object is bound to.
+	TPMPolicy string `json:"tpm_policy,omitempty"`
 }
 
 // SealResult represents the result of sealing data
@@ -647,6 +654,8 @@ type SealResult struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`    // Backend-specific metadata
 	KeyID      string            `json:"key_id,omitempty"`      // Key ID used for sealing
 	WrappedDEK []byte            `json:"wrapped_dek,omitempty"` // Wrapped Data Encryption Key (envelope encryption)
+	TPMPublic  []byte            `json:"tpm_public,omitempty"`  // TPM2 sealed object's public area
+	TPMPrivate []byte            `json:"tpm_private,omitempty"` // TPM2 sealed object's private area
 }
 
 // UnsealParams represents parameters for unsealing data
@@ -657,6 +666,16 @@ type UnsealParams struct {
 	Nonce      []byte `json:"nonce,omitempty"`   // IV/nonce used for encryption
 	Tag        []byte `json:"tag,omitempty"`     // Authentication tag for AEAD modes
 	AAD        []byte `json:"aad,omitempty"`     // Additional Authenticated Data (must match sealing)
+	// TPMPublic and TPMPrivate are a TPM2 sealed object's areas, given
+	// instead of a ciphertext.
+	TPMPublic  []byte `json:"tpm_public,omitempty"`
+	TPMPrivate []byte `json:"tpm_private,omitempty"`
+	// WrappedDEK is an envelope-sealing backend's wrapped key.
+	WrappedDEK []byte `json:"wrapped_dek,omitempty"`
+	// Metadata is the backend-specific data the seal returned.
+	Metadata map[string][]byte `json:"metadata,omitempty"`
+	// Password is the sealed object's authorization value (TPM2).
+	Password string `json:"password,omitempty"`
 }
 
 // UnsealResult represents the result of unsealing data

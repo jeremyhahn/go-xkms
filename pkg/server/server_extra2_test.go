@@ -712,25 +712,42 @@ func TestInitializePlatformStore_ManualStrategySkipsRegardlessOfBarrier(t *testi
 // enrollment harness, which needs the tpm_simulator build tag.
 
 // ============================================================================
-// Tests — initializePolicyManager without a TPM (policies stay off)
+// Tests — initTPMPolicyService without a TPM (the service stays off)
 // ============================================================================
 
-// With no TPM2 backend there is no PCR reader, so policies stay off. The
-// TPM-backed path lives in backend_tpm2_simulator_test.go.
-func TestInitializePolicyManager_NoTPMLeavesPoliciesOff(t *testing.T) {
+// With no TPM2 backend there is no TPM for the policy service, so it stays
+// off, and closing it is a no-op. The TPM-backed path lives in
+// tpm_policy_simulator_test.go.
+func TestInitTPMPolicyService_NoTPMLeavesTheServiceOff(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
-	err := s.initializePolicyManager()
-	require.NoError(t, err)
-	assert.Nil(t, s.policyManager)
+	require.NoError(t, s.initTPMPolicyService())
+	assert.Nil(t, s.TPMPolicyService())
+	s.closeTPMPolicies()
+	assert.Nil(t, s.TPMPolicyService())
 }
 
-// TestTPMPCRReader_NoTPM2Backend verifies the reader is absent, not an error,
-// when xkmsd has no TPM2 backend.
-func TestTPMPCRReader_NoTPM2Backend(t *testing.T) {
+// TestVTPMConfig resolves backends.tpm2.vtpm: off unless enabled, and an
+// enabled section without directories defaults them under storage.path.
+func TestVTPMConfig(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
-	reader, err := s.tpmPCRReader()
-	require.NoError(t, err)
-	assert.Nil(t, reader)
+	assert.Nil(t, s.vtpmConfig(), "no TPM2 section leaves vtpm mode off")
+
+	s.config.Storage.Path = "/var/lib/xkms"
+	s.config.Backends.TPM2 = &config.TPM2Config{Enabled: true, VTPM: &config.VTPMConfig{}}
+	assert.Nil(t, s.vtpmConfig(), "a vtpm section that is not enabled leaves vtpm mode off")
+
+	s.config.Backends.TPM2.VTPM.Enabled = true
+	cfg := s.vtpmConfig()
+	require.NotNil(t, cfg)
+	assert.Equal(t, "/var/lib/xkms/vtpm", cfg.StateDir)
+	assert.Equal(t, "/var/lib/xkms/vtpm-run", cfg.RunDir)
+	assert.Empty(t, cfg.Binary, "an empty binary resolves swtpm from PATH")
+
+	s.config.Backends.TPM2.VTPM = &config.VTPMConfig{Enabled: true, StateDir: "/srv/state", RunDir: "/run/x", Binary: "/opt/swtpm"}
+	cfg = s.vtpmConfig()
+	assert.Equal(t, "/srv/state", cfg.StateDir)
+	assert.Equal(t, "/run/x", cfg.RunDir)
+	assert.Equal(t, "/opt/swtpm", cfg.Binary)
 }
 
 // ============================================================================

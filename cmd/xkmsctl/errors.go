@@ -1287,41 +1287,69 @@ var (
 	// ErrPlatformStoreStatusFailed is the sentinel error "failed to get platform store status".
 	ErrPlatformStoreStatusFailed = errors.New("failed to get platform store status")
 
-	// PCR policy errors
+	// TPM policy errors
 
-	// ErrPolicyNameRequired is returned when a policy name is missing.
-	ErrPolicyNameRequired = errors.New("policy name is required")
+	// ErrTPMPolicyPCRsRequired is returned when --pcrs is missing for tpm
+	// policy create.
+	ErrTPMPolicyPCRsRequired = errors.New("--pcrs is required (comma-separated PCR indexes)")
 
-	// ErrPolicyPCRsRequired is returned when --pcrs is missing for policy create.
-	ErrPolicyPCRsRequired = errors.New("--pcrs is required (comma-separated PCR indexes)")
+	// ErrInvalidTPMPolicyPCR is returned for a negative PCR index.
+	ErrInvalidTPMPolicyPCR = errors.New("invalid PCR index")
 
-	// ErrCreatePolicyFailed is the sentinel error "failed to create policy".
-	ErrCreatePolicyFailed = errors.New("failed to create policy")
+	// ErrCreateTPMPolicyFailed is the sentinel error "failed to create TPM policy".
+	ErrCreateTPMPolicyFailed = errors.New("failed to create TPM policy")
 
-	// ErrGetPolicyFailed is the sentinel error "failed to get policy".
-	ErrGetPolicyFailed = errors.New("failed to get policy")
+	// ErrListTPMPoliciesFailed is the sentinel error "failed to list TPM policies".
+	ErrListTPMPoliciesFailed = errors.New("failed to list TPM policies")
 
-	// ErrListPoliciesFailed is the sentinel error "failed to list policies".
-	ErrListPoliciesFailed = errors.New("failed to list policies")
+	// ErrGetTPMPolicyFailed is the sentinel error "failed to get TPM policy".
+	ErrGetTPMPolicyFailed = errors.New("failed to get TPM policy")
 
-	// ErrDeletePolicyFailed is the sentinel error "failed to delete policy".
-	ErrDeletePolicyFailed = errors.New("failed to delete policy")
+	// ErrUpdateTPMPolicyFailed is the sentinel error "failed to update TPM policy".
+	ErrUpdateTPMPolicyFailed = errors.New("failed to update TPM policy")
 
-	// ErrRefreshPolicyFailed is the sentinel error "failed to refresh policy".
-	ErrRefreshPolicyFailed = errors.New("failed to refresh policy")
+	// ErrRevokeTPMPolicyFailed is the sentinel error "failed to revoke TPM policy".
+	ErrRevokeTPMPolicyFailed = errors.New("failed to revoke TPM policy")
 
-	// ErrVerifyPolicyFailed is the sentinel error "failed to verify policy".
-	ErrVerifyPolicyFailed = errors.New("failed to verify policy")
+	// ErrVerifyTPMPolicyFailed is the sentinel error "failed to verify TPM policy".
+	ErrVerifyTPMPolicyFailed = errors.New("failed to verify TPM policy")
 
-	// ErrPolicyVerifyMismatch is returned when a policy does not match the
-	// current PCR values.
-	ErrPolicyVerifyMismatch = errors.New("policy does not match current PCR values")
+	// ErrTPMPolicyMismatch is returned when a TPM policy's captured PCR
+	// values differ from the live ones.
+	ErrTPMPolicyMismatch = errors.New("TPM policy does not match the live PCR values")
 
-	// ErrExportPolicyFailed is the sentinel error "failed to export policy".
-	ErrExportPolicyFailed = errors.New("failed to export policy")
+	// ErrTPMPolicyNotApproved is returned when a TPM policy has no current
+	// approval (it was revoked, or the counter moved past its approval).
+	ErrTPMPolicyNotApproved = errors.New("TPM policy is not approved")
 
-	// ErrWritePolicyFileFailed is the sentinel error "failed to write policy file".
-	ErrWritePolicyFileFailed = errors.New("failed to write policy file")
+	// ErrDeleteTPMPolicyFailed is the sentinel error "failed to delete TPM policy".
+	ErrDeleteTPMPolicyFailed = errors.New("failed to delete TPM policy")
+
+	// ErrTPMPolicyObjectsFailed is the sentinel error "failed to list the objects of a TPM policy".
+	ErrTPMPolicyObjectsFailed = errors.New("failed to list the objects of a TPM policy")
+
+	// ErrTPMPolicyAutoUnsealFailed is the sentinel error "failed to set TPM policy auto-unseal".
+	ErrTPMPolicyAutoUnsealFailed = errors.New("failed to set TPM policy auto-unseal")
+
+	// ErrRotateTPMAuthorityFailed is the sentinel error "failed to rotate the TPM policy authority".
+	ErrRotateTPMAuthorityFailed = errors.New("failed to rotate the TPM policy authority")
+
+	// ErrTPMObjectPolicyFailed is the sentinel error "failed to get the TPM policy of an object".
+	ErrTPMObjectPolicyFailed = errors.New("failed to get the TPM policy of an object")
+
+	// ErrTenantTPMModeFailed is the sentinel error "failed to get or set a tenant's TPM mode".
+	ErrTenantTPMModeFailed = errors.New("failed to get or set a tenant's TPM mode")
+
+	// ErrTPMAreasRequired is returned when only one of --tpm-public and
+	// --tpm-private is given: a TPM2 sealed object needs both.
+	ErrTPMAreasRequired = errors.New("--tpm-public and --tpm-private must be given together")
+
+	// ErrInvalidBase64TPMArea is returned when a TPM2 sealed object's area
+	// is not valid base64.
+	ErrInvalidBase64TPMArea = errors.New("invalid base64 TPM sealed-object area")
+
+	// ErrTenantVTPMFailed is the sentinel error "tenant vTPM operation failed".
+	ErrTenantVTPMFailed = errors.New("tenant vTPM operation failed")
 
 	// PIN errors
 

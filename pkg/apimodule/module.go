@@ -55,7 +55,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/vtpm"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -235,12 +235,14 @@ func WithCA(cfg *ca.MultiIdentityCAConfig) Option {
 	}
 }
 
-// WithPCRReader enables PCR policies (/api/v1/policies/*): current PCR
-// values come from reader (typically the host's TPM), and definitions
-// persist durably. Requires WithQRDBClient for storage.
-func WithPCRReader(reader policy.PCRReader) Option {
+// WithVTPM makes vtpm mode available to the TPM policy service a self-built
+// module composes when its XKMSService has a TPM2 backend: each vtpm-mode
+// tenant's objects live in a virtual TPM (swtpm) the module's process
+// supervises under cfg. Without it a tenant set to vtpm mode is refused with
+// tpmpolicy.ErrVTPMUnavailable.
+func WithVTPM(cfg *vtpm.Config) Option {
 	return func(m *Module) {
-		m.pcrReader = reader
+		m.vtpm = cfg
 	}
 }
 
@@ -266,10 +268,11 @@ func WithBarrierRoutes() Option {
 // XKMSService and whatever host inputs were configured (WithQRDBClient,
 // WithWebAuthnConfig, WithSessionOptions, WithPIVLogin) — see module_host.go.
 // A self-built module also composes xkms's store-backed features (Password
-// Manager, platform store, credentials, SSH, CA, PCR policies) from the
+// Manager, platform store, credentials, SSH, CA, TPM policies) from the
 // host's dependencies (WithBarrierRegistry, WithPINBackend,
-// WithPlatformSealer, WithCredentialStrategy, WithCA, WithPCRReader) through
-// pkg/compose, the path xkmsd builds them through.
+// WithPlatformSealer, WithCredentialStrategy, WithCA, WithVTPM, and the
+// XKMSService's TPM2 backend) through pkg/compose, the path xkmsd builds them
+// through.
 //
 // Start and Stop are inherited BaseModule no-ops by design: the XKMSService
 // lifecycle (backends, CA, barrier, TPM/PKCS#11 handles) is owned by
@@ -291,7 +294,7 @@ type Module struct {
 	platformSealer         *compose.PlatformSealer
 	credentialStrategy     string
 	caConfig               *ca.MultiIdentityCAConfig
-	pcrReader              policy.PCRReader
+	vtpm                   *vtpm.Config
 	barrierRoutes          bool
 
 	uiPrefix       string

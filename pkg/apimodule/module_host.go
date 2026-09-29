@@ -148,7 +148,8 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 		PlatformSealer:     m.platformSealer,
 		CredentialStrategy: m.credentialStrategy,
 		CA:                 m.caConfig,
-		PCRReader:          m.pcrReader,
+		TPMBackend:         compose.TPM2Backend(x),
+		VTPM:               m.vtpm,
 		ServeBarrier:       m.barrierRoutes,
 		Logger:             slog.Default().With("module", ModuleName),
 	}

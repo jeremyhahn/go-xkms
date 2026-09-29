@@ -433,27 +433,68 @@ func (m *authMockClient) SealStoreStatus(context.Context) (*transport.SealStoreS
 	return &transport.SealStoreStatusResponse{}, nil
 }
 
-// Policy operations stub implementations
-func (m *authMockClient) PolicyCreate(context.Context, *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	return &transport.PolicyCreateResponse{}, nil
+func (m *authMockClient) TPMPolicyCreate(context.Context, *transport.TPMPolicyCreateRequest) (*transport.TPMPolicy, error) {
+	return &transport.TPMPolicy{}, nil
 }
-func (m *authMockClient) PolicyGet(context.Context, *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	return &transport.PolicyGetResponse{}, nil
+
+func (m *authMockClient) TPMPolicyGet(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	return &transport.TPMPolicy{}, nil
 }
-func (m *authMockClient) PolicyList(context.Context) (*transport.PolicyListResponse, error) {
-	return &transport.PolicyListResponse{}, nil
+
+func (m *authMockClient) TPMPolicyList(context.Context, *transport.TPMPolicyListRequest) (*transport.TPMPolicyListResponse, error) {
+	return &transport.TPMPolicyListResponse{}, nil
 }
-func (m *authMockClient) PolicyDelete(context.Context, *transport.PolicyDeleteRequest) error {
+
+func (m *authMockClient) TPMPolicyUpdate(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	return &transport.TPMPolicy{}, nil
+}
+
+func (m *authMockClient) TPMPolicyRevoke(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicy, error) {
+	return &transport.TPMPolicy{}, nil
+}
+
+func (m *authMockClient) TPMPolicyVerify(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicyVerifyResponse, error) {
+	return &transport.TPMPolicyVerifyResponse{}, nil
+}
+
+func (m *authMockClient) TPMPolicyDelete(context.Context, *transport.TPMPolicyDeleteRequest) error {
 	return nil
 }
-func (m *authMockClient) PolicyRefresh(context.Context, *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	return &transport.PolicyGetResponse{}, nil
+
+func (m *authMockClient) TPMPolicyObjects(context.Context, *transport.TPMPolicyRequest) (*transport.TPMPolicyObjectsResponse, error) {
+	return &transport.TPMPolicyObjectsResponse{}, nil
 }
-func (m *authMockClient) PolicyVerify(context.Context, *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	return &transport.PolicyVerifyResponse{}, nil
+
+func (m *authMockClient) TPMPolicySetAutoUnseal(context.Context, *transport.TPMPolicyAutoUnsealRequest) (*transport.TPMPolicy, error) {
+	return &transport.TPMPolicy{}, nil
 }
-func (m *authMockClient) PolicyExport(context.Context, *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
-	return &transport.PolicyExportResponse{}, nil
+
+func (m *authMockClient) TPMObjectPolicy(context.Context, *transport.TPMObjectPolicyRequest) (*transport.TPMObjectPolicyResponse, error) {
+	return &transport.TPMObjectPolicyResponse{}, nil
+}
+
+func (m *authMockClient) TPMPolicyRotateAuthority(context.Context, *transport.TPMAuthorityRotateRequest) (*transport.TPMAuthorityRotateResponse, error) {
+	return &transport.TPMAuthorityRotateResponse{}, nil
+}
+
+func (m *authMockClient) GetTenantTPMMode(context.Context, string) (*transport.TenantTPMModeResponse, error) {
+	return &transport.TenantTPMModeResponse{}, nil
+}
+
+func (m *authMockClient) SetTenantTPMMode(context.Context, *transport.SetTenantTPMModeRequest) (*transport.TenantTPMModeResponse, error) {
+	return &transport.TenantTPMModeResponse{}, nil
+}
+
+func (m *authMockClient) TenantVTPMStatus(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	return &transport.TenantVTPMStatusResponse{}, nil
+}
+
+func (m *authMockClient) TenantVTPMStart(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	return &transport.TenantVTPMStatusResponse{}, nil
+}
+
+func (m *authMockClient) TenantVTPMStop(context.Context, string) (*transport.TenantVTPMStatusResponse, error) {
+	return &transport.TenantVTPMStatusResponse{}, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ package tpm2
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -46,7 +47,7 @@ type symmetricDeriver interface {
 // bytes come back; the sealed key's own material never leaves the daemon that
 // owns the TPM, and never reaches the PKCS#11 module in the calling
 // application's address space.
-func (b *Backend) DeriveFromSymmetricKey(ctx context.Context, attrs *types.KeyAttributes, params *kdf.KDFParams) ([]byte, error) {
+func (b *Backend) DeriveFromSymmetricKey(ctx context.Context, attrs *types.KeyAttributes, params *kdf.KDFParams) (_ []byte, err error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -60,7 +61,13 @@ func (b *Backend) DeriveFromSymmetricKey(ctx context.Context, attrs *types.KeyAt
 		return nil, &errs.Detail{Err: types.ErrUnsupportedKDFAlgorithm, Detail: "nil KDF parameters"}
 	}
 
-	deriver, ok := b.tpm.(symmetricDeriver)
+	scope, err := b.symmetricScope(ctx, attrs.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, scope.close()) }()
+
+	deriver, ok := scope.tpm.(symmetricDeriver)
 	if !ok {
 		return nil, &errs.Detail{
 			Err:    types.ErrKeyDerivationNotSupported,
@@ -68,12 +75,9 @@ func (b *Backend) DeriveFromSymmetricKey(ctx context.Context, attrs *types.KeyAt
 		}
 	}
 
-	if attrs.Parent == nil {
-		attrs.Parent = b.srkAttrs
-	}
 	attrs.StoreType = types.StoreTPM2
 
-	return deriver.DeriveFromSymmetricKey(attrs, params)
+	return deriver.DeriveFromSymmetricKey(scope.bind(attrs), params)
 }
 
 // Compile-time proof that this backend offers derivation from a stored key.

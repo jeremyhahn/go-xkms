@@ -270,6 +270,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		Exportable: req.Exportable,
 		Sensitive:  req.Sensitive,
 		Partition:  req.Partition,
+		TPMPolicy:  req.TPMPolicy,
 		TenantID:   callerTenantID(r.Context()),
 	})
 	if err != nil {
@@ -1451,11 +1452,13 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sealed, err := h.xkmsService.Seal(r.Context(), &transport.SealRequest{
-		Backend:  req.Backend,
-		KeyID:    req.KeyID,
-		Data:     req.Data,
-		AAD:      req.AAD,
-		TenantID: callerTenantID(r.Context()),
+		Backend:   req.Backend,
+		KeyID:     req.KeyID,
+		Data:      req.Data,
+		AAD:       req.AAD,
+		Password:  req.Password,
+		TPMPolicy: req.TPMPolicy,
+		TenantID:  callerTenantID(r.Context()),
 	})
 	if err != nil {
 		mapKeyOpError(w, err)
@@ -1468,6 +1471,10 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 		Nonce:      sealed.Nonce,
 		Tag:        sealed.Tag,
 		Metadata:   sealed.Metadata,
+		TPMPublic:  sealed.TPMPublic,
+		TPMPrivate: sealed.TPMPrivate,
+		WrappedDEK: sealed.WrappedDEK,
+		KeyID:      sealed.KeyID,
 	}, http.StatusOK)
 }
 
@@ -1493,7 +1500,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Ciphertext) == 0 {
+	if len(req.Ciphertext) == 0 && (len(req.TPMPublic) == 0 || len(req.TPMPrivate) == 0) {
 		writeError(w, ErrMissingCiphertext, http.StatusBadRequest)
 		return
 	}
@@ -1511,6 +1518,10 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 		Tag:        req.Tag,
 		AAD:        req.AAD,
 		Metadata:   req.Metadata,
+		TPMPublic:  req.TPMPublic,
+		TPMPrivate: req.TPMPrivate,
+		WrappedDEK: req.WrappedDEK,
+		Password:   req.Password,
 		TenantID:   callerTenantID(r.Context()),
 	})
 	if err != nil {

@@ -14,8 +14,12 @@
 package tpm2
 
 import (
+	"bytes"
 	"context"
+	"errors"
 
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -51,7 +55,7 @@ func (b *Backend) CanSeal() bool {
 //   - opts: Sealing options (may be nil for defaults)
 //
 // Returns SealedData containing the TPM public/private areas, or error.
-func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (_ *types.SealedData, err error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -59,15 +63,56 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 		return nil, ErrNotInitialized
 	}
 
-	sealed, err := b.tpm.Seal(ctx, data, opts)
+	// Without KeyAttributes the TPM seals under its own defaults: the
+	// system scope's Platform SRK and key store.
+	if opts == nil || opts.KeyAttributes == nil {
+		return b.sealed(b.tpm.Seal(ctx, data, opts))
+	}
+
+	scope, err := b.scope(ctx, opts.KeyAttributes.TenantID)
 	if err != nil {
 		return nil, err
 	}
+	defer func() { err = errors.Join(err, scope.close()) }()
 
+	scoped := *opts
+	scoped.KeyAttributes = scope.bind(opts.KeyAttributes)
+	if scope.scoped {
+		scoped.Backend = scope.keys
+	}
+	sealed, err := b.sealed(scope.tpm.Seal(ctx, data, &scoped))
+	if err != nil {
+		return nil, err
+	}
+	if err := b.recordSealed(ctx, scope, scoped.KeyAttributes, sealed); err != nil {
+		return nil, err
+	}
+	return sealed, nil
+}
+
+// sealed stamps a sealing result as this backend's.
+func (b *Backend) sealed(sealed *types.SealedData, err error) (*types.SealedData, error) {
+	if err != nil {
+		return nil, err
+	}
 	// Ensure the backend type reflects this backend wrapper
 	sealed.Backend = types.BackendTypeTPM2
-
 	return sealed, nil
+}
+
+// recordSealed records the assignment of a sealed object bound to a named
+// policy, so the policy's objects include it and the policy cannot be deleted
+// while it exists. An object under the built-in platform policy is not
+// recorded: the platform policy is never deleted.
+func (b *Backend) recordSealed(ctx context.Context, scope *keyScope, attrs *types.KeyAttributes, sealed *types.SealedData) error {
+	if !scope.scoped || attrs.TPMPolicy == "" || attrs.TPMPolicy == types.TPMPolicyPlatform {
+		return nil
+	}
+	authPolicy, err := publicAuthPolicy(sealed.TPMPublic)
+	if err != nil {
+		return &AssignmentError{Tenant: scope.tenant, Object: tpmpolicy.ObjectID(tpmpolicy.ObjectSealed, attrs.CN), Err: err}
+	}
+	return b.assign(ctx, scope, tpmpolicy.ObjectSealed, attrs, authPolicy)
 }
 
 // Unseal decrypts/recovers data using the TPM's unsealing mechanism.
@@ -82,7 +127,7 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 //   - opts: Unsealing options (may be nil for defaults)
 //
 // Returns the original plaintext data, or error if unsealing fails.
-func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) (_ []byte, err error) {
 	if sealed == nil {
 		return nil, ErrNilSealedData
 	}
@@ -94,5 +139,42 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 		return nil, ErrNotInitialized
 	}
 
-	return b.tpm.Unseal(ctx, sealed, opts)
+	if opts == nil || opts.KeyAttributes == nil {
+		return b.tpm.Unseal(ctx, sealed, opts)
+	}
+
+	scope, err := b.scope(ctx, opts.KeyAttributes.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, scope.close()) }()
+
+	scoped := *opts
+	scoped.KeyAttributes = scope.bind(opts.KeyAttributes)
+	if !scope.scoped {
+		return scope.tpm.Unseal(ctx, sealed, &scoped)
+	}
+	scoped.Backend = scope.keys
+	return scope.tpm.Unseal(ctx, storedSealed(scope.keys, scoped.KeyAttributes, sealed), &scoped)
+}
+
+// storedSealed returns the sealed data to unseal in a scope. pkg/tpm2 reads a
+// named policy's binding record from the key store beside an object's blobs,
+// but only when it loads the object from that store: blobs passed in memory
+// are authorized as if they had no binding. When the scope's store holds the
+// very object the caller presents (the same public area), the in-memory
+// blobs are dropped so the object is loaded -- and authorized -- from the
+// store. Any other object is unsealed from the blobs the caller presents.
+func storedSealed(keys store.KeyBackend, attrs *types.KeyAttributes, sealed *types.SealedData) *types.SealedData {
+	if len(sealed.TPMPublic) == 0 || len(sealed.TPMPrivate) == 0 {
+		return sealed
+	}
+	stored, err := keys.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	if err != nil || !bytes.Equal(stored, sealed.TPMPublic) {
+		return sealed
+	}
+	fromStore := *sealed
+	fromStore.TPMPublic = nil
+	fromStore.TPMPrivate = nil
+	return &fromStore
 }

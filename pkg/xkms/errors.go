@@ -308,29 +308,16 @@ var (
 	// ErrInvalidSealedData indicates the sealed data is invalid or malformed.
 	ErrInvalidSealedData = errors.New("keystore: invalid sealed data")
 
-	// ErrInvalidPCRIndex indicates a PCR index is out of the valid range (0-23).
-	ErrInvalidPCRIndex = errors.New("keystore: invalid PCR index")
-
 	// ErrSealNotTenantBound indicates a backend whose sealing is not bound to
 	// any key, so a blob it seals for one tenant would unseal for every other
 	// tenant that holds the blob. A tenant-scoped view refuses to seal or
 	// unseal on such a backend (go-xkms#1228).
 	ErrSealNotTenantBound = errors.New("keystore: sealing on this backend is not bound to a tenant")
+
+	// ErrTPMPolicyNotSupported indicates a TPM policy was named for a key or
+	// sealed object on a backend that is not a TPM.
+	ErrTPMPolicyNotSupported = errors.New("keystore: a TPM policy applies to TPM2 keys and sealed objects only")
 )
-
-// ErrPCRHashAlgParse represents a failure to parse a PCR hash algorithm string.
-type ErrPCRHashAlgParse struct {
-	Algorithm string
-	Err       error
-}
-
-// Error returns the error message.
-func (e *ErrPCRHashAlgParse) Error() string {
-	return fmt.Sprintf("keystore: invalid PCR hash algorithm %q: %v", e.Algorithm, e.Err)
-}
-
-// Unwrap returns the underlying error.
-func (e *ErrPCRHashAlgParse) Unwrap() error { return e.Err }
 
 // Subsystem errors
 var (

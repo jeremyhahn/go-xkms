@@ -344,8 +344,8 @@ func TestService_Unseal_EmptyCiphertext(t *testing.T) {
 		if st.Code() != codes.InvalidArgument {
 			t.Errorf("Expected InvalidArgument code, got: %v", st.Code())
 		}
-		if st.Message() != "ciphertext is required" {
-			t.Errorf("Expected 'ciphertext is required' message, got: %s", st.Message())
+		if st.Message() != "ciphertext is required (or tpm_public and tpm_private for a TPM2 sealed object)" {
+			t.Errorf("Expected the missing-ciphertext message, got: %s", st.Message())
 		}
 	})
 
@@ -710,7 +710,7 @@ func TestService_Unseal_MultipleBackendValidation(t *testing.T) {
 			backend:       "software",
 			ciphertext:    []byte{},
 			expectedCode:  codes.InvalidArgument,
-			expectedError: "ciphertext is required",
+			expectedError: "ciphertext is required (or tpm_public and tpm_private for a TPM2 sealed object)",
 		},
 	}
 

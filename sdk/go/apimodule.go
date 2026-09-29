@@ -18,7 +18,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 )
 
 // go-xkms's qrdb ServiceModule surface, re-exported so downstream hosts
@@ -133,7 +132,7 @@ var WithServiceModulePIVLogin = apimodule.WithPIVLogin
 //
 // A self-built module composes xkms's store-backed features -- the Password
 // Manager, platform sealed-secret store, backend credential service, SSH,
-// Certificate Authority and PCR policies -- from dependencies the host
+// Certificate Authority and TPM policies -- from dependencies the host
 // supplies, through the same construction path xkmsd uses (pkg/compose).
 // Each option below supplies one dependency; a feature whose dependency is
 // absent stays off, logged with a typed reason and recorded in
@@ -179,12 +178,10 @@ var WithServiceModuleCredentialStrategy = apimodule.WithCredentialStrategy
 // backend named by its store type.
 var WithServiceModuleCA = apimodule.WithCA
 
-// ServiceModulePCRReader reads current PCR values, typically from the
-// host's TPM.
-type ServiceModulePCRReader = policy.PCRReader
-
-// WithServiceModulePCRReader enables PCR policies.
-var WithServiceModulePCRReader = apimodule.WithPCRReader
+// WithServiceModuleVTPM makes vtpm mode available to the TPM policy service
+// the module composes over its XKMSService's TPM2 backend (see
+// TPMVTPMConfig).
+var WithServiceModuleVTPM = apimodule.WithVTPM
 
 // WithServiceModuleBarrierRoutes mounts the barrier route families
 // (barrier, custodian, shares, init ceremony) and serves them over the
@@ -208,7 +205,7 @@ const (
 	ServiceModuleFeatureCredentials     = compose.FeatureCredentials
 	ServiceModuleFeatureSSH             = compose.FeatureSSH
 	ServiceModuleFeatureCA              = compose.FeatureCA
-	ServiceModuleFeaturePolicies        = compose.FeaturePolicies
+	ServiceModuleFeatureTPMPolicies     = compose.FeatureTPMPolicies
 	ServiceModuleFeatureBarrier         = compose.FeatureBarrier
 	ServiceModuleFeatureCustody         = compose.FeatureCustody
 )

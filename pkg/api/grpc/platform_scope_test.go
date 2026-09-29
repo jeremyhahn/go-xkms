@@ -29,8 +29,8 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmpolicytest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -40,20 +40,10 @@ import (
 
 const platformScopeSecret = "credentials/pkcs11-pin"
 
-// platformScopePCRReader returns a fixed value for every PCR.
-type platformScopePCRReader struct{}
-
-func (platformScopePCRReader) ReadPCRs(_ string, indices []int) (map[int][]byte, error) {
-	values := make(map[int][]byte, len(indices))
-	for _, idx := range indices {
-		values[idx] = make([]byte, 32)
-	}
-	return values, nil
-}
-
 // newPlatformScopeGRPC returns a Service over an XKMSService composed with an
 // unsealed system barrier, a PIN backend with both PINs set, a platform store
-// holding one credential and a PCR policy manager holding the "boot" policy.
+// holding one credential and a TPM policy service (whose tenant TPM mode and
+// vTPM RPCs are platform-scoped).
 func newPlatformScopeGRPC(t *testing.T) *Service {
 	t.Helper()
 	ctx := context.Background()
@@ -82,16 +72,13 @@ func newPlatformScopeGRPC(t *testing.T) *Service {
 	require.NoError(t, err)
 	require.NoError(t, store.Put(ctx, platformScopeSecret, []byte("platform-secret")))
 
-	policies, err := policy.NewManager(platformScopePCRReader{}, policy.NewMemoryPolicyStore())
-	require.NoError(t, err)
-	_, err = policies.CreatePolicy("boot", "sha256", []int{0, 7})
-	require.NoError(t, err)
+	policies, _ := tpmpolicytest.NewOffline(t)
 
 	svc := &xkms.XKMSService{}
 	svc.SetBarrier(b)
 	svc.SetPINManager(pins)
 	svc.SetPlatformStore(store)
-	svc.SetPolicyManager(policies)
+	svc.SetTPMPolicyService(policies)
 	return NewService(nil, nil, svc)
 }
 
@@ -211,26 +198,20 @@ var platformScopeRPCs = map[string]platformScopeRPC{
 		return rpcErr(s.GeneratePIVCSR(ctx, &pb.GeneratePIVCSRRequest{Backend: "software", Slot: "9a", Subject: "server"}))
 	},
 
-	"PolicyCreate": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.PolicyCreate(ctx, &pb.PolicyCreateRequest{Name: "attacker", Bank: "sha256", Pcrs: []int32{0}}))
+	"GetTenantTPMMode": func(ctx context.Context, s *Service) error {
+		return rpcErr(s.GetTenantTPMMode(ctx, &pb.TenantTPMModeRequest{TenantId: "tenant-b"}))
 	},
-	"PolicyGet": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.PolicyGet(ctx, &pb.PolicyGetRequest{Name: "boot"}))
+	"SetTenantTPMMode": func(ctx context.Context, s *Service) error {
+		return rpcErr(s.SetTenantTPMMode(ctx, &pb.SetTenantTPMModeRequest{TenantId: "tenant-b", Mode: "none"}))
 	},
-	"PolicyList": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.PolicyList(ctx, &pb.PolicyListRequest{}))
+	"TenantVTPMStatus": func(ctx context.Context, s *Service) error {
+		return rpcErr(s.TenantVTPMStatus(ctx, &pb.TenantVTPMRequest{TenantId: "tenant-b"}))
 	},
-	"PolicyDelete": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.PolicyDelete(ctx, &pb.PolicyDeleteRequest{Name: "boot"}))
+	"TenantVTPMStart": func(ctx context.Context, s *Service) error {
+		return rpcErr(s.TenantVTPMStart(ctx, &pb.TenantVTPMRequest{TenantId: "tenant-b"}))
 	},
-	"PolicyRefresh": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.PolicyRefresh(ctx, &pb.PolicyRefreshRequest{Name: "boot"}))
-	},
-	"PolicyVerify": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.PolicyVerify(ctx, &pb.PolicyVerifyRequest{Name: "boot"}))
-	},
-	"PolicyExport": func(ctx context.Context, s *Service) error {
-		return rpcErr(s.PolicyExport(ctx, &pb.PolicyExportRequest{Name: "boot"}))
+	"TenantVTPMStop": func(ctx context.Context, s *Service) error {
+		return rpcErr(s.TenantVTPMStop(ctx, &pb.TenantVTPMRequest{TenantId: "tenant-b"}))
 	},
 }
 

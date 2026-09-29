@@ -244,6 +244,7 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 		Algorithm:  params.Algorithm,
 		Exportable: params.Exportable,
 		Sensitive:  params.Sensitive,
+		TPMPolicy:  params.TPMPolicy,
 		TenantID:   callerTenantID(ctx),
 	})
 	if err != nil {
@@ -1609,11 +1610,13 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 	}
 
 	sealed, err := s.xkmsService.Seal(ctx, &transport.SealRequest{
-		Backend:  params.Backend,
-		KeyID:    params.KeyID,
-		Data:     params.Data,
-		AAD:      params.AAD,
-		TenantID: callerTenantID(ctx),
+		Backend:   params.Backend,
+		KeyID:     params.KeyID,
+		Data:      params.Data,
+		AAD:       params.AAD,
+		Password:  params.Password,
+		TPMPolicy: params.TPMPolicy,
+		TenantID:  callerTenantID(ctx),
 	})
 	if err != nil {
 		return nil, mapKeyOpError(err)
@@ -1636,6 +1639,8 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 		Metadata:   metadata,
 		KeyID:      sealed.KeyID,
 		WrappedDEK: sealed.WrappedDEK,
+		TPMPublic:  sealed.TPMPublic,
+		TPMPrivate: sealed.TPMPrivate,
 	}, nil
 }
 
@@ -1650,8 +1655,8 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 		return nil, err
 	}
 
-	if len(params.Ciphertext) == 0 {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "ciphertext is required"}}
+	if len(params.Ciphertext) == 0 && (len(params.TPMPublic) == 0 || len(params.TPMPrivate) == 0) {
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "ciphertext is required (or tpm_public and tpm_private for a TPM2 sealed object)"}}
 	}
 
 	resp, err := s.xkmsService.Unseal(ctx, &transport.UnsealRequest{
@@ -1661,6 +1666,11 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 		Nonce:      params.Nonce,
 		Tag:        params.Tag,
 		AAD:        params.AAD,
+		TPMPublic:  params.TPMPublic,
+		TPMPrivate: params.TPMPrivate,
+		WrappedDEK: params.WrappedDEK,
+		Metadata:   params.Metadata,
+		Password:   params.Password,
 		TenantID:   callerTenantID(ctx),
 	})
 	if err != nil {

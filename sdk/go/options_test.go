@@ -352,31 +352,67 @@ func (m *mockService) RevokeEscrow(ctx context.Context, escrowID string) error {
 
 // Policy methods
 
-func (m *mockService) PolicyCreate(ctx context.Context, req *PolicyCreateRequest) (*PolicyCreateResponse, error) {
+func (m *mockService) TPMPolicyCreate(context.Context, *TPMPolicyCreateRequest) (*TPMPolicy, error) {
 	return nil, nil
 }
 
-func (m *mockService) PolicyGet(ctx context.Context, req *PolicyGetRequest) (*PolicyGetResponse, error) {
+func (m *mockService) TPMPolicyGet(context.Context, *TPMPolicyRequest) (*TPMPolicy, error) {
 	return nil, nil
 }
 
-func (m *mockService) PolicyList(ctx context.Context) (*PolicyListResponse, error) {
+func (m *mockService) TPMPolicyList(context.Context, *TPMPolicyListRequest) (*TPMPolicyListResponse, error) {
 	return nil, nil
 }
 
-func (m *mockService) PolicyDelete(ctx context.Context, req *PolicyDeleteRequest) error {
+func (m *mockService) TPMPolicyUpdate(context.Context, *TPMPolicyRequest) (*TPMPolicy, error) {
+	return nil, nil
+}
+
+func (m *mockService) TPMPolicyRevoke(context.Context, *TPMPolicyRequest) (*TPMPolicy, error) {
+	return nil, nil
+}
+
+func (m *mockService) TPMPolicyVerify(context.Context, *TPMPolicyRequest) (*TPMPolicyVerifyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) TPMPolicyDelete(context.Context, *TPMPolicyDeleteRequest) error {
 	return nil
 }
 
-func (m *mockService) PolicyRefresh(ctx context.Context, req *PolicyRefreshRequest) (*PolicyGetResponse, error) {
+func (m *mockService) TPMPolicyObjects(context.Context, *TPMPolicyRequest) (*TPMPolicyObjectsResponse, error) {
 	return nil, nil
 }
 
-func (m *mockService) PolicyVerify(ctx context.Context, req *PolicyVerifyRequest) (*PolicyVerifyResponse, error) {
+func (m *mockService) TPMPolicySetAutoUnseal(context.Context, *TPMPolicyAutoUnsealRequest) (*TPMPolicy, error) {
 	return nil, nil
 }
 
-func (m *mockService) PolicyExport(ctx context.Context, req *PolicyExportRequest) (*PolicyExportResponse, error) {
+func (m *mockService) TPMObjectPolicy(context.Context, *TPMObjectPolicyRequest) (*TPMObjectPolicyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) TPMPolicyRotateAuthority(context.Context, *TPMAuthorityRotateRequest) (*TPMAuthorityRotateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetTenantTPMMode(context.Context, string) (*TenantTPMModeResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) SetTenantTPMMode(context.Context, *SetTenantTPMModeRequest) (*TenantTPMModeResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) TenantVTPMStatus(context.Context, string) (*TenantVTPMStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) TenantVTPMStart(context.Context, string) (*TenantVTPMStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) TenantVTPMStop(context.Context, string) (*TenantVTPMStatusResponse, error) {
 	return nil, nil
 }
 

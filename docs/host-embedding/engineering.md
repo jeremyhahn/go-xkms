@@ -11,10 +11,10 @@
 | `Deps` | What a host supplies to `Build`. Only `Service` is required. |
 | `Build(ctx, Deps) (*Stores, error)` | Composes every feature `Deps` has the dependencies for. Fails only on a nil `Service` (`*NilServiceError`). |
 | `Stores` / `(*Stores).Wire(svc)` | The composed stores; `Wire` publishes the non-nil ones into an `*xkms.XKMSService`. |
-| `BuildPasswordStore`, `BuildTenantPasswordManager`, `BuildPlatformStore`, `BuildCredentialService`, `BuildSSHClient`, `BuildCA`, `BuildPolicyManager` | One builder per store; xkmsd calls them directly. |
+| `BuildPasswordStore`, `BuildTenantPasswordManager`, `BuildPlatformStore`, `BuildCredentialService`, `BuildSSHClient`, `BuildCA`, `BuildTPMPolicyService` | One builder per store; xkmsd calls them directly. |
 | `StorageFactory`, `BackendLookup`, `PlatformSealer`, `CAParams` | Builder inputs. |
 | `Feature` + `Feature*` constants | Feature names used in errors and logs. |
-| `Storage*` constants | Persisted store names (`passwords`, `platform-store`, `ssh`, `ca`, `ca-serials`, `ca-revocations`, `policies`). Renaming one orphans data. |
+| `Storage*` constants | Persisted store names (`passwords`, `platform-store`, `ssh`, `ca`, `ca-serials`, `ca-revocations`, `tpm-policies`, `tpm-keys`). Renaming one orphans data. |
 
 ### `pkg/apimodule` options and their SDK re-exports (`sdk/go/apimodule.go`)
 
@@ -26,7 +26,7 @@
 | `WithPlatformSealer(strategy string, types.Sealer)` | `WithServiceModulePlatformSealer` | The platform sealed-secret store (`/api/v1/platform/*`) |
 | `WithCredentialStrategy(string)` | `WithServiceModuleCredentialStrategy` | The credential service's seal strategy (default `manual`) |
 | `WithCA(*ca.MultiIdentityCAConfig)` | `WithServiceModuleCA` (takes `TrustedCAMultiIdentityConfig`) | The CA (`/api/v1/ca/*` and the CA RPCs) |
-| `WithPCRReader(policy.PCRReader)` | `WithServiceModulePCRReader` (`ServiceModulePCRReader`) | PCR policies (`/api/v1/policies/*`) |
+| `WithVTPM(*vtpm.Config)` | `WithServiceModuleVTPM` (`TPMVTPMConfig`) | vtpm mode for the TPM policy service, which a self-built module composes whenever its XKMSService has a `tpm2` backend (`/api/v1/tpm/*`) |
 | `WithBarrierRoutes()` | `WithServiceModuleBarrierRoutes` | Registers and serves the barrier, custodian, shares and init route families over the host's barrier and node |
 
 `(*Module).HostStores() *compose.Stores` (SDK: `ServiceModuleHostStores`)
@@ -84,7 +84,7 @@ returns the composition after first use; `Disabled` holds the typed reasons
 | `…MissingDependenciesAreTypedAndOff`, `…NoQRDBClientLeavesStoresOff` | Missing dependencies are typed, logged and answer 501/503, never a silent 404 |
 | `…BarrierRoutes_OffByDefault`, `…ServeTheHostBarrier`, `…WithoutRegistryIsTypedOff` | Barrier families unregistered by default; opt-in serves the host's own unsealed barrier |
 | `pkg/compose/compose_test.go` | Every builder, its nil-input and storage-failure errors, CA reload, SSH backend resolution |
-| `pkg/seal/policy/backend_store_test.go` | Durable policy store round-trip across reopen, typed faults |
+| `pkg/compose/compose_tpm_sim_test.go` | The TPM policy service composes over a simulator TPM2 backend and answers through the service |
 | `pkg/api/rest/host_stores_test.go` | `NewHostServer` mounts store surfaces exactly from `HostConfig` |
 | `sdk/go/apimodule_host_test.go` | The SDK re-exports configure the same composition |
 

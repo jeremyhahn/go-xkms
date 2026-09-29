@@ -11,14 +11,14 @@ answer on a host that mounts the `xkms` ServiceModule:
 | SSH | `/xkms/v1/ssh/*` | `SSH*` | `WithQRDBClient` |
 | Certificate Authority | `/api/v1/ca/*` | `GetCACertificate`, `SignCSR`, … | `WithCA` + `WithQRDBClient` |
 | Platform sealed secrets | `/api/v1/platform/*` | `SealStore*` | `WithPlatformSealer` + `WithQRDBClient` |
-| PCR policies | `/api/v1/policies/*` | `Policy*` | `WithPCRReader` + `WithQRDBClient` |
+| TPM policies | `/api/v1/tpm/*`, `/api/v1/tenants/{id}/tpm*`, `/api/v1/keys/{id}/tpm-policy` | `TPMPolicy*`, `TPMObjectPolicy`, `*TenantTPMMode`, `TenantVTPM*` | a `tpm2` backend in the XKMSService + `WithQRDBClient` (`WithVTPM` for vtpm mode) |
 | Backend credentials | `/api/v1/credentials/*` | — | always (`manual`), `WithCredentialStrategy` |
 | PIN management | `/api/v1/pin/*` (`pin:read` to verify or read lockout, `pin:write` to set, change or reset) | `*PIN*` | `WithPINBackend` |
 | Barrier / custody / init | `/api/v1/barrier/*`, `/api/v1/custodian/*`, `/api/v1/shares/*`, `/api/v1/init/*` | `Barrier*`, custodian/share RPCs | `WithBarrierRoutes` + `WithBarrierRegistry` + `WithQRDBClient` |
 
 Authorization is unchanged: each route and RPC carries its `resource:action`
 permission and is enforced by the host's qrdb authorizer. Platform-scoped
-surfaces (platform store, policies, PIN management, barrier) refuse
+surfaces (platform store, tenant TPM modes, PIN management, barrier) refuse
 tenant-scoped callers.
 
 Status codes on a self-built module:
@@ -44,7 +44,7 @@ module, err := xkmssdk.NewServiceModule(resolveXKMSService,
     xkmssdk.WithServiceModulePINBackend(pinBackend),
     xkmssdk.WithServiceModuleCA(caConfig),               // *xkmssdk.TrustedCAMultiIdentityConfig
     xkmssdk.WithServiceModulePlatformSealer("tpm2", tpmSealer),
-    xkmssdk.WithServiceModulePCRReader(pcrReader),
+    xkmssdk.WithServiceModuleVTPM(vtpmConfig),          // *xkmssdk.TPMVTPMConfig; optional
 )
 serverOpts = append(serverOpts, qrdbsdk.WithModule(module))
 ```

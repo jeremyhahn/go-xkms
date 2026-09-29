@@ -75,6 +75,7 @@ func registerRoleGrants() {
 		// rest itself and re-declaring one would overwrite its decision. See
 		// module_scopes.go for the four and the reasoning behind each.
 		qrdbsdk.RegisterPermissionScope(qrdbsdk.PermissionScopeSelf, selfScopedPermissions()...)
+		qrdbsdk.RegisterPermissionScope(qrdbsdk.PermissionScopeCross, crossScopedPermissions()...)
 
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perms...)
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.RoleNameOwner, perms...)

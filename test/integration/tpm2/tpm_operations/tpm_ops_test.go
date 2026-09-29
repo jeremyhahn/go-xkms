@@ -873,8 +873,8 @@ func TestTPMOps_SealUnseal(t *testing.T) {
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		PlatformPolicy: false,
-		StoreType:      types.StoreTPM2,
+
+		StoreType: types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -1296,8 +1296,8 @@ func TestTPMOps_LoadKeyPair(t *testing.T) {
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		PlatformPolicy: false,
-		StoreType:      types.StoreTPM2,
+
+		StoreType: types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -1348,8 +1348,8 @@ func TestTPMOps_LoadKeyPairMissingBackendData(t *testing.T) {
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		PlatformPolicy: false,
-		StoreType:      types.StoreTPM2,
+
+		StoreType: types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -1586,8 +1586,8 @@ func TestTPMOps_UnsealWithNonExistentKey(t *testing.T) {
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		PlatformPolicy: false,
-		StoreType:      types.StoreTPM2,
+
+		StoreType: types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -1812,7 +1812,7 @@ func TestTPMOps_CreateECDSAWithPlatformPolicy(t *testing.T) {
 		KeyAlgorithm:       x509.ECDSA,
 		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.ECDSAWithSHA256,
-		PlatformPolicy:     true, // Enable platform policy
+		TPMPolicy:          types.TPMPolicyPlatform, // Enable platform policy
 		Parent: &types.KeyAttributes{
 			CN:        "srk",
 			StoreType: types.StoreTPM2,
@@ -1855,7 +1855,7 @@ func TestTPMOps_CreateRSAWithPlatformPolicy(t *testing.T) {
 		KeyAlgorithm:       x509.RSA,
 		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.SHA256WithRSA,
-		PlatformPolicy:     true, // Enable platform policy
+		TPMPolicy:          types.TPMPolicyPlatform, // Enable platform policy
 		Parent: &types.KeyAttributes{
 			CN:        "srk",
 			StoreType: types.StoreTPM2,
@@ -1970,8 +1970,8 @@ func TestTPMOps_DeleteKeyPersistent(t *testing.T) {
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		PlatformPolicy: false,
-		StoreType:      types.StoreTPM2,
+
+		StoreType: types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy:  tpm2.TPMRHOwner,
 			HandleType: tpm2.TPMHTTransient, // Transient handle
@@ -2300,8 +2300,8 @@ func TestTPMOps_SealWithPlatformPolicy(t *testing.T) {
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		PlatformPolicy: true, // Enable platform policy
-		StoreType:      types.StoreTPM2,
+		TPMPolicy: types.TPMPolicyPlatform, // Enable platform policy
+		StoreType: types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},

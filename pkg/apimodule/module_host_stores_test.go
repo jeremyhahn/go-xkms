@@ -84,7 +84,6 @@ func (h *hostMount) fullHostOptions(t *testing.T) []Option {
 		WithPINBackend(hostdeps.NewPINBackend(t, hostSOPIN, hostUserPIN)),
 		WithPlatformSealer("passphrase", hostdeps.NewSealer(t)),
 		WithCA(hostdeps.NewCAConfig("Host Mount Root")),
-		WithPCRReader(hostdeps.PCRReader{0: {0x01}, 7: {0x07}}),
 	}
 }
 
@@ -157,10 +156,10 @@ func (h *hostMount) registered(method, pattern string) bool {
 
 // TestModule_HostMount_EveryStoreAnswers is the host-mode acceptance test:
 // mounted the way go-quicbaas mounts it, with the host's qrdb client,
-// barrier registry, a platform sealer, a CA configuration and a PCR reader,
-// the Password Manager, SSH, CA, platform store and PCR policy routes all
-// serve real requests instead of 404/501, and the gRPC surface sees the
-// same composition.
+// barrier registry, a platform sealer and a CA configuration, the Password
+// Manager, SSH, CA and platform store routes all serve real requests instead
+// of 404/501, and the gRPC surface sees the same composition. The TPM policy
+// routes answer 503 here: the host's service has no TPM2 backend.
 func TestModule_HostMount_EveryStoreAnswers(t *testing.T) {
 	h := newFullHostMount(t)
 
@@ -210,14 +209,9 @@ func TestModule_HostMount_EveryStoreAnswers(t *testing.T) {
 		assert.Equal(t, secret, got.Secret)
 	})
 
-	t.Run("policies", func(t *testing.T) {
-		w := h.call(t, http.MethodPost, "/api/v1/policies/", "/api/v1/policies/", nil,
-			rest.PolicyCreateRequest{Name: "boot", Bank: "sha256", PCRIndices: []int{0, 7}})
-		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
-
-		w = h.call(t, http.MethodGet, "/api/v1/policies/{name}", "/api/v1/policies/boot",
-			map[string]string{"name": "boot"}, nil)
-		assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	t.Run("tpm policies need a TPM2 backend", func(t *testing.T) {
+		w := h.call(t, http.MethodGet, "/api/v1/tpm/policies", "/api/v1/tpm/policies", nil, nil)
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 	})
 
 	t.Run("credentials", func(t *testing.T) {
@@ -233,9 +227,15 @@ func TestModule_HostMount_EveryStoreAnswers(t *testing.T) {
 		assert.Contains(t, resp.Subject, "Host Mount Root")
 	})
 
+	// The host's service has no TPM2 backend (the simulator tests in
+	// pkg/compose cover that composition), so the TPM policy service is the
+	// one feature off, with its typed reason.
 	stores := h.module.HostStores()
 	require.NotNil(t, stores)
-	assert.Empty(t, stores.Disabled, "a host supplying every dependency gets every feature")
+	require.Len(t, stores.Disabled, 1, "a host supplying every dependency but a TPM gets every other feature")
+	var disabled *compose.FeatureDisabledError
+	require.ErrorAs(t, stores.Disabled[0], &disabled)
+	assert.Equal(t, compose.FeatureTPMPolicies, disabled.Feature)
 }
 
 // TestModule_HostMount_MissingDependenciesAreTypedAndOff proves a host that
@@ -264,7 +264,7 @@ func TestModule_HostMount_MissingDependenciesAreTypedAndOff(t *testing.T) {
 		compose.FeaturePIN:             "PIN backend",
 		compose.FeaturePlatformStore:   "platform sealer",
 		compose.FeatureCA:              "CA configuration",
-		compose.FeaturePolicies:        "PCR reader",
+		compose.FeatureTPMPolicies:     "TPM2 backend",
 	}, missing)
 
 	w = h.call(t, http.MethodGet, "/api/v1/ca/certificate", "/api/v1/ca/certificate", nil, nil)
@@ -273,7 +273,7 @@ func TestModule_HostMount_MissingDependenciesAreTypedAndOff(t *testing.T) {
 	w = h.call(t, http.MethodGet, "/api/v1/platform/status", "/api/v1/platform/status", nil, nil)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 
-	w = h.call(t, http.MethodGet, "/api/v1/policies/", "/api/v1/policies/", nil, nil)
+	w = h.call(t, http.MethodGet, "/api/v1/tpm/policies", "/api/v1/tpm/policies", nil, nil)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 }
 

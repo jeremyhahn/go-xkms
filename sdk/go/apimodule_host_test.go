@@ -32,9 +32,10 @@ import (
 
 // TestServiceModule_HostCompositionThroughSDK mounts the module the way a
 // downstream host does -- through this SDK's re-exports only -- and proves
-// the options reach the composition: the supplied CA and PCR reader turn
-// their features on, and the one dependency left out (the platform sealer)
-// is reported as a typed ServiceModuleFeatureDisabledError.
+// the options reach the composition: the supplied CA turns its feature on,
+// and the dependencies left out (the platform sealer, and the TPM2 backend
+// the TPM policy service needs) are reported as typed
+// ServiceModuleFeatureDisabledErrors.
 func TestServiceModule_HostCompositionThroughSDK(t *testing.T) {
 	svc := hostdeps.NewService(t)
 	client, _, err := testutil.NewQRDBFakeClient()
@@ -45,7 +46,6 @@ func TestServiceModule_HostCompositionThroughSDK(t *testing.T) {
 		WithServiceModulePINBackend(hostdeps.NewPINBackend(t, "so-pin-123456", "user-pin-654321")),
 		WithServiceModuleCredentialStrategy("manual"),
 		WithServiceModuleCA(hostdeps.NewCAConfig("SDK Host Root")),
-		WithServiceModulePCRReader(hostdeps.PCRReader{0: {0x01}}),
 	)
 	require.NoError(t, err)
 	assert.Nil(t, module.HostStores(), "nothing composes before first use")
@@ -72,7 +72,7 @@ func TestServiceModule_HostCompositionThroughSDK(t *testing.T) {
 	stores := module.HostStores()
 	require.NotNil(t, stores)
 	assert.NotNil(t, stores.CA)
-	assert.NotNil(t, stores.Policies)
+	assert.Nil(t, stores.TPMPolicies)
 	assert.NotNil(t, stores.PIN)
 
 	var off []ServiceModuleFeature
@@ -84,5 +84,6 @@ func TestServiceModule_HostCompositionThroughSDK(t *testing.T) {
 	assert.ElementsMatch(t, []ServiceModuleFeature{
 		ServiceModuleFeatureTenantPasswords,
 		ServiceModuleFeaturePlatformStore,
+		ServiceModuleFeatureTPMPolicies,
 	}, off)
 }
