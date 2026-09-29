@@ -14,14 +14,15 @@
 package quantum
 
 import (
+	"context"
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/mldsa"
 	"crypto/mlkem"
-	"fmt"
 	"io"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -403,20 +404,24 @@ func encryptWithAESGCM(plaintext, key, aad []byte, tracker types.AEADSafetyTrack
 	// -- but the nonce is now generated inside the module rather than here.
 	ciphertext := gcm.Seal(nil, nil, plaintext, aad)
 
-	// AEAD Safety: the nonce is only observable after Seal, so the collision
-	// check moved from before encryption to after it. The tracker still sees
-	// every nonce this key has used and still refuses a repeat; what changed is
-	// that a repeat is detected on the ciphertext that caused it rather than
-	// one call earlier. Returning an error here discards that ciphertext, so a
+	// AEAD Safety: the nonce is only observable after Seal, so the claim
+	// moves from before encryption to after it. The shared aead.KeyNonceGuard
+	// (go-xkms#1201) still sees every nonce this key material has used and
+	// still refuses a repeat in one atomic step; what changed is that a
+	// repeat is detected on the ciphertext that caused it rather than one
+	// call earlier. Returning an error here discards that ciphertext, so a
 	// reused nonce is still never handed to a caller.
-	if tracker != nil && keyID != "" {
-		nonce := ciphertext[:gcmNonceSize]
-		if err := tracker.CheckNonce(keyID, nonce); err != nil {
-			return nil, &errs.Affix{Prefix: "nonce reuse detected: ", Err: err, Suffix: " (CRITICAL SECURITY VIOLATION)"}
-		}
-		if err := tracker.RecordNonce(keyID, nonce); err != nil {
-			fmt.Printf("Warning: failed to record nonce for key %s: %v\n", keyID, err)
-		}
+	//
+	// The identity is key itself, not keyID: key is the ML-KEM-encapsulated
+	// shared secret, freshly derived per call, so claiming by identifier
+	// alone would collapse every encryption under this KEM key onto one
+	// guard entry and report unrelated shared secrets as a repeat. This is
+	// always a provider-generated nonce -- MLKEMPrivateKey.Encrypt accepts
+	// no caller nonce parameter at all -- so the claim tolerates a full
+	// guard; see backend.ClaimGeneratedAEADNonce.
+	nonce := ciphertext[:gcmNonceSize]
+	if err := backend.ClaimGeneratedAEADNonce(context.Background(), key, nil, keyID, nonce); err != nil {
+		return nil, &errs.Affix{Prefix: "nonce reuse detected: ", Err: err, Suffix: " (CRITICAL SECURITY VIOLATION)"}
 	}
 
 	return ciphertext, nil

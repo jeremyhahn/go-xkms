@@ -13,7 +13,11 @@
 
 package backend
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+)
 
 var (
 	// ErrFileAlreadyExists is returned when attempting to save a file that already exists
@@ -48,11 +52,20 @@ var (
 	// ErrInvalidAlgorithm is returned when an invalid or unsupported algorithm is specified.
 	ErrInvalidAlgorithm = errors.New("backend: invalid algorithm")
 
-	// ErrNonceReused is returned when attempting to encrypt with a nonce that has been used before.
-	// Nonce reuse in AEAD encryption (AES-GCM, ChaCha20-Poly1305) is a catastrophic security failure
-	// that allows attackers to recover the authentication key and forge messages.
-	// When this error occurs, the key should be rotated immediately.
-	ErrNonceReused = errors.New("backend: nonce reused - key rotation required")
+	// ErrNonceReused is the backend-package name for aead.ErrNonceReuse, the
+	// error every backend's Encrypt path returns (through ClaimAEADNonce) when
+	// a (key, nonce) pair repeats. It is an alias rather than a distinct
+	// sentinel, on purpose: go-xkms#1201 replaced the per-backend
+	// AEADSafetyTracker that used to return a backend-local error here with
+	// the single, atomic, shared aead.KeyNonceGuard, and a caller checking
+	// errors.Is(err, backend.ErrNonceReused) must keep matching what that
+	// guard actually returns.
+	//
+	// Nonce reuse in AEAD encryption (AES-GCM, ChaCha20-Poly1305) is a
+	// catastrophic security failure that allows attackers to recover the
+	// authentication key and forge messages. When this error occurs, the key
+	// should be rotated immediately.
+	ErrNonceReused = aead.ErrNonceReuse
 
 	// ErrBytesLimitExceeded is returned when the bytes encrypted with a key exceeds safety limits.
 	// For AES-GCM with 96-bit nonces, NIST recommends a limit of 2^32 blocks (~350 GB).

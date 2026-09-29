@@ -338,9 +338,15 @@ func TestRotateKey_AsymmetricSuccess(t *testing.T) {
 }
 
 // TestRotateKey_SymmetricResetsAEADTracking proves that rotating a symmetric
-// key resets its AEAD nonce tracking: a nonce recorded before rotation would
-// otherwise be (incorrectly) rejected as reused against the new key
-// version's fresh nonce space.
+// key resets its AEAD bytes-encrypted tracking: bytes counted against the
+// old key version must not carry into the new one's budget.
+//
+// Nonce-reuse tracking is no longer part of this reset: go-xkms#1201 moved
+// it out of AEADSafetyTracker entirely, into the shared, process-wide
+// aead.KeyNonceGuard every backend's Encrypt claims through, which is keyed
+// by the key's own material and is deliberately NOT reset on rotation --
+// resetting it would let the OLD key version's nonces be reused if the
+// rotated key ever produced the same material again.
 func TestRotateKey_SymmetricResetsAEADTracking(t *testing.T) {
 	mockClient := &MockKMSClient{
 		CreateKeyFunc: func(ctx context.Context, params *kms.CreateKeyInput, optFns ...func(*kms.Options)) (*kms.CreateKeyOutput, error) {
@@ -375,20 +381,25 @@ func TestRotateKey_SymmetricResetsAEADTracking(t *testing.T) {
 	}
 
 	trackingKeyID := attrs.ID()
-	nonce := []byte("0123456789ab") // 12-byte GCM nonce
-	if err := tracker.RecordNonce(trackingKeyID, nonce); err != nil {
-		t.Fatalf("RecordNonce() error = %v", err)
+	if err := tracker.SetAEADOptions(trackingKeyID, &types.AEADOptions{
+		BytesTracking:      true,
+		BytesTrackingLimit: 1000,
+	}); err != nil {
+		t.Fatalf("SetAEADOptions() error = %v", err)
 	}
-	if err := tracker.CheckNonce(trackingKeyID, nonce); err == nil {
-		t.Fatal("CheckNonce() expected reuse error before rotation, got nil")
+	if err := tracker.IncrementBytes(trackingKeyID, 900); err != nil {
+		t.Fatalf("IncrementBytes() error = %v", err)
+	}
+	if err := tracker.IncrementBytes(trackingKeyID, 200); err == nil {
+		t.Fatal("IncrementBytes() expected the budget to be exceeded before rotation, got nil")
 	}
 
 	if err := b.RotateKey(context.Background(), attrs); err != nil {
 		t.Fatalf("RotateKey() error = %v", err)
 	}
 
-	if err := tracker.CheckNonce(trackingKeyID, nonce); err != nil {
-		t.Errorf("CheckNonce() after RotateKey() = %v, want nil (tracking must reset on rotation)", err)
+	if err := tracker.IncrementBytes(trackingKeyID, 200); err != nil {
+		t.Errorf("IncrementBytes() after RotateKey() = %v, want nil (bytes budget must reset on rotation)", err)
 	}
 }
 
