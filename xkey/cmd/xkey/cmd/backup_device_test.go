@@ -168,6 +168,16 @@ func runDeviceCmd(t *testing.T, cmd *cobra.Command, run func(*cobra.Command, []s
 
 // --- to-device ---
 
+// TestBackupDeviceCmds_PasswordFromStdin pins go-xkms#1202: the device
+// commands take the backup password from --password-stdin or the
+// environment, like the other backup commands.
+func TestBackupDeviceCmds_PasswordFromStdin(t *testing.T) {
+	for _, cmd := range []*cobra.Command{backupToDeviceCmd, backupFromDeviceCmd} {
+		assert.NotNil(t, cmd.Flags().Lookup("password-stdin"), cmd.Name())
+		assert.Nil(t, cmd.Flags().Lookup("password"), cmd.Name())
+	}
+}
+
 func TestBackupToDevice_SendsSealedPayload(t *testing.T) {
 	home := isolatedBackupHome(t)
 	seedBackupStores(t, home)
@@ -202,7 +212,10 @@ func TestBackupToDevice_SendsSealedPayload(t *testing.T) {
 	svc, err := backup.NewService(&backup.Config{DeviceName: "test"})
 	require.NoError(t, err)
 
-	archive, err := svc.DecryptBackup(&envelope, deriveKey(password))
+	require.NotNil(t, envelope.KDF, "a password-sealed envelope must carry its KDF record")
+	key, err := envelope.PasswordKey([]byte(password))
+	require.NoError(t, err)
+	archive, err := svc.DecryptBackup(&envelope, key)
 	require.NoError(t, err)
 
 	require.NotNil(t, archive.TrustStore)
@@ -242,7 +255,9 @@ func TestBackupToDevice_GeneratedKeyOpensPayload(t *testing.T) {
 	svc, err := backup.NewService(&backup.Config{DeviceName: "test"})
 	require.NoError(t, err)
 
-	key, err := resolveDecryptionKey("", keyHex)
+	material, err := hex.DecodeString(keyHex)
+	require.NoError(t, err)
+	key, err := backup.NewRawKey(material)
 	require.NoError(t, err)
 
 	archive, err := svc.DecryptBackup(&envelope, key)
@@ -332,9 +347,9 @@ func TestBackupToDevice_ConnectFailure(t *testing.T) {
 
 // --- from-device ---
 
-// sealedDevicePayload seals the stores under home into the wire payload a
-// phone would hold.
-func sealedDevicePayload(t *testing.T, password string) []byte {
+// sealedDevicePayload seals the stores under home with key into the wire
+// payload a phone would hold.
+func sealedDevicePayload(t *testing.T, key *backup.Key) []byte {
 	t.Helper()
 
 	sources, err := resolveBackupSources(backupToDeviceCmd, backupStorePaths{}, true)
@@ -344,7 +359,7 @@ func sealedDevicePayload(t *testing.T, password string) []byte {
 	svc, err := backup.NewService(&backup.Config{DeviceName: "test"}, sources.readerOptions()...)
 	require.NoError(t, err)
 
-	encrypted, err := svc.CreateBackup(deriveKey(password))
+	encrypted, err := svc.CreateBackup(key)
 	require.NoError(t, err)
 
 	payload, err := json.Marshal(encrypted)
@@ -353,13 +368,22 @@ func sealedDevicePayload(t *testing.T, password string) []byte {
 	return payload
 }
 
+// devicePasswordKey derives a fresh password key, as "backup to-device"
+// does for an operator-supplied password.
+func devicePasswordKey(t *testing.T, password string) *backup.Key {
+	t.Helper()
+	key, err := backup.NewPasswordKey([]byte(password))
+	require.NoError(t, err)
+	return key
+}
+
 func TestBackupFromDevice_RestoresIntoStores(t *testing.T) {
 	const password = "device-backup-password"
 
 	// Seal a payload from a populated home, then restore it into a fresh one.
 	sourceHome := isolatedBackupHome(t)
 	seedBackupStores(t, sourceHome)
-	payload := sealedDevicePayload(t, password)
+	payload := sealedDevicePayload(t, devicePasswordKey(t, password))
 
 	targetHome := isolatedBackupHome(t)
 	pairTestDevice(t, "Test Phone")
@@ -447,7 +471,7 @@ func TestBackupFromDevice_NotAnEnvelope(t *testing.T) {
 func TestBackupFromDevice_WrongPasswordWritesNothing(t *testing.T) {
 	sourceHome := isolatedBackupHome(t)
 	seedBackupStores(t, sourceHome)
-	payload := sealedDevicePayload(t, "correct-password")
+	payload := sealedDevicePayload(t, devicePasswordKey(t, "correct-password"))
 
 	targetHome := isolatedBackupHome(t)
 	pairTestDevice(t, "Test Phone")
@@ -577,7 +601,7 @@ func TestBackupFromDevice_SkippedEntriesReported(t *testing.T) {
 	// exists, so all of them are reported as skipped rather than duplicated.
 	home := isolatedBackupHome(t)
 	seedBackupStores(t, home)
-	payload := sealedDevicePayload(t, password)
+	payload := sealedDevicePayload(t, devicePasswordKey(t, password))
 	pairTestDevice(t, "Test Phone")
 
 	useFakeTransport(t, &fakeDeviceTransport{
@@ -599,11 +623,11 @@ func TestBackupFromDevice_SkippedEntriesReported(t *testing.T) {
 }
 
 func TestBackupFromDevice_RestoreWithHexKey(t *testing.T) {
-	const password = "device-backup-password"
-
 	sourceHome := isolatedBackupHome(t)
 	seedBackupStores(t, sourceHome)
-	payload := sealedDevicePayload(t, password)
+	rawKey, err := backup.GenerateKey()
+	require.NoError(t, err)
+	payload := sealedDevicePayload(t, rawKey)
 
 	targetHome := isolatedBackupHome(t)
 	pairTestDevice(t, "Test Phone")
@@ -613,7 +637,7 @@ func TestBackupFromDevice_RestoreWithHexKey(t *testing.T) {
 	})
 
 	output, err := runDeviceCmd(t, backupFromDeviceCmd, runBackupFromDevice, map[string]string{
-		"key": hex.EncodeToString(deriveKey(password)),
+		"key": hex.EncodeToString(rawKey.Bytes()),
 	})
 	require.NoError(t, err, output)
 

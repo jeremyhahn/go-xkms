@@ -14,11 +14,12 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
-	"strings"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/spf13/cobra"
 )
 
@@ -91,6 +92,9 @@ type pinSource struct {
 	envVar    string
 	// stdinEmpty is returned when stdinFlag was given but stdin was empty.
 	stdinEmpty error
+	// stdinRead is returned when stdinFlag was given but stdin could not be
+	// read.
+	stdinRead error
 }
 
 var (
@@ -99,12 +103,14 @@ var (
 		stdinFlag:  pinFlagStdin,
 		envVar:     pinEnvVar,
 		stdinEmpty: ErrPINInputStdinEmpty,
+		stdinRead:  ErrPINInputStdinRead,
 	}
 	soPINSource = pinSource{
 		label:      "SO PIN",
 		stdinFlag:  soPINFlagStdin,
 		envVar:     soPINEnvVar,
 		stdinEmpty: ErrSOPINInputStdinEmpty,
+		stdinRead:  ErrPINInputStdinRead,
 	}
 )
 
@@ -182,26 +188,44 @@ func (p pinSource) addPersistentFlags(cmd *cobra.Command) {
 }
 
 // resolve returns the PIN from the highest-precedence source that carries
-// one: stdin when the stdin flag is set, then the environment variable. It
-// returns "" when neither does -- there is no third, flag-value source
-// (go-xkms#272): a value on the command line is visible to every other
-// process on the host via 'ps'.
+// one, as a string. It is resolveBytes for callers whose destination takes a
+// string; the intermediate bytes are wiped.
 func (p pinSource) resolve(cmd *cobra.Command) (string, error) {
+	secret, err := p.resolveBytes(cmd)
+	if err != nil {
+		return "", err
+	}
+	defer enclave.Wipe(secret)
+	return string(secret), nil
+}
+
+// resolveBytes returns the secret from the highest-precedence source that
+// carries one: stdin when the stdin flag is set, then the environment
+// variable. It returns nil when neither does -- there is no third,
+// flag-value source (go-xkms#272): a value on the command line is visible to
+// every other process on the host via 'ps'. The caller owns the returned
+// slice and wipes it with enclave.Wipe when done.
+func (p pinSource) resolveBytes(cmd *cobra.Command) ([]byte, error) {
 	fromStdin, err := cmd.Flags().GetBool(p.stdinFlag)
 	if err != nil {
-		return "", &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
+		return nil, &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
 	}
 	if fromStdin {
 		data, readErr := stdinReader()
 		if readErr != nil {
-			return "", &SentinelCauseError{Sentinel: ErrPINInputStdinRead, Cause: readErr}
+			enclave.Wipe(data)
+			return nil, &SentinelCauseError{Sentinel: p.stdinRead, Cause: readErr}
 		}
-		pin := strings.TrimRight(string(data), "\r\n")
-		if pin == "" {
-			return "", p.stdinEmpty
+		secret := bytes.TrimRight(data, "\r\n")
+		if len(secret) == 0 {
+			enclave.Wipe(data)
+			return nil, p.stdinEmpty
 		}
-		return pin, nil
+		return secret, nil
 	}
 
-	return os.Getenv(p.envVar), nil
+	if value := os.Getenv(p.envVar); value != "" {
+		return []byte(value), nil
+	}
+	return nil, nil
 }

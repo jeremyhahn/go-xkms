@@ -15,10 +15,6 @@ package services
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	crand "crypto/rand"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"math"
@@ -27,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -539,9 +536,15 @@ func (s *StaticPasswordService) SearchPasswords(query string) ([]StaticPasswordE
 // ---------------------------------------------------------------------------
 
 // BackupPasswords exports all stored passwords to filePath. When encrypt is
-// true the JSON payload is encrypted with AES-GCM using the provided password
-// and algorithm (one of "aes-128", "aes-192", "aes-256"). The encrypted output
-// consists of the GCM nonce prepended to the ciphertext.
+// true the JSON payload is encrypted with AES-GCM using the selected
+// algorithm (one of "aes-128", "aes-192", "aes-256") under a key derived
+// from password with a salted Argon2id KDF (sealPasswordBackup); the output
+// is a JSON envelope whose authenticated header records the algorithm, salt
+// and KDF parameters.
+//
+// password arrives as a string because the Wails binding decodes it from
+// JSON; it is copied to a byte slice for the derivation and that copy is
+// wiped.
 func (s *StaticPasswordService) BackupPasswords(filePath string, encrypt bool, algorithm string, password string) error {
 	if filePath == "" {
 		return ErrBackupInvalidPath
@@ -576,36 +579,20 @@ func (s *StaticPasswordService) BackupPasswords(filePath string, encrypt bool, a
 	if err != nil {
 		return ErrBackupFailed
 	}
+	defer enclave.Wipe(jsonBytes)
 
 	// Write plaintext backup.
 	if !encrypt {
 		return os.WriteFile(filePath, jsonBytes, 0600)
 	}
 
-	// Derive encryption key from password via SHA-256, truncated to the
-	// required key size for the selected algorithm.
-	keySize := algorithmKeySize[algorithm]
-	hash := sha256.Sum256([]byte(password))
-	key := hash[:keySize]
+	secret := []byte(password)
+	defer enclave.Wipe(secret)
 
-	block, err := aes.NewCipher(key)
+	encrypted, err := sealPasswordBackup(jsonBytes, algorithm, secret)
 	if err != nil {
-		return ErrBackupFailed
+		return err
 	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return ErrBackupFailed
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := crand.Read(nonce); err != nil {
-		return ErrBackupFailed
-	}
-
-	// Seal prepends the nonce to the ciphertext so the file is self-contained.
-	encrypted := gcm.Seal(nonce, nonce, jsonBytes, nil)
-
 	return os.WriteFile(filePath, encrypted, 0600)
 }
 
@@ -638,8 +625,11 @@ func (s *StaticPasswordService) OpenBackupFileDialog() (string, error) {
 
 // RestorePasswords imports passwords from a backup file created by
 // BackupPasswords. When encrypted is true, the file is first decrypted with
-// the given algorithm and password. Existing passwords with the same name are
-// skipped (no overwrite). Returns the number of passwords imported.
+// the given algorithm and password (openPasswordBackup); the algorithm must
+// match the one the backup header records, and an unsalted backup from an
+// earlier release is refused with ErrRestoreLegacyFormat. Existing passwords
+// with the same name are skipped (no overwrite). Returns the number of
+// passwords imported.
 func (s *StaticPasswordService) RestorePasswords(filePath string, encrypted bool, algorithm string, password string) (int, error) {
 	if filePath == "" {
 		return 0, ErrRestoreInvalidPath
@@ -662,14 +652,15 @@ func (s *StaticPasswordService) RestorePasswords(filePath string, encrypted bool
 		return 0, ErrRestoreInvalidPath
 	}
 
-	var jsonBytes []byte
+	jsonBytes := data
 	if encrypted {
-		jsonBytes, err = decryptBackup(data, algorithm, password)
+		secret := []byte(password)
+		jsonBytes, err = openPasswordBackup(data, algorithm, secret)
+		enclave.Wipe(secret)
 		if err != nil {
 			return 0, err
 		}
-	} else {
-		jsonBytes = data
+		defer enclave.Wipe(jsonBytes)
 	}
 
 	var entries []StaticPasswordEntry
@@ -724,40 +715,6 @@ func (s *StaticPasswordService) RestorePasswords(filePath string, encrypted bool
 	}
 
 	return imported, nil
-}
-
-// decryptBackup decrypts an AES-GCM encrypted backup file.
-func decryptBackup(data []byte, algorithm string, password string) ([]byte, error) {
-	keySize, ok := algorithmKeySize[algorithm]
-	if !ok {
-		return nil, ErrBackupInvalidAlgorithm
-	}
-
-	hash := sha256.Sum256([]byte(password))
-	key := hash[:keySize]
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, ErrRestoreDecryptFailed
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, ErrRestoreDecryptFailed
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(data) < nonceSize {
-		return nil, ErrRestoreDecryptFailed
-	}
-
-	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, ErrRestoreDecryptFailed
-	}
-
-	return plaintext, nil
 }
 
 // ---------------------------------------------------------------------------

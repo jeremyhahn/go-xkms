@@ -422,10 +422,12 @@ xkey share delete --server <url> --group-id <id> --share-index 1
 
 ## Backup and restore
 
-A backup holds the trust store, OATH credentials and passwords, sealed with XChaCha20-Poly1305.
+A backup holds the trust store, OATH credentials and passwords, sealed with XChaCha20-Poly1305. A backup password (Argon2id, salted) comes from `--password-stdin` or `XKEY_BACKUP_PASSWORD`; there is no `--password` flag. Version 1 (unsalted) backups are refused.
 
 ```bash
-xkey backup create --barrier-password-file <file> --output ~/xkey.xkb   # without --password, prints a random hex key
+xkey backup create --barrier-password-file <file> --output ~/xkey.xkb   # no password: prints a random hex key
+xkey backup create --password-stdin --output ~/xkey.xkb < pw.txt
+xkey backup contents <file> --password-stdin < pw.txt
 xkey backup contents <file> --key <hex>              # backup list shows ~/.xkey/backups
 xkey backup restore <file> --key <hex> --barrier-password-file <file>
 xkey backup to-device --device "<name>" --barrier-password-file <file>

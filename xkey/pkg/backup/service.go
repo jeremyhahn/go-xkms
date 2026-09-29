@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -32,8 +33,14 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	// BackupVersion is the current backup format version.
-	BackupVersion = 1
+	// BackupVersion is the current backup format version. Version 2 added
+	// the salted password KDF record and authenticates the envelope header
+	// as AEAD additional data (go-xkms#1202).
+	BackupVersion = 2
+
+	// legacyUnsaltedVersion is the refused version 1 format, whose password
+	// key was an unsalted SHA-256 of the password.
+	legacyUnsaltedVersion = 1
 
 	// BackupMagic identifies xkey backup files.
 	BackupMagic = "XKBK"
@@ -423,12 +430,33 @@ type PasswordEntry struct {
 	FolderPath string `json:"folder_path,omitempty"`
 }
 
-// EncryptedBackup is the on-wire / file format.
+// EncryptedBackup is the on-wire / file format. Magic, Version and KDF form
+// the header, which is bound to the ciphertext as AEAD additional data: a
+// header altered after sealing -- a changed salt, cost parameter or version
+// -- fails authentication.
 type EncryptedBackup struct {
-	Magic      string `json:"magic"`
-	Version    int    `json:"version"`
+	Magic   string `json:"magic"`
+	Version int    `json:"version"`
+
+	// KDF records the password key derivation (algorithm, costs, salt).
+	// It is nil for an envelope sealed with a raw key.
+	KDF *xkms.PasswordKeyParams `json:"kdf,omitempty"`
+
 	Nonce      []byte `json:"nonce"`
 	Ciphertext []byte `json:"ciphertext"`
+}
+
+// encryptedBackupHeader is the authenticated part of an EncryptedBackup.
+type encryptedBackupHeader struct {
+	Magic   string                  `json:"magic"`
+	Version int                     `json:"version"`
+	KDF     *xkms.PasswordKeyParams `json:"kdf,omitempty"`
+}
+
+// headerAAD returns the canonical encoding of the envelope header used as
+// AEAD additional data.
+func (eb *EncryptedBackup) headerAAD() ([]byte, error) {
+	return json.Marshal(encryptedBackupHeader{Magic: eb.Magic, Version: eb.Version, KDF: eb.KDF})
 }
 
 // RestoreResult reports the outcome of a restore operation.
@@ -498,9 +526,13 @@ func NewService(config *Config, opts ...Option) (*Service, error) {
 // ---------------------------------------------------------------------------
 
 // CreateBackup collects data from all non-nil sources, serializes the
-// archive to JSON, and encrypts it with XChaCha20-Poly1305. The key must
-// be exactly 32 bytes.
-func (s *Service) CreateBackup(key []byte) (*EncryptedBackup, error) {
+// archive to JSON, and encrypts it with XChaCha20-Poly1305 under key. A
+// password-derived key's KDF record is written into the header, which is
+// authenticated with the ciphertext.
+func (s *Service) CreateBackup(key *Key) (*EncryptedBackup, error) {
+	if key == nil {
+		return nil, ErrInvalidKey
+	}
 	archive, err := s.collectArchive()
 	if err != nil {
 		return nil, err
@@ -522,27 +554,38 @@ func (s *Service) CreateBackup(key []byte) (*EncryptedBackup, error) {
 		return nil, &SentinelCauseError{Sentinel: ErrCollectFailed, Cause: err}
 	}
 
-	ciphertext, nonce, err := encrypt(plaintext, key)
+	eb := &EncryptedBackup{Magic: BackupMagic, Version: BackupVersion, KDF: key.kdf}
+	aad, err := eb.headerAAD()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
+	}
+
+	eb.Ciphertext, eb.Nonce, err = encrypt(plaintext, key.material, aad)
 	if err != nil {
 		return nil, err
 	}
-
-	return &EncryptedBackup{
-		Magic:      BackupMagic,
-		Version:    BackupVersion,
-		Nonce:      nonce,
-		Ciphertext: ciphertext,
-	}, nil
+	return eb, nil
 }
 
 // DecryptBackup validates and decrypts an EncryptedBackup, verifies the
 // payload checksum, and returns the deserialized Archive.
-func (s *Service) DecryptBackup(eb *EncryptedBackup, key []byte) (*Archive, error) {
+//
+// A password key must come from DerivePasswordKey(eb.KDF, password). A
+// version 1 envelope is refused with ErrLegacyBackupFormat.
+func (s *Service) DecryptBackup(eb *EncryptedBackup, key *Key) (*Archive, error) {
 	if err := validateEncryptedBackup(eb); err != nil {
 		return nil, err
 	}
+	if key == nil {
+		return nil, ErrInvalidKey
+	}
 
-	plaintext, err := decrypt(eb.Ciphertext, eb.Nonce, key)
+	aad, err := eb.headerAAD()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidBackup, Cause: err}
+	}
+
+	plaintext, err := decrypt(eb.Ciphertext, eb.Nonce, key.material, aad)
 	if err != nil {
 		return nil, err
 	}
@@ -571,7 +614,7 @@ func (s *Service) DecryptBackup(eb *EncryptedBackup, key []byte) (*Archive, erro
 }
 
 // GetManifest decrypts the backup and returns only its manifest.
-func (s *Service) GetManifest(eb *EncryptedBackup, key []byte) (*Manifest, error) {
+func (s *Service) GetManifest(eb *EncryptedBackup, key *Key) (*Manifest, error) {
 	archive, err := s.DecryptBackup(eb, key)
 	if err != nil {
 		return nil, err
@@ -867,8 +910,9 @@ func (s *Service) collectPasswords(a *Archive) (bool, error) {
 // Internal: encryption helpers
 // ---------------------------------------------------------------------------
 
-// encrypt uses XChaCha20-Poly1305 to encrypt plaintext with a 32-byte key.
-func encrypt(plaintext, key []byte) (ciphertext, nonce []byte, err error) {
+// encrypt uses XChaCha20-Poly1305 to encrypt plaintext with a 32-byte key,
+// authenticating aad alongside it.
+func encrypt(plaintext, key, aad []byte) (ciphertext, nonce []byte, err error) {
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return nil, nil, &SentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
@@ -879,12 +923,13 @@ func encrypt(plaintext, key []byte) (ciphertext, nonce []byte, err error) {
 		return nil, nil, &DetailError{Err: ErrEncryptionFailed, Detail: fmt.Sprintf(": nonce generation: %v", err)}
 	}
 
-	ciphertext = aead.Seal(nil, nonce, plaintext, nil)
+	ciphertext = aead.Seal(nil, nonce, plaintext, aad)
 	return ciphertext, nonce, nil
 }
 
-// decrypt uses XChaCha20-Poly1305 to decrypt ciphertext with a 32-byte key.
-func decrypt(ciphertext, nonce, key []byte) ([]byte, error) {
+// decrypt uses XChaCha20-Poly1305 to decrypt ciphertext with a 32-byte key,
+// verifying aad alongside it.
+func decrypt(ciphertext, nonce, key, aad []byte) ([]byte, error) {
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
@@ -899,7 +944,7 @@ func decrypt(ciphertext, nonce, key []byte) ([]byte, error) {
 			": nonce is %d bytes, want %d", len(nonce), aead.NonceSize())}
 	}
 
-	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
+	plaintext, err := aead.Open(nil, nonce, ciphertext, aad)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}
@@ -907,10 +952,15 @@ func decrypt(ciphertext, nonce, key []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// validateEncryptedBackup checks magic bytes and version.
+// validateEncryptedBackup checks magic bytes and version. The unsalted
+// version 1 format has its own error so the operator is told to re-create
+// the backup rather than that the file is merely unrecognised.
 func validateEncryptedBackup(eb *EncryptedBackup) error {
 	if eb == nil || eb.Magic != BackupMagic {
 		return ErrInvalidBackup
+	}
+	if eb.Version == legacyUnsaltedVersion {
+		return ErrLegacyBackupFormat
 	}
 	if eb.Version != BackupVersion {
 		return ErrVersionMismatch

@@ -15,13 +15,16 @@ package cmd
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -46,7 +49,7 @@ func TestBackupCreateCmd_Structure(t *testing.T) {
 }
 
 func TestBackupCreateCmd_Flags(t *testing.T) {
-	flags := []string{"output", "password"}
+	flags := []string{"output", "password-stdin"}
 	for _, name := range flags {
 		t.Run(name, func(t *testing.T) {
 			flag := backupCreateCmd.Flags().Lookup(name)
@@ -62,10 +65,10 @@ func TestBackupCreateCmd_FlagDefaults(t *testing.T) {
 		assert.Equal(t, "", flag.DefValue)
 	})
 
-	t.Run("password_default_empty", func(t *testing.T) {
-		flag := backupCreateCmd.Flags().Lookup("password")
+	t.Run("password_stdin_default_false", func(t *testing.T) {
+		flag := backupCreateCmd.Flags().Lookup("password-stdin")
 		require.NotNil(t, flag)
-		assert.Equal(t, "", flag.DefValue)
+		assert.Equal(t, "false", flag.DefValue)
 	})
 }
 
@@ -97,7 +100,7 @@ func TestBackupRestoreCmd_Args(t *testing.T) {
 }
 
 func TestBackupRestoreCmd_Flags(t *testing.T) {
-	flags := []string{"password", "key"}
+	flags := []string{"password-stdin", "key"}
 	for _, name := range flags {
 		t.Run(name, func(t *testing.T) {
 			flag := backupRestoreCmd.Flags().Lookup(name)
@@ -225,7 +228,7 @@ func TestBackupContentsCmd_Args(t *testing.T) {
 }
 
 func TestBackupContentsCmd_Flags(t *testing.T) {
-	flags := []string{"password", "key"}
+	flags := []string{"password-stdin", "key"}
 	for _, name := range flags {
 		t.Run(name, func(t *testing.T) {
 			flag := backupContentsCmd.Flags().Lookup(name)
@@ -310,7 +313,7 @@ func TestBackupErrors(t *testing.T) {
 		{ErrBackupCreateFailed, "backup: creation failed"},
 		{ErrBackupRestoreFailed, "backup: restore failed"},
 		{ErrBackupDecryptFailed, "backup: decryption failed"},
-		{ErrBackupKeyRequired, "backup: password or key required"},
+		{ErrBackupKeyRequired, "backup: password (--password-stdin or XKEY_BACKUP_PASSWORD) or --key required"},
 		{ErrBackupFileNotFound, "backup: file not found"},
 		{ErrBackupToDeviceFailed, "backup: send to device failed"},
 		{ErrBackupFromDeviceFailed, "backup: restore from device failed"},
@@ -382,94 +385,208 @@ func TestGetBackupDir(t *testing.T) {
 	assert.Equal(t, expected, dir)
 }
 
-func TestDeriveKey(t *testing.T) {
-	key := deriveKey("test-password")
-	assert.Len(t, key, 32, "derived key should be 32 bytes")
-
-	// SHA-256 is deterministic
-	key2 := deriveKey("test-password")
-	assert.Equal(t, key, key2, "same password should produce same key")
-
-	// Different passwords produce different keys
-	key3 := deriveKey("different-password")
-	assert.NotEqual(t, key, key3, "different passwords should produce different keys")
-
-	// Verify it matches raw SHA-256
-	expected := sha256.Sum256([]byte("test-password"))
-	assert.Equal(t, expected[:], key)
-}
-
-func TestDeriveKey_EmptyPassword(t *testing.T) {
-	key := deriveKey("")
-	assert.Len(t, key, 32, "empty password should still produce 32-byte key")
-
-	expected := sha256.Sum256([]byte(""))
-	assert.Equal(t, expected[:], key)
-}
-
-func TestGenerateRandomKey(t *testing.T) {
-	key1, err := generateRandomKey()
-	require.NoError(t, err)
-	assert.Len(t, key1, 32, "random key should be 32 bytes")
-
-	key2, err := generateRandomKey()
-	require.NoError(t, err)
-	assert.Len(t, key2, 32, "random key should be 32 bytes")
-
-	// Two random keys should be different (extremely high probability)
-	assert.NotEqual(t, key1, key2, "two random keys should differ")
-}
-
-func TestResolveDecryptionKey_Password(t *testing.T) {
-	key, err := resolveDecryptionKey("mypassword", "")
-	require.NoError(t, err)
-	assert.Len(t, key, 32)
-
-	expected := deriveKey("mypassword")
-	assert.Equal(t, expected, key)
-}
-
-func TestResolveDecryptionKey_HexKey(t *testing.T) {
-	// Generate a valid 32-byte hex key
-	original := make([]byte, 32)
-	for i := range original {
-		original[i] = byte(i)
+// TestBackupCommands_NoPasswordValueFlag pins go-xkms#1202: no backup
+// command accepts the password as a flag value, which every other process on
+// the host could read through 'ps'.
+func TestBackupCommands_NoPasswordValueFlag(t *testing.T) {
+	for _, cmd := range []*cobra.Command{
+		backupCreateCmd, backupRestoreCmd, backupContentsCmd,
+		backupToDeviceCmd, backupFromDeviceCmd,
+	} {
+		t.Run(cmd.Name(), func(t *testing.T) {
+			assert.Nil(t, cmd.Flags().Lookup("password"), "--password value flag must not exist")
+		})
 	}
-	hexKey := hex.EncodeToString(original)
+}
 
-	key, err := resolveDecryptionKey("", hexKey)
+// oneBackupPassword is a backup.PasswordReader holding one entry, so a test
+// can seal an envelope without seeding on-disk stores.
+type oneBackupPassword struct{}
+
+// List returns the single entry.
+func (oneBackupPassword) List() ([]*backup.PasswordInfo, error) {
+	info := &backup.PasswordInfo{ID: "id-1", Name: "entry"}
+	if err := info.SetPassword("value"); err != nil {
+		return nil, err
+	}
+	return []*backup.PasswordInfo{info}, nil
+}
+
+// newBackupCredentialCmd returns a command declaring the backup credential
+// flags, isolated from the package-level commands.
+func newBackupCredentialCmd(t *testing.T) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "credential-test"}
+	backupPasswordSource.addFlags(cmd)
+	cmd.Flags().String("key", "", "")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	t.Setenv(backupPasswordSource.envVar, "")
+	return cmd
+}
+
+// sealTestEnvelope seals one trust-store certificate under key.
+func sealTestEnvelope(t *testing.T, key *backup.Key) *backup.EncryptedBackup {
+	t.Helper()
+	svc, err := backup.NewService(&backup.Config{DeviceName: "test"},
+		backup.WithPasswords(oneBackupPassword{}))
 	require.NoError(t, err)
-	assert.Equal(t, original, key)
+	eb, err := svc.CreateBackup(key)
+	require.NoError(t, err)
+	return eb
 }
 
-func TestResolveDecryptionKey_InvalidHex(t *testing.T) {
-	_, err := resolveDecryptionKey("", "not-valid-hex")
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrBackupDecryptFailed)
+func TestResolveSealingKey_PasswordFromStdin(t *testing.T) {
+	cmd := newBackupCredentialCmd(t)
+	stubStdin(t, []byte("stdin-password\n"), nil)
+	require.NoError(t, cmd.Flags().Set("password-stdin", "true"))
+
+	key, err := resolveSealingKey(cmd, ErrBackupCreateFailed)
+	require.NoError(t, err)
+	defer key.Wipe()
+
+	require.NotNil(t, key.KDF(), "a password key must carry its KDF record")
+	derived, err := backup.DerivePasswordKey(key.KDF(), []byte("stdin-password"))
+	require.NoError(t, err)
+	assert.Equal(t, key.Bytes(), derived.Bytes(), "the trailing newline must not be part of the password")
 }
 
-func TestResolveDecryptionKey_WrongKeyLength(t *testing.T) {
-	shortKey := hex.EncodeToString(make([]byte, 16)) // 16 bytes, not 32
-	_, err := resolveDecryptionKey("", shortKey)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrBackupDecryptFailed)
-	assert.Contains(t, err.Error(), "32 bytes")
+func TestResolveSealingKey_PasswordFromEnv(t *testing.T) {
+	cmd := newBackupCredentialCmd(t)
+	setBackupPassword(t, "env-password")
+
+	key, err := resolveSealingKey(cmd, ErrBackupCreateFailed)
+	require.NoError(t, err)
+	require.NotNil(t, key.KDF())
+	assert.Contains(t, cmd.OutOrStdout().(*bytes.Buffer).String(), "password-derived")
 }
 
-func TestResolveDecryptionKey_NeitherProvided(t *testing.T) {
-	_, err := resolveDecryptionKey("", "")
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrBackupKeyRequired)
+func TestResolveSealingKey_RandomWhenNoPassword(t *testing.T) {
+	cmd := newBackupCredentialCmd(t)
+
+	key, err := resolveSealingKey(cmd, ErrBackupCreateFailed)
+	require.NoError(t, err)
+	assert.Nil(t, key.KDF())
+	assert.Contains(t, cmd.OutOrStdout().(*bytes.Buffer).String(), hex.EncodeToString(key.Bytes()))
 }
 
-func TestResolveDecryptionKey_PasswordTakesPrecedence(t *testing.T) {
-	// When both are provided, password should be used
-	validHex := hex.EncodeToString(make([]byte, 32))
-	key, err := resolveDecryptionKey("mypassword", validHex)
+func TestResolveSealingKey_EmptyStdinRefused(t *testing.T) {
+	cmd := newBackupCredentialCmd(t)
+	stubStdin(t, []byte("\n"), nil)
+	require.NoError(t, cmd.Flags().Set("password-stdin", "true"))
+
+	key, err := resolveSealingKey(cmd, ErrBackupCreateFailed)
+	assert.Nil(t, key)
+	assert.ErrorIs(t, err, ErrBackupPasswordStdinEmpty)
+}
+
+func TestResolveSealingKey_StdinReadError(t *testing.T) {
+	cmd := newBackupCredentialCmd(t)
+	stubStdin(t, nil, errors.New("broken pipe"))
+	require.NoError(t, cmd.Flags().Set("password-stdin", "true"))
+
+	_, err := resolveSealingKey(cmd, ErrBackupCreateFailed)
+	assert.ErrorIs(t, err, ErrBackupPasswordStdinRead)
+}
+
+func TestResolveBackupCredential_PasswordOpensEnvelope(t *testing.T) {
+	sealing, err := backup.NewPasswordKey([]byte("open-me"))
+	require.NoError(t, err)
+	eb := sealTestEnvelope(t, sealing)
+
+	cmd := newBackupCredentialCmd(t)
+	setBackupPassword(t, "open-me")
+	credential, err := resolveBackupCredential(cmd)
+	require.NoError(t, err)
+	defer credential.wipe()
+
+	key, err := credential.keyFor(eb)
+	require.NoError(t, err)
+	assert.Equal(t, sealing.Bytes(), key.Bytes())
+}
+
+func TestResolveBackupCredential_HexKey(t *testing.T) {
+	raw, err := backup.GenerateKey()
+	require.NoError(t, err)
+	eb := sealTestEnvelope(t, raw)
+
+	cmd := newBackupCredentialCmd(t)
+	require.NoError(t, cmd.Flags().Set("key", hex.EncodeToString(raw.Bytes())))
+	credential, err := resolveBackupCredential(cmd)
 	require.NoError(t, err)
 
-	expected := deriveKey("mypassword")
-	assert.Equal(t, expected, key)
+	key, err := credential.keyFor(eb)
+	require.NoError(t, err)
+	assert.Equal(t, raw.Bytes(), key.Bytes())
+}
+
+func TestResolveBackupCredential_PasswordTakesPrecedence(t *testing.T) {
+	cmd := newBackupCredentialCmd(t)
+	setBackupPassword(t, "wins")
+	require.NoError(t, cmd.Flags().Set("key", hex.EncodeToString(make([]byte, backup.KeySize))))
+
+	credential, err := resolveBackupCredential(cmd)
+	require.NoError(t, err)
+	t.Cleanup(credential.wipe)
+	require.NotNil(t, credential.password)
+	assert.Equal(t, []byte("wins"), credential.password.Bytes())
+	assert.Nil(t, credential.key)
+}
+
+func TestResolveBackupCredential_InvalidInput(t *testing.T) {
+	tests := []struct {
+		name   string
+		keyHex string
+		want   error
+	}{
+		{"neither", "", ErrBackupKeyRequired},
+		{"invalid hex", "not-valid-hex", ErrBackupDecryptFailed},
+		{"short key", hex.EncodeToString(make([]byte, 16)), backup.ErrInvalidKey},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newBackupCredentialCmd(t)
+			require.NoError(t, cmd.Flags().Set("key", tt.keyHex))
+			credential, err := resolveBackupCredential(cmd)
+			assert.Nil(t, credential)
+			assert.ErrorIs(t, err, tt.want)
+		})
+	}
+}
+
+func TestBackupCredentialKeyFor_Refusals(t *testing.T) {
+	pw, err := secure.NewBufferFromBytes([]byte("pw"))
+	require.NoError(t, err)
+	password := &backupCredential{password: pw}
+	t.Cleanup(password.wipe)
+
+	t.Run("legacy unsalted file", func(t *testing.T) {
+		_, err := password.keyFor(&backup.EncryptedBackup{Magic: backup.BackupMagic, Version: 1})
+		assert.ErrorIs(t, err, ErrBackupDecryptFailed)
+		assert.ErrorIs(t, err, backup.ErrLegacyBackupFormat)
+		assert.Contains(t, err.Error(), "re-create the backup")
+	})
+
+	t.Run("raw-key envelope", func(t *testing.T) {
+		raw, err := backup.GenerateKey()
+		require.NoError(t, err)
+		_, err = password.keyFor(sealTestEnvelope(t, raw))
+		assert.ErrorIs(t, err, backup.ErrNotPasswordSealed)
+		assert.Contains(t, err.Error(), "--key")
+	})
+
+	t.Run("tampered kdf parameters", func(t *testing.T) {
+		sealing, err := backup.NewPasswordKey([]byte("pw"))
+		require.NoError(t, err)
+		eb := sealTestEnvelope(t, sealing)
+		params := *eb.KDF
+		params.MemoryKiB = 8 * 1024
+		eb.KDF = &params
+
+		_, err = password.keyFor(eb)
+		assert.ErrorIs(t, err, ErrBackupDecryptFailed)
+		assert.ErrorIs(t, err, backup.ErrKeyDerivationFailed)
+	})
 }
 
 func TestGetHostname(t *testing.T) {
@@ -575,7 +692,7 @@ func TestBackupRestore_FileNotFound(t *testing.T) {
 	var buf bytes.Buffer
 	backupRestoreCmd.SetOut(&buf)
 
-	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "password", "test"))
+	setBackupPassword(t, "test")
 	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "key", ""))
 
 	err := runBackupRestore(backupRestoreCmd, []string{"/nonexistent/backup.xkb"})
@@ -592,7 +709,7 @@ func TestBackupRestore_NoKey(t *testing.T) {
 	var buf bytes.Buffer
 	backupRestoreCmd.SetOut(&buf)
 
-	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "password", ""))
+	setBackupPassword(t, "")
 	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "key", ""))
 
 	err = runBackupRestore(backupRestoreCmd, []string{backupFile})
@@ -689,7 +806,7 @@ func TestBackupRestore_InvalidJSON(t *testing.T) {
 	var buf bytes.Buffer
 	backupRestoreCmd.SetOut(&buf)
 
-	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "password", "test"))
+	setBackupPassword(t, "test")
 	require.NoError(t, setFlagForTest(t, backupRestoreCmd.Flags(), "key", ""))
 
 	err = runBackupRestore(backupRestoreCmd, []string{backupFile})
@@ -701,7 +818,7 @@ func TestBackupContents_FileNotFound(t *testing.T) {
 	var buf bytes.Buffer
 	backupContentsCmd.SetOut(&buf)
 
-	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "password", "test"))
+	setBackupPassword(t, "test")
 	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "key", ""))
 
 	err := runBackupContents(backupContentsCmd, []string{"/nonexistent/backup.xkb"})
@@ -718,7 +835,7 @@ func TestBackupContents_NoKey(t *testing.T) {
 	var buf bytes.Buffer
 	backupContentsCmd.SetOut(&buf)
 
-	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "password", ""))
+	setBackupPassword(t, "")
 	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "key", ""))
 
 	err = runBackupContents(backupContentsCmd, []string{backupFile})
@@ -801,7 +918,7 @@ func TestBackupContents_InvalidJSON(t *testing.T) {
 	var buf bytes.Buffer
 	backupContentsCmd.SetOut(&buf)
 
-	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "password", "test"))
+	setBackupPassword(t, "test")
 	require.NoError(t, setFlagForTest(t, backupContentsCmd.Flags(), "key", ""))
 
 	err = runBackupContents(backupContentsCmd, []string{backupFile})
@@ -837,4 +954,60 @@ func TestBackupCmd_RegisteredOnRoot(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "backup command should be registered on root")
+}
+
+// TestBackupRestore_LegacyUnsaltedFileRefused pins go-xkms#1202: a version 1
+// file, keyed with an unsalted SHA-256 of the password, is refused with a
+// typed error and never migrated.
+func TestBackupRestore_LegacyUnsaltedFileRefused(t *testing.T) {
+	backupFile := filepath.Join(t.TempDir(), "legacy.xkb")
+	legacy, err := json.Marshal(map[string]any{
+		"magic":      backup.BackupMagic,
+		"version":    1,
+		"nonce":      make([]byte, 24),
+		"ciphertext": []byte("sealed-under-sha256-of-password"),
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(backupFile, legacy, 0o600))
+
+	var buf bytes.Buffer
+	backupRestoreCmd.SetOut(&buf)
+	setBackupFlags(t, backupRestoreCmd, map[string]string{"password": "legacy", "key": ""})
+
+	err = runBackupRestore(backupRestoreCmd, []string{backupFile})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBackupDecryptFailed)
+	assert.ErrorIs(t, err, backup.ErrLegacyBackupFormat)
+	assert.NotContains(t, buf.String(), "Restore completed")
+}
+
+// TestBackupCreate_PasswordStdinRoundTrip drives create and contents with
+// the password on standard input and checks the file records the salted KDF.
+func TestBackupCreate_PasswordStdinRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedBackupStores(t, home)
+	setBackupPassword(t, "")
+
+	backupFile := filepath.Join(t.TempDir(), "stdin.xkb")
+	stubStdin(t, []byte("piped-password\n"), nil)
+
+	var createBuf bytes.Buffer
+	backupCreateCmd.SetOut(&createBuf)
+	setBackupFlags(t, backupCreateCmd, map[string]string{"output": backupFile, "password-stdin": "true"})
+	require.NoError(t, runBackupCreate(backupCreateCmd, nil))
+
+	encrypted, err := readEncryptedBackup(backupFile)
+	require.NoError(t, err)
+	require.NotNil(t, encrypted.KDF, "a password backup must record its KDF")
+	assert.Equal(t, backup.BackupVersion, encrypted.Version)
+	assert.NotEmpty(t, encrypted.KDF.Salt)
+
+	// The password read for create was wiped after use; pipe it again.
+	stubStdin(t, []byte("piped-password\n"), nil)
+	var contentsBuf bytes.Buffer
+	backupContentsCmd.SetOut(&contentsBuf)
+	setBackupFlags(t, backupContentsCmd, map[string]string{"password-stdin": "true", "key": ""})
+	require.NoError(t, runBackupContents(backupContentsCmd, []string{backupFile}))
+	assert.Contains(t, contentsBuf.String(), "Passwords:    1")
 }

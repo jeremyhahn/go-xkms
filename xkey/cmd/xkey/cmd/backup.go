@@ -14,13 +14,12 @@
 package cmd
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"io"
 	"log/slog"
 	"math"
@@ -29,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
@@ -50,7 +50,15 @@ var (
 	ErrBackupDecryptFailed = errors.New("backup: decryption failed")
 
 	// ErrBackupKeyRequired indicates a password or key is required.
-	ErrBackupKeyRequired = errors.New("backup: password or key required")
+	ErrBackupKeyRequired = errors.New("backup: password (--password-stdin or XKEY_BACKUP_PASSWORD) or --key required")
+
+	// ErrBackupPasswordStdinEmpty indicates --password-stdin was given but
+	// standard input carried no password.
+	ErrBackupPasswordStdinEmpty = errors.New("backup: --password-stdin was given but standard input carried no password")
+
+	// ErrBackupPasswordStdinRead indicates standard input could not be read
+	// for --password-stdin.
+	ErrBackupPasswordStdinRead = errors.New("backup: failed to read the password from standard input")
 
 	// ErrBackupFileNotFound indicates the backup file was not found.
 	ErrBackupFileNotFound = errors.New("backup: file not found")
@@ -111,8 +119,17 @@ var backupCmd = &cobra.Command{
 trust store certificates, OATH credentials, and static passwords.
 
 Backups are sealed with XChaCha20-Poly1305. The file is the JSON encoding of
-the backup envelope -- magic, format version, nonce, and ciphertext -- so no
-backed-up value is readable without the password or key used to create it.`,
+the backup envelope -- magic, format version, KDF record, nonce, and
+ciphertext -- so no backed-up value is readable without the password or key
+used to create it.
+
+A password is stretched with Argon2id (t=3, m=64 MiB, p=4; PBKDF2-SHA256 when
+the Go FIPS 140 module is enabled) under a random salt. The salt and the KDF
+parameters are recorded in the envelope header, which is authenticated with
+the ciphertext. Version 1 backups, keyed with an unsalted SHA-256 of the
+password, are refused: re-create them with this release.
+
+` + backupPasswordUsage,
 }
 
 // backupCreateCmd creates a new encrypted backup.
@@ -123,18 +140,18 @@ var backupCreateCmd = &cobra.Command{
 store certificates, OATH credentials, and static passwords read from the xkey
 data directory ($XKEY_HOME/data, by default ~/.xkey/data).
 
-If no password is provided, a random 256-bit encryption key is generated
-and printed to stdout in hex encoding. Store this key securely: without it
-the backup cannot be read.
+If no password is supplied (--password-stdin or XKEY_BACKUP_PASSWORD), a
+random 256-bit encryption key is generated and printed to stdout in hex
+encoding. Store this key securely: without it the backup cannot be read.
 
 The command fails rather than writing an empty file when every data store is
 empty or unreachable.
 
 Examples:
   xkey backup create
-  xkey backup create --password mypassword
+  xkey backup create --password-stdin < password.txt
   xkey backup create --output /tmp/my-backup.xkb
-  xkey backup create --password mypassword --oath-store /srv/xkey/oath.json`,
+  XKEY_BACKUP_PASSWORD=... xkey backup create --oath-store /srv/xkey/oath.json`,
 	RunE: runBackupCreate,
 }
 
@@ -150,7 +167,7 @@ Restored data is merged into the stores under the xkey data directory
 ($XKEY_HOME/data). Entries that already exist are reported as skipped.
 
 Examples:
-  xkey backup restore ~/.xkey/backups/backup-20250207.xkb --password mypassword
+  xkey backup restore ~/.xkey/backups/backup-20250207.xkb --password-stdin < password.txt
   xkey backup restore backup.xkb --key aabbccdd...`,
 	Args: cobra.ExactArgs(1),
 	RunE: runBackupRestore,
@@ -180,7 +197,7 @@ without modifying any data. Requires the password or key used to create the
 backup.
 
 Examples:
-  xkey backup contents backup.xkb --password mypassword
+  xkey backup contents backup.xkb --password-stdin < password.txt
   xkey backup contents backup.xkb --key aabbccdd...`,
 	Args: cobra.ExactArgs(1),
 	RunE: runBackupContents,
@@ -196,19 +213,18 @@ func init() {
 	// Create flags
 	backupCreateCmd.Flags().StringP("output", "o", "",
 		"Output file path (default: ~/.xkey/backups/backup-{timestamp}.xkb)")
-	backupCreateCmd.Flags().String("password", "",
-		"Encryption password (if not set, a random key is generated)")
+	backupPasswordSource.addFlags(backupCreateCmd)
 	addBackupStoreFlags(backupCreateCmd)
 	addBarrierPasswordFlags(backupCreateCmd)
 
 	// Restore flags
-	backupRestoreCmd.Flags().String("password", "", "Decryption password")
+	backupPasswordSource.addFlags(backupRestoreCmd)
 	backupRestoreCmd.Flags().String("key", "", "Hex-encoded decryption key")
 	addBackupStoreFlags(backupRestoreCmd)
 	addBarrierPasswordFlags(backupRestoreCmd)
 
 	// Contents flags
-	backupContentsCmd.Flags().String("password", "", "Decryption password")
+	backupPasswordSource.addFlags(backupContentsCmd)
 	backupContentsCmd.Flags().String("key", "", "Hex-encoded decryption key")
 }
 
@@ -290,7 +306,6 @@ func writeManifestSummary(w io.Writer, view backupManifest) {
 // runBackupCreate creates an encrypted backup of xkey data.
 func runBackupCreate(cmd *cobra.Command, args []string) error {
 	output, _ := cmd.Flags().GetString("output")
-	password, _ := cmd.Flags().GetString("password")
 
 	// Determine output path
 	if output == "" {
@@ -308,19 +323,11 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrBackupCreateFailed, Detail: fmt.Sprintf(": cannot create backup directory: %v", err)}
 	}
 
-	// Derive or generate encryption key
-	var key []byte
-	if password != "" {
-		key = deriveKey(password)
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Using password-derived encryption key.")
-	} else {
-		var err error
-		key, err = generateRandomKey()
-		if err != nil {
-			return &SentinelCauseError{Sentinel: ErrBackupCreateFailed, Cause: err}
-		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generated encryption key (save this):\n  %s\n\n", hex.EncodeToString(key))
+	key, err := resolveSealingKey(cmd, ErrBackupCreateFailed)
+	if err != nil {
+		return err
 	}
+	defer key.Wipe()
 
 	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd), true)
 	if err != nil {
@@ -371,19 +378,23 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 // runBackupRestore restores xkey data from an encrypted backup file.
 func runBackupRestore(cmd *cobra.Command, args []string) error {
 	filePath := args[0]
-	password, _ := cmd.Flags().GetString("password")
-	keyHex, _ := cmd.Flags().GetString("key")
 
 	if err := requireBackupFile(filePath); err != nil {
 		return err
 	}
 
-	key, err := resolveDecryptionKey(password, keyHex)
+	credential, err := resolveBackupCredential(cmd)
+	if err != nil {
+		return err
+	}
+	defer credential.wipe()
+
+	encrypted, err := readEncryptedBackup(filePath)
 	if err != nil {
 		return err
 	}
 
-	encrypted, err := readEncryptedBackup(filePath)
+	key, err := credential.keyFor(encrypted)
 	if err != nil {
 		return err
 	}
@@ -494,19 +505,23 @@ func runBackupList(cmd *cobra.Command, args []string) error {
 // runBackupContents shows the manifest of a backup file without restoring.
 func runBackupContents(cmd *cobra.Command, args []string) error {
 	filePath := args[0]
-	password, _ := cmd.Flags().GetString("password")
-	keyHex, _ := cmd.Flags().GetString("key")
 
 	if err := requireBackupFile(filePath); err != nil {
 		return err
 	}
 
-	key, err := resolveDecryptionKey(password, keyHex)
+	credential, err := resolveBackupCredential(cmd)
+	if err != nil {
+		return err
+	}
+	defer credential.wipe()
+
+	encrypted, err := readEncryptedBackup(filePath)
 	if err != nil {
 		return err
 	}
 
-	encrypted, err := readEncryptedBackup(filePath)
+	key, err := credential.keyFor(encrypted)
 	if err != nil {
 		return err
 	}
@@ -1275,8 +1290,30 @@ var backupDecryptReasons = []struct {
 }{
 	{backup.ErrDecryptionFailed, "incorrect password or key"},
 	{backup.ErrCorruptedBackup, "checksum mismatch: the backup file is corrupt"},
+	{backup.ErrLegacyBackupFormat, "unsalted version 1 backup format is no longer supported; re-create the backup"},
 	{backup.ErrVersionMismatch, "unsupported backup format version"},
 	{backup.ErrInvalidBackup, "file is not an xkey backup envelope"},
+	{backup.ErrNotPasswordSealed, "backup was sealed with a raw key; supply it with --key"},
+	{backup.ErrKeyDerivationFailed, "the backup's key-derivation record is invalid or has been altered"},
+}
+
+// BackupDecryptError is an ErrBackupDecryptFailed carrying the
+// operator-facing reason and the backup service error it was classified
+// from. errors.Is matches both ErrBackupDecryptFailed and the cause, so a
+// caller can still tell, say, a refused legacy file from a wrong password.
+type BackupDecryptError struct {
+	Reason string
+	Cause  error
+}
+
+// Error implements the error interface.
+func (e *BackupDecryptError) Error() string {
+	return ErrBackupDecryptFailed.Error() + ": " + e.Reason
+}
+
+// Unwrap returns ErrBackupDecryptFailed and the cause.
+func (e *BackupDecryptError) Unwrap() []error {
+	return []error{ErrBackupDecryptFailed, e.Cause}
 }
 
 // classifyBackupDecryptError converts a backup service decryption failure
@@ -1284,7 +1321,7 @@ var backupDecryptReasons = []struct {
 func classifyBackupDecryptError(err error) error {
 	for _, candidate := range backupDecryptReasons {
 		if errors.Is(err, candidate.sentinel) {
-			return &DetailError{Err: ErrBackupDecryptFailed, Detail: ": " + candidate.reason}
+			return &BackupDecryptError{Reason: candidate.reason, Cause: err}
 		}
 	}
 	return &SentinelCauseError{Sentinel: ErrBackupDecryptFailed, Cause: err}
@@ -1309,37 +1346,124 @@ func getBackupDir() (string, error) {
 	return filepath.Join(home.Root, backupsDirName), nil
 }
 
-// deriveKey derives a 32-byte key from a password using SHA-256.
-func deriveKey(password string) []byte {
-	h := sha256.Sum256([]byte(password))
-	return h[:]
+// backupPasswordSource is the one way a backup password enters the CLI. It
+// follows the PIN convention (pin_input.go): standard input or the
+// environment, never a value flag -- a "--password" value is visible to
+// every other process on the host via 'ps' (go-xkms#1202).
+var backupPasswordSource = pinSource{
+	label:      "backup password",
+	stdinFlag:  "password-stdin",
+	envVar:     "XKEY_BACKUP_PASSWORD",
+	stdinEmpty: ErrBackupPasswordStdinEmpty,
+	stdinRead:  ErrBackupPasswordStdinRead,
 }
 
-// generateRandomKey generates a cryptographically random 32-byte key.
-func generateRandomKey() ([]byte, error) {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
+// backupPasswordUsage is the operator-facing description of the two backup
+// password sources, embedded in the backup command help.
+const backupPasswordUsage = `The backup password may be supplied two ways, in precedence order:
+
+  --password-stdin       read the password from standard input (preferred:
+                         it keeps the password out of the process list and
+                         the shell history)
+  XKEY_BACKUP_PASSWORD   environment variable
+
+There is no "--password" value flag: a value on the command line is visible
+to every other process on the host via 'ps'.`
+
+// resolveSealingKey returns the key a new backup is sealed with: derived
+// from the backup password when one is supplied, otherwise generated at
+// random and printed so the operator can keep it. The password is wiped
+// once the key is derived. sentinel names the operation a failure belongs
+// to. The caller wipes the returned key.
+func resolveSealingKey(cmd *cobra.Command, sentinel error) (*backup.Key, error) {
+	out := cmd.OutOrStdout()
+	password, err := backupPasswordSource.resolveBytes(cmd)
+	if err != nil {
 		return nil, err
 	}
+	defer enclave.Wipe(password)
+
+	if len(password) > 0 {
+		key, err := backup.NewPasswordKey(password)
+		if err != nil {
+			return nil, &SentinelCauseError{Sentinel: sentinel, Cause: err}
+		}
+		_, _ = fmt.Fprintln(out, "Using password-derived encryption key (Argon2id, salted).")
+		return key, nil
+	}
+
+	key, err := backup.GenerateKey()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: sentinel, Cause: err}
+	}
+	_, _ = fmt.Fprintf(out, "Generated encryption key (save this):\n  %s\n\n", hex.EncodeToString(key.Bytes()))
 	return key, nil
 }
 
-// resolveDecryptionKey resolves the decryption key from a password or hex-encoded key.
-func resolveDecryptionKey(password, keyHex string) ([]byte, error) {
-	if password != "" {
-		return deriveKey(password), nil
+// backupCredential is what the operator supplied to open a backup: a
+// password, whose key can only be derived once the envelope's KDF record has
+// been read, or a raw key. Exactly one is set.
+type backupCredential struct {
+	password *secure.Buffer
+	key      *backup.Key
+}
+
+// resolveBackupCredential resolves the credential for opening a backup,
+// before the envelope is read, so a missing credential fails fast. The
+// backup password takes precedence over --key. The caller calls wipe.
+func resolveBackupCredential(cmd *cobra.Command) (*backupCredential, error) {
+	password, err := backupPasswordSource.resolveBytes(cmd)
+	if err != nil {
+		return nil, err
 	}
-	if keyHex != "" {
-		key, err := hex.DecodeString(keyHex)
+	if len(password) > 0 {
+		// NewBufferFromBytes adopts password into protected memory and
+		// wipes the source slice.
+		protected, err := secure.NewBufferFromBytes(password)
 		if err != nil {
-			return nil, &DetailError{Err: ErrBackupDecryptFailed, Detail: fmt.Sprintf(": invalid hex key: %v", err)}
+			return nil, &SentinelCauseError{Sentinel: ErrBackupDecryptFailed, Cause: err}
 		}
-		if len(key) != 32 {
-			return nil, &DetailError{Err: ErrBackupDecryptFailed, Detail: fmt.Sprintf(": key must be 32 bytes, got %d", len(key))}
-		}
-		return key, nil
+		return &backupCredential{password: protected}, nil
 	}
-	return nil, ErrBackupKeyRequired
+
+	keyHex, err := cmd.Flags().GetString("key")
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrBackupDecryptFailed, Cause: err}
+	}
+	if keyHex == "" {
+		return nil, ErrBackupKeyRequired
+	}
+	material, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return nil, &DetailError{Err: ErrBackupDecryptFailed, Detail: fmt.Sprintf(": invalid hex key: %v", err)}
+	}
+	defer enclave.Wipe(material)
+	key, err := backup.NewRawKey(material)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrBackupDecryptFailed, Cause: err}
+	}
+	return &backupCredential{key: key}, nil
+}
+
+// keyFor returns the key that opens encrypted. A password is stretched with
+// the KDF record in the envelope header; the derived key is owned by the
+// credential and wiped with it.
+func (c *backupCredential) keyFor(encrypted *backup.EncryptedBackup) (*backup.Key, error) {
+	if c.key != nil {
+		return c.key, nil
+	}
+	key, err := encrypted.PasswordKey(c.password.Bytes())
+	if err != nil {
+		return nil, classifyBackupDecryptError(err)
+	}
+	c.key = key
+	return key, nil
+}
+
+// wipe zeroes the password and key the credential holds.
+func (c *backupCredential) wipe() {
+	c.password.Destroy()
+	c.key.Wipe()
 }
 
 // getHostname returns the system hostname or "unknown" on error.

@@ -103,7 +103,9 @@ types).
 
 `StaticPasswordService` is the frontend-facing surface: CRUD, folder
 management (`ListFolders`, `CreateFolder`, `MoveToFolder`, `RenameFolder`,
-`DeleteFolder`), search, backup/restore to an encrypted file, and KeePass
+`DeleteFolder`), search, backup/restore to an encrypted file (a salted
+Argon2id `XKPW` envelope with an authenticated header, see
+[engineering.md](engineering.md#encrypted-backup-format-go-xkms1202)), and KeePass
 KDBX / CSV / XML import (`xkey/pkg/pwimport`) — **GUI-only**, no CLI
 verb calls `pwimport`. It also drives the session verbs
 (`Unlock`/`Lock`/`GetStoreStatus`/`SetAccessMode`) through the same
