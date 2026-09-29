@@ -15,9 +15,6 @@ package grpc
 
 import (
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -106,63 +103,6 @@ func TestParseHashAlgorithm(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestExtractPublicKeyPEM(t *testing.T) {
-	t.Run("RSA key", func(t *testing.T) {
-		privKey, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatalf("Failed to generate RSA key: %v", err)
-		}
-
-		pem, err := extractPublicKeyPEM(privKey)
-		if err != nil {
-			t.Errorf("extractPublicKeyPEM failed: %v", err)
-		}
-		if !strings.Contains(pem, "BEGIN PUBLIC KEY") {
-			t.Error("PEM does not contain public key header")
-		}
-		if !strings.Contains(pem, "END PUBLIC KEY") {
-			t.Error("PEM does not contain public key footer")
-		}
-	})
-
-	t.Run("ECDSA key", func(t *testing.T) {
-		privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatalf("Failed to generate ECDSA key: %v", err)
-		}
-
-		pem, err := extractPublicKeyPEM(privKey)
-		if err != nil {
-			t.Errorf("extractPublicKeyPEM failed: %v", err)
-		}
-		if !strings.Contains(pem, "BEGIN PUBLIC KEY") {
-			t.Error("PEM does not contain public key header")
-		}
-	})
-
-	t.Run("Ed25519 key", func(t *testing.T) {
-		_, privKey, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			t.Fatalf("Failed to generate Ed25519 key: %v", err)
-		}
-
-		pem, err := extractPublicKeyPEM(privKey)
-		if err != nil {
-			t.Errorf("extractPublicKeyPEM failed: %v", err)
-		}
-		if !strings.Contains(pem, "BEGIN PUBLIC KEY") {
-			t.Error("PEM does not contain public key header")
-		}
-	})
-
-	t.Run("Unsupported key type", func(t *testing.T) {
-		_, err := extractPublicKeyPEM("invalid-key")
-		if err == nil {
-			t.Error("Expected error for unsupported key type")
-		}
-	})
 }
 
 func TestParseCertFromPEM(t *testing.T) {

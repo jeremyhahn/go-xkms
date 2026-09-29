@@ -484,13 +484,13 @@ func TestExportKey(t *testing.T) {
 		expectedError codes.Code
 	}{
 		{
-			name: "Valid export request",
+			name: "Valid export request without a service",
 			request: &pb.ExportKeyRequest{
 				KeyId:             "test-key",
 				Backend:           "test-backend",
 				WrappingAlgorithm: "RSAES_OAEP_SHA_256",
 			},
-			expectedError: codes.NotFound, // Backend not found in test
+			expectedError: codes.Unavailable, // no XKMSService is wired
 		},
 		{
 			name: "Missing key_id",

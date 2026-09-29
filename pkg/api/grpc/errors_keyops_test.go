@@ -23,7 +23,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // TestGrpcCodeForClass_UnmappedClassFallsBackToInternal proves the
@@ -93,5 +95,42 @@ func TestMapImportExportError_UnclassifiedErrorFallsBackToInternal(t *testing.T)
 	}
 	if got := st.Message(); got != "export key: disk on fire" {
 		t.Fatalf("message = %q, want %q", got, "export key: disk on fire")
+	}
+}
+
+// TestMapKeyOpError_ServiceWrappedCauses pins the two classifications
+// mapKeyOpError gained when the key lifecycle RPCs became service adapters
+// (go-xkms#1218): a malformed backend name is the caller's fault, and a
+// backend import/export sentinel the service wraps as an operation failure's
+// cause keeps the code mapImportExportError gives it when reported directly.
+func TestMapKeyOpError_ServiceWrappedCauses(t *testing.T) {
+	tests := map[string]struct {
+		err  error
+		want codes.Code
+	}{
+		"malformed backend name": {
+			err:  &xkms.ErrBackendNameValidation{Err: errors.New("contains '/'")},
+			want: codes.InvalidArgument,
+		},
+		"wrapped key-not-exportable": {
+			err:  &xkms.ErrOperationWrap{Sentinel: xkms.ErrOperationFailed, Err: backend.ErrKeyNotExportable},
+			want: codes.PermissionDenied,
+		},
+		"wrapped asymmetric export refusal": {
+			err:  &xkms.ErrKeyOperation{Operation: "export key", Err: backend.ErrAsymmetricKeyExportNotAllowed},
+			want: codes.InvalidArgument,
+		},
+		"unclassified cause stays internal": {
+			err:  &xkms.ErrOperationWrap{Sentinel: xkms.ErrOperationFailed, Err: errors.New("disk on fire")},
+			want: codes.Internal,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := status.Code(mapKeyOpError(context.Background(), nil, tt.err))
+			if got != tt.want {
+				t.Fatalf("code = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

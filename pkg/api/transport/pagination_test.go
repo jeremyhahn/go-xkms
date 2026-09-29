@@ -603,3 +603,23 @@ func TestAppendPaginationQuery_UnpaginatedWithExistingQuery(t *testing.T) {
 		t.Errorf("expected unchanged path for unpaginated request, got %s", path)
 	}
 }
+
+// TestWithPageRequest_AppliesEveryField proves the option copies a decoded
+// PageRequest whole, so a transport handing its caller's pagination to a
+// servicer loses neither the page nor the sort.
+func TestWithPageRequest_AppliesEveryField(t *testing.T) {
+	want := PageRequest{Page: 3, PageSize: 10, SortField: "KeyID", SortOrder: SortOrderDesc}
+	if got := BuildPageRequest(WithPageRequest(want)); got != want {
+		t.Fatalf("BuildPageRequest(WithPageRequest(%+v)) = %+v", want, got)
+	}
+}
+
+// TestWithPageRequest_ZeroValueIsUnpaginated proves the zero PageRequest --
+// what a transport decodes when its caller sent no pagination -- still asks
+// for every result.
+func TestWithPageRequest_ZeroValueIsUnpaginated(t *testing.T) {
+	got := BuildPageRequest(WithPageSize(5), WithPageRequest(PageRequest{}))
+	if !got.IsUnpaginated() || got.PageSize != 0 {
+		t.Fatalf("expected an unpaginated request, got %+v", got)
+	}
+}

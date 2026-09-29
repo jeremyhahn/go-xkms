@@ -453,6 +453,11 @@ type ErrBackendUnsupported struct {
 	Sentinel error
 	Backend  string
 	Detail   string
+
+	// Cause optionally names precisely what is unsupported, as a
+	// backend-layer sentinel -- backend.ErrExportNotSupported for the side of
+	// a copy that exports, say. errors.Is matches it as well as Sentinel.
+	Cause error
 }
 
 // Error returns the error message.
@@ -466,8 +471,14 @@ func (e *ErrBackendUnsupported) Error() string {
 	return e.Sentinel.Error()
 }
 
-// Unwrap returns the underlying sentinel error.
-func (e *ErrBackendUnsupported) Unwrap() error { return e.Sentinel }
+// Unwrap returns the sentinel and, when set, the precise cause, so errors.Is
+// and errors.As match either.
+func (e *ErrBackendUnsupported) Unwrap() []error {
+	if e.Cause != nil {
+		return []error{e.Sentinel, e.Cause}
+	}
+	return []error{e.Sentinel}
+}
 
 // ErrOperationWrap represents an operation error that wraps an underlying cause.
 // Used for signing, encryption, decryption, verification, and general operation failures.
