@@ -114,6 +114,42 @@ func (s *StaticPasswordService) SetAccessMode(mode string) error
 func (s *StaticPasswordService) TryAutoUnlock() error
 ```
 
+### Encrypted backup format (go-xkms#1202)
+
+`BackupPasswords(..., encrypt=true, ...)` writes a JSON envelope, not raw
+ciphertext (`pkg/gui/services/staticpw_backup.go:64-77`):
+
+```json
+{"magic": "XKPW", "version": 1, "algorithm": "aes-256",
+ "kdf": {"version": 1, "algorithm": "Argon2id", "salt": "<32 bytes>",
+         "time": 3, "memory_kib": 65536, "threads": 4, "key_length": 32},
+ "nonce": "<12 bytes>", "ciphertext": "<AES-GCM>"}
+```
+
+- The key comes from `backup.NewPasswordKey` (`pkg/backup/key.go:63`), the
+  one password KDF every xkey backup uses: the canonical
+  `xkms.NewFIPSAwareHasher` (`sdk/go/kdf.go:51`, root
+  `pkg/crypto/kdf/hasher.go:138-152`) — Argon2id t=3, m=64 MiB, p=4 over a
+  fresh 32-byte random salt, or PBKDF2-SHA256 (600 000 iterations) when the
+  Go FIPS 140 module is enabled. `aes-128`/`aes-192` use the leading 16/24
+  bytes of the 32-byte output (`staticpw_backup.go:86-96`).
+- The header (magic, version, algorithm, KDF record) is the AES-GCM
+  additional data (`staticpw_backup.go:80-83`), so any header edit fails
+  authentication. A KDF record whose costs differ from the ones its version
+  pins is refused before derivation (root-module
+  `pkg/crypto/kdf/hasher.go:268-280`), so
+  a tampered file can neither weaken the KDF nor demand unbounded memory.
+- `RestorePasswords` requires the selected algorithm to match the header
+  (`staticpw_backup.go:145-185`).
+- The Wails binding receives the password as a JSON-decoded `string`; the
+  service copies it to a `[]byte` for the derivation and wipes that copy
+  with `enclave.Wipe`, as it does the plaintext entry JSON
+  (`staticpw_service.go:548-597`, `633-666`).
+- **No backward compatibility.** Encrypted backups written before
+  go-xkms#1202 (raw `nonce||ciphertext` under an unsalted SHA-256 of the
+  password) are refused with `ErrRestoreLegacyFormat`, never migrated.
+  Re-export them from a store that holds the passwords.
+
 `StaticPasswordEntry` mirrors `StaticPassword` plus computed fields
 (`IsExpired`, `DaysUntilExpiry`) for the frontend
 (`staticpw_service.go:89`).
@@ -186,6 +222,15 @@ type constants shared with the extension protocol.
 `ErrStaticPWInvalidAccessMode`, `ErrStaticPWInvalidGenerateLength`,
 `ErrStaticPWBarrierSealed`.
 
+`pkg/gui/services/staticpw_backup.go:43-61` (encrypted backup):
+`ErrRestoreLegacyFormat` (not a salted `XKPW` envelope, including every
+pre-#1202 file), `ErrRestoreUnsupportedVersion`,
+`ErrRestoreAlgorithmMismatch` (selected algorithm differs from the header),
+`ErrRestoreKeyDerivationFailed` (KDF record missing, invalid or altered;
+wraps `xkms.ErrPasswordHashParamsMismatch`). A wrong password or a
+tampered header/ciphertext is `ErrRestoreDecryptFailed`
+(`pkg/gui/services/errors.go`).
+
 ## Configuration
 
 | Setting | Resolution | Notes |
@@ -204,6 +249,7 @@ type constants shared with the extension protocol.
 | `xkey/cmd/xkey/cmd/password_test.go`, `password_ssh_cert_test.go` | `ble codec_json` | CLI verbs, `--source` resolution, IPC-vs-disk list/status behavior |
 | `xkey/cmd/xkey/cmd/touch_test.go` | `ble codec_json` | `xkey touch` IPC round-trip |
 | `xkey/pkg/gui/services/staticpw_service_test.go` | (none) | GUI CRUD, folders, backup/restore, import, session verbs |
+| `xkey/pkg/gui/services/staticpw_backup_test.go` | `ble codec_json tpm_simulator` | Encrypted backup: round trip per algorithm, salt and KDF parameters in the header, fresh salt/key/ciphertext per backup, wrong password, legacy unsalted file refused, header tampering (salt, costs, version, nonce, AAD) |
 | `xkey/pkg/pwimport/*_test.go` | (none) | KDBX/CSV/XML parsers |
 
 Run the CLI tests:

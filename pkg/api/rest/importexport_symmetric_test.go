@@ -1085,7 +1085,6 @@ func TestCopyKeyHandler_ImportExportSuccessPath(t *testing.T) {
 			"source_key_id": "source-key",
 			"dest_backend": "dst-backend",
 			"dest_key_id": "dest-key",
-			"key_type": "rsa",
 			"algorithm": "RSAES_OAEP_SHA_256"
 		}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
@@ -1130,7 +1129,6 @@ func TestCopyKeyHandler_SourceKeyNotFoundError(t *testing.T) {
 			"source_key_id": "nonexistent-key",
 			"dest_backend": "dst-backend",
 			"dest_key_id": "dest-key",
-			"key_type": "rsa",
 			"algorithm": "RSAES_OAEP_SHA_256"
 		}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
@@ -1165,7 +1163,10 @@ func TestCopyKeyHandler_ExportError(t *testing.T) {
 		key, _ := rsa.GenerateKey(rand.Reader, 2048)
 		srcKs.backend.SetKey("source-key", key)
 
-		srcKs.backend.ExportKeyFunc = func(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+		// The copy wraps the source's material for the destination's own
+		// import parameters, so the export step it can fail in is
+		// ExportKeyTo (go-xkms#154, go-xkms#1218).
+		srcKs.backend.ExportKeyToFunc = func(attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 			return nil, &errs.Message{Msg: "export key failed during copy"}
 		}
 
@@ -1176,7 +1177,6 @@ func TestCopyKeyHandler_ExportError(t *testing.T) {
 			"source_key_id": "source-key",
 			"dest_backend": "dst-backend",
 			"dest_key_id": "dest-key",
-			"key_type": "rsa",
 			"algorithm": "RSAES_OAEP_SHA_256"
 		}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
@@ -1185,6 +1185,9 @@ func TestCopyKeyHandler_ExportError(t *testing.T) {
 		ctx.CopyKeyHandler(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		// A 500's text is withheld from the client and logged (go-xkms#1118).
+		assert.NotContains(t, w.Body.String(), "export key failed during copy")
+		assert.Contains(t, w.Body.String(), ErrInternalError.Error())
 	})
 }
 
@@ -1222,7 +1225,6 @@ func TestCopyKeyHandler_ImportError(t *testing.T) {
 			"source_key_id": "source-key",
 			"dest_backend": "dst-backend",
 			"dest_key_id": "dest-key",
-			"key_type": "rsa",
 			"algorithm": "RSAES_OAEP_SHA_256"
 		}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))

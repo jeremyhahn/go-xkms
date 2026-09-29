@@ -74,13 +74,24 @@ cat "$@" | awk -v threshold="$THRESHOLD" -v exclude="$EXCLUDE_PATTERN" '
 		slash = match(file, /\/[^\/]+\.go$/)
 		pkg = (slash > 0) ? substr(file, 1, slash - 1) : file
 
-		total[pkg] += numstmt
+		# A block appears once per merged lane: count its statements once,
+		# and treat it as covered if any lane hit it.
+		if (!(filespec in blockpkg)) {
+			blockpkg[filespec] = pkg
+			blockstmt[filespec] = numstmt
+		}
 		if (count > 0) {
-			coveredstmt[pkg] += numstmt
+			blockhit[filespec] = 1
 		}
 		seen[pkg] = 1
 	}
 	END {
+		for (b in blockpkg) {
+			total[blockpkg[b]] += blockstmt[b]
+			if (b in blockhit) {
+				coveredstmt[blockpkg[b]] += blockstmt[b]
+			}
+		}
 		print "=== Per-Package Statement Coverage (Threshold: " threshold "%) ==="
 		print ""
 

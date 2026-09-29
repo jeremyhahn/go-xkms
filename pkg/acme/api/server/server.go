@@ -38,6 +38,7 @@ import (
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/gui/webui"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/correlation"
 	"github.com/quic-go/quic-go/http3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -1111,7 +1112,11 @@ func (s *MultiProtocolServer) handleMCP(w http.ResponseWriter, r *http.Request) 
 			code = -32002
 			message = "Unauthorized"
 		}
-		s.writeMCPError(w, req.ID, code, message, err.Error())
+		// The denial reason stays server-side: it can carry RBAC or
+		// user-store detail that is not the caller's to see (go-xkms#1118,
+		// mirroring the gRPC fix in go-xkms#1103).
+		s.logMCPError(r, req.Method, "ACME admin MCP request denied", err)
+		s.writeMCPError(w, req.ID, code, message, nil)
 		return
 	}
 
@@ -1131,14 +1136,32 @@ func (s *MultiProtocolServer) handleMCP(w http.ResponseWriter, r *http.Request) 
 			code = -32002
 			message = "Unauthorized"
 		default:
-			code = -32603
-			message = "Internal error"
+			// An unclassified fault: its text is withheld from the client
+			// and logged server-side instead (go-xkms#1118).
+			s.logMCPError(r, req.Method, "ACME admin MCP internal error withheld from client", err)
+			s.writeMCPError(w, req.ID, -32603, "Internal error", nil)
+			return
 		}
 		s.writeMCPError(w, req.ID, code, message, err.Error())
 		return
 	}
 
 	s.writeMCPResponse(w, req.ID, result)
+}
+
+// logMCPError logs err, whose text an MCP error response withholds from the
+// client, with the method, the request path and the request's correlation
+// ID.
+func (s *MultiProtocolServer) logMCPError(r *http.Request, method, msg string, err error) {
+	attrs := []any{
+		slog.String("method", method),
+		slog.String("path", r.URL.Path),
+		slog.Any("error", err),
+	}
+	if id := correlation.GetCorrelationID(r.Context()); id != "" {
+		attrs = append(attrs, slog.String("request_id", id))
+	}
+	s.logger.ErrorContext(r.Context(), msg, attrs...)
 }
 
 // routeMCPMethod routes MCP method calls to the appropriate service method

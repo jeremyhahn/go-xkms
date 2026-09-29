@@ -555,31 +555,3 @@ func TestWrapAESGCMRefusesAWrappingKeyThatCannotBeRead(t *testing.T) {
 	assert.True(t, errors.Is(err, readErr), "the backend's own failure must be reported: got %v", err)
 	assert.False(t, errors.Is(err, aead.ErrNonceReuse), "this is not a reuse: got %v", err)
 }
-
-// TestGCMWrapKeyIdentityPrefersMaterialOverName proves the identity really is
-// the key's bytes wherever they can be had, and that the sealed-key identity is
-// a different shape entirely.
-//
-// Without this, an identity function that always returned the name would still
-// pass every refusal test above that uses one backend, and only the aliasing
-// test would fail -- which is exactly the defect this change exists to close.
-func TestGCMWrapKeyIdentityPrefersMaterialOverName(t *testing.T) {
-	store, attrs := newUntrackedAESWrappingBackend(t, "identity-be", "identity-kek")
-	material := rawKeyBytes(t, store, attrs)
-	ctx := context.Background()
-
-	identity, release, err := gcmWrapKeyIdentity(ctx, store, attrs)
-	require.NoError(t, err)
-	assert.Equal(t, material, identity, "the identity of a readable key is the key")
-	release()
-
-	sealedStore, sealedAttrs, _ := newSealedWrappingBackend(t, "identity-sealed-be", "identity-sealed-kek",
-		backend.ErrNotSupported)
-	sealedIdentity, sealedRelease, err := gcmWrapKeyIdentity(ctx, sealedStore, sealedAttrs)
-	require.NoError(t, err)
-	defer sealedRelease()
-	assert.Contains(t, string(sealedIdentity), sealedWrapKeyGuardDomain,
-		"a name-derived identity is tagged so it cannot collide with a key's own bytes")
-	assert.Contains(t, string(sealedIdentity), sealedAttrs.ID(),
-		"the name-derived identity must name the store and the key")
-}

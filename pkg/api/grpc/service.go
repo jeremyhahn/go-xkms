@@ -16,9 +16,6 @@ package grpc
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -370,6 +367,15 @@ func (s *Service) GetBackendInfo(ctx context.Context, req *pb.GetBackendInfoRequ
 }
 
 // GenerateKey generates a new cryptographic key
+// GenerateKey generates a new key.
+//
+// Generation belongs to the service layer, which owns backend resolution,
+// the algorithm and key-purpose vocabularies, the symmetric/asymmetric
+// split, curve and RSA-size validation (including the 2048-bit floor,
+// go-xkms#1204), and the exportability contract
+// (pkg/xkms/servicer_key.go's buildKeyAttributes). This handler used to
+// reimplement all of that so it could drift from REST, MCP and the embedded
+// transport's own copies (go-xkms#1214).
 func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (*pb.GenerateKeyResponse, error) {
 	// Validate request
 	if req.KeyId == "" {
@@ -389,155 +395,38 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		return nil, err
 	}
 
-	// Get keystore
-	ks, err := s.lookupBackend(req.Backend)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
-	}
-
-	// Parse key type
-	keyType := types.ParseKeyType(req.KeyType)
-	// Default to KeyTypeSigning if the parsed key type is invalid
-	// (e.g., when req.KeyType is an algorithm name like "rsa", "ecdsa", "ed25519")
-	if keyType == 0 {
-		keyType = types.KeyTypeSigning
-	}
-
-	hashAlg, hashErr := parseHashAlgorithm(req.Hash)
-	if hashErr != nil {
-		return nil, mapKeyOpError(ctx, s.xkmsService, hashErr)
-	}
-
-	// Build key attributes
-	attrs := &types.KeyAttributes{
-		CN:         req.KeyId,
-		KeyType:    keyType,
-		StoreType:  types.StoreType(req.Backend),
-		Hash:       hashAlg,
-		Partition:  types.Partition(req.Partition),
+	resp, err := s.xkmsService.GenerateKey(ctx, &transport.GenerateKeyRequest{
+		KeyID:      req.KeyId,
+		Backend:    req.Backend,
+		KeyType:    req.KeyType,
+		KeySize:    int(req.KeySize),
+		Curve:      req.Curve,
+		Hash:       req.Hash,
+		Algorithm:  req.Algorithm,
 		Exportable: req.Exportable,
 		Sensitive:  req.GetSensitive(),
-	}
-
-	// Set algorithm-specific attributes
-	var privKey crypto.PrivateKey
-	algorithm := req.Algorithm
-	switch {
-	case types.AlgorithmRSA.Equals(algorithm):
-		keySize := int(req.KeySize)
-		if keySize == 0 {
-			keySize = types.RSAKeySize2048 // Default
-		}
-		attrs.KeyAlgorithm = x509.RSA
-		attrs.RSAAttributes = &types.RSAAttributes{
-			KeySize: keySize,
-		}
-		privKey, err = ks.GenerateRSA(ctx, attrs)
-
-	case types.AlgorithmECDSA.Equals(algorithm):
-		curve := req.Curve
-		if curve == "" {
-			curve = string(types.CurveP256) // Default
-		}
-		attrs.KeyAlgorithm = x509.ECDSA
-		parsedCurve, curveErr := types.ParseCurve(curve)
-		if curveErr != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid curve: %v", curveErr)
-		}
-		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: parsedCurve,
-		}
-		privKey, err = ks.GenerateECDSA(ctx, attrs)
-
-	case types.AlgorithmEd25519.Equals(algorithm):
-		attrs.KeyAlgorithm = x509.Ed25519
-		privKey, err = ks.GenerateEd25519(ctx, attrs)
-
-	case symmetricAlgorithm(algorithm) != "":
-		// Handle symmetric key generation
-		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
-		if !ok {
-			return nil, status.Error(codes.Unimplemented, "backend does not support symmetric key generation")
-		}
-
-		symAlgorithm := symmetricAlgorithm(algorithm)
-
-		// A bare "symmetric" or "secret" names no cipher, so the key size
-		// selects one. A request that named its cipher outright keeps it: the
-		// size is already implied by the name, and overriding it here would
-		// generate a key the caller did not ask for.
-		if types.AlgorithmSymmetric.Equals(algorithm) || types.KeyTypeStringSecret.Equals(algorithm) {
-			switch int(req.KeySize) {
-			case 128:
-				symAlgorithm = types.SymmetricAES128GCM
-			case 192:
-				symAlgorithm = types.SymmetricAES192GCM
-			case 256, 0:
-				symAlgorithm = types.SymmetricAES256GCM
-			default:
-				return nil, status.Errorf(codes.InvalidArgument, "invalid key size for symmetric key: %d", req.KeySize)
-			}
-		}
-
-		attrs.SymmetricAlgorithm = symAlgorithm
-		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
-
-		_, err = symBackend.GenerateSymmetricKey(ctx, attrs)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to generate symmetric key: %v", err)
-		}
-
-		// Symmetric keys have no public key
-		return &pb.GenerateKeyResponse{
-			KeyId:     req.KeyId,
-			Backend:   req.Backend,
-			KeyType:   req.KeyType,
-			CreatedAt: timestamppb.Now(),
-		}, nil
-
-	default:
-		return nil, status.Errorf(codes.InvalidArgument, "unsupported algorithm: %s", algorithm)
-	}
-
+		Partition:  req.Partition,
+		TenantID:   callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, wrapWriteError(ctx, s.xkmsService, err, codes.Internal, "failed to generate key: %v", err)
-	}
-
-	// Extract public key PEM
-	publicKeyPem, err := extractPublicKeyPEM(privKey)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to extract public key: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.GenerateKeyResponse{
 		KeyId:        req.KeyId,
 		Backend:      req.Backend,
 		KeyType:      req.KeyType,
-		PublicKeyPem: publicKeyPem,
+		PublicKeyPem: resp.PublicKeyPEM,
 		CreatedAt:    timestamppb.Now(),
 	}, nil
 }
 
-// symmetricAlgorithm resolves an algorithm name to the symmetric cipher it
-// selects, or "" when the name is not a symmetric one.
+// ListKeys lists the keys in the specified backend.
 //
-// It mirrors the service layer's own parsing (xkms's parseSymmetricAlgorithm,
-// which is unexported): every spelling types.ParseAEADAlgorithm accepts, plus
-// the two bare names that mean "a symmetric key, you pick the cipher". This
-// transport used to match the literal "symmetric" and nothing else, so a
-// request naming its cipher outright -- "aes-256-gcm", "chacha20-poly1305" --
-// was refused as an unsupported algorithm even though the service accepts it.
-func symmetricAlgorithm(algorithm string) types.SymmetricAlgorithm {
-	if sym := types.ParseAEADAlgorithm(algorithm).ToSymmetricAlgorithm(); sym != "" {
-		return sym
-	}
-	if types.AlgorithmSymmetric.Equals(algorithm) || types.KeyTypeStringSecret.Equals(algorithm) {
-		return types.SymmetricAES256GCM
-	}
-	return ""
-}
-
-// ListKeys lists all keys in the specified backend
+// The listing belongs to the service layer, which confines it to the caller's
+// tenant: a tenant sees only its own keys, and Total counts only those. This
+// RPC used to list the unscoped backend itself, so any tenant could enumerate
+// every other tenant's keys (go-xkms#1218).
 func (s *Service) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.ListKeysResponse, error) {
 	if req.Backend == "" {
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
@@ -547,49 +436,36 @@ func (s *Service) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.Li
 		return nil, err
 	}
 
-	ks, err := s.lookupBackend(req.Backend)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	attrs, err := ks.ListKeys(ctx)
+	// The proto's limit/offset fields map to a page-based request for
+	// consistency across protocols.
+	listed, err := s.xkmsService.ListKeys(ctx, req.Backend,
+		transport.WithPageRequest(grpcPageRequest(int(req.Limit), int(req.Offset))))
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
-	// Apply pagination using the shared helper. The proto uses limit/offset
-	// fields which map to a page-based request for consistency across protocols.
-	pr := grpcPageRequest(int(req.Limit), int(req.Offset))
-	paginatedAttrs, _ := transport.ApplyPagination(attrs, pr)
-
-	// Convert to protobuf format
-	keys := make([]*pb.KeyInfo, len(paginatedAttrs))
-	for i, attr := range paginatedAttrs {
-		keys[i] = &pb.KeyInfo{
-			KeyId:     attr.CN,
-			Backend:   req.Backend,
-			KeyType:   attr.KeyType.String(),
-			Algorithm: attr.AlgorithmString(),
-			Partition: string(attr.Partition),
-			CreatedAt: timestamppb.Now(), // Note: actual creation time not tracked in KeyAttributes
-		}
-
-		// Add algorithm-specific info
-		if attr.RSAAttributes != nil {
-			keys[i].KeySize = int32(attr.RSAAttributes.KeySize) // #nosec G115 - RSA key size fits in int32
-		}
-		if attr.ECCAttributes != nil {
-			keys[i].Curve = types.CurveName(attr.ECCAttributes.Curve)
-		}
+	keys := make([]*pb.KeyInfo, 0, len(listed.Keys))
+	for _, key := range listed.Keys {
+		keys = append(keys, keyInfoToProto(key))
 	}
 
 	return &pb.ListKeysResponse{
 		Keys:  keys,
-		Total: int32(len(attrs)), // #nosec G115 - Key count fits in int32
+		Total: int32(listed.Total), // #nosec G115 - Key count fits in int32
 	}, nil
 }
 
-// GetKey retrieves information about a specific key
+// GetKey retrieves information about a specific key.
+//
+// The lookup belongs to the service layer, which confines it to the caller's
+// tenant. Another tenant's key is NotFound with exactly the message a key no
+// tenant holds produces, so the answer does not reveal that it exists. This
+// RPC used to scan the unscoped backend, and returned any tenant's key to any
+// caller that named it (go-xkms#1218).
 func (s *Service) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetKeyResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -602,60 +478,35 @@ func (s *Service) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetKey
 		return nil, err
 	}
 
-	ks, err := s.lookupBackend(req.Backend)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
+	}
+
+	resp, err := s.xkmsService.GetKey(ctx, req.Backend, req.KeyId)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
-	// List all keys and find the matching one
-	attrs, err := ks.ListKeys(ctx)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
+	return &pb.GetKeyResponse{
+		Key:          keyInfoToProto(resp.KeyInfo),
+		PublicKeyPem: resp.PublicKeyPEM,
+	}, nil
+}
+
+// keyInfoToProto renders the service layer's KeyInfo as this transport's
+// wire shape. Key attributes carry no creation time, so CreatedAt reports the
+// time of the response, as it always has.
+func keyInfoToProto(key transport.KeyInfo) *pb.KeyInfo {
+	return &pb.KeyInfo{
+		KeyId:     key.KeyID,
+		Backend:   key.Backend,
+		KeyType:   key.KeyType,
+		Algorithm: key.Algorithm,
+		KeySize:   int32(key.KeySize), // #nosec G115 - RSA key size fits in int32
+		Curve:     key.Curve,
+		Partition: key.Partition,
+		CreatedAt: timestamppb.Now(),
 	}
-
-	for _, attr := range attrs {
-		if attr.CN == req.KeyId {
-			keyInfo := &pb.KeyInfo{
-				KeyId:     attr.CN,
-				Backend:   req.Backend,
-				KeyType:   attr.KeyType.String(),
-				Algorithm: attr.AlgorithmString(),
-				Partition: string(attr.Partition),
-				CreatedAt: timestamppb.Now(),
-			}
-
-			if attr.RSAAttributes != nil {
-				keyInfo.KeySize = int32(attr.RSAAttributes.KeySize) // #nosec G115 - RSA key size fits in int32
-			}
-			if attr.ECCAttributes != nil {
-				keyInfo.Curve = types.CurveName(attr.ECCAttributes.Curve)
-			}
-
-			// Extract public key PEM for asymmetric signing keys
-			var publicKeyPem string
-			if attr.KeyType == types.KeyTypeSigning {
-				signer, err := ks.Signer(ctx, attr)
-				if err == nil {
-					pubKey := signer.Public()
-					pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
-					if err == nil {
-						pemBlock := &pem.Block{
-							Type:  "PUBLIC KEY",
-							Bytes: pubKeyBytes,
-						}
-						publicKeyPem = string(pem.EncodeToMemory(pemBlock))
-					}
-				}
-			}
-
-			return &pb.GetKeyResponse{
-				Key:          keyInfo,
-				PublicKeyPem: publicKeyPem,
-			}, nil
-		}
-	}
-
-	return nil, status.Errorf(codes.NotFound, "key not found: %s", req.KeyId)
 }
 
 // Sign signs data with the specified key
@@ -735,7 +586,11 @@ func (s *Service) Verify(ctx context.Context, req *pb.VerifyRequest) (*pb.Verify
 	return &pb.VerifyResponse{Valid: resp.Valid, Message: message}, nil
 }
 
-// DeleteKey deletes a key from the backend
+// DeleteKey deletes a key from the backend.
+//
+// Deletion belongs to the service layer, which resolves the key within the
+// caller's tenant; another tenant's key is NotFound, indistinguishable from a
+// key no tenant holds (go-xkms#1218).
 func (s *Service) DeleteKey(ctx context.Context, req *pb.DeleteKeyRequest) (*pb.DeleteKeyResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -748,21 +603,12 @@ func (s *Service) DeleteKey(ctx context.Context, req *pb.DeleteKeyRequest) (*pb.
 		return nil, err
 	}
 
-	ks, err := s.lookupTenantBackend(ctx, req.Backend)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	// Find key attributes
-	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
-	}
-
-	// Delete the key
-	err = ks.DeleteKey(ctx, attrs)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to delete key: %v", err)
+	if err := s.xkmsService.DeleteKey(ctx, req.Backend, req.KeyId); err != nil {
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.DeleteKeyResponse{
@@ -771,7 +617,11 @@ func (s *Service) DeleteKey(ctx context.Context, req *pb.DeleteKeyRequest) (*pb.
 	}, nil
 }
 
-// RotateKey rotates an existing key
+// RotateKey rotates an existing key.
+//
+// Rotation belongs to the service layer, which resolves the key within the
+// caller's tenant; another tenant's key is NotFound, indistinguishable from a
+// key no tenant holds (go-xkms#1218).
 func (s *Service) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*pb.RotateKeyResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -784,34 +634,24 @@ func (s *Service) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*pb.
 		return nil, err
 	}
 
-	ks, err := s.lookupTenantBackend(ctx, req.Backend)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	// Find key attributes
-	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
+	resp, err := s.xkmsService.RotateKey(ctx, &transport.RotateKeyRequest{
+		Backend:  req.Backend,
+		KeyID:    req.KeyId,
+		TenantID: callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
-	}
-
-	// Rotate the key
-	newKey, err := ks.RotateKey(ctx, attrs)
-	if err != nil {
-		return nil, wrapWriteError(ctx, s.xkmsService, err, codes.Internal, "failed to rotate key: %v", err)
-	}
-
-	// Extract public key PEM
-	publicKeyPem, err := extractPublicKeyPEM(newKey)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to extract public key: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.RotateKeyResponse{
-		KeyId:        req.KeyId,
+		KeyId:        resp.KeyID,
 		Backend:      req.Backend,
-		KeyType:      attrs.KeyType.String(),
-		PublicKeyPem: publicKeyPem,
+		KeyType:      resp.KeyType,
+		PublicKeyPem: resp.PublicKeyPEM,
 		RotatedAt:    timestamppb.Now(),
 	}, nil
 }
@@ -1262,13 +1102,20 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		Partition: types.Partition(req.Partition),
 	}
 
-	// Set algorithm-specific attributes based on key_type field (expected to be algorithm name)
+	// Set algorithm-specific attributes based on key_type field (expected to
+	// be algorithm name). KeyType (the purpose enum, not the wire field of
+	// the same name) is set in every branch, matching ImportKey's own
+	// switch: without it attrs.Validate() below refused every request here,
+	// asymmetric and symmetric alike, with "key type is required" -- the
+	// attributes this ceremony negotiated a wrapping key for never actually
+	// named a purpose.
 	switch {
 	case types.AlgorithmRSA.Equals(req.KeyType):
 		keySize := int(req.KeySize)
 		if keySize == 0 {
 			keySize = types.RSAKeySize2048 // Default
 		}
+		attrs.KeyType = types.KeyTypeSigning
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: keySize,
@@ -1278,6 +1125,7 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		if curve == "" {
 			curve = string(types.CurveP256) // Default
 		}
+		attrs.KeyType = types.KeyTypeSigning
 		attrs.KeyAlgorithm = x509.ECDSA
 		parsedCurve, curveErr := types.ParseCurve(curve)
 		if curveErr != nil {
@@ -1287,8 +1135,10 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 			Curve: parsedCurve,
 		}
 	case types.AlgorithmEd25519.Equals(req.KeyType):
+		attrs.KeyType = types.KeyTypeSigning
 		attrs.KeyAlgorithm = x509.Ed25519
 	case types.AlgorithmSymmetric.Equals(req.KeyType):
+		attrs.KeyType = types.KeyTypeSecret
 		// For symmetric keys, set algorithm based on key size
 		switch req.KeySize {
 		case 128:
@@ -1302,6 +1152,18 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		}
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported key type: %s", req.KeyType)
+	}
+
+	// The service layer's buildKeyAttributes runs this same check
+	// (pkg/xkms/servicer_key.go's validateKeyAttributes) as the last step
+	// before generation or import, enforcing the 2048-bit RSA floor
+	// (go-xkms#1204) among other invariants. This ceremony negotiates the
+	// parameters for a key of the same shape ImportKey will later be asked to
+	// store, so it must refuse an undersized request just as early rather
+	// than hand back working import parameters for a key the import step
+	// will refuse anyway (go-xkms#1214).
+	if err := attrs.Validate(); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid key attributes: %v", err)
 	}
 
 	// Parse wrapping algorithm
@@ -1598,6 +1460,17 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 	// so no caller could import a non-extractable secret key.
 	xkms.ApplyImportExportability(attrs, req.Exportable, req.Sensitive)
 
+	// The service layer's buildKeyAttributes runs this same check
+	// (pkg/xkms/servicer_key.go's validateKeyAttributes) as the last step
+	// before generation or import, enforcing the 2048-bit RSA floor
+	// (go-xkms#1204) among other invariants. This path used to call
+	// importBackend.ImportKey directly from attributes that had never been
+	// through it, so an RSA-1024 import reached the backend unchecked while
+	// the same request to GenerateKey was refused (go-xkms#1214).
+	if err := attrs.Validate(); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid key attributes: %v", err)
+	}
+
 	// Create wrapped key material
 	wrapped := &backend.WrappedKeyMaterial{
 		WrappedKey:  req.WrappedKey,
@@ -1619,7 +1492,11 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 	}, nil
 }
 
-// ExportKey exports a key in wrapped form for secure transport
+// ExportKey exports a key in wrapped form for secure transport.
+//
+// Export belongs to the service layer, which resolves the key within the
+// caller's tenant; another tenant's key is NotFound, indistinguishable from a
+// key no tenant holds (go-xkms#1218).
 func (s *Service) ExportKey(ctx context.Context, req *pb.ExportKeyRequest) (*pb.ExportKeyResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -1635,42 +1512,25 @@ func (s *Service) ExportKey(ctx context.Context, req *pb.ExportKeyRequest) (*pb.
 		return nil, err
 	}
 
-	ks, err := s.lookupTenantBackend(ctx, req.Backend)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	// Check if the backend supports the export half of the ceremony. Asserts
-	// backend.ExportBackend, not the full ImportExportBackend union: a
-	// backend that only supports import (AWS KMS, by hardware design) must
-	// still report the export-specific refusal here rather than an
-	// undifferentiated "neither" message.
-	backendImpl := ks.KeyProvider()
-	exportBackend, ok := backendImpl.(backend.ExportBackend)
-	if !ok {
-		return nil, status.Errorf(codes.Unimplemented, "backend %s does not support export operations", req.Backend)
-	}
-
-	// Find key attributes
-	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
+	resp, err := s.xkmsService.ExportKey(ctx, &transport.ExportKeyRequest{
+		Backend:   req.Backend,
+		KeyID:     req.KeyId,
+		Algorithm: req.WrappingAlgorithm,
+		TenantID:  callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
-	}
-
-	// Parse wrapping algorithm
-	wrappingAlg := backend.WrappingAlgorithm(req.WrappingAlgorithm)
-
-	// Export the key
-	wrapped, err := exportBackend.ExportKey(ctx, attrs, wrappingAlg)
-	if err != nil {
-		return nil, mapImportExportError("failed to export key", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.ExportKeyResponse{
-		WrappedKey:  wrapped.WrappedKey,
-		Algorithm:   string(wrapped.Algorithm),
-		ImportToken: wrapped.ImportToken,
-		Metadata:    wrapped.Metadata,
+		WrappedKey:  resp.WrappedKeyMaterial,
+		Algorithm:   resp.Algorithm,
+		ImportToken: resp.ImportToken,
+		Metadata:    resp.Metadata,
 	}, nil
 }
 
@@ -1802,7 +1662,16 @@ func (s *Service) UnwrapKeyByID(ctx context.Context, req *pb.UnwrapKeyByIDReques
 	}, nil
 }
 
-// CopyKey copies a key from one backend to another using export/import
+// CopyKey copies a key from one backend to another using export/import.
+//
+// The copy belongs to the service layer, which resolves the source key within
+// the caller's tenant, imports the copy into the caller's tenant in the
+// destination backend, and wraps the material for the destination's own
+// import parameters; the copy takes its attributes from the source key. This
+// RPC used to import the copy through the UNSCOPED destination backend, so a
+// tenant's copy landed with no tenant at all, and wrapped the material under
+// a token only the source backend could open, so a copy between two backend
+// instances always failed (go-xkms#1218).
 func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.CopyKeyResponse, error) {
 	if req.SourceBackend == "" {
 		return nil, status.Error(codes.InvalidArgument, "source_backend is required")
@@ -1824,78 +1693,26 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 		return nil, err
 	}
 
-	// Get source keystore
-	sourceKs, err := s.lookupTenantBackend(ctx, req.SourceBackend)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
+	}
+
+	resp, err := s.xkmsService.CopyKey(ctx, &transport.CopyKeyRequest{
+		SourceBackend: req.SourceBackend,
+		SourceKeyID:   req.SourceKeyId,
+		DestBackend:   req.DestBackend,
+		DestKeyID:     req.DestKeyId,
+		Algorithm:     req.WrappingAlgorithm,
+		TenantID:      callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "source backend not found: %v", err)
-	}
-
-	// Get destination keystore
-	destKs, err := s.lookupBackend(req.DestBackend)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "destination backend not found: %v", err)
-	}
-
-	// Verify source backend supports export. Asserts backend.ExportBackend,
-	// not the full ImportExportBackend union: the source backend below is
-	// only ever asked to ExportKey.
-	sourceBackend := sourceKs.KeyProvider()
-	sourceImportExport, ok := sourceBackend.(backend.ExportBackend)
-	if !ok {
-		return nil, status.Errorf(codes.Unimplemented, "source backend %s does not support export operations", req.SourceBackend)
-	}
-
-	// Verify destination backend supports import. Asserts
-	// backend.ImportBackend, not the full ImportExportBackend union: the
-	// destination backend below is only ever asked to ImportKey, so AWS
-	// KMS -- which genuinely cannot export but does support import -- is a
-	// valid destination even though it would never be a valid source.
-	destBackend := destKs.KeyProvider()
-	destImportExport, ok := destBackend.(backend.ImportBackend)
-	if !ok {
-		return nil, status.Errorf(codes.Unimplemented, "destination backend %s does not support import operations", req.DestBackend)
-	}
-
-	// Find source key attributes
-	sourceAttrs, err := s.findKeyAttributes(ctx, sourceKs, req.SourceKeyId)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "source key not found: %v", err)
-	}
-
-	// Parse wrapping algorithm
-	wrappingAlg := backend.WrappingAlgorithm(req.WrappingAlgorithm)
-
-	// Step 1: Export the key from source backend
-	wrapped, err := sourceImportExport.ExportKey(ctx, sourceAttrs, wrappingAlg)
-	if err != nil {
-		return nil, mapImportExportError("failed to export key from source backend", err)
-	}
-
-	// Step 2: Create destination key attributes (copy from source but with new ID)
-	destAttrs := &types.KeyAttributes{
-		CN:                 sourceAttrs.CN,
-		KeyType:            sourceAttrs.KeyType,
-		KeyAlgorithm:       sourceAttrs.KeyAlgorithm,
-		Hash:               sourceAttrs.Hash,
-		StoreType:          types.StoreType(req.DestBackend),
-		Partition:          sourceAttrs.Partition,
-		RSAAttributes:      sourceAttrs.RSAAttributes,
-		ECCAttributes:      sourceAttrs.ECCAttributes,
-		SymmetricAlgorithm: sourceAttrs.SymmetricAlgorithm,
-	}
-	// Update CN to destination key ID
-	destAttrs.CN = req.DestKeyId
-
-	// Step 3: Import the key into destination backend
-	err = destImportExport.ImportKey(ctx, destAttrs, wrapped)
-	if err != nil {
-		return nil, mapImportExportError("failed to import key into destination backend", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.CopyKeyResponse{
 		Success:   true,
-		Message:   fmt.Sprintf("key %s copied from %s to %s as %s", req.SourceKeyId, req.SourceBackend, req.DestBackend, req.DestKeyId),
-		DestKeyId: req.DestKeyId,
+		Message:   fmt.Sprintf("key %s copied from %s to %s as %s", req.SourceKeyId, req.SourceBackend, req.DestBackend, resp.KeyID),
+		DestKeyId: resp.KeyID,
 	}, nil
 }
 
@@ -2268,36 +2085,6 @@ func parseHashAlgorithm(hash string) (crypto.Hash, error) {
 	}
 
 	return h, nil
-}
-
-func extractPublicKeyPEM(privKey crypto.PrivateKey) (string, error) {
-	var pubKey crypto.PublicKey
-
-	switch k := privKey.(type) {
-	case *rsa.PrivateKey:
-		pubKey = &k.PublicKey
-	case *ecdsa.PrivateKey:
-		pubKey = &k.PublicKey
-	case ed25519.PrivateKey:
-		pubKey = k.Public()
-	case crypto.Signer:
-		// Handle OpaqueKey and other Signer implementations
-		pubKey = k.Public()
-	default:
-		return "", &errs.Message{Msg: "unsupported key type"}
-	}
-
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
-	if err != nil {
-		return "", err
-	}
-
-	pemBlock := &pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: pubKeyBytes,
-	}
-
-	return string(pem.EncodeToMemory(pemBlock)), nil
 }
 
 func parseCertFromPEM(certPem string) (*x509.Certificate, error) {

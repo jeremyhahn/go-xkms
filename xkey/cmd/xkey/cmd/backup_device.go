@@ -17,11 +17,9 @@ package cmd
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -75,15 +73,17 @@ directory -- sealed with XChaCha20-Poly1305 before it leaves this machine. The
 phone stores the sealed envelope and can return it later for restore; it never
 sees the plaintext.
 
-If no password is given a random 256-bit key is generated and printed. Store
-it securely: without it the backup on the phone cannot be read.
+If no password is supplied (--password-stdin or XKEY_BACKUP_PASSWORD) a
+random 256-bit key is generated and printed. Store it securely: without it
+the backup on the phone cannot be read. A password is stretched with
+Argon2id under a random salt recorded in the envelope header.
 
 The command fails rather than sending an empty backup when every data store is
 empty or unreachable.
 
 Examples:
   xkey backup to-device
-  xkey backup to-device --password mypassword
+  xkey backup to-device --password-stdin < password.txt
   xkey backup to-device --device "Pixel 8"
   xkey backup to-device --timeout 2m`,
 	RunE: runBackupToDevice,
@@ -102,7 +102,7 @@ Requires the same password or key used by "xkey backup to-device"; any other
 credential fails with a decryption error and nothing is written.
 
 Examples:
-  xkey backup from-device --password mypassword
+  xkey backup from-device --password-stdin < password.txt
   xkey backup from-device --key aabbccdd...
   xkey backup from-device --device "Pixel 8" --timeout 2m`,
 	RunE: runBackupFromDevice,
@@ -115,15 +115,14 @@ func init() {
 	// To-device flags
 	backupToDeviceCmd.Flags().String("device", "", "Paired device name to send backup to")
 	backupToDeviceCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	backupToDeviceCmd.Flags().String("password", "",
-		"Encryption password (if not set, a random key is generated)")
+	backupPasswordSource.addFlags(backupToDeviceCmd)
 	addBackupStoreFlags(backupToDeviceCmd)
 	addBarrierPasswordFlags(backupToDeviceCmd)
 
 	// From-device flags
 	backupFromDeviceCmd.Flags().String("device", "", "Paired device name to restore from")
 	backupFromDeviceCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	backupFromDeviceCmd.Flags().String("password", "", "Decryption password")
+	backupPasswordSource.addFlags(backupFromDeviceCmd)
 	backupFromDeviceCmd.Flags().String("key", "", "Hex-encoded decryption key")
 	addBackupStoreFlags(backupFromDeviceCmd)
 	addBarrierPasswordFlags(backupFromDeviceCmd)
@@ -140,7 +139,6 @@ func init() {
 func runBackupToDevice(cmd *cobra.Command, args []string) (err error) {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
-	password, _ := cmd.Flags().GetString("password")
 	out := cmd.OutOrStdout()
 
 	device, err := resolvePairedDevice(deviceName)
@@ -151,10 +149,11 @@ func runBackupToDevice(cmd *cobra.Command, args []string) (err error) {
 	// Seal the backup before any radio work: an unreachable data store or an
 	// empty backup must fail here rather than after the phone has been asked
 	// to store something.
-	key, err := deviceBackupKey(out, password)
+	key, err := resolveSealingKey(cmd, ErrBackupToDeviceFailed)
 	if err != nil {
 		return err
 	}
+	defer key.Wipe()
 
 	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd), true)
 	if err != nil {
@@ -250,16 +249,16 @@ func runBackupToDevice(cmd *cobra.Command, args []string) (err error) {
 func runBackupFromDevice(cmd *cobra.Command, args []string) (err error) {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
-	password, _ := cmd.Flags().GetString("password")
-	keyHex, _ := cmd.Flags().GetString("key")
 	out := cmd.OutOrStdout()
 
 	// The credential is required to open the envelope, so refuse before
 	// connecting rather than after prompting the operator for biometrics.
-	key, err := resolveDecryptionKey(password, keyHex)
+	// A password's key is derived once the envelope's KDF record arrives.
+	credential, err := resolveBackupCredential(cmd)
 	if err != nil {
 		return err
 	}
+	defer credential.wipe()
 
 	device, err := resolvePairedDevice(deviceName)
 	if err != nil {
@@ -313,6 +312,11 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) (err error) {
 			Err:    ErrBackupDecryptFailed,
 			Detail: ": phone returned data that is not an xkey backup envelope",
 		}
+	}
+
+	key, err := credential.keyFor(&encrypted)
+	if err != nil {
+		return err
 	}
 
 	svc, err := backup.NewService(&backup.Config{DeviceName: getHostname()})
@@ -371,23 +375,6 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) (err error) {
 	_, _ = fmt.Fprintln(out, "Backup restored from device successfully.")
 
 	return nil
-}
-
-// deviceBackupKey derives the sealing key from the given password, or
-// generates a random one and prints it so the operator can keep it.
-func deviceBackupKey(out io.Writer, password string) ([]byte, error) {
-	if password != "" {
-		_, _ = fmt.Fprintln(out, "Using password-derived encryption key.")
-		return deriveKey(password), nil
-	}
-
-	key, err := generateRandomKey()
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrBackupToDeviceFailed, Cause: err}
-	}
-	_, _ = fmt.Fprintf(out, "Generated encryption key (save this):\n  %s\n\n", hex.EncodeToString(key))
-
-	return key, nil
 }
 
 // resolvePairedDevice loads the paired device configuration and selects the

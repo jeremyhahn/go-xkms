@@ -154,6 +154,55 @@ response came back with no wrapping key, and `partition`, `metadata` and
 have worked; the REST body also now carries `partition`, `metadata` and
 `key_spec`, and `GenerateKeyRequest` carries `partition`.
 
+### The key lifecycle RPCs are service adapters on every transport (go-xkms#1218)
+
+`GetKey`, `ListKeys`, `DeleteKey`, `RotateKey`, `ExportKey` and `CopyKey` on
+REST (`pkg/api/rest/handlers.go:327`, `:369`, `:522`, `:557`, `:1600`,
+`:1660`) and gRPC (`pkg/api/grpc/service.go:430`, `:469`, `:594`, `:625`,
+`:1500`, `:1675`) validate their request, authorize it, and call the
+matching `XKMSService` method; they no longer touch a backend. MCP and the
+embedded transport already reached the service for `GetKey`, `RotateKey` and
+`CopyKey`.
+
+**Tenancy.** Every one of these resolves the key, or lists keys, inside the
+caller's tenant, taken from the authenticated identity — never from the
+request. A tenant naming another tenant's key gets exactly the response a key
+no tenant holds gets: REST `404` with the same body, gRPC `NotFound` with the
+same message. A listing returns the caller's keys only, and its `total`
+counts only those. A platform-scoped caller (no identity, or the reserved
+system tenant) sees every tenant's keys, as before. Before go-xkms#1218, REST
+let any tenant read, list, delete, rotate, export and copy any other tenant's
+keys, and gRPC let any tenant read and list them.
+
+**`CopyKey` semantics.** A copy is the same key under a new name: the
+destination takes the source key's algorithm, size, curve, hash and partition
+(`pkg/xkms/servicer_key.go:566`). The copy lands in the caller's tenant in the
+destination backend, and the material is wrapped for the destination's own
+import parameters (`ExportKeyTo`). REST's `CopyKeyRequest` therefore no longer
+has `key_type`, `key_size`, `curve`, `hash` or `aes_key_size`, and
+`key_type` is no longer required; a client that still sends them is not
+refused, the fields are ignored. gRPC's `CopyKey` already took no key
+description; its copy used to land with no tenant at all.
+
+**Wire changes.** Response shapes are unchanged except:
+
+| RPC | Transport | Change |
+|---|---|---|
+| not-found on Get, Delete, Rotate, Export | REST | body `error` is `keystore: key not found` (was `backend: key not found`) |
+| not-found on Copy | REST | body `error` is `source key backend: keystore: key not found` (was `source key not found: <id>`) |
+| not-found on Delete, Rotate, Export, Get | gRPC | message is `keystore: key not found` (was `key not found: key <id> not found`) |
+| unknown backend | REST, gRPC | message is `keystore: backend not found: <name>` (Copy: prefixed `source backend: ` / `destination backend: `) |
+| malformed backend name | REST, gRPC | `400` / `InvalidArgument` (REST was `404`, gRPC `NotFound`) |
+| backend with no import/export support | REST, gRPC | `501` / `Unimplemented` with `keystore: operation not supported: backend <name>: backend: key export not supported` (or `key import not supported` for a Copy destination) |
+| Get whose key handle cannot be read | REST | `200` with the metadata and no `public_key_pem` (was `500`) |
+| Get | gRPC | `public_key_pem` is filled for every asymmetric key, not only signing keys |
+| Rotate of a key with no encodable public key | gRPC | `OK` with an empty `public_key_pem` (was `Internal`) |
+| no service wired | REST, gRPC | `503` / `Unavailable` |
+
+`transport.KeyInfo` gained `key_size`, `curve` and `partition`, and
+`transport.RotateKeyResponse` gained `key_type`, so the service carries what
+gRPC's `KeyInfo` and both transports' rotate responses already reported.
+
 ### Import names the key's algorithm, on every transport
 
 `ImportKey` takes the algorithm of the key being imported in a `key_type` field
@@ -164,6 +213,18 @@ under an identifier that does not describe it.
 
 Do not confuse it with `algorithm`, which on every import request names the
 **wrapping** algorithm the material arrived under.
+
+REST's and gRPC's `ImportKey` and `GetImportParameters` handlers build their
+own `types.KeyAttributes` from these fields rather than calling
+`XKMSService.ImportKey` / `.GetImportParameters` — unlike `GenerateKey`,
+which delegates to the service on every transport as of go-xkms#1214 — because
+the service's import/export capability check requires a backend to support
+export as well as import, which an AWS-KMS-shaped import-only backend does
+not. Both handlers still call `types.KeyAttributes.Validate()` directly on
+the attributes they build, so the same 2048-bit RSA floor `GenerateKey`
+enforces (go-xkms#1204) applies here too. See
+[engineering.md § Import and `GetImportParameters` stay transport-level](engineering.md#import-and-getimportparameters-stay-transport-level-go-xkms1214)
+for the capability-resolution detail and the follow-up it names.
 
 | Transport | field |
 |---|---|
@@ -673,10 +734,10 @@ condition.
   handler that forwards a request-supplied `tenant_id`) — is now
   `ErrCodeInvalidParams`, matching each one's gRPC counterpart in
   `pkg/api/grpc/service.go`. `handleCopyKey`'s terminal
-  `XKMSService.CopyKey` failure, which gRPC has no counterpart for (its
-  `CopyKey` is a from-scratch implementation, not a delegation to the same
-  service method), now routes through `mapKeyOpError` like every other
-  service-layer delegation in this file, rather than a fixed-code wrap; its
+  `XKMSService.CopyKey` failure now routes through `mapKeyOpError` like
+  every other service-layer delegation in this file, rather than a
+  fixed-code wrap — the same service method REST's and gRPC's `CopyKey`
+  delegate to as of go-xkms#1218; its
   `ErrCopyKeyIncomplete` contract-violation sentinel (a nil error with
   `Success: false`) is `ErrCodeInternalError`.
 - **`pkg/api/mcp/handlers_bootstrap.go`**'s `bootstrap.showKeys` — found by

@@ -60,3 +60,36 @@ func eccPublicKey(pub *tpm2.TPMTPublic) (*ecdsa.PublicKey, error) {
 	}
 	return key, nil
 }
+
+// packRawECDSASignature packs a TPM2_Certify or TPM2_CertifyCreation ECDSA
+// signature as the raw r||s pair, each half left-padded to attester's curve
+// field size.
+//
+// This is the wire format a TCG-CSR-IDEVID carries: sgnCertifyInfoSignature
+// and atCertifyInfoSignature store the bare signature value with no algorithm
+// alongside it (TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00
+// r12 section 13.1), and [signatureFromScheme] recovers r and s from it by
+// splitting the buffer exactly in half. TPM2B_ECC_PARAMETER buffers are not
+// required to carry leading zero bytes, so r or s can arrive shorter than the
+// field size; without padding here the two halves would not be the same
+// length and a genuine signature would fail to parse back, or -- for a
+// signature whose two halves happen to differ in leading-zero count by
+// exactly the right amount -- silently split at the wrong point.
+func packRawECDSASignature(attester *tpm2.TPMTPublic, r, s []byte) ([]byte, error) {
+	detail, err := attester.Parameters.ECCDetail()
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrECCPublicArea, Detail: err.Error()}
+	}
+	curve, err := detail.CurveID.Curve()
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrECCPublicArea, Detail: err.Error()}
+	}
+	size := ecpoint.CoordinateSize(curve)
+	if len(r) > size || len(s) > size {
+		return nil, &errs.Detail{Err: ErrECCPublicArea, Detail: "ECDSA signature component wider than the curve field size"}
+	}
+	raw := make([]byte, 2*size)
+	copy(raw[size-len(r):size], r)
+	copy(raw[2*size-len(s):], s)
+	return raw, nil
+}

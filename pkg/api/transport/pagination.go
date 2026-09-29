@@ -87,6 +87,15 @@ func WithSortAsc() ListOption {
 	}
 }
 
+// WithPageRequest applies every field of an already-built PageRequest, for a
+// transport that decodes its pagination parameters into a PageRequest (from
+// an HTTP query, or a proto's limit/offset) and hands them to a servicer.
+func WithPageRequest(req PageRequest) ListOption {
+	return func(pr *PageRequest) {
+		*pr = req
+	}
+}
+
 // BuildPageRequest constructs a PageRequest from the given list options.
 // When no options are provided, an unpaginated request (Page==0) is returned.
 func BuildPageRequest(opts ...ListOption) PageRequest {

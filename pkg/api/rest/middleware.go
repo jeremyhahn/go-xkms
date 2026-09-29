@@ -56,6 +56,10 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
+// Unwrap returns the underlying ResponseWriter, following the
+// http.ResponseController convention.
+func (rw *responseWriter) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
+
 // LoggingMiddleware logs HTTP requests using the configured logger.
 func (s *Server) LoggingMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

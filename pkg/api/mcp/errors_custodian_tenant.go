@@ -36,7 +36,7 @@ func mapCustodianError(err error, operation string) error {
 		return nil
 	}
 	if class, ok := apierrors.ClassOf(apierrors.CustodianSentinelClasses, err); ok {
-		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: &errs.Wrapped{Msg: operation, Err: err}}
+		return classified(jsonRPCCodeForClass(class), &errs.Wrapped{Msg: operation, Err: err})
 	}
 	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
 }
@@ -99,12 +99,12 @@ func mapTenantError(err error, operation string) error {
 		// Matches gRPC's codes.ResourceExhausted; JSON-RPC has no dedicated
 		// member, so this renders through the same internal floor
 		// apierrors.ClassResourceExhausted uses.
-		return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: operation, Err: err}}
+		return classified(ErrCodeInternalError, &errs.Wrapped{Msg: operation, Err: err})
 	}
 
 	for _, entry := range tenantSentinelCodes {
 		if errors.Is(err, entry.sentinel) {
-			return &KeyOpError{Code: entry.code, Err: &errs.Wrapped{Msg: operation, Err: err}}
+			return classified(entry.code, &errs.Wrapped{Msg: operation, Err: err})
 		}
 	}
 

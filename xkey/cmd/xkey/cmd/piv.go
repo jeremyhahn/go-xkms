@@ -59,12 +59,14 @@ var (
 		stdinFlag:  "pkcs11-pin-stdin",
 		envVar:     "XKEY_PIV_PKCS11_PIN",
 		stdinEmpty: ErrPIVPKCS11PINStdinEmpty,
+		stdinRead:  ErrPINInputStdinRead,
 	}
 	pivPKCS11SOPINSource = pinSource{
 		label:      "PKCS#11 Security Officer PIN",
 		stdinFlag:  "pkcs11-so-pin-stdin",
 		envVar:     "XKEY_PIV_PKCS11_SO_PIN",
 		stdinEmpty: ErrPIVPKCS11SOPINStdinEmpty,
+		stdinRead:  ErrPINInputStdinRead,
 	}
 )
 

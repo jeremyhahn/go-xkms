@@ -61,6 +61,23 @@ var (
 	// memory. The value is never kept on the ordinary heap as a fallback
 	// (go-xkms#587).
 	ErrProtectedMemory = errors.New("backup: protected memory allocation failed")
+
+	// ErrLegacyBackupFormat is returned for a version 1 envelope. Version 1
+	// keyed its cipher with an unsalted SHA-256 of the password and carried
+	// no KDF record; such files are refused, never migrated (go-xkms#1202).
+	ErrLegacyBackupFormat = errors.New("backup: unsalted version 1 backup format is no longer supported; re-create the backup")
+
+	// ErrInvalidKey is returned for a sealing key that is not KeySize bytes.
+	ErrInvalidKey = errors.New("backup: invalid sealing key")
+
+	// ErrKeyDerivationFailed is returned when a sealing key cannot be
+	// generated or derived from a password, including when the envelope's
+	// KDF record does not match the parameters its version pins.
+	ErrKeyDerivationFailed = errors.New("backup: key derivation failed")
+
+	// ErrNotPasswordSealed is returned when a password is offered for an
+	// envelope that was sealed with a raw key and so carries no KDF record.
+	ErrNotPasswordSealed = errors.New("backup: backup was sealed with a raw key, not a password")
 )
 
 // DetailError appends detail text directly after a wrapped error while

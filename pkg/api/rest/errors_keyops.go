@@ -51,10 +51,18 @@ var keyOpSentinelStatus = []struct {
 // mapKeyOpError converts an error returned by the xkms service layer's key
 // and crypto operations into an HTTP status response. Validation failures
 // report the offending field verbatim so callers see the same wire-level
-// field name they sent; capability boundaries (a backend that cannot attest,
-// or cannot export) become 501 or 412; unresolved backends and keys become
-// 404. A clustered not-leader condition is surfaced as 421, exactly as
-// handleError does for the rest of the package. Anything else is a 500.
+// field name they sent; a malformed backend name is a 400; capability
+// boundaries (a backend that cannot attest, or cannot export) become 501 or
+// 412; unresolved backends and keys become 404. A clustered not-leader
+// condition is surfaced as 421, exactly as handleError does for the rest of
+// the package.
+//
+// An error none of those match is classified by mapErrorToStatusCode, the
+// package's table for the backend-layer sentinels a service operation wraps
+// rather than replaces: ExportKey and CopyKey report a backend's
+// ErrKeyNotExportable (403) or ErrExportNotSupported (501) as the cause of an
+// operation failure, and CopyKey an existing destination key as
+// storage.ErrAlreadyExists (409). Anything that table does not know is a 500.
 func mapKeyOpError(w http.ResponseWriter, err error) {
 	if nl, ok := xkms.AsNotLeader(err); ok {
 		writeNotLeader(w, nl)
@@ -73,6 +81,12 @@ func mapKeyOpError(w http.ResponseWriter, err error) {
 		return
 	}
 
+	var backendName *xkms.ErrBackendNameValidation
+	if errors.As(err, &backendName) {
+		writeError(w, backendName, http.StatusBadRequest)
+		return
+	}
+
 	for _, entry := range keyOpSentinelStatus {
 		if errors.Is(err, entry.sentinel) {
 			writeError(w, err, entry.status)
@@ -80,7 +94,7 @@ func mapKeyOpError(w http.ResponseWriter, err error) {
 		}
 	}
 
-	writeError(w, err, http.StatusInternalServerError)
+	writeError(w, err, mapErrorToStatusCode(err))
 }
 
 // keyOpValidationMessage renders a service-layer validation error for the

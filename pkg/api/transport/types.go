@@ -104,6 +104,12 @@ type KeyInfo struct {
 	Algorithm    string `json:"algorithm,omitempty"`
 	Backend      string `json:"backend"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
+	// KeySize is the RSA modulus size in bits; zero for any other key.
+	KeySize int `json:"key_size,omitempty"`
+	// Curve names an ECDSA key's curve ("P-256"); empty for any other key.
+	Curve string `json:"curve,omitempty"`
+	// Partition is the key's storage partition, when it has one.
+	Partition string `json:"partition,omitempty"`
 }
 
 // ListKeysRequest contains parameters for listing keys.
@@ -593,8 +599,11 @@ type RotateKeyRequest struct {
 
 // RotateKeyResponse contains the result of key rotation.
 type RotateKeyResponse struct {
-	Success      bool   `json:"success"`
-	KeyID        string `json:"key_id"`
+	Success bool   `json:"success"`
+	KeyID   string `json:"key_id"`
+	// KeyType is the rotated key's type ("SIGNING", "ENCRYPTION", ...),
+	// which rotation preserves.
+	KeyType      string `json:"key_type,omitempty"`
 	Message      string `json:"message,omitempty"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
 }

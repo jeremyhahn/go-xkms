@@ -281,7 +281,8 @@ func TestSealHandler(t *testing.T) {
 		var resp ErrorResponse
 		err := json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
-		assert.Contains(t, resp.Error, "TPM not available")
+		assert.Equal(t, ErrInternalError.Error(), resp.Error)
+		assert.NotContains(t, resp.Error, "TPM not available")
 	})
 }
 
@@ -561,7 +562,8 @@ func TestUnsealHandler(t *testing.T) {
 		var resp ErrorResponse
 		err := json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
-		assert.Contains(t, resp.Error, "authentication error")
+		assert.Equal(t, ErrInternalError.Error(), resp.Error)
+		assert.NotContains(t, resp.Error, "authentication error")
 	})
 }
 

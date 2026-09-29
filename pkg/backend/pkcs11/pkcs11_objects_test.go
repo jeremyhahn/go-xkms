@@ -2041,13 +2041,19 @@ func TestBackend_GetDecrypterByID_KeyCannotDecrypt(t *testing.T) {
 	assert.Nil(t, decrypter)
 }
 
-// TestBackend_GenerateRSAWithSize_DefaultKeySize proves an unspecified or
-// nonsensical RSA size falls back to 2048 bits rather than asking the token
-// for a key that is too small to be safe.
+// TestBackend_GenerateRSAWithSize_DefaultKeySize proves an unspecified RSA
+// size falls back to 2048 bits, and that a size below the floor is refused
+// rather than silently raised (go-xkms#1204).
 func TestBackend_GenerateRSAWithSize_DefaultKeySize(t *testing.T) {
 	b := newProvisionedBackend(t, "rsa-default-size")
 
-	for _, requested := range []int{0, 256} {
+	t.Run("256 is refused", func(t *testing.T) {
+		_, err := b.GenerateRSAWithSize(rsaKeyAttrs("rsa-default-256", 256), 256)
+		var sizeErr *types.RSAKeySizeError
+		require.ErrorAs(t, err, &sizeErr)
+	})
+
+	for _, requested := range []int{0} {
 		t.Run(strconv.Itoa(requested), func(t *testing.T) {
 			attrs := rsaKeyAttrs("rsa-default-"+strconv.Itoa(requested), requested)
 

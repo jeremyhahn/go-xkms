@@ -70,9 +70,16 @@ type encryptedToken struct {
 }
 
 // NewFileTokenStore creates a new file-based token store with encryption.
-// The encryptionKey should be a secure key (any length, will be hashed to 32 bytes).
-// If encryptionKey is nil, tokens are stored without encryption (not recommended).
+// encryptionKey must be non-empty; it is hashed with SHA-256 to derive the
+// 32-byte AES-256-GCM key. A nil or empty encryptionKey returns
+// ErrInvalidEncryptionKey rather than falling back to storing tokens in
+// plaintext: FileTokenStore never writes an OIDC access or refresh token to
+// disk unencrypted (go-xkms#1203).
 func NewFileTokenStore(path string, encryptionKey []byte) (*FileTokenStore, error) {
+	if len(encryptionKey) == 0 {
+		return nil, ErrInvalidEncryptionKey
+	}
+
 	// Ensure directory exists
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -85,22 +92,20 @@ func NewFileTokenStore(path string, encryptionKey []byte) (*FileTokenStore, erro
 	}
 
 	// Derive a 32-byte key from the provided key using SHA-256
-	if encryptionKey != nil {
-		hash := sha256.Sum256(encryptionKey)
-		store.key = hash[:]
+	hash := sha256.Sum256(encryptionKey)
+	store.key = hash[:]
 
-		// Initialize AES-GCM cipher
-		block, err := aes.NewCipher(store.key)
-		if err != nil {
-			return nil, ErrEncryptionFailed
-		}
-
-		gcm, err := cipher.NewGCM(block)
-		if err != nil {
-			return nil, ErrEncryptionFailed
-		}
-		store.gcm = gcm
+	// Initialize AES-GCM cipher
+	block, err := aes.NewCipher(store.key)
+	if err != nil {
+		return nil, ErrEncryptionFailed
 	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, ErrEncryptionFailed
+	}
+	store.gcm = gcm
 
 	// Load existing tokens if file exists
 	if _, err := os.Stat(path); err == nil {
@@ -284,19 +289,12 @@ func (s *FileTokenStore) save() error {
 	return os.Rename(tmpPath, s.path)
 }
 
-// encryptToken encrypts a token response.
+// encryptToken encrypts a token response. s.gcm is always set: NewFileTokenStore
+// refuses to construct a store without a valid encryption key.
 func (s *FileTokenStore) encryptToken(tokens *TokenResponse) (*encryptedToken, error) {
 	plaintext, err := json.Marshal(tokens)
 	if err != nil {
 		return nil, err
-	}
-
-	// If no encryption key, store plaintext (base64-encoded for consistency)
-	if s.gcm == nil {
-		return &encryptedToken{
-			Ciphertext: plaintext,
-			Nonce:      nil,
-		}, nil
 	}
 
 	// Generate random nonce
@@ -314,32 +312,24 @@ func (s *FileTokenStore) encryptToken(tokens *TokenResponse) (*encryptedToken, e
 	}, nil
 }
 
-// decryptToken decrypts a token response.
+// decryptToken decrypts a token response. s.gcm is always set: NewFileTokenStore
+// refuses to construct a store without a valid encryption key.
 func (s *FileTokenStore) decryptToken(encToken *encryptedToken) (*TokenResponse, error) {
 	if encToken == nil {
 		return nil, ErrTokenNotFound
 	}
 
-	var plaintext []byte
+	// crypto/cipher panics rather than returning an error when the nonce is
+	// not exactly NonceSize bytes. The nonce is read back from the on-disk
+	// token file, so a corrupted or tampered file must not be able to crash
+	// the process.
+	if len(encToken.Nonce) != s.gcm.NonceSize() {
+		return nil, ErrDecryptionFailed
+	}
 
-	// If no encryption key, data is stored as plaintext
-	if s.gcm == nil || encToken.Nonce == nil {
-		plaintext = encToken.Ciphertext
-	} else {
-		// crypto/cipher panics rather than returning an error when the nonce
-		// is not exactly NonceSize bytes. The nonce is read back from the
-		// on-disk token file, so a corrupted or tampered file must not be
-		// able to crash the process.
-		if len(encToken.Nonce) != s.gcm.NonceSize() {
-			return nil, ErrDecryptionFailed
-		}
-
-		// Decrypt
-		var err error
-		plaintext, err = s.gcm.Open(nil, encToken.Nonce, encToken.Ciphertext, nil)
-		if err != nil {
-			return nil, ErrDecryptionFailed
-		}
+	plaintext, err := s.gcm.Open(nil, encToken.Nonce, encToken.Ciphertext, nil)
+	if err != nil {
+		return nil, ErrDecryptionFailed
 	}
 
 	var tokens TokenResponse

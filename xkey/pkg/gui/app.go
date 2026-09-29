@@ -973,7 +973,9 @@ func (a *App) initializeDataDir() error {
 		a.oidcService.SetCallbackUnavailable(cfgErr)
 	}
 
-	// OIDC storage — encrypted via barrier or plain file fallback.
+	// OIDC provider config — encrypted via barrier when available; OIDC
+	// tokens themselves are barrier-encrypted or, with no barrier, held in
+	// memory only for the session (SetDataDir warns once; go-xkms#1203).
 	if barrierBackend != nil {
 		if oidcErr := a.oidcService.SetBackend(barrierBackend, "oidc/"); oidcErr != nil {
 			a.log.Warn("failed to set OIDC barrier backend", "error", oidcErr)

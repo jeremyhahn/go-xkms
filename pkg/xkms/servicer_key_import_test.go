@@ -270,6 +270,18 @@ func TestImportKeyRejectsMisdescribedKeys(t *testing.T) {
 			wantErr: ErrInvalidKeyAttributes,
 		},
 		{
+			// go-xkms#1204: buildImportKeyAttributes now runs
+			// KeyAttributes.Validate through applyKeyTemplate, so an import
+			// that declares an RSA modulus under 2048 bits is refused here
+			// rather than reaching the backend's ImportKey unchecked.
+			name: "undersized rsa key size",
+			mutate: func(r *transport.ImportKeyRequest) {
+				r.KeyType = "rsa"
+				r.KeySize = 1024
+			},
+			wantErr: ErrInvalidKeyAttributes,
+		},
+		{
 			name: "unresolvable hash",
 			mutate: func(r *transport.ImportKeyRequest) {
 				r.Hash = "SHA-3000"
@@ -437,6 +449,8 @@ func TestGetImportParametersUsesTheKeyTemplate(t *testing.T) {
 		curve       string
 		wantKeySpec string
 	}{
+		{name: "rsa 2048", keyType: "rsa", keySize: 2048, wantKeySpec: "RSA_2048"},
+		{name: "rsa 3072", keyType: "rsa", keySize: 3072, wantKeySpec: "RSA_3072"},
 		{name: "rsa 4096", keyType: "rsa", keySize: 4096, wantKeySpec: "RSA_4096"},
 		{name: "ecdsa p-521", keyType: "ecdsa", curve: "P-521", wantKeySpec: "ECC_NIST_P521"},
 		{name: "ed25519", keyType: "ed25519", wantKeySpec: "ED25519"},
@@ -503,4 +517,25 @@ func TestGetImportParametersRejectsAnUnusableTemplate(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidCurve)
+}
+
+// TestGetImportParametersRejectsUndersizedRSA proves the import-template
+// path -- applyKeyTemplate, shared by GetImportParameters, ImportKey and
+// UnwrapKeyByID -- refuses an RSA modulus below types.RSAKeySize2048 exactly
+// as buildKeyAttributes does for GenerateKey. Before applyKeyTemplate called
+// KeyAttributes.Validate, a caller could negotiate (and then complete) a BYOK
+// ceremony for a 1024-bit RSA key with no refusal anywhere (go-xkms#1204).
+func TestGetImportParametersRejectsUndersizedRSA(t *testing.T) {
+	svc := setupDeriveService(t)
+
+	_, err := svc.GetImportParameters(context.Background(), &transport.GetImportParametersRequest{
+		Backend:   "software",
+		KeyID:     "ceremony-key",
+		Algorithm: string(backend.WrappingAlgorithmRSAES_OAEP_SHA_256),
+		KeyType:   "rsa",
+		KeySize:   1024,
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
+	assert.Contains(t, err.Error(), "RSA key size must be at least 2048")
 }

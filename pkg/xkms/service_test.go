@@ -3428,6 +3428,17 @@ func TestErrBackendUnsupported_Error_AllBranches(t *testing.T) {
 	}
 	assert.Equal(t, ErrOperationNotSupported.Error(), e3.Error())
 	assert.ErrorIs(t, e3, ErrOperationNotSupported)
+
+	// With a precise cause: both the sentinel and the cause match.
+	e4 := &ErrBackendUnsupported{
+		Sentinel: ErrOperationNotSupported,
+		Backend:  "awskms",
+		Detail:   backend.ErrExportNotSupported.Error(),
+		Cause:    backend.ErrExportNotSupported,
+	}
+	assert.ErrorIs(t, e4, ErrOperationNotSupported)
+	assert.ErrorIs(t, e4, backend.ErrExportNotSupported)
+	assert.NotErrorIs(t, e3, backend.ErrExportNotSupported)
 }
 
 func TestErrOperationWrap_Error_AllBranches(t *testing.T) {

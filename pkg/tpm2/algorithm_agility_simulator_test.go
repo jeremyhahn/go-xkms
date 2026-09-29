@@ -303,14 +303,24 @@ func TestAgility_OneRSAKeySignsUnderEveryDeviceHash(t *testing.T) {
 }
 
 // TestAgility_EveryDeviceRSAKeySizeIsUsable proves the modulus size is the
-// caller's, not a template constant.
+// caller's, not a template constant -- for every size this project actually
+// permits a caller to choose.
 //
-// The sizes come from the device: TPM2_TestParms is asked about every size
-// TPM 2.0 defines and the ones it accepts are created, signed with, and
-// verified against the modulus read back out of the chip. The previous path
-// built every RSA key from a template whose KeyBits was hardcoded to 2048, so a
-// caller asking for anything else received a 2048-bit key and was told it had
-// succeeded.
+// The candidate sizes come from the device: TPM2_TestParms is asked about
+// every size TPM 2.0 defines, and the ones it accepts are created, signed
+// with, and verified against the modulus read back out of the chip. The
+// previous path built every RSA key from a template whose KeyBits was
+// hardcoded to 2048, so a caller asking for anything else received a
+// 2048-bit key and was told it had succeeded.
+//
+// A device-accepted size below types.RSAKeySize2048 (1024, on the
+// simulator and on TCG's reference implementation generally) is no longer
+// part of that proof: go-xkms#1204 made CreateRSA refuse it by name
+// regardless of what the device itself would accept, since the floor is
+// this project's minimum-strength policy, not a device-capability
+// question. TestCreateRSA_RefusesUndersizedModulus_Simulator
+// (rsa_keysize_simulator_test.go) pins that refusal; this test only proves
+// the caller-chosen-size property for sizes at or above the floor.
 func TestAgility_EveryDeviceRSAKeySizeIsUsable(t *testing.T) {
 	h := newSimHarness(t, nil)
 
@@ -320,6 +330,14 @@ func TestAgility_EveryDeviceRSAKeySizeIsUsable(t *testing.T) {
 	for _, keyBits := range supported {
 		attrs := signingKeyAttrs(t, h, fmt.Sprintf("agility-rsa-%d", keyBits), x509.RSA, nil)
 		attrs.RSAAttributes = &types.RSAAttributes{KeySize: keyBits}
+
+		if keyBits < types.RSAKeySize2048 {
+			_, err := h.TPM.CreateRSA(attrs, h.Backend, true)
+			var sizeErr *types.RSAKeySizeError
+			require.ErrorAs(t, err, &sizeErr,
+				"RSA-%d is device-defined but below the go-xkms#1204 floor, so CreateRSA must refuse it", keyBits)
+			continue
+		}
 
 		_, err := h.TPM.CreateRSA(attrs, h.Backend, true)
 		require.NoError(t, err, "the device accepted RSA-%d parameters, so creation must work", keyBits)
