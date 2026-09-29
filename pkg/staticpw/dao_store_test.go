@@ -686,6 +686,28 @@ func TestDAOStore_CreateFolder_Closed(t *testing.T) {
 	require.ErrorIs(t, err, ErrStoreClosed)
 }
 
+// TestDAOStore_CreateFolder_MarkerLookupFailureSurfaces proves that a
+// findFolderMarker failure other than ErrPasswordNotFound aborts CreateFolder
+// instead of being silently treated as "no such folder" (go-xkms#1347).
+// Closing the underlying storage out from under the store, without marking
+// the store itself closed, forces the marker lookup to fail with a real,
+// non-not-found error.
+func TestDAOStore_CreateFolder_MarkerLookupFailureSurfaces(t *testing.T) {
+	backend := storage.NewMemory()
+	kvStore, err := kvadapter.New(backend)
+	require.NoError(t, err)
+
+	store, err := NewDAOStore(kvStore)
+	require.NoError(t, err)
+
+	require.NoError(t, backend.Close())
+
+	err = store.CreateFolder("Work")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, storage.ErrClosed,
+		"the folder-marker lookup failure must reach the caller instead of being discarded")
+}
+
 func TestDAOStore_RemoveFolder_Success(t *testing.T) {
 	store := newTestDAOStore(t)
 	require.NoError(t, store.CreateFolder("Work"))

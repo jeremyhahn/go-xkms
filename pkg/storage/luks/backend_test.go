@@ -17,7 +17,20 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
+
+// closeErrBackend is a storage.Backend test double whose Close always
+// returns a fixed error. It embeds a nil storage.Backend so it satisfies
+// the interface without restating every method; Lock only ever calls
+// Close on the delegate, so the embedded nil is never reached.
+type closeErrBackend struct {
+	storage.Backend
+	closeErr error
+}
+
+func (c *closeErrBackend) Close() error { return c.closeErr }
 
 // mockVolumeOperator is a test double for VolumeOperator that uses a temp
 // directory as its mount point so the file storage delegate works without
@@ -522,5 +535,82 @@ func TestIsUnlocked_ReflectsState(t *testing.T) {
 
 	if b.IsUnlocked() {
 		t.Error("backend should be locked after Lock")
+	}
+}
+
+// TestUnlock_DelegateCreateFails_RollbackLockErrorSurfaces proves that when
+// the delegate cannot be created and the best-effort rollback (re-locking
+// the volume) also fails, the rollback failure is joined into the returned
+// error instead of being discarded (go-xkms#1347).
+func TestUnlock_DelegateCreateFails_RollbackLockErrorSurfaces(t *testing.T) {
+	// Empty mount point forces filestorage.New to fail.
+	mock := newMockVolumeOperator("")
+	rollbackErr := errors.New("rollback lock failed")
+	mock.lockErr = rollbackErr
+	b := NewBackend(mock)
+
+	err := b.Unlock("test-passphrase")
+	if !errors.Is(err, ErrDelegateCreateFailed) {
+		t.Errorf("expected error to wrap ErrDelegateCreateFailed, got %v", err)
+	}
+	if !errors.Is(err, rollbackErr) {
+		t.Errorf("expected error to wrap the rollback lock failure, got %v", err)
+	}
+	if b.IsUnlocked() {
+		t.Error("backend should remain locked when delegate creation fails")
+	}
+}
+
+// TestLock_DelegateCloseErrorSurfaces proves a failing delegate.Close is
+// reported by Lock instead of being silently discarded (go-xkms#1347).
+func TestLock_DelegateCloseErrorSurfaces(t *testing.T) {
+	tmpDir := t.TempDir()
+	mock := newMockVolumeOperator(tmpDir)
+	b := NewBackend(mock)
+
+	if err := b.Unlock("test-passphrase"); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
+	}
+
+	closeErr := errors.New("delegate close failed")
+	b.mu.Lock()
+	b.delegate = &closeErrBackend{closeErr: closeErr}
+	b.mu.Unlock()
+
+	err := b.Lock()
+	if !errors.Is(err, closeErr) {
+		t.Errorf("expected Lock to surface the delegate close error, got %v", err)
+	}
+	if b.IsUnlocked() {
+		t.Error("backend should still transition to locked even when delegate.Close fails")
+	}
+}
+
+// TestLock_DelegateCloseAndVolumeLockErrorsBothSurface proves both failures
+// are joined, not just the last one evaluated, when the delegate close and
+// the volume lock fail together (go-xkms#1347).
+func TestLock_DelegateCloseAndVolumeLockErrorsBothSurface(t *testing.T) {
+	tmpDir := t.TempDir()
+	mock := newMockVolumeOperator(tmpDir)
+	b := NewBackend(mock)
+
+	if err := b.Unlock("test-passphrase"); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
+	}
+
+	closeErr := errors.New("delegate close failed")
+	b.mu.Lock()
+	b.delegate = &closeErrBackend{closeErr: closeErr}
+	b.mu.Unlock()
+
+	volumeLockErr := errors.New("volume lock failed")
+	mock.lockErr = volumeLockErr
+
+	err := b.Lock()
+	if !errors.Is(err, ErrVolumeLockFailed) {
+		t.Errorf("expected error to wrap ErrVolumeLockFailed, got %v", err)
+	}
+	if !errors.Is(err, closeErr) {
+		t.Errorf("expected error to also wrap the delegate close error, got %v", err)
 	}
 }

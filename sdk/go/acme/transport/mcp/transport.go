@@ -40,6 +40,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sync/atomic"
@@ -52,6 +53,12 @@ import (
 const (
 	// DefaultTimeout is the default request timeout.
 	DefaultTimeout = 30 * time.Second
+
+	// maxHTTPErrorBodyBytes caps how much of an HTTP error response body is
+	// read into the resulting error message. An error response is diagnostic
+	// text, not a payload to buffer without bound; this mirrors the read cap
+	// sdk/go/login.go applies to its own response body.
+	maxHTTPErrorBodyBytes = 1 << 20 // 1 MiB
 
 	// DefaultMaxIdleConns is the default maximum number of idle connections.
 	DefaultMaxIdleConns = 100
@@ -592,8 +599,11 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 
 // handleHTTPError converts HTTP errors to SDK errors.
 func (t *Transport) handleHTTPError(op string, resp *http.Response) error {
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, maxHTTPErrorBodyBytes))
 	bodyStr := string(bodyBytes)
+	if readErr != nil {
+		bodyStr = fmt.Sprintf("%s (error response body could not be fully read: %v)", bodyStr, readErr)
+	}
 
 	switch resp.StatusCode {
 	case http.StatusBadRequest:

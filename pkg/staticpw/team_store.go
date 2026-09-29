@@ -15,6 +15,7 @@ package staticpw
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -109,8 +110,13 @@ func (s *DAOTeamStore) Create(ctx context.Context, team *TeamEntity) error {
 		return ErrTeamNameEmpty
 	}
 
-	// Check for duplicate name.
-	existing, _ := s.findByName(ctx, team.Name)
+	// Check for duplicate name. Only ErrTeamNotFound means the name is free;
+	// any other lookup failure (e.g. a DAO/storage error) must abort the
+	// create instead of being silently treated as "no such team".
+	existing, err := s.findByName(ctx, team.Name)
+	if err != nil && !errors.Is(err, ErrTeamNotFound) {
+		return err
+	}
 	if existing != nil {
 		return ErrTeamExists
 	}
