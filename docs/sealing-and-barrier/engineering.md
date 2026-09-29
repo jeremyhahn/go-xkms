@@ -204,8 +204,12 @@ silent answer and errors on everything else:
   with `*xkms.TenantBindingError` before the barrier is touched
   (`pkg/xkms/servicer_barrier.go:89,117,128,139,170,205,236,253,278,300,314,325,342`),
   and so does every `Policy*` method (`pkg/xkms/servicer_policy.go:42,66,84,106,120,138,160`).
-  No transport holds the barrier or the policy manager: REST, gRPC/Unix and
-  MCP call the service. REST's barrier initialize and unseal keep the secret in
+  No transport holds the barrier or the policy manager: REST, gRPC/Unix,
+  MCP and the ACME admin plane's `/admin/barrier/*` routes call the service
+  (the admin plane through its `SystemBarrier` interface,
+  `pkg/acme/admin/barrier_service.go:199`, which `*xkms.XKMSService`
+  satisfies and xkmsd supplies at `cmd/xkmsd/admin.go:186-194`;
+  go-xkms#1244). REST's barrier initialize and unseal keep the secret in
   protected memory end to end through `BarrierInitializeWithCredentials` /
   `BarrierUnsealWithCredentials` (`pkg/xkms/servicer_barrier.go:88,116`), which
   take a `seal.Credentials` the caller owns. `BarrierEnableEncryption` binds

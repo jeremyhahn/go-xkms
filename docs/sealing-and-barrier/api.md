@@ -1,6 +1,6 @@
 # Sealing and Barrier — API
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227)
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227, #1244)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -49,12 +49,20 @@ RBAC gate included -- with the answer a missing tenant gets (go-xkms#1227):
 | REST / QUIC | `404`, the unknown-tenant message | `pkg/api/rest/handlers_barrier_pin.go:504` |
 | gRPC / Unix | `codes.NotFound` | `pkg/api/apierrors/tables.go:147` |
 | MCP | `JSONRPCCodeNotFound` | `pkg/api/apierrors/tables.go:147` |
+| ACME admin plane (`/admin/barrier/*`) | `403`, the admin gate's own denial body (the admin plane's platform-only convention) | `pkg/acme/admin/barrier_handlers.go:279` |
 
 The refusal is raised in `XKMSService` (`pkg/xkms/servicer_barrier.go:89,117,
 128,139,170,205,236,253,278,300,314,325,342`), and every transport reaches
 the barrier only through it: REST `pkg/api/rest/handlers_barrier_pin.go`,
 `handlers_barrier_shamir.go`; gRPC/Unix `pkg/api/grpc/service_barrier_pin.go`,
-`service_barrier_shamir.go`; MCP `pkg/api/mcp/handlers_barrier_shamir.go`.
+`service_barrier_shamir.go`; MCP `pkg/api/mcp/handlers_barrier_shamir.go`;
+the ACME admin plane's `/admin/barrier/*` routes through `SystemBarrier`
+(`pkg/acme/admin/barrier_service.go:199`), which xkmsd satisfies with the
+server's `XKMSService` (`cmd/xkmsd/admin.go:186-194`, go-xkms#1244). The
+admin plane translates the refusal into its `*PlatformScopeError`
+(`pkg/acme/admin/barrier_service.go:245`) and answers it `403`, as it
+answers its other platform-only routes (tenant creation, the audit trail);
+see [`../acme-issuance/api.md`](../acme-issuance/api.md#admin-api-tenant-binding-responses).
 Before this change gRPC and MCP held their own barrier reference that
 production never set, so their barrier methods answered "not configured";
 they now serve the service's barrier. A service with no barrier composed
@@ -152,7 +160,7 @@ There is no "list shares" operation and there will not be one.
 | strategy hardware or provider unreachable | 503 | `Unavailable` | error object |
 | sealed-blob format version unknown | 500 | `Internal` | error object |
 | RBAC denial | 403 | `PermissionDenied` | error object |
-| tenant-scoped caller (platform scope) | 404 | `NotFound` | `JSONRPCCodeNotFound` |
+| tenant-scoped caller (platform scope) | 404 (403 on the ACME admin plane's `/admin/barrier/*`) | `NotFound` | `JSONRPCCodeNotFound` |
 | no barrier composed on the service | 503 | `Unavailable` | `ErrCodeServiceUnavailable` |
 
 `GET /api/v1/barrier/status` returning "sealed" is **200, not an error**. A

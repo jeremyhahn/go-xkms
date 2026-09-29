@@ -79,8 +79,7 @@ func (h *BarrierHandlers) RegisterRoutes(router *mux.Router, authMiddleware Auth
 func (h *BarrierHandlers) handleBarrierStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := h.service.Status(r.Context())
 	if err != nil {
-		h.logger.Error("failed to get barrier status", slog.String("error", err.Error()))
-		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to get barrier status")
+		h.writeBarrierError(w, "status", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
@@ -271,16 +270,25 @@ func (h *BarrierHandlers) handleBarrierRootToken(w http.ResponseWriter, r *http.
 }
 
 // writeBarrierError maps barrier error types to appropriate HTTP responses.
+//
+// The system barrier protects every tenant, so every barrier route is a
+// platform operation: a tenant-scoped caller is refused by the XKMSService
+// (go-xkms#1227, #1244) and answered exactly as a caller lacking the route's
+// grant (PlatformScopeError, writePermissionDenied), the way the admin plane
+// answers its other platform-only routes.
 func (h *BarrierHandlers) writeBarrierError(w http.ResponseWriter, operation string, err error) {
-	var notEnabledErr *BarrierNotEnabledError
-	if errors.As(err, &notEnabledErr) {
-		writeProblem(w, http.StatusConflict, "urn:trusted-ca:error:barrier-not-enabled", notEnabledErr.Error())
+	var scopeErr *PlatformScopeError
+	if errors.As(err, &scopeErr) {
+		h.logger.Warn("barrier operation refused: platform scope required",
+			slog.String("operation", operation),
+			slog.String("caller_tenant", scopeErr.CallerTenantID))
+		writePermissionDenied(w)
 		return
 	}
 
-	var remoteModeErr *BarrierRemoteModeError
-	if errors.As(err, &remoteModeErr) {
-		writeProblem(w, http.StatusConflict, "urn:trusted-ca:error:barrier-remote-mode", remoteModeErr.Error())
+	var notEnabledErr *BarrierNotEnabledError
+	if errors.As(err, &notEnabledErr) {
+		writeProblem(w, http.StatusConflict, "urn:trusted-ca:error:barrier-not-enabled", notEnabledErr.Error())
 		return
 	}
 
