@@ -14,6 +14,7 @@
 package loopback
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -23,6 +24,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -30,9 +32,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/server"
 )
 
 // minimalLoopbackConfig builds the smallest config that Launch can boot: a
@@ -367,6 +371,173 @@ func TestLaunch_ConstructEngineError(t *testing.T) {
 	}
 }
 
+// TestLaunch_GenerateTokenError proves a failure reading the per-launch
+// token's entropy source surfaces as a *LaunchError wrapping the cause,
+// before any listener is bound or engine constructed. randReader is
+// substituted with a reader that always errors, rather than exhausting the
+// host's real entropy source.
+func TestLaunch_GenerateTokenError(t *testing.T) {
+	sentinel := errors.New("entropy source exhausted")
+	orig := randReader
+	randReader = iotest.ErrReader(sentinel)
+	t.Cleanup(func() { randReader = orig })
+
+	_, err := Launch(context.Background(), Options{Config: minimalLoopbackConfig(t)})
+	if err == nil {
+		t.Fatal("expected error when the token entropy source fails")
+	}
+	var le *LaunchError
+	if !errors.As(err, &le) {
+		t.Fatalf("expected *LaunchError, got %T", err)
+	}
+	if le.Reason != "generate token" {
+		t.Errorf("Reason = %q, want %q", le.Reason, "generate token")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected the wrapped error to be the sentinel, got %v", le.Err)
+	}
+}
+
+// TestLaunch_BindLoopbackListenerError proves a failure binding the loopback
+// listener surfaces as a *LaunchError wrapping the cause. listenLoopback is
+// substituted with a function that always errors, rather than exhausting
+// real ports on the host to provoke a genuine bind failure.
+func TestLaunch_BindLoopbackListenerError(t *testing.T) {
+	sentinel := errors.New("bind: address already in use")
+	orig := listenLoopback
+	listenLoopback = func() (net.Listener, error) { return nil, sentinel }
+	t.Cleanup(func() { listenLoopback = orig })
+
+	_, err := Launch(context.Background(), Options{Config: minimalLoopbackConfig(t)})
+	if err == nil {
+		t.Fatal("expected error when the loopback listener fails to bind")
+	}
+	var le *LaunchError
+	if !errors.As(err, &le) {
+		t.Fatalf("expected *LaunchError, got %T", err)
+	}
+	if le.Reason != "bind loopback listener" {
+		t.Errorf("Reason = %q, want %q", le.Reason, "bind loopback listener")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected the wrapped error to be the sentinel, got %v", le.Err)
+	}
+}
+
+// TestLaunch_StartEngineError proves that when Server.Start fails, Launch
+// returns a *LaunchError wrapping the cause and releases the loopback
+// listener it had already bound, rather than leaking it. startServer is
+// substituted so the failure is deterministic instead of requiring a config
+// shape that fails deep inside pkg/server.
+func TestLaunch_StartEngineError(t *testing.T) {
+	sentinel := errors.New("start: transport bind failed")
+	origStart := startServer
+	startServer = func(*server.Server) error { return sentinel }
+	t.Cleanup(func() { startServer = origStart })
+
+	var capturedPort int
+	origListen := listenLoopback
+	listenLoopback = func() (net.Listener, error) {
+		ln, err := origListen()
+		if err == nil {
+			capturedPort = ln.Addr().(*net.TCPAddr).Port
+		}
+		return ln, err
+	}
+	t.Cleanup(func() { listenLoopback = origListen })
+
+	inst, err := Launch(context.Background(), Options{Config: minimalLoopbackConfig(t)})
+	if inst != nil {
+		t.Fatal("expected a nil Instance when Server.Start fails")
+	}
+	var le *LaunchError
+	if !errors.As(err, &le) {
+		t.Fatalf("expected *LaunchError, got %T", err)
+	}
+	if le.Reason != "start engine" {
+		t.Errorf("Reason = %q, want %q", le.Reason, "start engine")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected the wrapped error to be the sentinel, got %v", le.Err)
+	}
+
+	// The listener Launch had already bound must be released on this path,
+	// not leaked: rebinding the same port must succeed.
+	ln, err := net.Listen("tcp", "127.0.0.1:"+itoa(capturedPort))
+	if err != nil {
+		t.Fatalf("port %d still bound after a failed start: %v", capturedPort, err)
+	}
+	_ = ln.Close()
+}
+
+// failCloseListener wraps a real net.Listener, actually releasing the
+// underlying socket on Close (so the test leaves no bound port behind) while
+// still reporting a forced error to the caller, so Launch's Close-failure
+// logging on the start-failure cleanup path can be exercised without a
+// genuine close failure.
+type failCloseListener struct {
+	net.Listener
+	closeErr error
+}
+
+func (f *failCloseListener) Close() error {
+	_ = f.Listener.Close()
+	return f.closeErr
+}
+
+// TestLaunch_StartEngineError_LogsCleanupFailures proves that when
+// Server.Start fails and the subsequent cleanup itself hits errors —
+// Server.Shutdown failing and the loopback listener's Close failing — both
+// are logged rather than silently dropped, while Launch still returns the
+// original start error. shutdownServer and the listener's Close are both
+// substituted so both cleanup failures are deterministic.
+func TestLaunch_StartEngineError_LogsCleanupFailures(t *testing.T) {
+	startErr := errors.New("start: transport bind failed")
+	shutdownErr := errors.New("shutdown: drain timed out")
+	closeErr := errors.New("close: already closed")
+
+	origStart := startServer
+	startServer = func(*server.Server) error { return startErr }
+	t.Cleanup(func() { startServer = origStart })
+
+	origShutdown := shutdownServer
+	shutdownServer = func(*server.Server) error { return shutdownErr }
+	t.Cleanup(func() { shutdownServer = origShutdown })
+
+	origListen := listenLoopback
+	listenLoopback = func() (net.Listener, error) {
+		ln, err := origListen()
+		if err != nil {
+			return nil, err
+		}
+		return &failCloseListener{Listener: ln, closeErr: closeErr}, nil
+	}
+	t.Cleanup(func() { listenLoopback = origListen })
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	_, err := Launch(context.Background(), Options{Config: minimalLoopbackConfig(t), Logger: logger})
+	if err == nil {
+		t.Fatal("expected error when Server.Start fails")
+	}
+	var le *LaunchError
+	if !errors.As(err, &le) {
+		t.Fatalf("expected *LaunchError, got %T", err)
+	}
+	if le.Reason != "start engine" || !errors.Is(err, startErr) {
+		t.Errorf("Launch error = %v, want it to wrap the start error with Reason %q", err, "start engine")
+	}
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "loopback engine shutdown after failed start") || !strings.Contains(logged, shutdownErr.Error()) {
+		t.Errorf("log = %q, want it to report the shutdown cleanup failure %v", logged, shutdownErr)
+	}
+	if !strings.Contains(logged, "loopback REST listener close after failed start") || !strings.Contains(logged, closeErr.Error()) {
+		t.Errorf("log = %q, want it to report the listener close cleanup failure %v", logged, closeErr)
+	}
+}
+
 // TestInstance_Close_StopsTheListener proves Close actually tears the engine
 // down: after Close returns, the port Launch reported is free again instead
 // of the listener leaking for the life of the process.
@@ -394,6 +565,43 @@ func TestInstance_Close_StopsTheListener(t *testing.T) {
 			t.Fatalf("port %d still bound after Close: %v", port, err)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestInstance_Close_ShutdownError proves Close surfaces a Server.Shutdown
+// failure as a *LaunchError wrapping the cause instead of swallowing it.
+// shutdownServer is substituted for the assertion so the failure is
+// deterministic, then restored and driven for real so the launched engine
+// does not outlive the test.
+func TestInstance_Close_ShutdownError(t *testing.T) {
+	inst, err := Launch(context.Background(), Options{Config: minimalLoopbackConfig(t)})
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	sentinel := errors.New("shutdown: drain timed out")
+	origShutdown := shutdownServer
+	shutdownServer = func(*server.Server) error { return sentinel }
+
+	closeErr := inst.Close(context.Background())
+
+	// Restore the real seam and actually shut the engine down regardless of
+	// the assertions below, so this test leaves no running engine behind.
+	shutdownServer = origShutdown
+	t.Cleanup(func() { _ = inst.Close(context.Background()) })
+
+	if closeErr == nil {
+		t.Fatal("expected error when Server.Shutdown fails")
+	}
+	var le *LaunchError
+	if !errors.As(closeErr, &le) {
+		t.Fatalf("expected *LaunchError, got %T", closeErr)
+	}
+	if le.Reason != "shutdown engine" {
+		t.Errorf("Reason = %q, want %q", le.Reason, "shutdown engine")
+	}
+	if !errors.Is(closeErr, sentinel) {
+		t.Errorf("expected the wrapped error to be the sentinel, got %v", le.Err)
 	}
 }
 
