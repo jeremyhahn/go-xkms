@@ -107,7 +107,7 @@ func TestRestService_NonceBoundedMemoryUnderFlood(t *testing.T) {
 		require.NoError(t, service.redeemNonce(n))
 	}
 
-	assert.LessOrEqual(t, service.nonceEpoch.Load().UsedCount(), maxUsed)
+	assert.LessOrEqual(t, service.nonceEpoch.Load().epoch.UsedCount(), maxUsed)
 }
 
 // TestRestService_NonceEpochRotation verifies NonceLifetime bounds a nonce's
@@ -280,8 +280,8 @@ func TestNewRestService_SharedNonceKeyValidatesAcrossNodes(t *testing.T) {
 
 	// Cross-register each node's current epoch with the other, the step a
 	// load-balanced deployment's peer discovery would perform.
-	serviceA.GetNonceService().Register(serviceB.nonceEpoch.Load())
-	serviceB.GetNonceService().Register(serviceA.nonceEpoch.Load())
+	serviceA.GetNonceService().Register(serviceB.nonceEpoch.Load().epoch)
+	serviceB.GetNonceService().Register(serviceA.nonceEpoch.Load().epoch)
 
 	nonceFromB, err := serviceB.generateNonce()
 	require.NoError(t, err)

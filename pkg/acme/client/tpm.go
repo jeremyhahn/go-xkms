@@ -175,6 +175,20 @@ type TPMModule interface {
 	//   - Error if provisioning fails, nil on success
 	ProvisionEKCert(certDER []byte) error
 
+	// ProvisionIAKCert installs the IAK certificate enroll-01 issues, so a
+	// later device-attest-01 challenge can read it back for its statement's
+	// x5c[0] (deviceattest01.Setup). Without this, a device that enrolls and
+	// later attests in a separate process -- the common case for real
+	// hardware -- has no certificate to answer with, even though enrollment
+	// succeeded.
+	//
+	// Parameters:
+	//   - cert: the IAK certificate issued during enrollment
+	//
+	// Returns:
+	//   - Error if provisioning fails, nil on success
+	ProvisionIAKCert(cert *x509.Certificate) error
+
 	// CreateAttestedKey answers a device-attest-01 challenge for the
 	// certificate key called name: a signing key in the TPM under the
 	// Platform SRK, created on first use and reused after. The IAK certifies
@@ -464,6 +478,16 @@ func (a *XKMSTPMAdapter) ProvisionEKCert(certDER []byte) error {
 	}
 	a.ekCert = cert
 
+	return nil
+}
+
+// ProvisionIAKCert installs the IAK certificate enroll-01 issued, so a later
+// device-attest-01 challenge (deviceattest01.Setup, via IAKCertificate) can
+// read it back for the statement's x5c[0].
+func (a *XKMSTPMAdapter) ProvisionIAKCert(cert *x509.Certificate) error {
+	if err := a.tpm.ProvisionIAKCert(cert); err != nil {
+		return caerrors.StorageFailureError("failed to provision IAK certificate: %v", err)
+	}
 	return nil
 }
 

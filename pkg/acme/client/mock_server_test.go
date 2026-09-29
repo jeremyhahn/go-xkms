@@ -441,6 +441,11 @@ type mockTPMForEnrollment struct {
 	idevidCSR      *IDevIDCSR
 	activateResult []byte
 	errors         map[string]error
+
+	// provisionedIAKCert records the certificate EnrollDevice installed via
+	// ProvisionIAKCert, so tests can assert it matches the issued
+	// certificate (go-xkms#1100).
+	provisionedIAKCert *x509.Certificate
 }
 
 func newMockTPMForEnrollment(t *testing.T) *mockTPMForEnrollment {
@@ -522,6 +527,14 @@ func (m *mockTPMForEnrollment) ProvisionEKCert(certDER []byte) error {
 	if err, ok := m.errors["ProvisionEKCert"]; ok {
 		return err
 	}
+	return nil
+}
+
+func (m *mockTPMForEnrollment) ProvisionIAKCert(cert *x509.Certificate) error {
+	if err, ok := m.errors["ProvisionIAKCert"]; ok {
+		return err
+	}
+	m.provisionedIAKCert = cert
 	return nil
 }
 

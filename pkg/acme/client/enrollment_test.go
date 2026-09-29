@@ -57,6 +57,7 @@ type mockTPM struct {
 	createIDevIDFunc       func([]byte) (*IDevIDCSR, error)
 	activateCredentialFunc func([]byte, []byte) ([]byte, error)
 	provisionEKCertFunc    func([]byte) error
+	provisionIAKCertFunc   func(*x509.Certificate) error
 	attestFunc             func(string, string) (*AttestedKey, error)
 }
 
@@ -124,6 +125,13 @@ func (m *mockTPM) ActivateCredential(credBlob, encSecret []byte) ([]byte, error)
 func (m *mockTPM) ProvisionEKCert(certDER []byte) error {
 	if m.provisionEKCertFunc != nil {
 		return m.provisionEKCertFunc(certDER)
+	}
+	return nil
+}
+
+func (m *mockTPM) ProvisionIAKCert(cert *x509.Certificate) error {
+	if m.provisionIAKCertFunc != nil {
+		return m.provisionIAKCertFunc(cert)
 	}
 	return nil
 }
@@ -969,6 +977,7 @@ type coverageBoostTPM struct {
 	createIDevIDFunc       func([]byte) (*IDevIDCSR, error)
 	activateCredentialFunc func([]byte, []byte) ([]byte, error)
 	provisionEKCertFunc    func([]byte) error
+	provisionIAKCertFunc   func(*x509.Certificate) error
 	attestFunc             func(string, string) (*AttestedKey, error)
 }
 
@@ -1035,6 +1044,13 @@ func (m *coverageBoostTPM) ActivateCredential(credBlob, encSecret []byte) ([]byt
 func (m *coverageBoostTPM) ProvisionEKCert(certDER []byte) error {
 	if m.provisionEKCertFunc != nil {
 		return m.provisionEKCertFunc(certDER)
+	}
+	return nil
+}
+
+func (m *coverageBoostTPM) ProvisionIAKCert(cert *x509.Certificate) error {
+	if m.provisionIAKCertFunc != nil {
+		return m.provisionIAKCertFunc(cert)
 	}
 	return nil
 }
@@ -2024,6 +2040,7 @@ type enrollmentTestTPM struct {
 	createIDevIDFunc       func([]byte) (*IDevIDCSR, error)
 	activateCredentialFunc func([]byte, []byte) ([]byte, error)
 	provisionEKCertFunc    func([]byte) error
+	provisionIAKCertFunc   func(*x509.Certificate) error
 	attestFunc             func(string, string) (*AttestedKey, error)
 }
 
@@ -2090,6 +2107,13 @@ func (m *enrollmentTestTPM) ActivateCredential(credBlob, encSecret []byte) ([]by
 func (m *enrollmentTestTPM) ProvisionEKCert(certDER []byte) error {
 	if m.provisionEKCertFunc != nil {
 		return m.provisionEKCertFunc(certDER)
+	}
+	return nil
+}
+
+func (m *enrollmentTestTPM) ProvisionIAKCert(cert *x509.Certificate) error {
+	if m.provisionIAKCertFunc != nil {
+		return m.provisionIAKCertFunc(cert)
 	}
 	return nil
 }
@@ -3783,6 +3807,10 @@ func (m *testTPME2E) ProvisionEKCert(certDER []byte) error {
 	return nil
 }
 
+func (m *testTPME2E) ProvisionIAKCert(cert *x509.Certificate) error {
+	return nil
+}
+
 func (m *testTPME2E) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	return newTestAttestedKey(keyAuth)
 }
@@ -4523,10 +4551,11 @@ func (m *mockTPMForActivation) EK() crypto.PublicKey                      { retu
 func (m *mockTPMForActivation) EKCertificate() (*x509.Certificate, error) { return nil, nil }
 func (m *mockTPMForActivation) EKAttributes() (*KeyAttributes, error)     { return nil, nil }
 
-func (m *mockTPMForActivation) TPMManufacturer() (string, error)        { return testTPMManufacturer, nil }
-func (m *mockTPMForActivation) IAKAttributes() (*KeyAttributes, error)  { return nil, nil }
-func (m *mockTPMForActivation) CreateIDevID([]byte) (*IDevIDCSR, error) { return nil, nil }
-func (m *mockTPMForActivation) ProvisionEKCert([]byte) error            { return nil }
+func (m *mockTPMForActivation) TPMManufacturer() (string, error)         { return testTPMManufacturer, nil }
+func (m *mockTPMForActivation) IAKAttributes() (*KeyAttributes, error)   { return nil, nil }
+func (m *mockTPMForActivation) CreateIDevID([]byte) (*IDevIDCSR, error)  { return nil, nil }
+func (m *mockTPMForActivation) ProvisionEKCert([]byte) error             { return nil }
+func (m *mockTPMForActivation) ProvisionIAKCert(*x509.Certificate) error { return nil }
 func (m *mockTPMForActivation) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	return newTestAttestedKey(keyAuth)
 }
@@ -4812,6 +4841,7 @@ func (m *mockTPMWithErrors) IAKAttributes() (*KeyAttributes, error)         { re
 func (m *mockTPMWithErrors) CreateIDevID([]byte) (*IDevIDCSR, error)        { return nil, nil }
 func (m *mockTPMWithErrors) ActivateCredential(_, _ []byte) ([]byte, error) { return nil, nil }
 func (m *mockTPMWithErrors) ProvisionEKCert([]byte) error                   { return nil }
+func (m *mockTPMWithErrors) ProvisionIAKCert(*x509.Certificate) error       { return nil }
 func (m *mockTPMWithErrors) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	return newTestAttestedKey(keyAuth)
 }
@@ -4884,6 +4914,10 @@ func (m *mockTPMModuleForEnroll) ActivateCredential(credBlob, encSecret []byte) 
 }
 
 func (m *mockTPMModuleForEnroll) ProvisionEKCert(certDER []byte) error {
+	return nil
+}
+
+func (m *mockTPMModuleForEnroll) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
 
@@ -5383,6 +5417,10 @@ func (m *serverCoverageTPMModule) ActivateCredential(credBlob, encSecret []byte)
 }
 
 func (m *serverCoverageTPMModule) ProvisionEKCert(certDER []byte) error {
+	return nil
+}
+
+func (m *serverCoverageTPMModule) ProvisionIAKCert(cert *x509.Certificate) error {
 	return nil
 }
 
@@ -6431,7 +6469,8 @@ func (m *mockTPMModule) CreateIDevID(qualifyingData []byte) (*IDevIDCSR, error) 
 func (m *mockTPMModule) ActivateCredential(credBlob, encSecret []byte) ([]byte, error) {
 	return nil, nil
 }
-func (m *mockTPMModule) ProvisionEKCert(certDER []byte) error { return nil }
+func (m *mockTPMModule) ProvisionEKCert(certDER []byte) error     { return nil }
+func (m *mockTPMModule) ProvisionIAKCert(*x509.Certificate) error { return nil }
 func (m *mockTPMModule) CreateAttestedKey(name, keyAuth string) (*AttestedKey, error) {
 	return newTestAttestedKey(keyAuth)
 }
