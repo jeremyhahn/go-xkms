@@ -41,6 +41,11 @@ type TrustStore interface {
 	// Certificates that already exist are silently skipped.
 	AddPEM(pemData []byte) (int, error)
 
+	// ImportPEM parses and adds all certificates from PEM-encoded data,
+	// filing each under opts (a nil opts auto-classifies, as AddPEM does).
+	// Certificates that already exist are counted as skipped.
+	ImportPEM(pemData []byte, opts *AddCertificateOptions) (ImportResult, error)
+
 	// RemoveCertificate removes a certificate by its SHA-256 fingerprint (hex-encoded).
 	// Returns ErrCertificateNotFound if no certificate matches.
 	RemoveCertificate(fingerprint string) error

@@ -26,6 +26,8 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"golang.org/x/crypto/chacha20poly1305"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // ---------------------------------------------------------------------------
@@ -65,8 +67,8 @@ type TrustStoreReader interface {
 	Metadata(fingerprint string) (*CertMetadataInfo, error)
 }
 
-// CertMetadataInfo is a simplified metadata structure the backup service
-// uses. This avoids importing the truststore package directly.
+// CertMetadataInfo is the per-certificate metadata the backup service
+// records in an archive.
 type CertMetadataInfo struct {
 	Fingerprint string
 	Purpose     string
@@ -350,9 +352,12 @@ type CAReader interface {
 	GetCAChainPEM() ([]byte, error)
 }
 
-// TrustStoreWriter accepts PEM data for restoring certificates.
+// TrustStoreWriter accepts PEM data for restoring certificates, filing each
+// under the metadata the caller chooses. Restore always passes the purpose
+// recorded in the archive, never nil: a nil opts auto-classifies, and
+// auto-classification discards the operator's classification (#1312).
 type TrustStoreWriter interface {
-	AddPEM(pemData []byte) (int, error)
+	ImportPEM(pemData []byte, opts *truststore.AddCertificateOptions) (truststore.ImportResult, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -637,17 +642,49 @@ func (s *Service) RestoreTrustStore(archive *Archive, writer TrustStoreWriter) (
 		return result, nil
 	}
 
-	for _, cert := range archive.TrustStore.Certificates {
-		n, err := writer.AddPEM([]byte(cert.PEM))
+	// Validate every recorded purpose before writing anything, so an
+	// archive carrying one bad purpose restores no certificate at all
+	// rather than a partial trust store.
+	opts := make([]*truststore.AddCertificateOptions, len(archive.TrustStore.Certificates))
+	for i, cert := range archive.TrustStore.Certificates {
+		certOpts, err := recordedImportOptions(cert)
+		if err != nil {
+			return nil, err
+		}
+		opts[i] = certOpts
+	}
+
+	for i, cert := range archive.TrustStore.Certificates {
+		imported, err := writer.ImportPEM([]byte(cert.PEM), opts[i])
 		if err != nil {
 			result.Errors = append(result.Errors,
 				fmt.Sprintf("cert %s: %v", cert.Fingerprint, err))
 			result.Skipped++
 			continue
 		}
-		result.Restored += n
+		result.Restored += imported.Added
 	}
 	return result, nil
+}
+
+// recordedImportOptions returns the metadata cert was recorded with, which
+// restore files it under exactly. An absent or unrecognized purpose is
+// refused, never auto-classified: auto-classification would discard the
+// operator's classification and could promote a quarantined certificate to
+// an anchor (#1312).
+func recordedImportOptions(cert TrustStoreCert) (*truststore.AddCertificateOptions, error) {
+	if cert.Purpose == "" {
+		return nil, &RecordedPurposeError{Fingerprint: cert.Fingerprint, Err: ErrMissingRecordedPurpose}
+	}
+	purpose := truststore.CertPurpose(cert.Purpose)
+	if !truststore.IsValidPurpose(purpose) {
+		return nil, &RecordedPurposeError{Fingerprint: cert.Fingerprint, Purpose: cert.Purpose, Err: ErrInvalidRecordedPurpose}
+	}
+	return &truststore.AddCertificateOptions{
+		Purpose: purpose,
+		Source:  cert.Source,
+		Tags:    cert.Tags,
+	}, nil
 }
 
 // RestoreOATH restores OATH credentials from the archive.
@@ -790,12 +827,19 @@ func (s *Service) collectTrustStore(a *Archive) (bool, error) {
 			PEM:         encodeCertPEM(cert),
 			Fingerprint: fp,
 		}
+		// Every certificate's purpose is recorded: restore refuses a
+		// certificate without one rather than guessing it (#1312), so an
+		// archive missing metadata would be unrestorable.
 		meta, err := s.trustStore.Metadata(fp)
-		if err == nil && meta != nil {
-			tsc.Purpose = meta.Purpose
-			tsc.Source = meta.Source
-			tsc.Tags = meta.Tags
+		if err != nil {
+			return false, &DetailError{Err: ErrCollectFailed, Detail: fmt.Sprintf(": trust store metadata %s: %v", fp, err)}
 		}
+		if meta == nil {
+			return false, &DetailError{Err: ErrCollectFailed, Detail: fmt.Sprintf(": trust store metadata %s: missing", fp)}
+		}
+		tsc.Purpose = meta.Purpose
+		tsc.Source = meta.Source
+		tsc.Tags = meta.Tags
 		tsData.Certificates = append(tsData.Certificates, tsc)
 	}
 

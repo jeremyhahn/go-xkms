@@ -89,6 +89,15 @@ A certificate a paired phone sent during sync shows up as `synced`. It is
 stored so you can see it, not trusted: check it, then `xkey trust classify` it
 if you want it to anchor anything.
 
+`xkey trust add` without `--purpose` guesses, and the guess never makes a
+certificate `android-hardware` unless it is one of the Google Hardware
+Attestation Roots built into xkey. To trust another Android attestation root,
+say so: `xkey trust classify <fingerprint> --purpose android-hardware`.
+
+`xkey backup restore` puts every certificate back under the purpose it had
+when it was backed up. A backup whose trust-store entry has no purpose, or one
+this version does not know, is refused rather than guessed at — re-create it.
+
 **This is enforcement, not filing.** A `general` certificate will not anchor a
 TPM attestation. When an attestation fails, the fix is to add the right
 manufacturer anchor — not to reclassify something you already have as
@@ -130,7 +139,6 @@ by whoever issued the certificate; fingerprints cannot.
 ```
 xkey trust bootstrap --method spki --timeout 60s
 xkey trust list -o json
-xkey trust classify <fingerprint> --purpose bootstrap-ca
 xkey trust install <fingerprint>
 ```
 
@@ -139,8 +147,10 @@ Or, given a pin instead of a truststrap configuration:
 ```
 xkey trust import-platform kms.example.com:8443 --spki-pin <hex> --install-system
 xkey trust list -o json
-xkey trust classify <fingerprint> --purpose bootstrap-ca
 ```
+
+A fetched bundle — from either command, or from the GUI's trust-strap import —
+is already filed as `bootstrap-ca`. Classify only to give it another purpose.
 
 ## Troubleshooting
 

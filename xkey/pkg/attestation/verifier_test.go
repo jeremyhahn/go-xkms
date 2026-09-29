@@ -54,6 +54,9 @@ func (m *mockTrustStore) AddCertificateWithOptions(_ *x509.Certificate, _ *trust
 }
 
 func (m *mockTrustStore) AddPEM(_ []byte) (int, error) { return 0, nil }
+func (m *mockTrustStore) ImportPEM(_ []byte, _ *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
+	return truststore.ImportResult{}, nil
+}
 
 func (m *mockTrustStore) RemoveCertificate(_ string) error { return nil }
 

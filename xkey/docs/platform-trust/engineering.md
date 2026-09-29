@@ -80,10 +80,28 @@ three cannot drift
   expose the auto-classifying `AddPEM` at all
   (`TestSyncTrustStore_ForgedGoogleRootAnchorsNothing`,
   `xkey/cmd/xkey/cmd/sync_trust_quarantine_test.go`).
-- **`android-hardware` is never inferred from names.** `ClassifyCertificate`
-  grants it for the Android key attestation extension OID or an exact match
-  against the embedded Google roots only
-  (`TestClassifyCertificate_ForgedGoogleAttestationRootIsNotAndroidHardware`,
+- **A fetched bundle is filed under `bootstrap-ca`.** `trust bootstrap`,
+  `trust fetch`/`import-platform` and the GUI's `ImportFromTrustStrap` all file
+  through `truststore.BootstrapImportOptions(server)` — purpose `bootstrap-ca`,
+  source `platform:<host>` — never auto-classified
+  (`TestRunTrustBootstrap_FilesBundleUnderBootstrapCA`,
+  `TestTrustFetch_PinnedHappyPath`,
+  `TestImportFromTrustStrap_FilesUnderBootstrapCA`).
+- **Restore honours the recorded purpose.** `backup.RestoreTrustStore` writes
+  through `TrustStoreWriter.ImportPEM` with the archive's recorded purpose,
+  source and tags. A missing or unrecognized recorded purpose is refused
+  before any certificate is written, with `*backup.RecordedPurposeError`
+  matching `backup.ErrRestoreFailed` and `ErrMissingRecordedPurpose` /
+  `ErrInvalidRecordedPurpose`; pre-release, there is no fallback for older
+  archives (`TestRestoreTrustStore_PreservesEveryRecordedPurpose`,
+  `TestRestoreTrustStore_RefusesUnrecordedOrInvalidPurpose`,
+  `TestBackupLifecycle_CreateContentsRestore`).
+- **`android-hardware` is never inferred from the certificate.**
+  `ClassifyCertificate` grants it for an exact match against the embedded
+  Google roots only — not for issuer names, and not for the Android key
+  attestation extension OID, which belongs on device leaves and is anyone's to
+  mint (`TestClassifyCertificate_ForgedGoogleAttestationRootIsNotAndroidHardware`,
+  `TestClassifyCertificate_AndroidAttestationOIDIsNotAndroidHardware`,
   `TestClassifyCertificate_EmbeddedGoogleRootsAreAndroidHardware`).
 - **`import-platform` verifies by SPKI pin before storing. No TOFU.**
 - **`fetch`/`import-platform` never accept an unpinned connection.**

@@ -976,15 +976,11 @@ func (a *trustStoreAdapter) Metadata(fingerprint string) (*backup.CertMetadataIn
 	}, nil
 }
 
-// AddPEM imports PEM-encoded certificates during a restore.
-func (a *trustStoreAdapter) AddPEM(pemData []byte) (int, error) {
-	return a.store.AddPEM(pemData)
-}
-
 // ImportPEM imports PEM-encoded certificates with caller-chosen metadata.
-// Sync writes through this, never through AddPEM, so the certificates a
-// paired device sends are filed under the purpose the sync service chooses
-// instead of being auto-classified into an anchor purpose (#1304).
+// Restore and sync both write through it, so every certificate is filed under
+// the purpose its caller chose -- the purpose the archive recorded, or
+// PurposeSynced -- instead of being auto-classified into an anchor purpose
+// (#1304, #1312).
 func (a *trustStoreAdapter) ImportPEM(pemData []byte, opts *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
 	return a.store.ImportPEM(pemData, opts)
 }

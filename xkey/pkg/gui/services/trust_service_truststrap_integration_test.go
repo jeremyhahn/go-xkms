@@ -32,6 +32,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // truststrapTestBundle generates a self-signed CA certificate and returns
@@ -111,6 +113,34 @@ func TestImportFromTrustStrap_Direct_Success(t *testing.T) {
 	count, err := store.Count()
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "trust store must contain the imported certificate")
+}
+
+// TestImportFromTrustStrap_FilesUnderBootstrapCA guards #1312: the GUI files
+// a trust-strap bundle exactly as "xkey trust bootstrap" and "xkey trust
+// fetch" do -- under bootstrap-ca, sourced to the server. The bundle is a
+// self-signed CA, which auto-classification would have filed as user-ca.
+func TestImportFromTrustStrap_FilesUnderBootstrapCA(t *testing.T) {
+	cert, pemBundle := truststrapTestBundle(t, "Truststrap Purpose CA")
+
+	srv := httptest.NewServer(truststrapBundleHandler(t, pemBundle))
+	defer srv.Close()
+
+	store := newTestFileStore(t)
+	svc := NewTrustService(store)
+
+	added, err := svc.ImportFromTrustStrap(TrustStrapImportRequest{
+		Method: "direct",
+		Server: srv.URL,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, added)
+
+	meta, err := store.Metadata(truststore.Fingerprint(cert))
+	require.NoError(t, err)
+	want := truststore.BootstrapImportOptions(srv.URL)
+	assert.Equal(t, truststore.PurposeBootstrapCA, meta.Purpose)
+	assert.Equal(t, want.Source, meta.Source)
+	assert.Equal(t, "platform:"+strings.TrimPrefix(srv.URL, "http://"), meta.Source)
 }
 
 func TestImportFromTrustStrap_Direct_MultipleCerts(t *testing.T) {

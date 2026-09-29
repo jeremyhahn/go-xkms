@@ -46,12 +46,34 @@ and refused by the attestation verifier's pool builder
 (`truststore.IsAnchorPurpose`), so it anchors nothing until the operator
 reclassifies it.
 
-**Auto-classification never trusts a name.** A certificate added without
-`--purpose` is classified by `truststore.ClassifyCertificate`. It files a
-certificate as `android-hardware` only when it carries the Android key
-attestation extension or is byte-identical to an embedded Google Hardware
-Attestation Root — never because its issuer DN says "Google" and
-"Attestation", which anyone can write into a self-signed certificate.
+**A fetched bundle never chooses a purpose either.** Every network bootstrap
+path — `xkey trust bootstrap`, `xkey trust fetch`/`import-platform`, and the
+GUI's trust-strap import (`TrustService.ImportFromTrustStrap`) — files what it
+fetched under `bootstrap-ca`, sourced `platform:<host>`, through the one helper
+`truststore.BootstrapImportOptions` (`xkey/pkg/truststore/import.go`). The
+server chose the bundle; auto-classifying it would let the server choose an
+attestation purpose too. Only `fetch`/`import-platform` take `--purpose`/
+`--source` overrides.
+
+**Restore puts back what was backed up.** `xkey backup restore` files each
+certificate under the purpose, source and tags its archive recorded
+(`recordedImportOptions`, `xkey/pkg/backup/service.go`), never
+auto-classified — re-classifying would promote a `synced` certificate out of
+quarantine. An archive entry with no recorded purpose, or one that is not a
+trust-store purpose, refuses the whole trust-store restore before anything is
+written (`backup.RecordedPurposeError`). `xkey backup create` fails rather than
+write an entry whose metadata it cannot read.
+
+**Auto-classification never trusts what a certificate's minter controls.** A
+certificate added without `--purpose` (`xkey trust add`, the GUI's paste and
+file import) is classified by `truststore.ClassifyCertificate`. It files a
+certificate as `android-hardware` only when it is byte-identical to an
+embedded Google Hardware Attestation Root — never because its issuer DN says
+"Google" and "Attestation", and never because it carries the Android key
+attestation extension (1.3.6.1.4.1.11129.2.1.17). A genuine attestation
+extension sits on a device leaf, never on a root, and anyone can put that OID
+on a certificate they mint. Another attestation root is filed explicitly:
+`xkey trust classify <fingerprint> --purpose android-hardware`.
 
 `xkey trust import-platform <host:port>` and `xkey trust fetch <url>` are the
 shorthand for the whole flow against a platform instance: fetch the bundle
@@ -103,7 +125,7 @@ between xkey and any server it bootstraps trust from, in either direction.
 xkey trust bootstrap --method dane,noise,spki --timeout 60s
    → go-xkms/pkg/trust/bootstrap.Fetch  (first configured method that verifies)
    ← CA bundle
-   → xkey/pkg/truststore: stored, fingerprinted
+   → xkey/pkg/truststore: stored under bootstrap-ca, source platform:<host>
 
 xkey trust classify <fingerprint> --purpose tpm-manufacturer
    → the certificate becomes an anchor for that purpose only
@@ -114,7 +136,7 @@ xkey trust install <fingerprint>
 xkey trust fetch https://kms.example.com:8443/v1/ca/bootstrap --spki-pin <hex>
 xkey trust import-platform kms.example.com:8443 --spki-pin <hex>
    → go-xkms/pkg/trust/fetcher.Fetch (SPKI pin only, no dispatch, no fallback)
-   → SPKI-pinned TLS → GET /v1/ca/bootstrap → store (+ optional OS install with --install-system)
+   → SPKI-pinned TLS → GET /v1/ca/bootstrap → store under bootstrap-ca (+ optional OS install with --install-system)
 ```
 
 `import-platform` builds the URL from `<host:port>`; `fetch` takes any URL, so

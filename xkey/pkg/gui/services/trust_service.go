@@ -495,11 +495,17 @@ func (s *TrustService) ImportFromTrustStrap(req TrustStrapImportRequest) (int, e
 		return 0, ErrTrustStrapEmptyBundle
 	}
 
-	n, err := s.store.AddPEM(bundle.PEM)
-	if err == nil && n > 0 {
+	// File the bundle exactly as "xkey trust bootstrap" and "xkey trust
+	// fetch" do: under bootstrap-ca, sourced to the server. Auto-classifying
+	// it would let the server choose an attestation purpose (#1312).
+	result, err := s.store.ImportPEM(bundle.PEM, truststore.BootstrapImportOptions(cfg.ServerURL))
+	if err != nil {
+		return 0, err
+	}
+	if result.Added > 0 {
 		s.notifyMutate()
 	}
-	return n, err
+	return result.Added, nil
 }
 
 // buildBootstrapConfig projects a UI-supplied TrustStrapImportRequest

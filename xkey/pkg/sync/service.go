@@ -49,17 +49,16 @@ const (
 // ---------------------------------------------------------------------------
 
 // TrustStoreAccessor provides read/write access to the trust store for sync.
-// It extends the backup reader with a fingerprint-based duplicate check and a
-// write path on which the caller chooses the purpose.
+// It extends the backup reader and writer with a fingerprint-based duplicate
+// check.
 //
-// It deliberately does not embed backup.TrustStoreWriter: that writer's AddPEM
-// auto-classifies each certificate, and auto-classification would let a
-// paired device file a certificate it chose as an attestation or TLS anchor
-// (#1304). Sync writes only through ImportPEM, always with PurposeSynced.
+// The writer's ImportPEM takes the purpose from its caller, and sync always
+// passes PurposeSynced: auto-classification would let a paired device file a
+// certificate it chose as an attestation or TLS anchor (#1304).
 type TrustStoreAccessor interface {
 	backup.TrustStoreReader
+	backup.TrustStoreWriter
 	Contains(fingerprint string) (bool, error)
-	ImportPEM(pemData []byte, opts *truststore.AddCertificateOptions) (truststore.ImportResult, error)
 }
 
 // syncedCertificateSource is the source recorded on every certificate sync
