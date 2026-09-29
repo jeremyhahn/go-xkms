@@ -39,7 +39,7 @@ import (
 // scoped, and fails TestRESTPermissionsAreCrossTransportVocabulary.
 var restOnlyPermissions = map[string]struct{}{
 	"keys:update": {}, // PKCS#11 remote-state compare-and-swap
-	"ssh:use":     {}, // blanket gate on the /xkms/v1/ssh route group
+	"ssh:use":     {}, // REST's SSH signing route (go-xkms#1230)
 }
 
 // restPermissionPairs returns every resource:action pair the REST route table

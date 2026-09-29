@@ -1,6 +1,6 @@
 # RBAC — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1230)
 
 ## Exported surface
 
@@ -66,6 +66,20 @@ The binding is applied once, in `XKMSService`, and no transport repeats it:
 | `UpdateTenantQuotas` | `requirePlatformScope` | `pkg/xkms/servicer_tenant.go:340` |
 | `BarrierEnableEncryption` | `bindTenantTarget` (empty `TenantID` = system barrier) | `pkg/xkms/servicer_barrier.go:310` |
 | `SignCSR` | `bindTenantTarget` when `TenantID` is set (the SPIFFE tenant SAN) | `pkg/xkms/servicer_ca.go:178` |
+
+SSH assets take the same rule one level down, in the SSH service rather than
+`XKMSService` (go-xkms#1230). Their address is `(scope, owner, name)`, and
+the owner may be a user as well as a tenant, so `pkg/ssh/tenancy` binds it:
+a tenant-scoped identity owns `scope=tenant` only for `owner ==
+identity.TenantID` and `scope=user`/`service` only for `owner ==
+identity.Subject`; a cross-tenant identity owns every address
+(`pkg/ssh/tenancy/client.go:170-182`). The refusal, `*OwnerBindingError`
+(`pkg/ssh/tenancy/errors.go:44-71`), is the SSH store's own not-found for the
+address, verbatim — the SSH counterpart of `TenantBindingError`. Every
+transport's SSH surface calls that one service (`pkg/server/server.go:486-512`);
+none repeats the check. See
+[`../ssh-keys/architecture.md`](../ssh-keys/architecture.md) §"Owner binding
+and tenant partitions".
 ### `pkg/auth/rolemembership.go` — role membership
 
 var ErrRoleClientRequired error
@@ -185,7 +199,7 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		"keys:read",    // PKCS#11 object-state + seal-store reads (system-barrier state)
 		"keys:write",   // the mutating half of the same two stores
 		"keys:update",  // one compare-and-swap route on the PKCS#11 state store
-		"ssh:use",      // blanket gate on the SSH CA route group
+		"ssh:use",      // declared; no route gates on it since go-xkms#1230 (retirement: go-xkms#1232)
 		"bootstrap:read", // the trust-bootstrap listener's own public keys (go-xkms#632)
 	}
 }

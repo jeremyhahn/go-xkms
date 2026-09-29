@@ -53,8 +53,8 @@ const (
 	// GroupUsers routes carry authentication only (no tenant middleware):
 	// the user plane is identity-scoped, not tenant-scoped.
 	GroupUsers
-	// GroupSSH routes carry authentication + tenant enforcement; every
-	// route additionally gates on ssh:use.
+	// GroupSSH routes carry authentication + tenant enforcement; each
+	// route additionally gates on its own ssh:* permission.
 	GroupSSH
 )
 
@@ -473,30 +473,36 @@ func Routes() []RouteSpec {
 	user("POST", "/{username}/cert-bindings", auth.ResourceUsers, auth.ActionUpdate, func(s *Server) http.HandlerFunc { return s.handleBindUserCert })
 	user("DELETE", "/{username}", auth.ResourceUsers, auth.ActionDelete, func(s *Server) http.HandlerFunc { return s.handleDeleteUser })
 
-	// --- SSH. Every route carries the blanket ssh:use gate; key
-	// generation and signing must never be reachable anonymously. No
-	// interactive SSH console is served, by design. ---
+	// --- SSH. Each route gates on the permission its MCP method and gRPC
+	// RPC carry (pkg/api/mcp/authz.go, the qrdb.v1.permission options):
+	// ssh:read to read, ssh:write to create, ssh:delete to remove. Signing
+	// is ssh:write, matching the gRPC proto permission option
+	// (xkms.proto) and MCP (mcp/authz.go), so one grant means the same on
+	// every transport.
+	// The gate admits the operation; the SSH service (pkg/ssh/tenancy) binds
+	// the scope and owner the request names to the caller (go-xkms#1230).
+	// No interactive SSH console is served, by design. ---
 	hasSSH := func(s *Server) bool { return s.sshHandlers != nil }
-	ssh := func(method, pattern string, h func(s *Server) http.HandlerFunc) {
-		specs = append(specs, RouteSpec{Method: method, Pattern: "/xkms/v1/ssh" + pattern, Group: GroupSSH, Auth: RouteAuthPermission, Resource: auth.ResourceSSH, Action: auth.ActionUse, Enabled: hasSSH, Handler: h})
+	ssh := func(method, pattern, action string, h func(s *Server) http.HandlerFunc) {
+		specs = append(specs, RouteSpec{Method: method, Pattern: "/xkms/v1/ssh" + pattern, Group: GroupSSH, Auth: RouteAuthPermission, Resource: auth.ResourceSSH, Action: action, Enabled: hasSSH, Handler: h})
 	}
-	ssh("POST", "/keys", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleGenerate })
-	ssh("POST", "/keys/import", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleImport })
-	ssh("GET", "/keys", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleListKeys })
-	ssh("GET", "/keys/{scope}/{owner}/{name}", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleGetKey })
-	ssh("DELETE", "/keys/{scope}/{owner}/{name}", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleDeleteKey })
-	ssh("GET", "/keys/{scope}/{owner}/{name}/public", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleExportPublic })
-	ssh("POST", "/keys/{scope}/{owner}/{name}/sign", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleSign })
-	ssh("POST", "/known-hosts", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleAddKnownHost })
-	ssh("GET", "/known-hosts", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleListKnownHosts })
-	ssh("DELETE", "/known-hosts/{host}", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleRemoveKnownHost })
-	ssh("POST", "/known-hosts/{host}/verify", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleVerifyKnownHost })
-	ssh("POST", "/authorized-keys", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleAddAuthorized })
-	ssh("GET", "/authorized-keys", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleListAuthorized })
-	ssh("GET", "/authorized-keys/{scope}/{owner}/{name}", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleGetAuthorized })
-	ssh("DELETE", "/authorized-keys/{scope}/{owner}/{name}", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleRemoveAuthorized })
-	ssh("POST", "/authorized-keys/emit", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleEmit })
-	ssh("POST", "/authorized-keys/verify", func(s *Server) http.HandlerFunc { return s.sshHandlers.handleVerifyAuthorized })
+	ssh("POST", "/keys", auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleGenerate })
+	ssh("POST", "/keys/import", auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleImport })
+	ssh("GET", "/keys", auth.ActionRead, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleListKeys })
+	ssh("GET", "/keys/{scope}/{owner}/{name}", auth.ActionRead, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleGetKey })
+	ssh("DELETE", "/keys/{scope}/{owner}/{name}", auth.ActionDelete, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleDeleteKey })
+	ssh("GET", "/keys/{scope}/{owner}/{name}/public", auth.ActionRead, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleExportPublic })
+	ssh("POST", "/keys/{scope}/{owner}/{name}/sign", auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleSign })
+	ssh("POST", "/known-hosts", auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleAddKnownHost })
+	ssh("GET", "/known-hosts", auth.ActionRead, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleListKnownHosts })
+	ssh("DELETE", "/known-hosts/{host}", auth.ActionDelete, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleRemoveKnownHost })
+	ssh("POST", "/known-hosts/{host}/verify", auth.ActionRead, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleVerifyKnownHost })
+	ssh("POST", "/authorized-keys", auth.ActionWrite, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleAddAuthorized })
+	ssh("GET", "/authorized-keys", auth.ActionRead, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleListAuthorized })
+	ssh("GET", "/authorized-keys/{scope}/{owner}/{name}", auth.ActionRead, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleGetAuthorized })
+	ssh("DELETE", "/authorized-keys/{scope}/{owner}/{name}", auth.ActionDelete, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleRemoveAuthorized })
+	ssh("POST", "/authorized-keys/emit", auth.ActionRead, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleEmit })
+	ssh("POST", "/authorized-keys/verify", auth.ActionRead, func(s *Server) http.HandlerFunc { return s.sshHandlers.handleVerifyAuthorized })
 
 	return specs
 }

@@ -1,6 +1,6 @@
 # RBAC — User Guide
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1115, #1230)
 
 ## What RBAC controls
 
@@ -117,6 +117,14 @@ name another tenant are refused. An audit query that names another tenant, or
 none, returns only your own tenant's events. Reading every tenant's audit
 events takes a platform (system-tenant) identity whose role holds
 `audit:read:cross`. The built-in Admin role has it and Auditor does not.
+
+SSH keys, known-hosts pins and authorized_keys entries follow the same rule,
+per owner: in a tenant you reach `--scope tenant` assets of your own tenant
+and `--scope user`/`service` assets of your own subject, and nothing else —
+not even another user's in your tenant. Anything else reads as "not found",
+and creating a key or authorizing a login under someone else's owner creates
+nothing. See [`../ssh-keys/user.md`](../ssh-keys/user.md) §"Scoping keys to a
+tenant, user, or service".
 
 ## Where to go next
 

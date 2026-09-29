@@ -1,6 +1,6 @@
 # RBAC — Architecture
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1114, #1115, #1230)
 
 ## The problem
 
@@ -115,6 +115,17 @@ for every transport:
   permission is the question "may this identity reach other tenants?", and the
   answer changes what the service does rather than whether the call proceeds.
   See [`../audit-log/api.md`](../audit-log/api.md) §"Tenant scoping".
+- **SSH keys, host pins and authorized_keys entries** are addressed by
+  `(scope, owner, name)`, where the owner is a tenant ID or a subject. The SSH
+  service every transport calls binds the owner to the caller
+  (`pkg/ssh/tenancy/client.go:170-182`) and serves each tenant from its own
+  storage partition and backend-key namespace, so equal subjects in two
+  tenants never meet. Another owner's asset answers as a missing one; a
+  write under it creates nothing (go-xkms#1230; see
+  [`../ssh-keys/architecture.md`](../ssh-keys/architecture.md) §"Owner
+  binding and tenant partitions"). REST's SSH routes also gate per verb now
+  — `ssh:read`/`ssh:write`/`ssh:delete`, `ssh:use` to sign
+  (`pkg/api/rest/routes.go:476-503`) — instead of one blanket `ssh:use`.
 ## Identities carry role identifiers, never role names
 
 Every authenticated identity carries qrdb role **identifiers** in `Roles`:
