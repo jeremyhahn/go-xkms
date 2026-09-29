@@ -193,7 +193,7 @@ type importDataVolume interface {
 	Unlock(passphrase string) error
 	Lock() error
 	CopyDataToVolume(sourceDir string) error
-	IsMounted() bool
+	IsMounted() (bool, error)
 }
 
 // Compile-time check that *luks.Volume satisfies importDataVolume.
@@ -235,7 +235,12 @@ func importDataToVolume(out io.Writer, vol importDataVolume, sourceDir, tmpMount
 // never ran or failed) holds the volume's contents; it is left in place
 // and reported instead of being deleted.
 func removeTempMount(out io.Writer, vol importDataVolume, tmpMount string) {
-	if vol.IsMounted() {
+	mounted, err := vol.IsMounted()
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "Warning: could not determine whether %s is still mounted (%v); leaving it in place. Run 'xkey luks2 lock' against it, then remove it manually once its contents are no longer at risk.\n", tmpMount, err)
+		return
+	}
+	if mounted {
 		_, _ = fmt.Fprintf(out, "Warning: %s is still mounted; leaving it in place. Run 'xkey luks2 lock' against it, then remove it manually once its contents are no longer at risk.\n", tmpMount)
 		return
 	}

@@ -108,7 +108,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 // WrapKey wraps key material for secure transport using the specified parameters.
 // This uses the wrapping functions from pkg/crypto/wrapping.
 func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
-	if keyMaterial == nil || len(keyMaterial) == 0 {
+	if len(keyMaterial) == 0 {
 		return nil, backend.ErrInvalidAttributes
 	}
 

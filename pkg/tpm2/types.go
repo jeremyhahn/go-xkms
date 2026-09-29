@@ -54,17 +54,17 @@ const (
 	// Defined in "Registry of reserved TPM 2.0 handles and localities".
 	// These constants are used in test files.
 
-	nvramPlatformIndex    = 0x01400001 //nolint:unused // used in tests
-	nvramEndorsementIndex = 0x01C00001 //nolint:unused // used in tests
-	nvramOwnerIndex       = 0x01800001 //nolint:unused // used in tests
+	nvramPlatformIndex    = 0x01400001
+	nvramEndorsementIndex = 0x01C00001
+	nvramOwnerIndex       = 0x01800001
 
 	// NV index ranges for counter and extend testing
-	nvramCounterIndex = 0x01800010 //nolint:unused // used in tests
-	nvramExtendIndex  = 0x01800020 //nolint:unused // used in tests
+	nvramCounterIndex = 0x01800010
+	nvramExtendIndex  = 0x01800020
 
 	// nvramChunkIndex is used to test chunked NVRead/NVWrite paths for
 	// indices larger than TPM_PT_NV_BUFFER_MAX.
-	nvramChunkIndex = 0x01800030 //nolint:unused // used in tests
+	nvramChunkIndex = 0x01800030
 
 	// Trusted Platform EK and SRK stored under the Platform Hierarchy
 	// Registry of Reserved TPM 2.0 Handles and Localities, Section 2.3.1 - Key Handle Assignments
@@ -106,8 +106,8 @@ const DefaultEKCertDownloadTimeout = 10 * time.Second
 
 var (
 	// debugPCR and debugPCRBank are used in test files.
-	debugPCR     = uint(16)      //nolint:unused // used in tests
-	debugPCRBank = PCRBankSHA256 //nolint:unused // used in tests
+	debugPCR     = uint(16)
+	debugPCRBank = PCRBankSHA256
 
 	ErrPlatformPasswordUnavailable = errors.New("tpm: failed to retrieve platform password")
 	ErrCertStoreNotInitialized     = errors.New("tpm: certificate store not initialized")

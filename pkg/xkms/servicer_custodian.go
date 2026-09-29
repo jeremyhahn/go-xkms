@@ -37,68 +37,75 @@ type CustodianGroupServicer interface {
 // The transport request/response types are aliases of the qrdb transport types,
 // so the call is a direct pass-through to the node's custodian client.
 func (s *XKMSService) CreateCustodianGroup(ctx context.Context, req *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
-	if s.custodians == nil {
+	custodians := s.custodians.load()
+	if custodians == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	return s.custodians.CreateCustodianGroup(ctx, req)
+	return custodians.CreateCustodianGroup(ctx, req)
 }
 
 // GetCustodianGroup retrieves a custodian group by its ID.
 func (s *XKMSService) GetCustodianGroup(ctx context.Context, groupID string) (*transport.GetCustodianGroupResponse, error) {
-	if s.custodians == nil {
+	custodians := s.custodians.load()
+	if custodians == nil {
 		return nil, ErrNotConfigured
 	}
-	return s.custodians.GetCustodianGroup(ctx, groupID)
+	return custodians.GetCustodianGroup(ctx, groupID)
 }
 
 // ListCustodianGroups returns all registered custodian groups.
 func (s *XKMSService) ListCustodianGroups(ctx context.Context) (*transport.ListCustodianGroupsResponse, error) {
-	if s.custodians == nil {
+	custodians := s.custodians.load()
+	if custodians == nil {
 		return nil, ErrNotConfigured
 	}
-	return s.custodians.ListCustodianGroups(ctx)
+	return custodians.ListCustodianGroups(ctx)
 }
 
 // DeleteCustodianGroup deletes a custodian group by its ID.
 func (s *XKMSService) DeleteCustodianGroup(ctx context.Context, groupID string) error {
-	if s.custodians == nil {
+	custodians := s.custodians.load()
+	if custodians == nil {
 		return ErrNotConfigured
 	}
-	return s.custodians.DeleteCustodianGroup(ctx, groupID)
+	return custodians.DeleteCustodianGroup(ctx, groupID)
 }
 
 // AddCustodianMember adds a member to a custodian group.
 func (s *XKMSService) AddCustodianMember(ctx context.Context, req *transport.AddCustodianMemberRequest) (*transport.AddCustodianMemberResponse, error) {
-	if s.custodians == nil {
+	custodians := s.custodians.load()
+	if custodians == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	return s.custodians.AddCustodianMember(ctx, req)
+	return custodians.AddCustodianMember(ctx, req)
 }
 
 // RemoveCustodianMember removes a member from a custodian group.
 func (s *XKMSService) RemoveCustodianMember(ctx context.Context, req *transport.RemoveCustodianMemberRequest) error {
-	if s.custodians == nil {
+	custodians := s.custodians.load()
+	if custodians == nil {
 		return ErrNotConfigured
 	}
 	if req == nil {
 		return ErrNilRequest
 	}
-	return s.custodians.RemoveCustodianMember(ctx, req)
+	return custodians.RemoveCustodianMember(ctx, req)
 }
 
 // DistributeShares distributes Shamir shares to the members of a custodian group.
 func (s *XKMSService) DistributeShares(ctx context.Context, req *transport.DistributeSharesRequest) (*transport.DistributeSharesResponse, error) {
-	if s.custodians == nil {
+	custodians := s.custodians.load()
+	if custodians == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	return s.custodians.DistributeShares(ctx, req)
+	return custodians.DistributeShares(ctx, req)
 }

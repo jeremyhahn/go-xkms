@@ -182,7 +182,7 @@ func TestEkRootPool_FromFile(t *testing.T) {
 		t.Fatal("ekRootPool() returned nil pool")
 	}
 	if len(pool.Subjects()) != 1 { //nolint:staticcheck // test-only introspection
-		t.Errorf("pool has %d entries, want 1", len(pool.Subjects())) //nolint:staticcheck
+		t.Errorf("pool has %d entries, want 1", len(pool.Subjects())) //nolint:staticcheck // test-only introspection
 	}
 }
 
@@ -198,8 +198,8 @@ func TestEkRootPool_ConcatenatedIntermediateBothUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ekRootPool() error: %v", err)
 	}
-	if len(pool.Subjects()) != 2 { //nolint:staticcheck
-		t.Errorf("pool has %d entries, want 2", len(pool.Subjects())) //nolint:staticcheck
+	if len(pool.Subjects()) != 2 { //nolint:staticcheck // test-only introspection
+		t.Errorf("pool has %d entries, want 2", len(pool.Subjects())) //nolint:staticcheck // test-only introspection
 	}
 }
 
@@ -217,8 +217,8 @@ func TestEkRootPool_MultipleFilesCombine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ekRootPool() error: %v", err)
 	}
-	if len(pool.Subjects()) != 2 { //nolint:staticcheck
-		t.Errorf("pool has %d entries, want 2", len(pool.Subjects())) //nolint:staticcheck
+	if len(pool.Subjects()) != 2 { //nolint:staticcheck // test-only introspection
+		t.Errorf("pool has %d entries, want 2", len(pool.Subjects())) //nolint:staticcheck // test-only introspection
 	}
 }
 

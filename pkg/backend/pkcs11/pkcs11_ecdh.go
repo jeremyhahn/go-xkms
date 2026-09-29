@@ -153,8 +153,13 @@ func (b *Backend) DeriveKeyECDH(
 	peerPublicKey []byte,
 	kdfParams *types.KDFParams,
 ) (derivedKeyOut []byte, err error) {
-	if ctx == nil {
-		ctx = context.Background()
+	// A cancelled caller gets no token work done on its behalf. The check is
+	// nil tolerant so a caller that forgot the context still gets a
+	// derivation rather than a panic.
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, &errs.Wrapped{Msg: "pkcs11: ECDH derivation cancelled", Err: err}
+		}
 	}
 
 	// Validate inputs
@@ -289,7 +294,7 @@ func (b *Backend) findPrivateKeyHandle(session pkcs11.SessionHandle, attrs *type
 	}
 
 	if len(handles) == 0 {
-		return 0, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return 0, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	return handles[0], nil
@@ -461,11 +466,12 @@ func uncompressedPoint(candidate []byte) ([]byte, elliptic.Curve, error) {
 		return nil, nil, &errs.Message{Msg: fmt.Sprintf("unsupported EC point size: %d", len(candidate))}
 	}
 
-	// Unmarshal rejects points that are not on the curve, which is what stops
-	// an invalid-curve attack: a peer that submits a point on a weaker curve
-	// can otherwise recover the private key from a sequence of derivations.
-	if x, _ := elliptic.Unmarshal(curve, candidate); x == nil {
-		return nil, nil, &errs.Message{Msg: "invalid EC point: not on curve"}
+	// ParseUncompressedPublicKey rejects points that are not on the curve,
+	// which is what stops an invalid-curve attack: a peer that submits a
+	// point on a weaker curve can otherwise recover the private key from a
+	// sequence of derivations.
+	if _, err := ecdsa.ParseUncompressedPublicKey(curve, candidate); err != nil {
+		return nil, nil, &errs.Wrapped{Msg: "invalid EC point: not on curve", Err: err}
 	}
 
 	return candidate, curve, nil
@@ -496,7 +502,11 @@ func parsePeerPublicKey(pubKeyBytes []byte) ([]byte, elliptic.Curve, error) {
 		if !ok {
 			return nil, nil, &errs.Detail{Err: ErrInvalidPeerPublicKey, Detail: "public key is not an ECDSA key"}
 		}
-		return elliptic.Marshal(ecdsaPub.Curve, ecdsaPub.X, ecdsaPub.Y), ecdsaPub.Curve, nil
+		pubBytes, err := ecdsaPub.Bytes()
+		if err != nil {
+			return nil, nil, &errs.Wrapped{Msg: "failed to encode peer public key", Err: err}
+		}
+		return pubBytes, ecdsaPub.Curve, nil
 	}
 
 	// Bare uncompressed point.

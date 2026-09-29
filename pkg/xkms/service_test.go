@@ -3337,12 +3337,12 @@ func TestSetBarrier_AndGet(t *testing.T) {
 	require.NoError(t, err)
 
 	// Initially nil
-	assert.Nil(t, svc.barrier)
+	assert.Nil(t, svc.barrier.load())
 
 	// We can't easily create a real Barrier without storage/strategy,
 	// but we can set nil and verify it stays nil
 	svc.SetBarrier(nil)
-	assert.Nil(t, svc.barrier)
+	assert.Nil(t, svc.barrier.load())
 }
 
 func TestSetWebAuthn_NilSet(t *testing.T) {

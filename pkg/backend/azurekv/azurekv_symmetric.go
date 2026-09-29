@@ -127,7 +127,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	// Check if metadata exists
 	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	// Extract metadata
@@ -503,8 +503,14 @@ func (k *azureSymmetricKey) Decrypt(encrypted *types.EncryptedData, opts *types.
 			"azurekv: nonce is %d bytes, want %d", len(encrypted.Nonce), gcm.NonceSize())}
 	}
 
-	// Reconstruct ciphertext with tag
-	ciphertextWithTag := append(encrypted.Ciphertext, encrypted.Tag...)
+	// Reconstruct ciphertext with tag into a fresh slice -- appending onto
+	// encrypted.Ciphertext directly (its caller-owned backing array) would
+	// silently write Tag into any spare capacity behind it, exactly the
+	// aliasing bug JoinGCMWithRandomNonce above already avoids by allocating
+	// its own backing array.
+	ciphertextWithTag := make([]byte, 0, len(encrypted.Ciphertext)+len(encrypted.Tag))
+	ciphertextWithTag = append(ciphertextWithTag, encrypted.Ciphertext...)
+	ciphertextWithTag = append(ciphertextWithTag, encrypted.Tag...)
 
 	// Decrypt
 	plaintext, err := gcm.Open(nil, encrypted.Nonce, ciphertextWithTag, aad)

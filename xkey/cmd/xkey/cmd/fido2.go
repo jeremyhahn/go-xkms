@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -718,6 +719,16 @@ func cryptoRandReadImpl(b []byte) (int, error) {
 	return len(b), nil // Will be replaced with actual implementation
 }
 
+// readCryptoRandomFrom reads exactly len(b) bytes from r into b using
+// io.ReadFull, so a source that returns fewer bytes than requested on a
+// single Read (a short read) is retried until b is fully populated,
+// instead of silently returning fewer random bytes than the caller asked
+// for. Extracted from the /dev/urandom closure below so this behavior is
+// unit-testable against a fake short-reading io.Reader.
+func readCryptoRandomFrom(r io.Reader, b []byte) (int, error) {
+	return io.ReadFull(r, b)
+}
+
 func init() {
 	// Set up the actual crypto/rand implementation
 	cryptoRandRead = func(b []byte) (int, error) {
@@ -727,7 +738,7 @@ func init() {
 			return 0, err
 		}
 		defer func() { _ = f.Close() }()
-		return f.Read(b)
+		return readCryptoRandomFrom(f, b)
 	}
 }
 

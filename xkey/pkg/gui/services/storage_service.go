@@ -156,7 +156,11 @@ func (s *StorageService) RequireUnlocked() error {
 	if backend.IsUnlocked() {
 		return nil
 	}
-	if !vol.IsMounted() {
+	mounted, err := vol.IsMounted()
+	if err != nil {
+		return &WrappedError{Msg: "storage_service: could not determine volume mount state", Err: err}
+	}
+	if !mounted {
 		return xkms.ErrLUKSVolumeLocked
 	}
 	return backend.Attach()
@@ -181,7 +185,11 @@ func (s *StorageService) GetStatus() (*StorageStatus, error) {
 	status.VolumeExists = vol.Exists()
 	if status.VolumeExists {
 		status.IsLUKS = vol.IsLUKS()
-		status.IsMounted = vol.IsMounted()
+		mounted, mountErr := vol.IsMounted()
+		if mountErr != nil {
+			return nil, &WrappedError{Msg: "storage_service: could not determine volume mount state", Err: mountErr}
+		}
+		status.IsMounted = mounted
 		status.IsOpen = vol.IsOpen()
 		if info, statErr := os.Stat(vol.LUKSPath); statErr == nil {
 			status.VolumeSizeBytes = info.Size()

@@ -53,8 +53,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
-	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
@@ -68,8 +68,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
-	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/ssh/tenancy"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
@@ -308,6 +306,10 @@ type Server struct {
 	// Password store
 	passwordStore *staticpw.BackendStore
 
+	// passwordManager routes Password Manager entries to per-tenant stores.
+	// One instance serves the XKMSService and the REST surface.
+	passwordManager *staticpw.TenantPasswordStoreManager
+
 	// PKCS#11 remote-state store — persists a remote-mode PKCS#11 module's token
 	// and object state in the embedded qrdb node. Nil unless enabled.
 	pkcs11StateStore *pkcs11state.Store
@@ -489,19 +491,7 @@ func (s *Server) ensureSSHClient() sdkssh.Client {
 		if s.xkmsService == nil {
 			return
 		}
-		sshStorage, err := s.createStorage("ssh")
-		if err != nil {
-			s.logger.Error("Failed to create SSH storage", slog.Any("error", err))
-			return
-		}
-		resolver := sshbackend.ResolverFunc(func(_ context.Context, backendID string) (types.KeyProvider, error) {
-			b, lerr := s.xkmsService.LookupBackend(backendID)
-			if lerr != nil {
-				return nil, lerr
-			}
-			return b.KeyProvider(), nil
-		})
-		client, err := tenancy.New(tenancy.Options{Storage: sshStorage, Resolver: resolver})
+		client, err := compose.BuildSSHClient(s.createStorage, s.xkmsService.LookupBackend)
 		if err != nil {
 			s.logger.Error("Failed to build SSH client", slog.Any("error", err))
 			return
@@ -842,6 +832,12 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// The resolved service is also captured on the server so the transport
 	// constructors receive it via dependency injection.
 	if svc, err := xkms.Get(); err == nil {
+		// The store-backed features publish through the same compose path an
+		// embedding host's module uses. The tenant password manager is built
+		// before the service is published so the REST surface (which reads
+		// s.passwordManager) never observes it half-composed.
+		stores := s.composedStores()
+
 		// Published under the lock: with the unified API server enabled the
 		// embedded node serves module RPCs concurrently with this
 		// composition, and the module resolver reads the reference through
@@ -853,9 +849,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// made below the route gate (QueryAudit's audit:read:cross check).
 		// A nil Authorizer means RBAC is disabled, as it does there.
 		svc.SetAuthorizer(s.rbacAuthorizer)
-		if s.barrier != nil {
-			svc.SetBarrier(s.barrier)
-		}
+		stores.Wire(svc)
 		if s.tokenIssuer != nil {
 			// So DisableUser/DeleteUser can revoke every refresh-token
 			// session an affected account holds the moment the lifecycle
@@ -866,42 +860,14 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.webauthnService != nil {
 			svc.SetWebAuthn(s.webauthnService)
 		}
-		if s.pinManager != nil {
-			svc.SetPINManager(s.pinManager)
-		}
-		if s.passwordStore != nil {
-			if s.qrdbClient != nil {
-				svc.SetUserClients(s.qrdbClient.Users(), s.qrdbClient.Roles())
-			}
-			svc.SetPasswordStore(s.passwordStore)
-			// Wire tenant password store manager if barrier registry is available
-			if s.barrierRegistry != nil {
-				pwManager, pwErr := staticpw.NewTenantPasswordStoreManager(s.barrierRegistry, s.passwordStore)
-				if pwErr != nil {
-					s.logger.Warn("Failed to create tenant password store manager", "error", pwErr)
-				} else {
-					svc.SetPasswordStoreManager(pwManager)
-					s.logger.Info("Tenant password store manager wired into service")
-				}
-			}
+		if s.passwordStore != nil && s.qrdbClient != nil {
+			svc.SetUserClients(s.qrdbClient.Users(), s.qrdbClient.Roles())
 		}
 		if s.pkcs11StateStore != nil {
 			svc.SetPKCS11StateStore(s.pkcs11StateStore)
 		}
-		if s.platformStore != nil {
-			svc.SetPlatformStore(s.platformStore)
-		}
-		if s.policyManager != nil {
-			svc.SetPolicyManager(s.policyManager)
-		}
 		if s.escrowRegistry != nil {
 			svc.SetEscrowRegistry(s.escrowRegistry)
-		}
-		if s.qrdbClient != nil {
-			svc.SetCustodianClient(s.qrdbClient.CustodianGroups())
-		}
-		if s.qrdbClient != nil {
-			svc.SetShareClient(s.qrdbClient.Shares())
 		}
 		// UserAuthFactors returns nil when the transport predates the
 		// user-side surface, so the servicer stays unconfigured rather than
@@ -942,19 +908,8 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.tenantService != nil {
 			svc.SetTenantService(s.tenantService)
 		}
-		if s.credentialService != nil {
-			svc.SetCredentialService(s.credentialService)
-		}
 		if s.ceremonyService != nil {
 			svc.SetCeremonyService(initialize.NewCeremonyAdapter(s.ceremonyService))
-		}
-		if s.ca != nil {
-			// s.ca is ca.TrustedCA which doesn't include the *Raw adapter methods.
-			// The concrete *ca.CA struct satisfies provider.CA via its Raw methods
-			// in service_adapter.go. Type-assert to wire the typed interface.
-			if caProvider, ok := s.ca.(provider.CA); ok {
-				svc.SetCA(caProvider)
-			}
 		}
 		// Wire the hardware-attestation trust anchors. Without them,
 		// attestation-gated CSR signing fails closed, so a broken anchor
@@ -973,6 +928,39 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	}
 
 	return s, nil
+}
+
+// composedStores assembles xkmsd's store-backed features for
+// compose.Stores.Wire -- the publish step an embedding host's module runs
+// too. xkmsd builds each store at its own point of the start-up sequence;
+// the per-tenant password manager, which needs both the password store and
+// the barrier registry, is built here, once both exist, and kept on the
+// server so the REST surface routes through the same instance.
+func (s *Server) composedStores() *compose.Stores {
+	if s.passwordStore != nil && s.barrierRegistry != nil {
+		manager, err := compose.BuildTenantPasswordManager(s.barrierRegistry, s.passwordStore)
+		if err != nil {
+			s.logger.Warn("Per-tenant password routing is off", "error", err)
+		} else {
+			s.passwordManager = manager
+		}
+	}
+	stores := &compose.Stores{
+		PasswordStore:   s.passwordStore,
+		PasswordManager: s.passwordManager,
+		PIN:             s.pinManager,
+		PlatformStore:   s.platformStore,
+		Credentials:     s.credentialService,
+		CA:              s.ca,
+		Policies:        s.policyManager,
+		Barrier:         s.barrier,
+	}
+	// xkmsd serves share custody over its own node whenever it has one.
+	if s.qrdbClient != nil {
+		stores.Custodians = s.qrdbClient.CustodianGroups()
+		stores.Shares = s.qrdbClient.Shares()
+	}
+	return stores
 }
 
 // setupLogger configures the logger based on config
@@ -1847,12 +1835,11 @@ func (s *Server) initializePINManager() error {
 
 // initializePasswordStore initializes the static password store.
 func (s *Server) initializePasswordStore() error {
-	backend, err := s.createStorage("passwords")
+	store, err := compose.BuildPasswordStore(s.createStorage)
 	if err != nil {
 		return &ErrStorageCreate{Resource: "password storage", Err: err}
 	}
-
-	s.passwordStore = staticpw.NewStore(backend)
+	s.passwordStore = store
 
 	// createStorage above is the actual storage seam: it always prefixes a
 	// view over the single shared datastore, which ignores datastore.path
@@ -1894,29 +1881,36 @@ func (s *Server) initializePKCS11StateStore() error {
 // initializeCredentialService initializes the credential management service
 // for sealing/unsealing backend credentials (PKCS#11 User PIN, TPM2 auth, etc.)
 func (s *Server) initializeCredentialService() error {
-	strategy := s.config.Credentials.SealStrategy
-	if strategy == "" {
-		strategy = "manual"
-	}
-
-	cfg := &credentialspkg.Config{
-		Strategy: strategy,
-	}
-
-	svc, err := credentialspkg.New(cfg, s.platformStore, s.barrier, s.logger)
+	svc, err := compose.BuildCredentialService(s.logger, s.config.Credentials.SealStrategy, s.platformStore, s.barrier)
 	if err != nil {
 		return &ErrServiceInit{Service: "credential service", Err: err, Sentinel: ErrCredentialServiceFailed}
 	}
 
 	s.credentialService = svc
-	s.logger.Info("Credential service initialized", "strategy", strategy)
+	s.logger.Info("Credential service initialized", "strategy", svc.Strategy())
 	return nil
 }
 
-// initializePolicyManager initializes the PCR policy manager.
+// initializePolicyManager builds the PCR policy manager (/api/v1/policies/*)
+// through compose.BuildPolicyManager, the path an embedding host's
+// WithPCRReader takes. The PCR reader is xkmsd's configured TPM; without
+// one, policies stay off and the typed reason is logged.
 func (s *Server) initializePolicyManager() error {
-	// Policy manager is optional, only for TPM-equipped servers
-	s.logger.Info("Policy manager initialization deferred (requires TPM PCR reader)")
+	reader, err := s.tpmPCRReader()
+	if err != nil {
+		return &ErrServiceInit{Service: "policy manager", Err: err}
+	}
+	if reader == nil {
+		disabled := &compose.FeatureDisabledError{Feature: compose.FeaturePolicies, Missing: "PCR reader (no TPM is configured)"}
+		s.logger.Info("xkms feature off", "feature", compose.FeaturePolicies, "reason", disabled.Error())
+		return nil
+	}
+	manager, err := compose.BuildPolicyManager(s.createStorage, reader)
+	if err != nil {
+		return &ErrServiceInit{Service: "policy manager", Err: err}
+	}
+	s.policyManager = manager
+	s.logger.Info("xkms feature on", "feature", compose.FeaturePolicies, "pcr_reader", "tpm2")
 	return nil
 }
 
@@ -2243,17 +2237,12 @@ func (s *Server) initializeCA() error {
 
 	s.logger.Info("Initializing CA...")
 
-	// Validate the CA configuration
-	if err := s.config.CA.Validate(); err != nil {
-		return &ErrCAInit{Operation: "validate CA configuration", Err: err}
-	}
-
 	// Resolve the keystore backend for the CA's root identity
 	if len(s.config.CA.Identity) == 0 {
 		return ErrCANoIdentities
 	}
 	keystoreType := s.config.CA.Identity[0].GetStoreType()
-	var backend xkms.Backend
+	var clusterBackend xkms.Backend
 	if s.clusterCAKeyStrategy != nil {
 		// Cluster-ACME mode: the cluster CA key custody strategy resolves this
 		// node's runtime keystore. For the barrier strategy the first node's
@@ -2261,64 +2250,27 @@ func (s *Server) initializeCA() error {
 		// and every node loads it, so any node can issue (IssuerForIdentity
 		// resolves the cluster intermediate signing key). hsm/tpm-kek resolve
 		// their respective durable stores.
-		clusterBackend, err := s.resolveClusterCARuntimeBackend()
+		b, err := s.resolveClusterCARuntimeBackend()
 		if err != nil {
 			return &ErrCAInit{Operation: "resolve cluster CA keystore", Err: err}
 		}
-		backend = clusterBackend
-	} else {
-		b, ok := s.backends[string(keystoreType)]
-		if !ok {
-			return &ErrBackendNotAvailable{Backend: string(keystoreType), Purpose: "CA keystore"}
-		}
-		backend = b
+		clusterBackend = b
 	}
 
 	// backendForStore routes every CA signing key to its backend by
 	// StoreType (pkg/ca requires this; there is no single-keystore
 	// fallback). In cluster-ACME mode the cluster CA key custody strategy
-	// resolves a single runtime keystore for every StoreType, mirroring
-	// `backend` above; outside cluster mode each StoreType resolves to its
-	// own registered backend.
+	// resolves a single runtime keystore for every StoreType; outside
+	// cluster mode each StoreType resolves to its own registered backend.
 	backendForStore := func(cn string, st types.StoreType) (xkms.Backend, error) {
-		if s.clusterCAKeyStrategy != nil {
-			return backend, nil
+		if clusterBackend != nil {
+			return clusterBackend, nil
 		}
 		b, ok := s.backends[string(st)]
 		if !ok {
 			return nil, &ErrBackendNotAvailable{Backend: string(st), Purpose: "CA keystore"}
 		}
 		return b, nil
-	}
-
-	// Create certificate storage for the CA
-	caStorage, err := s.createStorage("ca")
-	if err != nil {
-		return &ErrStorageCreate{Resource: "CA storage directory", Err: err}
-	}
-	certAdapter := storage.NewCertAdapter(caStorage)
-	caCertStore, err := certstore.New(&certstore.Config{
-		CertStorage: certAdapter,
-	})
-	if err != nil {
-		return &ErrServiceInit{Service: "CA certificate store", Err: err}
-	}
-
-	// Persist certificate serial numbers in the datastore so uniqueness
-	// survives restarts (and replicates under Raft). Without this the CA falls
-	// back to in-memory serial tracking, which risks issuing duplicate serials
-	// after a restart — a violation of X.509 serial uniqueness.
-	serialStore, err := s.createStorage("ca-serials")
-	if err != nil {
-		return &ErrServiceInit{Service: "CA serial store", Err: err}
-	}
-
-	// Persist certificate revocations in the datastore so the revocation set
-	// survives restarts (and replicates under Raft). Without this, revoked
-	// certificates silently become un-revoked after a restart.
-	revocationStore, err := s.createStorage("ca-revocations")
-	if err != nil {
-		return &ErrServiceInit{Service: "CA revocation store", Err: err}
 	}
 
 	// CA identity and software-keystore key passwords (id.Keys[j].Password,
@@ -2329,49 +2281,23 @@ func (s *Server) initializeCA() error {
 	// through types.SecretValueBytes / types.NewPasswordFromSecretValue,
 	// which prefers that resolved enclave over Raw -- see
 	// Server.resolveConfigSecrets.
-
-	// Create the CA instance
-	trustedCA, err := ca.NewFromMultiIdentityConfig(&ca.MultiIdentityParams{
+	//
+	// compose.BuildCA is the construction path an embedding host's CA takes
+	// too: it opens the certificate, serial and revocation stores, loads the
+	// persisted hierarchy, and initializes one only when no root was ever
+	// persisted. The cluster ACME first-node provisioner may have pre-staged
+	// CA certificates (pkg/trust/clusterca); adopting them before the load
+	// keeps it from initializing a second root.
+	trustedCA, err := compose.BuildCA(s.ctx, compose.CAParams{
 		Config:          s.config.CA,
-		KeyStore:        backend,
-		CertStore:       caCertStore,
-		SerialGen:       ca.NewSerialGenerator(ca.NewBackendStorage(serialStore)),
-		RevocationStore: revocationStore,
+		Storage:         s.caStorage,
 		BackendForStore: backendForStore,
 		AuditLogger:     s.auditLogger,
+		AdoptCertStore:  s.adoptStagedClusterCACerts,
+		Logger:          s.logger,
 	})
 	if err != nil {
-		return &ErrCAInit{Operation: "create CA", Err: err}
-	}
-
-	// Adopt any CA certificates pre-staged by the cluster ACME first-node
-	// provisioner (pkg/trust/clusterca) so Load finds the full hierarchy and
-	// does not re-Init (which would fork a second root). No-op when no staged
-	// material exists.
-	if err := s.adoptStagedClusterCACerts(caCertStore); err != nil {
-		return &ErrCAInit{Operation: "adopt staged cluster CA certificates", Err: err}
-	}
-
-	// Try to load existing CA state (certificates and keys from a previous
-	// run). Only a genuine ca.ErrCertificateNotFound -- the root (or an
-	// intermediate) certificate is simply absent, the one condition Load
-	// reports that legitimately means "never initialized" -- falls through to
-	// Init, which getOrGenerateCAKey makes safe to (re)run over a partial
-	// state. Any other Load failure (a corrupt or unreadable persisted
-	// certificate, an unavailable keystore backend, a key-attributes defect)
-	// is a distinct problem with existing state and must fail startup closed
-	// instead of silently forging a new root over it (go-xkms#793: initializeCA
-	// used to treat every Load error alike, so a Load bug unrelated to
-	// "not found" minted a brand new CA -- and therefore a new TLS SPKI and a
-	// new client pin -- on every restart).
-	if err := trustedCA.Load(s.ctx); err != nil {
-		if !errors.Is(err, ca.ErrCertificateNotFound) {
-			return &ErrCAInit{Operation: "load existing CA", Err: err}
-		}
-		s.logger.Info("No existing CA found, initializing new CA", "reason", err.Error())
-		if initErr := trustedCA.Init(s.ctx); initErr != nil {
-			return &ErrCAInit{Operation: "initialize new CA", Err: initErr}
-		}
+		return &ErrCAInit{Operation: "build CA", Err: err}
 	}
 
 	s.ca = trustedCA
@@ -2399,6 +2325,17 @@ func (s *Server) initializeCA() error {
 	}
 
 	return nil
+}
+
+// caStorage opens the CA's named store (certificates, serials,
+// revocations) for compose.BuildCA, reporting a failure as the storage
+// error it is.
+func (s *Server) caStorage(name string) (storage.Backend, error) {
+	backend, err := s.createStorage(name)
+	if err != nil {
+		return nil, &ErrStorageCreate{Resource: "CA storage " + name, Err: err}
+	}
+	return backend, nil
 }
 
 // tlsBootstrapCA is the subset of ca.TrustedCA the TLS-server-certificate
@@ -2901,21 +2838,22 @@ func (s *Server) ModuleRESTServer() *rest.Server {
 // (pkg/apimodule), so both surfaces are built from identical wiring.
 func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	restConfig := &rest.Config{
-		Host:             s.config.Server.Host,
-		Port:             s.config.Server.RESTPort,
-		Backends:         s.backends,
-		Version:          getBuildVersion(),
-		Authenticator:    s.liveAuthenticator,
-		EnableRBAC:       s.config.Auth.EnableRBAC,
-		RBACAuthorizer:   s.rbacAuthorizer,
-		AuditLogger:      s.auditLogger,
-		PasswordStore:    s.passwordStore,
-		BarrierRegistry:  s.barrierRegistry,
-		CustodianEnabled: s.qrdbClient != nil,
-		ShareEnabled:     s.qrdbClient != nil,
-		CeremonyService:  s.ceremonyService,
-		XKMSService:      s.xkmsService,
-		SSHClient:        s.ensureSSHClient(),
+		Host:                 s.config.Server.Host,
+		Port:                 s.config.Server.RESTPort,
+		Backends:             s.backends,
+		Version:              getBuildVersion(),
+		Authenticator:        s.liveAuthenticator,
+		EnableRBAC:           s.config.Auth.EnableRBAC,
+		RBACAuthorizer:       s.rbacAuthorizer,
+		AuditLogger:          s.auditLogger,
+		PasswordStore:        s.passwordStore,
+		PasswordStoreManager: s.passwordManager,
+		BarrierRegistry:      s.barrierRegistry,
+		CustodianEnabled:     s.qrdbClient != nil,
+		ShareEnabled:         s.qrdbClient != nil,
+		CeremonyService:      s.ceremonyService,
+		XKMSService:          s.xkmsService,
+		SSHClient:            s.ensureSSHClient(),
 	}
 
 	// Embedded web UI: serve the compiled SPA (installed via SetUIAssets)

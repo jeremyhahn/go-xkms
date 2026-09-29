@@ -298,6 +298,34 @@ func TestVolume_Unlock_SetupLoopDeviceFails(t *testing.T) {
 	assert.Equal(t, "setup_loop", volErr.Operation)
 }
 
+// TestVolume_Unlock_CheckMountedFails proves that an error determining
+// whether the volume is already mounted aborts Unlock instead of being
+// treated as "not mounted" and proceeding to attach a loop device.
+func TestVolume_Unlock_CheckMountedFails(t *testing.T) {
+	withKeyringCheck(t, func() error { return nil })
+	stubLoopSeams(t)
+
+	mountCheckErr := errors.New("could not read /proc/self/mountinfo")
+	isMountedFn = func(string) (bool, error) { return false, mountCheckErr }
+
+	setupCalls := 0
+	setupLoopDevice = func(string) (string, error) { setupCalls++; return "/dev/loop-test0", nil }
+
+	dir := t.TempDir()
+	luksPath := filepath.Join(dir, "vault.luks")
+	require.NoError(t, os.WriteFile(luksPath, []byte("container"), 0600))
+	v := NewVolumeWithPaths(luksPath, filepath.Join(dir, "mnt"))
+
+	err := v.Unlock("passphrase")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, mountCheckErr)
+
+	var volErr *VolumeError
+	require.ErrorAs(t, err, &volErr)
+	assert.Equal(t, "check_mounted", volErr.Operation)
+	assert.Equal(t, 0, setupCalls, "an unknown mount state must not proceed to attach a loop device")
+}
+
 // TestVolume_Unlock_UnlockFails proves a wrong passphrase detaches the loop
 // device it had just attached.
 func TestVolume_Unlock_UnlockFails(t *testing.T) {
@@ -488,6 +516,34 @@ func TestVolume_Unlock_ChmodMountPointFails(t *testing.T) {
 
 // TestVolume_Lock_UnmountFails proves an unmount failure is reported without
 // attempting to close the LUKS mapping or detach the loop device.
+// TestVolume_Lock_CheckMountedFails proves that an error determining mount
+// state aborts Lock instead of silently treating the volume as unmounted
+// and skipping the unmount step.
+func TestVolume_Lock_CheckMountedFails(t *testing.T) {
+	stubLoopSeams(t)
+	mountCheckErr := errors.New("could not read /proc/self/mountinfo")
+	isMountedFn = func(string) (bool, error) { return false, mountCheckErr }
+	isUnlockedFn = func(string) bool { return true }
+
+	unmountCalls := 0
+	unmountLUKS = func(string, int) error { unmountCalls++; return nil }
+
+	v := &Volume{
+		LUKSPath:   filepath.Join(t.TempDir(), "vault.luks"),
+		MountPoint: t.TempDir(),
+		MapperName: MapperName,
+	}
+
+	err := v.Lock()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, mountCheckErr)
+
+	var volErr *VolumeError
+	require.ErrorAs(t, err, &volErr)
+	assert.Equal(t, "check_mounted", volErr.Operation)
+	assert.Equal(t, 0, unmountCalls, "an unknown mount state must not proceed to unmount")
+}
+
 func TestVolume_Lock_UnmountFails(t *testing.T) {
 	stubLoopSeams(t)
 	isMountedFn = func(string) (bool, error) { return true, nil }
@@ -600,6 +656,29 @@ func TestVolume_Lock_Success(t *testing.T) {
 	assert.Equal(t, 1, unmountCalls)
 	assert.Equal(t, 1, lockCalls)
 	assert.Equal(t, 1, detachCalls)
+}
+
+// TestVolume_CopyDataToVolume_CheckMountedFails proves that an error
+// determining mount state aborts CopyDataToVolume instead of silently
+// treating the volume as unmounted.
+func TestVolume_CopyDataToVolume_CheckMountedFails(t *testing.T) {
+	stubLoopSeams(t)
+	mountCheckErr := errors.New("could not read /proc/self/mountinfo")
+	isMountedFn = func(string) (bool, error) { return false, mountCheckErr }
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	require.NoError(t, os.MkdirAll(src, 0700))
+
+	v := NewVolumeWithPaths(filepath.Join(dir, "vault.luks"), filepath.Join(dir, "mnt"))
+
+	err := v.CopyDataToVolume(src)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, mountCheckErr)
+
+	var volErr *VolumeError
+	require.ErrorAs(t, err, &volErr)
+	assert.Equal(t, "check_mounted", volErr.Operation)
 }
 
 // TestVolume_CopyDataToVolume_Mounted_Success proves data is copied into a

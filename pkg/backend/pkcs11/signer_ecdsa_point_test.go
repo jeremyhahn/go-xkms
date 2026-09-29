@@ -112,7 +112,7 @@ func TestDecodeECPoint_BarePointWithHeaderLikePrefix(t *testing.T) {
 			require.NoError(t, err, "a bare uncompressed point must not be unwrapped")
 			require.Equal(t, point, decoded, "no byte of a bare point may be stripped")
 
-			x, y := elliptic.Unmarshal(tc.curve, decoded)
+			x, y := elliptic.Unmarshal(tc.curve, decoded) //nolint:staticcheck // SA1019: on-curve validation of the decoded point; crypto/ecdh migration is a separate, behavior-sensitive change
 			require.NotNil(t, x, "the decoded point must still be on the curve")
 			require.NotNil(t, y)
 		})
@@ -150,7 +150,7 @@ func TestDecodeECPoint_BothEncodingsAgree(t *testing.T) {
 		t.Run(curve.Params().Name, func(t *testing.T) {
 			key, err := ecdsa.GenerateKey(curve, rand.Reader)
 			require.NoError(t, err)
-			point := elliptic.Marshal(curve, key.PublicKey.X, key.PublicKey.Y)
+			point := elliptic.Marshal(curve, key.X, key.Y) //nolint:staticcheck // SA1019: builds the uncompressed-point wire format decodeECPoint is tested against; crypto/ecdh migration is a separate, behavior-sensitive change
 
 			bare, err := decodeECPoint(curve, point)
 			require.NoError(t, err)

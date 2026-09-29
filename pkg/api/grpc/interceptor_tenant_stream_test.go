@@ -203,7 +203,7 @@ func TestTenantStreamInterceptor_Success(t *testing.T) {
 
 func TestTenantServerStream_Context(t *testing.T) {
 	t.Run("returns wrapped context", func(t *testing.T) {
-		parentCtx := context.WithValue(context.Background(), "test-key", "test-value") //nolint:staticcheck
+		parentCtx := context.WithValue(context.Background(), "test-key", "test-value") //nolint:staticcheck // SA1029: a plain string key is fine for this test, which only checks that Context() returns the value unwrapped, not real collision safety
 		innerStream := &fakeServerStream{ctx: context.Background()}
 		wrapped := &tenantServerStream{
 			ServerStream: innerStream,

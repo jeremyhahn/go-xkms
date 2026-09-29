@@ -84,6 +84,11 @@ type PlatformPolicyStatus struct {
 	Valid      bool   `json:"valid"` // current PCRs match stored digests
 	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
+
+	// Error carries the reason Valid could not be confirmed true (e.g. the
+	// TPM was unavailable while reading live PCR values), as opposed to a
+	// confirmed digest mismatch, where Valid is simply false with no error.
+	Error string `json:"error,omitempty"`
 }
 
 // PolicyVerifyResult is the frontend-facing result of a server-side
@@ -182,16 +187,24 @@ func (s *PlatformPolicyService) GetStatus() (retStatus *PlatformPolicyStatus, re
 		return &PlatformPolicyStatus{Configured: false}, nil
 	}
 
-	valid, _ := s.verifyDigests(def)
+	valid, verifyErr := s.verifyDigests(def)
 
-	return &PlatformPolicyStatus{
+	status := &PlatformPolicyStatus{
 		Configured: true,
 		PCRs:       def.PCRs,
 		Bank:       def.Bank,
 		Valid:      valid,
 		CreatedAt:  def.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:  def.UpdatedAt.Format(time.RFC3339),
-	}, nil
+	}
+	if verifyErr != nil {
+		// Valid stays false, but the reason (e.g. TPM unavailable) must
+		// reach the caller instead of being indistinguishable from a
+		// confirmed digest mismatch.
+		status.Error = verifyErr.Error()
+	}
+
+	return status, nil
 }
 
 // CreatePolicy captures the current PCR values from the TPM and stores

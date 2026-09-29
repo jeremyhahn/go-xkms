@@ -63,7 +63,12 @@ func WithRESTServer(resolve RESTResolver) Option {
 //   - permission routes register under their resource:action permission,
 //     enforced by qrdb's authorization layer.
 //
-// The full route table registers unconditionally — with a host-supplied
+// The barrier route families (rest.IsBarrierRoute: barrier, custodian,
+// shares, init ceremony) register only when the module serves them
+// (servesBarrierRoutes): always behind a host-supplied REST server, and on a
+// self-built module only with WithBarrierRoutes — so a host that owns its
+// barrier keeps those paths. The rest of the route table registers
+// unconditionally — with a host-supplied
 // resolver (WithRESTServer), with the module's self-built surface
 // (WithQRDBClient / WithWebAuthnConfig / WithSessionOptions / WithPIVLogin,
 // or none of those, restServer's rest.NewHostServer fallback), or with
@@ -81,6 +86,9 @@ func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 	variants := map[routeKey][]rest.RouteSpec{}
 	var order []routeKey
 	for _, spec := range rest.Routes() {
+		if rest.IsBarrierRoute(spec) && !m.servesBarrierRoutes() {
+			continue
+		}
 		key := routeKey{spec.Method, spec.Pattern}
 		if _, seen := variants[key]; !seen {
 			order = append(order, key)

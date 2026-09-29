@@ -142,7 +142,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 // The wrapped key can then be securely transmitted and imported via ImportKey, which will
 // unwrap it using the corresponding private key in the HSM.
 func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
-	if keyMaterial == nil || len(keyMaterial) == 0 {
+	if len(keyMaterial) == 0 {
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "key material cannot be nil or empty"}
 	}
 
@@ -172,7 +172,7 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		wrapped, err = wrapping.WrapRSAAES(keyMaterial, rsaPubKey, params.Algorithm)
 
 	default:
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: params.Algorithm.String()}
 	}
 
 	if err != nil {
@@ -429,7 +429,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		}
 
 	default:
-		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: wrapped.Algorithm.String()}
 	}
 
 	// CKA_LABEL and CKA_ID are part of the C_UnwrapKey template, so a token that
@@ -549,7 +549,7 @@ func (b *Backend) importKeyHybrid(session pkcs11.SessionHandle, attrs *types.Key
 		hashMech = pkcs11.CKM_SHA_1
 		mgfMech = pkcs11.CKG_MGF1_SHA1
 	default:
-		return 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
+		return 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: wrapped.Algorithm.String()}
 	}
 
 	// SoftHSM2 doesn't support C_UnwrapKey with CKM_RSA_PKCS_OAEP for secret keys.
@@ -854,7 +854,7 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	}
 
 	if keyHandle == 0 {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	// Check if key is extractable (CKA_EXTRACTABLE attribute in HSM)
@@ -1116,7 +1116,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	}
 
 	if keyHandle == 0 {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
 	}
 
 	// Check if the key is extractable

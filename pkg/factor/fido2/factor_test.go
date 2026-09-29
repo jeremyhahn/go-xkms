@@ -43,10 +43,11 @@ type authenticator struct {
 	rpIDHsh []byte
 
 	// flags is the authenticatorData flags byte; ceremonyType is the
-	// clientDataJSON "type". Tests alter them to model a misbehaving or
-	// hostile client.
+	// clientDataJSON "type"; origin is the clientDataJSON "origin". Tests
+	// alter them to model a misbehaving or hostile client.
 	flags        byte
 	ceremonyType string
+	origin       string
 }
 
 func newAuthenticator(t *testing.T, rpID string) *authenticator {
@@ -62,6 +63,7 @@ func newAuthenticator(t *testing.T, rpID string) *authenticator {
 		rpIDHsh:      h[:],
 		flags:        0x05, // UP + UV
 		ceremonyType: "webauthn.get",
+		origin:       "https://" + rpID,
 	}
 }
 
@@ -111,7 +113,7 @@ func (a *authenticator) clientDataJSON(challenge []byte) []byte {
 	}{
 		Type:      a.ceremonyType,
 		Challenge: base64.RawURLEncoding.EncodeToString(challenge),
-		Origin:    "https://" + a.rpID,
+		Origin:    a.origin,
 	}
 	b, _ := json.Marshal(cd)
 	return b
@@ -160,17 +162,29 @@ func marshalASN1(r, s *big.Int) ([]byte, error) {
 
 func enroll(t *testing.T, f *Factor, a *authenticator) *qrdbsdk.AuthFactorEnrollment {
 	t.Helper()
+	return enrollWithParams(t, f, a, nil)
+}
+
+// enrollWithParams enrolls a's credential, overlaying extra onto the base
+// MethodParams so tests can exercise "origins" and
+// "require_user_verification" without duplicating the whole call.
+func enrollWithParams(t *testing.T, f *Factor, a *authenticator, extra map[string]any) *qrdbsdk.AuthFactorEnrollment {
+	t.Helper()
 	credID := make([]byte, 16)
 	if _, err := rand.Read(credID); err != nil {
 		t.Fatalf("rand credID: %v", err)
 	}
+	params := map[string]any{
+		"cose_public_key": base64.StdEncoding.EncodeToString(a.coseKey(t)),
+		"credential_id":   base64.RawURLEncoding.EncodeToString(credID),
+		"rp_id":           a.rpID,
+	}
+	for k, v := range extra {
+		params[k] = v
+	}
 	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
-		UserID: "custodian-1",
-		MethodParams: map[string]any{
-			"cose_public_key": base64.StdEncoding.EncodeToString(a.coseKey(t)),
-			"credential_id":   base64.RawURLEncoding.EncodeToString(credID),
-			"rp_id":           a.rpID,
-		},
+		UserID:       "custodian-1",
+		MethodParams: params,
 	})
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
@@ -194,7 +208,14 @@ func responseFor(a *authenticator, t *testing.T, nonce []byte) *qrdbsdk.AuthFact
 // issue enrolls a's credential with f and issues a challenge for it.
 func issue(t *testing.T, f *Factor, a *authenticator) (*qrdbsdk.AuthFactorEnrollment, *qrdbsdk.AuthFactorChallenge) {
 	t.Helper()
-	enrollment := enroll(t, f, a)
+	return issueWithParams(t, f, a, nil)
+}
+
+// issueWithParams enrolls a's credential with extra MethodParams overlaid and
+// issues a challenge for it.
+func issueWithParams(t *testing.T, f *Factor, a *authenticator, extra map[string]any) (*qrdbsdk.AuthFactorEnrollment, *qrdbsdk.AuthFactorChallenge) {
+	t.Helper()
+	enrollment := enrollWithParams(t, f, a, extra)
 	challenge, err := f.Challenge(context.Background(), enrollment)
 	if err != nil {
 		t.Fatalf("Challenge: %v", err)
@@ -438,16 +459,182 @@ func TestFIDO2Factor_Verify_RejectsMissingUserPresence(t *testing.T) {
 	}
 }
 
-// TestFIDO2Factor_Verify_AcceptsUserPresenceWithoutVerification pins that UP
-// alone suffices: no enrollment records a user-verification requirement.
-func TestFIDO2Factor_Verify_AcceptsUserPresenceWithoutVerification(t *testing.T) {
+// TestFIDO2Factor_Verify_RejectsUserPresenceWithoutVerification pins the
+// WebAuthn/CTAP2 best-practice default for a factor used to unseal or
+// authenticate: every enrollment requires user verification unless it
+// explicitly opts out, so UP alone is refused.
+func TestFIDO2Factor_Verify_RejectsUserPresenceWithoutVerification(t *testing.T) {
 	f := New(Config{RPID: "example.com"})
 	a := newAuthenticator(t, "example.com")
 	_, challenge := issue(t, f, a)
-	a.flags = 0x01 // UP only
+	a.flags = 0x01 // UP only, no UV
+
+	err := f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce))
+	requireVerificationFailed(t, err)
+	if !strings.Contains(err.Error(), "user-verified") {
+		t.Errorf("error %q does not name the missing user-verified flag", err)
+	}
+}
+
+// TestFIDO2Factor_Verify_AcceptsUserPresenceWhenVerificationNotRequired pins
+// the explicit opt-out: an enrollment that sets
+// "require_user_verification": false accepts UP alone.
+func TestFIDO2Factor_Verify_AcceptsUserPresenceWhenVerificationNotRequired(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issueWithParams(t, f, a, map[string]any{"require_user_verification": false})
+	a.flags = 0x01 // UP only, no UV
 
 	if err := f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce)); err != nil {
-		t.Fatalf("Verify(UP only): %v", err)
+		t.Fatalf("Verify(UP only, UV not required): %v", err)
+	}
+}
+
+// TestFIDO2Factor_Verify_RejectsChallengeWithoutRequireUV proves Verify has
+// no implicit default when the enrollment carries no user-verification
+// requirement at all (e.g. a pre-existing enrollment predating this field):
+// it refuses rather than silently defaulting to permissive.
+func TestFIDO2Factor_Verify_RejectsChallengeWithoutRequireUV(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issue(t, f, a)
+	delete(challenge.MethodData, methodDataRequireUV)
+
+	err := f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce))
+	requireVerificationFailed(t, err)
+	if !strings.Contains(err.Error(), methodDataRequireUV) {
+		t.Errorf("error %q does not name the missing %s", err, methodDataRequireUV)
+	}
+}
+
+// TestFIDO2Factor_Verify_RejectsWrongOrigin covers a clientDataJSON whose
+// origin does not match any origin the enrollment recorded, per WebAuthn
+// L2/L3 §7.2 step 9.
+func TestFIDO2Factor_Verify_RejectsWrongOrigin(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issue(t, f, a)
+	a.origin = "https://evil.example.net"
+
+	err := f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce))
+	requireVerificationFailed(t, err)
+	if !strings.Contains(err.Error(), "origin") {
+		t.Errorf("error %q does not name the origin mismatch", err)
+	}
+}
+
+// TestFIDO2Factor_Verify_AcceptsAnyEnrolledOrigin covers an enrollment that
+// records several accepted origins (e.g. an apex domain and a www subdomain):
+// an assertion from any one of them verifies.
+func TestFIDO2Factor_Verify_AcceptsAnyEnrolledOrigin(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issueWithParams(t, f, a, map[string]any{
+		"origins": []string{"https://example.com", "https://www.example.com"},
+	})
+	a.origin = "https://www.example.com"
+
+	if err := f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce)); err != nil {
+		t.Fatalf("Verify(second enrolled origin): %v", err)
+	}
+}
+
+func TestFIDO2Factor_Verify_RejectsChallengeWithoutOrigins(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	_, challenge := issue(t, f, a)
+	delete(challenge.MethodData, methodDataOrigins)
+
+	err := f.Verify(context.Background(), challenge, responseFor(a, t, challenge.Nonce))
+	requireVerificationFailed(t, err)
+	if !strings.Contains(err.Error(), methodDataOrigins) {
+		t.Errorf("error %q does not name the missing %s", err, methodDataOrigins)
+	}
+}
+
+// TestFIDO2Factor_Enroll_RecordsOriginAndUVRequirement pins that Enroll
+// records both fields even with no explicit MethodParams: the default
+// origin "https://" + rp_id and the secure require_user_verification default
+// of true, and that Challenge carries both into MethodData for Verify to
+// read.
+func TestFIDO2Factor_Enroll_RecordsOriginAndUVRequirement(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+
+	enrollment := enroll(t, f, a)
+	if got, want := enrollment.Metadata["origins"], "https://example.com"; got != want {
+		t.Errorf("enrollment Metadata[origins] = %q, want %q", got, want)
+	}
+	if got, want := enrollment.Metadata["require_uv"], "true"; got != want {
+		t.Errorf("enrollment Metadata[require_uv] = %q, want %q", got, want)
+	}
+
+	challenge, err := f.Challenge(context.Background(), enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	origins, ok := challenge.MethodData[methodDataOrigins].([]string)
+	if !ok || len(origins) != 1 || origins[0] != "https://example.com" {
+		t.Errorf("challenge MethodData[%q] = %v, want [https://example.com]", methodDataOrigins, challenge.MethodData[methodDataOrigins])
+	}
+	if requireUV, ok := challenge.MethodData[methodDataRequireUV].(bool); !ok || !requireUV {
+		t.Errorf("challenge MethodData[%q] = %v, want true", methodDataRequireUV, challenge.MethodData[methodDataRequireUV])
+	}
+}
+
+// TestFIDO2Factor_Enroll_RecordsExplicitOriginsAndUVOverride pins that
+// explicit MethodParams values for "origins" and
+// "require_user_verification" are recorded verbatim rather than the
+// defaults.
+func TestFIDO2Factor_Enroll_RecordsExplicitOriginsAndUVOverride(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+
+	enrollment := enrollWithParams(t, f, a, map[string]any{
+		"origins":                   []string{"https://example.com", "https://www.example.com"},
+		"require_user_verification": false,
+	})
+	if got, want := enrollment.Metadata["origins"], "https://example.com,https://www.example.com"; got != want {
+		t.Errorf("enrollment Metadata[origins] = %q, want %q", got, want)
+	}
+	if got, want := enrollment.Metadata["require_uv"], "false"; got != want {
+		t.Errorf("enrollment Metadata[require_uv] = %q, want %q", got, want)
+	}
+}
+
+func TestFIDO2Factor_Enroll_RejectsEmptyOrigins(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
+	_, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
+		UserID: "custodian-1",
+		MethodParams: map[string]any{
+			"cose_public_key": base64.StdEncoding.EncodeToString(a.coseKey(t)),
+			"credential_id":   base64.RawURLEncoding.EncodeToString([]byte("credential-id-1")),
+			"rp_id":           a.rpID,
+			"origins":         []string{},
+		},
+	})
+	if !errors.As(err, &inv) {
+		t.Fatalf("Enroll(empty origins) err = %v, want EnrollmentInvalidError", err)
+	}
+}
+
+func TestFIDO2Factor_Enroll_RejectsMalformedRequireUserVerification(t *testing.T) {
+	f := New(Config{RPID: "example.com"})
+	a := newAuthenticator(t, "example.com")
+	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
+	_, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
+		UserID: "custodian-1",
+		MethodParams: map[string]any{
+			"cose_public_key":           base64.StdEncoding.EncodeToString(a.coseKey(t)),
+			"credential_id":             base64.RawURLEncoding.EncodeToString([]byte("credential-id-1")),
+			"rp_id":                     a.rpID,
+			"require_user_verification": 42,
+		},
+	})
+	if !errors.As(err, &inv) {
+		t.Fatalf("Enroll(bad require_user_verification) err = %v, want EnrollmentInvalidError", err)
 	}
 }
 

@@ -1711,6 +1711,18 @@ func (a *App) PostBarrierUnseal() error {
 	return nil
 }
 
+// resolveBrowsersDir resolves the directory browser certificate state is
+// stored under, ~/.xkey/browsers. Extracted from NewApp so its
+// user-home-directory resolution failure is unit-testable without
+// invoking the rest of NewApp's service construction.
+func resolveBrowsersDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".xkey", "browsers"), nil
+}
+
 // NewApp creates a new App with the provided configuration. Pass nil to
 // use DefaultGUIConfig.
 func NewApp(cfg *GUIConfig) *App {
@@ -1891,8 +1903,11 @@ func NewApp(cfg *GUIConfig) *App {
 		}
 	}
 
-	home, _ := os.UserHomeDir()
-	browsersDir := filepath.Join(home, ".xkey", "browsers")
+	browsersDir, err := resolveBrowsersDir()
+	if err != nil {
+		log.Error("failed to resolve user home directory", "error", err)
+		panic("browser service initialization failed: could not resolve user home directory: " + err.Error())
+	}
 	secureBrowserSvc := services.NewSecureBrowserService(
 		browsersDir, browserSvc, trustSvc, log)
 	// Without this the generic launcher only exports SSL_CERT_FILE, which no
@@ -2171,8 +2186,8 @@ func NewApp(cfg *GUIConfig) *App {
 		mgr := a.pkcs11Service.GetManager()
 		if mgr != nil {
 			if conn, connErr := mgr.GetConnection(moduleID, slotID); connErr == nil {
-				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN) //nolint:staticcheck // SA4023: see below — stub build always errors.
-				if p11Err == nil {                                                              //nolint:staticcheck // SA4023: the !pkcs11 stub build always returns a non-nil error (branch statically dead there); real on-device registration runs in the pkcs11 build.
+				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN)
+				if p11Err == nil {
 					if pivErr := xkmssdk.RegisterPIVStore("pkcs11", p11Store); pivErr != nil {
 						a.log.Warn("failed to register PKCS#11 PIV store", "error", pivErr)
 					} else {

@@ -82,7 +82,7 @@ func captureUploadHandler(resCh chan<- uploadResult) func(ch ssh.Channel, req *s
 		var buf bytes.Buffer
 		_, _ = io.Copy(&buf, ch)
 		resCh <- uploadResult{cmd: cmd, data: buf.Bytes()}
-		ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0})) //nolint:errcheck
+		ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 	}
 }
 
@@ -249,8 +249,8 @@ func TestUpload_NonZeroExit(t *testing.T) {
 	failHandler := func(ch ssh.Channel, req *ssh.Request) {
 		req.Reply(true, nil)
 		_, _ = io.Copy(io.Discard, ch)
-		ch.Stderr().Write([]byte("No space left on device"))                          //nolint:errcheck
-		ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1})) //nolint:errcheck
+		ch.Stderr().Write([]byte("No space left on device"))
+		ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 	}
 	srv := newTestServer(t, hostSigner, failHandler)
 	defer srv.close()

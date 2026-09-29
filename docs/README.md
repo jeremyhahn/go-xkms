@@ -29,6 +29,7 @@ the folder in the same commit that changes the behavior.
 | [escrow](escrow/) | External key escrow (KMIP + xkms federation): the agent factory, daemon config, and service layer — reachable today only through the embedded Go SDK, pending an RBAC vocabulary decision for the network transports |
 | [fido2-ctap2](fido2-ctap2/) | The canonical FIDO2 CTAP2 implementation |
 | [frost-threshold-signing](frost-threshold-signing/) | RFC 9591 FROST threshold signing (`-tags frost`) — trusted-dealer keygen, the explicit round API, and why the CLI's local path and the REST/gRPC/MCP network surface are independent |
+| [host-embedding](host-embedding/) | Mounting the `xkms` ServiceModule in a qrdb-embedding host: the host supplies dependencies (qrdb client, barrier registry, PIN backend, sealer, CA config, PCR reader), `pkg/compose` builds the Password Manager, SSH, CA, platform store, credential and policy stores through the same path as `xkmsd`, and the barrier routes stay the host's unless it opts in |
 | [init-ceremony](init-ceremony/) | `xkmsd init` — the KMS+CA half and the delegated IAM half |
 | [key-management](key-management/) | Key lifecycle, key providers, symmetric and asymmetric operations |
 | [luks](luks/) | The root module's `pkg/luks`: FIPS-aware LUKS volume lifecycle (`Manager`/`Executor`) and TPM 2.0 passphrase sealing (`TPMSealer`); `xkey`'s own LUKS2 implementation is documented separately in `xkey/docs/luks/` |
@@ -133,6 +134,7 @@ by five and reports unconverted folders as converted.
 | [luks](luks/) | — |
 | [signing](signing/) | `verification/` — **absorbed and deleted** (its `ChecksumProvider` was never wired to a live verifier; superseded by `types.ChecksumProvider`) |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
+| [host-embedding](host-embedding/) | — (new surface; `architecture/server-architecture.md` §"Unified API Server" points here for host mode) |
 | [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
 | [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — **absorbed and deleted**. The legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions described a proxy plane that was since deleted; `ca-key-custody.md` is retained as a companion deep-dive, now [`clustering/ca-key-custody.md`](clustering/ca-key-custody.md), linked from [`clustering/architecture.md`](clustering/architecture.md). A separate `docs/cluster/` five-file folder landed briefly (go-xkms#847, the read-only REST cluster status/membership surface for the web console) and duplicated this one; it was merged into `clustering/` in the same pass rather than kept as two folders for one feature. |
 | [rbac](rbac/) | `architecture/rbac.md` |

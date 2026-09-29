@@ -256,7 +256,7 @@ func deriveSealingKey(privateKey crypto.PrivateKey, keyID string) ([]byte, error
 	switch k := privateKey.(type) {
 	case *rsa.PrivateKey:
 		// Use the private exponent D as key material
-		keyMaterial = k.D.Bytes() //nolint:staticcheck // raw private scalar needed for key derivation
+		keyMaterial = k.D.Bytes() // crypto/rsa.PrivateKey.D is not deprecated (unlike ecdsa's), no nolint needed
 	case *ecdsa.PrivateKey:
 		// Use the private scalar D as key material
 		keyMaterial = k.D.Bytes() //nolint:staticcheck // raw private scalar needed for key derivation

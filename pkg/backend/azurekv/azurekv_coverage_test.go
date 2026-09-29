@@ -593,7 +593,7 @@ func TestSignerAndDecrypter_RSAOAEPBranches(t *testing.T) {
 	}
 
 	// nil opts -> PKCS#1 v1.5.
-	pkcs1ct, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, []byte("secret"))
+	pkcs1ct, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, []byte("secret")) //nolint:staticcheck // SA1019: exercises azurekvDecrypter.Decrypt's nil-opts path, which maps to Azure Key Vault's real EncryptionAlgorithmRSA15
 	if err != nil {
 		t.Fatalf("EncryptPKCS1v15() error = %v", err)
 	}

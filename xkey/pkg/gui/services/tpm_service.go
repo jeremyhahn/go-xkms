@@ -1661,8 +1661,15 @@ func (s *TPMService) ProvisionIDevID(ownerAuth string) (retErr error) {
 	}
 	iakAttrs.TPMAttributes.HierarchyAuth = iakAuth
 
-	// Get EK certificate for IDevID CSR (optional, may not exist)
-	ekCert, _ := tpm.EKCertificate()
+	// Get EK certificate for IDevID CSR. Only "not provisioned" is
+	// tolerated (the EK certificate is optional, per CreateIDevID); any
+	// other failure (e.g. a TPM communication error) must fail
+	// provisioning rather than silently proceed without it.
+	ekCert, ekErr := tpm.EKCertificate()
+	if ekErr != nil && !errors.Is(ekErr, xkms.ErrTPMEndorsementCertNotFound) {
+		s.log.Error("failed to get EK certificate for IDevID provisioning", "error", ekErr)
+		return ErrTPMProvisionIDevIDFailed
+	}
 
 	if _, _, err := tpm.CreateIDevID(iakAttrs, ekCert, nil); err != nil {
 		if isTPMAuthError(err) {

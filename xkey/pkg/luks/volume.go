@@ -89,10 +89,11 @@ func (v *Volume) IsLUKS() bool {
 	return IsLUKSVolume(v.LUKSPath)
 }
 
-// IsMounted checks if the volume is mounted.
-func (v *Volume) IsMounted() bool {
-	mounted, _ := isMountedFn(v.MountPoint)
-	return mounted
+// IsMounted checks if the volume is mounted. It returns an error when the
+// mount state could not be determined; callers must not treat that as
+// "not mounted".
+func (v *Volume) IsMounted() (bool, error) {
+	return isMountedFn(v.MountPoint)
 }
 
 // IsOpen checks if the LUKS volume is unlocked.
@@ -185,7 +186,11 @@ func (v *Volume) Unlock(passphrase string) error {
 		return ErrVolumeNotFound
 	}
 
-	if v.IsMounted() {
+	mounted, err := v.IsMounted()
+	if err != nil {
+		return &VolumeError{Operation: "check_mounted", Path: v.MountPoint, Err: err}
+	}
+	if mounted {
 		return ErrVolumeAlreadyMounted
 	}
 
@@ -244,12 +249,16 @@ func (v *Volume) Unlock(passphrase string) error {
 
 // Lock unmounts and closes the LUKS volume.
 func (v *Volume) Lock() error {
-	if !v.IsOpen() && !v.IsMounted() {
+	mounted, err := v.IsMounted()
+	if err != nil {
+		return &VolumeError{Operation: "check_mounted", Path: v.MountPoint, Err: err}
+	}
+	if !v.IsOpen() && !mounted {
 		return ErrVolumeNotMounted
 	}
 
 	// Unmount if mounted
-	if v.IsMounted() {
+	if mounted {
 		if err := unmountLUKS(v.MountPoint, 0); err != nil {
 			return &VolumeError{Operation: "unmount", Path: v.MountPoint, Err: err}
 		}
@@ -279,7 +288,11 @@ func (v *Volume) Lock() error {
 // (non-elevated) calling user so that the unprivileged GUI process can
 // access them.
 func (v *Volume) CopyDataToVolume(sourceDir string) error {
-	if !v.IsMounted() {
+	mounted, err := v.IsMounted()
+	if err != nil {
+		return &VolumeError{Operation: "check_mounted", Path: v.MountPoint, Err: err}
+	}
+	if !mounted {
 		return ErrVolumeNotMounted
 	}
 
