@@ -230,17 +230,19 @@ under an identifier that does not describe it.
 Do not confuse it with `algorithm`, which on every import request names the
 **wrapping** algorithm the material arrived under.
 
-REST's and gRPC's `ImportKey` and `GetImportParameters` handlers build their
-own `types.KeyAttributes` from these fields rather than calling
-`XKMSService.ImportKey` / `.GetImportParameters` — unlike `GenerateKey`,
-which delegates to the service on every transport as of go-xkms#1214 — because
-the service's import/export capability check requires a backend to support
-export as well as import, which an AWS-KMS-shaped import-only backend does
-not. Both handlers still call `types.KeyAttributes.Validate()` directly on
-the attributes they build, so the same 2048-bit RSA floor `GenerateKey`
-enforces (go-xkms#1204) applies here too. See
-[engineering.md § Import and `GetImportParameters` stay transport-level](engineering.md#import-and-getimportparameters-stay-transport-level-go-xkms1214)
-for the capability-resolution detail and the follow-up it names.
+REST's and gRPC's `ImportKey` and `GetImportParameters` handlers now call
+`XKMSService.ImportKey` / `.GetImportParameters` directly, the same
+service-layer delegation `GenerateKey` received in go-xkms#1214: the
+service's capability resolution now asserts only the import half
+(`backend.ImportBackend`), never the full `backend.ImportExportBackend`
+union, so an AWS-KMS-shaped import-only backend reaches it exactly as it
+reaches the handlers' pre-go-xkms#1216 local implementation
+(go-xkms#1216). The service enforces the same 2048-bit RSA floor
+`GenerateKey` does (go-xkms#1204) as part of building the key's attributes,
+so no transport-level `types.KeyAttributes.Validate()` call is needed
+anymore. See
+[engineering.md § Import/export capability resolution is split by direction](engineering.md#importexport-capability-resolution-is-split-by-direction-go-xkms1216)
+for the capability-resolution detail.
 
 | Transport | field |
 |---|---|

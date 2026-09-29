@@ -344,13 +344,9 @@ func (s *XKMSService) ImportKey(ctx context.Context, req *transport.ImportKeyReq
 		return nil, err
 	}
 
-	importExport, ok := importExportFor(b)
+	importer, ok := importBackendFor(b)
 	if !ok {
-		return nil, &ErrBackendUnsupported{
-			Sentinel: ErrOperationNotSupported,
-			Backend:  backendName,
-			Detail:   "does not support import/export operations",
-		}
+		return nil, unsupportedHalf(backendName, backend.ErrImportNotSupported)
 	}
 
 	attrs, err := buildImportKeyAttributes(req, backendName, b.Type())
@@ -365,16 +361,30 @@ func (s *XKMSService) ImportKey(ctx context.Context, req *transport.ImportKeyReq
 		Metadata:    req.Metadata,
 	}
 
-	if err = importExport.ImportKey(ctx, attrs, wrapped); err != nil {
+	if err = importer.ImportKey(ctx, attrs, wrapped); err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
 
 	incrementKeysTotal(backendName)
 
-	return &transport.ImportKeyResponse{
+	resp = &transport.ImportKeyResponse{
 		Success: true,
 		KeyID:   req.KeyID,
-	}, nil
+	}
+
+	// Best-effort: attach the public key PEM for asymmetric imports, mirroring
+	// GenerateKey's response. Symmetric material has no public key to report,
+	// and a transport whose wire response carries no such field (gRPC) simply
+	// ignores it.
+	if !attrs.IsSymmetric() {
+		if privKey, keyErr := b.GetKey(ctx, attrs); keyErr == nil {
+			if pubPEM, pemErr := pubKeyPEM(privKey); pemErr == nil {
+				resp.PublicKeyPEM = pubPEM
+			}
+		}
+	}
+
+	return resp, nil
 }
 
 // ExportKey exports a key in wrapped form for secure transport.
@@ -403,7 +413,7 @@ func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyReq
 		return nil, err
 	}
 
-	importExport, ok := importExportFor(b)
+	exporter, ok := exportBackendFor(b)
 	if !ok {
 		return nil, unsupportedHalf(backendName, backend.ErrExportNotSupported)
 	}
@@ -414,7 +424,7 @@ func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyReq
 	}
 
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
-	wrapped, err := importExport.ExportKey(ctx, keyAttrs, algorithm)
+	wrapped, err := exporter.ExportKey(ctx, keyAttrs, algorithm)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
@@ -503,13 +513,9 @@ func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.Ge
 		return nil, err
 	}
 
-	importExport, ok := importExportFor(b)
+	importer, ok := importBackendFor(b)
 	if !ok {
-		return nil, &ErrBackendUnsupported{
-			Sentinel: ErrOperationNotSupported,
-			Backend:  backendName,
-			Detail:   "does not support import/export operations",
-		}
+		return nil, unsupportedHalf(backendName, backend.ErrImportNotSupported)
 	}
 
 	// The request's key template decides which kind of key the ceremony is
@@ -531,7 +537,7 @@ func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.Ge
 	}
 
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
-	params, err := importExport.GetImportParameters(ctx, attrs, algorithm)
+	params, err := importer.GetImportParameters(ctx, attrs, algorithm)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
@@ -595,11 +601,11 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		return nil, &ErrCopyKeyBackend{Role: "destination", Err: err}
 	}
 
-	srcImportExport, ok := importExportFor(srcB)
+	srcExporter, ok := exportBackendFor(srcB)
 	if !ok {
 		return nil, unsupportedHalf(sourceBackend, backend.ErrExportNotSupported)
 	}
-	dstImportExport, ok := importExportFor(dstB)
+	dstImporter, ok := importBackendFor(dstB)
 	if !ok {
 		return nil, unsupportedHalf(destBackend, backend.ErrImportNotSupported)
 	}
@@ -644,17 +650,17 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 	// names by ITS OWN token -- meaningless to any other backend instance's
 	// ImportKey, which looks the token up in its own state and finds nothing
 	// (go-xkms#154, go-xkms#222).
-	dstParams, err := dstImportExport.GetImportParameters(ctx, dstAttrs, algorithm)
+	dstParams, err := dstImporter.GetImportParameters(ctx, dstAttrs, algorithm)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "get destination import parameters", Err: err}
 	}
 
-	wrappedKey, err := srcImportExport.ExportKeyTo(ctx, srcAttrs, dstParams)
+	wrappedKey, err := srcExporter.ExportKeyTo(ctx, srcAttrs, dstParams)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "export key", Err: err}
 	}
 
-	if err := dstImportExport.ImportKey(ctx, dstAttrs, wrappedKey); err != nil {
+	if err := dstImporter.ImportKey(ctx, dstAttrs, wrappedKey); err != nil {
 		return nil, &ErrKeyOperation{Operation: "import key", Err: err}
 	}
 
@@ -696,13 +702,9 @@ func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.Expo
 		return nil, roleLookupError("backend", req.Backend, err)
 	}
 
-	importExport, ok := importExportFor(b)
+	exporter, ok := exportBackendFor(b)
 	if !ok {
-		return nil, &ErrBackendUnsupported{
-			Sentinel: ErrOperationNotSupported,
-			Backend:  req.Backend,
-			Detail:   "does not support import/export operations",
-		}
+		return nil, unsupportedHalf(req.Backend, backend.ErrExportNotSupported)
 	}
 
 	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
@@ -730,7 +732,7 @@ func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.Expo
 		}
 	}
 
-	keyMaterial, err := importExport.ExportKeyMaterial(ctx, attrs)
+	keyMaterial, err := exporter.ExportKeyMaterial(ctx, attrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrExportKeyMaterialFailed, Err: err}
 	}
@@ -775,13 +777,9 @@ func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest
 		return nil, err
 	}
 
-	importExport, ok := importExportFor(b)
+	importer, ok := importBackendFor(b)
 	if !ok {
-		return nil, &ErrBackendUnsupported{
-			Sentinel: ErrOperationNotSupported,
-			Backend:  backendName,
-			Detail:   "does not support import/export operations",
-		}
+		return nil, unsupportedHalf(backendName, backend.ErrImportNotSupported)
 	}
 
 	// Parse the wrapping public key
@@ -802,7 +800,7 @@ func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest
 		KeySpec:           req.KeySpec,
 	}
 
-	wrapped, err := importExport.WrapKey(ctx, req.KeyMaterial, params)
+	wrapped, err := importer.WrapKey(ctx, req.KeyMaterial, params)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
@@ -840,13 +838,9 @@ func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReq
 		return nil, err
 	}
 
-	importExport, ok := importExportFor(b)
+	importer, ok := importBackendFor(b)
 	if !ok {
-		return nil, &ErrBackendUnsupported{
-			Sentinel: ErrOperationNotSupported,
-			Backend:  backendName,
-			Detail:   "does not support import/export operations",
-		}
+		return nil, unsupportedHalf(backendName, backend.ErrImportNotSupported)
 	}
 
 	wrapped := &backend.WrappedKeyMaterial{
@@ -874,7 +868,7 @@ func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReq
 		params.WrappingPublicKey = wrappingPubKey
 	}
 
-	keyMaterial, err := importExport.UnwrapKey(ctx, wrapped, params)
+	keyMaterial, err := importer.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
@@ -1006,12 +1000,12 @@ func (s *XKMSService) wrapTargetKeyMaterial(ctx context.Context, req *transport.
 		return nil, roleLookupError("target key backend", req.TargetKeyBackend, err)
 	}
 
-	targetImportExport, ok := importExportFor(targetBackend)
+	targetExporter, ok := exportBackendFor(targetBackend)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
 			Backend:  req.TargetKeyBackend,
-			Detail:   "target key backend does not support import/export operations",
+			Detail:   "target key backend does not support export operations",
 		}
 	}
 
@@ -1021,7 +1015,7 @@ func (s *XKMSService) wrapTargetKeyMaterial(ctx context.Context, req *transport.
 	}
 
 	// Only symmetric keys created with Exportable=true can be released here.
-	keyMaterial, err := targetImportExport.ExportKeyMaterial(ctx, targetAttrs)
+	keyMaterial, err := targetExporter.ExportKeyMaterial(ctx, targetAttrs)
 	if err != nil {
 		return nil, &ErrOperationWrap{Sentinel: ErrExportKeyMaterialFailed, Detail: "target key", Err: err}
 	}
@@ -1094,12 +1088,12 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 		return nil, roleLookupError("target key backend", req.TargetKeyBackend, err)
 	}
 
-	targetImportExport, ok := importExportFor(targetBackend)
+	targetImporter, ok := importBackendFor(targetBackend)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
 			Backend:  req.TargetKeyBackend,
-			Detail:   "target key backend does not support import/export operations",
+			Detail:   "target key backend does not support import operations",
 		}
 	}
 
@@ -1135,7 +1129,7 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 	// obstacle to route around: for a TPM, an HSM or a cloud KMS the ceremony
 	// is the whole reason plaintext key material never crosses the boundary.
 	// Re-wrapping keeps C_UnwrapKey working the same way on all of them.
-	if err := importKeyMaterial(ctx, targetImportExport, targetAttrs, keyMaterial); err != nil {
+	if err := importKeyMaterial(ctx, targetImporter, targetAttrs, keyMaterial); err != nil {
 		return nil, &ErrKeyOperation{Operation: "import unwrapped key", KeyID: req.TargetKeyID, Err: err}
 	}
 
@@ -1157,7 +1151,7 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 // clear. RSA-OAEP with SHA-256 is the wrapping algorithm: SHA-1 is refused
 // project-wide, and the hybrid RSA+AES variants exist for material too large
 // for a single RSA block, which a key being unwrapped here is not.
-func importKeyMaterial(ctx context.Context, target ImportExporter, attrs *types.KeyAttributes, material []byte) error {
+func importKeyMaterial(ctx context.Context, target keyImporter, attrs *types.KeyAttributes, material []byte) error {
 	const algorithm = backend.WrappingAlgorithmRSAES_OAEP_SHA_256
 
 	params, err := target.GetImportParameters(ctx, attrs, algorithm)

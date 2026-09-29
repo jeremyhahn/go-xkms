@@ -205,20 +205,23 @@ var _ PIVKeyGenerator = (*backendPIVKeyGenerator)(nil)
 // chosen because a PKCS#8-encoded RSA-4096 key exceeds what plain RSA-OAEP can
 // carry.
 //
-// A backend that does not implement ImportExportBackend, or that refuses the
-// operation, produces ErrPIVImportNotSupported so the refusal is reportable
-// rather than mistaken for success.
+// A backend that does not implement backend.ImportBackend, or that refuses
+// the operation, produces ErrPIVImportNotSupported so the refusal is
+// reportable rather than mistaken for success.
 func (g *backendPIVKeyGenerator) ImportPIVKey(ctx context.Context, slot pivcert.PIVSlot, algorithm string, cn string, key crypto.PrivateKey) (crypto.Signer, error) {
 	builder, ok := pivAlgorithmDispatch[algorithm]
 	if !ok {
 		return nil, ErrPIVInvalidAlgorithm
 	}
 
-	// The import ceremony is resolved through importExportFor, the same
+	// The import ceremony is resolved through importBackendFor, the same
 	// capability lookup xkms.ImportKey makes (service.go), so PIV import and
 	// generic key import reach a backend the one way rather than two — and a
 	// tenant-scoped backend keeps its scoping rather than being unwrapped.
-	importer, ok := importExportFor(g.backend)
+	// Only the import half is needed: PIV key installation never exports, so
+	// a backend that can import but not export (AWS KMS's shape) must not be
+	// blocked here by an unrelated export limitation.
+	importer, ok := importBackendFor(g.backend)
 	if !ok {
 		return nil, ErrPIVImportNotSupported
 	}

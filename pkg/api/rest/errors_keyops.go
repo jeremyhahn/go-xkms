@@ -17,6 +17,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -46,6 +47,20 @@ var keyOpSentinelStatus = []struct {
 	{xkms.ErrBackendNotFound, http.StatusNotFound},
 	{xkms.ErrKeyNotFound, http.StatusNotFound},
 	{xkms.ErrNotInitialized, http.StatusServiceUnavailable},
+
+	// WrapKey, UnwrapKey, GetImportParameters and ImportKey now route through
+	// the service layer (go-xkms#1216) rather than calling
+	// backend.ImportBackend / backend.ExportBackend directly, so a
+	// backend-layer capability or policy sentinel reaches here wrapped in the
+	// service's own xkms.ErrOperationWrap. These mirror the same sentinels
+	// mapErrorToStatusCode classifies for the handlers that still call the
+	// backend methods directly (ExportKey, CopyKey), so both paths report the
+	// same capability boundary under the same status code regardless of which
+	// one a given RPC happens to take.
+	{backend.ErrExportNotSupported, http.StatusNotImplemented},
+	{backend.ErrImportNotSupported, http.StatusNotImplemented},
+	{backend.ErrAsymmetricKeyExportNotAllowed, http.StatusBadRequest},
+	{backend.ErrKeyNotExportable, http.StatusForbidden},
 }
 
 // mapKeyOpError converts an error returned by the xkms service layer's key

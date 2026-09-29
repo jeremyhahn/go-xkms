@@ -1980,7 +1980,10 @@ func TestHandler_WrapKey(t *testing.T) {
 
 		_, err := server.handleWrapKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse public key")
+		// WrapKey now routes through the service layer, which parses the DER
+		// itself and reports "...wrapping public key", not the MCP-local
+		// wrapper's former "failed to parse public key".
+		assert.Contains(t, err.Error(), "failed to parse wrapping public key")
 	})
 }
 
