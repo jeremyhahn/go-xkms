@@ -16,7 +16,9 @@ package xkms
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
+	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 )
 
 // go-xkms's qrdb ServiceModule surface, re-exported so downstream hosts
@@ -125,3 +127,94 @@ type ServiceModulePIVLoginOptions = rest.PIVLoginOptions
 // WithServiceModulePIVLogin enables the module's self-built PIV/mTLS login
 // exchange.
 var WithServiceModulePIVLogin = apimodule.WithPIVLogin
+
+// ---------------------------------------------------------------------------
+// Host composition surface
+//
+// A self-built module composes xkms's store-backed features -- the Password
+// Manager, platform sealed-secret store, backend credential service, SSH,
+// Certificate Authority and PCR policies -- from dependencies the host
+// supplies, through the same construction path xkmsd uses (pkg/compose).
+// Each option below supplies one dependency; a feature whose dependency is
+// absent stays off, logged with a typed reason and recorded in
+// (*ServiceModule).HostStores().Disabled. Stores persist in the host's qrdb
+// KV (WithServiceModuleQRDBClient) under ServiceModuleHostStoragePrefix.
+// ---------------------------------------------------------------------------
+
+// ServiceModuleHostStoragePrefix is the qrdb key namespace a self-built
+// module persists its stores under in the host's KV.
+const ServiceModuleHostStoragePrefix = apimodule.HostStoragePrefix
+
+// ServiceModuleBarrierRegistryResolver returns the host's tenant barrier
+// registry (an embedded qrdb node's BarrierRegistry), or nil when the host
+// has none.
+type ServiceModuleBarrierRegistryResolver = apimodule.BarrierRegistryResolver
+
+// WithServiceModuleBarrierRegistry supplies the host's tenant barrier
+// registry: per-tenant Password Manager stores live behind each tenant's
+// barrier, and it backs the "barrier" credential strategy and
+// WithServiceModuleBarrierRoutes.
+var WithServiceModuleBarrierRegistry = apimodule.WithBarrierRegistry
+
+// WithServiceModulePINBackend supplies the host's PIN backend, whose user
+// PIN opens a tenant's Password Manager session. It also backs the PIN
+// management routes.
+var WithServiceModulePINBackend = apimodule.WithPINBackend
+
+// WithServiceModulePlatformSealer enables the platform sealed-secret store,
+// sealing its records through the given Sealer (which must seal with nil
+// options, carrying its own key) under the named seal strategy.
+var WithServiceModulePlatformSealer = apimodule.WithPlatformSealer
+
+// WithServiceModuleCredentialStrategy selects the backend credential
+// service's seal strategy: "manual" (default), "barrier" (needs
+// WithServiceModuleBarrierRegistry) or a platform strategy (needs
+// WithServiceModulePlatformSealer).
+var WithServiceModuleCredentialStrategy = apimodule.WithCredentialStrategy
+
+// WithServiceModuleCA enables the Certificate Authority from a
+// TrustedCAMultiIdentityConfig; each CA key lives in the XKMSService
+// backend named by its store type.
+var WithServiceModuleCA = apimodule.WithCA
+
+// ServiceModulePCRReader reads current PCR values, typically from the
+// host's TPM.
+type ServiceModulePCRReader = policy.PCRReader
+
+// WithServiceModulePCRReader enables PCR policies.
+var WithServiceModulePCRReader = apimodule.WithPCRReader
+
+// WithServiceModuleBarrierRoutes mounts the barrier route families
+// (barrier, custodian, shares, init ceremony) and serves them over the
+// host's qrdb barrier and node. Off by default, so a host that owns its
+// barrier keeps those paths.
+var WithServiceModuleBarrierRoutes = apimodule.WithBarrierRoutes
+
+// ServiceModuleHostStores is what a self-built module composed:
+// (*ServiceModule).HostStores returns it after the module's first use.
+type ServiceModuleHostStores = compose.Stores
+
+// ServiceModuleFeature names a store-backed feature of the module.
+type ServiceModuleFeature = compose.Feature
+
+// The store-backed features a self-built module composes.
+const (
+	ServiceModuleFeaturePasswords       = compose.FeaturePasswords
+	ServiceModuleFeatureTenantPasswords = compose.FeatureTenantPasswords
+	ServiceModuleFeaturePIN             = compose.FeaturePIN
+	ServiceModuleFeaturePlatformStore   = compose.FeaturePlatformStore
+	ServiceModuleFeatureCredentials     = compose.FeatureCredentials
+	ServiceModuleFeatureSSH             = compose.FeatureSSH
+	ServiceModuleFeatureCA              = compose.FeatureCA
+	ServiceModuleFeaturePolicies        = compose.FeaturePolicies
+	ServiceModuleFeatureBarrier         = compose.FeatureBarrier
+	ServiceModuleFeatureCustody         = compose.FeatureCustody
+)
+
+// ServiceModuleFeatureDisabledError reports a feature left off because the
+// host did not supply a dependency it needs.
+type ServiceModuleFeatureDisabledError = compose.FeatureDisabledError
+
+// ServiceModuleFeatureBuildError reports a feature whose construction
+// failed with its dependencies present.
+type ServiceModuleFeatureBuildError = compose.FeatureBuildError

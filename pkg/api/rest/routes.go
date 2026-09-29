@@ -15,6 +15,7 @@ package rest
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -88,6 +89,29 @@ type RouteSpec struct {
 
 	// Handler binds the route's handler on a constructed server.
 	Handler func(s *Server) http.HandlerFunc
+}
+
+// barrierRoutePrefixes are the route families that operate the system
+// barrier's lifecycle: the barrier itself, the Shamir share custody that
+// unseals it, and the init ceremony that creates it.
+var barrierRoutePrefixes = []string{
+	"/api/v1/barrier/",
+	"/api/v1/custodian/",
+	"/api/v1/shares/",
+	"/api/v1/init/",
+}
+
+// IsBarrierRoute reports whether spec belongs to the barrier route families
+// (barrier, custodian, shares, init ceremony). A host embedding the xkms
+// ServiceModule over its own barrier leaves these families unmounted unless
+// it opts in (pkg/apimodule WithBarrierRoutes).
+func IsBarrierRoute(spec RouteSpec) bool {
+	for _, prefix := range barrierRoutePrefixes {
+		if strings.HasPrefix(spec.Pattern, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Routes returns the full REST route table. Order is stable and grouped by

@@ -38,9 +38,11 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // DefaultJWTSigningKeyCN is the reserved backend key CN that signs session
@@ -588,11 +590,13 @@ type SessionOptions struct {
 }
 
 // HostConfig configures NewHostServer: a self-sufficient, non-listening
-// *Server a host that merely embeds go-xkms's qrdb ServiceModule
-// (pkg/apimodule) can build from its resolved XKMSService and its own qrdb
-// client, without any of the xkmsd-only wiring (barrier, custodian,
-// ceremony, SSH, PKCS#11 remote state, CA). It is the host-composition path
-// behind pkg/apimodule's self-built REST surface.
+// *Server a host that embeds go-xkms's qrdb ServiceModule (pkg/apimodule)
+// builds from its resolved XKMSService and its own qrdb client. The
+// store-backed surfaces (Password Manager, SSH, CA, platform store, PCR
+// policies, credentials) are composed by pkg/compose — the same path xkmsd
+// composes them through — and handed in here or wired into the
+// XKMSService. It is the host-composition path behind pkg/apimodule's
+// self-built REST surface.
 type HostConfig struct {
 	// XKMSService is required; a nil service is a construction error.
 	XKMSService *xkms.XKMSService
@@ -625,6 +629,26 @@ type HostConfig struct {
 	// PIVLogin configures the TLS-client-certificate login exchange.
 	PIVLogin *PIVLoginOptions
 
+	// PasswordStore enables the Password Manager routes. Nil leaves them
+	// answering "not configured".
+	PasswordStore *staticpw.BackendStore
+
+	// PasswordStoreManager routes Password Manager entries to per-tenant
+	// stores; pass the same manager the XKMSService was wired with.
+	PasswordStoreManager *staticpw.TenantPasswordStoreManager
+
+	// SSHClient enables the /xkms/v1/ssh routes. Nil leaves them
+	// answering "not configured".
+	SSHClient sdkssh.Client
+
+	// ServeBarrier mounts the custodian and share handlers; it requires
+	// QRDBClient, and an XKMSService wired with that node's custodian and
+	// share clients (pkg/compose Stores.Wire does). The barrier routes
+	// themselves serve whatever barrier the XKMSService was wired with. Off
+	// by default: a host that owns its barrier keeps these surfaces to
+	// itself.
+	ServeBarrier bool
+
 	// Logger receives construction and request diagnostics. Nil selects
 	// slog.Default().
 	Logger *slog.Logger
@@ -651,9 +675,11 @@ func (e *HostXKMSServiceRequiredError) Error() string {
 // token issuer, WebAuthn service, and session authenticator are wired
 // exactly like xkmsd's own composition (pkg/server buildRESTConfig /
 // initializeTokenIssuer / initializeWebAuthnService) via the shared
-// Build* functions above. Barrier, custodian, ceremony, SSH, and CA
-// surfaces are xkmsd-only and stay disabled -- their RouteEnabled
-// predicates already gate on nil.
+// Build* functions above. The Password Manager and SSH surfaces serve the
+// stores in hc; the CA surface serves when the XKMSService carries a CA;
+// the custodian and share surfaces serve only with hc.ServeBarrier. The
+// init ceremony and tenant-management surfaces stay xkmsd-only -- their
+// RouteEnabled predicates gate on nil.
 //
 // A construction failure here means the host gave NewHostServer nothing it
 // could authenticate callers with (no signing backend and no qrdb client) or
@@ -730,6 +756,21 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 	} else {
 		logger.Info("host REST surface: no default signing backend; session/login routes stay unmounted", "error", err)
 	}
+
+	cfg.PasswordStore = hc.PasswordStore
+	cfg.PasswordStoreManager = hc.PasswordStoreManager
+	cfg.SSHClient = hc.SSHClient
+	// The XKMSService is the CA servicer when it carries a CA -- the same
+	// condition xkmsd's buildRESTConfig gates restConfig.CA on.
+	if hc.XKMSService.CA() != nil {
+		cfg.CA = hc.XKMSService
+	}
+
+	// The XKMSService carries the node's custodian and share clients
+	// (pkg/compose Stores.Wire); these flags mount the REST handlers that
+	// reach them.
+	cfg.CustodianEnabled = hc.ServeBarrier && hc.QRDBClient != nil
+	cfg.ShareEnabled = cfg.CustodianEnabled
 
 	if hc.QRDBClient != nil {
 		cfg.AuthUserStore = auth.NewQRDBUserStore(hc.QRDBClient.Users())
