@@ -482,18 +482,6 @@ func TestFrostKeyHandle(t *testing.T) {
 	assert.Equal(t, handle.GroupPublicKey, pub)
 }
 
-func TestSigningSession(t *testing.T) {
-	session := &SigningSession{
-		SessionID:     "session-123",
-		KeyID:         "my-key",
-		ParticipantID: 1,
-	}
-
-	assert.Equal(t, "session-123", session.SessionID)
-	assert.Equal(t, "my-key", session.KeyID)
-	assert.Equal(t, uint32(1), session.ParticipantID)
-}
-
 func TestFrostBackend_GenerateKey_InvalidFrostAttributes(t *testing.T) {
 	backend := createTestBackend(t)
 

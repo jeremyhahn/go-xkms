@@ -45,6 +45,7 @@ func stubLoopSeams(t *testing.T) {
 	origUnmount := unmountLUKS
 	origIsMounted := isMountedFn
 	origIsUnlocked := isUnlockedFn
+	origChmod := chmodFn
 	t.Cleanup(func() {
 		setupLoopDevice = origSetup
 		detachLoopDevice = origDetach
@@ -57,6 +58,7 @@ func stubLoopSeams(t *testing.T) {
 		unmountLUKS = origUnmount
 		isMountedFn = origIsMounted
 		isUnlockedFn = origIsUnlocked
+		chmodFn = origChmod
 	})
 
 	setupLoopDevice = func(string) (string, error) { return "/dev/loop-test0", nil }
@@ -273,6 +275,7 @@ func TestVolume_Create_Success(t *testing.T) {
 	info, err := os.Stat(luksPath)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1<<20), info.Size())
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "container file must not be group/world readable")
 }
 
 // TestVolume_Unlock_SetupLoopDeviceFails proves a failed loop attach is
@@ -422,6 +425,65 @@ func TestVolume_Unlock_Success(t *testing.T) {
 	assert.True(t, info.IsDir())
 	assert.Equal(t, MapperName, mountedOpts.Device)
 	assert.Equal(t, mountPoint, mountedOpts.MountPoint)
+}
+
+// TestVolume_Unlock_ChmodsMountPointAfterMount proves the mount point is
+// re-asserted to 0700 only after the mount call, undoing whatever mode a
+// freshly formatted ext4 root (mkfs.ext4 defaults to 0755) left behind when
+// mounted over the 0700 directory MkdirAll created.
+func TestVolume_Unlock_ChmodsMountPointAfterMount(t *testing.T) {
+	withKeyringCheck(t, func() error { return nil })
+	stubLoopSeams(t)
+
+	// Simulate the ext4 root inode's default permissions replacing the
+	// mount point's mode as part of the mount call itself.
+	mountLUKS = func(opts luks2.MountOptions) error {
+		return os.Chmod(opts.MountPoint, 0755)
+	}
+
+	dir := t.TempDir()
+	luksPath := filepath.Join(dir, "vault.luks")
+	require.NoError(t, os.WriteFile(luksPath, []byte("container"), 0600))
+	mountPoint := filepath.Join(dir, "mnt")
+	v := NewVolumeWithPaths(luksPath, mountPoint)
+
+	require.NoError(t, v.Unlock("passphrase"))
+
+	info, err := os.Stat(mountPoint)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0700), info.Mode().Perm(), "mount point must be re-asserted to 0700 after mount")
+}
+
+// TestVolume_Unlock_ChmodMountPointFails proves a failed post-mount chmod
+// unmounts, re-locks and detaches rather than leaving a world-listable
+// volume mounted and unlocked.
+func TestVolume_Unlock_ChmodMountPointFails(t *testing.T) {
+	withKeyringCheck(t, func() error { return nil })
+	stubLoopSeams(t)
+
+	unmountCalls, lockCalls, detachCalls := 0, 0, 0
+	unmountLUKS = func(string, int) error { unmountCalls++; return nil }
+	lockLUKS = func(string) error { lockCalls++; return nil }
+	detachLoopDevice = func(string) error { detachCalls++; return nil }
+
+	chmodErr := errors.New("chmod failed")
+	chmodFn = func(string, os.FileMode) error { return chmodErr }
+
+	dir := t.TempDir()
+	luksPath := filepath.Join(dir, "vault.luks")
+	require.NoError(t, os.WriteFile(luksPath, []byte("container"), 0600))
+	v := NewVolumeWithPaths(luksPath, filepath.Join(dir, "mnt"))
+
+	err := v.Unlock("passphrase")
+	require.Error(t, err)
+
+	var volErr *VolumeError
+	require.ErrorAs(t, err, &volErr)
+	assert.Equal(t, "chmod_mountpoint", volErr.Operation)
+	assert.ErrorIs(t, err, chmodErr)
+	assert.Equal(t, 1, unmountCalls, "a failed chmod must unmount the volume")
+	assert.Equal(t, 1, lockCalls)
+	assert.Equal(t, 1, detachCalls)
 }
 
 // TestVolume_Lock_UnmountFails proves an unmount failure is reported without

@@ -39,11 +39,22 @@
 //
 // The handler provides the following endpoints:
 //
-//	POST /registration/begin   - Start registration ceremony
+//	POST /registration/begin   - Start registration of an account's FIRST passkey
 //	POST /registration/finish  - Complete registration
-//	GET  /registration/status  - Check if user is registered
 //	POST /login/begin          - Start authentication ceremony
 //	POST /login/finish         - Complete authentication
+//
+// The mount helpers register only these public ceremonies. Handler also
+// provides BeginAddCredential, which adds a passkey to the account of the
+// caller's authenticated session; mount it yourself, behind authentication
+// middleware that stores the identity with auth.WithIdentity:
+//
+//	POST /credentials/begin    - Start adding a passkey to the session's account
+//
+// Neither begin route reveals whether an account exists: registration is
+// refused the same way for an account that already has a passkey and (with
+// public registration off) for an unknown email, and login answers an
+// unknown account with decoy options.
 //
 // # Headers
 //

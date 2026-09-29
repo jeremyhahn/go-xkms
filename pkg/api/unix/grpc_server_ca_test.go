@@ -121,7 +121,7 @@ func waitForCASocket(t *testing.T, socketPath string) {
 // TestGRPCServer_GetCACertificate_NoCA verifies a CA RPC over the Unix
 // socket returns codes.Unavailable when GRPCConfig.CA is unset.
 func TestGRPCServer_GetCACertificate_NoCA(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ca-none.sock")
+	socketPath := filepath.Join(privateSocketDir(t), "ca-none.sock")
 
 	server, err := NewGRPCServer(&GRPCConfig{SocketPath: socketPath})
 	if err != nil {
@@ -158,7 +158,7 @@ func TestGRPCServer_GetCACertificate_NoCA(t *testing.T) {
 // old package-level grpcinternal.SetCA global was never called by this
 // listener, so this RPC answered Unavailable even with a CA configured).
 func TestGRPCServer_GetCACertificate_WithCA(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ca-configured.sock")
+	socketPath := filepath.Join(privateSocketDir(t), "ca-configured.sock")
 	cert := generateUnixTestCACert(t)
 
 	server, err := NewGRPCServer(&GRPCConfig{

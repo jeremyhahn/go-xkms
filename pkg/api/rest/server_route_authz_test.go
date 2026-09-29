@@ -159,6 +159,9 @@ var sessionOnlyRoutes = []string{
 	"POST /api/v1/init/claim-share/begin",
 	"POST /api/v1/init/claim-share/complete",
 	"POST /api/v1/passwords/access-mode",
+	// Adds a passkey to the caller's OWN account; the account comes from
+	// the session, never the request (go-xkms#1294).
+	"POST /api/v1/webauthn/credentials/begin",
 }
 
 // routeAuthzRecordingClient records the resource:action pair it was asked to

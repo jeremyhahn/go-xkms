@@ -92,20 +92,22 @@ func requireWebAuthnEnabled(t *testing.T, cfg *TestConfig) {
 	t.Helper()
 
 	client := NewRESTClient(cfg.RESTBaseURL)
-	resp, err := client.doRequest("GET", "/api/v1/webauthn/registration/status", nil)
+	resp, err := client.doRequest("POST", "/api/v1/webauthn/login/begin", map[string]interface{}{})
 	if err != nil {
-		t.Fatalf("WebAuthn registration status endpoint unreachable at %s: %v", cfg.RESTBaseURL, err)
+		t.Fatalf("WebAuthn login begin endpoint unreachable at %s: %v", cfg.RESTBaseURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		t.Fatalf("WebAuthn is not mounted on %s (registration status returned 404); "+
+		t.Fatalf("WebAuthn is not mounted on %s (login begin returned 404); "+
 			"the harness config must set webauthn.enabled: true", cfg.RESTBaseURL)
 	}
 }
 
-// TestWebAuthnRegistrationStatus tests the registration status endpoint
-func TestWebAuthnRegistrationStatus(t *testing.T) {
+// TestWebAuthnRegistrationStatusRemoved pins the go-xkms#1296 removal of the
+// unauthenticated registration-status probe: it answered whether any email
+// had a passkey.
+func TestWebAuthnRegistrationStatusRemoved(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
@@ -114,52 +116,31 @@ func TestWebAuthnRegistrationStatus(t *testing.T) {
 	requireWebAuthnEnabled(t, cfg)
 
 	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	resp, err := client.doRequest("GET", "/api/v1/webauthn/registration/status?email=unknown@example.com", nil)
+	assertNoError(t, err, "Registration status request failed")
+	defer resp.Body.Close()
 
-	t.Run("Check unregistered user by email", func(t *testing.T) {
-		resp, err := client.doRequest("GET", "/api/v1/webauthn/registration/status?email=unknown@example.com", nil)
-		assertNoError(t, err, "Registration status request failed")
-		defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("registration status must no longer be served, got %d", resp.StatusCode)
+	}
+}
 
-		assertEqual(t, http.StatusOK, resp.StatusCode, "Unexpected status code")
+// TestWebAuthnAddCredentialRequiresSession pins go-xkms#1294: adding a
+// passkey to an existing account is served only to an authenticated session.
+func TestWebAuthnAddCredentialRequiresSession(t *testing.T) {
+	cfg := LoadTestConfig()
+	if !isServerAvailable(t, cfg) {
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
+	}
 
-		var result map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&result)
-		assertNoError(t, err, "Failed to decode response")
+	requireWebAuthnEnabled(t, cfg)
 
-		registered, ok := result["registered"].(bool)
-		if !ok {
-			t.Fatal("Response missing registered field")
-		}
+	client := NewWebAuthnClient(cfg.RESTBaseURL)
+	resp, err := client.doRequest("POST", "/api/v1/webauthn/credentials/begin", map[string]interface{}{})
+	assertNoError(t, err, "Add-credential request failed")
+	defer resp.Body.Close()
 
-		if registered {
-			t.Fatal("User should not be registered")
-		}
-
-		t.Log("Registration status check passed: user not registered")
-	})
-
-	t.Run("Check without user identifier", func(t *testing.T) {
-		resp, err := client.doRequest("GET", "/api/v1/webauthn/registration/status", nil)
-		assertNoError(t, err, "Registration status request failed")
-		defer resp.Body.Close()
-
-		assertEqual(t, http.StatusOK, resp.StatusCode, "Unexpected status code")
-
-		var result map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&result)
-		assertNoError(t, err, "Failed to decode response")
-
-		registered, ok := result["registered"].(bool)
-		if !ok {
-			t.Fatal("Response missing registered field")
-		}
-
-		if registered {
-			t.Fatal("User should not be registered without identifier")
-		}
-
-		t.Log("Registration status check passed: no user identifier returns false")
-	})
+	assertEqual(t, http.StatusUnauthorized, resp.StatusCode, "an unauthenticated add-passkey must be refused")
 }
 
 // TestWebAuthnBeginRegistration tests the begin registration endpoint
@@ -301,9 +282,17 @@ func TestWebAuthnBeginLogin(t *testing.T) {
 		assertNoError(t, err, "Request failed")
 		defer resp.Body.Close()
 
-		assertEqual(t, http.StatusNotFound, resp.StatusCode, "Should return not found for unknown user")
+		// Decoy options, not 404: the route must not reveal whether the
+		// account exists (go-xkms#1296).
+		assertEqual(t, http.StatusOK, resp.StatusCode, "Unknown email must be answered like a known one")
+		if resp.Header.Get("X-Session-Id") == "" {
+			t.Fatal("decoy ceremony must carry a session ID like a real one")
+		}
+		if resp.Header.Get("X-User-Id") != "" {
+			t.Fatal("login begin must not return a user identifier")
+		}
 
-		t.Log("Unknown user validation passed")
+		t.Log("Unknown user anti-enumeration passed")
 	})
 }
 
@@ -401,7 +390,6 @@ func TestWebAuthnMethodNotAllowed(t *testing.T) {
 	}{
 		{"GET on registration/begin", "GET", "/api/v1/webauthn/registration/begin"},
 		{"GET on registration/finish", "GET", "/api/v1/webauthn/registration/finish"},
-		{"POST on registration/status", "POST", "/api/v1/webauthn/registration/status"},
 		{"GET on login/begin", "GET", "/api/v1/webauthn/login/begin"},
 		{"GET on login/finish", "GET", "/api/v1/webauthn/login/finish"},
 	}
@@ -439,7 +427,7 @@ func TestWebAuthnRoutesMounted(t *testing.T) {
 	}{
 		{"POST", "/api/v1/webauthn/registration/begin"},
 		{"POST", "/api/v1/webauthn/registration/finish"},
-		{"GET", "/api/v1/webauthn/registration/status"},
+		{"POST", "/api/v1/webauthn/credentials/begin"},
 		{"POST", "/api/v1/webauthn/login/begin"},
 		{"POST", "/api/v1/webauthn/login/finish"},
 	}

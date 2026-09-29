@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/handlers"
 )
 
@@ -202,6 +204,7 @@ func TestHandleAWSOutput(t *testing.T) {
 func TestStoreAndLoadAWSSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionFile := filepath.Join(tmpDir, "session.json")
+	cmd := &cobra.Command{}
 
 	session := AWSStoredSession{
 		Region:       "us-east-1",
@@ -213,13 +216,13 @@ func TestStoreAndLoadAWSSession(t *testing.T) {
 	}
 
 	// Store
-	err := storeAWSSession(sessionFile, session)
+	err := storeAWSSession(cmd, sessionFile, session)
 	if err != nil {
 		t.Fatalf("storeAWSSession() error = %v", err)
 	}
 
 	// Load
-	loaded, err := loadAWSSession(sessionFile)
+	loaded, err := loadAWSSession(cmd, sessionFile)
 	if err != nil {
 		t.Fatalf("loadAWSSession() error = %v", err)
 	}
@@ -239,7 +242,12 @@ func TestStoreAndLoadAWSSession(t *testing.T) {
 }
 
 func TestLoadAWSSession_NotFound(t *testing.T) {
-	_, err := loadAWSSession("/nonexistent/path/session.json")
+	// The path stays inside t.TempDir(): openAWSSessionStore creates the
+	// parent directory of an explicit path on demand (matching every other
+	// xkms.StorageBackend-rooted store), so a path outside the sandbox would
+	// touch the host filesystem.
+	path := filepath.Join(t.TempDir(), "nonexistent", "session.json")
+	_, err := loadAWSSession(&cobra.Command{}, path)
 	if err == nil {
 		t.Error("Expected error for nonexistent file")
 	}
@@ -340,6 +348,7 @@ func TestOIDCAWSErrors_Messages(t *testing.T) {
 // Benchmark for session storage
 func BenchmarkStoreAWSSession(b *testing.B) {
 	tmpDir := b.TempDir()
+	cmd := &cobra.Command{}
 	session := AWSStoredSession{
 		Region:       "us-east-1",
 		Profile:      "test",
@@ -351,7 +360,7 @@ func BenchmarkStoreAWSSession(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sessionFile := filepath.Join(tmpDir, "session.json")
-		_ = storeAWSSession(sessionFile, session)
+		_ = storeAWSSession(cmd, sessionFile, session)
 	}
 }
 

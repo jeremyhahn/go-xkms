@@ -113,10 +113,10 @@ describe('RegisterPanel', () => {
     expect(await screen.findByText('Account created')).toBeTruthy();
   });
 
-  it('surfaces a registration-disabled rejection and returns to the form', async () => {
+  it('surfaces a registration-refused rejection and returns to the form', async () => {
     const provider = makeProvider();
     fake.mocks.webAuthnRegisterBegin.mockRejectedValue(
-      new FakeApiError(403, 'self-service registration disabled'),
+      new FakeApiError(403, 'registration refused'),
     );
     const onSuccess = vi.fn();
 
@@ -126,7 +126,10 @@ describe('RegisterPanel', () => {
     await submitRegistration('jane@example.com', 'Jane Smith');
 
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('not enabled on this server');
+    // One message for both refusals: the server does not say whether the
+    // account exists (go-xkms#1296).
+    expect(alert.textContent).toContain('Registration is not available for this address');
+    expect(alert.textContent).toContain('sign in and add another');
     expect(onSuccess).not.toHaveBeenCalled();
     // Back on the form for another attempt.
     expect(screen.getByLabelText('Email')).toBeTruthy();

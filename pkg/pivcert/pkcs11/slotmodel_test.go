@@ -263,3 +263,43 @@ func TestECCurveFromOID(t *testing.T) {
 	assert.Empty(t, ecCurveFromOID(nil))
 	assert.Empty(t, ecCurveFromOID([]byte{0xff, 0xff}))
 }
+
+// TestPIVSlotModel_EnumeratePrivateKeys_FindObjectsFinalErrorSurfaces proves
+// that a C_FindObjectsFinal failure on enumeratePrivateKeys is joined into
+// the returned error instead of being silently discarded by the deferred
+// call (go-xkms#1347). The test hook finalizes the search itself immediately
+// after every handle has been consumed, so the production defer's own
+// FindObjectsFinal call is guaranteed to fail with
+// CKR_OPERATION_NOT_INITIALIZED -- deterministically, with no timing
+// dependency.
+func TestPIVSlotModel_EnumeratePrivateKeys_FindObjectsFinalErrorSurfaces(t *testing.T) {
+	pool := newSlotModelTestPool(t)
+	m := &PIVSlotModel{pool: pool, occupied: make(map[pivcert.PIVSlot]keyInfo)}
+
+	testHookBeforeFindObjectsFinal = func(ctx *p11.Ctx, session p11.SessionHandle) {
+		require.NoError(t, ctx.FindObjectsFinal(session),
+			"the test hook's own finalize must succeed so the production defer's finalize is what fails")
+	}
+	t.Cleanup(func() { testHookBeforeFindObjectsFinal = nil })
+
+	_, err := m.enumeratePrivateKeys()
+	require.Error(t, err, "a FindObjectsFinal failure must not be discarded")
+	assert.ErrorIs(t, err, ErrFindObjectsFinalFailed)
+}
+
+// TestPIVSlotModel_EnumerateCertificates_FindObjectsFinalErrorSurfaces is the
+// identical proof for enumerateCertificates (go-xkms#1347).
+func TestPIVSlotModel_EnumerateCertificates_FindObjectsFinalErrorSurfaces(t *testing.T) {
+	pool := newSlotModelTestPool(t)
+	m := &PIVSlotModel{pool: pool, occupied: make(map[pivcert.PIVSlot]keyInfo)}
+
+	testHookBeforeFindObjectsFinal = func(ctx *p11.Ctx, session p11.SessionHandle) {
+		require.NoError(t, ctx.FindObjectsFinal(session),
+			"the test hook's own finalize must succeed so the production defer's finalize is what fails")
+	}
+	t.Cleanup(func() { testHookBeforeFindObjectsFinal = nil })
+
+	_, err := m.enumerateCertificates()
+	require.Error(t, err, "a FindObjectsFinal failure must not be discarded")
+	assert.ErrorIs(t, err, ErrFindObjectsFinalFailed)
+}

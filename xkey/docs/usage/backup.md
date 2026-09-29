@@ -94,6 +94,8 @@ before go-xkms#936.
 | KDF parameters in the file altered | Fails with `backup: decryption failed: the backup's key-derivation record is invalid or has been altered`, before any key is derived |
 | Password given for a random-key backup | Fails with `backup: decryption failed: backup was sealed with a raw key; supply it with --key-stdin or XKEY_BACKUP_KEY` |
 | Backup holds a category the CLI cannot write | Restores the rest, then exits with `backup: restore incomplete` |
+| Trust-store entry with no recorded purpose, or one that is not a trust-store purpose | Fails with `backup: restore failed`, naming the certificate and purpose (`backup.RecordedPurposeError`); no certificate is written. Restored certificates keep their recorded purpose, source and tags; none is re-classified |
+| Trust-store certificate whose metadata cannot be read (`create`/`to-device`) | Fails with `backup: data collection failed`; an archive never records a certificate without its purpose |
 
 Entries that already exist in a target store are reported per category as
 `skipped`, and the command ends with

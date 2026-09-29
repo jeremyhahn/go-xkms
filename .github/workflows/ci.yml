@@ -586,7 +586,6 @@ jobs:
       #                         the whole set's cost, 1.7x the other forty
       #                         combined. Runs nightly (nightly.yml,
       #                         xkey-pkcs11-unit) instead of on every PR.
-      #   ./cmd/xkey/cmd        run below in the same step under -tags ble
       #   ./pkg/gui/services    (the CLI's fail-closed fingerprint and the
       #                         logins harness guard live behind it), as
       #                         whole packages (#332): 8,282 test functions,
@@ -656,8 +655,18 @@ jobs:
               GOPROXY=off \
             "$@"
           }
+          #
+          # ./cmd/xkey/cmd is in THIS line too, not only the -tags ble one
+          # below: the !ble build compiles a genuinely different set of
+          # source files for every command that ships a BLE stub (e.g.
+          # backup_device_stub.go beside backup_device.go) -- the stub's flag
+          # registration had silently drifted out of parity with the real
+          # command (missing `backup from-device --key-stdin`, a missing
+          # `device scan --timeout`), undetected because CI only ever
+          # compiled and ran the ble variant of this package (go-xkms#1318).
+          # Both tag sets now run here so that drift fails the build again.
           as_xkey_ci go test -race -tags "codec_json tpm_simulator" -count=1 \
-            ./cmd/e2eprobe ./cmd/xkey \
+            ./cmd/e2eprobe ./cmd/xkey ./cmd/xkey/cmd \
             ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
             ./pkg/ca ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
             ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \

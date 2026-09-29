@@ -59,6 +59,7 @@ func TestServer_Reload_RebuildsAuthenticator(t *testing.T) {
 	newCfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
 		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 
 	require.NoError(t, server.Reload(newCfg))
@@ -81,6 +82,7 @@ func TestServer_Reload_AppliesRelaxedAuthentication(t *testing.T) {
 	cfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
 		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 
 	server, err := New(cfg)
@@ -108,6 +110,7 @@ func TestServer_Reload_InvalidAuthKeepsPreviousAuthenticator(t *testing.T) {
 	cfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
 		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 
 	server, err := New(cfg)
@@ -152,6 +155,7 @@ func TestServer_Reload_UnknownAuthTypeKeepsPreviousAuthenticator(t *testing.T) {
 	cfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
 		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 
 	server, err := New(cfg)
@@ -184,6 +188,7 @@ func TestServer_Reload_BrokenJWTKeyKeepsPreviousAuthenticator(t *testing.T) {
 	cfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
 		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 
 	server, err := New(cfg)

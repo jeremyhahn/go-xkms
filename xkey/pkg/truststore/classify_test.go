@@ -167,31 +167,48 @@ func generateSignedCert(
 	return leaf
 }
 
-func TestClassifyCertificate_AndroidAttestationOID(t *testing.T) {
+// TestClassifyCertificate_AndroidAttestationOIDIsNotAndroidHardware guards
+// #1312: the Android key attestation extension belongs on a device leaf,
+// never on a root, and anyone can put the OID on a certificate they mint. A
+// self-signed CA carrying it is classified like any other self-signed CA,
+// never as an Android attestation anchor.
+func TestClassifyCertificate_AndroidAttestationOIDIsNotAndroidHardware(t *testing.T) {
 	androidOID := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11129, 2, 1, 17}
 	ext := pkix.Extension{
 		Id:    androidOID,
 		Value: []byte{0x30, 0x00}, // minimal ASN.1 SEQUENCE
 	}
 
-	cert := generateSelfSignedCert(t,
-		"Android Test",
-		[]string{"Test Org"},
-		false,
-		nil,
-		[]pkix.Extension{ext},
-	)
+	tests := []struct {
+		name string
+		isCA bool
+		want CertPurpose
+	}{
+		{"self-signed CA", true, PurposeUserCA},
+		{"self-signed leaf", false, PurposeGeneral},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cert := generateSelfSignedCert(t,
+				"Android Test",
+				[]string{"Test Org"},
+				tt.isCA,
+				nil,
+				[]pkix.Extension{ext},
+			)
 
-	got := ClassifyCertificate(cert)
-	if got != PurposeAndroidHardware {
-		t.Errorf("ClassifyCertificate() = %q, want %q", got, PurposeAndroidHardware)
+			if got := ClassifyCertificate(cert); got != tt.want {
+				t.Errorf("ClassifyCertificate() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestClassifyCertificate_GoogleIssuerHeuristic(t *testing.T) {
-	// The issuer heuristic checks for Organization containing "Google"
-	// and CommonName containing "Attestation". Since self-signed certs
-	// have issuer == subject, we set subject to match both conditions.
+// TestClassifyCertificate_ForgedGoogleAttestationRootIsNotAndroidHardware
+// guards #1304: a self-signed CA whose DN names "Google ... Attestation" is
+// anyone's to mint, so the names alone must not file it as an Android
+// attestation anchor. It is classified like any other self-signed CA.
+func TestClassifyCertificate_ForgedGoogleAttestationRootIsNotAndroidHardware(t *testing.T) {
 	cert := generateSelfSignedCert(t,
 		"Google Hardware Attestation Root",
 		[]string{"Google LLC"},
@@ -201,14 +218,15 @@ func TestClassifyCertificate_GoogleIssuerHeuristic(t *testing.T) {
 	)
 
 	got := ClassifyCertificate(cert)
-	if got != PurposeAndroidHardware {
-		t.Errorf("ClassifyCertificate() = %q, want %q", got, PurposeAndroidHardware)
+	if got != PurposeUserCA {
+		t.Errorf("ClassifyCertificate() = %q, want %q for a self-signed CA that only names Google", got, PurposeUserCA)
 	}
 }
 
-func TestClassifyCertificate_GoogleIssuerHeuristic_SignedByGoogle(t *testing.T) {
-	// A leaf cert issued by a Google Attestation CA, where the leaf itself
-	// has a non-Google subject. The issuer fields come from the parent.
+// TestClassifyCertificate_GoogleNamedIssuerIsNotAndroidHardware guards the
+// issued-certificate half of #1304: a certificate whose issuer DN claims a
+// Google attestation CA is not an attestation anchor on that claim alone.
+func TestClassifyCertificate_GoogleNamedIssuerIsNotAndroidHardware(t *testing.T) {
 	cert := generateSignedCert(t,
 		"Device Key",
 		[]string{"Device Vendor"},
@@ -220,8 +238,25 @@ func TestClassifyCertificate_GoogleIssuerHeuristic_SignedByGoogle(t *testing.T) 
 	)
 
 	got := ClassifyCertificate(cert)
-	if got != PurposeAndroidHardware {
-		t.Errorf("ClassifyCertificate() = %q, want %q", got, PurposeAndroidHardware)
+	if got != PurposeGeneral {
+		t.Errorf("ClassifyCertificate() = %q, want %q for a certificate whose issuer only names Google", got, PurposeGeneral)
+	}
+}
+
+// TestClassifyCertificate_EmbeddedGoogleRootsAreAndroidHardware proves the
+// genuine Google Hardware Attestation Roots still classify as Android
+// hardware anchors -- including the RSA roots, whose DN carries only a
+// serial number and never matched the issuer-name heuristic this replaced.
+func TestClassifyCertificate_EmbeddedGoogleRootsAreAndroidHardware(t *testing.T) {
+	roots := LoadEmbeddedRoots(PurposeAndroidHardware)
+	if len(roots) == 0 {
+		t.Fatal("no embedded Google Hardware Attestation Roots")
+	}
+	for i, root := range roots {
+		if got := ClassifyCertificate(root); got != PurposeAndroidHardware {
+			t.Errorf("ClassifyCertificate(embedded root %d, %s) = %q, want %q",
+				i, root.Subject, got, PurposeAndroidHardware)
+		}
 	}
 }
 
@@ -385,8 +420,8 @@ func TestClassifyCertificate_General_NonCANonSpecial(t *testing.T) {
 
 func TestClassifyCertificate_PriorityOrder(t *testing.T) {
 	// A certificate with both the Android attestation OID and an Intel
-	// issuer organization should classify as Android hardware because
-	// Android attestation is checked first in the priority order.
+	// issuer organization classifies as a TPM manufacturer: the OID confers
+	// nothing (#1312), so it cannot outrank the manufacturer match.
 	androidOID := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11129, 2, 1, 17}
 	ext := pkix.Extension{
 		Id:    androidOID,
@@ -402,9 +437,9 @@ func TestClassifyCertificate_PriorityOrder(t *testing.T) {
 	)
 
 	got := ClassifyCertificate(cert)
-	if got != PurposeAndroidHardware {
-		t.Errorf("ClassifyCertificate() = %q, want %q (Android OID should take priority over TPM manufacturer)",
-			got, PurposeAndroidHardware)
+	if got != PurposeTPMManufacturer {
+		t.Errorf("ClassifyCertificate() = %q, want %q (the Android OID must not outrank the TPM manufacturer match)",
+			got, PurposeTPMManufacturer)
 	}
 }
 
@@ -459,55 +494,6 @@ func TestClassifyCertificate_UserCA_NotCA(t *testing.T) {
 	if got == PurposeUserCA {
 		t.Errorf("ClassifyCertificate() = %q, want anything other than %q for non-CA self-signed cert",
 			got, PurposeUserCA)
-	}
-}
-
-func TestHasAndroidAttestationOID(t *testing.T) {
-	androidOID := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11129, 2, 1, 17}
-	ext := pkix.Extension{
-		Id:    androidOID,
-		Value: []byte{0x30, 0x00},
-	}
-
-	cert := generateSelfSignedCert(t,
-		"Android Key",
-		[]string{"Test"},
-		false,
-		nil,
-		[]pkix.Extension{ext},
-	)
-
-	if !hasAndroidAttestationOID(cert) {
-		t.Error("hasAndroidAttestationOID() = false, want true for cert with Android attestation extension")
-	}
-}
-
-func TestHasAndroidAttestationOID_NoMatch(t *testing.T) {
-	cert := generateTestCert(t, "Plain CA")
-
-	if hasAndroidAttestationOID(cert) {
-		t.Error("hasAndroidAttestationOID() = true, want false for cert without Android attestation extension")
-	}
-}
-
-func TestHasAndroidAttestationOID_DifferentOID(t *testing.T) {
-	// An extension with an OID that is close but not the Android attestation OID.
-	nearOID := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11129, 2, 1, 18}
-	ext := pkix.Extension{
-		Id:    nearOID,
-		Value: []byte{0x05, 0x00},
-	}
-
-	cert := generateSelfSignedCert(t,
-		"Near Android",
-		[]string{"Test"},
-		false,
-		nil,
-		[]pkix.Extension{ext},
-	)
-
-	if hasAndroidAttestationOID(cert) {
-		t.Error("hasAndroidAttestationOID() = true, want false for OID 1.3.6.1.4.1.11129.2.1.18")
 	}
 }
 
@@ -610,7 +596,8 @@ func TestHasOIDPrefix_NoExtensions(t *testing.T) {
 }
 
 func TestClassifyCertificate_MultipleExtensions(t *testing.T) {
-	// A cert with multiple extensions where only one matches Android OID.
+	// A cert with multiple extensions, one of them the Android attestation
+	// OID, is still not an Android hardware anchor (#1312).
 	unrelatedOID := asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 15}
 	androidOID := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11129, 2, 1, 17}
 
@@ -628,15 +615,15 @@ func TestClassifyCertificate_MultipleExtensions(t *testing.T) {
 	)
 
 	got := ClassifyCertificate(cert)
-	if got != PurposeAndroidHardware {
+	if got != PurposeGeneral {
 		t.Errorf("ClassifyCertificate() = %q, want %q for cert with Android OID among multiple extensions",
-			got, PurposeAndroidHardware)
+			got, PurposeGeneral)
 	}
 }
 
 func TestClassifyCertificate_GoogleIssuerNoAttestation(t *testing.T) {
-	// Google LLC issuer but CN does not contain "Attestation" -- should
-	// not trigger the Android heuristic.
+	// A Google LLC certificate that is not an embedded attestation root is
+	// not an Android hardware anchor.
 	cert := generateSelfSignedCert(t,
 		"Google Trust Services",
 		[]string{"Google LLC"},

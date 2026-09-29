@@ -1964,9 +1964,17 @@ func (m *mockTransportClient) EnrollDevice(_ context.Context, _ *transport.Enrol
 type mockAuditLogger struct {
 	cryptoOps []string
 	keyOps    []string
+	entries   []audit.Entry
+	logErr    error
 }
 
-func (m *mockAuditLogger) Log(_ audit.Entry) error { return nil }
+func (m *mockAuditLogger) Log(e audit.Entry) error {
+	if m.logErr != nil {
+		return m.logErr
+	}
+	m.entries = append(m.entries, e)
+	return nil
+}
 func (m *mockAuditLogger) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) error {
 	return nil
 }

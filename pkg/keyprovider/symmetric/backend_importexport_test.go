@@ -827,12 +827,15 @@ func TestUnwrapKey_InvalidAlgorithm(t *testing.T) {
 	wrapped, err := b.WrapKey(context.Background(), keyMaterial, params)
 	require.NoError(t, err)
 
-	// Change algorithm to unsupported
+	// Change algorithm to something that does not match what the token
+	// was issued for: go-xkms#1342 makes UnwrapKey refuse this as an
+	// algorithm mismatch before it ever reaches the wrapping library's
+	// own unsupported-algorithm check.
 	wrapped.Algorithm = "UNSUPPORTED_ALGORITHM"
 
 	_, err = b.UnwrapKey(context.Background(), wrapped, params)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid algorithm")
+	assert.ErrorIs(t, err, backend.ErrInvalidAlgorithm)
 }
 
 // TestUnwrapKey_InvalidKeySize tests unwrap with invalid unwrapped key size

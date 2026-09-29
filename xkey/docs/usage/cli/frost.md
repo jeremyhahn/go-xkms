@@ -39,6 +39,14 @@ make build WITH_FROST=1
 
 ## Command Reference
 
+> **FROST passphrase (go-xkms#1324).** `keygen` in participant mode,
+> `import`, `round1` and `round2` seal or unseal the local secret share and
+> require the FROST passphrase via `--passphrase-stdin`, `--passphrase-file`
+> or `XKMS_FROST_PASSPHRASE`; it encrypts the share wrapping key stored in
+> `<key-dir>/frost/secrets`. The examples below omit it. The normative
+> reference is
+> [`docs/frost-threshold-signing/cli.md`](../../../../docs/frost-threshold-signing/cli.md).
+
 ### frost keygen
 
 Generate FROST key packages using the trusted dealer model.

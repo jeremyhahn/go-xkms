@@ -1061,28 +1061,22 @@ func TestCoveragePush_ParseChallengeAsDynamicPortAssignment(t *testing.T) {
 		challengeTyp string
 		wantBase     string
 		wantPort     uint16
-		wantErr      bool
 	}{
-		{"standard http-01", "http-01", "http-01", 0, false},
-		{"standard enroll-01", "enroll-01", "enroll-01", 0, false},
-		{"with port enroll-01-8080", "enroll-01-8080", "enroll-01", 8080, false},
-		{"with port device-attest-01-443", "device-attest-01-443", "device-attest-01", 443, false},
-		{"no hyphen", "http", "http", 0, false},
-		{"version suffix -01", "http-01", "http-01", 0, false},
-		{"port 100", "enroll-01-100", "enroll-01", 100, false},
-		{"port 99 (reserved)", "enroll-01-99", "enroll-01-99", 0, false},
+		{"standard http-01", "http-01", "http-01", 0},
+		{"standard enroll-01", "enroll-01", "enroll-01", 0},
+		{"with port enroll-01-8080", "enroll-01-8080", "enroll-01", 8080},
+		{"with port device-attest-01-443", "device-attest-01-443", "device-attest-01", 443},
+		{"no hyphen", "http", "http", 0},
+		{"version suffix -01", "http-01", "http-01", 0},
+		{"port 100", "enroll-01-100", "enroll-01", 100},
+		{"port 99 (reserved)", "enroll-01-99", "enroll-01-99", 0},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			baseType, port, err := parseChallengeAsDynamicPortAssignment(tc.challengeTyp)
-			if tc.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tc.wantBase, baseType)
-				assert.Equal(t, tc.wantPort, port)
-			}
+			baseType, port := parseChallengeAsDynamicPortAssignment(tc.challengeTyp)
+			assert.Equal(t, tc.wantBase, baseType)
+			assert.Equal(t, tc.wantPort, port)
 		})
 	}
 }

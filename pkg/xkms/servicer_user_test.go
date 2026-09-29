@@ -15,16 +15,25 @@ package xkms
 
 import (
 	"context"
+	stdcrypto "crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
 // ============================================================================
@@ -853,4 +862,127 @@ func TestCreateUser_SendsTheNormalizedEmail(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "grace@example.com", got.Email,
 		"the store must receive the canonical form, not the raw input")
+}
+
+// ============================================================================
+// revokeUserSessions (go-xkms#1297): DisableUser and DeleteUser must end
+// every refresh-token session the affected account holds, so a session
+// started before the lifecycle change cannot keep refreshing.
+// ============================================================================
+
+// spyRefreshStore is a token.RefreshStore whose only exercised method is
+// RevokeBySubject, recording every subject it is called with. The other
+// methods are never reached by revokeUserSessions; a real store's
+// behavior for them is already covered in pkg/auth/token.
+type spyRefreshStore struct {
+	revoked []string
+	// failOn optionally fails RevokeBySubject for one subject, so a test can
+	// prove a revoke failure does not roll back the lifecycle change that
+	// already succeeded.
+	failOn string
+}
+
+var _ token.RefreshStore = (*spyRefreshStore)(nil)
+
+func (s *spyRefreshStore) Save(context.Context, *token.Record) error { return nil }
+
+func (s *spyRefreshStore) Get(context.Context, string, string) (*token.Record, error) {
+	return nil, nil
+}
+
+func (s *spyRefreshStore) MarkRotated(context.Context, string, string) error { return nil }
+
+func (s *spyRefreshStore) RevokeFamily(context.Context, string) error { return nil }
+
+func (s *spyRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+	s.revoked = append(s.revoked, subject)
+	if s.failOn != "" && subject == s.failOn {
+		return errors.New("revoke store unavailable")
+	}
+	return nil
+}
+
+// newTestTokenIssuerWithStore builds a token issuer over a fresh software
+// ECDSA P-256 key and the given refresh store.
+func newTestTokenIssuerWithStore(t *testing.T, store token.RefreshStore) *token.Issuer {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	issuer, err := token.NewIssuer(&token.Config{
+		Signer: key,
+		KeyAttributes: &types.KeyAttributes{
+			KeyAlgorithm:       x509.ECDSA,
+			SignatureAlgorithm: x509.ECDSAWithSHA256,
+			Hash:               stdcrypto.SHA256,
+		},
+		RefreshStore: store,
+	})
+	require.NoError(t, err)
+	return issuer
+}
+
+func TestDisableUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 42, Username: "alice"}, nil
+	}
+	users.disableUser = func(_ context.Context, _ uint64) error { return nil }
+
+	store := &spyRefreshStore{}
+	svc.SetTokenIssuer(newTestTokenIssuerWithStore(t, store))
+
+	require.NoError(t, svc.DisableUser(context.Background(), "alice"))
+
+	wantHandle := base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(42))
+	assert.ElementsMatch(t, []string{"alice", wantHandle}, store.revoked,
+		"disable must revoke both subject encodings a login can mint a refresh token under")
+}
+
+func TestDeleteUser_RevokesSessionsForUsernameAndWebAuthnHandle(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 7, Username: "bob"}, nil
+	}
+	users.deleteUser = func(_ context.Context, _ uint64) error { return nil }
+
+	store := &spyRefreshStore{}
+	svc.SetTokenIssuer(newTestTokenIssuerWithStore(t, store))
+
+	require.NoError(t, svc.DeleteUser(context.Background(), "bob"))
+
+	wantHandle := base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(7))
+	assert.ElementsMatch(t, []string{"bob", wantHandle}, store.revoked)
+}
+
+// TestDisableUser_NoTokenIssuerConfiguredStillSucceeds proves a deployment
+// with no session-token plane wired (SetTokenIssuer never called) still
+// disables the account; the refresh-time re-check is the enforcement point
+// there instead.
+func TestDisableUser_NoTokenIssuerConfiguredStillSucceeds(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 1, Username: "alice"}, nil
+	}
+	users.disableUser = func(_ context.Context, _ uint64) error { return nil }
+
+	require.NoError(t, svc.DisableUser(context.Background(), "alice"))
+}
+
+// TestDisableUser_RevokeFailureDoesNotFailTheOperation proves a
+// session-revocation failure is best-effort: the qrdb lifecycle change
+// already succeeded and must not be rolled back or reported as a failure
+// because the (defense-in-depth) session sweep could not reach the store.
+func TestDisableUser_RevokeFailureDoesNotFailTheOperation(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+		return &qrdbtransport.User{ID: 1, Username: "mallory"}, nil
+	}
+	users.disableUser = func(_ context.Context, _ uint64) error { return nil }
+
+	store := &spyRefreshStore{failOn: "mallory"}
+	svc.SetTokenIssuer(newTestTokenIssuerWithStore(t, store))
+
+	require.NoError(t, svc.DisableUser(context.Background(), "mallory"))
+	assert.Contains(t, store.revoked, "mallory")
 }

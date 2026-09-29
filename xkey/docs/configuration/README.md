@@ -992,13 +992,18 @@ sudo rc-service xkey start
 
 ### OIDC Token Storage
 
-Tokens are stored in JSON files with `0600` permissions.
+The OIDC token store and the AWS DPoP session store are both
+barrier-encrypted when `xkey barrier init` has been run, and an unencrypted
+`0600` JSON file with one logged warning otherwise; an explicit
+`--token-store`/`--session-store` always uses a plain file at exactly that
+path. See [oidc/architecture.md](oidc/architecture.md#where-the-store-lives)
+for the full decision.
 
 | File | Default Path | Description |
 |------|--------------|-------------|
-| Token store | `~/.xkey/tokens.json` | OIDC tokens |
-| Provider config | `~/.xkey/oidc-providers.json` | Saved providers |
-| AWS session | `~/.xkey/aws-session.json` | AWS DPoP sessions |
+| Token store | `<xkey data dir>/oidc/tokens.json`, or barrier-encrypted | OIDC tokens |
+| Provider config | `~/.xkey/oidc-providers.json` | Saved providers (not secret) |
+| AWS session | `<xkey data dir>/oidc/aws-session.json`, or barrier-encrypted | AWS DPoP sessions |
 | Logs | `~/.xkey/logs/` | Background refresh logs |
 | PIDs | `~/.xkey/pids/` | Background process PIDs |
 

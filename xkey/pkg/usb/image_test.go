@@ -226,6 +226,10 @@ func TestCreateOnImageFile_Success(t *testing.T) {
 	}
 	err := createOnImageFile(cfg)
 	require.NoError(t, err)
+
+	info, statErr := os.Stat(cfg.Path)
+	require.NoError(t, statErr)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "image file must not be group/world readable")
 }
 
 // TestCreateOnImageFile_DetachWarning verifies that a detach failure

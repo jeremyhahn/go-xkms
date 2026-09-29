@@ -255,11 +255,7 @@
       // Step 3: finish — same anti-enumeration collapse as begin.
       let resp;
       try {
-        resp = await client.auth.webAuthnFinishLogin(
-          begin.sessionId,
-          credential,
-          begin.userId,
-        );
+        resp = await client.auth.webAuthnFinishLogin(begin.sessionId, credential);
       } catch (e: unknown) {
         errorMessage = isNetworkFailure(e) ? NETWORK_MESSAGE : failureMessage;
         return;

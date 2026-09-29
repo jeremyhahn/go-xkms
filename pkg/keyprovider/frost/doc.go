@@ -87,8 +87,12 @@
 // Cloud KMS) for production deployments.
 //
 // Session Management:
-// Signing sessions expire after DefaultSessionTimeout (5 minutes).
-// Always complete signing sessions promptly.
+// xkms keeps no server-side signing session. The caller holds the
+// NoncePackage returned by GenerateNonces (including its secret nonces)
+// and passes it back to SignRound; the caller must zeroize it once used
+// (see SigningNonces.Zeroize). Complete each round promptly and never
+// reuse a NoncePackage — EnableNonceTracking rejects any commitment
+// reused across signing attempts.
 //
 // # Basic Usage
 //

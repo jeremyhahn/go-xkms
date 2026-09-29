@@ -29,6 +29,32 @@ import (
 	"github.com/jeremyhahn/go-xkms/test/integration/api/commands"
 )
 
+// frostDealerRecipientFlags creates one recipient key per participant, each
+// in its own key directory, with `frost recipient`, and returns the dealer
+// keygen --recipient flags naming them: every dealer package is encrypted to
+// its participant's recipient key.
+func frostDealerRecipientFlags(t *testing.T, runner *commands.TestRunner, total int) []string {
+	t.Helper()
+	var flags []string
+	for id := 1; id <= total; id++ {
+		dir := commands.CreateTempKeyDir(t)
+		pemPath := filepath.Join(dir, "recipient.pem")
+		stdout, stderr, err := runner.RunCommand(t,
+			"--transport", "embedded",
+			"--key-dir", dir,
+			"frost", "recipient",
+			"--public-key-file", pemPath,
+		)
+		if err != nil {
+			t.Logf("stdout: %s", stdout)
+			t.Logf("stderr: %s", stderr)
+			t.Fatalf("frost recipient for participant %d failed: %v", id, err)
+		}
+		flags = append(flags, "--recipient", fmt.Sprintf("%d=%s", id, pemPath))
+	}
+	return flags
+}
+
 // TestFROST_KeygenAllProtocols tests FROST key generation across all protocols
 func TestFROST_KeygenAllProtocols(t *testing.T) {
 	runner := commands.NewTestRunner()
@@ -105,6 +131,7 @@ func TestFROST_TrustedDealerAllProtocols(t *testing.T) {
 				"--export-dir", exportDir, // export-dir triggers dealer mode
 				"-o", "json",
 			}
+			args = append(args, frostDealerRecipientFlags(t, runner, 3)...)
 			stdout, stderr, err := runner.RunCommand(t, args...)
 			if err != nil {
 				t.Logf("stdout: %s", stdout)
@@ -460,6 +487,7 @@ func TestFROST_CLIWorkflow(t *testing.T) {
 			"--participants", "alice,bob,charlie",
 			"--export-dir", exportDir,
 		}
+		args = append(args, frostDealerRecipientFlags(t, runner, 3)...)
 		stdout, stderr, err := runner.RunCommand(t, args...)
 		if err != nil {
 			t.Logf("stdout: %s", stdout)
@@ -664,6 +692,7 @@ func TestProtocolParity_FrostTrustedDealer(t *testing.T) {
 			"--participants", "alice,bob,charlie",
 			"--export-dir", exportDir, // export-dir triggers dealer mode
 		}
+		args = append(args, frostDealerRecipientFlags(t, runner, 3)...)
 		stdout, stderr, err := runner.RunCommand(t, args...)
 		if err != nil {
 			t.Logf("stdout: %s", stdout)

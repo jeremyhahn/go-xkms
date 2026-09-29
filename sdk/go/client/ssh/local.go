@@ -214,7 +214,10 @@ func ResolveLocalSigners(ctx context.Context, sel LocalKeySelector, authSock str
 			lookup = sel.Host
 		}
 		hc := cfg.Lookup(lookup)
-		homeDir, _ := os.UserHomeDir()
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
 		identities, err = DiscoverLocalIdentities(hc, homeDir)
 		if err != nil {
 			return nil, err

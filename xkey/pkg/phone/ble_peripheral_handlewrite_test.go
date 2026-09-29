@@ -34,7 +34,7 @@ func TestBLEPeripheral_HandleWrite_QueuesData(t *testing.T) {
 		t.Fatalf("NewBLEPeripheral failed: %v", err)
 	}
 
-	p.handleWrite([]byte("fragment-1"))
+	p.handleWrite(1, []byte("fragment-1"))
 
 	select {
 	case got := <-p.incomingData:
@@ -65,7 +65,7 @@ func TestBLEPeripheral_HandleWrite_DropsWhenBufferFull(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		p.handleWrite([]byte("one-too-many"))
+		p.handleWrite(1, []byte("one-too-many"))
 		close(done)
 	}()
 
@@ -77,5 +77,75 @@ func TestBLEPeripheral_HandleWrite_DropsWhenBufferFull(t *testing.T) {
 
 	if got := len(p.incomingData); got != capacity {
 		t.Fatalf("incomingData holds %d entries, want exactly %d (the dropped write must not have been queued)", got, capacity)
+	}
+}
+
+// TestBLEPeripheral_HandleWrite_BindsToFirstCentral pins #1307: the GATT
+// control point is shared by every connected central, not scoped per
+// session, so without a binding a second central's write would be spliced
+// into the first central's reassembler. handleWrite must bind to whichever
+// central's write arrives first and drop every write reporting a different
+// one.
+func TestBLEPeripheral_HandleWrite_BindsToFirstCentral(t *testing.T) {
+	p, err := NewBLEPeripheral(&BLEPeripheralConfig{DeviceName: "xKey-test"})
+	if err != nil {
+		t.Fatalf("NewBLEPeripheral failed: %v", err)
+	}
+
+	// The first write binds the session to client 1.
+	p.handleWrite(1, []byte("from-first"))
+	select {
+	case got := <-p.incomingData:
+		if string(got) != "from-first" {
+			t.Fatalf("got %q, want %q", got, "from-first")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the first central's write was not queued")
+	}
+
+	// A different client's write must be dropped, not queued.
+	p.handleWrite(2, []byte("from-second"))
+	select {
+	case got := <-p.incomingData:
+		t.Fatalf("write from an unbound central was queued: %q", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// The bound central can still write.
+	p.handleWrite(1, []byte("from-first-again"))
+	select {
+	case got := <-p.incomingData:
+		if string(got) != "from-first-again" {
+			t.Fatalf("got %q, want %q", got, "from-first-again")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the bound central's follow-up write was not queued")
+	}
+}
+
+// TestBLEPeripheral_ResetCentralBinding_AllowsNextCentral pins the other half
+// of #1307's binding: resetCentralBinding (called by AcceptConnection when a
+// session ends) must let the next session bind to whatever central writes
+// first, rather than continuing to refuse the previous session's central
+// forever.
+func TestBLEPeripheral_ResetCentralBinding_AllowsNextCentral(t *testing.T) {
+	p, err := NewBLEPeripheral(&BLEPeripheralConfig{DeviceName: "xKey-test"})
+	if err != nil {
+		t.Fatalf("NewBLEPeripheral failed: %v", err)
+	}
+
+	p.handleWrite(1, []byte("session-one"))
+	<-p.incomingData
+
+	p.resetCentralBinding()
+
+	p.handleWrite(2, []byte("session-two"))
+	select {
+	case got := <-p.incomingData:
+		if string(got) != "session-two" {
+			t.Fatalf("got %q, want %q", got, "session-two")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the new central's write was dropped after resetCentralBinding")
 	}
 }

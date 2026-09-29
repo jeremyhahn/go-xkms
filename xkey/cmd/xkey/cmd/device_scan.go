@@ -50,12 +50,7 @@ Examples:
 func init() {
 	deviceCmd.AddCommand(deviceScanCmd)
 
-	// Scan flags. --timeout is shared with `device pair` and resolves
-	// through resolveDeviceScanTimeout (device.go): the flag when explicitly
-	// set, else device.scan_timeout from the unified config, else this
-	// registered default (go-xkms#1071).
-	deviceScanCmd.Flags().Duration("timeout", defaultDeviceScanTimeout,
-		"Scan timeout duration (default: device.scan_timeout, 30s)")
+	registerDeviceScanFlags(deviceScanCmd)
 }
 
 // runDeviceScan executes the phone scan command.

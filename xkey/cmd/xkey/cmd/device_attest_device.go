@@ -135,12 +135,18 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) (err error) {
 	var device *PairedDevice
 	switch {
 	case deviceFilter != "":
-		device = findDeviceByName(cfg, deviceFilter)
+		device, err = findDeviceByName(cfg, deviceFilter)
+		if err != nil {
+			return err
+		}
 		if device == nil {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceFilter)}
 		}
 	case cfg.DefaultDevice != "":
-		device = findDeviceByName(cfg, cfg.DefaultDevice)
+		device, err = findDeviceByName(cfg, cfg.DefaultDevice)
+		if err != nil {
+			return err
+		}
 		if device == nil {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": default device %s not found", cfg.DefaultDevice)}
 		}

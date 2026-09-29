@@ -1,6 +1,6 @@
 # FROST Threshold Signing — User Guide
 
-> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1231)
+> **Status: NORMATIVE** · Feature: `frost-threshold-signing` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1337)
 
 ## What this is for
 
@@ -35,10 +35,35 @@ go build -tags frost ./cmd/xkmsctl
 
 ## Setting up a 2-of-3 group
 
-One person (the "dealer") generates and distributes the key packages. This
-example keeps everything on one machine for illustration; in practice each
-package would be handed to its participant over a channel you trust (out of
-band — this tool does not distribute packages for you).
+One person (the "dealer") generates the key packages, and each package is
+encrypted so that only its own participant can import it. This tool does not
+distribute packages for you: you move the files yourself.
+
+**1. Each participant creates a recipient key** on their own machine,
+choosing a FROST passphrase that protects their keys there:
+
+```bash
+xkmsctl frost recipient --public-key-file alice.pem \
+  --passphrase-file ~/.config/xkms/frost.passphrase
+```
+
+The first command run against a `--key-dir` sets its passphrase; `import`,
+`round1` and `round2` need the same one later. Supply it with
+`--passphrase-stdin`, `--passphrase-file` or the `XKMS_FROST_PASSPHRASE`
+environment variable — never on the command line. The examples below assume
+it is exported:
+
+```bash
+read -rs XKMS_FROST_PASSPHRASE && export XKMS_FROST_PASSPHRASE
+```
+
+Send `alice.pem` to the dealer. It is a public key, so the file is not
+secret, but its integrity matters: read the printed `recipient_id` to the
+dealer over a different channel, such as a call, so a key swapped in transit
+is caught.
+
+**2. The dealer generates the packages**, naming each participant's
+recipient key:
 
 ```bash
 xkmsctl frost keygen \
@@ -46,16 +71,24 @@ xkmsctl frost keygen \
   --algorithm FROST-Ed25519-SHA512 \
   --threshold 2 --total 3 \
   --participants alice,bob,charlie \
-  --export-dir ./treasury-packages
+  --export-dir ./treasury-packages \
+  --recipient 1=alice.pem --recipient 2=bob.pem --recipient 3=charlie.pem
 ```
 
 This writes three files: `alice_participant_1.json`,
-`bob_participant_2.json`, `charlie_participant_3.json`. Each participant
-imports **only their own file**, on their own machine:
+`bob_participant_2.json`, `charlie_participant_3.json`. Each is encrypted to
+one participant's recipient key: the files can travel over any channel, and
+neither the dealer nor anyone else can read the share back out of them.
+
+**3. Each participant imports their own file** into the `--key-dir` that
+holds their recipient key:
 
 ```bash
 xkmsctl frost import --package ./treasury-packages/alice_participant_1.json
 ```
+
+Another participant's file is refused ("encrypted to a different recipient
+key").
 
 The dealer's own copy of the packages should be deleted once every
 participant has imported theirs — the dealer briefly held the whole key
@@ -131,23 +164,39 @@ xkmsctl frost delete treasury-key                    # prompts unless --force
 ## How your secret share is protected at rest
 
 `xkmsctl frost keygen`/`import` never write a participant's secret share to
-disk in the clear. Under `--key-dir/frost/secrets`, xkmsctl runs a real
-software key-storage backend (the same one `xkmsd` uses for local software
-keys) and provisions a dedicated Ed25519 wrapping key on it the first time
-it runs; every secret share is then sealed under that key (AES-256-GCM,
-derived via HKDF) before it touches disk, and the public components under
-`--key-dir/frost/public` — group public key, verification shares, and each
-key's sealed secret-share envelope — never carry the share in recoverable
-form on their own. This is the same protection `xkmsd` applies when
-`backends.frost.secret_backend` names `tpm2`, `pkcs11`, or a cloud KMS: the
-mechanism differs by backend (TPM PCR-bound sealing, HSM/KMS envelope
-encryption, or the software HKDF+AES-GCM path this CLI uses), but every
-`secret_backend` protects the share the same way — none stores it verbatim.
+disk in the clear, and nothing on disk unlocks it without your FROST
+passphrase:
+
+- A dealer package on its way to you is encrypted to your recipient key
+  (JWE, ECDH-ES with AES-256 key wrap and AES-256-GCM). The recipient key is
+  kept under `--key-dir/frost/secrets` as encrypted PKCS#8 under your
+  passphrase, and only its public half ever leaves your machine.
+
+- Each share is sealed (AES-256-GCM, with a key derived via HKDF from a
+  dedicated Ed25519 wrapping key) and stored with the key's public parts
+  under `--key-dir/frost/public`.
+- The wrapping key is stored under `--key-dir/frost/secrets` as encrypted
+  PKCS#8, protected by your passphrase. xkmsctl refuses to write it
+  unencrypted.
+- Both directories are created readable by you only (`0700`).
+
+Someone who copies your `--key-dir` still needs the passphrase to recover a
+share, so choose a strong one and keep it off the command line. A wrong
+passphrase is refused ("FROST passphrase rejected") and nothing is changed.
+Forgetting it makes the stored shares unrecoverable; re-import your key
+package under a new `--key-dir` if you still have it.
+
+`xkmsctl` cannot keep the wrapping key in a TPM or HSM: it has no local
+hardware backend, and `--backend` values other than `software` are refused
+for `xkmsctl frost`. To hold shares behind hardware, run them through
+`xkmsd` with `backends.frost.secret_backend` set to `tpm2`, `pkcs11` or a
+cloud KMS, where the share is protected by TPM sealing or HSM/KMS envelope
+encryption instead.
 
 If you are embedding go-xkms directly in a Go program instead of using
 `xkmsctl` — `xkms.AutoInitialize` with `BackendConfigs[xkms.BackendFROST]`,
-rather than the CLI's own `createFrostBackend`
-(`cmd/xkmsctl/frost.go:1146`), which xkmsctl uses instead and is unaffected
+rather than the CLI's own `openFrostShareBackend`
+(`cmd/xkmsctl/frost.go:1398`), which xkmsctl uses instead and is unaffected
 — the same fail-closed rule applies one level lower: its internal `pkcs8`
 secret store refuses to persist the wrapping key at all unless you set
 `"allow_plaintext_keys": true` in that backend's config
@@ -162,6 +211,15 @@ go-xkms#1237.
 - **Never reuse a `round1` nonce file.** FROST nonce reuse is catastrophic —
   it can recover the private key. Run `round1` fresh for every signing
   attempt, including retries after a failed `round2`.
+- **Upgrading from a build before #1324.** A `--key-dir` written by an older
+  xkmsctl holds a plaintext wrapping key, which every share verb now rejects
+  as "FROST passphrase rejected". Re-import your key package into a fresh
+  `--key-dir` with a passphrase, then delete the old directory.
+- **Packages exported before #1337 cannot be imported.** They carry the
+  share in plaintext, and `import` refuses them ("key package is not
+  encrypted to a recipient key"). Run `frost recipient`, and have the dealer
+  generate a new key with `--recipient` for everyone. Delete the old
+  plaintext files.
 - **`--key-dir` is per-identity, not per-group.** If you run both `keygen`
   (dealer) and `import` (participant) commands with the default `--key-dir`,
   you will overwrite your own participant data with the dealer's export

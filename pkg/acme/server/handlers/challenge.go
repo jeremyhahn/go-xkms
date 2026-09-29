@@ -210,11 +210,7 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 	// Parse the challenge type to extract the port number used by the challenge
 	// selected by the client. The baseType is used for map lookup since challenges
 	// with ports (e.g., "enroll-01-8888") should use the same verifier as base type.
-	baseType, challengePort, err := parseChallengeAsDynamicPortAssignment(challenge.Type)
-	if err != nil {
-		writeError(w, common.MalformedError("Failed to parse challenge type", nil))
-		return
-	}
+	baseType, challengePort := parseChallengeAsDynamicPortAssignment(challenge.Type)
 
 	// Use default ports when no explicit port is specified
 	if challengePort == 0 {
@@ -532,16 +528,20 @@ func (s *RestService) writeChallengeResponse(w http.ResponseWriter, challenge *e
 // parseChallengeAsDynamicPortAssignment parses a challenge type that may include a port number.
 // Format: "challenge-type-port" where port is optional and must be > 99 (to avoid matching -01 suffix).
 // Returns the base challenge type and the port number (0 if not specified).
+//
+// This never fails: every input a caller can pass -- with or without a
+// trailing port, with a non-numeric or out-of-range suffix -- resolves to
+// some (baseType, port) pair, so there is no error for a caller to check.
 // Examples:
-//   - "http-01" -> ("http-01", 0, nil) - standard challenge, no port
-//   - "enroll-01" -> ("enroll-01", 0, nil) - standard challenge, no port
-//   - "enroll-01-8080" -> ("enroll-01", 8080, nil) - with explicit port
-//   - "device-attest-01-443" -> ("device-attest-01", 443, nil) - with explicit port
-func parseChallengeAsDynamicPortAssignment(challengeType string) (string, uint16, error) {
+//   - "http-01" -> ("http-01", 0) - standard challenge, no port
+//   - "enroll-01" -> ("enroll-01", 0) - standard challenge, no port
+//   - "enroll-01-8080" -> ("enroll-01", 8080) - with explicit port
+//   - "device-attest-01-443" -> ("device-attest-01", 443) - with explicit port
+func parseChallengeAsDynamicPortAssignment(challengeType string) (string, uint16) {
 	parts := strings.Split(challengeType, "-")
 	if len(parts) < 2 {
 		// No port specified, return 0 for default
-		return challengeType, 0, nil
+		return challengeType, 0
 	}
 
 	// Try to parse the last part as a port number
@@ -549,25 +549,25 @@ func parseChallengeAsDynamicPortAssignment(challengeType string) (string, uint16
 	port, err := strconv.ParseUint(lastPart, 10, 16)
 	if err != nil {
 		// Last part is not a number, so no port specified
-		return challengeType, 0, nil
+		return challengeType, 0
 	}
 
 	// Port numbers <= 99 are reserved for challenge version suffixes (like -01)
 	// Real port numbers would be > 99 (e.g., 80, 443, 8080)
 	if port <= 99 {
-		return challengeType, 0, nil
+		return challengeType, 0
 	}
 
 	// Reconstruct the base challenge type without the port
 	baseType := strings.Join(parts[:len(parts)-1], "-")
-	return baseType, uint16(port), nil
+	return baseType, uint16(port)
 }
 
 // isEnrollXChallenge checks if the challenge type is an enrollment challenge.
 // Enrollment challenges include enroll-01, enroll-01-8080, endorse-01, device-attest-01, etc.
 // Uses HasPrefix to match both standard and port-suffixed challenge types.
 func isEnrollXChallenge(challengeType string) bool {
-	baseType, _, _ := parseChallengeAsDynamicPortAssignment(challengeType)
+	baseType, _ := parseChallengeAsDynamicPortAssignment(challengeType)
 	return strings.HasPrefix(baseType, "enroll") ||
 		strings.HasPrefix(baseType, "endorse") ||
 		strings.HasPrefix(baseType, "device-attest")

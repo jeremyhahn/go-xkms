@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	sshagent "golang.org/x/crypto/ssh/agent"
@@ -357,6 +358,74 @@ func TestSSHConsole_OpenConfigHostConsole_Success(t *testing.T) {
 	// The token is one-time: a second resolve must fail.
 	if _, err := svc.resolve(req); !errors.Is(err, ErrSSHConsoleInvalidToken) {
 		t.Fatalf("expected ErrSSHConsoleInvalidToken on reuse, got %v", err)
+	}
+}
+
+// TestSSHConsole_Resolve_ExpiredTicketRefused verifies resolve refuses (and
+// deletes) a ticket older than consoleTicketTTL, so a WebSocket upgrade that
+// arrives long after OpenConsole -- a browser tab left open after the
+// dialog it belonged to was abandoned -- cannot redeem a ticket whose
+// signer(s) and host-key policy were captured under stale conditions
+// (go-xkms#1299). The service's clock seam (now) makes this hermetic: no
+// real consoleTicketTTL-length sleep.
+func TestSSHConsole_Resolve_ExpiredTicketRefused(t *testing.T) {
+	svc := NewSSHConsoleService()
+	defer svc.Shutdown()
+
+	fixed := time.Now()
+	svc.now = func() time.Time { return fixed }
+
+	const token = "expired-ticket-token"
+	svc.mu.Lock()
+	svc.tickets[token] = &consoleTicket{
+		host:    "example.com",
+		port:    22,
+		user:    "carol",
+		created: fixed.Add(-consoleTicketTTL - time.Second),
+	}
+	svc.mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/console?token="+token, nil)
+	if _, err := svc.resolve(req); !errors.Is(err, ErrSSHConsoleInvalidToken) {
+		t.Fatalf("expected ErrSSHConsoleInvalidToken for expired ticket, got %v", err)
+	}
+
+	svc.mu.Lock()
+	_, exists := svc.tickets[token]
+	svc.mu.Unlock()
+	if exists {
+		t.Fatal("expected expired ticket to be deleted from the ticket table")
+	}
+}
+
+// TestSSHConsole_Resolve_UnexpiredTicketAccepted verifies resolve still
+// redeems a ticket within consoleTicketTTL, the companion case to
+// TestSSHConsole_Resolve_ExpiredTicketRefused: the TTL check must not
+// reject a ticket that simply has not aged out yet.
+func TestSSHConsole_Resolve_UnexpiredTicketAccepted(t *testing.T) {
+	svc := NewSSHConsoleService()
+	defer svc.Shutdown()
+
+	fixed := time.Now()
+	svc.now = func() time.Time { return fixed }
+
+	const token = "fresh-ticket-token"
+	svc.mu.Lock()
+	svc.tickets[token] = &consoleTicket{
+		host:    "example.com",
+		port:    22,
+		user:    "carol",
+		created: fixed.Add(-consoleTicketTTL + time.Second),
+	}
+	svc.mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/console?token="+token, nil)
+	target, err := svc.resolve(req)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if target.Host != "example.com" || target.User != "carol" || target.Port != 22 {
+		t.Fatalf("unexpected target: %+v", target)
 	}
 }
 

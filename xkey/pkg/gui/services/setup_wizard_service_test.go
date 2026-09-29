@@ -16,6 +16,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -201,6 +202,92 @@ func TestGenerateRandomPIN_Complexity(t *testing.T) {
 		require.True(t, pinMeetsComplexity(pin),
 			"PIN iteration %d should meet complexity: %s", i, pin)
 	}
+}
+
+// TestGenerateRandomPIN_NeverFails stress-tests generateRandomPIN across a
+// large number of iterations for every supported length, with extra
+// coverage at length 4 where the weak-PIN rule (all four character classes
+// present) has the lowest per-attempt acceptance probability of any
+// supported length (~7%, since a 4-character PIN can only satisfy the rule
+// by placing a distinct class in each of its 4 positions).
+//
+// This is a regression test for #1210: generateRandomPIN previously capped
+// its rejection-sampling loop at 100 attempts, which could exhaust and
+// return ErrSetupPINGenerationFailed at length 4 with probability on the
+// order of 1 in 1,300 calls -- rare enough to pass most local runs (single
+// invocations, even -count=200) yet real enough to appear once in CI.
+// generateRandomPIN now loops until it finds a match instead of giving up,
+// so it must never fail here regardless of how many times it is called.
+func TestGenerateRandomPIN_NeverFails(t *testing.T) {
+	lengths := []int{0, 1, 2, 3, 4, 5, 8, 12, 16, 64}
+	for _, length := range lengths {
+		length := length
+		t.Run(fmt.Sprintf("length=%d", length), func(t *testing.T) {
+			t.Parallel()
+
+			iterations := 2000
+			if length == 4 {
+				// Weakest acceptance rate: exercise it hardest.
+				iterations = 20000
+			}
+
+			for i := 0; i < iterations; i++ {
+				pin, err := generateRandomPIN(length)
+				require.NoErrorf(t, err, "iteration %d", i)
+				require.Lenf(t, pin, length, "iteration %d", i)
+				if length >= 4 {
+					require.Truef(t, pinMeetsComplexity(pin),
+						"iteration %d produced a PIN missing a character class: %s", i, pin)
+				}
+			}
+		})
+	}
+}
+
+// TestGenerateRandomPIN_Distribution is a cheap sanity check that
+// generateRandomPIN draws characters roughly uniformly from pinCharset --
+// the complexity rejection step must not skew the output toward one
+// character class.
+func TestGenerateRandomPIN_Distribution(t *testing.T) {
+	const (
+		numPINs   = 2000
+		pinLength = 16
+	)
+
+	var upper, lower, digit, special int
+	total := 0
+	for i := 0; i < numPINs; i++ {
+		pin, err := generateRandomPIN(pinLength)
+		require.NoError(t, err)
+		for _, c := range pin {
+			total++
+			switch {
+			case c >= 'A' && c <= 'Z':
+				upper++
+			case c >= 'a' && c <= 'z':
+				lower++
+			case c >= '0' && c <= '9':
+				digit++
+			default:
+				special++
+			}
+		}
+	}
+	require.Equal(t, numPINs*pinLength, total)
+
+	// Expected proportions from the 90-char charset: 26 upper, 26 lower,
+	// 10 digit, 28 special. The margin is wide -- far beyond statistical
+	// noise at this sample size -- so this stays a sanity check rather
+	// than becoming a new source of flakiness.
+	assertProportion := func(name string, count int, expected float64) {
+		got := float64(count) / float64(total)
+		require.InDeltaf(t, expected, got, expected*0.35,
+			"%s proportion %.4f far from expected %.4f", name, got, expected)
+	}
+	assertProportion("upper", upper, 26.0/90.0)
+	assertProportion("lower", lower, 26.0/90.0)
+	assertProportion("digit", digit, 10.0/90.0)
+	assertProportion("special", special, 28.0/90.0)
 }
 
 // TestPinMeetsComplexity verifies the complexity checker with known inputs.

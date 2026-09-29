@@ -1,6 +1,6 @@
 # OIDC — Engineering
 
-Status: current. Last verified: 2026-09-28.
+Status: current. Last verified: 2026-09-29.
 
 This document covers the CLI's token-store surface
 (`cmd/xkey/cmd/oidc_token_store.go`, `cmd/xkey/cmd/oidc.go`), the GUI's token
@@ -203,21 +203,25 @@ every other GUI store picks between its barrier-backed and no-barrier forms:
   still round-trips through `oidc-providers.json` in the same data
   directory either way; only the token content moved to memory-only.
 
-Before this change, `SetDataDir` opened `oidc.NewFileTokenStore` with a
+Before go-xkms#1203, `SetDataDir` opened `oidc.NewFileTokenStore` with a
 constant key (`oidcTokenEncKey = "xkey-oidc-token-store-encryption"`)
 compiled into the binary — readable out of any xkey build, so `tokens.json`
 carried no real confidentiality — and, on any store-open error, silently
 reopened the same path with a `nil` key, writing tokens in the clear. Both
-are deleted outright, not deprecated: `oidc.NewFileTokenStore` now refuses to
-construct a store at all without a real key (see `ErrInvalidEncryptionKey`
-below), so there is no way to reintroduce this fallback by accident.
+were deleted outright, not deprecated, by #1203; go-xkms#1325 finished the
+job by deleting `oidc.FileTokenStore` itself (`pkg/oidc/store.go`) along with
+its `ErrEncryptionFailed`/`ErrDecryptionFailed`/`ErrInvalidEncryptionKey`
+sentinels, once a `go-xkms` audit confirmed no production caller had used it
+since #1203 replaced its only caller with `MemoryTokenStore` — there is now
+no fixed-key file store left in this package for a future caller to reach
+for by mistake. `BackendTokenStore` (barrier-backed) and `MemoryTokenStore`
+(no-barrier, in-memory) are the only two `TokenStore` implementations here.
 
 ## Errors
 
 | Sentinel | Meaning |
 |---|---|
 | `ErrOIDCNoTokensFound` | Nothing is stored, or what is stored does not parse as the current format |
-| `oidc.ErrInvalidEncryptionKey` | `NewFileTokenStore` was called with a `nil` or empty `encryptionKey`; it refuses to construct a store rather than falling back to plaintext |
 | `ErrOIDCTokenStoreFailed` | `Save` failed, or `openOIDCTokenStore` could not resolve a backend (wraps the underlying cause — often `ErrBarrierStoreOpenFailed`) |
 | `ErrOIDCTokenLoadFailed` | A command's `Load` call failed for a reason other than "not found" |
 | `ErrOIDCProtectedMemory` | The mlocked allocation for a token field failed (`secure.NewBufferFromBytes` error) |
@@ -271,12 +275,13 @@ the files below.
 | `xkey/pkg/oidc/callback_test.go` (`TestSanitizeProviderText*`, `FuzzSanitizeProviderText`) | OSC 52, OSC 8, CSI, DCS/APC/PM/SOS, nF and Fs escapes, 8-bit C1 sequences (raw and UTF-8), NUL and other C0, line breaks, bidi overrides, invalid UTF-8, length bounding on a rune boundary; the fuzz target checks for any input that the output is inert, bounded and idempotent |
 | `*TerminalInert*`, `TestTokenRequestError_RendersProviderTextInert`, `TestClient_Exchange_TokenEndpointErrorIsInert` | An OSC 52 + `ESC[2J` + 8-bit CSI + NUL payload sent through every call path listed under Invariants (CLI, GUI and AWS callback errors, the GUI log line, the OIDC and AWS token-endpoint errors, the GUI refresh error, printed claims and the AWS access key ID) comes out as plain text |
 | `oidc_barrier_test.go` | The barrier decision itself: no-barrier warning + plain-file fallback, barrier-encrypted round-trip across two independent `openOIDCTokenStore` calls (proving a fresh process can unseal and read), wrong-password and no-password typed refusals, `--token-store` bypassing barrier auto-detection, and `TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick` — which invalidates the barrier password on the test's `cobra.Command` immediately after the store is opened, then proves three successful refresh ticks still complete, so any hypothetical re-resolution inside the loop would have failed |
+| `oidc_aws_barrier_test.go` | The identical barrier decision for the AWS DPoP session store (go-xkms#1325): no-barrier warning + plain-file fallback under `<xkey data dir>/oidc/aws-session.json`, barrier-encrypted round-trip across two independent `openAWSSessionStore` calls proving neither the refresh token nor the DPoP private key PEM appears in the on-disk ciphertext, wrong-password and no-password typed refusals, and an explicit `--session-store` bypassing barrier auto-detection |
 
 The GUI token store's barrier-first decision (go-xkms#1203) is covered by:
 
 | File | Covers |
 |---|---|
-| `xkey/pkg/oidc/store_test.go` | `NewFileTokenStore` refuses a `nil` and an empty `encryptionKey` with `ErrInvalidEncryptionKey`; `TestFileTokenStore_NeverWritesPlaintext` proves every on-disk entry carries a GCM nonce and its ciphertext never contains the plaintext token strings; `TestFileTokenStore_DecryptInvalidJSON` and `TestFileTokenStore_DecryptToken_WrongNonceLength` exercise `decryptToken` now that it has no plaintext branch |
+| `xkey/pkg/oidc/store_test.go` | `MemoryTokenStore`'s CRUD and closed-store behavior, `normalizeIssuer`, and the `TokenStore` interface assertion (`BackendTokenStore`'s own assertion lives beside its implementation in `backend_store.go`) — `oidc.FileTokenStore` and its dedicated tests were deleted outright by go-xkms#1325 once confirmed unused in production since #1203 |
 | `xkey/pkg/gui/services/oidc_token_store_security_test.go` | No barrier: no file named `tokens*` is ever written to the data directory, `svc.tokenStore` is an `*oidc.MemoryTokenStore`, a token round-trips within the session, and the warning logs exactly once naming the exposure; with a barrier: `SetBackend` still round-trips through the storage backend under the `oidc/tokens/` key prefix |
 | `xkey/pkg/gui/oidc_token_store_warning_test.go` | The same behavior end to end through `App.initializeDataDir()`, mirroring `fido2_passkey_store_warning_test.go`'s pattern for the FIDO2 passkey store: the warning fires without a barrier and does not fire with one, and the `oidc/` data directory carries no token file |
 

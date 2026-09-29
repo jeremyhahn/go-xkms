@@ -157,6 +157,46 @@ func TestCopyFileSeal_PreservesContentAndMode(t *testing.T) {
 	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
 }
 
+// TestCopyFileSeal_RefusesSymlink proves that copyFileSeal refuses to
+// follow a symlink rather than silently copying whatever it points at into
+// the (unencrypted) staging directory.
+func TestCopyFileSeal_RefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.txt")
+	require.NoError(t, os.WriteFile(target, []byte("outside data"), 0600))
+
+	link := filepath.Join(dir, "link.txt")
+	require.NoError(t, os.Symlink(target, link))
+
+	dst := filepath.Join(dir, "dst.txt")
+	err := copyFileSeal(link, dst)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSealSymlinkRefused)
+
+	var sealErr *SealError
+	require.ErrorAs(t, err, &sealErr)
+	assert.Equal(t, "copy_file", sealErr.Operation)
+
+	_, statErr := os.Stat(dst)
+	assert.True(t, os.IsNotExist(statErr), "the destination must not be created for a refused symlink")
+}
+
+// TestCopyDirContents_RefusesSymlink proves that a symlink encountered
+// while walking a directory tree aborts the copy instead of dereferencing
+// it into the staging copy.
+func TestCopyDirContents_RefusesSymlink(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	target := filepath.Join(src, "target.txt")
+	require.NoError(t, os.WriteFile(target, []byte("secret"), 0600))
+	require.NoError(t, os.Symlink(target, filepath.Join(src, "link.txt")))
+
+	err := copyDirContents(src, dst)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSealSymlinkRefused)
+}
+
 // --- volume construction from flags ---
 
 func TestCreateSealVolume_FlagsOverrideDefaults(t *testing.T) {

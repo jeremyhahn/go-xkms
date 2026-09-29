@@ -144,6 +144,9 @@ func (m *p6bMockTrustStore) AddCertificateWithOptions(_ *x509.Certificate, _ *tr
 func (m *p6bMockTrustStore) AddPEM(_ []byte) (int, error) {
 	return m.addPEMCount, m.addPEMErr
 }
+func (m *p6bMockTrustStore) ImportPEM(_ []byte, _ *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
+	return truststore.ImportResult{Added: m.addPEMCount}, m.addPEMErr
+}
 func (m *p6bMockTrustStore) RemoveCertificate(_ string) error { return m.removeErr }
 func (m *p6bMockTrustStore) Certificates() ([]*x509.Certificate, error) {
 	return m.certs, m.certErr

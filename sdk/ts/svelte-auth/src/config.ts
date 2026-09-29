@@ -30,7 +30,6 @@ import type {
   WebAuthnBeginLoginRequest,
   WebAuthnBeginRegistrationRequest,
   WebAuthnCeremonyStart,
-  WebAuthnRegistrationStatusResponse,
   AssertionCredentialJSON,
   AttestationCredentialJSON,
 } from '@go-xkms/sdk';
@@ -53,7 +52,6 @@ export interface AuthCeremonyApi {
   webAuthnFinishLogin(
     sessionId: string,
     credential: AssertionCredentialJSON,
-    userId?: string,
   ): Promise<WebAuthnAuthResponse>;
   webAuthnRegisterBegin(
     req: WebAuthnBeginRegistrationRequest,
@@ -62,10 +60,6 @@ export interface AuthCeremonyApi {
     sessionId: string,
     credential: AttestationCredentialJSON,
   ): Promise<WebAuthnAuthResponse>;
-  webAuthnRegistrationStatus(query: {
-    user_id?: string;
-    email?: string;
-  }): Promise<WebAuthnRegistrationStatusResponse>;
   /** POST the TLS-verified client certificate for a bearer token pair. */
   loginCert(): Promise<TokenResponse>;
 }

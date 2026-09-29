@@ -185,6 +185,8 @@ func TestTrustFetch_PinnedHappyPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 	assert.Equal(t, truststore.PurposeBootstrapCA, meta.Purpose)
+	assert.Equal(t, truststore.BootstrapImportOptions(srv.URL).Source, meta.Source,
+		"trust fetch must record the same source as trust bootstrap and the GUI")
 	assert.True(t, strings.HasPrefix(meta.Source, "platform:"))
 }
 

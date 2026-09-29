@@ -308,6 +308,6 @@ func deviceIDMatches(actual, expected string) bool {
 
 // IsEndorseChallengeType returns true if the challenge type is endorse-01.
 func IsEndorseChallengeType(challengeType string) bool {
-	baseType, _, _ := parseChallengeAsDynamicPortAssignment(challengeType)
+	baseType, _ := parseChallengeAsDynamicPortAssignment(challengeType)
 	return baseType == "endorse-01"
 }

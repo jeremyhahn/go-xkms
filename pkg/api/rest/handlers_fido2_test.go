@@ -26,6 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	pkgwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
@@ -142,9 +143,9 @@ func TestHandleSDKBeginRegistration_RegistrationClosed(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rr.Code, "body: %s", rr.Body.String())
 	var errResp ErrorResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &errResp))
-	assert.Equal(t, "registration_disabled", errResp.Error,
+	assert.Equal(t, "registration_refused", errResp.Error,
 		"the machine-readable code must match the browser route's documented contract")
-	assert.Equal(t, "public registration is disabled", errResp.Message)
+	assert.Equal(t, pkgwebauthn.ErrRegistrationRefused.Error(), errResp.Message)
 }
 
 func TestHandleSDKBeginRegistration_BadJSON(t *testing.T) {
@@ -245,21 +246,27 @@ func TestHandleSDKBeginAuthentication_BadJSON(t *testing.T) {
 }
 
 func TestHandleSDKBeginAuthentication_UnknownUser(t *testing.T) {
-	// Real service, but the user was never registered => resolve-user error => 500.
+	// Real service, but the user was never registered: answered with decoy
+	// options, exactly like a known account, so the SDK route does not
+	// reveal whether the account exists (go-xkms#1296).
 	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
 
 	body, _ := json.Marshal(transport.BeginAuthenticationRequest{Email: "nobody@example.com"})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/begin", bytes.NewReader(body)))
 
-	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	var resp transport.BeginAuthenticationResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp.SessionID)
+	assert.Contains(t, resp.OptionsJSON, "allowCredentials")
 }
 
 // TestHandleSDKBeginAuthentication_UsernameKeyNotRecognized verifies the SDK
 // route reads the login key from "email" only: a body that carries the
 // address solely under the removed "username" wire key resolves an empty
-// login key, not the address, and so is reported as the same unknown-account
-// error an empty Email always produces (owner rule 2026-09-22, PR 2).
+// login key, not the address, and so is refused as the same malformed
+// request an empty Email always produces (owner rule 2026-09-22, PR 2).
 func TestHandleSDKBeginAuthentication_UsernameKeyNotRecognized(t *testing.T) {
 	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
 
@@ -305,8 +312,11 @@ func TestHandleSDKFinishAuthentication_BadJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
+// TestHandleSDKFinishAuthentication_ParseError is go-xkms#1310: a malformed
+// assertion is a login-finish failure like any other, so it gets the same
+// fixed 401 verification_failed response as a wrong-but-well-formed
+// assertion, not a distinct 400 that would set it apart from that case.
 func TestHandleSDKFinishAuthentication_ParseError(t *testing.T) {
-	// Valid request JSON but unparseable assertion => service error => 400.
 	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
 
 	body, _ := json.Marshal(transport.FinishAuthenticationRequest{
@@ -317,7 +327,11 @@ func TestHandleSDKFinishAuthentication_ParseError(t *testing.T) {
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/finish", bytes.NewReader(body)))
 
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&errResp))
+	assert.Equal(t, webauthnhttp.ErrorCodeVerificationFailed, errResp.Error)
+	assert.Equal(t, "verification failed", errResp.Message)
 }
 
 func TestHandleSDKFinishAuthentication_NotConfigured(t *testing.T) {

@@ -17,7 +17,7 @@
   import { isWailsAvailable, callBackend, callBackendVoid, callBackendWithError } from '$lib/api/backend';
   import type { TrustCertInfo } from '$lib/api/backend';
 
-  type PurposeFilter = 'all' | 'tpm-manufacturer' | 'idevid-issuer' | 'user-ca' | 'bootstrap-ca' | 'android-hardware' | 'general';
+  type PurposeFilter = 'all' | 'tpm-manufacturer' | 'idevid-issuer' | 'user-ca' | 'bootstrap-ca' | 'android-hardware' | 'general' | 'synced';
 
   interface PurposeTab {
     value: PurposeFilter;
@@ -32,6 +32,7 @@
     { value: 'bootstrap-ca', label: 'Bootstrap CA' },
     { value: 'android-hardware', label: 'Android Hardware' },
     { value: 'general', label: 'General' },
+    { value: 'synced', label: 'Synced' },
   ];
 
   const purposeColors: Record<string, { bg: string; fg: string }> = {
@@ -41,6 +42,7 @@
     'bootstrap-ca':      { bg: '#d4edda', fg: '#155724' },
     'android-hardware':  { bg: '#fff3cd', fg: '#856404' },
     'general':           { bg: 'var(--color-surface-container)', fg: 'var(--color-on-surface-variant)' },
+    'synced':            { bg: 'var(--color-surface-container)', fg: 'var(--color-on-surface-variant)' },
   };
 
   let certificates: TrustCertInfo[] = [];
@@ -353,6 +355,7 @@
       'bootstrap-ca': 'Bootstrap CA',
       'android-hardware': 'Android Hardware',
       'general': 'General',
+      'synced': 'Synced',
     };
     return labels[purpose] ?? purpose;
   }

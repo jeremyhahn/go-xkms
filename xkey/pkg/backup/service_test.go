@@ -23,10 +23,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,10 +37,13 @@ import (
 // Mock implementations
 // ---------------------------------------------------------------------------
 
+// mockTrustStore serves certs with the metadata in meta. A nil meta files
+// every certificate as general; metaErr fails every metadata lookup.
 type mockTrustStore struct {
-	certs []*x509.Certificate
-	meta  map[string]*CertMetadataInfo
-	err   error
+	certs   []*x509.Certificate
+	meta    map[string]*CertMetadataInfo
+	metaErr error
+	err     error
 }
 
 func (m *mockTrustStore) Certificates() ([]*x509.Certificate, error) {
@@ -49,8 +54,11 @@ func (m *mockTrustStore) Certificates() ([]*x509.Certificate, error) {
 }
 
 func (m *mockTrustStore) Metadata(fingerprint string) (*CertMetadataInfo, error) {
+	if m.metaErr != nil {
+		return nil, m.metaErr
+	}
 	if m.meta == nil {
-		return nil, errors.New("no metadata")
+		return &CertMetadataInfo{Fingerprint: fingerprint, Purpose: "general"}, nil
 	}
 	info, ok := m.meta[fingerprint]
 	if !ok {
@@ -106,15 +114,17 @@ func (m *mockCAReader) GetCAChainPEM() ([]byte, error) {
 
 type mockTrustStoreWriter struct {
 	added [][]byte
+	opts  []*truststore.AddCertificateOptions
 	err   error
 }
 
-func (m *mockTrustStoreWriter) AddPEM(pemData []byte) (int, error) {
+func (m *mockTrustStoreWriter) ImportPEM(pemData []byte, opts *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
 	if m.err != nil {
-		return 0, m.err
+		return truststore.ImportResult{}, m.err
 	}
 	m.added = append(m.added, pemData)
-	return 1, nil
+	m.opts = append(m.opts, opts)
+	return truststore.ImportResult{Added: 1}, nil
 }
 
 type mockOATHWriter struct {
@@ -311,7 +321,7 @@ func TestCreateBackup_TrustStoreOnly(t *testing.T) {
 		meta: map[string]*CertMetadataInfo{
 			fp: {
 				Fingerprint: fp,
-				Purpose:     "tls-root",
+				Purpose:     "user-ca",
 				Source:      "manual",
 				Tags:        []string{"production"},
 			},
@@ -337,7 +347,7 @@ func TestCreateBackup_TrustStoreOnly(t *testing.T) {
 	require.NotNil(t, archive.TrustStore)
 	assert.Len(t, archive.TrustStore.Certificates, 1)
 	assert.Equal(t, fp, archive.TrustStore.Certificates[0].Fingerprint)
-	assert.Equal(t, "tls-root", archive.TrustStore.Certificates[0].Purpose)
+	assert.Equal(t, "user-ca", archive.TrustStore.Certificates[0].Purpose)
 	assert.Equal(t, "manual", archive.TrustStore.Certificates[0].Source)
 	assert.Equal(t, []string{"production"}, archive.TrustStore.Certificates[0].Tags)
 }
@@ -350,7 +360,7 @@ func TestCreateBackup_AllSources(t *testing.T) {
 		WithTrustStore(&mockTrustStore{
 			certs: []*x509.Certificate{cert},
 			meta: map[string]*CertMetadataInfo{
-				fp: {Fingerprint: fp, Purpose: "ca-root", Source: "system"},
+				fp: {Fingerprint: fp, Purpose: "general", Source: "system"},
 			},
 		}),
 		WithOATH(&mockOATHReader{creds: testOATHCreds()}),
@@ -554,7 +564,7 @@ func TestCreateDecryptRoundTrip(t *testing.T) {
 		WithTrustStore(&mockTrustStore{
 			certs: []*x509.Certificate{cert},
 			meta: map[string]*CertMetadataInfo{
-				fp: {Fingerprint: fp, Purpose: "tls-root", Source: "test"},
+				fp: {Fingerprint: fp, Purpose: "user-ca", Source: "test"},
 			},
 		}),
 		WithOATH(&mockOATHReader{creds: oathCreds}),
@@ -646,7 +656,7 @@ func TestRestoreTrustStore(t *testing.T) {
 		WithTrustStore(&mockTrustStore{
 			certs: []*x509.Certificate{cert},
 			meta: map[string]*CertMetadataInfo{
-				fp: {Fingerprint: fp, Purpose: "tls", Source: "test"},
+				fp: {Fingerprint: fp, Purpose: "tpm-manufacturer", Source: "test", Tags: []string{"lab"}},
 			},
 		}),
 	)
@@ -667,6 +677,94 @@ func TestRestoreTrustStore(t *testing.T) {
 	assert.Equal(t, 0, result.Skipped)
 	assert.Empty(t, result.Errors)
 	assert.Len(t, writer.added, 1)
+
+	// The certificate is filed under exactly the metadata it was backed up
+	// with, never auto-classified (#1312).
+	require.Len(t, writer.opts, 1)
+	require.NotNil(t, writer.opts[0])
+	assert.Equal(t, truststore.PurposeTPMManufacturer, writer.opts[0].Purpose)
+	assert.Equal(t, "test", writer.opts[0].Source)
+	assert.Equal(t, []string{"lab"}, writer.opts[0].Tags)
+}
+
+// TestRestoreTrustStore_PreservesEveryRecordedPurpose restores one
+// certificate per trust-store purpose and checks each lands under the purpose
+// the archive recorded -- including synced, which auto-classification would
+// promote out of quarantine.
+func TestRestoreTrustStore_PreservesEveryRecordedPurpose(t *testing.T) {
+	svc, err := NewService(testConfig())
+	require.NoError(t, err)
+
+	purposes := []truststore.CertPurpose{
+		truststore.PurposeGeneral,
+		truststore.PurposeTPMManufacturer,
+		truststore.PurposeAndroidHardware,
+		truststore.PurposeUserCA,
+		truststore.PurposeBootstrapCA,
+		truststore.PurposeIDevIDIssuer,
+		truststore.PurposeSynced,
+	}
+	certs := make([]TrustStoreCert, 0, len(purposes))
+	for i, purpose := range purposes {
+		certs = append(certs, TrustStoreCert{
+			PEM:         fmt.Sprintf("cert%d", i),
+			Fingerprint: fmt.Sprintf("fp%d", i),
+			Purpose:     string(purpose),
+		})
+	}
+
+	writer := &mockTrustStoreWriter{}
+	result, err := svc.RestoreTrustStore(&Archive{TrustStore: &TrustStoreData{Certificates: certs}}, writer)
+	require.NoError(t, err)
+	assert.Equal(t, len(purposes), result.Restored)
+	require.Len(t, writer.opts, len(purposes))
+	for i, purpose := range purposes {
+		assert.Equal(t, purpose, writer.opts[i].Purpose)
+	}
+}
+
+// TestRestoreTrustStore_RefusesUnrecordedOrInvalidPurpose checks that an
+// archive whose certificate has no recorded purpose, or one that is not a
+// trust-store purpose, is refused with a typed error and writes nothing --
+// not even the valid certificates before it.
+func TestRestoreTrustStore_RefusesUnrecordedOrInvalidPurpose(t *testing.T) {
+	tests := []struct {
+		name    string
+		purpose string
+		wantErr error
+	}{
+		{"missing", "", ErrMissingRecordedPurpose},
+		{"unknown", "tls-root", ErrInvalidRecordedPurpose},
+		{"wrong case", "USER-CA", ErrInvalidRecordedPurpose},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, err := NewService(testConfig())
+			require.NoError(t, err)
+
+			archive := &Archive{
+				TrustStore: &TrustStoreData{
+					Certificates: []TrustStoreCert{
+						{PEM: "cert1", Fingerprint: "fp1", Purpose: string(truststore.PurposeUserCA)},
+						{PEM: "cert2", Fingerprint: "fp2", Purpose: tt.purpose},
+					},
+				},
+			}
+
+			writer := &mockTrustStoreWriter{}
+			result, err := svc.RestoreTrustStore(archive, writer)
+			assert.Nil(t, result)
+			require.ErrorIs(t, err, tt.wantErr)
+			assert.ErrorIs(t, err, ErrRestoreFailed)
+
+			var purposeErr *RecordedPurposeError
+			require.ErrorAs(t, err, &purposeErr)
+			assert.Equal(t, "fp2", purposeErr.Fingerprint)
+			assert.Equal(t, tt.purpose, purposeErr.Purpose)
+			assert.Contains(t, err.Error(), "fp2", "the refusal must name the certificate")
+			assert.Empty(t, writer.added, "a refused archive must write no certificate")
+		})
+	}
 }
 
 func TestRestoreTrustStore_NilArchive(t *testing.T) {
@@ -697,8 +795,8 @@ func TestRestoreTrustStore_WriterError(t *testing.T) {
 	archive := &Archive{
 		TrustStore: &TrustStoreData{
 			Certificates: []TrustStoreCert{
-				{PEM: "cert1", Fingerprint: "fp1"},
-				{PEM: "cert2", Fingerprint: "fp2"},
+				{PEM: "cert1", Fingerprint: "fp1", Purpose: "general"},
+				{PEM: "cert2", Fingerprint: "fp2", Purpose: "general"},
 			},
 		},
 	}
@@ -931,29 +1029,42 @@ func TestCollect_CAError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCollectFailed)
 }
 
+// TestCollect_TrustStoreNoMetadata checks that a certificate whose metadata
+// cannot be read fails the backup: restore refuses a certificate with no
+// recorded purpose (#1312), so an archive without one would be unrestorable.
 func TestCollect_TrustStoreNoMetadata(t *testing.T) {
 	cert := testCert(t)
 
-	// Trust store returns certs but no metadata (nil map).
 	svc, err := NewService(testConfig(),
 		WithTrustStore(&mockTrustStore{
-			certs: []*x509.Certificate{cert},
-			meta:  nil,
+			certs:   []*x509.Certificate{cert},
+			metaErr: errors.New("no metadata"),
 		}),
 	)
 	require.NoError(t, err)
 
-	key := testKey()
-	eb, err := svc.CreateBackup(key)
+	eb, err := svc.CreateBackup(testKey())
+	assert.Nil(t, eb)
+	assert.ErrorIs(t, err, ErrCollectFailed)
+}
+
+// TestCollect_TrustStoreNilMetadata checks that a store reporting no error
+// but nil metadata also fails the backup rather than recording no purpose.
+func TestCollect_TrustStoreNilMetadata(t *testing.T) {
+	cert := testCert(t)
+	fp := testCertFingerprint(cert)
+
+	svc, err := NewService(testConfig(),
+		WithTrustStore(&mockTrustStore{
+			certs: []*x509.Certificate{cert},
+			meta:  map[string]*CertMetadataInfo{fp: nil},
+		}),
+	)
 	require.NoError(t, err)
 
-	archive, err := svc.DecryptBackup(eb, key)
-	require.NoError(t, err)
-	require.Len(t, archive.TrustStore.Certificates, 1)
-
-	// Metadata fields should be empty strings since lookup failed.
-	assert.Empty(t, archive.TrustStore.Certificates[0].Purpose)
-	assert.Empty(t, archive.TrustStore.Certificates[0].Source)
+	eb, err := svc.CreateBackup(testKey())
+	assert.Nil(t, eb)
+	assert.ErrorIs(t, err, ErrCollectFailed)
 }
 
 func TestCollect_CAChainError(t *testing.T) {
@@ -1015,21 +1126,21 @@ func TestRestoreTrustStore_PartialFailure(t *testing.T) {
 
 	callCount := 0
 	writer := &countingTrustStoreWriter{
-		addFunc: func(pemData []byte) (int, error) {
+		addFunc: func(pemData []byte) (truststore.ImportResult, error) {
 			callCount++
 			if callCount == 2 {
-				return 0, errors.New("second cert failed")
+				return truststore.ImportResult{}, errors.New("second cert failed")
 			}
-			return 1, nil
+			return truststore.ImportResult{Added: 1}, nil
 		},
 	}
 
 	archive := &Archive{
 		TrustStore: &TrustStoreData{
 			Certificates: []TrustStoreCert{
-				{PEM: "cert1", Fingerprint: "fp1"},
-				{PEM: "cert2", Fingerprint: "fp2"},
-				{PEM: "cert3", Fingerprint: "fp3"},
+				{PEM: "cert1", Fingerprint: "fp1", Purpose: "general"},
+				{PEM: "cert2", Fingerprint: "fp2", Purpose: "general"},
+				{PEM: "cert3", Fingerprint: "fp3", Purpose: "general"},
 			},
 		},
 	}
@@ -1042,12 +1153,12 @@ func TestRestoreTrustStore_PartialFailure(t *testing.T) {
 	assert.Contains(t, result.Errors[0], "fp2")
 }
 
-// countingTrustStoreWriter is a mock that uses a callback for AddPEM.
+// countingTrustStoreWriter is a mock that uses a callback for ImportPEM.
 type countingTrustStoreWriter struct {
-	addFunc func(pemData []byte) (int, error)
+	addFunc func(pemData []byte) (truststore.ImportResult, error)
 }
 
-func (w *countingTrustStoreWriter) AddPEM(pemData []byte) (int, error) {
+func (w *countingTrustStoreWriter) ImportPEM(pemData []byte, _ *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
 	return w.addFunc(pemData)
 }
 

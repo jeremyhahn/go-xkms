@@ -113,6 +113,9 @@ func (m *mockSecureBrowserTrustStore) AddCertificateWithOptions(_ *x509.Certific
 	return nil
 }
 func (m *mockSecureBrowserTrustStore) AddPEM(_ []byte) (int, error) { return 0, nil }
+func (m *mockSecureBrowserTrustStore) ImportPEM(_ []byte, _ *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
+	return truststore.ImportResult{}, nil
+}
 func (m *mockSecureBrowserTrustStore) RemoveCertificate(_ string) error {
 	return nil
 }
