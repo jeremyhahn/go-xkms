@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
@@ -112,26 +111,8 @@ func init() {
 	backupCmd.AddCommand(backupToDeviceCmd)
 	backupCmd.AddCommand(backupFromDeviceCmd)
 
-	// To-device flags
-	backupToDeviceCmd.Flags().String("device", "", "Paired device name to send backup to")
-	backupToDeviceCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	backupPasswordSource.addFlags(backupToDeviceCmd)
-	addBackupStoreFlags(backupToDeviceCmd)
-	addBarrierPasswordFlags(backupToDeviceCmd)
-
-	// From-device flags
-	backupFromDeviceCmd.Flags().String("device", "", "Paired device name to restore from")
-	backupFromDeviceCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	backupPasswordSource.addFlags(backupFromDeviceCmd)
-	backupKeySource.addFlags(backupFromDeviceCmd)
-	addBackupStoreFlags(backupFromDeviceCmd)
-	addBarrierPasswordFlags(backupFromDeviceCmd)
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("backup.to_device.device", backupToDeviceCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("backup.to_device.timeout", backupToDeviceCmd.Flags().Lookup("timeout"))
-	_ = viper.BindPFlag("backup.from_device.device", backupFromDeviceCmd.Flags().Lookup("device"))
-	_ = viper.BindPFlag("backup.from_device.timeout", backupFromDeviceCmd.Flags().Lookup("timeout"))
+	registerBackupToDeviceFlags(backupToDeviceCmd)
+	registerBackupFromDeviceFlags(backupFromDeviceCmd)
 }
 
 // runBackupToDevice seals a backup of the local xkey data and stores it on a

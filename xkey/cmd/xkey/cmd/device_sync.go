@@ -117,40 +117,10 @@ func init() {
 	deviceCmd.AddCommand(deviceSyncPushCmd)
 	deviceCmd.AddCommand(deviceSyncPullCmd)
 
-	// Sync flags
-	deviceSyncCmd.Flags().Bool("trust-store", false, "Sync trust store certificates")
-	deviceSyncCmd.Flags().Bool("oath", false, "Sync OATH credentials")
-	deviceSyncCmd.Flags().Bool("passwords", false, "Sync password entries")
-	deviceSyncCmd.Flags().Bool("all", true, "Sync all stores (default)")
-	deviceSyncCmd.Flags().String("device", "", "Paired device name")
-	deviceSyncCmd.Flags().Bool("dry-run", false, "Show what would be synced without applying")
-	deviceSyncCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	addBarrierPasswordFlags(deviceSyncCmd)
-
-	// Sync-status flags
-	deviceSyncStatusCmd.Flags().String("device", "", "Paired device name")
-	deviceSyncStatusCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	addBarrierPasswordFlags(deviceSyncStatusCmd)
-
-	// Sync-push flags
-	deviceSyncPushCmd.Flags().Bool("trust-store", false, "Push trust store certificates")
-	deviceSyncPushCmd.Flags().Bool("oath", false, "Push OATH credentials")
-	deviceSyncPushCmd.Flags().Bool("passwords", false, "Push password entries")
-	deviceSyncPushCmd.Flags().Bool("all", true, "Push all stores (default)")
-	deviceSyncPushCmd.Flags().String("device", "", "Paired device name")
-	deviceSyncPushCmd.Flags().Bool("dry-run", false, "Show what would be pushed without applying")
-	deviceSyncPushCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	addBarrierPasswordFlags(deviceSyncPushCmd)
-
-	// Sync-pull flags
-	deviceSyncPullCmd.Flags().Bool("trust-store", false, "Pull trust store certificates")
-	deviceSyncPullCmd.Flags().Bool("oath", false, "Pull OATH credentials")
-	deviceSyncPullCmd.Flags().Bool("passwords", false, "Pull password entries")
-	deviceSyncPullCmd.Flags().Bool("all", true, "Pull all stores (default)")
-	deviceSyncPullCmd.Flags().String("device", "", "Paired device name")
-	deviceSyncPullCmd.Flags().Bool("dry-run", false, "Show what would be pulled without applying")
-	deviceSyncPullCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	addBarrierPasswordFlags(deviceSyncPullCmd)
+	registerDeviceSyncFlags(deviceSyncCmd)
+	registerDeviceSyncStatusFlags(deviceSyncStatusCmd)
+	registerDeviceSyncPushFlags(deviceSyncPushCmd)
+	registerDeviceSyncPullFlags(deviceSyncPullCmd)
 }
 
 // syncScope holds the resolved set of stores to sync.
