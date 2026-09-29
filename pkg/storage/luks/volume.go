@@ -28,8 +28,10 @@ type VolumeOperator interface {
 	// IsLUKS reports whether the container file is a valid LUKS volume.
 	IsLUKS() bool
 
-	// IsMounted reports whether the volume is currently mounted.
-	IsMounted() bool
+	// IsMounted reports whether the volume is currently mounted. It
+	// returns an error when the mount state could not be determined;
+	// callers must not treat that as "not mounted".
+	IsMounted() (bool, error)
 
 	// IsOpen reports whether the LUKS volume is currently unlocked.
 	IsOpen() bool

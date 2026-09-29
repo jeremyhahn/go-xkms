@@ -16,9 +16,9 @@ package nssdb
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/md5" //nolint:gosec
+	"crypto/md5" //nolint:gosec // NSS trust object fingerprint (CKA_CERT_MD5_HASH); matches nssdb.go
 	"crypto/rand"
-	"crypto/sha1" //nolint:gosec
+	"crypto/sha1" //nolint:gosec // NSS trust object fingerprint (CKA_CERT_SHA1_HASH); matches nssdb.go
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
@@ -215,8 +215,8 @@ func TestAddTrustedCA(t *testing.T) {
 	).Scan(&sha1Hash, &md5Hash)
 	require.NoError(t, err)
 
-	expectedSHA1 := sha1.Sum(cert.Raw) //nolint:gosec
-	expectedMD5 := md5.Sum(cert.Raw)   //nolint:gosec
+	expectedSHA1 := sha1.Sum(cert.Raw) //nolint:gosec // NSS trust object requires the SHA1 fingerprint (CKA_CERT_SHA1_HASH)
+	expectedMD5 := md5.Sum(cert.Raw)   //nolint:gosec // NSS trust object requires the MD5 fingerprint (CKA_CERT_MD5_HASH)
 	assert.Equal(t, expectedSHA1[:], sha1Hash)
 	assert.Equal(t, expectedMD5[:], md5Hash)
 
@@ -806,8 +806,8 @@ func TestTrustObjectAttributes(t *testing.T) {
 	assert.Equal(t, trustedDelegator, aEmail, "TRUST_EMAIL_PROTECTION")
 	assert.Equal(t, encodeBool(false), aStepUp, "TRUST_STEP_UP_APPROVED")
 
-	expectedSHA1 := sha1.Sum(cert.Raw) //nolint:gosec
-	expectedMD5 := md5.Sum(cert.Raw)   //nolint:gosec
+	expectedSHA1 := sha1.Sum(cert.Raw) //nolint:gosec // NSS trust object requires the SHA1 fingerprint (CKA_CERT_SHA1_HASH)
+	expectedMD5 := md5.Sum(cert.Raw)   //nolint:gosec // NSS trust object requires the MD5 fingerprint (CKA_CERT_MD5_HASH)
 	assert.Equal(t, expectedSHA1[:], aSHA1, "CERT_SHA1_HASH")
 	assert.Equal(t, expectedMD5[:], aMD5, "CERT_MD5_HASH")
 }

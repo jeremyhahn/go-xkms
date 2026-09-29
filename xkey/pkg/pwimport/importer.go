@@ -14,6 +14,7 @@
 package pwimport
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -102,8 +103,19 @@ func (i *Importer) Import(opts *ImportOptions) (*ImportResult, error) {
 			continue
 		}
 
-		// Check for existing entry.
-		existing, _ := i.store.Get(sp.ID)
+		// Check for existing entry. Only "not found" means there is
+		// nothing to collide with; any other read failure (e.g. a store
+		// backend error) must not be silently treated the same way, since
+		// that could import a duplicate the store simply failed to report.
+		existing, err := i.store.Get(sp.ID)
+		if err != nil && !errors.Is(err, xkms.ErrStaticPasswordNotFound) {
+			result.Failed++
+			result.Errors = append(result.Errors, ImportError{
+				EntryName: sp.Name,
+				Error:     fmt.Sprintf("failed to check for existing entry: %v", err),
+			})
+			continue
+		}
 		if existing != nil {
 			if opts.SkipDuplicates {
 				result.Skipped++

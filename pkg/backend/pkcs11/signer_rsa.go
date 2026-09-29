@@ -18,7 +18,6 @@ package pkcs11
 import (
 	"crypto"
 	"crypto/rsa"
-	"encoding/asn1"
 	"fmt"
 	"io"
 	"math/big"
@@ -121,7 +120,7 @@ func (s *pkcs11RSASigner) signPKCS1v15(digest []byte, opts crypto.SignerOpts) ([
 			return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("unsupported hash for PKCS1v15: %v", hashFunc)}
 		}
 
-		// DigestInfo = prefix || digest
+		// DigestInfo is the concatenation of the ASN.1 prefix and the digest.
 		signed = make([]byte, len(prefix)+len(digest))
 		copy(signed, prefix)
 		copy(signed[len(prefix):], digest)
@@ -581,7 +580,3 @@ func findRSASigner(pool *SessionPool, id []byte) (*pkcs11RSASigner, error) {
 		label:         string(id),
 	}, nil
 }
-
-// marshalRSAPublicKeyOID returns the DER-encoded OID for RSA keys.
-// This is not currently used but kept for potential future PKCS#11 attribute needs.
-var rsaOID = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 1}

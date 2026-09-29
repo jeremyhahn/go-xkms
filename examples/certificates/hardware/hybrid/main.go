@@ -235,7 +235,9 @@ func main() {
 	// Cleanup
 	log.Println("\n[Cleanup] Removing remaining test certificates...")
 	for _, id := range remainingCerts {
-		hwStorage.DeleteCert(id)
+		if err := hwStorage.DeleteCert(id); err != nil {
+			log.Printf("✗ Failed to delete %s: %v", id, err)
+		}
 	}
 
 	log.Println("\n✓ Example completed successfully!")

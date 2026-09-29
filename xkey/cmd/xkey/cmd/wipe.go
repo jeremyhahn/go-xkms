@@ -151,7 +151,11 @@ func runWipe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Lock container if mounted
-	if vol.IsMounted() || vol.IsOpen() {
+	mounted, err := vol.IsMounted()
+	if err != nil {
+		return &WipeError{Operation: "check_mounted", Err: err}
+	}
+	if mounted || vol.IsOpen() {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking container...")
 		if err := vol.Lock(); err != nil {
 			return &WipeError{Operation: "lock", Message: "container must be unlocked first", Err: err}

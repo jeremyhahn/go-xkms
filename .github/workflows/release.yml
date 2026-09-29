@@ -133,8 +133,9 @@ jobs:
       # fetch-depth: 0 -- the cross-pin step reads the tag namespace to decide
       # which nested modules are released, and a shallow clone has no tags.
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
           ref: ${{ env.RELEASE_TAG }}
 
@@ -148,7 +149,7 @@ jobs:
       # defect is the job environment and not the script: a host with Go on
       # PATH cannot see it. Do not remove this step to "simplify" the job.
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -243,8 +244,9 @@ jobs:
       commit: ${{ steps.get_version.outputs.commit }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
           ref: ${{ env.RELEASE_TAG }}
 
@@ -318,7 +320,7 @@ jobs:
           cat CHANGELOG.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           body_path: CHANGELOG.md
@@ -384,8 +386,9 @@ jobs:
             fips: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
       # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
@@ -395,8 +398,9 @@ jobs:
       # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
       # "scripts/retry.sh: No such file or directory").
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: scripts
@@ -711,8 +715,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
       # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
@@ -722,8 +727,9 @@ jobs:
       # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
       # "scripts/retry.sh: No such file or directory").
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: scripts
@@ -743,12 +749,12 @@ jobs:
       # regardless of platform.
       - name: Set up QEMU
         if: github.server_url == 'https://github.com'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           cache-image: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # ghcr.io is GitHub's registry. On Gitea, secrets.GITHUB_TOKEN is the
       # LOCAL Gitea Actions token -- it authenticates to nothing on ghcr.io
@@ -759,7 +765,7 @@ jobs:
       # working on Gitea while skipping what only GitHub can do.
       - name: Log in to GitHub Container Registry
         if: github.server_url == 'https://github.com'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -767,7 +773,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SERVER }}
           tags: |
@@ -967,7 +973,7 @@ jobs:
       # skip the push there rather than fail after a successful scan.
       - name: Build and push Docker image
         if: github.server_url == 'https://github.com'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: Dockerfile.release
@@ -991,8 +997,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
       # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
@@ -1002,8 +1009,9 @@ jobs:
       # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
       # "scripts/retry.sh: No such file or directory").
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: scripts
@@ -1012,18 +1020,18 @@ jobs:
       # multi-arch push step below, which never runs on Gitea.
       - name: Set up QEMU
         if: github.server_url == 'https://github.com'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           cache-image: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # See the server-image job's comment: ghcr.io login always fails on
       # Gitea (no valid credential), so it's guarded to GitHub only.
       - name: Log in to GitHub Container Registry
         if: github.server_url == 'https://github.com'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -1031,7 +1039,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_CLI }}
           tags: |
@@ -1104,7 +1112,7 @@ jobs:
       # No credentials to push with on Gitea (see the login step above).
       - name: Build and push CLI Docker image
         if: github.server_url == 'https://github.com'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: Dockerfile.cli
@@ -1158,8 +1166,9 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
       # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
@@ -1169,8 +1178,9 @@ jobs:
       # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
       # "scripts/retry.sh: No such file or directory").
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: scripts
@@ -1209,7 +1219,7 @@ jobs:
       needs.build-docker-cli.result == 'success'
     steps:
       - name: Update release notes
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -1313,8 +1323,9 @@ jobs:
           fi
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
       # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
@@ -1324,8 +1335,9 @@ jobs:
       # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
       # "scripts/retry.sh: No such file or directory").
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: scripts

@@ -642,7 +642,7 @@ func (m *MockKeyVaultClient) Decrypt(ctx context.Context, keyName, keyVersion st
 		switch *params.Algorithm {
 		case azkeys.EncryptionAlgorithmRSA15:
 			// PKCS#1 v1.5 padding
-			plaintext, err = rsa.DecryptPKCS1v15(rand.Reader, priv, params.Value)
+			plaintext, err = rsa.DecryptPKCS1v15(rand.Reader, priv, params.Value) //nolint:staticcheck // SA1019: mocking Azure Key Vault's EncryptionAlgorithmRSA15, which azurekvDecrypter.Decrypt (azurekv.go) exposes for legacy/compatibility mode
 		case azkeys.EncryptionAlgorithmRSAOAEP:
 			// OAEP with SHA1
 			plaintext, err = rsa.DecryptOAEP(crypto.SHA1.New(), rand.Reader, priv, params.Value, nil)
@@ -701,7 +701,7 @@ func (m *MockKeyVaultClient) RotateKey(ctx context.Context, name string, options
 	version := "2" // Simplified - in real implementation, parse and increment
 	if mock.version != "" {
 		v := 1
-		fmt.Sscanf(mock.version, "%d", &v)
+		_, _ = fmt.Sscanf(mock.version, "%d", &v) // best-effort parse; v keeps its default of 1 on failure
 		version = fmt.Sprintf("%d", v+1)
 	}
 	mock.version = version

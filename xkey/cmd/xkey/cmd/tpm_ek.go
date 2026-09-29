@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/spf13/cobra"
@@ -494,6 +495,24 @@ func runEKBackup(cmd *cobra.Command, args []string) (err error) {
 	return nil
 }
 
+// ekCertWriter is the subset of xkms.TrustedPlatformModule that
+// restoreEKCert needs. It exists so tests can verify hierarchyAuth reaches
+// the TPM call without a real or simulated TPM.
+type ekCertWriter interface {
+	ProvisionEKCert(hierarchyAuth, ekCert []byte) error
+}
+
+// restoreEKCert writes ekCertDER to tpm's EK certificate NV index. When the
+// index is hierarchy-protected (tpm.config.EK.CertHandle != 0), writing to
+// it requires the endorsement/owner hierarchy authorization in
+// hierarchyAuth; ProvisionEKCert threads it through to the underlying
+// NVDefineSpace/NVWrite calls, unlike WriteEKCert, which always passes nil.
+// hierarchyAuth is wiped before returning.
+func restoreEKCert(tpm ekCertWriter, hierarchyAuth, ekCertDER []byte) error {
+	defer enclave.Wipe(hierarchyAuth)
+	return tpm.ProvisionEKCert(hierarchyAuth, ekCertDER)
+}
+
 func runEKRestore(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Read the certificate from file
@@ -566,14 +585,11 @@ func runEKRestore(cmd *cobra.Command, args []string) (err error) {
 	_, _ = fmt.Fprintln(out, "         Make sure this is a valid manufacturer certificate.")
 	_, _ = fmt.Fprintln(out)
 
-	// Write certificate to NV RAM
-	// Note: This requires hierarchy authorization
-	hierarchyAuth := []byte(tpmCfg.hierarchyAuth)
-	if err := tpm.WriteEKCert(block.Bytes); err != nil {
+	// Write certificate to NV RAM. See restoreEKCert for why hierarchyAuth
+	// (from --hierarchy-auth) must be passed through.
+	if err := restoreEKCert(tpm, []byte(tpmCfg.hierarchyAuth), block.Bytes); err != nil {
 		return &WrappedError{Msg: "failed to write EK certificate to NV RAM", Err: err}
 	}
-
-	_ = hierarchyAuth
 
 	certType := "RSA"
 	if ekUseEC {
