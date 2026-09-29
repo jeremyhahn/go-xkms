@@ -1033,6 +1033,7 @@ func TestRunTrustClassify_AllPurposes(t *testing.T) {
 		"user-ca",
 		"bootstrap-ca",
 		"idevid-issuer",
+		"synced",
 	}
 
 	for _, purposeStr := range purposes {

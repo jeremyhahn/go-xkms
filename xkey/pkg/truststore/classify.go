@@ -47,17 +47,20 @@ var manufacturerPurposes = map[string]CertPurpose{
 // properties. Classification follows a priority order: Android hardware
 // attestation, TPM manufacturer, IDevID issuer, user CA, and general.
 // Uses map-based dispatch for O(1) manufacturer lookup.
+//
+// Android hardware attestation is granted only to a certificate carrying the
+// Android key attestation extension or to one byte-identical to an embedded
+// Google Hardware Attestation Root. It is never granted from issuer name
+// strings: an issuer DN is chosen by whoever signs the certificate, so a
+// self-signed certificate naming "Google ... Attestation" is anyone's to
+// mint, and filing it as an attestation anchor would let its minter vouch
+// for any Android device (#1304).
 func ClassifyCertificate(cert *x509.Certificate) CertPurpose {
-	// Check for Android hardware attestation: extension OID match or
-	// issuer heuristic (Google organization with Attestation in CN).
-	if hasAndroidAttestationOID(cert) {
+	if hasAndroidAttestationOID(cert) || isEmbeddedAndroidRoot(cert) {
 		return PurposeAndroidHardware
 	}
 	issuerOrg := strings.Join(cert.Issuer.Organization, " ")
 	issuerCN := cert.Issuer.CommonName
-	if strings.Contains(issuerOrg, "Google") && strings.Contains(issuerCN, "Attestation") {
-		return PurposeAndroidHardware
-	}
 
 	// Check for TPM manufacturer: O(1) lookup against known manufacturer names,
 	// plus TCG OID prefix detection in extensions.
@@ -119,6 +122,17 @@ func hasOIDPrefix(cert *x509.Certificate, prefix asn1.ObjectIdentifier) bool {
 func hasAndroidAttestationOID(cert *x509.Certificate) bool {
 	for _, ext := range cert.Extensions {
 		if ext.Id.Equal(oidAndroidKeyAttestation) {
+			return true
+		}
+	}
+	return false
+}
+
+// isEmbeddedAndroidRoot reports whether cert is byte-identical to one of the
+// Google Hardware Attestation Root CAs compiled into xkey.
+func isEmbeddedAndroidRoot(cert *x509.Certificate) bool {
+	for _, root := range LoadEmbeddedRoots(PurposeAndroidHardware) {
+		if cert.Equal(root) {
 			return true
 		}
 	}

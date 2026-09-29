@@ -1,6 +1,6 @@
 # Phone as HSM — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## Exported surface — `xkey/pkg/pairing`
 
@@ -67,8 +67,19 @@ TPM. `remote.syncStatus` is the one exception: with no `SyncService` it
 reports an empty status (nothing has been synced yet) rather than an error,
 since that is a legitimate status, not a missing feature.
 
+**Sync writes are quarantined and audited (#1304).** `remote.syncTrustStore`
+stores every certificate the phone sends under `truststore.PurposeSynced`,
+which anchors neither TLS nor attestation; the phone cannot plant a trust
+anchor. Each `remote.syncTrustStore`/`syncOATH`/`syncPasswords` write is
+recorded as `audit.OpSyncApplied` against `BridgeConfig.DeviceID`/`DeviceName`
+(`Bridge.auditSyncApplied`, `xkey/pkg/pairing/bridge_sync.go`), success or
+failure, with the item counts; a failed audit write fails the call as
+`ErrSyncFailed`.
+
 `cmd/xkey/cmd/device_listen.go`'s `buildListenBridgeConfig` is the one place
-that wires all three: it opens the OATH store through `openOATHStore` and the
+that wires all three, plus the audit identity — `AuditLogger` is
+`audit.NewSlogLogger`, `DeviceID`/`DeviceName` the paired device's BLE address
+and name: it opens the OATH store through `openOATHStore` and the
 sync service through `openSyncService` — the exact constructors `xkey oath`
 and `xkey device sync` themselves call — and builds the PIV storage provider
 from the same `createPIVStorage` construction `xkey piv` uses, so a

@@ -163,6 +163,7 @@ Available purposes:
   user-ca           User-created CA certificates
   bootstrap-ca      CA certificates from bootstrap enrollment
   idevid-issuer     CA certificates that issue IDevID certificates
+  synced            Received from a paired device by sync; anchors nothing
 
 Examples:
   # Add a CA certificate
@@ -262,6 +263,7 @@ Available purposes:
   user-ca           User-created CA certificates
   bootstrap-ca      CA certificates from bootstrap enrollment
   idevid-issuer     CA certificates that issue IDevID certificates
+  synced            Received from a paired device by sync; anchors nothing
 
 Examples:
   # Classify a certificate as a TPM manufacturer CA
@@ -326,7 +328,7 @@ func init() {
 
 	// Add command flags
 	trustAddCmd.Flags().String("purpose", "",
-		"certificate purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer)")
+		"certificate purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer, synced)")
 	trustAddCmd.Flags().String("source", "",
 		"source of the certificate (e.g., manual, url:..., file:...)")
 

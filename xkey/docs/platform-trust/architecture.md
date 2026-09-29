@@ -1,6 +1,6 @@
 # Platform Trust — Architecture
 
-> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## The problem
 
@@ -31,10 +31,27 @@ client of that library, which is the architecture rule between the modules.
 | `user-ca` | user and client certificates |
 | `bootstrap-ca` | the trust-bootstrap path |
 | `idevid-issuer` | IDevID issuance |
+| `synced` | nothing — received from a paired device by sync, quarantined until reclassified |
 
 `xkey trust classify <fingerprint> --purpose <purpose>` sets it, and
 `--purpose` is a **required** flag on that verb. A certificate without a purpose
 is not a universal trust anchor; it is an unclassified one.
+
+**Sync never chooses a purpose.** Certificates a paired device sends through
+`remote.syncTrustStore`, `xkey device sync`, or CA sync are stored as `synced`
+(`xkey/pkg/sync/service.go`, `syncedImportOptions`), never auto-classified: a
+phone is a peer, not an authority over this host's roots. `synced` is absent
+from the TLS anchor set (`tlsAnchorPurposes`, `xkey/pkg/truststore/import.go`)
+and refused by the attestation verifier's pool builder
+(`truststore.IsAnchorPurpose`), so it anchors nothing until the operator
+reclassifies it.
+
+**Auto-classification never trusts a name.** A certificate added without
+`--purpose` is classified by `truststore.ClassifyCertificate`. It files a
+certificate as `android-hardware` only when it carries the Android key
+attestation extension or is byte-identical to an embedded Google Hardware
+Attestation Root — never because its issuer DN says "Google" and
+"Attestation", which anyone can write into a self-signed certificate.
 
 `xkey trust import-platform <host:port>` and `xkey trust fetch <url>` are the
 shorthand for the whole flow against a platform instance: fetch the bundle

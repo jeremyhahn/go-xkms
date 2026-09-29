@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // Data type constants matching backup package conventions.
@@ -48,11 +49,33 @@ const (
 // ---------------------------------------------------------------------------
 
 // TrustStoreAccessor provides read/write access to the trust store for sync.
-// It extends the backup reader/writer with a fingerprint-based duplicate check.
+// It extends the backup reader with a fingerprint-based duplicate check and a
+// write path on which the caller chooses the purpose.
+//
+// It deliberately does not embed backup.TrustStoreWriter: that writer's AddPEM
+// auto-classifies each certificate, and auto-classification would let a
+// paired device file a certificate it chose as an attestation or TLS anchor
+// (#1304). Sync writes only through ImportPEM, always with PurposeSynced.
 type TrustStoreAccessor interface {
 	backup.TrustStoreReader
-	backup.TrustStoreWriter
 	Contains(fingerprint string) (bool, error)
+	ImportPEM(pemData []byte, opts *truststore.AddCertificateOptions) (truststore.ImportResult, error)
+}
+
+// syncedCertificateSource is the source recorded on every certificate sync
+// writes, so an operator listing the trust store can see where it came from.
+const syncedCertificateSource = "sync"
+
+// syncedImportOptions is the metadata every certificate arriving through sync
+// is stored with. PurposeSynced is a quarantine that no trust decision
+// consumes: a paired device is a peer, not an authority over this host's
+// roots, so what it sends is recorded and never trusted until the operator
+// reclassifies it.
+func syncedImportOptions() *truststore.AddCertificateOptions {
+	return &truststore.AddCertificateOptions{
+		Purpose: truststore.PurposeSynced,
+		Source:  syncedCertificateSource,
+	}
 }
 
 // OATHAccessor provides read/write access to OATH credentials for sync.
@@ -274,7 +297,9 @@ func (s *Service) ComputeLocalCADelta() (*CADelta, error) {
 
 // ApplyTrustStoreDelta applies remote trust store certificates using union
 // merge: certificates not already present (by fingerprint) are added;
-// duplicates are skipped.
+// duplicates are skipped. Every added certificate is stored under
+// truststore.PurposeSynced, never auto-classified, so nothing a paired device
+// sends becomes a TLS or attestation anchor.
 func (s *Service) ApplyTrustStoreDelta(delta *TrustStoreDelta) (*SyncItemResult, error) {
 	result := &SyncItemResult{DataType: DataTypeTrustStore}
 
@@ -308,14 +333,14 @@ func (s *Service) ApplyTrustStoreDelta(delta *TrustStoreDelta) (*SyncItemResult,
 			continue
 		}
 
-		n, addErr := s.trustStore.AddPEM([]byte(cert.PEM))
+		imported, addErr := s.trustStore.ImportPEM([]byte(cert.PEM), syncedImportOptions())
 		if addErr != nil {
 			result.Errors = append(result.Errors,
 				fmt.Sprintf("cert %s: %v", cert.Fingerprint, addErr))
 			result.Skipped++
 			continue
 		}
-		result.Added += n
+		result.Added += imported.Added
 	}
 
 	return result, nil
@@ -452,7 +477,9 @@ func (s *Service) ApplyPasswordDelta(delta *PasswordDelta) (*SyncItemResult, err
 
 // ApplyCADelta applies a remote CA certificate to the local trust store.
 // The laptop is authoritative for CA data, so this is typically used in
-// the pull direction (phone receives laptop CA cert).
+// the pull direction (phone receives laptop CA cert). The certificate and
+// chain are stored under truststore.PurposeSynced like every other synced
+// certificate: arriving over sync does not make a CA a trust anchor here.
 func (s *Service) ApplyCADelta(delta *CADelta) (*SyncItemResult, error) {
 	result := &SyncItemResult{DataType: DataTypeCA}
 
@@ -465,21 +492,21 @@ func (s *Service) ApplyCADelta(delta *CADelta) (*SyncItemResult, error) {
 		return result, &DetailError{Err: ErrCASyncFailed, Detail: ": trust store accessor not configured"}
 	}
 
-	n, err := s.trustStore.AddPEM([]byte(delta.CACertPEM))
+	imported, err := s.trustStore.ImportPEM([]byte(delta.CACertPEM), syncedImportOptions())
 	if err != nil {
 		result.Errors = append(result.Errors,
 			fmt.Sprintf("ca cert: %v", err))
 		return result, nil
 	}
-	result.Added += n
+	result.Added += imported.Added
 
 	if delta.CAChainPEM != "" {
-		chainN, chainErr := s.trustStore.AddPEM([]byte(delta.CAChainPEM))
+		chain, chainErr := s.trustStore.ImportPEM([]byte(delta.CAChainPEM), syncedImportOptions())
 		if chainErr != nil {
 			result.Errors = append(result.Errors,
 				fmt.Sprintf("ca chain: %v", chainErr))
 		} else {
-			result.Added += chainN
+			result.Added += chain.Added
 		}
 	}
 

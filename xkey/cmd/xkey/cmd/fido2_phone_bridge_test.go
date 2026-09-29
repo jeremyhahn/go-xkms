@@ -813,7 +813,7 @@ func TestConnectXKMSdBridge_Disabled(t *testing.T) {
 	backend := newTestPhoneBackend(t, mockTransport)
 	logger := newTestLogger()
 
-	result, err := connectXKMSdBridge(backend, &cobra.Command{}, logger)
+	result, err := connectXKMSdBridge(backend, &cobra.Command{}, &PairedDevice{Name: "test-phone"}, logger)
 
 	assert.Nil(t, result, "should return nil when xkmsd is disabled")
 	assert.NoError(t, err, "should return nil error when xkmsd is disabled")
@@ -832,7 +832,7 @@ func TestConnectXKMSdBridge_DisabledIgnoresNilCmd(t *testing.T) {
 	backend := newTestPhoneBackend(t, mockTransport)
 	logger := newTestLogger()
 
-	result, err := connectXKMSdBridge(backend, nil, logger)
+	result, err := connectXKMSdBridge(backend, nil, &PairedDevice{Name: "test-phone"}, logger)
 
 	assert.Nil(t, result, "should return nil when xkmsd is disabled")
 	assert.NoError(t, err, "should return nil error when xkmsd is disabled")

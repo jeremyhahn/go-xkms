@@ -1,6 +1,6 @@
 # Platform Trust — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## Exported surface
 
@@ -25,8 +25,14 @@ The closed set, from `trustAddCmd`'s `--purpose` help
 (`xkey/cmd/xkey/cmd/trust.go:323`):
 
 ```
-general | tpm-manufacturer | android-hardware | user-ca | bootstrap-ca | idevid-issuer
+general | tpm-manufacturer | android-hardware | user-ca | bootstrap-ca | idevid-issuer | synced
 ```
+
+`synced` is the quarantine every certificate arriving through sync is stored
+under (`xkey/pkg/sync/service.go`, `syncedImportOptions`, through
+`TrustStoreAccessor.ImportPEM`). `truststore.IsAnchorPurpose` is false for it,
+and the attestation verifier's pool builder refuses it with
+`ErrUnsupportedPurpose`; it is absent from `tlsAnchorPurposes`.
 
 `--purpose` is **required** on `trust classify`
 (`MarkFlagRequired("purpose")`), and optional on `trust add`.
@@ -69,6 +75,16 @@ three cannot drift
 - **Purpose gates use.** A certificate classified `general` must not be accepted
   as a `tpm-manufacturer` anchor. Widening a purpose to make something work
   removes the guarantee the purpose existed for.
+- **A paired device never picks an anchor.** Sync writes only through
+  `TrustStoreAccessor.ImportPEM` with `PurposeSynced`; the accessor does not
+  expose the auto-classifying `AddPEM` at all
+  (`TestSyncTrustStore_ForgedGoogleRootAnchorsNothing`,
+  `xkey/cmd/xkey/cmd/sync_trust_quarantine_test.go`).
+- **`android-hardware` is never inferred from names.** `ClassifyCertificate`
+  grants it for the Android key attestation extension OID or an exact match
+  against the embedded Google roots only
+  (`TestClassifyCertificate_ForgedGoogleAttestationRootIsNotAndroidHardware`,
+  `TestClassifyCertificate_EmbeddedGoogleRootsAreAndroidHardware`).
 - **`import-platform` verifies by SPKI pin before storing. No TOFU.**
 - **`fetch`/`import-platform` never accept an unpinned connection.**
   `--spki-pin` is validated before the HTTP client is even built

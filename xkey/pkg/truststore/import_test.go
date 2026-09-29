@@ -100,6 +100,31 @@ func TestFileStore_TLSRoots_ExcludesAttestationPurposes(t *testing.T) {
 	assert.Equal(t, "user ca", roots[0].Subject.CommonName)
 }
 
+// A self-signed CA imported under PurposeSynced keeps the caller's purpose
+// instead of being auto-classified as a user CA, and is withheld from the TLS
+// anchors (#1304): a certificate a paired device pushed is never a root.
+func TestFileStore_ImportPEM_SyncedSelfSignedCAIsNotATLSAnchor(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileStore(&FileStoreConfig{BaseDir: dir})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	certPEM := generateTestCertPEM(t, "phone planted ca")
+	result, err := store.ImportPEM(certPEM, &AddCertificateOptions{Purpose: PurposeSynced})
+	require.NoError(t, err)
+	require.Equal(t, ImportResult{Added: 1}, result)
+
+	certs, err := store.CertificatesByPurpose(PurposeSynced)
+	require.NoError(t, err)
+	require.Len(t, certs, 1)
+	require.Equal(t, PurposeUserCA, ClassifyCertificate(certs[0]),
+		"precondition: auto-classification would have made this a TLS anchor")
+
+	roots, err := store.TLSRoots()
+	require.NoError(t, err)
+	assert.Empty(t, roots)
+}
+
 // An empty store yields no anchors and no error: verification then rests on
 // the platform roots alone.
 func TestFileStore_TLSRoots_EmptyStore(t *testing.T) {

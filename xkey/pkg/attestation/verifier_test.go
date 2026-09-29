@@ -1116,3 +1116,72 @@ func TestLoadTrust_StoreQueryFailureRefuses(t *testing.T) {
 		t.Error("LoadTrust returned non-nil trust material on failure")
 	}
 }
+
+// --- Synced-certificate quarantine (#1304) ---
+
+// TestBuildTrustPool_RefusesSyncedPurpose pins that the synced quarantine a
+// paired device's certificates land in never yields a trust pool, even when
+// the store holds certificates under it.
+func TestBuildTrustPool_RefusesSyncedPurpose(t *testing.T) {
+	store := newMockTrustStore()
+	store.addCertForPurpose(generateTestCA(t, "Synced CA").cert, truststore.PurposeSynced)
+
+	v, err := NewVerifier(store, truststore.LoadEmbeddedRoots)
+	if err != nil {
+		t.Fatalf("NewVerifier() error: %v", err)
+	}
+
+	pool, err := v.BuildTrustPool(truststore.PurposeSynced)
+	if !errors.Is(err, ErrUnsupportedPurpose) {
+		t.Errorf("BuildTrustPool(synced) error = %v, want %v", err, ErrUnsupportedPurpose)
+	}
+	if pool != nil {
+		t.Error("BuildTrustPool(synced) returned a pool, want nil")
+	}
+}
+
+// TestLoadTrust_ExcludesSyncedForgedGoogleRoot is the #1304 attack end to
+// end at the trust-store layer: a self-signed CA dressed as a Google
+// hardware attestation root, stored the way sync stores it, must not anchor
+// a chain it signed. The control store proves the same chain verifies once
+// the root genuinely sits under the Android hardware purpose, so the refusal
+// is the quarantine's doing and not an artifact of the fixture.
+func TestLoadTrust_ExcludesSyncedForgedGoogleRoot(t *testing.T) {
+	forged := generateTestCA(t, "Google Hardware Attestation Root")
+	leaf := generateLeafCert(t, forged, "Attested Key")
+
+	verifyAgainst := func(purpose truststore.CertPurpose) error {
+		t.Helper()
+		store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("NewFileStore() error: %v", err)
+		}
+		t.Cleanup(func() {
+			if closeErr := store.Close(); closeErr != nil {
+				t.Errorf("Close() error: %v", closeErr)
+			}
+		})
+		if err := store.AddCertificateWithOptions(forged.cert, &truststore.AddCertificateOptions{Purpose: purpose}); err != nil {
+			t.Fatalf("AddCertificateWithOptions() error: %v", err)
+		}
+		trust, err := LoadTrust(store)
+		if err != nil {
+			t.Fatalf("LoadTrust() error: %v", err)
+		}
+		_, err = leaf.Verify(x509.VerifyOptions{
+			Roots:     trust.Pool,
+			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+		})
+		return err
+	}
+
+	if err := verifyAgainst(truststore.PurposeAndroidHardware); err != nil {
+		t.Fatalf("control: chain did not verify with the root under android-hardware: %v", err)
+	}
+
+	err := verifyAgainst(truststore.PurposeSynced)
+	var unknownAuthority x509.UnknownAuthorityError
+	if !errors.As(err, &unknownAuthority) {
+		t.Errorf("chain verification against a synced root = %v, want x509.UnknownAuthorityError", err)
+	}
+}

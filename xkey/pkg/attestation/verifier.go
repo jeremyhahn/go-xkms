@@ -266,10 +266,6 @@ func (v *Verifier) VerifyChain(chain []*x509.Certificate, purpose truststore.Cer
 		return nil, ErrEmptyCertChain
 	}
 
-	if !truststore.IsValidPurpose(purpose) {
-		return nil, ErrUnsupportedPurpose
-	}
-
 	leaf := chain[0]
 
 	roots, err := v.buildTrustPool(purpose)
@@ -323,8 +319,15 @@ func (v *Verifier) BuildTrustPool(purpose truststore.CertPurpose) (*x509.CertPoo
 // 1. Certificates in the trust store matching the given purpose
 // 2. Embedded manufacturer roots from the optional EmbeddedRootsLoader
 //
+// Returns ErrUnsupportedPurpose if purpose is not an anchor purpose (see
+// truststore.IsAnchorPurpose): an unknown purpose, or the synced quarantine a
+// paired device's certificates land in, never yields trust anchors.
 // Returns ErrNoTrustAnchors if both sources produce zero certificates.
 func (v *Verifier) buildTrustPool(purpose truststore.CertPurpose) (*x509.CertPool, error) {
+	if !truststore.IsAnchorPurpose(purpose) {
+		return nil, ErrUnsupportedPurpose
+	}
+
 	pool := x509.NewCertPool()
 	count := 0
 

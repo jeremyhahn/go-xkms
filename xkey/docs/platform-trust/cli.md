@@ -1,6 +1,6 @@
 # Platform Trust — CLI
 
-> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 Binary: `xkey`, group `trust` (`xkey/cmd/xkey/cmd/trust.go`, plus `fetch` and
 `import-platform` in `xkey/cmd/xkey/cmd/trust_fetch.go`).
@@ -161,6 +161,7 @@ Everything after `add` is keyed by **fingerprint**, not by name.
 | `user-ca` | user and client certificates |
 | `bootstrap-ca` | the trust-bootstrap path |
 | `idevid-issuer` | IDevID issuance |
+| `synced` | nothing — received from a paired device by sync, quarantined until reclassified |
 
 ```
 xkey trust classify 3fa1… --purpose tpm-manufacturer
@@ -169,7 +170,9 @@ xkey trust classify 3fa1… --purpose tpm-manufacturer
 `general`, `user-ca`, and `bootstrap-ca` are the purposes that anchor a TLS
 server chain, so `xkey auth register` and `xkey auth login` reach a server
 issued by any of them with no pin and no `--tls-ca`. The three attestation
-purposes are deliberately not TLS anchors.
+purposes are deliberately not TLS anchors, and `synced` anchors nothing:
+promote a synced certificate with `classify` only once you have checked it
+yourself.
 
 **Purpose is enforcement.** A `general` certificate will not anchor a TPM
 attestation. Reclassifying something broadly to make a verification pass removes
