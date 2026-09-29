@@ -41,10 +41,19 @@ var keyOpSentinelStatus = []struct {
 	// failed.
 	{xkms.ErrWeakOAEPHash, http.StatusBadRequest},
 	{xkms.ErrInvalidHashFunction, http.StatusBadRequest},
+	// A malformed certificate, an empty chain, or sealed data missing its
+	// payload is a fault in the request (go-xkms#1228).
+	{xkms.ErrInvalidEncodingPEM, http.StatusBadRequest},
+	{xkms.ErrInvalidCertificate, http.StatusBadRequest},
+	{xkms.ErrEmptyChain, http.StatusBadRequest},
+	{xkms.ErrInvalidSealedData, http.StatusBadRequest},
+	{xkms.ErrNilData, http.StatusBadRequest},
 	{xkms.ErrOperationNotSupported, http.StatusNotImplemented},
 	{xkms.ErrExportKeyMaterialFailed, http.StatusPreconditionFailed},
 	{xkms.ErrBackendNotFound, http.StatusNotFound},
 	{xkms.ErrKeyNotFound, http.StatusNotFound},
+	{xkms.ErrCertNotFound, http.StatusNotFound},
+	{xkms.ErrCertChainNotFound, http.StatusNotFound},
 	{xkms.ErrNotInitialized, http.StatusServiceUnavailable},
 }
 
@@ -72,6 +81,16 @@ func mapKeyOpError(w http.ResponseWriter, err error) {
 	var role *xkms.ErrRoleLookup
 	if errors.As(err, &role) {
 		writeError(w, role, http.StatusNotFound)
+		return
+	}
+
+	// A key or certificate ID that does not parse -- including one naming
+	// another tenant's namespace ("tenant-b/web") -- is malformed input. It
+	// is matched before ErrValidation, which the parse failure may wrap, so
+	// the response names the key ID as the field at fault.
+	var keyID *xkms.ErrKeyIDParse
+	if errors.As(err, &keyID) {
+		writeError(w, keyID, http.StatusBadRequest)
 		return
 	}
 

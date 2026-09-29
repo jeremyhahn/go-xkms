@@ -466,24 +466,6 @@ func (s *XKMSService) BackendNames() []string {
 	return names
 }
 
-// SealWithBackend seals data using a specific backend on this service instance.
-func (s *XKMSService) SealWithBackend(ctx context.Context, backendName string, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
-	b, err := s.LookupBackend(backendName)
-	if err != nil {
-		return nil, err
-	}
-	return b.Seal(ctx, data, opts)
-}
-
-// UnsealWithBackend unseals data using a specific backend on this service instance.
-func (s *XKMSService) UnsealWithBackend(ctx context.Context, backendName string, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
-	b, err := s.LookupBackend(backendName)
-	if err != nil {
-		return nil, err
-	}
-	return b.Unseal(ctx, sealed, opts)
-}
-
 // CanSealDirect returns true if the specified backend supports sealing operations.
 // If backendName is empty, checks the default backend. This is the low-level
 // boolean check; the transport interface's CanSeal returns a structured response.

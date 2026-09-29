@@ -868,6 +868,7 @@ func TestSealHandler_MissingData(t *testing.T) {
 }
 
 func TestSealHandler_InvalidBackendName(t *testing.T) {
+	setupTestService(t, "test-backend")
 	ctx := newTestHandlerContext()
 	body, _ := json.Marshal(SealRequest{Backend: "../../evil", Data: []byte("data")})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/seal", strings.NewReader(string(body)))

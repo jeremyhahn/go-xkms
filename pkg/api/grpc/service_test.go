@@ -15,12 +15,8 @@ package grpc
 
 import (
 	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"errors"
-	"math/big"
 	"strings"
 	"testing"
 
@@ -102,93 +98,6 @@ func TestParseHashAlgorithm(t *testing.T) {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
-	}
-}
-
-func TestParseCertFromPEM(t *testing.T) {
-	// Generate a test certificate
-	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate key: %v", err)
-	}
-
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName: "test",
-		},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &privKey.PublicKey, privKey)
-	if err != nil {
-		t.Fatalf("Failed to create certificate: %v", err)
-	}
-
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		t.Fatalf("Failed to parse certificate: %v", err)
-	}
-
-	validPEM := encodeCertToPEM(cert)
-
-	t.Run("Valid PEM", func(t *testing.T) {
-		parsed, err := parseCertFromPEM(validPEM)
-		if err != nil {
-			t.Errorf("parseCertFromPEM failed: %v", err)
-		}
-		if parsed == nil {
-			t.Error("Parsed certificate is nil")
-		}
-	})
-
-	t.Run("Invalid PEM - not a certificate", func(t *testing.T) {
-		invalidPEM := `-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC
------END PRIVATE KEY-----`
-		_, err := parseCertFromPEM(invalidPEM)
-		if err == nil {
-			t.Error("Expected error for non-certificate PEM")
-		}
-	})
-
-	t.Run("Invalid PEM - no PEM block", func(t *testing.T) {
-		_, err := parseCertFromPEM("not a pem")
-		if err == nil {
-			t.Error("Expected error for invalid PEM")
-		}
-	})
-}
-
-func TestEncodeCertToPEM(t *testing.T) {
-	// Generate a test certificate
-	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate key: %v", err)
-	}
-
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName: "test",
-		},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &privKey.PublicKey, privKey)
-	if err != nil {
-		t.Fatalf("Failed to create certificate: %v", err)
-	}
-
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		t.Fatalf("Failed to parse certificate: %v", err)
-	}
-
-	pem := encodeCertToPEM(cert)
-	if !strings.Contains(pem, "BEGIN CERTIFICATE") {
-		t.Error("PEM does not contain certificate header")
-	}
-	if !strings.Contains(pem, "END CERTIFICATE") {
-		t.Error("PEM does not contain certificate footer")
 	}
 }
 

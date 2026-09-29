@@ -151,31 +151,22 @@ func TestService_Seal_EmptyData(t *testing.T) {
 }
 
 // TestService_Seal_NonExistentBackend tests Seal with a backend that does not exist.
-// The handler should return Internal error when the backend is not found.
+// The service reports an unknown backend as NotFound.
 func TestService_Seal_NonExistentBackend(t *testing.T) {
 	service := setupSealingTest(t)
 	defer xkms.Reset()
 
-	ctx := context.Background()
-	testData := []byte("secret data to seal")
-
-	t.Run("returns Internal error for non-existent backend", func(t *testing.T) {
-		_, err := service.Seal(ctx, &pb.SealRequest{
-			Backend: "nonexistent",
-			Data:    testData,
-		})
-		if err == nil {
-			t.Fatal("Expected error for non-existent backend")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatalf("Expected gRPC status error, got: %v", err)
-		}
-		if st.Code() != codes.Internal {
-			t.Errorf("Expected Internal code, got: %v", st.Code())
-		}
+	_, err := service.Seal(context.Background(), &pb.SealRequest{
+		Backend: "nonexistent",
+		Data:    []byte("secret data to seal"),
 	})
+	st, ok := status.FromError(err)
+	if !ok || err == nil {
+		t.Fatalf("Expected gRPC status error, got: %v", err)
+	}
+	if st.Code() != codes.NotFound {
+		t.Errorf("Expected NotFound code, got: %v", st.Code())
+	}
 }
 
 // TestService_Seal_InvalidBackendName tests Seal with invalid backend name characters.
@@ -218,9 +209,9 @@ func TestService_Seal_InvalidBackendName(t *testing.T) {
 	}
 }
 
-// TestService_Seal_WithValidBackend tests Seal with a valid backend.
-// Note: The current implementation requires KeyAttributes from key_id, which is not
-// yet implemented in the handler. This test verifies the expected error behavior.
+// TestService_Seal_WithValidBackend tests Seal with a valid backend: without a
+// key_id the caller's default sealing key is used, and a key_id that names no
+// key is NotFound.
 func TestService_Seal_WithValidBackend(t *testing.T) {
 	service := setupSealingTest(t)
 	defer xkms.Reset()
@@ -228,31 +219,16 @@ func TestService_Seal_WithValidBackend(t *testing.T) {
 	ctx := context.Background()
 	testData := []byte("secret data to seal")
 
-	t.Run("returns error when KeyAttributes not provided", func(t *testing.T) {
-		// The current handler does not populate KeyAttributes from key_id,
-		// so the backend will return an error about missing KeyAttributes.
-		_, err := service.Seal(ctx, &pb.SealRequest{
+	t.Run("seals under the default sealing key when no key_id is given", func(t *testing.T) {
+		resp, err := service.Seal(ctx, &pb.SealRequest{
 			Backend: "software",
 			Data:    testData,
 		})
-
-		// We expect an Internal error because the handler passes nil KeyAttributes
-		// to the backend, which requires them for sealing.
-		if err == nil {
-			t.Fatal("Expected error when KeyAttributes is missing")
+		if err != nil {
+			t.Fatalf("Seal without key_id failed: %v", err)
 		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatalf("Expected gRPC status error, got: %v", err)
-		}
-		if st.Code() != codes.Internal {
-			t.Errorf("Expected Internal code, got: %v", st.Code())
-		}
-
-		// Verify the error message indicates the KeyAttributes issue
-		if !strings.Contains(st.Message(), "seal") {
-			t.Errorf("Expected error message to contain 'seal', got: %s", st.Message())
+		if len(resp.Ciphertext) == 0 {
+			t.Error("Expected ciphertext from the default sealing key")
 		}
 	})
 
@@ -278,24 +254,34 @@ func TestService_Seal_WithValidBackend(t *testing.T) {
 		}
 	})
 
-	t.Run("returns error with AAD when KeyAttributes missing", func(t *testing.T) {
-		// Even when AAD is provided, the operation fails without KeyAttributes
-		_, err := service.Seal(ctx, &pb.SealRequest{
+	t.Run("seals with AAD under the default sealing key", func(t *testing.T) {
+		aad := []byte("additional authenticated data")
+		sealed, err := service.Seal(ctx, &pb.SealRequest{
 			Backend: "software",
 			Data:    testData,
-			Aad:     []byte("additional authenticated data"),
+			Aad:     aad,
 		})
+		if err != nil {
+			t.Fatalf("Seal with AAD failed: %v", err)
+		}
 
+		opened, err := service.Unseal(ctx, &pb.UnsealRequest{
+			Backend: "software", Ciphertext: sealed.Ciphertext,
+			Nonce: sealed.Nonce, Tag: sealed.Tag, Aad: aad,
+		})
+		if err != nil {
+			t.Fatalf("Unseal with AAD failed: %v", err)
+		}
+		if string(opened.Plaintext) != string(testData) {
+			t.Errorf("round trip returned %q", opened.Plaintext)
+		}
+
+		_, err = service.Unseal(ctx, &pb.UnsealRequest{
+			Backend: "software", Ciphertext: sealed.Ciphertext,
+			Nonce: sealed.Nonce, Tag: sealed.Tag, Aad: []byte("other"),
+		})
 		if err == nil {
-			t.Fatal("Expected error when KeyAttributes is missing")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatalf("Expected gRPC status error, got: %v", err)
-		}
-		if st.Code() != codes.Internal {
-			t.Errorf("Expected Internal code, got: %v", st.Code())
+			t.Error("Expected unseal with different AAD to fail")
 		}
 	})
 }
@@ -766,22 +752,15 @@ func TestService_Seal_LargeData(t *testing.T) {
 			largeData[i] = byte(i % 256)
 		}
 
-		_, err := service.Seal(ctx, &pb.SealRequest{
+		resp, err := service.Seal(ctx, &pb.SealRequest{
 			Backend: "software",
 			Data:    largeData,
 		})
-
-		// The operation should fail due to missing KeyAttributes, not due to data size
-		if err == nil {
-			t.Fatal("Expected error when KeyAttributes is missing")
+		if err != nil {
+			t.Fatalf("Seal of a large payload failed: %v", err)
 		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatalf("Expected gRPC status error, got: %v", err)
-		}
-		if st.Code() != codes.Internal {
-			t.Errorf("Expected Internal code (KeyAttributes missing), got: %v", st.Code())
+		if len(resp.Ciphertext) != len(largeData) {
+			t.Errorf("Expected %d bytes of ciphertext, got %d", len(largeData), len(resp.Ciphertext))
 		}
 	})
 }

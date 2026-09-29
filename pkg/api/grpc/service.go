@@ -18,7 +18,6 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"time"
@@ -739,6 +738,15 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 	return &pb.DecryptResponse{Plaintext: resp.Plaintext}, nil
 }
 
+// The certificate RPCs below are thin adapters over the XKMSService
+// certificate methods, which confine every read, write, listing and delete to
+// the caller's tenant namespace on the default backend. A certificate another
+// tenant holds, or one the platform holds, answers exactly as one nobody
+// stored, and a key ID that names another namespace ("tenant-b/web") is
+// refused as malformed. These RPCs used to call whichever backend the name
+// map yielded first, unscoped, so any tenant could read, overwrite, list or
+// delete every tenant's certificates and the platform's (go-xkms#1228).
+
 // SaveCert stores a certificate
 func (s *Service) SaveCert(ctx context.Context, req *pb.SaveCertRequest) (*pb.SaveCertResponse, error) {
 	if req.KeyId == "" {
@@ -748,31 +756,20 @@ func (s *Service) SaveCert(ctx context.Context, req *pb.SaveCertRequest) (*pb.Sa
 		return nil, status.Error(codes.InvalidArgument, "cert_pem is required")
 	}
 
-	// Parse PEM to certificate
-	cert, err := parseCertFromPEM(req.CertPem)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid certificate PEM: %v", err)
-	}
-
 	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, req.KeyId); err != nil {
 		return nil, err
 	}
 
-	// Get any backend's keystore for cert operations (they all share the same cert storage)
-	backends := s.backendNames()
-	if len(backends) == 0 {
-		return nil, status.Error(codes.Internal, "no backends available")
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	ks, err := s.lookupBackend(backends[0])
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
-	}
-
-	// Save the certificate
-	err = ks.SaveCert(ctx, req.KeyId, cert)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to save certificate: %v", err)
+	if err := s.xkmsService.SaveCertificate(ctx, &transport.SaveCertificateRequest{
+		KeyID:          req.KeyId,
+		CertificatePEM: req.CertPem,
+		TenantID:       callerTenantID(ctx),
+	}); err != nil {
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.SaveCertResponse{
@@ -791,28 +788,17 @@ func (s *Service) GetCert(ctx context.Context, req *pb.GetCertRequest) (*pb.GetC
 		return nil, err
 	}
 
-	// Get any backend's keystore for cert operations
-	backends := s.backendNames()
-	if len(backends) == 0 {
-		return nil, status.Error(codes.Internal, "no backends available")
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	ks, err := s.lookupBackend(backends[0])
+	resp, err := s.xkmsService.GetCertificate(ctx, "", req.KeyId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
-
-	// Get the certificate
-	cert, err := ks.GetCert(ctx, req.KeyId)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "certificate not found: %v", err)
-	}
-
-	// Convert to PEM
-	certPem := encodeCertToPEM(cert)
 
 	return &pb.GetCertResponse{
-		CertPem: certPem,
+		CertPem: resp.CertificatePEM,
 	}, nil
 }
 
@@ -826,21 +812,12 @@ func (s *Service) DeleteCert(ctx context.Context, req *pb.DeleteCertRequest) (*p
 		return nil, err
 	}
 
-	// Get any backend's keystore for cert operations
-	backends := s.backendNames()
-	if len(backends) == 0 {
-		return nil, status.Error(codes.Internal, "no backends available")
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	ks, err := s.lookupBackend(backends[0])
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
-	}
-
-	// Delete the certificate
-	err = ks.DeleteCert(ctx, req.KeyId)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to delete certificate: %v", err)
+	if err := s.xkmsService.DeleteCertificate(ctx, "", req.KeyId); err != nil {
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.DeleteCertResponse{
@@ -855,26 +832,23 @@ func (s *Service) ListCerts(ctx context.Context, req *pb.ListCertsRequest) (*pb.
 		return nil, err
 	}
 
-	// Get any backend's keystore for cert operations
-	backends := s.backendNames()
-	if len(backends) == 0 {
-		return nil, status.Error(codes.Internal, "no backends available")
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	ks, err := s.lookupBackend(backends[0])
+	listed, err := s.xkmsService.ListCertificates(ctx, "")
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
-	// List certificates
-	keyIDs, err := ks.ListCerts(ctx)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to list certificates: %v", err)
+	keyIDs := make([]string, 0, len(listed.Certificates))
+	for _, cert := range listed.Certificates {
+		keyIDs = append(keyIDs, cert.KeyID)
 	}
 
 	return &pb.ListCertsResponse{
 		KeyIds: keyIDs,
-		Total:  int32(len(keyIDs)), // #nosec G115 - Certificate count fits in int32
+		Total:  int32(listed.Total), // #nosec G115 - Certificate count fits in int32
 	}, nil
 }
 
@@ -888,21 +862,13 @@ func (s *Service) CertExists(ctx context.Context, req *pb.CertExistsRequest) (*p
 		return nil, err
 	}
 
-	// Get any backend's keystore for cert operations
-	backends := s.backendNames()
-	if len(backends) == 0 {
-		return nil, status.Error(codes.Internal, "no backends available")
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	ks, err := s.lookupBackend(backends[0])
+	exists, err := s.xkmsService.CertificateExists(ctx, "", req.KeyId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
-	}
-
-	// Check if certificate exists
-	exists, err := ks.CertExists(ctx, req.KeyId)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to check certificate existence: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.CertExistsResponse{
@@ -919,35 +885,20 @@ func (s *Service) SaveCertChain(ctx context.Context, req *pb.SaveCertChainReques
 		return nil, status.Error(codes.InvalidArgument, "cert_chain_pem is required")
 	}
 
-	// Parse PEM chain to certificates
-	chain := make([]*x509.Certificate, len(req.CertChainPem))
-	for i, certPem := range req.CertChainPem {
-		cert, err := parseCertFromPEM(certPem)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid certificate PEM at index %d: %v", i, err)
-		}
-
-		if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, req.KeyId); err != nil {
-			return nil, err
-		}
-		chain[i] = cert
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, req.KeyId); err != nil {
+		return nil, err
 	}
 
-	// Get any backend's keystore for cert operations
-	backends := s.backendNames()
-	if len(backends) == 0 {
-		return nil, status.Error(codes.Internal, "no backends available")
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	ks, err := s.lookupBackend(backends[0])
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
-	}
-
-	// Save the certificate chain
-	err = ks.SaveCertChain(ctx, req.KeyId, chain)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to save certificate chain: %v", err)
+	if err := s.xkmsService.SaveCertificateChain(ctx, &transport.SaveCertificateChainRequest{
+		KeyID:    req.KeyId,
+		ChainPEM: req.CertChainPem,
+		TenantID: callerTenantID(ctx),
+	}); err != nil {
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.SaveCertChainResponse{
@@ -966,36 +917,23 @@ func (s *Service) GetCertChain(ctx context.Context, req *pb.GetCertChainRequest)
 		return nil, err
 	}
 
-	// Get any backend's keystore for cert operations
-	backends := s.backendNames()
-	if len(backends) == 0 {
-		return nil, status.Error(codes.Internal, "no backends available")
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	ks, err := s.lookupBackend(backends[0])
+	resp, err := s.xkmsService.GetCertificateChain(ctx, "", req.KeyId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
-	}
-
-	// Get the certificate chain
-	chain, err := ks.GetCertChain(ctx, req.KeyId)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "certificate chain not found: %v", err)
-	}
-
-	// Convert to PEM
-	chainPem := make([]string, len(chain))
-	for i, cert := range chain {
-		chainPem[i] = encodeCertToPEM(cert)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.GetCertChainResponse{
-		CertChainPem: chainPem,
+		CertChainPem: resp.ChainPEM,
 	}, nil
 }
 
-// GetTLSCertificate returns a TLS certificate and its chain. The private key
-// never travels on this response (go-xkms#627).
+// GetTLSCertificate returns a TLS certificate and its chain, read from the
+// caller's certificate namespace in the named backend. The private key never
+// travels on this response (go-xkms#627).
 func (s *Service) GetTLSCertificate(ctx context.Context, req *pb.GetTLSCertificateRequest) (*pb.GetTLSCertificateResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
@@ -1008,49 +946,18 @@ func (s *Service) GetTLSCertificate(ctx context.Context, req *pb.GetTLSCertifica
 		return nil, err
 	}
 
-	ks, err := s.lookupTenantBackend(ctx, req.Backend)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
+	}
+
+	resp, err := s.xkmsService.GetTLSCertificate(ctx, req.Backend, req.KeyId)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
-	}
-
-	// Find key attributes
-	attrs, err := s.findKeyAttributes(ctx, ks, req.KeyId)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
-	}
-
-	// Get the TLS certificate
-	tlsCert, err := ks.GetTLSCertificate(ctx, req.KeyId, attrs)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get TLS certificate: %v", err)
-	}
-
-	// Convert leaf certificate to PEM
-	if len(tlsCert.Certificate) == 0 {
-		return nil, status.Error(codes.Internal, "TLS certificate has no data")
-	}
-
-	leafCert, err := x509.ParseCertificate(tlsCert.Certificate[0])
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to parse leaf certificate: %v", err)
-	}
-	certPem := encodeCertToPEM(leafCert)
-
-	// Convert certificate chain to PEM (excluding leaf). The private key
-	// (tlsCert.PrivateKey) is deliberately never encoded or returned here:
-	// it stays in the backend that holds it (go-xkms#627).
-	chainPem := make([]string, 0, len(tlsCert.Certificate)-1)
-	for i := 1; i < len(tlsCert.Certificate); i++ {
-		cert, err := x509.ParseCertificate(tlsCert.Certificate[i])
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to parse certificate at index %d: %v", i, err)
-		}
-		chainPem = append(chainPem, encodeCertToPEM(cert))
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.GetTLSCertificateResponse{
-		CertPem:      certPem,
-		CertChainPem: chainPem,
+		CertPem:      resp.CertificatePEM,
+		CertChainPem: resp.ChainPEM,
 	}, nil
 }
 
@@ -1768,9 +1675,15 @@ func (s *Service) EncryptAsym(ctx context.Context, req *pb.EncryptAsymRequest) (
 	}, nil
 }
 
-// Seal encrypts data using the backend's sealing mechanism
+// Seal encrypts data using the backend's sealing mechanism.
+//
+// The seal belongs to the service layer, which resolves the sealing key --
+// the named one, or the caller's default sealing key when none is named --
+// within the caller's tenant. Another tenant's key is NotFound with exactly
+// the message a key no tenant holds produces. This RPC used to resolve the
+// key over the unscoped backend and sealed under any tenant's key of that
+// name (go-xkms#1228).
 func (s *Service) Seal(ctx context.Context, req *pb.SealRequest) (*pb.SealResponse, error) {
-	// Validate required parameters
 	if req.Backend == "" {
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
@@ -1782,44 +1695,19 @@ func (s *Service) Seal(ctx context.Context, req *pb.SealRequest) (*pb.SealRespon
 		return nil, err
 	}
 
-	// Build seal options
-	opts := &types.SealOptions{
-		AAD: req.Aad,
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	// If key ID is provided, look up the key to get its actual attributes
-	if req.KeyId != "" {
-		// Get the backend to look up the key
-		ks, err := s.lookupBackend(req.Backend)
-		if err != nil {
-			return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
-		}
-
-		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys(ctx)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
-		}
-
-		var targetAttr *types.KeyAttributes
-		for _, attr := range keyAttrs {
-			if attr.CN == req.KeyId {
-				targetAttr = attr
-				break
-			}
-		}
-
-		if targetAttr == nil {
-			return nil, status.Errorf(codes.NotFound, "key not found: %s", req.KeyId)
-		}
-
-		opts.KeyAttributes = targetAttr
-	}
-
-	// Call xkms service
-	sealed, err := s.sealWithBackend(ctx, req.Backend, req.Data, opts)
+	sealed, err := s.xkmsService.Seal(ctx, &transport.SealRequest{
+		Backend:  req.Backend,
+		KeyID:    req.KeyId,
+		Data:     req.Data,
+		AAD:      req.Aad,
+		TenantID: callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to seal data: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	// Convert metadata from map[string][]byte to map[string]string (base64 encoded)
@@ -1829,7 +1717,7 @@ func (s *Service) Seal(ctx context.Context, req *pb.SealRequest) (*pb.SealRespon
 	}
 
 	return &pb.SealResponse{
-		Backend:    string(sealed.Backend),
+		Backend:    sealed.Backend,
 		Ciphertext: sealed.Ciphertext,
 		Nonce:      sealed.Nonce,
 		Tag:        sealed.Tag,
@@ -1837,9 +1725,15 @@ func (s *Service) Seal(ctx context.Context, req *pb.SealRequest) (*pb.SealRespon
 	}, nil
 }
 
-// Unseal decrypts previously sealed data
+// Unseal decrypts previously sealed data.
+//
+// As with Seal, the key is resolved within the caller's tenant by the
+// service, so a blob sealed under another tenant's key -- named, or that
+// tenant's default sealing key -- does not unseal here. This RPC used to
+// resolve the key over the unscoped backend, so a tenant that held another
+// tenant's blob and knew its key's name recovered the plaintext
+// (go-xkms#1228).
 func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.UnsealResponse, error) {
-	// Validate required parameters
 	if req.Backend == "" {
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
@@ -1851,57 +1745,25 @@ func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.Unseal
 		return nil, err
 	}
 
-	// Get backend to determine backend type for sealed data
-	ks, err := s.lookupBackend(req.Backend)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, xkms.ErrNotInitialized.Error())
 	}
 
-	// Construct SealedData from request
-	sealed := &types.SealedData{
-		Backend:    ks.KeyProvider().Type(),
+	resp, err := s.xkmsService.Unseal(ctx, &transport.UnsealRequest{
+		Backend:    req.Backend,
+		KeyID:      req.KeyId,
 		Ciphertext: req.Ciphertext,
 		Nonce:      req.Nonce,
 		Tag:        req.Tag,
-	}
-
-	// Build unseal options
-	opts := &types.UnsealOptions{
-		AAD: req.Aad,
-	}
-
-	// If key ID is provided, look up the key to get its actual attributes
-	if req.KeyId != "" {
-		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys(ctx)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
-		}
-
-		var targetAttr *types.KeyAttributes
-		for _, attr := range keyAttrs {
-			if attr.CN == req.KeyId {
-				targetAttr = attr
-				break
-			}
-		}
-
-		if targetAttr == nil {
-			return nil, status.Errorf(codes.NotFound, "key not found: %s", req.KeyId)
-		}
-
-		opts.KeyAttributes = targetAttr
-		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
-	}
-
-	// Call xkms service
-	plaintext, err := s.unsealWithBackend(ctx, req.Backend, sealed, opts)
+		AAD:        req.Aad,
+		TenantID:   callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to unseal data: %v", err)
+		return nil, mapKeyOpError(ctx, s.xkmsService, err)
 	}
 
 	return &pb.UnsealResponse{
-		Plaintext: plaintext,
+		Plaintext: resp.Plaintext,
 	}, nil
 }
 
@@ -2087,31 +1949,6 @@ func parseHashAlgorithm(hash string) (crypto.Hash, error) {
 	return h, nil
 }
 
-func parseCertFromPEM(certPem string) (*x509.Certificate, error) {
-	block, _ := pem.Decode([]byte(certPem))
-	if block == nil {
-		return nil, &errs.Message{Msg: "failed to decode PEM block"}
-	}
-	if block.Type != "CERTIFICATE" {
-		return nil, &errs.Message{Msg: fmt.Sprintf("invalid PEM type: %s (expected CERTIFICATE)", block.Type)}
-	}
-
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, &errs.Message{Msg: fmt.Sprintf("failed to parse certificate: %v", err)}
-	}
-
-	return cert, nil
-}
-
-func encodeCertToPEM(cert *x509.Certificate) string {
-	pemBlock := &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: cert.Raw,
-	}
-	return string(pem.EncodeToMemory(pemBlock))
-}
-
 // lookupBackend retrieves a backend by name, delegating to s.xkmsService when
 // available. Returns xkms.ErrNotInitialized when the service is not set.
 func (s *Service) lookupBackend(name string) (xkms.Backend, error) {
@@ -2151,24 +1988,6 @@ func (s *Service) backendNames() []string {
 		return nil
 	}
 	return s.xkmsService.BackendNames()
-}
-
-// sealWithBackend delegates to s.xkmsService.SealWithBackend.
-// Returns xkms.ErrNotInitialized when the service is not set.
-func (s *Service) sealWithBackend(ctx context.Context, backendName string, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
-	if s.xkmsService == nil {
-		return nil, xkms.ErrNotInitialized
-	}
-	return s.xkmsService.SealWithBackend(ctx, backendName, data, opts)
-}
-
-// unsealWithBackend delegates to s.xkmsService.UnsealWithBackend.
-// Returns xkms.ErrNotInitialized when the service is not set.
-func (s *Service) unsealWithBackend(ctx context.Context, backendName string, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
-	if s.xkmsService == nil {
-		return nil, xkms.ErrNotInitialized
-	}
-	return s.xkmsService.UnsealWithBackend(ctx, backendName, sealed, opts)
 }
 
 // canSeal returns whether the named backend (or default when no name is given)

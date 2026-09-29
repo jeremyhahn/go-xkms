@@ -199,6 +199,17 @@ silent answer and errors on everything else:
   opens sessions.
 - **Tenant barriers are independent.** A tenant barrier's state does not affect
   the platform barrier.
+- **Data-level sealing stays inside the caller's tenant** (go-xkms#1228).
+  `XKMSService.Seal` / `Unseal` resolve the backend with
+  `resolveTenantBackend` (`pkg/xkms/servicer_seal.go:157`, `:237`) and find
+  a named key among that tenant's keys (`sealingKey`, `:131`). The tenant
+  view stamps its tenant on the sealing key's attributes
+  (`pkg/xkms/backend_tenant.go:243`, `:258`), so the default sealing key is
+  per tenant with no configuration, storage or migration of its own, and
+  refuses TPM 2.0, whose blobs are not bound to any key (`sealBound`,
+  `pkg/xkms/backend_tenant.go:227`). REST, gRPC and MCP call the service and
+  never a backend's `Seal` directly; the per-instance `SealWithBackend` /
+  `UnsealWithBackend` pass-throughs they used are deleted.
 - **Concurrency.** Strategies are safe for concurrent seal/unseal; device access
   serialises where the device requires it.
 

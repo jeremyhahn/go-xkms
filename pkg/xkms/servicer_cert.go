@@ -14,15 +14,30 @@
 package xkms
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"sort"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 )
+
+// Every certificate method resolves the backend through the caller's tenant,
+// so a tenant reads, writes, lists and deletes only certificates stored in
+// its own namespace ("{tenant}/{keyID}", see TenantScopedBackend). Methods
+// with a request struct take the tenant from its TenantID, which each
+// transport fills from the authenticated identity; the rest read it from the
+// identity on ctx (scopedTenantIDFromContext). A platform-scoped caller
+// operates on the unscoped store. A key ID is validated before use, and the
+// validation refuses "/", so a tenant cannot name another tenant's namespace.
+// Another tenant's certificate is therefore exactly as absent as one nobody
+// stored. The transports used to call the unscoped backend directly, and any
+// tenant could read, overwrite, list or delete every tenant's certificates
+// and the platform's (go-xkms#1228).
 
 // GetCertificate retrieves a certificate by key ID from the specified backend.
 // If backendName is empty, the default backend is used.
@@ -32,7 +47,7 @@ func (s *XKMSService) GetCertificate(ctx context.Context, backendName, keyID str
 	metricsBackend := s.metricsBackendName(backendName)
 	defer func() { recordServiceOp(metrics.OpGet, metricsBackend, start, err) }()
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, scopedTenantIDFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +81,7 @@ func (s *XKMSService) SaveCertificate(ctx context.Context, req *transport.SaveCe
 		return ErrNilRequest
 	}
 
-	b, err := s.resolveBackend(req.Backend)
+	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
 	if err != nil {
 		return err
 	}
@@ -77,7 +92,7 @@ func (s *XKMSService) SaveCertificate(ctx context.Context, req *transport.SaveCe
 
 	cert, err := certFromPEM(req.CertificatePEM)
 	if err != nil {
-		return &ErrCertOperation{Operation: "parse certificate PEM", Err: err}
+		return err
 	}
 
 	if saveErr := b.SaveCert(ctx, req.KeyID, cert); saveErr != nil {
@@ -96,7 +111,7 @@ func (s *XKMSService) DeleteCertificate(ctx context.Context, backendName, keyID 
 	metricsBackend := s.metricsBackendName(backendName)
 	defer func() { recordServiceOp(metrics.OpDelete, metricsBackend, start, err) }()
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, scopedTenantIDFromContext(ctx))
 	if err != nil {
 		return err
 	}
@@ -121,7 +136,7 @@ func (s *XKMSService) CertificateExists(ctx context.Context, backendName, keyID 
 	metricsBackend := s.metricsBackendName(backendName)
 	defer func() { recordServiceOp(metrics.OpGet, metricsBackend, start, err) }()
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, scopedTenantIDFromContext(ctx))
 	if err != nil {
 		return false, err
 	}
@@ -133,15 +148,17 @@ func (s *XKMSService) CertificateExists(ctx context.Context, backendName, keyID 
 	return b.CertExists(ctx, keyID)
 }
 
-// ListCertificates lists all certificates from the specified backend.
-// If backendName is empty, the default backend is used.
+// ListCertificates lists the caller's certificates in the specified backend.
+// If backendName is empty, the default backend is used. The list options are
+// honoured: the response carries the requested page and the pagination
+// metadata describing it, and with no options the full list.
 // Implements the CertServicer interface.
 func (s *XKMSService) ListCertificates(ctx context.Context, backendName string, opts ...transport.ListOption) (resp *transport.ListCertificatesResponse, err error) {
 	start := time.Now()
 	metricsBackend := s.metricsBackendName(backendName)
 	defer func() { recordServiceOp(metrics.OpList, metricsBackend, start, err) }()
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, scopedTenantIDFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -151,8 +168,13 @@ func (s *XKMSService) ListCertificates(ctx context.Context, backendName string, 
 		return nil, &ErrCertOperation{Operation: "list certificates", Err: err}
 	}
 
-	certs := make([]transport.CertificateInfo, 0, len(certIDs))
-	for _, id := range certIDs {
+	// The IDs are ordered before paging so a caller walking the pages sees
+	// each certificate once, and only the requested page is read back.
+	sort.Strings(certIDs)
+	page, pagination := transport.ApplyPagination(certIDs, transport.BuildPageRequest(opts...))
+
+	certs := make([]transport.CertificateInfo, 0, len(page))
+	for _, id := range page {
 		info := transport.CertificateInfo{
 			KeyID: id,
 		}
@@ -174,6 +196,7 @@ func (s *XKMSService) ListCertificates(ctx context.Context, backendName string, 
 
 	return &transport.ListCertificatesResponse{
 		Certificates: certs,
+		PageResponse: pagination,
 	}, nil
 }
 
@@ -191,7 +214,7 @@ func (s *XKMSService) SaveCertificateChain(ctx context.Context, req *transport.S
 		return ErrNilRequest
 	}
 
-	b, err := s.resolveBackend(req.Backend)
+	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
 	if err != nil {
 		return err
 	}
@@ -228,7 +251,7 @@ func (s *XKMSService) GetCertificateChain(ctx context.Context, backendName, keyI
 	metricsBackend := s.metricsBackendName(backendName)
 	defer func() { recordServiceOp(metrics.OpGet, metricsBackend, start, err) }()
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, scopedTenantIDFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -254,14 +277,16 @@ func (s *XKMSService) GetCertificateChain(ctx context.Context, backendName, keyI
 }
 
 // GetTLSCertificate retrieves a TLS certificate bundle (leaf + chain) by key ID.
-// If backendName is empty, the default backend is used.
+// If backendName is empty, the default backend is used. The bundle carries no
+// private key, so it needs none: the leaf and chain are read from the
+// caller's certificate namespace like every other certificate read.
 // Implements the CertServicer interface.
 func (s *XKMSService) GetTLSCertificate(ctx context.Context, backendName, keyID string) (resp *transport.GetTLSCertificateResponse, err error) {
 	start := time.Now()
 	metricsBackend := s.metricsBackendName(backendName)
 	defer func() { recordServiceOp(metrics.OpGet, metricsBackend, start, err) }()
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, scopedTenantIDFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -281,14 +306,22 @@ func (s *XKMSService) GetTLSCertificate(ctx context.Context, backendName, keyID 
 		CertificatePEM: certToPEM(leafCert),
 	}
 
-	// Attempt to get the chain; chain is optional for TLS bundles
+	// Attempt to get the chain; chain is optional for TLS bundles. A stored
+	// chain runs leaf to root, so when it opens with the leaf that entry is
+	// dropped: ChainPEM carries the certificates above the leaf, which
+	// CertificatePEM already holds.
 	chain, chainErr := b.GetCertChain(ctx, keyID)
 	if chainErr == nil && len(chain) > 0 {
+		if bytes.Equal(chain[0].Raw, leafCert.Raw) {
+			chain = chain[1:]
+		}
 		chainPEM := make([]string, 0, len(chain))
 		for _, cert := range chain {
 			chainPEM = append(chainPEM, certToPEM(cert))
 		}
-		resp.ChainPEM = chainPEM
+		if len(chainPEM) > 0 {
+			resp.ChainPEM = chainPEM
+		}
 	}
 
 	return resp, nil
@@ -312,5 +345,9 @@ func certFromPEM(pemStr string) (*x509.Certificate, error) {
 	if block.Type != "CERTIFICATE" {
 		return nil, &ErrPEMBlock{Expected: "CERTIFICATE", Got: block.Type}
 	}
-	return x509.ParseCertificate(block.Bytes)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, &ErrCertificateParse{Err: err}
+	}
+	return cert, nil
 }

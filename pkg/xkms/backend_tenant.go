@@ -215,14 +215,56 @@ func (t *TenantScopedBackend) GetDecrypterByID(ctx context.Context, keyID string
 // Sealing Operations
 // ========================================================================
 
-// Seal encrypts data using the underlying backend's sealing mechanism.
-func (t *TenantScopedBackend) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
-	return t.base.Seal(ctx, data, opts)
+// sealBound refuses a base backend whose sealing is not bound to a key.
+//
+// Every key-based sealer (software, PKCS#11, the cloud KMSs) derives or
+// resolves its sealing key from KeyAttributes, so stamping this tenant on the
+// attributes confines a blob to the tenant that sealed it. TPM 2.0 sealing is
+// different: the blob is a keyed-hash object under the platform storage root,
+// and it unseals for anyone who presents it, whatever key they name. Passing
+// that through a tenant view would let one tenant unseal another's blob, so
+// the view refuses it instead (go-xkms#1228).
+func (t *TenantScopedBackend) sealBound() error {
+	if t.base.Type() == types.StoreTPM2 {
+		return &ErrBackendUnsupported{
+			Sentinel: ErrSealingNotSupported,
+			Backend:  string(types.StoreTPM2),
+			Detail:   "a tenant-scoped caller cannot seal or unseal on this backend",
+			Cause:    ErrSealNotTenantBound,
+		}
+	}
+	return nil
 }
 
-// Unseal decrypts previously sealed data using the underlying backend.
+// Seal encrypts data under a key of this tenant. The sealing key's
+// attributes are stamped with the tenant exactly as every key operation's
+// are, so the key the base backend loads -- and, for a key-derived sealer,
+// the key it derives -- is this tenant's and no other's.
+func (t *TenantScopedBackend) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	if err := t.sealBound(); err != nil {
+		return nil, err
+	}
+	if opts == nil {
+		return t.base.Seal(ctx, data, nil)
+	}
+	scoped := *opts
+	scoped.KeyAttributes = t.scopeAttrs(opts.KeyAttributes)
+	return t.base.Seal(ctx, data, &scoped)
+}
+
+// Unseal decrypts data previously sealed under a key of this tenant. The
+// key is resolved within this tenant as Seal resolves it, so a blob sealed
+// under another tenant's key does not unseal here.
 func (t *TenantScopedBackend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
-	return t.base.Unseal(ctx, sealed, opts)
+	if err := t.sealBound(); err != nil {
+		return nil, err
+	}
+	if opts == nil {
+		return t.base.Unseal(ctx, sealed, nil)
+	}
+	scoped := *opts
+	scoped.KeyAttributes = t.scopeAttrs(opts.KeyAttributes)
+	return t.base.Unseal(ctx, sealed, &scoped)
 }
 
 // CanSeal returns true if the underlying backend supports sealing.

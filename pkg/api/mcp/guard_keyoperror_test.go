@@ -66,7 +66,7 @@ func assertKeyOpCode(t *testing.T, err error, want int) {
 // way a lexical pattern match over source text could (a static check has to
 // re-derive, by inspecting call graphs across interface boundaries, that
 // every "safe" mapper function -- mapKeyOpError, mapShareError,
-// certOperationError, and so on -- itself only ever returns nil or
+// mapCAError, and so on -- itself only ever returns nil or
 // *KeyOpError; a runtime call proves it directly). Second, it is exactly
 // the architecture this package already committed to for the sibling gate
 // (TestEveryHandler_MalformedParamsAreInvalidParams, go-xkms#774): a table

@@ -1,6 +1,6 @@
 # Certificate Authority — User Guide
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Prerequisites
 
@@ -101,6 +101,11 @@ xkmsctl tls get web-tls -o json
 leaves the backend that holds it — a server process signs and decrypts
 through that backend (or its own local key store), it never receives the key
 material over this call.
+
+Stored certificates belong to your tenant. `cert list` shows only your
+tenant's certificates, and naming a certificate another tenant (or the
+platform) stored reads as "not found". Two tenants can each keep a certificate
+called `web-tls` without affecting each other. A key ID cannot contain `/`.
 
 ## Enrolling a device with a TPM
 

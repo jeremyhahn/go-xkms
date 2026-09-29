@@ -21,13 +21,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // TestHandler_Seal tests the seal handler for sealing data with a backend.
-// Note: The current handler implementation only sets CN in KeyAttributes,
-// which is insufficient for the software backend that requires StoreType.
-// These tests document the current behavior.
 func TestHandler_Seal(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
@@ -108,9 +106,9 @@ func TestHandler_Seal(t *testing.T) {
 		assert.Contains(t, err.Error(), "backend not found")
 	})
 
-	t.Run("fails when backend name is empty", func(t *testing.T) {
+	t.Run("an empty backend name selects the default backend", func(t *testing.T) {
 		params := SealParams{
-			Backend: "", // Empty backend name
+			Backend: "", // The default backend
 			KeyID:   "test-key",
 			Data:    []byte("some data"),
 		}
@@ -126,8 +124,8 @@ func TestHandler_Seal(t *testing.T) {
 
 		_, err = server.handleSeal(context.Background(), req)
 		require.Error(t, err)
-		// The service validates backend name cannot be empty
-		assert.Contains(t, err.Error(), "backend not found")
+		// The default backend holds no key named test-key.
+		assert.ErrorIs(t, err, xkms.ErrKeyNotFound)
 	})
 
 	// Note: The handler now looks up the key by CN and retrieves full KeyAttributes
@@ -284,12 +282,12 @@ func TestHandler_Unseal(t *testing.T) {
 
 		_, err = server.handleUnseal(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "backend not found")
+		assert.ErrorIs(t, err, xkms.ErrBackendNotFound)
 	})
 
-	t.Run("fails when backend name is empty", func(t *testing.T) {
+	t.Run("an empty backend name selects the default backend", func(t *testing.T) {
 		params := UnsealParams{
-			Backend:    "", // Empty backend
+			Backend:    "", // The default backend
 			KeyID:      "test-key",
 			Ciphertext: []byte("some encrypted data"),
 			Nonce:      []byte("nonce"),
@@ -306,7 +304,8 @@ func TestHandler_Unseal(t *testing.T) {
 
 		_, err = server.handleUnseal(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "backend not found")
+		// The default backend holds no key named test-key.
+		assert.ErrorIs(t, err, xkms.ErrKeyNotFound)
 	})
 
 	t.Run("accepts valid unseal params structure", func(t *testing.T) {
@@ -509,10 +508,12 @@ func TestHandler_Seal_ParamsValidation(t *testing.T) {
 			ID:      1,
 		}
 
-		// Will fail due to empty backend, but should pass param validation
-		_, err = server.handleSeal(context.Background(), req)
-		require.Error(t, err)
-		assert.NotContains(t, err.Error(), "invalid params")
+		// The default backend seals under the default sealing key.
+		result, err := server.handleSeal(context.Background(), req)
+		require.NoError(t, err)
+		sealed, ok := result.(SealResult)
+		require.True(t, ok)
+		assert.NotEmpty(t, sealed.Ciphertext)
 	})
 
 	t.Run("accepts params with all fields populated", func(t *testing.T) {
@@ -561,10 +562,10 @@ func TestHandler_Seal_ParamsValidation(t *testing.T) {
 			ID:      1,
 		}
 
-		// Should not error on parsing, may fail on backend
+		// Extra fields are ignored in Go's JSON unmarshaling, and the
+		// default sealing key seals the data.
 		_, err := server.handleSeal(context.Background(), req)
-		// Extra fields are ignored in Go's JSON unmarshaling
-		assert.NotContains(t, err.Error(), "invalid params")
+		require.NoError(t, err)
 	})
 }
 

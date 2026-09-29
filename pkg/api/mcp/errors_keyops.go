@@ -16,6 +16,7 @@ package mcp
 import (
 	"errors"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -111,10 +112,21 @@ var keyOpSentinelCodes = []struct {
 	sentinel error
 	code     int
 }{
+	// A malformed certificate, an empty chain, or sealed data missing its
+	// payload is a fault in the request (go-xkms#1228).
+	{xkms.ErrInvalidEncodingPEM, ErrCodeInvalidParams},
+	{xkms.ErrInvalidCertificate, ErrCodeInvalidParams},
+	{xkms.ErrEmptyChain, ErrCodeInvalidParams},
+	{xkms.ErrInvalidSealedData, ErrCodeInvalidParams},
+	{xkms.ErrNilData, ErrCodeInvalidParams},
 	{xkms.ErrOperationNotSupported, ErrCodeMethodNotFound},
+	{xkms.ErrSealingNotSupported, ErrCodeMethodNotFound},
 	{xkms.ErrExportKeyMaterialFailed, ErrCodeInternalError},
 	{xkms.ErrBackendNotFound, sdkssh.JSONRPCCodeNotFound},
 	{xkms.ErrKeyNotFound, sdkssh.JSONRPCCodeNotFound},
+	{xkms.ErrCertNotFound, sdkssh.JSONRPCCodeNotFound},
+	{xkms.ErrCertChainNotFound, sdkssh.JSONRPCCodeNotFound},
+	{storage.ErrNotFound, sdkssh.JSONRPCCodeNotFound},
 	{xkms.ErrNotInitialized, ErrCodeInternalError},
 }
 
@@ -142,6 +154,15 @@ func mapKeyOpError(err error) error {
 		// to report Invalid params, as if the caller's request were
 		// malformed rather than the name it gave simply not resolving.
 		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: err}
+	}
+
+	// A key or certificate ID that does not parse -- including one naming
+	// another tenant's namespace ("tenant-b/web") -- is malformed input. It
+	// is matched before ErrValidation, which the parse failure may wrap, so
+	// the message names the key ID as the field at fault.
+	var keyID *xkms.ErrKeyIDParse
+	if errors.As(err, &keyID) {
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: keyID}
 	}
 
 	var validation *xkms.ErrValidation

@@ -174,7 +174,7 @@ func TestSaveCert_InvalidPEM(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "invalid certificate PEM")
+	assert.Contains(t, st.Message(), "invalid PEM encoding")
 }
 
 func TestSaveCert_SuccessPath(t *testing.T) {
@@ -249,7 +249,7 @@ func TestDeleteCert_NotFoundError(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.NotFound, st.Code())
 }
 
 func TestCertExists_FoundPath(t *testing.T) {
@@ -855,22 +855,6 @@ func TestGetLockoutStatus_WithActiveLockout(t *testing.T) {
 	assert.Equal(t, int32(10), resp.MaxAttempts)
 	assert.Equal(t, int32(300), resp.RecoverySeconds)
 	assert.NotEmpty(t, resp.LockoutUntil)
-}
-
-// ===================== parseCertFromPEM edge cases =====================
-
-func TestParseCertFromPEM_InvalidDER(t *testing.T) {
-	invalidPEM := string(pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: []byte("not-a-real-certificate"),
-	}))
-	_, err := parseCertFromPEM(invalidPEM)
-	require.Error(t, err)
-}
-
-func TestParseCertFromPEM_NoPEMBlock(t *testing.T) {
-	_, err := parseCertFromPEM("just a regular string with no PEM")
-	require.Error(t, err)
 }
 
 // ===================== GenerateKey Ed25519 and symmetric =====================
@@ -2850,7 +2834,10 @@ func TestGetKey_BackendNotFound(t *testing.T) {
 
 // ===================== No backends available paths =====================
 
-func TestSaveCert_NoBackendsAvailable(t *testing.T) {
+// The certificate RPCs are adapters over the xkms service; without one they
+// report Unavailable, as every other service-backed RPC does.
+
+func TestSaveCert_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2862,11 +2849,11 @@ func TestSaveCert_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
-	assert.Contains(t, st.Message(), "no backends available")
+	assert.Equal(t, codes.Unavailable, st.Code())
+	assert.Contains(t, st.Message(), xkms.ErrNotInitialized.Error())
 }
 
-func TestGetCert_NoBackendsAvailable(t *testing.T) {
+func TestGetCert_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2876,10 +2863,10 @@ func TestGetCert_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
-func TestDeleteCert_NoBackendsAvailable(t *testing.T) {
+func TestDeleteCert_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2889,10 +2876,10 @@ func TestDeleteCert_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
-func TestListCerts_NoBackendsAvailable(t *testing.T) {
+func TestListCerts_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2900,10 +2887,10 @@ func TestListCerts_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
-func TestCertExists_NoBackendsAvailable(t *testing.T) {
+func TestCertExists_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2913,10 +2900,10 @@ func TestCertExists_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
-func TestSaveCertChain_NoBackendsAvailable(t *testing.T) {
+func TestSaveCertChain_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2928,10 +2915,10 @@ func TestSaveCertChain_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
-func TestGetCertChain_NoBackendsAvailable(t *testing.T) {
+func TestGetCertChain_ServiceNotInitialized(t *testing.T) {
 	xkms.Reset()
 	svc := NewService(nil, nil, nil)
 
@@ -2941,7 +2928,7 @@ func TestGetCertChain_NoBackendsAvailable(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 func TestWrapKey_NoBackendsAvailable(t *testing.T) {
