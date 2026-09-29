@@ -177,7 +177,7 @@ cmd_download() {
 
 sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
 
-# plan_upload FILE — prints one of: skip | replace ASSET_ID | add
+# plan_upload FILE — prints one of: skip | mismatch ASSET_ID | add
 plan_upload() {
 	local file="$1" name id aname size url tmp
 	name="$(basename "$file")"
@@ -188,7 +188,7 @@ plan_upload() {
 		if [ "$(sha256_of "$tmp")" = "$(sha256_of "$file")" ]; then
 			rm -f "$tmp"; echo "skip"; return 0
 		fi
-		rm -f "$tmp"; echo "replace $id"; return 0
+		rm -f "$tmp"; echo "mismatch $id"; return 0
 	done < <(release_assets)
 	echo "add"
 }
@@ -206,13 +206,12 @@ cmd_upload() {
 		case "$action" in
 		skip)
 			echo "${name}: already present with the same SHA-256, skipped" ;;
-		replace)
-			id="${plan#replace }"
-			echo "${name}: present with a different SHA-256, replacing asset ${id}"
-			if [ "${DRY_RUN:-0}" != 1 ]; then
-				api DELETE "/repos/${RELEASE_REPO}/releases/${rid}/assets/${id}" >/dev/null
-				api POST "/repos/${RELEASE_REPO}/releases/${rid}/assets?name=${name}" -F "attachment=@${file}" >/dev/null
-			fi ;;
+		mismatch)
+			id="${plan#mismatch }"
+			echo "ERROR: ${name}: asset ${id} exists with a different SHA-256" >&2
+			echo "ERROR: Release assets must be idempotent. Do not overwrite existing artifacts." >&2
+			echo "ERROR: If this is intentional, manually delete the asset and retry." >&2
+			return 1 ;;
 		add)
 			echo "${name}: absent, uploading"
 			if [ "${DRY_RUN:-0}" != 1 ]; then
