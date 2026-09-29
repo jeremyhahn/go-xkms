@@ -79,6 +79,17 @@ expired session is consumed all the same (cannot be retried).
 - **Enrollment parameters are fixed at enrollment.** The PKCS#11 mechanism, the
   FIDO2 RP id and the PIV slot are recorded when the factor is enrolled and are
   not renegotiable at verification. This is what prevents downgrade.
+- **The PKCS#11 mechanism is checked, not just recorded.** `Enroll` refuses a
+  mechanism whose family (`CKM_ECDSA*` vs. an `RSA` mechanism) does not match
+  the enrolled key's own algorithm — a record that could never be satisfied by
+  a genuine signature from that key. `Challenge` copies the enrolled mechanism
+  into `MethodData["mechanism"]` alongside the key. `Verify` reads it from
+  there and nowhere else: it refuses when that mechanism is inconsistent with
+  the enrolled key's algorithm, and refuses when `response.Metadata["mechanism"]`
+  names a different mechanism than the enrolled one — even when the signature
+  itself is otherwise valid. Verify never selects *how* it checks a signature
+  from anything the response supplies; the enrolled mechanism only ever
+  gates a refusal, never a choice.
 - **The verification key comes from the challenge, never the response.** Each
   factor's `Challenge` copies `enrollment.PublicKey` into `MethodData`
   (`enrolled_cert_pem` for `piv` and `mtls`, `enrolled_public_key_der` for
@@ -114,7 +125,7 @@ them.
 | challenge expired | verification fails; no partial credit |
 | signature does not verify against the enrollment | fails |
 | hardware absent or unreadable | fails — never falls back to a software check |
-| PKCS#11 mechanism differs from the enrolled one | fails |
+| PKCS#11 mechanism differs from the enrolled one, or is inconsistent with the enrolled key's algorithm | fails |
 | FIDO2 RP id mismatch (`authenticatorData` rpIdHash) | fails |
 | FIDO2 user-present flag clear | fails |
 | FIDO2 clientDataJSON not `webauthn.get`, or not bound to the nonce | fails |
@@ -141,7 +152,11 @@ capability. The four knobs are `factor.Config` above. What to set in practice:
 - **`FIDO2RPID`** — set it to your actual relying-party id. It is recorded on
   every enrollment, so changing it later invalidates them.
 - **`PKCS11Mechanism`** — override only with reason; the default
-  `CKM_ECDSA_SHA256` is the safe choice.
+  `CKM_ECDSA_SHA256` is the safe choice for ECDSA enrollments. It applies only
+  when the enrolled key is ECDSA-family; an RSA key enrolled without an
+  explicit `"mechanism"` MethodParam gets the package's own RSA default
+  (`CKM_SHA256_RSA_PKCS`) instead of inheriting an ECDSA mechanism it is
+  inconsistent with.
 - **`ChallengeTTLSeconds`** — shorter is safer. The five-minute default is
   already generous for interactive use.
 

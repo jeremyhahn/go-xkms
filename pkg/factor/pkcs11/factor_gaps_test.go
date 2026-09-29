@@ -19,6 +19,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
@@ -527,5 +528,246 @@ func TestDerDecodeError_Message(t *testing.T) {
 	}
 	if (&derDecodeError{}).Error() != "" {
 		t.Error("an empty reason should render as an empty message, not a placeholder")
+	}
+}
+
+// TestMechanismFamily pins the mechanism classifier that both Enroll and
+// Verify rely on to decide whether a mechanism is consistent with a key's
+// algorithm.
+func TestMechanismFamily(t *testing.T) {
+	cases := []struct {
+		mechanism string
+		want      string
+	}{
+		{"CKM_ECDSA", "ecdsa"},
+		{"CKM_ECDSA_SHA256", "ecdsa"},
+		{"CKM_ECDSA_SHA384", "ecdsa"},
+		{"CKM_RSA_PKCS", "rsa"},
+		{"CKM_SHA256_RSA_PKCS", "rsa"},
+		{"CKM_RSA_PKCS_PSS", "rsa"},
+		{"CKM_AES_CBC", ""},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := mechanismFamily(tc.mechanism); got != tc.want {
+			t.Errorf("mechanismFamily(%q) = %q, want %q", tc.mechanism, got, tc.want)
+		}
+	}
+}
+
+// TestEnroll_RejectsMechanismInconsistentWithKeyType proves the enrollment
+// record can never carry a mechanism that names the wrong key algorithm — an
+// EC key with an RSA mechanism, or vice versa — because a record like that
+// can never be satisfied by a genuine signature from the enrolled key.
+func TestEnroll_RejectsMechanismInconsistentWithKeyType(t *testing.T) {
+	f := New(Config{})
+	ctx := context.Background()
+
+	t.Run("ecdsa key with rsa mechanism", func(t *testing.T) {
+		_, der := ecP256(t)
+		_, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+			UserID: "user-1",
+			MethodParams: map[string]any{
+				"public_key_der": der,
+				"mechanism":      "CKM_RSA_PKCS",
+			},
+		})
+		var invalid *qrdbsdk.AuthFactorEnrollmentInvalidError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("error type = %T, want *AuthFactorEnrollmentInvalidError", err)
+		}
+		if !strings.Contains(err.Error(), "inconsistent") {
+			t.Errorf("error %q does not explain the inconsistency", err)
+		}
+	})
+
+	t.Run("rsa key with ecdsa mechanism", func(t *testing.T) {
+		priv, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatalf("rsa.GenerateKey: %v", err)
+		}
+		der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+		if err != nil {
+			t.Fatalf("MarshalPKIXPublicKey: %v", err)
+		}
+		_, err = f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+			UserID: "user-1",
+			MethodParams: map[string]any{
+				"public_key_der": der,
+				"mechanism":      "CKM_ECDSA_SHA256",
+			},
+		})
+		var invalid *qrdbsdk.AuthFactorEnrollmentInvalidError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("error type = %T, want *AuthFactorEnrollmentInvalidError", err)
+		}
+		if !strings.Contains(err.Error(), "inconsistent") {
+			t.Errorf("error %q does not explain the inconsistency", err)
+		}
+	})
+}
+
+// TestEnroll_RSADefaultsToAnRSAMechanism is the regression for a latent bug:
+// f.cfg.DefaultMechanism is CKM_ECDSA_SHA256, so an RSA enrollment that omits
+// "mechanism" previously recorded an ECDSA mechanism against an RSA key — an
+// enrollment the mechanism/key-type consistency check would then always
+// refuse to verify. An RSA key enrolled without an explicit mechanism must
+// get an RSA-family default instead.
+func TestEnroll_RSADefaultsToAnRSAMechanism(t *testing.T) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey: %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+
+	f := New(Config{})
+	enrollment, err := f.Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "user-1",
+		MethodParams: map[string]any{"public_key_der": der},
+	})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	if got := mechanismFamily(enrollment.Metadata["mechanism"]); got != "rsa" {
+		t.Fatalf("mechanism = %q (family %q), want an RSA mechanism", enrollment.Metadata["mechanism"], got)
+	}
+}
+
+// TestVerify_RejectsResponseNamingADifferentMechanism is the mechanism
+// analogue of TestPKCS11Factor_Verify_RejectsAttackerKeyInResponse: a
+// response whose declared mechanism differs from the one recorded at
+// enrollment must be refused, even when the signature itself is genuine and
+// otherwise valid.
+func TestVerify_RejectsResponseNamingADifferentMechanism(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	key, der := ecP256(t)
+
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "user-1",
+		MethodParams: map[string]any{"public_key_der": der},
+	})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	challenge, err := f.Challenge(ctx, enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	if got := challenge.MethodData[methodDataMechanism]; got != defaultMechanism {
+		t.Fatalf("challenge MethodData[%q] = %v, want %q", methodDataMechanism, got, defaultMechanism)
+	}
+
+	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Value:    signNonce(t, key, challenge.Nonce),
+		Metadata: map[string]string{responseMechanism: "CKM_RSA_PKCS"},
+	})
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	if !errors.As(err, &failed) {
+		t.Fatalf("Verify(mismatched mechanism) err = %v, want VerificationFailedError", err)
+	}
+	if !strings.Contains(err.Error(), "response named mechanism") {
+		t.Errorf("error %q does not explain the mechanism mismatch", err)
+	}
+}
+
+// TestVerify_AcceptsResponseNamingTheEnrolledMechanism proves a response that
+// echoes back the enrolled mechanism (as a well-behaved custodian client
+// would) is not penalized by the new check — only a genuine mismatch is
+// refused.
+func TestVerify_AcceptsResponseNamingTheEnrolledMechanism(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	key, der := ecP256(t)
+
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "user-1",
+		MethodParams: map[string]any{"public_key_der": der},
+	})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	challenge, err := f.Challenge(ctx, enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+
+	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Value:    signNonce(t, key, challenge.Nonce),
+		Metadata: map[string]string{responseMechanism: defaultMechanism},
+	})
+	if err != nil {
+		t.Fatalf("Verify(matching mechanism) failed: %v", err)
+	}
+}
+
+// TestVerify_RejectsChallengeWithoutMechanism proves Verify fails closed when
+// the enrolled mechanism is missing from the challenge — the same treatment
+// the enrolled key already gets — rather than silently skipping the check.
+func TestVerify_RejectsChallengeWithoutMechanism(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	key, der := ecP256(t)
+
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "user-1",
+		MethodParams: map[string]any{"public_key_der": der},
+	})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	challenge, err := f.Challenge(ctx, enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	delete(challenge.MethodData, methodDataMechanism)
+
+	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Value: signNonce(t, key, challenge.Nonce),
+	})
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	if !errors.As(err, &failed) {
+		t.Fatalf("Verify(no mechanism) err = %v, want VerificationFailedError", err)
+	}
+	if !strings.Contains(err.Error(), "mechanism missing from challenge MethodData") {
+		t.Errorf("error %q does not explain the missing mechanism", err)
+	}
+}
+
+// TestVerify_RejectsChallengeWithInconsistentMechanism covers a
+// hand-tampered or corrupted challenge whose mechanism no longer matches the
+// enrolled key's algorithm — the key parses as ECDSA, but the mechanism
+// string names an RSA operation. Verify must refuse rather than silently
+// falling back to the key-type switch alone.
+func TestVerify_RejectsChallengeWithInconsistentMechanism(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	key, der := ecP256(t)
+
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "user-1",
+		MethodParams: map[string]any{"public_key_der": der},
+	})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	challenge, err := f.Challenge(ctx, enrollment)
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	challenge.MethodData[methodDataMechanism] = "CKM_RSA_PKCS"
+
+	err = f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Value: signNonce(t, key, challenge.Nonce),
+	})
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	if !errors.As(err, &failed) {
+		t.Fatalf("Verify(inconsistent mechanism) err = %v, want VerificationFailedError", err)
+	}
+	if !strings.Contains(err.Error(), "inconsistent with the enrolled ecdsa key") {
+		t.Errorf("error %q does not explain the inconsistency", err)
 	}
 }
