@@ -2662,7 +2662,7 @@ Usage: `xkey trust add <pem-file> [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--purpose` | string |  | certificate purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer) |
+| `--purpose` | string |  | certificate purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer, synced) |
 | `--source` | string |  | source of the certificate (e.g., manual, url:..., file:...) |
 
 ## xkey trust bootstrap

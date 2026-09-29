@@ -83,7 +83,8 @@ type purposeLister interface {
 // The attestation purposes (tpm-manufacturer, android-hardware,
 // idevid-issuer) are deliberately absent. They anchor device attestation
 // chains, and a TLS session to a server is not one; promoting them to TLS
-// roots would widen what a TPM vendor root can authenticate.
+// roots would widen what a TPM vendor root can authenticate. PurposeSynced is
+// absent too: a certificate a paired device pushed is never an anchor.
 var tlsAnchorPurposes = []CertPurpose{PurposeUserCA, PurposeBootstrapCA, PurposeGeneral}
 
 // tlsRoots collects the store's TLS-eligible anchors.

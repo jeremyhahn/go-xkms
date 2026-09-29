@@ -29,6 +29,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -274,7 +275,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 
 	// Wire the xkmsd bridge so the phone's full remote.* method set is served,
 	// not just ping and attestation.
-	bridgeClient, bridge, collaborators, err := connectListenBridge(cmd, logger, enroller, enrollerErr)
+	bridgeClient, bridge, collaborators, err := connectListenBridge(cmd, logger, targetDevice, enroller, enrollerErr)
 	if err != nil {
 		return err
 	}
@@ -577,6 +578,14 @@ func listenPIVStorageProvider(cmd *cobra.Command, logger *slog.Logger) pairing.P
 // this reason (go-xkms#690), and a host with, say, no OATH store yet should
 // still pair, sync its trust store, and serve PIV and every other method.
 //
+// device is the paired phone the bridge serves. Every audited bridge call —
+// crypto requests, policy denials, and each remote.sync* write the phone
+// makes into this host's stores — is recorded against it: DeviceID is its
+// BLE address and DeviceName its paired name, the same identity pkg/phone
+// records connection events under. The audit sink is the slog-backed
+// audit.Logger the headless "xkey extension serve" daemon uses (fido2.go),
+// since neither command owns a persistent audit store.
+//
 // The returned collaborators must be closed at shutdown by the caller
 // (listenBridgeCollaborators.Close); connectListenBridge and
 // connectXKMSdBridge both do this via defer, matching every other resource
@@ -585,6 +594,7 @@ func buildListenBridgeConfig(
 	cmd *cobra.Command,
 	logger *slog.Logger,
 	xkmsdCfg *XKMSdBridgeConfig,
+	device *PairedDevice,
 	enroller pairing.TPMEnroller,
 	enrollerErr error,
 ) (*pairing.BridgeConfig, *listenBridgeCollaborators) {
@@ -615,6 +625,9 @@ func buildListenBridgeConfig(
 		OATHStore:       collaborators.oathStore,
 		PIVStorage:      listenPIVStorageProvider(cmd, logger),
 		SyncService:     syncService,
+		AuditLogger:     audit.NewSlogLogger(logger),
+		DeviceID:        device.Address,
+		DeviceName:      device.Name,
 	}
 
 	return bridgeCfg, collaborators
@@ -628,6 +641,7 @@ func buildListenBridgeConfig(
 func connectListenBridge(
 	cmd *cobra.Command,
 	logger *slog.Logger,
+	device *PairedDevice,
 	enroller pairing.TPMEnroller,
 	enrollerErr error,
 ) (transport.Client, *pairing.Bridge, *listenBridgeCollaborators, error) {
@@ -641,7 +655,7 @@ func connectListenBridge(
 		return nil, nil, nil, err
 	}
 
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, enroller, enrollerErr)
+	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, device, enroller, enrollerErr)
 
 	bridge, err := pairing.NewBridge(client, bridgeCfg)
 	if err != nil {

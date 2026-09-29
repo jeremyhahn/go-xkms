@@ -70,6 +70,7 @@ test.describe('Trust Store View', () => {
         'Bootstrap CA',
         'Android Hardware',
         'General',
+        'Synced',
       ];
 
       for (const label of expectedTabs) {
@@ -116,6 +117,7 @@ test.describe('Trust Store View', () => {
         'Bootstrap CA',
         'Android Hardware',
         'General',
+        'Synced',
       ];
 
       for (const label of tabs) {

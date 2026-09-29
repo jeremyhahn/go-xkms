@@ -981,6 +981,14 @@ func (a *trustStoreAdapter) AddPEM(pemData []byte) (int, error) {
 	return a.store.AddPEM(pemData)
 }
 
+// ImportPEM imports PEM-encoded certificates with caller-chosen metadata.
+// Sync writes through this, never through AddPEM, so the certificates a
+// paired device sends are filed under the purpose the sync service chooses
+// instead of being auto-classified into an anchor purpose (#1304).
+func (a *trustStoreAdapter) ImportPEM(pemData []byte, opts *truststore.AddCertificateOptions) (truststore.ImportResult, error) {
+	return a.store.ImportPEM(pemData, opts)
+}
+
 // Contains reports whether a certificate with the given fingerprint is
 // already held, so a sync merge can skip it instead of re-importing.
 func (a *trustStoreAdapter) Contains(fingerprint string) (bool, error) {

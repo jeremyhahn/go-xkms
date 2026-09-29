@@ -145,7 +145,7 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 	// through to buildListenBridgeConfig so the bridge's OATH/PIV/sync
 	// collaborators open the same stores "xkey device listen" does
 	// (go-xkms#1041).
-	bridged, err := connectXKMSdBridge(backend, cfg.Cmd, logger)
+	bridged, err := connectXKMSdBridge(backend, cfg.Cmd, device, logger)
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err, backend.Close())
 	}

@@ -1,6 +1,6 @@
 # Platform Trust — User Guide
 
-> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## What this is for
 
@@ -83,6 +83,11 @@ xkey trust classify <fingerprint> --purpose bootstrap-ca
 | `user-ca` | user and client certificates |
 | `bootstrap-ca` | the trust-bootstrap path |
 | `idevid-issuer` | IDevID issuance |
+| `synced` | nothing — received from a paired device by sync, quarantined until reclassified |
+
+A certificate a paired phone sent during sync shows up as `synced`. It is
+stored so you can see it, not trusted: check it, then `xkey trust classify` it
+if you want it to anchor anything.
 
 **This is enforcement, not filing.** A `general` certificate will not anchor a
 TPM attestation. When an attestation fails, the fix is to add the right
