@@ -187,20 +187,23 @@ func TestSetupSignalHandler_SIGHUPReachesReloadChannel(t *testing.T) {
 
 // TestRun_DispatchesRegisteredSubcommand pins the map-based dispatch itself
 // (CLAUDE.md's O(1)-lookup convention): os.Args[1] naming a registered
-// subcommand runs its handler and returns 0 without ever reaching the
-// flag-parsing / server-construction path below it. The real "init" entry is
-// swapped out for the duration of the test because runInit calls os.Exit,
-// which would terminate the test binary.
+// subcommand runs its handler and returns the handler's exit code without
+// ever reaching the flag-parsing / server-construction path below it. The
+// real "init" entry is swapped out for the duration of the test purely to
+// keep the assertion independent of runInit's own behavior -- runInit itself
+// is exercised directly in init_test.go, and no longer calls os.Exit, so
+// swapping it out here is a choice, not a requirement.
 func TestRun_DispatchesRegisteredSubcommand(t *testing.T) {
 	original := subcommands
 	t.Cleanup(func() { subcommands = original })
 
 	called := false
 	var gotArgs []string
-	subcommands = map[string]func([]string){
-		"init": func(args []string) {
+	subcommands = map[string]func([]string) int{
+		"init": func(args []string) int {
 			called = true
 			gotArgs = args
+			return 7
 		},
 	}
 
@@ -208,8 +211,8 @@ func TestRun_DispatchesRegisteredSubcommand(t *testing.T) {
 	os.Args = []string{"xkmsd", "init", "--so-pin", "1234"}
 	t.Cleanup(func() { os.Args = origArgs })
 
-	if code := run(); code != 0 {
-		t.Fatalf("run() = %d, want 0", code)
+	if code := run(); code != 7 {
+		t.Fatalf("run() = %d, want the handler's own exit code 7", code)
 	}
 	if !called {
 		t.Fatal("run() did not dispatch to the registered \"init\" subcommand")
