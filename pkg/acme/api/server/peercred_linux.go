@@ -18,38 +18,22 @@ package server
 import (
 	"net"
 
-	"golang.org/x/sys/unix"
+	"github.com/jeremyhahn/go-xkms/pkg/peercred"
 )
 
 // checkPeerCredentialSupport reports that Linux implements SO_PEERCRED.
 func checkPeerCredentialSupport() error {
-	return nil
+	return peercred.CheckSupport()
 }
 
 // peerCredentialsFromConn reads the kernel-verified UID/GID/PID of the peer
-// of a Unix domain socket connection using SO_PEERCRED. The value comes from
-// the kernel's record of the socket's creating process and cannot be forged
-// by the peer.
+// of a Unix domain socket connection using SO_PEERCRED, via the shared
+// pkg/peercred implementation. The value comes from the kernel's record of
+// the socket's creating process and cannot be forged by the peer.
 func peerCredentialsFromConn(conn *net.UnixConn) (*PeerCredentials, error) {
-	sysConn, err := conn.SyscallConn()
+	creds, err := peercred.FromConn(conn)
 	if err != nil {
 		return nil, ErrPeerCredentialsFailed{Reason: err.Error()}
 	}
-
-	var ucred *unix.Ucred
-	var sockErr error
-	if ctrlErr := sysConn.Control(func(fd uintptr) {
-		ucred, sockErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
-	}); ctrlErr != nil {
-		return nil, ErrPeerCredentialsFailed{Reason: ctrlErr.Error()}
-	}
-	if sockErr != nil {
-		return nil, ErrPeerCredentialsFailed{Reason: sockErr.Error()}
-	}
-
-	return &PeerCredentials{
-		PID: ucred.Pid,
-		UID: ucred.Uid,
-		GID: ucred.Gid,
-	}, nil
+	return &PeerCredentials{PID: creds.PID, UID: creds.UID, GID: creds.GID}, nil
 }

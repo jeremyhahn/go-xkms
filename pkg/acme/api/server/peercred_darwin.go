@@ -18,51 +18,24 @@ package server
 import (
 	"net"
 
-	"golang.org/x/sys/unix"
+	"github.com/jeremyhahn/go-xkms/pkg/peercred"
 )
 
 // checkPeerCredentialSupport reports that Darwin implements LOCAL_PEERCRED
 // and LOCAL_PEEREPID.
 func checkPeerCredentialSupport() error {
-	return nil
+	return peercred.CheckSupport()
 }
 
 // peerCredentialsFromConn reads the kernel-verified UID/GID/PID of the peer
 // of a Unix domain socket connection using LOCAL_PEERCRED (UID and primary
-// GID) and LOCAL_PEEREPID (the peer's effective process ID). Both values
-// come from the kernel's record of the socket's connecting process and
-// cannot be forged by the peer.
+// GID) and LOCAL_PEEREPID (the peer's effective process ID), via the shared
+// pkg/peercred implementation. Both values come from the kernel's record of
+// the socket's connecting process and cannot be forged by the peer.
 func peerCredentialsFromConn(conn *net.UnixConn) (*PeerCredentials, error) {
-	sysConn, err := conn.SyscallConn()
+	creds, err := peercred.FromConn(conn)
 	if err != nil {
 		return nil, ErrPeerCredentialsFailed{Reason: err.Error()}
 	}
-
-	var xucred *unix.Xucred
-	var pid int
-	var credErr, pidErr error
-	if ctrlErr := sysConn.Control(func(fd uintptr) {
-		xucred, credErr = unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
-		if credErr != nil {
-			return
-		}
-		pid, pidErr = unix.GetsockoptInt(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEEREPID)
-	}); ctrlErr != nil {
-		return nil, ErrPeerCredentialsFailed{Reason: ctrlErr.Error()}
-	}
-	if credErr != nil {
-		return nil, ErrPeerCredentialsFailed{Reason: credErr.Error()}
-	}
-	if pidErr != nil {
-		return nil, ErrPeerCredentialsFailed{Reason: pidErr.Error()}
-	}
-	if xucred.Ngroups < 1 {
-		return nil, ErrPeerCredentialsFailed{Reason: "kernel reported no peer group"}
-	}
-
-	return &PeerCredentials{
-		PID: int32(pid),
-		UID: xucred.Uid,
-		GID: xucred.Groups[0],
-	}, nil
+	return &PeerCredentials{PID: creds.PID, UID: creds.UID, GID: creds.GID}, nil
 }

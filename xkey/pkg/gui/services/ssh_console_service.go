@@ -111,6 +111,11 @@ type SSHConsoleService struct {
 	tickets          map[string]*consoleTicket
 	hostKeyPolicy    string // "yes" (default) | "ask" | "accept-new"
 	knownHostsPolicy string // "barrier" (default) | "system" | "both"
+
+	// now is the clock seam issueTicket and resolve use to stamp and check
+	// ticket age, so a test can exercise consoleTicketTTL expiry without a
+	// real 2-minute sleep. Defaults to time.Now.
+	now func() time.Time
 }
 
 // NewSSHConsoleService constructs the service. The loopback server starts
@@ -125,6 +130,7 @@ func NewSSHConsoleService() *SSHConsoleService {
 		tickets:          make(map[string]*consoleTicket),
 		hostKeyPolicy:    "ask",
 		knownHostsPolicy: "barrier",
+		now:              time.Now,
 	}
 }
 
@@ -339,10 +345,10 @@ func (s *SSHConsoleService) issueTicket(ticket *consoleTicket) (*SSHConsoleEndpo
 	if err != nil {
 		return nil, err
 	}
-	ticket.created = time.Now()
+	ticket.created = s.clock()
 	s.mu.Lock()
 	for tok, t := range s.tickets {
-		if time.Since(t.created) > consoleTicketTTL {
+		if s.clock().Sub(t.created) > consoleTicketTTL {
 			delete(s.tickets, tok)
 		}
 	}
@@ -397,10 +403,20 @@ func (s *SSHConsoleService) resolve(r *http.Request) (*sshclient.ConsoleTarget, 
 	s.mu.Lock()
 	ticket := s.tickets[token]
 	if ticket != nil {
-		delete(s.tickets, token) // one-time use
+		delete(s.tickets, token) // one-time use, redeemed or not
 	}
 	s.mu.Unlock()
 	if ticket == nil {
+		return nil, ErrSSHConsoleInvalidToken
+	}
+	// A ticket issueTicket's purge missed (the WebSocket upgrade never
+	// arrived, or arrived only after sitting behind a slow client) must not
+	// be redeemed once it has outlived consoleTicketTTL: the signer(s) it
+	// carries were resolved against whatever key material and host-key
+	// policy were current at issue time, and an old token is exactly what a
+	// browser tab left open after the operator revoked or rotated a key
+	// would still be holding.
+	if s.clock().Sub(ticket.created) > consoleTicketTTL {
 		return nil, ErrSSHConsoleInvalidToken
 	}
 
@@ -426,6 +442,16 @@ func (s *SSHConsoleService) resolve(r *http.Request) (*sshclient.ConsoleTarget, 
 		KnownHostsExtraFiles: extraKnownHosts,
 		KnownHostsSkipStore:  skipStore,
 	}, nil
+}
+
+// clock returns the current time via the service's now seam, falling back to
+// time.Now for a zero-value SSHConsoleService (e.g. constructed directly
+// rather than via NewSSHConsoleService).
+func (s *SSHConsoleService) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 // bg returns the service context, falling back to background before startup.

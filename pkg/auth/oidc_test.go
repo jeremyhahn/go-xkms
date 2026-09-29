@@ -29,6 +29,8 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -928,6 +930,129 @@ func TestOIDCAuthenticator_CustomAudience(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestOIDCAuthenticator_AudienceMismatchNotSalvagedByUserinfo is the
+// regression test for go-xkms#1299: an ID token that fails audience
+// validation must be refused outright, never re-tried against the userinfo
+// endpoint. The mock provider registers this exact (JWT-formatted) string as
+// a "valid" opaque access token, which is what a userinfo endpoint that
+// authenticates any bearer token it is handed -- without re-deriving the
+// caller's identity from it -- would do; before the fix, validateToken's
+// unconditional fallback would have let that registration salvage the
+// token's identity despite the mismatched audience.
+func TestOIDCAuthenticator_AudienceMismatchNotSalvagedByUserinfo(t *testing.T) {
+	mock := newMockOIDCProvider(t)
+	defer mock.close()
+
+	ctx := context.Background()
+	auth, err := NewOIDCAuthenticator(ctx, &OIDCConfig{
+		Issuer:   mock.issuer,
+		ClientID: "test-client",
+	})
+	require.NoError(t, err)
+
+	token := mock.createIDToken(t, jwt.MapClaims{
+		"sub": "user123",
+		"aud": "wrong-client",
+	})
+	mock.registerValidAccessToken(token)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	_, err = auth.AuthenticateHTTP(req)
+	require.Error(t, err, "an audience-mismatched ID token must be refused, not accepted through userinfo")
+}
+
+// TestOIDCAuthenticator_EmptySubjectRefused_IDToken verifies an ID token
+// carrying no sub claim is refused rather than producing an Identity for
+// nobody.
+func TestOIDCAuthenticator_EmptySubjectRefused_IDToken(t *testing.T) {
+	mock := newMockOIDCProvider(t)
+	defer mock.close()
+
+	ctx := context.Background()
+	auth, err := NewOIDCAuthenticator(ctx, &OIDCConfig{
+		Issuer:   mock.issuer,
+		ClientID: "test-client",
+	})
+	require.NoError(t, err)
+
+	token := mock.createIDToken(t, jwt.MapClaims{
+		"aud": "test-client",
+		// No "sub" claim.
+	})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	_, err = auth.AuthenticateHTTP(req)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOIDCMissingSubject)
+}
+
+// TestOIDCAuthenticator_EmptySubjectRefused_AccessToken verifies an opaque
+// access token whose userinfo response carries no sub claim is refused
+// rather than producing an Identity for nobody. A dedicated server (rather
+// than mutating the shared mockOIDCProvider's userInfoData after its request
+// handler goroutine is already live) keeps the response fixture immutable
+// for the lifetime of the test.
+func TestOIDCAuthenticator_EmptySubjectRefused_AccessToken(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	var serverURL string
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		doc := map[string]interface{}{
+			"issuer":                 serverURL,
+			"authorization_endpoint": serverURL + "/authorize",
+			"token_endpoint":         serverURL + "/token",
+			"userinfo_endpoint":      serverURL + "/userinfo",
+			"jwks_uri":               serverURL + "/jwks",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(doc)
+	})
+
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		jwk := jose.JSONWebKey{
+			Key:       &privateKey.PublicKey,
+			KeyID:     "test-key-1",
+			Algorithm: string(jose.ES256),
+			Use:       "sig",
+		}
+		jwks := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{jwk}}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(jwks)
+	})
+
+	// Userinfo returns a claims set with no "sub".
+	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"email": "user@example.com",
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	serverURL = server.URL
+
+	ctx := context.Background()
+	auth, err := NewOIDCAuthenticator(ctx, &OIDCConfig{
+		Issuer:   serverURL,
+		ClientID: "test-client",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer opaque-token-no-sub")
+
+	_, err = auth.AuthenticateHTTP(req)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOIDCMissingSubject)
 }
 
 func TestOIDCAuthenticator_WrongSigningKey(t *testing.T) {

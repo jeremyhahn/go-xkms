@@ -54,6 +54,7 @@ func TestServer_Reload_LogsWhenListenersRunning(t *testing.T) {
 	newCfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
 		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 
 	require.NoError(t, server.Reload(newCfg))

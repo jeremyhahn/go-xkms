@@ -42,6 +42,14 @@ import (
 func createMinimalConfig(t *testing.T) *config.Config {
 	t.Helper()
 	tempDir := t.TempDir()
+	// t.TempDir()'s per-call leaf directory is created with mode 0o777 (see
+	// testing.(*common).makeTempDir), so its effective mode depends on the
+	// process umask and can come out group- or world-writable (e.g. umask
+	// 002). This config uses tempDir as the Unix socket directory
+	// (Unix.SocketPath below), which pkg/api/unix's Start now refuses to
+	// bind inside unless it is privately owned -- chmod it the way a real
+	// daemon's runtime directory would be.
+	require.NoError(t, os.Chmod(tempDir, 0700))
 
 	return &config.Config{
 		Server: config.ServerConfig{
@@ -877,6 +885,7 @@ func TestServer_InitializeAuthentication_CompositeDerived(t *testing.T) {
 	cfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
 		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 
 	server, err := New(cfg)
@@ -1231,6 +1240,70 @@ func TestServer_CreateJWTAuthenticator_InvalidKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse public key")
 }
 
+// TestServer_CreateJWTAuthenticator_KeyFileRequiresIssuerAndAudience verifies
+// operator key-file mode (auth.jwt.public_key_file) refuses to start without
+// both an issuer and an audience configured: without them, JWTAuthenticator
+// skips the issuer/audience checks entirely and accepts a token from any
+// issuer for any audience so long as it is signed by the configured key.
+func TestServer_CreateJWTAuthenticator_KeyFileRequiresIssuerAndAudience(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cases := []struct {
+		name     string
+		issuer   string
+		audience []string
+	}{
+		{name: "missing both", issuer: "", audience: nil},
+		{name: "missing audience", issuer: "https://issuer.example.com", audience: nil},
+		{name: "missing issuer", issuer: "", audience: []string{"xkms"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := createMinimalConfig(t)
+			cfg.Auth.JWT = &config.JWTConfig{
+				PublicKeyFile: writeTestJWTPublicKey(t),
+				Issuer:        tc.issuer,
+				Audience:      tc.audience,
+			}
+
+			server, err := New(cfg)
+			require.NoError(t, err)
+			require.NotNil(t, server)
+			defer func() { _ = server.Shutdown() }()
+
+			_, err = server.createJWTAuthenticator()
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrJWTKeyFileIssuerAudienceRequired)
+		})
+	}
+}
+
+// TestServer_CreateJWTAuthenticator_KeyFileWithIssuerAndAudience verifies
+// operator key-file mode succeeds, and pins issuer/audience onto the
+// authenticator, when both are configured.
+func TestServer_CreateJWTAuthenticator_KeyFileWithIssuerAndAudience(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	cfg.Auth.JWT = &config.JWTConfig{
+		PublicKeyFile: writeTestJWTPublicKey(t),
+		Issuer:        "https://issuer.example.com",
+		Audience:      []string{"xkms"},
+	}
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, server)
+	defer func() { _ = server.Shutdown() }()
+
+	jwtAuth, err := server.createJWTAuthenticator()
+	require.NoError(t, err)
+	require.NotNil(t, jwtAuth)
+}
+
 // Test buildTLSConfig with invalid CA content
 
 func TestServer_BuildTLSConfig_InvalidCAContent(t *testing.T) {
@@ -1337,6 +1410,7 @@ func TestServer_InitializeAuthentication_CompositeWithJWTKeyFile(t *testing.T) {
 	cfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: pubKeyFile,
 		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 	cfg.WebAuthn = &config.WebAuthnConfig{
 		Enabled: true,
@@ -1492,6 +1566,7 @@ func TestServer_InitializeAuthentication_JWTDirect(t *testing.T) {
 	cfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: pubKeyFile,
 		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 
 	server, err := New(cfg)
@@ -1738,6 +1813,7 @@ func TestServer_Reload_AuthChange(t *testing.T) {
 	newCfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
 		Issuer:        "test-issuer",
+		Audience:      []string{"test-audience"},
 	}
 
 	// Reload must apply the auth configuration, not just store it.

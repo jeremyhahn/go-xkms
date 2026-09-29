@@ -257,6 +257,24 @@ func TestJWTAuthenticator_AuthenticateHTTP(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			// jwt.WithExpirationRequired refuses a token with no exp claim
+			// at all: without it, jwt/v5's default expiry check is a no-op,
+			// which is the same as bearer authentication accepting a
+			// permanent credential.
+			name: "missing exp claim",
+			config: &JWTConfig{
+				PublicKey: publicKey,
+			},
+			setupReq: func(req *http.Request, key *ecdsa.PrivateKey) {
+				token := createTestToken(t, key, jwt.MapClaims{
+					"sub": "user123",
+					// No "exp" claim
+				})
+				req.Header.Set("Authorization", "Bearer "+token)
+			},
+			wantErr: true,
+		},
+		{
 			name: "valid issuer",
 			config: &JWTConfig{
 				PublicKey: publicKey,
