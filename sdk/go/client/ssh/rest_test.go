@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -612,6 +613,57 @@ func TestREST_PassphraseBufferDestroyed(t *testing.T) {
 	// Nothing further to assert here that isn't covered by the canary
 	// scan — this test documents intent and guarantees the code path
 	// executes without panics.
+}
+
+// TestRESTKeys_ImportSendsProviderPassphraseAsBase64 verifies, on the
+// actual request body Import puts on the wire, that the passphrase reaches
+// the server correctly base64-encoded under the passphrase_b64 field —
+// the counterpart of TestRestImportRequest_PassphraseWipeReachesMarshaledBytes,
+// which proves the same field is then wiped (go-xkms#1257).
+func TestRESTKeys_ImportSendsProviderPassphraseAsBase64(t *testing.T) {
+	const secret = "correct horse battery staple"
+
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		gotBody = body
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"name":"imported"}`))
+	}))
+	defer srv.Close()
+
+	client, err := sdkssh.NewREST(sdkssh.RESTOptions{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("NewREST: %v", err)
+	}
+	defer client.Close()
+
+	provider := secure.NewCallbackProvider(func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(secret), nil
+	})
+
+	if _, err := client.Keys().Import(context.Background(), sdkssh.ImportRequest{
+		Scope: "user", Owner: "alice", Name: "imported", PEM: []byte("pem"),
+	}, provider); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	var decoded struct {
+		Passphrase []byte `json:"passphrase_b64"`
+	}
+	if err := json.Unmarshal(gotBody, &decoded); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	if string(decoded.Passphrase) != secret {
+		t.Errorf("passphrase on wire = %q, want %q", decoded.Passphrase, secret)
+	}
+	if !strings.Contains(string(gotBody), `"passphrase_b64"`) {
+		t.Errorf("request body missing passphrase_b64 field: %s", gotBody)
+	}
 }
 
 // TestREST_MalformedServerBody surfaces ProtocolError for broken JSON.

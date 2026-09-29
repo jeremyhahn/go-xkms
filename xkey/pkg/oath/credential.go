@@ -362,7 +362,11 @@ func defaultAlgorithmForMode() string {
 func ParseURI(uri string) (*Credential, error) {
 	u, err := url.Parse(uri)
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrInvalidURI, Cause: err}
+		// url.Parse's returned *url.Error embeds the full input URI in its
+		// message, including the query string -- and therefore the secret.
+		// That text must never reach the returned error, so report a fixed
+		// detail instead of wrapping the cause.
+		return nil, &DetailError{Err: ErrInvalidURI, Detail: ": malformed URI"}
 	}
 
 	if u.Scheme != "otpauth" {

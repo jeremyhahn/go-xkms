@@ -120,7 +120,7 @@ func (h *SSHHandlers) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, http.StatusCreated)
 }
 
-// handleImport consumes a restImportDTO whose PassphraseB64 field uses
+// handleImport consumes a restImportDTO whose Passphrase field (wire name passphrase_b64) uses
 // a custom json.Unmarshaler that lands the decoded bytes directly into
 // a *secure.Buffer. No Go string carries the plaintext passphrase on
 // this path — see SSHPassphraseField below.

@@ -612,38 +612,51 @@ func TestLoadOIDCConfig_NotFound(t *testing.T) {
 	}
 }
 
-func TestTruncateToken(t *testing.T) {
+// TestTruncateToken_NeverPrintsFullToken guards against the default (non
+// --full) display printing a whole token: truncateToken must return at most
+// an 8-character prefix plus the token's length, never the token itself,
+// regardless of how short the token is (go-xkms#1257).
+func TestTruncateToken_NeverPrintsFullToken(t *testing.T) {
 	tests := []struct {
-		name   string
-		token  string
-		maxLen int
-		want   string
+		name  string
+		token string
+		want  string
 	}{
 		{
-			name:   "shorter than max",
-			token:  "short",
-			maxLen: 10,
-			want:   "short",
+			name:  "empty token",
+			token: "",
+			want:  "(0 chars)",
 		},
 		{
-			name:   "equal to max",
-			token:  "1234567890",
-			maxLen: 10,
-			want:   "1234567890",
+			name:  "short token under prefix length",
+			token: "abc",
+			want:  "abc… (3 chars)",
 		},
 		{
-			name:   "longer than max",
-			token:  "this-is-a-very-long-token",
-			maxLen: 10,
-			want:   "this-is-a-",
+			name:  "token equal to prefix length",
+			token: "abcdefgh",
+			want:  "abcdefgh… (8 chars)",
+		},
+		{
+			name:  "token of exactly 40 characters",
+			token: "abcdefghij" + strings.Repeat("x", 30),
+			want:  "abcdefgh… (40 chars)",
+		},
+		{
+			name:  "long token",
+			token: strings.Repeat("a", 1234),
+			want:  "aaaaaaaa… (1234 chars)",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := truncateToken(tt.token, tt.maxLen)
+			got := truncateToken(tt.token)
 			if got != tt.want {
-				t.Errorf("truncateToken(%q, %d) = %q, want %q", tt.token, tt.maxLen, got, tt.want)
+				t.Errorf("truncateToken(%q) = %q, want %q", tt.token, got, tt.want)
+			}
+			if len(tt.token) > truncateTokenPrefixLen && strings.Contains(got, tt.token) {
+				t.Errorf("truncateToken(%q) leaked the full token: %q", tt.token, got)
 			}
 		})
 	}
