@@ -177,7 +177,6 @@ describe('KeysClient (crypto-op and lifecycle endpoints)', () => {
       source_key_id: 'k1',
       dest_backend: 'tpm2',
       dest_key_id: 'k2',
-      key_type: 'ecdsa',
       algorithm: 'ECDSA_P256',
     });
     expect(fake.calls[2]?.url).toBe(`${BASE}/api/v1/keys/copy`);

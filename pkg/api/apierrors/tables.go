@@ -17,6 +17,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -48,6 +49,27 @@ var ImportExportSentinelClasses = []SentinelClass{
 	{backend.ErrImportNotSupported, ClassUnimplemented},
 	{backend.ErrAsymmetricKeyExportNotAllowed, ClassInvalidArgument},
 	{backend.ErrKeyNotExportable, ClassPermissionDenied},
+	// ErrCallerNonceNotSupported is a malformed request against a backend
+	// whose remote encryption service manages its own nonces (AWS KMS, GCP
+	// KMS, Vault Transit, the paired phone): the caller asked for a
+	// guarantee this backend cannot give, not a capability the backend
+	// categorically lacks the way export/import are (go-xkms#1223).
+	{backend.ErrCallerNonceNotSupported, ClassInvalidArgument},
+}
+
+// AEADSentinelClasses classifies the pkg/crypto/aead nonce-safety domain
+// errors that reach the key and crypto operations (Encrypt, WrapKeyByID)
+// through pkg/xkms's process-wide AEAD nonce guard (claimAEADNonce,
+// claimGeneratedAEADNonce): a nonce this process has already consumed under
+// this key is the caller's request repeating a value that must never repeat,
+// not a fault in the server, and a full guard is a resource limit reached
+// rather than a permanent refusal. Both pkg/api/grpc's mapKeyOpError and
+// pkg/api/mcp's mirror of it read this table (go-xkms#1223), mirroring
+// pkg/api/rest/errors_keyops.go's keyOpSentinelStatus entries for the same
+// two sentinels.
+var AEADSentinelClasses = []SentinelClass{
+	{aead.ErrNonceReuse, ClassAlreadyExists},
+	{aead.ErrNonceTrackerFull, ClassResourceExhausted},
 }
 
 // PIVSentinelClasses classifies the PIV domain errors pkg/xkms's PIV

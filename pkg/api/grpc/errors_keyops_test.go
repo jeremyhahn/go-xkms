@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -132,5 +133,56 @@ func TestMapKeyOpError_ServiceWrappedCauses(t *testing.T) {
 				t.Fatalf("code = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestMapKeyOpError_AEADNonceSentinels pins go-xkms#1223: a reused AEAD
+// nonce and a full nonce tracker reach mapKeyOpError wrapped exactly as
+// pkg/xkms's claimAEADNonce / claimGeneratedAEADNonce actually wrap them
+// (*xkms.ErrKeyOperation), from both the generic Encrypt RPC and
+// WrapKeyByID's AES-GCM wrap path, and must render as AlreadyExists and
+// ResourceExhausted respectively rather than falling through to the
+// codes.Internal catch-all a caller cannot distinguish from a genuine
+// server fault.
+func TestMapKeyOpError_AEADNonceSentinels(t *testing.T) {
+	tests := map[string]struct {
+		err  error
+		want codes.Code
+	}{
+		"nonce reuse via Encrypt": {
+			err:  &xkms.ErrKeyOperation{Operation: "aead encrypt", KeyID: "k1", Err: aead.ErrNonceReuse},
+			want: codes.AlreadyExists,
+		},
+		"nonce reuse via WrapKeyByID": {
+			err:  &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrNonceReuse},
+			want: codes.AlreadyExists,
+		},
+		"nonce tracker full via Encrypt": {
+			err:  &xkms.ErrKeyOperation{Operation: "aead encrypt", KeyID: "k1", Err: aead.ErrNonceTrackerFull},
+			want: codes.ResourceExhausted,
+		},
+		"nonce tracker full via WrapKeyByID": {
+			err:  &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrNonceTrackerFull},
+			want: codes.ResourceExhausted,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := status.Code(mapKeyOpError(context.Background(), nil, tt.err))
+			if got != tt.want {
+				t.Fatalf("code = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMapKeyOpError_CallerNonceNotSupported pins go-xkms#1223: a symmetric
+// backend that refuses a caller-supplied nonce (AWS KMS, GCP KMS, Vault
+// Transit, the paired phone) reports InvalidArgument, matching the 400 REST
+// reports for the same sentinel.
+func TestMapKeyOpError_CallerNonceNotSupported(t *testing.T) {
+	got := status.Code(mapKeyOpError(context.Background(), nil, backend.ErrCallerNonceNotSupported))
+	if got != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", got)
 	}
 }

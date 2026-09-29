@@ -178,5 +178,17 @@ func mapKeyOpError(err error) error {
 		return &KeyOpError{Code: jsonRPCCodeForClass(class), Err: err}
 	}
 
+	// aead.ErrNonceReuse and aead.ErrNonceTrackerFull reach here wrapped in
+	// pkg/xkms's ErrKeyOperation from Encrypt's and WrapKeyByID's AEAD nonce
+	// guard; see apierrors.AEADSentinelClasses. classified is used rather
+	// than the bare *KeyOpError literal above: ClassResourceExhausted has no
+	// dedicated JSON-RPC code and renders through the same ErrCodeInternalError
+	// floor an unclassified fault does, so Classified is what keeps a nonce
+	// tracker at capacity from being reported with the internal-fault text
+	// ClientError withholds for a genuinely unclassified error.
+	if class, ok := apierrors.ClassOf(apierrors.AEADSentinelClasses, err); ok {
+		return classified(jsonRPCCodeForClass(class), err)
+	}
+
 	return &KeyOpError{Code: ErrCodeInternalError, Err: err}
 }

@@ -299,6 +299,15 @@ func (e *vaultSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 		if err := aead.RequireDefaultTagSize(opts.TagSize, "Vault Transit"); err != nil {
 			return nil, err
 		}
+		// Vault Transit's encrypt endpoint manages nonce generation
+		// server-side and exposes no parameter to override it. A
+		// caller-supplied nonce used to be accepted here and silently
+		// dropped, which let a caller believe its own nonce discipline
+		// governed this encryption when Vault's did instead. Refused
+		// outright rather than ignored.
+		if opts.Nonce != nil {
+			return nil, backend.ErrCallerNonceNotSupported
+		}
 	}
 
 	// Track bytes encrypted (Vault manages nonces server-side)

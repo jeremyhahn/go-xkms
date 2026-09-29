@@ -192,13 +192,19 @@ keys, and gRPC let any tenant read and list them.
 
 **`CopyKey` semantics.** A copy is the same key under a new name: the
 destination takes the source key's algorithm, size, curve, hash and partition
-(`pkg/xkms/servicer_key.go:566`). The copy lands in the caller's tenant in the
-destination backend, and the material is wrapped for the destination's own
-import parameters (`ExportKeyTo`). REST's `CopyKeyRequest` therefore no longer
-has `key_type`, `key_size`, `curve`, `hash` or `aes_key_size`, and
-`key_type` is no longer required; a client that still sends them is not
-refused, the fields are ignored. gRPC's `CopyKey` already took no key
-description; its copy used to land with no tenant at all.
+(`pkg/xkms/servicer_key.go:566`), and — since go-xkms#1223 —
+`types.ValidateRSAKeySize` refuses a source whose RSA modulus is below 2048
+bits before the export/import runs (`pkg/xkms/servicer_key.go:614`), reported
+as `400` / `InvalidArgument` on every transport through the same
+`*xkms.ErrValidation` path every other key-op validation failure uses. The
+copy lands in the caller's tenant in the destination backend, and the
+material is wrapped for the destination's own import parameters
+(`ExportKeyTo`). REST's, gRPC's and MCP's `CopyKeyRequest` / `CopyKeyParams`
+never had, or (as of go-xkms#1223) no longer have, `key_type`, `key_size` or
+`curve`: the service has always ignored them, so they were removed from the
+wire types, the xkmsctl `key copy` flags and the TypeScript SDK mirror rather
+than kept as dead input. `hash` and `aes_key_size` remain on MCP's
+`CopyKeyParams` only — see the "still outstanding" note above (#155).
 
 **Wire changes.** Response shapes are unchanged except:
 

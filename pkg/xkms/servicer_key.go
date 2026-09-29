@@ -615,6 +615,21 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		return nil, &ErrCopyKeyBackend{Role: "source key", Err: err}
 	}
 
+	// The RSA-2048 floor is re-checked here directly against
+	// types.ValidateRSAKeySize rather than by calling srcAttrs.Validate():
+	// Validate requires fields (backend, name, store type) a copy's
+	// reconstructed source attributes do not always carry, and rejected a
+	// legitimate copy outright (go-xkms#1220). A key generated before the
+	// floor existed, or copied in from a backend that never enforced it, is
+	// refused here rather than propagated to a new backend under a new name.
+	// A caller-named size of zero is left alone -- the copy always sets one
+	// from the source's own attributes.
+	if srcAttrs.RSAAttributes != nil && srcAttrs.RSAAttributes.KeySize != 0 {
+		if err := types.ValidateRSAKeySize(srcAttrs.RSAAttributes.KeySize); err != nil {
+			return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: err.Error()}
+		}
+	}
+
 	// The destination describes the same key under a new name: the store type
 	// is the destination backend's, exactly as an import into it would derive
 	// it, and the digest and partition travel with the material so the copy is

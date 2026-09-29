@@ -543,6 +543,44 @@ func TestSymmetricEncrypter_Encrypt(t *testing.T) {
 	}
 }
 
+// TestSymmetricEncrypter_Encrypt_RejectsCallerNonce proves Encrypt refuses a
+// caller-supplied nonce rather than silently dropping it: GCP KMS's Encrypt
+// RPC manages nonce generation server-side and exposes no parameter to
+// override it (go-xkms#1223).
+func TestSymmetricEncrypter_Encrypt_RejectsCallerNonce(t *testing.T) {
+	e := &gcpKMSSymmetricEncrypter{
+		backend: &Backend{client: &MockKMSClient{}},
+		keyName: "projects/p/locations/l/keyRings/kr/cryptoKeys/nonce-test",
+		attrs:   &types.KeyAttributes{CN: "nonce-test", SymmetricAlgorithm: types.SymmetricAES256GCM},
+	}
+	_, err := e.Encrypt([]byte("plaintext"), &types.EncryptOptions{Nonce: []byte("123456789012")})
+	if !errors.Is(err, backend.ErrCallerNonceNotSupported) {
+		t.Errorf("Encrypt() error = %v, want backend.ErrCallerNonceNotSupported", err)
+	}
+}
+
+// TestSymmetricEncrypter_Encrypt_AllowsNilNonce proves the new caller-nonce
+// refusal does not reject the common case of an empty EncryptOptions.
+func TestSymmetricEncrypter_Encrypt_AllowsNilNonce(t *testing.T) {
+	mockClient := &MockKMSClient{
+		EncryptFunc: func(ctx context.Context, req *kmspb.EncryptRequest, opts ...interface{}) (*kmspb.EncryptResponse, error) {
+			ciphertext := []byte("encrypted-data")
+			return &kmspb.EncryptResponse{
+				Ciphertext:       ciphertext,
+				CiphertextCrc32C: &wrapperspb.Int64Value{Value: int64(crc32c(ciphertext))},
+			}, nil
+		},
+	}
+	e := &gcpKMSSymmetricEncrypter{
+		backend: &Backend{client: mockClient},
+		keyName: "projects/p/locations/l/keyRings/kr/cryptoKeys/nonce-test",
+		attrs:   &types.KeyAttributes{CN: "nonce-test", SymmetricAlgorithm: types.SymmetricAES256GCM},
+	}
+	if _, err := e.Encrypt([]byte("plaintext"), &types.EncryptOptions{}); err != nil {
+		t.Errorf("Encrypt() with no nonce should not be refused: %v", err)
+	}
+}
+
 func TestSymmetricEncrypter_Decrypt(t *testing.T) {
 	tests := []struct {
 		name     string

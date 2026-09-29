@@ -1642,9 +1642,6 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 		DestBackend:   params.DestBackend,
 		DestKeyID:     params.DestKeyID,
 		Algorithm:     params.Algorithm,
-		KeyType:       params.KeyType,
-		KeySize:       params.KeySize,
-		Curve:         params.Curve,
 		TenantID:      tenantID,
 	})
 	if err != nil {

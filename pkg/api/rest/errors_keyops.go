@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -61,6 +62,22 @@ var keyOpSentinelStatus = []struct {
 	{backend.ErrImportNotSupported, http.StatusNotImplemented},
 	{backend.ErrAsymmetricKeyExportNotAllowed, http.StatusBadRequest},
 	{backend.ErrKeyNotExportable, http.StatusForbidden},
+
+	// A caller-supplied nonce against a backend whose remote encryption
+	// service manages its own nonces (AWS KMS, GCP KMS, Vault Transit, the
+	// paired phone) is a malformed request, not a capability the backend
+	// categorically lacks (go-xkms#1223).
+	{backend.ErrCallerNonceNotSupported, http.StatusBadRequest},
+
+	// aead.ErrNonceReuse and aead.ErrNonceTrackerFull reach here wrapped in
+	// pkg/xkms's ErrKeyOperation from Encrypt's and WrapKeyByID's AEAD nonce
+	// guard. A reused nonce is the caller's request repeating a value that
+	// must never repeat -- 409, matching gRPC's codes.AlreadyExists and
+	// apierrors.AEADSentinelClasses' ClassAlreadyExists -- and a full guard
+	// is a resource limit reached, not a permanent refusal -- 503, matching
+	// codes.ResourceExhausted (go-xkms#1223).
+	{aead.ErrNonceReuse, http.StatusConflict},
+	{aead.ErrNonceTrackerFull, http.StatusServiceUnavailable},
 }
 
 // mapKeyOpError converts an error returned by the xkms service layer's key

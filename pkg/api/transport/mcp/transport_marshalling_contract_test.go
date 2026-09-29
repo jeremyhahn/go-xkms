@@ -182,6 +182,9 @@ func TestExportKey_ParamsReachTheHandlerStruct(t *testing.T) {
 // TestCopyKey_ParamsReachTheHandlerStruct covers copy. Every field the request
 // can express must survive; the two the params struct has and the request does
 // not (hash, aes_key_size) are go-xkms#155 and are not addressed here.
+// KeyType, KeySize and Curve used to be among those fields too; they were
+// removed from both structs because the service ignores them outright
+// (go-xkms#1223), so there is nothing left for this test to assert about them.
 func TestCopyKey_ParamsReachTheHandlerStruct(t *testing.T) {
 	raw := captureParams(t, xkmsmcp.CopyKeyResult{Success: true}, func(tr *Transport) error {
 		_, err := tr.CopyKey(context.Background(), &transport.CopyKeyRequest{
@@ -190,9 +193,6 @@ func TestCopyKey_ParamsReachTheHandlerStruct(t *testing.T) {
 			DestBackend:   "pkcs11",
 			DestKeyID:     "dst.example",
 			Algorithm:     "RSAES_OAEP_SHA_256",
-			KeyType:       "rsa",
-			KeySize:       2048,
-			Curve:         "P-256",
 		})
 		return err
 	})
@@ -205,7 +205,4 @@ func TestCopyKey_ParamsReachTheHandlerStruct(t *testing.T) {
 	assert.Equal(t, "pkcs11", params.DestBackend)
 	assert.Equal(t, "dst.example", params.DestKeyID)
 	assert.Equal(t, "RSAES_OAEP_SHA_256", params.Algorithm)
-	assert.Equal(t, "rsa", params.KeyType)
-	assert.Equal(t, 2048, params.KeySize)
-	assert.Equal(t, "P-256", params.Curve)
 }

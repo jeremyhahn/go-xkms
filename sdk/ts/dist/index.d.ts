@@ -1721,18 +1721,20 @@ interface ExportKeyResponse {
     algorithm: string;
     import_token?: Base64;
 }
-/** Mirrors pkg/api/rest/types.go CopyKeyRequest. */
+/**
+ * Mirrors pkg/api/rest/types.go CopyKeyRequest. It names the source key, the
+ * destination, and the wrapping algorithm, and nothing about the key itself:
+ * the copy takes its algorithm, size, curve, hash and partition from the
+ * source key (XKMSService.CopyKey). key_type, key_size, curve, hash and
+ * aes_key_size were removed rather than kept as fields the server has never
+ * read (go-xkms#1223).
+ */
 interface CopyKeyRequest {
     source_backend: string;
     source_key_id: string;
     dest_backend: string;
     dest_key_id: string;
-    key_type: string;
     algorithm: string;
-    key_size?: number;
-    curve?: string;
-    hash?: string;
-    aes_key_size?: number;
 }
 /** Mirrors pkg/api/rest/types.go CopyKeyResponse. */
 interface CopyKeyResponse {
