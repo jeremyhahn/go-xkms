@@ -157,8 +157,10 @@ type ServiceModuleBarrierRegistryResolver = apimodule.BarrierRegistryResolver
 var WithServiceModuleBarrierRegistry = apimodule.WithBarrierRegistry
 
 // WithServiceModulePINBackend supplies the host's PIN backend, whose user
-// PIN opens a tenant's Password Manager session. It also backs the PIN
-// management routes.
+// PIN opens a tenant's Password Manager session. It also mounts the
+// permission-gated, platform-scoped PIN management routes, /api/v1/pin/*
+// (pin:read to verify a PIN or read the lockout, pin:write to set, change or
+// reset).
 var WithServiceModulePINBackend = apimodule.WithPINBackend
 
 // WithServiceModulePlatformSealer enables the platform sealed-secret store,
