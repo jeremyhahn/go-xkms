@@ -20,6 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -87,4 +89,46 @@ func TestMapKeyOpError_UnclassifiedErrorIsInternal(t *testing.T) {
 // mapKeyOpError(err) }" call site stays correct without its own nil guard.
 func TestMapKeyOpError_Nil(t *testing.T) {
 	assert.NoError(t, mapKeyOpError(nil))
+}
+
+// TestMapKeyOpError_AEADNonceSentinels pins go-xkms#1223: a reused AEAD
+// nonce and a full nonce tracker reach mapKeyOpError wrapped exactly as
+// pkg/xkms's claimAEADNonce / claimGeneratedAEADNonce actually wrap them
+// (*xkms.ErrKeyOperation), from both the generic Encrypt RPC and
+// WrapKeyByID's AES-GCM wrap path, and must render as the JSON-RPC duplicate
+// code and the internal-error floor respectively (JSON-RPC has no dedicated
+// ResourceExhausted member), with Classified set so the resource-exhausted
+// case's text is not withheld the way a genuinely unclassified fault's is.
+func TestMapKeyOpError_AEADNonceSentinels(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"nonce reuse via Encrypt", &xkms.ErrKeyOperation{Operation: "aead encrypt", KeyID: "k1", Err: aead.ErrNonceReuse}, sdkssh.JSONRPCCodeDuplicate},
+		{"nonce reuse via WrapKeyByID", &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrNonceReuse}, sdkssh.JSONRPCCodeDuplicate},
+		{"nonce tracker full via Encrypt", &xkms.ErrKeyOperation{Operation: "aead encrypt", KeyID: "k1", Err: aead.ErrNonceTrackerFull}, ErrCodeInternalError},
+		{"nonce tracker full via WrapKeyByID", &xkms.ErrKeyOperation{Operation: "aes-gcm wrap", KeyID: "k1", Err: aead.ErrNonceTrackerFull}, ErrCodeInternalError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := mapKeyOpError(tt.err)
+			var keyErr *KeyOpError
+			require.ErrorAs(t, err, &keyErr)
+			assert.Equal(t, tt.want, keyErr.Code)
+			assert.False(t, keyErr.Internal(),
+				"an AEAD nonce-safety refusal must not be reported with the withheld internal-fault text")
+		})
+	}
+}
+
+// TestMapKeyOpError_CallerNonceNotSupported pins go-xkms#1223: a symmetric
+// backend that refuses a caller-supplied nonce (AWS KMS, GCP KMS, Vault
+// Transit, the paired phone) reports Invalid params, matching the 400 REST
+// and InvalidArgument gRPC report for the same sentinel.
+func TestMapKeyOpError_CallerNonceNotSupported(t *testing.T) {
+	err := mapKeyOpError(backend.ErrCallerNonceNotSupported)
+	var keyErr *KeyOpError
+	require.ErrorAs(t, err, &keyErr)
+	assert.Equal(t, ErrCodeInvalidParams, keyErr.Code)
 }

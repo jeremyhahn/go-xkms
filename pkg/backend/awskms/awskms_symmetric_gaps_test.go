@@ -21,6 +21,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -242,6 +244,41 @@ func TestSymmetricEncrypterEncrypt_RejectsNonDefaultTagSize(t *testing.T) {
 	_, err := e.Encrypt([]byte("plaintext"), &types.EncryptOptions{TagSize: 8})
 	if err == nil {
 		t.Error("Encrypt() expected error for non-default TagSize, got nil")
+	}
+}
+
+// TestSymmetricEncrypterEncrypt_RejectsCallerNonce proves Encrypt refuses a
+// caller-supplied nonce rather than silently dropping it: AWS KMS's Encrypt
+// API manages nonce generation server-side and exposes no parameter to
+// override it (go-xkms#1223).
+func TestSymmetricEncrypterEncrypt_RejectsCallerNonce(t *testing.T) {
+	e := &awsKMSSymmetricEncrypter{
+		backend: mustBackendWithClient(t, &MockKMSClient{}),
+		keyID:   "test-key-id",
+		attrs:   &types.KeyAttributes{CN: "nonce-test", SymmetricAlgorithm: types.SymmetricAES256GCM},
+	}
+	_, err := e.Encrypt([]byte("plaintext"), &types.EncryptOptions{Nonce: []byte("123456789012")})
+	if !errors.Is(err, backend.ErrCallerNonceNotSupported) {
+		t.Errorf("Encrypt() error = %v, want backend.ErrCallerNonceNotSupported", err)
+	}
+}
+
+// TestSymmetricEncrypterEncrypt_AllowsNilNonce proves the new caller-nonce
+// refusal does not reject the common case of an empty EncryptOptions,
+// distinguishing "no options at all" and "an explicit nonce" from each other.
+func TestSymmetricEncrypterEncrypt_AllowsNilNonce(t *testing.T) {
+	mockClient := &MockKMSClient{
+		EncryptFunc: func(ctx context.Context, params *kms.EncryptInput, optFns ...func(*kms.Options)) (*kms.EncryptOutput, error) {
+			return &kms.EncryptOutput{CiphertextBlob: []byte("ciphertext")}, nil
+		},
+	}
+	e := &awsKMSSymmetricEncrypter{
+		backend: mustBackendWithClient(t, mockClient),
+		keyID:   "test-key-id",
+		attrs:   &types.KeyAttributes{CN: "nonce-test", SymmetricAlgorithm: types.SymmetricAES256GCM},
+	}
+	if _, err := e.Encrypt([]byte("plaintext"), &types.EncryptOptions{}); err != nil {
+		t.Errorf("Encrypt() with no nonce should not be refused: %v", err)
 	}
 }
 

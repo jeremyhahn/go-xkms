@@ -26,8 +26,8 @@ import (
 
 // classToGRPCCode translates apierrors.Class onto its gRPC status code. It is
 // total over every Class the apierrors tables this package reads
-// (ImportExportSentinelClasses, and the PIV, barrier, seal store, PIN,
-// custodian and policy tables consumed by service_piv.go,
+// (ImportExportSentinelClasses, AEADSentinelClasses, and the PIV, barrier,
+// seal store, PIN, custodian and policy tables consumed by service_piv.go,
 // service_barrier_pin.go, service_seal_store.go,
 // service_custodian_share_tenant.go and service_policy.go) can produce, so
 // a table entry can never resolve to an unmapped Class silently;
@@ -134,6 +134,13 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 	}
 
 	if class, ok := apierrors.ClassOf(apierrors.ImportExportSentinelClasses, err); ok {
+		return status.Error(grpcCodeForClass(class), err.Error())
+	}
+
+	// aead.ErrNonceReuse and aead.ErrNonceTrackerFull reach here wrapped in
+	// pkg/xkms's ErrKeyOperation from Encrypt's and WrapKeyByID's AEAD nonce
+	// guard; see apierrors.AEADSentinelClasses.
+	if class, ok := apierrors.ClassOf(apierrors.AEADSentinelClasses, err); ok {
 		return status.Error(grpcCodeForClass(class), err.Error())
 	}
 

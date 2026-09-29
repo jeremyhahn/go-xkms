@@ -1544,6 +1544,14 @@ func (e *gcpKMSSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		if err := aead.RequireDefaultTagSize(opts.TagSize, "GCP KMS"); err != nil {
 			return nil, err
 		}
+		// GCP KMS's Encrypt RPC manages nonce generation server-side and
+		// exposes no parameter to override it. A caller-supplied nonce used
+		// to be accepted here and silently dropped, which let a caller
+		// believe its own nonce discipline governed this encryption when GCP
+		// KMS's did instead. Refused outright rather than ignored.
+		if opts.Nonce != nil {
+			return nil, backend.ErrCallerNonceNotSupported
+		}
 	}
 
 	e.backend.mu.RLock()

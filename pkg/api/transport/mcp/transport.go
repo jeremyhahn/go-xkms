@@ -897,15 +897,16 @@ func (t *Transport) ExportKeyMaterial(ctx context.Context, req *transport.Export
 }
 
 // CopyKey copies a key from one backend to another.
-// CopyKey copies a key from one backend to another.
 //
 // Params are built by name so the pair cannot drift. Note what this does NOT
-// fix: xkmsmcp.CopyKeyParams carries hash and aes_key_size, and
+// fix: xkmsmcp.CopyKeyParams still carries hash and aes_key_size, and
 // transport.CopyKeyRequest has no field for either, so no caller of this
 // transport can populate them. That gap is go-xkms#155 and closing it means
 // deciding whether the request struct gains the fields on every transport --
 // the gRPC CopyKeyRequest message would need them too. Left alone deliberately
-// rather than papered over here.
+// rather than papered over here. KeyType, KeySize and Curve, which used to be
+// threaded through here too, were removed from both structs: the service
+// ignores them and always has (go-xkms#1223).
 func (t *Transport) CopyKey(ctx context.Context, req *transport.CopyKeyRequest) (*transport.CopyKeyResponse, error) {
 	if req == nil {
 		return nil, transport.ErrInvalidRequest
@@ -916,10 +917,7 @@ func (t *Transport) CopyKey(ctx context.Context, req *transport.CopyKeyRequest) 
 		SourceKeyID:   req.SourceKeyID,
 		DestBackend:   req.DestBackend,
 		DestKeyID:     req.DestKeyID,
-		KeyType:       req.KeyType,
 		Algorithm:     req.Algorithm,
-		KeySize:       req.KeySize,
-		Curve:         req.Curve,
 	}
 
 	var result transport.CopyKeyResponse

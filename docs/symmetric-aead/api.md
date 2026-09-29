@@ -38,11 +38,23 @@ full-length tag; AES-GCM admits 12-16 bytes per NIST SP 800-38D §5.2.1.2).
 `nonce` may be used once per key per server process. A second encryption
 under the same key and nonce is refused, including a nonce the server
 generated for an earlier response and a nonce used by an AES-GCM wrap under
-that key. The error wraps `aead.ErrNonceReuse` and today surfaces through the
-catch-all status (HTTP 500). Leave `nonce` empty unless a protocol requires
-it. See [`architecture.md`](architecture.md) §"Caller-supplied nonces"
-for the limits: the record does not survive a restart and is not shared
-between cluster nodes.
+that key. The error wraps `aead.ErrNonceReuse` and is reported as `409
+Conflict` (gRPC `AlreadyExists`, the MCP JSON-RPC duplicate code) through the
+shared `apierrors.AEADSentinelClasses` table (`pkg/api/apierrors/tables.go`)
+every transport's `mapKeyOpError` consults (go-xkms#1223); it used to fall
+through to the catch-all `500`. A bounded nonce tracker that has reached
+capacity wraps `aead.ErrNonceTrackerFull` and is reported as `503 Service
+Unavailable` (gRPC `ResourceExhausted`) through the same table. Leave `nonce`
+empty unless a protocol requires it. See [`architecture.md`](architecture.md)
+§"Caller-supplied nonces" for the limits: the record does not survive a
+restart and is not shared between cluster nodes.
+
+A caller-supplied `nonce` against AWS KMS, GCP KMS, Vault Transit or a paired
+phone's symmetric backend is refused outright with
+`backend.ErrCallerNonceNotSupported` (`400 Bad Request` / `InvalidArgument` /
+MCP Invalid params): those backends' remote encryption service manages nonce
+generation itself and exposes no parameter to accept a caller's choice, so a
+supplied nonce used to be silently dropped rather than honored (go-xkms#1223).
 
 Response (`EncryptResponse`, `types.go:182-189`):
 

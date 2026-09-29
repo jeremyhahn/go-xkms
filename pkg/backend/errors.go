@@ -82,6 +82,17 @@ var (
 	// and is not permitted. Use ExportKey with wrapping for secure key transport instead.
 	ErrAsymmetricKeyExportNotAllowed = errors.New("backend: raw key material export not allowed for asymmetric keys")
 
+	// ErrCallerNonceNotSupported is returned when a caller supplies a nonce to
+	// a symmetric Encrypt call on a backend whose encryption always happens
+	// remotely -- AWS KMS, GCP KMS, Vault Transit and the paired phone all
+	// manage nonce generation themselves and expose no parameter to override
+	// it, so a caller-chosen nonce was previously accepted and silently
+	// dropped rather than honored. Refusing it outright means a caller
+	// relying on its own nonce for AEAD safety learns immediately that this
+	// backend does not provide that guarantee, instead of unknowingly
+	// encrypting under a nonce the backend chose for itself.
+	ErrCallerNonceNotSupported = errors.New("backend: caller-supplied nonce not supported by this backend")
+
 	// ErrExportToUnsupported is returned by ExportKeyTo when a backend cannot
 	// wrap key material under a destination-supplied set of import
 	// parameters. This is true of every hardware- or provider-bound wrap

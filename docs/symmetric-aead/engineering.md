@@ -71,6 +71,28 @@ ChaCha20/XChaCha20 keys with `ErrCBCRequiresAES`/`ErrECBRequiresAES`.
   concurrency, keys that predate the process, aliasing, generated-nonce
   replay, wrap/encrypt sharing, sealed keys, identity failure, full-guard
   policy, PKCS#11 end to end).
+- **`aead.ErrNonceReuse` and `aead.ErrNonceTrackerFull` classify to
+  `ClassAlreadyExists` / `ClassResourceExhausted` on every transport**,
+  through `apierrors.AEADSentinelClasses` (`pkg/api/apierrors/tables.go`),
+  consulted from `pkg/api/grpc/errors_keyops.go`'s and `pkg/api/mcp`'s
+  `mapKeyOpError`, and mirrored by REST's `keyOpSentinelStatus`
+  (`pkg/api/rest/errors_keyops.go`) — `409`/`AlreadyExists`/the MCP
+  duplicate code for a reuse, `503`/`ResourceExhausted`/the MCP internal
+  floor (with `Classified` set so the text is not withheld) for a full
+  guard (go-xkms#1223). Both `Encrypt` and `WrapKeyByID` (the AES-GCM wrap)
+  go through the same table. Tests: `TestMapKeyOpError_AEADNonceSentinels`
+  in each of `pkg/api/grpc`, `pkg/api/mcp` and `pkg/api/rest`, plus the
+  `"aead"` sub-test in each package's `TestClassification_MatchesSharedTables`.
+- **A caller-supplied nonce against a backend whose encryption always
+  happens remotely is refused, not silently dropped.** AWS KMS, GCP KMS,
+  Vault Transit and the paired phone's symmetric `Encrypt` all manage nonce
+  generation themselves and expose no parameter to override it; a non-nil
+  `EncryptOptions.Nonce` is refused with `backend.ErrCallerNonceNotSupported`
+  before the remote call is ever made (`pkg/backend/awskms/awskms_symmetric.go`,
+  `pkg/backend/gcpkms/gcpkms.go`, `pkg/backend/vault/vault_symmetric.go`,
+  `pkg/backend/phone/symmetric.go`), classified as `ClassInvalidArgument` via
+  `apierrors.ImportExportSentinelClasses` — `400`/`InvalidArgument`/MCP
+  Invalid params (go-xkms#1223).
 - **CBC/ECB carry no AEAD safety tracking at all** — they are not AEAD
   modes, so `IncrementBytes`/`CheckNonce`/`RecordNonce` are never called on
   that path (`backend.go:556-569`, `:750-759`).
@@ -103,7 +125,11 @@ All declared as typed sentinels in `errors.go`, never inline `fmt.Errorf`:
 `ErrCiphertextNotBlockAligned`, `ErrKeyMetadataNotFound`,
 `ErrInvalidPadding`. `pkg/backend/errors.go` separately declares
 `ErrNonceReused` and `ErrBytesLimitExceeded`, returned by the
-`AEADSafetyTracker` implementation, not by this package.
+`AEADSafetyTracker` implementation, not by this package, and
+`ErrCallerNonceNotSupported` (go-xkms#1223), returned by the AWS KMS, GCP
+KMS, Vault Transit and paired-phone symmetric `Encrypt` implementations when
+the caller supplies a nonce those backends' remote encryption service cannot
+honor.
 
 ## AEAD safety tracker — `types.AEADSafetyTracker`
 
