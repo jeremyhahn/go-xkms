@@ -332,8 +332,10 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 		}
 		createdKeys = append(createdKeys, sourceAttrs)
 
-		// Test getting import parameters
-		params, err := ieb.GetImportParameters(ctx, sourceAttrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		// Test getting import parameters. Azure Key Vault's native BYOK
+		// key_hsm format always requires the hybrid RSA+AES-KWP wrapping
+		// algorithm (go-xkms#1342); plain RSA-OAEP is refused.
+		params, err := ieb.GetImportParameters(ctx, sourceAttrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		if err != nil {
 			t.Logf("GetImportParameters not fully supported yet: %v", err)
 			return
