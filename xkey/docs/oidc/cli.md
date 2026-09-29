@@ -1,6 +1,6 @@
 # OIDC — CLI
 
-Status: current. Last verified: 2026-09-25.
+Status: current. Last verified: 2026-09-29.
 
 `xkey oidc` performs browser-based OIDC login against any OIDC-compliant
 provider (PKCE authorization code) or AWS Console native login (DPoP), and
@@ -68,10 +68,30 @@ delegated to the AWS DPoP flow automatically.
 ## `xkey oidc aws`
 
 Direct AWS Console native login (DPoP). See `pkg/oidc`'s DPoP documentation
-for the mechanism; this command's session (the DPoP key and refresh token)
-is stored separately from the standard OIDC session, at `--session-store`
-(default `~/.xkey/aws-session.json`) — out of scope for the barrier
-migration in [architecture.md](architecture.md).
+for the mechanism; this command's session (the DPoP private key and refresh
+token) is stored separately from the standard OIDC session, in its own
+barrier-or-fallback store — the same decision the session storage flags
+table above describes for `--token-store`, applied to `--session-store`
+instead (see [architecture.md](architecture.md) for the full "where the
+store lives" table). In order:
+
+1. `--session-store` explicitly set (directly here, or saved earlier on an
+   AWS provider via `xkey oidc providers add --session-store`) → the session
+   is read/written as a plain file at exactly that path. No barrier
+   involved.
+2. `--session-store` left at its default, a barrier is initialized → the
+   session is barrier-encrypted; a barrier password is required (from a
+   flag, a file, the environment, or an interactive prompt) or the command
+   fails with a typed refusal rather than writing plaintext.
+3. `--session-store` left at its default, no barrier initialized → the
+   session is written as a plain file (a warning is logged once, naming the
+   store and suggesting `xkey barrier init`).
+
+`--session-store`'s flag value is, in every case, also used to derive the
+default log-file and PID-file directories for `--background`/
+`--auto-refresh` — those are never secret, so they keep the historical
+`~/.xkey/logs`/`~/.xkey/pids` layout regardless of where the session data
+itself lands.
 
 ```
 xkey oidc aws [flags]
@@ -87,10 +107,15 @@ xkey oidc aws [flags]
 | `--credentials-file` | `~/.aws/credentials` | AWS credentials file path; replaced atomically with mode `0600`, other profiles kept |
 | `--exec` | | Execute a script after login |
 | `--auto-refresh` | `0` | Auto-refresh interval in seconds |
-| `--session-store` | `~/.xkey/aws-session.json` | Session store path |
+| `--session-store` | `~/.xkey/aws-session.json` | Session store path; see the barrier-or-fallback decision above |
+| `--barrier-password-stdin` | `false` | Read the barrier password from standard input |
+| `--barrier-password-file <path>` | | Read the barrier password from the first line of this file |
 | `--background` | `false` | Run auto-refresh in background |
 | `--log-file` | (auto-generated) | Log file for background refresh |
 | `--callback-host`, `--callback-port` | `oidc.callback_host`/`oidc.callback_port` | Local callback listener; AWS redirects to `127.0.0.1`, so only `localhost`, `127.0.0.1`, or `""` can serve it |
+
+Environment: `XKEY_BARRIER_PASSWORD` is read when neither barrier flag is
+set, the same as the session storage flags table above.
 
 ## `xkey oidc token`
 
