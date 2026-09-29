@@ -15,6 +15,7 @@ package tpm2
 
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -35,6 +36,12 @@ import (
 // The caller receives only derived bytes. The base key's own material is never
 // returned, and tpm2SymmetricKey.Raw continues to refuse it.
 func (tpm *TPM2) DeriveFromSymmetricKey(attrs *types.KeyAttributes, params *kdf.KDFParams) ([]byte, error) {
+	return tpm.DeriveFromSymmetricKeyIn(attrs, tpm.backend, params)
+}
+
+// DeriveFromSymmetricKeyIn is DeriveFromSymmetricKey over a key whose blobs
+// are in keys.
+func (tpm *TPM2) DeriveFromSymmetricKeyIn(attrs *types.KeyAttributes, keys store.KeyBackend, params *kdf.KDFParams) ([]byte, error) {
 	if attrs == nil {
 		return nil, ErrInvalidKeyAttributes
 	}
@@ -49,11 +56,11 @@ func (tpm *TPM2) DeriveFromSymmetricKey(attrs *types.KeyAttributes, params *kdf.
 	// GetSymmetricKey proves the sealed object exists and carries the
 	// attributes claimed for it before any TPM_Unseal is attempted; the
 	// encrypter below performs no such check of its own.
-	if _, err := tpm.GetSymmetricKey(attrs); err != nil {
+	if _, err := tpm.GetSymmetricKeyIn(attrs, keys); err != nil {
 		return nil, err
 	}
 
-	encrypter := &tpm2AESEncrypter{tpm: tpm, attrs: attrs}
+	encrypter := &tpm2AESEncrypter{tpm: tpm, attrs: attrs, keys: keys}
 	keyMaterial, err := encrypter.loadKeyMaterial()
 	if err != nil {
 		return nil, err

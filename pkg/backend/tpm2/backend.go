@@ -1077,19 +1077,20 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	attrs.StoreType = types.StoreTPM2
 	applyDefaultTPMPolicy(attrs)
 
-	// The key is sealed under the scope's Platform SRK: its attributes carry
-	// its USER PIN when the PlatformKeyStore has one, otherwise creation is
-	// authorized through its platform PCR policy. pkg/tpm2 refuses any other
-	// parent (ErrSymmetricKeyParent), which is why a shared tenant is
-	// refused here.
-	scope, err := b.symmetricScope(ctx, attrs.TenantID)
+	// The key is sealed under the scope's parent -- the Platform SRK, or a
+	// shared tenant's storage key beneath it -- in the scope's key store.
+	scope, err := b.scope(ctx, attrs.TenantID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, scope.close()) }()
 
 	bound := scope.bind(attrs)
-	key, err := scope.tpm.GenerateSymmetricKey(bound)
+	tpm, err := scope.symmetricTPM()
+	if err != nil {
+		return nil, err
+	}
+	key, err := tpm.GenerateSymmetricKeyIn(bound, scope.keys)
 	if err != nil {
 		return nil, err
 	}
@@ -1112,7 +1113,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		return nil, ErrInvalidKeyAttributes
 	}
 
-	scope, err := b.symmetricScope(ctx, attrs.TenantID)
+	scope, err := b.scope(ctx, attrs.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -1120,7 +1121,11 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 
 	attrs.StoreType = types.StoreTPM2
 
-	return scope.tpm.GetSymmetricKey(scope.bind(attrs))
+	tpm, err := scope.symmetricTPM()
+	if err != nil {
+		return nil, err
+	}
+	return tpm.GetSymmetricKeyIn(scope.bind(attrs), scope.keys)
 }
 
 // SymmetricEncrypter returns a SymmetricEncrypter for the key identified by attrs.
@@ -1136,31 +1141,89 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 		return nil, ErrInvalidKeyAttributes
 	}
 
-	// Every Encrypt and Decrypt loads the sealed key under this parent, the
-	// scope's Platform SRK, with its USER PIN or platform PCR policy. It is
-	// persistent, so the encrypter outlives the scope's close.
-	scope, err := b.symmetricScope(ctx, attrs.TenantID)
+	attrs.StoreType = types.StoreTPM2
+
+	// A key must exist before an encrypter is handed out for it.
+	if _, err := b.getSymmetricKeyLocked(ctx, attrs); err != nil {
+		return nil, err
+	}
+
+	// Every Encrypt and Decrypt loads the sealed key under its scope's
+	// parent. A shared tenant's storage key is loaded per operation and
+	// flushed afterwards, so the encrypter resolves the scope for each call
+	// rather than holding one open for its own lifetime.
+	keyAttrs := *attrs
+	return &scopedSymmetricEncrypter{backend: b, ctx: ctx, attrs: &keyAttrs}, nil
+}
+
+// getSymmetricKeyLocked is GetSymmetricKey for a caller already holding
+// b.mu.
+func (b *Backend) getSymmetricKeyLocked(ctx context.Context, attrs *types.KeyAttributes) (_ types.SymmetricKey, err error) {
+	scope, err := b.scope(ctx, attrs.TenantID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, scope.close()) }()
-
-	attrs.StoreType = types.StoreTPM2
-
-	return scope.tpm.SymmetricEncrypter(scope.bind(attrs))
-}
-
-// symmetricScope resolves the scope of a symmetric key operation, refusing a
-// shared tenant, which owns no Platform SRK to seal the key under.
-func (b *Backend) symmetricScope(ctx context.Context, tenant string) (*keyScope, error) {
-	scope, err := b.scope(ctx, tenant)
+	tpm, err := scope.symmetricTPM()
 	if err != nil {
 		return nil, err
 	}
-	if err := scope.refuseSymmetric(); err != nil {
-		return nil, errors.Join(err, scope.close())
+	return tpm.GetSymmetricKeyIn(scope.bind(attrs), scope.keys)
+}
+
+// scopedSymmetricEncrypter encrypts and decrypts with a TPM symmetric key,
+// resolving the key's scope -- and so loading its parent -- for each call.
+type scopedSymmetricEncrypter struct {
+	backend *Backend
+	ctx     context.Context
+	attrs   *types.KeyAttributes
+}
+
+// Compile-time interface check.
+var _ types.SymmetricEncrypter = (*scopedSymmetricEncrypter)(nil)
+
+// Encrypt encrypts plaintext with the key.
+func (e *scopedSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions) (_ *types.EncryptedData, err error) {
+	enc, closeScope, err := e.open()
+	if err != nil {
+		return nil, err
 	}
-	return scope, nil
+	defer func() { err = errors.Join(err, closeScope()) }()
+	return enc.Encrypt(plaintext, opts)
+}
+
+// Decrypt decrypts data with the key.
+func (e *scopedSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) (_ []byte, err error) {
+	enc, closeScope, err := e.open()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, closeScope()) }()
+	return enc.Decrypt(data, opts)
+}
+
+// open resolves the key's scope and returns the TPM encrypter under it,
+// with the function that releases the scope.
+func (e *scopedSymmetricEncrypter) open() (types.SymmetricEncrypter, func() error, error) {
+	b := e.backend
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.closed {
+		return nil, nil, ErrNotInitialized
+	}
+	scope, err := b.scope(e.ctx, e.attrs.TenantID)
+	if err != nil {
+		return nil, nil, err
+	}
+	tpm, err := scope.symmetricTPM()
+	if err != nil {
+		return nil, nil, errors.Join(err, scope.close())
+	}
+	enc, err := tpm.SymmetricEncrypterIn(scope.bind(e.attrs), scope.keys)
+	if err != nil {
+		return nil, nil, errors.Join(err, scope.close())
+	}
+	return enc, scope.close, nil
 }
 
 // GetTracker returns the AEAD safety tracker for this backend.

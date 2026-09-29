@@ -65,7 +65,9 @@ func (k *tpm2SymmetricKey) Raw() ([]byte, error) {
 type tpm2AESEncrypter struct {
 	tpm   *TPM2
 	attrs *types.KeyAttributes
-	mu    sync.Mutex
+	// keys is the store holding the key's blobs; nil is the TPM's default.
+	keys store.KeyBackend
+	mu   sync.Mutex
 }
 
 // GenerateSymmetricKey generates a new AES symmetric key and seals it in the
@@ -96,6 +98,13 @@ type tpm2AESEncrypter struct {
 //   - ErrSymmetricKeyParent if attrs.Parent is not the Platform SRK
 //   - Error if generation fails or attributes are invalid
 func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+	return tpm.GenerateSymmetricKeyIn(attrs, tpm.backend)
+}
+
+// GenerateSymmetricKeyIn is GenerateSymmetricKey with the key's blobs kept in
+// keys rather than the TPM's default key store: a shared-mode tenant's
+// symmetric keys live in its own store, under its own storage key.
+func (tpm *TPM2) GenerateSymmetricKeyIn(attrs *types.KeyAttributes, keys store.KeyBackend) (types.SymmetricKey, error) {
 	if err := validateSymmetricKeyAttributes(attrs); err != nil {
 		return nil, err
 	}
@@ -110,13 +119,17 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 		return nil, ErrNotInitialized
 	}
 
+	if keys == nil {
+		return nil, ErrNoStorageBackend
+	}
+
 	sealAttrs, err := tpm.symmetricSealAttrs(attrs)
 	if err != nil {
 		return nil, err
 	}
 
 	// Check if key already exists by trying to load the public blob
-	if _, err := tpm.backend.Get(attrs, store.FSEXT_PUBLIC_BLOB); err == nil {
+	if _, err := keys.Get(attrs, store.FSEXT_PUBLIC_BLOB); err == nil {
 		return nil, kbackend.ErrKeyAlreadyExists
 	}
 
@@ -130,7 +143,7 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 	sealAttrs.SealData = types.NewSealData(keyMaterial)
 	defer sealAttrs.SealData.Clear()
 
-	if _, err := tpm.sealKeyInternal(sealAttrs, tpm.backend, false); err != nil {
+	if _, err := tpm.sealKeyInternal(sealAttrs, keys, false); err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to create symmetric key", Err: err}
 	}
 
@@ -155,8 +168,9 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 // symmetric key attrs is created, loaded and unsealed under.
 //
 // The parent is attrs.Parent, or the Platform SRK's own attributes when the
-// caller named none, and it must be the Platform SRK: go-xkms never parents
-// its secrets on the Shared SRK. Its USER PIN (Parent.Password) or, without
+// caller named none. It must be the Platform SRK or a storage key beneath it
+// (a tenant's storage key): go-xkms never parents its secrets on the Shared
+// SRK. Its USER PIN (Parent.Password) or, without
 // one, its platform PCR policy authorizes TPM2_Create and TPM2_Load exactly as
 // for every other object sealKeyInternal seals (see CreateSession).
 //
@@ -176,16 +190,8 @@ func (tpm *TPM2) symmetricSealAttrs(attrs *types.KeyAttributes) (*types.KeyAttri
 		parent = psrk
 	}
 
-	psrkHandle := platformSRKHandle(tpm.config)
-	if parent.TPMAttributes == nil || parent.TPMAttributes.Handle != psrkHandle {
-		var got tpm2.TPMHandle
-		if parent.TPMAttributes != nil {
-			got = parent.TPMAttributes.Handle
-		}
-		return nil, &errs.Detail{
-			Err:    ErrSymmetricKeyParent,
-			Detail: fmt.Sprintf("%s: parent handle 0x%x, Platform SRK 0x%x", attrs.CN, uint32(got), uint32(psrkHandle)),
-		}
+	if err := tpm.checkSymmetricParent(attrs.CN, parent); err != nil {
+		return nil, err
 	}
 
 	sealAttrs := *attrs
@@ -193,6 +199,28 @@ func (tpm *TPM2) symmetricSealAttrs(attrs *types.KeyAttributes) (*types.KeyAttri
 	sealAttrs.TPMAttributes = nil
 	sealAttrs.SealData = nil
 	return &sealAttrs, nil
+}
+
+// checkSymmetricParent accepts the Platform SRK, or a child storage key
+// loaded under it, as a symmetric key's parent. The Shared SRK and any
+// non-storage key are refused with ErrSymmetricKeyParent.
+func (tpm *TPM2) checkSymmetricParent(cn string, parent *types.KeyAttributes) error {
+	var handle tpm2.TPMHandle
+	if parent.TPMAttributes != nil {
+		handle = parent.TPMAttributes.Handle
+	}
+	psrkHandle := platformSRKHandle(tpm.config)
+	if handle == psrkHandle {
+		return nil
+	}
+	ssrk := tpm.config != nil && tpm.config.SSRK != nil && handle == tpm2.TPMHandle(tpm.config.SSRK.Handle)
+	if parent.TPMAttributes == nil || ssrk || parent.KeyType != types.KeyTypeStorage {
+		return &errs.Detail{
+			Err:    ErrSymmetricKeyParent,
+			Detail: fmt.Sprintf("%s: parent handle 0x%x is neither the Platform SRK 0x%x nor a storage key under it", cn, uint32(handle), uint32(psrkHandle)),
+		}
+	}
+	return nil
 }
 
 // GetSymmetricKey retrieves an existing symmetric key from the TPM.
@@ -209,6 +237,11 @@ func (tpm *TPM2) symmetricSealAttrs(attrs *types.KeyAttributes) (*types.KeyAttri
 //     ErrKeyRetrievalFailed if the store returned some other error and
 //     existence could not be determined
 func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+	return tpm.GetSymmetricKeyIn(attrs, tpm.backend)
+}
+
+// GetSymmetricKeyIn is GetSymmetricKey reading the key's blobs from keys.
+func (tpm *TPM2) GetSymmetricKeyIn(attrs *types.KeyAttributes, keys store.KeyBackend) (types.SymmetricKey, error) {
 	if err := validateSymmetricKeyAttributes(attrs); err != nil {
 		return nil, err
 	}
@@ -225,7 +258,10 @@ func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey
 	// ErrKeyRetrievalFailed instead, so callers such as getOrGenerateCAKey
 	// never mistake "could not read the key" for "the key does not exist
 	// yet" and silently generate a replacement.
-	publicBlob, err := tpm.backend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	if keys == nil {
+		return nil, ErrNoStorageBackend
+	}
+	publicBlob, err := keys.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, &errs.Detail{Err: kbackend.ErrKeyNotFound, Detail: attrs.CN}
@@ -283,15 +319,21 @@ func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey
 //     ErrKeyRetrievalFailed if GetSymmetricKey could not determine that
 //     (both propagated from GetSymmetricKey, which does the classification)
 func (tpm *TPM2) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+	return tpm.SymmetricEncrypterIn(attrs, tpm.backend)
+}
+
+// SymmetricEncrypterIn is SymmetricEncrypter over a key whose blobs are in
+// keys.
+func (tpm *TPM2) SymmetricEncrypterIn(attrs *types.KeyAttributes, keys store.KeyBackend) (types.SymmetricEncrypter, error) {
 	// Verify the key exists
-	_, err := tpm.GetSymmetricKey(attrs)
-	if err != nil {
+	if _, err := tpm.GetSymmetricKeyIn(attrs, keys); err != nil {
 		return nil, err
 	}
 
 	return &tpm2AESEncrypter{
 		tpm:   tpm,
 		attrs: attrs,
+		keys:  keys,
 	}, nil
 }
 
@@ -543,7 +585,11 @@ func (e *tpm2AESEncrypter) loadKeyMaterial() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	keyMaterial, err := e.tpm.unsealKeyInternal(sealAttrs, e.tpm.backend)
+	keys := e.keys
+	if keys == nil {
+		keys = e.tpm.backend
+	}
+	keyMaterial, err := e.tpm.unsealKeyInternal(sealAttrs, keys)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to unseal key material", Err: err}
 	}

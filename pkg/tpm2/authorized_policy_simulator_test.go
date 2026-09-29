@@ -4,6 +4,7 @@
 package tpm2
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -647,4 +648,81 @@ func TestCreateStorageKey_RejectsMissingParent(t *testing.T) {
 	err := h.TPM.CreateStorageKey(&types.KeyAttributes{CN: "orphan"}, h.Backend)
 	require.ErrorIs(t, err, store.ErrInvalidParentAttributes)
 	require.ErrorIs(t, h.TPM.CreateStorageKey(nil, h.Backend), store.ErrInvalidKeyAttributes)
+}
+
+// TestAuthorizedPolicy_SealedObjectFromBlobsInCallerStore proves a sealed
+// object whose blobs the caller presents in memory is authorized by the
+// binding record in the key store the caller names -- a tenant's store --
+// not the TPM's default store, where no record exists for it.
+func TestAuthorizedPolicy_SealedObjectFromBlobsInCallerStore(t *testing.T) {
+	f := newPolicyFixture(t)
+	tenantStore := store.NewFileBackend(f.h.Logger, storage.NewMemory())
+
+	secret := []byte("sealed in a tenant's store")
+	attrs := sealedKeyAttrsUnder(f.srk, "tenant-sealed", nil)
+	attrs.TPMPolicy = testPolicyName
+	attrs.SealData = types.NewSealData(secret)
+	_, err := f.h.TPM.SealKey(attrs, tenantStore, false)
+	require.NoError(t, err)
+
+	pub, err := tenantStore.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	priv, err := tenantStore.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	require.NoError(t, err)
+
+	unsealAttrs := sealedKeyAttrsUnder(f.srk, "tenant-sealed", nil)
+	got, err := f.h.TPM.Unseal(context.Background(),
+		&types.SealedData{Backend: types.BackendTypeTPM2, TPMPublic: pub, TPMPrivate: priv},
+		&types.UnsealOptions{KeyAttributes: unsealAttrs, Backend: tenantStore})
+	require.NoError(t, err)
+	assert.Equal(t, secret, got)
+}
+
+// TestSymmetricKey_UnderATenantStorageKey proves a symmetric key can live
+// under a tenant's storage key (a child of the Platform SRK) in the tenant's
+// own key store -- a shared-mode tenant's symmetric keys -- while a
+// symmetric key parented on the Shared SRK is still refused.
+func TestSymmetricKey_UnderATenantStorageKey(t *testing.T) {
+	f := newPolicyFixture(t)
+	tenantStore := store.NewFileBackend(f.h.Logger, storage.NewMemory())
+
+	storageKey := &types.KeyAttributes{
+		CN:            "acme-storage",
+		KeyAlgorithm:  x509.RSA,
+		KeyType:       types.KeyTypeStorage,
+		Parent:        f.srk,
+		Password:      mustPassword([]byte("acme-storage-secret")),
+		StoreType:     types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{Hierarchy: tpm2.TPMRHOwner},
+	}
+	require.NoError(t, f.h.TPM.CreateStorageKey(storageKey, tenantStore))
+	loaded, err := f.h.TPM.LoadKeyPair(storageKey, nil, tenantStore)
+	require.NoError(t, err)
+	defer f.h.TPM.Flush(loaded.ObjectHandle)
+	storageKey.TPMAttributes.Handle = loaded.ObjectHandle
+	storageKey.TPMAttributes.Name = loaded.Name
+
+	attrs := psrkSymmetricAttrs("acme-aes", storageKey)
+	_, err = f.h.TPM.GenerateSymmetricKeyIn(attrs, tenantStore)
+	require.NoError(t, err)
+	_, err = f.h.Backend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.Error(t, err, "the key lives in the tenant's store, not the default one")
+
+	encrypter, err := f.h.TPM.SymmetricEncrypterIn(attrs, tenantStore)
+	require.NoError(t, err)
+	encrypted, err := encrypter.Encrypt([]byte("tenant data"), nil)
+	require.NoError(t, err)
+	decrypted, err := encrypter.Decrypt(encrypted, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("tenant data"), decrypted)
+
+	ssrk, err := f.h.TPM.SSRKAttributes()
+	require.NoError(t, err)
+	_, err = f.h.TPM.GenerateSymmetricKeyIn(psrkSymmetricAttrs("ssrk-aes", ssrk), tenantStore)
+	require.ErrorIs(t, err, ErrSymmetricKeyParent)
+
+	notStorage := *storageKey
+	notStorage.KeyType = types.KeyTypeSigning
+	_, err = f.h.TPM.GenerateSymmetricKeyIn(psrkSymmetricAttrs("bad-parent-aes", &notStorage), tenantStore)
+	require.ErrorIs(t, err, ErrSymmetricKeyParent)
 }

@@ -91,5 +91,5 @@ each transport's key-operation mapper:
 | `tpmpolicy.ErrPolicyExists` | AlreadyExists | `AlreadyExists` | 409 | duplicate |
 | `*tpmpolicy.PolicyInUseError` (lists the objects), `*ScopeInUseError`, `*PCRBankUnavailableError`, `ErrTPMModeNone`, `ErrVTPMUnavailable`, `ErrNotVTPMMode`, `ErrPolicyRevoked` | FailedPrecondition | `FailedPrecondition` | 409 | internal error code (message kept) |
 | `*InvalidNameError`, `*InvalidModeError`, `*InvalidTenantError`, `*InvalidPCRBankError`, `*InvalidPCRError`, `ErrReservedPolicy`, `ErrEmptyPCRSelection`, `ErrSystemScopeMode`, `*xkms.InvalidTPMObjectKindError`, `*xkms.ErrKeyIDParse`, `xkms.ErrTPMPolicyNotSupported`, `tpm2.ErrReservedObject` | InvalidArgument | `InvalidArgument` | 400 | invalid params |
-| `tpm2.ErrTenantSymmetricKeyUnsupported`, `tpm2.ErrTenantImportUnsupported` | Unimplemented | `Unimplemented` | 501 | method not found |
+| `tpm2.ErrSymmetricKeysUnsupported`, `tpm2.ErrTenantImportUnsupported` | Unimplemented | `Unimplemented` | 501 | method not found |
 | `xkms.ErrNotConfigured` (no TPM2 backend) | Unavailable | `Unavailable` | 503 | service unavailable |

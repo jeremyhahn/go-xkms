@@ -380,6 +380,7 @@ func (tpm *TPM2) unsealKeyInternal(
 // instead of LoadKeyPair.
 func (tpm *TPM2) unsealFromBlobs(
 	keyAttrs *types.KeyAttributes,
+	backend store.KeyBackend,
 	tpmPublic, tpmPrivate []byte) ([]byte, error) {
 
 	if keyAttrs.Parent == nil {
@@ -426,7 +427,7 @@ func (tpm *TPM2) unsealFromBlobs(
 	tpm.logger.Info("tpm: unsealFromBlobs - creating key session",
 		slog.String("tpm_policy", keyAttrs.TPMPolicy),
 		slog.String("cn", keyAttrs.CN))
-	session2, closer2, err2 := tpm.CreateKeySession(keyAttrs)
+	session2, closer2, err2 := tpm.createKeySession(keyAttrs, backend)
 	defer func() {
 		if err := closer2(); err != nil {
 			tpm.logger.Error("failed to close key session", slog.String("error", err.Error()))

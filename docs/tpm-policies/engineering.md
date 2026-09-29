@@ -37,15 +37,20 @@ Design: [`architecture.md`](architecture.md). Surface: [`api.md`](api.md).
   objects, `tpmpolicy.IsReservedObject`) and each tenant scope's recorded
   keys, with `TenantID` and `TPMPolicy` set; `TenantScopedBackend` filters by
   tenant.
+- Symmetric keys live in every scope: under the Platform SRK in the system
+  and vtpm scopes, and under the tenant's storage key in shared mode, with
+  their blobs in the scope's key store (`pkg/tpm2`'s
+  `GenerateSymmetricKeyIn`, `GetSymmetricKeyIn`, `SymmetricEncrypterIn` and
+  `DeriveFromSymmetricKeyIn`). The encrypter a shared tenant gets opens its
+  scope for each `Encrypt` and `Decrypt`, because the storage key is loaded
+  per operation and flushed afterwards.
 - Refusals: `ErrReservedObject` (a name the service owns),
-  `ErrTenantSymmetricKeyUnsupported` (a shared-mode tenant owns no Platform
-  SRK), `ErrTenantImportUnsupported` (imports are parented to the Platform
-  SRK). A scope that cannot open surfaces as `*ScopeError` wrapping the
+  `ErrSymmetricKeysUnsupported` (a TPM implementation without the
+  store-aware symmetric methods), `ErrTenantImportUnsupported` (imports are
+  parented to the Platform SRK). A scope that cannot open surfaces as `*ScopeError` wrapping the
   service's error, such as `tpmpolicy.ErrTPMModeNone`.
-- `Unseal` of in-memory blobs: `pkg/tpm2` reads a named policy's binding
-  record only when it loads the object from a key store, so when the scope's
-  store holds the very object presented (same public area) the backend
-  unseals it from the store (`storedSealed`).
+- `Unseal` of in-memory blobs reads a named policy's binding record from the
+  key store in `UnsealOptions.Backend`. The backend passes the scope's store.
 - `TenantBoundSealing()` reports true with a scope provider;
   `xkms.TenantScopedBackend` then permits TPM2 sealing for a tenant, which it
   refuses otherwise (go-xkms#1228).
@@ -85,7 +90,7 @@ backends:
 ## Tests
 
 - `pkg/backend/tpm2/scope_sim_test.go` (simulator): named-policy keys, tenant
-  isolation, mode none, sealing under a named policy, symmetric refusal,
+  isolation, mode none, sealing under a named policy, symmetric keys in every scope,
   reserved objects.
 - `pkg/server/tpm_policy_simulator_test.go` (simulator): xkmsd end to end —
   two keys bound to one policy, objects/object-policy, refused delete, sign,

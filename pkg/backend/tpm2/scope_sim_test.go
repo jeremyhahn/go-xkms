@@ -241,13 +241,16 @@ func TestScopedBackend_SealWithNamedPolicy(t *testing.T) {
 	assert.Error(t, err, "another tenant's scope cannot load the object")
 }
 
-// TestScopedBackend_SymmetricKeysNeedAPlatformSRK proves the system scope
-// generates symmetric keys, and a shared tenant, which owns no Platform SRK,
-// is refused with a typed error.
-func TestScopedBackend_SymmetricKeysNeedAPlatformSRK(t *testing.T) {
+// TestScopedBackend_SymmetricKeysInEveryScope proves the system scope and a
+// shared tenant both hold symmetric keys: the tenant's is sealed under its own
+// storage key in its own store, encrypts and decrypts through an encrypter
+// that outlives the call that made it, and is invisible to another tenant.
+func TestScopedBackend_SymmetricKeysInEveryScope(t *testing.T) {
 	f := newScopedFixture(t)
 	system := &types.KeyAttributes{CN: "system-aes", SymmetricAlgorithm: types.SymmetricAES256GCM, KeyType: types.KeyTypeSecret}
 	_, err := f.backend.GenerateSymmetricKey(f.ctx, system)
+	require.NoError(t, err)
+	_, err = f.backend.GetSymmetricKey(f.ctx, system)
 	require.NoError(t, err)
 	assignment, err := f.svc.PolicyOf(f.ctx, "", tpmpolicy.ObjectKey, "system-aes")
 	require.NoError(t, err)
@@ -255,7 +258,22 @@ func TestScopedBackend_SymmetricKeysNeedAPlatformSRK(t *testing.T) {
 
 	tenant := &types.KeyAttributes{CN: "tenant-aes", TenantID: "acme", SymmetricAlgorithm: types.SymmetricAES256GCM, KeyType: types.KeyTypeSecret}
 	_, err = f.backend.GenerateSymmetricKey(f.ctx, tenant)
-	require.ErrorIs(t, err, ErrTenantSymmetricKeyUnsupported)
+	require.NoError(t, err)
+	assignment, err = f.svc.PolicyOf(f.ctx, "acme", tpmpolicy.ObjectKey, "tenant-aes")
+	require.NoError(t, err)
+	assert.Equal(t, types.TPMPolicyPlatform, assignment.Policy)
+
+	encrypter, err := f.backend.SymmetricEncrypter(f.ctx, &types.KeyAttributes{CN: "tenant-aes", TenantID: "acme", SymmetricAlgorithm: types.SymmetricAES256GCM, KeyType: types.KeyTypeSecret})
+	require.NoError(t, err)
+	encrypted, err := encrypter.Encrypt([]byte("acme data"), nil)
+	require.NoError(t, err)
+	decrypted, err := encrypter.Decrypt(encrypted, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("acme data"), decrypted)
+
+	other := &types.KeyAttributes{CN: "tenant-aes", TenantID: "globex", SymmetricAlgorithm: types.SymmetricAES256GCM, KeyType: types.KeyTypeSecret}
+	_, err = f.backend.GetSymmetricKey(f.ctx, other)
+	require.Error(t, err, "another tenant cannot see acme's symmetric key")
 }
 
 // TestScopedBackend_ReservedObjectsAreHidden proves the policy service's own

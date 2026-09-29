@@ -14,11 +14,9 @@
 package tpm2
 
 import (
-	"bytes"
 	"context"
 	"errors"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/tpmpolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -151,30 +149,8 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 
 	scoped := *opts
 	scoped.KeyAttributes = scope.bind(opts.KeyAttributes)
-	if !scope.scoped {
-		return scope.tpm.Unseal(ctx, sealed, &scoped)
+	if scope.scoped {
+		scoped.Backend = scope.keys
 	}
-	scoped.Backend = scope.keys
-	return scope.tpm.Unseal(ctx, storedSealed(scope.keys, scoped.KeyAttributes, sealed), &scoped)
-}
-
-// storedSealed returns the sealed data to unseal in a scope. pkg/tpm2 reads a
-// named policy's binding record from the key store beside an object's blobs,
-// but only when it loads the object from that store: blobs passed in memory
-// are authorized as if they had no binding. When the scope's store holds the
-// very object the caller presents (the same public area), the in-memory
-// blobs are dropped so the object is loaded -- and authorized -- from the
-// store. Any other object is unsealed from the blobs the caller presents.
-func storedSealed(keys store.KeyBackend, attrs *types.KeyAttributes, sealed *types.SealedData) *types.SealedData {
-	if len(sealed.TPMPublic) == 0 || len(sealed.TPMPrivate) == 0 {
-		return sealed
-	}
-	stored, err := keys.Get(attrs, store.FSEXT_PUBLIC_BLOB)
-	if err != nil || !bytes.Equal(stored, sealed.TPMPublic) {
-		return sealed
-	}
-	fromStore := *sealed
-	fromStore.TPMPublic = nil
-	fromStore.TPMPrivate = nil
-	return &fromStore
+	return scope.tpm.Unseal(ctx, sealed, &scoped)
 }

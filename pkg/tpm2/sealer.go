@@ -211,23 +211,25 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 		keyAttrs.Password = opts.Password
 	}
 
-	// If TPMPublic and TPMPrivate blobs are provided in sealed data, use them directly
-	// instead of reading from backend storage. This enables unsealing from in-memory
-	// blobs (e.g., loaded from EFI partition files during boot).
-	if len(sealed.TPMPublic) > 0 && len(sealed.TPMPrivate) > 0 {
-		tpm.logger.Debug("unseal: using provided TPMPublic/TPMPrivate blobs directly")
-		return tpm.unsealFromBlobs(keyAttrs, sealed.TPMPublic, sealed.TPMPrivate)
-	}
-
-	// Fall back to reading from backend storage
 	backend := tpm.backend
 	if opts.Backend != nil {
-		if kb, ok := opts.Backend.(store.KeyBackend); ok {
-			backend = kb
-		} else {
+		kb, ok := opts.Backend.(store.KeyBackend)
+		if !ok {
 			return nil, ErrInvalidSealBackend
 		}
+		backend = kb
 	}
+
+	// If TPMPublic and TPMPrivate blobs are provided in sealed data, use them
+	// directly instead of reading them from backend storage. This enables
+	// unsealing from in-memory blobs (e.g., loaded from EFI partition files
+	// during boot). The object's policy binding record, when it has one, is
+	// still read from the caller's key store.
+	if len(sealed.TPMPublic) > 0 && len(sealed.TPMPrivate) > 0 {
+		tpm.logger.Debug("unseal: using provided TPMPublic/TPMPrivate blobs directly")
+		return tpm.unsealFromBlobs(keyAttrs, backend, sealed.TPMPublic, sealed.TPMPrivate)
+	}
+
 	if backend == nil {
 		return nil, ErrNoStorageBackend
 	}

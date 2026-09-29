@@ -54,14 +54,6 @@ func TestKeyScope_BindParentsPerScope(t *testing.T) {
 	assert.Same(t, own, caller.Parent, "the caller's attributes are untouched")
 }
 
-// TestKeyScope_RefuseSymmetric proves only a shared tenant scope refuses a
-// symmetric key.
-func TestKeyScope_RefuseSymmetric(t *testing.T) {
-	assert.NoError(t, (&keyScope{}).refuseSymmetric())
-	assert.NoError(t, (&keyScope{tenant: "acme"}).refuseSymmetric())
-	assert.ErrorIs(t, (&keyScope{tenant: "acme", shared: true}).refuseSymmetric(), ErrTenantSymmetricKeyUnsupported)
-}
-
 // TestKeyScope_CloseWithoutRelease proves an unscoped scope closes cleanly
 // and a scoped one returns its release error.
 func TestKeyScope_CloseWithoutRelease(t *testing.T) {
@@ -87,29 +79,6 @@ func TestPublicAuthPolicy_RejectsMalformedPublic(t *testing.T) {
 	keys := store.NewFileBackend(slog.New(slog.NewTextHandler(io.Discard, nil)), storage.NewMemory())
 	_, err = authPolicyOf(keys, &types.KeyAttributes{CN: "missing"})
 	assert.Error(t, err, "a key with no public blob has no authPolicy")
-}
-
-// TestStoredSealed proves the in-memory blobs are dropped only when the
-// scope's store holds the very object presented.
-func TestStoredSealed(t *testing.T) {
-	keys := store.NewFileBackend(slog.New(slog.NewTextHandler(io.Discard, nil)), storage.NewMemory())
-	attrs := &types.KeyAttributes{CN: "sealed"}
-	require.NoError(t, keys.Save(attrs, []byte("public"), store.FSEXT_PUBLIC_BLOB, false))
-
-	same := &types.SealedData{TPMPublic: []byte("public"), TPMPrivate: []byte("private")}
-	fromStore := storedSealed(keys, attrs, same)
-	assert.Nil(t, fromStore.TPMPublic)
-	assert.Nil(t, fromStore.TPMPrivate)
-	assert.Equal(t, []byte("public"), same.TPMPublic, "the caller's sealed data is untouched")
-
-	other := &types.SealedData{TPMPublic: []byte("another"), TPMPrivate: []byte("private")}
-	assert.Same(t, other, storedSealed(keys, attrs, other))
-
-	unknown := &types.SealedData{TPMPublic: []byte("public"), TPMPrivate: []byte("private")}
-	assert.Same(t, unknown, storedSealed(keys, &types.KeyAttributes{CN: "absent"}, unknown))
-
-	blobless := &types.SealedData{}
-	assert.Same(t, blobless, storedSealed(keys, attrs, blobless))
 }
 
 // TestScopeErrors proves each scope error names its subject and unwraps to

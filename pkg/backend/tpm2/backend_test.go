@@ -412,6 +412,19 @@ func (m *mockTPM) SymmetricEncrypter(attrs *types.KeyAttributes) (types.Symmetri
 	return m.symmetricEncrypterResult, nil
 }
 
+// The store-aware variants answer exactly as the default-store methods: the
+// backend routes every symmetric operation through them with its scope's
+// key store.
+func (m *mockTPM) GenerateSymmetricKeyIn(attrs *types.KeyAttributes, _ store.KeyBackend) (types.SymmetricKey, error) {
+	return m.GenerateSymmetricKey(attrs)
+}
+func (m *mockTPM) GetSymmetricKeyIn(attrs *types.KeyAttributes, _ store.KeyBackend) (types.SymmetricKey, error) {
+	return m.GetSymmetricKey(attrs)
+}
+func (m *mockTPM) SymmetricEncrypterIn(attrs *types.KeyAttributes, _ store.KeyBackend) (types.SymmetricEncrypter, error) {
+	return m.SymmetricEncrypter(attrs)
+}
+
 func (m *mockTPM) VerifyAuth(handle tpm2.TPMHandle, authValue []byte) error            { return nil }
 func (m *mockTPM) ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte) error { return nil }
 
@@ -2229,13 +2242,18 @@ func TestSymmetricEncrypter_TPMError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
 
+	// The encrypter resolves its key's scope, and so the TPM encrypter, on
+	// each call: the TPM's error surfaces from Encrypt and Decrypt.
 	attrs := &types.KeyAttributes{CN: "test-sym-key"}
-	_, err := b.SymmetricEncrypter(context.Background(), attrs)
-	if err == nil {
-		t.Error("Expected error from TPM SymmetricEncrypter")
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	if err != nil {
+		t.Fatalf("SymmetricEncrypter: %v", err)
 	}
-	if !errors.Is(err, expectedErr) {
-		t.Errorf("Expected wrapped TPM error, got %v", err)
+	if _, err := encrypter.Encrypt([]byte("data"), nil); !errors.Is(err, expectedErr) {
+		t.Errorf("Encrypt: expected the TPM error, got %v", err)
+	}
+	if _, err := encrypter.Decrypt(&types.EncryptedData{}, nil); !errors.Is(err, expectedErr) {
+		t.Errorf("Decrypt: expected the TPM error, got %v", err)
 	}
 }
 

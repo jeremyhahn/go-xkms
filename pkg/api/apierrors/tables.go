@@ -219,7 +219,7 @@ var TPMPolicySentinelClasses = []SentinelClass{
 	{tpmpolicy.ErrNotVTPMMode, ClassFailedPrecondition},
 	{tpmpolicy.ErrPolicyRevoked, ClassFailedPrecondition},
 	{tpm2backend.ErrReservedObject, ClassInvalidArgument},
-	{tpm2backend.ErrTenantSymmetricKeyUnsupported, ClassUnimplemented},
+	{tpm2backend.ErrSymmetricKeysUnsupported, ClassUnimplemented},
 	{tpm2backend.ErrTenantImportUnsupported, ClassUnimplemented},
 }
 

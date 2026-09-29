@@ -57,11 +57,9 @@ var (
 	// authority, sealed secrets or vTPM state key).
 	ErrReservedObject = errors.New("tpm2: the name is reserved for a TPM policy service object")
 
-	// ErrTenantSymmetricKeyUnsupported is returned for a symmetric key
-	// operation of a tenant in shared TPM mode: the TPM seals symmetric keys
-	// under the Platform SRK only, which a shared tenant does not own. A vtpm
-	// tenant's symmetric keys live under its own vTPM's Platform SRK.
-	ErrTenantSymmetricKeyUnsupported = errors.New("tpm2: symmetric keys are not available to a tenant in shared TPM mode")
+	// ErrSymmetricKeysUnsupported is returned when the scope's TPM cannot
+	// keep a symmetric key's blobs in the scope's own key store.
+	ErrSymmetricKeysUnsupported = errors.New("tpm2: this TPM cannot hold symmetric keys in a scope's key store")
 
 	// ErrTenantImportUnsupported is returned for ImportKey in a tenant scope:
 	// a duplicate is imported under the Platform SRK, which a tenant scope's
@@ -195,12 +193,22 @@ func (s *keyScope) bind(attrs *types.KeyAttributes) *types.KeyAttributes {
 	return &bound
 }
 
-// refuseSymmetric refuses a symmetric key operation the scope cannot serve.
-func (s *keyScope) refuseSymmetric() error {
-	if s.shared {
-		return ErrTenantSymmetricKeyUnsupported
+// storeSymmetricTPM is the symmetric-key surface of a TPM that keeps a key's
+// blobs in a caller-named store; *pkgtpm2.TPM2 implements it.
+type storeSymmetricTPM interface {
+	GenerateSymmetricKeyIn(attrs *types.KeyAttributes, keys store.KeyBackend) (types.SymmetricKey, error)
+	GetSymmetricKeyIn(attrs *types.KeyAttributes, keys store.KeyBackend) (types.SymmetricKey, error)
+	SymmetricEncrypterIn(attrs *types.KeyAttributes, keys store.KeyBackend) (types.SymmetricEncrypter, error)
+}
+
+// symmetricTPM returns the scope's TPM as a storeSymmetricTPM, or
+// ErrSymmetricKeysUnsupported for a TPM implementation without it.
+func (s *keyScope) symmetricTPM() (storeSymmetricTPM, error) {
+	tpm, ok := s.tpm.(storeSymmetricTPM)
+	if !ok {
+		return nil, ErrSymmetricKeysUnsupported
 	}
-	return nil
+	return tpm, nil
 }
 
 // refuseReserved refuses attrs naming an object the policy service owns.

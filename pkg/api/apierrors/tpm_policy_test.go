@@ -50,7 +50,7 @@ func TestTPMPolicyClassOf(t *testing.T) {
 		{"mode none through a scope", &tpm2backend.ScopeError{Tenant: "acme", Err: tpmpolicy.ErrTPMModeNone}, ClassFailedPrecondition},
 		{"vtpm unavailable", tpmpolicy.ErrVTPMUnavailable, ClassFailedPrecondition},
 		{"reserved object", &tpm2backend.ReservedObjectError{CN: "tpm-storage-key"}, ClassInvalidArgument},
-		{"shared-tenant symmetric", tpm2backend.ErrTenantSymmetricKeyUnsupported, ClassUnimplemented},
+		{"symmetric keys unsupported by the TPM", tpm2backend.ErrSymmetricKeysUnsupported, ClassUnimplemented},
 		{"not configured", xkms.ErrNotConfigured, ClassUnavailable},
 		{"policy off TPM", xkms.ErrTPMPolicyNotSupported, ClassInvalidArgument},
 	}

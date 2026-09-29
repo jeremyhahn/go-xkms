@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -34,7 +35,7 @@ import (
 // implement it yields ErrKeyDerivationNotSupported, which is the truth about
 // that double.
 type symmetricDeriver interface {
-	DeriveFromSymmetricKey(attrs *types.KeyAttributes, params *kdf.KDFParams) ([]byte, error)
+	DeriveFromSymmetricKeyIn(attrs *types.KeyAttributes, keys store.KeyBackend, params *kdf.KDFParams) ([]byte, error)
 }
 
 // DeriveFromSymmetricKey runs the key derivation function selected by params
@@ -61,7 +62,7 @@ func (b *Backend) DeriveFromSymmetricKey(ctx context.Context, attrs *types.KeyAt
 		return nil, &errs.Detail{Err: types.ErrUnsupportedKDFAlgorithm, Detail: "nil KDF parameters"}
 	}
 
-	scope, err := b.symmetricScope(ctx, attrs.TenantID)
+	scope, err := b.scope(ctx, attrs.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +78,7 @@ func (b *Backend) DeriveFromSymmetricKey(ctx context.Context, attrs *types.KeyAt
 
 	attrs.StoreType = types.StoreTPM2
 
-	return deriver.DeriveFromSymmetricKey(scope.bind(attrs), params)
+	return deriver.DeriveFromSymmetricKeyIn(scope.bind(attrs), scope.keys, params)
 }
 
 // Compile-time proof that this backend offers derivation from a stored key.
