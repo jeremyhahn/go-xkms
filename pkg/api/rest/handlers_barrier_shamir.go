@@ -19,7 +19,6 @@ import (
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
 // Shamir barrier handler typed errors.
@@ -84,7 +83,7 @@ type BarrierGenerateRootTokenRequest struct {
 // never returned (qrdb share-free contract): shares are sealed to enrolled
 // Security Officers; only the threshold/total metadata is reported.
 func (h *HandlerContext) BarrierInitializeShamirHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -95,13 +94,7 @@ func (h *HandlerContext) BarrierInitializeShamirHandler(w http.ResponseWriter, r
 		return
 	}
 
-	creds, err := seal.CredentialsFor([]byte(req.Secret))
-	if err != nil {
-		writeError(w, err, http.StatusInternalServerError)
-		return
-	}
-	defer creds.Secret.Destroy()
-	result, err := h.Barrier.InitializeShamir(r.Context(), creds)
+	result, err := h.xkmsService.BarrierInitializeShamir(r.Context(), &transport.BarrierInitializeShamirRequest{Secret: req.Secret})
 	if err != nil {
 		handleBarrierError(w, err)
 		return
@@ -114,7 +107,7 @@ func (h *HandlerContext) BarrierInitializeShamirHandler(w http.ResponseWriter, r
 // Submits a single Shamir share for stateful quorum-based unsealing.
 // When enough shares have been submitted, the barrier unseals automatically.
 func (h *HandlerContext) BarrierUnsealShareHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -130,7 +123,7 @@ func (h *HandlerContext) BarrierUnsealShareHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	progress, err := h.Barrier.UnsealWithShare(r.Context(), req.Share)
+	progress, err := h.xkmsService.BarrierUnsealWithShare(r.Context(), &transport.BarrierUnsealShareRequest{Share: req.Share})
 	if err != nil {
 		handleBarrierError(w, err)
 		return
@@ -142,7 +135,7 @@ func (h *HandlerContext) BarrierUnsealShareHandler(w http.ResponseWriter, r *htt
 // BarrierUnsealSharesHandler handles POST /api/v1/barrier/unseal-shares requests.
 // Performs stateless batch unsealing with all required shares provided at once.
 func (h *HandlerContext) BarrierUnsealSharesHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -158,7 +151,7 @@ func (h *HandlerContext) BarrierUnsealSharesHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if err := h.Barrier.UnsealWithShares(r.Context(), req.Shares); err != nil {
+	if err := h.xkmsService.BarrierUnsealWithShares(r.Context(), &transport.BarrierUnsealSharesRequest{Shares: req.Shares}); err != nil {
 		handleBarrierError(w, err)
 		return
 	}
@@ -173,7 +166,7 @@ func (h *HandlerContext) BarrierUnsealSharesHandler(w http.ResponseWriter, r *ht
 // Generates a new set of Shamir shares for the existing root key.
 // The root key does not change; only the shares are rotated.
 func (h *HandlerContext) BarrierRekeyHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -194,7 +187,7 @@ func (h *HandlerContext) BarrierRekeyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	result, err := h.Barrier.Rekey(r.Context(), req.Threshold, req.Total)
+	result, err := h.xkmsService.BarrierRekey(r.Context(), &transport.BarrierRekeyRequest{Threshold: req.Threshold, Total: req.Total})
 	if err != nil {
 		handleBarrierError(w, err)
 		return
@@ -208,7 +201,7 @@ func (h *HandlerContext) BarrierRekeyHandler(w http.ResponseWriter, r *http.Requ
 // Recovery shares are sealed to enrolled recovery officers and never
 // returned (qrdb share-free contract).
 func (h *HandlerContext) BarrierGenerateRecoveryKeysHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -229,7 +222,7 @@ func (h *HandlerContext) BarrierGenerateRecoveryKeysHandler(w http.ResponseWrite
 		return
 	}
 
-	result, err := h.Barrier.GenerateRecoveryKeys(r.Context(), req.Threshold, req.Total)
+	result, err := h.xkmsService.BarrierGenerateRecoveryKeys(r.Context(), &transport.BarrierGenerateRecoveryKeysRequest{Threshold: req.Threshold, Total: req.Total})
 	if err != nil {
 		handleBarrierError(w, err)
 		return
@@ -241,7 +234,7 @@ func (h *HandlerContext) BarrierGenerateRecoveryKeysHandler(w http.ResponseWrite
 // BarrierRecoverWithKeysHandler handles POST /api/v1/barrier/recovery-keys/recover requests.
 // Reconstructs the DEK from recovery key shares and unseals the barrier.
 func (h *HandlerContext) BarrierRecoverWithKeysHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -257,7 +250,7 @@ func (h *HandlerContext) BarrierRecoverWithKeysHandler(w http.ResponseWriter, r 
 		return
 	}
 
-	if err := h.Barrier.RecoverWithKeys(r.Context(), req.Keys); err != nil {
+	if err := h.xkmsService.BarrierRecoverWithKeys(r.Context(), &transport.BarrierRecoverWithKeysRequest{Keys: req.Keys}); err != nil {
 		handleBarrierError(w, err)
 		return
 	}
@@ -271,12 +264,12 @@ func (h *HandlerContext) BarrierRecoverWithKeysHandler(w http.ResponseWriter, r 
 // BarrierDeleteRecoveryKeysHandler handles DELETE /api/v1/barrier/recovery-keys requests.
 // Removes recovery key metadata from storage.
 func (h *HandlerContext) BarrierDeleteRecoveryKeysHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
 
-	if err := h.Barrier.DeleteRecoveryKeys(r.Context()); err != nil {
+	if err := h.xkmsService.BarrierDeleteRecoveryKeys(r.Context()); err != nil {
 		handleBarrierError(w, err)
 		return
 	}
@@ -291,7 +284,7 @@ func (h *HandlerContext) BarrierDeleteRecoveryKeysHandler(w http.ResponseWriter,
 // Generates a one-time root token by proving knowledge of the master key
 // through Shamir share reconstruction.
 func (h *HandlerContext) BarrierGenerateRootTokenHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -307,7 +300,7 @@ func (h *HandlerContext) BarrierGenerateRootTokenHandler(w http.ResponseWriter, 
 		return
 	}
 
-	token, err := h.Barrier.GenerateRootToken(r.Context(), req.Shares)
+	token, err := h.xkmsService.BarrierGenerateRootToken(r.Context(), &transport.BarrierGenerateRootTokenRequest{Shares: req.Shares})
 	if err != nil {
 		handleBarrierError(w, err)
 		return

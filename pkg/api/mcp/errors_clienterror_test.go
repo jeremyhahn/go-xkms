@@ -170,8 +170,8 @@ func TestClientError_Classification(t *testing.T) {
 		},
 		{
 			name:        "barrier not configured keeps its text",
-			err:         errBarrierNotConfigured(),
-			wantCode:    ErrCodeInternalError,
+			err:         &KeyOpError{Code: ErrCodeServiceUnavailable, Err: ErrBarrierNotConfigured},
+			wantCode:    ErrCodeServiceUnavailable,
 			wantMessage: ErrBarrierNotConfigured.Error(),
 		},
 	}

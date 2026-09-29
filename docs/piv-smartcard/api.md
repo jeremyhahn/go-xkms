@@ -1,6 +1,6 @@
 # PIV Smartcard — API
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-25
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1227)
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -31,6 +31,20 @@ the card — `piv:use`. Admin and Owner hold all four by default.
 **PIV is the best-covered hardware feature on MCP** — all eight slot operations
 have methods, unlike PIN (zero) and WebAuthn (zero). The one gap is PIV login,
 which is an authentication route rather than a slot operation.
+
+**The eight slot operations are platform-scoped** (go-xkms#1227). They
+operate the server's own card, so each `XKMSService` PIV method refuses a
+tenant-scoped caller -- a tenant-local Admin whose self-scoped `piv:*` grants
+pass the RBAC gate included -- before the card is touched
+(`pkg/xkms/servicer_piv.go:31,40,49,58,67,76,85,94`). Every transport calls
+those methods and never the package-level PIV functions: REST
+`pkg/api/rest/handlers_piv.go`, gRPC/Unix `pkg/api/grpc/service_piv.go`, MCP
+`pkg/api/mcp/handlers_piv.go`. The answer is the one a missing tenant gets:
+REST `404` (through `handleError`, `pkg/api/rest/errors.go:162`), gRPC
+`NotFound` and MCP `JSONRPCCodeNotFound` (`pkg/api/apierrors/tables.go:71`).
+The SDK-only verbs (`ImportPIVKey`, `SignPIVSlot`, `AttestPIVSlot`,
+`ResetPIVDevice`) are package functions with no network route and are not
+scoped.
 
 `POST /api/v1/auth/login/piv` sits in `GroupAuthSession`, is `RouteAuthPublic`
 (it *is* the authentication), is gated on `hasIssuer`, and runs behind the login
@@ -136,6 +150,8 @@ types share no index.
 | device absent / token locked | 503 | `Unavailable` | error object |
 | PIN required | 401 | `Unauthenticated` | error object |
 | TPM NV space exhausted | 507 | `ResourceExhausted` | error object |
+| tenant-scoped caller (platform scope) | 404 | `NotFound` | `JSONRPCCodeNotFound` |
+| no `XKMSService` composed | 503 | `Unavailable` | — (MCP always has one) |
 
 `PIVStorageError` carries the operation and the slot; the transport preserves
 the slot in the message, because "store failed" without it is not actionable.

@@ -58,6 +58,14 @@ func policyCreateBody(t *testing.T) *bytes.Reader {
 	return bytes.NewReader(body)
 }
 
+// policyServiceOver returns an XKMSService composed with mgr, the only path
+// the policy routes reach the manager by.
+func policyServiceOver(mgr *policy.Manager) *xkms.XKMSService {
+	svc := &xkms.XKMSService{}
+	svc.SetPolicyManager(mgr)
+	return svc
+}
+
 // TestPolicyCreateRoute_RBACDenied proves a caller whose policy:create check
 // is refused is denied by the middleware before the handler runs.
 func TestPolicyCreateRoute_RBACDenied(t *testing.T) {
@@ -67,7 +75,7 @@ func TestPolicyCreateRoute_RBACDenied(t *testing.T) {
 	server, err := NewServer(&Config{
 		Authenticator:  auth.NewNoOpAuthenticator(),
 		Backends:       map[string]xkms.Backend{"test": newMockKeyStore()},
-		PolicyManager:  mgr,
+		XKMSService:    policyServiceOver(mgr),
 		EnableRBAC:     true,
 		RBACAuthorizer: auth.NewAuthorizer(denyingRBACClient{}),
 	})
@@ -116,7 +124,7 @@ func TestPolicyCreateRoute_RequiresPolicyCreate(t *testing.T) {
 	server, err := NewServer(&Config{
 		Authenticator:  auth.NewNoOpAuthenticator(),
 		Backends:       map[string]xkms.Backend{"test": newMockKeyStore()},
-		PolicyManager:  mgr,
+		XKMSService:    policyServiceOver(mgr),
 		EnableRBAC:     true,
 		RBACAuthorizer: auth.NewAuthorizer(rbac),
 	})

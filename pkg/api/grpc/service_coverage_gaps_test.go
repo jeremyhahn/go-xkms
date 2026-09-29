@@ -757,7 +757,7 @@ func TestRotateKey_SuccessPath(t *testing.T) {
 
 func TestGetLockoutStatus_NilFromBackend(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	resp, err := svc.GetLockoutStatus(ctx, &emptypb.Empty{})
@@ -771,7 +771,7 @@ func TestGetLockoutStatus_NilFromBackend(t *testing.T) {
 
 func TestSetUserPIN_PINManagerErrorPath(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.SetSOPIN(ctx, &pb.SetSOPINRequest{
@@ -789,7 +789,7 @@ func TestSetUserPIN_PINManagerErrorPath(t *testing.T) {
 
 func TestChangeUserPIN_ErrorPath(t *testing.T) {
 	setupPINManager(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.ChangeUserPIN(ctx, &pb.ChangeUserPINRequest{
@@ -800,9 +800,7 @@ func TestChangeUserPIN_ErrorPath(t *testing.T) {
 }
 
 func TestResetLockout_NotConfiguredPath(t *testing.T) {
-	SetPINManager(nil)
-	defer SetPINManager(nil)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	_, err := svc.ResetLockout(ctx, &pb.ResetLockoutRequest{
@@ -811,7 +809,7 @@ func TestResetLockout_NotConfiguredPath(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
+	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
 // mockPINBackendWithLockout implements PINBackend with active lockout tracking.
@@ -843,10 +841,9 @@ func (m *mockPINBackendWithLockout) ResetLockout(_ string) error { return nil }
 
 func TestGetLockoutStatus_WithActiveLockout(t *testing.T) {
 	mock := &mockPINBackendWithLockout{}
-	SetPINManager(mock)
-	t.Cleanup(func() { SetPINManager(nil) })
+	useTestPINManager(t, mock)
 
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	resp, err := svc.GetLockoutStatus(ctx, &emptypb.Empty{})
@@ -1188,7 +1185,7 @@ func TestGrpcPageRequest_EdgeCases(t *testing.T) {
 
 func TestBarrierSeal_NotInitializedPath(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Barrier is not initialized, sealing should still work (idempotent seal)
@@ -3512,7 +3509,7 @@ func TestImportKey_UnsupportedTypeWithRealBackend(t *testing.T) {
 
 func TestBarrierStatus_WithInitializedAt(t *testing.T) {
 	setupBarrier(t)
-	svc := newTestService()
+	svc := newPlatformTestService()
 	ctx := context.Background()
 
 	// Initialize to set InitializedAt

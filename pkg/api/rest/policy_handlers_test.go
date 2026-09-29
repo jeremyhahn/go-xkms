@@ -23,6 +23,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -98,7 +99,26 @@ func newTestPolicyHandlers(t *testing.T) (*PolicyHandlers, *mockPolicyStore) {
 	}
 	mgr, err := policy.NewManager(reader, store)
 	require.NoError(t, err)
-	return NewPolicyHandlers(mgr), store
+	return policyHandlersOver(mgr), store
+}
+
+// policyHandlersOver returns the handlers over an XKMSService composed with
+// mgr: the handlers reach the policy manager only through the service, which
+// enforces its platform scope.
+func policyHandlersOver(mgr *policy.Manager) *PolicyHandlers {
+	svc := &xkms.XKMSService{}
+	svc.SetPolicyManager(mgr)
+	return NewPolicyHandlers(svc)
+}
+
+// TestPolicy_NotConfiguredIsUnavailable: a service without a policy manager
+// answers 503.
+func TestPolicy_NotConfiguredIsUnavailable(t *testing.T) {
+	h := NewPolicyHandlers(&xkms.XKMSService{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil)
+	w := httptest.NewRecorder()
+	h.ListPoliciesHandler(w, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func policyRouter(h *PolicyHandlers) *chi.Mux {

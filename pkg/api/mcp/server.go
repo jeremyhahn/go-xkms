@@ -49,7 +49,7 @@ import (
 // Typed errors for barrier MCP handlers.
 var (
 	// ErrBarrierNotConfigured is returned when a barrier operation is attempted
-	// on a server that does not have a barrier configured.
+	// on a server that has no XKMSService composed.
 	ErrBarrierNotConfigured = errors.New("barrier not configured")
 
 	// ErrBarrierSecretRequired is returned when a barrier operation requires
@@ -94,12 +94,12 @@ var (
 
 // Server holds the xkms JSON-RPC 2.0 dispatch core: the method table, the
 // tenant and authorization gates, and the sub-system references (backends,
-// barrier, password store, SSH) each handler needs. It carries no network
+// password store, SSH) each handler needs. The system barrier is reached only
+// through the XKMSService, which enforces its platform scope. It carries no network
 // state; InvokeMethod is the only entry point.
 type Server struct {
 	keystore        xkms.Backend // Default keystore for backward compatibility
 	xkmsService     *xkms.XKMSService
-	barrier         *seal.Barrier
 	barrierRegistry *seal.BarrierRegistry
 	passwordManager *staticpw.TenantPasswordStoreManager
 	authenticator   auth.Authenticator
@@ -124,7 +124,6 @@ type Server struct {
 type Config struct {
 	Authenticator auth.Authenticator
 	Logger        *slog.Logger
-	Barrier       *seal.Barrier
 	// BarrierRegistry gates per-request tenant access the same way REST,
 	// gRPC, and QUIC do (see pkg/api/tenantgate). Nil disables tenant
 	// enforcement.
@@ -196,7 +195,6 @@ func NewServer(config *Config) (*Server, error) {
 
 	s := &Server{
 		xkmsService:     svc,
-		barrier:         config.Barrier,
 		barrierRegistry: config.BarrierRegistry,
 		passwordManager: config.PasswordManager,
 		authenticator:   authenticator,
@@ -222,11 +220,6 @@ func NewServer(config *Config) (*Server, error) {
 	s.keystore = keystore
 
 	return s, nil
-}
-
-// SetBarrier configures the barrier for the MCP server.
-func (s *Server) SetBarrier(b *seal.Barrier) {
-	s.barrier = b
 }
 
 // SetBarrierRegistry configures the tenant barrier registry for the MCP

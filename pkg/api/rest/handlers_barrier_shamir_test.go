@@ -49,8 +49,7 @@ func testShamirBarrierContext(t *testing.T) (*HandlerContext, *seal.Barrier) {
 	)
 	require.NoError(t, err)
 
-	h := NewHandlerContext("test")
-	h.SetBarrier(barrier)
+	h := handlerOverBarrier(barrier)
 	return h, barrier
 }
 

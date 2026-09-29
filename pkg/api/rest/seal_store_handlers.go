@@ -20,17 +20,29 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // SealStoreHandlers provides HTTP handlers for platform store operations.
+//
+// Every handler delegates to the XKMSService's SealStore* methods and never
+// to the store itself: the platform store holds platform-global secrets (the
+// backend credentials under credentials/<name>), and the service's
+// requirePlatformScope is what refuses a tenant-scoped caller (go-xkms#1226).
+// The routes' keys:* grants cannot, because a tenant-local Admin's
+// self-scoped grants resolve against its own tenant.
 type SealStoreHandlers struct {
-	store seal.PlatformStore
+	servicer xkms.SealStoreServicer
 }
 
-// NewSealStoreHandlers creates a new SealStoreHandlers instance.
-func NewSealStoreHandlers(store seal.PlatformStore) *SealStoreHandlers {
-	return &SealStoreHandlers{store: store}
+// NewSealStoreHandlers creates a new SealStoreHandlers instance over the
+// XKMSService's platform-store operations.
+func NewSealStoreHandlers(servicer xkms.SealStoreServicer) *SealStoreHandlers {
+	return &SealStoreHandlers{servicer: servicer}
 }
 
 // --- Request types ---
@@ -81,7 +93,7 @@ type SealStorePutResponse struct {
 
 // --- Handlers ---
 
-// PutSecretHandler handles PUT /api/v1/platform-store/{name} requests.
+// PutSecretHandler handles PUT /api/v1/platform/secrets/{name} requests.
 // It stores a secret under the given name. The request body must contain
 // the base64-encoded secret. If a secret already exists with this name,
 // it is overwritten with a fresh seal operation.
@@ -109,12 +121,8 @@ func (h *SealStoreHandlers) PutSecretHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.store.Put(r.Context(), name, secret); err != nil {
-		if errors.Is(err, seal.ErrInvalidSecretName) {
-			platformStoreWriteJSONError(w, "Invalid secret name", http.StatusBadRequest)
-			return
-		}
-		platformStoreWriteJSONError(w, "Failed to store secret", http.StatusInternalServerError)
+	if err := h.servicer.SealStorePut(r.Context(), &transport.SealStorePutRequest{Name: name, Secret: secret}); err != nil {
+		platformStoreWriteServiceError(w, err, "Failed to store secret")
 		return
 	}
 
@@ -126,7 +134,7 @@ func (h *SealStoreHandlers) PutSecretHandler(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// GetSecretHandler handles GET /api/v1/platform-store/{name} requests.
+// GetSecretHandler handles GET /api/v1/platform/secrets/{name} requests.
 // It retrieves and unseals the secret stored under the given name.
 func (h *SealStoreHandlers) GetSecretHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
@@ -135,29 +143,21 @@ func (h *SealStoreHandlers) GetSecretHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	secret, err := h.store.Get(r.Context(), name)
+	got, err := h.servicer.SealStoreGet(r.Context(), &transport.SealStoreGetRequest{Name: name})
 	if err != nil {
-		if errors.Is(err, seal.ErrSecretNotFound) {
-			platformStoreWriteJSONError(w, "Secret not found", http.StatusNotFound)
-			return
-		}
-		if errors.Is(err, seal.ErrInvalidSecretName) {
-			platformStoreWriteJSONError(w, "Invalid secret name", http.StatusBadRequest)
-			return
-		}
-		platformStoreWriteJSONError(w, "Failed to retrieve secret", http.StatusInternalServerError)
+		platformStoreWriteServiceError(w, err, "Failed to retrieve secret")
 		return
 	}
 
 	resp := SealStoreGetResponse{
 		Name:   name,
-		Secret: base64.StdEncoding.EncodeToString(secret),
+		Secret: base64.StdEncoding.EncodeToString(got.Secret),
 	}
 
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// DeleteSecretHandler handles DELETE /api/v1/platform-store/{name} requests.
+// DeleteSecretHandler handles DELETE /api/v1/platform/secrets/{name} requests.
 // It removes the secret stored under the given name.
 func (h *SealStoreHandlers) DeleteSecretHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
@@ -166,16 +166,8 @@ func (h *SealStoreHandlers) DeleteSecretHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := h.store.Delete(r.Context(), name); err != nil {
-		if errors.Is(err, seal.ErrSecretNotFound) {
-			platformStoreWriteJSONError(w, "Secret not found", http.StatusNotFound)
-			return
-		}
-		if errors.Is(err, seal.ErrInvalidSecretName) {
-			platformStoreWriteJSONError(w, "Invalid secret name", http.StatusBadRequest)
-			return
-		}
-		platformStoreWriteJSONError(w, "Failed to delete secret", http.StatusInternalServerError)
+	if err := h.servicer.SealStoreDelete(r.Context(), &transport.SealStoreDeleteRequest{Name: name}); err != nil {
+		platformStoreWriteServiceError(w, err, "Failed to delete secret")
 		return
 	}
 
@@ -186,15 +178,16 @@ func (h *SealStoreHandlers) DeleteSecretHandler(w http.ResponseWriter, r *http.R
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// ListSecretsHandler handles GET /api/v1/platform-store requests.
+// ListSecretsHandler handles GET /api/v1/platform/secrets requests.
 // It returns the names of all stored secrets.
 func (h *SealStoreHandlers) ListSecretsHandler(w http.ResponseWriter, r *http.Request) {
-	names, err := h.store.List(r.Context())
+	list, err := h.servicer.SealStoreList(r.Context())
 	if err != nil {
-		platformStoreWriteJSONError(w, "Failed to list secrets", http.StatusInternalServerError)
+		platformStoreWriteServiceError(w, err, "Failed to list secrets")
 		return
 	}
 
+	names := list.Names
 	if names == nil {
 		names = []string{}
 	}
@@ -207,9 +200,9 @@ func (h *SealStoreHandlers) ListSecretsHandler(w http.ResponseWriter, r *http.Re
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// ResealSecretHandler handles POST /api/v1/platform-store/{name}/reseal requests.
-// It re-seals a secret so it is protected with the current backend state
-// (e.g., fresh TPM PCR values after a legitimate system change).
+// ResealSecretHandler handles POST /api/v1/platform/secrets/{name}/reseal
+// requests. It re-seals a secret so it is protected with the current backend
+// state (e.g., fresh TPM PCR values after a legitimate system change).
 func (h *SealStoreHandlers) ResealSecretHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if name == "" {
@@ -217,16 +210,8 @@ func (h *SealStoreHandlers) ResealSecretHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := h.store.Reseal(r.Context(), name); err != nil {
-		if errors.Is(err, seal.ErrSecretNotFound) {
-			platformStoreWriteJSONError(w, "Secret not found", http.StatusNotFound)
-			return
-		}
-		if errors.Is(err, seal.ErrResealFailed) {
-			platformStoreWriteJSONError(w, "Failed to reseal secret", http.StatusInternalServerError)
-			return
-		}
-		platformStoreWriteJSONError(w, "Failed to reseal secret", http.StatusInternalServerError)
+	if err := h.servicer.SealStoreReseal(r.Context(), &transport.SealStoreResealRequest{Name: name}); err != nil {
+		platformStoreWriteServiceError(w, err, "Failed to reseal secret")
 		return
 	}
 
@@ -238,26 +223,59 @@ func (h *SealStoreHandlers) ResealSecretHandler(w http.ResponseWriter, r *http.R
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// StatusHandler handles GET /api/v1/platform-store/status requests.
-// It returns the basic status of the platform store including a list of stored secret names.
+// StatusHandler handles GET /api/v1/platform/status requests. It returns the
+// basic status of the platform store including a list of stored secret names.
 func (h *SealStoreHandlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
-	names, err := h.store.List(r.Context())
+	status, err := h.servicer.SealStoreStatus(r.Context())
 	if err != nil {
-		platformStoreWriteJSONError(w, "Failed to get platform store status", http.StatusInternalServerError)
+		platformStoreWriteServiceError(w, err, "Failed to get platform store status")
 		return
 	}
 
+	names := status.SecretNames
 	if names == nil {
 		names = []string{}
 	}
 
 	resp := SealStoreStatusResponse{
-		Available: true,
+		Available: status.Available,
 		Names:     names,
 		Total:     len(names),
 	}
 
 	writeJSON(w, resp, http.StatusOK)
+}
+
+// platformStoreErrorResponses maps the platform-store service's sentinels to
+// the status and fixed message each answers with. The tenant binding's
+// refusal (xkms.TenantBindingError, which unwraps to qrdbsdk.ErrTenantMissing)
+// renders its own message -- the unknown-tenant text every transport answers
+// with -- so platformStoreWriteServiceError handles it before this table.
+var platformStoreErrorResponses = []struct {
+	sentinel error
+	status   int
+	message  string
+}{
+	{xkms.ErrNotConfigured, http.StatusServiceUnavailable, "Platform store not configured"},
+	{seal.ErrSecretNotFound, http.StatusNotFound, "Secret not found"},
+	{seal.ErrInvalidSecretName, http.StatusBadRequest, "Invalid secret name"},
+}
+
+// platformStoreWriteServiceError writes the response for an error returned by
+// the platform-store service. Anything unclassified is a 500 carrying
+// fallback, never the error's own text.
+func platformStoreWriteServiceError(w http.ResponseWriter, err error, fallback string) {
+	if errors.Is(err, qrdbsdk.ErrTenantMissing) {
+		platformStoreWriteJSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	for _, entry := range platformStoreErrorResponses {
+		if errors.Is(err, entry.sentinel) {
+			platformStoreWriteJSONError(w, entry.message, entry.status)
+			return
+		}
+	}
+	platformStoreWriteJSONError(w, fallback, http.StatusInternalServerError)
 }
 
 // platformStoreWriteJSONError writes an error response in the standard JSON format.

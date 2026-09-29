@@ -25,7 +25,6 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Typed errors for PIV gRPC operations.
@@ -41,7 +40,15 @@ var (
 
 	// ErrPIVCertificateRequired is returned when the certificate data is missing.
 	ErrPIVCertificateRequired = errors.New("grpc: piv certificate data is required")
+
+	// ErrPIVServiceNotConfigured is returned when no XKMSService is composed
+	// to serve the PIV RPCs.
+	ErrPIVServiceNotConfigured = errors.New("grpc: piv service not configured")
 )
+
+// The PIV RPCs delegate to the XKMSService's PIV methods: the PIV card is the
+// server's own hardware, and the service's requirePlatformScope is what
+// refuses a tenant-scoped caller (go-xkms#1227).
 
 // mapPIVError converts a PIV domain error to the appropriate gRPC status
 // error, classifying it through apierrors.PIVSentinelClasses -- the table
@@ -74,7 +81,10 @@ func (s *Service) ListPIVSlots(ctx context.Context, req *pb.ListPIVSlotsRequest)
 		Backend: req.GetBackend(),
 	}
 
-	resp, err := xkms.ListPIVSlots(ctx, tReq)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrPIVServiceNotConfigured.Error())
+	}
+	resp, err := s.xkmsService.ListPIVSlots(ctx, tReq)
 	if err != nil {
 		return nil, mapPIVError(err, "list piv slots")
 	}
@@ -121,7 +131,10 @@ func (s *Service) GetPIVCertificate(ctx context.Context, req *pb.GetPIVCertifica
 		Format:  req.GetFormat(),
 	}
 
-	resp, err := xkms.GetPIVCertificate(ctx, tReq)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrPIVServiceNotConfigured.Error())
+	}
+	resp, err := s.xkmsService.GetPIVCertificate(ctx, tReq)
 	if err != nil {
 		return nil, mapPIVError(err, "get piv certificate")
 	}
@@ -159,7 +172,10 @@ func (s *Service) StorePIVCertificate(ctx context.Context, req *pb.StorePIVCerti
 		Format:      req.GetFormat(),
 	}
 
-	if err := xkms.StorePIVCertificate(ctx, tReq); err != nil {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrPIVServiceNotConfigured.Error())
+	}
+	if err := s.xkmsService.StorePIVCertificate(ctx, tReq); err != nil {
 		return nil, mapPIVError(err, "store piv certificate")
 	}
 
@@ -184,7 +200,10 @@ func (s *Service) DeletePIVCertificate(ctx context.Context, req *pb.DeletePIVCer
 		Slot:    req.GetSlot(),
 	}
 
-	if err := xkms.DeletePIVCertificate(ctx, tReq); err != nil {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrPIVServiceNotConfigured.Error())
+	}
+	if err := s.xkmsService.DeletePIVCertificate(ctx, tReq); err != nil {
 		return nil, mapPIVError(err, "delete piv certificate")
 	}
 
@@ -211,7 +230,10 @@ func (s *Service) GeneratePIVKey(ctx context.Context, req *pb.GeneratePIVKeyRequ
 		Subject:   req.GetSubject(),
 	}
 
-	resp, err := xkms.GeneratePIVKey(ctx, tReq)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrPIVServiceNotConfigured.Error())
+	}
+	resp, err := s.xkmsService.GeneratePIVKey(ctx, tReq)
 	if err != nil {
 		return nil, mapPIVError(err, "generate piv key")
 	}
@@ -249,7 +271,10 @@ func (s *Service) ImportPIVCertificate(ctx context.Context, req *pb.StorePIVCert
 		Format:      req.GetFormat(),
 	}
 
-	if err := xkms.ImportPIVCertificate(ctx, tReq); err != nil {
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrPIVServiceNotConfigured.Error())
+	}
+	if err := s.xkmsService.ImportPIVCertificate(ctx, tReq); err != nil {
 		return nil, mapPIVError(err, "import piv certificate")
 	}
 
@@ -278,7 +303,10 @@ func (s *Service) ExportPIVCertificate(ctx context.Context, req *pb.GetPIVCertif
 		Format:  req.GetFormat(),
 	}
 
-	resp, err := xkms.ExportPIVCertificate(ctx, tReq)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrPIVServiceNotConfigured.Error())
+	}
+	resp, err := s.xkmsService.ExportPIVCertificate(ctx, tReq)
 	if err != nil {
 		return nil, mapPIVError(err, "export piv certificate")
 	}
@@ -309,7 +337,10 @@ func (s *Service) GeneratePIVCSR(ctx context.Context, req *pb.GeneratePIVCSRRequ
 		Subject: req.GetSubject(),
 	}
 
-	resp, err := xkms.GeneratePIVCSR(ctx, tReq)
+	if s.xkmsService == nil {
+		return nil, status.Error(codes.Unavailable, ErrPIVServiceNotConfigured.Error())
+	}
+	resp, err := s.xkmsService.GeneratePIVCSR(ctx, tReq)
 	if err != nil {
 		return nil, mapPIVError(err, "generate piv csr")
 	}

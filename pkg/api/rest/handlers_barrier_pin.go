@@ -17,12 +17,21 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/secureio"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// The system-barrier and PIN handlers delegate to the XKMSService and never
+// to the barrier or PIN backend directly: both are platform-global, and the
+// service's requirePlatformScope is what refuses a tenant-scoped caller
+// (go-xkms#1227). The routes' seal:*, barrier:* and pin:* grants cannot,
+// because a tenant-local Admin's self-scoped grants resolve against its own
+// tenant. The refusal is xkms.TenantBindingError, which unwraps to
+// qrdbsdk.ErrTenantMissing and answers 404 exactly as a genuine miss.
 
 // Barrier/PIN handler typed errors.
 var (
@@ -54,14 +63,6 @@ type BarrierInitializeRequest struct {
 // BarrierInitializeRequest for wire-format notes.
 type BarrierUnsealRequest struct {
 	Password secureio.PasswordField `json:"password_b64,omitempty"`
-}
-
-// BarrierStatusResponse represents the barrier status response.
-type BarrierStatusResponse struct {
-	Sealed         bool      `json:"sealed"`
-	Strategy       string    `json:"strategy"`
-	HardwareBacked bool      `json:"hardware_backed"`
-	InitializedAt  time.Time `json:"initialized_at"`
 }
 
 // --- PIN request/response types ---
@@ -100,21 +101,12 @@ type ResetLockoutRequest struct {
 	SOPIN string `json:"so_pin"`
 }
 
-// LockoutStatusResponse represents the lockout status response.
-type LockoutStatusResponse struct {
-	FailedAttempts  int       `json:"failed_attempts"`
-	MaxAttempts     int       `json:"max_attempts"`
-	IsLocked        bool      `json:"is_locked"`
-	LockoutUntil    time.Time `json:"lockout_until,omitempty"`
-	RecoverySeconds int       `json:"recovery_seconds"`
-}
-
 // --- Barrier handlers ---
 
 // BarrierInitializeHandler handles POST /v1/barrier/initialize requests.
 // Initializes the barrier with a new root key sealed using the best available strategy.
 func (h *HandlerContext) BarrierInitializeHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -144,7 +136,7 @@ func (h *HandlerContext) BarrierInitializeHandler(w http.ResponseWriter, r *http
 		return
 	}
 	defer creds.Secret.Destroy()
-	if err := h.Barrier.Initialize(r.Context(), creds); err != nil {
+	if err := h.xkmsService.BarrierInitializeWithCredentials(r.Context(), creds); err != nil {
 		handleBarrierError(w, err)
 		return
 	}
@@ -158,7 +150,7 @@ func (h *HandlerContext) BarrierInitializeHandler(w http.ResponseWriter, r *http
 // BarrierUnsealHandler handles POST /v1/barrier/unseal requests.
 // Unseals the barrier using the provided credentials.
 func (h *HandlerContext) BarrierUnsealHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -188,7 +180,7 @@ func (h *HandlerContext) BarrierUnsealHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer creds.Secret.Destroy()
-	if err := h.Barrier.Unseal(r.Context(), creds); err != nil {
+	if err := h.xkmsService.BarrierUnsealWithCredentials(r.Context(), creds); err != nil {
 		handleBarrierError(w, err)
 		return
 	}
@@ -202,13 +194,13 @@ func (h *HandlerContext) BarrierUnsealHandler(w http.ResponseWriter, r *http.Req
 // BarrierSealHandler handles POST /v1/barrier/seal requests.
 // Seals the barrier, zeroing the DEK and blocking further operations.
 func (h *HandlerContext) BarrierSealHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
 
-	if err := h.Barrier.Seal(); err != nil {
-		writeError(w, err, http.StatusInternalServerError)
+	if err := h.xkmsService.BarrierSeal(r.Context()); err != nil {
+		handleBarrierError(w, err)
 		return
 	}
 
@@ -221,18 +213,17 @@ func (h *HandlerContext) BarrierSealHandler(w http.ResponseWriter, r *http.Reque
 // BarrierStatusHandler handles GET /v1/barrier/status requests.
 // Returns the current barrier status including seal state and active strategy.
 func (h *HandlerContext) BarrierStatusHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
 
-	status := h.Barrier.Status()
-	writeJSON(w, &BarrierStatusResponse{
-		Sealed:         status.Sealed,
-		Strategy:       string(status.Strategy),
-		HardwareBacked: status.HardwareBacked,
-		InitializedAt:  status.InitializedAt,
-	}, http.StatusOK)
+	status, err := h.xkmsService.BarrierStatus(r.Context())
+	if err != nil {
+		handleBarrierError(w, err)
+		return
+	}
+	writeJSON(w, status, http.StatusOK)
 }
 
 // --- PIN handlers ---
@@ -240,7 +231,7 @@ func (h *HandlerContext) BarrierStatusHandler(w http.ResponseWriter, r *http.Req
 // SetSOPINHandler handles POST /v1/pin/so-pin requests.
 // Sets the Security Officer PIN.
 func (h *HandlerContext) SetSOPINHandler(w http.ResponseWriter, r *http.Request) {
-	if h.PINManager == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrPINManagerNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -256,7 +247,7 @@ func (h *HandlerContext) SetSOPINHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.PINManager.SetSOPIN(req.CurrentSOPIN, req.NewSOPIN); err != nil {
+	if err := h.xkmsService.SetSOPIN(r.Context(), &transport.SetSOPINRequest{CurrentSOPIN: req.CurrentSOPIN, NewSOPIN: req.NewSOPIN}); err != nil {
 		handlePINError(w, err)
 		return
 	}
@@ -270,7 +261,7 @@ func (h *HandlerContext) SetSOPINHandler(w http.ResponseWriter, r *http.Request)
 // SetUserPINHandler handles POST /v1/pin/user-pin requests.
 // Sets the user PIN, requiring SO PIN authorization.
 func (h *HandlerContext) SetUserPINHandler(w http.ResponseWriter, r *http.Request) {
-	if h.PINManager == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrPINManagerNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -291,7 +282,7 @@ func (h *HandlerContext) SetUserPINHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.PINManager.SetUserPIN(req.SOPIN, req.NewUserPIN); err != nil {
+	if err := h.xkmsService.SetUserPIN(r.Context(), &transport.SetUserPINRequest{SOPIN: req.SOPIN, NewUserPIN: req.NewUserPIN}); err != nil {
 		handlePINError(w, err)
 		return
 	}
@@ -305,7 +296,7 @@ func (h *HandlerContext) SetUserPINHandler(w http.ResponseWriter, r *http.Reques
 // ChangeSOPINHandler handles POST /v1/pin/so-pin/change requests.
 // Changes the SO PIN from the current to a new value.
 func (h *HandlerContext) ChangeSOPINHandler(w http.ResponseWriter, r *http.Request) {
-	if h.PINManager == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrPINManagerNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -326,7 +317,7 @@ func (h *HandlerContext) ChangeSOPINHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.PINManager.ChangeSOPIN(req.CurrentSOPIN, req.NewSOPIN); err != nil {
+	if err := h.xkmsService.ChangeSOPIN(r.Context(), &transport.ChangeSOPINRequest{CurrentSOPIN: req.CurrentSOPIN, NewSOPIN: req.NewSOPIN}); err != nil {
 		handlePINError(w, err)
 		return
 	}
@@ -340,7 +331,7 @@ func (h *HandlerContext) ChangeSOPINHandler(w http.ResponseWriter, r *http.Reque
 // ChangeUserPINHandler handles POST /v1/pin/user-pin/change requests.
 // Changes the user PIN from the current to a new value.
 func (h *HandlerContext) ChangeUserPINHandler(w http.ResponseWriter, r *http.Request) {
-	if h.PINManager == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrPINManagerNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -361,7 +352,7 @@ func (h *HandlerContext) ChangeUserPINHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := h.PINManager.ChangeUserPIN(req.CurrentUserPIN, req.NewUserPIN); err != nil {
+	if err := h.xkmsService.ChangeUserPIN(r.Context(), &transport.ChangeUserPINRequest{CurrentUserPIN: req.CurrentUserPIN, NewUserPIN: req.NewUserPIN}); err != nil {
 		handlePINError(w, err)
 		return
 	}
@@ -375,7 +366,7 @@ func (h *HandlerContext) ChangeUserPINHandler(w http.ResponseWriter, r *http.Req
 // VerifySOPINHandler handles POST /v1/pin/so-pin/verify requests.
 // Verifies the provided SO PIN.
 func (h *HandlerContext) VerifySOPINHandler(w http.ResponseWriter, r *http.Request) {
-	if h.PINManager == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrPINManagerNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -391,7 +382,7 @@ func (h *HandlerContext) VerifySOPINHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.PINManager.VerifySOPIN(req.PIN); err != nil {
+	if err := h.xkmsService.VerifySOPIN(r.Context(), &transport.VerifySOPINRequest{SOPIN: req.PIN}); err != nil {
 		handlePINError(w, err)
 		return
 	}
@@ -405,7 +396,7 @@ func (h *HandlerContext) VerifySOPINHandler(w http.ResponseWriter, r *http.Reque
 // VerifyUserPINHandler handles POST /v1/pin/user-pin/verify requests.
 // Verifies the provided user PIN.
 func (h *HandlerContext) VerifyUserPINHandler(w http.ResponseWriter, r *http.Request) {
-	if h.PINManager == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrPINManagerNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -421,7 +412,7 @@ func (h *HandlerContext) VerifyUserPINHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := h.PINManager.VerifyUserPIN(req.PIN); err != nil {
+	if err := h.xkmsService.VerifyUserPIN(r.Context(), &transport.VerifyUserPINRequest{UserPIN: req.PIN}); err != nil {
 		handlePINError(w, err)
 		return
 	}
@@ -435,25 +426,23 @@ func (h *HandlerContext) VerifyUserPINHandler(w http.ResponseWriter, r *http.Req
 // GetLockoutStatusHandler handles GET /v1/pin/lockout requests.
 // Returns the current lockout status.
 func (h *HandlerContext) GetLockoutStatusHandler(w http.ResponseWriter, r *http.Request) {
-	if h.PINManager == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrPINManagerNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
 
-	status := h.PINManager.GetLockoutStatus()
-	writeJSON(w, &LockoutStatusResponse{
-		FailedAttempts:  status.FailedAttempts,
-		MaxAttempts:     status.MaxAttempts,
-		IsLocked:        status.IsLocked,
-		LockoutUntil:    status.LockoutUntil,
-		RecoverySeconds: status.RecoverySeconds,
-	}, http.StatusOK)
+	status, err := h.xkmsService.GetLockoutStatus(r.Context())
+	if err != nil {
+		handlePINError(w, err)
+		return
+	}
+	writeJSON(w, status, http.StatusOK)
 }
 
 // ResetLockoutHandler handles POST /v1/pin/lockout/reset requests.
 // Resets the lockout counter using SO PIN authorization.
 func (h *HandlerContext) ResetLockoutHandler(w http.ResponseWriter, r *http.Request) {
-	if h.PINManager == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrPINManagerNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -469,7 +458,7 @@ func (h *HandlerContext) ResetLockoutHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.PINManager.ResetLockout(req.SOPIN); err != nil {
+	if err := h.xkmsService.ResetLockout(r.Context(), &transport.ResetLockoutRequest{SOPIN: req.SOPIN}); err != nil {
 		handlePINError(w, err)
 		return
 	}
@@ -509,10 +498,13 @@ func handleBarrierError(w http.ResponseWriter, err error) {
 		writeError(w, err, http.StatusBadRequest)
 	case errors.Is(err, seal.ErrCorruptRootKey):
 		writeError(w, err, http.StatusInternalServerError)
-	// BarrierEnableEncryption's target tenant is caller-supplied; the
-	// service's tenant binding refuses a foreign one as not-found.
+	// A tenant-scoped caller is refused every system-barrier operation, and
+	// BarrierEnableEncryption's caller-supplied target tenant is bound to the
+	// caller's own; both refusals read as not-found.
 	case errors.Is(err, qrdbsdk.ErrTenantMissing):
 		writeError(w, err, http.StatusNotFound)
+	case errors.Is(err, xkms.ErrNotConfigured):
+		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
 
 	// Shamir-specific errors
 	case errors.Is(err, seal.ErrShamirNotConfigured):
@@ -568,6 +560,11 @@ func handlePINError(w http.ResponseWriter, err error) {
 		writeError(w, err, http.StatusUnauthorized)
 	case errors.Is(err, qrdbsdk.ErrPINStateCorrupted):
 		writeError(w, err, http.StatusInternalServerError)
+	// A tenant-scoped caller is refused every PIN operation as not-found.
+	case errors.Is(err, qrdbsdk.ErrTenantMissing):
+		writeError(w, err, http.StatusNotFound)
+	case errors.Is(err, xkms.ErrNotConfigured):
+		writeError(w, ErrPINManagerNotConfigured, http.StatusServiceUnavailable)
 	default:
 		writeError(w, err, http.StatusInternalServerError)
 	}

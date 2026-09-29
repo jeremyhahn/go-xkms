@@ -199,6 +199,22 @@ silent answer and errors on everything else:
   opens sessions.
 - **Tenant barriers are independent.** A tenant barrier's state does not affect
   the platform barrier.
+- **The system barrier and the PCR policies are platform-scoped** (go-xkms#1227).
+  Every system-barrier method of `XKMSService` refuses a tenant-scoped caller
+  with `*xkms.TenantBindingError` before the barrier is touched
+  (`pkg/xkms/servicer_barrier.go:89,117,128,139,170,205,236,253,278,300,314,325,342`),
+  and so does every `Policy*` method (`pkg/xkms/servicer_policy.go:42,66,84,106,120,138,160`).
+  No transport holds the barrier or the policy manager: REST, gRPC/Unix and
+  MCP call the service. REST's barrier initialize and unseal keep the secret in
+  protected memory end to end through `BarrierInitializeWithCredentials` /
+  `BarrierUnsealWithCredentials` (`pkg/xkms/servicer_barrier.go:88,116`), which
+  take a `seal.Credentials` the caller owns. `BarrierEnableEncryption` binds
+  its target instead (`pkg/xkms/servicer_barrier.go:384`).
+- **A Shamir initialize request that states no shape uses the configured
+  one.** `BarrierInitializeShamir` applies the request's threshold/total only
+  when either is non-zero (`pkg/xkms/servicer_barrier.go:179`); the REST,
+  gRPC and MCP wire forms carry only the secret, and routing them through the
+  service must not overwrite the barrier's configured shape with zeros.
 - **Concurrency.** Strategies are safe for concurrent seal/unseal; device access
   serialises where the device requires it.
 

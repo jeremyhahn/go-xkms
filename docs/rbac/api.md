@@ -1,6 +1,6 @@
 # RBAC — API
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1226, #1227)
 
 RBAC is cross-cutting, not a capability with its own endpoint set: it is the
 authorization gate every other feature's REST route, gRPC RPC, and MCP tool
@@ -107,9 +107,9 @@ tenant gets **the same answer a nonexistent tenant gets**, not a denial:
 
 | Transport | Answer | Mapping site |
 |---|---|---|
-| REST / QUIC | `404 Not Found`, body `{"error":"tenant: not found",...}` | tenant routes: `pkg/api/rest/errors.go:130`; `/barrier/enable-encryption`: `pkg/api/rest/handlers_barrier_pin.go:514`; `/ca/sign-csr`: `pkg/api/rest/handlers_ca.go:84` |
-| gRPC | `codes.NotFound` | tenant RPCs: `pkg/api/grpc/service_custodian_share_tenant.go:86`; `BarrierEnableEncryption`: `pkg/api/apierrors/tables.go:133` |
-| MCP | `JSONRPCCodeNotFound` | tenant methods: `pkg/api/mcp/errors_custodian_tenant.go:57`; `barrier.enableEncryption`: `pkg/api/apierrors/tables.go:133`; `xkms.ca.sign-csr`: `pkg/api/mcp/errors_cert.go:90` |
+| REST / QUIC | `404 Not Found`, body `{"error":"tenant: not found",...}` | tenant routes: `pkg/api/rest/errors.go:130`; `/barrier/enable-encryption`: `pkg/api/rest/handlers_barrier_pin.go:504`; `/ca/sign-csr`: `pkg/api/rest/handlers_ca.go:84` |
+| gRPC | `codes.NotFound` | tenant RPCs: `pkg/api/grpc/service_custodian_share_tenant.go:86`; `BarrierEnableEncryption`: `pkg/api/apierrors/tables.go:147` |
+| MCP | `JSONRPCCodeNotFound` | tenant methods: `pkg/api/mcp/errors_custodian_tenant.go:57`; `barrier.enableEncryption`: `pkg/api/apierrors/tables.go:147`; `xkms.ca.sign-csr`: `pkg/api/mcp/errors_cert.go:90` |
 
 Affected capabilities: get, delete, barrier init / unseal / status of a
 tenant; `ListTenants` returns only the caller's own tenant; enable-encryption
@@ -124,6 +124,30 @@ without the grant gets `403` / `PermissionDenied` — and are then refused with
 the not-found answer above to **every** tenant-scoped caller, including one
 naming its own tenant. Only a platform (system-tenant) identity changes a
 plan.
+
+**Platform-global operations** (go-xkms#1226, #1227) are refused with the
+same not-found answer to every tenant-scoped caller, whatever grants it
+holds; only a platform (system-tenant) identity, or an in-process caller with
+no identity, reaches them:
+
+| Capability | REST | gRPC / Unix | MCP |
+|---|---|---|---|
+| sealed platform store | `/api/v1/platform/secrets[/{name}[/reseal]]`, `/api/v1/platform/status` | `SealStore*` | `sealStore.*` |
+| credentials | `POST /api/v1/credentials/submit`, `GET /api/v1/credentials/` | no RPC | `credentials.submit` |
+| system barrier | `/api/v1/barrier/*` except `enable-encryption` | `Barrier*` except `BarrierEnableEncryption` | `barrier.*` except `barrier.enableEncryption` |
+| token PINs | `/api/v1/pin/*` | `SetSOPIN` … `ResetLockout` | `xkms.setSOPIN` … `xkms.resetLockout` |
+| server PIV card | `/api/v1/piv/slots*` | `*PIV*` | `xkms.*PIV*` |
+| PCR policies | `/api/v1/policies/*` | `Policy*` | `policy.*` |
+
+The refusal is raised in the service (`pkg/xkms/tenant_binding.go:88`) and
+mapped by: REST `pkg/api/rest/seal_store_handlers.go:268`,
+`policy_handlers.go:367`, `handlers_credentials.go:90`,
+`handlers_barrier_pin.go:504` (barrier), `:564` (PIN), and `errors.go:162`
+(PIV, through `handleError`); gRPC and MCP through the shared tables
+`pkg/api/apierrors/tables.go:39` (seal store), `:71` (PIV), `:96` (PIN),
+`:147` (barrier), `:192` (policy), plus MCP's credential table
+`pkg/api/mcp/handlers_init_credentials.go:124`. `barrier.enableEncryption`
+keeps its tenant binding: a tenant may still migrate its own barrier.
 
 ## Internal error responses
 

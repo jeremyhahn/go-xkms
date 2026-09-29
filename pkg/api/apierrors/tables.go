@@ -34,6 +34,10 @@ var SealStoreSentinelClasses = []SentinelClass{
 	{seal.ErrSecretNotFound, ClassNotFound},
 	{seal.ErrInvalidSecretName, ClassInvalidArgument},
 	{seal.ErrResealFailed, ClassInternal},
+	// Every operation on this platform-global state is platform-scoped: a
+	// tenant-scoped caller is refused with xkms.TenantBindingError, which
+	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1226).
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 }
 
 // ImportExportSentinelClasses classifies the backend-layer capability
@@ -83,6 +87,10 @@ var PIVSentinelClasses = []SentinelClass{
 	{xkms.ErrPIVInvalidSlot, ClassInvalidArgument},
 	{xkms.ErrPIVInvalidFormat, ClassInvalidArgument},
 	{xkms.ErrPIVKeyNotFound, ClassNotFound},
+	// Every operation on this platform-global state is platform-scoped: a
+	// tenant-scoped caller is refused with xkms.TenantBindingError, which
+	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1227).
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 }
 
 // PINSentinelClasses classifies the go-qrdb PIN backend domain errors
@@ -104,6 +112,10 @@ var PINSentinelClasses = []SentinelClass{
 	{qrdbsdk.ErrInvalidCurrentPIN, ClassUnauthenticated},
 	{qrdbsdk.ErrPINStateCorrupted, ClassDataLoss},
 	{qrdbsdk.ErrPINStrategyNotSet, ClassFailedPrecondition},
+	// Every operation on this platform-global state is platform-scoped: a
+	// tenant-scoped caller is refused with xkms.TenantBindingError, which
+	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1227).
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 }
 
 // CustodianSentinelClasses classifies the go-qrdb custodian-group domain
@@ -150,9 +162,13 @@ var BarrierSentinelClasses = []SentinelClass{
 	{seal.ErrCorruptRootKey, ClassDataLoss},
 	{seal.ErrEncryptorNotAvailable, ClassFailedPrecondition},
 	// BarrierEnableEncryption's target tenant is caller-supplied; XKMSService's
-	// tenant binding refuses a foreign one with an error that unwraps to
-	// go-qrdb's unknown-tenant sentinel (xkms.TenantBindingError).
+	// tenant binding refuses a foreign one, and every system-barrier operation
+	// refuses a tenant-scoped caller outright (go-xkms#1227), with an error
+	// that unwraps to go-qrdb's unknown-tenant sentinel
+	// (xkms.TenantBindingError).
 	{qrdbsdk.ErrTenantMissing, ClassNotFound},
+	// XKMSService returns ErrNotConfigured when no system barrier is composed.
+	{xkms.ErrNotConfigured, ClassUnavailable},
 
 	// Shamir secret sharing errors.
 	{seal.ErrShamirNotConfigured, ClassFailedPrecondition},
@@ -192,4 +208,8 @@ var PolicySentinelClasses = []SentinelClass{
 	{policy.ErrPCRIndexOutOfRange, ClassInvalidArgument},
 	{policy.ErrDuplicatePCRIndex, ClassInvalidArgument},
 	{policy.ErrExportFailed, ClassInternal},
+	// Every operation on this platform-global state is platform-scoped: a
+	// tenant-scoped caller is refused with xkms.TenantBindingError, which
+	// unwraps to go-qrdb's unknown-tenant sentinel (go-xkms#1227).
+	{qrdbsdk.ErrTenantMissing, ClassNotFound},
 }

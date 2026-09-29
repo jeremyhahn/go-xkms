@@ -30,7 +30,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 
 	"github.com/go-chi/chi/v5"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
@@ -39,53 +38,41 @@ import (
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 )
 
 // ==========================================================================
 // server.go - NewServer with optional components
 // ==========================================================================
 
-func TestNewServer_WithBarrier(t *testing.T) {
+// TestNewServer_PlatformHandlersComposeOverTheService pins that the
+// platform-global handler groups -- the system barrier and PINs (on the
+// handler context), the platform store, the PCR policies and the credentials
+// -- are wired over the XKMSService and nothing else, so each operation passes
+// the service's platform scope (go-xkms#1226, #1227). Without a service none
+// of them is mounted.
+func TestNewServer_PlatformHandlersComposeOverTheService(t *testing.T) {
 	ks := newMockKeyStore()
-	memStore := storage.NewMemory()
-	sealStrategy := seal.NewSoftwareStrategy()
+	svc := &xkms.XKMSService{}
 
-	barrier, err := seal.NewBarrier(
-		slog.Default(),
-		memStore,
-		seal.BarrierConfig{RootKeyPath: "test-key"},
-		sealStrategy,
-	)
-	require.NoError(t, err)
-
-	cfg := &Config{
+	server, err := NewServer(&Config{
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends:      map[string]xkms.Backend{"test": ks},
-		Barrier:       barrier,
-	}
-
-	server, err := NewServer(cfg)
+		XKMSService:   svc,
+	})
 	require.NoError(t, err)
-	require.NotNil(t, server)
-	require.NotNil(t, server.handlers.Barrier)
-}
+	assert.Same(t, svc, server.handlers.xkmsService)
+	assert.NotNil(t, server.platformHandlers)
+	assert.NotNil(t, server.policyHandlers)
+	assert.NotNil(t, server.credentialHandlers)
 
-func TestNewServer_WithPINManager(t *testing.T) {
-	ks := newMockKeyStore()
-	pinMgr := &mockPINManager{strategy: qrdbsdk.PINStrategySoftware, initialized: true}
-
-	cfg := &Config{
+	bare, err := NewServer(&Config{
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends:      map[string]xkms.Backend{"test": ks},
-		PINManager:    pinMgr,
-	}
-
-	server, err := NewServer(cfg)
+	})
 	require.NoError(t, err)
-	require.NotNil(t, server)
-	require.NotNil(t, server.handlers.PINManager)
+	assert.Nil(t, bare.platformHandlers)
+	assert.Nil(t, bare.policyHandlers)
+	assert.Nil(t, bare.credentialHandlers)
 }
 
 func TestNewServer_WithRBACEnabled_NoAuthorizerFailsClosed(t *testing.T) {
@@ -239,40 +226,6 @@ func TestNewServer_WithPasswordStoreAndRegistry(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	assert.NotNil(t, server.passwordHandlers)
-}
-
-func TestNewServer_WithPolicyManager(t *testing.T) {
-	ks := newMockKeyStore()
-	policyStore := newMockPolicyStore()
-	reader := &mockPCRReader{values: map[int][]byte{0: make([]byte, 32)}}
-	mgr, err := policy.NewManager(reader, policyStore)
-	require.NoError(t, err)
-
-	cfg := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Backends:      map[string]xkms.Backend{"test": ks},
-		PolicyManager: mgr,
-	}
-
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	assert.NotNil(t, server.policyHandlers)
-}
-
-func TestNewServer_WithCredentialService(t *testing.T) {
-	ks := newMockKeyStore()
-
-	cfg := &Config{
-		Authenticator:     auth.NewNoOpAuthenticator(),
-		Backends:          map[string]xkms.Backend{"test": ks},
-		CredentialService: &credentialspkg.Service{},
-	}
-
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	assert.NotNil(t, server.credentialHandlers)
 }
 
 // ==========================================================================
@@ -520,7 +473,7 @@ func TestPolicy_VerifyPolicy_InternalError(t *testing.T) {
 	reader := &mockPCRReader{err: errors.New("pcr read error")}
 	mgr, err := policy.NewManager(reader, store)
 	require.NoError(t, err)
-	h := NewPolicyHandlers(mgr)
+	h := policyHandlersOver(mgr)
 
 	// Create the policy directly in the store.
 	store.policies["boot"] = &policy.PolicyDefinition{
@@ -547,7 +500,7 @@ func TestPolicy_ExportPolicy_InternalError(t *testing.T) {
 	reader := &mockPCRReader{values: map[int][]byte{0: make([]byte, 32)}}
 	mgr, err := policy.NewManager(reader, store)
 	require.NoError(t, err)
-	h := NewPolicyHandlers(mgr)
+	h := policyHandlersOver(mgr)
 
 	r := chi.NewRouter()
 	r.Get("/api/v1/policies/{name}/export", h.ExportPolicyHandler)
@@ -564,7 +517,7 @@ func TestPolicy_ListPolicies_Error(t *testing.T) {
 	reader := &mockPCRReader{values: map[int][]byte{0: make([]byte, 32)}}
 	mgr, err := policy.NewManager(reader, store)
 	require.NoError(t, err)
-	h := NewPolicyHandlers(mgr)
+	h := policyHandlersOver(mgr)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/policies", nil)
 	w := httptest.NewRecorder()
@@ -708,8 +661,7 @@ func TestBarrierSealHandler_NotInitialized(t *testing.T) {
 	require.NoError(t, err)
 
 	// Do NOT initialize barrier. Sealing an uninitialized barrier should error.
-	h := NewHandlerContext("test")
-	h.SetBarrier(barrier)
+	h := handlerOverBarrier(barrier)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/seal", nil)
 	w := httptest.NewRecorder()
