@@ -52,11 +52,6 @@ export interface ListUsersResponse {
   has_more: boolean;
 }
 
-/** Mirrors pkg/api/rest/user_handlers.go updateUserBody. */
-export interface UpdateUserRequest {
-  enabled: boolean;
-}
-
 /** Mirrors pkg/api/rest/user_handlers.go bindUserCertBody. */
 export interface BindUserCertRequest {
   thumbprint: string;

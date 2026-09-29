@@ -27,12 +27,14 @@ import (
 // ListPermissions fails on the first unscoped permission an identity holds —
 // which fails token issuance, not just the one call. Under go-qrdb
 // v0.19.0-alpha a go-quicbaas login for any role carrying keys:read was
-// rejected with "permission: no scope declared for keys:read".
+// rejected with "permission: no scope declared for keys:read" (keys:read has
+// since been retired: go-xkms#1249 replaced it and keys:write with the
+// ordinary per-verb keys:create/get/list/update/delete CRUD actions qrdb
+// already declares scope for).
 //
 // pkg/auth/permissions.go states that most of xkms's resource:action pairs
 // mirror qrdb's canonical registry, so qrdb's own self_scope.go /
-// tenant_scope.go declare the scope of nearly all of them. That claim holds
-// for 69 of the 81 permissions this module contributes. The twelve below are
+// tenant_scope.go declare the scope of nearly all of them. The ten below are
 // the exceptions — names qrdb does not declare, so xkms owns them and must
 // declare their reach itself.
 //
@@ -60,26 +62,18 @@ import (
 // members still have, which is incoherent rather than safe.
 func selfScopedPermissions() []qrdbsdk.Permission {
 	return []qrdbsdk.Permission{
-		// keys:read gates the read surface of the PKCS#11 object-state store
-		// (PKCS11StateGet, PKCS11StateList) and the seal store (SealStoreGet,
-		// SealStoreStatus). Both hold SYSTEM-barrier state, not per-tenant key
-		// material: qrdb declares the whole seal:* family — seal:unseal,
-		// seal:rekey, seal:rotate_root_key — ScopeSelf and reserves
-		// ScopeTenantOnly for tenant_barrier:*, the per-tenant custody a
-		// platform operator must not hold. keys:read reads strictly less than
-		// keys:get and keys:export, which qrdb declares ScopeSelf.
-		qrdbsdk.Permission(auth.ResourceKeys + ":" + auth.ActionRead),
-
-		// keys:write gates the mutating half of the same two stores
-		// (PKCS11StatePut/PutIfAbsent/CAS/CAD/Delete, SealStorePut/Reseal).
-		// Same material, same reach, and strictly less than keys:delete and
-		// keys:import — both ScopeSelf in qrdb.
-		qrdbsdk.Permission(auth.ResourceKeys + ":" + auth.ActionWrite),
-
-		// keys:update gates the single compare-and-swap route on the PKCS#11
-		// state store. It is keys:write narrowed to one conditional mutation,
-		// so it cannot warrant a wider or narrower tenancy reach than the
-		// permission it refines.
+		// keys:update gates the compare-and-swap routes on the PKCS#11 state
+		// store and the platform-sealed store's reseal-in-place operation
+		// (PKCS11StateCAS, SealStoreReseal). go-xkms#1249 retired the coarse
+		// keys:read/keys:write pair those two stores used to share with
+		// every other keys:* mutation and read: PKCS11StatePut/PutIfAbsent,
+		// PKCS11StateGet/List, and SealStorePut/Get/List/Status now carry
+		// the ordinary per-verb keys:create/get/list/delete actions qrdb
+		// itself declares ScopeSelf for, leaving keys:update as the one name
+		// in this family qrdb does not declare (qrdb's keys:* vocabulary has
+		// no update member; see pkg/auth/permissions.go). It holds the same
+		// SYSTEM-barrier-state reach keys:read/write held: strictly less
+		// than keys:delete and keys:import, both ScopeSelf in qrdb.
 		qrdbsdk.Permission(auth.ResourceKeys + ":" + auth.ActionUpdate),
 
 		// bootstrap:read reports the trust-bootstrap listener's own public
@@ -94,8 +88,8 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// authorization policy management (pkg/seal/policy): capturing,
 		// reading, refreshing, verifying, and exporting the PCR-value
 		// snapshots sealed secrets bind to. It is platform/hardware state,
-		// not per-tenant key material -- the same reasoning keys:read/write
-		// above give for the PKCS#11 remote-state and seal stores -- so it
+		// not per-tenant key material -- the same reasoning keys:update
+		// above gives for the PKCS#11 remote-state and seal stores -- so it
 		// takes the same ScopeSelf reach. qrdb does not declare this name;
 		// xkms owns it. PIN EACH MEMBER: a family helper here would tag a
 		// future policy action nobody reviewed.

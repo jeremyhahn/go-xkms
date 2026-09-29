@@ -1,6 +1,6 @@
 # RBAC — API
 
-> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-28 (#1226, #1227, #1232)
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-29 (#1226, #1227, #1232, #1249)
 
 RBAC is cross-cutting, not a capability with its own endpoint set: it is the
 authorization gate every other feature's REST route, gRPC RPC, and MCP tool
@@ -24,15 +24,23 @@ transport's own permission table is pinned against its own source
 (`internal/authzscan`, engineering.md's Test strategy), and
 `pkg/api/authz_consistency_test` additionally cross-checks the three tables
 against each other so a permission that drifts on only one transport fails
-CI (go-xkms#1232). Two known exceptions are tracked, not silently allowed:
-`POST /api/v1/passwords/access-mode` is session-authenticated on REST with
-no RBAC permission, where gRPC's `PasswordStoreSetAccessMode` and MCP's
-`password.setAccessMode` both require `passwords:write`; and REST's
-`/api/v1/pkcs11state/*` routes carry per-verb CRUD actions
-(`keys:create`/`get`/`list`/`update`/`delete`) where gRPC's `PKCS11State*`
-RPCs collapse to a coarser `keys:write`/`keys:read` tiering. Both are
-allowlisted in the consistency golden pending a product decision; see
-engineering.md's Invariants.
+CI (go-xkms#1232). REST's `/api/v1/pkcs11state/*` and
+`/api/v1/platform/secrets*` routes and gRPC's `PKCS11State*`/`SealStore*`
+RPCs used to diverge the same way — REST already carried per-verb CRUD
+actions (`keys:create`/`get`/`list`/`update`/`delete`) while gRPC collapsed
+every family to a coarse `keys:write`/`keys:read` tiering — until
+go-xkms#1249 moved gRPC (and MCP's `sealStore.*` methods) onto the same
+per-verb actions REST already used, and split REST's user enable/disable
+into their own routes carrying qrdb's own `users:enable`/`users:disable`
+(previously a single `PUT /api/v1/users/{username}` picked the direction
+from a request-body field the permission gate could not see, so it could
+only carry the coarser `users:update` for both). One known exception
+remains, tracked rather than silently allowed: `POST
+/api/v1/passwords/access-mode` is session-authenticated on REST with no
+RBAC permission, where gRPC's `PasswordStoreSetAccessMode` and MCP's
+`password.setAccessMode` both require `passwords:write`. It is allowlisted
+in the consistency golden pending a product decision; see engineering.md's
+Invariants.
 
 ## User lifecycle — REST
 
@@ -44,7 +52,8 @@ Base path `/api/v1/users` (`pkg/api/rest/routes.go`):
 | `GET` | `/api/v1/users/` | `users:list` | `handleListUsers` |
 | `GET` | `/api/v1/users/{username}` | `users:read` | `handleGetUser` |
 | `GET` | `/api/v1/users/{username}/credentials` | `users:read` | `handleListUserCredentials` |
-| `PUT` | `/api/v1/users/{username}` | `users:update` | `handleUpdateUser` (enable/disable only) |
+| `POST` | `/api/v1/users/{username}/enable` | `users:enable` | `handleEnableUser` |
+| `POST` | `/api/v1/users/{username}/disable` | `users:disable` | `handleDisableUser` |
 | `POST` | `/api/v1/users/{username}/cert-bindings` | `users:update` | `handleBindUserCert` |
 | `DELETE` | `/api/v1/users/{username}` | `users:delete` | `handleDeleteUser` |
 
@@ -87,8 +96,8 @@ Same routes as REST — QUIC is HTTP/3 on the unified REST listener.
 | `user.list` | `users:list` |
 | `user.get` | `users:read` |
 | `user.delete` | `users:delete` |
-| `user.enable` | `users:update` |
-| `user.disable` | `users:update` |
+| `user.enable` | `users:enable` |
+| `user.disable` | `users:disable` |
 | `user.bindCert` | `users:update` |
 | `user.listCredentials` | `users:read` |
 
@@ -97,9 +106,9 @@ Same routes as REST — QUIC is HTTP/3 on the unified REST listener.
 - **No `/roles` REST route, no role RPC on `XKMSService`, no `role.*` MCP
   tool.** Verified absent across all three. Role CRUD is SDK-only (see
   engineering.md).
-- **No role-reassignment endpoint.** `PUT /api/v1/users/{username}` and its
-  gRPC/MCP equivalents only flip `enabled`; there is no field or verb that
-  changes `RoleIDs` on an existing user.
+- **No role-reassignment endpoint.** `POST /api/v1/users/{username}/enable`
+  and `.../disable`, and their gRPC/MCP equivalents, only flip `enabled`;
+  there is no field or verb that changes `RoleIDs` on an existing user.
 - **The ACME admin API's `roles:*` routes are a different feature.**
   `pkg/acme/admin/tenant_handlers.go` exposes
   `GET/POST/PUT/DELETE /admin/.../tenants/{id}/roles` gated by

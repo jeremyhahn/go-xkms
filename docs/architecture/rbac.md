@@ -113,10 +113,9 @@ does not declare — are xkms's to own, and they are declared in
 
 | Permission | Scope | Why |
 |------------|-------|-----|
-| `keys:read` | `self` | PKCS#11 object-state and seal-store reads; system-barrier state, and go-qrdb declares the whole `seal:*` family `self` |
-| `keys:write` | `self` | the mutating half of the same two stores; strictly less than `keys:delete`/`keys:import`, both `self` |
-| `keys:update` | `self` | one compare-and-swap route on the PKCS#11 state store — `keys:write` narrowed |
-| `ssh:use` | `self` | the blanket gate on the SSH CA route group, whose siblings `ssh:read`/`write`/`delete` and the matching `piv:use` are all `self` |
+| `keys:update` | `self` | `PKCS11StateCAS` and `SealStoreReseal`; system-barrier state, and go-qrdb declares the whole `seal:*` family `self`. go-xkms#1249 moved every other PKCS#11-state and seal-store operation onto the ordinary per-verb `keys:create`/`get`/`list`/`delete` actions go-qrdb itself scopes, retiring the coarse `keys:read`/`keys:write` pair this table used to carry |
+| `bootstrap:read` | `self` | the trust-bootstrap listener's own public keys (go-xkms#632); process-wide, not per-tenant, so it holds the same reach as `seal:status` |
+| `policy:create`/`get`/`list`/`delete`/`refresh`/`verify`/`export` | `self` | TPM 2.0 PCR-bank sealed-secret authorization policy management (`pkg/seal/policy`, go-xkms#691); platform/hardware state, not per-tenant key material, so it takes the same reach as `keys:update` and `bootstrap:read` above |
 
 Two rules govern that file. **Pin each member, not the family** — a family
 helper that later gains a member would scope it silently. **Declare only what

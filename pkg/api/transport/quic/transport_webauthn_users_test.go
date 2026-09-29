@@ -300,7 +300,7 @@ func TestDeleteUser_ServerErr(t *testing.T) {
 // --- Users: EnableUser / DisableUser ---
 
 func TestEnableUser_Success(t *testing.T) {
-	tr, cleanup := newRecordingTransport(t, http.MethodPut, "/api/v1/users/bob", func(w http.ResponseWriter) {
+	tr, cleanup := newRecordingTransport(t, http.MethodPost, "/api/v1/users/bob/enable", func(w http.ResponseWriter) {
 		writeJSONResponse(t, w, http.StatusOK, map[string]bool{"success": true})
 	})
 	defer cleanup()
@@ -318,7 +318,7 @@ func TestEnableUser_ServerErr(t *testing.T) {
 }
 
 func TestDisableUser_Success(t *testing.T) {
-	tr, cleanup := newRecordingTransport(t, http.MethodPut, "/api/v1/users/bob", func(w http.ResponseWriter) {
+	tr, cleanup := newRecordingTransport(t, http.MethodPost, "/api/v1/users/bob/disable", func(w http.ResponseWriter) {
 		writeJSONResponse(t, w, http.StatusOK, map[string]bool{"success": true})
 	})
 	defer cleanup()
@@ -335,9 +335,11 @@ func TestDisableUser_ServerErr(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestSetUserEnabled_RequestBody proves EnableUser/DisableUser send the
-// {"enabled": <bool>} body the REST transport sends, not just hit the route.
-func TestSetUserEnabled_RequestBody(t *testing.T) {
+// TestSetUserEnabled_NoRequestBody proves EnableUser/DisableUser send no
+// body: the direction lives in the route (.../enable vs .../disable,
+// go-xkms#1249), not in a JSON payload the static permission gate would
+// have to decode before it could authorize the request.
+func TestSetUserEnabled_NoRequestBody(t *testing.T) {
 	var gotBody []byte
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -355,13 +357,10 @@ func TestSetUserEnabled_RequestBody(t *testing.T) {
 	}
 
 	require.NoError(t, tr.EnableUser(context.Background(), "bob"))
-	var enabled map[string]bool
-	require.NoError(t, json.Unmarshal(gotBody, &enabled))
-	assert.True(t, enabled["enabled"])
+	assert.Empty(t, gotBody)
 
 	require.NoError(t, tr.DisableUser(context.Background(), "bob"))
-	require.NoError(t, json.Unmarshal(gotBody, &enabled))
-	assert.False(t, enabled["enabled"])
+	assert.Empty(t, gotBody)
 }
 
 // --- Users: BindUserCert ---
