@@ -522,6 +522,14 @@ func TestDeriveKeyECDH_BackendNoKeyAgreement(t *testing.T) {
 // ===================== Decrypt asymmetric path tests =====================
 
 func TestDecrypt_AsymmetricRSA_ErrorPath(t *testing.T) {
+	// The RPC's asymmetric fallback defaults to PKCS#1 v1.5 and is refused
+	// unless crypto.allow_legacy_key_wrap is set (go-xkms#1283); this test's
+	// premise is exercising that construction's failure path, so it must opt
+	// in explicitly.
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(true)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
 	svc := setupServiceTest(t)
 	defer xkms.Reset()
 
@@ -545,6 +553,44 @@ func TestDecrypt_AsymmetricRSA_ErrorPath(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.Internal, st.Code())
 	assert.Contains(t, st.Message(), "decryption failed")
+	assert.NotContains(t, st.Message(), "invalid-ciphertext-data-for-rsa-decrypt",
+		"the uniform ciphertext-rejected error must not echo request or backend detail")
+}
+
+// TestDecrypt_PKCS1v15RefusedByDefault is the gRPC refusal test for
+// go-xkms#1283: Decrypt's asymmetric fallback must refuse PKCS#1 v1.5 --
+// named explicitly or left unnamed -- unless crypto.allow_legacy_key_wrap is
+// set. Before this fix it performed PKCS#1 v1.5 unconditionally, the one
+// construction of its kind in the service not gated by this policy.
+func TestDecrypt_PKCS1v15RefusedByDefault(t *testing.T) {
+	previous := types.AllowLegacyKeyWrap()
+	types.SetAllowLegacyKeyWrap(false)
+	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+
+	svc := setupServiceTest(t)
+	defer xkms.Reset()
+
+	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
+		KeyId:   "rsa-decrypt-refused",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
+		KeySize: 2048,
+	})
+	require.NoError(t, err)
+
+	for _, padding := range []string{"", "pkcs1v15"} {
+		_, err = svc.Decrypt(context.Background(), &pb.DecryptRequest{
+			KeyId:      "rsa-decrypt-refused",
+			Backend:    "software",
+			Ciphertext: []byte("irrelevant"),
+			Padding:    padding,
+		})
+		require.Error(t, err, "padding %q", padding)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.InvalidArgument, st.Code(), "padding %q", padding)
+		assert.Contains(t, st.Message(), "allow_legacy_key_wrap", "padding %q", padding)
+	}
 }
 
 func TestDecrypt_KeyNotFoundError(t *testing.T) {

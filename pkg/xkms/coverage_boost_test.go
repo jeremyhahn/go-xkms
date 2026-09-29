@@ -975,6 +975,10 @@ func TestBoostDecrypt_Symmetric_DecryptError(t *testing.T) {
 }
 
 func TestBoostDecrypt_AsymFallback_Success(t *testing.T) {
+	if !allowLegacyWrap(t) {
+		return
+	}
+
 	software, _ := setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
