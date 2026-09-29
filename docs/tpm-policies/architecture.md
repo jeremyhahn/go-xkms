@@ -184,6 +184,52 @@ model today:
 The model is therefore a new, cross-backend design. It must decide how a
 verify or decrypt call selects a version.
 
+## Key versions
+
+Owner ruling (2026-09-29): a service-layer version model on every backend.
+
+- **A version is its own backend key.** Key `K` version `n` is the backend key
+  `K@v<n>`. `RotateKey(K)` creates `K@v<n+1>` with the same algorithm,
+  attributes and, for TPM2, the same scope and policy. It then makes that
+  version current. Nothing is re-keyed in place, so a non-exportable TPM2 key
+  rotates like any other.
+- **The version records live in the registry**
+  (`{tenant}/key-versions/<keyID>`). A record holds the current version and,
+  per version, its state (`enabled`, `disabled` or `retired`) and creation
+  time. The gRPC `ListKeyVersions`, `Enable/DisableKeyVersion` and
+  `Enable/DisableAllKeyVersions` RPCs, already declared, are implemented over
+  it.
+- **Encrypt and sign always use the current version. Decrypt and verify select
+  the version from the envelope,** so callers never track versions.
+  - A disabled version refuses every operation until it is re-enabled.
+  - A retired version is gone: its backend key is deleted, and it can never be
+    re-enabled.
+  - Older enabled versions keep serving decrypt and verify.
+- **Rotate all:** `RotateScopeKeys(tenant)` rotates every key in the tenant's
+  scope and reports each result.
+
+### Envelope format (v1)
+
+```
+offset  size  field
+0       2     magic 0x58 0x4B ("XK")
+2       1     format version, 0x01
+3       1     kind: 0x01 ciphertext, 0x02 signature
+4       4     key version, uint32 big-endian (1-based)
+8       n     payload: the backend's ciphertext or signature, unchanged
+```
+
+- A header whose magic, format version or kind is unknown is refused with
+  `*EnvelopeFormatError`. It is never guessed at.
+- A future format bumps byte 2. Decoders keep every format they have ever
+  shipped.
+
+**Open question, not yet ruled on:** a signature or an RSA-OAEP ciphertext
+often leaves xkms in a standard format that has no room for a header: X.509
+and CSR signatures, SSH signatures, JWS, git commit signatures, and ciphertext
+a third party produced with the public key. See the report accompanying this
+section for the options.
+
 ## NV counter and revocation
 
 - Each scope has one NV index of type `TPM_NT_COUNTER`, and each named policy
