@@ -29,7 +29,8 @@ import (
 func TestDefaultConfig_ListenerAddresses(t *testing.T) {
 	cfg := DefaultConfig()
 	assert.Equal(t, ":9443", cfg.Agent.ListenAddress)
-	assert.Equal(t, ":8444", cfg.Phone.RelayListenAddress)
+	assert.Equal(t, "127.0.0.1:8444", cfg.Phone.RelayListenAddress,
+		"the relay's built-in default is loopback-only (go-xkms#1306)")
 	require.NoError(t, cfg.Validate())
 }
 

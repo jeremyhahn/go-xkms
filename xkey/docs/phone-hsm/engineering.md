@@ -58,6 +58,36 @@ lives in, so signing reaches it through `Client.Sign` exactly like
 because `Client` (the generic `transport.Client`) has no certificate-storage
 verbs.
 
+### Sync approval is a required collaborator, not an optional one (go-xkms#1306)
+
+`remote.syncPasswords`, `remote.syncOATH` and `remote.syncAll` export this
+host's password vault or OATH secrets to the phone; `remote.syncTrustStore`
+(public certificates) and `remote.syncStatus` (metadata) do not and are not
+gated by this. `BridgeConfig.SyncApproval pairing.SyncApprovalFunc`
+(`bridge.go`) is consulted before any of the three run:
+
+```go
+type SyncApprovalFunc func(ctx context.Context, req *SyncApprovalRequest) error
+```
+
+A `nil` `SyncApproval` refuses all three with `ErrSyncApprovalRequired` —
+unlike every other collaborator in the table above, "not configured" is
+never silently equivalent to "unchecked". A configured function that
+returns an error refuses with `ErrSyncNotApproved` wrapping it.
+`AlwaysApproveSync` (`bridge.go`) is the explicit "already decided elsewhere"
+escape hatch for a caller that has made this decision by some other means; it
+exists so leaving `SyncApproval` nil is never mistaken for it.
+
+`cmd/xkey/cmd/device_listen_handler.go`'s `newSessionSyncApproval` is the
+CLI's implementation for `device listen`/`device relay`: one session-level
+decision made at start time from `--allow-sync` and
+`allowPhoneSyncExport`'s enterprise-policy resolution
+(`device_pairing_policy_shared.go`), not a live per-request prompt — those
+commands run as a foreground daemon with no UI thread to interrupt per
+request. A GUI-driven bridge (none exists yet; the GUI does not currently
+build a phone-initiated bridge at all) would want a live per-request prompt
+instead and should implement its own `SyncApprovalFunc`.
+
 Every field above is optional. When one is `nil`, its methods answer with a
 typed "not configured" sentinel (`ErrOATHNotConfigured`, `ErrPIVNotConfigured`,
 `ErrSyncNotConfigured`, all mapped to JSON-RPC `ErrorCodeFeatureUnavailable`)
@@ -74,10 +104,13 @@ anchor. Each `remote.syncTrustStore`/`syncOATH`/`syncPasswords` write is
 recorded as `audit.OpSyncApplied` against `BridgeConfig.DeviceID`/`DeviceName`
 (`Bridge.auditSyncApplied`, `xkey/pkg/pairing/bridge_sync.go`), success or
 failure, with the item counts; a failed audit write fails the call as
-`ErrSyncFailed`.
+`ErrSyncFailed`. A refused `SyncApproval` decision for `syncOATH`/
+`syncPasswords`/`syncAll` (see "Sync approval is a required collaborator"
+above) is audited the same way, as its own entry, before the apply that
+never runs.
 
-`cmd/xkey/cmd/device_listen.go`'s `buildListenBridgeConfig` is the one place
-that wires all three, plus the audit identity — `AuditLogger` is
+`cmd/xkey/cmd/device_listen_handler.go`'s `buildListenBridgeConfig` is the
+one place that wires all three, plus the audit identity — `AuditLogger` is
 `audit.NewSlogLogger`, `DeviceID`/`DeviceName` the paired device's BLE address
 and name: it opens the OATH store through `openOATHStore` and the
 sync service through `openSyncService` — the exact constructors `xkey oath`
@@ -563,6 +596,48 @@ Its `Error` and `Unwrap` are nil-safe: the type is exported, so a downstream
 package can construct one by hand, and an error that panics while being logged
 converts a handled failure into an outage.
 
+## Live attestation on a phone-initiated connection (go-xkms#1306)
+
+Everything in the previous section is the laptop-as-INITIATOR case: this
+host dials out (`PhoneKeyBackend.Connect`, `openDeviceSession`) and drives
+`AttestOverSession`/`enforceReattestation` itself. `xkey device listen`
+(BLE peripheral) and `xkey device relay` (TCP) are the opposite direction —
+the phone dials in — and until go-xkms#1306 that direction served the full
+`remote.*` bridge on Noise static-key possession alone, with no liveness
+check: `ExpectedRemoteStatic` proves the peer holds the key paired earlier
+(see above), never that it is hardware-bound, so a copied Noise key was
+sufficient.
+
+Both `phone.TCPPairingConfig` and `phone.BLEPeripheralConfig` now carry a
+required `LiveAttest pairing.LiveAttestFunc`. Immediately after the Noise
+handshake completes and before any request reaches `RequestHandler`, the
+responder runs it: derives `session.AttestChannelBinding()`, builds a
+`pairing.RPCExchange` from `pairing.InlineExchange` (raw send/receive
+primitives — `tcpSend`/`tcpReceive` for TCP, `sendMessage`/
+`receiveMessageTimeout` for BLE — since the responder has no independent
+request-driving loop of its own at this point), and calls the verifier. A
+`nil` `LiveAttest` refuses the connection outright
+(`ErrLiveAttestationUnavailable`), matching `PhoneKeyBackend.proveLiveness`'s
+own fail-closed contract on the initiator side; a verifier that returns an
+error closes the connection before `RequestHandler` ever runs.
+
+`cmd/xkey/cmd/device_session_shared.go`'s `newLiveAttestor` — the same
+constructor `openDeviceSession`'s initiator path uses — is the verifier both
+`device listen` and `device relay` wire in. The wire content is
+`local.attestDevice`: the responder is, for this one exchange, the
+requester, exactly as `bidirectional.md` describes the laptop's `local.*`
+half; the phone answers it the same way it answers an initiator-driven
+reattestation.
+
+`device relay` also pins the Noise handshake itself:
+`TCPPairingConfig.ExpectedRemoteStatic` (mirroring
+`BLEPeripheralConfig.ExpectedRemoteStatic`, and rejected at construction by
+the same too-short/too-long check as `ErrPeripheralInvalidPin` —
+`ErrTCPServerInvalidPin`) is set to the target paired device's stored Noise
+static public key, so an unrelated initiator's handshake fails
+(`ErrStaticKeyMismatch`) before the connection reaches the live-attestation
+step at all.
+
 ## Configuration
 
 Pairing keys and the expected device fingerprint, from a completed pairing.
@@ -571,7 +646,9 @@ Transport selection is USB AOA, TCP relay (`tcp_transport.go`) or BLE.
 server's bind address is `phone.relay_listen_address` in the unified config
 (`pkg/config`, validated as `host:port`; `XKEY_PHONE_RELAY_LISTEN_ADDRESS`),
 resolved by `xkey device relay` as flag (`--listen`) over configuration over
-the built-in `phone.DefaultTCPListenAddr` (`:8444`) (#140).
+the built-in default, `127.0.0.1:8444` — loopback only (go-xkms#1306; #140
+set the resolution order, not this default). Reachable from the network
+needs an explicit non-loopback address.
 
 Device-side policy: `device_enrollment_policy.go`, `sharing_policy.go`.
 
@@ -704,7 +781,8 @@ two-way "have a barrier or don't" that `SealLocalNoiseKey` itself sees:
 func (s *PhoneService) resolveNoiseKeyBarrier() (barrier pairing.NoiseKeyBarrier, noBarrierConfigured bool)
 func (s *PhoneService) sealOrWarnLocalNoiseKey(deviceName string, priv []byte) (string, error)
 
-// cmd/xkey/cmd/device_barrier.go
+// cmd/xkey/cmd/device_barrier_shared.go -- no build tag (go-xkms#1306):
+// `xkey device relay` needs it too, and neither function touches Bluetooth.
 func openDeviceBarrier(cmd *cobra.Command) (pairing.NoiseKeyBarrier, func(), error)
 func sealOrWarnLocalNoiseKey(logger *slog.Logger, deviceName string, barrier pairing.NoiseKeyBarrier, priv []byte) (string, error)
 ```
@@ -725,8 +803,8 @@ does.
 | Surface | Where | Barrier source | No barrier configured | Exists but sealed |
 |---|---|---|---|---|
 | GUI `Pair`/`Connect` | `pkg/gui/services/phone_service.go` | `PhoneService.SetBarrierService`, re-resolved on every use so an app lock/unlock is honoured | legacy plaintext + one `slog.Warn` | refuses (`ErrPhoneBarrierRequired`) |
-| CLI `device pair`, `device listen`, `device attest-device` | `cmd/xkey/cmd/device_barrier.go` (`openDeviceBarrier`) | `--barrier-password`/`--barrier-password-file` flags, then `XKEY_BARRIER_PASSWORD`; resolved before the devices file is even read | legacy plaintext + one `slog.Warn` | refuses (`ErrDeviceBarrierUnsealFailed`) |
-| Every other device-backed command (OATH sync, backup, sharing, re-attest, phone enrollment, FIDO2 phone backend) | `cmd/xkey/cmd/device_session.go` (`unsealDeviceLocalKey`, behind `openDeviceSession`/`newPairedDeviceBackendConfig`) | `XKEY_BARRIER_PASSWORD` only, opened and closed around the one unseal | unaffected — a legacy record already needed no barrier | refuses (only reached for an already-sealed record, which always needs a barrier) |
+| CLI `device pair`, `device listen`, `device relay`, `device attest-device` | `cmd/xkey/cmd/device_barrier_shared.go` (`openDeviceBarrier`) | `--barrier-password`/`--barrier-password-file` flags, then `XKEY_BARRIER_PASSWORD`; resolved before the devices file is even read | legacy plaintext + one `slog.Warn` | refuses (`ErrDeviceBarrierUnsealFailed`) |
+| Every other device-backed command (OATH sync, backup, sharing, re-attest, phone enrollment, FIDO2 phone backend) | `cmd/xkey/cmd/device_session_shared.go` (`unsealDeviceLocalKey`, behind `openDeviceSession`/`newPairedDeviceBackendConfig`) | `XKEY_BARRIER_PASSWORD` only, opened and closed around the one unseal | unaffected — a legacy record already needed no barrier | refuses (only reached for an already-sealed record, which always needs a barrier) |
 
 **No migration.** A device's record stays in whichever form it was written
 in until the operator re-pairs it. There is no reseal-on-use: a legacy

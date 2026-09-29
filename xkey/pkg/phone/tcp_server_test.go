@@ -206,6 +206,7 @@ func TestTCPPairingServer_HandshakeAndRequest(t *testing.T) {
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:     "127.0.0.1:0",
 		RequestHandler: handler,
+		LiveAttest:     alwaysLiveAttestForTest,
 	})
 	if err != nil {
 		t.Fatalf("NewTCPPairingServer: %v", err)
@@ -266,6 +267,7 @@ func TestTCPPairingServer_MultipleConnections(t *testing.T) {
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:     "127.0.0.1:0",
 		RequestHandler: handler,
+		LiveAttest:     alwaysLiveAttestForTest,
 	})
 	if err != nil {
 		t.Fatalf("NewTCPPairingServer: %v", err)
@@ -327,6 +329,7 @@ func TestTCPPairingServer_StopDrainsConnections(t *testing.T) {
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:     "127.0.0.1:0",
 		RequestHandler: handler,
+		LiveAttest:     alwaysLiveAttestForTest,
 	})
 	if err != nil {
 		t.Fatalf("NewTCPPairingServer: %v", err)
@@ -446,6 +449,7 @@ func TestTCPPairingServer_NoHandler(t *testing.T) {
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr: "127.0.0.1:0",
 		// No RequestHandler
+		LiveAttest: alwaysLiveAttestForTest,
 	})
 	if err != nil {
 		t.Fatalf("NewTCPPairingServer: %v", err)
@@ -510,6 +514,7 @@ func TestTCPPairingServer_HandlerError(t *testing.T) {
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:     "127.0.0.1:0",
 		RequestHandler: handler,
+		LiveAttest:     alwaysLiveAttestForTest,
 	})
 	if err != nil {
 		t.Fatalf("NewTCPPairingServer: %v", err)
@@ -605,6 +610,7 @@ func TestTCPPairingServer_ConcurrentConnections(t *testing.T) {
 	srv, err := NewTCPPairingServer(&TCPPairingConfig{
 		ListenAddr:     "127.0.0.1:0",
 		RequestHandler: handler,
+		LiveAttest:     alwaysLiveAttestForTest,
 	})
 	if err != nil {
 		t.Fatalf("NewTCPPairingServer: %v", err)

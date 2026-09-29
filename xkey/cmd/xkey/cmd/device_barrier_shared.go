@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build ble
-
 package cmd
 
 import (
@@ -38,6 +36,11 @@ import (
 // What refuses is a barrier that DOES exist but cannot be opened -- the
 // operator chose to protect this key, and a locked barrier is not consent to
 // fall back to plaintext.
+//
+// Not ble-gated: none of this touches Bluetooth, and go-xkms#1306 needs it
+// from `xkey device relay` (TCP, no ble tag required) as well as `xkey
+// device listen` (BLE). It used to live in a ble-tagged file only because
+// every caller happened to be BLE at the time it was written.
 var (
 	// ErrDeviceBarrierNotInitialized indicates no barrier has ever been set
 	// up on this host. Only openDeviceBarrierWithPassword's callers, which

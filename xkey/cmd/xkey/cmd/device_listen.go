@@ -17,50 +17,18 @@ package cmd
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
 )
-
-// Device listen command errors.
-var (
-	// ErrDeviceListenFailed indicates the listen command failed to start.
-	ErrDeviceListenFailed = errors.New("device: listen failed")
-
-	// ErrDeviceNoDefaultDevice indicates no default device is configured.
-	ErrDeviceNoDefaultDevice = errors.New("device: no default device configured")
-
-	// ErrInvalidNonceSize indicates the nonce size is invalid.
-	ErrInvalidNonceSize = errors.New("device: nonce must be 32 bytes")
-
-	// ErrTPM2InitFailed indicates TPM2 initialization failed.
-	ErrTPM2InitFailed = errors.New("device: TPM2 initialization failed")
-
-	// ErrDevicePinInvalid indicates the paired device record has no usable
-	// pinned Noise static key -- empty or the wrong length -- so the
-	// peripheral would otherwise be built with nothing to pin, silently
-	// accepting a handshake from any phone rather than only the paired one.
-	// Re-pairing the device is the only recovery: there is no partial key to
-	// repair.
-	ErrDevicePinInvalid = errors.New("device: paired device has no valid pinned key; re-pair the device")
-)
-
-// Default TPM2 device path.
-const defaultTPMDevice = "/dev/tpmrm0"
 
 // deviceListenCmd starts the BLE peripheral to accept phone-initiated connections.
 var deviceListenCmd = &cobra.Command{
@@ -139,9 +107,19 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 	tpmDevice, _ := cmd.Flags().GetString("tpm-device")
 	tpmPCRBank, _ := cmd.Flags().GetString("tpm-pcr-bank")
 	tpmEnrollment, _ := cmd.Flags().GetBool("tpm-enrollment")
+	allowSyncFlag, _ := cmd.Flags().GetBool("allow-sync")
 
 	// Parse attestation mode
 	attestMode := pairing.ParseAttestationMode(attestModeStr)
+
+	// Resolved before anything else touches the network: an SO PIN that
+	// fails to verify a sealed policy must refuse the whole session, not
+	// just the sync methods it happens to govern (go-xkms#1306).
+	syncPolicy, err := resolvePairingPolicy(cmd, unifiedConfigOrDefault(), logger)
+	if err != nil {
+		return err
+	}
+	syncAllowed := allowPhoneSyncExport(allowSyncFlag, syncPolicy)
 
 	// The barrier is opened, if one is initialized, before the devices file:
 	// this command reads the local Noise static private key to advertise as
@@ -168,67 +146,12 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 		return ErrDeviceNotPaired
 	}
 
-	// Find the target device. findDeviceByName refuses an ambiguous name
-	// (more than one record) instead of resolving it by taking the first
-	// match -- the phone's advertised name is untrusted input, and a lookup
-	// by name is how this command picks which pinned key to trust for the
-	// whole listening session (#1307).
-	var targetDevice *PairedDevice
-	switch {
-	case deviceFilter != "":
-		targetDevice, err = findDeviceByName(cfg, deviceFilter)
-		if err != nil {
-			return err
-		}
-		if targetDevice == nil {
-			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceFilter)}
-		}
-	case cfg.DefaultDevice != "":
-		targetDevice, err = findDeviceByName(cfg, cfg.DefaultDevice)
-		if err != nil {
-			return err
-		}
-		if targetDevice == nil {
-			return ErrDeviceNoDefaultDevice
-		}
-	case len(cfg.Devices) == 1:
-		targetDevice = &cfg.Devices[0]
-	default:
-		fmt.Println("Multiple devices paired. Specify one with --device or set a default.")
-		return ErrDeviceNoDefaultDevice
-	}
-
-	// Decode the phone's public key
-	expectedRemoteStatic, err := base64.StdEncoding.DecodeString(targetDevice.NoisePublicKey)
+	// Resolve which paired device this session pins to, decode its remote
+	// static key, and unseal our local one -- shared with "xkey device
+	// relay" (go-xkms#1306); see resolveListenTargetDevice.
+	targetDevice, expectedRemoteStatic, localPrivateKey, err := resolveListenTargetDevice(cfg, deviceFilter, barrier, logger)
 	if err != nil {
-		return &WrappedError{Msg: "failed to decode phone public key", Err: err}
-	}
-	// Refused here, before any of the TPM/bridge setup below runs, and again
-	// by NewBLEPeripheral itself: an empty or wrong-length key is a corrupt
-	// paired-device record, and building the peripheral with it would pin
-	// nothing (phone.NewNoiseSession treats a zero-length PeerStaticKey as
-	// "no key to pin," not as an error), silently accepting a handshake from
-	// any phone rather than the one that was paired. The same rule
-	// PhoneKeyBackend applies to an unset ExpectedRemoteStatic (phone.go),
-	// applied here to a stored one that decoded to nothing usable.
-	if len(expectedRemoteStatic) != pairing.NoiseKeySize {
-		return &DetailError{Err: ErrDevicePinInvalid, Detail: fmt.Sprintf(": %s", targetDevice.Name)}
-	}
-
-	// Unseal our local static key (#42). barrier is nil here only because
-	// openDeviceBarrier found none initialized (any other resolution
-	// failure already returned above); a nil barrier means this record is
-	// expected to be the legacy plaintext form, logged once per operation.
-	// pairing.UnsealLocalNoiseKey requires the stored form to match the
-	// barrier's presence and returns pairing.ErrNoiseKeyFormMismatch
-	// (telling the operator to re-pair) when it does not -- there is no
-	// migration between the two forms.
-	if barrier == nil && !pairing.IsSealedNoiseKey(targetDevice.LocalNoisePrivateKey) {
-		logger.Warn(noBarrierConfiguredWarning, "device", targetDevice.Name)
-	}
-	localPrivateKey, err := pairing.UnsealLocalNoiseKey(barrier, targetDevice.LocalNoisePrivateKey)
-	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrDeviceListenFailed, Cause: err}
+		return err
 	}
 	// Destroyed here, at the unseal, not at the LoadStaticKey below: a
 	// decode failure on any other field returns in between, and the raw
@@ -295,8 +218,11 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 	}
 
 	// Wire the xkmsd bridge so the phone's full remote.* method set is served,
-	// not just ping and attestation.
-	bridgeClient, bridge, collaborators, err := connectListenBridge(cmd, logger, targetDevice, enroller, enrollerErr)
+	// not just ping and attestation. syncApproval gates the secret-exporting
+	// remote.sync* methods (go-xkms#1306): allowed once, at session start,
+	// not per request -- see newSessionSyncApproval.
+	syncApproval := newSessionSyncApproval(targetDevice.Name, syncAllowed, logger)
+	bridgeClient, bridge, collaborators, err := connectListenBridge(cmd, logger, targetDevice, enroller, enrollerErr, syncApproval)
 	if err != nil {
 		return err
 	}
@@ -326,6 +252,11 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 		DeviceName:           deviceName,
 		Logger:               logger,
 		RequestHandler:       handler,
+		// The #129 live attestation gate: the peripheral sends
+		// local.attestDevice to the phone and requires a verified answer
+		// before serving any request (go-xkms#1306). newLiveAttestor is the
+		// exact verifier PhoneKeyBackend.Connect uses on the initiator side.
+		LiveAttest: newLiveAttestor(targetDevice, logger),
 	})
 	if err == nil {
 		// The constructor consumed the key; the peripheral releases it now.
@@ -430,401 +361,4 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 			// Continue listening for new connections
 		}
 	}
-}
-
-// initTPMForAttestation attempts to initialize a TPM2 connection for attestation.
-func initTPMForAttestation(devicePath string, logger *slog.Logger) (xkms.TrustedPlatformModule, error) {
-	if devicePath == "" {
-		devicePath = defaultTPMDevice
-	}
-
-	logger.Debug("initializing TPM2 for attestation", slog.String("device", devicePath))
-
-	tpmCfg := &xkms.TPMConfig{
-		Device: devicePath,
-		Hash:   "SHA-256",
-	}
-
-	tpmModule, err := xkms.NewTPM2(&xkms.TPMParams{
-		Config: tpmCfg,
-		Logger: logger,
-	})
-	if err != nil {
-		// Check if it's a "not initialized" error which means TPM is present but not provisioned
-		if errors.Is(err, xkms.ErrTPMNotInitialized) {
-			logger.Warn("TPM2 present but not initialized for attestation")
-			return nil, err
-		}
-		return nil, err
-	}
-
-	logger.Info("TPM2 initialized for attestation", slog.String("device", devicePath))
-	return tpmModule, nil
-}
-
-// resolveListenEnroller decides which TPM, if any, the bridge answers TCG
-// device enrollment from, and reports whether this command owns the handle.
-//
-// Enrollment is off unless requested. When it is requested and the attestor
-// already opened this host's TPM, that handle is shared rather than opening
-// the device a second time, and the returned closer is nil because the
-// attestor's deferred Close still owns it. Only when no TPM is open yet does
-// this open one, in which case the caller must close it.
-//
-// A host with no reachable TPM yields a nil enroller and no error: the bridge
-// still serves every other method, and OpenTPMEnroller has already said at
-// INFO or WARN why enrollment is unavailable.
-func resolveListenEnroller(
-	enabled bool,
-	attestTPM xkms.TrustedPlatformModule,
-	devicePath string,
-	pcrBank string,
-	logger *slog.Logger,
-) (pairing.TPMEnroller, io.Closer, error) {
-	if !enabled {
-		return nil, nil, nil
-	}
-	if attestTPM != nil {
-		logger.Info("TCG device enrollment enabled on the attestation TPM")
-		return attestTPM, nil, nil
-	}
-
-	// The reason is logged by OpenTPMEnroller, at INFO when this host simply
-	// has no TPM and at WARN when it has one that cannot be opened.
-	enroller, err := pairing.OpenTPMEnroller(&pairing.TPMEnrollerConfig{
-		Device:          devicePath,
-		PlatformPCRBank: pcrBank,
-		Logger:          logger,
-	})
-	if err != nil {
-		// A host with no TPM reports nothing to the phone beyond "unsupported".
-		// A TPM we could not open is a fault someone can fix, so the cause is
-		// carried to the bridge and reported distinctly.
-		if errors.Is(err, pairing.ErrTPMNotConfigured) {
-			return nil, nil, nil
-		}
-		return nil, nil, err
-	}
-	return enroller, enroller, nil
-}
-
-// listenBridgeCollaborators holds the long-lived Bridge collaborators
-// buildListenBridgeConfig opens so the phone's remote.oath* and remote.sync*
-// methods reach real xkey data instead of reporting the feature
-// unconfigured. Unlike the PIV storage provider (opened fresh per request by
-// the bridge itself), these are opened once, for the life of the daemon, and
-// must be closed at shutdown.
-//
-// Shared, not "listen"-specific despite the name: connectXKMSdBridge
-// (fido2_phone_bridge.go) opens the same collaborators for "xkey fido2"'s
-// phone bridge (go-xkms#1041), following resolveListenEnroller's own
-// precedent of staying "Listen"-named once shared rather than renaming for
-// every new caller.
-type listenBridgeCollaborators struct {
-	oathStore   oath.Store
-	syncSources *backupSources
-}
-
-// Close releases every collaborator resource this holds. A nil receiver is a
-// safe no-op (no bridge was built, or nothing opened successfully). Errors
-// are logged rather than returned: every call site is an unconditional
-// deferred teardown with no error path of its own, matching
-// backupSources.Close's own contract.
-func (c *listenBridgeCollaborators) Close() {
-	if c == nil {
-		return
-	}
-	if c.oathStore != nil {
-		if err := c.oathStore.Close(); err != nil {
-			slog.Default().Warn("failed to close OATH store", slog.String("error", err.Error()))
-		}
-	}
-	if c.syncSources != nil {
-		c.syncSources.Close()
-	}
-}
-
-// listenPIVStorageProvider returns a pairing.PIVStorageProvider that builds
-// PIV certificate storage for a named backend using the exact same
-// createPIVStorage construction "xkey piv" uses (piv.go), over the same
-// flag/config-resolved configuration (--backend, --piv-storage,
-// --storage-path, --tpm-device, --pkcs11-*): a certificate stored via
-// "xkey piv store" is the certificate the phone sees through
-// remote.pivGetCert/pivListSlots. Storage is opened fresh per request and
-// closed by the bridge afterward (bridge_piv.go), matching how "xkey piv"
-// itself opens storage once per invocation rather than holding a long-lived
-// session. cmd is "xkey device listen"'s own command, which declares none of
-// PIVCmd's flags, so this resolves through the unified config only unless a
-// future flag is added here too.
-func listenPIVStorageProvider(cmd *cobra.Command, logger *slog.Logger) pairing.PIVStorageProvider {
-	return func(backend string) (xkms.PIVCertificateStorage, error) {
-		cfg, err := buildPIVConfig(cmd)
-		if err != nil {
-			return nil, err
-		}
-		cfg.Backend = PIVBackendType(backend)
-		// Re-derive the storage type for the requested backend unless the
-		// operator pinned one explicitly, matching buildPIVConfig's own
-		// precedence (an explicit --piv-storage/config override always wins).
-		if pivStorageOverride(cmd) == "" {
-			cfg.StorageType = defaultPIVStorageTypeForBackend(cfg.Backend)
-		}
-		return createPIVStorage(cfg, logger)
-	}
-}
-
-// buildListenBridgeConfig assembles the BridgeConfig a caller hands to
-// pairing.NewBridge, opening every collaborator that config needs. Split out
-// from connectListenBridge so the wiring can be exercised without an xkmsd
-// connection: it takes no transport.Client and dials nothing.
-//
-// connectListenBridge ("xkey device listen") and connectXKMSdBridge
-// ("xkey fido2"'s phone bridge, fido2_phone_bridge.go) both call this
-// unchanged (go-xkms#1041): a phone reaches the identical OATH store, PIV
-// certificate storage, and sync service through either command's bridge, not
-// a second, differently-wired implementation that only forwards ping,
-// attestation, and TPM enrollment. cmd is whichever cobra.Command the caller
-// is running under; its --barrier-password/--barrier-password-file flags
-// (registered by registerDeviceListenFlags on "xkey device listen", and
-// directly on fido2Cmd) are read the same way regardless of which command
-// owns them.
-//
-// The OATH store and sync service are opened through the exact constructors
-// "xkey oath" (openOATHStore, oath.go) and "xkey device sync"
-// (openSyncService, device_sync.go) already use, reading cmd's
-// --barrier-password/--barrier-password-file flags the same way those
-// commands do. The PIV certificate storage provider builds on the exact
-// createPIVStorage construction "xkey piv" uses. A collaborator that fails to
-// open is logged and left nil rather than aborting the daemon: the bridge
-// already treats a nil collaborator as "feature unconfigured" for exactly
-// this reason (go-xkms#690), and a host with, say, no OATH store yet should
-// still pair, sync its trust store, and serve PIV and every other method.
-//
-// device is the paired phone the bridge serves. Every audited bridge call —
-// crypto requests, policy denials, and each remote.sync* write the phone
-// makes into this host's stores — is recorded against it: DeviceID is its
-// BLE address and DeviceName its paired name, the same identity pkg/phone
-// records connection events under. The audit sink is the slog-backed
-// audit.Logger the headless "xkey extension serve" daemon uses (fido2.go),
-// since neither command owns a persistent audit store.
-//
-// The returned collaborators must be closed at shutdown by the caller
-// (listenBridgeCollaborators.Close); connectListenBridge and
-// connectXKMSdBridge both do this via defer, matching every other resource
-// their respective commands own.
-func buildListenBridgeConfig(
-	cmd *cobra.Command,
-	logger *slog.Logger,
-	xkmsdCfg *XKMSdBridgeConfig,
-	device *PairedDevice,
-	enroller pairing.TPMEnroller,
-	enrollerErr error,
-) (*pairing.BridgeConfig, *listenBridgeCollaborators) {
-	collaborators := &listenBridgeCollaborators{}
-
-	if oathStore, oathErr := openOATHStore(cmd, ""); oathErr != nil {
-		logger.Warn("OATH store unavailable; remote.oath* will report unconfigured",
-			slog.String("error", oathErr.Error()))
-	} else {
-		collaborators.oathStore = oathStore
-	}
-
-	syncService, syncSources, syncErr := openSyncService(cmd)
-	if syncErr != nil {
-		logger.Warn("sync service unavailable; remote.sync* will report unconfigured",
-			slog.String("error", syncErr.Error()))
-	} else {
-		collaborators.syncSources = syncSources
-	}
-
-	bridgeCfg := &pairing.BridgeConfig{
-		AllowedBackends: xkmsdCfg.AllowedBackends,
-		DeniedBackends:  xkmsdCfg.DeniedBackends,
-		RequestTimeout:  xkmsdCfg.RequestTimeout,
-		Logger:          logger,
-		TPM:             enroller,
-		TPMOpenErr:      enrollerErr,
-		OATHStore:       collaborators.oathStore,
-		PIVStorage:      listenPIVStorageProvider(cmd, logger),
-		SyncService:     syncService,
-		AuditLogger:     audit.NewSlogLogger(logger),
-		DeviceID:        device.Address,
-		DeviceName:      device.Name,
-	}
-
-	return bridgeCfg, collaborators
-}
-
-// connectListenBridge creates the xkmsd bridge that serves the phone's
-// remote.* requests while this laptop is listening. It returns a nil client
-// and bridge when xkmsd is not enabled, in which case only the locally
-// handled methods are served. The enroller, when non-nil, is the TPM the
-// bridge answers the TCG/IDevID enrollment methods from.
-func connectListenBridge(
-	cmd *cobra.Command,
-	logger *slog.Logger,
-	device *PairedDevice,
-	enroller pairing.TPMEnroller,
-	enrollerErr error,
-) (transport.Client, *pairing.Bridge, *listenBridgeCollaborators, error) {
-	cfg := loadXKMSdBridgeConfig()
-	if !cfg.Enabled {
-		return nil, nil, nil, nil
-	}
-
-	client, err := dialXKMSd(cfg, logger)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	bridgeCfg, collaborators := buildListenBridgeConfig(cmd, logger, cfg, device, enroller, enrollerErr)
-
-	bridge, err := pairing.NewBridge(client, bridgeCfg)
-	if err != nil {
-		collaborators.Close()
-		return nil, nil, nil, errors.Join(ErrXKMSdBridgeCreationFailed, err, client.Close())
-	}
-
-	return client, bridge, collaborators, nil
-}
-
-// listenRequestHandler handles incoming requests from the phone.
-type listenRequestHandler struct {
-	logger   *slog.Logger
-	attestor pairing.LaptopAttestor
-	bridge   *pairing.Bridge
-}
-
-// newListenRequestHandler creates a new listen request handler with
-// attestation support. The bridge, when non-nil, serves every remote.* method
-// the locally handled set does not cover.
-func newListenRequestHandler(
-	logger *slog.Logger,
-	tpmModule xkms.TrustedPlatformModule,
-	mode pairing.AttestationMode,
-	bridge *pairing.Bridge,
-) (*listenRequestHandler, error) {
-	attestor, err := pairing.NewLaptopAttestor(&pairing.LaptopAttestorConfig{
-		Mode:   mode,
-		TPM:    tpmModule,
-		Logger: logger,
-	})
-	if err != nil {
-		return nil, &WrappedError{Msg: "failed to create laptop attestor", Err: err}
-	}
-
-	return &listenRequestHandler{
-		logger:   logger,
-		attestor: attestor,
-		bridge:   bridge,
-	}, nil
-}
-
-// HandleRequest processes a JSON-RPC request from the phone.
-func (h *listenRequestHandler) HandleRequest(ctx context.Context, request []byte) ([]byte, error) {
-	h.logger.Debug("received request from phone", slog.Int("size", len(request)))
-
-	// Decode the request
-	req, err := pairing.DecodeRequest(request)
-	if err != nil {
-		h.logger.Error("failed to decode request", slog.String("error", err.Error()))
-		return pairing.EncodeErrorResponse(0, pairing.ErrorCodeParseError, "Failed to parse request", nil)
-	}
-
-	h.logger.Info("processing request",
-		slog.String("method", req.Method),
-		slog.Uint64("id", req.ID),
-	)
-
-	// Route the request based on method using map-based dispatch. Locally
-	// handled methods win: laptop attestation is produced by the TPM attestor
-	// configured here, not by xkmsd.
-	if handler, ok := h.methodHandlers()[req.Method]; ok {
-		return handler(ctx, req)
-	}
-
-	// Everything else is a xkmsd operation, served by the bridge.
-	if h.bridge != nil {
-		return h.handleViaBridge(ctx, req)
-	}
-
-	h.logger.Warn("unsupported method", slog.String("method", req.Method))
-	return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeMethodNotFound, "Method not supported", nil)
-}
-
-// handleViaBridge dispatches a request to the xkmsd bridge and encodes the
-// bridge's JSON-RPC response.
-func (h *listenRequestHandler) handleViaBridge(ctx context.Context, req *pairing.Request) ([]byte, error) {
-	resp := h.bridge.HandleRequest(ctx, req)
-	if resp == nil {
-		h.logger.Error("bridge returned no response", slog.String("method", req.Method))
-		return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInternalError, "Bridge returned no response", nil)
-	}
-	return json.Marshal(resp)
-}
-
-// methodHandler is a function type for handling specific methods.
-type methodHandler func(ctx context.Context, req *pairing.Request) ([]byte, error)
-
-// methodHandlers returns the map of method names to handlers.
-func (h *listenRequestHandler) methodHandlers() map[string]methodHandler {
-	return map[string]methodHandler{
-		pairing.MethodPing:               h.handlePing,
-		pairing.MethodRemoteAttestDevice: h.handleRemoteAttestDevice,
-	}
-}
-
-// handlePing handles the ping method.
-func (h *listenRequestHandler) handlePing(_ context.Context, req *pairing.Request) ([]byte, error) {
-	return pairing.EncodeResponse(req.ID, &pairing.PingResult{
-		Pong: true,
-	})
-}
-
-// handleRemoteAttestDevice handles the remote.attestDevice method.
-// This is called when the phone requests the laptop to attest itself.
-// The phone generates a nonce and sends it here; we generate our attestation
-// (using TPM2 if available) and return it to the phone for verification.
-func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *pairing.Request) ([]byte, error) {
-	// Decode the parameters
-	paramsJSON, err := json.Marshal(req.Params)
-	if err != nil {
-		return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInvalidParams, "Invalid parameters", nil)
-	}
-
-	var params pairing.RemoteAttestDeviceParams
-	if err := json.Unmarshal(paramsJSON, &params); err != nil {
-		return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInvalidParams, "Failed to decode parameters", nil)
-	}
-
-	h.logger.Info("laptop attestation requested by phone",
-		slog.Int("nonce_len", len(params.Nonce)),
-		slog.String("attestation_mode", string(h.attestor.Mode())),
-		slog.Bool("tpm2_available", h.attestor.IsTPM2Available()),
-	)
-
-	// Generate attestation using the configured attestor
-	result, err := h.attestor.GenerateAttestation(params.Nonce)
-	if err != nil {
-		h.logger.Error("attestation generation failed", slog.String("error", err.Error()))
-
-		// Map errors to appropriate RPC error codes
-		switch {
-		case errors.Is(err, phone.ErrInvalidAttestationNonce):
-			return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInvalidParams, "Nonce must be 32 bytes", nil)
-		case errors.Is(err, phone.ErrTPM2Required):
-			return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeAttestUnsupported, "TPM2 required but not available", nil)
-		default:
-			return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeAttestFailed, err.Error(), nil)
-		}
-	}
-
-	h.logger.Info("returning laptop attestation",
-		slog.String("format", result.Format),
-		slog.String("security_level", result.SecurityLevel),
-		slog.Int("cert_chain_len", len(result.CertificateChain)),
-		slog.Bool("boot_verified", result.BootStateVerified),
-	)
-
-	return pairing.EncodeResponse(req.ID, result)
 }

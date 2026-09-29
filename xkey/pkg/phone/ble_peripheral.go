@@ -95,6 +95,25 @@ type BLEPeripheralConfig struct {
 	// RequestHandler processes incoming requests from the phone.
 	// If nil, requests are logged but not processed.
 	RequestHandler PeripheralRequestHandler
+
+	// LiveAttest, when set, is run once per accepted connection immediately
+	// after the Noise handshake completes and before RequestHandler ever
+	// sees a request: the peripheral sends this LAPTOP's own challenge to
+	// the PHONE (local.attestDevice) over the same connection and requires
+	// a verified answer before serving anything else. This is the same
+	// #129 liveness proof PhoneKeyBackend.Connect performs when THIS host
+	// initiates the connection; a phone-initiated connection (this
+	// peripheral's whole purpose) got none of it before, so a copied Noise
+	// static key was sufficient to reach the bridge.
+	//
+	// Required: nil refuses every connection after the handshake
+	// (ErrLiveAttestationUnavailable) rather than serving requests with no
+	// liveness check. See TCPPairingConfig.LiveAttest, its TCP counterpart.
+	LiveAttest pairing.LiveAttestFunc
+
+	// LiveAttestTimeout bounds LiveAttest's round trip, which prompts the
+	// phone's user for biometric confirmation. Default: DefaultLiveAttestTimeout.
+	LiveAttestTimeout time.Duration
 }
 
 // PeripheralRequestHandler handles incoming requests from phone.
@@ -301,6 +320,10 @@ func NewBLEPeripheral(cfg *BLEPeripheralConfig) (*BLEPeripheral, error) {
 
 	if cfg.DeviceName == "" {
 		cfg.DeviceName = "xKey"
+	}
+
+	if cfg.LiveAttestTimeout == 0 {
+		cfg.LiveAttestTimeout = DefaultLiveAttestTimeout
 	}
 
 	mtu := cfg.MTU
@@ -700,8 +723,51 @@ func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
 	p.connected.Store(true)
 	p.log.Info("phone connected, session established")
 
+	// The #129 live attestation gate, before ANY request is served. Without
+	// it, possession of a copied Noise static key was sufficient to reach
+	// the bridge on a phone-initiated connection -- unlike a
+	// laptop-initiated one, which PhoneKeyBackend.Connect already proves
+	// liveness on. See BLEPeripheralConfig.LiveAttest.
+	if err := p.performLiveAttestation(ctx, session); err != nil {
+		return &WrappedError{Msg: "live attestation refused", Err: err}
+	}
+
 	// Handle requests
 	return p.handleRequests(ctx)
+}
+
+// performLiveAttestation runs the peripheral's configured LiveAttest
+// verifier once, immediately after the handshake and before any request is
+// served. Required: a nil LiveAttest refuses the connection rather than
+// serving requests with no liveness check (ErrLiveAttestationUnavailable),
+// matching PhoneKeyBackend.proveLiveness's own fail-closed contract for the
+// same proof on the initiator side.
+func (p *BLEPeripheral) performLiveAttestation(ctx context.Context, session *pairing.NoiseSession) error {
+	if p.cfg.LiveAttest == nil {
+		return ErrLiveAttestationUnavailable
+	}
+
+	channelBinding, err := session.AttestChannelBinding()
+	if err != nil {
+		return err
+	}
+
+	attestCtx, cancel := context.WithTimeout(ctx, p.cfg.LiveAttestTimeout)
+	defer cancel()
+
+	exchange := pairing.InlineExchange(session,
+		func(ctx context.Context, ciphertext []byte) error {
+			return p.sendMessage(ctx, ciphertext)
+		},
+		func(ctx context.Context) ([]byte, error) {
+			// attestCtx already carries LiveAttestTimeout as a deadline, so
+			// the receive waits on ctx.Done() rather than a second, redundant
+			// timer of its own.
+			return p.receiveMessageTimeout(ctx, 0)
+		},
+	)
+
+	return p.cfg.LiveAttest(attestCtx, exchange, channelBinding)
 }
 
 // performHandshake handles the Noise XX handshake as responder.

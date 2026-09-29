@@ -54,7 +54,7 @@ func TestBLEStubFlagParity(t *testing.T) {
 		{
 			name:  "device listen",
 			cmd:   deviceListenCmd,
-			flags: []string{"device", "name", "timeout", "attestation-mode", "tpm-device", "tpm-enrollment", "tpm-pcr-bank", "barrier-password-stdin", "barrier-password-file"},
+			flags: []string{"device", "name", "timeout", "attestation-mode", "tpm-device", "tpm-enrollment", "tpm-pcr-bank", "allow-sync", "so-pin-stdin", "barrier-password-stdin", "barrier-password-file"},
 		},
 		{
 			name:  "device pair",

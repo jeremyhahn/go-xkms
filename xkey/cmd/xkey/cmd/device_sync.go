@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -31,14 +30,8 @@ import (
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
 )
 
-// Device sync errors.
-var (
-	// ErrDeviceSyncFailed indicates a phone sync operation failed.
-	ErrDeviceSyncFailed = errors.New("device: sync operation failed")
-
-	// ErrDeviceSyncNoScope indicates no sync scope was specified.
-	ErrDeviceSyncNoScope = errors.New("device: no sync scope specified")
-)
+// ErrDeviceSyncNoScope indicates no sync scope was specified.
+var ErrDeviceSyncNoScope = errors.New("device: no sync scope specified")
 
 // deviceSyncCmd synchronizes data bidirectionally with a paired phone.
 var deviceSyncCmd = &cobra.Command{
@@ -714,37 +707,6 @@ func parseSyncTime(value string) time.Time {
 // ---------------------------------------------------------------------------
 // Service wiring and reporting
 // ---------------------------------------------------------------------------
-
-// syncStateFile is the name of the sync state file kept in the data directory.
-const syncStateFile = "sync-state.json"
-
-// openSyncService opens every local store and wires it into a sync service.
-// The caller owns the returned sources and must close them.
-func openSyncService(cmd *cobra.Command) (*xkeysync.Service, *backupSources, error) {
-	dataDir, err := backupDataDir()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Sync merges in both directions, so a local store that has never been
-	// written to is a normal starting point, not a missing source: strict
-	// existence checking is for the read-only backup commands.
-	sources, err := resolveBackupSources(cmd, backupStorePaths{}, false)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	svc, err := xkeysync.NewService(&xkeysync.Config{
-		DeviceName:    getHostname(),
-		StateFilePath: filepath.Join(dataDir, syncStateFile),
-	}, sources.syncOptions()...)
-	if err != nil {
-		sources.Close()
-		return nil, nil, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
-	}
-
-	return svc, sources, nil
-}
 
 // recordSyncState stamps the successful sync so sync-status can report it.
 func recordSyncState(svc *xkeysync.Service) error {

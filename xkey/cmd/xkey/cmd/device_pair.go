@@ -28,7 +28,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
-	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
@@ -362,6 +361,31 @@ func runDevicePair(cmd *cobra.Command, args []string) (err error) {
 		return abortPairing(transport, &WrappedError{Msg: "key exchange failed", Err: err})
 	}
 
+	// Short authentication string (go-xkms#1306): a human-comparable summary
+	// of the #129 channel binding, so the operator can catch an active MITM
+	// that substituted its own static key for the real phone's during this
+	// unauthenticated first handshake -- the one case the attestation check
+	// below does NOT cover on its own when the enterprise policy allows
+	// pairing an unattestable device (allowUnattestablePairing): with no
+	// attestation signature to bind the channel, nothing else here proves
+	// the static key just learned belongs to the phone the operator is
+	// looking at.
+	//
+	// This is informational, not yet a gate: xkey-android does not display
+	// the matching code yet (see docs/phone-hsm/security.md), so blocking
+	// pairing on an operator confirming a match nobody can see would refuse
+	// every pairing outright. Once the phone shows the same value, this
+	// becomes the natural place to require it.
+	if sas, sasErr := pairing.ShortAuthString(session); sasErr != nil {
+		logger.Warn("short authentication string unavailable", slog.String("error", sasErr.Error()))
+	} else {
+		fmt.Println()
+		fmt.Printf("  Verification code: %s\n", sas)
+		fmt.Println("  If your xKey app version displays a matching code, confirm they agree")
+		fmt.Println("  before trusting this pairing over an untrusted network.")
+		fmt.Println()
+	}
+
 	// Send pairing confirmation request to phone
 	fmt.Println("Waiting for confirmation on phone...")
 	pairingReq := pairing.NewRequest(pairing.MethodPairingConfirm, &pairing.PairingConfirmParams{
@@ -530,25 +554,6 @@ func performPairingAttestation(
 	return verified.Result, nil
 }
 
-// loadPairingAttestationTrust builds this machine's Android hardware
-// attestation trust material.
-//
-// It is the CLI's half of a decision whose other half is shared: WHICH store
-// to open is per-surface, what to do with the pool is not.
-func loadPairingAttestationTrust() (_ *attestation.Trust, err error) {
-	store, err := openTrustStore()
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: attestation.ErrDeviceAttestVerifyFailed, Cause: err}
-	}
-	defer func() {
-		if closeErr := store.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-
-	return attestation.LoadTrust(store)
-}
-
 // newPairedDeviceRecord builds the persisted record for a freshly paired
 // device. localNoisePrivateKey is the value to store verbatim in
 // LocalNoisePrivateKey -- the caller seals it (pairing.SealLocalNoiseKey)
@@ -605,94 +610,4 @@ func resolvePairedDevices(devices []PairedDevice, pairedDevice PairedDevice) ([]
 		return pairing.ReplacePairedDevices(devices, sameDevice, pairedDevice), nil
 	}
 	return append(devices, pairedDevice), nil
-}
-
-// ErrPairingPolicyRefused indicates the config directory is sealed, an SO
-// PIN was supplied, and the policy section did not verify under it. The
-// pairing is refused outright rather than continued under a policy that may
-// have been edited: the cause (config.ErrPolicyUnverifiable joined with
-// ErrPolicyHMACMismatch or ErrPolicyHMACLoadFailed) is reachable with
-// errors.Is.
-var ErrPairingPolicyRefused = errors.New("device pair: sealed enterprise policy could not be verified")
-
-// resolvePairingPolicy resolves the enterprise plane for one pairing.
-//
-// It returns the policy with its verification state when the plane can be
-// trusted: unsealed (personal mode, the section is the user's own file) or
-// sealed and verified under the SO PIN the operator supplied. It returns
-// (nil, nil) when the directory is sealed and no SO PIN was supplied — the
-// plane exists but is unknown, and allowUnattestablePairing fails closed on
-// it. It returns ErrPairingPolicyRefused when an SO PIN was supplied and the
-// section did not verify, because a sealed section that does not verify is a
-// value anyone may have written and must not be consulted at all (#118).
-//
-// Where the SO PIN comes from is the same three sources as the user PIN
-// (soPINUsage). It is never demanded: an ordinary pairing has no SO at the
-// keyboard, and the price of not supplying it is the fail-closed answer.
-func resolvePairingPolicy(cmd *cobra.Command, unified *xkeyconfig.Config, logger *slog.Logger) (*xkeyconfig.VerifiedPolicy, error) {
-	soPIN, err := resolveSOPINInput(cmd)
-	if err != nil {
-		return nil, err
-	}
-
-	configDir := xkeyconfig.ConfigDir()
-	if soPIN == "" && xkeyconfig.IsEnterpriseMode(configDir) {
-		logger.Info("sealed enterprise policy not consulted: no SO PIN supplied",
-			"config_dir", configDir)
-		return nil, nil
-	}
-
-	policy, err := xkeyconfig.LoadVerifiedPolicy(unified, configDir, soPIN)
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrPairingPolicyRefused, Cause: err}
-	}
-	if policy.State == xkeyconfig.PolicySealedVerified {
-		logger.Info("enterprise policy verified", "state", policy.State.String())
-	}
-	return policy, nil
-}
-
-// allowUnattestablePairing projects this command's two policy planes onto the
-// shared decision, attestation.AllowUnattestablePairing.
-//
-// What is genuinely this command's is WHERE each plane comes from: the user
-// plane is devices.yaml as this package reads it, the enterprise plane is the
-// config.VerifiedPolicy resolvePairingPolicy produced, nil when the directory
-// is sealed and no SO PIN was supplied. What is not this command's is how they
-// combine -- the GUI pairs phones too, and a resolution that lived here alone
-// was the #95 defect one level up (#115).
-func allowUnattestablePairing(devices *DevicesConfig, policy *xkeyconfig.VerifiedPolicy) bool {
-	userAllows := devices != nil && devices.AttestationPolicy != nil &&
-		devices.AttestationPolicy.AllowUnattestableDevices
-	return attestation.AllowUnattestablePairing(userAllows, policy)
-}
-
-// printUnattestablePairingWarning tells the operator what they now have, in the
-// terms the record actually supports.
-//
-// It is deliberately not softened. The default is to refuse; reaching this
-// point means someone chose to pair a device whose hardware claims could not be
-// checked, and the one thing they must not take away is that the pairing
-// carries a verified device identity. It does not carry any device identity.
-func printUnattestablePairingWarning() {
-	fmt.Println()
-	fmt.Println("  WARNING: paired WITHOUT a verified attestation.")
-	fmt.Println()
-	fmt.Println("  Policy allows pairing an unattestable device, so this pairing")
-	fmt.Println("  completed. Nothing about the device's hardware was verified, so")
-	fmt.Println("  the record stores no security level, no boot state and no device")
-	fmt.Println("  fingerprint -- there is nothing trustworthy to store.")
-	fmt.Println()
-	fmt.Println("  This device is NOT known to be a hardware-backed security key.")
-	fmt.Println("  Run `xkey device attest-device` to attempt attestation again.")
-	fmt.Println()
-}
-
-// hostname returns the local hostname, or "unknown" if it cannot be determined.
-func hostname() string {
-	name, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return name
 }

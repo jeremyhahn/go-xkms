@@ -124,6 +124,19 @@ const (
 	// but it receives it, and a reserved number is what stops a future method
 	// family from meaning something else by -32037.
 	ErrorCodeAttestProtocolDowngrade = -32037
+
+	// ErrorCodeSyncApprovalRequired means the bridge has no desktop approval
+	// mechanism configured for the secret-exporting sync methods
+	// (remote.syncPasswords, remote.syncOATH, remote.syncAll). Distinct from
+	// ErrorCodeFeatureUnavailable: the sync data source may be fully
+	// configured, but nothing has decided whether this phone may pull it.
+	ErrorCodeSyncApprovalRequired = -32038
+
+	// ErrorCodeSyncNotApproved means a desktop approval mechanism was
+	// consulted for a secret-exporting sync method and refused this
+	// specific request -- an operator declined, a session was not started
+	// with sync allowed, or enterprise policy locks it off.
+	ErrorCodeSyncNotApproved = -32039
 )
 
 // requestIDCounter provides unique request IDs.
@@ -326,6 +339,9 @@ var rpcErrorMap = map[int]error{
 	// on decode: the code alone cannot say which feature, only that it is
 	// unavailable there.
 	ErrorCodeFeatureUnavailable: ErrFeatureNotConfigured,
+	// Sync approval error codes.
+	ErrorCodeSyncApprovalRequired: ErrSyncApprovalRequired,
+	ErrorCodeSyncNotApproved:      ErrSyncNotApproved,
 }
 
 // MapRPCError maps JSON-RPC error codes to package errors.

@@ -1,6 +1,6 @@
 # Device Pairing and Enrollment — Architecture
 
-> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## The problem
 
@@ -38,10 +38,11 @@ interface never touches `xkey/pkg/pairing` at all.
 ## What this folder owns vs. what it links to
 
 **This folder owns**: the `device enroll` / `device connect` client-side
-agent-enrollment flow (the counterpart to [agent](../agent/)'s server side),
-the devices.yaml multi-record config format as a CLI artifact, and QR-code
-pairing (`xkey/pkg/qrgen`, `xkey/pkg/qrscan`) as an out-of-band way to move a
-Noise public key and TCP address from one screen to another camera.
+agent-enrollment flow (the counterpart to [agent](../agent/)'s server side)
+and the devices.yaml multi-record config format as a CLI artifact.
+`xkey/pkg/qrgen`/`xkey/pkg/qrscan` are covered under "QR pairing was removed
+from `device relay`" below — no CLI verb constructs a `qrgen.PairingPayload`
+any more.
 
 **[phone-hsm](../phone-hsm/) owns**: everything about *why* phone pairing is
 shaped the way it is — the Noise XX protocol choice, the attestation model,
@@ -73,23 +74,36 @@ correct read of `usb` in this feature is a *transport* for phone pairing
 (USB AOA), not a device kind. See [engineering.md](engineering.md) for the
 real `PairedDevice` shape.
 
-## QR pairing
+## QR pairing was removed from `device relay` (go-xkms#1306)
 
-QR pairing does not add a third trust mechanism; it is an alternative way to
-carry the same Noise XX bootstrap material when BLE proximity or an ADB cable
-is not available. `xkey device relay --qr` (`cmd/xkey/cmd/device_relay.go`)
-starts the TCP pairing relay and renders a `pairing.PairingPayload`
-(`xkey/pkg/qrgen/payload.go`) — protocol version, Noise public key, TCP
-address, transport tag, host name — as both a terminal QR code
-(`qrgen.GenerateTerminalQR`) and an `xkey-pair://` URI (`qrgen.ToURI`). The
-scanning side (a phone) still runs the same Noise XX handshake this folder's
-phone-pairing table points at [phone-hsm](../phone-hsm/) for.
+`xkey device relay` used to accept a `--qr` flag that rendered a
+`pairing.PairingPayload` (`xkey/pkg/qrgen/payload.go`) — protocol version, a
+freshly generated Noise public key, TCP address, transport tag, host name
+— as a terminal QR code and an `xkey-pair://` URI, framed as an alternative
+way to carry the Noise XX bootstrap material to a phone when BLE was not
+available. An audit found it did not work as an alternative pairing path at
+all: the relay never read the payload's `Code` field, wired no `pairing
+confirm` handler and no `RequestHandler` at all (`ErrTCPServerNotRunning`
+aside, every request got "method not found"), and generated a throwaway key
+every invocation that nothing could ever be pinned to. There was never a
+working QR-based pairing flow to carry forward, and `xkey device pair`
+(BLE) has no TCP counterpart today.
 
-`xkey/pkg/qrscan` decodes the complementary case — a security key or camera
-reading a QR code shown by another party — for `Mode` `ScanModePairing`. Only
-`ScanModeOTP` has a shipped CLI entry point today (`xkey oath scan`, see
-[oath](../oath/)); `ScanModePairing` is reachable by any caller of the
-library but no `xkey device` verb drives it yet.
+`device relay` was redesigned around what it can actually be: the TCP
+counterpart to `device listen`'s BLE peripheral, serving an **already
+paired** device's session (pinned to that device's stored Noise static key,
+gated on live attestation), never a first-pairing mechanism. `--qr` is gone.
+See [phone-hsm/cli.md](../phone-hsm/cli.md#connectivity) and
+[phone-hsm/user.md](../phone-hsm/user.md#when-the-phone-is-not-on-the-same-bus)
+for the current command.
+
+`xkey/pkg/qrgen` and `xkey/pkg/qrscan` are unchanged and still exist, but as
+of this change no `xkey device` (or any other) CLI verb constructs a
+`qrgen.PairingPayload` or drives `qrscan.ScanModePairing` — both packages
+are reachable only as libraries, with no current caller. Reviving a
+QR-based pairing flow would need a real protocol addition (a one-time code
+verified by both sides, at minimum) coordinated with xkey-android, not a
+restoration of the flag removed here.
 
 ## Build-tag boundary
 

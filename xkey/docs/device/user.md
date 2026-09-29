@@ -1,6 +1,6 @@
 # Device Pairing and Enrollment — User Guide
 
-> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 This page covers the two things you bring a second machine into xkey's trust
 boundary for: using a phone as a hardware key backend, and letting a remote
@@ -21,19 +21,22 @@ phone must be running the xkey-android app and advertising. Pairing performs
 a Noise XX handshake and, unless your policy says otherwise, refuses to
 complete if the phone's hardware attestation cannot be verified.
 
-## Pair over the network with a QR code
+## After pairing, reach the phone over the network instead of BLE
 
-If BLE proximity is not available (a headless host, a phone on a different
-network segment):
+`xkey device relay` is **not** a way to pair a phone — there is no QR code.
+Pair with `xkey device pair` (BLE) first. Once paired, if BLE proximity is
+not available for a later session (a headless host, a phone on a different
+network segment), `xkey device relay` serves that same paired device's
+session over TCP instead:
 
 ```
-xkey device relay --qr
+xkey device relay
+xkey device relay --device "Pixel-8"
 ```
 
-This starts a TCP relay and shows a QR code plus an `xkey-pair://` URI. Scan
-it with the xkey-android app, or type the URI in by hand if a camera is not
-available. The phone connects over TCP and performs the same handshake BLE
-pairing would have.
+It binds loopback only by default; see
+[phone-hsm/user.md](../phone-hsm/user.md#when-the-phone-is-not-on-the-same-bus)
+for reaching it from the network and the rest of its flags.
 
 ## Enroll this machine as a remote agent
 

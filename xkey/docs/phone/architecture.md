@@ -1,6 +1,6 @@
 # Phone Backend — Architecture
 
-> **Status: NORMATIVE** · Feature: `phone` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `phone` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## Scope: this folder vs. [phone-hsm](../phone-hsm/)
 
@@ -90,12 +90,18 @@ Nothing here is a fixed "phone is always the server" design:
   initiator (`xkey/pkg/phone/phone.go:457-616`).
 - **Desktop as BLE peripheral, phone as GATT central** — `BLEPeripheral`
   advertises and accepts a connection, driving the handshake as responder.
-  Wired into `xkey device listen` (`xkey/cmd/xkey/cmd/device_listen.go:305`);
+  Wired into `xkey device listen` (`xkey/cmd/xkey/cmd/device_listen.go:248`);
   see phone-hsm's [cli.md](../phone-hsm/cli.md) for the verb.
 - **TCP relay** — `TCPPairingServer` is this host's Noise responder over a
-  plain TCP listener (default `:8444`,
+  plain TCP listener (default loopback-only, `127.0.0.1:8444`,
   `xkey/pkg/phone/tcp_server.go:55`), for networks where BLE does not reach.
-  Wired into `xkey device relay`; also covered in phone-hsm's cli.md.
+  Wired into `xkey device relay` (go-xkms#1306): pinned to a specific paired
+  device's Noise static key (`TCPPairingConfig.ExpectedRemoteStatic`) and
+  gated on the same live attestation proof `xkey device listen` requires
+  (`TCPPairingConfig.LiveAttest`) before it serves any request. It is not a
+  pairing mechanism -- there is no TCP path for `xkey device pair`, only for
+  an already-paired device's later sessions. Also covered in phone-hsm's
+  cli.md.
 - **USB AOA** — `USBTransport` is the desktop acting as USB host while the
   phone switches into Android Open Accessory mode
   (`xkey/pkg/phone/usb_transport.go`, `aoa.go`). The same low-level
@@ -138,6 +144,12 @@ The attestation protocol itself (`local.attestKey`, `remote.attestDevice`,
 the certificate-chain verification) is `xkey/pkg/pairing`'s
 `protocol_attestation.go`/`bridge_attestation.go`, documented in phone-hsm's
 engineering.md.
+
+Both checks above are the laptop-as-INITIATOR direction. `BLEPeripheral` and
+`TCPPairingServer` (this package) are the opposite direction -- the phone
+dials in -- and each now carries its own `LiveAttest` field running the same
+#129 proof on a phone-initiated connection (go-xkms#1306); see phone-hsm's
+engineering.md, "Live attestation on a phone-initiated connection".
 
 ## Bidirectional key sharing at the FIDO2-daemon layer
 

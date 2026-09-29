@@ -17,10 +17,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// registerDeviceListenFlags registers the flags for `xkey device listen`. It
-// is called by both the ble and !ble implementations of the command
-// (device_listen.go and device_listen_stub.go) so the two flag sets cannot
-// drift out of parity (go-xkms#1318).
+// registerDeviceListenFlags registers the flags for `xkey device listen`
+// and, since go-xkms#1306, `xkey device relay`. It is called by the ble and
+// !ble implementations of "listen" (device_listen.go and
+// device_listen_stub.go) and by "relay" (device_relay.go) so their flag sets
+// cannot drift out of parity (go-xkms#1318).
 func registerDeviceListenFlags(cmd *cobra.Command) {
 	cmd.Flags().String("device", "", "Specific paired device to accept connections from")
 	cmd.Flags().String("name", "", "Advertised device name (default: hostname)")
@@ -29,5 +30,15 @@ func registerDeviceListenFlags(cmd *cobra.Command) {
 	cmd.Flags().String("tpm-device", "", "TPM2 device path (default: /dev/tpmrm0)")
 	cmd.Flags().Bool("tpm-enrollment", false, "Serve TCG-CSR-IDEVID device enrollment from this host's TPM")
 	cmd.Flags().String("tpm-pcr-bank", "", "PCR bank for the platform policy digest (default: SHA-256); set only if this TPM's SHA-256 bank is not allocated")
+	// --allow-sync opts THIS session in to serving remote.syncPasswords,
+	// remote.syncOATH and remote.syncAll -- the bridge methods that export
+	// the password vault or OATH secrets to the phone. Without it those
+	// three methods are refused (ErrSyncApprovalRequired) regardless of
+	// what else is configured: exporting secrets is never the default
+	// (go-xkms#1306). An enterprise policy sealed under the SO PIN can lock
+	// this decision either way; see resolvePairingPolicy and
+	// allowPhoneSyncExport.
+	cmd.Flags().Bool("allow-sync", false, "Allow this session to export the password vault and OATH secrets to the phone via remote.sync*")
+	addSOPINFlags(cmd)
 	addBarrierPasswordFlags(cmd)
 }

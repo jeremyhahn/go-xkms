@@ -287,6 +287,23 @@ var (
 	// the backup service, which has not been wired into the bridge.
 	ErrBackupNotConfigured = errors.New("pairing: backup is not configured on this host")
 
+	// ErrSyncApprovalRequired is returned by remote.syncPasswords,
+	// remote.syncOATH and remote.syncAll when no desktop approval mechanism
+	// is configured on the bridge. These three methods export the vault
+	// (passwords, OATH secrets) to the phone, unlike remote.syncTrustStore
+	// (public certificates) and remote.syncStatus (metadata), which are not
+	// gated. A bridge with no SyncApproval configured refuses them rather
+	// than exporting secrets with no desktop-side check at all -- fail
+	// closed, matching every other optional bridge collaborator that
+	// defaults to "unconfigured" rather than "unchecked".
+	ErrSyncApprovalRequired = errors.New("pairing: exporting secrets to the phone requires desktop approval, which is not configured on this host")
+
+	// ErrSyncNotApproved is returned when the configured SyncApproval
+	// function refused this specific request: the operator declined a live
+	// prompt, no --allow-sync session flag was supplied, or enterprise
+	// policy locks secret export off.
+	ErrSyncNotApproved = errors.New("pairing: the desktop refused to export secrets to the phone")
+
 	// ErrFeatureNotConfigured is the generic client-side counterpart of
 	// ErrorCodeFeatureUnavailable: the peer understood the method but its
 	// collaborator was not wired in on that host.

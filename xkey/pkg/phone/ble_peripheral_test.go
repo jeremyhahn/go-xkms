@@ -38,6 +38,11 @@ func (h *echoHandler) HandleRequest(_ context.Context, request []byte) ([]byte, 
 	return []byte(`{"jsonrpc":"2.0","result":"` + string(request) + `"}`), nil
 }
 
+// alwaysLiveAttestForTest is defined in tcp_e2e_test.go (no build tag, so it
+// is always part of this test binary) and reused here so both the TCP and
+// BLE responder tests share one "always approve" stand-in for the #129
+// live-attestation gate.
+
 // newTestPeripheral builds a peripheral whose notify path is wired to an
 // in-memory writer. Nothing here touches Bluetooth hardware: only the
 // fragmentation and notify plumbing is under test.
@@ -47,6 +52,7 @@ func newTestPeripheral(t *testing.T, handler PeripheralRequestHandler, writer Fr
 	p, err := NewBLEPeripheral(&BLEPeripheralConfig{
 		DeviceName:     "xKey-test",
 		RequestHandler: handler,
+		LiveAttest:     alwaysLiveAttestForTest,
 	})
 	if err != nil {
 		t.Fatalf("NewBLEPeripheral failed: %v", err)

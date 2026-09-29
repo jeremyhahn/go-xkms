@@ -1,12 +1,13 @@
 # Device Pairing and Enrollment — Engineering
 
-> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
-For the phone-pairing verbs (`pair`, `scan`, `listen`, `attest*`, `*-sync`,
-`share*`, `relay`'s Noise/barrier semantics) see
-[phone-hsm/engineering.md](../phone-hsm/engineering.md); this page covers
-only the client-side agent-enrollment flow, the devices.yaml config surface,
-and QR-code pairing.
+For the phone-pairing verbs (`pair`, `scan`, `listen`, `relay`, `attest*`,
+`*-sync`, `share*`) see [phone-hsm/engineering.md](../phone-hsm/engineering.md);
+this page covers only the client-side agent-enrollment flow, the
+devices.yaml config surface, and the `xkey/pkg/qrgen`/`xkey/pkg/qrscan`
+library surface, which as of go-xkms#1306 has no CLI caller at all — see
+[architecture.md](architecture.md#qr-pairing-was-removed-from-device-relay-go-xkms1306).
 
 ## Exported surface — `cmd/xkey/cmd` (device group)
 
@@ -70,10 +71,18 @@ Agent-enrollment surface (`cmd/xkey/cmd/device_enroll.go`):
   (`agent-cert.pem`), `deviceEnrollCAFile` (`ca-cert.pem`) — all written under
   `agentCertDir()` (shared with `agent/`).
 
-Relay/QR surface (`cmd/xkey/cmd/device_relay.go`): `ErrDeviceRelayStartFailed`,
-`ErrDeviceRelayStopFailed`.
+Relay surface (`cmd/xkey/cmd/device_relay.go`): `ErrDeviceRelayStartFailed`,
+`ErrDeviceRelayStopFailed`. `device relay` itself -- its pinning to a
+specific paired device, its `LiveAttest` gate, and its loopback-default
+bind -- is documented in [phone-hsm/engineering.md](../phone-hsm/engineering.md#live-attestation-on-a-phone-initiated-connection-go-xkms1306),
+alongside `device listen`, since the two share their request handler and
+bridge wiring.
 
 ## Exported surface — `xkey/pkg/qrgen`
+
+Unused by any CLI verb as of go-xkms#1306 (`device relay --qr` was removed
+— see [architecture.md](architecture.md#qr-pairing-was-removed-from-device-relay-go-xkms1306)).
+The package itself is unchanged and still a usable library.
 
 - `PairingPayload` — `Version int` (must be `1`), `Type string` (must be
   `"xkey-pair"`), `NoisePub string` (base64url, 32 raw bytes), `Addr string`
@@ -106,10 +115,13 @@ for the only mode with a shipped CLI verb today (`xkey oath scan`).
   CLI invocation) read the same `devices.yaml`. An unresolvable home is an
   error, never a silent fallback to root's home (#442).
 - **The barrier custody of the Noise static private key (#42)** applies to
-  every phone-backed device command, gated behind the `ble` tag
-  (`cmd/xkey/cmd/device_barrier.go:14` `//go:build ble`) — see
-  [phone-hsm/cli.md](../phone-hsm/cli.md#the-barrier-when-one-exists-42) for
-  the full rule; it is not re-derived here.
+  every phone-backed device command, including `device relay` (TCP, no
+  `ble` tag required). `openDeviceBarrier`/`openDeviceBarrierWithPassword`
+  moved to `cmd/xkey/cmd/device_barrier_shared.go` (no build tag) in
+  go-xkms#1306 so `device relay` reaches the same barrier `device listen`
+  (`ble`-gated) does without depending on Bluetooth support being compiled
+  in. See [phone-hsm/cli.md](../phone-hsm/cli.md#the-barrier-when-one-exists-42)
+  for the full rule; it is not re-derived here.
 - **`device enroll` persists credentials before probing the master.** A
   rejected probe still leaves an operator with material to inspect
   (`runDeviceEnroll`, `cmd/xkey/cmd/device_enroll.go`).
@@ -199,7 +211,11 @@ settings had no config/environment claim to make true in the first place (its
 - `cmd/xkey/cmd/device_enroll_test.go`, `device_enroll_phone_test.go`,
   `device_enroll_phone_ca_test.go` — the CSR/CA/probe flow with a fake
   `deviceEnrollCA` and a fake `deviceEnrollMasterProbe`.
-- `cmd/xkey/cmd/device_relay_test.go` — the TCP relay and its QR output.
+- `cmd/xkey/cmd/device_relay_test.go` — flag/structure coverage, `ble`-tagged
+  barrier/pin/ambiguous-name refusals shared with `device listen`
+  (`resolveListenTargetDevice`). The wire-level `LiveAttest`/pin tests live
+  with `phone.TCPPairingServer` in `pkg/phone` (see phone-hsm's
+  engineering.md), since that is where the gate is actually enforced.
 - `cmd/xkey/cmd/device_pair_flow_test.go`,
   `device_pair_reconnect_interop_test.go`, `device_pair_policy_test.go`,
   `device_barrier_test.go`, `device_listen_bridge_test.go`,

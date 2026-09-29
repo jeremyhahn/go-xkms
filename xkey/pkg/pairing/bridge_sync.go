@@ -77,7 +77,7 @@ func (b *Bridge) handleSyncTrustStore(_ context.Context, params json.RawMessage)
 // Credentials are merged through the Bridge's configured sync.Service using
 // last-modified-wins conflict resolution on UpdatedAt. When no sync service
 // is configured, ErrSyncNotConfigured is returned.
-func (b *Bridge) handleSyncOATH(_ context.Context, params json.RawMessage) (interface{}, error) {
+func (b *Bridge) handleSyncOATH(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemoteSyncOATHParams
 	if err := unmarshalParams(params, &p); err != nil {
 		return nil, ErrBridgeInvalidParams
@@ -85,6 +85,10 @@ func (b *Bridge) handleSyncOATH(_ context.Context, params json.RawMessage) (inte
 
 	b.logger.Info("OATH sync requested",
 		"credentialCount", len(p.Credentials))
+
+	if err := b.approveSync(ctx, MethodRemoteSyncOATH); err != nil {
+		return nil, err
+	}
 
 	if b.syncService == nil {
 		return nil, ErrSyncNotConfigured
@@ -114,7 +118,7 @@ func (b *Bridge) handleSyncOATH(_ context.Context, params json.RawMessage) (inte
 // Passwords are merged through the Bridge's configured sync.Service using
 // last-modified-wins conflict resolution on UpdatedAt. When no sync service
 // is configured, ErrSyncNotConfigured is returned.
-func (b *Bridge) handleSyncPasswords(_ context.Context, params json.RawMessage) (interface{}, error) {
+func (b *Bridge) handleSyncPasswords(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemoteSyncPasswordsParams
 	if err := unmarshalParams(params, &p); err != nil {
 		return nil, ErrBridgeInvalidParams
@@ -122,6 +126,10 @@ func (b *Bridge) handleSyncPasswords(_ context.Context, params json.RawMessage) 
 
 	b.logger.Info("password sync requested",
 		"passwordCount", len(p.Passwords))
+
+	if err := b.approveSync(ctx, MethodRemoteSyncPasswords); err != nil {
+		return nil, err
+	}
 
 	if b.syncService == nil {
 		return nil, ErrSyncNotConfigured
@@ -153,7 +161,7 @@ func (b *Bridge) handleSyncPasswords(_ context.Context, params json.RawMessage) 
 // than applying anything; a phone that wants to push data uses the
 // per-store remote.sync* methods instead. When no sync service is
 // configured, ErrSyncNotConfigured is returned.
-func (b *Bridge) handleSyncAll(_ context.Context, params json.RawMessage) (interface{}, error) {
+func (b *Bridge) handleSyncAll(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	var p RemoteSyncAllParams
 	if err := unmarshalParams(params, &p); err != nil {
 		return nil, ErrBridgeInvalidParams
@@ -163,6 +171,10 @@ func (b *Bridge) handleSyncAll(_ context.Context, params json.RawMessage) (inter
 		"includeTrustStore", p.IncludeTrustStore,
 		"includeOATH", p.IncludeOATH,
 		"includePasswords", p.IncludePasswords)
+
+	if err := b.approveSync(ctx, MethodRemoteSyncAll); err != nil {
+		return nil, err
+	}
 
 	if b.syncService == nil {
 		return nil, ErrSyncNotConfigured
@@ -263,6 +275,54 @@ func (b *Bridge) handleSyncStatus(_ context.Context, _ json.RawMessage) (interfa
 		DeviceID:       deviceID,
 		StoreChecksums: checksums,
 	}, nil
+}
+
+// approveSync gates one secret-exporting remote.sync* call. A nil
+// SyncApproval refuses outright (ErrSyncApprovalRequired): the bridge never
+// exports the password vault or OATH secrets on the strength of the Noise
+// session alone. A configured approver that returns an error refuses with
+// ErrSyncNotApproved wrapping it. Either outcome is audited so a refusal is
+// on record exactly like a successful export.
+func (b *Bridge) approveSync(ctx context.Context, method string) error {
+	var approveErr error
+	if b.syncApproval == nil {
+		approveErr = ErrSyncApprovalRequired
+	} else {
+		approveErr = b.syncApproval(ctx, &SyncApprovalRequest{
+			Method:     method,
+			DeviceName: b.config.DeviceName,
+		})
+	}
+
+	if approveErr == nil {
+		return nil
+	}
+
+	// Only a REFUSAL gets its own audit entry. A grant needs none: the apply
+	// that follows is already audited (auditSyncApplied), and an entry per
+	// grant here would double every successful sync's audit trail for no
+	// second fact -- "approved, then applied" says nothing "applied" does
+	// not already say. A refusal has no such second entry, since nothing
+	// downstream of it ever runs, so this is the only record it gets.
+	if b.auditLogger != nil {
+		entry := audit.Entry{
+			Timestamp:  time.Now(),
+			Operation:  audit.OpSyncApplied,
+			DeviceID:   b.config.DeviceID,
+			DeviceName: b.config.DeviceName,
+			Success:    false,
+			Error:      approveErr.Error(),
+			Details:    map[string]any{"method": method, "phase": "approval"},
+		}
+		if auditErr := b.auditLogger.Log(entry); auditErr != nil {
+			return errors.Join(approveErr, auditErr)
+		}
+	}
+
+	if errors.Is(approveErr, ErrSyncApprovalRequired) {
+		return approveErr
+	}
+	return &SentinelCauseError{Sentinel: ErrSyncNotApproved, Cause: approveErr}
 }
 
 // ---------------------------------------------------------------------------

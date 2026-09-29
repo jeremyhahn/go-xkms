@@ -1,6 +1,6 @@
 # Phone Backend — User Guide
 
-> **Status: NORMATIVE** · Feature: `phone` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `phone` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## What this does
 
@@ -54,11 +54,16 @@ private key) sealed behind your barrier when one is set up, the same way
 xkey device relay
 ```
 
-Runs this host's side of the pairing session over plain TCP instead of BLE
+Serves an **already-paired** phone's session over plain TCP instead of BLE
 — useful when the phone and desktop are not in Bluetooth range of each
-other but can reach each other over a network. See phone-hsm's
-[cli.md](../phone-hsm/cli.md) for `--listen` and the config key that sets a
-default listen address.
+other but can reach each other over a network (go-xkms#1306). It is not a
+pairing mechanism: pair the phone first with `xkey device pair` (BLE), then
+use `xkey device relay` for later sessions. It pins to that paired device's
+Noise static key and requires the same live attestation proof `xkey device
+listen` requires, and binds to loopback only unless you pass `--listen` with
+a non-loopback address. See phone-hsm's [cli.md](../phone-hsm/cli.md) for
+every flag, including `--device`, `--allow-sync`, and the config key that
+sets a default listen address.
 
 ## Troubleshooting
 

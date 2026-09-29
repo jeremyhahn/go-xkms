@@ -43,6 +43,15 @@ var (
 	// ErrTCPMaxConnectionsReached indicates the maximum number of concurrent
 	// connections has been reached and the connection was rejected.
 	ErrTCPMaxConnectionsReached = errors.New("phone: max connections reached")
+
+	// ErrTCPServerInvalidPin indicates ExpectedRemoteStatic was supplied but
+	// is not a usable Noise static public key: empty, or a length other than
+	// pairing.NoiseKeySize. Mirrors BLEPeripheralConfig's
+	// ErrPeripheralInvalidPin: a caller that meant to pin a key and supplied
+	// something unusable must be refused at construction, not silently
+	// downgraded to unpinned (phone.NewNoiseSession treats a zero-length
+	// PeerStaticKey as "no key to pin," not as an error).
+	ErrTCPServerInvalidPin = errors.New("phone: expected remote static key must be omitted or exactly NoiseKeySize bytes")
 )
 
 // TCP framing constants matching TCPTransport in pkg/pairing/tcp_transport.go.
@@ -51,8 +60,13 @@ const (
 	maxTCPMessageSize  = 65535
 )
 
-// DefaultTCPListenAddr is the default TCP address for the pairing server.
-const DefaultTCPListenAddr = ":8444"
+// DefaultTCPListenAddr is the default TCP address for the pairing server:
+// loopback only (go-xkms#1306). A caller that wants this reachable from the
+// network must say so explicitly with a non-loopback ListenAddr; `xkey
+// device relay` (cmd/xkey/cmd/device_relay.go) always resolves and supplies
+// an explicit address before construction, so this is the fallback for any
+// other caller that omits ListenAddr.
+const DefaultTCPListenAddr = "127.0.0.1:8444"
 
 // Default timeout and limit values for TCPPairingConfig.
 const (
@@ -71,12 +85,21 @@ const (
 
 // TCPPairingConfig configures the TCP pairing server.
 type TCPPairingConfig struct {
-	// ListenAddr is the TCP address to listen on (default ":8444").
+	// ListenAddr is the TCP address to listen on (default DefaultTCPListenAddr, "127.0.0.1:8444").
 	ListenAddr string
 
 	// LocalStaticKey is the persistent Noise static key, held in protected
 	// memory. If nil, a new key is generated on start.
 	LocalStaticKey *pairing.StaticKey
+
+	// ExpectedRemoteStatic pins every accepted connection to one peer's
+	// static public key. If set, the Noise handshake fails for any
+	// initiator that does not hold the matching private key. If nil, the
+	// server accepts a handshake from any initiator (unpinned) -- the
+	// caller is responsible for deciding that is safe; `xkey device relay`
+	// always pins to the paired device it is invoked for (go-xkms#1306),
+	// matching BLEPeripheralConfig.ExpectedRemoteStatic exactly.
+	ExpectedRemoteStatic []byte
 
 	// OwnsStaticKey transfers ownership of LocalStaticKey to the server, so
 	// that Stop releases it — and, just as importantly, RETAINS it when a
@@ -110,6 +133,30 @@ type TCPPairingConfig struct {
 	// MaxConnections limits concurrent connections. 0 means no limit.
 	// Default: 64.
 	MaxConnections int
+
+	// LiveAttest, when set, is run once per accepted connection immediately
+	// after the Noise handshake completes and before RequestHandler ever
+	// sees a request: the server sends this LAPTOP's own challenge to the
+	// PHONE (local.attestDevice) over the same connection and requires a
+	// verified answer before serving anything else. This is the same #129
+	// liveness proof PhoneKeyBackend.Connect performs when THIS host
+	// initiates the connection; a phone-initiated connection (this server's
+	// whole purpose) got none of it before, so a copied Noise static key was
+	// sufficient to reach the bridge.
+	//
+	// Required: nil refuses every connection after the handshake
+	// (ErrLiveAttestationUnavailable) rather than serving requests with no
+	// liveness check. A caller that has deliberately decided to run without
+	// it must say so with AlwaysApproveLiveAttest, matching
+	// pairing.AlwaysApproveSync's precedent -- leaving this nil is never
+	// read as "attestation not required."
+	LiveAttest pairing.LiveAttestFunc
+
+	// LiveAttestTimeout bounds LiveAttest's round trip, which prompts the
+	// phone's user for biometric confirmation. Default: 120 seconds
+	// (DefaultLiveAttestTimeout), matching the CLI's own connect-and-call
+	// budget for the same proof.
+	LiveAttestTimeout time.Duration
 }
 
 // TCPPairingServer accepts TCP connections from remote devices.
@@ -161,6 +208,14 @@ func NewTCPPairingServer(cfg *TCPPairingConfig) (*TCPPairingServer, error) {
 	if cfg == nil {
 		cfg = &TCPPairingConfig{}
 	}
+
+	// Validated before anything below takes ownership of a supplied key: a
+	// refused construction must not leave a transferred key adopted with
+	// nothing to release it. nil means "run unpinned"; anything else must be
+	// a usable Noise static public key.
+	if cfg.ExpectedRemoteStatic != nil && len(cfg.ExpectedRemoteStatic) != pairing.NoiseKeySize {
+		return nil, ErrTCPServerInvalidPin
+	}
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = DefaultTCPListenAddr
 	}
@@ -178,6 +233,9 @@ func NewTCPPairingServer(cfg *TCPPairingConfig) (*TCPPairingServer, error) {
 	}
 	if cfg.MaxConnections == 0 {
 		cfg.MaxConnections = DefaultMaxConnections
+	}
+	if cfg.LiveAttestTimeout == 0 {
+		cfg.LiveAttestTimeout = DefaultLiveAttestTimeout
 	}
 
 	// Resolve the static key.
@@ -493,8 +551,9 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 
 	// Create a Noise session as responder for this connection.
 	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
-		LocalStaticKey: s.localStaticKey,
-		IsInitiator:    false,
+		LocalStaticKey:       s.localStaticKey,
+		ExpectedRemoteStatic: s.cfg.ExpectedRemoteStatic,
+		IsInitiator:          false,
 	})
 	if err != nil {
 		s.log.Error("failed to create noise session", "remote", remoteAddr, "error", err)
@@ -565,17 +624,59 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 		return
 	}
 
-	// Clear the handshake deadline before entering the request loop. Not
-	// fatal if it fails: requestLoop sets its own idle-timeout deadline
-	// before every read, which unconditionally supersedes this one.
-	if err := conn.SetDeadline(time.Time{}); err != nil {
-		s.log.Warn("failed to clear handshake deadline", "remote", remoteAddr, "error", err)
+	s.log.Info("noise handshake completed", "remote", remoteAddr)
+
+	// The #129 live attestation gate, before ANY request is served. Without
+	// it, possession of a copied Noise static key was sufficient to reach
+	// the bridge on a phone-initiated connection -- unlike a
+	// laptop-initiated one, which PhoneKeyBackend.Connect already proves
+	// liveness on. See TCPPairingConfig.LiveAttest.
+	if err := conn.SetDeadline(time.Now().Add(s.cfg.LiveAttestTimeout)); err != nil {
+		s.log.Error("failed to set live-attestation deadline", "remote", remoteAddr, "error", err)
+		return
+	}
+	if err := s.performLiveAttestation(conn, session); err != nil {
+		s.log.Error("live attestation refused; closing connection", "remote", remoteAddr, "error", err)
+		return
 	}
 
-	s.log.Info("noise handshake completed", "remote", remoteAddr)
+	// Clear the deadline before entering the request loop. Not fatal if it
+	// fails: requestLoop sets its own idle-timeout deadline before every
+	// read, which unconditionally supersedes this one.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		s.log.Warn("failed to clear live-attestation deadline", "remote", remoteAddr, "error", err)
+	}
 
 	// Enter the encrypted request/response loop.
 	s.requestLoop(conn, session, remoteAddr)
+}
+
+// performLiveAttestation runs the server's configured LiveAttest verifier
+// once, immediately after the handshake and before any request is served.
+// Required: a nil LiveAttest refuses the connection rather than serving
+// requests with no liveness check (ErrLiveAttestationUnavailable), matching
+// PhoneKeyBackend.proveLiveness's own fail-closed contract for the same proof
+// on the initiator side.
+func (s *TCPPairingServer) performLiveAttestation(conn net.Conn, session *pairing.NoiseSession) error {
+	if s.cfg.LiveAttest == nil {
+		return ErrLiveAttestationUnavailable
+	}
+
+	channelBinding, err := session.AttestChannelBinding()
+	if err != nil {
+		return err
+	}
+
+	exchange := pairing.InlineExchange(session,
+		func(ctx context.Context, ciphertext []byte) error {
+			return tcpSend(conn, ciphertext)
+		},
+		func(ctx context.Context) ([]byte, error) {
+			return tcpReceive(conn)
+		},
+	)
+
+	return s.cfg.LiveAttest(context.Background(), exchange, channelBinding)
 }
 
 // requestLoop reads encrypted JSON-RPC requests, decrypts them, delegates
