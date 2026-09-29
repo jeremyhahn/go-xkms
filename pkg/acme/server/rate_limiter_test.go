@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,11 +109,11 @@ func TestNewRateLimiter(t *testing.T) {
 	if rl.Interval != interval {
 		t.Errorf("Expected Interval to be %v, got %v", interval, rl.Interval)
 	}
-	if rl.Tokens == nil {
-		t.Error("Expected Tokens map to be initialized")
+	if rl.Len() != 0 {
+		t.Errorf("Expected a new limiter to track no clients, got %d", rl.Len())
 	}
-	if rl.LastRequest == nil {
-		t.Error("Expected LastRequest map to be initialized")
+	if !rl.Allow("client") {
+		t.Error("Expected the first request from a new client to be allowed")
 	}
 }
 
@@ -359,29 +360,37 @@ func TestRateLimiter_RetryAfterHeaderIsInteger(t *testing.T) {
 	}
 }
 
-func TestClientID_WithValidJWS(t *testing.T) {
-	// Create a minimal JWS structure with KID
+// TestClientID_IgnoresUnverifiedKID verifies ClientID never keys on a JWS
+// "kid" it has not seen verified, and never consumes the request body: a
+// body naming an arbitrary account still maps to the client IP.
+func TestClientID_IgnoresUnverifiedKID(t *testing.T) {
 	jwsPayload := `{"protected":"eyJhbGciOiJFUzI1NiIsImtpZCI6Imh0dHBzOi8vZXhhbXBsZS5jb20vYWNtZS9hY2N0LzEifQ","payload":"","signature":"test"}`
 
 	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewBufferString(jwsPayload))
-	clientID := ClientID(req)
+	req.RemoteAddr = "192.0.2.10:4444"
 
-	// Should parse the KID from the JWS
-	if !strings.Contains(clientID, "http") {
-		// If parsing fails, it should fall back to RemoteAddr
-		// This is expected for our minimal test JWS
-		if clientID == "" {
-			t.Error("Expected non-empty client ID")
-		}
+	if got := ClientID(req); got != "192.0.2.10" {
+		t.Errorf("Expected the client IP for an unverified kid, got %q", got)
 	}
 
-	// Verify body can still be read
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		t.Fatalf("Failed to read body after ClientID call: %v", err)
 	}
-	if len(body) == 0 {
-		t.Error("Body should be restorable after ClientID call")
+	if string(body) != jwsPayload {
+		t.Error("ClientID must not consume the request body")
+	}
+}
+
+// TestClientID_UsesVerifiedAccountID verifies ClientID keys on the account
+// a verifying middleware recorded with WithVerifiedAccountID.
+func TestClientID_UsesVerifiedAccountID(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	req.RemoteAddr = "192.0.2.10:4444"
+	req = req.WithContext(WithVerifiedAccountID(req.Context(), 4242))
+
+	if got := ClientID(req); got != "4242" {
+		t.Errorf("Expected the verified account ID, got %q", got)
 	}
 }
 
@@ -417,7 +426,7 @@ func TestClientID_FallbackUsesProxyHeaders(t *testing.T) {
 	defer func() { TrustedProxies = oldTrustedProxies }()
 
 	// Set up trusted proxies for these tests
-	TrustedProxies = []string{"10.0.0.1"}
+	TrustedProxies = mustTrustedProxies(t, "10.0.0.1")
 
 	t.Run("FallbackToXForwardedFor", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewBufferString("invalid-jws"))
@@ -466,7 +475,7 @@ func TestClientIP(t *testing.T) {
 	defer func() { TrustedProxies = oldTrustedProxies }()
 
 	// Set up trusted proxies for these tests - include common test IPs
-	TrustedProxies = []string{"10.0.0.1", "::1"}
+	TrustedProxies = mustTrustedProxies(t, "10.0.0.1", "::1")
 
 	t.Run("FallbackToRemoteAddr", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -501,9 +510,10 @@ func TestClientIP(t *testing.T) {
 
 		clientIP := ClientIP(req)
 
-		// Should return the first IP (original client)
-		if clientIP != "203.0.113.50" {
-			t.Errorf("Expected client IP to be 203.0.113.50, got %s", clientIP)
+		// Only the hop the trusted proxy appended (the rightmost) is
+		// believed; entries to its left were supplied by the client.
+		if clientIP != "150.172.238.178" {
+			t.Errorf("Expected client IP to be 150.172.238.178, got %s", clientIP)
 		}
 	})
 
@@ -514,8 +524,8 @@ func TestClientIP(t *testing.T) {
 
 		clientIP := ClientIP(req)
 
-		if clientIP != "203.0.113.50" {
-			t.Errorf("Expected client IP to be 203.0.113.50, got %s", clientIP)
+		if clientIP != "70.41.3.18" {
+			t.Errorf("Expected client IP to be 70.41.3.18, got %s", clientIP)
 		}
 	})
 
@@ -592,8 +602,8 @@ func TestClientIP(t *testing.T) {
 
 		clientIP := ClientIP(req)
 
-		if clientIP != "2001:db8::1" {
-			t.Errorf("Expected IPv6 address 2001:db8::1, got %s", clientIP)
+		if clientIP != "2001:db8::2" {
+			t.Errorf("Expected IPv6 address 2001:db8::2, got %s", clientIP)
 		}
 	})
 
@@ -1287,4 +1297,14 @@ func TestNilConfigRateLimiters(t *testing.T) {
 		wrapped.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
+}
+
+// mustTrustedProxies parses a trusted-proxy list for a test.
+func mustTrustedProxies(t *testing.T, entries ...string) *ratelimit.TrustedProxies {
+	t.Helper()
+	proxies, err := ratelimit.ParseTrustedProxies(entries)
+	if err != nil {
+		t.Fatalf("ParseTrustedProxies(%v): %v", entries, err)
+	}
+	return proxies
 }

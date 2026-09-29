@@ -259,20 +259,20 @@ func TestKeyNonceGuardIsAtomicUnderConcurrency(t *testing.T) {
 	}
 }
 
-// TestSharedGCMNonceGuardIsOneInstance proves the process-wide guard really is
+// TestSharedAEADNonceGuardIsOneInstance proves the process-wide guard really is
 // process-wide. A guard rebuilt per call would see every pair as new and prove
 // nothing, and separate paths would each get their own view.
-func TestSharedGCMNonceGuardIsOneInstance(t *testing.T) {
-	first, err := SharedGCMNonceGuard()
+func TestSharedAEADNonceGuardIsOneInstance(t *testing.T) {
+	first, err := SharedAEADNonceGuard()
 	if err != nil {
-		t.Fatalf("SharedGCMNonceGuard: %v", err)
+		t.Fatalf("SharedAEADNonceGuard: %v", err)
 	}
-	second, err := SharedGCMNonceGuard()
+	second, err := SharedAEADNonceGuard()
 	if err != nil {
-		t.Fatalf("SharedGCMNonceGuard: %v", err)
+		t.Fatalf("SharedAEADNonceGuard: %v", err)
 	}
 	if first != second {
-		t.Fatal("SharedGCMNonceGuard must return the same guard every time")
+		t.Fatal("SharedAEADNonceGuard must return the same guard every time")
 	}
 
 	key := []byte("shared-guard-key")

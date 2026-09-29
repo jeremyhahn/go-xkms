@@ -46,6 +46,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"io"
 	"reflect"
@@ -67,11 +68,12 @@ func newCryptoFixture(t *testing.T) (m *module.Module, session module.SessionHan
 
 // buildCMechanismWithParam lays out a CK_MECHANISM selecting mechType whose
 // pParameter points at paramBuf, the parameterised sibling of
-// exports_keymgmt2_test.go's buildCMechanism.
-func buildCMechanismWithParam(mechType module.MechanismType, paramBuf []byte) []byte {
+// exports_keymgmt2_test.go's buildCMechanism. paramBuf's backing storage is
+// pinned for the rest of t by putPtr (exports_mechdecode_test.go).
+func buildCMechanismWithParam(t testing.TB, mechType module.MechanismType, paramBuf []byte) []byte {
 	buf := newAlignedBuf(cMechanismSize)
 	putULong(buf, 0, uint64(mechType))
-	putPtr(buf, 8, bytePtr(paramBuf))
+	putPtr(t, buf, 8, bytePtr(paramBuf))
 	putULong(buf, 16, uint64(len(paramBuf)))
 	return buf
 }
@@ -94,7 +96,7 @@ func generateRSAKeyPairViaC(t *testing.T, session module.SessionHandle) (pub, pr
 	t.Helper()
 
 	mechBuf := buildCMechanism(module.CKM_RSA_PKCS_KEY_PAIR_GEN)
-	pubTemplate := buildCAttributeArray([]module.Attribute{
+	pubTemplate := buildCAttributeArray(t, []module.Attribute{
 		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_PUBLIC_KEY)),
 		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_RSA)),
 		module.NewUint32Attribute(module.CKA_MODULUS_BITS, 2048),
@@ -104,7 +106,7 @@ func generateRSAKeyPairViaC(t *testing.T, session module.SessionHandle) (pub, pr
 		module.NewBoolAttribute(module.CKA_VERIFY, true),
 		module.NewBoolAttribute(module.CKA_TOKEN, false),
 	})
-	privTemplate := buildCAttributeArray([]module.Attribute{
+	privTemplate := buildCAttributeArray(t, []module.Attribute{
 		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_PRIVATE_KEY)),
 		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_RSA)),
 		module.NewStringAttribute(module.CKA_LABEL, "roundtrip-rsa-priv"),
@@ -127,9 +129,6 @@ func generateRSAKeyPairViaC(t *testing.T, session module.SessionHandle) (pub, pr
 		allocOf(ft, 7),
 	}
 	out := fn.Call(args)
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(pubTemplate)
-	runtime.KeepAlive(privTemplate)
 
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_GenerateKeyPair = %s, want CKR_OK", rv)
@@ -146,7 +145,7 @@ func generateAESKeyViaC(t *testing.T, session module.SessionHandle, label string
 	t.Helper()
 
 	mechBuf := buildCMechanism(module.CKM_AES_KEY_GEN)
-	template := buildCAttributeArray([]module.Attribute{
+	template := buildCAttributeArray(t, []module.Attribute{
 		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
 		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
 		module.NewUint32Attribute(module.CKA_VALUE_LEN, 32),
@@ -170,8 +169,6 @@ func generateAESKeyViaC(t *testing.T, session module.SessionHandle, label string
 		allocOf(ft, 4),
 	}
 	out := fn.Call(args)
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(template)
 
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_GenerateKey(%s) = %s, want CKR_OK", label, rv)
@@ -191,7 +188,6 @@ func signInitViaC(t *testing.T, session module.SessionHandle, key module.ObjectH
 		cMechanismPtr(mechBuf, ft, 1),
 		scalarOf(ft, 2, uint64(key)),
 	})
-	runtime.KeepAlive(mechBuf)
 	return module.CK_RV(out[0].Uint())
 }
 
@@ -207,7 +203,6 @@ func verifyInitViaC(t *testing.T, session module.SessionHandle, key module.Objec
 		cMechanismPtr(mechBuf, ft, 1),
 		scalarOf(ft, 2, uint64(key)),
 	})
-	runtime.KeepAlive(mechBuf)
 	return module.CK_RV(out[0].Uint())
 }
 
@@ -295,7 +290,6 @@ func encryptInitViaC(t *testing.T, session module.SessionHandle, key module.Obje
 		cMechanismPtr(mechBuf, ft, 1),
 		scalarOf(ft, 2, uint64(key)),
 	})
-	runtime.KeepAlive(mechBuf)
 	return module.CK_RV(out[0].Uint())
 }
 
@@ -311,7 +305,6 @@ func decryptInitViaC(t *testing.T, session module.SessionHandle, key module.Obje
 		cMechanismPtr(mechBuf, ft, 1),
 		scalarOf(ft, 2, uint64(key)),
 	})
-	runtime.KeepAlive(mechBuf)
 	return module.CK_RV(out[0].Uint())
 }
 
@@ -448,8 +441,8 @@ func TestAESGenerateEncryptDecrypt_RoundTrip(t *testing.T) {
 	key := generateAESKeyViaC(t, session, "roundtrip-aes-encrypt")
 
 	plaintext := []byte("a secret message encrypted end to end through the cgo boundary")
-	gcmParams := buildGCMParams(gcmRoundTripIV, 96, nil, 128)
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, gcmParams)
+	gcmParams := buildGCMParams(t, gcmRoundTripIV, 96, nil, 128)
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, gcmParams)
 
 	if rv := encryptInitViaC(t, session, key, mechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_EncryptInit = %s, want CKR_OK", rv)
@@ -464,10 +457,8 @@ func TestAESGenerateEncryptDecrypt_RoundTrip(t *testing.T) {
 	if len(ciphertext) != len(plaintext)+16 {
 		t.Fatalf("ciphertext is %d bytes, want %d (plaintext + 16-byte GCM tag)", len(ciphertext), len(plaintext)+16)
 	}
-	runtime.KeepAlive(gcmParams)
-	runtime.KeepAlive(mechBuf)
 
-	decryptMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	decryptMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	if rv := decryptInitViaC(t, session, key, decryptMechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_DecryptInit = %s, want CKR_OK", rv)
 	}
@@ -478,20 +469,18 @@ func TestAESGenerateEncryptDecrypt_RoundTrip(t *testing.T) {
 	if !bytes.Equal(recovered, plaintext) {
 		t.Fatalf("C_Decrypt = %q, want %q", recovered, plaintext)
 	}
-	runtime.KeepAlive(decryptMechBuf)
 
 	t.Run("tampered ciphertext is rejected", func(t *testing.T) {
 		tampered := append([]byte(nil), ciphertext...)
 		tampered[0] ^= 0xFF
 
-		tamperMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+		tamperMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 		if rv := decryptInitViaC(t, session, key, tamperMechBuf); rv != module.CKR_OK {
 			t.Fatalf("C_DecryptInit = %s, want CKR_OK", rv)
 		}
 		if _, rv := decryptViaC(t, session, tampered); rv != module.CKR_ENCRYPTED_DATA_INVALID {
 			t.Fatalf("C_Decrypt(tampered ciphertext) = %s, want CKR_ENCRYPTED_DATA_INVALID", rv)
 		}
-		runtime.KeepAlive(tamperMechBuf)
 	})
 }
 
@@ -506,7 +495,7 @@ func TestAESGenerateEncryptDecrypt_RoundTrip(t *testing.T) {
 func encryptOnceViaC(t *testing.T, session module.SessionHandle, key module.ObjectHandle, iv, plaintext []byte) []byte {
 	t.Helper()
 
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(iv, 96, nil, 128))
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, iv, 96, nil, 128))
 	if rv := encryptInitViaC(t, session, key, mechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_EncryptInit: %s", rv)
 	}
@@ -514,7 +503,6 @@ func encryptOnceViaC(t *testing.T, session module.SessionHandle, key module.Obje
 	if rv != module.CKR_OK {
 		t.Fatalf("C_Encrypt: %s", rv)
 	}
-	runtime.KeepAlive(mechBuf)
 	return ciphertext
 }
 
@@ -532,7 +520,7 @@ func TestAESWrapUnwrapKey_RoundTrip(t *testing.T) {
 	wrappingKey := generateAESKeyViaC(t, session, "roundtrip-wrapping-key")
 	targetKey := generateAESKeyViaC(t, session, "roundtrip-target-key")
 
-	wrapMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	wrapMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	fn := reflect.ValueOf(C_WrapKey)
 	ft := fn.Type()
 
@@ -556,7 +544,6 @@ func TestAESWrapUnwrapKey_RoundTrip(t *testing.T) {
 		setBufferPtr(wrappedBuf, ft, 4),
 		fillLen,
 	})
-	runtime.KeepAlive(wrapMechBuf)
 	runtime.KeepAlive(wrappedBuf)
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_WrapKey(full buffer) = %s, want CKR_OK", rv)
@@ -566,7 +553,7 @@ func TestAESWrapUnwrapKey_RoundTrip(t *testing.T) {
 		t.Fatal("C_WrapKey produced an empty wrapped key")
 	}
 
-	unwrapTemplate := buildCAttributeArray([]module.Attribute{
+	unwrapTemplate := buildCAttributeArray(t, []module.Attribute{
 		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
 		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
 		module.NewStringAttribute(module.CKA_LABEL, "roundtrip-unwrapped-key"),
@@ -574,7 +561,7 @@ func TestAESWrapUnwrapKey_RoundTrip(t *testing.T) {
 		module.NewBoolAttribute(module.CKA_DECRYPT, true),
 		module.NewBoolAttribute(module.CKA_TOKEN, false),
 	})
-	unwrapMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	unwrapMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 
 	unwrapFn := reflect.ValueOf(C_UnwrapKey)
 	uft := unwrapFn.Type()
@@ -589,9 +576,7 @@ func TestAESWrapUnwrapKey_RoundTrip(t *testing.T) {
 		allocOf(uft, 7),
 	}
 	uout := unwrapFn.Call(uargs)
-	runtime.KeepAlive(unwrapMechBuf)
 	runtime.KeepAlive(wrappedKey)
-	runtime.KeepAlive(unwrapTemplate)
 	if rv := module.CK_RV(uout[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_UnwrapKey = %s, want CKR_OK", rv)
 	}
@@ -621,7 +606,7 @@ func TestAESWrapUnwrapKey_RoundTrip(t *testing.T) {
 func createSecretKeyObjectViaC(t *testing.T, session module.SessionHandle, value []byte) module.ObjectHandle {
 	t.Helper()
 
-	template := buildCAttributeArray([]module.Attribute{
+	template := buildCAttributeArray(t, []module.Attribute{
 		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
 		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
 		module.NewStringAttribute(module.CKA_LABEL, "roundtrip-hkdf-base-key"),
@@ -639,7 +624,6 @@ func createSecretKeyObjectViaC(t *testing.T, session module.SessionHandle, value
 		allocOf(ft, 3),
 	}
 	out := fn.Call(args)
-	runtime.KeepAlive(template)
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_CreateObject(secret key) = %s, want CKR_OK", rv)
 	}
@@ -659,9 +643,9 @@ func TestDeriveKeyHKDF_RoundTrip(t *testing.T) {
 	info := []byte("roundtrip-hkdf-info")
 	baseKey := createSecretKeyObjectViaC(t, session, ikm)
 
-	hkdfParams := buildHKDFParams(true, true, module.CKM_SHA256, module.CKF_HKDF_SALT_DATA, salt, 0, info)
-	mechBuf := buildCMechanismWithParam(module.CKM_HKDF_DERIVE, hkdfParams)
-	derivedTemplate := buildCAttributeArray([]module.Attribute{
+	hkdfParams := buildHKDFParams(t, true, true, module.CKM_SHA256, module.CKF_HKDF_SALT_DATA, salt, 0, info)
+	mechBuf := buildCMechanismWithParam(t, module.CKM_HKDF_DERIVE, hkdfParams)
+	derivedTemplate := buildCAttributeArray(t, []module.Attribute{
 		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
 		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
 		module.NewStringAttribute(module.CKA_LABEL, "roundtrip-derived-key"),
@@ -682,9 +666,6 @@ func TestDeriveKeyHKDF_RoundTrip(t *testing.T) {
 		allocOf(ft, 5),
 	}
 	out := fn.Call(args)
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(hkdfParams)
-	runtime.KeepAlive(derivedTemplate)
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_DeriveKey = %s, want CKR_OK", rv)
 	}
@@ -725,7 +706,14 @@ func TestDeriveKeyHKDF_RoundTrip(t *testing.T) {
 func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
 	_, session := newCryptoFixture(t)
 
-	wrappingKey := createSecretKeyObjectViaC(t, session, bytes.Repeat([]byte("Kw"), 16)) // 32 bytes: AES-256.
+	// A fresh AES-256 key and IV per run: the module's GCM nonce guard is
+	// process-wide, so a fixed pair would be refused as a reuse the second
+	// time this test runs in one process (go test -count=N).
+	wrappingMaterial := make([]byte, 32)
+	if _, err := rand.Read(wrappingMaterial); err != nil {
+		t.Fatalf("rand.Read(wrapping key): %v", err)
+	}
+	wrappingKey := createSecretKeyObjectViaC(t, session, wrappingMaterial)
 	// CKA_WRAP and CKA_UNWRAP must both be set (v3.2 §5.18.6/§5.18.7):
 	// this test wraps and unwraps under the same key object, so it needs
 	// permission for both directions. createSecretKeyObjectViaC sets
@@ -736,9 +724,12 @@ func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
 	targetKey := createSecretKeyObjectViaC(t, session, targetValue)
 	setAuthWrapAttributes(t, session, targetKey, false, true)
 
-	iv := []byte("authwrap-iv1")
-	gcmMsgParams := buildGCMMessageParams(iv, 0, module.CKG_NO_GENERATE, nil, 0)
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, gcmMsgParams)
+	iv := make([]byte, 12)
+	if _, err := rand.Read(iv); err != nil {
+		t.Fatalf("rand.Read(iv): %v", err)
+	}
+	gcmMsgParams := buildGCMMessageParams(t, iv, 0, module.CKG_NO_GENERATE, nil, 0)
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, gcmMsgParams)
 
 	wrapFn := reflect.ValueOf(C_WrapKeyAuthenticated)
 	wft := wrapFn.Type()
@@ -771,7 +762,6 @@ func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
 		setBufferPtr(wrappedBuf, wft, 6),
 		wFillLen,
 	})
-	runtime.KeepAlive(mechBuf)
 	runtime.KeepAlive(wrappedBuf)
 	if rv := module.CK_RV(wout[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_WrapKeyAuthenticated(full buffer) = %s, want CKR_OK", rv)
@@ -781,7 +771,7 @@ func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
 		t.Fatalf("wrapped key is %d bytes, want %d (16-byte target + 16-byte GCM tag)", len(wrappedKey), len(targetValue)+16)
 	}
 
-	unwrapTemplate := buildCAttributeArray([]module.Attribute{
+	unwrapTemplate := buildCAttributeArray(t, []module.Attribute{
 		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
 		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
 		module.NewStringAttribute(module.CKA_LABEL, "roundtrip-authunwrapped-key"),
@@ -789,7 +779,7 @@ func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
 		module.NewBoolAttribute(module.CKA_EXTRACTABLE, true),
 		module.NewBoolAttribute(module.CKA_TOKEN, false),
 	})
-	unwrapMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMMessageParams(iv, 0, module.CKG_NO_GENERATE, nil, 0))
+	unwrapMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMMessageParams(t, iv, 0, module.CKG_NO_GENERATE, nil, 0))
 
 	unwrapFn := reflect.ValueOf(C_UnwrapKeyAuthenticated)
 	uft := unwrapFn.Type()
@@ -806,9 +796,7 @@ func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
 		allocOf(uft, 9),
 	}
 	uout := unwrapFn.Call(uargs)
-	runtime.KeepAlive(unwrapMechBuf)
 	runtime.KeepAlive(wrappedKey)
-	runtime.KeepAlive(unwrapTemplate)
 	if rv := module.CK_RV(uout[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_UnwrapKeyAuthenticated(genuine blob) = %s, want CKR_OK", rv)
 	}
@@ -827,7 +815,7 @@ func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
 		tampered := append([]byte(nil), wrappedKey...)
 		tampered[0] ^= 0xFF
 
-		tamperMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMMessageParams(iv, 0, module.CKG_NO_GENERATE, nil, 0))
+		tamperMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMMessageParams(t, iv, 0, module.CKG_NO_GENERATE, nil, 0))
 		targs := []reflect.Value{
 			scalarOf(uft, 0, uint64(session)),
 			cMechanismPtr(tamperMechBuf, uft, 1),
@@ -841,7 +829,6 @@ func TestWrapUnwrapKeyAuthenticated_RoundTrip(t *testing.T) {
 			allocOf(uft, 9),
 		}
 		tout := unwrapFn.Call(targs)
-		runtime.KeepAlive(tamperMechBuf)
 		runtime.KeepAlive(tampered)
 		if rv := module.CK_RV(tout[0].Uint()); rv != module.CKR_AEAD_DECRYPT_FAILED {
 			t.Fatalf("C_UnwrapKeyAuthenticated(tampered blob) = %s, want CKR_AEAD_DECRYPT_FAILED", rv)

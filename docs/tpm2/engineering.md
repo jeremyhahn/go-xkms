@@ -232,6 +232,15 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   self-certification (`TPM2_CertifyCreation`) is authorized by the IAK's own
   authValue, not the EK's (#467).
 
+- **`DecodePCRs` treats its input as adversarial.** `Quote.PCRs` and the
+  TCG-CSR `ProdCaData` carry PCR banks encoded by `EncodePCRs` with
+  `encoding/gob`, and verifiers decode what a remote attester sent.
+  `encoding/gob` is not hardened against adversarial input, so `DecodePCRs`
+  (`pkg/tpm2/encoding.go:74`) refuses more than 64 KiB before decoding and
+  validates the result against what `ReadPCRs` can produce
+  (`encoding.go:50-66`, sharing `maxPCRIndex` with `ReadPCRs`). The gob
+  encoding itself is unchanged: it is the wire format producers already emit.
+
 ## Bus protection
 
 The TPM bus is outside the security boundary: an observer with a probe on
@@ -431,6 +440,8 @@ vocabulary. The categories that need distinguishing:
 | quote signature or nonce invalid | the evidence is not fresh or not from that AK |
 | `ErrSymmetricKeyParent` | a symmetric key was asked to live under a parent other than the Platform SRK, or no Platform SRK is available. Nothing is created or loaded |
 | `ErrUnprotectedSymmetricKey` | the stored symmetric key predates the Platform SRK rule (Shared SRK parent, no authorization, `NoDA`). It is refused, never loaded; delete and regenerate it |
+| `ErrPCRDataTooLarge` | encoded PCR banks over 64 KiB, refused by `DecodePCRs` before gob decodes them (`pkg/tpm2/encoding.go:74`) |
+| `ErrInvalidPCRData` | decoded PCR banks no TPM reports: more than 8 banks, more than 24 PCRs in a bank, an index outside 0..23, or a value longer than 64 bytes (`validatePCRBanks`, `pkg/tpm2/encoding.go:91`) |
 | `ErrECCPublicArea` | the ECC public area does not yield a valid public key: bad parameters, an unknown curve, or a point that is not on the curve. On the `TPM2_Certify` path it is wrapped as `ErrCertifyMalformed`; the underlying `ecpoint.ErrInvalidPoint` stays reachable through `errors.Is` |
 | `ErrAdminWithPolicyNoAuthPolicy` | the template about to be created from sets `adminWithPolicy` while naming no `authPolicy`, so the object's ADMIN role would be unauthorizable by anything. Raised by `assertAdminAuthorizable` before `TPM2_CreatePrimary`; nothing is created |
 | `ErrDevIDTemplateNonConformant` | the IDevID or IAK template about to be created from departs from TCG Templates H-0 through H-4 in an attribute, its `authPolicy`, its `unique` string, its scheme, its symmetric definition, its exponent, its KDF or its curve. Raised by `assertDevIDTemplateConformant` before `TPM2_CreatePrimary`; nothing is created |
@@ -480,12 +491,56 @@ RNG bringing the structure to a multiple of `TCGCSRAlignment` (16) when
 `idevid.pad` is set. The signature is over the packed `csrContents` bytes.
 
 Two departures remain and are recorded, not hidden: §13.1 describes the
-signature as "DER encoded ... including algorithm ID" while the CSR carries
-the raw TPM signature (PKCS#1 v1.5 / PSS bytes for RSA, ASN.1 `r,s` for
-ECDSA) — changing it changes every verifier in `pkg/ca` and `pkg/acme`; and
-`idevid.pad=false` emits an unpadded structure the specification's typedef
-does not describe. `UnmarshalIDevIDCSR` accepts both structure versions so a
-CA on this release still enrolls a device on the previous one.
+signature as "DER encoded ... including algorithm ID" while the CSR's own
+top-level signature (`TCG_CSR_IDEVID.signature`, over the packed
+`csrContents` bytes, checked by `verifyRSASignatureStateless` /
+`verifyECDSASignatureStateless` in `tcg_csr_serverside.go`) carries the raw
+TPM signature instead — PKCS#1 v1.5 / PSS bytes for RSA, ASN.1 `r,s` for
+ECDSA (`SignValidate`, `tpm.go:1926`) — changing it changes every verifier in
+`pkg/ca` and `pkg/acme`; and `idevid.pad=false` emits an unpadded structure
+the specification's typedef does not describe. `UnmarshalIDevIDCSR` accepts
+both structure versions so a CA on this release still enrolls a device on
+the previous one.
+
+The two certification signatures carried *inside* `csrContents` —
+`atCertifyInfoSignature` (the IAK's own `TPM2_CertifyCreation`) and
+`sgnCertifyInfoSignature` (the IAK's `TPM2_Certify` of the IDevID) — are a
+third, narrower departure from §13.1's "DER encoded" text, and are not ASN.1
+at all for either key type: PKCS#1 v1.5 / PSS bytes for RSA, and for ECDSA
+the raw `r‖s` pair, each component left-padded to the attesting key's curve
+field size (32/48/66 bytes for P-256/P-384/P-521). `CreateIAK` and
+`CreateIDevID` (`key.go:865`, ECDSA branch at `key.go:1115`; `key.go:1441`,
+ECDSA branch at `key.go:1753`) pack it through the shared
+`packRawECDSASignature` (`eccpub.go:78`); `VerifyCertifyRaw`'s
+`signatureFromScheme` (`certify_verify.go:334`) is the one place that parses
+it back, by splitting the buffer exactly in half — so it, not §13.1, is the
+format's normative definition. Before #1182 the ECDSA branches of `CreateIAK`
+and `CreateIDevID` packed ASN.1 DER here instead, which no verifier —
+including `signatureFromScheme` itself — could parse; an RSA IAK or IDevID
+was never affected, and the outer CSR signature above was never affected
+either, since it is a separate field checked by a separate, DER-aware
+verifier.
+
+**Parsing is bounded by the input, not by the length fields.** A
+TCG-CSR-IDEVID reaches the CA from the network -- the `enroll-01` challenge
+response and ACME finalize (`pkg/acme/server/handlers/order_finalize.go`) --
+and carries fifteen attacker-chosen 32-bit lengths.
+`UnmarshalIDevIDCSR` (`pkg/tpm2/idevid_csr.go:656`) refuses input over
+`MaxIDevIDCSRSize` (1 MiB, `idevid_csr.go:35`) with
+`*IDevIDCSRTooLargeError`, and every variable-length field, the signature
+included, is read by `readSizedField` (`idevid_csr.go:822`), which compares
+the declared length with the bytes remaining **before** `make` and returns
+`*IDevIDCSRFieldSizeError{Field, Declared, Remaining}` (it wraps
+`io.ErrUnexpectedEOF`) when it does not fit. `UnpackIDevIDContent`
+(`idevid_csr.go:702`) applies the same bound to a caller's reader.
+`UnpackIDevIDCSR` (`idevid_csr.go:849`), whose size fields and data slices
+are independent struct fields, copies through `copySizedField`
+(`idevid_csr.go:839`): a size larger than its slice is `store.ErrCorruptCopy`
+before the buffer is allocated. `ParseEventLog` bounds each event's data at
+`MaxEventDataSize` (`pkg/tpm2/eventlog.go:38`, `*EventDataTooLargeError`).
+`UnpackProdCaData` (`prodcadata.go`) already checked the sum of its four
+lengths against the input before allocating. Regression and fuzz coverage:
+`pkg/tpm2/idevid_csr_bounds_test.go` (`FuzzUnmarshalIDevIDCSR`), go-xkms#1172.
 
 ## Configuration
 

@@ -13,7 +13,7 @@
 
 // Package ca coverage boost, sixteenth pass: targets remaining uncovered
 // functions identified after boost15. All tests are in-memory, fast,
-// race-detector clean. Tests that mutate package-level state (aiaHTTPClient)
+// race-detector clean. Tests that mutate package-level state
 // or shared CA fields must NOT use t.Parallel().
 package ca
 

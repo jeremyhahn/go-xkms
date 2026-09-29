@@ -1,6 +1,6 @@
 # Network Agent — Architecture
 
-> **Status: NORMATIVE** · Feature: `agent` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `agent` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## The problem
 
@@ -148,6 +148,30 @@ resist guessing, and a single hash-equality check is exactly as strong a
 gate as the plaintext comparison it replaces — the only thing that changes
 is that the store's on-disk (or DAO-backed) representation never contains
 a value an attacker with read access to the store could redeem directly.
+
+## Shape chosen: the connected-agent table is keyed on identity and bounded
+
+`Server.ConnectedAgents` reports the agents currently talking to the master.
+The table behind it used to be keyed on the peer's `ip:port` and cleared only
+by `Stop`, so without mTLS any network peer could grow it without limit by
+reconnecting from fresh source ports. The table is now bounded three ways
+(`xkey/pkg/agent/server.go`):
+
+1. **Keyed on the authenticated agent ID.** `peerAgentID` (`server.go:248`)
+   derives the ID from the verified client certificate the same way
+   enrollment does, so every connection from one agent shares one entry.
+   A peer without a verified certificate (plaintext development mode) is
+   tracked per connection under its address.
+2. **Released on disconnect.** A gRPC stats handler, `connTracker`
+   (`server.go:343`), tags each connection; `recordActivity`
+   (`server.go:267`) binds the tag to the entry on the first RPC, and
+   `connectionClosed` (`server.go:322`) drops the entry when the last
+   connection holding it ends.
+3. **Capped.** At `maxConnectedAgents` (1024, `server.go:38`) entries,
+   `recordActivity` evicts entries idle for longer than `agentIdleTimeout`
+   (10 minutes, `server.go:42`); if none are idle the new activity is not
+   tracked and a warning is logged. Tracking is observational only, so an
+   untracked peer is not refused.
 
 ## Rejected alternative: check revocation only, skip the store lookup
 

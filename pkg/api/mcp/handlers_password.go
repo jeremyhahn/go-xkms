@@ -662,7 +662,7 @@ func mapPasswordUnlockError(err error) error {
 	case errors.Is(err, staticpw.ErrStoreNotLocked),
 		errors.Is(err, seal.ErrTenantSealed),
 		errors.Is(err, seal.ErrTenantNotFound):
-		return &KeyOpError{Code: ErrCodeInternalError, Err: err}
+		return classified(ErrCodeInternalError, err)
 	default:
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "user PIN verification failed"}}
 	}
@@ -691,7 +691,7 @@ func mapPasswordStoreError(err error) error {
 		// JSON-RPC has no FailedPrecondition code; matches the internal
 		// floor mapPasswordUnlockError already uses for the same two
 		// sentinels on the unlock path.
-		return &KeyOpError{Code: ErrCodeInternalError, Err: err}
+		return classified(ErrCodeInternalError, err)
 	default:
 		return &KeyOpError{Code: ErrCodeInternalError, Err: err}
 	}

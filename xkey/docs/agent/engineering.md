@@ -1,6 +1,6 @@
 # Network Agent — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `agent` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `agent` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
 
 ## Exported surface
 
@@ -221,6 +221,28 @@ func (s *AgentService) ApproveEnrollmentWithCertificate(requestID string) (*Enro
 `Config` and `ClientConfig` are unchanged by this feature. Their field
 tables live in [user.md](user.md#server-configuration).
 
+## Connection tracking
+
+`Server.ConnectedAgents()` (`xkey/pkg/agent/server.go:200`) returns copies
+of the tracked entries, so later activity never changes a returned value.
+
+Invariants:
+
+- An mTLS peer with a verified certificate is tracked under its agent ID
+  (`peerAgentID`, `server.go:248`), the public-key fingerprint that also
+  keys the enrollment store. Any other peer is tracked under its `ip:port`.
+- Each gRPC connection holds its entry through a `connTag` that the
+  `connTracker` stats handler (`server.go:343`) attaches in `TagConn` and
+  releases on `stats.ConnEnd`. The entry is deleted when its last
+  connection closes (`connectionClosed`, `server.go:322`). A connection
+  whose entry was evicted or replaced never deletes the newer entry.
+- The table holds at most `maxConnectedAgents` (1024) entries. When full,
+  entries idle for more than `agentIdleTimeout` (10 minutes) are evicted
+  (`evictIdleLocked`, `server.go:311`); if the table is still full the
+  activity goes untracked.
+
+Neither limit is configurable.
+
 ## Tests
 
 - `xkey/pkg/agent/enrollment_test.go` — `VerifyAgentCertificate` (enrolled
@@ -231,6 +253,12 @@ tables live in [user.md](user.md#server-configuration).
 - `xkey/pkg/agent/server_test.go` — `buildTLSConfig` installs
   `VerifyPeerCertificate` in mTLS mode; `Server.verifyPeerCertificate`
   against enrolled/revoked/unenrolled certificates and an empty chain.
+- `xkey/pkg/agent/server_tracking_test.go` — entries removed on
+  disconnect; 100 reconnects leave nothing behind; two connections from one
+  mTLS agent share one ID-keyed entry that survives until the last closes;
+  an unverified certificate is not used as an identity; the 1024-entry cap;
+  idle eviction when full; a stale connection end never removes a newer
+  entry.
 - `xkey/cmd/xkey/cmd/agent_ca_test.go` — `xkmsdCA.IsRevoked` against a fake
   xkmsd endpoint (not revoked, revoked, authority failure).
 - `xkey/pkg/gui/services/agent_service_test.go` — `RemoveAgent` revokes the

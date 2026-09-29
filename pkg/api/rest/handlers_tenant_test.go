@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -104,6 +105,8 @@ func setupTenantTestHandlers(t *testing.T) (*TenantHandlers, *chi.Mux) {
 		r.Get("/{tenantID}/barrier/status", handlers.TenantBarrierStatusHandler)
 		r.Post("/{tenantID}/barrier/init", handlers.TenantBarrierInitHandler)
 		r.Post("/{tenantID}/barrier/unseal", handlers.TenantBarrierUnsealHandler)
+		r.Put("/{tenantID}/entitlements", handlers.UpdateTenantEntitlementsHandler)
+		r.Put("/{tenantID}/quotas", handlers.UpdateTenantQuotasHandler)
 	})
 	return handlers, r
 }
@@ -694,7 +697,9 @@ func TestGetTenantHandler_TenantFiltering(t *testing.T) {
 		var errResp ErrorResponse
 		err := json.NewDecoder(rec.Body).Decode(&errResp)
 		require.NoError(t, err)
-		assert.Contains(t, errResp.Error, "qrdb/seal: tenant not found")
+		// The refusal is the body a genuinely missing tenant gets, so it
+		// cannot be told apart from an unused tenant ID.
+		assert.Equal(t, qrdbsdk.ErrTenantMissing.Error(), errResp.Error)
 	})
 
 	t.Run("tenant user can access own tenant", func(t *testing.T) {
@@ -769,15 +774,17 @@ func TestDeleteTenantHandler_TenantFiltering(t *testing.T) {
 		var errResp ErrorResponse
 		err := json.NewDecoder(rec.Body).Decode(&errResp)
 		require.NoError(t, err)
-		assert.Contains(t, errResp.Error, "qrdb/seal: tenant not found")
+		// The refusal is the body a genuinely missing tenant gets, so it
+		// cannot be told apart from an unused tenant ID.
+		assert.Equal(t, qrdbsdk.ErrTenantMissing.Error(), errResp.Error)
 	})
 
 	// "SO can delete any tenant" (asserting a real 204) is intentionally
 	// absent here for the same reason as TestDeleteTenantHandler_Success: full
 	// teardown needs a real embedded qrdb node. The cross-tenant-filtering
 	// behavior this test exists to cover is exercised above regardless of
-	// caller role, since the 404 fires on the identity check before deletion
-	// is attempted.
+	// caller role, since XKMSService's tenant binding answers 404 before
+	// deletion is attempted.
 }
 
 // TestTenantBarrierStatusHandler_TenantFiltering tests tenant-scoped access for barrier status.
@@ -861,4 +868,73 @@ func TestTenantBarrierUnsealHandler_TenantFiltering(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
+}
+
+// serveAs routes one request through router carrying identity and returns
+// the recorder.
+func serveAs(t *testing.T, router *chi.Mux, method, path string, body []byte, identity *auth.Identity) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestTenantHandlers_CrossTenantRefusalMatchesGenuineMiss proves the REST
+// rendering of XKMSService's tenant binding refusal is byte-for-byte the
+// response a nonexistent tenant gets: same status, same body. A
+// tenant-scoped probe therefore cannot tell another tenant's ID from an
+// unused one.
+func TestTenantHandlers_CrossTenantRefusalMatchesGenuineMiss(t *testing.T) {
+	_, router := setupTenantTestHandlers(t)
+	require.Equal(t, http.StatusCreated, createTenantViaAPI(t, router, "tenant-b", "Tenant B").Code)
+
+	so := &auth.Identity{Subject: "so-admin", TenantID: qrdbsdk.SystemTenantID}
+	tenantA := &auth.Identity{Subject: "admin-a", TenantID: "tenant-a"}
+
+	refused := serveAs(t, router, http.MethodGet, "/tenants/tenant-b", nil, tenantA)
+	missing := serveAs(t, router, http.MethodGet, "/tenants/no-such-tenant", nil, so)
+
+	assert.Equal(t, http.StatusNotFound, refused.Code)
+	assert.Equal(t, missing.Code, refused.Code)
+	assert.Equal(t, missing.Body.String(), refused.Body.String())
+}
+
+// TestTenantHandlers_PlanChangeRefusedForTenantScope proves a tenant-scoped
+// caller cannot change even its OWN tenant's entitlements or quotas (404,
+// the binding's not-found), while a system identity can.
+func TestTenantHandlers_PlanChangeRefusedForTenantScope(t *testing.T) {
+	_, router := setupTenantTestHandlers(t)
+	require.Equal(t, http.StatusCreated, createTenantViaAPI(t, router, "tenant-a", "Tenant A").Code)
+
+	tenantA := &auth.Identity{Subject: "admin-a", TenantID: "tenant-a"}
+	so := &auth.Identity{Subject: "so-admin", TenantID: qrdbsdk.SystemTenantID}
+	entitlements := []byte(`{"entitlements":{"allow_dedicated_raft":true}}`)
+	quotas := []byte(`{"quotas":{"max_keys":1000000}}`)
+
+	assert.Equal(t, http.StatusNotFound,
+		serveAs(t, router, http.MethodPut, "/tenants/tenant-a/entitlements", entitlements, tenantA).Code)
+	assert.Equal(t, http.StatusNotFound,
+		serveAs(t, router, http.MethodPut, "/tenants/tenant-a/quotas", quotas, tenantA).Code)
+
+	assert.Equal(t, http.StatusOK,
+		serveAs(t, router, http.MethodPut, "/tenants/tenant-a/entitlements", entitlements, so).Code)
+	assert.Equal(t, http.StatusOK,
+		serveAs(t, router, http.MethodPut, "/tenants/tenant-a/quotas", quotas, so).Code)
+}
+
+// TestTenantHandlers_BarrierCrossTenantRefused proves the tenant barrier
+// routes answer 404 for a tenant-scoped caller naming another tenant, now
+// that the check lives in XKMSService rather than in each handler.
+func TestTenantHandlers_BarrierCrossTenantRefused(t *testing.T) {
+	_, router := setupTenantTestHandlers(t)
+	require.Equal(t, http.StatusCreated, createTenantViaAPI(t, router, "tenant-b", "Tenant B").Code)
+
+	tenantA := &auth.Identity{Subject: "admin-a", TenantID: "tenant-a"}
+	assert.Equal(t, http.StatusNotFound,
+		serveAs(t, router, http.MethodPost, "/tenants/tenant-b/barrier/init", []byte(`{"passphrase":"correct horse battery staple"}`), tenantA).Code)
+	assert.Equal(t, http.StatusNotFound,
+		serveAs(t, router, http.MethodPost, "/tenants/tenant-b/barrier/unseal", []byte(`{"key":"Y29ycmVjdA=="}`), tenantA).Code)
 }

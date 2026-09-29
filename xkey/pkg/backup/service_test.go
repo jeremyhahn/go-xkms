@@ -147,12 +147,24 @@ func (m *mockPasswordWriter) Add(pw *PasswordInfo) error {
 // Test helpers
 // ---------------------------------------------------------------------------
 
-func testKey() []byte {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
+func testKey() *Key {
+	key, err := GenerateKey()
+	if err != nil {
 		panic(err)
 	}
 	return key
+}
+
+// sealTestPayload seals plaintext under key the way CreateBackup does, so a
+// test can build an envelope around an arbitrary (malformed) payload.
+func sealTestPayload(t *testing.T, plaintext []byte, key *Key) *EncryptedBackup {
+	t.Helper()
+	eb := &EncryptedBackup{Magic: BackupMagic, Version: BackupVersion, KDF: key.KDF()}
+	aad, err := eb.headerAAD()
+	require.NoError(t, err)
+	eb.Ciphertext, eb.Nonce, err = encrypt(plaintext, key.Bytes(), aad)
+	require.NoError(t, err)
+	return eb
 }
 
 func testCert(t *testing.T) *x509.Certificate {
@@ -499,15 +511,7 @@ func TestDecryptBackup_InvalidJSONPayload(t *testing.T) {
 	require.NoError(t, err)
 
 	key := testKey()
-	ciphertext, nonce, err := encrypt([]byte("not valid json"), key)
-	require.NoError(t, err)
-
-	eb := &EncryptedBackup{
-		Magic:      BackupMagic,
-		Version:    BackupVersion,
-		Nonce:      nonce,
-		Ciphertext: ciphertext,
-	}
+	eb := sealTestPayload(t, []byte("not valid json"), key)
 
 	archive, err := svc.DecryptBackup(eb, key)
 	assert.Nil(t, archive)
@@ -533,15 +537,7 @@ func TestDecryptBackup_ChecksumMismatch(t *testing.T) {
 	plaintext, err := json.Marshal(archive)
 	require.NoError(t, err)
 
-	ciphertext, nonce, err := encrypt(plaintext, key)
-	require.NoError(t, err)
-
-	eb := &EncryptedBackup{
-		Magic:      BackupMagic,
-		Version:    BackupVersion,
-		Nonce:      nonce,
-		Ciphertext: ciphertext,
-	}
+	eb := sealTestPayload(t, plaintext, key)
 
 	got, err := svc.DecryptBackup(eb, key)
 	assert.Nil(t, got)
@@ -982,7 +978,7 @@ func TestCollect_CAChainError(t *testing.T) {
 	assert.Empty(t, archive.CAData.CAChainPEM)
 }
 
-func TestEncrypt_InvalidKeySize(t *testing.T) {
+func TestCreateBackup_NilKey(t *testing.T) {
 	cert := testCert(t)
 	svc, err := NewService(testConfig(),
 		WithTrustStore(&mockTrustStore{
@@ -991,14 +987,12 @@ func TestEncrypt_InvalidKeySize(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Key too short.
-	shortKey := make([]byte, 16)
-	eb, err := svc.CreateBackup(shortKey)
+	eb, err := svc.CreateBackup(nil)
 	assert.Nil(t, eb)
-	assert.ErrorIs(t, err, ErrEncryptionFailed)
+	assert.ErrorIs(t, err, ErrInvalidKey)
 }
 
-func TestDecrypt_InvalidKeySize(t *testing.T) {
+func TestDecryptBackup_NilKey(t *testing.T) {
 	cert := testCert(t)
 	svc, err := NewService(testConfig(),
 		WithTrustStore(&mockTrustStore{
@@ -1007,14 +1001,12 @@ func TestDecrypt_InvalidKeySize(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	key := testKey()
-	eb, err := svc.CreateBackup(key)
+	eb, err := svc.CreateBackup(testKey())
 	require.NoError(t, err)
 
-	shortKey := make([]byte, 16)
-	archive, err := svc.DecryptBackup(eb, shortKey)
+	archive, err := svc.DecryptBackup(eb, nil)
 	assert.Nil(t, archive)
-	assert.ErrorIs(t, err, ErrDecryptionFailed)
+	assert.ErrorIs(t, err, ErrInvalidKey)
 }
 
 func TestRestoreTrustStore_PartialFailure(t *testing.T) {

@@ -21,6 +21,11 @@ import (
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
+// ErrInternal is the fixed message a client receives in place of an
+// internal error's text (see ClientError). The detail is logged server-side
+// by InvokeMethod instead (go-xkms#1118).
+var ErrInternal = errors.New("xkms: internal error")
+
 // KeyOpError carries a JSON-RPC error code alongside the underlying error
 // returned by the xkms service layer. InvokeMethod unwraps it via errors.As
 // to select the wire-level code instead of collapsing every handler failure
@@ -32,13 +37,60 @@ type KeyOpError struct {
 
 	// Err is the underlying error returned by the xkms service layer.
 	Err error
+
+	// Classified reports that Err matched a named sentinel in one of this
+	// package's classification tables, so its text is a client-facing
+	// message. It matters only when Code is ErrCodeInternalError: JSON-RPC
+	// has no FailedPrecondition, DataLoss or ResourceExhausted member, so a
+	// classified condition such as a sealed barrier shares that code with
+	// the unclassified floor, and Classified is what tells them apart. The
+	// zero value is unclassified, so an error nobody classified is withheld.
+	Classified bool
 }
 
-// Error returns the underlying error's message.
+// Error returns the underlying error's message. It is the server-side
+// detail; the text a client may see is ClientError's.
 func (e *KeyOpError) Error() string { return e.Err.Error() }
 
 // Unwrap returns the underlying error.
 func (e *KeyOpError) Unwrap() error { return e.Err }
+
+// Internal reports whether e is an unclassified server fault, whose text is
+// withheld from the client.
+func (e *KeyOpError) Internal() bool {
+	return e.Code == ErrCodeInternalError && !e.Classified
+}
+
+// classified returns a *KeyOpError for an err a classification table (or a
+// handler's own sentinel switch) matched, marking its text client-facing
+// even when code is the ErrCodeInternalError floor.
+func classified(code int, err error) *KeyOpError {
+	return &KeyOpError{Code: code, Err: err, Classified: true}
+}
+
+// ClientError returns the JSON-RPC code and the message a client may see for
+// an error InvokeMethod returned. A *KeyOpError keeps its code; its message
+// is its own text unless it is Internal, in which case the message is
+// ErrInternal's fixed text. Any other error was never classified and
+// reports ErrCodeInternalError with ErrInternal's text. InvokeMethod logs
+// the withheld detail with the method and request ID (go-xkms#1118).
+func ClientError(err error) (code int, message string) {
+	var keyErr *KeyOpError
+	if !errors.As(err, &keyErr) {
+		return ErrCodeInternalError, ErrInternal.Error()
+	}
+	if keyErr.Internal() {
+		return keyErr.Code, ErrInternal.Error()
+	}
+	return keyErr.Code, keyErr.Error()
+}
+
+// withheld reports whether ClientError withholds err's text from the
+// client.
+func withheld(err error) bool {
+	var keyErr *KeyOpError
+	return !errors.As(err, &keyErr) || keyErr.Internal()
+}
 
 // keyOpSentinelCodes maps the service-layer sentinels raised by the key and
 // crypto operations onto JSON-RPC error codes. It is an ordered slice rather
@@ -118,7 +170,7 @@ func mapKeyOpError(err error) error {
 
 	for _, entry := range keyOpSentinelCodes {
 		if errors.Is(err, entry.sentinel) {
-			return &KeyOpError{Code: entry.code, Err: err}
+			return classified(entry.code, err)
 		}
 	}
 

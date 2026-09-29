@@ -422,39 +422,6 @@ func TestP7_StaticPW_RestorePasswords_WithExpiresAt(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// StaticPasswordService - decryptBackup error paths
-// ---------------------------------------------------------------------------
-
-func TestP7_StaticPW_DecryptBackup_TooShortData(t *testing.T) {
-	_, err := decryptBackup([]byte{0x01, 0x02, 0x03}, "aes-256", "test")
-	assert.ErrorIs(t, err, ErrRestoreDecryptFailed)
-}
-
-func TestP7_StaticPW_DecryptBackup_WrongPassword(t *testing.T) {
-	dir := t.TempDir()
-	backupFile := filepath.Join(dir, "enc.json")
-
-	store := &p7MockStaticPWStore{
-		passwords: []*staticpw.StaticPassword{
-			{Name: "test", Password: "secret"},
-		},
-	}
-	svc := NewStaticPasswordService(store)
-	require.NoError(t, svc.BackupPasswords(backupFile, true, "aes-256", "correct"))
-
-	data, err := os.ReadFile(backupFile)
-	require.NoError(t, err)
-
-	_, err = decryptBackup(data, "aes-256", "wrong-password")
-	assert.ErrorIs(t, err, ErrRestoreDecryptFailed)
-}
-
-func TestP7_StaticPW_DecryptBackup_InvalidAlgorithm(t *testing.T) {
-	_, err := decryptBackup([]byte("dummy"), "invalid-algo", "password")
-	assert.ErrorIs(t, err, ErrBackupInvalidAlgorithm)
-}
-
-// ---------------------------------------------------------------------------
 // StaticPasswordService - RestorePasswords encrypted round-trip
 // ---------------------------------------------------------------------------
 

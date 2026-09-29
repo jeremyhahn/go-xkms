@@ -15,9 +15,6 @@ package grpc
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -1357,51 +1354,6 @@ func (m *mockStreamServerStream) Context() context.Context {
 
 func (m *mockStreamServerStream) SetHeader(md metadata.MD) error {
 	return nil
-}
-
-// TestExtractPublicKeyPEMWithCryptoSignerInterface tests extractPublicKeyPEM with crypto.Signer
-func TestExtractPublicKeyPEMWithCryptoSignerInterface(t *testing.T) {
-	// Test with RSA key (implements crypto.Signer)
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-
-	pem, err := extractPublicKeyPEM(rsaKey)
-	if err != nil {
-		t.Fatalf("extractPublicKeyPEM failed: %v", err)
-	}
-	if pem == "" {
-		t.Error("Expected non-empty PEM")
-	}
-
-	// Test with ECDSA key
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate ECDSA key: %v", err)
-	}
-
-	pem, err = extractPublicKeyPEM(ecKey)
-	if err != nil {
-		t.Fatalf("extractPublicKeyPEM failed: %v", err)
-	}
-	if pem == "" {
-		t.Error("Expected non-empty PEM")
-	}
-
-	// Test with Ed25519 key
-	_, ed25519Key, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate Ed25519 key: %v", err)
-	}
-
-	pem, err = extractPublicKeyPEM(ed25519Key)
-	if err != nil {
-		t.Fatalf("extractPublicKeyPEM failed: %v", err)
-	}
-	if pem == "" {
-		t.Error("Expected non-empty PEM")
-	}
 }
 
 // Helper function to generate test TLS certificate

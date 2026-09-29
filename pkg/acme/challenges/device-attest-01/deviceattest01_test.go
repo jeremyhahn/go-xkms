@@ -17,13 +17,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,17 +62,18 @@ func TestAttestationFormat_String(t *testing.T) {
 
 func TestVerify_NetworkError(t *testing.T) {
 	ca := &mockCA{}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	// Use invalid port to trigger network error
-	err := Verify(resolver, ca, "127.0.0.1", "99999", "token", "keyauth")
+	// Port 1 on loopback has no listener: the connection is refused.
+	err := Verify(client, ca, "127.0.0.1", "1", "token", "keyauth")
 	if err == nil {
-		t.Error("Verify() should fail with network error")
+		t.Fatal("Verify() should fail with network error")
 	}
 
 	// Verify it's a network error, not a CA verification error
-	if !strings.Contains(err.Error(), "failed to contact client") {
-		t.Errorf("Expected network error, got: %v", err)
+	var verr *validation.Error
+	if !errors.As(err, &verr) || verr.Kind != validation.KindConnection {
+		t.Errorf("Expected a KindConnection *validation.Error, got: %v", err)
 	}
 }
 
@@ -89,15 +90,16 @@ func TestVerify_HTTPStatusError(t *testing.T) {
 	port := parts[1]
 
 	ca := &mockCA{}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail with non-200 status")
 	}
 
-	if !strings.Contains(err.Error(), "unexpected status code") {
-		t.Errorf("Expected status code error, got: %v", err)
+	var status *validation.StatusError
+	if !errors.As(err, &status) || status.StatusCode != http.StatusNotFound {
+		t.Errorf("Expected a 404 *validation.StatusError, got: %v", err)
 	}
 }
 
@@ -115,9 +117,9 @@ func TestVerify_InvalidJSON(t *testing.T) {
 	port := parts[1]
 
 	ca := &mockCA{}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail with invalid JSON")
 	}
@@ -144,9 +146,9 @@ func TestVerify_InvalidCBOR(t *testing.T) {
 	port := parts[1]
 
 	ca := &mockCA{}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail with invalid CBOR")
 	}
@@ -186,9 +188,9 @@ func TestVerify_InvalidAttestationFormat(t *testing.T) {
 	port := parts[1]
 
 	ca := &mockCA{}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err != ErrInvalidAttestationFormat {
 		t.Errorf("Expected ErrInvalidAttestationFormat, got: %v", err)
 	}
@@ -226,9 +228,9 @@ func TestVerify_CAVerificationError(t *testing.T) {
 	ca := &mockCA{
 		verifyError: errors.New("CA verification failed"),
 	}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when CA verification fails")
 	}
@@ -270,9 +272,9 @@ func TestVerify_AKCertificateChainError(t *testing.T) {
 	ca := &mockCA{
 		verifyAKChainError: errors.New("AK chain verification failed"),
 	}
-	resolver := net.DefaultResolver
+	client := loopbackClient()
 
-	err := Verify(resolver, ca, host, port, "token", "keyauth")
+	err := Verify(client, ca, host, port, "token", "keyauth")
 	if err != ErrCertificateChainInvalid {
 		t.Errorf("Expected ErrCertificateChainInvalid, got: %v", err)
 	}

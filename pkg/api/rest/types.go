@@ -320,17 +320,16 @@ type ExportKeyRequest struct {
 }
 
 // CopyKeyRequest represents a request to copy a key from one backend to another.
+//
+// It names the source key, the destination, and the wrapping algorithm, and
+// nothing about the key itself: the copy takes its algorithm, size, curve,
+// hash and partition from the source key (XKMSService.CopyKey).
 type CopyKeyRequest struct {
 	SourceBackend string `json:"source_backend"` // Source backend name
 	SourceKeyID   string `json:"source_key_id"`
 	DestBackend   string `json:"dest_backend"` // Destination backend name
 	DestKeyID     string `json:"dest_key_id"`
-	KeyType       string `json:"key_type"`  // "rsa", "ecdsa", "ed25519", "symmetric"
 	Algorithm     string `json:"algorithm"` // Wrapping algorithm
-	KeySize       int    `json:"key_size,omitempty"`
-	Curve         string `json:"curve,omitempty"`
-	Hash          string `json:"hash,omitempty"`
-	AESKeySize    int    `json:"aes_key_size,omitempty"`
 }
 
 // CopyKeyResponse represents the response for copying a key.

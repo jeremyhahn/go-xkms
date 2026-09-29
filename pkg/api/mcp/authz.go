@@ -227,7 +227,8 @@ var methodPermissions = map[string]permission{
 	// s.authorize(ctx, auth.ResourceTenants|auth.ResourceTenantBarrier, ...)
 	// calls (go-xkms#773). Tenant metadata CRUD carries tenants:*; the
 	// per-tenant barrier lifecycle is its own resource family, distinct from
-	// the system barrier's seal:*.
+	// the system barrier's seal:*. Entitlements and quotas are plan
+	// management and carry their own qrdb permissions, never tenants:update.
 	"xkms.createTenant":             {auth.ResourceTenants, auth.ActionCreate},
 	"xkms.getTenant":                {auth.ResourceTenants, auth.ActionRead},
 	"xkms.listTenants":              {auth.ResourceTenants, auth.ActionList},
@@ -235,8 +236,8 @@ var methodPermissions = map[string]permission{
 	"xkms.tenantBarrierInit":        {auth.ResourceTenantBarrier, auth.ActionInit},
 	"xkms.tenantBarrierUnseal":      {auth.ResourceTenantBarrier, auth.ActionUnseal},
 	"xkms.tenantBarrierStatus":      {auth.ResourceTenantBarrier, auth.ActionStatus},
-	"xkms.updateTenantEntitlements": {auth.ResourceTenants, auth.ActionUpdate},
-	"xkms.updateTenantQuotas":       {auth.ResourceTenants, auth.ActionUpdate},
+	"xkms.updateTenantEntitlements": {auth.ResourceTenants, auth.ActionSetEntitlements},
+	"xkms.updateTenantQuotas":       {auth.ResourceTenants, auth.ActionSetQuotas},
 
 	// Non-ECDH key derivation -- pkg/api/grpc/service.go's DeriveKey
 	// s.authorize(ctx, auth.ResourceKeys, auth.ActionDerive, ...) call,

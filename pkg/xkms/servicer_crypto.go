@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -640,15 +641,39 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 			// selects the key's native AEAD default, and an unrecognized Mode
 			// string is left for SymmetricEncrypter.Encrypt to reject as a typed
 			// error rather than silently running the default cipher.
+			mode := types.CipherMode(strings.ToLower(req.Mode))
+
+			// The empty Mode is the key's AEAD (AES-GCM or ChaCha20-Poly1305).
+			// A caller-supplied nonce for it is claimed before the seal, and a
+			// claim that fails refuses the request before any ciphertext
+			// exists; see claimAEADNonce.
+			aeadMode := mode == ""
+			if aeadMode && len(req.Nonce) > 0 {
+				if err := claimAEADNonce(ctx, b, attrs, aeadEncryptOperation, req.Nonce); err != nil {
+					return nil, err
+				}
+			}
+
 			encrypted, err := encrypter.Encrypt(req.Plaintext, &types.EncryptOptions{
 				AdditionalData: req.AdditionalData,
 				Nonce:          req.Nonce,
-				Mode:           types.CipherMode(strings.ToLower(req.Mode)),
+				Mode:           mode,
 				IV:             req.IV,
 				TagSize:        req.TagSize,
 			})
 			if err != nil {
 				return nil, wrapOperationError(ErrEncryptionFailed, "", err)
+			}
+
+			// Any nonce the caller did not claim above -- one the provider
+			// generated -- is recorded now that it is known, so nobody can
+			// present it later as their own. Providers that keep the nonce
+			// inside their own ciphertext format return none, and have
+			// nothing to record.
+			if aeadMode && len(encrypted.Nonce) > 0 && !bytes.Equal(encrypted.Nonce, req.Nonce) {
+				if err := claimGeneratedAEADNonce(ctx, b, attrs, encrypted.Nonce); err != nil {
+					return nil, err
+				}
 			}
 			return &transport.EncryptResponse{
 				Ciphertext:   encrypted.Ciphertext,

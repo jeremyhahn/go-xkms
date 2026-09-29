@@ -98,6 +98,12 @@ for every transport:
 - **Key operations** reject a request `tenant_id` at the transport
   (`tenantForRequest` in `pkg/api/rest/handlers_keyops.go:54` and
   `pkg/api/mcp/handlers.go:1393`). gRPC has no such field.
+- **Key lookups and listings** resolve inside the caller's tenant in the
+  service, on every transport. Another tenant's key is `ErrKeyNotFound`, the
+  same answer a missing key gets, so a `keys:*` grant never reaches past the
+  holder's tenant (go-xkms#1218; see
+  [`../key-management/engineering.md`](../key-management/engineering.md)
+  §"Key lifecycle RPCs resolve inside the caller's tenant").
 - **PKCS#11 remote state** accepts a `tenant_id` only when it names the
   caller's own tenant, because the module states its configured tenant
   (`pkcs11StateScope`, `pkg/xkms/servicer_pkcs11state.go:79`). See

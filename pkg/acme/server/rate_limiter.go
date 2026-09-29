@@ -14,55 +14,21 @@
 package server
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
+	"math"
 	"net/http"
-	"strings"
+	"strconv"
 	"sync"
 	"time"
 
-	"github.com/go-jose/go-jose/v4"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 )
-
-// DefaultMaxRequestBodySize is the default maximum request body size (64KB).
-// This prevents DoS attacks via memory exhaustion from large request bodies.
-// ACME requests are typically small (JWS payloads), so 64KB is generous.
-const DefaultMaxRequestBodySize int64 = 64 * 1024
-
-// MaxRequestBodySize controls the maximum allowed request body size.
-// Configure this based on your deployment needs.
-var MaxRequestBodySize int64 = DefaultMaxRequestBodySize
-
-// BodySizeLimitMiddleware creates a middleware that limits request body size.
-// This prevents DoS attacks by rejecting requests with bodies larger than maxBytes.
-// Returns HTTP 413 Payload Too Large if the limit is exceeded.
-//
-// Parameters:
-//   - maxBytes: Maximum allowed body size in bytes. If 0, uses DefaultMaxRequestBodySize.
-//
-// Returns:
-//   - func(next http.Handler) http.Handler: Middleware function
-func BodySizeLimitMiddleware(maxBytes int64) func(next http.Handler) http.Handler {
-	if maxBytes <= 0 {
-		maxBytes = DefaultMaxRequestBodySize
-	}
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Only limit body size for methods that have a body
-			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
-				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
 
 // RateLimitConfig contains rate limiting configuration per RFC 8555 Section 6.6.
 // Different limits can be configured for different endpoint categories.
@@ -129,15 +95,45 @@ func DefaultRateLimitConfig() *RateLimitConfig {
 	}
 }
 
+// DefaultMaxEntries is the number of client buckets a RateLimiter or a
+// TenantRateLimiter tenant tracks before it refuses to admit a new client.
+// It bounds the memory a flood of distinct client keys can consume.
+const DefaultMaxEntries = 10000
+
+// maxSweepInterval caps how long a RateLimiter goes between sweeps of its
+// expired buckets, so a long-interval limiter (new-account: 10 per hour)
+// still frees capacity promptly once entries age out.
+const maxSweepInterval = time.Minute
+
+// rateBucket is the token-bucket state of one client key.
+type rateBucket struct {
+	tokens      int
+	lastRequest time.Time
+}
+
 // RateLimiter implements a token bucket rate limiting policy for ACME requests.
-// It tracks request rates per resource (typically by client IP or JWS KID) and
-// enforces configurable rate limits to prevent abuse.
+// It tracks request rates per resource key (the client IP, or an account ID
+// only once the account's JWS has been verified) and enforces a configurable
+// limit to prevent abuse.
+//
+// Its state is bounded: a bucket idle for its TTL (see ttl) is evicted, and
+// once DefaultMaxEntries keys are tracked a new key is refused until one
+// expires — the same fail-closed policy as TenantRateLimiter.
 type RateLimiter struct {
-	MaxRequests int                  // Maximum number of requests allowed in the interval
-	Interval    time.Duration        // Time interval for rate limit window
-	Tokens      map[string]int       // Remaining tokens per resource key
-	LastRequest map[string]time.Time // Timestamp of last request per resource key
-	mu          sync.Mutex           // Mutex to synchronize access
+	MaxRequests int           // Maximum number of requests allowed in the interval
+	Interval    time.Duration // Time interval for rate limit window
+
+	// mu guards buckets and lastSweep. It is held only for the bucket
+	// arithmetic in Allow, never across a handler or a body read.
+	mu         sync.Mutex
+	buckets    map[string]*rateBucket
+	lastSweep  time.Time
+	maxEntries int
+
+	// now is the limiter's clock: time.Now in production. It is a seam so
+	// tests can age buckets past their TTL deterministically instead of
+	// sleeping for the interval.
+	now func() time.Time
 
 	// auditLog records EventRateLimitExceeded when a request is throttled.
 	// Nil (the default) disables audit emission entirely; SetAuditLogger
@@ -155,11 +151,97 @@ type RateLimiter struct {
 // Returns:
 //   - *RateLimiter: Configured rate limiter instance
 func NewRateLimiter(maxRequests int, interval time.Duration) *RateLimiter {
+	now := time.Now
 	return &RateLimiter{
 		MaxRequests: maxRequests,
 		Interval:    interval,
-		Tokens:      make(map[string]int),
-		LastRequest: make(map[string]time.Time),
+		buckets:     make(map[string]*rateBucket),
+		lastSweep:   now(),
+		maxEntries:  DefaultMaxEntries,
+		now:         now,
+	}
+}
+
+// ttl is how long a bucket may sit idle before it is evicted:
+// MaxRequests intervals, the time a fully drained bucket takes to refill.
+// An idle bucket that old is indistinguishable from a new one, so eviction
+// never grants or withholds a token. A limiter that admits nothing keeps a
+// bucket one interval; one with no positive interval never refills, so its
+// buckets never expire (only the entry cap bounds it).
+func (rl *RateLimiter) ttl() time.Duration {
+	if rl.Interval <= 0 {
+		return time.Duration(math.MaxInt64)
+	}
+	if rl.MaxRequests <= 1 {
+		return rl.Interval
+	}
+	if rl.Interval > time.Duration(math.MaxInt64)/time.Duration(rl.MaxRequests) {
+		return time.Duration(math.MaxInt64)
+	}
+	return rl.Interval * time.Duration(rl.MaxRequests)
+}
+
+// Len reports how many client buckets the limiter currently tracks.
+func (rl *RateLimiter) Len() int {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return len(rl.buckets)
+}
+
+// Allow consumes one token from key's bucket and reports whether the request
+// is admitted. A key not yet tracked starts with a full bucket, unless the
+// limiter already tracks its maximum number of keys, in which case the new
+// key is refused until an existing bucket expires.
+//
+// The lock is held only for this arithmetic; callers must derive key before
+// calling and serve the request after Allow returns.
+func (rl *RateLimiter) Allow(key string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := rl.now()
+	rl.sweepExpiredLocked(now)
+
+	bucket, exists := rl.buckets[key]
+	if !exists {
+		if len(rl.buckets) >= rl.maxEntries {
+			return false
+		}
+		bucket = &rateBucket{tokens: rl.MaxRequests, lastRequest: now}
+		rl.buckets[key] = bucket
+	} else {
+		// Token bucket refill: one token per elapsed interval, capped at
+		// MaxRequests.
+		if rl.Interval > 0 {
+			refill := now.Sub(bucket.lastRequest) / rl.Interval
+			if refill > time.Duration(rl.MaxRequests) {
+				refill = time.Duration(rl.MaxRequests)
+			}
+			bucket.tokens = min(rl.MaxRequests, bucket.tokens+int(refill))
+		}
+		bucket.lastRequest = now
+	}
+
+	if bucket.tokens <= 0 {
+		return false
+	}
+	bucket.tokens--
+	return true
+}
+
+// sweepExpiredLocked evicts every bucket idle for longer than ttl. It runs at
+// most once per sweep period (ttl, capped at maxSweepInterval), so its O(n)
+// cost is amortized across all requests in that period. rl.mu must be held.
+func (rl *RateLimiter) sweepExpiredLocked(now time.Time) {
+	ttl := rl.ttl()
+	if now.Sub(rl.lastSweep) < min(ttl, maxSweepInterval) {
+		return
+	}
+	rl.lastSweep = now
+	for key, bucket := range rl.buckets {
+		if now.Sub(bucket.lastRequest) >= ttl {
+			delete(rl.buckets, key)
+		}
 	}
 }
 
@@ -172,9 +254,11 @@ func (rl *RateLimiter) SetAuditLogger(logger audit.AuditLogger) {
 
 // NewClientRateLimiterMiddleware builds the overall per-client ACME
 // admission-control middleware mounted on the whole "/acme" surface: a
-// RateLimiter keyed by ClientID (the JWS KID once an account exists, the
-// client IP before one does), wired to auditLog so a throttled request is
-// recorded via EventRateLimitExceeded. It is the single construction path
+// RateLimiter keyed by ClientIP, wired to auditLog so a throttled request is
+// recorded via EventRateLimitExceeded. It is keyed on the client address, not
+// the JWS "kid": it runs before the JWS is verified, and an unverified kid is
+// attacker-chosen, so keying on it would let one client mint a fresh bucket
+// per request. It is the single construction path
 // for that blanket limiter — the standalone TrustedCA
 // (pkg/acme/client/trustedca.go) and xkmsd's embedded ACME listener
 // (cmd/xkmsd/acme.go) both call it instead of hand-rolling their own
@@ -182,7 +266,7 @@ func (rl *RateLimiter) SetAuditLogger(logger audit.AuditLogger) {
 func NewClientRateLimiterMiddleware(maxRequests int, interval time.Duration, auditLog audit.AuditLogger) func(http.Handler) http.Handler {
 	limiter := NewRateLimiter(maxRequests, interval)
 	limiter.SetAuditLogger(auditLog)
-	return limiter.MiddlewareFunc(ClientID)
+	return limiter.MiddlewareFunc(rateLimitClientIPKey)
 }
 
 // recordRateLimitExceeded logs EventRateLimitExceeded for resourceKey.
@@ -227,37 +311,24 @@ func (rl *RateLimiter) recordRateLimitExceeded(r *http.Request, resourceKey stri
 func (rl *RateLimiter) MiddlewareFunc(resourceKeyFunc func(r *http.Request) string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			rl.mu.Lock()
-			defer rl.mu.Unlock()
-
-			resourceKey := resourceKeyFunc(r) // Generate the resource key (IP or KID)
-
-			// Calculate time since the last request for this resource
-			now := time.Now()
-			elapsed := now.Sub(rl.LastRequest[resourceKey])
-
-			// Add tokens back based on time passed (token bucket refill)
-			tokensToAdd := int(elapsed.Seconds() / rl.Interval.Seconds())
-			rl.Tokens[resourceKey] = min(rl.MaxRequests, rl.Tokens[resourceKey]+tokensToAdd)
-
-			// Update last request time
-			rl.LastRequest[resourceKey] = now
-
-			// Check if we have tokens left
-			if rl.Tokens[resourceKey] > 0 {
-				rl.Tokens[resourceKey]--
-				next.ServeHTTP(w, r) // Serve the request
-			} else {
-				// Rate limit exceeded - return RFC 8555 compliant error response.
-				// The request is refused either way, so a failed audit write
-				// cannot change the outcome to "allow" here (there is no more
-				// permissive action to withhold); it is surfaced through the
-				// default logger since RateLimiter has no logger of its own.
-				if auditErr := rl.recordRateLimitExceeded(r, resourceKey); auditErr != nil {
-					slog.Default().Error("audit log failed", "error", auditErr)
-				}
-				rl.writeRateLimitError(w)
+			// The key is derived, and the request served, outside the
+			// limiter's lock: only Allow's bucket arithmetic is serialized,
+			// so one slow request never delays another.
+			resourceKey := resourceKeyFunc(r)
+			if rl.Allow(resourceKey) {
+				next.ServeHTTP(w, r)
+				return
 			}
+
+			// Rate limit exceeded - return RFC 8555 compliant error response.
+			// The request is refused either way, so a failed audit write
+			// cannot change the outcome to "allow" here (there is no more
+			// permissive action to withhold); it is surfaced through the
+			// default logger since RateLimiter has no logger of its own.
+			if auditErr := rl.recordRateLimitExceeded(r, resourceKey); auditErr != nil {
+				slog.Default().Error("audit log failed", "error", auditErr)
+			}
+			rl.writeRateLimitError(w)
 		})
 	}
 }
@@ -305,7 +376,7 @@ func NewAccountRateLimiter(config *RateLimit) func(next http.Handler) http.Handl
 	}
 
 	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(ClientIP)
+	return limiter.MiddlewareFunc(rateLimitClientIPKey)
 }
 
 // NewOrderRateLimiter creates a middleware for limiting order creation per account.
@@ -325,7 +396,7 @@ func NewOrderRateLimiter(config *RateLimit) func(next http.Handler) http.Handler
 	}
 
 	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(ClientID)
+	return limiter.MiddlewareFunc(rateLimitClientIDKey)
 }
 
 // CertificateRateLimiter creates a middleware for limiting certificate operations per account.
@@ -345,7 +416,7 @@ func CertificateRateLimiter(config *RateLimit) func(next http.Handler) http.Hand
 	}
 
 	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(ClientID)
+	return limiter.MiddlewareFunc(rateLimitClientIDKey)
 }
 
 // OverallRateLimiter creates a middleware for limiting all requests per IP address.
@@ -365,7 +436,7 @@ func OverallRateLimiter(config *RateLimit) func(next http.Handler) http.Handler 
 	}
 
 	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(ClientIP)
+	return limiter.MiddlewareFunc(rateLimitClientIPKey)
 }
 
 // FailedValidationRateLimiter creates a middleware for limiting failed validation attempts per account.
@@ -385,135 +456,79 @@ func FailedValidationRateLimiter(config *RateLimit) func(next http.Handler) http
 	}
 
 	limiter := NewRateLimiter(config.MaxRequests, config.Interval)
-	return limiter.MiddlewareFunc(ClientID)
+	return limiter.MiddlewareFunc(rateLimitClientIDKey)
 }
 
-// TrustedProxies contains IP addresses/CIDRs that are trusted to set proxy headers.
-// This should be configured based on your infrastructure (e.g., load balancer IPs).
-// An empty list means no proxies are trusted (secure default).
-var TrustedProxies []string
+// TrustedProxies is the set of proxies trusted to name the client in the
+// X-Forwarded-For / X-Real-IP headers. Nil (the default) trusts none, so
+// proxy headers are ignored and only the transport peer address is used.
+var TrustedProxies *ratelimit.TrustedProxies
 
-// ClientIP extracts the client's IP address from the request.
-// It only trusts proxy headers (X-Forwarded-For, X-Real-IP) if the request
-// comes from a trusted proxy. This prevents IP spoofing attacks.
-//
-// SECURITY NOTE: By default, TrustedProxies is empty, meaning proxy headers
-// are ignored and only the direct connection IP (RemoteAddr) is used.
-// Configure TrustedProxies to include your load balancer/proxy IPs if needed.
-//
-// Header priority (when from trusted proxy):
-//  1. X-Forwarded-For (standard proxy header, uses first IP in chain)
-//  2. X-Real-IP (nginx proxy header)
-//  3. RemoteAddr (direct connection)
-//
-// Parameters:
-//   - r: HTTP request
-//
-// Returns:
-//   - string: Client IP address
+// ClientIP extracts the client's IP address from the request. Proxy headers
+// are honoured only from TrustedProxies; the resolution rules are those of
+// the shared ratelimit.TrustedProxies.ClientIP, which the REST login limiter
+// uses too.
 func ClientIP(r *http.Request) string {
-	remoteIP := extractIPFromRemoteAddr(r.RemoteAddr)
-
-	// Only trust proxy headers if request is from a trusted proxy
-	if isTrustedProxy(remoteIP) {
-		// Check X-Forwarded-For header first (standard proxy header)
-		// Format: "client, proxy1, proxy2" - first IP is the original client
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// Take the first IP in the chain (original client)
-			if idx := strings.Index(xff, ","); idx != -1 {
-				return strings.TrimSpace(xff[:idx])
-			}
-			return strings.TrimSpace(xff)
-		}
-
-		// Check X-Real-IP header (commonly used by nginx)
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
-		}
-	}
-
-	// Use direct connection IP (RemoteAddr)
-	return remoteIP
+	return TrustedProxies.ClientIP(r)
 }
 
-// extractIPFromRemoteAddr extracts the IP address from a RemoteAddr string.
-// RemoteAddr can be "IP:port" or just "IP" for Unix sockets.
-func extractIPFromRemoteAddr(remoteAddr string) string {
-	// Handle IPv6 addresses like "[::1]:8080"
-	if strings.HasPrefix(remoteAddr, "[") {
-		if idx := strings.LastIndex(remoteAddr, "]:"); idx != -1 {
-			return remoteAddr[1:idx]
-		}
-		// No port, just "[::1]"
-		return strings.Trim(remoteAddr, "[]")
-	}
+// verifiedAccountContextKey is the context key under which
+// WithVerifiedAccountID publishes the account a request's JWS was verified
+// against. It is unexported so only WithVerifiedAccountID can set it.
+type verifiedAccountContextKey struct{}
 
-	// Handle IPv4 addresses like "192.168.1.1:8080"
-	if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
-		return remoteAddr[:idx]
-	}
-
-	return remoteAddr
+// WithVerifiedAccountID returns a copy of ctx recording that the request's
+// JWS signature was verified against account accountID. Only the code that
+// performed that verification may call it (handlers.RestService.
+// TenantAuthMiddleware); ClientID trusts it unconditionally.
+func WithVerifiedAccountID(ctx context.Context, accountID uint64) context.Context {
+	return context.WithValue(ctx, verifiedAccountContextKey{}, accountID)
 }
 
-// isTrustedProxy checks if an IP address is in the list of trusted proxies.
-func isTrustedProxy(ip string) bool {
-	if len(TrustedProxies) == 0 {
-		return false
-	}
-
-	for _, trusted := range TrustedProxies {
-		// Simple exact match (could be extended to support CIDR ranges)
-		if ip == trusted {
-			return true
-		}
-	}
-	return false
+// VerifiedAccountIDFromContext returns the account WithVerifiedAccountID
+// recorded on ctx, if any.
+func VerifiedAccountIDFromContext(ctx context.Context) (uint64, bool) {
+	accountID, ok := ctx.Value(verifiedAccountContextKey{}).(uint64)
+	return accountID, ok
 }
 
-// ClientID generates a rate-limiting client identifier by parsing the JWS KID from the request,
-// or falling back to the client's IP address if KID is not available.
+// ClientID returns the rate-limiting key for a request: the decimal account
+// ID when the request's JWS has already been verified (see
+// WithVerifiedAccountID), otherwise the client IP (ClientIP). The two cannot
+// collide — an IP address always contains "." or ":".
 //
-// This function attempts to extract the KeyID from the JWS protected header to identify
-// authenticated ACME clients. If the request doesn't contain a valid JWS or KID,
-// it falls back to using the client's IP address (with proxy header support).
+// It never reads the request body and never trusts an unverified JWS "kid":
+// a kid taken from an unverified header is attacker-chosen, and keying on it
+// would let a client mint a fresh bucket per request and bypass the limit.
 //
-// This is used for account-based rate limiting (new orders, certificates, failed validations).
-//
-// Parameters:
-//   - r: HTTP request to extract client identifier from
-//
-// Returns:
-//   - string: Client identifier (JWS KID or IP address)
+// This is used for account-based rate limiting (new orders, certificates,
+// failed validations), whose limiters are mounted after the JWS is verified.
 func ClientID(r *http.Request) string {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return ClientIP(r)
+	if accountID, ok := VerifiedAccountIDFromContext(r.Context()); ok {
+		return strconv.FormatUint(accountID, 10)
 	}
-	// The body has already been read in full above, and net/http closes the
-	// server request body itself once the handler returns, so a close error
-	// here is neither actionable nor meaningful (go-xkms#866).
-	defer func() { _ = r.Body.Close() }()
+	return ClientIP(r)
+}
 
-	// Restore the body so it can be read again by the handler
-	r.Body = io.NopCloser(bytes.NewBuffer(body))
+// rateLimitClientIPKey resolves ClientIP and folds it through
+// ratelimit.RateLimitKey, so every rate limiter keyed on the client's
+// transport/forwarded IP address (NewAccountRateLimiter, OverallRateLimiter,
+// and the tenant-aware new-account/overall limiters) buckets an IPv6 client
+// on its /64 rather than its full address, while an IPv4 client keys on its
+// exact address as before.
+func rateLimitClientIPKey(r *http.Request) string {
+	return ratelimit.RateLimitKey(ClientIP(r))
+}
 
-	jwsString := strings.TrimSpace(string(body))
-	jws, err := jose.ParseSigned(jwsString, AllowedJOSEAlgorithms)
-	if err != nil {
-		return ClientIP(r)
-	}
-
-	if len(jws.Signatures) == 0 {
-		return ClientIP(r)
-	}
-
-	protectedHeader := jws.Signatures[0].Header
-
-	if protectedHeader.KeyID == "" {
-		return ClientIP(r)
-	}
-	return protectedHeader.KeyID
+// rateLimitClientIDKey resolves ClientID and folds it through
+// ratelimit.RateLimitKey. A JWS KID passes through unchanged — it is never a
+// valid IP address — and the IP fallback is masked exactly like
+// rateLimitClientIPKey, so every ClientID-keyed limiter (new-order,
+// certificate, failed-validation, and the overall per-client admission
+// control) gets the same IPv6 /64 protection before an account exists to key
+// on.
+func rateLimitClientIDKey(r *http.Request) string {
+	return ratelimit.RateLimitKey(ClientID(r))
 }
 
 // writeJSONError writes an ACME error response in JSON format.

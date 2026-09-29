@@ -856,6 +856,21 @@ func TestMapKeyOpError(t *testing.T) {
 			wantStatus: http.StatusServiceUnavailable,
 		},
 		{
+			name:       "malformed backend name is a bad request",
+			err:        &xkms.ErrBackendNameValidation{Err: errors.New("contains '/'")},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "wrapped key-not-exportable cause is forbidden",
+			err:        &xkms.ErrOperationWrap{Sentinel: xkms.ErrOperationFailed, Err: backend.ErrKeyNotExportable},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "wrapped existing destination key is a conflict",
+			err:        &xkms.ErrKeyOperation{Operation: "import key", Err: storage.ErrAlreadyExists},
+			wantStatus: http.StatusConflict,
+		},
+		{
 			name:       "anything else is internal",
 			err:        errors.New("disk on fire"),
 			wantStatus: http.StatusInternalServerError,

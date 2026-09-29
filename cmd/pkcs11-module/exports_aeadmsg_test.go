@@ -36,20 +36,19 @@ package main
 import (
 	"bytes"
 	"reflect"
-	"runtime"
 	"testing"
 	"unsafe"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
 )
 
-func buildGCMMessageParams(iv []byte, ivFixedBits uint32, ivGenerator module.IVGenerator, tag []byte, tagBits uint32) []byte {
+func buildGCMMessageParams(t testing.TB, iv []byte, ivFixedBits uint32, ivGenerator module.IVGenerator, tag []byte, tagBits uint32) []byte {
 	buf := newAlignedBuf(48)
-	putPtr(buf, 0, bytePtr(iv))
+	putPtr(t, buf, 0, bytePtr(iv))
 	putULong(buf, 8, uint64(len(iv)))
 	putULong(buf, 16, uint64(ivFixedBits))
 	putULong(buf, 24, uint64(ivGenerator))
-	putPtr(buf, 32, bytePtr(tag))
+	putPtr(t, buf, 32, bytePtr(tag))
 	putULong(buf, 40, uint64(tagBits))
 	return buf
 }
@@ -60,16 +59,13 @@ func TestGCMMessageParams_WellFormedPopulatesEveryField(t *testing.T) {
 
 	iv := []byte("111122223333")
 	tag := make([]byte, 16) // ulTagBits/8 = 128/8 = 16 bytes.
-	buf := buildGCMMessageParams(iv, 64, module.CKG_GENERATE, tag, 128)
+	buf := buildGCMMessageParams(t, iv, 64, module.CKG_GENERATE, tag, 128)
 
 	ptr := cPtr(unsafe.Pointer(&buf[0]), ft, 0)
 	length := reflect.New(ft.In(1)).Elem()
 	length.SetUint(48)
 
 	out := callCFn(gcmMessageParams, ptr, length)
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(iv)
-	runtime.KeepAlive(tag)
 
 	if !out[1].Bool() {
 		t.Fatal("gcmMessageParams(well-formed) ok = false, want true")
@@ -99,7 +95,7 @@ func TestGCMMessageParams_DanglingIvLenIsRefused(t *testing.T) {
 	ft := fn.Type()
 
 	tag := make([]byte, 16)
-	buf := buildGCMMessageParams(nil, 0, module.CKG_NO_GENERATE, tag, 128)
+	buf := buildGCMMessageParams(t, nil, 0, module.CKG_NO_GENERATE, tag, 128)
 	putULong(buf, 8, 12) // ulIvLen says 12 bytes; pIv is still NULL.
 
 	ptr := cPtr(unsafe.Pointer(&buf[0]), ft, 0)
@@ -107,8 +103,6 @@ func TestGCMMessageParams_DanglingIvLenIsRefused(t *testing.T) {
 	length.SetUint(48)
 
 	out := callCFn(gcmMessageParams, ptr, length)
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(tag)
 	if out[1].Bool() {
 		t.Error("gcmMessageParams(dangling ulIvLen, NULL pIv) ok = true, want false")
 	}
@@ -121,15 +115,13 @@ func TestGCMMessageParams_DanglingTagIsRefused(t *testing.T) {
 	ft := fn.Type()
 
 	iv := []byte("111122223333")
-	buf := buildGCMMessageParams(iv, 0, module.CKG_NO_GENERATE, nil, 128) // ulTagBits=128 (16 bytes); pTag is NULL.
+	buf := buildGCMMessageParams(t, iv, 0, module.CKG_NO_GENERATE, nil, 128) // ulTagBits=128 (16 bytes); pTag is NULL.
 
 	ptr := cPtr(unsafe.Pointer(&buf[0]), ft, 0)
 	length := reflect.New(ft.In(1)).Elem()
 	length.SetUint(48)
 
 	out := callCFn(gcmMessageParams, ptr, length)
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(iv)
 	if out[1].Bool() {
 		t.Error("gcmMessageParams(dangling tag, NULL pTag) ok = true, want false")
 	}
@@ -145,7 +137,7 @@ func TestWriteGCMMessageParams_CopiesIVAndTagBack(t *testing.T) {
 
 	ivDest := make([]byte, 16)  // room for more than the produced IV.
 	tagDest := make([]byte, 16) // exactly the produced tag's size.
-	buf := buildGCMMessageParams(ivDest, 0, module.CKG_GENERATE, tagDest, 0)
+	buf := buildGCMMessageParams(t, ivDest, 0, module.CKG_GENERATE, tagDest, 0)
 
 	producedIV := []byte("111122223333") // 12 bytes.
 	producedTag := bytes.Repeat([]byte{0xAB}, 16)
@@ -158,9 +150,6 @@ func TestWriteGCMMessageParams_CopiesIVAndTagBack(t *testing.T) {
 
 	ptr := cPtr(unsafe.Pointer(&buf[0]), ft, 0)
 	out := callCFn(writeGCMMessageParams, ptr, reflect.ValueOf(params))
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(ivDest)
-	runtime.KeepAlive(tagDest)
 
 	if got := module.CK_RV(out[0].Uint()); got != module.CKR_OK {
 		t.Fatalf("writeGCMMessageParams(well-formed) = %s, want CKR_OK", got)
@@ -182,15 +171,13 @@ func TestWriteGCMMessageParams_UndersizedIVDestinationIsRefused(t *testing.T) {
 	ft := fn.Type()
 
 	ivDest := make([]byte, 4) // shorter than the 12-byte produced IV.
-	buf := buildGCMMessageParams(ivDest, 0, module.CKG_GENERATE, nil, 0)
+	buf := buildGCMMessageParams(t, ivDest, 0, module.CKG_GENERATE, nil, 0)
 	putULong(buf, 8, uint64(len(ivDest)))
 
 	params := &module.AESGCMMessageParams{IV: []byte("111122223333")}
 
 	ptr := cPtr(unsafe.Pointer(&buf[0]), ft, 0)
 	out := callCFn(writeGCMMessageParams, ptr, reflect.ValueOf(params))
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(ivDest)
 
 	if got := module.CK_RV(out[0].Uint()); got != module.CKR_MECHANISM_PARAM_INVALID {
 		t.Fatalf("writeGCMMessageParams(undersized IV destination) = %s, want CKR_MECHANISM_PARAM_INVALID", got)
@@ -204,15 +191,13 @@ func TestWriteGCMMessageParams_UndersizedTagDestinationIsRefused(t *testing.T) {
 	ft := fn.Type()
 
 	tagDest := make([]byte, 8) // 64 bits, shorter than the 128-bit produced tag.
-	buf := buildGCMMessageParams(nil, 0, module.CKG_NO_GENERATE, tagDest, 0)
+	buf := buildGCMMessageParams(t, nil, 0, module.CKG_NO_GENERATE, tagDest, 0)
 	putULong(buf, 40, uint64(len(tagDest)*8))
 
 	params := &module.AESGCMMessageParams{Tag: bytes.Repeat([]byte{0xCD}, 16)}
 
 	ptr := cPtr(unsafe.Pointer(&buf[0]), ft, 0)
 	out := callCFn(writeGCMMessageParams, ptr, reflect.ValueOf(params))
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(tagDest)
 
 	if got := module.CK_RV(out[0].Uint()); got != module.CKR_MECHANISM_PARAM_INVALID {
 		t.Fatalf("writeGCMMessageParams(undersized tag destination) = %s, want CKR_MECHANISM_PARAM_INVALID", got)

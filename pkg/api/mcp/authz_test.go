@@ -764,8 +764,8 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.tenantBarrierInit":        "tenant_barrier:init",
 	"xkms.tenantBarrierStatus":      "tenant_barrier:status",
 	"xkms.tenantBarrierUnseal":      "tenant_barrier:unseal",
-	"xkms.updateTenantEntitlements": "tenants:update",
-	"xkms.updateTenantQuotas":       "tenants:update",
+	"xkms.updateTenantEntitlements": "tenants:set_entitlements",
+	"xkms.updateTenantQuotas":       "tenants:set_quotas",
 
 	// Non-ECDH key derivation — pkg/api/grpc/service.go (go-xkms#773).
 	"xkms.deriveKey": "keys:derive",

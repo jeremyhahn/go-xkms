@@ -39,6 +39,25 @@ func closeOIDCResponseBody(resp *http.Response) {
 	}
 }
 
+// maxOIDCResponseBytes bounds every response body read from the identity
+// provider: the discovery document, the JWKS and the userinfo claims. Each
+// is a small JSON document; the cap stops a hostile or compromised provider
+// from exhausting memory with an endless body.
+const maxOIDCResponseBytes = 1 << 20
+
+// readOIDCResponse reads resp's body, refusing one longer than
+// maxOIDCResponseBytes with ErrOIDCResponseTooLarge.
+func readOIDCResponse(resp *http.Response) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxOIDCResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxOIDCResponseBytes {
+		return nil, ErrOIDCResponseTooLarge
+	}
+	return body, nil
+}
+
 // OIDCAuthenticatorError represents an error from the OIDC authenticator.
 type OIDCAuthenticatorError struct {
 	Message string
@@ -72,6 +91,7 @@ var (
 	ErrOIDCMissingSubject       = &OIDCAuthenticatorError{Message: "missing subject claim"}
 	ErrOIDCInvalidIssuer        = &OIDCAuthenticatorError{Message: "invalid issuer"}
 	ErrOIDCInvalidAudience      = &OIDCAuthenticatorError{Message: "invalid audience"}
+	ErrOIDCResponseTooLarge     = &OIDCAuthenticatorError{Message: "identity provider response too large"}
 )
 
 // OIDCConfig configures the OIDC authenticator.
@@ -268,7 +288,7 @@ func (a *OIDCAuthenticator) discover(ctx context.Context) error {
 		}
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readOIDCResponse(resp)
 	if err != nil {
 		return &OIDCAuthenticatorError{Message: "failed to read discovery response", Cause: err}
 	}
@@ -324,7 +344,7 @@ func (a *OIDCAuthenticator) getJWKS(ctx context.Context) (*jose.JSONWebKeySet, e
 		}
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readOIDCResponse(resp)
 	if err != nil {
 		return nil, &OIDCAuthenticatorError{Message: "failed to read JWKS response", Cause: err}
 	}
@@ -445,7 +465,7 @@ func (a *OIDCAuthenticator) validateAccessToken(ctx context.Context, tokenString
 		}
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readOIDCResponse(resp)
 	if err != nil {
 		return nil, &OIDCAuthenticatorError{Message: "failed to read userinfo response", Cause: err}
 	}

@@ -611,25 +611,25 @@ func TestModuleStorage_SetTimeout_IgnoresNonPositive(t *testing.T) {
 }
 
 // TestModuleStorage_FailedAttemptCounter_CAS exercises the atomic counter path
-// on a compare-and-swap-capable backend (the memory engine): increments
-// accumulate, reset clears, and a load reads the authoritative dedicated key.
+// on a compare-and-swap-capable backend (the memory engine): spends accumulate,
+// reset clears, and a load reads the authoritative dedicated key.
 func TestModuleStorage_FailedAttemptCounter_CAS(t *testing.T) {
 	s := NewModuleStorage(storage.NewMemory())
 	t.Cleanup(func() { _ = s.Close() })
 
-	// Two increments accumulate to 2 and each returns the authoritative value.
-	v, persisted, err := s.IncrementFailedAttempt(0, CKU_USER)
+	// Two spends accumulate to 2 and each returns the authoritative value.
+	v, admitted, err := s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
 	require.NoError(t, err)
-	require.True(t, persisted)
+	require.True(t, admitted)
 	require.Equal(t, uint32(1), v)
 
-	v, persisted, err = s.IncrementFailedAttempt(0, CKU_USER)
+	v, admitted, err = s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
 	require.NoError(t, err)
-	require.True(t, persisted)
+	require.True(t, admitted)
 	require.Equal(t, uint32(2), v)
 
 	// The SO counter is independent of the user counter.
-	v, _, err = s.IncrementFailedAttempt(0, CKU_SO)
+	v, _, err = s.SpendFailedAttempt(0, CKU_SO, MaxPINAttempts)
 	require.NoError(t, err)
 	require.Equal(t, uint32(1), v)
 
@@ -647,11 +647,138 @@ func TestModuleStorage_FailedAttemptCounter_CAS(t *testing.T) {
 	require.Equal(t, uint32(1), so)
 }
 
+// TestModuleStorage_SpendFailedAttempt_RefusesAtLimit pins that an exhausted
+// budget is refused without being charged: the spend reports admitted=false and
+// the stored counter does not move past the limit.
+func TestModuleStorage_SpendFailedAttempt_RefusesAtLimit(t *testing.T) {
+	s := NewModuleStorage(storage.NewMemory())
+	t.Cleanup(func() { _ = s.Close() })
+
+	for want := uint32(1); want <= MaxPINAttempts; want++ {
+		v, admitted, err := s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
+		require.NoError(t, err)
+		require.True(t, admitted)
+		require.Equal(t, want, v)
+	}
+
+	v, admitted, err := s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
+	require.NoError(t, err)
+	require.False(t, admitted, "an exhausted budget must refuse the attempt")
+	require.Equal(t, uint32(MaxPINAttempts), v)
+
+	user, _, err := s.LoadFailedAttempts(0)
+	require.NoError(t, err)
+	require.Equal(t, uint32(MaxPINAttempts), user, "a refused attempt must not be written")
+}
+
+// TestModuleStorage_RefundFailedAttempt covers each branch of refundedCount as
+// the durable counter applies it.
+func TestModuleStorage_RefundFailedAttempt(t *testing.T) {
+	spend := func(t *testing.T, s *ModuleStorage) uint32 {
+		t.Helper()
+		v, admitted, err := s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
+		require.NoError(t, err)
+		require.True(t, admitted)
+		return v
+	}
+
+	t.Run("uncontended success resets to zero", func(t *testing.T) {
+		s := NewModuleStorage(storage.NewMemory())
+		spend(t, s)
+		spent := spend(t, s)
+		v, err := s.RefundFailedAttempt(0, CKU_USER, spent)
+		require.NoError(t, err)
+		require.Equal(t, uint32(0), v)
+	})
+
+	t.Run("a later charge survives the refund", func(t *testing.T) {
+		s := NewModuleStorage(storage.NewMemory())
+		spent := spend(t, s)
+		spend(t, s) // a concurrent attempt charged after this one
+		v, err := s.RefundFailedAttempt(0, CKU_USER, spent)
+		require.NoError(t, err)
+		require.Equal(t, uint32(1), v, "only the refunding attempt's own charge may be returned")
+	})
+
+	t.Run("a counter reset underneath is left alone", func(t *testing.T) {
+		s := NewModuleStorage(storage.NewMemory())
+		spend(t, s)
+		spent := spend(t, s)
+		require.NoError(t, s.ResetFailedAttempt(0, CKU_USER))
+		spend(t, s) // a new attempt charged after the reset
+		v, err := s.RefundFailedAttempt(0, CKU_USER, spent)
+		require.NoError(t, err)
+		require.Equal(t, uint32(1), v, "a charge that cannot be proven to be this attempt's must stand")
+	})
+
+	t.Run("an absent counter stays absent", func(t *testing.T) {
+		s := NewModuleStorage(storage.NewMemory())
+		v, err := s.RefundFailedAttempt(0, CKU_USER, 1)
+		require.NoError(t, err)
+		require.Equal(t, uint32(0), v)
+		exists, err := s.backend.Exists(context.Background(), mustFailedAttemptKey(t, CKU_USER))
+		require.NoError(t, err)
+		require.False(t, exists, "a refund must not create a counter")
+	})
+}
+
+// TestModuleStorage_FailedAttemptCounter_NonCASBackend drives the mutex-guarded
+// read-modify-write path a backend without compare-and-swap takes.
+func TestModuleStorage_FailedAttemptCounter_NonCASBackend(t *testing.T) {
+	fb := newFaultBackend()
+	_, isCAS := storage.Backend(fb).(storage.CompareAndSwapper)
+	require.False(t, isCAS, "the fault backend must not expose compare-and-swap for this test to mean anything")
+	s := NewModuleStorage(fb)
+
+	for want := uint32(1); want <= MaxPINAttempts; want++ {
+		v, admitted, err := s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
+		require.NoError(t, err)
+		require.True(t, admitted)
+		require.Equal(t, want, v)
+	}
+	v, admitted, err := s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
+	require.NoError(t, err)
+	require.False(t, admitted)
+	require.Equal(t, uint32(MaxPINAttempts), v)
+
+	v, err = s.RefundFailedAttempt(0, CKU_USER, MaxPINAttempts)
+	require.NoError(t, err)
+	require.Equal(t, uint32(0), v)
+
+	fb.failPut = true
+	_, _, err = s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
+	require.ErrorIs(t, err, errInjectedStorage)
+	_, err = s.RefundFailedAttempt(0, CKU_USER, 1)
+	require.NoError(t, err, "a refund with nothing to return writes nothing, so it cannot fail on a write")
+}
+
+// TestModuleStorage_FailedAttemptCounter_Corrupt pins that a counter that does
+// not parse fails the spend rather than reading as an empty budget.
+func TestModuleStorage_FailedAttemptCounter_Corrupt(t *testing.T) {
+	backend := storage.NewMemory()
+	s := NewModuleStorage(backend)
+	require.NoError(t, backend.Put(context.Background(), mustFailedAttemptKey(t, CKU_USER), []byte("not-a-number")))
+
+	_, admitted, err := s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
+	require.ErrorIs(t, err, ErrCorruptAttemptCounter)
+	require.False(t, admitted)
+}
+
+// TestModuleStorage_FailedAttemptCounter_NoCounterForUserType pins that a user
+// type with no budget is an error, not a free attempt.
+func TestModuleStorage_FailedAttemptCounter_NoCounterForUserType(t *testing.T) {
+	s := NewModuleStorage(storage.NewMemory())
+
+	_, admitted, err := s.SpendFailedAttempt(0, CKU_CONTEXT_SPECIFIC, MaxPINAttempts)
+	require.ErrorIs(t, err, ErrNoAttemptCounter)
+	require.False(t, admitted)
+	require.ErrorIs(t, s.ResetFailedAttempt(0, CKU_CONTEXT_SPECIFIC), ErrNoAttemptCounter)
+}
+
 // TestModuleStorage_LoadFailedAttempts_AbsentKeyIsZero verifies that a token
 // with no dedicated counter key reads back zero attempts -- there is no
-// record snapshot to seed from -- and that a subsequent atomic increment
-// starts from that zero, not from any value the caller might have supplied
-// before the dedicated counter existed.
+// record snapshot to seed from -- and that a subsequent spend starts from that
+// zero.
 func TestModuleStorage_LoadFailedAttempts_AbsentKeyIsZero(t *testing.T) {
 	s := NewModuleStorage(storage.NewMemory())
 	t.Cleanup(func() { _ = s.Close() })
@@ -662,23 +789,27 @@ func TestModuleStorage_LoadFailedAttempts_AbsentKeyIsZero(t *testing.T) {
 	require.Equal(t, uint32(0), user)
 	require.Equal(t, uint32(0), so)
 
-	// The next increment builds on 0.
-	v, _, err := s.IncrementFailedAttempt(0, CKU_USER)
+	// The next spend builds on 0.
+	v, _, err := s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
 	require.NoError(t, err)
 	require.Equal(t, uint32(1), v)
 }
 
-// TestModuleStorage_FailedAttemptCounter_NilBackend confirms a store-less module
-// reports persisted=false so the caller advances its own in-memory counter.
+// TestModuleStorage_FailedAttemptCounter_NilBackend confirms a store-less
+// ModuleStorage refuses the ledger operations with ErrNoAttemptStore rather than
+// answering with an empty budget, and reports itself as not durable so the
+// module never installs it as a ledger.
 func TestModuleStorage_FailedAttemptCounter_NilBackend(t *testing.T) {
 	s := NewModuleStorage(nil)
+	require.False(t, s.Durable())
 
-	v, persisted, err := s.IncrementFailedAttempt(0, CKU_USER)
-	require.NoError(t, err)
-	require.False(t, persisted)
-	require.Equal(t, uint32(0), v)
+	_, admitted, err := s.SpendFailedAttempt(0, CKU_USER, MaxPINAttempts)
+	require.ErrorIs(t, err, ErrNoAttemptStore)
+	require.False(t, admitted)
 
-	require.NoError(t, s.ResetFailedAttempt(0, CKU_USER))
+	_, err = s.RefundFailedAttempt(0, CKU_USER, 1)
+	require.ErrorIs(t, err, ErrNoAttemptStore)
+	require.ErrorIs(t, s.ResetFailedAttempt(0, CKU_USER), ErrNoAttemptStore)
 
 	user, so, err := s.LoadFailedAttempts(0)
 	require.NoError(t, err)
@@ -687,10 +818,11 @@ func TestModuleStorage_FailedAttemptCounter_NilBackend(t *testing.T) {
 }
 
 // TestModuleStorage_FailedAttemptCounter_ConcurrentAccumulates is the property
-// the server-authoritative counter exists for: many clients incrementing one
-// shared token's counter through the same CAS-capable backend must all be
-// counted, with no lost updates. Two ModuleStorage instances over one backend
-// model two remote-mode modules pointed at the same server-side token.
+// the shared counter exists for: many clients charging one shared token's
+// counter through the same CAS-capable backend must all be counted, with no
+// lost updates. Two ModuleStorage instances over one backend model two modules
+// pointed at the same token. The limit is set above the total so every spend is
+// admitted and the total is exact.
 func TestModuleStorage_FailedAttemptCounter_ConcurrentAccumulates(t *testing.T) {
 	backend := storage.NewMemory()
 	t.Cleanup(func() { _ = backend.Close() })
@@ -704,8 +836,8 @@ func TestModuleStorage_FailedAttemptCounter_ConcurrentAccumulates(t *testing.T) 
 		go func(store *ModuleStorage) {
 			defer wg.Done()
 			for i := 0; i < perClient; i++ {
-				if _, _, err := store.IncrementFailedAttempt(0, CKU_USER); err != nil {
-					t.Errorf("increment: %v", err)
+				if _, _, err := store.SpendFailedAttempt(0, CKU_USER, 2*perClient); err != nil {
+					t.Errorf("spend: %v", err)
 					return
 				}
 			}
@@ -716,5 +848,13 @@ func TestModuleStorage_FailedAttemptCounter_ConcurrentAccumulates(t *testing.T) 
 	user, _, err := a.LoadFailedAttempts(0)
 	require.NoError(t, err)
 	require.Equal(t, uint32(2*perClient), user,
-		"every concurrent increment across both clients must be counted; a lower total is a lost update")
+		"every concurrent spend across both clients must be counted; a lower total is a lost update")
+}
+
+// mustFailedAttemptKey returns slot 0's counter key for userType.
+func mustFailedAttemptKey(t *testing.T, userType UserType) string {
+	t.Helper()
+	key, ok := failedAttemptKey(0, userType)
+	require.True(t, ok)
+	return key
 }

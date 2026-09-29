@@ -111,7 +111,8 @@ it.
 ## Tenant admins stay in their tenant
 
 A tenant's Admin manages keys, users and audit for that tenant only. Naming
-another tenant in a request does not widen that. PKCS#11 token-state calls that
+another tenant in a request does not widen that. Naming another tenant's key
+reads as "key not found", and listing keys shows only your own tenant's. PKCS#11 token-state calls that
 name another tenant are refused. An audit query that names another tenant, or
 none, returns only your own tenant's events. Reading every tenant's audit
 events takes a platform (system-tenant) identity whose role holds

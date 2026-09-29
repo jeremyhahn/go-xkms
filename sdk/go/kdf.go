@@ -30,3 +30,38 @@ const AlgorithmHKDF = kdf.AlgorithmHKDF
 // distinct from KDFParams (= types.KDFParams), which describes key-agreement KDF
 // parameters.
 type CryptoKDFParams = kdf.KDFParams
+
+// Password-based key derivation, re-exported so the xkey backup paths derive
+// file-encryption keys through the one canonical FIPS-aware hasher
+// (Argon2id, or PBKDF2-SHA256 when the Go FIPS 140 module is enabled) and
+// persist the salt and cost parameters beside the ciphertext.
+
+// PasswordHasher derives keys from passwords with a versioned, salted KDF.
+type PasswordHasher = kdf.PasswordHasher
+
+// PasswordHashVersion identifies a PasswordHasher derivation profile.
+type PasswordHashVersion = kdf.HashVersion
+
+// PasswordKeyParams is the persisted record of one password-based key
+// derivation: version, algorithm, cost parameters and salt.
+type PasswordKeyParams = kdf.PasswordKeyParams
+
+// NewFIPSAwareHasher returns a PasswordHasher that uses Argon2id, or
+// PBKDF2-SHA256 when the Go FIPS 140 module is enabled.
+func NewFIPSAwareHasher() *PasswordHasher { return kdf.NewFIPSAwareHasher() }
+
+// Password key-derivation errors.
+var (
+	// ErrPasswordHashInvalidVersion indicates an unknown hasher version.
+	ErrPasswordHashInvalidVersion = kdf.ErrHasherInvalidVersion
+
+	// ErrPasswordHashInvalidPassword indicates an empty password.
+	ErrPasswordHashInvalidPassword = kdf.ErrHasherInvalidPassword
+
+	// ErrPasswordHashInvalidSalt indicates a missing or short salt.
+	ErrPasswordHashInvalidSalt = kdf.ErrHasherInvalidSalt
+
+	// ErrPasswordHashParamsMismatch indicates a PasswordKeyParams record
+	// whose algorithm or costs differ from the ones its version pins.
+	ErrPasswordHashParamsMismatch = kdf.ErrHasherParamsMismatch
+)

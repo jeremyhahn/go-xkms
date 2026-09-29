@@ -28,6 +28,13 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 )
 
+// maxOrderIdentifiers is the most identifiers one new-order request may
+// carry. Each identifier creates an authorization and its challenges in
+// storage, and ChallengeHandler rescans an account's authorizations, so an
+// unbounded list turns a single request into unbounded work. 100 matches the
+// widely deployed public-CA limit on names per certificate.
+const maxOrderIdentifiers = 100
+
 type NewOrderRequest struct {
 	Identifiers []entities.ACMEIdentifier `yaml:"identifiers" json:"identifiers"`
 	NotBefore   string                    `yaml:"not-before" json:"notBefore,omitempty"`
@@ -52,6 +59,15 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(payload, &req); err != nil {
 		errResp := common.MalformedError("Invalid JSON payload", nil)
 		writeError(w, errResp)
+		return
+	}
+
+	// RFC 8555 Section 6.7 "malformed": the request as a whole is refused,
+	// not any single identifier in it (which is what rejectedIdentifier
+	// means), and nothing is persisted.
+	if len(req.Identifiers) > maxOrderIdentifiers {
+		writeError(w, common.MalformedError(fmt.Sprintf(
+			"Order has %d identifiers; at most %d are allowed", len(req.Identifiers), maxOrderIdentifiers), nil))
 		return
 	}
 

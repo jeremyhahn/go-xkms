@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // TestClassOf_MatchesSentinel proves ClassOf resolves a matching error
@@ -81,4 +82,16 @@ func TestClassOf_NoMatch(t *testing.T) {
 		assert.False(t, ok)
 		assert.Equal(t, ClassInternal, class)
 	})
+}
+
+// TestBarrierSentinelClasses_TenantBindingIsNotFound proves the barrier table
+// classifies XKMSService's tenant binding refusal (raised for a foreign
+// BarrierEnableEncryption target) as NotFound, so gRPC and MCP answer it
+// exactly as they answer a nonexistent tenant.
+func TestBarrierSentinelClasses_TenantBindingIsNotFound(t *testing.T) {
+	class, ok := ClassOf(BarrierSentinelClasses, &xkms.TenantBindingError{
+		Op: "barrier enable encryption", CallerTenantID: "tenant-a", TargetTenantID: "tenant-b",
+	})
+	assert.True(t, ok)
+	assert.Equal(t, ClassNotFound, class)
 }

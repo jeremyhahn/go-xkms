@@ -139,16 +139,10 @@ func TestServer_Addr_NotStarted(t *testing.T) {
 	}
 }
 
-func TestServer_UpdateAgentActivity(t *testing.T) {
+func TestServer_RecordActivity(t *testing.T) {
 	server := testServer(t)
 
-	if err := server.Start(); err != nil {
-		t.Fatalf("start failed: %v", err)
-	}
-	defer server.Stop()
-
-	// Simulate agent activity.
-	server.updateAgentActivity("192.168.1.100:12345")
+	server.recordActivity(nil, "", "192.168.1.100:12345")
 
 	agents := server.ConnectedAgents()
 	if len(agents) != 1 {
@@ -158,14 +152,18 @@ func TestServer_UpdateAgentActivity(t *testing.T) {
 		t.Errorf("expected address 192.168.1.100:12345, got %q", agents[0].Info.Address)
 	}
 
-	// Update again should update last activity.
+	// Recording again must update the last activity, and the earlier
+	// snapshot must not change underneath the caller.
 	first := agents[0].LastActivity
 	time.Sleep(10 * time.Millisecond)
-	server.updateAgentActivity("192.168.1.100:12345")
+	server.recordActivity(nil, "", "192.168.1.100:12345")
 
-	agents = server.ConnectedAgents()
-	if !agents[0].LastActivity.After(first) {
+	updated := server.ConnectedAgents()
+	if !updated[0].LastActivity.After(first) {
 		t.Error("last activity should have been updated")
+	}
+	if !agents[0].LastActivity.Equal(first) {
+		t.Error("an earlier snapshot must not observe later activity")
 	}
 }
 

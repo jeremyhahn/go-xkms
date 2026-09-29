@@ -14,6 +14,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -24,6 +25,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
@@ -35,6 +37,24 @@ import (
 // challenges, is eligible for substitution with the request's client IP when
 // acme.enrollment.allow_loopback_identifier is enabled.
 const loopbackIdentifier = "127.0.0.1"
+
+// challengeProblem converts a challenge verifier's error into the problem
+// document returned to the ACME client. It never includes err.Error(): a
+// failure to reach or read from the target is the RFC 8555 "connection"
+// problem carrying the validation client's fixed category
+// (validation.Kind), and every other failure is "incorrectResponse" with a
+// fixed detail.
+func challengeProblem(err error) *entities.Error {
+	var verr *validation.Error
+	if !errors.As(err, &verr) {
+		return common.IncorrectResponse("Challenge validation failed")
+	}
+	detail := "Challenge validation failed: " + verr.Kind.String()
+	if verr.Kind == validation.KindInvalidTarget {
+		return common.IncorrectResponse(detail)
+	}
+	return common.ConnectionError(detail)
+}
 
 func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -171,6 +191,9 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Perform challenge validation
 	var validationSuccessful bool
+	// verifyErr keeps the verifier's full error for the audit record; the
+	// client-facing challenge.Error carries only its category.
+	var verifyErr error
 
 	pubKey, err := xkmssdk.DecodePublicKeyPEM([]byte(account.Key))
 	if err != nil {
@@ -284,12 +307,18 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 				challenge.Token,
 				keyAuth); err != nil {
 
+				// The verifier's error names the dialed address, the
+				// resolver's answer or the target's status, all of which
+				// would turn the challenge into a probe of the server's
+				// network. It is logged and audited in full; the client
+				// gets only a fixed category (challengeProblem).
 				s.logger.Warn(
 					"challenge verification failed",
 					slog.String("error", err.Error()),
 					slog.String("challenge", challenge.Type))
+				verifyErr = err
 				challenge.Status = common.StatusInvalid
-				challenge.Error = common.IncorrectResponse(err.Error())
+				challenge.Error = challengeProblem(err)
 			} else {
 				validationSuccessful = true
 			}
@@ -356,7 +385,9 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		// enumeration), not just a misconfigured client, so it is audited
 		// like the other security-relevant failures in this package.
 		errDetail := ""
-		if challenge.Error != nil {
+		if verifyErr != nil {
+			errDetail = verifyErr.Error()
+		} else if challenge.Error != nil {
 			errDetail = challenge.Error.Error()
 		}
 		if auditErr := s.recordAudit(audit.EventChallengeFailed, s.auditLog.LogWithContext(auditContext(r),

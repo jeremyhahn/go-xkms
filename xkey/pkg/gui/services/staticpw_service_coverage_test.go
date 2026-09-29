@@ -71,12 +71,16 @@ func TestStaticPWService_Coverage_BackupPasswords_Encrypted_AES256(t *testing.T)
 	err = svc.BackupPasswords(outFile, true, "aes-256", "my-backup-password")
 	require.NoError(t, err)
 
-	// Verify the file exists and is NOT valid JSON (it is encrypted).
+	// The file is a sealed envelope, not the plaintext entry list.
 	data, readErr := os.ReadFile(outFile)
 	require.NoError(t, readErr)
-	assert.True(t, len(data) > 0)
 	var check []StaticPasswordEntry
-	assert.Error(t, json.Unmarshal(data, &check), "encrypted data should not be valid JSON")
+	assert.Error(t, json.Unmarshal(data, &check), "encrypted backup must not parse as the entry list")
+	var envelope passwordBackupEnvelope
+	require.NoError(t, json.Unmarshal(data, &envelope))
+	assert.Equal(t, passwordBackupMagic, envelope.Magic)
+	assert.NotEmpty(t, envelope.Ciphertext)
+	assert.NotContains(t, string(data), "encrypted-entry", "entry name leaked in plaintext")
 }
 
 func TestStaticPWService_Coverage_BackupPasswords_Encrypted_AES128(t *testing.T) {
@@ -306,28 +310,6 @@ func TestStaticPWService_Coverage_RestorePasswords_WrongDecryptionPassword(t *te
 
 	svc2, _ := newTestStaticPWService(t)
 	_, err = svc2.RestorePasswords(backupFile, true, "aes-256", "wrong-password")
-	assert.ErrorIs(t, err, ErrRestoreDecryptFailed)
-}
-
-// ---------------------------------------------------------------------------
-// decryptBackup
-// ---------------------------------------------------------------------------
-
-func TestStaticPWService_Coverage_DecryptBackup_InvalidAlgorithm(t *testing.T) {
-	_, err := decryptBackup([]byte("data"), "invalid", "password")
-	assert.ErrorIs(t, err, ErrBackupInvalidAlgorithm)
-}
-
-func TestStaticPWService_Coverage_DecryptBackup_TooShort(t *testing.T) {
-	// AES-256 GCM nonce is 12 bytes; provide data shorter than that.
-	_, err := decryptBackup([]byte("short"), "aes-256", "password")
-	assert.ErrorIs(t, err, ErrRestoreDecryptFailed)
-}
-
-func TestStaticPWService_Coverage_DecryptBackup_CorruptCiphertext(t *testing.T) {
-	// Create a blob with a valid-length "nonce" but garbage ciphertext.
-	fakeData := make([]byte, 50) // enough for nonce + some garbage
-	_, err := decryptBackup(fakeData, "aes-256", "password")
 	assert.ErrorIs(t, err, ErrRestoreDecryptFailed)
 }
 

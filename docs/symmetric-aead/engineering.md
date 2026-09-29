@@ -1,6 +1,6 @@
 # Symmetric Encryption & AEAD — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `symmetric-aead` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Exported surface — `pkg/keyprovider/symmetric`
 
@@ -57,6 +57,20 @@ ChaCha20/XChaCha20 keys with `ErrCBCRequiresAES`/`ErrECBRequiresAES`.
   uniqueness check runs on the produced ciphertext's nonce and a collision
   discards that ciphertext rather than ever returning it
   (`backend.go:667-675`).
+- **Every AEAD nonce on the Encrypt RPC is claimed in the process-wide
+  guard.** A caller-supplied nonce is claimed before the seal, and a generated
+  one after it (`pkg/xkms/servicer_crypto.go:650-677`). Both go through
+  `claimAEADNonce` (`pkg/xkms/aead_nonce_guard.go:103-125`), the same function
+  the AES-GCM wrap uses (`servicer_wrapkey.go:519`, `:551`), keyed by
+  `aeadKeyIdentity` (`aead_nonce_guard.go:67-81`). A reuse is an
+  `*ErrKeyOperation` wrapping `aead.ErrNonceReuse`, and no ciphertext is
+  returned. A full guard refuses caller-supplied nonces with
+  `aead.ErrNonceTrackerFull` but not generated ones
+  (`aead_nonce_guard.go:144-160`). Tests:
+  `pkg/xkms/servicer_crypto_nonce_test.go:120-505` (reuse, ChaCha20-Poly1305,
+  concurrency, keys that predate the process, aliasing, generated-nonce
+  replay, wrap/encrypt sharing, sealed keys, identity failure, full-guard
+  policy, PKCS#11 end to end).
 - **CBC/ECB carry no AEAD safety tracking at all** — they are not AEAD
   modes, so `IncrementBytes`/`CheckNonce`/`RecordNonce` are never called on
   that path (`backend.go:556-569`, `:750-759`).
@@ -127,6 +141,10 @@ recognizes exactly one configuration key, `"key_dir"` (string): empty or
 
 ## What is absent, half-built, or misdescribed
 
+- **The Encrypt/wrap nonce guard is per-process.** `aead.SharedAEADNonceGuard`
+  lives in memory with a per-process salt. It forgets every claim on restart
+  and is not shared between cluster nodes. A persistent guard is awaiting an
+  owner ruling on issue #1201.
 - **No persistent `AEADSafetyTracker`.** Every deployment that constructs a
   `symmetric.Backend` (or `quantum.QuantumBackend`) without supplying its own
   `types.AEADSafetyTracker` implementation loses all nonce-reuse history and

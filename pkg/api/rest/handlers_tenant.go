@@ -22,7 +22,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -33,18 +32,6 @@ var (
 	ErrMissingTenantID     = errors.New("missing tenant_id")
 	ErrMissingTenantName   = errors.New("missing tenant name")
 )
-
-// isCrossTenantAccess reports whether the given identity is attempting to act
-// on a tenant other than its own. A cross-tenant-scoped identity per
-// auth.IsCrossTenant (nil, empty TenantID, or the reserved system tenant), a
-// request scoped to no tenant, and same-tenant access all return false; only
-// a tenant-scoped identity targeting a different tenant is cross-tenant.
-func isCrossTenantAccess(identity *auth.Identity, tenantID string) bool {
-	if auth.IsCrossTenant(identity) || tenantID == "" {
-		return false
-	}
-	return identity.TenantID != tenantID
-}
 
 // createTenantRequest represents a request to register a new tenant. The
 // optional IsolationType selects the tenant's isolation mode (prefix / barrier
@@ -184,29 +171,26 @@ func (h *TenantHandlers) tenantSealed(tenantID string) bool {
 // ListTenantsHandler handles GET /tenants requests.
 // It returns all registered tenant IDs with their barrier status.
 // Tenant-scoped identities see only their own tenant; system-level
-// identities (SO) see all tenants.
+// identities (SO) see all tenants. XKMSService.ListTenants applies that
+// filter.
 func (h *TenantHandlers) ListTenantsHandler(w http.ResponseWriter, r *http.Request) {
 	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
 
-	identity := auth.GetIdentity(r.Context())
-
 	tenants := make([]tenantInfoResponse, 0)
 
 	// List through the XKMS tenant service so prefix-isolated (default)
 	// tenants — which are not in the barrier registry — are included,
-	// consistent with the create/get paths.
+	// consistent with the create/get paths. The service already confines a
+	// tenant-scoped caller to its own tenant.
 	listResp, err := h.xkmsService.ListTenants(r.Context())
 	if err != nil {
 		handleTenantError(w, err)
 		return
 	}
 	for _, ti := range listResp.Tenants {
-		if identity != nil && !auth.IsCrossTenant(identity) && ti.ID != identity.TenantID {
-			continue
-		}
 		tenants = append(tenants, tenantInfoResponse{
 			ID:            ti.ID,
 			Name:          ti.Name,
@@ -232,8 +216,9 @@ func (h *TenantHandlers) ListTenantsHandler(w http.ResponseWriter, r *http.Reque
 
 // GetTenantHandler handles GET /tenants/{id} requests.
 // It returns information about a specific registered tenant.
-// Tenant-scoped identities can only access their own tenant; cross-tenant
-// access returns 404 to prevent tenant enumeration.
+// Tenant-scoped identities can only access their own tenant: XKMSService
+// refuses any other tenant with an error that maps to 404, so a probe cannot
+// enumerate tenants.
 func (h *TenantHandlers) GetTenantHandler(w http.ResponseWriter, r *http.Request) {
 	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
@@ -243,13 +228,6 @@ func (h *TenantHandlers) GetTenantHandler(w http.ResponseWriter, r *http.Request
 	tenantID := chi.URLParam(r, "tenantID")
 	if tenantID == "" {
 		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
-		return
-	}
-
-	// Tenant access check: return 404 to prevent enumeration
-	identity := auth.GetIdentity(r.Context())
-	if isCrossTenantAccess(identity, tenantID) {
-		writeError(w, seal.ErrTenantNotFound, http.StatusNotFound)
 		return
 	}
 
@@ -274,8 +252,8 @@ func (h *TenantHandlers) GetTenantHandler(w http.ResponseWriter, r *http.Request
 
 // DeleteTenantHandler handles DELETE /tenants/{id} requests.
 // It unregisters a tenant from the barrier registry.
-// Tenant-scoped identities can only delete their own tenant; cross-tenant
-// access returns 404 to prevent tenant enumeration.
+// Tenant-scoped identities can only delete their own tenant: XKMSService
+// refuses any other tenant with an error that maps to 404.
 func (h *TenantHandlers) DeleteTenantHandler(w http.ResponseWriter, r *http.Request) {
 	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
@@ -285,13 +263,6 @@ func (h *TenantHandlers) DeleteTenantHandler(w http.ResponseWriter, r *http.Requ
 	tenantID := chi.URLParam(r, "tenantID")
 	if tenantID == "" {
 		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
-		return
-	}
-
-	// Tenant access check: return 404 to prevent enumeration
-	identity := auth.GetIdentity(r.Context())
-	if isCrossTenantAccess(identity, tenantID) {
-		writeError(w, seal.ErrTenantNotFound, http.StatusNotFound)
 		return
 	}
 
@@ -309,7 +280,8 @@ func (h *TenantHandlers) DeleteTenantHandler(w http.ResponseWriter, r *http.Requ
 // It returns the barrier status for a specific tenant. Each tenant has an
 // independent barrier with its own DEK, so the status reflects the tenant's
 // own seal state, strategy, and hardware-backed flag.
-// Tenant-scoped identities can only view their own tenant's barrier status.
+// Tenant-scoped identities can only view their own tenant's barrier status
+// (XKMSService refuses any other tenant with an error that maps to 404).
 func (h *TenantHandlers) TenantBarrierStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
@@ -319,13 +291,6 @@ func (h *TenantHandlers) TenantBarrierStatusHandler(w http.ResponseWriter, r *ht
 	tenantID := chi.URLParam(r, "tenantID")
 	if tenantID == "" {
 		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
-		return
-	}
-
-	// Tenant access check: return 404 to prevent enumeration
-	identity := auth.GetIdentity(r.Context())
-	if isCrossTenantAccess(identity, tenantID) {
-		writeError(w, seal.ErrTenantNotFound, http.StatusNotFound)
 		return
 	}
 
@@ -341,7 +306,9 @@ func (h *TenantHandlers) TenantBarrierStatusHandler(w http.ResponseWriter, r *ht
 
 // UpdateTenantEntitlementsHandler handles PUT /tenants/{tenantID}/entitlements.
 // It updates which isolation tiers and dedicated-storage features the tenant's
-// plan permits. Requires the composed TenantService.
+// plan permits. The route requires tenants:set_entitlements and XKMSService
+// admits only a cross-tenant identity (a tenant-scoped caller gets 404).
+// Requires the composed TenantService.
 func (h *TenantHandlers) UpdateTenantEntitlementsHandler(w http.ResponseWriter, r *http.Request) {
 	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
@@ -369,7 +336,9 @@ func (h *TenantHandlers) UpdateTenantEntitlementsHandler(w http.ResponseWriter, 
 }
 
 // UpdateTenantQuotasHandler handles PUT /tenants/{tenantID}/quotas. It updates
-// the tenant's resource quotas. Requires the composed TenantService.
+// the tenant's resource quotas. The route requires tenants:set_quotas and
+// XKMSService admits only a cross-tenant identity (a tenant-scoped caller gets
+// 404). Requires the composed TenantService.
 func (h *TenantHandlers) UpdateTenantQuotasHandler(w http.ResponseWriter, r *http.Request) {
 	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
@@ -401,7 +370,8 @@ func (h *TenantHandlers) UpdateTenantQuotasHandler(w http.ResponseWriter, r *htt
 // initializes the tenant's barrier by generating a root key and sealing it
 // with the tenant's configured strategy. The tenant barrier transitions to
 // unsealed state after initialization.
-// Tenant-scoped identities can only initialize their own tenant's barrier.
+// Tenant-scoped identities can only initialize their own tenant's barrier
+// (XKMSService refuses any other tenant with an error that maps to 404).
 func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http.Request) {
 	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
@@ -411,13 +381,6 @@ func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http
 	tenantID := chi.URLParam(r, "tenantID")
 	if tenantID == "" {
 		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
-		return
-	}
-
-	// Tenant access check: return 404 to prevent enumeration
-	identity := auth.GetIdentity(r.Context())
-	if isCrossTenantAccess(identity, tenantID) {
-		writeError(w, seal.ErrTenantNotFound, http.StatusNotFound)
 		return
 	}
 
@@ -453,7 +416,8 @@ func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http
 // Each tenant has an independent barrier with its own DEK. This endpoint
 // unseals the tenant's barrier using the provided credentials. The tenant
 // barrier must have been previously initialized.
-// Tenant-scoped identities can only unseal their own tenant's barrier.
+// Tenant-scoped identities can only unseal their own tenant's barrier
+// (XKMSService refuses any other tenant with an error that maps to 404).
 func (h *TenantHandlers) TenantBarrierUnsealHandler(w http.ResponseWriter, r *http.Request) {
 	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
@@ -463,13 +427,6 @@ func (h *TenantHandlers) TenantBarrierUnsealHandler(w http.ResponseWriter, r *ht
 	tenantID := chi.URLParam(r, "tenantID")
 	if tenantID == "" {
 		writeError(w, ErrMissingTenantID, http.StatusBadRequest)
-		return
-	}
-
-	// Tenant access check: return 404 to prevent enumeration
-	identity := auth.GetIdentity(r.Context())
-	if isCrossTenantAccess(identity, tenantID) {
-		writeError(w, seal.ErrTenantNotFound, http.StatusNotFound)
 		return
 	}
 

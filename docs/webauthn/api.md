@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — API
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -143,8 +143,23 @@ is minted onto both halves of a token pair, so it survives a refresh.
 | invalid attestation or assertion | 401 | `Unauthenticated` |
 | non-increasing signature counter | 401 | `Unauthenticated` |
 | public registration disabled | 403 | `PermissionDenied` |
+| session store full (too many unfinished ceremonies) | 503, code `session_limit` | `ResourceExhausted` |
+| request body over 1 MiB | 413 | — (the gRPC message limit applies) |
 | rate limited | 429 | `ResourceExhausted` |
 | WebAuthn not configured | route absent (404) | `Unimplemented` |
+
+**A full session store is a 503, not a 401.** It says nothing about the
+caller or an account, only that the relying party is holding its maximum of
+unfinished ceremonies; retry after the abandoned ones expire
+(`pkg/webauthn/http/handler.go:315`, `pkg/api/rest/handlers_fido2.go:62,122`,
+`pkg/api/grpc/service_fido2.go:55,125`). See
+[engineering.md](engineering.md) §"Session lifetime and the session cap".
+
+**The rate limit keys on the client IP**, taken from the transport peer with
+its port removed. `X-Forwarded-For` / `X-Real-IP` are believed only from a
+proxy listed in `server.trusted_proxies`; see
+[`../xkmsd-configuration/user.md`](../xkmsd-configuration/user.md)
+§"Behind a reverse proxy".
 
 **The uniform 401 is deliberate.** Internally these are distinct typed errors
 (`pkg/webauthn/errors.go`, exercised by `verification_error_test.go`); on the

@@ -60,10 +60,12 @@ type nonTCGCA struct{ ACMECertificateAuthority }
 // different error. Distinguishing those two failures is the whole point: the
 // shipped bug made every enroll-01 challenge take the negative path.
 //
-// No I/O: the assertion runs before enroll01.Verify is reached, and a resolver
-// that answers nothing keeps the positive case off the network.
+// No I/O: the assertion runs before enroll01.Verify is reached, and a
+// challenge client whose resolver answers nothing keeps the positive case
+// off the network.
 func TestACMEAttestationVerifiersCapabilityCheck(t *testing.T) {
-	verifiers := ACMEAttestationVerifiers(true, false)
+	client := NewACMEChallengeClient(ACMEChallengeClientConfig{Resolver: offlineResolver(t)})
+	verifiers := ACMEAttestationVerifiers(client, true, false)
 
 	verify, ok := verifiers[ACMEChallengeTypeEnroll01]
 	if !ok {

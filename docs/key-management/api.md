@@ -39,6 +39,31 @@ from the `pkg/auth` vocabulary. The same table drives the legacy in-process
 server and the unified-API-server `ServiceModule` in `pkg/apimodule`, so a
 route exists on both paths with the same permission by construction.
 
+The same table bounds every request body. `BodyLimitMiddleware`
+(`pkg/api/rest/middleware_bodylimit.go:67`) is installed on each route on both
+mounts — `registerRoutes` (`pkg/api/rest/server.go:724,759`) and `BindRoute`
+(`pkg/api/rest/module_support.go:43`) — with the route's
+`RouteSpec.MaxBodyBytes` (`routes.go:81`): 1 MiB (`DefaultMaxBodyBytes`,
+`middleware_bodylimit.go:29`) unless the route carries caller data. Sign,
+verify, encrypt, decrypt, seal and unseal take `BulkMaxBodyBytes`, 4 MiB
+(`:35`, `routes.go:118`), in line with the gRPC transports' 4 MiB receive
+limit. A body over the bound is answered 413 with a `RequestTooLargeError`
+naming the bound, whether the client declared its length or streamed it: a
+streamed overflow replaces the handler's own error response
+(`middleware_bodylimit.go:113`). The listener also sets `ReadHeaderTimeout`,
+10 s by default (`server.go:336,638`).
+
+The REST rate limiters (`ratelimit.Middleware`, `pkg/ratelimit/ratelimit.go:246`)
+key on `TrustedProxies.ClientIP` (`pkg/ratelimit/clientip.go:102`): the
+transport peer's IP without its port, or — only when that peer is listed in
+`server.trusted_proxies` — the right-most untrusted `X-Forwarded-For` hop.
+The resolved address is then folded through `ratelimit.RateLimitKey`
+(`clientip.go:171`, go-xkms#1179) before it becomes the bucket key: unchanged
+for IPv4, masked to its `/64` for IPv6, so a client cannot evade the limiter
+by rotating through addresses an ISP delegates it within one `/64`. The
+limiter tracks at most `DefaultMaxClients` (100,000, `ratelimit.go:52`)
+clients; while full it refuses new clients until idle ones are cleaned up.
+
 ## Capability matrix
 
 | Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC (HTTP/3) | MCP | Embedded | Permission |
@@ -128,6 +153,55 @@ response came back with no wrapping key, and `partition`, `metadata` and
 `key_spec` were dropped. No import, wrap or unwrap over REST or QUIC could
 have worked; the REST body also now carries `partition`, `metadata` and
 `key_spec`, and `GenerateKeyRequest` carries `partition`.
+
+### The key lifecycle RPCs are service adapters on every transport (go-xkms#1218)
+
+`GetKey`, `ListKeys`, `DeleteKey`, `RotateKey`, `ExportKey` and `CopyKey` on
+REST (`pkg/api/rest/handlers.go:327`, `:369`, `:522`, `:557`, `:1600`,
+`:1660`) and gRPC (`pkg/api/grpc/service.go:430`, `:469`, `:594`, `:625`,
+`:1500`, `:1675`) validate their request, authorize it, and call the
+matching `XKMSService` method; they no longer touch a backend. MCP and the
+embedded transport already reached the service for `GetKey`, `RotateKey` and
+`CopyKey`.
+
+**Tenancy.** Every one of these resolves the key, or lists keys, inside the
+caller's tenant, taken from the authenticated identity — never from the
+request. A tenant naming another tenant's key gets exactly the response a key
+no tenant holds gets: REST `404` with the same body, gRPC `NotFound` with the
+same message. A listing returns the caller's keys only, and its `total`
+counts only those. A platform-scoped caller (no identity, or the reserved
+system tenant) sees every tenant's keys, as before. Before go-xkms#1218, REST
+let any tenant read, list, delete, rotate, export and copy any other tenant's
+keys, and gRPC let any tenant read and list them.
+
+**`CopyKey` semantics.** A copy is the same key under a new name: the
+destination takes the source key's algorithm, size, curve, hash and partition
+(`pkg/xkms/servicer_key.go:566`). The copy lands in the caller's tenant in the
+destination backend, and the material is wrapped for the destination's own
+import parameters (`ExportKeyTo`). REST's `CopyKeyRequest` therefore no longer
+has `key_type`, `key_size`, `curve`, `hash` or `aes_key_size`, and
+`key_type` is no longer required; a client that still sends them is not
+refused, the fields are ignored. gRPC's `CopyKey` already took no key
+description; its copy used to land with no tenant at all.
+
+**Wire changes.** Response shapes are unchanged except:
+
+| RPC | Transport | Change |
+|---|---|---|
+| not-found on Get, Delete, Rotate, Export | REST | body `error` is `keystore: key not found` (was `backend: key not found`) |
+| not-found on Copy | REST | body `error` is `source key backend: keystore: key not found` (was `source key not found: <id>`) |
+| not-found on Delete, Rotate, Export, Get | gRPC | message is `keystore: key not found` (was `key not found: key <id> not found`) |
+| unknown backend | REST, gRPC | message is `keystore: backend not found: <name>` (Copy: prefixed `source backend: ` / `destination backend: `) |
+| malformed backend name | REST, gRPC | `400` / `InvalidArgument` (REST was `404`, gRPC `NotFound`) |
+| backend with no import/export support | REST, gRPC | `501` / `Unimplemented` with `keystore: operation not supported: backend <name>: backend: key export not supported` (or `key import not supported` for a Copy destination) |
+| Get whose key handle cannot be read | REST | `200` with the metadata and no `public_key_pem` (was `500`) |
+| Get | gRPC | `public_key_pem` is filled for every asymmetric key, not only signing keys |
+| Rotate of a key with no encodable public key | gRPC | `OK` with an empty `public_key_pem` (was `Internal`) |
+| no service wired | REST, gRPC | `503` / `Unavailable` |
+
+`transport.KeyInfo` gained `key_size`, `curve` and `partition`, and
+`transport.RotateKeyResponse` gained `key_type`, so the service carries what
+gRPC's `KeyInfo` and both transports' rotate responses already reported.
 
 ### Import names the key's algorithm, on every transport
 
@@ -258,6 +332,7 @@ shared type set.
 | malformed request | 400 | `InvalidArgument` | JSON-RPC `-32602` |
 | unauthenticated | 401 | `Unauthenticated` | error object |
 | RBAC denial | 403 | `PermissionDenied` | error object |
+| request body over the route's bound | 413 | — (gRPC message limit) | — |
 | `ErrKeyNotFound` | 404 | `NotFound` | JSON-RPC `-32001` (`sdkssh.JSONRPCCodeNotFound`) |
 | `ErrBackendNotFound` | 404 | `NotFound` | JSON-RPC `-32001` (`sdkssh.JSONRPCCodeNotFound`) |
 | `ErrKeyAlreadyExists` | 409 | `AlreadyExists` | error object |
@@ -661,10 +736,10 @@ condition.
   handler that forwards a request-supplied `tenant_id`) — is now
   `ErrCodeInvalidParams`, matching each one's gRPC counterpart in
   `pkg/api/grpc/service.go`. `handleCopyKey`'s terminal
-  `XKMSService.CopyKey` failure, which gRPC has no counterpart for (its
-  `CopyKey` is a from-scratch implementation, not a delegation to the same
-  service method), now routes through `mapKeyOpError` like every other
-  service-layer delegation in this file, rather than a fixed-code wrap; its
+  `XKMSService.CopyKey` failure now routes through `mapKeyOpError` like
+  every other service-layer delegation in this file, rather than a
+  fixed-code wrap — the same service method REST's and gRPC's `CopyKey`
+  delegate to as of go-xkms#1218; its
   `ErrCopyKeyIncomplete` contract-violation sentinel (a nil error with
   `Success: false`) is `ErrCodeInternalError`.
 - **`pkg/api/mcp/handlers_bootstrap.go`**'s `bootstrap.showKeys` — found by

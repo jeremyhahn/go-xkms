@@ -83,10 +83,14 @@ var keyOpSentinelCodes = []struct {
 
 // mapKeyOpError converts an error returned by the xkms service layer into a
 // gRPC status error. Validation failures report the offending field verbatim so
-// callers see the same wire-level field name they sent; capability boundaries
-// (a backend that cannot attest, or cannot export) become Unimplemented or
-// FailedPrecondition; unresolved backends and keys become NotFound. Anything
-// else is an internal fault. xkmsService is threaded through to notLeaderStatus
+// callers see the same wire-level field name they sent; a malformed backend
+// name is InvalidArgument; capability boundaries (a backend that cannot
+// attest, or cannot export) become Unimplemented or FailedPrecondition;
+// unresolved backends and keys become NotFound. A backend-layer import/export
+// sentinel the service wraps as an operation failure's cause -- ExportKey and
+// CopyKey report ErrKeyNotExportable and ErrExportNotSupported that way -- is
+// classified by apierrors.ImportExportSentinelClasses, exactly as
+// mapImportExportError classifies it. Anything else is an internal fault. xkmsService is threaded through to notLeaderStatus
 // so a not-leader translation can resolve the leader's dialable gRPC endpoint;
 // it may be nil.
 //
@@ -116,6 +120,11 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 	var validation *xkms.ErrValidation
 	if errors.As(err, &validation) {
 		return status.Error(codes.InvalidArgument, validationMessage(validation))
+	}
+
+	var backendName *xkms.ErrBackendNameValidation
+	if errors.As(err, &backendName) {
+		return status.Error(codes.InvalidArgument, backendName.Error())
 	}
 
 	for _, entry := range keyOpSentinelCodes {

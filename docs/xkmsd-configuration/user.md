@@ -1,6 +1,6 @@
 # xkmsd Configuration — User Guide
 
-> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-28
 
 ## Where a setting comes from
 
@@ -46,6 +46,31 @@ listener. The embedded qrdb node's unified API server uses the same value.
   host-local deployment or the machine's LAN address behind a firewall.
 
 The shipped example pins `127.0.0.1`; open it up deliberately.
+
+## Behind a reverse proxy
+
+The REST login rate limiter (and the ACME request limiter) counts requests per
+client IP address. By default that is the address of whoever opened the
+connection, without the port, and the `X-Forwarded-For` / `X-Real-IP` headers
+are ignored: any client can write those headers, so believing them would let a
+client pick a fresh rate-limit bucket for every request.
+
+When xkmsd sits behind a reverse proxy or load balancer, every request arrives
+from the proxy's address, so all clients share one bucket. List the proxy in
+`server.trusted_proxies` and the limiter takes the client from its forwarding
+header instead:
+
+```yaml
+server:
+  trusted_proxies:
+    - 10.0.0.10        # one proxy
+    - 10.20.0.0/16     # or a whole subnet of them
+```
+
+Only the right-most `X-Forwarded-For` entry that is not itself a trusted
+proxy counts, which is the address your proxy saw. Anything a client put
+further left is ignored. A value that is not an IP address or CIDR prefix stops
+xkmsd at startup.
 
 ## A value that will not decode
 

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -75,11 +76,12 @@ func TestTenantAuthMiddleware_ResolvesVerifiedTenant(t *testing.T) {
 	url := fmt.Sprintf("%s/acme/new-order", service.baseRESTURI)
 	req := createJWSRequest(t, service, key, url, map[string]interface{}{}, true, account.ID)
 
-	var gotTenant string
+	var gotTenant, gotClientID string
 	var gotAccount *entities.ACMEAccount
 	var gotErr error
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotTenant = server.TenantIDFromContext(r.Context())
+		gotClientID = server.ClientID(r)
 		gotAccount, _, gotErr = service.parseKID(r.Context(), r)
 		w.WriteHeader(http.StatusOK)
 	})
@@ -92,6 +94,8 @@ func TestTenantAuthMiddleware_ResolvesVerifiedTenant(t *testing.T) {
 	require.NoError(t, gotErr)
 	require.NotNil(t, gotAccount)
 	require.Equal(t, account.ID, gotAccount.ID)
+	require.Equal(t, strconv.FormatUint(account.ID, 10), gotClientID,
+		"a verified kid must key the per-account rate-limit bucket")
 }
 
 // TestTenantAuthMiddleware_HeaderCannotSpoofTenant proves that a
@@ -152,10 +156,11 @@ func TestTenantAuthMiddleware_InvalidSignatureNoTenant(t *testing.T) {
 	url := fmt.Sprintf("%s/acme/new-order", service.baseRESTURI)
 	req := createJWSRequest(t, service, attackerKey, url, map[string]interface{}{}, true, account.ID)
 
-	var gotTenant string
+	var gotTenant, gotClientID string
 	var gotErr error
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotTenant = server.TenantIDFromContext(r.Context())
+		gotClientID = server.ClientID(r)
 		_, _, gotErr = service.parseKID(r.Context(), r)
 		w.WriteHeader(http.StatusOK)
 	})
@@ -165,6 +170,8 @@ func TestTenantAuthMiddleware_InvalidSignatureNoTenant(t *testing.T) {
 
 	require.Equal(t, "", gotTenant, "a request that fails verification must never resolve a tenant")
 	require.ErrorIs(t, gotErr, ErrInvalidJWSSignature)
+	require.Equal(t, server.ClientIP(req), gotClientID,
+		"an unverified kid must never key a rate-limit bucket")
 }
 
 // TestTenantAuthMiddleware_NoKIDSkipsResolution proves that a JWK-embedded

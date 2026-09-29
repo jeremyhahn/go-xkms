@@ -52,6 +52,9 @@ func (s *Service) BeginRegistration(ctx context.Context, req *pb.BeginRegistrati
 		if errors.Is(cErr, webauthn.ErrPublicRegistrationDisabled) {
 			return nil, status.Error(codes.PermissionDenied, "public registration is disabled")
 		}
+		if webauthn.IsSessionLimit(cErr) {
+			return nil, status.Error(codes.ResourceExhausted, "too many unfinished ceremonies; retry later")
+		}
 		return nil, status.Error(codes.Internal, cErr.Error())
 	}
 	return &pb.BeginRegistrationResponse{
@@ -119,6 +122,9 @@ func (s *Service) BeginAuthentication(ctx context.Context, req *pb.BeginAuthenti
 		Email: req.Email,
 	})
 	if cErr != nil {
+		if webauthn.IsSessionLimit(cErr) {
+			return nil, status.Error(codes.ResourceExhausted, "too many unfinished ceremonies; retry later")
+		}
 		return nil, status.Error(codes.Internal, cErr.Error())
 	}
 	return &pb.BeginAuthenticationResponse{

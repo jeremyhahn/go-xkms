@@ -298,7 +298,13 @@ func TestUnpackIDevIDContent(t *testing.T) {
 		reader := bytes.NewReader(buf.Bytes())
 		_, err := UnpackIDevIDContent(reader)
 		require.Error(t, err)
-		assert.Equal(t, io.EOF, err)
+		var sizeErr *IDevIDCSRFieldSizeError
+		require.ErrorAs(t, err, &sizeErr,
+			"a declared length with no payload must be refused before allocating")
+		assert.Equal(t, "ProdModel", sizeErr.Field)
+		assert.Equal(t, uint32(16), sizeErr.Declared)
+		assert.Equal(t, 0, sizeErr.Remaining)
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	})
 
 	t.Run("empty reader returns error", func(t *testing.T) {

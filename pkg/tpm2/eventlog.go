@@ -30,6 +30,24 @@ const (
 	AlgSM3256Alt uint16 = 0x2000
 )
 
+// MaxEventDataSize bounds the event data of one TCG event log entry. Event
+// data is a firmware-chosen blob (a UEFI variable, a device path, a boot
+// string); the largest real entries are EFI signature databases, tens of
+// kilobytes. The bound keeps a corrupt or hostile log's 32-bit event size
+// from driving a multi-gigabyte allocation.
+const MaxEventDataSize = 1 << 20
+
+// EventDataTooLargeError is returned when an event log entry declares more
+// than MaxEventDataSize bytes of event data.
+type EventDataTooLargeError struct {
+	EventNum int
+	Size     uint32
+}
+
+func (e *EventDataTooLargeError) Error() string {
+	return fmt.Sprintf("tpm: event %d declares %d bytes of event data, more than the %d-byte maximum", e.EventNum, e.Size, MaxEventDataSize)
+}
+
 // Event represents a single parsed TPM event.
 type Event struct {
 	EventNum    int
@@ -174,6 +192,10 @@ func ParseEventLogWithOptions(filePath string, opts ParseEventLogOptions) ([]Eve
 			return nil, &errs.Message{Msg: fmt.Sprintf("error reading event size: %v", err)}
 		}
 		e.EventSize = int(eventSize)
+
+		if eventSize > MaxEventDataSize {
+			return nil, &EventDataTooLargeError{EventNum: e.EventNum, Size: eventSize}
+		}
 
 		// Read event data if eventSize is greater than zero
 		if eventSize > 0 {

@@ -113,8 +113,8 @@ var gatedRoutePermissions = []gatedRoute{
 	{http.MethodGet, "/api/v1/tenants/t1/barrier/status", "tenant_barrier", "status"},
 	{http.MethodPost, "/api/v1/tenants/t1/barrier/init", "tenant_barrier", "init"},
 	{http.MethodPost, "/api/v1/tenants/t1/barrier/unseal", "tenant_barrier", "unseal"},
-	{http.MethodPut, "/api/v1/tenants/t1/entitlements", "tenants", "update"},
-	{http.MethodPut, "/api/v1/tenants/t1/quotas", "tenants", "update"},
+	{http.MethodPut, "/api/v1/tenants/t1/entitlements", "tenants", "set_entitlements"},
+	{http.MethodPut, "/api/v1/tenants/t1/quotas", "tenants", "set_quotas"},
 
 	// Password vault — service_password.go.
 	{http.MethodPost, "/api/v1/passwords/", "passwords", "write"},

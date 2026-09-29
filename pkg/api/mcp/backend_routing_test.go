@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"math/big"
 	"sync/atomic"
 	"testing"
@@ -114,7 +115,8 @@ func TestGetImportParameters_RunsAgainstTheNamedBackend(t *testing.T) {
 	_, err = server.handleGetImportParameters(context.Background(),
 		rpc(t, "xkms.getImportParameters", GetImportParametersParams{KeyID: "routed", Backend: "second", Algorithm: "RSAES_OAEP_SHA_256"}))
 	require.Error(t, err, "the named backend has no import capability")
-	assert.Contains(t, err.Error(), "does not support import operations")
+	assert.Contains(t, err.Error(), backend.ErrImportNotSupported.Error(),
+		"the refusal names the missing import half")
 	assert.False(t, errors.Is(err, ErrInvalidBackend), "a registered backend is not an invalid one")
 }
 

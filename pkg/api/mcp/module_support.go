@@ -16,9 +16,11 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sort"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/correlation"
 	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
 )
 
@@ -103,7 +105,22 @@ func (e *UnknownMethodError) Error() string { return "mcp: method not found: " +
 // module's real MCP tools (pkg/apimodule RegisterMCP). On that server,
 // per-tool authorization additionally belongs to go-qrdb's MCP tool
 // registry once module tools gain registry coverage there.
+//
+// An error whose text ClientError withholds from the client -- an
+// unclassified fault from a handler, a gate, or the tenant check -- is logged
+// here, once, with the method, its tool name and the request's correlation
+// ID, so the detail reaches the operator rather than the caller
+// (go-xkms#1118).
 func (s *Server) InvokeMethod(ctx context.Context, method string, params json.RawMessage) (interface{}, error) {
+	result, err := s.invokeMethod(ctx, method, params)
+	if err != nil && withheld(err) {
+		s.logWithheldError(ctx, method, err)
+	}
+	return result, err
+}
+
+// invokeMethod runs InvokeMethod's gates and dispatch.
+func (s *Server) invokeMethod(ctx context.Context, method string, params json.RawMessage) (interface{}, error) {
 	ctx, err := s.tenantAccess(ctx, method)
 	if err != nil {
 		return nil, err
@@ -121,4 +138,29 @@ func (s *Server) InvokeMethod(ctx context.Context, method string, params json.Ra
 		return nil, &KeyOpError{Code: ErrCodeMethodNotFound, Err: &UnknownMethodError{Method: method}}
 	}
 	return handler(s, ctx, req)
+}
+
+// withheldErrorLogMessage is the log message recorded for an internal error
+// whose text ClientError withholds from the client.
+const withheldErrorLogMessage = "mcp: internal error withheld from client"
+
+// logWithheldError logs err, the detail of an internal error ClientError
+// withholds, with the method, its tool name and the request's correlation
+// ID. A Server built without NewServer carries no logger; err is then logged
+// through slog.Default, the logger NewServer itself uses when Config.Logger
+// is nil.
+func (s *Server) logWithheldError(ctx context.Context, method string, err error) {
+	logger := s.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	attrs := []any{
+		slog.String("method", method),
+		slog.String("tool", ToolName(method)),
+		slog.Any("error", err),
+	}
+	if id := correlation.GetCorrelationID(ctx); id != "" {
+		attrs = append(attrs, slog.String("request_id", id))
+	}
+	logger.ErrorContext(ctx, withheldErrorLogMessage, attrs...)
 }

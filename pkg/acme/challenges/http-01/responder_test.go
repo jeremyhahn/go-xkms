@@ -265,7 +265,7 @@ func TestResponder_VerifyRoundTrip(t *testing.T) {
 
 	responder := newTestResponder(t, keyAuth)
 
-	if err := Verify(nil, "127.0.0.1", responderPort(t, responder), "token-roundtrip", keyAuth); err != nil {
+	if err := Verify(loopbackClient(), "127.0.0.1", responderPort(t, responder), "token-roundtrip", keyAuth); err != nil {
 		t.Fatalf("Verify against the responder: %v", err)
 	}
 }
@@ -273,7 +273,7 @@ func TestResponder_VerifyRoundTrip(t *testing.T) {
 func TestResponder_VerifyRoundTripKeyAuthMismatch(t *testing.T) {
 	responder := newTestResponder(t, "token-roundtrip.correct")
 
-	err := Verify(nil, "127.0.0.1", responderPort(t, responder), "token-roundtrip", "token-roundtrip.wrong")
+	err := Verify(loopbackClient(), "127.0.0.1", responderPort(t, responder), "token-roundtrip", "token-roundtrip.wrong")
 
 	var mismatch ErrKeyAuthorizationMismatch
 	if !errors.As(err, &mismatch) {
@@ -516,7 +516,7 @@ func TestResponder_ConcurrentOrders(t *testing.T) {
 				return
 			}
 			for i := 0; i < rounds; i++ {
-				if err := Verify(nil, "127.0.0.1", port, token, keyAuth); err != nil {
+				if err := Verify(loopbackClient(), "127.0.0.1", port, token, keyAuth); err != nil {
 					errs <- err
 					return
 				}
@@ -535,7 +535,7 @@ func TestResponder_ConcurrentOrders(t *testing.T) {
 	if err := first.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown first responder: %v", err)
 	}
-	if err := Verify(nil, "127.0.0.1", responderPort(t, second), "token-second", secondKeyAuth); err != nil {
+	if err := Verify(loopbackClient(), "127.0.0.1", responderPort(t, second), "token-second", secondKeyAuth); err != nil {
 		t.Errorf("second order stopped serving when the first was shut down: %v", err)
 	}
 }

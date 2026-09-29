@@ -32,8 +32,6 @@ import (
 	"errors"
 	"io"
 	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -555,68 +553,6 @@ func TestImportIssuingCAs_NoAIAUrls(t *testing.T) {
 	cert, _ := makeSelfSignedCert(t, "no-aia")
 	err := ca.ImportIssuingCAs(context.Background(), cert)
 	assert.NoError(t, err)
-}
-
-func TestImportIssuingCAs_HTTPServerDER(t *testing.T) {
-	// Serve a DER-encoded cert at a test HTTP server.
-	issuingCert, _ := makeSelfSignedCert(t, "served-issuer")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/pkix-cert")
-		_, _ = w.Write(issuingCert.Raw)
-	}))
-	t.Cleanup(srv.Close)
-
-	ca := setupTestCA(t)
-
-	// Build a leaf cert pointing AIA at our test server.
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	root, err := ca.TrustedRoot()
-	require.NoError(t, err)
-
-	tpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(9999),
-		Subject:               pkix.Name{CommonName: "aia-leaf"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IssuingCertificateURL: []string{srv.URL + "/issuer.der"},
-	}
-	// Self-sign the leaf for simplicity (only the AIA URLs matter here).
-	certDER, err := x509.CreateCertificate(rand.Reader, tpl, root, &key.PublicKey, ca)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	err = ca.ImportIssuingCAs(context.Background(), cert)
-	require.NoError(t, err)
-}
-
-func TestImportIssuingCAs_ServerError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	t.Cleanup(srv.Close)
-
-	ca := setupTestCA(t)
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	root, err := ca.TrustedRoot()
-	require.NoError(t, err)
-
-	tpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(8888),
-		Subject:               pkix.Name{CommonName: "aia-error-leaf"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IssuingCertificateURL: []string{srv.URL + "/bad"},
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tpl, root, &key.PublicKey, ca)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	err = ca.ImportIssuingCAs(context.Background(), cert)
-	assert.ErrorIs(t, err, ErrStorageError)
 }
 
 // =============================================================================

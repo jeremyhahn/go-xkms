@@ -61,6 +61,8 @@ var pkcs11StateOps = map[string]pkcs11StateOp{
 	},
 }
 
+// tenantCtx carries a Tenant Admin identity bound to tenantID. It is shared
+// by every tenant-confinement test in this package.
 func tenantCtx(tenantID string) context.Context {
 	return auth.WithIdentity(context.Background(), &auth.Identity{Subject: "user@" + tenantID, TenantID: tenantID, Roles: []string{"admin"}})
 }

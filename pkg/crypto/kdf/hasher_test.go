@@ -317,3 +317,128 @@ func TestDeriveKey_DifferentVersionsDifferentKeys(t *testing.T) {
 	assert.False(t, bytes.Equal(keyV1, keyV2),
 		"different versions must produce different keys for same password and salt")
 }
+
+func TestNewKeyParams_DescribesVersionProfile(t *testing.T) {
+	tests := []struct {
+		name    string
+		version HashVersion
+		want    PasswordKeyParams
+	}{
+		{"argon2id", HashV1, PasswordKeyParams{
+			Version: HashV1, Algorithm: AlgorithmArgon2id, Time: 3,
+			MemoryKiB: 64 * 1024, Threads: 4, KeyLength: KeyLength,
+		}},
+		{"pbkdf2", HashV2, PasswordKeyParams{
+			Version: HashV2, Algorithm: AlgorithmPBKDF2, Iterations: 600000,
+			Hash: "SHA-256", KeyLength: KeyLength,
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, err := NewPasswordHasher(tt.version)
+			require.NoError(t, err)
+
+			params, err := h.NewKeyParams()
+			require.NoError(t, err)
+			assert.Len(t, params.Salt, SaltLength)
+
+			got := *params
+			got.Salt = nil
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestNewKeyParams_FreshSaltEachCall(t *testing.T) {
+	h, err := NewPasswordHasher(HashV1)
+	require.NoError(t, err)
+
+	first, err := h.NewKeyParams()
+	require.NoError(t, err)
+	second, err := h.NewKeyParams()
+	require.NoError(t, err)
+
+	assert.False(t, bytes.Equal(first.Salt, second.Salt))
+}
+
+func TestDeriveKeyFromParams_MatchesDeriveKey(t *testing.T) {
+	h, err := NewPasswordHasher(HashV1)
+	require.NoError(t, err)
+	password := []byte("params-roundtrip")
+
+	params, err := h.NewKeyParams()
+	require.NoError(t, err)
+
+	fromParams, err := h.DeriveKeyFromParams(password, params)
+	require.NoError(t, err)
+	direct, err := h.DeriveKey(password, params.Salt, HashV1)
+	require.NoError(t, err)
+
+	assert.Equal(t, direct, fromParams)
+}
+
+func TestDeriveKeyFromParams_CrossVersion(t *testing.T) {
+	// A record written by a PBKDF2 (FIPS) hasher is derivable by an
+	// Argon2id hasher: the record's version, not the hasher's, decides.
+	writer, err := NewPasswordHasher(HashV2)
+	require.NoError(t, err)
+	reader, err := NewPasswordHasher(HashV1)
+	require.NoError(t, err)
+	password := []byte("cross-version")
+
+	params, err := writer.NewKeyParams()
+	require.NoError(t, err)
+	want, err := writer.DeriveKeyFromParams(password, params)
+	require.NoError(t, err)
+	got, err := reader.DeriveKeyFromParams(password, params)
+	require.NoError(t, err)
+
+	assert.Equal(t, want, got)
+}
+
+func TestDeriveKeyFromParams_RejectsTamperedParams(t *testing.T) {
+	h, err := NewPasswordHasher(HashV1)
+	require.NoError(t, err)
+
+	tamper := map[string]func(p *PasswordKeyParams){
+		"time":       func(p *PasswordKeyParams) { p.Time = 1 },
+		"memory":     func(p *PasswordKeyParams) { p.MemoryKiB = 1 << 30 },
+		"threads":    func(p *PasswordKeyParams) { p.Threads = 1 },
+		"algorithm":  func(p *PasswordKeyParams) { p.Algorithm = AlgorithmArgon2i },
+		"iterations": func(p *PasswordKeyParams) { p.Iterations = 1 },
+		"hash":       func(p *PasswordKeyParams) { p.Hash = "MD5" },
+		"key length": func(p *PasswordKeyParams) { p.KeyLength = 16 },
+	}
+	for name, mutate := range tamper {
+		t.Run(name, func(t *testing.T) {
+			params, err := h.NewKeyParams()
+			require.NoError(t, err)
+			mutate(params)
+
+			_, err = h.DeriveKeyFromParams([]byte("pw"), params)
+			assert.ErrorIs(t, err, ErrHasherParamsMismatch)
+		})
+	}
+}
+
+func TestDeriveKeyFromParams_InvalidInput(t *testing.T) {
+	h, err := NewPasswordHasher(HashV1)
+	require.NoError(t, err)
+
+	_, err = h.DeriveKeyFromParams([]byte("pw"), nil)
+	assert.ErrorIs(t, err, ErrHasherParamsMismatch)
+
+	_, err = h.DeriveKeyFromParams([]byte("pw"), &PasswordKeyParams{Version: 99})
+	assert.ErrorIs(t, err, ErrHasherInvalidVersion)
+
+	params, err := h.NewKeyParams()
+	require.NoError(t, err)
+	params.Salt = params.Salt[:8]
+	_, err = h.DeriveKeyFromParams([]byte("pw"), params)
+	assert.ErrorIs(t, err, ErrHasherInvalidSalt)
+
+	params, err = h.NewKeyParams()
+	require.NoError(t, err)
+	_, err = h.DeriveKeyFromParams(nil, params)
+	assert.ErrorIs(t, err, ErrHasherInvalidPassword)
+}

@@ -1030,48 +1030,31 @@ func TestCreateTenant(t *testing.T) {
 }
 
 func TestGetTenant(t *testing.T) {
-	svc := NewService(nil, nil, nil)
-
-	t.Run("returns error when registry not configured", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(nil)
-		defer SetBarrierRegistry(old)
-
+	t.Run("returns unavailable when xkms service not wired", func(t *testing.T) {
+		svc := NewService(nil, nil, nil)
 		_, err := svc.GetTenant(context.Background(), &pb.GetTenantRequest{TenantId: "t1"})
 		require.Error(t, err)
+		assert.Equal(t, codes.Unavailable, status.Code(err))
 	})
 
 	t.Run("returns error when tenant_id is empty", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(setupBarrierRegistry(t))
-		defer SetBarrierRegistry(old)
-
+		svc := NewService(nil, nil, newTenantServiceWiredXKMS(t))
 		_, err := svc.GetTenant(context.Background(), &pb.GetTenantRequest{})
 		require.Error(t, err)
-		st, ok := status.FromError(err)
-		require.True(t, ok)
-		assert.Equal(t, codes.InvalidArgument, st.Code())
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
 
-	t.Run("returns error when tenant not found", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(setupBarrierRegistry(t))
-		defer SetBarrierRegistry(old)
-
+	t.Run("returns not found when tenant does not exist", func(t *testing.T) {
+		svc := NewService(nil, nil, newTenantServiceWiredXKMS(t))
 		_, err := svc.GetTenant(context.Background(), &pb.GetTenantRequest{TenantId: "nonexistent"})
 		require.Error(t, err)
-		st, ok := status.FromError(err)
-		require.True(t, ok)
-		assert.Equal(t, codes.NotFound, st.Code())
+		assert.Equal(t, codes.NotFound, status.Code(err))
 	})
 
 	t.Run("returns tenant on success", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		reg := setupBarrierRegistry(t)
-		SetBarrierRegistry(reg)
-		defer SetBarrierRegistry(old)
-
-		testTenantRegisteredTenant(t, reg, "my-tenant")
+		svc := NewService(nil, nil, newTenantServiceWiredXKMS(t))
+		_, err := svc.CreateTenant(context.Background(), &pb.CreateTenantRequest{Id: "my-tenant", Name: "Mine"})
+		require.NoError(t, err)
 
 		resp, err := svc.GetTenant(context.Background(), &pb.GetTenantRequest{TenantId: "my-tenant"})
 		require.NoError(t, err)
@@ -1080,35 +1063,26 @@ func TestGetTenant(t *testing.T) {
 }
 
 func TestListTenants(t *testing.T) {
-	svc := NewService(nil, nil, nil)
-
-	t.Run("returns error when registry not configured", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(nil)
-		defer SetBarrierRegistry(old)
-
+	t.Run("returns unavailable when xkms service not wired", func(t *testing.T) {
+		svc := NewService(nil, nil, nil)
 		_, err := svc.ListTenants(context.Background(), &pb.ListTenantsRequest{})
 		require.Error(t, err)
+		assert.Equal(t, codes.Unavailable, status.Code(err))
 	})
 
 	t.Run("returns empty list", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(setupBarrierRegistry(t))
-		defer SetBarrierRegistry(old)
-
+		svc := NewService(nil, nil, newTenantServiceWiredXKMS(t))
 		resp, err := svc.ListTenants(context.Background(), &pb.ListTenantsRequest{})
 		require.NoError(t, err)
 		assert.Empty(t, resp.Tenants)
 	})
 
 	t.Run("returns populated list", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		reg := setupBarrierRegistry(t)
-		SetBarrierRegistry(reg)
-		defer SetBarrierRegistry(old)
-
-		testTenantRegisteredTenant(t, reg, "tenant-a")
-		testTenantRegisteredTenant(t, reg, "tenant-b")
+		svc := NewService(nil, nil, newTenantServiceWiredXKMS(t))
+		for _, id := range []string{"tenant-a", "tenant-b"} {
+			_, err := svc.CreateTenant(context.Background(), &pb.CreateTenantRequest{Id: id, Name: id})
+			require.NoError(t, err)
+		}
 
 		resp, err := svc.ListTenants(context.Background(), &pb.ListTenantsRequest{})
 		require.NoError(t, err)
@@ -1117,39 +1091,30 @@ func TestListTenants(t *testing.T) {
 }
 
 func TestDeleteTenant(t *testing.T) {
-	svc := NewService(nil, nil, nil)
-
-	t.Run("returns error when registry not configured", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(nil)
-		defer SetBarrierRegistry(old)
-
+	t.Run("returns unavailable when xkms service not wired", func(t *testing.T) {
+		svc := NewService(nil, nil, nil)
 		_, err := svc.DeleteTenant(context.Background(), &pb.DeleteTenantRequest{TenantId: "t1"})
 		require.Error(t, err)
+		assert.Equal(t, codes.Unavailable, status.Code(err))
 	})
 
 	t.Run("returns error when tenant_id is empty", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		SetBarrierRegistry(setupBarrierRegistry(t))
-		defer SetBarrierRegistry(old)
-
+		svc := NewService(nil, nil, newTenantServiceWiredXKMS(t))
 		_, err := svc.DeleteTenant(context.Background(), &pb.DeleteTenantRequest{})
 		require.Error(t, err)
-		st, ok := status.FromError(err)
-		require.True(t, ok)
-		assert.Equal(t, codes.InvalidArgument, st.Code())
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
 
-	t.Run("deletes tenant on success", func(t *testing.T) {
-		old := GetBarrierRegistry()
-		reg := setupBarrierRegistry(t)
-		SetBarrierRegistry(reg)
-		defer SetBarrierRegistry(old)
-
-		testTenantRegisteredTenant(t, reg, "del-tenant")
-
-		_, err := svc.DeleteTenant(context.Background(), &pb.DeleteTenantRequest{TenantId: "del-tenant"})
-		require.NoError(t, err)
+	// A successful delete is absent for the reason
+	// pkg/api/rest/handlers_tenant_test.go records: go-qrdb's tenant teardown
+	// needs a DatabaseLister / KeyspaceReclaimer this in-memory harness does
+	// not compose. The servicer's delegation is pinned by
+	// pkg/xkms's TestDeleteTenant_Delegates.
+	t.Run("returns not found when tenant does not exist", func(t *testing.T) {
+		svc := NewService(nil, nil, newTenantServiceWiredXKMS(t))
+		_, err := svc.DeleteTenant(context.Background(), &pb.DeleteTenantRequest{TenantId: "nonexistent"})
+		require.Error(t, err)
+		assert.Equal(t, codes.NotFound, status.Code(err))
 	})
 }
 

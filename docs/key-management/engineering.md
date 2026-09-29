@@ -68,7 +68,9 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
 ## Invariants
 
 - **A key ID is scoped to `{tenant, backend}`.** The same string in two
-  backends names two different keys; `ListKeys` always takes a backend.
+  backends names two different keys; `ListKeys` always takes a backend. The
+  tenant half is enforced in the service, for every transport: see *Key
+  lifecycle RPCs resolve inside the caller's tenant* below.
 - **Generation is not idempotent.** `GenerateKey` on an existing ID returns
   `ErrKeyAlreadyExists` rather than replacing material. Replacement is
   `RotateKey`.
@@ -426,6 +428,73 @@ the same four sentinels to its own `keyOpSentinelStatus` table, matching
 call the backend directly. `errors.Is`/`apierrors.ClassOf` see through
 `ErrOperationWrap`'s wrapping either way, so the classification — and the
 wire status code — is unchanged by which path a given error took.
+
+## Key lifecycle RPCs resolve inside the caller's tenant (go-xkms#1218)
+
+REST's and gRPC's `GetKey`, `ListKeys`, `DeleteKey`, `RotateKey`,
+`ExportKey` and `CopyKey` are thin adapters over the `XKMSService` method of
+the same name (REST `pkg/api/rest/handlers.go:327`–`:1660`, gRPC
+`pkg/api/grpc/service.go:430`–`:1675`). Before, they resolved the key over
+the unscoped backend themselves. On REST any tenant could read, list,
+delete, rotate, export and copy any other tenant's key; on gRPC it could
+read and list them, and a copy landed with no tenant.
+
+Where the tenant comes from:
+
+- `RotateKey`, `ExportKey` and `CopyKey` take `TenantID` in their request
+  struct. The transports fill it from the authenticated identity
+  (`callerTenantID`), never from the wire.
+- `GetKey`, `DeleteKey` and `ListKeys` take no request struct; the service
+  reads the tenant from the identity on `ctx` with
+  `scopedTenantIDFromContext` (`pkg/xkms/servicer_password.go:93`) at
+  `pkg/xkms/servicer_key.go:162`, `:271` and `:302`. The `KeyServicer`
+  signatures are unchanged, so MCP's `getKey` and the embedded transport are
+  scoped by the same change.
+
+Both routes end at `tenantScopes` (`pkg/xkms/servicer_helpers.go:65`): a real
+tenant gets a `TenantScopedBackend`, whose `ListKeys`
+(`pkg/xkms/backend_tenant.go:94`) returns only that tenant's keys, and the
+system tenant or no identity gets the unscoped backend. The lookup by common
+name is `findKeyAttrs` (`pkg/xkms/servicer_helpers.go:140`) over that view,
+so another tenant's key is the same bare `ErrKeyNotFound` a missing key is.
+The refusal equals a genuine miss because nothing takes a different path for
+it, not because an error is rewritten. The transports map it with
+`mapKeyOpError` (`pkg/api/rest/errors_keyops.go:66`,
+`pkg/api/grpc/errors_keyops.go:96`) to 404 / `NotFound`.
+
+`ListKeys` paginates before it reads any public key: it collects the scoped
+backend with each key, applies the page, then fills `PublicKeyPEM` for that
+page only (`publicKeyPEMOf`, `pkg/xkms/servicer_key.go:244`). The transports
+hand their decoded pagination to the service with
+`transport.WithPageRequest` (`pkg/api/transport/pagination.go:93`).
+`keyInfoFromAttrs` (`pkg/xkms/servicer_key.go:1673`) renders algorithm, RSA
+size, curve and partition, so gRPC's `KeyInfo` keeps every field it had.
+
+`ExportKey` and `CopyKey` still resolve import/export through the union
+`importExportFor`; see the section above. A backend missing it is refused
+by `unsupportedHalf` (`pkg/xkms/servicer_key.go:1661`), which matches both
+`ErrOperationNotSupported` and the precise `backend.ErrExportNotSupported` /
+`backend.ErrImportNotSupported`, so the refusal says which half was
+missing. An import-only backend is therefore not a `CopyKey` destination on
+any transport until the capability split lands. REST's and gRPC's own
+copies asserted only `backend.ImportBackend` for the destination, but they
+wrapped under the source's token (plain `ExportKey`), so a copy between two
+backend instances never succeeded on them anyway.
+
+`mapKeyOpError` gained two classifications for causes the service wraps
+rather than replaces. `xkms.ErrBackendNameValidation` is 400 /
+`InvalidArgument`. REST falls back to `mapErrorToStatusCode`, so a wrapped
+`backend.ErrKeyNotExportable` stays 403 and a wrapped
+`storage.ErrAlreadyExists` 409. gRPC falls back to
+`apierrors.ImportExportSentinelClasses`, as `mapImportExportError` does.
+
+Tests: `pkg/api/rest/handlers_keyops_crosstenant_test.go` and
+`pkg/api/grpc/service_keyops_crosstenant_test.go` drive each RPC as tenant A
+against tenant B's key and compare the answer, byte for byte, with the one
+for the same key ID in a deployment where no tenant holds it. They also
+assert tenant B's key survives, and that a tenant's copy lands in its own
+tenant. `pkg/xkms/servicer_key_tenant_lifecycle_test.go` pins the service
+side.
 
 ## Error semantics
 

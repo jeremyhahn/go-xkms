@@ -213,7 +213,7 @@ func TestCopyKey_DestBackendNotFound(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.NotFound, st.Code())
-	assert.Contains(t, st.Message(), "destination backend not found")
+	assert.Contains(t, st.Message(), "destination backend: "+xkms.ErrBackendNotFound.Error())
 }
 
 func TestImportKey_BackendDoesNotSupportImportExport(t *testing.T) {

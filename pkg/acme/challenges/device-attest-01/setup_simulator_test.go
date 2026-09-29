@@ -25,7 +25,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -184,13 +183,13 @@ func TestSetupIsAcceptedByTheVerifier(t *testing.T) {
 
 			host, port := servePayload(t, payload)
 			ca := anchoredTo(issuer)
-			verified, err := VerifyAttestation(net.DefaultResolver, ca, host, port, "token", tpmKeyAuth)
+			verified, err := VerifyAttestation(loopbackClient(), ca, host, port, "token", tpmKeyAuth)
 			require.NoError(t, err)
 			assert.True(t, ca.chainChecked, "x5c was never anchored")
 			assert.Equal(t, FormatTPM, verified.Format)
 
 			// The one-shot verifier still defers to the binding.
-			assert.ErrorIs(t, Verify(net.DefaultResolver, ca, host, port, "token", tpmKeyAuth), ErrKeyBindingRequired)
+			assert.ErrorIs(t, Verify(loopbackClient(), ca, host, port, "token", tpmKeyAuth), ErrKeyBindingRequired)
 
 			require.NoError(t, verified.BindCSRKey(signedCSR(t, signer)))
 		})
@@ -205,7 +204,7 @@ func TestSetupEvidenceRefusesACSRForAnotherKey(t *testing.T) {
 	payload, err := Setup(tpmKeyAuth, device.tpm, key, device.keys)
 	require.NoError(t, err)
 	host, port := servePayload(t, payload)
-	verified, err := VerifyAttestation(net.DefaultResolver, anchoredTo(issuer), host, port, "token", tpmKeyAuth)
+	verified, err := VerifyAttestation(loopbackClient(), anchoredTo(issuer), host, port, "token", tpmKeyAuth)
 	require.NoError(t, err)
 
 	software, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

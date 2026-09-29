@@ -495,15 +495,6 @@ func TestSC_GetPolicy_ConfigLoadError(t *testing.T) {
 // oidc_service.go tests
 // ===========================================================================
 
-// TestSC_OIDCService_SetDataDir_TokenStoreError covers L199-202.
-func TestSC_OIDCService_SetDataDir_TokenStoreError(t *testing.T) {
-	svc := NewOIDCService(nil)
-	dir := t.TempDir()
-	// Create a directory where the tokens file should be, causing file open error.
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, oidcTokensFile), 0700))
-	svc.SetDataDir(dir)
-}
-
 // TestSC_OIDCService_Close covers L227-229.
 func TestSC_OIDCService_Close(t *testing.T) {
 	svc := NewOIDCService(nil)

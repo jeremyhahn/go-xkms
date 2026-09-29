@@ -146,6 +146,13 @@ const (
 	// qrdb declares it ScopeCross, so only a system-tenant identity can hold
 	// it; its built-in Admin role carries it and its Auditor role does not.
 	ActionReadCross = "read:cross"
+	// Tenant plan-management actions. Mirror qrdb
+	// permission.TenantsSetEntitlements and permission.TenantsSetQuotas: a
+	// tenant's entitlements and quotas decide what it may consume, so they are
+	// gated separately from tenants:update (display metadata) and are never
+	// implied by it.
+	ActionSetEntitlements = "set_entitlements"
+	ActionSetQuotas       = "set_quotas"
 
 	// ActionWrite is the coarse mutating action of the resource families that
 	// do not model create/update separately (piv:write, ssh:write,
