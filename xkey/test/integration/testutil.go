@@ -103,7 +103,7 @@ func findBinary(t *testing.T) string {
 // The Makefile exports XKEY_CLI_BUILD_TAGS with the full production tag set
 // (ble, production, codec_json, pkcs11, ...). Without it, the minimum tag
 // set required for a functional CLI is used: codec_json is mandatory for
-// the go-codec based DAOs (e.g. pcrpolicy).
+// the go-codec based DAOs (e.g. the authenticator RP policy store).
 func cliBuildTags() string {
 	if tags := os.Getenv("XKEY_CLI_BUILD_TAGS"); tags != "" {
 		return tags

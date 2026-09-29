@@ -140,8 +140,8 @@ func openBarrierBackend(password, dataDir, tpmDevice string, tpmSimulator bool) 
 
 // unsealTPM2BarrierService unseals a tpm2-strategy barrier for a one-shot or
 // long-running headless CLI command (oath, backup, the OIDC token store,
-// fido2): PCR-policy auto-unseal first (see `xkey policy
-// set-auto-unseal`), then a direct TPM unseal. Both need the TPM transport
+// fido2): TPM-policy auto-unseal first (see `xkey tpm policy
+// auto-unseal`), then a direct TPM unseal. Both need the TPM transport
 // to stay live for as long as the returned barrier-backed store is used, so
 // unlike `xkey extension serve` (which threads the returned closer through
 // to an explicit shutdown defer, since it is a daemon expected to run for a
@@ -151,11 +151,11 @@ func openBarrierBackend(password, dataDir, tpmDevice string, tpmSimulator bool) 
 func unsealTPM2BarrierService(barrierSvc *services.BarrierService, dataDir, tpmDevice string, tpmSimulator bool) error {
 	logger := slog.Default()
 
-	unsealed, _, autoErr := tryBarrierPolicyAutoUnseal(context.Background(), logger, barrierSvc, dataDir, tpmDevice, tpmSimulator)
+	unsealed, _, autoErr := tryBarrierPolicyAutoUnseal(context.Background(), logger, barrierSvc, dataDir, xkms.StrategyTPM2, tpmDevice, tpmSimulator)
 	if autoErr != nil {
-		logger.Warn("barrier PCR-policy auto-unseal failed, falling back to direct TPM unseal", "error", autoErr)
+		logger.Warn("barrier TPM-policy auto-unseal failed, falling back to direct TPM unseal", "error", autoErr)
 	} else if unsealed {
-		logger.Info("barrier auto-unsealed via PCR policy")
+		logger.Info("barrier auto-unsealed through the TPM auto-unseal policy")
 		return nil
 	}
 

@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 )
 
@@ -168,17 +169,6 @@ func testConfigData() *GUIConfigData {
 	}
 }
 
-// testConfigDataWithAutoUnseal returns a GUIConfigData with auto-unseal configured.
-func testConfigDataWithAutoUnseal(blobID string) *GUIConfigData {
-	cfg := testConfigData()
-	cfg.AutoUnsealEnabled = true
-	cfg.AutoUnsealBlobID = blobID
-	cfg.AutoUnsealPCRs = []int{0, 7}
-	cfg.AutoUnsealPCRBank = "sha256"
-	cfg.AutoUnsealPolicyType = "none"
-	return cfg
-}
-
 // newTestConfigPair creates a config getter and saver backed by the given initial config.
 func newTestConfigPair(initial *GUIConfigData) (func() *GUIConfigData, func(*GUIConfigData) error) {
 	cfg := initial
@@ -220,4 +210,14 @@ func newTestSetupWizard(cfg *GUIConfigData) *testSetupWizard {
 		configFunc: configFunc,
 		eventLog:   &eventLog,
 	}
+}
+
+// testConfigDataWithAutoUnseal returns a GUIConfigData with LUKS auto-unseal
+// configured under the built-in platform policy.
+func testConfigDataWithAutoUnseal(blobID string) *GUIConfigData {
+	cfg := testConfigData()
+	cfg.AutoUnsealEnabled = true
+	cfg.AutoUnsealBlobID = blobID
+	cfg.AutoUnsealTPMPolicy = xkms.TPMPolicyPlatform
+	return cfg
 }

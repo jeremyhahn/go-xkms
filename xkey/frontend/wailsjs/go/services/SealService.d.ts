@@ -38,11 +38,11 @@ export function SetDefaultBackend(arg1:string):Promise<void>;
 
 export function SetLocalClient(arg1:transport.Client):Promise<void>;
 
-export function SetPlatformPolicyService(arg1:services.PlatformPolicyService):Promise<void>;
-
 export function SetStorageDir(arg1:string):Promise<void>;
 
 export function SetTPMAccessor(arg1:services.TPMAccessor):Promise<void>;
+
+export function SetTPMPolicyService(arg1:services.TPMPolicyService):Promise<void>;
 
 export function StorageDir():Promise<string>;
 

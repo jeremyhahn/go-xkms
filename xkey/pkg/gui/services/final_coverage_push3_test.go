@@ -388,225 +388,6 @@ func TestFCP5_TrustService_EligibleFingerprints_NilStore(t *testing.T) {
 	assert.Nil(t, svc.eligibleFingerprints())
 }
 
-func TestFCP5_TrustService_EligibleFingerprints_WithCerts(t *testing.T) {
-	tmpDir := t.TempDir()
-	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{
-		BaseDir: filepath.Join(tmpDir, "trust"),
-	})
-	require.NoError(t, err)
-	defer store.Close()
-
-	cert := fcp5GenerateSelfSignedCert(t)
-	err = store.AddCertificateWithOptions(cert, &truststore.AddCertificateOptions{
-		Tags: []string{TagBrowserExport},
-	})
-	require.NoError(t, err)
-
-	svc := NewTrustService(store)
-	fps := svc.eligibleFingerprints()
-	assert.Len(t, fps, 1)
-}
-
-// ---------------------------------------------------------------------------
-// PlatformPolicyService: ExportPolicy, GetStatus, VerifyPolicy, Initialize
-// ---------------------------------------------------------------------------
-
-func TestFCP5_PlatformPolicyService_ExportPolicy_Configured(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	now := time.Now()
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:      []int{0, 7},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "abcd1234", 7: "ef567890"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-
-	result, err := svc.ExportPolicy()
-	require.NoError(t, err)
-	assert.Contains(t, result, "Platform Policy")
-	assert.Contains(t, result, "sha256")
-	assert.Contains(t, result, "pcr_selections")
-	assert.Contains(t, result, "pcr_digests")
-}
-
-func TestFCP5_PlatformPolicyService_ExportPolicy_NotConfigured(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	_, err := svc.ExportPolicy()
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestFCP5_PlatformPolicyService_ExportPolicy_NoDigests(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	now := time.Now()
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-
-	result, err := svc.ExportPolicy()
-	require.NoError(t, err)
-	assert.Contains(t, result, "Platform Policy")
-	assert.NotContains(t, result, "pcr_digests")
-}
-
-func TestFCP5_PlatformPolicyService_GetStatus_Configured(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	now := time.Now()
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:      []int{0, 7},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "abcd1234"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-
-	status, err := svc.GetStatus()
-	require.NoError(t, err)
-	assert.True(t, status.Configured)
-	assert.Equal(t, "sha256", status.Bank)
-}
-
-func TestFCP5_PlatformPolicyService_GetStatus_NotConfigured(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	status, err := svc.GetStatus()
-	require.NoError(t, err)
-	assert.False(t, status.Configured)
-}
-
-func TestFCP5_PlatformPolicyService_VerifyPolicy_NotConfigured(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	_, err := svc.VerifyPolicy()
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestFCP5_PlatformPolicyService_VerifyPolicy_NoTPM(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "abcd1234"},
-	})
-
-	valid, err := svc.VerifyPolicy()
-	assert.Error(t, err)
-	assert.False(t, valid)
-}
-
-func TestFCP5_PlatformPolicyService_GetPolicyPCRs_Configured(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0, 1, 7},
-		Bank: "sha384",
-	})
-
-	pcrs, bank, err := svc.GetPolicyPCRs()
-	require.NoError(t, err)
-	assert.Equal(t, []int{0, 1, 7}, pcrs)
-	assert.Equal(t, "sha384", bank)
-}
-
-func TestFCP5_PlatformPolicyService_GetPolicyPCRs_NotConfigured(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	_, _, err := svc.GetPolicyPCRs()
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestFCP5_PlatformPolicyService_GetPlatformPolicyAsPCRPolicy(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	now := time.Now()
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:      []int{0, 7},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "abcd1234", 7: "ef567890"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-
-	policy, err := svc.GetPlatformPolicyAsPCRPolicy()
-	require.NoError(t, err)
-	require.NotNil(t, policy)
-	assert.Equal(t, "Platform Policy", policy.Name)
-	assert.True(t, policy.IsPlatformPolicy)
-	assert.Len(t, policy.PCRSelections, 2)
-	assert.Len(t, policy.PCRDigests, 2)
-}
-
-func TestFCP5_PlatformPolicyService_GetPlatformPolicyAsPCRPolicy_NotConfigured(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	policy, err := svc.GetPlatformPolicyAsPCRPolicy()
-	require.NoError(t, err)
-	assert.Nil(t, policy)
-}
-
-func TestFCP5_PlatformPolicyService_Initialize_FileNotFound(t *testing.T) {
-	svc := NewPlatformPolicyService("/nonexistent/path/policy.json")
-	err := svc.Initialize()
-	require.NoError(t, err)
-}
-
-func TestFCP5_PlatformPolicyService_Initialize_ValidFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	policyPath := filepath.Join(tmpDir, "policy.json")
-
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0, 7},
-		Bank:      "sha256",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	data, err := json.Marshal(def)
-	require.NoError(t, err)
-	err = os.WriteFile(policyPath, data, 0o600)
-	require.NoError(t, err)
-
-	svc := NewPlatformPolicyService(policyPath)
-	err = svc.Initialize()
-	require.NoError(t, err)
-
-	loaded := svc.policy.Load()
-	require.NotNil(t, loaded)
-	assert.Equal(t, []int{0, 7}, loaded.PCRs)
-}
-
-func TestFCP5_PlatformPolicyService_Initialize_InvalidJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	policyPath := filepath.Join(tmpDir, "policy.json")
-	err := os.WriteFile(policyPath, []byte("not-json"), 0o600)
-	require.NoError(t, err)
-
-	svc := NewPlatformPolicyService(policyPath)
-	err = svc.Initialize()
-	assert.ErrorIs(t, err, ErrPolicyLoadFailed)
-}
-
-func TestFCP5_PlatformPolicyService_SavePolicy(t *testing.T) {
-	policyPath := filepath.Join(t.TempDir(), "subdir", "policy.json")
-	svc := NewPlatformPolicyService(policyPath)
-
-	err := svc.savePolicy(&PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	})
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(policyPath)
-	require.NoError(t, err)
-
-	var loaded PlatformPolicyDefinition
-	err = json.Unmarshal(data, &loaded)
-	require.NoError(t, err)
-	assert.Equal(t, "sha256", loaded.Bank)
-}
-
-// ---------------------------------------------------------------------------
-// BrowserService: knownBrowsers, openSystemBrowser, saveConfig
-// ---------------------------------------------------------------------------
-
 // TestFCP5_KnownBrowsers verifies knownBrowsers returns the candidate list
 // for the platform it is running on. knownBrowsers switches on runtime.GOOS
 // at run time rather than at build time, so the expectation is selected the
@@ -923,34 +704,6 @@ func TestFCP5_ValidateConfig_CustomCommand(t *testing.T) {
 	assert.NoError(t, validateConfig(BrowserConfig{CustomCommand: "/usr/bin/custom"}))
 }
 
-func TestFCP5_ValidateConfig_Empty(t *testing.T) {
-	assert.ErrorIs(t, validateConfig(BrowserConfig{}), ErrBrowserInvalidConfig)
-}
-
-// ---------------------------------------------------------------------------
-// PlatformPolicyService: validatePCRSelection, validatePCRBank
-// ---------------------------------------------------------------------------
-
-func TestFCP5_ValidatePCRSelection_Empty(t *testing.T) {
-	assert.ErrorIs(t, validatePCRSelection(nil), ErrPolicyInvalidPCRs)
-}
-
-func TestFCP5_ValidatePCRSelection_Valid(t *testing.T) {
-	assert.NoError(t, validatePCRSelection([]int{0, 7, 14}))
-}
-
-func TestFCP5_ValidatePCRBank_Empty(t *testing.T) {
-	assert.ErrorIs(t, validatePCRBank(""), ErrPolicyInvalidBank)
-}
-
-func TestFCP5_ValidatePCRBank_Valid(t *testing.T) {
-	assert.NoError(t, validatePCRBank("sha256"))
-}
-
-// ---------------------------------------------------------------------------
-// APIExplorerService: NewAPIExplorerService validation
-// ---------------------------------------------------------------------------
-
 func TestFCP5_NewAPIExplorerService_NilConfig(t *testing.T) {
 	_, err := NewAPIExplorerService(nil)
 	assert.ErrorIs(t, err, ErrExplorerNilConfig)
@@ -976,6 +729,29 @@ func TestFCP5_NewAPIExplorerService_NilTrustStore(t *testing.T) {
 	assert.ErrorIs(t, err, ErrExplorerNilTrustStore)
 }
 
+func TestFCP5_TrustService_EligibleFingerprints_WithCerts(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{
+		BaseDir: filepath.Join(tmpDir, "trust"),
+	})
+	require.NoError(t, err)
+	defer store.Close()
+
+	cert := fcp5GenerateSelfSignedCert(t)
+	err = store.AddCertificateWithOptions(cert, &truststore.AddCertificateOptions{
+		Tags: []string{TagBrowserExport},
+	})
+	require.NoError(t, err)
+
+	svc := NewTrustService(store)
+	fps := svc.eligibleFingerprints()
+	assert.Len(t, fps, 1)
+}
+
+func TestFCP5_ValidateConfig_Empty(t *testing.T) {
+	assert.ErrorIs(t, validateConfig(BrowserConfig{}), ErrBrowserInvalidConfig)
+}
+
 func TestFCP5_NewAPIExplorerService_NilHistoryStore(t *testing.T) {
 	_, err := NewAPIExplorerService(&ExplorerConfig{
 		TokenStore: tokenstore.NewMemoryTokenStore(),
@@ -983,38 +759,4 @@ func TestFCP5_NewAPIExplorerService_NilHistoryStore(t *testing.T) {
 		TrustStore: xkms.NewStorageMemory(),
 	})
 	assert.ErrorIs(t, err, ErrExplorerNilHistoryStore)
-}
-
-// ---------------------------------------------------------------------------
-// PlatformPolicyService: getPolicyClient, SetClient
-// ---------------------------------------------------------------------------
-
-func TestFCP5_PlatformPolicyService_GetPolicyClient_NotSet(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	_, err := svc.getPolicyClient()
-	assert.ErrorIs(t, err, ErrPolicyNoClient)
-}
-
-func TestFCP5_PlatformPolicyService_VerifyPolicyRemote_EmptyName(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	_, err := svc.VerifyPolicyRemote("")
-	assert.ErrorIs(t, err, ErrPolicyInvalidName)
-}
-
-func TestFCP5_PlatformPolicyService_ExportPolicyRemote_EmptyName(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	_, err := svc.ExportPolicyRemote("")
-	assert.ErrorIs(t, err, ErrPolicyInvalidName)
-}
-
-func TestFCP5_PlatformPolicyService_VerifyPolicyRemote_NoClient(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	_, err := svc.VerifyPolicyRemote("test-policy")
-	assert.ErrorIs(t, err, ErrPolicyNoClient)
-}
-
-func TestFCP5_PlatformPolicyService_ExportPolicyRemote_NoClient(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	_, err := svc.ExportPolicyRemote("test-policy")
-	assert.ErrorIs(t, err, ErrPolicyNoClient)
 }

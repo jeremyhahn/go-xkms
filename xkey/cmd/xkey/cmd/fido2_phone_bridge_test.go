@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
+
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -63,7 +65,10 @@ func (m *mockCloserTransport) Close() error {
 // baseSDKClient provides default "not implemented" stubs for every method
 // on the transport.Client interface. Test mocks embed this and override
 // only the methods they need.
-type baseSDKClient struct{}
+type baseSDKClient struct {
+	// Fake serves the TPM policy API, which these tests do not exercise.
+	*tpmpolicyfake.Fake
+}
 
 func (b *baseSDKClient) Connect(ctx context.Context) error {
 	return errNotImplemented
@@ -540,36 +545,6 @@ func (b *baseSDKClient) RevokeEscrow(_ context.Context, _ string) error {
 }
 
 // Policy operations
-
-func (b *baseSDKClient) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) PolicyGet(_ context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) PolicyList(_ context.Context) (*transport.PolicyListResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) PolicyDelete(_ context.Context, _ *transport.PolicyDeleteRequest) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) PolicyRefresh(_ context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) PolicyVerify(_ context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) PolicyExport(_ context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
-	return nil, errNotImplemented
-}
-
-// Custodian group operations
 
 func (b *baseSDKClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	return nil, errNotImplemented

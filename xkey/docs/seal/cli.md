@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — CLI
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 Every flag below is verified against `xkey <group> <verb> --help` built from
 this checkout. See [architecture.md](architecture.md) for the auto-unseal
@@ -66,7 +66,7 @@ echo "$BARRIER_PASSWORD" | xkey barrier unseal
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--auto` | `false` | Unseal via the designated TPM PCR auto-unseal policy only. **Never prompts for or reads a password.** Fails with a typed error if no policy is set, the barrier's strategy isn't `tpm2`, or the current PCRs don't match. |
+| `--auto` | `false` | Unseal with the password the TPM releases under the auto-unseal policy only (any strategy that takes a password). **Never prompts for or reads a password.** Fails with a typed error if no policy carries the auto-unseal mark, or the TPM refuses the policy (the PCRs changed, or the policy was revoked). |
 
 ### `xkey barrier seal`
 
@@ -80,30 +80,26 @@ Zeroes the DEK. Idempotent.
 | `--socket string` | auto-detect | IPC socket of a running daemon |
 | `--source string` | `auto` | `auto`, `daemon`, or `disk` — the running daemon owns the barrier, so its state is read over IPC when one is running; with none running, only the on-disk (necessarily sealed) state is available |
 
-## `xkey policy`
+## `xkey tpm policy auto-unseal`
 
-PCR policy management. Persistent flags: `--store string` (default
-`<data dir>/pcr_policies` — the same location the GUI uses, see
-architecture.md), `--tpm-device string`, `--tpm-simulator` (same meaning as
-`barrier`'s).
+The named TPM policies themselves are managed with `xkey tpm policy`,
+documented in [docs/tpm-policies/cli.md](../../../docs/tpm-policies/cli.md).
+The verb that belongs to this feature is `auto-unseal`:
 
-| Verb | Usage | Notes |
-|---|---|---|
-| `create` | `xkey policy create <name> --pcrs 0,2,4,7 [--bank sha256\|sha1\|sha384]` | Reads current PCR values from the TPM and saves them under `<name>` |
-| `list` | `xkey policy list [--page N] [--page-size N]` | `ls` alias; unpaginated by default |
-| `get` | `xkey policy get <name>` | Full detail, including hex PCR digests |
-| `delete` | `xkey policy delete <name>` | `rm`/`remove` aliases; refuses on the currently-designated auto-unseal policy |
-| `set-auto-unseal` | `xkey policy set-auto-unseal <name>` | Designates `<name>` for headless/GUI auto-unseal; replaces any previous designation |
-| `clear-auto-unseal` | `xkey policy clear-auto-unseal` | Removes the designation; no barrier auto-unseals afterward |
-| `refresh` | `xkey policy refresh <name>` | Re-reads current PCR values into an existing policy (e.g. after a firmware/kernel update) |
-| `verify` | `xkey policy verify <name>` | Compares current PCRs against the saved policy; non-zero exit and a diff on mismatch |
-| `export` | `xkey policy export <name>` | JSON to stdout, hex-encoded PCR values |
+| Usage | Notes |
+|---|---|
+| `xkey tpm policy auto-unseal <name>` | Makes `<name>` the auto-unseal policy and seals the barrier password (read from the terminal, or from stdin when piped) in the TPM under it; replaces any previous one |
+| `xkey tpm policy auto-unseal --off` | Clears the mark and deletes the sealed password; the barrier then needs its password |
+| `xkey tpm policy create <name> --pcrs ... --auto-unseal` | Creates the policy and enables auto-unseal in one step |
+
+With `--xkmsd-url` (or `XKMSD_URL`) the verb sets the mark on the server's
+policy instead, for the server's barrier.
 
 ## Headless daemons that auto-unseal
 
 `xkey extension serve` and `xkey fido2`/`fido2 start` (with `--storage
 barrier`) both accept the barrier flags below. For a `tpm2`-strategy
-barrier they try policy auto-unseal first, then a direct TPM unseal. For a
+barrier they try TPM-policy auto-unseal first, then a direct TPM unseal. For a
 cloud KMS strategy (`aws_kms`, `gcp_kms`, `azure_kv`, `vault`) they rebuild
 the backend from the connection settings `xkey barrier init` persisted to
 the config file and unseal with it — no password. For `software` they need
@@ -116,14 +112,14 @@ can collect.
 |---|---|---|
 | `--barrier-password-stdin` | `extension serve`, `fido2` | Read the barrier password from standard input |
 | `--barrier-password-file string` | `extension serve`, `fido2` | First line of the named file |
-| `--tpm-device string`, `--tpm-simulator` | `extension serve` (also `barrier`, `policy`) | Same TPM selection as `barrier` |
+| `--tpm-device string`, `--tpm-simulator` | `extension serve` (also `barrier`) | Same TPM selection as `barrier` |
 | `--no-barrier` | `extension serve` | Skip the barrier entirely, plain file storage (testing only) |
 
 `XKEY_BARRIER_PASSWORD` is honored by both when no password flag is set.
 
 ## TPM device resolution
 
-Shared by `barrier`, `policy`, and `extension serve` (`resolveTPMDevice`):
+Shared by `barrier` and `extension serve` (`resolveTPMDevice`); `xkey tpm policy` uses the `tpm` group's `--device`/`--simulator`:
 
 1. `--tpm-device` / `--tpm-simulator` flags
 2. `TPM_DEVICE_PATH` environment variable
@@ -156,9 +152,10 @@ Shared by every command that persists barrier, policy, or PIN state
 # First-time setup with TPM hardware sealing
 xkey barrier init --strategy tpm2
 
-# A human captures the current boot state and designates it for auto-unseal
-xkey policy create boot-policy --pcrs 0,2,4,7 --bank sha256
-xkey policy set-auto-unseal boot-policy
+# A human captures the current boot state as a named TPM policy and seals
+# the barrier password under it
+xkey tpm policy create boot-policy --pcrs 0,2,4,7 --bank sha256
+echo "$BARRIER_PASSWORD" | xkey tpm policy auto-unseal boot-policy
 
 # From then on, an agent's unseal needs no password
 xkey barrier unseal --auto
@@ -167,6 +164,6 @@ xkey barrier unseal --auto
 xkey extension serve --socket /run/xkey/xkey.sock
 
 # After a firmware/kernel update changes the measured boot state
-xkey policy verify boot-policy   # reports the mismatch, non-zero exit
-xkey policy refresh boot-policy  # re-captures current PCRs
+xkey tpm policy verify boot-policy   # reports the change, non-zero exit
+xkey tpm policy update boot-policy   # re-captures and re-approves; nothing is re-sealed
 ```

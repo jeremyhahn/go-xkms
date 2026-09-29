@@ -3,10 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--
+    Frame policy only (go-xkms#1274): the only <iframe> in the app is the
+    API Explorer response preview (APIExplorer.svelte), which renders
+    fetched HTML via srcdoc (an about:srcdoc document) and nothing else
+    opens a nested browsing context. script-src/style-src/connect-src/
+    img-src are deliberately left unrestricted here -- this file cannot be
+    exercised against a running GUI from this change's environment to
+    confirm a stricter policy would not break the Svelte build's inline
+    style attributes, xterm.js, or the Vite dev server. See
+    pkg/gui/csp.go (ContentSecurityPolicy) for the header applied to the
+    built Wails app, which carries the identical directives.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="frame-src 'self' about: data:; object-src 'none'; base-uri 'self'" />
   <title>xKey</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
-  <script type="module" crossorigin src="/assets/index-DxZbWHr5.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-ClR-jwrm.css">
+  <script type="module" crossorigin src="/assets/index-C7NPv2s5.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BLodD0La.css">
 </head>
 <body>
   <div id="app"></div>

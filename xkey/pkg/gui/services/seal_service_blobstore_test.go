@@ -25,29 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testBlob creates a sealedBlobStorage with the given ID for testing.
-func testBlob(id string) *sealedBlobStorage {
-	return &sealedBlobStorage{
-		ID:         id,
-		Label:      "test-label-" + id,
-		SizeBytes:  42,
-		PolicyType: string(PolicyTypeNone),
-		Category:   "user",
-		BackendID:  string(xkms.BackendTypeTPM2),
-		SealedData: &xkms.SealedData{
-			Backend:    xkms.BackendTypeTPM2,
-			Ciphertext: []byte("ciphertext-" + id),
-			TPMPublic:  []byte("tpm-public-" + id),
-			TPMPrivate: []byte("tpm-private-" + id),
-		},
-		CreatedAt: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
-	}
-}
-
-// ---------------------------------------------------------------------------
-// SetBackend / Backend getter/setter
-// ---------------------------------------------------------------------------
-
 func TestSealService_SetBackend(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	assert.Nil(t, svc.Backend())
@@ -265,98 +242,6 @@ func TestSealService_UnsealData_BackendNotFound(t *testing.T) {
 // blobToEntry helper tests
 // ---------------------------------------------------------------------------
 
-func TestBlobToEntry_MissingPolicyType(t *testing.T) {
-	blob := &sealedBlobStorage{
-		ID:        "test-id",
-		Label:     "test-label",
-		SizeBytes: 100,
-		CreatedAt: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
-	}
-	_, err := blobToEntry(blob)
-	assert.ErrorIs(t, err, ErrSealBlobPolicyTypeMissing)
-}
-
-func TestBlobToEntry_MissingBackendID(t *testing.T) {
-	blob := &sealedBlobStorage{
-		ID:         "test-id",
-		Label:      "test-label",
-		PolicyType: string(PolicyTypeNone),
-		CreatedAt:  time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
-	}
-	_, err := blobToEntry(blob)
-	assert.ErrorIs(t, err, ErrSealBlobBackendIDMissing)
-}
-
-func TestBlobToEntry_DefaultStorageType(t *testing.T) {
-	blob := &sealedBlobStorage{
-		ID:         "test-id",
-		Label:      "test-label",
-		SizeBytes:  100,
-		PolicyType: string(PolicyTypeNone),
-		BackendID:  string(xkms.BackendTypeTPM2),
-		CreatedAt:  time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
-	}
-	entry, err := blobToEntry(blob)
-	require.NoError(t, err)
-	assert.Equal(t, string(StorageTypeDisk), entry.StorageType)
-}
-
-func TestBlobToEntry_ExplicitStorageType(t *testing.T) {
-	blob := &sealedBlobStorage{
-		ID:          "test-id",
-		Label:       "test-label",
-		PolicyType:  string(PolicyTypeNone),
-		BackendID:   string(xkms.BackendTypeTPM2),
-		StorageType: string(StorageTypeNVRAM),
-		CreatedAt:   time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
-	}
-	entry, err := blobToEntry(blob)
-	require.NoError(t, err)
-	assert.Equal(t, string(StorageTypeNVRAM), entry.StorageType)
-}
-
-func TestBlobToEntry_DefaultCategory(t *testing.T) {
-	blob := &sealedBlobStorage{
-		ID:         "test-id",
-		Label:      "barrier_password",
-		PolicyType: string(PolicyTypeNone),
-		BackendID:  string(xkms.BackendTypeTPM2),
-		CreatedAt:  time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
-	}
-	entry, err := blobToEntry(blob)
-	require.NoError(t, err)
-	assert.Equal(t, "system", entry.Category)
-}
-
-func TestBlobToEntry_AllFieldsMapped(t *testing.T) {
-	blob := &sealedBlobStorage{
-		ID:          "id-123",
-		Label:       "my-secret",
-		SizeBytes:   256,
-		PCRBound:    true,
-		PolicyType:  string(PolicyTypeCustomPCR),
-		Category:    "user",
-		BackendID:   string(xkms.BackendTypeTPM2),
-		StorageType: string(StorageTypeNVRAM),
-		CreatedAt:   time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
-	}
-	entry, err := blobToEntry(blob)
-	require.NoError(t, err)
-	assert.Equal(t, "id-123", entry.ID)
-	assert.Equal(t, "my-secret", entry.Label)
-	assert.Equal(t, 256, entry.SizeBytes)
-	assert.True(t, entry.PCRBound)
-	assert.Equal(t, string(PolicyTypeCustomPCR), entry.PolicyType)
-	assert.Equal(t, "user", entry.Category)
-	assert.Equal(t, string(xkms.BackendTypeTPM2), entry.BackendID)
-	assert.Equal(t, string(StorageTypeNVRAM), entry.StorageType)
-	assert.Equal(t, "2025-06-15T12:00:00Z", entry.CreatedAt)
-}
-
-// ---------------------------------------------------------------------------
-// sortAndCollectEntries helper tests
-// ---------------------------------------------------------------------------
-
 func TestSortAndCollectEntries_SortsByNewestFirst(t *testing.T) {
 	items := []blobWithTime{
 		{
@@ -436,7 +321,6 @@ func TestSealService_DeleteBlob_NoBackend_DirectDisk(t *testing.T) {
 
 func TestSealRequest_StorageType_Field(t *testing.T) {
 	req := &SealRequest{
-		PolicyType:  "none",
 		Label:       "test",
 		Data:        base64.StdEncoding.EncodeToString([]byte("data")),
 		StorageType: string(StorageTypeNVRAM),
@@ -545,7 +429,6 @@ func TestSealService_FullRoundTrip_Backend(t *testing.T) {
 
 	// Seal.
 	req := &SealRequest{
-		PolicyType:  "none",
 		Label:       "round-trip",
 		Data:        base64.StdEncoding.EncodeToString([]byte("secret-data")),
 		StorageType: string(StorageTypeNVRAM),
@@ -575,4 +458,95 @@ func TestSealService_FullRoundTrip_Backend(t *testing.T) {
 	entries, listErr = svc.ListBlobs()
 	require.NoError(t, listErr)
 	assert.Empty(t, entries)
+}
+
+// testBlob returns a tpm2 sealed blob record with no TPM policy.
+func testBlob(id string) *sealedBlobStorage {
+	return &sealedBlobStorage{
+		ID:        id,
+		Label:     "test-label-" + id,
+		SizeBytes: 42,
+		Category:  "user",
+		BackendID: string(xkms.BackendTypeTPM2),
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
+			Ciphertext: []byte("ciphertext-" + id),
+			TPMPublic:  []byte("tpm-public-" + id),
+			TPMPrivate: []byte("tpm-private-" + id),
+		},
+		CreatedAt: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+func TestBlobToEntry_MissingBackendID(t *testing.T) {
+	blob := &sealedBlobStorage{
+		ID:        "test-id",
+		Label:     "test-label",
+		CreatedAt: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
+	}
+	_, err := blobToEntry(blob)
+	assert.ErrorIs(t, err, ErrSealBlobBackendIDMissing)
+}
+
+func TestBlobToEntry_DefaultStorageType(t *testing.T) {
+	blob := &sealedBlobStorage{
+		ID:        "test-id",
+		Label:     "test-label",
+		SizeBytes: 100,
+		BackendID: string(xkms.BackendTypeTPM2),
+		CreatedAt: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
+	}
+	entry, err := blobToEntry(blob)
+	require.NoError(t, err)
+	assert.Equal(t, string(StorageTypeDisk), entry.StorageType)
+}
+
+func TestBlobToEntry_ExplicitStorageType(t *testing.T) {
+	blob := &sealedBlobStorage{
+		ID:          "test-id",
+		Label:       "test-label",
+		BackendID:   string(xkms.BackendTypeTPM2),
+		StorageType: string(StorageTypeNVRAM),
+		CreatedAt:   time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
+	}
+	entry, err := blobToEntry(blob)
+	require.NoError(t, err)
+	assert.Equal(t, string(StorageTypeNVRAM), entry.StorageType)
+}
+
+func TestBlobToEntry_DefaultCategory(t *testing.T) {
+	blob := &sealedBlobStorage{
+		ID:        "test-id",
+		Label:     "barrier_password",
+		BackendID: string(xkms.BackendTypeTPM2),
+		CreatedAt: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
+	}
+	entry, err := blobToEntry(blob)
+	require.NoError(t, err)
+	assert.Equal(t, "system", entry.Category)
+}
+
+func TestBlobToEntry_AllFieldsMapped(t *testing.T) {
+	blob := &sealedBlobStorage{
+		ID:          "id-123",
+		Label:       "my-secret",
+		SizeBytes:   256,
+		TPMPolicy:   "boot",
+		HasPassword: true,
+		Category:    "user",
+		BackendID:   string(xkms.BackendTypeTPM2),
+		StorageType: string(StorageTypeNVRAM),
+		CreatedAt:   time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
+	}
+	entry, err := blobToEntry(blob)
+	require.NoError(t, err)
+	assert.Equal(t, "id-123", entry.ID)
+	assert.Equal(t, "my-secret", entry.Label)
+	assert.Equal(t, 256, entry.SizeBytes)
+	assert.Equal(t, "boot", entry.TPMPolicy)
+	assert.True(t, entry.PasswordProtected)
+	assert.Equal(t, "user", entry.Category)
+	assert.Equal(t, string(xkms.BackendTypeTPM2), entry.BackendID)
+	assert.Equal(t, string(StorageTypeNVRAM), entry.StorageType)
+	assert.Equal(t, "2025-06-15T12:00:00Z", entry.CreatedAt)
 }

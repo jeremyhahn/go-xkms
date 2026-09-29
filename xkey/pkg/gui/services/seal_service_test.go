@@ -24,7 +24,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
-	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -99,9 +98,8 @@ func newSealServiceWithMockClient(t *testing.T, mc *sealMockClient) *SealService
 // validSealRequest returns a SealRequest with valid base64-encoded data.
 func validSealRequest() *SealRequest {
 	return &SealRequest{
-		PolicyType: "none",
-		Label:      "test-secret",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello world")),
+		Label: "test-secret",
+		Data:  base64.StdEncoding.EncodeToString([]byte("hello world")),
 	}
 }
 
@@ -128,13 +126,6 @@ func TestSealService_SetTPMAccessor(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetTPMAccessor(nil)
 	assert.Nil(t, svc.tpmAccessor)
-}
-
-func TestSealService_SetPlatformPolicyService(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	policySvc := NewPlatformPolicyService("/tmp/policy")
-	svc.SetPlatformPolicyService(policySvc)
-	assert.Equal(t, policySvc, svc.policyService)
 }
 
 func TestSealService_SetClientFunc(t *testing.T) {
@@ -460,11 +451,11 @@ func TestSealService_ListBlobs_SkipsCorruptJSON(t *testing.T) {
 	assert.Empty(t, blobs)
 }
 
-func TestSealService_ListBlobs_ShowsPolicyType(t *testing.T) {
+func TestSealService_ListBlobs_ShowsTPMPolicyAndPassword(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 
 	req := validSealRequest()
-	req.PolicyType = "password"
+	req.TPMPolicy = "boot"
 	req.Password = "test-password"
 	_, err := svc.SealData(req)
 	require.NoError(t, err)
@@ -472,13 +463,13 @@ func TestSealService_ListBlobs_ShowsPolicyType(t *testing.T) {
 	blobs, err := svc.ListBlobs()
 	require.NoError(t, err)
 	require.Len(t, blobs, 1)
-	assert.Equal(t, "password", blobs[0].PolicyType)
+	assert.Equal(t, "boot", blobs[0].TPMPolicy)
+	assert.True(t, blobs[0].PasswordProtected)
 }
 
-func TestSealService_ListBlobs_DefaultPolicyTypeIsNone(t *testing.T) {
+func TestSealService_ListBlobs_NoPolicyByDefault(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 
-	// Create a blob with no policy type (legacy/default).
 	req := validSealRequest()
 	_, err := svc.SealData(req)
 	require.NoError(t, err)
@@ -486,34 +477,13 @@ func TestSealService_ListBlobs_DefaultPolicyTypeIsNone(t *testing.T) {
 	blobs, err := svc.ListBlobs()
 	require.NoError(t, err)
 	require.Len(t, blobs, 1)
-	assert.Equal(t, "none", blobs[0].PolicyType)
+	assert.Empty(t, blobs[0].TPMPolicy)
+	assert.False(t, blobs[0].PasswordProtected)
 }
 
 // ---------------------------------------------------------------------------
 // SealData - basic
 // ---------------------------------------------------------------------------
-
-func TestSealService_SealData_Success(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	req := validSealRequest()
-
-	entry, err := svc.SealData(req)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-
-	assert.NotEmpty(t, entry.ID)
-	assert.Equal(t, "test-secret", entry.Label)
-	assert.Equal(t, len("hello world"), entry.SizeBytes)
-	assert.False(t, entry.PCRBound)
-	assert.NotEmpty(t, entry.CreatedAt)
-	assert.Equal(t, "none", entry.PolicyType)
-	assert.Equal(t, string(xkms.BackendTypeTPM2), entry.BackendID)
-
-	// Verify the file was created on disk.
-	path := svc.blobPath(entry.ID)
-	_, statErr := os.Stat(path)
-	assert.NoError(t, statErr)
-}
 
 func TestSealService_SealData_NilRequest(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
@@ -532,9 +502,8 @@ func TestSealService_SealData_EmptyLabel(t *testing.T) {
 func TestSealService_SealData_EmptyData(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "my-label",
-		Data:       "",
+		Label: "my-label",
+		Data:  "",
 	}
 	_, err := svc.SealData(req)
 	assert.ErrorIs(t, err, ErrSealInvalidData)
@@ -543,9 +512,8 @@ func TestSealService_SealData_EmptyData(t *testing.T) {
 func TestSealService_SealData_InvalidBase64(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "my-label",
-		Data:       "not!valid!base64!!",
+		Label: "my-label",
+		Data:  "not!valid!base64!!",
 	}
 	_, err := svc.SealData(req)
 	assert.ErrorIs(t, err, ErrSealDecodeFailed)
@@ -569,42 +537,6 @@ func TestSealService_SealData_SealError(t *testing.T) {
 	req := validSealRequest()
 	_, err := svc.SealData(req)
 	assert.ErrorIs(t, err, ErrSealStorageFailed)
-}
-
-func TestSealService_SealData_WithPCRBinding(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	req := &SealRequest{
-		Label:      "pcr-bound-secret",
-		Data:       base64.StdEncoding.EncodeToString([]byte("sensitive data")),
-		PCRs:       []int{0, 7},
-		PCRBank:    "sha256",
-		PolicyType: "custom_pcr",
-	}
-
-	entry, err := svc.SealData(req)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-
-	assert.True(t, entry.PCRBound)
-	assert.Equal(t, "pcr-bound-secret", entry.Label)
-	assert.Equal(t, len("sensitive data"), entry.SizeBytes)
-	assert.Equal(t, "custom_pcr", entry.PolicyType)
-}
-
-func TestSealService_SealData_WithPCRBinding_DefaultBank(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	req := &SealRequest{
-		Label:      "pcr-default-bank",
-		Data:       base64.StdEncoding.EncodeToString([]byte("data")),
-		PCRs:       []int{0},
-		PolicyType: "custom_pcr",
-		// PCRBank intentionally empty - should default to sha256.
-	}
-
-	entry, err := svc.SealData(req)
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-	assert.True(t, entry.PCRBound)
 }
 
 func TestSealService_SealData_NilContext(t *testing.T) {
@@ -634,151 +566,59 @@ func TestSealService_SealData_WithExplicitBackend(t *testing.T) {
 // SealData - policy types
 // ---------------------------------------------------------------------------
 
-func TestSealService_SealData_PolicyTypeNone(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
+func TestSealService_SealData_TPMPasswordIsEnforcedByTheTPM(t *testing.T) {
+	var captured *transport.SealRequest
+	mc := defaultSealMockClient()
+	mc.sealFn = func(_ context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
+		captured = req
+		return &transport.SealResponse{Backend: req.Backend, Ciphertext: req.Data}, nil
+	}
+	svc := newSealServiceWithMockClient(t, mc)
 	req := validSealRequest()
-	req.PolicyType = "none"
-
-	entry, err := svc.SealData(req)
-	require.NoError(t, err)
-	assert.Equal(t, "none", entry.PolicyType)
-	assert.False(t, entry.PCRBound)
-}
-
-func TestSealService_SealData_PolicyTypePassword_Success(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	req := validSealRequest()
-	req.PolicyType = "password"
 	req.Password = "my-secret-password"
 
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
-	assert.Equal(t, "password", entry.PolicyType)
+	assert.True(t, entry.PasswordProtected)
+	require.NotNil(t, captured)
+	assert.Equal(t, "my-secret-password", captured.Password, "the TPM gets the password as the object's auth value")
 
-	// Verify the password hash was stored on disk.
+	// A tpm2 blob keeps no software hash: the TPM is the only check.
 	blob, loadErr := svc.loadBlobByID(entry.ID)
 	require.NoError(t, loadErr)
-	assert.NotEmpty(t, blob.Password)
-	assert.Contains(t, blob.Password, ":")
+	assert.Empty(t, blob.Password)
 }
 
-func TestSealService_SealData_PolicyTypePassword_EmptyPassword(t *testing.T) {
+func TestSealService_SealData_SoftwarePasswordIsHashed(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 	req := validSealRequest()
-	req.PolicyType = "password"
-	req.Password = ""
-
-	_, err := svc.SealData(req)
-	assert.ErrorIs(t, err, ErrSealPasswordRequired)
-}
-
-func TestSealService_SealData_PolicyTypePlatformPolicy_Success(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-
-	// Set up platform policy service with a configured policy.
-	policyMock := defaultPolicyMock()
-	policyPath := filepath.Join(t.TempDir(), "platform.policy")
-	policySvc := NewPlatformPolicyService(policyPath)
-	policySvc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return policyMock }))
-
-	_, err := policySvc.CreatePolicy([]int{0, 7}, "sha256")
-	require.NoError(t, err)
-
-	svc.SetPlatformPolicyService(policySvc)
-
-	req := validSealRequest()
-	req.PolicyType = "platform_policy"
-
-	entry, err := svc.SealData(req)
-	require.NoError(t, err)
-	assert.Equal(t, "platform_policy", entry.PolicyType)
-	assert.True(t, entry.PCRBound)
-}
-
-func TestSealService_SealData_PolicyTypePlatformPolicy_NoPolicyConfigured(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	// No platform policy service set.
-	req := validSealRequest()
-	req.PolicyType = "platform_policy"
-
-	_, err := svc.SealData(req)
-	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
-}
-
-func TestSealService_SealData_PolicyTypePlatformPolicy_PolicyServiceNotConfigured(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-
-	// Set up a policy service but do NOT create a policy.
-	policyPath := filepath.Join(t.TempDir(), "platform.policy")
-	policySvc := NewPlatformPolicyService(policyPath)
-	svc.SetPlatformPolicyService(policySvc)
-
-	req := validSealRequest()
-	req.PolicyType = "platform_policy"
-
-	_, err := svc.SealData(req)
-	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
-}
-
-func TestSealService_SealData_PolicyTypeCustomPCR(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	req := &SealRequest{
-		Label:      "custom-pcr-secret",
-		Data:       base64.StdEncoding.EncodeToString([]byte("data")),
-		PCRs:       []int{0, 1, 7},
-		PCRBank:    "sha256",
-		PolicyType: "custom_pcr",
-	}
-
-	entry, err := svc.SealData(req)
-	require.NoError(t, err)
-	assert.Equal(t, "custom_pcr", entry.PolicyType)
-	assert.True(t, entry.PCRBound)
-}
-
-func TestSealService_SealData_InvalidPolicyType(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	req := validSealRequest()
-	req.PolicyType = "nonexistent_policy"
-
-	_, err := svc.SealData(req)
-	assert.ErrorIs(t, err, ErrSealInvalidPolicyType)
-}
-
-func TestSealService_SealData_DefaultPolicyTypeIsNone(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	req := validSealRequest()
-	// PolicyType intentionally empty.
-
-	entry, err := svc.SealData(req)
-	require.NoError(t, err)
-	assert.Equal(t, "none", entry.PolicyType)
-}
-
-func TestSealService_SealData_TPMOnlyPolicyWithNonTPMBackend(t *testing.T) {
-	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-
-	// Try to seal with platform_policy using the software backend.
-	req := validSealRequest()
-	req.PolicyType = "platform_policy"
 	req.Backend = "software"
+	req.Password = "my-secret-password"
 
-	_, err := svc.SealData(req)
-	assert.ErrorIs(t, err, ErrSealPolicyRequiresTPM)
+	entry, err := svc.SealData(req)
+	require.NoError(t, err)
+	assert.True(t, entry.PasswordProtected)
+
+	blob, loadErr := svc.loadBlobByID(entry.ID)
+	require.NoError(t, loadErr)
+	assert.Contains(t, blob.Password, ":", "a non-TPM blob's password is checked against an argon2id hash")
 }
 
-func TestSealService_SealData_CustomPCRPolicyWithNonTPMBackend(t *testing.T) {
+func TestSealService_SealData_NoPolicyByDefault(t *testing.T) {
+	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
+	req := validSealRequest()
+
+	entry, err := svc.SealData(req)
+	require.NoError(t, err)
+	assert.Empty(t, entry.TPMPolicy)
+}
+
+func TestSealService_SealData_TPMPolicyWithNonTPMBackend(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 
-	// Try to seal with custom_pcr using the software backend.
-	req := &SealRequest{
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("data")),
-		PCRs:       []int{0, 7},
-		PCRBank:    "sha256",
-		PolicyType: "custom_pcr",
-		Backend:    "software",
-	}
+	req := validSealRequest()
+	req.TPMPolicy = xkms.TPMPolicyPlatform
+	req.Backend = "software"
 
 	_, err := svc.SealData(req)
 	assert.ErrorIs(t, err, ErrSealPolicyRequiresTPM)
@@ -801,21 +641,18 @@ func TestSealService_SealData_SDKRequestReceivesCorrectParams(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, mc)
 
 	req := &SealRequest{
-		Label:      "param-test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("my-data")),
-		PCRs:       []int{0, 7},
-		PCRBank:    "sha256",
-		PolicyType: "custom_pcr",
+		Label:     "param-test",
+		Data:      base64.StdEncoding.EncodeToString([]byte("my-data")),
+		TPMPolicy: "boot",
 	}
-	_, err := svc.SealData(req)
+	entry, err := svc.SealData(req)
 	require.NoError(t, err)
 	require.NotNil(t, capturedReq)
 
 	assert.Equal(t, string(xkms.BackendTypeTPM2), capturedReq.Backend)
 	assert.Equal(t, []byte("my-data"), capturedReq.Data)
-	assert.Equal(t, "sha256", capturedReq.PCRHashAlg)
-	assert.Contains(t, capturedReq.PCRs, 0)
-	assert.Contains(t, capturedReq.PCRs, 7)
+	assert.Equal(t, "boot", capturedReq.TPMPolicy)
+	assert.Equal(t, sealedObjectPrefix+entry.ID, capturedReq.KeyID, "every tpm2 blob is sealed as an object of its own")
 }
 
 func TestSealService_SealData_TPMFieldsPreserved(t *testing.T) {
@@ -878,9 +715,8 @@ func TestSealService_UnsealData_Success(t *testing.T) {
 	// Seal first.
 	original := "hello world"
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "unseal-test",
-		Data:       base64.StdEncoding.EncodeToString([]byte(original)),
+		Label: "unseal-test",
+		Data:  base64.StdEncoding.EncodeToString([]byte(original)),
 	}
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
@@ -961,10 +797,9 @@ func TestSealService_UnsealData_BackwardCompatEmptyBackend(t *testing.T) {
 
 	// Create a blob file manually with empty Backend (simulates pre-Phase 3 blob).
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "legacy-blob",
-		Label:      "legacy",
+		BackendID: "software",
+		ID:        "legacy-blob",
+		Label:     "legacy",
 		SealedData: &xkms.SealedData{
 			Backend:    "", // empty = pre-Phase 3
 			Ciphertext: []byte("old-data"),
@@ -993,10 +828,10 @@ func TestSealService_UnsealData_PasswordCorrect(t *testing.T) {
 
 	original := "secret payload"
 	req := &SealRequest{
-		Label:      "password-protected",
-		Data:       base64.StdEncoding.EncodeToString([]byte(original)),
-		PolicyType: "password",
-		Password:   "correct-password",
+		Label:    "password-protected",
+		Data:     base64.StdEncoding.EncodeToString([]byte(original)),
+		Backend:  "software",
+		Password: "correct-password",
 	}
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
@@ -1013,10 +848,10 @@ func TestSealService_UnsealData_PasswordIncorrect(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 
 	req := &SealRequest{
-		Label:      "password-protected",
-		Data:       base64.StdEncoding.EncodeToString([]byte("data")),
-		PolicyType: "password",
-		Password:   "correct-password",
+		Label:    "password-protected",
+		Data:     base64.StdEncoding.EncodeToString([]byte("data")),
+		Backend:  "software",
+		Password: "correct-password",
 	}
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
@@ -1029,10 +864,10 @@ func TestSealService_UnsealData_PasswordRequired(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 
 	req := &SealRequest{
-		Label:      "password-protected",
-		Data:       base64.StdEncoding.EncodeToString([]byte("data")),
-		PolicyType: "password",
-		Password:   "my-password",
+		Label:    "password-protected",
+		Data:     base64.StdEncoding.EncodeToString([]byte("data")),
+		Backend:  "software",
+		Password: "my-password",
 	}
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
@@ -1198,10 +1033,9 @@ func TestSealService_saveBlob_And_loadBlob(t *testing.T) {
 	svc := NewSealService(dir)
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-blob-001",
-		Label:      "test-label",
+		BackendID: "software",
+		ID:        "test-blob-001",
+		Label:     "test-label",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("sealed-data"),
@@ -1359,53 +1193,6 @@ func TestSealService_AutoSelectDefault_NoClient(t *testing.T) {
 // PCR conversion helpers
 // ---------------------------------------------------------------------------
 
-func TestPcrSelectToInts(t *testing.T) {
-	// Byte 0 = 0b10000001 = PCR 0 and PCR 7
-	sel := []byte{0x81}
-	result := pcrSelectToInts(sel)
-	assert.Equal(t, []int{0, 7}, result)
-}
-
-func TestPcrSelectToInts_Empty(t *testing.T) {
-	result := pcrSelectToInts(nil)
-	assert.Empty(t, result)
-}
-
-func TestPcrSelectToInts_MultipleBits(t *testing.T) {
-	// Byte 0 = 0xFF (PCR 0-7), Byte 1 = 0x01 (PCR 8)
-	sel := []byte{0xFF, 0x01}
-	result := pcrSelectToInts(sel)
-	assert.Len(t, result, 9)
-	assert.Equal(t, 0, result[0])
-	assert.Equal(t, 7, result[7])
-	assert.Equal(t, 8, result[8])
-}
-
-func TestHashAlgIDToString(t *testing.T) {
-	tests := []struct {
-		name string
-		alg  uint16
-		want string
-	}{
-		{"sha1", 0x0004, "sha1"},
-		{"sha256", 0x000B, "sha256"},
-		{"sha384", 0x000C, "sha384"},
-		{"sha512", 0x000D, "sha512"},
-		{"unknown", 0xFFFF, "sha256"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			// TPMAlgID is a uint16 type alias.
-			result := hashAlgIDToString(tpm2.TPMAlgID(tc.alg))
-			assert.Equal(t, tc.want, result)
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Password hashing helpers
-// ---------------------------------------------------------------------------
-
 func TestHashPassword(t *testing.T) {
 	hash, err := hashPassword("test-password")
 	require.NoError(t, err)
@@ -1455,44 +1242,6 @@ func TestClassifyCategory_UserLabels(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Error sentinel tests
-// ---------------------------------------------------------------------------
-
-func TestSealServiceErrors_Distinct(t *testing.T) {
-	errs := []error{
-		ErrSealTPMNotAvailable,
-		ErrSealNotSupported,
-		ErrSealInvalidLabel,
-		ErrSealInvalidData,
-		ErrSealBlobNotFound,
-		ErrSealStorageFailed,
-		ErrSealDecodeFailed,
-		ErrSealMarshalFailed,
-		ErrSealUnmarshalFailed,
-		ErrSealInvalidPolicyType,
-		ErrSealPasswordRequired,
-		ErrSealPolicyMismatch,
-		ErrSealPolicyNotAvailable,
-		ErrSealStorageDirNotSet,
-		ErrSealStorageDirRelative,
-		ErrSealBackendNotFound,
-		ErrSealPolicyRequiresTPM,
-		ErrSealNoClient,
-		ErrSealBlobPolicyTypeMissing,
-		ErrSealBlobBackendIDMissing,
-	}
-	for i := range errs {
-		for j := range errs {
-			if i == j {
-				continue
-			}
-			assert.NotEqual(t, errs[i], errs[j],
-				"errors %d and %d should be distinct", i, j)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// UserCanManageSealedData policy gate (#668).
 // ---------------------------------------------------------------------------
 
 func TestSealService_SealData_PolicyGate(t *testing.T) {

@@ -1278,13 +1278,24 @@ export namespace services {
 		    return a;
 		}
 	}
+	export class BarrierAutoUnsealService {
+	
+	    static createFrom(source: any = {}) {
+	        return new BarrierAutoUnsealService(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
 	export class BarrierAutoUnsealStatus {
 	    available: boolean;
 	    reason?: string;
-	    tpm_available: boolean;
 	    barrier_sealed: boolean;
 	    policy_configured: boolean;
 	    policy_name: string;
+	    credential_sealed: boolean;
 	    pcrs_match: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -1295,10 +1306,10 @@ export namespace services {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.available = source["available"];
 	        this.reason = source["reason"];
-	        this.tpm_available = source["tpm_available"];
 	        this.barrier_sealed = source["barrier_sealed"];
 	        this.policy_configured = source["policy_configured"];
 	        this.policy_name = source["policy_name"];
+	        this.credential_sealed = source["credential_sealed"];
 	        this.pcrs_match = source["pcrs_match"];
 	    }
 	}
@@ -1597,116 +1608,6 @@ export namespace services {
 	        this.nonce = source["nonce"];
 	    }
 	}
-	export class PCRSelection {
-	    index: number;
-	    bank: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PCRSelection(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.index = source["index"];
-	        this.bank = source["bank"];
-	    }
-	}
-	export class PolicyElement {
-	    type: string;
-	    pcr_selections?: PCRSelection[];
-	    pcr_bank?: string;
-	    password_hash?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PolicyElement(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.type = source["type"];
-	        this.pcr_selections = this.convertValues(source["pcr_selections"], PCRSelection);
-	        this.pcr_bank = source["pcr_bank"];
-	        this.password_hash = source["password_hash"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	export class CompositePolicy {
-	    name: string;
-	    description: string;
-	    operator: string;
-	    elements: PolicyElement[];
-	    created_at: string;
-	    updated_at?: string;
-	    pcr_digests?: Record<string, string>;
-	    valid?: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new CompositePolicy(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.description = source["description"];
-	        this.operator = source["operator"];
-	        this.elements = this.convertValues(source["elements"], PolicyElement);
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	        this.pcr_digests = source["pcr_digests"];
-	        this.valid = source["valid"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	export class ConflictingAssignment {
-	    key_handle: string;
-	    current_policy: string;
-	    assigned_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ConflictingAssignment(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.key_handle = source["key_handle"];
-	        this.current_policy = source["current_policy"];
-	        this.assigned_at = source["assigned_at"];
-	    }
-	}
 	export class ConnectionInfo {
 	    state: string;
 	    protocol: string;
@@ -1940,6 +1841,17 @@ export namespace services {
 	        this.AllowedDomains = source["AllowedDomains"];
 	        this.BlockedDomains = source["BlockedDomains"];
 	        this.MaxFillsPerMinute = source["MaxFillsPerMinute"];
+	    }
+	}
+	export class LocalTPMPolicies {
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalTPMPolicies(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
 	    }
 	}
 	export class SealerInfo {
@@ -2417,10 +2329,7 @@ export namespace services {
 	    server_auto_connect: boolean;
 	    auto_unseal_enabled: boolean;
 	    auto_unseal_blob_id: string;
-	    auto_unseal_pcrs: number[];
-	    auto_unseal_pcr_bank: string;
-	    auto_unseal_policy_type: string;
-	    auto_unseal_policy_name: string;
+	    auto_unseal_tpm_policy: string;
 	    auto_unseal_backend: string;
 	    fido2_authenticator_enabled: boolean;
 	    clipboard_timeout: number;
@@ -2429,7 +2338,6 @@ export namespace services {
 	    storage_type: string;
 	    barrier_initialized: boolean;
 	    barrier_strategy: string;
-	    barrier_auto_unseal_blob_id?: string;
 	    barrier_auto_unseal_enabled: boolean;
 	    app_auto_lock_minutes: number;
 	    app_lock_on_screen_lock: boolean;
@@ -2465,10 +2373,7 @@ export namespace services {
 	        this.server_auto_connect = source["server_auto_connect"];
 	        this.auto_unseal_enabled = source["auto_unseal_enabled"];
 	        this.auto_unseal_blob_id = source["auto_unseal_blob_id"];
-	        this.auto_unseal_pcrs = source["auto_unseal_pcrs"];
-	        this.auto_unseal_pcr_bank = source["auto_unseal_pcr_bank"];
-	        this.auto_unseal_policy_type = source["auto_unseal_policy_type"];
-	        this.auto_unseal_policy_name = source["auto_unseal_policy_name"];
+	        this.auto_unseal_tpm_policy = source["auto_unseal_tpm_policy"];
 	        this.auto_unseal_backend = source["auto_unseal_backend"];
 	        this.fido2_authenticator_enabled = source["fido2_authenticator_enabled"];
 	        this.clipboard_timeout = source["clipboard_timeout"];
@@ -2477,7 +2382,6 @@ export namespace services {
 	        this.storage_type = source["storage_type"];
 	        this.barrier_initialized = source["barrier_initialized"];
 	        this.barrier_strategy = source["barrier_strategy"];
-	        this.barrier_auto_unseal_blob_id = source["barrier_auto_unseal_blob_id"];
 	        this.barrier_auto_unseal_enabled = source["barrier_auto_unseal_enabled"];
 	        this.app_auto_lock_minutes = source["app_auto_lock_minutes"];
 	        this.app_lock_on_screen_lock = source["app_lock_on_screen_lock"];
@@ -2518,6 +2422,7 @@ export namespace services {
 	    key_size?: number;
 	    curve?: string;
 	    exportable?: boolean;
+	    tpm_policy?: string;
 	    hierarchy?: string;
 	    handle?: number;
 	    is_primary?: boolean;
@@ -2537,6 +2442,7 @@ export namespace services {
 	        this.key_size = source["key_size"];
 	        this.curve = source["curve"];
 	        this.exportable = source["exportable"];
+	        this.tpm_policy = source["tpm_policy"];
 	        this.hierarchy = source["hierarchy"];
 	        this.handle = source["handle"];
 	        this.is_primary = source["is_primary"];
@@ -3308,72 +3214,6 @@ export namespace services {
 	    }
 	}
 	
-	export class PCRComparisonEntry {
-	    key: string;
-	    bank: string;
-	    index: number;
-	    saved: string;
-	    current: string;
-	    match: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new PCRComparisonEntry(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.key = source["key"];
-	        this.bank = source["bank"];
-	        this.index = source["index"];
-	        this.saved = source["saved"];
-	        this.current = source["current"];
-	        this.match = source["match"];
-	    }
-	}
-	export class PCRPolicy {
-	    name: string;
-	    description: string;
-	    pcr_selections: PCRSelection[];
-	    created_at: string;
-	    updated_at?: string;
-	    pcr_digests?: Record<string, string>;
-	    is_platform_policy?: boolean;
-	    valid?: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new PCRPolicy(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.description = source["description"];
-	        this.pcr_selections = this.convertValues(source["pcr_selections"], PCRSelection);
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	        this.pcr_digests = source["pcr_digests"];
-	        this.is_platform_policy = source["is_platform_policy"];
-	        this.valid = source["valid"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
 	
 	
 	export class PCRValue {
@@ -3810,40 +3650,6 @@ export namespace services {
 	        this.status = source["status"];
 	    }
 	}
-	export class PlatformPolicyService {
-	
-	
-	    static createFrom(source: any = {}) {
-	        return new PlatformPolicyService(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	
-	    }
-	}
-	export class PlatformPolicyStatus {
-	    configured: boolean;
-	    pcrs: number[];
-	    bank: string;
-	    valid: boolean;
-	    created_at: string;
-	    updated_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PlatformPolicyStatus(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.configured = source["configured"];
-	        this.pcrs = source["pcrs"];
-	        this.bank = source["bank"];
-	        this.valid = source["valid"];
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	    }
-	}
 	export class PlatformSRKInfo {
 	    present: boolean;
 	    algorithm: string;
@@ -3866,103 +3672,7 @@ export namespace services {
 	        this.initialized = source["initialized"];
 	    }
 	}
-	export class PolicyAssignment {
-	    policy_name: string;
-	    key_handle: string;
-	    assigned_at: string;
 	
-	    static createFrom(source: any = {}) {
-	        return new PolicyAssignment(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.policy_name = source["policy_name"];
-	        this.key_handle = source["key_handle"];
-	        this.assigned_at = source["assigned_at"];
-	    }
-	}
-	export class PolicyComparisonResult {
-	    policy_name: string;
-	    all_match: boolean;
-	    total_pcrs: number;
-	    match_count: number;
-	    mismatch_count: number;
-	    entries: PCRComparisonEntry[];
-	    compared_at: string;
-	    error?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PolicyComparisonResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.policy_name = source["policy_name"];
-	        this.all_match = source["all_match"];
-	        this.total_pcrs = source["total_pcrs"];
-	        this.match_count = source["match_count"];
-	        this.mismatch_count = source["mismatch_count"];
-	        this.entries = this.convertValues(source["entries"], PCRComparisonEntry);
-	        this.compared_at = source["compared_at"];
-	        this.error = source["error"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	export class PolicyDeletionImpact {
-	    policy_name: string;
-	    policy_type: string;
-	    assigned_key_handles: string[];
-	    has_password_entry: boolean;
-	    password_entry_id?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PolicyDeletionImpact(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.policy_name = source["policy_name"];
-	        this.policy_type = source["policy_type"];
-	        this.assigned_key_handles = source["assigned_key_handles"];
-	        this.has_password_entry = source["has_password_entry"];
-	        this.password_entry_id = source["password_entry_id"];
-	    }
-	}
-	
-	export class PolicyVerifyResult {
-	    name: string;
-	    valid: boolean;
-	    message?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PolicyVerifyResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.valid = source["valid"];
-	        this.message = source["message"];
-	    }
-	}
 	export class ProbeResult {
 	    library_path: string;
 	    display_name: string;
@@ -4443,9 +4153,7 @@ export namespace services {
 	export class SealRequest {
 	    label: string;
 	    data: string;
-	    pcrs: number[];
-	    pcr_bank: string;
-	    policy_type: string;
+	    tpm_policy: string;
 	    password: string;
 	    backend: string;
 	    storage_type: string;
@@ -4458,9 +4166,7 @@ export namespace services {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.label = source["label"];
 	        this.data = source["data"];
-	        this.pcrs = source["pcrs"];
-	        this.pcr_bank = source["pcr_bank"];
-	        this.policy_type = source["policy_type"];
+	        this.tpm_policy = source["tpm_policy"];
 	        this.password = source["password"];
 	        this.backend = source["backend"];
 	        this.storage_type = source["storage_type"];
@@ -4482,8 +4188,8 @@ export namespace services {
 	    id: string;
 	    label: string;
 	    size_bytes: number;
-	    pcr_bound: boolean;
-	    policy_type: string;
+	    tpm_policy: string;
+	    password_protected: boolean;
 	    created_at: string;
 	    category: string;
 	    backend_id: string;
@@ -4498,8 +4204,8 @@ export namespace services {
 	        this.id = source["id"];
 	        this.label = source["label"];
 	        this.size_bytes = source["size_bytes"];
-	        this.pcr_bound = source["pcr_bound"];
-	        this.policy_type = source["policy_type"];
+	        this.tpm_policy = source["tpm_policy"];
+	        this.password_protected = source["password_protected"];
 	        this.created_at = source["created_at"];
 	        this.category = source["category"];
 	        this.backend_id = source["backend_id"];
@@ -4863,6 +4569,22 @@ export namespace services {
 	
 	    }
 	}
+	export class TPMAuthorityInfo {
+	    generation: number;
+	    authority_name: string;
+	    epoch: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMAuthorityInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.generation = source["generation"];
+	        this.authority_name = source["authority_name"];
+	        this.epoch = source["epoch"];
+	    }
+	}
 	export class TPMClearRequest {
 	    lockout_auth: string;
 	    force: boolean;
@@ -5011,6 +4733,109 @@ export namespace services {
 	        this.key_size = source["key_size"];
 	        this.persistent = source["persistent"];
 	        this.purpose = source["purpose"];
+	    }
+	}
+	export class TPMObjectPolicyInfo {
+	    object_id: string;
+	    kind: string;
+	    policy: string;
+	    auth_policy?: string;
+	    created_at?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMObjectPolicyInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.object_id = source["object_id"];
+	        this.kind = source["kind"];
+	        this.policy = source["policy"];
+	        this.auth_policy = source["auth_policy"];
+	        this.created_at = source["created_at"];
+	    }
+	}
+	export class TPMPolicyInfo {
+	    name: string;
+	    builtin: boolean;
+	    bank?: string;
+	    pcrs?: number[];
+	    pcr_values?: Record<number, string>;
+	    pcr_digest?: string;
+	    index?: number;
+	    approved: boolean;
+	    epoch?: number;
+	    authority_generation?: number;
+	    auto_unseal: boolean;
+	    object_count: number;
+	    created_at?: string;
+	    updated_at?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMPolicyInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.builtin = source["builtin"];
+	        this.bank = source["bank"];
+	        this.pcrs = source["pcrs"];
+	        this.pcr_values = source["pcr_values"];
+	        this.pcr_digest = source["pcr_digest"];
+	        this.index = source["index"];
+	        this.approved = source["approved"];
+	        this.epoch = source["epoch"];
+	        this.authority_generation = source["authority_generation"];
+	        this.auto_unseal = source["auto_unseal"];
+	        this.object_count = source["object_count"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
+	export class TPMPolicyService {
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMPolicyService(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
+	export class TPMPolicyStatus {
+	    available: boolean;
+	    mode: string;
+	    scope: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMPolicyStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.mode = source["mode"];
+	        this.scope = source["scope"];
+	    }
+	}
+	export class TPMPolicyVerification {
+	    name: string;
+	    match: boolean;
+	    mismatched: number[];
+	    approved: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TPMPolicyVerification(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.match = source["match"];
+	        this.mismatched = source["mismatched"];
+	        this.approved = source["approved"];
 	    }
 	}
 	export class TPMService {

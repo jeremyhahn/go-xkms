@@ -336,7 +336,7 @@ Usage: `xkey barrier unseal [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--auto` | bool | false | Unseal via TPM PCR-policy auto-unseal only (see 'xkey policy set-auto-unseal'); never prompts for a password |
+| `--auto` | bool | false | Unseal via the TPM auto-unseal policy only (see 'xkey tpm policy auto-unseal'); never prompts for a password |
 
 ## xkey browser
 
@@ -1844,88 +1844,6 @@ Show platform store status
 
 Usage: `xkey platform-store status`
 
-## xkey policy
-
-PCR policy management for TPM-based sealing
-
-Usage: `xkey policy`
-
-Inherited by subcommands:
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--store` | string |  | Path to policy store directory (default: <data dir>/pcr_policies) |
-| `--tpm-device` | string |  | TPM device path used to read current PCR values (default: $TPM_DEVICE_PATH or /dev/tpmrm0) |
-| `--tpm-simulator` | bool | false | Use the in-process TPM simulator instead of a hardware device (requires a simulator build) |
-
-## xkey policy clear-auto-unseal
-
-Clear the auto-unseal policy designation
-
-Usage: `xkey policy clear-auto-unseal`
-
-## xkey policy create
-
-Create a new PCR policy
-
-Usage: `xkey policy create <name> [flags]`
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--bank` | string | sha256 | PCR hash bank (sha1, sha256, sha384) |
-| `--pcrs` | string |  | Comma-separated PCR indices (e.g., 0,2,4,7) |
-
-## xkey policy delete
-
-Delete a PCR policy
-
-Usage: `xkey policy delete <name>`
-
-Aliases: rm, remove
-
-## xkey policy export
-
-Export policy as JSON
-
-Usage: `xkey policy export <name>`
-
-## xkey policy get
-
-Show details of a PCR policy
-
-Usage: `xkey policy get <name>`
-
-## xkey policy list
-
-List all PCR policies
-
-Usage: `xkey policy list [flags]`
-
-Aliases: ls
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--page` | int | 0 | Page number (1-based, 0 means list all) |
-| `--page-size` | int | 20 | Number of policies per page |
-
-## xkey policy refresh
-
-Refresh policy with current PCR values
-
-Usage: `xkey policy refresh <name>`
-
-## xkey policy set-auto-unseal
-
-Mark a policy as the auto-unseal policy
-
-Usage: `xkey policy set-auto-unseal <name>`
-
-## xkey policy verify
-
-Verify current PCR values against policy
-
-Usage: `xkey policy verify <name>`
-
 ## xkey provision
 
 Provision a fresh xkey instance for one agent
@@ -2403,6 +2321,18 @@ Inherited by subcommands:
 | `--simulator` | bool | false | Use TPM simulator instead of hardware TPM |
 | `--verbose`, `-v` | bool | false | Enable verbose output |
 
+## xkey tpm authority
+
+TPM policy authority
+
+Usage: `xkey tpm authority`
+
+## xkey tpm authority rotate
+
+Replace the policy authority
+
+Usage: `xkey tpm authority rotate`
+
 ## xkey tpm clear
 
 Clear TPM state
@@ -2616,6 +2546,86 @@ Usage: `xkey tpm pcrs [flags]`
 |---|---|---|---|
 | `--bank` | string |  | PCR bank to display (sha1, sha256, sha384, sha512) |
 | `--indices` | string |  | Comma-separated list of PCR indices (default: 0-23) |
+
+## xkey tpm policy
+
+Named TPM policies
+
+Usage: `xkey tpm policy`
+
+## xkey tpm policy auto-unseal
+
+Set or clear the barrier auto-unseal policy
+
+Usage: `xkey tpm policy auto-unseal [name] [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--off` | bool | false | Clear the auto-unseal policy |
+
+## xkey tpm policy create
+
+Create a named policy over the live PCR values
+
+Usage: `xkey tpm policy create <name> [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--auto-unseal` | bool | false | Also make it the barrier auto-unseal policy (see 'tpm policy auto-unseal') |
+| `--bank` | string | sha256 | PCR bank: sha1, sha256, sha384 or sha512 |
+| `--pcrs` | string |  | PCR indices, e.g. 0,7 or 0-7 (required) |
+
+## xkey tpm policy delete
+
+Delete a policy no object uses
+
+Usage: `xkey tpm policy delete <name>`
+
+Aliases: rm
+
+## xkey tpm policy get
+
+Show a policy and its captured PCR values
+
+Usage: `xkey tpm policy get <name>`
+
+## xkey tpm policy key
+
+Show the policy a TPM key is bound to
+
+Usage: `xkey tpm policy key <key-id>`
+
+## xkey tpm policy list
+
+List policies with their object counts
+
+Usage: `xkey tpm policy list`
+
+Aliases: ls
+
+## xkey tpm policy objects
+
+List the keys and sealed objects bound to a policy
+
+Usage: `xkey tpm policy objects <name>`
+
+## xkey tpm policy revoke
+
+Withdraw the policy's approval
+
+Usage: `xkey tpm policy revoke <name>`
+
+## xkey tpm policy update
+
+Re-capture the PCR values and re-approve the policy
+
+Usage: `xkey tpm policy update <name>`
+
+## xkey tpm policy verify
+
+Compare the live PCRs with the captured ones
+
+Usage: `xkey tpm policy verify <name>`
 
 ## xkey tpm provision
 

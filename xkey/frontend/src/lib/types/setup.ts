@@ -48,7 +48,6 @@ export interface SetupChoices {
   storage_passphrase: string;
   enable_master_password: boolean;
   master_password: string;
-  enable_platform_policy: boolean;
   tpm_seal_passwords: boolean;
   password_store_mode: string;
   so_pin: string;

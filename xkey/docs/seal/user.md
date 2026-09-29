@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — User Guide
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## Set up the barrier
 
@@ -44,10 +44,15 @@ password.
 
 ```bash
 # One-time human setup, on a TPM 2.0 machine with the barrier already
-# initialized with --strategy tpm2:
-xkey policy create boot-policy --pcrs 0,2,4,7 --bank sha256
-xkey policy set-auto-unseal boot-policy
+# initialized: capture the boot state as a named TPM policy, then seal the
+# barrier password in the TPM under it.
+xkey tpm policy create boot-policy --pcrs 0,2,4,7 --bank sha256
+echo "$BARRIER_PASSWORD" | xkey tpm policy auto-unseal boot-policy
 ```
+
+In the GUI: TPM → Policies → create the policy, then switch on its
+auto-unseal toggle (or Settings → Storage → Barrier Auto-Unseal) and enter
+the barrier password once.
 
 From then on:
 
@@ -61,12 +66,12 @@ xkey fido2 --storage barrier
 ```
 
 If the platform's measured boot state ever changes (a firmware or kernel
-update), the policy no longer matches and auto-unseal stops working — see
-"Recover from a PCR mismatch" below. It fails loudly (a logged warning
-naming the mismatch, then falls back to whatever the command's normal
-fallback is — a direct TPM unseal, or a password) rather than silently
-degrading, so this is something an operator will notice, not something
-that quietly stops protecting the barrier.
+update), the TPM refuses the policy and auto-unseal stops working — see
+"Recover after a platform change" below. It fails loudly (a logged warning
+naming the refusal, then the command's normal fallback — a password) rather
+than silently degrading, so this is something an operator will notice, not
+something that quietly stops protecting the barrier. The check is the TPM's:
+xKey never compares PCRs itself.
 
 For the agent-facing version of this guidance — including which commands
 are safe to run unattended and which are human-only — see the
@@ -85,27 +90,29 @@ A barrier sealed with a cloud KMS strategy needs no password at all —
 the connection settings `xkey barrier init` persisted and authenticate with
 the same ambient (or configured) credentials.
 
-## Recover from a PCR mismatch
+## Recover after a platform change
 
 After a firmware, BIOS, or kernel update, the platform's PCR values change
-and a previously-working auto-unseal policy stops matching:
+and the TPM stops releasing the barrier password:
 
 ```bash
-xkey policy verify boot-policy
-# Policy 'boot-policy': MISMATCH - 1 PCR(s) differ
-#   PCR[ 7]:
-#     Expected: ...
-#     Current:  ...
+xkey tpm policy verify boot-policy
+# Policy:    boot-policy
+# PCR state: PCRs changed: 7
+# Approval:  current
 ```
 
-If the new boot state is trusted (you made the update deliberately), re-capture it:
+If the new boot state is trusted (you made the update deliberately), unseal
+once with the password and re-approve the policy — nothing is re-sealed:
 
 ```bash
-xkey policy refresh boot-policy
+xkey tpm policy update boot-policy
 ```
 
-If it isn't trusted, leave the policy as-is: auto-unseal will keep refusing
-until someone investigates, which is the intended fail-safe behavior.
+If it isn't trusted, leave the policy as-is: auto-unseal keeps refusing
+until someone investigates, which is the intended fail-safe behavior. To
+stop auto-unseal immediately everywhere, revoke the policy
+(`xkey tpm policy revoke boot-policy`).
 
 ## Check barrier status
 
@@ -115,23 +122,24 @@ xkey barrier status --json | jq .sealed
 xkey barrier status --source disk   # inspect on-disk state even while a daemon runs
 ```
 
-## Manage policies
+## Manage auto-unseal
 
 ```bash
-xkey policy list                 # all saved policies, with an [auto-unseal] tag
-xkey policy get boot-policy       # full detail, hex PCR digests
-xkey policy export boot-policy    # JSON to stdout
-xkey policy clear-auto-unseal     # stop auto-unsealing; the barrier falls back to a password
-xkey policy delete old-policy     # refused if old-policy is the current auto-unseal designation
+xkey tpm policy list                  # the auto-unseal policy is marked in the AUTO-UNSEAL column
+xkey tpm policy auto-unseal --off     # stop auto-unsealing; the barrier falls back to its password
+xkey tpm policy delete old-policy     # refused, listing the objects, while anything (auto-unseal included) uses it
 ```
 
-## GUI: PCR-bound LUKS volume auto-unseal
+Everything else about named TPM policies is in
+[docs/tpm-policies/user.md](../../../docs/tpm-policies/user.md).
 
-The desktop GUI has a separate, older auto-unseal path for a LUKS-encrypted
+## GUI: TPM-sealed LUKS volume auto-unseal
+
+The desktop GUI has a separate auto-unseal path for a LUKS-encrypted
 storage volume (as opposed to the barrier above): the first-run setup
-wizard can seal the LUKS passphrase to the TPM, optionally bound to a
-platform policy captured during setup, so the volume unlocks automatically
-at GUI startup. This is configured entirely through the setup wizard, not
+wizard (or Settings → Storage) seals the LUKS passphrase in the TPM under
+the built-in platform policy, so the volume unlocks automatically at GUI
+startup. This is configured entirely through the setup wizard, not
 the CLI — see [setup-wizard/](../setup-wizard/) for that flow. It is
 unrelated to the barrier auto-unseal above: a LUKS volume (if you chose
 LUKS storage) is unlocked first, and the barrier that lives on top of it is

@@ -21,8 +21,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
@@ -316,31 +314,6 @@ func TestFSC_ApplySetup_BarrierAlreadyInit_UnsealSucceeds(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // ApplySetup platform policy enabled with service present (L382-394)
-// ---------------------------------------------------------------------------
-
-func TestFSC_ApplySetup_PlatformPolicyServicePresent(t *testing.T) {
-	tw := newTestSetupWizard(&GUIConfigData{})
-
-	// Create a PlatformPolicyService (no TPM, so CreatePolicy fails).
-	tmpDir := t.TempDir()
-	policyPath := filepath.Join(tmpDir, "platform-policy.json")
-	ppSvc := NewPlatformPolicyService(policyPath)
-	ppSvc.SetContext(context.Background())
-	tw.svc.SetPlatformPolicyService(ppSvc)
-
-	result, err := tw.svc.ApplySetup(&SetupChoices{
-		Mode:    "standalone",
-		SOPin:   testSOPin,
-		UserPin: testUserPin,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	// CreatePolicy fails (no TPM), so it goes to the warning path.
-	assert.True(t, containsSubstring(result.Warnings, "platform policy creation failed"))
-}
-
-// ---------------------------------------------------------------------------
-// ApplySetup TPM provisioning steps 6+7 (L420-444)
 // ---------------------------------------------------------------------------
 
 func TestFSC_ApplySetup_TPMProvisioningWithHierarchyAuth(t *testing.T) {
@@ -1236,74 +1209,8 @@ func TestSetupCov_TPMSealedPasswordProtection(t *testing.T) {
 	require.NotNil(t, result)
 
 	// Barrier is unavailable (barrierSvc nil), so the tpm_sealed path runs.
-	// platform policy service is also nil → warning expected.
-	assert.True(t, containsSubstring(result.Warnings, "platform policy"),
-		"expected platform policy warning, got warnings=%v", result.Warnings)
 	assert.True(t, containsSubstring(result.Warnings, "barrier service unavailable"),
 		"expected barrier service unavailable warning, got warnings=%v", result.Warnings)
-}
-
-// TestSetupCov_TPMSealedUserPinSealSuccess covers the success path
-// at L471 in ApplySetup where SealData succeeds for user_pin.
-func TestSetupCov_TPMSealedUserPinSealSuccess(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create a working mock TPM.
-	mockTPMInst := &sealMockTPM{
-		mockTPM: *defaultMockTPM(),
-		canSeal: true,
-	}
-
-	// Shared SealService for both PP and wizard.
-	sealSvc := NewSealService(filepath.Join(tmpDir, "seals"))
-	wireSealMockClient(sealSvc, mockTPMInst)
-	sealSvc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return mockTPMInst
-	}))
-	sealSvc.SetContext(context.Background())
-
-	// PlatformPolicyService.
-	policyPath := filepath.Join(tmpDir, "platform_policy.json")
-	policyMock := &mockTPM{
-		device: "/dev/tpmrm0",
-		pcrBanks: []xkms.PCRBank{{
-			Algorithm: "SHA256",
-			PCRs: []xkms.PCR{
-				{ID: 0, Value: []byte{0xAA}},
-				{ID: 7, Value: []byte{0xBB}},
-			},
-		}},
-	}
-	ppPolicySvc := NewPlatformPolicyService(policyPath)
-	ppPolicySvc.SetContext(context.Background())
-	ppPolicySvc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return policyMock
-	}))
-	_, err := ppPolicySvc.CreatePolicy([]int{0, 7}, "sha256")
-	require.NoError(t, err)
-	sealSvc.SetPlatformPolicyService(ppPolicySvc)
-
-	// Wire up the setup wizard with the SAME working SealService.
-	tw := newTestSetupWizard(&GUIConfigData{})
-	tw.svc.SetSealService(sealSvc)
-
-	result, err := tw.svc.ApplySetup(&SetupChoices{
-		Mode:              "standalone",
-		SOPin:             testSOPin,
-		UserPin:           testUserPin,
-		StorageType:       "barrier",
-		BarrierPassword:   "testbarrier123",
-		PasswordStoreMode: "tpm_sealed",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// Both SetModeTPMSealed and user_pin seal should succeed.
-	// No warnings about user_pin seal.
-	for _, w := range result.Warnings {
-		assert.NotContains(t, w, "user_pin seal:",
-			"user_pin seal should succeed, got warning: %s", w)
-	}
 }
 
 // TestSetupCov_SkipSetup_InitDataDirFails covers the SkipSetup path where

@@ -14,17 +14,11 @@
 package services
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"math/big"
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
@@ -35,36 +29,6 @@ import (
 
 // ---------------------------------------------------------------------------
 // Helper: create TPMService with temp dataDir and mock
-// ---------------------------------------------------------------------------
-
-func ftCreateService(t *testing.T, mock *mockTPM) (*TPMService, string) {
-	t.Helper()
-	svc := newServiceWithMock(mock)
-	dataDir := t.TempDir()
-	svc.SetDataDir(dataDir)
-	svc.SetPolicyStore(newTestPCRPolicyStore(t))
-	return svc, dataDir
-}
-
-// ftCreatePolicyService creates a PlatformPolicyService wired to the given
-// policyMockTPM with a temp directory.
-func ftCreatePolicyService(t *testing.T, mock *policyMockTPM) *PlatformPolicyService {
-	t.Helper()
-	policyPath := filepath.Join(t.TempDir(), "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-	svc.SetContext(context.Background())
-	return svc
-}
-
-// ============================================================================
-// TPM SERVICE TESTS
-// ============================================================================
-
-// ---------------------------------------------------------------------------
-// ChangeOwnerAuth / ChangeEndorsementAuth / ChangeLockoutAuth
-// These are at 60% because only the defer block is covered.
-// The actual path goes through changeHierarchyAuth.
 // ---------------------------------------------------------------------------
 
 func TestFT_ChangeOwnerAuth_Success(t *testing.T) {
@@ -170,151 +134,6 @@ func TestFT_GetVerificationStatus_WithTPM(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // ListPolicies (60%) - only defer is uncovered
-// ---------------------------------------------------------------------------
-
-func TestFT_ListPolicies_NoStoreConfigured(t *testing.T) {
-	mock := defaultMockTPM()
-	svc := newServiceWithMock(mock)
-	// No policy store wired -> ErrTPMPolicyStoreNotSet.
-	_, err := svc.ListPolicies()
-	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
-}
-
-func TestFT_ListPolicies_WithPolicies(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-
-	policies := []PCRPolicy{
-		{Name: "test-policy", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
-	}
-	seedTPMServicePolicies(t, svc, policies)
-
-	result, err := svc.ListPolicies()
-	require.NoError(t, err)
-	require.Len(t, result, 1)
-	assert.Equal(t, "test-policy", result[0].Name)
-}
-
-// ---------------------------------------------------------------------------
-// ListPolicyAssignments (60%) - only defer is uncovered
-// ---------------------------------------------------------------------------
-
-func TestFT_ListPolicyAssignments_Empty(t *testing.T) {
-	mock := defaultMockTPM()
-	svc := newServiceWithMock(mock)
-	assignments, err := svc.ListPolicyAssignments()
-	require.NoError(t, err)
-	assert.Empty(t, assignments)
-}
-
-func TestFT_ListPolicyAssignments_WithAssignments(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, dataDir := ftCreateService(t, mock)
-
-	// Write an assignment file
-	assignments := []PolicyAssignment{
-		{PolicyName: "policy-a", KeyHandle: "0x81000001", AssignedAt: time.Now().Format(time.RFC3339)},
-	}
-	data, err := json.MarshalIndent(assignments, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), data, 0600))
-
-	result, err := svc.ListPolicyAssignments()
-	require.NoError(t, err)
-	require.Len(t, result, 1)
-	assert.Equal(t, "policy-a", result[0].PolicyName)
-}
-
-// ---------------------------------------------------------------------------
-// ListCompositePolicies (60%) - only defer is uncovered
-// ---------------------------------------------------------------------------
-
-func TestFT_ListCompositePolicies_Empty(t *testing.T) {
-	mock := defaultMockTPM()
-	svc := newServiceWithMock(mock)
-	policies, err := svc.ListCompositePolicies()
-	require.NoError(t, err)
-	assert.Empty(t, policies)
-}
-
-func TestFT_ListCompositePolicies_WithPolicies(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, dataDir := ftCreateService(t, mock)
-
-	// Write a composite policies file
-	policies := []CompositePolicy{
-		{Name: "comp-policy", Operator: "AND"},
-	}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, compositePoliciesFile), data, 0600))
-
-	result, err := svc.ListCompositePolicies()
-	require.NoError(t, err)
-	require.Len(t, result, 1)
-	assert.Equal(t, "comp-policy", result[0].Name)
-}
-
-// ---------------------------------------------------------------------------
-// GetConflictingAssignments (86.7%)
-// Cover: empty keyHandles, whitespace handles, no conflicts path
-// ---------------------------------------------------------------------------
-
-func TestFT_GetConflictingAssignments_EmptyInput(t *testing.T) {
-	mock := defaultMockTPM()
-	svc := newServiceWithMock(mock)
-	conflicts, err := svc.GetConflictingAssignments([]string{})
-	require.NoError(t, err)
-	assert.Empty(t, conflicts)
-}
-
-func TestFT_GetConflictingAssignments_WhitespaceHandles(t *testing.T) {
-	mock := defaultMockTPM()
-	svc := newServiceWithMock(mock)
-	conflicts, err := svc.GetConflictingAssignments([]string{"  ", "", "   "})
-	require.NoError(t, err)
-	assert.Empty(t, conflicts)
-}
-
-func TestFT_GetConflictingAssignments_WithConflicts(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, dataDir := ftCreateService(t, mock)
-
-	// Write assignments
-	assignments := []PolicyAssignment{
-		{PolicyName: "pol-1", KeyHandle: "0x81000001", AssignedAt: "2025-01-01T00:00:00Z"},
-		{PolicyName: "pol-2", KeyHandle: "0x81000002", AssignedAt: "2025-01-02T00:00:00Z"},
-	}
-	data, err := json.MarshalIndent(assignments, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), data, 0600))
-
-	conflicts, err := svc.GetConflictingAssignments([]string{"0x81000001", "0x81000003"})
-	require.NoError(t, err)
-	require.Len(t, conflicts, 1)
-	assert.Equal(t, "0x81000001", conflicts[0].KeyHandle)
-	assert.Equal(t, "pol-1", conflicts[0].CurrentPolicy)
-}
-
-func TestFT_GetConflictingAssignments_NoConflicts(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, dataDir := ftCreateService(t, mock)
-
-	// Write assignments for different handles
-	assignments := []PolicyAssignment{
-		{PolicyName: "pol-1", KeyHandle: "0x81000001", AssignedAt: "2025-01-01T00:00:00Z"},
-	}
-	data, err := json.MarshalIndent(assignments, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), data, 0600))
-
-	conflicts, err := svc.GetConflictingAssignments([]string{"0x81000099"})
-	require.NoError(t, err)
-	assert.Empty(t, conflicts)
-}
-
-// ---------------------------------------------------------------------------
-// GetEKECCInfo (78.6%) - cover cert present path
 // ---------------------------------------------------------------------------
 
 func TestFT_GetEKECCInfo_CertPresent(t *testing.T) {
@@ -484,104 +303,6 @@ func TestFT_DeleteNVIndex_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestFT_DeleteNVIndex_TPMError(t *testing.T) {
-	mock := defaultMockTPM()
-	mock.nvUndefineErr = errors.New("undefine failed")
-	svc := newServiceWithMock(mock)
-	err := svc.DeleteNVIndex(0x01500000, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "undefine failed")
-}
-
-// ---------------------------------------------------------------------------
-// GetCompositePolicy (77.8%) - not-found path
-// ---------------------------------------------------------------------------
-
-func TestFT_GetCompositePolicy_NotFound(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	_, err := svc.GetCompositePolicy("nonexistent")
-	assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
-}
-
-func TestFT_GetCompositePolicy_Found(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, dataDir := ftCreateService(t, mock)
-
-	policies := []CompositePolicy{
-		{Name: "my-comp", Operator: "AND", Elements: []PolicyElement{{Type: "password", PasswordHash: "hash"}}},
-	}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, compositePoliciesFile), data, 0600))
-
-	result, err := svc.GetCompositePolicy("my-comp")
-	require.NoError(t, err)
-	assert.Equal(t, "my-comp", result.Name)
-	assert.Equal(t, "AND", result.Operator)
-}
-
-// ---------------------------------------------------------------------------
-// GetPolicy (77.8%) - not-found path
-// ---------------------------------------------------------------------------
-
-func TestFT_GetPolicy_NotFound(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	seedTPMServicePolicies(t, svc, nil)
-	_, err := svc.GetPolicy("nonexistent")
-	assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
-}
-
-func TestFT_GetPolicy_Found(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-
-	policies := []PCRPolicy{
-		{Name: "my-pol", PCRSelections: []PCRSelection{{Index: 7, Bank: "sha256"}}},
-	}
-	seedTPMServicePolicies(t, svc, policies)
-
-	result, err := svc.GetPolicy("my-pol")
-	require.NoError(t, err)
-	assert.Equal(t, "my-pol", result.Name)
-}
-
-// ---------------------------------------------------------------------------
-// VerifyPolicyPassword (81.8%) - not-found, no password element
-// ---------------------------------------------------------------------------
-
-func TestFT_VerifyPolicyPassword_PolicyNotFound(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	_, err := svc.VerifyPolicyPassword("nonexistent", "pass")
-	assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
-}
-
-func TestFT_VerifyPolicyPassword_NoPasswordElement(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, dataDir := ftCreateService(t, mock)
-
-	// Create a composite policy with only PCR elements
-	policies := []CompositePolicy{
-		{
-			Name:     "pcr-only",
-			Operator: "SINGLE",
-			Elements: []PolicyElement{{Type: "pcr", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}}},
-		},
-	}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, compositePoliciesFile), data, 0600))
-
-	_, err = svc.VerifyPolicyPassword("pcr-only", "some-pass")
-	assert.ErrorIs(t, err, ErrTPMInvalidPolicyType)
-}
-
-// ---------------------------------------------------------------------------
-// ListTransientHandles (86.7%) - success path with handles
-// ---------------------------------------------------------------------------
-
 func TestFT_ListTransientHandles_NoTPM(t *testing.T) {
 	svc := NewTPMService()
 	_, err := svc.ListTransientHandles()
@@ -598,102 +319,6 @@ func TestFT_ListTransientHandles_Success(t *testing.T) {
 	assert.Equal(t, "0x80000001", result[0].Handle)
 	assert.Equal(t, "transient", result[0].Type)
 }
-
-func TestFT_ListTransientHandles_TPMError(t *testing.T) {
-	mock := defaultMockTPM()
-	mock.fixedPropsErr = errors.New("transient list failed")
-	mock.fixedProps = nil
-	svc := newServiceWithMock(mock)
-	_, err := svc.ListTransientHandles()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "transient list failed")
-}
-
-// ---------------------------------------------------------------------------
-// CreatePasswordPolicy (82.4%) - validation paths
-// ---------------------------------------------------------------------------
-
-func TestFT_CreatePasswordPolicy_EmptyName(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	err := svc.CreatePasswordPolicy("", "desc", "password", false)
-	assert.ErrorIs(t, err, ErrTPMInvalidPolicyName)
-}
-
-func TestFT_CreatePasswordPolicy_EmptyPassword(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	err := svc.CreatePasswordPolicy("test-pass-pol", "desc", "", false)
-	assert.ErrorIs(t, err, ErrTPMInvalidAuth)
-}
-
-func TestFT_CreatePasswordPolicy_WhitespaceName(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	err := svc.CreatePasswordPolicy("   ", "desc", "pass", false)
-	assert.ErrorIs(t, err, ErrTPMInvalidPolicyName)
-}
-
-func TestFT_CreatePasswordPolicy_WhitespacePassword(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	err := svc.CreatePasswordPolicy("test-pass", "desc", "   ", false)
-	assert.ErrorIs(t, err, ErrTPMInvalidAuth)
-}
-
-// ---------------------------------------------------------------------------
-// CreatePCROrPasswordPolicy (84.2%) - validation paths
-// ---------------------------------------------------------------------------
-
-func TestFT_CreatePCROrPasswordPolicy_EmptyName(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	err := svc.CreatePCROrPasswordPolicy("", "desc", []PCRSelection{{Index: 0, Bank: "sha256"}}, "sha256", "pass", false)
-	assert.ErrorIs(t, err, ErrTPMInvalidPolicyName)
-}
-
-func TestFT_CreatePCROrPasswordPolicy_EmptyPCRs(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	err := svc.CreatePCROrPasswordPolicy("test-or", "desc", nil, "sha256", "pass", false)
-	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
-}
-
-func TestFT_CreatePCROrPasswordPolicy_EmptyPassword(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	err := svc.CreatePCROrPasswordPolicy("test-or", "desc", []PCRSelection{{Index: 0, Bank: "sha256"}}, "sha256", "", false)
-	assert.ErrorIs(t, err, ErrTPMInvalidAuth)
-}
-
-// ---------------------------------------------------------------------------
-// CreatePCRAndPasswordPolicy (84.2%) - validation paths
-// ---------------------------------------------------------------------------
-
-func TestFT_CreatePCRAndPasswordPolicy_EmptyName(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	err := svc.CreatePCRAndPasswordPolicy("", "desc", []PCRSelection{{Index: 0, Bank: "sha256"}}, "sha256", "pass", false)
-	assert.ErrorIs(t, err, ErrTPMInvalidPolicyName)
-}
-
-func TestFT_CreatePCRAndPasswordPolicy_EmptyPCRs(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	err := svc.CreatePCRAndPasswordPolicy("test-and", "desc", nil, "sha256", "pass", false)
-	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
-}
-
-func TestFT_CreatePCRAndPasswordPolicy_EmptyPassword(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	err := svc.CreatePCRAndPasswordPolicy("test-and", "desc", []PCRSelection{{Index: 0, Bank: "sha256"}}, "sha256", "  ", false)
-	assert.ErrorIs(t, err, ErrTPMInvalidAuth)
-}
-
-// ---------------------------------------------------------------------------
-// GetPlatformPolicy (83.3%) - no TPM path
-// ---------------------------------------------------------------------------
 
 func TestFT_GetPlatformPolicy_NoTPM(t *testing.T) {
 	svc := NewTPMService()
@@ -817,50 +442,6 @@ func TestFT_ForceResetLockout_NoTPM(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // GetNVSummary (89.5%) - no TPM path
-// ---------------------------------------------------------------------------
-
-func TestFT_GetNVSummary_NoTPM(t *testing.T) {
-	svc := NewTPMService()
-	_, err := svc.GetNVSummary()
-	assert.ErrorIs(t, err, ErrTPMNotAvailable)
-}
-
-// ---------------------------------------------------------------------------
-// saveAssignments (85.7%) - dataDir not set
-// ---------------------------------------------------------------------------
-
-func TestFT_SaveAssignments_NoDataDir(t *testing.T) {
-	mock := defaultMockTPM()
-	svc := newServiceWithMock(mock)
-	// No dataDir set -> saveAssignments returns error
-	err := svc.saveAssignments([]PolicyAssignment{})
-	assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
-}
-
-// ---------------------------------------------------------------------------
-// saveCompositePolicies (85.7%) - dataDir not set
-// ---------------------------------------------------------------------------
-
-func TestFT_SaveCompositePolicies_NoDataDir(t *testing.T) {
-	mock := defaultMockTPM()
-	svc := newServiceWithMock(mock)
-	err := svc.saveCompositePolicies([]CompositePolicy{})
-	assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
-}
-
-// ---------------------------------------------------------------------------
-// savePolicies (88.9%) - dataDir not set
-// ---------------------------------------------------------------------------
-
-func TestFT_SavePolicies_NoStoreConfigured(t *testing.T) {
-	mock := defaultMockTPM()
-	svc := newServiceWithMock(mock)
-	err := svc.savePolicies([]PCRPolicy{})
-	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
-}
-
-// ---------------------------------------------------------------------------
-// GetSharedSRKInfo (83.3%) - no TPM / attrs error paths
 // ---------------------------------------------------------------------------
 
 func TestFT_GetSharedSRKInfo_NoTPM(t *testing.T) {
@@ -1029,416 +610,6 @@ func TestFT_GetEventLog_NoTPM(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // GetStatus (70%) - configured but TPM unavailable for verify
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_GetStatus_ConfiguredNoTPM(t *testing.T) {
-	policyPath := filepath.Join(t.TempDir(), "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-	// No TPM accessor set
-
-	// Manually store a policy definition
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0, 7},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aabbccdd", 7: "11223344"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	svc.policy.Store(def)
-
-	status, err := svc.GetStatus()
-	require.NoError(t, err)
-	require.NotNil(t, status)
-	assert.True(t, status.Configured)
-	// TPM unavailable -> verifyDigests fails -> Valid=false
-	assert.False(t, status.Valid)
-}
-
-// ---------------------------------------------------------------------------
-// CreatePolicy (83.3%) - save error (read-only dir)
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_CreatePolicy_SaveError(t *testing.T) {
-	// Create policy path inside a non-writable location
-	policyPath := filepath.Join("/dev/null", "subdir", "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-	mock := defaultPolicyMock()
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-
-	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-// ---------------------------------------------------------------------------
-// UpdatePolicy (85%) - not configured, readPCRs error, save error
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_UpdatePolicy_NotConfigured(t *testing.T) {
-	svc := ftCreatePolicyService(t, defaultPolicyMock())
-	_, err := svc.UpdatePolicy([]int{0}, "sha256")
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestFT_PlatformPolicy_UpdatePolicy_InvalidPCRs(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	// First create a policy
-	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
-	require.NoError(t, err)
-
-	// Then update with invalid PCRs
-	_, err = svc.UpdatePolicy(nil, "sha256")
-	assert.ErrorIs(t, err, ErrPolicyInvalidPCRs)
-}
-
-func TestFT_PlatformPolicy_UpdatePolicy_InvalidBank(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	_, err := svc.CreatePolicy([]int{0}, "sha256")
-	require.NoError(t, err)
-
-	_, err = svc.UpdatePolicy([]int{0}, "md5")
-	assert.ErrorIs(t, err, ErrPolicyInvalidBank)
-}
-
-func TestFT_PlatformPolicy_UpdatePolicy_ReadPCRsError(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	_, err := svc.CreatePolicy([]int{0}, "sha256")
-	require.NoError(t, err)
-
-	// Now break the TPM
-	mock.pcrBanksErr = errors.New("tpm failure")
-	_, err = svc.UpdatePolicy([]int{0}, "sha256")
-	assert.ErrorIs(t, err, ErrPolicyVerifyFailed)
-}
-
-// ---------------------------------------------------------------------------
-// VerifyPolicy (66.7%) - not configured, TPM error
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_VerifyPolicy_NotConfigured(t *testing.T) {
-	svc := ftCreatePolicyService(t, defaultPolicyMock())
-	_, err := svc.VerifyPolicy()
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestFT_PlatformPolicy_VerifyPolicy_TPMError(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	// Create policy
-	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
-	require.NoError(t, err)
-
-	// Break the TPM
-	mock.pcrBanksErr = errors.New("tpm died")
-	valid, err := svc.VerifyPolicy()
-	require.Error(t, err)
-	assert.False(t, valid)
-}
-
-func TestFT_PlatformPolicy_VerifyPolicy_Mismatch(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	// Create policy
-	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
-	require.NoError(t, err)
-
-	// Change PCR values to simulate drift
-	mock.pcrBanksOverride = []xkms.PCRBank{
-		{
-			Algorithm: "SHA256",
-			PCRs: []xkms.PCR{
-				{ID: 0, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}}, // Different from stored
-				{ID: 7, Value: []byte{0x11, 0x22, 0x33, 0x44}},
-			},
-		},
-	}
-
-	valid, err := svc.VerifyPolicy()
-	require.NoError(t, err)
-	assert.False(t, valid)
-}
-
-func TestFT_PlatformPolicy_VerifyPolicy_Success(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
-	require.NoError(t, err)
-
-	valid, err := svc.VerifyPolicy()
-	require.NoError(t, err)
-	assert.True(t, valid)
-}
-
-// ---------------------------------------------------------------------------
-// ExportPolicy (85%) - not configured, empty digests, empty pcrs
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_ExportPolicy_NotConfigured(t *testing.T) {
-	svc := ftCreatePolicyService(t, defaultPolicyMock())
-	_, err := svc.ExportPolicy()
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestFT_PlatformPolicy_ExportPolicy_EmptyDigests(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	// Store a policy with empty digests
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		Digests:   map[int]string{},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	svc.policy.Store(def)
-
-	result, err := svc.ExportPolicy()
-	require.NoError(t, err)
-	assert.Contains(t, result, "Platform Policy")
-	assert.Contains(t, result, "sha256")
-	// No pcr_digests key when empty
-	assert.NotContains(t, result, "pcr_digests")
-}
-
-func TestFT_PlatformPolicy_ExportPolicy_EmptyPCRs(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aabbccdd"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	svc.policy.Store(def)
-
-	result, err := svc.ExportPolicy()
-	require.NoError(t, err)
-	assert.Contains(t, result, "Platform Policy")
-	// No pcr_selections key when empty
-	assert.NotContains(t, result, "pcr_selections")
-}
-
-// ---------------------------------------------------------------------------
-// GetPlatformPolicyAsPCRPolicy (75%) - empty digests (nil valid)
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_AsPCRPolicy_EmptyDigests(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		Digests:   map[int]string{},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	svc.policy.Store(def)
-
-	result, err := svc.GetPlatformPolicyAsPCRPolicy()
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, "Platform Policy", result.Name)
-	assert.True(t, result.IsPlatformPolicy)
-	// Empty digests -> validatePlatformPolicyDigests returns nil
-	assert.Nil(t, result.Valid)
-}
-
-func TestFT_PlatformPolicy_AsPCRPolicy_NotConfigured(t *testing.T) {
-	svc := ftCreatePolicyService(t, defaultPolicyMock())
-	result, err := svc.GetPlatformPolicyAsPCRPolicy()
-	require.NoError(t, err)
-	assert.Nil(t, result)
-}
-
-func TestFT_PlatformPolicy_AsPCRPolicy_WithDigests(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
-	require.NoError(t, err)
-
-	result, err := svc.GetPlatformPolicyAsPCRPolicy()
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.IsPlatformPolicy)
-	require.NotNil(t, result.Valid)
-	assert.True(t, *result.Valid)
-}
-
-// ---------------------------------------------------------------------------
-// RefreshPlatformPolicyPCRs (85%) - not configured, readPCRs error, save error
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_RefreshPCRs_NotConfigured(t *testing.T) {
-	svc := ftCreatePolicyService(t, defaultPolicyMock())
-	_, err := svc.RefreshPlatformPolicyPCRs()
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestFT_PlatformPolicy_RefreshPCRs_ReadError(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	_, err := svc.CreatePolicy([]int{0}, "sha256")
-	require.NoError(t, err)
-
-	mock.pcrBanksErr = errors.New("pcr read failed")
-	_, err = svc.RefreshPlatformPolicyPCRs()
-	assert.ErrorIs(t, err, ErrPolicyVerifyFailed)
-}
-
-func TestFT_PlatformPolicy_RefreshPCRs_SaveError(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	_, err := svc.CreatePolicy([]int{0}, "sha256")
-	require.NoError(t, err)
-
-	// Point the policy path to a read-only location
-	svc.policyPath = filepath.Join("/dev/null", "subdir", "platform.policy")
-	_, err = svc.RefreshPlatformPolicyPCRs()
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-// ---------------------------------------------------------------------------
-// verifyDigests (81%) - missing PCR in live, invalid hex
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_VerifyDigests_MissingPCR(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	// Store a policy referencing PCR 15 which the mock doesn't have
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0, 15},
-		Bank:    "sha256",
-		Digests: map[int]string{0: hex.EncodeToString([]byte{0xAA, 0xBB, 0xCC, 0xDD}), 15: "deadbeef"},
-	}
-	svc.policy.Store(def)
-
-	valid, err := svc.VerifyPolicy()
-	require.NoError(t, err)
-	// PCR 15 not in live -> mismatch
-	assert.False(t, valid)
-}
-
-func TestFT_PlatformPolicy_VerifyDigests_InvalidStoredHex(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	// Store a policy with invalid hex in stored digests
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "NOT_HEX_$$"},
-	}
-	svc.policy.Store(def)
-
-	valid, err := svc.VerifyPolicy()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrPolicyVerifyFailed)
-	assert.False(t, valid)
-}
-
-// ---------------------------------------------------------------------------
-// savePolicy (83.3%) - MkdirAll error, WriteFile error
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_SavePolicy_DirCreationError(t *testing.T) {
-	// Use /dev/null as parent - can't create subdirectories under it
-	svc := NewPlatformPolicyService(filepath.Join("/dev/null", "subdir", "deep", "platform.policy"))
-
-	def := &PlatformPolicyDefinition{
-		PCRs: []int{0},
-		Bank: "sha256",
-	}
-	err := svc.savePolicy(def)
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-func TestFT_PlatformPolicy_SavePolicy_WriteFileError(t *testing.T) {
-	// Create a directory where the .tmp file should go, which will cause
-	// WriteFile to fail because it can't write to a directory path
-	dir := t.TempDir()
-	tmpFilePath := filepath.Join(dir, "platform.policy.tmp")
-	require.NoError(t, os.MkdirAll(tmpFilePath, 0700)) // Create dir at .tmp path
-
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform.policy"))
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "aabb"},
-	}
-	err := svc.savePolicy(def)
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-// ---------------------------------------------------------------------------
-// validatePCRSelection edge cases
-// ---------------------------------------------------------------------------
-
-func TestFT_ValidatePCRSelection_NegativeIndex(t *testing.T) {
-	err := validatePCRSelection([]int{-1})
-	assert.ErrorIs(t, err, ErrPolicyInvalidPCRs)
-}
-
-func TestFT_ValidatePCRSelection_ExactMax(t *testing.T) {
-	// PCR 23 is valid (maxPCRIndex = 23)
-	err := validatePCRSelection([]int{23})
-	require.NoError(t, err)
-}
-
-func TestFT_ValidatePCRSelection_AboveMax(t *testing.T) {
-	err := validatePCRSelection([]int{24})
-	assert.ErrorIs(t, err, ErrPolicyInvalidPCRs)
-}
-
-// ---------------------------------------------------------------------------
-// validatePCRBank edge cases
-// ---------------------------------------------------------------------------
-
-func TestFT_ValidatePCRBank_InvalidName(t *testing.T) {
-	err := validatePCRBank("sm3")
-	assert.ErrorIs(t, err, ErrPolicyInvalidBank)
-}
-
-func TestFT_ValidatePCRBank_CaseSensitive(t *testing.T) {
-	// Upper case should fail since validPCRBanks has lowercase keys
-	err := validatePCRBank("SHA256")
-	assert.ErrorIs(t, err, ErrPolicyInvalidBank)
-}
-
-// ---------------------------------------------------------------------------
-// UpdatePolicy - save error path
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_UpdatePolicy_SaveError(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	_, err := svc.CreatePolicy([]int{0}, "sha256")
-	require.NoError(t, err)
-
-	// Point to invalid path
-	svc.policyPath = filepath.Join("/dev/null", "deep", "platform.policy")
-	_, err = svc.UpdatePolicy([]int{0}, "sha256")
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-// ---------------------------------------------------------------------------
-// PlatformSRKInfo (90%) - cover PlatformKeyStore nil
 // ---------------------------------------------------------------------------
 
 func TestFT_GetPlatformSRKInfo_NoPKS(t *testing.T) {
@@ -1656,108 +827,6 @@ func TestFT_WriteNVData_NoTPM(t *testing.T) {
 // ReadNVData (90.9%) - no TPM
 // ---------------------------------------------------------------------------
 
-func TestFT_ReadNVData_NoTPM(t *testing.T) {
-	svc := NewTPMService()
-	_, err := svc.ReadNVData(0x01500000, 64, "")
-	assert.ErrorIs(t, err, ErrTPMNotAvailable)
-}
-
-// ---------------------------------------------------------------------------
-// ComparePolicyPCRs (93.3%) - empty name
-// ---------------------------------------------------------------------------
-
-func TestFT_ComparePolicyPCRs_EmptyName(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	_, err := svc.ComparePolicyPCRs("")
-	assert.ErrorIs(t, err, ErrTPMInvalidPolicyName)
-}
-
-func TestFT_ComparePolicyPCRs_WhitespaceName(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := ftCreateService(t, mock)
-	_, err := svc.ComparePolicyPCRs("   ")
-	assert.ErrorIs(t, err, ErrTPMInvalidPolicyName)
-}
-
-// ---------------------------------------------------------------------------
-// getPolicyContext fallback
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_GetPolicyContext_FallbackToBackground(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	// ctx is nil, should return context.Background()
-	ctx := svc.getPolicyContext()
-	require.NotNil(t, ctx)
-}
-
-func TestFT_PlatformPolicy_GetPolicyContext_WithContext(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	expected := context.Background()
-	svc.SetContext(expected)
-	ctx := svc.getPolicyContext()
-	assert.Equal(t, expected, ctx)
-}
-
-// ---------------------------------------------------------------------------
-// GetPolicyPCRs - not configured
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_GetPolicyPCRs_NotConfigured(t *testing.T) {
-	svc := ftCreatePolicyService(t, defaultPolicyMock())
-	pcrs, bank, err := svc.GetPolicyPCRs()
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-	assert.Nil(t, pcrs)
-	assert.Empty(t, bank)
-}
-
-func TestFT_PlatformPolicy_GetPolicyPCRs_Configured(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
-	require.NoError(t, err)
-
-	pcrs, bank, err := svc.GetPolicyPCRs()
-	require.NoError(t, err)
-	assert.Equal(t, []int{0, 7}, pcrs)
-	assert.Equal(t, "sha256", bank)
-}
-
-// ---------------------------------------------------------------------------
-// DeletePolicy - not configured, remove error suppressed
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_DeletePolicy_NotConfigured(t *testing.T) {
-	svc := ftCreatePolicyService(t, defaultPolicyMock())
-	err := svc.DeletePolicy()
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-// ---------------------------------------------------------------------------
-// ExportPolicy - with populated digests and PCRs
-// ---------------------------------------------------------------------------
-
-func TestFT_PlatformPolicy_ExportPolicy_WithDigestsAndPCRs(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := ftCreatePolicyService(t, mock)
-
-	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
-	require.NoError(t, err)
-
-	result, err := svc.ExportPolicy()
-	require.NoError(t, err)
-	assert.Contains(t, result, "Platform Policy")
-	assert.Contains(t, result, "pcr_selections")
-	assert.Contains(t, result, "pcr_digests")
-	assert.Contains(t, result, "sha256:0")
-	assert.Contains(t, result, "sha256:7")
-}
-
-// ---------------------------------------------------------------------------
-// isTPMAuthError - additional coverage for string-based detection
-// ---------------------------------------------------------------------------
-
 func TestFT_IsTPMAuthError_StringBased(t *testing.T) {
 	assert.True(t, isTPMAuthError(errors.New("some AUTH_FAIL occurred")))
 	assert.True(t, isTPMAuthError(errors.New("bad_auth detected")))
@@ -1843,4 +912,45 @@ func TestFT_GetEKECCInfo_ECCSAKeyInCert(t *testing.T) {
 	require.NotNil(t, info)
 	assert.True(t, info.Present)
 	assert.Equal(t, 384, info.KeySize)
+}
+
+func TestFT_DeleteNVIndex_TPMError(t *testing.T) {
+	mock := defaultMockTPM()
+	mock.nvUndefineErr = errors.New("undefine failed")
+	svc := newServiceWithMock(mock)
+	err := svc.DeleteNVIndex(0x01500000, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "undefine failed")
+}
+
+func TestFT_ListTransientHandles_TPMError(t *testing.T) {
+	mock := defaultMockTPM()
+	mock.fixedPropsErr = errors.New("transient list failed")
+	mock.fixedProps = nil
+	svc := newServiceWithMock(mock)
+	_, err := svc.ListTransientHandles()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transient list failed")
+}
+
+func TestFT_GetNVSummary_NoTPM(t *testing.T) {
+	svc := NewTPMService()
+	_, err := svc.GetNVSummary()
+	assert.ErrorIs(t, err, ErrTPMNotAvailable)
+}
+
+func TestFT_ReadNVData_NoTPM(t *testing.T) {
+	svc := NewTPMService()
+	_, err := svc.ReadNVData(0x01500000, 64, "")
+	assert.ErrorIs(t, err, ErrTPMNotAvailable)
+}
+
+// ftCreateService returns a TPMService over mock with a temporary data
+// directory.
+func ftCreateService(t *testing.T, mock *mockTPM) (*TPMService, string) {
+	t.Helper()
+	svc := newServiceWithMock(mock)
+	dataDir := t.TempDir()
+	svc.SetDataDir(dataDir)
+	return svc, dataDir
 }

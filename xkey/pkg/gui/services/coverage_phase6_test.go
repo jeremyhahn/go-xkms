@@ -30,8 +30,6 @@ import (
 	"testing"
 	"time"
 
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
@@ -384,13 +382,13 @@ func TestP6B_SealService_SealData_PanicRecovery(t *testing.T) {
 
 	// Empty label
 	entry, err = svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "", Data: "aGVsbG8="})
+		Label: "", Data: "aGVsbG8="})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealInvalidLabel)
 
 	// Empty data
 	entry, err = svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "test", Data: ""})
+		Label: "test", Data: ""})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealInvalidData)
 }
@@ -401,7 +399,7 @@ func TestP6B_SealService_SealData_Base64DecodeError(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	entry, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "test", Data: "not-valid-base64!!!"})
+		Label: "test", Data: "not-valid-base64!!!"})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealDecodeFailed)
 }
@@ -413,7 +411,7 @@ func TestP6B_SealService_SealData_BackendNotFound(t *testing.T) {
 
 	data := base64.StdEncoding.EncodeToString([]byte("secret"))
 	entry, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "test", Data: data, Backend: "nonexistent"})
+		Label: "test", Data: data, Backend: "nonexistent"})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealBackendNotFound)
 }
@@ -426,81 +424,9 @@ func TestP6B_SealService_SealData_CanSealFalse(t *testing.T) {
 
 	data := base64.StdEncoding.EncodeToString([]byte("secret"))
 	entry, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "test", Data: data, Backend: "mock"})
+		Label: "test", Data: data, Backend: "mock"})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealNotSupported)
-}
-
-func TestP6B_SealService_SealData_InvalidPolicyType(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewSealService(dir)
-	svc.SetContext(context.Background())
-	wireSealMockClient(svc, &sealMockTPM{mockTPM: *defaultMockTPM(), canSeal: true})
-
-	data := base64.StdEncoding.EncodeToString([]byte("secret"))
-	entry, err := svc.SealData(&SealRequest{
-		Label:      "test",
-		Data:       data,
-		Backend:    "mock",
-		PolicyType: "invalid_policy",
-	})
-	assert.Nil(t, entry)
-	assert.ErrorIs(t, err, ErrSealInvalidPolicyType)
-}
-
-func TestP6B_SealService_SealData_PasswordPolicyNoPassword(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewSealService(dir)
-	svc.SetContext(context.Background())
-	wireSealMockClient(svc, &sealMockTPM{mockTPM: *defaultMockTPM(), canSeal: true})
-
-	data := base64.StdEncoding.EncodeToString([]byte("secret"))
-	entry, err := svc.SealData(&SealRequest{
-		Label:      "test",
-		Data:       data,
-		Backend:    "mock",
-		PolicyType: string(PolicyTypePassword),
-		Password:   "",
-	})
-	assert.Nil(t, entry)
-	assert.ErrorIs(t, err, ErrSealPasswordRequired)
-}
-
-func TestP6B_SealService_SealData_PlatformPolicyRequiresTPM(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewSealService(dir)
-	svc.SetContext(context.Background())
-	wireSealMockClient(svc, &sealMockTPM{mockTPM: *defaultMockTPM(), canSeal: true})
-
-	data := base64.StdEncoding.EncodeToString([]byte("secret"))
-	entry, err := svc.SealData(&SealRequest{
-		Label:      "test",
-		Data:       data,
-		Backend:    "mock",
-		PolicyType: string(PolicyTypePlatformPolicy),
-	})
-	assert.Nil(t, entry)
-	assert.ErrorIs(t, err, ErrSealPolicyRequiresTPM)
-}
-
-func TestP6B_SealService_SealData_SuccessWithPassword(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewSealService(dir)
-	svc.SetContext(context.Background())
-	wireSealMockClient(svc, &sealMockTPM{mockTPM: *defaultMockTPM(), canSeal: true})
-
-	plaintext := []byte("my-secret-data")
-	data := base64.StdEncoding.EncodeToString(plaintext)
-	entry, err := svc.SealData(&SealRequest{
-		Label:      "pw-test",
-		Data:       data,
-		Backend:    "mock",
-		PolicyType: string(PolicyTypePassword),
-		Password:   "mypassword",
-	})
-	require.NoError(t, err)
-	assert.NotEmpty(t, entry.ID)
-	assert.Equal(t, "pw-test", entry.Label)
 }
 
 func TestP6B_SealService_UnsealData_PanicRecovery(t *testing.T) {
@@ -563,8 +489,7 @@ func TestP6B_SealService_SaveBlob_MarshalError(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	err := svc.saveBlob(&sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software", ID: "test"})
+		BackendID: "software", ID: "test"})
 	assert.ErrorIs(t, err, ErrSealStorageFailed)
 }
 
@@ -574,10 +499,9 @@ func TestP6B_SealService_SaveBlob_WriteSuccess(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-blob-123",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "test-blob-123",
+		Label:     "test",
 	}
 	err := svc.saveBlob(blob)
 	assert.NoError(t, err)
@@ -602,170 +526,6 @@ func TestP6B_SealService_EnsureStorageDir_RelativeDir(t *testing.T) {
 
 // ===========================================================================
 // 3. Platform Policy Service - error paths
-// ===========================================================================
-
-func TestP6B_PlatformPolicyService_GetStatus_PanicRecovery(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	status, err := svc.GetStatus()
-	assert.NoError(t, err)
-	assert.NotNil(t, status)
-	assert.False(t, status.Configured)
-}
-
-func TestP6B_PlatformPolicyService_CreatePolicy_InvalidPCRs(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	// Empty PCRs
-	status, err := svc.CreatePolicy([]int{}, "sha256")
-	assert.Nil(t, status)
-	assert.ErrorIs(t, err, ErrPolicyInvalidPCRs)
-
-	// PCR out of range
-	status, err = svc.CreatePolicy([]int{25}, "sha256")
-	assert.Nil(t, status)
-	assert.ErrorIs(t, err, ErrPolicyInvalidPCRs)
-}
-
-func TestP6B_PlatformPolicyService_CreatePolicy_InvalidBank(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	status, err := svc.CreatePolicy([]int{0, 7}, "invalid_bank")
-	assert.Nil(t, status)
-	assert.ErrorIs(t, err, ErrPolicyInvalidBank)
-}
-
-func TestP6B_PlatformPolicyService_UpdatePolicy_NotConfigured(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	status, err := svc.UpdatePolicy([]int{0}, "sha256")
-	assert.Nil(t, status)
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestP6B_PlatformPolicyService_DeletePolicy_NotConfigured(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	err := svc.DeletePolicy()
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestP6B_PlatformPolicyService_VerifyPolicy_NotConfigured(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	valid, err := svc.VerifyPolicy()
-	assert.False(t, valid)
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestP6B_PlatformPolicyService_GetPolicyPCRs_NotConfigured(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	pcrs, bank, err := svc.GetPolicyPCRs()
-	assert.Nil(t, pcrs)
-	assert.Empty(t, bank)
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestP6B_PlatformPolicyService_ExportPolicy_NotConfigured(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	result, err := svc.ExportPolicy()
-	assert.Empty(t, result)
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestP6B_PlatformPolicyService_ExportPolicy_WithPolicy(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	// Manually store a policy.
-	now := time.Now()
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0, 7},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aabbcc", 7: "ddeeff"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	svc.policy.Store(def)
-
-	result, err := svc.ExportPolicy()
-	assert.NoError(t, err)
-	assert.Contains(t, result, "sha256")
-	assert.Contains(t, result, "aabbcc")
-}
-
-func TestP6B_PlatformPolicyService_GetPlatformPolicyAsPCRPolicy_NilPolicy(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	policy, err := svc.GetPlatformPolicyAsPCRPolicy()
-	assert.Nil(t, policy)
-	assert.NoError(t, err)
-}
-
-func TestP6B_PlatformPolicyService_RefreshPlatformPolicyPCRs_NotConfigured(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	policy, err := svc.RefreshPlatformPolicyPCRs()
-	assert.Nil(t, policy)
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}
-
-func TestP6B_PlatformPolicyService_SavePolicy_Success(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aa"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	err := svc.savePolicy(def)
-	assert.NoError(t, err)
-
-	// Verify file written
-	data, readErr := os.ReadFile(filepath.Join(dir, "platform_policy.json"))
-	assert.NoError(t, readErr)
-	assert.Contains(t, string(data), "sha256")
-}
-
-func TestP6B_PlatformPolicyService_DeletePolicy_Success(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	// Store and save a policy.
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aa"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	svc.policy.Store(def)
-	require.NoError(t, svc.savePolicy(def))
-
-	err := svc.DeletePolicy()
-	assert.NoError(t, err)
-
-	// Verify policy is nil.
-	assert.Nil(t, svc.policy.Load())
-}
-
-// ===========================================================================
-// 4. OIDC Service - SetDataDir, Close, token store
 // ===========================================================================
 
 func TestP6B_OIDCService_SetDataDir_CreatesTokenStore(t *testing.T) {
@@ -1622,34 +1382,6 @@ func TestP6B_SetupWizard_GetPolicy_ConfigLoadError(t *testing.T) {
 // 18. Setup Wizard - Apply wizard (step 4, 8 error branches)
 // ===========================================================================
 
-func TestP6B_SetupWizard_Apply_PlatformPolicyCreateFailed(t *testing.T) {
-	svc := &SetupWizardService{}
-	svc.configFunc = func() *GUIConfigData { return &GUIConfigData{} }
-	svc.configSave = func(_ *GUIConfigData) error { return nil }
-	svc.initDataDirFunc = func() error { return nil }
-
-	// Set a platform policy service with no TPM accessor (will fail readPCRDigests).
-	dir := t.TempDir()
-	ppSvc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-	svc.SetPlatformPolicyService(ppSvc)
-
-	result, err := svc.ApplySetup(&SetupChoices{
-		Mode:              "standalone",
-		SOPin:             "123456",
-		UserPin:           "654321",
-		PasswordStoreMode: "none",
-	})
-	require.NoError(t, err)
-	// Platform policy creation will fail with no TPM, should be in warnings.
-	hasWarning := false
-	for _, w := range result.Warnings {
-		if len(w) > 0 {
-			hasWarning = true
-		}
-	}
-	assert.True(t, hasWarning)
-}
-
 func TestP6B_SetupWizard_Apply_TPMSealedPasswordMode(t *testing.T) {
 	svc := &SetupWizardService{}
 	svc.configFunc = func() *GUIConfigData { return &GUIConfigData{} }
@@ -1782,129 +1514,6 @@ func TestP6B_SealService_VerifyPassword_InvalidHex(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestP6B_SealService_ClassifyCategory(t *testing.T) {
-	assert.Equal(t, "user", classifyCategory("user_pin"))
-	assert.Equal(t, "user", classifyCategory("so_pin"))
-	assert.Equal(t, "system", classifyCategory("password_master_key"))
-	assert.Equal(t, "user", classifyCategory("luks_passphrase"))
-	assert.Equal(t, "user", classifyCategory("random_label"))
-}
-
-// ===========================================================================
-// 20. Seal Service - handlePolicyPlatformPolicy, handlePolicyCustomPCR
-// ===========================================================================
-
-func TestP6B_SealService_HandlePolicyPlatformPolicy_NilService(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	opts := &xkms.SealOptions{}
-	err := handlePolicyPlatformPolicy(svc, &SealRequest{
-		PolicyType: "none"}, opts)
-	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
-}
-
-func TestP6B_SealService_HandlePolicyPlatformPolicy_NotConfigured(t *testing.T) {
-	dir := t.TempDir()
-	policySvc := NewPlatformPolicyService(filepath.Join(dir, "platform_policy.json"))
-
-	svc := NewSealService(dir)
-	svc.policyService = policySvc
-
-	opts := &xkms.SealOptions{}
-	err := handlePolicyPlatformPolicy(svc, &SealRequest{
-		PolicyType: "none"}, opts)
-	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
-}
-
-func TestP6B_SealService_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, &SealRequest{
-		PolicyType: "none", PCRs: nil}, opts)
-	assert.NoError(t, err)
-	assert.Nil(t, opts.TPMPolicy)
-}
-
-func TestP6B_SealService_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, &SealRequest{
-		PolicyType: "none",
-		PCRs:       []int{0, 7},
-		PCRBank:    "sha256",
-	}, opts)
-	assert.NoError(t, err)
-	assert.NotNil(t, opts.TPMPolicy)
-}
-
-func TestP6B_SealService_HandlePolicyCustomPCR_UnknownBank(t *testing.T) {
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, &SealRequest{
-		PolicyType: "none",
-		PCRs:       []int{0},
-		PCRBank:    "unknown_bank",
-	}, opts)
-	assert.NoError(t, err)
-	// Should default to SHA256.
-	assert.NotNil(t, opts.TPMPolicy)
-}
-
-func TestP6B_SealService_HandlePolicyPassword_EmptyPassword(t *testing.T) {
-	err := handlePolicyPassword(nil, &SealRequest{
-		PolicyType: "none", Password: ""}, nil)
-	assert.ErrorIs(t, err, ErrSealPasswordRequired)
-}
-
-func TestP6B_SealService_HandlePolicyPassword_WithPassword(t *testing.T) {
-	err := handlePolicyPassword(nil, &SealRequest{
-		PolicyType: "none", Password: "secret"}, nil)
-	assert.NoError(t, err)
-}
-
-func TestP6B_SealService_HandlePolicyNone(t *testing.T) {
-	err := handlePolicyNone(nil, nil, nil)
-	assert.NoError(t, err)
-}
-
-// ===========================================================================
-// 21. Platform Policy Validation helpers
-// ===========================================================================
-
-func TestP6B_ValidatePCRSelection(t *testing.T) {
-	err := validatePCRSelection(nil)
-	assert.ErrorIs(t, err, ErrPolicyInvalidPCRs)
-
-	err = validatePCRSelection([]int{})
-	assert.ErrorIs(t, err, ErrPolicyInvalidPCRs)
-
-	err = validatePCRSelection([]int{-1})
-	assert.ErrorIs(t, err, ErrPolicyInvalidPCRs)
-
-	err = validatePCRSelection([]int{24})
-	assert.ErrorIs(t, err, ErrPolicyInvalidPCRs)
-
-	err = validatePCRSelection([]int{0, 7, 23})
-	assert.NoError(t, err)
-}
-
-func TestP6B_ValidatePCRBank(t *testing.T) {
-	err := validatePCRBank("")
-	assert.ErrorIs(t, err, ErrPolicyInvalidBank)
-
-	err = validatePCRBank("md5")
-	assert.ErrorIs(t, err, ErrPolicyInvalidBank)
-
-	err = validatePCRBank("sha256")
-	assert.NoError(t, err)
-
-	err = validatePCRBank("sha384")
-	assert.NoError(t, err)
-
-	err = validatePCRBank("sha512")
-	assert.NoError(t, err)
-}
-
-// ===========================================================================
-// 22. Seal Service - LoadBlob
-// ===========================================================================
-
 func TestP6B_SealService_LoadBlob_FileNotExist(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewSealService(dir)
@@ -1930,10 +1539,9 @@ func TestP6B_SealService_LoadBlob_ValidJSON(t *testing.T) {
 	path := filepath.Join(dir, "good.json")
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-id",
-		Label:      "test-label",
+		BackendID: "software",
+		ID:        "test-id",
+		Label:     "test-label",
 	}
 	data, err := json.Marshal(blob)
 	require.NoError(t, err)
@@ -1944,4 +1552,12 @@ func TestP6B_SealService_LoadBlob_ValidJSON(t *testing.T) {
 	assert.NoError(t, loadErr)
 	assert.Equal(t, "test-id", loaded.ID)
 	assert.Equal(t, "test-label", loaded.Label)
+}
+
+func TestP6B_SealService_ClassifyCategory(t *testing.T) {
+	assert.Equal(t, "user", classifyCategory("user_pin"))
+	assert.Equal(t, "user", classifyCategory("so_pin"))
+	assert.Equal(t, "system", classifyCategory("password_master_key"))
+	assert.Equal(t, "user", classifyCategory("luks_passphrase"))
+	assert.Equal(t, "user", classifyCategory("random_label"))
 }

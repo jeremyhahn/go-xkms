@@ -150,13 +150,12 @@ and `oath`.
 | `xkey ca` | `info`, `issue`, `sign-csr`, `revoke`, `crl`, `check-revocation`, `bundle` |
 | `xkey cert` | `request`, `show`, `export` |
 | `xkey trust` | `list`, `add`, `remove`, `show`, `bootstrap`, `classify`, `install`, `uninstall`, `fetch`, `import-platform` |
-| `xkey policy` | `create`, `list`, `get`, `delete`, `set-auto-unseal`, `clear-auto-unseal`, `refresh`, `verify`, `export` |
 
 ### Hardware
 
 | Command | Subcommands |
 |---------|-------------|
-| `xkey tpm` | `status`, `info`, `pcrs`, `quote`, `ek`, `iak`, `idevid`, `provision`, `install`, `clear` |
+| `xkey tpm` | `status`, `info`, `pcrs`, `quote`, `ek`, `iak`, `idevid`, `provision`, `install`, `clear`, `policy` (`create`, `list`, `get`, `update`, `revoke`, `verify`, `delete`, `objects`, `key`, `auto-unseal`), `authority rotate` |
 | `xkey piv` | `list`, `show`, `store`, `import`, `export`, `delete`, `generate`, `csr`, `status`, `phone-*` |
 | `xkey usb` | `create`, `status`, `update`, `device` |
 

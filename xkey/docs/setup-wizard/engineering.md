@@ -1,6 +1,6 @@
 # Setup Wizard — Engineering
 
-> **Status: NORMATIVE** · Feature: `setup-wizard` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `setup-wizard` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 Package: `xkey/pkg/gui/services`, file `setup_wizard_service.go`. Errors in
 `errors.go`. Frontend contract in `xkey/frontend/src/lib/types/setup.ts`.
@@ -23,8 +23,8 @@ Package: `xkey/pkg/gui/services`, file `setup_wizard_service.go`. Errors in
 
 Setters: `SetContext`, `SetStorageService`, `SetTPMService`, `SetPINService`
 (re-wires the collaborator the constructor already required, e.g. to swap in
-a test double), `SetSealService`, `SetPlatformPolicyService`,
-`SetAutoUnsealService`, `SetBarrierService`, `SetStaticPasswordService`,
+a test double), `SetSealService`, `SetTPMPolicyService`,
+`SetBarrierAutoUnsealService`, `SetAutoUnsealService`, `SetBarrierService`, `SetStaticPasswordService`,
 `SetAdminService`, `SetTPMStatusFunc`, `SetConfigFunc`, `SetConfigSaveFunc`,
 `SetEventEmitter`, `SetInitDataDirFunc`, `SetConfigDir`.
 
@@ -43,8 +43,8 @@ construction is no longer possible through the public constructor.
 
 Every other collaborator stays a setter because each may legitimately be
 absent on a given build or host — e.g. a device with no TPM (#510) — and the
-step that needs it already degrades to a warning (`platform policy service
-unavailable`, `barrier service unavailable`, ...) or a soft `SetupResult`
+step that needs it already degrades to a warning (`barrier service
+unavailable`, `barrier auto-unseal: ... (manual unlock on restart)`, ...) or a soft `SetupResult`
 failure rather than fabricating success. `SetPasswordProtectionService` and
 `SetPostApplyFunc` were removed as part of this audit: the former set a
 field (`ppSvc`) no code in the package ever read, and the latter wired a
@@ -200,8 +200,8 @@ fields the same audit found.
 
 | Event | Payload | When |
 |---|---|---|
-| `setup:progress` | `{step, total_steps, label}` | before each step; totals are 10 / 7 / 4 for the three apply methods |
-| `setup:completed` | `{mode, storage_created, master_password_set, platform_policy_created, tpm_sealed_passwords, user_pin_set, so_pin_set, barrier_initialized, barrier_strategy}` | end of `ApplySetup` |
+| `setup:progress` | `{step, total_steps, label}` | before each step; totals are 9 / 7 / 4 for the three apply methods |
+| `setup:completed` | `{mode, storage_created, master_password_set, tpm_sealed_passwords, user_pin_set, so_pin_set, barrier_initialized, barrier_strategy}` | end of `ApplySetup` |
 | `setup:skipped` | `{reason}` | `SkipSetup` |
 
 ## Tests

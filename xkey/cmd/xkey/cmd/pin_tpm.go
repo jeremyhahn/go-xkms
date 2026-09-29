@@ -39,20 +39,49 @@ import (
 // backend) or expected (pinselect's fresh-install auto-selection, which
 // treats an unavailable TPM as "prefer the next strategy").
 func openTPMModule(logger *slog.Logger, dataDir, device string, useSimulator bool) (xkms.TrustedPlatformModule, io.Closer, error) {
+	opened, err := openTPMWithKeyStore(logger, dataDir, device, useSimulator)
+	if err != nil {
+		return nil, nil, err
+	}
+	return opened.tpm, opened.tpm, nil
+}
+
+// openedTPM is a TPM opened by openTPMWithKeyStore together with its own
+// key store: the persistent store of the objects it creates under the
+// Platform SRK, at <dataDir>/tpm.
+type openedTPM struct {
+	tpm     xkms.TrustedPlatformModule
+	factory *xkms.TPMStorageFactory
+}
+
+// keys returns the TPM's own key store.
+func (o *openedTPM) keys() xkms.TPMKeyBackend {
+	return o.factory.KeyBackend()
+}
+
+// Close closes the TPM and then its key store.
+func (o *openedTPM) Close() error {
+	return errors.Join(o.tpm.Close(), o.factory.Close())
+}
+
+// openTPMWithKeyStore is openTPMModule's primitive: it opens the TPM with
+// its key store at <dataDir>/tpm and returns both, for callers -- the local
+// TPM policy service -- that need the store as well as the TPM.
+func openTPMWithKeyStore(logger *slog.Logger, dataDir, device string, useSimulator bool) (*openedTPM, error) {
 	resolvedDevice := resolveTPMDevice(device)
 
 	// The simulator has no backing device file to stat; only hardware mode
 	// requires the device to be present before attempting to open it.
 	if !useSimulator {
 		if _, err := os.Stat(resolvedDevice); err != nil {
-			return nil, nil, &WrappedError{Msg: fmt.Sprintf("tpm device %s not found", resolvedDevice), Err: err}
+			return nil, &WrappedError{Msg: fmt.Sprintf("tpm device %s not found", resolvedDevice), Err: err}
 		}
 	}
 
 	tpmDataDir := filepath.Join(dataDir, "tpm")
 	factory, err := xkms.NewTPMStorageFactory(logger, tpmDataDir)
 	if err != nil {
-		return nil, nil, &WrappedError{Msg: "tpm storage factory", Err: err}
+		return nil, &WrappedError{Msg: "tpm storage factory", Err: err}
 	}
 
 	cfg := xkms.DefaultTPMConfig
@@ -73,12 +102,12 @@ func openTPMModule(logger *slog.Logger, dataDir, device string, useSimulator boo
 		// to the Shared SRK -- which is what probeTPMSealer's caller checks
 		// before using this TPM for the barrier strategy.
 		if errors.Is(err, xkms.ErrTPMNotInitialized) && tpm != nil {
-			return tpm, tpm, nil
+			return &openedTPM{tpm: tpm, factory: factory}, nil
 		}
-		return nil, nil, &WrappedError{Msg: "open tpm", Err: errors.Join(err, factory.Close())}
+		return nil, &WrappedError{Msg: "open tpm", Err: errors.Join(err, factory.Close())}
 	}
 
-	return tpm, tpm, nil
+	return &openedTPM{tpm: tpm, factory: factory}, nil
 }
 
 // newPINTPMProvider builds the pinselect.TPMProvider that `xkey pin` and

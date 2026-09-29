@@ -84,10 +84,9 @@ func TestP3B_ApplySetup_PasswordStoreMode_AESSoftware_UseUserPinAsMaster(t *test
 		UserPin:            testUserPin,
 	})
 	require.NoError(t, err)
-	// Without barrier or platform policy services, setup still succeeds
-	// but produces warnings about unavailable services.
+	// Without a barrier service, setup still succeeds but warns about it.
 	assert.True(t, result.Success)
-	assert.Contains(t, result.Warnings, "platform policy service unavailable")
+	assert.Contains(t, result.Warnings, "barrier service unavailable")
 }
 
 // TestP3B_ApplySetup_AutoUnseal_LUKSWithPolicy tests the auto-unseal
@@ -1037,7 +1036,7 @@ func TestP3B_SealService_SealData_NilRequest(t *testing.T) {
 func TestP3B_SealService_SealData_EmptyLabel(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	entry, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Data: "dGVzdA=="})
+		Data: "dGVzdA=="})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealInvalidLabel)
 }
@@ -1046,7 +1045,7 @@ func TestP3B_SealService_SealData_EmptyLabel(t *testing.T) {
 func TestP3B_SealService_SealData_EmptyData(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	entry, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "test"})
+		Label: "test"})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealInvalidData)
 }
@@ -1056,9 +1055,8 @@ func TestP3B_SealService_SealData_EmptyData(t *testing.T) {
 func TestP3B_SealService_SealData_InvalidBase64(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	entry, err := svc.SealData(&SealRequest{
-		PolicyType: "none",
-		Label:      "test",
-		Data:       "not-valid-base64!!!",
+		Label: "test",
+		Data:  "not-valid-base64!!!",
 	})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealDecodeFailed)
@@ -1069,10 +1067,9 @@ func TestP3B_SealService_SealData_InvalidBase64(t *testing.T) {
 func TestP3B_SealService_SealData_BackendNotFound(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	entry, err := svc.SealData(&SealRequest{
-		PolicyType: "none",
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("data")),
-		Backend:    "nonexistent",
+		Label:   "test",
+		Data:    base64.StdEncoding.EncodeToString([]byte("data")),
+		Backend: "nonexistent",
 	})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealBackendNotFound)
@@ -1163,7 +1160,6 @@ func TestP3B_SealService_ListBlobs_CategoryClassification(t *testing.T) {
 
 	// Write a blob with a system label.
 	systemBlob := &sealedBlobStorage{
-		PolicyType: "none",
 		BackendID:  "software",
 		ID:         "sys-001",
 		Label:      "user_pin",
@@ -1180,7 +1176,6 @@ func TestP3B_SealService_ListBlobs_CategoryClassification(t *testing.T) {
 
 	// Write a blob with a user label.
 	userBlob := &sealedBlobStorage{
-		PolicyType: "none",
 		BackendID:  "software",
 		ID:         "usr-001",
 		Label:      "my-secret-note",
@@ -1294,83 +1289,3 @@ func TestP3B_SealService_CanSeal_NoBackend(t *testing.T) {
 // REMOVED: TestP3B_SealService_SealData_TPMOnlyPolicyOnNonTPMBackend tests that (uses removed RegisterSealer API)
 
 // REMOVED: TestP3B_SealService_SealData_CustomPCRPolicyOnNonTPMBackend tests that (uses removed RegisterSealer API)
-
-// TestP3B_HandlePolicyNone_NoOp tests that handlePolicyNone returns nil.
-func TestP3B_HandlePolicyNone_NoOp(t *testing.T) {
-	err := handlePolicyNone(nil, nil, nil)
-	assert.NoError(t, err)
-}
-
-// TestP3B_HandlePolicyPassword_EmptyPassword tests handlePolicyPassword
-// with an empty password.
-func TestP3B_HandlePolicyPassword_EmptyPassword(t *testing.T) {
-	err := handlePolicyPassword(nil, &SealRequest{
-		PolicyType: "none", Password: ""}, nil)
-	assert.ErrorIs(t, err, ErrSealPasswordRequired)
-}
-
-// TestP3B_HandlePolicyPassword_WithPassword tests handlePolicyPassword
-// with a valid password.
-func TestP3B_HandlePolicyPassword_WithPassword(t *testing.T) {
-	err := handlePolicyPassword(nil, &SealRequest{
-		PolicyType: "none", Password: "secret"}, nil)
-	assert.NoError(t, err)
-}
-
-// TestP3B_HandlePolicyCustomPCR_NoPCRs tests handlePolicyCustomPCR
-// with no PCRs (returns nil, no-op).
-func TestP3B_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, &SealRequest{
-		PolicyType: "none"}, opts)
-	assert.NoError(t, err)
-	assert.Nil(t, opts.TPMPolicy)
-}
-
-// TestP3B_HandlePolicyCustomPCR_WithPCRs tests handlePolicyCustomPCR
-// with specific PCRs and bank.
-func TestP3B_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, &SealRequest{
-		PolicyType: "none",
-		PCRs:       []int{0, 7, 9},
-		PCRBank:    "sha256",
-	}, opts)
-	assert.NoError(t, err)
-	require.NotNil(t, opts.TPMPolicy)
-}
-
-// TestP3B_HandlePolicyCustomPCR_DefaultBank tests handlePolicyCustomPCR
-// with an empty bank (defaults to sha256).
-func TestP3B_HandlePolicyCustomPCR_DefaultBank(t *testing.T) {
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, &SealRequest{
-		PolicyType: "none",
-		PCRs:       []int{0},
-		PCRBank:    "",
-	}, opts)
-	assert.NoError(t, err)
-	require.NotNil(t, opts.TPMPolicy)
-}
-
-// TestP3B_HandlePolicyCustomPCR_UnknownBank tests handlePolicyCustomPCR
-// with an unknown bank name (should default to SHA256 alg).
-func TestP3B_HandlePolicyCustomPCR_UnknownBank(t *testing.T) {
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, &SealRequest{
-		PolicyType: "none",
-		PCRs:       []int{0},
-		PCRBank:    "unknown-bank",
-	}, opts)
-	assert.NoError(t, err)
-	require.NotNil(t, opts.TPMPolicy)
-}
-
-// TestP3B_HandlePolicyPlatformPolicy_NilPolicyService tests
-// handlePolicyPlatformPolicy when policyService is nil.
-func TestP3B_HandlePolicyPlatformPolicy_NilPolicyService(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	err := handlePolicyPlatformPolicy(svc, &SealRequest{
-		PolicyType: "none"}, &xkms.SealOptions{})
-	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
-}

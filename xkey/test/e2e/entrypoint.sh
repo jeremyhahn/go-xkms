@@ -208,7 +208,7 @@ echo "[entrypoint] Go modules downloaded."
 # golang.org/x/tools/go/packages in NeedTypes mode; against a COLD cache it
 # fails to obtain export data for the nested in-house generics module and aborts
 # with: internal error: package "github.com/jeremyhahn/go-qrdb/sdk/go" without
-# types was imported from ".../xkey/pkg/pcr_policy". Pre-building populates the
+# types was imported from an xkey package using its generic DAOs. Pre-building populates the
 # export data so the loader resolves types on the first pass.
 echo "[entrypoint] Warming Go build cache for wails binding generation..."
 go build -tags "ble production webkit2_41" ./... >/dev/null 2>&1 || true

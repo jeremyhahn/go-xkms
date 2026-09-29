@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — Engineering
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 See [architecture.md](architecture.md) for the two-layer shape (Barrier vs.
 the legacy sealed-blob store) and the auto-unseal decision order before
@@ -183,29 +183,41 @@ A future `*SecretValue` (or any other direct struct-pointer) field added to
 (`xkey/pkg/gui/services/barrier_auto_unseal.go`):
 
 ```go
-func NewBarrierAutoUnsealService(policyStore pcrpolicy.PolicyStore, opts ...BarrierAutoUnsealOption) *BarrierAutoUnsealService
-func WithBarrierAutoUnsealTPMAccessor(a *TPMAccessor) BarrierAutoUnsealOption
+const BarrierAutoUnsealObject = "xkey-barrier-auto-unseal"
+
+func NewBarrierAutoUnsealService(opts ...BarrierAutoUnsealOption) *BarrierAutoUnsealService
+func WithBarrierAutoUnsealLocal(l *LocalTPMPolicies) BarrierAutoUnsealOption
 func WithBarrierAutoUnsealBarrier(b *BarrierService) BarrierAutoUnsealOption
 func WithBarrierAutoUnsealLogger(l *slog.Logger) BarrierAutoUnsealOption
-func WithBarrierAutoUnsealStrategyID(id string) BarrierAutoUnsealOption // default "tpm2"
 
-func (s *BarrierAutoUnsealService) TryAutoUnseal(ctx context.Context) (bool, error)
-func (s *BarrierAutoUnsealService) CaptureCurrentPCRs(ctx context.Context, bank string, pcrIndices []uint) (map[uint][]byte, error)
+func (s *BarrierAutoUnsealService) TryAutoUnseal(ctx context.Context, strategyID string) (bool, error)
 func (s *BarrierAutoUnsealService) GetAutoUnsealStatus() (*BarrierAutoUnsealStatus, error) // GUI-bound
-func (s *BarrierAutoUnsealService) SetAutoUnsealPolicy(policyName string) error            // GUI-bound
-func (s *BarrierAutoUnsealService) ClearAutoUnsealPolicy() error                           // GUI-bound
+func (s *BarrierAutoUnsealService) EnableAutoUnseal(policyName, credential string) error   // GUI-bound
+func (s *BarrierAutoUnsealService) DisableAutoUnseal() error                               // GUI-bound
 ```
 
+`EnableAutoUnseal` seals `credential` (the barrier password) in the TPM as
+`BarrierAutoUnsealObject`, bound to the named policy and nothing else, then
+gives the policy the auto-unseal mark (clearing it from any other).
 `TryAutoUnseal` returns `(true, nil)` on success, `(false, nil)` when no
-auto-unseal policy is configured, `(false, err)` for every other failure
-(PCR mismatch, TPM unavailable, the barrier's own `Unseal` failing).
+policy carries the mark, and `(false, err)` for every other failure — the
+TPM refusing the policy session, a mark with nothing sealed under it, or the
+barrier's own `Unseal` rejecting the password.
+
+The local TPM policy service it runs on is
+`services.LocalTPMPolicies` (`tpm_policy_local.go`), opened with
+`OpenLocalTPMPolicies(LocalTPMPolicyParams{TPM, Keys, DataDir, OpenStore,
+Accessor, Logger})` over `sdk/go` `BuildTPMPolicyService`; see
+[docs/tpm-policies/](../../../docs/tpm-policies/) for the policy model and
+the GUI's `TPMPolicyService`.
 
 The headless CLI counterpart lives in `xkey/cmd/xkey/cmd`, never
 imported by anything outside the CLI:
 
 ```go
 // barrier_auto_unseal.go
-func tryBarrierPolicyAutoUnseal(ctx context.Context, logger *slog.Logger, barrierSvc *services.BarrierService, dataDir, tpmDevice string, tpmSimulator bool) (unsealed bool, closer io.Closer, err error)
+func openLocalTPMPolicies(logger *slog.Logger, dataDir, device string, useSimulator bool) (*localTPMPolicies, error)
+func tryBarrierPolicyAutoUnseal(ctx context.Context, logger *slog.Logger, barrierSvc *services.BarrierService, dataDir string, strategy xkms.StrategyID, tpmDevice string, tpmSimulator bool) (bool, io.Closer, error)
 
 // extension_serve.go
 func probeTPMModule(logger *slog.Logger, dataDir, device string, useSimulator bool) (xkms.TrustedPlatformModule, io.Closer)
@@ -214,53 +226,31 @@ func probeTPMSealer(logger *slog.Logger, dataDir, device string, useSimulator bo
 // barrier_store.go
 func openBarrierBackend(password, dataDir, tpmDevice string, tpmSimulator bool) (xkms.StorageBackend, error)
 func unsealTPM2BarrierService(barrierSvc *services.BarrierService, dataDir, tpmDevice string, tpmSimulator bool) error
-
-// policy.go
-func openPolicyStore(storePath string) (pcrpolicy.PolicyStore, error) // storePath == "" resolves <data dir>/pcr_policies
 ```
 
 `tryBarrierPolicyAutoUnseal` is the one function every headless caller
-composes: open the policy store at `<data dir>/pcr_policies`, check for a
-designated policy (no TPM touched at all if none exists), open the TPM only
-once a policy exists, and drive `BarrierAutoUnsealService.TryAutoUnseal`.
-It returns the TPM `io.Closer` it opened on success so the caller decides
-the connection's lifetime (see "TPM connection lifetime" below).
-
-## Exported surface: named PCR policies
-
-`pkg/pcr_policy.PolicyStore` interface and `DAOStore` implementation:
-
-```go
-type PolicyStore interface {
-	Create(ctx context.Context, name, bank string, pcrs map[uint][]byte) (*PCRPolicyEntity, error)
-	Save(ctx context.Context, entity *PCRPolicyEntity) error
-	Get(ctx context.Context, name string) (*PCRPolicyEntity, error)
-	List(ctx context.Context) ([]*PCRPolicyEntity, error)
-	Page(ctx context.Context, q qrdbsdk.PageQuery) (qrdbsdk.PageResult[*PCRPolicyEntity], error)
-	Delete(ctx context.Context, name string) error
-	SetAutoUnseal(ctx context.Context, name string) error
-	ClearAutoUnseal(ctx context.Context) error
-	GetAutoUnsealPolicy(ctx context.Context) (*PCRPolicyEntity, error)
-	Close() error
-}
-```
-
-`PCRPolicyEntity{Name, Bank, PCRs map[uint][]byte, AutoUnseal bool,
-CreatedAt, UpdatedAt}`. Only one entity may have `AutoUnseal == true` at a
-time; `SetAutoUnseal` clears any previous designation first. `Delete` on the
-currently-designated policy returns `pcrpolicy.ErrDeleteAutoUnseal` — clear
-the designation first.
+composes: open the local TPM policy service over this host's TPM (registry
+at `<data dir>/tpm-policies`), and drive
+`BarrierAutoUnsealService.TryAutoUnseal`. It returns the `io.Closer` of the
+TPM it opened on success so the caller decides the connection's lifetime
+(see the one-shot-command invariant below).
 
 ## Invariants
 
-- **A policy that exists but no longer matches the current PCR values is
-  never a silent fallback.** `TryAutoUnseal` returns
-  `ErrBarrierAutoUnsealPCRMismatch`, and every caller logs it at `Warn`
+- **The TPM decides.** Auto-unseal never compares PCRs itself: the barrier
+  password is released only by a TPM policy session over the auto-unseal
+  policy's NV index. A PCR change or a revoke makes the TPM refuse
+  (`ErrBarrierAutoUnsealRefused`), and every caller logs it at `Warn`
   before trying anything else.
-- **No auto-unseal policy configured is the one case that produces no log
-  line at all.** It is the expected state for a barrier that never had
-  `xkey policy set-auto-unseal` run against it; `tryBarrierPolicyAutoUnseal`
-  returns before ever opening the TPM.
+- **The auto-unseal password object is assigned to its policy**, so the
+  policy cannot be deleted while auto-unseal uses it; `DisableAutoUnseal`
+  removes the object and its assignment without unsealing it, so it works
+  after the PCRs changed.
+- **The mark and the sealed password move together.** A mark set without
+  sealing (on the server API, or moved to another policy) fails closed with
+  `ErrBarrierAutoUnsealNotEnrolled`/`ErrBarrierAutoUnsealPolicyMoved`.
+- **No policy carrying the mark is the one case that produces no log line
+  at all.**
 - **`SetTPMSealerFunc` is always called before `Unseal`/`Initialize` for a
   tpm2-strategy barrier.** Every auto-unseal and direct-unseal call site
   sets it from the same TPM handle it just opened.
@@ -272,10 +262,8 @@ the designation first.
 - **The in-process TPM simulator (`-tags tpm_simulator`) allows only one
   simulator instance open per process at a time** (`simulator.Get`'s
   package-wide lock in `go-tpm-tools`) and starts every fresh instance
-  unprovisioned. A test that needs two "separate" TPM opens to succeed at
-  unsealing must close the first before opening the second, and must
-  `Provision(nil)` each instance that seals or unseals — reading PCRs alone
-  needs no provisioning. This is a simulator limitation
+  unprovisioned, so a test keeps one provisioned instance open for the
+  whole test. This is a simulator limitation
   (`xkey/test/integration/swtpm_test_helpers.go` documents the same thing
   for cross-process CLI integration tests, which use `swtpm` instead), not
   a behaviour a caller should route around.
@@ -284,51 +272,48 @@ the designation first.
 
 | Sentinel | Meaning |
 |---|---|
-| `services.ErrBarrierAutoUnsealPCRMismatch` | A policy is designated but the current PCR values don't match it |
-| `services.ErrBarrierAutoUnsealTPMUnavailable` | No TPM could be opened |
-| `services.ErrBarrierAutoUnsealNoPolicyStore` | `TryAutoUnseal` called with no policy store wired |
+| `services.ErrBarrierAutoUnsealRefused` | The TPM refused to release the password under the policy: the PCRs changed, or the policy was revoked |
+| `services.ErrBarrierAutoUnsealNotEnrolled` | A policy carries the mark but no password is sealed under it |
+| `services.ErrBarrierAutoUnsealPolicyMoved` | The password is sealed under another policy than the one carrying the mark |
+| `services.ErrBarrierAutoUnsealNoPolicyService` | No local TPM policy service (no TPM, or no data directory yet) |
 | `services.ErrBarrierAutoUnsealNoBarrier` | `TryAutoUnseal` called with no barrier wired |
-| `services.ErrBarrierAutoUnsealFailed` | The barrier's own `Unseal` failed after PCRs matched |
-| `services.ErrBarrierAutoUnsealInvalidBank` | The policy names an unsupported PCR bank |
-| `services.ErrBarrierAutoUnsealReadPCRFailed` | The TPM PCR read itself failed |
-| `cmd.ErrBarrierAutoUnsealPolicyStoreFailed` | The CLI could not open the policy store at the resolved path |
+| `services.ErrBarrierAutoUnsealFailed` | The TPM released the password but the barrier's own `Unseal` rejected it |
+| `services.ErrBarrierAutoUnsealEmptyPolicyName`, `ErrBarrierAutoUnsealBuiltinPolicy`, `ErrBarrierAutoUnsealCredentialRequired` | `EnableAutoUnseal` validation: a named (not the built-in) policy and a non-empty password are required |
+| `cmd.ErrLocalTPMPoliciesOpenFailed` | The CLI could not open the local TPM policy service (no TPM, an unprovisioned one, or its registry) |
 | `cmd.ErrBarrierStoreTPMUnavailable` | `openBarrierBackend`'s direct-unseal fallback found no TPM |
 | `services.ErrBarrierStrategyUnavailable` | `SetTPMSealerFunc`/`SetCloudKMSStrategyFunc` was not called (or, for TPM2, returned nil/`!CanSeal()`) before an `Unseal`/`Initialize` needing it |
 | `config.ErrBarrierCloudKMSConfigInvalid` | A cloud KMS barrier strategy's persisted config is missing a required field or pairs a credential field partially |
 | `cmd.ErrBarrierConfigNotLoaded` | `xkey barrier init --strategy aws_kms\|gcp_kms\|azure_kv\|vault` ran before the unified config was loaded (defensive; not reachable through normal CLI startup) |
 | `sdk/go.ErrUnresolvedSecretURI` | A cloud KMS strategy's explicit `*SecretValue` credential field names a reference xkey has no resolver for |
 | `pkg/seal.ErrSealBackendUnavailable`, `ErrNotCloudSealStrategy` (`sdk/go`) | The backend handed to `BuildCloudKMSStrategy` doesn't implement `types.Sealer`/`types.SymmetricKeyProvider`, or `id` isn't one of the four cloud strategies |
-| `pcrpolicy.ErrPolicyNotFound` | Named policy, or the auto-unseal designation, does not exist |
-| `pcrpolicy.ErrDeleteAutoUnseal` | Attempted to delete the currently-designated auto-unseal policy |
 
-Legacy sealed-blob store (`SealService`/`PlatformPolicyService`/
-`AutoUnsealService`, GUI-only):
+Sealed-blob store (`SealService`/`AutoUnsealService`, GUI-only):
 
 | Sentinel | Meaning |
 |---|---|
-| `ErrSealTPMNotAvailable`, `ErrSealBackendNotFound`, `ErrSealPolicyRequiresTPM` | Sealer/backend resolution failures |
-| `ErrSealBlobNotFound`, `ErrSealBlobPolicyTypeMissing`, `ErrSealBlobBackendIDMissing` | A sealed blob record is missing, or predates required fields (rejected, never defaulted) |
-| `ErrSealInvalidPolicyType`, `ErrSealPasswordRequired`, `ErrSealPolicyMismatch` | Seal/unseal request validation |
-| `ErrPolicyNotConfigured`, `ErrPolicyInvalidPCRs`, `ErrPolicyInvalidBank`, `ErrPolicyVerifyFailed` | `PlatformPolicyService` (the single, unnamed GUI platform policy — distinct from the named `pcrpolicy` store above) |
+| `ErrSealTPMNotAvailable`, `ErrSealBackendNotFound`, `ErrSealPolicyRequiresTPM` | Sealer/backend resolution failures; a TPM policy on a non-TPM backend |
+| `ErrSealBlobNotFound`, `ErrSealBlobBackendIDMissing` | A sealed blob record is missing, or predates the required `backend_id` (rejected, never defaulted) |
+| `ErrSealPasswordRequired`, `ErrSealPolicyMismatch` | A non-TPM blob's password is missing or wrong (the TPM checks a tpm2 blob's password itself) |
 | `ErrAutoUnsealNotConfigured`, `ErrAutoUnsealUnsealFailed`, `ErrAutoUnsealMountFailed`, `ErrAutoUnsealResealFailed` | LUKS-volume auto-unseal (`AutoUnsealService`) |
 
 ## Configuration
 
 | Setting | Resolution | Notes |
 |---|---|---|
-| Data directory | `--data-dir` flag (where the command has one) → `XKEY_DATA_DIR` → `data_dir` config key → `~/.xkey/data` (`resolveDataDir`, `datadir.go`) | Roots the barrier, the PCR policy store, and PIN state |
-| PCR policy store path | `xkey policy`'s `--store` flag; empty resolves to `<data dir>/pcr_policies` | Same location `pkg/gui/app.go`'s `initializeDataDir` opens |
+| Data directory | `--data-dir` flag (where the command has one) → `XKEY_DATA_DIR` → `data_dir` config key → `~/.xkey/data` (`resolveDataDir`, `datadir.go`) | Roots the barrier, the TPM policy registry (`tpm-policies`, `tpm-keys`), the TPM key store (`tpm`), and PIN state |
+| TPM policy registry | `<data dir>/tpm-policies`, opened with `state.storage_engine` (default `file`) | Outside the barrier, so boot-time auto-unseal can read it; the GUI and CLI open the same stores |
 | TPM device | `--tpm-device`/`--tpm-simulator` flags → `TPM_DEVICE_PATH` env → `/dev/tpmrm0` (`resolveTPMDevice`, `extension_serve.go`) | `--tpm-simulator` requires a `-tags tpm_simulator` build; never for production data |
-| Barrier password | `--barrier-password-stdin` flag → `--barrier-password-file` → `XKEY_BARRIER_PASSWORD` env → interactive prompt (terminal only) (`resolveBarrierPassword`) | Not consulted at all for a tpm2-strategy or cloud-KMS-strategy barrier's unseal |
+| Barrier password | `--barrier-password-stdin` flag → `--barrier-password-file` → `XKEY_BARRIER_PASSWORD` env → interactive prompt (terminal only) (`resolveBarrierPassword`) | Not consulted when auto-unseal succeeds, or for a cloud-KMS-strategy barrier |
 | Cloud KMS connection settings | `xkey barrier init --strategy <id> --<provider>-...` flags, persisted to `Config.Barrier.CloudKMS.<Provider>` | Read back by every later `unseal`/`extension serve`; never re-specified on the command line |
 
 ## Tests
 
 | File | Tags | Covers |
 |---|---|---|
-| `xkey/pkg/gui/services/barrier_auto_unseal_test.go` | (none — mocked TPM/policy store) | `TryAutoUnseal`'s decision logic: success, no policy, PCR mismatch, TPM/store errors |
-| `xkey/cmd/xkey/cmd/barrier_auto_unseal_test.go` | `tpm_simulator` | `tryBarrierPolicyAutoUnseal` against a real simulator TPM: `_Success` (real seal + unseal via `BarrierAutoUnsealService.TryAutoUnseal` on one already-open, provisioned TPM — see the simulator-limitation invariant above for why this doesn't drive a second, independent TPM open), `_NoPolicyConfigured` (silent fallback, no TPM touched), `_PCRMismatch` (typed error, exercised through the full CLI wrapper's own TPM open), `_PolicyStoreOpenFailedIsTyped` |
-| `xkey/cmd/xkey/cmd/barrier_cli_test.go`, `policy_test.go`, `extension_serve_test.go`, `fido2_*_test.go` | `ble codec_json` | CLI flag parsing, non-TPM barrier/policy flows, extension-serve/fido2 wiring |
+| `xkey/pkg/gui/services/barrier_auto_unseal_test.go` | (none) | `BarrierAutoUnsealService` without a TPM: unavailable service, argument validation, missing barrier |
+| `xkey/pkg/gui/services/tpm_policy_simulator_test.go` | `tpm_simulator` | Against a real simulator TPM: the TPM releases the barrier password under the policy, refuses it after a PCR change (`ErrBarrierAutoUnsealRefused`), releases it again after `UpdatePolicy`; a moved mark fails closed; a wrong password surfaces as `ErrBarrierAutoUnsealFailed`; the local policy lifecycle with keys (see docs/tpm-policies) |
+| `xkey/cmd/xkey/cmd/tpm_policy_test.go`, `tpm_policy_simulator_test.go` | (none) / `tpm_simulator` | `xkey tpm policy` in server mode over a fake server and in local mode over the simulator, including `auto-unseal` sealing the barrier password; `tryBarrierPolicyAutoUnseal` failing with `ErrLocalTPMPoliciesOpenFailed` without a (provisioned) TPM |
+| `xkey/cmd/xkey/cmd/barrier_cli_test.go`, `extension_serve_test.go`, `fido2_*_test.go` | `ble codec_json` | CLI flag parsing, non-TPM barrier flows, extension-serve/fido2 wiring |
 | `xkey/pkg/config/barrier_cloud_test.go` | `ble codec_json` | `BarrierAWSKMSConfig`/`BarrierGCPKMSConfig`/`BarrierAzureKVConfig`/`BarrierVaultConfig.Validate()` — required fields, credential-field pairing; `TestBarrierCloudKMSConfig_SecretValueRoundTrip` — a `*SecretValue` reference survives `Save`→`Load` intact |
 | `xkey/pkg/config/load_test.go`, `load_partial_test.go`, `save_test.go` | `ble codec_json` | Pre-existing config-loader suite, re-run by this feature: `secretValueDecodeHookFunc`/`stringToWeakSliceHookFunc` (`load.go`) must not regress a `*SecretValue`-free `Load()`/`Save()` round trip or an env-var slice override (`TestLoadFromPath_EnvOverride`'s `XKEY_GUI_AUTO_UNSEAL_PCRS`) |
 | `xkey/cmd/xkey/cmd/barrier_cloudkms_test.go` | `ble codec_json` | `resolveBarrierCloudSecrets` (nil field skipped, unclaimed reference fails), `buildCloudKMSBarrierStrategy`'s "not compiled in" error, `persistBarrierCloudKMSConfig` (no-op for non-cloud strategies, missing-config error, a full init→save→reload round trip including `KeyID`), `--aws-key-id` flag registration |
@@ -340,8 +325,9 @@ Legacy sealed-blob store (`SealService`/`PlatformPolicyService`/
 Run the auto-unseal-specific tests:
 
 ```
-cd xkey && GOWORK=off go test -tags 'ble codec_json tpm_simulator' \
-  -run TestTryBarrierPolicyAutoUnseal -v ./cmd/xkey/cmd/...
+cd xkey && GOWORK=off go test -tags 'codec_json tpm_simulator' \
+  -run 'TestBarrierAutoUnseal|TestTryBarrierPolicyAutoUnseal|TestTPMPolicyAutoUnseal' \
+  ./pkg/gui/services/ ./cmd/xkey/cmd/
 ```
 
 Run the broader CLI suite (no simulator needed):

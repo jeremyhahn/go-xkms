@@ -110,6 +110,10 @@ export function SetRegistry(arg1) {
   return window['go']['services']['KeyService']['SetRegistry'](arg1);
 }
 
+export function SetTPMPolicyService(arg1) {
+  return window['go']['services']['KeyService']['SetTPMPolicyService'](arg1);
+}
+
 export function SignData(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['services']['KeyService']['SignData'](arg1, arg2, arg3, arg4, arg5);
 }

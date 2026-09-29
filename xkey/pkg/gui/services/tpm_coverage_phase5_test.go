@@ -20,7 +20,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"log/slog"
@@ -82,18 +81,6 @@ func p5aNewPINService(backend qrdbsdk.PINBackend) *PINService {
 		svc.SetPINService(pSvc)
 	}
 	return svc
-}
-
-// p5aNewTPMService creates a TPMService wired to the given mock TPM with
-// a temporary data directory for file operations.
-func p5aNewTPMService(t *testing.T, mock *mockTPM) (*TPMService, string) {
-	t.Helper()
-	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-	dataDir := t.TempDir()
-	svc.SetDataDir(dataDir)
-	svc.SetPolicyStore(newTestPCRPolicyStore(t))
-	return svc, dataDir
 }
 
 // p5aDefaultMockTPM returns a minimal mock suitable for most tests.
@@ -651,230 +638,6 @@ func TestP5A_GetPlatformSRKInfo_PolicyEnabled(t *testing.T) {
 	assert.Equal(t, "Platform Policy", info.PolicyName)
 }
 
-// TestP5A_GetConflictingAssignments_EmptyHandles tests GetConflictingAssignments
-// when the input handles list includes empty and whitespace-only strings.
-func TestP5A_GetConflictingAssignments_EmptyHandles(t *testing.T) {
-	svc := NewTPMService()
-	svc.SetDataDir(t.TempDir())
-
-	conflicts, err := svc.GetConflictingAssignments([]string{"", "  ", ""})
-	require.NoError(t, err)
-	assert.Empty(t, conflicts)
-}
-
-// TestP5A_GetConflictingAssignments_WithMatches tests GetConflictingAssignments
-// when some handles have existing assignments.
-func TestP5A_GetConflictingAssignments_WithMatches(t *testing.T) {
-	svc := NewTPMService()
-	dataDir := t.TempDir()
-	svc.SetDataDir(dataDir)
-
-	// Write an assignment to disk.
-	assignments := []PolicyAssignment{
-		{PolicyName: "test-policy", KeyHandle: "0x81000001", AssignedAt: "2025-01-01T00:00:00Z"},
-		{PolicyName: "other-policy", KeyHandle: "0x81000002", AssignedAt: "2025-01-02T00:00:00Z"},
-	}
-	data, err := json.MarshalIndent(assignments, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), data, 0600))
-
-	conflicts, err := svc.GetConflictingAssignments([]string{"0x81000001", "0x81000099"})
-	require.NoError(t, err)
-	require.Len(t, conflicts, 1)
-	assert.Equal(t, "0x81000001", conflicts[0].KeyHandle)
-	assert.Equal(t, "test-policy", conflicts[0].CurrentPolicy)
-}
-
-// TestP5A_ExportPolicy_WithUpdatedAt tests ExportPolicy when the policy has
-// an UpdatedAt field set.
-// TestP5A_ExportPolicy_WithUpdatedAt verifies ExportPolicy includes an
-// updated_at field. The canonical pcr_policy store stamps UpdatedAt with
-// the save time on every Save (see pcr_policy.DAOStore.Save), so a
-// caller-supplied UpdatedAt value does not round-trip; only field
-// presence is checked here.
-func TestP5A_ExportPolicy_WithUpdatedAt(t *testing.T) {
-	mock := p5aDefaultMockTPM()
-	svc, _ := p5aNewTPMService(t, mock)
-
-	policy := PCRPolicy{
-		Name: "p5a-export-updated",
-		PCRSelections: []PCRSelection{
-			{Index: 0, Bank: "sha256"},
-		},
-		PCRDigests: map[string]string{"sha256:0": "aabb"},
-	}
-	policies := []PCRPolicy{policy}
-	seedTPMServicePolicies(t, svc, policies)
-
-	exported, err := svc.ExportPolicy("p5a-export-updated")
-	require.NoError(t, err)
-	assert.Contains(t, exported, "updated_at")
-	assert.Contains(t, exported, "pcr_bank")
-	assert.Contains(t, exported, "pcr_digests")
-}
-
-// TestP5A_CreatePolicy_NoPCRSelectionsRejected verifies that a plain
-// PCRPolicy with no PCR selections cannot be represented in the canonical
-// pcr_policy store.
-func TestP5A_CreatePolicy_NoPCRSelectionsRejected(t *testing.T) {
-	svc := NewTPMService()
-	svc.SetDataDir(t.TempDir())
-	svc.SetPolicyStore(newTestPCRPolicyStore(t))
-
-	policy := PCRPolicy{
-		Name:      "p5a-no-selections",
-		CreatedAt: "2025-01-01T00:00:00Z",
-	}
-	err := svc.savePolicies([]PCRPolicy{policy})
-	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
-}
-
-// TestP5A_ExportCompositePolicy_WithBranches tests ExportCompositePolicy to
-// cover the pcr_bank and pcr_selections extraction from PCR elements.
-func TestP5A_ExportCompositePolicy_WithBranches(t *testing.T) {
-	mock := p5aDefaultMockTPM()
-	svc, dataDir := p5aNewTPMService(t, mock)
-
-	cp := CompositePolicy{
-		Name:        "p5a-cp-export",
-		Operator:    "AND",
-		Description: "test composite",
-		UpdatedAt:   "2025-02-01T00:00:00Z",
-		PCRDigests:  map[string]string{"sha256:0": "aabb"},
-		Elements: []PolicyElement{
-			{
-				Type:    "pcr",
-				PCRBank: "sha256",
-				PCRSelections: []PCRSelection{
-					{Index: 0, Bank: "sha256"},
-					{Index: 7, Bank: "sha256"},
-				},
-			},
-			{
-				Type:         "password",
-				PasswordHash: "argon2:test",
-			},
-		},
-		CreatedAt: "2025-01-01T00:00:00Z",
-	}
-	policies := []CompositePolicy{cp}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, compositePoliciesFile), data, 0600))
-
-	exported, err := svc.ExportCompositePolicy("p5a-cp-export")
-	require.NoError(t, err)
-	assert.Contains(t, exported, "updated_at")
-	assert.Contains(t, exported, "description")
-	assert.Contains(t, exported, "pcr_bank")
-	assert.Contains(t, exported, "pcr_selections")
-	assert.Contains(t, exported, "pcr_digests")
-}
-
-// TestP5A_ExportCompositePolicy_PCRBankFromSelections tests the code path where
-// elem.PCRBank is empty but PCRSelections have a bank.
-func TestP5A_ExportCompositePolicy_PCRBankFromSelections(t *testing.T) {
-	svc := NewTPMService()
-	dataDir := t.TempDir()
-	svc.SetDataDir(dataDir)
-
-	cp := CompositePolicy{
-		Name:     "p5a-cp-bank-fallback",
-		Operator: "SINGLE",
-		Elements: []PolicyElement{
-			{
-				Type:    "pcr",
-				PCRBank: "", // empty bank
-				PCRSelections: []PCRSelection{
-					{Index: 0, Bank: "sha384"},
-				},
-			},
-		},
-		CreatedAt: "2025-01-01T00:00:00Z",
-	}
-	policies := []CompositePolicy{cp}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, compositePoliciesFile), data, 0600))
-
-	exported, err := svc.ExportCompositePolicy("p5a-cp-bank-fallback")
-	require.NoError(t, err)
-	assert.Contains(t, exported, "sha384")
-}
-
-// TestP5A_ImportBinaryPolicyDigest_NoPCRSelectionsRejected documents a
-// pre-existing gap (unrelated to go-xkms compat cleanup PR5, tracked
-// separately): importBinaryPolicyDigest builds a PCRPolicy with a
-// "policy_digest" entry but no PCRSelections, which pcrPolicyToEntity
-// always rejects. Every production TPMService has a policy store wired
-// (see app.go SetPolicyStore), so this path fails the same way in
-// production today.
-func TestP5A_ImportBinaryPolicyDigest_NoPCRSelectionsRejected(t *testing.T) {
-	mock := p5aDefaultMockTPM()
-	svc, _ := p5aNewTPMService(t, mock)
-
-	_, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", []byte{0xAA, 0xBB, 0xCC})
-	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
-}
-
-// TestP5A_ImportJSONPolicy_CompositePath tests importJSONPolicy when the JSON
-// has an "operator" field, routing it to importCompositePolicy.
-func TestP5A_ImportJSONPolicy_CompositePath(t *testing.T) {
-	mock := p5aDefaultMockTPM()
-	svc, _ := p5aNewTPMService(t, mock)
-
-	policyJSON := `{
-		"name": "p5a-composite-import",
-		"operator": "AND",
-		"elements": [
-			{"type": "password", "password_hash": "test"}
-		]
-	}`
-
-	name, err := svc.importJSONPolicy([]byte(policyJSON))
-	require.NoError(t, err)
-	assert.Equal(t, "p5a-composite-import", name)
-}
-
-// TestP5A_ImportCompositePolicy_Duplicate tests importCompositePolicy when
-// a policy with the same name already exists.
-func TestP5A_ImportCompositePolicy_Duplicate(t *testing.T) {
-	mock := p5aDefaultMockTPM()
-	svc, dataDir := p5aNewTPMService(t, mock)
-
-	// Pre-create a composite policy.
-	existing := CompositePolicy{
-		Name:      "p5a-dup",
-		Operator:  "AND",
-		CreatedAt: time.Now().Format(time.RFC3339),
-	}
-	policies := []CompositePolicy{existing}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, compositePoliciesFile), data, 0600))
-
-	raw := map[string]interface{}{
-		"name":     "p5a-dup",
-		"operator": "OR",
-	}
-	_, err = svc.importCompositePolicy(raw)
-	assert.ErrorIs(t, err, ErrTPMPolicyExists)
-}
-
-// TestP5A_ImportCompositePolicy_EmptyName tests importCompositePolicy with
-// an empty name field.
-func TestP5A_ImportCompositePolicy_EmptyName(t *testing.T) {
-	svc := NewTPMService()
-	svc.SetDataDir(t.TempDir())
-
-	raw := map[string]interface{}{
-		"name":     "",
-		"operator": "AND",
-	}
-	_, err := svc.importCompositePolicy(raw)
-	assert.ErrorIs(t, err, ErrTPMInvalidPolicyName)
-}
-
 // TestP5A_VerifyCertAgainstTrustStore_NilTrustStore tests verifyCertAgainstTrustStore
 // when no trust store is configured.
 func TestP5A_VerifyCertAgainstTrustStore_NilTrustStore(t *testing.T) {
@@ -923,52 +686,6 @@ func TestP5A_LoadHandleDescriptions_InvalidJSON(t *testing.T) {
 
 	descriptions := svc.loadHandleDescriptions()
 	assert.Empty(t, descriptions)
-}
-
-// TestP5A_LoadPolicies_NoStoreConfigured tests loadPolicies when
-// SetPolicyStore has never been called (go-xkms compat cleanup PR5 removed
-// the pcr_policies.json file fallback).
-func TestP5A_LoadPolicies_NoStoreConfigured(t *testing.T) {
-	svc := NewTPMService()
-	dataDir := t.TempDir()
-	svc.SetDataDir(dataDir)
-
-	_, err := svc.loadPolicies()
-	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
-}
-
-// TestP5A_LoadCompositePolicies_InvalidJSON tests loadCompositePolicies when
-// the file contains invalid JSON.
-func TestP5A_LoadCompositePolicies_InvalidJSON(t *testing.T) {
-	svc := NewTPMService()
-	dataDir := t.TempDir()
-	svc.SetDataDir(dataDir)
-
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dataDir, compositePoliciesFile),
-		[]byte("{invalid"),
-		0600,
-	))
-
-	policies := svc.loadCompositePolicies()
-	assert.Empty(t, policies)
-}
-
-// TestP5A_LoadAssignments_InvalidJSON tests loadAssignments when the file
-// contains invalid JSON.
-func TestP5A_LoadAssignments_InvalidJSON(t *testing.T) {
-	svc := NewTPMService()
-	dataDir := t.TempDir()
-	svc.SetDataDir(dataDir)
-
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dataDir, policyAssignmentsFile),
-		[]byte("{invalid"),
-		0600,
-	))
-
-	assignments := svc.loadAssignments()
-	assert.Empty(t, assignments)
 }
 
 // TestP5A_GetStatus_NoTPM tests GetStatus when no TPM accessor is set.
@@ -1228,34 +945,6 @@ func TestP5A_SetHandleDescription_RemoveEntry(t *testing.T) {
 	assert.False(t, exists)
 }
 
-// TestP5A_SavePolicies_NoDataDir tests savePolicies when no data directory
-// is configured.
-func TestP5A_SavePolicies_NoStoreConfigured(t *testing.T) {
-	svc := NewTPMService()
-	// No policy store set.
-
-	err := svc.savePolicies([]PCRPolicy{{Name: "test"}})
-	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
-}
-
-// TestP5A_SaveAssignments_NoDataDir tests saveAssignments when no data
-// directory is configured.
-func TestP5A_SaveAssignments_NoDataDir(t *testing.T) {
-	svc := NewTPMService()
-
-	err := svc.saveAssignments([]PolicyAssignment{{PolicyName: "test"}})
-	assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
-}
-
-// TestP5A_SaveCompositePolicies_NoDataDir tests saveCompositePolicies when
-// no data directory is configured.
-func TestP5A_SaveCompositePolicies_NoDataDir(t *testing.T) {
-	svc := NewTPMService()
-
-	err := svc.saveCompositePolicies([]CompositePolicy{{Name: "test"}})
-	assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
-}
-
 // TestP5A_SaveHandleDescriptions_NoDataDir tests saveHandleDescriptions when
 // no data directory is configured.
 func TestP5A_SaveHandleDescriptions_NoDataDir(t *testing.T) {
@@ -1263,20 +952,6 @@ func TestP5A_SaveHandleDescriptions_NoDataDir(t *testing.T) {
 
 	err := svc.saveHandleDescriptions(map[string]string{"0x81": "test"})
 	assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
-}
-
-// TestP5A_IsPlatformPolicyName_NotPlatformPolicy tests isPlatformPolicyName
-// with a non-platform-policy name.
-func TestP5A_IsPlatformPolicyName_NotPlatformPolicy(t *testing.T) {
-	svc := NewTPMService()
-	assert.False(t, svc.isPlatformPolicyName("my-custom-policy"))
-}
-
-// TestP5A_IsPlatformPolicyName_NilPlatformPolicyService tests isPlatformPolicyName
-// when the platform policy service is nil.
-func TestP5A_IsPlatformPolicyName_NilPlatformPolicyService(t *testing.T) {
-	svc := NewTPMService()
-	assert.False(t, svc.isPlatformPolicyName("Platform Policy"))
 }
 
 // TestP5A_GetEKInfo_WithTrustStoreVerification tests GetEKInfo when the EK cert
@@ -1376,45 +1051,6 @@ func TestP5A_BuildCapabilities_NoOptionalFields(t *testing.T) {
 	// Should still have the standard capabilities.
 	assert.Contains(t, caps, "PCR Read/Extend")
 	assert.Contains(t, caps, "Quoting")
-}
-
-// TestP5A_ReadPCRDigests_BankReadError tests readPCRDigests when a bank
-// read returns an error.
-func TestP5A_ReadPCRDigests_BankReadError(t *testing.T) {
-	mock := p5aDefaultMockTPM()
-	mock.pcrBanksErr = errors.New("read failed")
-	svc, _ := p5aNewTPMService(t, mock)
-
-	selections := []PCRSelection{
-		{Index: 0, Bank: "sha256"},
-	}
-	digests := svc.readPCRDigests(mock, selections)
-	// Should return empty on error.
-	assert.Empty(t, digests)
-}
-
-// TestP5A_ReadPCRDigests_Success tests readPCRDigests with matching bank data.
-func TestP5A_ReadPCRDigests_Success(t *testing.T) {
-	mock := p5aDefaultMockTPM()
-	mock.pcrBanks = []xkms.PCRBank{
-		{
-			Algorithm: "sha256",
-			PCRs: []xkms.PCR{
-				{ID: 0, Value: []byte{0xAA, 0xBB}},
-				{ID: 7, Value: []byte{0xCC, 0xDD}},
-			},
-		},
-	}
-	svc, _ := p5aNewTPMService(t, mock)
-
-	selections := []PCRSelection{
-		{Index: 0, Bank: "sha256"},
-		{Index: 7, Bank: "sha256"},
-	}
-	digests := svc.readPCRDigests(mock, selections)
-	assert.Len(t, digests, 2)
-	assert.Equal(t, "aabb", digests["sha256:0"])
-	assert.Equal(t, "ccdd", digests["sha256:7"])
 }
 
 // TestP5A_GetPCRs_SHA384Mismatch tests GetPCRs with the SHA384/SHA386
@@ -1536,81 +1172,13 @@ func TestP5A_ExtendNV_EmptyData(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTPMInvalidNVData)
 }
 
-// TestP5A_RemoveAssignmentsForPolicy_NoMatches tests removeAssignmentsForPolicy
-// when no assignments match the given policy name.
-func TestP5A_RemoveAssignmentsForPolicy_NoMatches(t *testing.T) {
+// p5aNewTPMService returns a TPMService over mock with a temporary data
+// directory.
+func p5aNewTPMService(t *testing.T, mock *mockTPM) (*TPMService, string) {
+	t.Helper()
 	svc := NewTPMService()
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
-
-	// Create an assignment for a different policy.
-	assignments := []PolicyAssignment{
-		{PolicyName: "other-policy", KeyHandle: "0x81000001", AssignedAt: "2025-01-01T00:00:00Z"},
-	}
-	data, err := json.MarshalIndent(assignments, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), data, 0600))
-
-	// Remove assignments for a non-existent policy - should not error.
-	svc.removeAssignmentsForPolicy("non-existent")
-
-	// Verify the existing assignment is still there.
-	loaded := svc.loadAssignments()
-	assert.Len(t, loaded, 1)
-}
-
-// TestP5A_RemoveAssignmentsForPolicy_WithMatches tests removeAssignmentsForPolicy
-// when assignments match and are removed.
-func TestP5A_RemoveAssignmentsForPolicy_WithMatches(t *testing.T) {
-	svc := NewTPMService()
-	dataDir := t.TempDir()
-	svc.SetDataDir(dataDir)
-
-	assignments := []PolicyAssignment{
-		{PolicyName: "target-policy", KeyHandle: "0x81000001", AssignedAt: "2025-01-01T00:00:00Z"},
-		{PolicyName: "other-policy", KeyHandle: "0x81000002", AssignedAt: "2025-01-02T00:00:00Z"},
-		{PolicyName: "target-policy", KeyHandle: "0x81000003", AssignedAt: "2025-01-03T00:00:00Z"},
-	}
-	data, err := json.MarshalIndent(assignments, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), data, 0600))
-
-	svc.removeAssignmentsForPolicy("target-policy")
-
-	loaded := svc.loadAssignments()
-	assert.Len(t, loaded, 1)
-	assert.Equal(t, "other-policy", loaded[0].PolicyName)
-}
-
-// TestP5A_CompositePolicyPCRSelections_BankFallback tests compositePolicyPCRSelections
-// when sel.Bank is empty but elem.PCRBank is set.
-func TestP5A_CompositePolicyPCRSelections_BankFallback(t *testing.T) {
-	policy := &CompositePolicy{
-		Elements: []PolicyElement{
-			{
-				Type:    "pcr",
-				PCRBank: "sha384",
-				PCRSelections: []PCRSelection{
-					{Index: 0, Bank: ""},
-					{Index: 7, Bank: "sha256"},
-				},
-			},
-		},
-	}
-	selections := compositePolicyPCRSelections(policy)
-	require.Len(t, selections, 2)
-	assert.Equal(t, "sha384", selections[0].Bank) // Filled from PCRBank.
-	assert.Equal(t, "sha256", selections[1].Bank) // Already set.
-}
-
-// TestP5A_CompositePolicyPCRSelections_NonPCRElements tests that non-PCR
-// elements are skipped.
-func TestP5A_CompositePolicyPCRSelections_NonPCRElements(t *testing.T) {
-	policy := &CompositePolicy{
-		Elements: []PolicyElement{
-			{Type: "password", PasswordHash: "test"},
-		},
-	}
-	selections := compositePolicyPCRSelections(policy)
-	assert.Empty(t, selections)
+	return svc, dataDir
 }

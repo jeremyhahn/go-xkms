@@ -66,16 +66,16 @@ export function SetLocalClient(arg1) {
   return window['go']['services']['SealService']['SetLocalClient'](arg1);
 }
 
-export function SetPlatformPolicyService(arg1) {
-  return window['go']['services']['SealService']['SetPlatformPolicyService'](arg1);
-}
-
 export function SetStorageDir(arg1) {
   return window['go']['services']['SealService']['SetStorageDir'](arg1);
 }
 
 export function SetTPMAccessor(arg1) {
   return window['go']['services']['SealService']['SetTPMAccessor'](arg1);
+}
+
+export function SetTPMPolicyService(arg1) {
+  return window['go']['services']['SealService']['SetTPMPolicyService'](arg1);
 }
 
 export function StorageDir() {

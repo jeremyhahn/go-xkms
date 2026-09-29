@@ -230,7 +230,7 @@ dev-browser: frontend-install
 	@echo "$(CYAN)$(BOLD)Starting xKey dev (browser mode) on :34115...$(RESET)"
 	@# GODEBUG=gotypesalias=1 forces go/types to materialize type aliases;
 	@# wails v2.12.0 is built with gotypesalias=0 baked in which trips
-	@# x/tools/go/packages when xkey/pkg/pcr_policy imports parameterized
+	@# x/tools/go/packages when a bound package imports parameterized
 	@# type aliases (e.g. qrdbsdk.PageResult[E]) from go-qrdb/sdk/go.
 	@# -nosyncgomod + -m skip 'go mod tidy'. First-party deps resolve from
 	@# Gitea tags (dependency-resolution.md); no workspace is used.

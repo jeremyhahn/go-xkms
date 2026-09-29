@@ -832,7 +832,7 @@ func TestSC_AutoUnseal_Enable_ConfigSaveDeleteBlobFails(t *testing.T) {
 	autoSvc.SetConfigFunc(func() *GUIConfigData { return testConfigData() })
 	autoSvc.SetConfigSaveFunc(func(_ *GUIConfigData) error { return errors.New("save failed") })
 
-	_, err := autoSvc.Enable("long-enough-passphrase", []int{0, 7}, "sha256", "none", "", "tpm2")
+	_, err := autoSvc.Enable("long-enough-passphrase", "", "tpm2")
 	assert.Error(t, err)
 }
 
@@ -856,9 +856,8 @@ func TestSC_AutoUnseal_TryAutoUnseal_UnsealFails(t *testing.T) {
 	goodMock := defaultSealMock()
 	goodSealSvc := newSealServiceWithMock(t, goodMock)
 	entry, err := goodSealSvc.SealData(&SealRequest{
-		PolicyType: "none",
-		Label:      "auto-unseal-passphrase",
-		Data:       base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
+		Label: "auto-unseal-passphrase",
+		Data:  base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
 	})
 	require.NoError(t, err)
 
@@ -880,9 +879,8 @@ func TestSC_AutoUnseal_Reseal_ConfigSaveDeleteFails(t *testing.T) {
 	mock := defaultSealMock()
 	sealSvc := newSealServiceWithMock(t, mock)
 	entry, err := sealSvc.SealData(&SealRequest{
-		PolicyType: "none",
-		Label:      "auto-unseal-passphrase",
-		Data:       base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
+		Label: "auto-unseal-passphrase",
+		Data:  base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
 	})
 	require.NoError(t, err)
 
@@ -901,9 +899,8 @@ func TestSC_AutoUnseal_Reseal_DeleteOldBlobFails(t *testing.T) {
 	mock := defaultSealMock()
 	sealSvc := newSealServiceWithMock(t, mock)
 	entry, err := sealSvc.SealData(&SealRequest{
-		PolicyType: "none",
-		Label:      "auto-unseal-passphrase",
-		Data:       base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
+		Label: "auto-unseal-passphrase",
+		Data:  base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
 	})
 	require.NoError(t, err)
 

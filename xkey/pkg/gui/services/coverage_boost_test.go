@@ -281,10 +281,9 @@ func TestAppService_GetStatus_AllCallbacks(t *testing.T) {
 func TestSealService_saveBlob_EmptyStorageDir(t *testing.T) {
 	svc := NewSealService("")
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-blob",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "test-blob",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
@@ -299,10 +298,9 @@ func TestSealService_saveBlob_EmptyStorageDir(t *testing.T) {
 func TestSealService_saveBlob_RelativeStorageDir(t *testing.T) {
 	svc := NewSealService("relative/path")
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-blob",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "test-blob",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
@@ -363,222 +361,6 @@ func TestSealService_ListBlobs_MixedContent(t *testing.T) {
 
 // ===========================================================================
 // Platform Policy Service coverage boost
-// ===========================================================================
-
-func TestPlatformPolicyService_validatePlatformPolicyDigests_EmptyDigests(t *testing.T) {
-	svc := newPolicyServiceWithMock(t, defaultPolicyMock())
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{}, // Empty digests.
-	}
-
-	result := svc.validatePlatformPolicyDigests(def)
-	assert.Nil(t, result, "empty digests should return nil (unknown)")
-}
-
-func TestPlatformPolicyService_validatePlatformPolicyDigests_NoTPM(t *testing.T) {
-	// No TPM accessor set: verifyDigests will fail, so result should be nil.
-	policyPath := filepath.Join(t.TempDir(), "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "aabb"},
-	}
-
-	result := svc.validatePlatformPolicyDigests(def)
-	assert.Nil(t, result, "TPM unavailable should return nil (unknown)")
-}
-
-func TestPlatformPolicyService_validatePlatformPolicyDigests_Valid(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := newPolicyServiceWithMock(t, mock)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0, 7},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "aabbccdd", 7: "11223344"},
-	}
-
-	result := svc.validatePlatformPolicyDigests(def)
-	require.NotNil(t, result)
-	assert.True(t, *result)
-}
-
-func TestPlatformPolicyService_validatePlatformPolicyDigests_Mismatch(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := newPolicyServiceWithMock(t, mock)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0, 7},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "ffffffff", 7: "11223344"},
-	}
-
-	result := svc.validatePlatformPolicyDigests(def)
-	require.NotNil(t, result)
-	assert.False(t, *result)
-}
-
-func TestPlatformPolicyService_verifyDigests_InvalidStoredHex(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := newPolicyServiceWithMock(t, mock)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "zzzz_invalid_hex"},
-	}
-
-	valid, err := svc.verifyDigests(def)
-	assert.False(t, valid)
-	assert.ErrorIs(t, err, ErrPolicyVerifyFailed)
-}
-
-func TestPlatformPolicyService_GetStatus_NoTPM(t *testing.T) {
-	// Create a service with a stored policy but no TPM accessor.
-	policyPath := filepath.Join(t.TempDir(), "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-
-	// Manually store a policy.
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0, 7},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aabb", 7: "ccdd"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	svc.policy.Store(def)
-
-	status, err := svc.GetStatus()
-	require.NoError(t, err)
-	assert.True(t, status.Configured)
-	// Valid should be false because verifyDigests fails without TPM.
-	assert.False(t, status.Valid)
-}
-
-func TestPlatformPolicyService_GetPlatformPolicyAsPCRPolicy_ValidFalse(t *testing.T) {
-	// Test the path where validatePlatformPolicyDigests returns false.
-	mock := defaultPolicyMock()
-	svc := newPolicyServiceWithMock(t, mock)
-
-	// Create a policy.
-	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
-	require.NoError(t, err)
-
-	// Change the PCR values so validation returns false.
-	mock.pcrBanksOverride = []xkms.PCRBank{
-		{
-			Algorithm: "SHA256",
-			PCRs: []xkms.PCR{
-				{ID: 0, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}},
-				{ID: 7, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}},
-			},
-		},
-	}
-
-	policy, err := svc.GetPlatformPolicyAsPCRPolicy()
-	require.NoError(t, err)
-	require.NotNil(t, policy)
-	require.NotNil(t, policy.Valid)
-	assert.False(t, *policy.Valid)
-}
-
-func TestPlatformPolicyService_GetPlatformPolicyAsPCRPolicy_NoTPM(t *testing.T) {
-	// When TPM is unavailable, Valid should be nil (unknown).
-	policyPath := filepath.Join(t.TempDir(), "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aabb"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	svc.policy.Store(def)
-
-	policy, err := svc.GetPlatformPolicyAsPCRPolicy()
-	require.NoError(t, err)
-	require.NotNil(t, policy)
-	assert.Nil(t, policy.Valid, "Valid should be nil when TPM is unavailable")
-}
-
-func TestPlatformPolicyService_savePolicy_AtomicWrite(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "deep", "nested", "policy")
-	policyPath := filepath.Join(dir, "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0, 7},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "aabb", 7: "ccdd"},
-	}
-
-	err := svc.savePolicy(def)
-	require.NoError(t, err)
-
-	// Verify file exists and is valid JSON.
-	data, readErr := os.ReadFile(policyPath)
-	require.NoError(t, readErr)
-
-	var loaded PlatformPolicyDefinition
-	require.NoError(t, json.Unmarshal(data, &loaded))
-	assert.Equal(t, "sha256", loaded.Bank)
-	assert.Equal(t, "aabb", loaded.Digests[0])
-
-	// Verify temp file is cleaned up.
-	_, statErr := os.Stat(policyPath + ".tmp")
-	assert.True(t, os.IsNotExist(statErr))
-}
-
-func TestPlatformPolicyService_VerifyPolicy_EmptyDigests(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := newPolicyServiceWithMock(t, mock)
-
-	// Store a policy with empty digests.
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{},
-	}
-	svc.policy.Store(def)
-
-	// verifyDigests iterates over stored digests; with empty digests,
-	// all comparisons pass (nothing to compare), so result should be true.
-	valid, err := svc.VerifyPolicy()
-	require.NoError(t, err)
-	assert.True(t, valid)
-}
-
-func TestPlatformPolicyService_CreatePolicy_TPMReturnsNilForAccessor(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return nil }))
-
-	_, err := svc.CreatePolicy([]int{0}, "sha256")
-	assert.ErrorIs(t, err, ErrPolicyTPMNotAvailable)
-}
-
-func TestPlatformPolicyService_UpdatePolicy_ReadPCRsError(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := newPolicyServiceWithMock(t, mock)
-
-	// Create first.
-	_, err := svc.CreatePolicy([]int{0}, "sha256")
-	require.NoError(t, err)
-
-	// Now fail ReadPCRs.
-	mock.pcrBanksErr = errors.New("tpm read failure")
-
-	_, err = svc.UpdatePolicy([]int{0}, "sha256")
-	assert.ErrorIs(t, err, ErrPolicyVerifyFailed)
-}
-
-// ===========================================================================
-// OATH Service coverage boost
 // ===========================================================================
 
 func TestOATHService_GenerateTOTP_NonExistentAccount(t *testing.T) {
@@ -1040,9 +822,8 @@ func TestSealService_UnsealData_PasswordEmptyOnNonPasswordBlob(t *testing.T) {
 	// Seal without password.
 	original := "test-data"
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "no-pw",
-		Data:       base64.StdEncoding.EncodeToString([]byte(original)),
+		Label: "no-pw",
+		Data:  base64.StdEncoding.EncodeToString([]byte(original)),
 	}
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
@@ -1057,31 +838,6 @@ func TestSealService_UnsealData_PasswordEmptyOnNonPasswordBlob(t *testing.T) {
 // ===========================================================================
 // Platform Policy Service - error sentinels
 // ===========================================================================
-
-func TestPlatformPolicyServiceErrors_Distinct(t *testing.T) {
-	errs := []error{
-		ErrPolicyTPMNotAvailable,
-		ErrPolicyInvalidPCRs,
-		ErrPolicyInvalidBank,
-		ErrPolicyNotConfigured,
-		ErrPolicySaveFailed,
-		ErrPolicyLoadFailed,
-		ErrPolicyVerifyFailed,
-		ErrPolicyExportFailed,
-		ErrPolicyNoClient,
-		ErrPolicyInvalidName,
-	}
-
-	for i := range errs {
-		for j := range errs {
-			if i == j {
-				continue
-			}
-			assert.NotEqual(t, errs[i], errs[j],
-				"error %d and %d should be distinct", i, j)
-		}
-	}
-}
 
 // TestYubiKeyDetectionResult_JSONFieldNames guards against the Wails
 // field-name regression where the Svelte UI expected capitalized Go field

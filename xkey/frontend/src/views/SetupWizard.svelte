@@ -56,7 +56,6 @@
     'Creating encrypted storage',
     'Initializing built-in encryption',
     'Initializing data directory',
-    'Creating platform policy',
     'Configuring PINs',
     'Provisioning TPM keys',
     'Initializing platform key store',

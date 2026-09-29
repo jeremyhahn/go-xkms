@@ -110,10 +110,7 @@ type GUIConfigData struct {
 	ServerAutoConnect         bool                 `json:"server_auto_connect"`
 	AutoUnsealEnabled         bool                 `json:"auto_unseal_enabled"`
 	AutoUnsealBlobID          string               `json:"auto_unseal_blob_id"`
-	AutoUnsealPCRs            []int                `json:"auto_unseal_pcrs"`
-	AutoUnsealPCRBank         string               `json:"auto_unseal_pcr_bank"`
-	AutoUnsealPolicyType      string               `json:"auto_unseal_policy_type"`
-	AutoUnsealPolicyName      string               `json:"auto_unseal_policy_name"`
+	AutoUnsealTPMPolicy       string               `json:"auto_unseal_tpm_policy"`
 	AutoUnsealBackend         string               `json:"auto_unseal_backend"`
 	FIDO2AuthenticatorEnabled bool                 `json:"fido2_authenticator_enabled"`
 	ClipboardTimeout          int                  `json:"clipboard_timeout"`
@@ -122,7 +119,6 @@ type GUIConfigData struct {
 	StorageType               string               `json:"storage_type"`
 	BarrierInitialized        bool                 `json:"barrier_initialized"`
 	BarrierStrategy           string               `json:"barrier_strategy"`
-	BarrierAutoUnsealBlobID   string               `json:"barrier_auto_unseal_blob_id,omitempty"`
 	BarrierAutoUnsealEnabled  bool                 `json:"barrier_auto_unseal_enabled"`
 	AppAutoLockMinutes        int                  `json:"app_auto_lock_minutes"`
 	AppLockOnScreenLock       bool                 `json:"app_lock_on_screen_lock"`

@@ -17,11 +17,12 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
@@ -294,26 +295,15 @@ func TestFinal2_Seal_ListBlobs_Empty(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
-func TestFinal2_Seal_SealData_InvalidPolicyType(t *testing.T) {
-	// L404-406: unknown policy type.
-	svc := NewSealService(t.TempDir())
-	_, err := svc.SealData(&SealRequest{
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("secret")),
-		PolicyType: "invalid_policy",
-	})
-	assert.ErrorIs(t, err, ErrSealInvalidPolicyType)
-}
-
 func TestFinal2_Seal_SealData_RandReadError(t *testing.T) {
 	// L423-425: rand.Read fail for ID generation is hard to trigger.
 	// Instead test the L444-446 password hashing path.
 	svc := NewSealService(t.TempDir())
 	_, err := svc.SealData(&SealRequest{
-		Label:      "test-pw",
-		Data:       base64.StdEncoding.EncodeToString([]byte("secret")),
-		PolicyType: "password",
-		Password:   "mypassword",
+		Label:    "test-pw",
+		Data:     base64.StdEncoding.EncodeToString([]byte("secret")),
+		Backend:  "software",
+		Password: "mypassword",
 	})
 	// Will fail because no TPM sealer is available.
 	assert.Error(t, err)
@@ -360,7 +350,7 @@ func TestFinal2_AutoUnseal_Enable_NoSealService(t *testing.T) {
 	svc := NewAutoUnsealService(nil, nil)
 	svc.SetConfigFunc(func() *GUIConfigData { return &GUIConfigData{} })
 	svc.SetConfigSaveFunc(func(d *GUIConfigData) error { return nil })
-	_, err := svc.Enable("pass", []int{0, 7}, "sha256", "pcr", "default", "tpm2")
+	_, err := svc.Enable("pass", xkms.TPMPolicyPlatform, "tpm2")
 	assert.Error(t, err)
 }
 

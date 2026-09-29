@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
+
 	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -35,6 +37,9 @@ import (
 
 // mockTransportClient implements transport.Client with configurable behavior per method.
 type mockTransportClient struct {
+	// Fake serves the TPM policy API, which these tests do not exercise.
+	*tpmpolicyfake.Fake
+
 	listBackendsResp *transport.ListBackendsResponse
 	listBackendsErr  error
 
@@ -1913,34 +1918,6 @@ func (m *mockTransportClient) RevokeEscrow(_ context.Context, _ string) error {
 }
 
 // Policy operations
-
-func (m *mockTransportClient) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) PolicyGet(_ context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) PolicyList(_ context.Context) (*transport.PolicyListResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) PolicyDelete(_ context.Context, _ *transport.PolicyDeleteRequest) error {
-	return errNotImplemented
-}
-
-func (m *mockTransportClient) PolicyRefresh(_ context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) PolicyVerify(_ context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) PolicyExport(_ context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
-	return nil, errNotImplemented
-}
 
 func (m *mockTransportClient) IssueEKCertificate(_ context.Context, _ *transport.IssueEKCertificateRequest) (*transport.IssueEKCertificateResponse, error) {
 	return nil, errNotImplemented

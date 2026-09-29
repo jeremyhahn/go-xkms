@@ -34,7 +34,7 @@ tell.
 | [pkcs11-manager](pkcs11-manager/) | The PKCS#11 module/token manager wrapper and its automatic per-slot backend-registry synchronization | — |
 | [pkcs11](pkcs11/) | xkey's PKCS#11 side: GUI module/slot/token management, the embedded and IPC `PKCS11Transport` implementations, and the `--backend pkcs11` surface across other commands | `pkcs11/ipc.md` |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
-| [seal](seal/) | The Barrier, barrier PCR-policy auto-unseal (shared by the CLI and GUI), the named PCR policy store, and the legacy sealed-blob store | `seal/README.md`, `seal/platform-policy.md`, `configuration/auto-unseal.md` (now a pointer) |
+| [seal](seal/) | The Barrier, barrier auto-unseal through a named TPM policy (shared by the CLI and GUI), and the sealed-blob store | `seal/README.md`, `seal/platform-policy.md`, `configuration/auto-unseal.md` (now a pointer) |
 | [secret-service](secret-service/) | The `org.freedesktop.secrets` D-Bus daemon exposing the static-password store to secret-tool, git-credential-libsecret and browsers, with Lock/Unlock tied to the barrier | — |
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
 | [share-custody](share-custody/) | The Shamir share custody client | — |
@@ -319,9 +319,9 @@ reference — is [virtual-authenticator](virtual-authenticator/).
 - Superseded background, unconverted: [Overview](phone/README.md), [Protocol](phone/protocol.md), [Attestation](phone/attestation.md), [Bidirectional](phone/bidirectional.md), [Transport](phone/transport.md), [Backend](phone/backend/README.md), [Backend Architecture](phone/backend/architecture.md), `phone/android/`
 
 ### [Seal](seal/)
-- [Architecture](seal/architecture.md) -- The Barrier, PCR-policy auto-unseal, and the legacy sealed-blob store
+- [Architecture](seal/architecture.md) -- The Barrier, TPM-policy auto-unseal, and the sealed-blob store
 - [Engineering](seal/engineering.md) -- Exported surface, invariants, errors, tests
-- [CLI](seal/cli.md) -- Every `xkey barrier`/`xkey policy` verb and flag
+- [CLI](seal/cli.md) -- Every `xkey barrier` verb and flag, and `xkey tpm policy auto-unseal`
 - [API](seal/api.md) -- Network-transport surface (none)
 - [User Guide](seal/user.md) -- Task-oriented usage, including agent auto-unseal setup
 

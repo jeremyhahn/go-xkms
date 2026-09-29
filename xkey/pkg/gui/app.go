@@ -15,7 +15,6 @@ package gui
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -54,7 +53,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
-	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/sshstore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
@@ -119,7 +117,7 @@ type App struct {
 	notificationService      *services.NotificationService
 	sealService              *services.SealService
 	passwordProtectionSvc    *services.PasswordProtectionService
-	platformPolicyService    *services.PlatformPolicyService
+	tpmPolicyService         *services.TPMPolicyService
 	autoUnsealService        *services.AutoUnsealService
 	barrierAutoUnsealService *services.BarrierAutoUnsealService
 	oidcService              *services.OIDCService
@@ -251,10 +249,7 @@ func configToData(cfg *GUIConfig) *services.GUIConfigData {
 		ServerAutoConnect:         cfg.ServerAutoConnect,
 		AutoUnsealEnabled:         cfg.AutoUnsealEnabled,
 		AutoUnsealBlobID:          cfg.AutoUnsealBlobID,
-		AutoUnsealPCRs:            cfg.AutoUnsealPCRs,
-		AutoUnsealPCRBank:         cfg.AutoUnsealPCRBank,
-		AutoUnsealPolicyType:      cfg.AutoUnsealPolicyType,
-		AutoUnsealPolicyName:      cfg.AutoUnsealPolicyName,
+		AutoUnsealTPMPolicy:       cfg.AutoUnsealTPMPolicy,
 		AutoUnsealBackend:         cfg.AutoUnsealBackend,
 		FIDO2AuthenticatorEnabled: cfg.FIDO2AuthenticatorEnabled,
 		ClipboardTimeout:          cfg.ClipboardTimeout,
@@ -265,7 +260,6 @@ func configToData(cfg *GUIConfig) *services.GUIConfigData {
 		StorageType:               cfg.StorageType,
 		BarrierInitialized:        cfg.BarrierInitialized,
 		BarrierStrategy:           cfg.BarrierStrategy,
-		BarrierAutoUnsealBlobID:   cfg.BarrierAutoUnsealBlobID,
 		BarrierAutoUnsealEnabled:  cfg.BarrierAutoUnsealEnabled,
 		SealerBackend:             cfg.SealerBackend,
 		APIExplorerSandboxPolicy:  cfg.APIExplorerSandboxPolicy,
@@ -303,10 +297,7 @@ func applyDataToConfig(base *GUIConfig, d *services.GUIConfigData) *GUIConfig {
 	cfg.ServerAutoConnect = d.ServerAutoConnect
 	cfg.AutoUnsealEnabled = d.AutoUnsealEnabled
 	cfg.AutoUnsealBlobID = d.AutoUnsealBlobID
-	cfg.AutoUnsealPCRs = d.AutoUnsealPCRs
-	cfg.AutoUnsealPCRBank = d.AutoUnsealPCRBank
-	cfg.AutoUnsealPolicyType = d.AutoUnsealPolicyType
-	cfg.AutoUnsealPolicyName = d.AutoUnsealPolicyName
+	cfg.AutoUnsealTPMPolicy = d.AutoUnsealTPMPolicy
 	cfg.AutoUnsealBackend = d.AutoUnsealBackend
 	cfg.FIDO2AuthenticatorEnabled = d.FIDO2AuthenticatorEnabled
 	cfg.ClipboardTimeout = d.ClipboardTimeout
@@ -317,7 +308,6 @@ func applyDataToConfig(base *GUIConfig, d *services.GUIConfigData) *GUIConfig {
 	cfg.StorageType = d.StorageType
 	cfg.BarrierInitialized = d.BarrierInitialized
 	cfg.BarrierStrategy = d.BarrierStrategy
-	cfg.BarrierAutoUnsealBlobID = d.BarrierAutoUnsealBlobID
 	cfg.SealerBackend = d.SealerBackend
 	cfg.BarrierAutoUnsealEnabled = d.BarrierAutoUnsealEnabled
 	cfg.APIExplorerSandboxPolicy = d.APIExplorerSandboxPolicy
@@ -930,36 +920,9 @@ func (a *App) initializeDataDir() error {
 	// Wire TPM data directory for handle descriptions and CA storage.
 	a.tpmService.SetDataDir(dir)
 
-	// PCR policy store — always a plain file-backed store (never routed
-	// through the barrier), because BarrierAutoUnsealService must be able to
-	// read the auto-unseal policy BEFORE the barrier is unsealed. This is the
-	// same canonical pcrpolicy.DAOStore used by the CLI (xkey policy ...),
-	// unifying GUI/CLI/auto-unseal onto one PCR policy store.
-	pcrPolicyBackend, ppErr := a.openStore(filepath.Join(dir, "pcr_policies"))
-	if ppErr != nil {
-		a.log.Warn("failed to create PCR policy storage backend", "error", ppErr)
-	} else {
-		pcrKVStore, kvErr := xkmssdk.NewKVStoreAdapter(pcrPolicyBackend)
-		if kvErr != nil {
-			a.log.Warn("failed to create PCR policy kv adapter", "error", kvErr)
-		} else {
-			pcrPolicyStore, storeErr := pcrpolicy.NewDAOStore(pcrKVStore)
-			if storeErr != nil {
-				a.log.Warn("failed to create PCR policy store", "error", storeErr)
-			} else {
-				// SetPolicyStore performs a one-time silent migration of any
-				// legacy pcr_policies.json into the store on first call.
-				// Nil guards: tests exercise initializeDataDir on a partially
-				// constructed App without these services wired.
-				if a.tpmService != nil {
-					a.tpmService.SetPolicyStore(pcrPolicyStore)
-				}
-				if a.barrierAutoUnsealService != nil {
-					a.barrierAutoUnsealService.SetPolicyStore(pcrPolicyStore)
-				}
-			}
-		}
-	}
+	// Local TPM policy service -- normally already open, since startup opens
+	// it before the barrier for auto-unseal; opened here on first run.
+	a.ensureLocalTPMPolicies()
 
 	// OIDC callback listener — the oidc section of the unified config, so
 	// the GUI login binds the same host and port the CLI does. Load returns
@@ -1734,7 +1697,6 @@ func NewApp(cfg *GUIConfig) *App {
 	// Services start with nil stores (degraded mode).
 	// Stores are wired after LUKS mount decision via initializeDataDir().
 	staticPWSvc := services.NewStaticPasswordService(nil)
-	tpmSvc.SetStaticPasswordService(staticPWSvc)
 
 	// Create sealed data storage in the data directory (~/.xkey/data/sealed/).
 	// Sealed blobs are TPM-encrypted and do not need barrier protection,
@@ -1757,20 +1719,18 @@ func NewApp(cfg *GUIConfig) *App {
 	// Seal protection service: global lock/unlock gate for sealed data.
 	sealProtSvc := services.NewSealProtectionService(sealSvc)
 
-	// Create platform policy service with config-dir path (outside LUKS).
-	policyPath := ""
-	if cfgDir != "" {
-		policyPath = filepath.Join(cfgDir, "platform.policy")
-	}
-	platformPolicySvc := services.NewPlatformPolicyService(policyPath)
+	// Named TPM policies: in-process over xKey's own TPM (wired by
+	// ensureLocalTPMPolicies once the TPM and data directory are known), or
+	// on the connected server.
+	tpmPolicySvc := services.NewTPMPolicyService()
 
 	// Create auto-unseal service (LUKS volumes).
 	autoUnsealSvc := services.NewAutoUnsealService(sealSvc, storageSvc)
 
-	// Create barrier auto-unseal service (PCR policy-based).
-	// The policy store and TPM accessor are wired later in initializeDataDir
-	// after the barrier is unsealed (chicken-and-egg: store is behind barrier).
-	barrierAutoUnsealSvc := services.NewBarrierAutoUnsealService(nil,
+	// Create barrier auto-unseal service (named TPM policy). The local TPM
+	// policy service is wired by ensureLocalTPMPolicies, before the barrier
+	// is unsealed.
+	barrierAutoUnsealSvc := services.NewBarrierAutoUnsealService(
 		services.WithBarrierAutoUnsealLogger(log),
 	)
 
@@ -1936,7 +1896,7 @@ func NewApp(cfg *GUIConfig) *App {
 		notificationService:      notifySvc,
 		sealService:              sealSvc,
 		passwordProtectionSvc:    ppSvc,
-		platformPolicyService:    platformPolicySvc,
+		tpmPolicyService:         tpmPolicySvc,
 		autoUnsealService:        autoUnsealSvc,
 		barrierAutoUnsealService: barrierAutoUnsealSvc,
 		oidcService:              oidcSvc,
@@ -1991,8 +1951,6 @@ func NewApp(cfg *GUIConfig) *App {
 	a.tpmAccessor = tpmAccessor
 	tpmSvc.SetTPMAccessor(tpmAccessor)
 	sealSvc.SetTPMAccessor(tpmAccessor)
-	platformPolicySvc.SetTPMAccessor(tpmAccessor)
-	barrierAutoUnsealSvc.SetTPMAccessor(tpmAccessor)
 
 	// Apply persisted sealer backend selection (overrides auto-select).
 	if cfg.SealerBackend != "" {
@@ -2011,11 +1969,10 @@ func NewApp(cfg *GUIConfig) *App {
 		return tpmObj
 	})
 
-	// Wire platform policy into seal service.
-	sealSvc.SetPlatformPolicyService(platformPolicySvc)
-
-	// Wire platform policy into TPM service for unified policy menu.
-	tpmSvc.SetPlatformPolicyService(platformPolicySvc)
+	// Wire the TPM policy service into the services that create TPM
+	// objects, so local objects are recorded against their policy.
+	sealSvc.SetTPMPolicyService(tpmPolicySvc)
+	keySvc.SetTPMPolicyService(tpmPolicySvc)
 
 	// Wire auto-unseal config functions.
 	autoUnsealSvc.SetConfigFunc(func() *services.GUIConfigData {
@@ -2047,7 +2004,8 @@ func NewApp(cfg *GUIConfig) *App {
 	})
 	setupWizardSvc.SetTPMService(tpmSvc)
 	setupWizardSvc.SetSealService(sealSvc)
-	setupWizardSvc.SetPlatformPolicyService(platformPolicySvc)
+	setupWizardSvc.SetTPMPolicyService(tpmPolicySvc)
+	setupWizardSvc.SetBarrierAutoUnsealService(barrierAutoUnsealSvc)
 	setupWizardSvc.SetAutoUnsealService(autoUnsealSvc)
 	setupWizardSvc.SetBarrierService(barrierSvc)
 	setupWizardSvc.SetConfigDir(cfgDir)
@@ -2270,19 +2228,7 @@ func NewApp(cfg *GUIConfig) *App {
 	// Wire ConnectionService event emitter.
 	connSvc.SetEventEmitter(func(evt events.Event) {
 		a.EmitEvent(evt)
-
-		// Update service clients when server connection state changes.
-		switch evt.Type {
-		case events.EventServerConnected:
-			client := connSvc.GetClient()
-			pivSvc.SetClient(client)
-			a.custodianService.SetClient(client)
-			a.tenantService.SetClient(client)
-			a.certificateService.SetClient(client)
-		case events.EventServerDisconnected, events.EventServerError:
-			pivSvc.SetClient(nil)
-			a.certificateService.SetClient(nil)
-		}
+		a.applyConnectionEvent(evt.Type, connSvc.GetClient())
 	})
 
 	// Wire ShareService event emitter.
@@ -2593,6 +2539,93 @@ func (a *App) getTPM() xkmssdk.TrustedPlatformModule {
 	return a.tpmInstance
 }
 
+// applyConnectionEvent points the services that follow the server
+// connection at client when it connects, and away from it when it
+// disconnects or fails; the TPM policy service then returns to xKey's own
+// TPM.
+func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Client) {
+	switch eventType {
+	case events.EventServerConnected:
+		a.pivService.SetClient(client)
+		a.custodianService.SetClient(client)
+		a.tenantService.SetClient(client)
+		a.certificateService.SetClient(client)
+		a.tpmPolicyService.SetClient(client)
+	case events.EventServerDisconnected, events.EventServerError:
+		a.pivService.SetClient(nil)
+		a.certificateService.SetClient(nil)
+		a.tpmPolicyService.SetClient(nil)
+	}
+}
+
+// ensureLocalTPMPolicies opens the TPM policy service over xKey's own TPM,
+// once the TPM and the data directory are both known, and hands it to the
+// services that use it. Without a TPM there is nothing to open, and the TPM
+// policy service answers from the connected server only.
+func (a *App) ensureLocalTPMPolicies() {
+	if a.tpmPolicyService == nil || a.tpmPolicyService.Local() != nil {
+		return
+	}
+	if a.dataDir == "" {
+		dir, err := dataDir()
+		if err != nil {
+			a.log.Warn("TPM policies: data directory unavailable", "error", err)
+			return
+		}
+		a.dataDir = dir
+	}
+	tpm := a.getTPM()
+	a.tpmMu.Lock()
+	factory := a.tpmStorageFactory
+	a.tpmMu.Unlock()
+	if tpm == nil || factory == nil {
+		return
+	}
+	local, err := services.OpenLocalTPMPolicies(services.LocalTPMPolicyParams{
+		TPM:       tpm,
+		Keys:      factory.KeyBackend(),
+		DataDir:   a.dataDir,
+		OpenStore: a.openStore,
+		Accessor:  a.tpmAccessor,
+		Logger:    a.log,
+	})
+	if err != nil {
+		a.log.Warn("TPM policies: local service unavailable", "error", err)
+		return
+	}
+	a.tpmPolicyService.SetLocal(local)
+	if a.barrierAutoUnsealService != nil {
+		a.barrierAutoUnsealService.SetLocal(local)
+	}
+	a.log.Info("TPM policies: local service open", "data_dir", a.dataDir)
+}
+
+// autoUnsealBarrier unseals the barrier at startup without a password:
+// first with the credential the TPM releases under the named auto-unseal
+// policy, then -- for a tpm2 barrier created without a password -- with the
+// TPM alone. It reports whether the barrier is now unsealed; when it is not,
+// the user unseals it by hand.
+func (a *App) autoUnsealBarrier(ctx context.Context) bool {
+	a.ensureLocalTPMPolicies()
+	a.barrierAutoUnsealService.SetBarrier(a.barrierService)
+	ok, err := a.barrierAutoUnsealService.TryAutoUnseal(ctx, a.config.BarrierStrategy)
+	if ok {
+		a.log.Info("barrier auto-unsealed through the TPM auto-unseal policy")
+		return true
+	}
+	if err != nil {
+		a.log.Warn("barrier auto-unseal through the TPM policy failed", "error", err)
+	}
+	if a.config.BarrierStrategy != string(xkmssdk.StrategyTPM2) {
+		return false
+	}
+	if err := a.barrierService.Unseal("", a.config.BarrierStrategy); err != nil {
+		a.log.Info("tpm2 barrier needs its password", "error", err)
+		return false
+	}
+	return true
+}
+
 // Run starts the Wails v2 application. It blocks until the application exits.
 func (a *App) Run() error {
 	if a.running.Swap(true) {
@@ -2625,7 +2658,7 @@ func (a *App) Run() error {
 		a.appLockService,
 		a.pkcs11Service,
 		a.passwordProtectionSvc,
-		a.platformPolicyService,
+		a.tpmPolicyService,
 		a.autoUnsealService,
 		a.oidcService,
 		a.clipboardService,
@@ -2731,7 +2764,7 @@ func (a *App) startup(ctx context.Context) {
 	a.appLockService.SetContext(ctx)
 	a.pkcs11Service.SetContext(ctx)
 	a.passwordProtectionSvc.SetContext(ctx)
-	a.platformPolicyService.SetContext(ctx)
+	a.tpmPolicyService.SetContext(ctx)
 	a.autoUnsealService.SetContext(ctx)
 	a.oidcService.SetContext(ctx)
 	a.clipboardService.SetContext(ctx)
@@ -2798,13 +2831,6 @@ func (a *App) startup(ctx context.Context) {
 	a.deviceNotifier = notify.NewFocusNotifier(wailsNotifier, func() {
 		a.ShowWindow()
 	})
-
-	// Initialize platform policy early since the policy file lives in
-	// ~/.config/xkey/ (outside any LUKS volume) and must be available
-	// before postDataDirStartup or the user navigates to the TPM page.
-	if err := a.platformPolicyService.Initialize(); err != nil {
-		a.log.Warn("failed to initialize platform policy", "error", err)
-	}
 
 	// Set barrier data directory to ~/.xkey/data/ so all encrypted data
 	// lives in the data directory, not the config directory.
@@ -2959,58 +2985,17 @@ func (a *App) startupReturningUser(ctx context.Context) {
 	a.appLockService.SetBarrierStrategy(a.config.BarrierStrategy)
 
 	// Auto-unseal barrier if configured.
-	if a.config.StorageType == "barrier" && a.config.BarrierInitialized {
-		unsealed := false
-
-		if a.config.BarrierStrategy == "tpm2" && a.config.BarrierAutoUnsealEnabled {
-			// TPM2 strategy: try PCR policy-based auto-unseal first, then
-			// fall back to direct TPM unseal (no password needed).
-			a.barrierAutoUnsealService.SetBarrier(a.barrierService)
-			ok, err := a.barrierAutoUnsealService.TryAutoUnseal(ctx)
-			if ok {
-				a.log.Info("barrier auto-unsealed via PCR policy")
-				a.EmitEvent(events.NewEvent(events.EventBarrierUnlocked, nil))
-				a.appLockService.AutoUnlock()
-				unsealed = true
-			} else if err != nil {
-				a.log.Warn("barrier PCR policy auto-unseal failed, trying direct TPM", "error", err)
-			}
-			// Fallback: direct TPM unseal without PCR policy verification.
-			if !unsealed {
-				if err := a.barrierService.Unseal("", a.config.BarrierStrategy); err != nil {
-					a.log.Warn("barrier auto-unseal failed", "error", err)
-				} else {
-					a.EmitEvent(events.NewEvent(events.EventBarrierUnlocked, nil))
-					a.appLockService.AutoUnlock()
-					unsealed = true
-				}
-			}
-		} else if a.config.BarrierAutoUnsealEnabled && a.config.BarrierAutoUnsealBlobID != "" {
-			// Software strategy: try auto-unseal via TPM-sealed barrier password.
-			b64PW, unsealErr := a.sealService.UnsealData(a.config.BarrierAutoUnsealBlobID, "")
-			if unsealErr == nil {
-				pwBytes, decErr := base64.StdEncoding.DecodeString(b64PW)
-				if decErr == nil {
-					if err := a.barrierService.Unseal(string(pwBytes), a.config.BarrierStrategy); err != nil {
-						a.log.Warn("barrier auto-unseal with sealed password failed", "error", err)
-					} else {
-						a.log.Info("barrier auto-unsealed via sealed password")
-						a.EmitEvent(events.NewEvent(events.EventBarrierUnlocked, nil))
-						a.appLockService.AutoUnlock()
-						unsealed = true
-					}
-				} else {
-					a.log.Warn("barrier auto-unseal: failed to decode password", "error", decErr)
-				}
-			} else {
-				a.log.Warn("barrier auto-unseal: failed to unseal password blob", "error", unsealErr)
-			}
-		}
-
-		if !unsealed {
+	if a.config.StorageType == "barrier" && a.config.BarrierInitialized && a.config.BarrierAutoUnsealEnabled {
+		if a.autoUnsealBarrier(ctx) {
+			a.EmitEvent(events.NewEvent(events.EventBarrierUnlocked, nil))
+			a.appLockService.AutoUnlock()
+		} else {
 			a.log.Info("barrier locked, waiting for password")
 			a.EmitEvent(events.NewEvent(events.EventBarrierLocked, nil))
 		}
+	} else if a.config.StorageType == "barrier" && a.config.BarrierInitialized {
+		a.log.Info("barrier locked, waiting for password")
+		a.EmitEvent(events.NewEvent(events.EventBarrierLocked, nil))
 	}
 
 	// Register post-unseal hook so that manual unseal (via UnsealDialog)
@@ -3494,6 +3479,16 @@ func (a *App) shutdown(ctx context.Context) {
 		shutdownStep(a.log, "backend-registry-close", 1*time.Second, func() error {
 			if a.backendRegistry != nil {
 				return a.backendRegistry.Close()
+			}
+			return nil
+		})
+
+		// Close the local TPM policy service before its TPM.
+		shutdownStep(a.log, "tpm-policies-close", 1*time.Second, func() error {
+			if local := a.tpmPolicyService.Local(); local != nil {
+				a.tpmPolicyService.SetLocal(nil)
+				a.barrierAutoUnsealService.SetLocal(nil)
+				return local.Close()
 			}
 			return nil
 		})

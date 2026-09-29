@@ -429,12 +429,11 @@ func TestFinalCoveragePush4_SealService_ListBlobs_ViaBackend(t *testing.T) {
 
 	// Store a valid blob.
 	blob := sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-blob-1",
-		Label:      "test label",
-		SizeBytes:  256,
-		CreatedAt:  time.Now().UTC(),
+		BackendID: "software",
+		ID:        "test-blob-1",
+		Label:     "test label",
+		SizeBytes: 256,
+		CreatedAt: time.Now().UTC(),
 	}
 	data, err := json.Marshal(blob)
 	require.NoError(t, err)
@@ -489,12 +488,11 @@ func TestFinalCoveragePush4_SealService_ListBlobs_ViaBackend_MultipleBlobs(t *te
 	// Store multiple blobs with different timestamps.
 	for i, label := range []string{"first", "second", "third"} {
 		blob := sealedBlobStorage{
-			PolicyType: "none",
-			BackendID:  "software",
-			ID:         label,
-			Label:      label,
-			SizeBytes:  100 * (i + 1),
-			CreatedAt:  time.Now().UTC().Add(time.Duration(i) * time.Hour),
+			BackendID: "software",
+			ID:        label,
+			Label:     label,
+			SizeBytes: 100 * (i + 1),
+			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Hour),
 		}
 		data, err := json.Marshal(blob)
 		require.NoError(t, err)

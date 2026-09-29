@@ -15,7 +15,7 @@
 
 // Package xkey — stub swtpm lifecycle for integration test binaries built
 // without the tpm_simulator tag. TPM2 barrier CLI tests (barrier_tpm2_test.go,
-// pcr_policy_test.go) are themselves gated on tpm_simulator and are absent
+// tpm_policy_test.go) are themselves gated on tpm_simulator and are absent
 // from this build, so there is nothing to stop; this stub exists solely so
 // main_test.go's TestMain can call stopSwtpmForTests unconditionally
 // regardless of which tag set the binary was built with.

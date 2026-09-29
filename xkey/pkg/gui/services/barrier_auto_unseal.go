@@ -15,59 +15,70 @@ package services
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-
-	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
+
+// BarrierAutoUnsealObject names the TPM sealed object, in the system scope of
+// xKey's TPM, that holds the barrier credential for auto-unseal. It is bound
+// to the scope's auto-unseal policy and to nothing else, so the TPM releases
+// it only in the platform state that policy approves.
+const BarrierAutoUnsealObject = "xkey-barrier-auto-unseal"
 
 // Barrier auto-unseal typed errors.
 var (
-	// ErrBarrierAutoUnsealPCRMismatch indicates the current TPM PCR values do
-	// not match the expected digests stored in the auto-unseal policy.
-	ErrBarrierAutoUnsealPCRMismatch = errors.New("barrier_auto_unseal: PCR values do not match policy")
-
-	// ErrBarrierAutoUnsealTPMUnavailable indicates the TPM is not available for
-	// barrier auto-unseal operations.
-	ErrBarrierAutoUnsealTPMUnavailable = errors.New("barrier_auto_unseal: TPM not available")
-
-	// ErrBarrierAutoUnsealNoPolicyStore indicates the policy store is nil.
-	ErrBarrierAutoUnsealNoPolicyStore = errors.New("barrier_auto_unseal: policy store not configured")
+	// ErrBarrierAutoUnsealNoPolicyService indicates the local TPM policy
+	// service is not available (no TPM, or no data directory).
+	ErrBarrierAutoUnsealNoPolicyService = errors.New("barrier_auto_unseal: the local TPM policy service is not available")
 
 	// ErrBarrierAutoUnsealNoBarrier indicates the barrier service is nil.
 	ErrBarrierAutoUnsealNoBarrier = errors.New("barrier_auto_unseal: barrier service not configured")
 
-	// ErrBarrierAutoUnsealFailed indicates the barrier unseal operation failed.
+	// ErrBarrierAutoUnsealFailed indicates the TPM released the credential
+	// but the barrier refused it.
 	ErrBarrierAutoUnsealFailed = errors.New("barrier_auto_unseal: barrier unseal failed")
 
-	// ErrBarrierAutoUnsealInvalidBank indicates the policy specifies an
-	// unsupported PCR bank.
-	ErrBarrierAutoUnsealInvalidBank = errors.New("barrier_auto_unseal: invalid PCR bank in policy")
+	// ErrBarrierAutoUnsealRefused indicates the TPM refused to release the
+	// barrier credential: the PCRs no longer hold the values the
+	// auto-unseal policy approves, or its approval was revoked.
+	ErrBarrierAutoUnsealRefused = errors.New("barrier_auto_unseal: the TPM refused to release the barrier credential under the auto-unseal policy")
 
-	// ErrBarrierAutoUnsealReadPCRFailed indicates the TPM PCR read failed.
-	ErrBarrierAutoUnsealReadPCRFailed = errors.New("barrier_auto_unseal: failed to read PCR values from TPM")
+	// ErrBarrierAutoUnsealNotEnrolled indicates a policy carries the
+	// auto-unseal mark but no barrier credential is sealed under it.
+	ErrBarrierAutoUnsealNotEnrolled = errors.New("barrier_auto_unseal: no barrier credential is sealed under the auto-unseal policy; enable auto-unseal again")
 
-	// ErrBarrierAutoUnsealNoPCRIndices indicates the request contains no PCR
-	// indices.
-	ErrBarrierAutoUnsealNoPCRIndices = errors.New("barrier_auto_unseal: no PCR indices specified")
+	// ErrBarrierAutoUnsealPolicyMoved indicates the barrier credential is
+	// sealed under another policy than the one carrying the auto-unseal
+	// mark.
+	ErrBarrierAutoUnsealPolicyMoved = errors.New("barrier_auto_unseal: the barrier credential is sealed under another policy than the auto-unseal policy; enable auto-unseal again")
 
-	// ErrBarrierAutoUnsealEmptyPolicyName indicates an empty policy name was
-	// provided to SetAutoUnsealPolicy.
+	// ErrBarrierAutoUnsealEmptyPolicyName indicates an empty policy name.
 	ErrBarrierAutoUnsealEmptyPolicyName = errors.New("barrier_auto_unseal: policy name cannot be empty")
+
+	// ErrBarrierAutoUnsealBuiltinPolicy indicates the built-in platform
+	// policy was named: auto-unseal needs a named policy of its own.
+	ErrBarrierAutoUnsealBuiltinPolicy = errors.New("barrier_auto_unseal: the built-in platform policy cannot carry auto-unseal; create a named policy")
+
+	// ErrBarrierAutoUnsealCredentialRequired indicates an empty barrier
+	// credential. A barrier with no credential needs no auto-unseal: the
+	// TPM releases it on its own.
+	ErrBarrierAutoUnsealCredentialRequired = errors.New("barrier_auto_unseal: the barrier password is required")
 )
 
 // BarrierAutoUnsealOption is a functional option for configuring
 // BarrierAutoUnsealService.
 type BarrierAutoUnsealOption func(*BarrierAutoUnsealService)
 
-// WithBarrierAutoUnsealTPMAccessor sets the TPM accessor for PCR reads.
-func WithBarrierAutoUnsealTPMAccessor(a *TPMAccessor) BarrierAutoUnsealOption {
+// WithBarrierAutoUnsealLocal sets the local TPM policy service over xKey's
+// TPM.
+func WithBarrierAutoUnsealLocal(l *LocalTPMPolicies) BarrierAutoUnsealOption {
 	return func(s *BarrierAutoUnsealService) {
-		s.tpmAccessor.Store(a)
+		s.local.Store(l)
 	}
 }
 
@@ -85,71 +96,42 @@ func WithBarrierAutoUnsealLogger(l *slog.Logger) BarrierAutoUnsealOption {
 	}
 }
 
-// WithBarrierAutoUnsealStrategyID sets the barrier strategy ID to use
-// during unseal.
-func WithBarrierAutoUnsealStrategyID(id string) BarrierAutoUnsealOption {
-	return func(s *BarrierAutoUnsealService) {
-		s.strategyID = id
-	}
-}
-
-// BarrierAutoUnsealService handles barrier auto-unseal at boot by verifying
-// TPM PCR values against a stored PCR policy. When the current platform
-// state matches the policy, the barrier is unsealed via the TPM's PCR
-// policy branch (PlatformPolicySession with nil auth), which requires
-// no user-provided PIN.
+// BarrierAutoUnsealService unseals xKey's barrier at boot without a password
+// when the platform is in the state a named TPM policy approves.
+//
+// Auto-unseal is an attribute of a named policy (at most one per scope, set
+// with the TPM policy service). Enabling it seals the barrier credential in
+// the TPM as BarrierAutoUnsealObject, bound to that policy alone; TryAutoUnseal
+// has the TPM unseal it through a policy session, so it is the TPM that
+// checks the PCRs and the policy's approval. After a PCR change, a revoke or
+// an authority problem the TPM refuses, and the caller falls back to a
+// manual unseal.
 //
 // This is distinct from AutoUnsealService, which handles LUKS volume
-// auto-unseal. BarrierAutoUnsealService operates at the barrier layer,
-// unlocking the encrypted key management storage.
-//
-// policyStore, tpmAccessor, and barrier are stored behind atomic.Pointer so
-// that the composition root can wire them in after construction (once the
-// data directory and barrier have been initialized) without racing against
-// concurrent reads from Wails-bound frontend calls.
+// auto-unseal. The local policy service and barrier are stored behind
+// atomic pointers so the composition root can wire them after construction
+// without racing Wails-bound frontend calls.
 type BarrierAutoUnsealService struct {
-	policyStore atomic.Pointer[pcrpolicy.PolicyStore]
-	tpmAccessor atomic.Pointer[TPMAccessor]
-	barrier     atomic.Pointer[BarrierService]
-	logger      *slog.Logger
-	strategyID  string
+	local   atomic.Pointer[LocalTPMPolicies]
+	barrier atomic.Pointer[BarrierService]
+	logger  *slog.Logger
 }
 
-// NewBarrierAutoUnsealService creates a new BarrierAutoUnsealService with
-// the given policy store and options. policyStore may be nil; in that case
-// GetAutoUnsealStatus reports the feature as unavailable until
-// SetPolicyStore is called with a non-nil store.
-func NewBarrierAutoUnsealService(policyStore pcrpolicy.PolicyStore, opts ...BarrierAutoUnsealOption) *BarrierAutoUnsealService {
+// NewBarrierAutoUnsealService returns a BarrierAutoUnsealService configured
+// by opts.
+func NewBarrierAutoUnsealService(opts ...BarrierAutoUnsealOption) *BarrierAutoUnsealService {
 	s := &BarrierAutoUnsealService{
-		logger:     slog.Default().With("component", "barrier_auto_unseal_service"),
-		strategyID: "tpm2",
+		logger: slog.Default().With("component", "barrier_auto_unseal_service"),
 	}
-	s.policyStore.Store(&policyStore)
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
 }
 
-// getPolicyStore returns the currently configured PCR policy store, or nil
-// if none has been set.
-func (s *BarrierAutoUnsealService) getPolicyStore() pcrpolicy.PolicyStore {
-	if p := s.policyStore.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
-// SetPolicyStore injects (or replaces) the PCR policy store used to look up
-// the auto-unseal policy. This is called by the composition root once the
-// data directory and canonical pcr_policy store are available.
-func (s *BarrierAutoUnsealService) SetPolicyStore(store pcrpolicy.PolicyStore) {
-	s.policyStore.Store(&store)
-}
-
-// SetTPMAccessor sets the shared TPMAccessor used for serialized TPM access.
-func (s *BarrierAutoUnsealService) SetTPMAccessor(a *TPMAccessor) {
-	s.tpmAccessor.Store(a)
+// SetLocal sets (or replaces) the local TPM policy service.
+func (s *BarrierAutoUnsealService) SetLocal(l *LocalTPMPolicies) {
+	s.local.Store(l)
 }
 
 // SetBarrier sets the barrier service used for unsealing.
@@ -157,269 +139,199 @@ func (s *BarrierAutoUnsealService) SetBarrier(b *BarrierService) {
 	s.barrier.Store(b)
 }
 
-// TryAutoUnseal attempts to unseal the barrier using the configured
-// auto-unseal PCR policy.
+// requireLocal returns the local TPM policy service or
+// ErrBarrierAutoUnsealNoPolicyService.
+func (s *BarrierAutoUnsealService) requireLocal() (*LocalTPMPolicies, error) {
+	l := s.local.Load()
+	if l == nil {
+		return nil, ErrBarrierAutoUnsealNoPolicyService
+	}
+	return l, nil
+}
+
+// TryAutoUnseal unseals the barrier with the credential the TPM releases
+// under the scope's auto-unseal policy. strategyID is the barrier's sealing
+// strategy.
 //
-// Returns (true, nil) if auto-unseal succeeded.
-// Returns (false, nil) if no auto-unseal policy is configured.
-// Returns (false, err) if auto-unseal failed (PCR mismatch, TPM error, etc.).
-func (s *BarrierAutoUnsealService) TryAutoUnseal(ctx context.Context) (bool, error) {
-	store := s.getPolicyStore()
-	if store == nil {
-		return false, ErrBarrierAutoUnsealNoPolicyStore
+// Returns (true, nil) when the barrier was unsealed, (false, nil) when no
+// policy carries the auto-unseal mark, and (false, err) otherwise -- notably
+// ErrBarrierAutoUnsealRefused when the TPM refuses the policy session. The
+// caller then falls back to a manual unseal.
+func (s *BarrierAutoUnsealService) TryAutoUnseal(ctx context.Context, strategyID string) (bool, error) {
+	l, err := s.requireLocal()
+	if err != nil {
+		return false, err
 	}
 	barrier := s.barrier.Load()
 	if barrier == nil {
 		return false, ErrBarrierAutoUnsealNoBarrier
 	}
 
-	// 1. Get auto-unseal policy from store.
-	policy, err := store.GetAutoUnsealPolicy(ctx)
-	if err != nil {
-		if errors.Is(err, pcrpolicy.ErrPolicyNotFound) {
-			s.logger.Debug("barrier-auto-unseal: no auto-unseal policy configured")
-			return false, nil
-		}
-		s.logger.Error("barrier-auto-unseal: failed to retrieve policy", "error", err)
-		return false, err
-	}
-
-	// 2. Verify current PCR values match the policy.
-	match, verifyErr := s.verifyPCRs(ctx, policy)
-	if verifyErr != nil {
-		s.logger.Error("barrier-auto-unseal: PCR verification failed", "error", verifyErr)
-		return false, verifyErr
-	}
-
-	if !match {
-		s.logger.Warn("barrier-auto-unseal: PCR mismatch, falling back to manual unseal",
-			slog.String("policy", policy.Name),
-			slog.String("bank", policy.Bank))
-		return false, ErrBarrierAutoUnsealPCRMismatch
-	}
-
-	// 3. PCRs match: unseal the barrier using the TPM strategy.
-	// For TPM2 strategy with PCR branch, an empty password is used because
-	// the PlatformPolicySession(nil) path relies solely on PCR state.
-	s.logger.Info("barrier-auto-unseal: PCR values match policy, unsealing barrier",
-		slog.String("policy", policy.Name))
-
-	if unsealErr := barrier.Unseal("", s.strategyID); unsealErr != nil {
-		s.logger.Error("barrier-auto-unseal: barrier unseal failed", "error", unsealErr)
-		return false, ErrBarrierAutoUnsealFailed
-	}
-
-	s.logger.Info("barrier-auto-unseal: barrier successfully unsealed via PCR policy",
-		slog.String("policy", policy.Name))
-	return true, nil
-}
-
-// verifyPCRs checks if current TPM PCR values match the given policy.
-// Returns (true, nil) on match, (false, nil) on mismatch, or (false, err)
-// on TPM or validation errors.
-//
-// Unexported on purpose: it takes a *pcrpolicy.PCRPolicyEntity, and pcr_policy
-// transitively imports the go-qrdb/sdk/go generic DAO types. If this method were
-// exported, the wails v2 binding generator would try to type-load that generics
-// package and abort with "package go-qrdb/sdk/go without types", preventing the
-// GUI from launching. It is only used internally (by TryAutoUnseal); the frontend
-// never calls it.
-func (s *BarrierAutoUnsealService) verifyPCRs(ctx context.Context, policy *pcrpolicy.PCRPolicyEntity) (bool, error) {
-	if policy == nil {
+	policy, err := l.AutoUnsealPolicy(ctx)
+	if errors.Is(err, xkms.ErrTPMPolicyNotFound) {
+		s.logger.Debug("barrier-auto-unseal: no auto-unseal policy configured")
 		return false, nil
 	}
-
-	if len(policy.PCRs) == 0 {
-		return false, nil
-	}
-
-	// Policies created through the GUI store the bank in its display form
-	// (e.g. "SHA256"); normalize before validating and reading.
-	bank := normalizeBankAlg(policy.Bank)
-	if _, ok := validPCRBanks[bank]; !ok {
-		return false, ErrBarrierAutoUnsealInvalidBank
-	}
-
-	// Extract PCR indices from the policy.
-	indices := make([]uint, 0, len(policy.PCRs))
-	for idx := range policy.PCRs {
-		indices = append(indices, idx)
-	}
-
-	// Read current PCR values from TPM.
-	currentPCRs, err := s.CaptureCurrentPCRs(ctx, bank, indices)
 	if err != nil {
 		return false, err
 	}
-
-	// Compare each PCR value using constant-time comparison.
-	for idx, expectedDigest := range policy.PCRs {
-		currentDigest, ok := currentPCRs[idx]
-		if !ok {
-			s.logger.Debug("barrier-auto-unseal: PCR index not found in current values",
-				slog.Uint64("pcr_index", uint64(idx)))
-			return false, nil
-		}
-
-		if len(expectedDigest) != len(currentDigest) {
-			return false, nil
-		}
-
-		if subtle.ConstantTimeCompare(expectedDigest, currentDigest) != 1 {
-			s.logger.Debug("barrier-auto-unseal: PCR value mismatch",
-				slog.Uint64("pcr_index", uint64(idx)))
-			return false, nil
-		}
+	if err := s.checkEnrolled(ctx, l, policy); err != nil {
+		return false, err
 	}
 
+	credential, err := l.UnsealObject(ctx, BarrierAutoUnsealObject)
+	if err != nil {
+		s.logger.Warn("barrier-auto-unseal: the TPM refused the auto-unseal policy, falling back to manual unseal",
+			slog.String("policy", policy), slog.String("error", err.Error()))
+		return false, &SentinelCauseError{Sentinel: ErrBarrierAutoUnsealRefused, Cause: err}
+	}
+	defer clear(credential)
+
+	if err := barrier.Unseal(string(credential), strategyID); err != nil {
+		s.logger.Error("barrier-auto-unseal: barrier unseal failed", "error", err)
+		return false, &SentinelCauseError{Sentinel: ErrBarrierAutoUnsealFailed, Cause: err}
+	}
+	s.logger.Info("barrier-auto-unseal: barrier unsealed through the TPM policy", slog.String("policy", policy))
 	return true, nil
 }
 
-// CaptureCurrentPCRs reads the current PCR values from the TPM for the
-// given bank and PCR indices. Returns a map of PCR index to raw digest bytes.
-func (s *BarrierAutoUnsealService) CaptureCurrentPCRs(_ context.Context, bank string, pcrIndices []uint) (map[uint][]byte, error) {
-	if len(pcrIndices) == 0 {
-		return nil, ErrBarrierAutoUnsealNoPCRIndices
+// checkEnrolled confirms the barrier credential is sealed under policy.
+func (s *BarrierAutoUnsealService) checkEnrolled(ctx context.Context, l *LocalTPMPolicies, policy string) error {
+	assigned, err := l.TPMObjectPolicy(ctx, &transport.TPMObjectPolicyRequest{
+		KeyID: BarrierAutoUnsealObject,
+		Kind:  xkms.TPMObjectKindSealed,
+	})
+	if errors.Is(err, xkms.ErrTPMPolicyNotAssigned) {
+		return ErrBarrierAutoUnsealNotEnrolled
 	}
-
-	// Accept both normalized ("sha256") and display-form ("SHA256") banks.
-	bank = normalizeBankAlg(bank)
-	if _, ok := validPCRBanks[bank]; !ok {
-		return nil, ErrBarrierAutoUnsealInvalidBank
-	}
-
-	tpm, err := s.acquireTPM()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer s.tpmAccessor.Load().Release()
-
-	banks, err := tpm.ReadPCRs(pcrIndices)
-	if err != nil {
-		s.logger.Error("barrier-auto-unseal: TPM ReadPCRs failed", "error", err)
-		return nil, ErrBarrierAutoUnsealReadPCRFailed
-	}
-
-	normalizedBank := normalizeBankAlg(bank)
-	result := make(map[uint][]byte, len(pcrIndices))
-
-	for _, b := range banks {
-		bankAlg := normalizeBankAlg(b.Algorithm)
-		if bankAlg != normalizedBank {
-			continue
-		}
-		for _, pcr := range b.PCRs {
-			for _, requested := range pcrIndices {
-				if uint(pcr.ID) == requested {
-					result[requested] = pcr.Value
-				}
-			}
+	if assigned.Policy != policy {
+		return &DetailError{
+			Err:    ErrBarrierAutoUnsealPolicyMoved,
+			Detail: fmt.Sprintf(" (sealed under %q, auto-unseal policy is %q)", assigned.Policy, policy),
 		}
 	}
-
-	return result, nil
+	return nil
 }
 
 // BarrierAutoUnsealStatus is the frontend-facing representation of barrier
 // auto-unseal configuration and runtime state.
 type BarrierAutoUnsealStatus struct {
-	// Available reports whether the barrier auto-unseal feature is usable
-	// at all. It is false only when no PCR policy store has been wired
-	// (e.g. during early startup before initializeDataDir runs). When
-	// false, Reason explains why and the remaining fields are zero values.
-	Available        bool   `json:"available"`
-	Reason           string `json:"reason,omitempty"`
-	TPMAvailable     bool   `json:"tpm_available"`
-	BarrierSealed    bool   `json:"barrier_sealed"`
+	// Available reports whether barrier auto-unseal can be used at all. It
+	// is false when there is no local TPM policy service (no TPM, or the
+	// data directory is not open yet); Reason then says why and the
+	// remaining fields are zero.
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+
+	BarrierSealed bool `json:"barrier_sealed"`
+
+	// PolicyConfigured reports whether a policy carries the auto-unseal
+	// mark, and PolicyName names it.
 	PolicyConfigured bool   `json:"policy_configured"`
 	PolicyName       string `json:"policy_name"`
-	PCRsMatch        bool   `json:"pcrs_match"`
+
+	// CredentialSealed reports whether the barrier credential is sealed
+	// under that policy, so auto-unseal can run.
+	CredentialSealed bool `json:"credential_sealed"`
+
+	// PCRsMatch reports whether the live PCRs match the policy and its
+	// approval is current (advisory: the TPM decides at unseal time).
+	PCRsMatch bool `json:"pcrs_match"`
 }
 
 // GetAutoUnsealStatus returns the current barrier auto-unseal configuration
-// and runtime state. This method is bound to the Wails frontend.
-//
-// If no policy store has been configured yet, this returns a status with
-// Available=false and a nil error rather than an error, so the frontend can
-// render a graceful "unavailable" panel instead of retrying indefinitely.
+// and runtime state. Without a local TPM policy service it reports
+// Available=false and a nil error, so the frontend can render an
+// "unavailable" panel instead of retrying.
 func (s *BarrierAutoUnsealService) GetAutoUnsealStatus() (*BarrierAutoUnsealStatus, error) {
-	store := s.getPolicyStore()
-	if store == nil {
-		return &BarrierAutoUnsealStatus{
-			Available: false,
-			Reason:    "PCR policy store is not configured",
-		}, nil
+	l := s.local.Load()
+	if l == nil {
+		return &BarrierAutoUnsealStatus{Reason: ErrBarrierAutoUnsealNoPolicyService.Error()}, nil
 	}
-
 	status := &BarrierAutoUnsealStatus{Available: true}
-
-	// Check TPM availability.
-	status.TPMAvailable = s.tpmAccessor.Load() != nil
-
-	// Check barrier state.
 	if barrier := s.barrier.Load(); barrier != nil {
-		info := barrier.GetSealInfo()
-		status.BarrierSealed = info.Sealed
+		status.BarrierSealed = barrier.GetSealInfo().Sealed
 	}
 
-	// Check whether an auto-unseal policy is configured.
-	policy, err := store.GetAutoUnsealPolicy(context.Background())
+	ctx := context.Background()
+	policy, err := l.AutoUnsealPolicy(ctx)
+	if errors.Is(err, xkms.ErrTPMPolicyNotFound) {
+		return status, nil
+	}
 	if err != nil {
-		if errors.Is(err, pcrpolicy.ErrPolicyNotFound) {
-			// No policy configured — not an error, just unconfigured.
-			return status, nil
-		}
+		return nil, err
+	}
+	status.PolicyConfigured = true
+	status.PolicyName = policy
+
+	switch err := s.checkEnrolled(ctx, l, policy); {
+	case err == nil:
+		status.CredentialSealed = true
+	case errors.Is(err, ErrBarrierAutoUnsealNotEnrolled), errors.Is(err, ErrBarrierAutoUnsealPolicyMoved):
+	default:
 		return nil, err
 	}
 
-	status.PolicyConfigured = true
-	status.PolicyName = policy.Name
-
-	// If the TPM is available, check whether current PCR values match.
-	if status.TPMAvailable {
-		match, verifyErr := s.verifyPCRs(context.Background(), policy)
-		if verifyErr == nil {
-			status.PCRsMatch = match
-		}
-		// Verification errors are non-fatal here: PCRsMatch stays false.
+	v, err := l.TPMPolicyVerify(ctx, &transport.TPMPolicyRequest{Name: policy})
+	if err != nil {
+		return nil, err
 	}
-
+	status.PCRsMatch = v.Match && v.Approved
 	return status, nil
 }
 
-// SetAutoUnsealPolicy configures barrier auto-unseal to use the named
-// PCR policy. This method is bound to the Wails frontend.
-func (s *BarrierAutoUnsealService) SetAutoUnsealPolicy(policyName string) error {
-	store := s.getPolicyStore()
-	if store == nil {
-		return ErrBarrierAutoUnsealNoPolicyStore
-	}
-	if policyName == "" {
-		return ErrBarrierAutoUnsealEmptyPolicyName
-	}
-	return store.SetAutoUnseal(context.Background(), policyName)
-}
-
-// ClearAutoUnsealPolicy removes the barrier auto-unseal policy designation.
-// This method is bound to the Wails frontend.
-func (s *BarrierAutoUnsealService) ClearAutoUnsealPolicy() error {
-	store := s.getPolicyStore()
-	if store == nil {
-		return ErrBarrierAutoUnsealNoPolicyStore
-	}
-	return store.ClearAutoUnseal(context.Background())
-}
-
-// acquireTPM obtains the TPM instance via the shared accessor.
-// The caller MUST call s.tpmAccessor.Load().Release() after a successful call.
-func (s *BarrierAutoUnsealService) acquireTPM() (xkms.TrustedPlatformModule, error) {
-	accessor := s.tpmAccessor.Load()
-	if accessor == nil {
-		return nil, ErrBarrierAutoUnsealTPMUnavailable
-	}
-	tpm, err := accessor.Acquire()
+// EnableAutoUnseal makes policyName the scope's auto-unseal policy and seals
+// credential -- the barrier's password -- in the TPM under it, replacing any
+// credential sealed before.
+func (s *BarrierAutoUnsealService) EnableAutoUnseal(policyName, credential string) error {
+	l, err := s.requireLocal()
 	if err != nil {
-		return nil, ErrBarrierAutoUnsealTPMUnavailable
+		return err
 	}
-	return tpm, nil
+	switch policyName {
+	case "":
+		return ErrBarrierAutoUnsealEmptyPolicyName
+	case xkms.TPMPolicyPlatform:
+		return ErrBarrierAutoUnsealBuiltinPolicy
+	}
+	if credential == "" {
+		return ErrBarrierAutoUnsealCredentialRequired
+	}
+
+	ctx := context.Background()
+	if err := l.SealObject(ctx, BarrierAutoUnsealObject, policyName, []byte(credential)); err != nil {
+		return err
+	}
+	if _, err := l.TPMPolicySetAutoUnseal(ctx, &transport.TPMPolicyAutoUnsealRequest{Name: policyName, Enabled: true}); err != nil {
+		return err
+	}
+	s.logger.Info("barrier-auto-unseal: enabled", slog.String("policy", policyName))
+	return nil
+}
+
+// DisableAutoUnseal clears the auto-unseal mark and deletes the sealed
+// barrier credential. Disabling when nothing is enabled is not an error.
+func (s *BarrierAutoUnsealService) DisableAutoUnseal() error {
+	l, err := s.requireLocal()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	policy, err := l.AutoUnsealPolicy(ctx)
+	switch {
+	case err == nil:
+		if _, err := l.TPMPolicySetAutoUnseal(ctx, &transport.TPMPolicyAutoUnsealRequest{Name: policy, Enabled: false}); err != nil {
+			return err
+		}
+	case !errors.Is(err, xkms.ErrTPMPolicyNotFound):
+		return err
+	}
+	if err := l.DeleteObject(ctx, BarrierAutoUnsealObject); err != nil {
+		return err
+	}
+	s.logger.Info("barrier-auto-unseal: disabled")
+	return nil
 }

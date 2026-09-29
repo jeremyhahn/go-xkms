@@ -23,12 +23,17 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
+
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/pflag"
 )
 
 // mockSealStoreClient implements SealStoreService for testing.
 type mockSealStoreClient struct {
+	// Fake serves the TPM policy API, which these tests do not exercise.
+	*tpmpolicyfake.Fake
+
 	mu         sync.Mutex
 	secrets    map[string][]byte
 	putErr     error

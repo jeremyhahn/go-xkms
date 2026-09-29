@@ -18,12 +18,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
@@ -31,30 +31,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// newSealServiceWithPlatformPolicy creates a SealService wired with a mock
-// TPM and a PlatformPolicyService that has a pre-loaded policy definition.
-// This allows SealData calls with PolicyType "platform_policy" to succeed.
-func newSealServiceWithPlatformPolicy(t *testing.T, mock *sealMockTPM) *SealService {
-	t.Helper()
-	svc := newSealServiceWithMock(t, mock)
-
-	policySvc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "policy.json"))
-	policySvc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:      []int{0, 1, 7},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aabb", 1: "ccdd", 7: "eeff"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	})
-	svc.SetPlatformPolicyService(policySvc)
-
-	return svc
-}
-
-// ==========================================================================
-// 1. setup_wizard_service.go coverage
-// ==========================================================================
 
 func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_PPSvcFailsSetMode(t *testing.T) {
 	svc := &SetupWizardService{}
@@ -86,33 +62,6 @@ func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_PPSvcFailsSetMode(t *testi
 	assert.True(t, result.Success)
 	assert.True(t, len(result.Warnings) > 0)
 	_ = savedCfg
-}
-
-func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_SealUserPIN(t *testing.T) {
-	svc := &SetupWizardService{}
-
-	cfg := &GUIConfigData{}
-	svc.SetConfigFunc(func() *GUIConfigData { return cfg })
-	svc.SetConfigSaveFunc(func(c *GUIConfigData) error { return nil })
-	svc.SetInitDataDirFunc(func() error { return nil })
-
-	mock := defaultSealMock()
-	sealSvc := newSealServiceWithPlatformPolicy(t, mock)
-	svc.SetSealService(sealSvc)
-
-	pinSvc := NewPINService()
-	svc.SetPINService(pinSvc)
-
-	choices := &SetupChoices{
-		Mode:              "standalone",
-		SOPin:             "so-pin-123",
-		UserPin:           "user-pin-456",
-		PasswordStoreMode: "tpm_sealed",
-	}
-
-	result, err := svc.ApplySetup(choices)
-	require.NoError(t, err)
-	require.NotNil(t, result)
 }
 
 // TestSetupWizard_ApplySOProvisioning_ConfigLoadSavePaths covers L812-832.
@@ -332,30 +281,18 @@ func TestSealService_ListBlobs_PanicRecoveryFC4(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
-func TestSealService_SealData_InvalidPolicyTypeFC4(t *testing.T) {
-	mock := defaultSealMock()
-	svc := newSealServiceWithMock(t, mock)
-
-	req := validSealRequest()
-	req.PolicyType = "totally_invalid_policy"
-
-	entry, err := svc.SealData(req)
-	assert.ErrorIs(t, err, ErrSealInvalidPolicyType)
-	assert.Nil(t, entry)
-}
-
 func TestSealService_SealData_PasswordPolicyHashSuccess(t *testing.T) {
 	mock := defaultSealMock()
 	svc := newSealServiceWithMock(t, mock)
 
 	req := validSealRequest()
-	req.PolicyType = "password"
+	req.Backend = "software"
 	req.Password = "my-strong-password"
 
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
-	assert.Equal(t, "password", entry.PolicyType)
+	assert.True(t, entry.PasswordProtected)
 	assert.NotEmpty(t, entry.ID)
 
 	blobPath := svc.blobPath(entry.ID)
@@ -371,8 +308,7 @@ func TestSealService_SealData_PasswordPolicyHashSuccess(t *testing.T) {
 func TestSealService_SaveBlob_StorageDirNotSetFC4(t *testing.T) {
 	svc := NewSealService("")
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software", ID: "test"}
+		BackendID: "software", ID: "test"}
 	err := svc.saveBlob(blob)
 	assert.ErrorIs(t, err, ErrSealStorageFailed)
 }
@@ -380,8 +316,7 @@ func TestSealService_SaveBlob_StorageDirNotSetFC4(t *testing.T) {
 func TestSealService_SaveBlob_RelativeDirFC4(t *testing.T) {
 	svc := NewSealService("relative/path")
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software", ID: "test"}
+		BackendID: "software", ID: "test"}
 	err := svc.saveBlob(blob)
 	assert.ErrorIs(t, err, ErrSealStorageFailed)
 }
@@ -484,7 +419,7 @@ func TestAutoUnseal_Enable_ConfigSaveDeleteBlobOnErrorFC4(t *testing.T) {
 		return errors.New("config save failed")
 	})
 
-	result, err := autoSvc.Enable("long-passphrase", nil, "", "", "", "")
+	result, err := autoSvc.Enable("long-passphrase", "", "")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 
@@ -497,9 +432,8 @@ func TestAutoUnseal_TryAutoUnseal_UnlockVolumePathFC4(t *testing.T) {
 	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "auto-unseal-passphrase",
-		Data:       base64.StdEncoding.EncodeToString([]byte("test-passphrase-12345")),
+		Label: "auto-unseal-passphrase",
+		Data:  base64.StdEncoding.EncodeToString([]byte("test-passphrase-12345")),
 	}
 	entry, err := sealSvc.SealData(req)
 	require.NoError(t, err)
@@ -517,9 +451,8 @@ func TestAutoUnseal_Reseal_ConfigSaveFailCleanupFC4(t *testing.T) {
 	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "auto-unseal-passphrase",
-		Data:       base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
+		Label: "auto-unseal-passphrase",
+		Data:  base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
 	}
 	entry, err := sealSvc.SealData(req)
 	require.NoError(t, err)
@@ -544,9 +477,8 @@ func TestAutoUnseal_Reseal_DeleteOldBlobFailsFC4(t *testing.T) {
 	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "auto-unseal-passphrase",
-		Data:       base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
+		Label: "auto-unseal-passphrase",
+		Data:  base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
 	}
 	entry, err := sealSvc.SealData(req)
 	require.NoError(t, err)
@@ -594,36 +526,6 @@ func TestAutoUnseal_TryAutoUnseal_UnsealFailsFC4(t *testing.T) {
 // Additional edge cases
 // ==========================================================================
 
-// TestSealService_ListBlobs_SkipsRecordMissingPolicyType documents that
-// ListBlobs skips (rather than defaults) a sealed blob record with no
-// policy_type: that field is required (go-xkms compat cleanup PR5).
-func TestSealService_ListBlobs_SkipsRecordMissingPolicyType(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewSealService(dir)
-	svc.SetContext(context.Background())
-
-	blob := &sealedBlobStorage{
-		BackendID:  "software",
-		ID:         "test-blob-1",
-		Label:      "user_data",
-		SizeBytes:  100,
-		PolicyType: "",
-		SealedData: &xkms.SealedData{
-			Backend:    xkms.BackendTypeTPM2,
-			Ciphertext: []byte("test"),
-		},
-		CreatedAt: time.Now(),
-	}
-	data, err := json.Marshal(blob)
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(dir, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-blob-1.sealed.json"), data, 0600))
-
-	entries, err := svc.ListBlobs()
-	require.NoError(t, err)
-	assert.Empty(t, entries)
-}
-
 func TestBarrierService_Context_FallbackFC4(t *testing.T) {
 	svc := newTestBarrierService(t)
 	ctx := svc.context()
@@ -646,7 +548,7 @@ func TestAutoUnseal_Enable_ShortPassphraseFC4(t *testing.T) {
 	mock := defaultSealMock()
 	autoSvc, _, _ := newAutoUnsealTestSvc(t, mock)
 
-	result, err := autoSvc.Enable("short", nil, "", "", "", "")
+	result, err := autoSvc.Enable("short", "", "")
 	assert.ErrorIs(t, err, ErrAutoUnsealInvalidPassphrase)
 	assert.Nil(t, result)
 }

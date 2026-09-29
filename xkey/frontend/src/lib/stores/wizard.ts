@@ -33,7 +33,6 @@ const defaultChoices: SetupChoices = {
   storage_passphrase: '',
   enable_master_password: false,
   master_password: '',
-  enable_platform_policy: true,
   tpm_seal_passwords: true,
   password_store_mode: 'aes_software',
   so_pin: '',

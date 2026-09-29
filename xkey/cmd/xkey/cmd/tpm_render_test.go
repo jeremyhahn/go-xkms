@@ -213,39 +213,6 @@ func TestSimplifyError(t *testing.T) {
 
 // --- outputStatusText / outputStatusJSON ---
 
-func sampleTPMStatus() *TPMStatusOutput {
-	return &TPMStatusOutput{
-		Device:       "/dev/tpmrm0",
-		Manufacturer: "IFX",
-		VendorID:     "SLB9670",
-		Firmware:     "7.85",
-		Type:         "hardware",
-		Provisioned:  true,
-		Keys: []KeyStatus{
-			{Name: "EK", Handle: "0x81010001", Present: true, Algorithm: "RSA-2048"},
-			{Name: "IAK", Handle: "0x81010002", Present: true, Algorithm: "RSA-2048", SignatureAlgorithm: "SHA256-RSA-PSS"},
-			{Name: "IDevID", Handle: "0x81020000", Present: false, Error: "not found"},
-			{Name: "SSRK", Handle: "0x81000001", Present: false, Error: "transport reset"},
-		},
-		Certificates: []CertStatus{
-			{Name: "EK Cert", NVIndex: "0x01C00002", Present: true, Subject: "CN=EK"},
-			{Name: "IDevID Cert", NVIndex: "0x01C90000", Present: false, Error: "not found"},
-			{Name: "Extra Cert", NVIndex: "0x01C90001", Present: false, Error: "nv read denied"},
-		},
-		PlatformPolicy: PlatformPolicyStatus{
-			PCRBank:      "sha256",
-			GoldenPCRs:   []uint{0, 1, 7},
-			PlatformPCR:  16,
-			PolicyDigest: strings.Repeat("ab", 32),
-			Configured:   true,
-		},
-		GoldenPCRValues: []PCRValueStatus{
-			{Index: 0, Value: strings.Repeat("cd", 32)},
-			{Index: 7, Value: "short"},
-		},
-	}
-}
-
 func TestOutputStatusText_RendersEverySection(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, outputStatusText(&buf, sampleTPMStatus()))
@@ -693,4 +660,37 @@ func TestGetLogLevel_FollowsVerboseFlag(t *testing.T) {
 
 	tpmCfg.verbose = true
 	assert.Equal(t, "DEBUG", getLogLevel().String())
+}
+
+func sampleTPMStatus() *TPMStatusOutput {
+	return &TPMStatusOutput{
+		Device:       "/dev/tpmrm0",
+		Manufacturer: "IFX",
+		VendorID:     "SLB9670",
+		Firmware:     "7.85",
+		Type:         "hardware",
+		Provisioned:  true,
+		Keys: []KeyStatus{
+			{Name: "EK", Handle: "0x81010001", Present: true, Algorithm: "RSA-2048"},
+			{Name: "IAK", Handle: "0x81010002", Present: true, Algorithm: "RSA-2048", SignatureAlgorithm: "SHA256-RSA-PSS"},
+			{Name: "IDevID", Handle: "0x81020000", Present: false, Error: "not found"},
+			{Name: "SSRK", Handle: "0x81000001", Present: false, Error: "transport reset"},
+		},
+		Certificates: []CertStatus{
+			{Name: "EK Cert", NVIndex: "0x01C00002", Present: true, Subject: "CN=EK"},
+			{Name: "IDevID Cert", NVIndex: "0x01C90000", Present: false, Error: "not found"},
+			{Name: "Extra Cert", NVIndex: "0x01C90001", Present: false, Error: "nv read denied"},
+		},
+		PlatformPolicy: PlatformPolicyStatus{
+			PCRBank:      "sha256",
+			GoldenPCRs:   []uint{0, 1, 7},
+			PlatformPCR:  16,
+			PolicyDigest: strings.Repeat("ab", 32),
+			Configured:   true,
+		},
+		GoldenPCRValues: []PCRValueStatus{
+			{Index: 0, Value: strings.Repeat("cd", 32)},
+			{Index: 7, Value: "short"},
+		},
+	}
 }

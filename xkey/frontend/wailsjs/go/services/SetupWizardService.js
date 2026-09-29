@@ -46,6 +46,10 @@ export function SetAutoUnsealService(arg1) {
   return window['go']['services']['SetupWizardService']['SetAutoUnsealService'](arg1);
 }
 
+export function SetBarrierAutoUnsealService(arg1) {
+  return window['go']['services']['SetupWizardService']['SetBarrierAutoUnsealService'](arg1);
+}
+
 export function SetBarrierService(arg1) {
   return window['go']['services']['SetupWizardService']['SetBarrierService'](arg1);
 }
@@ -78,10 +82,6 @@ export function SetPINService(arg1) {
   return window['go']['services']['SetupWizardService']['SetPINService'](arg1);
 }
 
-export function SetPlatformPolicyService(arg1) {
-  return window['go']['services']['SetupWizardService']['SetPlatformPolicyService'](arg1);
-}
-
 export function SetSealService(arg1) {
   return window['go']['services']['SetupWizardService']['SetSealService'](arg1);
 }
@@ -92,6 +92,10 @@ export function SetStaticPasswordService(arg1) {
 
 export function SetStorageService(arg1) {
   return window['go']['services']['SetupWizardService']['SetStorageService'](arg1);
+}
+
+export function SetTPMPolicyService(arg1) {
+  return window['go']['services']['SetupWizardService']['SetTPMPolicyService'](arg1);
 }
 
 export function SetTPMService(arg1) {

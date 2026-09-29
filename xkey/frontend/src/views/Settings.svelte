@@ -4,6 +4,7 @@
   import Card from '$lib/components/Card.svelte';
   import GradientHeader from '$lib/components/GradientHeader.svelte';
   import Toggle from '$lib/components/Toggle.svelte';
+  import BarrierAutoUnsealPanel from '$lib/components/BarrierAutoUnsealPanel.svelte';
   import Input from '$lib/components/Input.svelte';
   import Button from '$lib/components/Button.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
@@ -34,7 +35,7 @@
   import { addNotification } from '$lib/stores/notifications';
   import type { ThemeMode } from '$lib/stores/theme';
   import { isWailsAvailable, callBackend, callBackendVoid, callBackendVoidWithError, callBackendWithError } from '$lib/api/backend';
-  import type { GUIConfig, AutoUnsealStatus, AutoUnsealResult, PINStatus, LockoutStatus, BarrierAutoUnsealStatus, PCRPolicy } from '$lib/api/backend';
+  import type { GUIConfig, AutoUnsealStatus, AutoUnsealResult, PINStatus, LockoutStatus, } from '$lib/api/backend';
   import { isServerConnected, connect, disconnect } from '$lib/stores/connection';
   import { isEnterpriseMode, enterprisePolicy } from '$lib/stores/auth';
   import { extensionPairingChanged } from '$lib/stores/events';
@@ -327,17 +328,6 @@
   let showAutoUnsealDisableConfirm = false;
 
   // Barrier auto-unseal state
-  let barrierAutoUnsealStatus: BarrierAutoUnsealStatus | null = null;
-  let barrierAutoUnsealLoading = false;
-  // Latches once loadBarrierAutoUnsealStatus has been attempted (success or
-  // failure) so the reactive auto-fetch below cannot refire indefinitely if
-  // the backend call fails. Explicit user actions (Retry button, Set/Clear
-  // handlers) call loadBarrierAutoUnsealStatus directly and bypass this latch.
-  let barrierAutoUnsealAttempted = false;
-  let barrierAutoUnsealPolicies: PCRPolicy[] = [];
-  let barrierAutoUnsealSelectedPolicy = '';
-  let barrierAutoUnsealSetting = false;
-  let barrierAutoUnsealClearing = false;
 
   // PIN management state
   let pinStatus: PINStatus | null = null;
@@ -372,12 +362,6 @@
     loadAutoUnsealStatus();
   }
 
-  // Load barrier auto-unseal status when the storage category is selected.
-  // barrierAutoUnsealAttempted prevents this from refiring forever if the
-  // backend call fails (see loadBarrierAutoUnsealStatus).
-  $: if (activeCategory === 'storage' && isWailsAvailable() && !barrierAutoUnsealStatus && !barrierAutoUnsealLoading && !barrierAutoUnsealAttempted) {
-    loadBarrierAutoUnsealStatus();
-  }
 
   // Load browser config when the browser category is selected
   $: if (activeCategory === 'browser' && isWailsAvailable() && !browserConfigLoaded && !browserLoading) {
@@ -557,11 +541,9 @@
       return;
     }
     autoUnsealEnabling = true;
-    const defaultPCRs = [0, 1, 2, 3, 4, 5, 6, 7];
-    const defaultBank = 'sha256';
     const result = await callBackend<AutoUnsealResult>(
       'AutoUnsealService', 'Enable',
-      autoUnsealPassphrase, defaultPCRs, defaultBank, 'custom_pcr', '', 'tpm2'
+      autoUnsealPassphrase, 'platform', 'tpm2'
     );
     autoUnsealEnabling = false;
     if (result && result.success) {
@@ -587,57 +569,6 @@
       loadAutoUnsealStatus();
     } else {
       addNotification('error', 'Failed to disable auto-unseal');
-    }
-  }
-
-  async function loadBarrierAutoUnsealStatus(): Promise<void> {
-    barrierAutoUnsealLoading = true;
-    barrierAutoUnsealAttempted = true;
-    const [status, policies] = await Promise.all([
-      callBackend<BarrierAutoUnsealStatus>('BarrierAutoUnsealService', 'GetAutoUnsealStatus'),
-      callBackend<PCRPolicy[]>('TPMService', 'ListPolicies'),
-    ]);
-    if (status) {
-      barrierAutoUnsealStatus = status;
-      barrierAutoUnsealSelectedPolicy = status.policy_name || '';
-    }
-    if (policies) {
-      barrierAutoUnsealPolicies = policies;
-    }
-    barrierAutoUnsealLoading = false;
-  }
-
-  async function handleSetBarrierAutoUnsealPolicy(): Promise<void> {
-    if (!barrierAutoUnsealSelectedPolicy) {
-      addNotification('error', 'Select a PCR policy first');
-      return;
-    }
-    barrierAutoUnsealSetting = true;
-    const result = await callBackendVoidWithError(
-      'BarrierAutoUnsealService', 'SetAutoUnsealPolicy',
-      barrierAutoUnsealSelectedPolicy,
-    );
-    barrierAutoUnsealSetting = false;
-    if (result.ok) {
-      addNotification('success', `Barrier auto-unseal policy set to "${barrierAutoUnsealSelectedPolicy}"`);
-      barrierAutoUnsealStatus = null;
-      loadBarrierAutoUnsealStatus();
-    } else {
-      addNotification('error', result.error || 'Failed to set barrier auto-unseal policy');
-    }
-  }
-
-  async function handleClearBarrierAutoUnsealPolicy(): Promise<void> {
-    barrierAutoUnsealClearing = true;
-    const result = await callBackendVoidWithError('BarrierAutoUnsealService', 'ClearAutoUnsealPolicy');
-    barrierAutoUnsealClearing = false;
-    if (result.ok) {
-      addNotification('success', 'Barrier auto-unseal policy cleared');
-      barrierAutoUnsealSelectedPolicy = '';
-      barrierAutoUnsealStatus = null;
-      loadBarrierAutoUnsealStatus();
-    } else {
-      addNotification('error', result.error || 'Failed to clear barrier auto-unseal policy');
     }
   }
 
@@ -1874,157 +1805,11 @@
           <div class="settings-section">
             <h2 class="text-title-medium section-heading">Barrier Auto-Unseal</h2>
 
-            {#if barrierAutoUnsealLoading}
-              <div class="storage-loading">
-                <LoadingSpinner size={32} />
-                <span class="text-body-medium">Loading barrier auto-unseal status...</span>
-              </div>
-            {:else if barrierAutoUnsealStatus && !barrierAutoUnsealStatus.available}
-              <div class="auto-unseal-info" role="status">
-                <Icon path={mdiShieldLockOutline} size={20} color="var(--color-on-surface-variant)" />
-                <span class="text-body-small">
-                  Barrier auto-unseal is unavailable{barrierAutoUnsealStatus.reason ? `: ${barrierAutoUnsealStatus.reason}` : '.'}
-                </span>
-              </div>
-            {:else if barrierAutoUnsealStatus}
-              <div class="setting-row">
-                <div class="setting-info">
-                  <span class="text-title-small">TPM Available</span>
-                  <span class="text-body-small setting-desc">
-                    {barrierAutoUnsealStatus.tpm_available ? 'TPM detected on this system' : 'No TPM detected'}
-                  </span>
-                </div>
-                <StatusBadge status={barrierAutoUnsealStatus.tpm_available ? 'connected' : 'disconnected'} />
-              </div>
-
-              {#if !barrierAutoUnsealStatus.tpm_available}
-                <div class="auto-unseal-info" role="status">
-                  <Icon path={mdiChip} size={20} color="var(--color-on-surface-variant)" />
-                  <span class="text-body-small">
-                    A Trusted Platform Module (TPM) is required for barrier auto-unseal. Ensure your system has a TPM 2.0 device available.
-                  </span>
-                </div>
-              {:else if !barrierAutoUnsealStatus.policy_configured}
-                <div class="setting-row">
-                  <div class="setting-info">
-                    <span class="text-title-small">Policy</span>
-                    <span class="text-body-small setting-desc">No auto-unseal PCR policy configured</span>
-                  </div>
-                  <StatusBadge status="warning" />
-                </div>
-
-                {#if barrierAutoUnsealPolicies.length === 0}
-                  <div class="auto-unseal-info" role="status">
-                    <Icon path={mdiShieldLockOutline} size={20} color="var(--color-on-surface-variant)" />
-                    <span class="text-body-small">
-                      No PCR policies found. Create a PCR policy in the TPM section before configuring barrier auto-unseal.
-                    </span>
-                  </div>
-                {:else}
-                  <div class="storage-actions">
-                    <div class="storage-action-row">
-                      <div class="setting-info">
-                        <span class="text-title-small">Enable Barrier Auto-Unseal</span>
-                        <span class="text-body-small setting-desc">
-                          Select a PCR policy to automatically unseal the barrier when platform state matches
-                        </span>
-                      </div>
-                    </div>
-                    <div class="storage-action-row">
-                      <select
-                        class="form-select"
-                        bind:value={barrierAutoUnsealSelectedPolicy}
-                      >
-                        <option value="">-- Select a PCR policy --</option>
-                        {#each barrierAutoUnsealPolicies as policy}
-                          <option value={policy.name}>{policy.name}</option>
-                        {/each}
-                      </select>
-                      <Button
-                        variant="primary"
-                        icon={mdiShieldLockOutline}
-                        loading={barrierAutoUnsealSetting}
-                        disabled={!barrierAutoUnsealSelectedPolicy}
-                        on:click={handleSetBarrierAutoUnsealPolicy}
-                      >
-                        Enable
-                      </Button>
-                    </div>
-                  </div>
-                {/if}
-              {:else}
-                <div class="setting-row">
-                  <div class="setting-info">
-                    <span class="text-title-small">Active Policy</span>
-                    <span class="text-body-small font-mono setting-desc">{barrierAutoUnsealStatus.policy_name}</span>
-                  </div>
-                  <StatusBadge status="verified" />
-                </div>
-
-                <div class="setting-row">
-                  <div class="setting-info">
-                    <span class="text-title-small">PCR State</span>
-                    <span class="text-body-small setting-desc">
-                      {barrierAutoUnsealStatus.pcrs_match
-                        ? 'Current platform PCR values match the policy'
-                        : 'PCR values do not match — auto-unseal will not activate'}
-                    </span>
-                  </div>
-                  <StatusBadge status={barrierAutoUnsealStatus.pcrs_match ? 'verified' : 'warning'} />
-                </div>
-
-                {#if barrierAutoUnsealPolicies.length > 0}
-                  <div class="storage-actions">
-                    <div class="storage-action-row">
-                      <div class="setting-info">
-                        <span class="text-title-small">Change Policy</span>
-                        <span class="text-body-small setting-desc">Switch to a different PCR policy for auto-unseal</span>
-                      </div>
-                    </div>
-                    <div class="storage-action-row">
-                      <select
-                        class="form-select"
-                        bind:value={barrierAutoUnsealSelectedPolicy}
-                      >
-                        {#each barrierAutoUnsealPolicies as policy}
-                          <option value={policy.name}>{policy.name}</option>
-                        {/each}
-                      </select>
-                      <Button
-                        variant="outline"
-                        icon={mdiRefresh}
-                        loading={barrierAutoUnsealSetting}
-                        disabled={!barrierAutoUnsealSelectedPolicy || barrierAutoUnsealSelectedPolicy === barrierAutoUnsealStatus.policy_name}
-                        on:click={handleSetBarrierAutoUnsealPolicy}
-                      >
-                        Apply
-                      </Button>
-                    </div>
-                  </div>
-                {/if}
-
-                <div class="storage-actions">
-                  <div class="storage-action-row">
-                    <div class="setting-info">
-                      <span class="text-title-small">Disable Barrier Auto-Unseal</span>
-                      <span class="text-body-small setting-desc setting-warn">
-                        Remove the PCR policy binding — the barrier will require a PIN on next startup
-                      </span>
-                    </div>
-                    <Button
-                      variant="danger"
-                      loading={barrierAutoUnsealClearing}
-                      on:click={handleClearBarrierAutoUnsealPolicy}
-                    >
-                      Disable
-                    </Button>
-                  </div>
-                </div>
-              {/if}
-            {:else}
-              <p class="text-body-medium storage-empty-msg">Unable to load barrier auto-unseal status.</p>
-              <Button variant="outline" on:click={loadBarrierAutoUnsealStatus}>Retry</Button>
-            {/if}
+            <p class="text-body-small setting-desc">
+              Seal the barrier password in the TPM under a named TPM policy. At startup the TPM releases it only while
+              the platform is in the state the policy approves; otherwise you unlock with your password.
+            </p>
+            <BarrierAutoUnsealPanel />
           </div>
         </Card>
 

@@ -468,219 +468,6 @@ func TestP3_GetVerificationStatus_DelegatesToVerifyTPM(t *testing.T) {
 // ListPolicies: with data (60% -> higher)
 // ---------------------------------------------------------------------------
 
-func TestP3_ListPolicies_NoStoreConfigured(t *testing.T) {
-	svc := newServiceWithMock(defaultMockTPM())
-	// No policy store wired.
-	_, err := svc.ListPolicies()
-	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
-}
-
-func TestP3_ListPolicies_WithSavedPolicies(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
-		Name:          "pol-a",
-		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
-	}))
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
-		Name:          "pol-b",
-		PCRSelections: []PCRSelection{{Index: 7, Bank: "sha256"}},
-	}))
-
-	policies, err := svc.ListPolicies()
-	require.NoError(t, err)
-	assert.Len(t, policies, 2)
-}
-
-// ---------------------------------------------------------------------------
-// GetPolicy: found + no data (77.8% -> higher)
-// ---------------------------------------------------------------------------
-
-func TestP3_GetPolicy_Found(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
-		Name:          "findme",
-		Description:   "test policy",
-		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
-	}))
-
-	policy, err := svc.GetPolicy("findme")
-	require.NoError(t, err)
-	require.NotNil(t, policy)
-	assert.Equal(t, "findme", policy.Name)
-	assert.Equal(t, "test policy", policy.Description)
-}
-
-func TestP3_GetPolicy_NoStoreConfigured(t *testing.T) {
-	svc := newServiceWithMock(defaultMockTPM())
-	_, err := svc.GetPolicy("anything")
-	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
-}
-
-// ---------------------------------------------------------------------------
-// savePolicies: no store configured
-// ---------------------------------------------------------------------------
-
-func TestP3_SavePolicies_NoStoreConfigured(t *testing.T) {
-	svc := newServiceWithMock(defaultMockTPM())
-	err := svc.savePolicies([]PCRPolicy{{Name: "x"}})
-	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
-}
-
-// ---------------------------------------------------------------------------
-// ExportPolicy: branches for UpdatedAt, Digests, and empty selections (77.3% -> higher)
-// ---------------------------------------------------------------------------
-
-func TestP3_ExportPolicy_WithUpdatedAt(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
-		Name:          "export-updated",
-		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
-	}))
-	// Update to set UpdatedAt
-	_, updateErr := svc.UpdatePolicy("export-updated", &PCRPolicy{
-		Name:          "export-updated",
-		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}, {Index: 7, Bank: "sha256"}},
-	})
-	require.NoError(t, updateErr)
-
-	exported, err := svc.ExportPolicy("export-updated")
-	require.NoError(t, err)
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(exported), &parsed))
-	assert.NotEmpty(t, parsed["updated_at"])
-}
-
-func TestP3_ExportPolicy_WithDigests(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
-		Name:          "export-digests",
-		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
-		PCRDigests:    map[string]string{"sha256:0": "aabbccdd"},
-	}))
-
-	exported, err := svc.ExportPolicy("export-digests")
-	require.NoError(t, err)
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(exported), &parsed))
-	digests, ok := parsed["pcr_digests"].(map[string]interface{})
-	require.True(t, ok)
-	assert.NotEmpty(t, digests)
-}
-
-func TestP3_CreatePolicy_NoPCRSelectionsRejected(t *testing.T) {
-	// A plain PCRPolicy with no PCR selections cannot be represented in the
-	// canonical pcr_policy store.
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	err := svc.CreatePolicy(&PCRPolicy{
-		Name: "export-nopcr",
-	})
-	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
-}
-
-// ---------------------------------------------------------------------------
-// ListPolicyAssignments: with data (60% -> higher)
-// ---------------------------------------------------------------------------
-
-func TestP3_ListPolicyAssignments_NoDataDir(t *testing.T) {
-	svc := newServiceWithMock(defaultMockTPM())
-	assignments, err := svc.ListPolicyAssignments()
-	require.NoError(t, err)
-	assert.Empty(t, assignments)
-}
-
-func TestP3_ListPolicyAssignments_WithData(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
-		Name:          "assign-list",
-		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
-	}))
-	require.NoError(t, svc.AssignPolicyToKey("assign-list", "0x81000001"))
-
-	assignments, err := svc.ListPolicyAssignments()
-	require.NoError(t, err)
-	assert.Len(t, assignments, 1)
-	assert.Equal(t, "0x81000001", assignments[0].KeyHandle)
-}
-
-// ---------------------------------------------------------------------------
-// ListCompositePolicies: with data (60% -> higher)
-// ---------------------------------------------------------------------------
-
-func TestP3_ListCompositePolicies_NoDataDir(t *testing.T) {
-	svc := newServiceWithMock(defaultMockTPM())
-	policies, err := svc.ListCompositePolicies()
-	require.NoError(t, err)
-	assert.Empty(t, policies)
-}
-
-func TestP3_ListCompositePolicies_AfterCreate(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreateCompositePolicy(&CompositePolicy{
-		Name:     "comp-list",
-		Operator: "AND",
-		Elements: []PolicyElement{
-			{Type: "pcr", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
-		},
-	}))
-
-	policies, err := svc.ListCompositePolicies()
-	require.NoError(t, err)
-	assert.Len(t, policies, 1)
-	assert.Equal(t, "comp-list", policies[0].Name)
-}
-
-// ---------------------------------------------------------------------------
-// GetCompositePolicy: no data dir (77.8% -> higher)
-// ---------------------------------------------------------------------------
-
-func TestP3_GetCompositePolicy_EmptyDataDir(t *testing.T) {
-	svc := newServiceWithMock(defaultMockTPM())
-	_, err := svc.GetCompositePolicy("anything")
-	assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
-}
-
-// ---------------------------------------------------------------------------
-// VerifyPolicyPassword: more branch coverage (72.7% -> higher)
-// ---------------------------------------------------------------------------
-
-func TestP3_VerifyPolicyPassword_NoPasswordElement(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreateCompositePolicy(&CompositePolicy{
-		Name:     "pcr-only-comp-p3",
-		Operator: "AND",
-		Elements: []PolicyElement{
-			{Type: "pcr", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
-		},
-	}))
-
-	_, err := svc.VerifyPolicyPassword("pcr-only-comp-p3", "anything")
-	assert.ErrorIs(t, err, ErrTPMInvalidPolicyType)
-}
-
-func TestP3_VerifyPolicyPassword_EmptyPasswordHash(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreateCompositePolicy(&CompositePolicy{
-		Name:     "empty-hash-comp-p3",
-		Operator: "AND",
-		Elements: []PolicyElement{
-			{Type: "password", PasswordHash: ""},
-		},
-	}))
-
-	_, err := svc.VerifyPolicyPassword("empty-hash-comp-p3", "anything")
-	assert.ErrorIs(t, err, ErrTPMInvalidPolicyType)
-}
-
-func TestP3_VerifyPolicyPassword_PolicyNotFound(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	_, err := svc.VerifyPolicyPassword("nonexistent-p3", "pw")
-	assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
-}
-
-// ---------------------------------------------------------------------------
-// ImportManufacturerCA: parse error paths (76.5% -> higher)
-// ---------------------------------------------------------------------------
-
 func TestP3_ImportManufacturerCA_BadDER(t *testing.T) {
 	svc := newServiceWithMock(defaultMockTPM())
 	badPEM := "-----BEGIN CERTIFICATE-----\nZm9vYmFy\n-----END CERTIFICATE-----\n"
@@ -773,47 +560,6 @@ func TestP3_VerifyTPM_VerificationFails(t *testing.T) {
 	assert.NotEmpty(t, status.ErrorMessage)
 }
 
-func TestP3_VerifyTPM_NoCACertsLoaded(t *testing.T) {
-	mock := defaultMockTPM()
-	mock.ekCert = testCert()
-	mock.ekCertErr = nil
-	svc := newServiceWithMock(mock)
-
-	status, err := svc.VerifyTPM()
-	require.NoError(t, err)
-	assert.False(t, status.Verified)
-	assert.Contains(t, status.ErrorMessage, "no manufacturer CA certificates loaded")
-}
-
-// ---------------------------------------------------------------------------
-// GetConflictingAssignments: whitespace handles (86.7% -> higher)
-// ---------------------------------------------------------------------------
-
-func TestP3_GetConflictingAssignments_WhitespaceHandles(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
-		Name:          "ws-pol-p3",
-		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
-	}))
-	require.NoError(t, svc.AssignPolicyToKey("ws-pol-p3", "0x81000001"))
-
-	// Request with whitespace-padded handles
-	conflicts, err := svc.GetConflictingAssignments([]string{"  0x81000001  ", "", "  "})
-	require.NoError(t, err)
-	assert.Len(t, conflicts, 1)
-}
-
-func TestP3_GetConflictingAssignments_EmptyList(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	conflicts, err := svc.GetConflictingAssignments(nil)
-	require.NoError(t, err)
-	assert.Empty(t, conflicts)
-}
-
-// ---------------------------------------------------------------------------
-// buildSubjectAltNames: all SAN types (80% -> 100%)
-// ---------------------------------------------------------------------------
-
 func TestP3_BuildSubjectAltNames_AllTypes(t *testing.T) {
 	cert := &x509.Certificate{
 		DNSNames:       []string{"example.com", "test.example.com"},
@@ -829,77 +575,22 @@ func TestP3_BuildSubjectAltNames_AllTypes(t *testing.T) {
 	assert.Contains(t, result, "email:admin@example.com")
 }
 
+func TestP3_VerifyTPM_NoCACertsLoaded(t *testing.T) {
+	mock := defaultMockTPM()
+	mock.ekCert = testCert()
+	mock.ekCertErr = nil
+	svc := newServiceWithMock(mock)
+
+	status, err := svc.VerifyTPM()
+	require.NoError(t, err)
+	assert.False(t, status.Verified)
+	assert.Contains(t, status.ErrorMessage, "no manufacturer CA certificates loaded")
+}
+
 func TestP3_BuildSubjectAltNames_DNSOnly(t *testing.T) {
 	cert := &x509.Certificate{
 		DNSNames: []string{"single.example.com"},
 	}
 	result := buildSubjectAltNames(cert)
 	assert.Equal(t, "DNS:single.example.com", result)
-}
-
-// ---------------------------------------------------------------------------
-// ExportCompositePolicy: additional branches (80% -> higher)
-// ---------------------------------------------------------------------------
-
-func TestP3_ExportCompositePolicy_WithUpdatedAt(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreateCompositePolicy(&CompositePolicy{
-		Name:     "comp-export-updated-p3",
-		Operator: "AND",
-		Elements: []PolicyElement{
-			{Type: "pcr", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
-		},
-	}))
-
-	// Manually set UpdatedAt by modifying saved policies
-	policies := svc.loadCompositePolicies()
-	require.Len(t, policies, 1)
-	policies[0].UpdatedAt = time.Now().Format(time.RFC3339)
-	policies[0].Description = "updated desc"
-	policies[0].PCRDigests = map[string]string{"sha256:0": "aabb"}
-	require.NoError(t, svc.saveCompositePolicies(policies))
-
-	exported, err := svc.ExportCompositePolicy("comp-export-updated-p3")
-	require.NoError(t, err)
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(exported), &parsed))
-	assert.NotEmpty(t, parsed["updated_at"])
-	assert.Equal(t, "updated desc", parsed["description"])
-	assert.NotNil(t, parsed["pcr_digests"])
-	assert.Equal(t, "sha256", parsed["pcr_bank"])
-}
-
-func TestP3_ExportCompositePolicy_PasswordOnly(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreateCompositePolicy(&CompositePolicy{
-		Name:     "comp-pw-only-p3",
-		Operator: "SINGLE",
-		Elements: []PolicyElement{
-			{Type: "password", PasswordHash: "somehash"},
-		},
-	}))
-
-	exported, err := svc.ExportCompositePolicy("comp-pw-only-p3")
-	require.NoError(t, err)
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(exported), &parsed))
-	_, hasBankKey := parsed["pcr_bank"]
-	assert.False(t, hasBankKey)
-}
-
-func TestP3_ExportCompositePolicy_PCRExplicitBank(t *testing.T) {
-	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreateCompositePolicy(&CompositePolicy{
-		Name:     "comp-explicit-bank-p3",
-		Operator: "AND",
-		Elements: []PolicyElement{
-			{Type: "pcr", PCRBank: "sha384", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha384"}}},
-		},
-	}))
-
-	exported, err := svc.ExportCompositePolicy("comp-explicit-bank-p3")
-	require.NoError(t, err)
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(exported), &parsed))
-	assert.Equal(t, "sha384", parsed["pcr_bank"])
 }

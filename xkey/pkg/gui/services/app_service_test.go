@@ -221,45 +221,6 @@ func TestAppService_MinimizeToTray_NilFunc(t *testing.T) {
 // AutoUnseal config fields
 // ---------------------------------------------------------------------------
 
-func TestGUIConfigData_AutoUnsealFields(t *testing.T) {
-	cfg := &GUIConfigData{
-		AutoUnsealEnabled: true,
-		AutoUnsealBlobID:  "blob-abc123",
-		AutoUnsealPCRs:    []int{0, 7, 14},
-		AutoUnsealPCRBank: "sha384",
-	}
-
-	svc := NewAppService(cfg)
-	got := svc.GetConfig()
-	assert.True(t, got.AutoUnsealEnabled)
-	assert.Equal(t, "blob-abc123", got.AutoUnsealBlobID)
-	assert.Equal(t, []int{0, 7, 14}, got.AutoUnsealPCRs)
-	assert.Equal(t, "sha384", got.AutoUnsealPCRBank)
-}
-
-func TestGUIConfigData_AutoUnsealFields_Update(t *testing.T) {
-	svc := NewAppService(defaultTestConfig())
-
-	updated := defaultTestConfig()
-	updated.AutoUnsealEnabled = true
-	updated.AutoUnsealBlobID = "new-blob"
-	updated.AutoUnsealPCRs = []int{0}
-	updated.AutoUnsealPCRBank = "sha256"
-
-	err := svc.UpdateConfig(updated)
-	require.NoError(t, err)
-
-	got := svc.GetConfig()
-	assert.True(t, got.AutoUnsealEnabled)
-	assert.Equal(t, "new-blob", got.AutoUnsealBlobID)
-	assert.Equal(t, []int{0}, got.AutoUnsealPCRs)
-	assert.Equal(t, "sha256", got.AutoUnsealPCRBank)
-}
-
-// ---------------------------------------------------------------------------
-// SetWindowHideFunc
-// ---------------------------------------------------------------------------
-
 func TestAppService_SetWindowHideFunc(t *testing.T) {
 	svc := NewAppService(defaultTestConfig())
 	assert.Nil(t, svc.windowHideFunc)

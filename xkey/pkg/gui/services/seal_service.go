@@ -30,7 +30,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/go-tpm/tpm2"
 	"golang.org/x/crypto/argon2"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -62,20 +61,13 @@ var (
 	ErrSealDecodeFailed       = errors.New("seal_service: base64 decode failed")
 	ErrSealMarshalFailed      = errors.New("seal_service: JSON marshal failed")
 	ErrSealUnmarshalFailed    = errors.New("seal_service: JSON unmarshal failed")
-	ErrSealInvalidPolicyType  = errors.New("seal_service: invalid policy type")
 	ErrSealPasswordRequired   = errors.New("seal_service: password required for this blob")
 	ErrSealPolicyMismatch     = errors.New("seal_service: password does not match")
-	ErrSealPolicyNotAvailable = errors.New("seal_service: platform policy not configured")
 	ErrSealStorageDirNotSet   = errors.New("seal_service: storage directory not configured")
 	ErrSealStorageDirRelative = errors.New("seal_service: storage directory must be an absolute path")
 	ErrSealBackendNotFound    = errors.New("seal_service: requested backend not registered")
-	ErrSealPolicyRequiresTPM  = errors.New("seal_service: PCR-based policies require TPM backend")
+	ErrSealPolicyRequiresTPM  = errors.New("seal_service: a TPM policy requires the tpm2 backend")
 	ErrSealNoClient           = errors.New("seal_service: SDK client not available")
-
-	// ErrSealBlobPolicyTypeMissing indicates a sealed blob record on disk has
-	// no policy_type. Every blob written by this version sets it; a record
-	// without one predates that and cannot be read.
-	ErrSealBlobPolicyTypeMissing = errors.New("seal_service: sealed blob record has no policy_type")
 
 	// ErrSealBlobBackendIDMissing indicates a sealed blob record on disk has
 	// no backend_id. Every blob written by this version sets it; a record
@@ -121,22 +113,6 @@ func validateBlobID(id string) error {
 	return nil
 }
 
-// pcrBankAlgMap maps user-facing PCR bank names to TPM algorithm identifiers.
-var pcrBankAlgMap = map[string]tpm2.TPMAlgID{
-	"sha1":   tpm2.TPMAlgSHA1,
-	"sha256": tpm2.TPMAlgSHA256,
-	"sha384": tpm2.TPMAlgSHA384,
-	"sha512": tpm2.TPMAlgSHA512,
-}
-
-// hashAlgIDToStringMap maps TPM hash algorithm IDs to their string names.
-var hashAlgIDToStringMap = map[tpm2.TPMAlgID]string{
-	tpm2.TPMAlgSHA1:   "sha1",
-	tpm2.TPMAlgSHA256: "sha256",
-	tpm2.TPMAlgSHA384: "sha384",
-	tpm2.TPMAlgSHA512: "sha512",
-}
-
 // Argon2id parameters for password hashing.
 const (
 	argon2Time    = 1
@@ -146,22 +122,10 @@ const (
 	argon2SaltLen = 16
 )
 
-// policyHandler is a function that applies policy-specific seal options.
-type policyHandler func(s *SealService, req *SealRequest, opts *xkms.SealOptions) error
-
-// policyHandlers maps policy types to their handler functions.
-var policyHandlers = map[PolicyType]policyHandler{
-	PolicyTypeNone:           handlePolicyNone,
-	PolicyTypePassword:       handlePolicyPassword,
-	PolicyTypePlatformPolicy: handlePolicyPlatformPolicy,
-	PolicyTypeCustomPCR:      handlePolicyCustomPCR,
-}
-
-// tpmOnlyPolicies defines policy types that require a TPM backend.
-var tpmOnlyPolicies = map[PolicyType]struct{}{
-	PolicyTypePlatformPolicy: {},
-	PolicyTypeCustomPCR:      {},
-}
+// sealedObjectPrefix prefixes the name of the TPM sealed object each tpm2
+// blob is sealed as. Every blob gets an object of its own, so each carries
+// its own policy binding and can be deleted, with its assignment, on its own.
+const sealedObjectPrefix = "xkey-sealed-"
 
 // systemSealLabels identifies labels that belong to the "system" category.
 // System blobs cannot be deleted from the Sealed Data UI.
@@ -277,11 +241,17 @@ func (s *SealService) sealerDetails(backend string) map[string]string {
 
 // SealedBlobEntry is the frontend-facing representation of a sealed blob.
 type SealedBlobEntry struct {
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	SizeBytes   int    `json:"size_bytes"`
-	PCRBound    bool   `json:"pcr_bound"`
-	PolicyType  string `json:"policy_type"`
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	SizeBytes int    `json:"size_bytes"`
+
+	// TPMPolicy names the TPM policy the blob is bound to: "platform", a
+	// named policy, or empty for none.
+	TPMPolicy string `json:"tpm_policy"`
+
+	// PasswordProtected reports whether unsealing takes a password.
+	PasswordProtected bool `json:"password_protected"`
+
 	CreatedAt   string `json:"created_at"`
 	Category    string `json:"category"`
 	BackendID   string `json:"backend_id"`   // which backend sealed this blob
@@ -290,12 +260,20 @@ type SealedBlobEntry struct {
 
 // SealRequest holds the parameters for a seal operation.
 type SealRequest struct {
-	Label       string `json:"label"`
-	Data        string `json:"data"`         // base64-encoded plaintext
-	PCRs        []int  `json:"pcrs"`         // optional PCR binding
-	PCRBank     string `json:"pcr_bank"`     // default "sha256"
-	PolicyType  string `json:"policy_type"`  // "none"|"password"|"platform_policy"|"custom_pcr"
-	Password    string `json:"password"`     // for PolicyTypePassword
+	Label string `json:"label"`
+	Data  string `json:"data"` // base64-encoded plaintext
+
+	// TPMPolicy names the TPM policy the blob is bound to (tpm2 backend
+	// only): "platform" for the built-in platform policy, a named policy,
+	// or empty for none.
+	TPMPolicy string `json:"tpm_policy"`
+
+	// Password, when set, is also required to unseal. On the tpm2 backend
+	// it is the sealed object's TPM authorization value -- with a policy,
+	// the policy's password branch, which unseals even after the PCRs
+	// change -- and on other backends a software check.
+	Password string `json:"password"`
+
 	Backend     string `json:"backend"`      // "tpm2", "software", etc. Empty = default
 	StorageType string `json:"storage_type"` // "disk" or "nvram". Empty = default ("disk")
 }
@@ -305,11 +283,10 @@ type sealedBlobStorage struct {
 	ID          string           `json:"id"`
 	Label       string           `json:"label"`
 	SizeBytes   int              `json:"size_bytes"`
-	PCRBound    bool             `json:"pcr_bound"`
-	PCRs        []int            `json:"pcrs,omitempty"`
-	PCRBank     string           `json:"pcr_bank,omitempty"`
-	PolicyType  string           `json:"policy_type,omitempty"`
-	Password    string           `json:"password,omitempty"` // argon2id hash for verification
+	TPMPolicy   string           `json:"tpm_policy,omitempty"`
+	HasPassword bool             `json:"has_password,omitempty"`
+	Password    string           `json:"password,omitempty"` // argon2id hash; set for non-TPM backends only
+	Local       bool             `json:"local,omitempty"`    // sealed through xKey's own backends, not a server
 	Category    string           `json:"category,omitempty"`
 	BackendID   string           `json:"backend_id,omitempty"`   // backend registry ID that sealed this blob
 	StorageType string           `json:"storage_type,omitempty"` // "disk" or "nvram"
@@ -333,7 +310,7 @@ type SealService struct {
 	log            *slog.Logger
 	storageDir     string
 	tpmAccessor    *TPMAccessor // kept for NV RAM operations
-	policyService  *PlatformPolicyService
+	tpmPolicies    *TPMPolicyService
 	localClient    xkms.Client         // embedded local client (always available after init)
 	clientFunc     func() xkms.Client  // remote server client provider
 	defaultBackend string              // default backend name
@@ -378,17 +355,24 @@ func (s *SealService) SetClientFunc(fn func() xkms.Client) {
 // server client (when connected) and falls back to the embedded local
 // client. Returns ErrSealNoClient if neither is available.
 func (s *SealService) getClient() (xkms.Client, error) {
+	client, _, err := s.resolveClient()
+	return client, err
+}
+
+// resolveClient returns the best available SDK client, as getClient does,
+// and whether it is the embedded local client.
+func (s *SealService) resolveClient() (xkms.Client, bool, error) {
 	// Prefer remote server client when connected.
 	if s.clientFunc != nil {
 		if client := s.clientFunc(); client != nil {
-			return client, nil
+			return client, false, nil
 		}
 	}
 	// Fall back to embedded local client.
 	if s.localClient != nil {
-		return s.localClient, nil
+		return s.localClient, true, nil
 	}
-	return nil, ErrSealNoClient
+	return nil, false, ErrSealNoClient
 }
 
 // SetTPMAccessor sets the shared TPMAccessor used for serialized TPM access.
@@ -398,10 +382,10 @@ func (s *SealService) SetTPMAccessor(a *TPMAccessor) {
 	s.tpmAccessor = a
 }
 
-// SetPlatformPolicyService sets the platform policy service used for
-// PolicyTypePlatformPolicy seal operations.
-func (s *SealService) SetPlatformPolicyService(svc *PlatformPolicyService) {
-	s.policyService = svc
+// SetTPMPolicyService sets the TPM policy service that records, in local
+// mode, which named policy each local tpm2 blob is bound to.
+func (s *SealService) SetTPMPolicyService(svc *TPMPolicyService) {
+	s.tpmPolicies = svc
 }
 
 // SetBackend sets the storage backend used for blob persistence. When set,
@@ -702,13 +686,9 @@ func (s *SealService) listBlobsDirect() ([]SealedBlobEntry, error) {
 }
 
 // blobToEntry converts an internal sealedBlobStorage to a frontend
-// SealedBlobEntry. Returns ErrSealBlobPolicyTypeMissing or
-// ErrSealBlobBackendIDMissing if the record predates those fields being
-// required; those records cannot be represented.
+// SealedBlobEntry. Returns ErrSealBlobBackendIDMissing if the record
+// predates that field being required; such a record cannot be represented.
 func blobToEntry(blob *sealedBlobStorage) (SealedBlobEntry, error) {
-	if blob.PolicyType == "" {
-		return SealedBlobEntry{}, ErrSealBlobPolicyTypeMissing
-	}
 	if blob.BackendID == "" {
 		return SealedBlobEntry{}, ErrSealBlobBackendIDMissing
 	}
@@ -721,15 +701,15 @@ func blobToEntry(blob *sealedBlobStorage) (SealedBlobEntry, error) {
 		storageType = string(StorageTypeDisk)
 	}
 	return SealedBlobEntry{
-		ID:          blob.ID,
-		Label:       blob.Label,
-		SizeBytes:   blob.SizeBytes,
-		PCRBound:    blob.PCRBound,
-		PolicyType:  blob.PolicyType,
-		CreatedAt:   blob.CreatedAt.Format(time.RFC3339),
-		Category:    category,
-		BackendID:   blob.BackendID,
-		StorageType: storageType,
+		ID:                blob.ID,
+		Label:             blob.Label,
+		SizeBytes:         blob.SizeBytes,
+		TPMPolicy:         blob.TPMPolicy,
+		PasswordProtected: blob.HasPassword,
+		CreatedAt:         blob.CreatedAt.Format(time.RFC3339),
+		Category:          category,
+		BackendID:         blob.BackendID,
+		StorageType:       storageType,
 	}, nil
 }
 
@@ -751,6 +731,11 @@ func sortAndCollectEntries(items []blobWithTime) []SealedBlobEntry {
 // SDK client and stores the result as a blob. When a storage backend
 // is configured, data is persisted through the barrier-encrypted backend.
 // Otherwise, the blob is written directly to disk.
+//
+// On the tpm2 backend the blob is sealed as a TPM object of its own, bound
+// to req.TPMPolicy and, when set, to req.Password; a blob sealed locally
+// under a named policy is recorded against it, so the policy cannot be
+// deleted while the blob exists.
 func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -781,52 +766,33 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 	if backend == "" {
 		backend = s.defaultBackend
 	}
-
-	// Resolve policy type. Required: policyTypeMap has no "" entry, so an
-	// empty request field is rejected the same way as an unrecognized one.
-	pt, ok := policyTypeMap[req.PolicyType]
-	if !ok {
-		return nil, ErrSealInvalidPolicyType
-	}
-
-	// Validate TPM-only policies against backend.
-	if _, isTPMOnly := tpmOnlyPolicies[pt]; isTPMOnly && backend != string(xkms.BackendTypeTPM2) {
+	isTPM := backend == string(xkms.BackendTypeTPM2)
+	if req.TPMPolicy != "" && !isTPM {
 		return nil, ErrSealPolicyRequiresTPM
 	}
 
-	// Build seal options and apply policy handler (computes PCR selections).
-	opts := &xkms.SealOptions{}
-	handler, ok := policyHandlers[pt]
-	if !ok {
-		return nil, ErrSealInvalidPolicyType
+	// Generate a unique ID.
+	idBytes := make([]byte, 16)
+	if _, err := rand.Read(idBytes); err != nil {
+		return nil, ErrSealStorageFailed
 	}
-	if err := handler(s, req, opts); err != nil {
-		return nil, err
-	}
+	id := hex.EncodeToString(idBytes)
 
-	// Get the SDK client.
-	client, err := s.getClient()
+	client, local, err := s.resolveClient()
 	if err != nil {
 		return nil, ErrSealBackendNotFound
 	}
 
-	// Build SDK SealRequest from the GUI request and policy options.
 	sdkReq := &transport.SealRequest{
-		Backend: backend,
-		Data:    plaintext,
+		Backend:   backend,
+		Data:      plaintext,
+		TPMPolicy: req.TPMPolicy,
+		Password:  req.Password,
 	}
-
-	// Transfer PCR policy from opts to SDK request.
-	if opts.TPMPolicy != nil && len(opts.TPMPolicy.PCRSelection.PCRSelections) > 0 {
-		sel := opts.TPMPolicy.PCRSelection.PCRSelections[0]
-		sdkReq.PCRs = pcrSelectToInts(sel.PCRSelect)
-		sdkReq.PCRHashAlg = hashAlgIDToString(sel.Hash)
-	}
-
-	// Transfer password if set.
-	if opts.Password != nil {
-		pwStr, _ := opts.Password.String()
-		sdkReq.Password = pwStr
+	objectName := ""
+	if isTPM {
+		objectName = sealedObjectPrefix + id
+		sdkReq.KeyID = objectName
 	}
 
 	ctx := s.ctx
@@ -840,7 +806,7 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		// TPM-backed seal failures are also recorded under OpTPMSealFailed so
 		// they surface in a TPM-scoped audit query, in addition to the
 		// backend-agnostic OpSealData trail every strategy gets.
-		if backend == "tpm2" {
+		if isTPM {
 			if auditErr := s.logSealEvent(audit.OpTPMSealFailed, false, err, map[string]any{"label": req.Label}); auditErr != nil {
 				return nil, auditErr
 			}
@@ -849,6 +815,14 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 			return nil, auditErr
 		}
 		return nil, err
+	}
+
+	if local && isNamedTPMPolicy(req.TPMPolicy) && s.tpmPolicies != nil {
+		if err := s.tpmPolicies.assignLocal(ctx, xkms.TPMObjectKindSealed, objectName, req.TPMPolicy); err != nil {
+			// An object the registry does not know would keep its policy
+			// from ever being deleted safely, so it does not survive.
+			return nil, errors.Join(err, s.tpmPolicies.deleteLocalObject(ctx, objectName))
+		}
 	}
 
 	// Map SDK response to SealedData for blob storage.
@@ -864,13 +838,6 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		Metadata:   resp.Metadata,
 	}
 
-	// Generate a unique ID.
-	idBytes := make([]byte, 16)
-	if _, err := rand.Read(idBytes); err != nil {
-		return nil, ErrSealStorageFailed
-	}
-	id := hex.EncodeToString(idBytes)
-
 	// Resolve storage type (default to "disk").
 	storageType := req.StorageType
 	if storageType == "" {
@@ -881,10 +848,9 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		ID:          id,
 		Label:       req.Label,
 		SizeBytes:   len(plaintext),
-		PCRBound:    len(req.PCRs) > 0 || pt == PolicyTypePlatformPolicy,
-		PCRs:        req.PCRs,
-		PCRBank:     req.PCRBank,
-		PolicyType:  req.PolicyType,
+		TPMPolicy:   req.TPMPolicy,
+		HasPassword: req.Password != "",
+		Local:       local,
 		Category:    classifyCategory(req.Label),
 		BackendID:   backend,
 		StorageType: storageType,
@@ -892,8 +858,9 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		CreatedAt:   time.Now(),
 	}
 
-	// Hash password for storage if password policy is active.
-	if pt == PolicyTypePassword {
+	// The TPM enforces a tpm2 blob's password itself; any other backend
+	// gets a software check against an argon2id hash.
+	if req.Password != "" && !isTPM {
 		hash, hashErr := hashPassword(req.Password)
 		if hashErr != nil {
 			return nil, ErrSealStorageFailed
@@ -918,8 +885,15 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 	return &result, nil
 }
 
+// isNamedTPMPolicy reports whether policy names a policy created with the
+// TPM policy service, rather than none or the built-in platform policy.
+func isNamedTPMPolicy(policy string) bool {
+	return policy != "" && policy != xkms.TPMPolicyPlatform
+}
+
 // UnsealData unseals a previously sealed blob and returns the data as base64.
-// The password parameter is required when the blob was sealed with PolicyTypePassword.
+// The password parameter is required for a blob sealed with a password (on
+// the tpm2 backend, a blob bound to a policy may instead unseal through it).
 func (s *SealService) UnsealData(id string, password string) (result string, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -943,8 +917,10 @@ func (s *SealService) UnsealData(id string, password string) (result string, ret
 		return "", err
 	}
 
-	// Verify password if blob was sealed with password policy.
-	if blob.PolicyType == string(PolicyTypePassword) {
+	// A non-TPM blob's password is checked here; the TPM checks a tpm2
+	// blob's password, and with a policy a missing one means the policy
+	// branch is tried instead.
+	if blob.Password != "" {
 		if password == "" {
 			return "", ErrSealPasswordRequired
 		}
@@ -975,6 +951,9 @@ func (s *SealService) UnsealData(id string, password string) (result string, ret
 		TPMPrivate: blob.SealedData.TPMPrivate,
 		WrappedDEK: blob.SealedData.WrappedDEK,
 		Metadata:   blob.SealedData.Metadata,
+	}
+	if blob.BackendID == string(xkms.BackendTypeTPM2) {
+		sdkReq.Password = password
 	}
 
 	ctx := s.ctx
@@ -1026,6 +1005,13 @@ func (s *SealService) DeleteBlob(id string) error {
 		ctx = context.Background()
 	}
 
+	if err := s.deleteLocalObject(ctx, id); err != nil {
+		if auditErr := s.logSealEvent(audit.OpSealBlobDeleted, false, err, map[string]any{"blob_id": id}); auditErr != nil {
+			return auditErr
+		}
+		return err
+	}
+
 	if s.backend != nil {
 		if err := s.backend.Delete(ctx, s.blobPrefix+id); err != nil {
 			if auditErr := s.logSealEvent(audit.OpSealBlobDeleted, false, err, map[string]any{"blob_id": id}); auditErr != nil {
@@ -1052,6 +1038,21 @@ func (s *SealService) DeleteBlob(id string) error {
 	}
 
 	return s.logSealEvent(audit.OpSealBlobDeleted, true, nil, map[string]any{"blob_id": id})
+}
+
+// deleteLocalObject removes the TPM sealed object, and its policy
+// assignment, of a blob sealed on xKey's own TPM. Other blobs have no local
+// object, and a blob that does not exist is left to the caller's own
+// not-found handling. The caller holds s.mu.
+func (s *SealService) deleteLocalObject(ctx context.Context, id string) error {
+	blob, err := s.loadBlobByID(id)
+	if err != nil {
+		return nil
+	}
+	if !blob.Local || blob.BackendID != string(xkms.BackendTypeTPM2) || s.tpmPolicies == nil {
+		return nil
+	}
+	return s.tpmPolicies.deleteLocalObject(ctx, sealedObjectPrefix+blob.ID)
 }
 
 // ensureStorageDir creates the storage directory if it doesn't exist.
@@ -1140,127 +1141,6 @@ func (s *SealService) loadBlobByID(id string) (*sealedBlobStorage, error) {
 
 	path := s.blobPath(id)
 	return s.loadBlob(path)
-}
-
-// ---------------------------------------------------------------------------
-// PCR conversion helpers
-// ---------------------------------------------------------------------------
-
-// pcrSelectToInts extracts PCR indices from a TPM PCR select bitmap.
-// Each byte contains 8 PCR bits: bit 0 of byte 0 = PCR 0, etc.
-func pcrSelectToInts(sel []byte) []int {
-	var pcrs []int
-	for byteIdx, b := range sel {
-		for bit := 0; bit < 8; bit++ {
-			if b&(1<<bit) != 0 {
-				pcrs = append(pcrs, byteIdx*8+bit)
-			}
-		}
-	}
-	return pcrs
-}
-
-// hashAlgIDToString converts a TPM hash algorithm ID to its string name.
-// Returns "sha256" as the default if the algorithm is not recognized.
-func hashAlgIDToString(alg tpm2.TPMAlgID) string {
-	if s, ok := hashAlgIDToStringMap[alg]; ok {
-		return s
-	}
-	return "sha256"
-}
-
-// ---------------------------------------------------------------------------
-// Policy handlers
-// ---------------------------------------------------------------------------
-
-// handlePolicyNone performs no additional processing.
-func handlePolicyNone(_ *SealService, _ *SealRequest, _ *xkms.SealOptions) error {
-	return nil
-}
-
-// handlePolicyPassword validates the password is non-empty. The password
-// hash is stored on the blob after sealing, not in the TPM seal options.
-func handlePolicyPassword(_ *SealService, req *SealRequest, _ *xkms.SealOptions) error {
-	if req.Password == "" {
-		return ErrSealPasswordRequired
-	}
-	return nil
-}
-
-// handlePolicyPlatformPolicy retrieves PCRs from the PlatformPolicyService
-// and configures the seal options with the platform policy PCR selection.
-func handlePolicyPlatformPolicy(s *SealService, req *SealRequest, opts *xkms.SealOptions) error {
-	if s.policyService == nil {
-		return ErrSealPolicyNotAvailable
-	}
-
-	pcrs, bank, err := s.policyService.GetPolicyPCRs()
-	if err != nil {
-		return ErrSealPolicyNotAvailable
-	}
-
-	algID, ok := pcrBankAlgMap[bank]
-	if !ok {
-		algID = tpm2.TPMAlgSHA256
-	}
-
-	pcrUints := make([]uint, len(pcrs))
-	for i, p := range pcrs {
-		pcrUints[i] = uint(p)
-	}
-
-	opts.TPMPolicy = &xkms.TPMSealPolicy{
-		PCRSelection: tpm2.TPMLPCRSelection{
-			PCRSelections: []tpm2.TPMSPCRSelection{
-				{
-					Hash:      algID,
-					PCRSelect: tpm2.PCClientCompatible.PCRs(pcrUints...),
-				},
-			},
-		},
-		HashAlg: algID,
-	}
-
-	// Store the platform policy PCRs on the request for blob metadata.
-	req.PCRs = pcrs
-	req.PCRBank = bank
-
-	return nil
-}
-
-// handlePolicyCustomPCR uses the request's PCRs directly (current behavior).
-func handlePolicyCustomPCR(_ *SealService, req *SealRequest, opts *xkms.SealOptions) error {
-	if len(req.PCRs) == 0 {
-		return nil
-	}
-
-	bank := req.PCRBank
-	if bank == "" {
-		bank = "sha256"
-	}
-	algID, ok := pcrBankAlgMap[bank]
-	if !ok {
-		algID = tpm2.TPMAlgSHA256
-	}
-
-	pcrUints := make([]uint, len(req.PCRs))
-	for i, p := range req.PCRs {
-		pcrUints[i] = uint(p)
-	}
-
-	opts.TPMPolicy = &xkms.TPMSealPolicy{
-		PCRSelection: tpm2.TPMLPCRSelection{
-			PCRSelections: []tpm2.TPMSPCRSelection{
-				{
-					Hash:      algID,
-					PCRSelect: tpm2.PCClientCompatible.PCRs(pcrUints...),
-				},
-			},
-		},
-		HashAlg: algID,
-	}
-
-	return nil
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # xKey Desktop GUI — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## Exported surface — `*App` itself
 
@@ -38,7 +38,8 @@ call — it blocks until the application exits.
 | `OATHService` | `oathService` | TOTP/HOTP operations |
 | `StaticPasswordService` | `staticPWService` | Static password store, access modes, locking |
 | `PIVService` | `pivService` | PIV certificate/key operations; delegates to a remote transport client when one is set, else a local file-backed manager |
-| `TPMService` | `tpmService` | TPM2 operations |
+| `TPMService` | `tpmService` | TPM2 device operations |
+| `TPMPolicyService` | `tpmPolicyService` | Named TPM policies: the connected server's, else in-process over xKey's own TPM (`LocalTPMPolicies`, opened by `ensureLocalTPMPolicies`); follows the server connection through `applyConnectionEvent` |
 | `AuditService` | `auditService` | Audit log operations |
 | `AdminService` | `adminService` | Server administration; hidden by default, privilege-gated |
 | `ConnectionService` | `connectionService` | — |
@@ -52,9 +53,8 @@ call — it blocks until the application exits.
 | `NotificationService` | `notificationService` | — |
 | `SealService` | `sealService` | Barrier-backed encrypted storage, auto-selected backend |
 | `SealProtectionService` | `sealProtectionSvc` | UI-level access gating for seal operations |
-| `PlatformPolicyService` | `platformPolicyService` | Platform PCR-based data-sealing policies |
 | `AutoUnsealService` | `autoUnsealService` | Orchestrates sealed auto-unseal, coordinating `SealService` + `StorageService` |
-| `BarrierAutoUnsealService` | `barrierAutoUnsealService` | Concurrent-safe barrier auto-unseal reads |
+| `BarrierAutoUnsealService` | `barrierAutoUnsealService` | Barrier auto-unseal through a named TPM policy the TPM enforces |
 | `OIDCService` | `oidcService` | — |
 | `ClipboardService` | `clipboardService` | — |
 | `TrustService` | `trustService` | Trust store operations |

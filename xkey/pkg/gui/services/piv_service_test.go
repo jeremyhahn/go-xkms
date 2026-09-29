@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
+
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -38,6 +40,9 @@ import (
 // mockPIVClient implements transport.Client with configurable PIV method responses.
 // Non-PIV methods return errMockNotImplemented.
 type mockPIVClient struct {
+	// Fake serves the TPM policy API, which these tests do not exercise.
+	*tpmpolicyfake.Fake
+
 	listPIVSlotsResp *transport.ListPIVSlotsResponse
 	listPIVSlotsErr  error
 
@@ -1592,34 +1597,6 @@ func (m *mockPIVClient) RevokeEscrow(_ context.Context, _ string) error {
 }
 
 // Policy operations stub implementations for mockPIVClient
-
-func (m *mockPIVClient) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	return nil, errMockNotImplemented
-}
-
-func (m *mockPIVClient) PolicyGet(_ context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	return nil, errMockNotImplemented
-}
-
-func (m *mockPIVClient) PolicyList(_ context.Context) (*transport.PolicyListResponse, error) {
-	return nil, errMockNotImplemented
-}
-
-func (m *mockPIVClient) PolicyDelete(_ context.Context, _ *transport.PolicyDeleteRequest) error {
-	return errMockNotImplemented
-}
-
-func (m *mockPIVClient) PolicyRefresh(_ context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	return nil, errMockNotImplemented
-}
-
-func (m *mockPIVClient) PolicyVerify(_ context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	return nil, errMockNotImplemented
-}
-
-func (m *mockPIVClient) PolicyExport(_ context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
-	return nil, errMockNotImplemented
-}
 
 func (m *mockPIVClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	return nil, errMockNotImplemented

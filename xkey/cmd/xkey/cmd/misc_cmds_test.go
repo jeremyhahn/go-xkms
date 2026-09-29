@@ -15,7 +15,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -277,30 +276,4 @@ func TestUSBCmdError_Message(t *testing.T) {
 		(&USBCmdError{Operation: "create", Message: "no space", Err: os.ErrPermission}).Error())
 	assert.ErrorIs(t, &USBCmdError{Operation: "x", Err: os.ErrPermission}, os.ErrPermission)
 	assert.Nil(t, (&USBCmdError{Operation: "x"}).Unwrap())
-}
-
-// ---------------------------------------------------------------
-// policy store
-// ---------------------------------------------------------------
-
-func TestOpenPolicyStore_RoundTripsThroughDisk(t *testing.T) {
-	dir := t.TempDir()
-
-	store, err := openPolicyStore(dir)
-	require.NoError(t, err)
-	require.NotNil(t, store)
-
-	// A fresh store holds no policies; the listing must succeed rather than
-	// erroring on the missing backing file.
-	policies, err := store.List(context.Background())
-	require.NoError(t, err)
-	assert.Empty(t, policies)
-}
-
-func TestOpenPolicyStore_RejectsUnusablePath(t *testing.T) {
-	blocker := filepath.Join(t.TempDir(), "blocker")
-	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
-
-	_, err := openPolicyStore(filepath.Join(blocker, "store"))
-	assert.Error(t, err)
 }

@@ -3,12 +3,7 @@
 import {services} from '../models';
 import {audit} from '../models';
 import {context} from '../models';
-import {pcrpolicy} from '../models';
 import {truststore} from '../models';
-
-export function AssignPolicyToKey(arg1:string,arg2:string):Promise<void>;
-
-export function AssignPolicyToKeys(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function CertifyKey(arg1:string):Promise<services.CertifyKeyResult>;
 
@@ -20,35 +15,15 @@ export function ChangeOwnerAuth(arg1:string,arg2:string):Promise<void>;
 
 export function ClearTPM(arg1:services.TPMClearRequest):Promise<services.TPMClearResult>;
 
-export function ComparePolicyPCRs(arg1:string):Promise<services.PolicyComparisonResult>;
-
-export function CreateCompositePolicy(arg1:services.CompositePolicy):Promise<void>;
-
-export function CreateDefaultPlatformPolicy():Promise<void>;
-
-export function CreatePCRAndPasswordPolicy(arg1:string,arg2:string,arg3:Array<services.PCRSelection>,arg4:string,arg5:string,arg6:boolean):Promise<void>;
-
-export function CreatePCROrPasswordPolicy(arg1:string,arg2:string,arg3:Array<services.PCRSelection>,arg4:string,arg5:string,arg6:boolean):Promise<void>;
-
-export function CreatePasswordPolicy(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
-
-export function CreatePolicy(arg1:services.PCRPolicy):Promise<void>;
-
 export function DefineNVCounter(arg1:number,arg2:string):Promise<void>;
 
 export function DefineNVExtend(arg1:number,arg2:string):Promise<void>;
 
 export function DefineNVOrdinary(arg1:number,arg2:number,arg3:string):Promise<void>;
 
-export function DeleteCompositePolicy(arg1:string):Promise<void>;
-
 export function DeleteNVIndex(arg1:number,arg2:string):Promise<void>;
 
-export function DeletePolicy(arg1:string):Promise<void>;
-
 export function DevicePath():Promise<string>;
-
-export function ExportCompositePolicy(arg1:string):Promise<string>;
 
 export function ExportEKCert(arg1:string):Promise<string>;
 
@@ -57,8 +32,6 @@ export function ExportEKECCCert(arg1:string):Promise<string>;
 export function ExportIAKCert(arg1:string):Promise<string>;
 
 export function ExportIDevIDCert(arg1:string):Promise<string>;
-
-export function ExportPolicy(arg1:string):Promise<string>;
 
 export function ExtendNV(arg1:number,arg2:string,arg3:string):Promise<void>;
 
@@ -71,10 +44,6 @@ export function ForceResetLockout(arg1:string):Promise<void>;
 export function GenerateIDevIDCSR():Promise<string>;
 
 export function GenerateQuote(arg1:string,arg2:Array<number>,arg3:string):Promise<services.Quote>;
-
-export function GetCompositePolicy(arg1:string):Promise<services.CompositePolicy>;
-
-export function GetConflictingAssignments(arg1:Array<string>):Promise<Array<services.ConflictingAssignment>>;
 
 export function GetEKECCInfo():Promise<services.EKECCInfo>;
 
@@ -98,10 +67,6 @@ export function GetPlatformPolicy():Promise<string>;
 
 export function GetPlatformSRKInfo():Promise<services.PlatformSRKInfo>;
 
-export function GetPolicy(arg1:string):Promise<services.PCRPolicy>;
-
-export function GetPolicyDeletionImpact(arg1:string):Promise<services.PolicyDeletionImpact>;
-
 export function GetRandomBytes(arg1:number):Promise<string>;
 
 export function GetSharedSRKInfo():Promise<services.SharedSRKInfo>;
@@ -120,8 +85,6 @@ export function ImportIDevIDCert(arg1:string):Promise<void>;
 
 export function ImportManufacturerCA(arg1:string):Promise<void>;
 
-export function ImportPolicyFile():Promise<string>;
-
 export function IncrementNVCounter(arg1:number,arg2:string):Promise<number>;
 
 export function InitializePlatformKeyStore(arg1:string,arg2:string):Promise<void>;
@@ -130,19 +93,9 @@ export function InitializePlatformKeyStoreWithDefaults():Promise<void>;
 
 export function Install(arg1:string):Promise<void>;
 
-export function ListCompositePolicies():Promise<Array<services.CompositePolicy>>;
-
-export function ListCompositePoliciesWithDigests():Promise<Array<services.CompositePolicy>>;
-
 export function ListKeys():Promise<Array<services.TPMKey>>;
 
 export function ListPersistentHandles():Promise<Array<services.HandleInfo>>;
-
-export function ListPolicies():Promise<Array<services.PCRPolicy>>;
-
-export function ListPoliciesWithDigests():Promise<Array<services.PCRPolicy>>;
-
-export function ListPolicyAssignments():Promise<Array<services.PolicyAssignment>>;
 
 export function ListTransientHandles():Promise<Array<services.HandleInfo>>;
 
@@ -162,15 +115,9 @@ export function ReadNVExtend(arg1:number,arg2:string):Promise<string>;
 
 export function ReadPCRs(arg1:string):Promise<Array<services.PCRValue>>;
 
-export function RefreshCompositePolicyPCRs(arg1:string):Promise<services.CompositePolicy>;
-
-export function RefreshPolicyPCRs(arg1:string):Promise<services.PCRPolicy>;
-
 export function ReplayEventLog():Promise<services.EventLogReplayResult>;
 
 export function ResetLockout(arg1:string):Promise<void>;
-
-export function SavePolicyToFile(arg1:string):Promise<void>;
 
 export function SetAuditLogger(arg1:audit.Logger):Promise<void>;
 
@@ -186,21 +133,9 @@ export function SetElevatorFunc(arg1:services.ElevatorFunc):Promise<void>;
 
 export function SetHandleDescription(arg1:string,arg2:string):Promise<void>;
 
-export function SetPlatformPolicyService(arg1:services.PlatformPolicyService):Promise<void>;
-
-export function SetPolicyStore(arg1:pcrpolicy.PolicyStore):Promise<void>;
-
-export function SetStaticPasswordService(arg1:services.StaticPasswordService):Promise<void>;
-
 export function SetTPMAccessor(arg1:services.TPMAccessor):Promise<void>;
 
 export function SetTrustStore(arg1:truststore.TrustStore):Promise<void>;
-
-export function UnassignPolicyFromKey(arg1:string):Promise<void>;
-
-export function UpdatePolicy(arg1:string,arg2:services.PCRPolicy):Promise<services.PCRPolicy>;
-
-export function VerifyPolicyPassword(arg1:string,arg2:string):Promise<boolean>;
 
 export function VerifyTPM():Promise<services.VerificationStatus>;
 

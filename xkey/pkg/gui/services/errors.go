@@ -105,11 +105,6 @@ var (
 	// ErrTPMDataDirNotSet indicates the data directory has not been configured.
 	ErrTPMDataDirNotSet = errors.New("tpm_service: data directory not set")
 
-	// ErrTPMPolicyStoreNotSet indicates SetPolicyStore has not been called.
-	// PCR policy CRUD requires the canonical pcr_policy store wired by the
-	// composition root; there is no file-backed fallback.
-	ErrTPMPolicyStoreNotSet = errors.New("tpm_service: PCR policy store not set")
-
 	// ErrTPMInvalidHandle indicates an invalid TPM handle value was provided.
 	ErrTPMInvalidHandle = errors.New("tpm_service: invalid handle")
 
@@ -165,47 +160,8 @@ var (
 	// ErrTPMProvisionIDevIDFailed indicates IDevID provisioning failed.
 	ErrTPMProvisionIDevIDFailed = errors.New("tpm_service: IDevID provisioning failed")
 
-	// ErrTPMInvalidPolicyName indicates an empty or invalid policy name.
-	ErrTPMInvalidPolicyName = errors.New("tpm_service: invalid policy name")
-
-	// ErrTPMPolicyExists indicates a policy with this name already exists.
-	ErrTPMPolicyExists = errors.New("tpm_service: policy already exists")
-
-	// ErrTPMPolicyNotFound indicates the requested policy was not found.
-	ErrTPMPolicyNotFound = errors.New("tpm_service: policy not found")
-
-	// ErrTPMPolicyExportFailed indicates the policy could not be exported.
-	ErrTPMPolicyExportFailed = errors.New("tpm_service: policy export failed")
-
-	// ErrTPMInvalidPolicyOperator indicates an invalid composite policy operator.
-	ErrTPMInvalidPolicyOperator = errors.New("tpm_service: invalid policy operator (must be AND, OR, or SINGLE)")
-
-	// ErrTPMInvalidPolicyType indicates an invalid policy type.
-	ErrTPMInvalidPolicyType = errors.New("tpm_service: invalid policy type")
-
-	// ErrTPMPasswordVerifyFailed indicates password verification failed.
-	ErrTPMPasswordVerifyFailed = errors.New("tpm_service: password verification failed")
-
 	// ErrTPMEventLogReplayFailed indicates the event log replay operation failed.
 	ErrTPMEventLogReplayFailed = errors.New("tpm_service: event log replay failed")
-
-	// ErrTPMPolicyNoDigests indicates the policy has no saved PCR digests to compare.
-	ErrTPMPolicyNoDigests = errors.New("tpm_service: policy has no saved digests")
-
-	// ErrTPMPolicyImportFailed indicates the policy file could not be imported.
-	ErrTPMPolicyImportFailed = errors.New("tpm_service: policy import failed")
-
-	// ErrTPMPolicyImportCancelled indicates the user cancelled the file dialog.
-	ErrTPMPolicyImportCancelled = errors.New("tpm_service: import cancelled")
-
-	// ErrTPMPolicySaveCancelled indicates the user cancelled the save dialog.
-	ErrTPMPolicySaveCancelled = errors.New("tpm_service: save cancelled")
-
-	// ErrTPMPolicyMixedBanks indicates a PCR policy's selections reference
-	// more than one hash bank. The canonical pcr_policy store models a
-	// policy with a single Bank field, so all selections in one policy must
-	// share the same bank.
-	ErrTPMPolicyMixedBanks = errors.New("tpm_service: policy PCR selections must share a single bank")
 )
 
 // OIDCService errors.

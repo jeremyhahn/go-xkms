@@ -25,6 +25,8 @@ export function SetAdminService(arg1:services.AdminService):Promise<void>;
 
 export function SetAutoUnsealService(arg1:services.AutoUnsealService):Promise<void>;
 
+export function SetBarrierAutoUnsealService(arg1:services.BarrierAutoUnsealService):Promise<void>;
+
 export function SetBarrierService(arg1:services.BarrierService):Promise<void>;
 
 export function SetConfigDir(arg1:string):Promise<void>;
@@ -41,13 +43,13 @@ export function SetInitDataDirFunc(arg1:any):Promise<void>;
 
 export function SetPINService(arg1:services.PINService):Promise<void>;
 
-export function SetPlatformPolicyService(arg1:services.PlatformPolicyService):Promise<void>;
-
 export function SetSealService(arg1:services.SealService):Promise<void>;
 
 export function SetStaticPasswordService(arg1:services.StaticPasswordService):Promise<void>;
 
 export function SetStorageService(arg1:services.StorageService):Promise<void>;
+
+export function SetTPMPolicyService(arg1:services.TPMPolicyService):Promise<void>;
 
 export function SetTPMService(arg1:services.TPMService):Promise<void>;
 

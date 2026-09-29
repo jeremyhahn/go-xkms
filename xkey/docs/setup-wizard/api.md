@@ -1,6 +1,6 @@
 # Setup Wizard — API
 
-> **Status: NORMATIVE** · Feature: `setup-wizard` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `setup-wizard` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 One transport: Wails bindings, called from the frontend as
 `window.go.services.SetupWizardService.<Method>(...)` through
@@ -58,7 +58,7 @@ and the `setup:completed` event carry `so_pin_set` booleans only.
 | Event | Payload |
 |---|---|
 | `setup:progress` | `{step, total_steps, label}` |
-| `setup:completed` | `{mode, storage_created, master_password_set, platform_policy_created, tpm_sealed_passwords, user_pin_set, so_pin_set, barrier_initialized, barrier_strategy}` |
+| `setup:completed` | `{mode, storage_created, master_password_set, tpm_sealed_passwords, user_pin_set, so_pin_set, barrier_initialized, barrier_strategy}` |
 | `setup:skipped` | `{reason}` |
 
 ## Frontend elements the contract depends on

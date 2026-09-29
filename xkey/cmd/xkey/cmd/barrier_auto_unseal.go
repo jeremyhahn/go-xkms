@@ -1,5 +1,5 @@
-// Copyright (c) 2026 Jeremy Hahn
-// Copyright (c) 2026 Automate The Things, LLC
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
 //
 // This file is part of go-xkms.
 //
@@ -18,111 +18,100 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
-	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
 )
 
-// pcrPolicyStoreSubdir is the data-directory subpath for the PCR policy
-// store. It matches the xKey GUI's own PCR policy store exactly
-// (pkg/gui/app.go, initializeDataDir: filepath.Join(dir, "pcr_policies")),
-// so a policy created or designated for auto-unseal through either surface
-// -- the GUI's TPM wizard or `xkey policy set-auto-unseal` -- is visible to
-// the other, and to every headless command in this file.
-const pcrPolicyStoreSubdir = "pcr_policies"
+// ErrLocalTPMPoliciesOpenFailed indicates the TPM policy service over this
+// host's TPM could not be opened: no TPM, or its registry could not be
+// opened under the data directory.
+var ErrLocalTPMPoliciesOpenFailed = errors.New("tpm policy: failed to open the local TPM policy service")
 
-// ErrBarrierAutoUnsealPolicyStoreFailed indicates the PCR policy store
-// backing `xkey policy set-auto-unseal` could not be opened.
-var ErrBarrierAutoUnsealPolicyStoreFailed = errors.New("barrier: failed to open PCR policy store")
+// localTPMPolicies is the TPM policy service the CLI runs in-process over
+// this host's TPM, and the TPM it runs on. Close closes both.
+type localTPMPolicies struct {
+	*services.LocalTPMPolicies
+	tpm *openedTPM
+}
+
+// Close closes the policy service, then the TPM and its key store.
+func (l *localTPMPolicies) Close() error {
+	return errors.Join(l.LocalTPMPolicies.Close(), l.tpm.Close())
+}
+
+// openLocalTPMPolicies opens the TPM policy service over this host's TPM --
+// the device at the resolved path, or the in-process simulator -- with its
+// registry under dataDir: the same service, over the same stores, as the
+// xKey GUI's local mode.
+func openLocalTPMPolicies(logger *slog.Logger, dataDir, device string, useSimulator bool) (*localTPMPolicies, error) {
+	opened, err := openTPMWithKeyStore(logger, dataDir, device, useSimulator)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrLocalTPMPoliciesOpenFailed, Cause: err}
+	}
+	local, err := services.OpenLocalTPMPolicies(services.LocalTPMPolicyParams{
+		TPM:       opened.tpm,
+		Keys:      opened.keys(),
+		DataDir:   dataDir,
+		OpenStore: openEngineStore,
+		Logger:    logger,
+	})
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrLocalTPMPoliciesOpenFailed, Cause: errors.Join(err, opened.Close())}
+	}
+	return &localTPMPolicies{LocalTPMPolicies: local, tpm: opened}, nil
+}
+
+// openEngineStore opens the store rooted at dir with the storage engine the
+// unified config selects ("file" unless state.storage_engine says
+// otherwise), exactly as the xKey GUI opens its local stores, so both read
+// the same data.
+func openEngineStore(dir string) (xkms.StorageBackend, error) {
+	kind := "file"
+	if cfg := GetConfig(); cfg != nil && cfg.State.StorageEngine != "" {
+		kind = cfg.State.StorageEngine
+	}
+	return xkms.StorageOpenEngine(xkms.StorageEngineConfig{Kind: xkms.StorageEngineKind(kind), Path: dir})
+}
 
 // tryBarrierPolicyAutoUnseal is the headless counterpart of the xKey GUI's
-// boot-time PCR-policy auto-unseal (pkg/gui/app.go initializeDataDir /
-// runtime startup, around barrierAutoUnsealService.TryAutoUnseal): both
-// drive the same services.BarrierAutoUnsealService against the canonical
-// pcrpolicy.DAOStore at <dataDir>/pcr_policies, so a policy designated with
-// `xkey policy set-auto-unseal` unseals a tpm2-strategy barrier for any of
-// them without a password.
+// boot-time auto-unseal: both drive services.BarrierAutoUnsealService over
+// the local TPM policy service, so the TPM releases the barrier credential
+// sealed under the scope's auto-unseal policy (see `xkey tpm policy
+// auto-unseal`) through a policy session, and the barrier -- sealed with
+// strategy -- is unsealed with it.
 //
 // Returns (true, closer, nil) when the barrier was auto-unsealed. closer
-// releases the TPM transport that the unsealed barrier's TPM2 strategy now
-// holds; the caller owns it and must keep it open for as long as the
-// barrier may be used (a long-running daemon should defer its Close until
-// shutdown) rather than closing it immediately.
+// releases the TPM the unsealed barrier may still use (a tpm2 strategy); the
+// caller owns it and keeps it open for as long as the barrier is used.
 //
-// Returns (false, nil, nil) when no auto-unseal policy is configured at
-// all -- the expected, silent state for any barrier that never had
-// `xkey policy set-auto-unseal` run against it. Callers fall back to their
-// normal password/direct-TPM unseal path without logging anything.
+// Returns (false, nil, nil) when no policy carries the auto-unseal mark --
+// the expected, silent state. Callers fall back to their normal unseal path.
 //
-// Returns (false, nil, err) for every other failure: the policy store
-// could not be opened, no TPM is available, or -- critically -- a policy IS
-// configured but the current PCR values do not match it
-// (services.ErrBarrierAutoUnsealPCRMismatch). Callers MUST log err before
-// falling back in this case; a PCR mismatch means the platform state
-// changed, and silently trying a password next without a trace would hide
-// exactly the event an operator most needs to see.
-func tryBarrierPolicyAutoUnseal(ctx context.Context, logger *slog.Logger, barrierSvc *services.BarrierService, dataDir, tpmDevice string, tpmSimulator bool) (unsealed bool, closer io.Closer, err error) {
-	store, err := openPolicyStore(filepath.Join(dataDir, pcrPolicyStoreSubdir))
+// Returns (false, nil, err) for every other failure: no TPM, the registry
+// could not be opened, or -- critically -- the TPM refused the policy session
+// (services.ErrBarrierAutoUnsealRefused: the PCRs changed or the approval was
+// revoked). Callers MUST log err before falling back: a refusal means the
+// platform state changed, which is exactly the event an operator needs to
+// see.
+func tryBarrierPolicyAutoUnseal(ctx context.Context, logger *slog.Logger, barrierSvc *services.BarrierService, dataDir string, strategy xkms.StrategyID, tpmDevice string, tpmSimulator bool) (bool, io.Closer, error) {
+	local, err := openLocalTPMPolicies(logger, dataDir, tpmDevice, tpmSimulator)
 	if err != nil {
-		return false, nil, &SentinelCauseError{Sentinel: ErrBarrierAutoUnsealPolicyStoreFailed, Cause: err}
-	}
-	defer func() {
-		err = finalizeAutoUnsealStoreClose(logger, unsealed, err, store.Close())
-	}()
-
-	if _, err := store.GetAutoUnsealPolicy(ctx); err != nil {
-		if errors.Is(err, pcrpolicy.ErrPolicyNotFound) {
-			return false, nil, nil
-		}
-		return false, nil, &SentinelCauseError{Sentinel: ErrBarrierAutoUnsealPolicyStoreFailed, Cause: err}
+		return false, nil, err
 	}
 
-	tpm, tpmCloser := probeTPMModule(logger, dataDir, tpmDevice, tpmSimulator)
-	if tpm == nil {
-		return false, nil, services.ErrBarrierAutoUnsealTPMUnavailable
-	}
+	// A tpm2-strategy barrier unseals its root key with the same TPM.
+	barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return local.tpm.tpm })
 
-	barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return tpm })
-
-	accessor := services.NewTPMAccessor(func() xkms.TrustedPlatformModule { return tpm })
-	autoSvc := services.NewBarrierAutoUnsealService(store,
-		services.WithBarrierAutoUnsealTPMAccessor(accessor),
+	autoSvc := services.NewBarrierAutoUnsealService(
+		services.WithBarrierAutoUnsealLocal(local.LocalTPMPolicies),
 		services.WithBarrierAutoUnsealBarrier(barrierSvc),
 		services.WithBarrierAutoUnsealLogger(logger),
 	)
-
-	ok, unsealErr := autoSvc.TryAutoUnseal(ctx)
-	if !ok {
-		// Auto-unseal did not succeed (PCR mismatch, TPM error, or the
-		// barrier's own Unseal failed): release the TPM here. The caller's
-		// fallback (direct TPM unseal or a password) opens its own
-		// connection if it needs one, so nothing downstream depends on
-		// this transport staying open.
-		joinedErr := unsealErr
-		if closeErr := tpmCloser.Close(); closeErr != nil {
-			joinedErr = errors.Join(joinedErr, closeErr)
-		}
-		return false, nil, joinedErr
+	unsealed, err := autoSvc.TryAutoUnseal(ctx, string(strategy))
+	if !unsealed {
+		// The caller's fallback opens its own TPM connection if it needs one.
+		return false, nil, errors.Join(err, local.Close())
 	}
-	return true, tpmCloser, nil
-}
-
-// finalizeAutoUnsealStoreClose folds the PCR policy store's Close error, if
-// any, into tryBarrierPolicyAutoUnseal's result. When the barrier was
-// already successfully auto-unsealed (unsealed == true), a Close failure
-// doesn't invalidate that result -- the caller already has what it asked
-// for -- so it is logged rather than turned into a failure of an
-// otherwise-successful call. Otherwise it is joined into err so it isn't
-// lost.
-func finalizeAutoUnsealStoreClose(logger *slog.Logger, unsealed bool, err, closeErr error) error {
-	if closeErr == nil {
-		return err
-	}
-	if unsealed {
-		logger.Warn("barrier: failed to close PCR policy store after successful auto-unseal", "error", closeErr)
-		return err
-	}
-	return errors.Join(err, closeErr)
+	return true, local, nil
 }

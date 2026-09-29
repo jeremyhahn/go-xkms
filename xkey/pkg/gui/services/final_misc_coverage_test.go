@@ -586,11 +586,10 @@ func TestFM_SealService_SaveBlob_MarshalAndWrite(t *testing.T) {
 	svc := NewSealService(dir)
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-blob-1",
-		Label:      "test",
-		CreatedAt:  time.Now(),
+		BackendID: "software",
+		ID:        "test-blob-1",
+		Label:     "test",
+		CreatedAt: time.Now(),
 	}
 	err := svc.saveBlob(blob)
 	assert.NoError(t, err)
@@ -638,9 +637,8 @@ func TestFM_SealService_SealData_DecodeFailure(t *testing.T) {
 	svc := fmNewSealSvc(t, mock)
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test",
-		Data:       "not!!!valid!!!base64",
+		Label: "test",
+		Data:  "not!!!valid!!!base64",
 	}
 	_, err := svc.SealData(req)
 	assert.ErrorIs(t, err, ErrSealDecodeFailed)
@@ -794,7 +792,7 @@ func TestFM_AutoUnseal_Enable_ConfigSaveFuncNil(t *testing.T) {
 	autoSvc.SetConfigFunc(func() *GUIConfigData { return testConfigData() })
 	// Do NOT set configSave.
 
-	_, err := autoSvc.Enable("password1234", nil, "sha256", "none", "", "tpm2")
+	_, err := autoSvc.Enable("password1234", "", "tpm2")
 	assert.ErrorIs(t, err, ErrAutoUnsealConfigSaveFuncNil)
 }
 
@@ -852,11 +850,10 @@ func TestFM_AutoUnseal_TryAutoUnseal_InvalidBase64(t *testing.T) {
 	blobDir := sealSvc.storageDir
 	blobID := "bad-b64-blob"
 	rawBlob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         blobID,
-		Label:      "auto-unseal-passphrase",
-		CreatedAt:  time.Now(),
+		BackendID: "software",
+		ID:        blobID,
+		Label:     "auto-unseal-passphrase",
+		CreatedAt: time.Now(),
 		SealedData: &xkms.SealedData{
 			Ciphertext: []byte("not-base64-at-all!!!"),
 		},

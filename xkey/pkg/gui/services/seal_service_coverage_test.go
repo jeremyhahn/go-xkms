@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-tpm/tpm2"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
@@ -316,7 +315,7 @@ func TestSealService_Coverage_ClassifyCategory(t *testing.T) {
 // blobToEntry
 // ---------------------------------------------------------------------------
 
-func TestSealService_Coverage_BlobToEntry_MissingPolicyType(t *testing.T) {
+func TestSealService_Coverage_BlobToEntry_MissingBackendID(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:        "test-id",
 		Label:     "test-label",
@@ -324,29 +323,16 @@ func TestSealService_Coverage_BlobToEntry_MissingPolicyType(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 	_, err := blobToEntry(blob)
-	assert.ErrorIs(t, err, ErrSealBlobPolicyTypeMissing)
-}
-
-func TestSealService_Coverage_BlobToEntry_MissingBackendID(t *testing.T) {
-	blob := &sealedBlobStorage{
-		ID:         "test-id",
-		Label:      "test-label",
-		SizeBytes:  100,
-		PolicyType: "none",
-		CreatedAt:  time.Now(),
-	}
-	_, err := blobToEntry(blob)
 	assert.ErrorIs(t, err, ErrSealBlobBackendIDMissing)
 }
 
 func TestSealService_Coverage_BlobToEntry_DefaultCategoryAndStorageType(t *testing.T) {
 	blob := &sealedBlobStorage{
-		ID:         "test-id",
-		Label:      "test-label",
-		SizeBytes:  100,
-		PolicyType: "none",
-		BackendID:  "software",
-		CreatedAt:  time.Now(),
+		ID:        "test-id",
+		Label:     "test-label",
+		SizeBytes: 100,
+		BackendID: "software",
+		CreatedAt: time.Now(),
 	}
 	entry, err := blobToEntry(blob)
 	require.NoError(t, err)
@@ -358,39 +344,12 @@ func TestSealService_Coverage_BlobToEntry_DefaultCategoryAndStorageType(t *testi
 	assert.Equal(t, string(StorageTypeDisk), entry.StorageType) // default
 }
 
-func TestSealService_Coverage_BlobToEntry_AllFields(t *testing.T) {
-	blob := &sealedBlobStorage{
-		ID:          "full-id",
-		Label:       "password_master_key",
-		SizeBytes:   256,
-		PCRBound:    true,
-		PolicyType:  "password",
-		Category:    "system",
-		BackendID:   "tpm2",
-		StorageType: "nvram",
-		CreatedAt:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-	}
-	entry, err := blobToEntry(blob)
-	require.NoError(t, err)
-
-	assert.Equal(t, "full-id", entry.ID)
-	assert.Equal(t, "password_master_key", entry.Label)
-	assert.Equal(t, 256, entry.SizeBytes)
-	assert.True(t, entry.PCRBound)
-	assert.Equal(t, "password", entry.PolicyType)
-	assert.Equal(t, "system", entry.Category)
-	assert.Equal(t, "tpm2", entry.BackendID)
-	assert.Equal(t, "nvram", entry.StorageType)
-	assert.Equal(t, "2025-01-01T00:00:00Z", entry.CreatedAt)
-}
-
 func TestSealService_Coverage_BlobToEntry_SystemCategory(t *testing.T) {
 	blob := &sealedBlobStorage{
-		ID:         "sys-id",
-		Label:      "barrier_password",
-		PolicyType: "none",
-		BackendID:  "software",
-		CreatedAt:  time.Now(),
+		ID:        "sys-id",
+		Label:     "barrier_password",
+		BackendID: "software",
+		CreatedAt: time.Now(),
 	}
 	entry, err := blobToEntry(blob)
 	require.NoError(t, err)
@@ -405,143 +364,6 @@ func TestSealService_Coverage_SortAndCollectEntries_Empty(t *testing.T) {
 	result := sortAndCollectEntries(nil)
 	assert.Empty(t, result)
 }
-
-func TestSealService_Coverage_SortAndCollectEntries_Sorted(t *testing.T) {
-	now := time.Now()
-	items := []blobWithTime{
-		{entry: SealedBlobEntry{ID: "oldest"}, createdAt: now.Add(-2 * time.Hour)},
-		{entry: SealedBlobEntry{ID: "newest"}, createdAt: now},
-		{entry: SealedBlobEntry{ID: "middle"}, createdAt: now.Add(-1 * time.Hour)},
-	}
-
-	result := sortAndCollectEntries(items)
-	require.Len(t, result, 3)
-	assert.Equal(t, "newest", result[0].ID)
-	assert.Equal(t, "middle", result[1].ID)
-	assert.Equal(t, "oldest", result[2].ID)
-}
-
-// ---------------------------------------------------------------------------
-// pcrSelectToInts
-// ---------------------------------------------------------------------------
-
-func TestSealService_Coverage_PcrSelectToInts_SingleByte(t *testing.T) {
-	// 0x81 = bit 0 and bit 7 set -> PCR 0 and PCR 7
-	result := pcrSelectToInts([]byte{0x81})
-	assert.Equal(t, []int{0, 7}, result)
-}
-
-func TestSealService_Coverage_PcrSelectToInts_MultiByte(t *testing.T) {
-	// byte 0: 0x01 = PCR 0; byte 1: 0x01 = PCR 8; byte 2: 0x80 = PCR 23
-	result := pcrSelectToInts([]byte{0x01, 0x01, 0x80})
-	assert.Equal(t, []int{0, 8, 23}, result)
-}
-
-func TestSealService_Coverage_PcrSelectToInts_Empty(t *testing.T) {
-	result := pcrSelectToInts(nil)
-	assert.Nil(t, result)
-}
-
-func TestSealService_Coverage_PcrSelectToInts_AllZeros(t *testing.T) {
-	result := pcrSelectToInts([]byte{0x00, 0x00})
-	assert.Nil(t, result)
-}
-
-// ---------------------------------------------------------------------------
-// hashAlgIDToString
-// ---------------------------------------------------------------------------
-
-func TestSealService_Coverage_HashAlgIDToString(t *testing.T) {
-	assert.Equal(t, "sha1", hashAlgIDToString(tpm2.TPMAlgSHA1))
-	assert.Equal(t, "sha256", hashAlgIDToString(tpm2.TPMAlgSHA256))
-	assert.Equal(t, "sha384", hashAlgIDToString(tpm2.TPMAlgSHA384))
-	assert.Equal(t, "sha512", hashAlgIDToString(tpm2.TPMAlgSHA512))
-	assert.Equal(t, "sha256", hashAlgIDToString(tpm2.TPMAlgID(0xFFFF))) // unknown defaults to sha256
-}
-
-// ---------------------------------------------------------------------------
-// Policy handlers
-// ---------------------------------------------------------------------------
-
-func TestSealService_Coverage_HandlePolicyNone(t *testing.T) {
-	err := handlePolicyNone(nil, nil, nil)
-	assert.NoError(t, err)
-}
-
-func TestSealService_Coverage_HandlePolicyPassword_Empty(t *testing.T) {
-	req := &SealRequest{
-		PolicyType: "none", Password: ""}
-	err := handlePolicyPassword(nil, req, nil)
-	assert.ErrorIs(t, err, ErrSealPasswordRequired)
-}
-
-func TestSealService_Coverage_HandlePolicyPassword_Valid(t *testing.T) {
-	req := &SealRequest{
-		PolicyType: "none", Password: "mysecret"}
-	err := handlePolicyPassword(nil, req, nil)
-	assert.NoError(t, err)
-}
-
-func TestSealService_Coverage_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
-	req := &SealRequest{
-		PolicyType: "none"}
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, req, opts)
-	assert.NoError(t, err)
-	assert.Nil(t, opts.TPMPolicy) // No PCRs = no policy set
-}
-
-func TestSealService_Coverage_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
-	req := &SealRequest{
-		PolicyType: "none",
-		PCRs:       []int{0, 7},
-		PCRBank:    "sha256",
-	}
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, req, opts)
-	assert.NoError(t, err)
-	require.NotNil(t, opts.TPMPolicy)
-	assert.Equal(t, tpm2.TPMAlgSHA256, opts.TPMPolicy.HashAlg)
-}
-
-func TestSealService_Coverage_HandlePolicyCustomPCR_DefaultBank(t *testing.T) {
-	req := &SealRequest{
-		PolicyType: "none",
-		PCRs:       []int{0},
-		PCRBank:    "", // should default to sha256
-	}
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, req, opts)
-	assert.NoError(t, err)
-	require.NotNil(t, opts.TPMPolicy)
-	assert.Equal(t, tpm2.TPMAlgSHA256, opts.TPMPolicy.HashAlg)
-}
-
-func TestSealService_Coverage_HandlePolicyCustomPCR_UnknownBank(t *testing.T) {
-	req := &SealRequest{
-		PolicyType: "none",
-		PCRs:       []int{0},
-		PCRBank:    "md5", // not in pcrBankAlgMap
-	}
-	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, req, opts)
-	assert.NoError(t, err)
-	require.NotNil(t, opts.TPMPolicy)
-	assert.Equal(t, tpm2.TPMAlgSHA256, opts.TPMPolicy.HashAlg) // defaults to sha256
-}
-
-func TestSealService_Coverage_HandlePolicyPlatformPolicy_NilService(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	svc.policyService = nil
-
-	err := handlePolicyPlatformPolicy(svc, &SealRequest{
-		PolicyType: "none"}, &xkms.SealOptions{})
-	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
-}
-
-// ---------------------------------------------------------------------------
-// hashPassword / verifyPassword / splitPasswordHash
-// ---------------------------------------------------------------------------
 
 func TestSealService_Coverage_HashPassword_Unique(t *testing.T) {
 	hash1, err1 := hashPassword("test-password")
@@ -669,11 +491,10 @@ func TestSealService_Coverage_SaveAndLoadBlob_Direct(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-blob",
-		Label:      "test-label",
-		SizeBytes:  42,
+		BackendID: "software",
+		ID:        "test-blob",
+		Label:     "test-label",
+		SizeBytes: 42,
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeSoftware,
 			Ciphertext: []byte("ciphertext"),
@@ -724,11 +545,10 @@ func TestSealService_Coverage_SaveAndLoadBlob_ViaBackend(t *testing.T) {
 	svc.SetBackend(backend, "sealed/")
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "backend-blob",
-		Label:      "backend-label",
-		SizeBytes:  100,
+		BackendID: "software",
+		ID:        "backend-blob",
+		Label:     "backend-label",
+		SizeBytes: 100,
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeSoftware,
 			Ciphertext: []byte("test"),
@@ -792,11 +612,10 @@ func TestSealService_Coverage_ListBlobs_ViaBackend_WithBlobs(t *testing.T) {
 	// Save two blobs.
 	for _, id := range []string{"blob-1", "blob-2"} {
 		blob := &sealedBlobStorage{
-			PolicyType: "none",
-			BackendID:  "software",
-			ID:         id,
-			Label:      "label-" + id,
-			SizeBytes:  50,
+			BackendID: "software",
+			ID:        id,
+			Label:     "label-" + id,
+			SizeBytes: 50,
 			SealedData: &xkms.SealedData{
 				Backend: xkms.BackendTypeSoftware,
 			},
@@ -818,7 +637,6 @@ func TestSealService_Coverage_ListBlobs_ViaBackend_SkipsInvalidJSON(t *testing.T
 
 	// Write valid blob.
 	validBlob := &sealedBlobStorage{
-		PolicyType: "none",
 		BackendID:  "software",
 		ID:         "valid",
 		Label:      "valid-label",
@@ -864,7 +682,6 @@ func TestSealService_Coverage_DeleteBlob_ViaBackend(t *testing.T) {
 
 	// Save a blob then delete it.
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
 		BackendID:  "software",
 		ID:         "delete-me",
 		Label:      "to-delete",
@@ -900,7 +717,6 @@ func TestSealService_Coverage_DeleteBlob_ViaBackend_WithAudit(t *testing.T) {
 	svc.SetAuditLogger(logger)
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
 		BackendID:  "software",
 		ID:         "audit-delete",
 		Label:      "audit-label",
@@ -923,7 +739,6 @@ func TestSealService_Coverage_DeleteBlob_NilContext(t *testing.T) {
 
 	// Create blob on disk.
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
 		BackendID:  "software",
 		ID:         "ctx-nil",
 		Label:      "ctx-nil-label",
@@ -1058,10 +873,9 @@ func TestSealService_Coverage_UnsealData_BackendIDFallback(t *testing.T) {
 
 	// Create a blob directly with empty BackendID.
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "no-backend",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "no-backend",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeSoftware,
 			Ciphertext: []byte("data"),
@@ -1085,10 +899,9 @@ func TestSealService_Coverage_UnsealData_FullBackendIDFallback(t *testing.T) {
 
 	// Create a blob with empty BackendID and empty SealedData.Backend.
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "empty-backend",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "empty-backend",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Ciphertext: []byte("data"),
 		},
@@ -1192,9 +1005,8 @@ func TestSealService_Coverage_SealData_SystemCategory(t *testing.T) {
 	svc.SetClientFunc(func() xkms.Client { return mc })
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "password_master_key",
-		Data:       base64.StdEncoding.EncodeToString([]byte("master-key-data")),
+		Label: "password_master_key",
+		Data:  base64.StdEncoding.EncodeToString([]byte("master-key-data")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -1235,70 +1047,11 @@ func TestSealService_Coverage_SealData_ExplicitBackend(t *testing.T) {
 // Seal error sentinel uniqueness
 // ---------------------------------------------------------------------------
 
-func TestSealService_Coverage_ErrorSentinels(t *testing.T) {
-	sentinels := []error{
-		ErrSealTPMNotAvailable,
-		ErrSealNotSupported,
-		ErrSealInvalidLabel,
-		ErrSealInvalidData,
-		ErrSealBlobNotFound,
-		ErrSealStorageFailed,
-		ErrSealDecodeFailed,
-		ErrSealMarshalFailed,
-		ErrSealUnmarshalFailed,
-		ErrSealInvalidPolicyType,
-		ErrSealPasswordRequired,
-		ErrSealPolicyMismatch,
-		ErrSealPolicyNotAvailable,
-		ErrSealStorageDirNotSet,
-		ErrSealStorageDirRelative,
-		ErrSealBackendNotFound,
-		ErrSealPolicyRequiresTPM,
-		ErrSealNoClient,
-		ErrSealBlobPolicyTypeMissing,
-		ErrSealBlobBackendIDMissing,
-	}
-
-	seen := make(map[string]bool, len(sentinels))
-	for _, s := range sentinels {
-		msg := s.Error()
-		assert.False(t, seen[msg], "duplicate seal error: %s", msg)
-		seen[msg] = true
-	}
-}
-
-// ---------------------------------------------------------------------------
-// SealedBlobEntry / SealRequest types
-// ---------------------------------------------------------------------------
-
-func TestSealService_Coverage_SealedBlobEntry_JSON(t *testing.T) {
-	entry := SealedBlobEntry{
-		ID:          "test-id",
-		Label:       "test-label",
-		SizeBytes:   256,
-		PCRBound:    true,
-		PolicyType:  "password",
-		CreatedAt:   "2025-01-01T00:00:00Z",
-		Category:    "user",
-		BackendID:   "tpm2",
-		StorageType: "disk",
-	}
-
-	data, err := json.Marshal(entry)
-	require.NoError(t, err)
-
-	var decoded SealedBlobEntry
-	require.NoError(t, json.Unmarshal(data, &decoded))
-	assert.Equal(t, entry, decoded)
-}
-
 func TestSealService_Coverage_SealRequest_JSON(t *testing.T) {
 	req := SealRequest{
 		Label:       "my-label",
 		Data:        "base64data",
-		PCRs:        []int{0, 7},
-		PCRBank:     "sha256",
-		PolicyType:  "custom_pcr",
+		TPMPolicy:   "boot",
 		Password:    "secret",
 		Backend:     "tpm2",
 		StorageType: "disk",
@@ -1381,38 +1134,6 @@ func TestSealService_Coverage_AvailableSealers_CanSealError(t *testing.T) {
 	assert.Empty(t, sealers) // Errors cause backends to be skipped
 }
 
-func TestSealService_Coverage_AvailableSealers_NilResponse(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	svc.SetContext(context.Background())
-	mc := &sealMockClient{
-		canSealFn: func(_ context.Context, _ string) (*transport.CanSealResponse, error) {
-			return nil, nil // nil response
-		},
-	}
-	svc.SetLocalClient(mc)
-
-	sealers := svc.AvailableSealers()
-	assert.Empty(t, sealers)
-}
-
-// ---------------------------------------------------------------------------
-// pcrBankAlgMap
-// ---------------------------------------------------------------------------
-
-func TestSealService_Coverage_PcrBankAlgMap(t *testing.T) {
-	assert.Equal(t, tpm2.TPMAlgSHA1, pcrBankAlgMap["sha1"])
-	assert.Equal(t, tpm2.TPMAlgSHA256, pcrBankAlgMap["sha256"])
-	assert.Equal(t, tpm2.TPMAlgSHA384, pcrBankAlgMap["sha384"])
-	assert.Equal(t, tpm2.TPMAlgSHA512, pcrBankAlgMap["sha512"])
-
-	_, exists := pcrBankAlgMap["md5"]
-	assert.False(t, exists)
-}
-
-// ---------------------------------------------------------------------------
-// knownSealerMeta
-// ---------------------------------------------------------------------------
-
 func TestSealService_Coverage_KnownSealerMeta(t *testing.T) {
 	tpmMeta, ok := knownSealerMeta[string(xkms.BackendTypeTPM2)]
 	assert.True(t, ok)
@@ -1466,15 +1187,15 @@ func TestSealService_Coverage_SealData_PasswordPolicy_ViaBackend(t *testing.T) {
 	svc.SetBackend(backend, "sealed/")
 
 	req := &SealRequest{
-		Label:      "pw-protected",
-		Data:       base64.StdEncoding.EncodeToString([]byte("secret data")),
-		PolicyType: "password",
-		Password:   "my-password",
+		Label:    "pw-protected",
+		Data:     base64.StdEncoding.EncodeToString([]byte("secret data")),
+		Backend:  "software",
+		Password: "my-password",
 	}
 
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
-	assert.Equal(t, "password", entry.PolicyType)
+	assert.True(t, entry.PasswordProtected)
 }
 
 // ---------------------------------------------------------------------------
@@ -1543,7 +1264,6 @@ func TestSealService_Coverage_SaveBlob_BackendPutError(t *testing.T) {
 	svc.SetBackend(&errorBackend{}, "sealed/")
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
 		BackendID:  "software",
 		ID:         "err-blob",
 		Label:      "err-label",
@@ -1605,7 +1325,6 @@ func TestSealService_Coverage_SaveBlob_EmptyStorageDir(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
 		BackendID:  "software",
 		ID:         "no-dir",
 		Label:      "no-dir-label",
@@ -1628,7 +1347,6 @@ func TestSealService_Coverage_SaveBlob_NilContext_ViaBackend(t *testing.T) {
 	svc.SetBackend(backend, "sealed/")
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
 		BackendID:  "software",
 		ID:         "nil-ctx",
 		Label:      "nil-ctx-label",
@@ -1648,32 +1366,31 @@ func TestSealService_Coverage_SaveBlob_NilContext_ViaBackend(t *testing.T) {
 // SealData PCR bound flag
 // ---------------------------------------------------------------------------
 
-func TestSealService_Coverage_SealData_PCRBoundFlag(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	svc.SetContext(context.Background())
-	mc := defaultSealMockClient()
-	svc.SetClientFunc(func() xkms.Client { return mc })
-
-	// With PCRs -> PCRBound = true
-	req := &SealRequest{
-		Label:      "pcr-bound",
-		Data:       base64.StdEncoding.EncodeToString([]byte("data")),
-		PCRs:       []int{0, 7},
-		PolicyType: "custom_pcr",
+func TestSealService_Coverage_SortAndCollectEntries_Sorted(t *testing.T) {
+	now := time.Now()
+	items := []blobWithTime{
+		{entry: SealedBlobEntry{ID: "oldest"}, createdAt: now.Add(-2 * time.Hour)},
+		{entry: SealedBlobEntry{ID: "newest"}, createdAt: now},
+		{entry: SealedBlobEntry{ID: "middle"}, createdAt: now.Add(-1 * time.Hour)},
 	}
-	entry, err := svc.SealData(req)
-	require.NoError(t, err)
-	assert.True(t, entry.PCRBound)
+
+	result := sortAndCollectEntries(items)
+	require.Len(t, result, 3)
+	assert.Equal(t, "newest", result[0].ID)
+	assert.Equal(t, "middle", result[1].ID)
+	assert.Equal(t, "oldest", result[2].ID)
 }
 
-func TestSealService_Coverage_SealData_NotPCRBound(t *testing.T) {
+func TestSealService_Coverage_AvailableSealers_NilResponse(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	mc := defaultSealMockClient()
-	svc.SetClientFunc(func() xkms.Client { return mc })
+	mc := &sealMockClient{
+		canSealFn: func(_ context.Context, _ string) (*transport.CanSealResponse, error) {
+			return nil, nil // nil response
+		},
+	}
+	svc.SetLocalClient(mc)
 
-	// No PCRs, no platform policy -> not PCR bound
-	entry, err := svc.SealData(validSealRequest())
-	require.NoError(t, err)
-	assert.False(t, entry.PCRBound)
+	sealers := svc.AvailableSealers()
+	assert.Empty(t, sealers)
 }

@@ -1,6 +1,6 @@
 # Setup Wizard — Architecture
 
-> **Status: NORMATIVE** · Feature: `setup-wizard` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `setup-wizard` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 ## The problem
 
@@ -18,8 +18,8 @@ credentials the device will demand from them later.
 orchestrator in the GUI services layer. It owns no state of its own beyond
 the `setup_complete` flag in the GUI config; every step delegates to the
 service that owns the capability (`PINService`, `BarrierService`,
-`TPMService`, `StaticPasswordService`, `PlatformPolicyService`,
-`AutoUnsealService`, `StorageService`). Dependencies are injected by setters
+`TPMService`, `StaticPasswordService`, `TPMPolicyService`,
+`BarrierAutoUnsealService`, `AutoUnsealService`, `StorageService`). Dependencies are injected by setters
 during Wails startup (`xkey/pkg/gui/app.go`), which is what lets the tests
 wire an in-memory password store and a mock PIN backend around the real
 orchestration.
@@ -49,15 +49,25 @@ Go, and the Go side is the one that refuses.
 | 2 | Configuring PINs | `PINService` (may fail here; retried at 7) |
 | 3 | Provisioning TPM keys | `TPMService` |
 | 4 | Initializing platform key store | `TPMService` |
-| 5 | Creating platform policy | `PlatformPolicyService` |
-| 6 | Initializing built-in encryption | `BarrierService` |
-| 7 | Initializing data directory | `initDataDirFunc`, then PIN retry |
-| 8 | Configuring password protection | `StaticPasswordService`, `PasswordProtectionService` |
-| 9 | Configuring auto-unseal | `AutoUnsealService` |
-| 10 | Saving configuration | config save, `setup:completed` |
+| 5 | Initializing built-in encryption | `BarrierService` |
+| 6 | Initializing data directory | `initDataDirFunc`, then PIN retry |
+| 7 | Configuring password protection | `StaticPasswordService`, `PasswordProtectionService` |
+| 8 | Configuring auto-unseal | `AutoUnsealService` (LUKS), `TPMPolicyService` + `BarrierAutoUnsealService` (barrier) |
+| 9 | Saving configuration | config save, `setup:completed` |
 
-Step 6 must precede step 7 so the password store can sit on the barrier.
-Step 7 must precede step 8 because the store does not exist before it.
+Step 5 must precede step 6 so the password store can sit on the barrier.
+Step 6 must precede step 7 because the store does not exist before it.
+
+There is no platform-policy step: the built-in `platform` TPM policy always
+exists. When the operator asks for auto-unseal, step 8 creates the named TPM
+policy `auto-unseal` over the live values of PCRs 0, 7 and 9 (SHA-256) on
+xKey's own TPM — or reuses it on a re-run — and seals the barrier password
+under it (`BarrierAutoUnsealService.EnableAutoUnseal`); the LUKS passphrase
+is sealed under the built-in `platform` policy. When the TPM owner hierarchy
+was given the SO PIN as its password, the SO PIN authorizes the policy's NV
+index. A failure is a warning: setup completes and the barrier needs its
+password on restart. See [../seal/](../seal/architecture.md) and
+[docs/tpm-policies](../../../docs/tpm-policies/architecture.md).
 
 ## Credential placement
 

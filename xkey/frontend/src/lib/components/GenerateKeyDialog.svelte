@@ -7,7 +7,7 @@
   import { mdiClose, mdiKeyPlus } from '$lib/utils/icons';
   import { callBackend, isWailsAvailable } from '$lib/api/backend';
   import { addNotification } from '$lib/stores/notifications';
-  import type { RemoteBackendInfo, GenerateKeyParams, GenerateKeyResult, SupportedKeyTypes } from '$lib/api/backend';
+  import type { RemoteBackendInfo, GenerateKeyParams, GenerateKeyResult, SupportedKeyTypes, TPMPolicyInfo } from '$lib/api/backend';
 
   export let open = false;
   export let backends: RemoteBackendInfo[] = [];
@@ -22,6 +22,10 @@
   let exportable = false;
   let generating = false;
   let supportedTypes: SupportedKeyTypes | null = null;
+  // TPM policy the key is bound to (tpm2 backends): the built-in platform
+  // policy by default, or a named policy.
+  let tpmPolicy = 'platform';
+  let tpmPolicies: TPMPolicyInfo[] = [];
 
   const defaultKeyTypes = ['rsa', 'ecdsa', 'ed25519', 'aes'];
   const defaultCurves = ['P-256', 'P-384', 'P-521'];
@@ -37,6 +41,16 @@
   // Fetch supported key types when backend changes.
   $: if (backend && isWailsAvailable()) {
     fetchSupportedTypes(backend);
+  }
+
+  $: isTPMBackend = backends.find(b => b.id === backend)?.type === 'tpm2';
+  $: if (isTPMBackend && isWailsAvailable()) {
+    fetchTPMPolicies();
+  }
+
+  async function fetchTPMPolicies(): Promise<void> {
+    const policies = await callBackend<TPMPolicyInfo[]>('TPMPolicyService', 'ListPolicies');
+    tpmPolicies = (policies ?? []).filter(p => !p.builtin);
   }
 
   async function fetchSupportedTypes(backendId: string): Promise<void> {
@@ -58,8 +72,9 @@
     };
     if (showCurve) params.curve = curve;
     if (showKeySize) params.key_size = keySize;
+    if (isTPMBackend) params.tpm_policy = tpmPolicy;
 
-    const result = await callBackend<GenerateKeyResult>('KeyService', 'GenerateKey', params);
+    const result = await callBackend<GenerateKeyResult>('KeyService', 'GenerateKey', 'local', params);
     generating = false;
     if (result) {
       addNotification('success', `Key generated: ${result.key_id}`);
@@ -75,6 +90,7 @@
     backend = '';
     keyType = 'ecdsa';
     exportable = false;
+    tpmPolicy = 'platform';
     open = false;
     dispatch('close');
   }
@@ -146,6 +162,18 @@
               <option value={512}>ML-KEM-512 (128-bit security)</option>
               <option value={768}>ML-KEM-768 (192-bit security)</option>
               <option value={1024}>ML-KEM-1024 (256-bit security)</option>
+            </select>
+          </div>
+        {/if}
+
+        {#if isTPMBackend}
+          <div class="form-field">
+            <label class="text-label-large" for="gen-tpm-policy">TPM Policy</label>
+            <select class="form-select" id="gen-tpm-policy" bind:value={tpmPolicy}>
+              <option value="platform">Platform (built-in): platform PCR or password</option>
+              {#each tpmPolicies as policy (policy.name)}
+                <option value={policy.name}>{policy.name}: {policy.bank} PCR {(policy.pcrs ?? []).join(', ')}</option>
+              {/each}
             </select>
           </div>
         {/if}

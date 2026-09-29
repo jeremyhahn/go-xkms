@@ -60,6 +60,8 @@ export function SetLocalClient(arg1:transport.Client):Promise<void>;
 
 export function SetRegistry(arg1:backendregistry.Registry):Promise<void>;
 
+export function SetTPMPolicyService(arg1:services.TPMPolicyService):Promise<void>;
+
 export function SignData(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<string>;
 
 export function SignFile(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<void>;

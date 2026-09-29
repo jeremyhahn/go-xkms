@@ -56,7 +56,7 @@ RUN go mod download
 COPY . .
 
 # Build the xkey binary for testing. codec_json is required for the
-# go-codec based DAOs (e.g. pcrpolicy); GUI/hardware tags (webkit, pkcs11)
+# go-codec based DAOs (e.g. the authenticator RP policy store); GUI/hardware tags (webkit, pkcs11)
 # are omitted because this image lacks their development headers.
 RUN go build -tags codec_json -o /usr/local/bin/xkey ./cmd/xkey
 

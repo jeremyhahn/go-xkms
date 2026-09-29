@@ -16,7 +16,6 @@ package services
 import (
 	"context"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -67,16 +66,6 @@ func (m *saPanicPINBackend) ResetLockout(_ string) error {
 }
 func (m *saPanicPINBackend) SetMaxAttempts(_ int) {
 	panic("saPanic: SetMaxAttempts")
-}
-
-// saPanicTPM panics on ReadPCRs to trigger panic recovery in readPCRDigests
-// and verifyDigests.
-type saPanicTPM struct {
-	mockTPM
-}
-
-func (m *saPanicTPM) ReadPCRs(_ []uint) ([]xkms.PCRBank, error) {
-	panic("saPanic: ReadPCRs")
 }
 
 // saSealer holds configuration for seal service tests. Converted to an
@@ -136,489 +125,6 @@ func saWirePanicClient(svc *SealService) {
 	}
 	svc.SetClientFunc(func() xkms.Client { return mc })
 }
-
-// TestSA_PlatformPolicy_GetStatus_InnerRecovery covers L172-176 indirectly:
-// When readPCRDigests catches its own panic, GetStatus receives an error from
-// verifyDigests and returns a status with Valid=false (not a panic).
-// The outer panic recovery defer (L171-177) still executes on normal return
-// but recover() returns nil, so the panic branch is not taken.
-func TestSA_PlatformPolicy_GetStatus_InnerRecovery(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &saPanicTPM{mockTPM: *defaultMockTPM()}
-	}))
-	svc.SetContext(context.Background())
-
-	// Store a policy that triggers readPCRDigests -> ReadPCRs -> panic
-	// inside verifyDigests, called by GetStatus.
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aabb"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	})
-
-	// The inner readPCRDigests has its own panic recovery (L564-569) that
-	// catches the ReadPCRs panic and returns an error. verifyDigests then
-	// returns (false, err), and GetStatus returns Valid=false.
-	status, err := svc.GetStatus()
-	assert.NoError(t, err)
-	assert.NotNil(t, status)
-	assert.True(t, status.Configured)
-	assert.False(t, status.Valid)
-}
-
-// TestSA_PlatformPolicy_CreatePolicy_InnerRecovery covers L200-204 indirectly:
-// CreatePolicy calls readPCRDigests which has its own panic recovery. The panic
-// in ReadPCRs is caught internally and returned as an error to CreatePolicy.
-func TestSA_PlatformPolicy_CreatePolicy_InnerRecovery(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &saPanicTPM{mockTPM: *defaultMockTPM()}
-	}))
-	svc.SetContext(context.Background())
-
-	status, err := svc.CreatePolicy([]int{0}, "sha256")
-	assert.Nil(t, status)
-	assert.Error(t, err)
-	// Error comes from readPCRDigests' own recovery, not CreatePolicy's.
-	assert.Contains(t, err.Error(), "panic in readPCRDigests")
-}
-
-// TestSA_PlatformPolicy_CreatePolicy_SaveFails covers L228-230:
-// CreatePolicy returns error when savePolicy fails.
-func TestSA_PlatformPolicy_CreatePolicy_SaveFails(t *testing.T) {
-	// Use an unwritable directory for the policy path.
-	dir := t.TempDir()
-	unwritable := filepath.Join(dir, "noperm")
-	require.NoError(t, os.MkdirAll(unwritable, 0500))
-	policyPath := filepath.Join(unwritable, "subdir", "policy.json")
-
-	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &policyMockTPM{
-			mockTPM: *defaultMockTPM(),
-			pcrBanksOverride: []xkms.PCRBank{
-				{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
-			},
-		}
-	}))
-	svc.SetContext(context.Background())
-
-	status, err := svc.CreatePolicy([]int{0}, "sha256")
-	assert.Nil(t, status)
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-// TestSA_PlatformPolicy_UpdatePolicy_InnerRecovery covers L248-252 indirectly:
-// UpdatePolicy calls readPCRDigests which catches its own panic.
-func TestSA_PlatformPolicy_UpdatePolicy_InnerRecovery(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &saPanicTPM{mockTPM: *defaultMockTPM()}
-	}))
-	svc.SetContext(context.Background())
-
-	// Must have existing policy for UpdatePolicy to proceed past nil check.
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256",
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-
-	status, err := svc.UpdatePolicy([]int{0}, "sha256")
-	assert.Nil(t, status)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "panic in readPCRDigests")
-}
-
-// TestSA_PlatformPolicy_UpdatePolicy_SaveFails covers L280-282:
-// UpdatePolicy returns error when savePolicy fails.
-func TestSA_PlatformPolicy_UpdatePolicy_SaveFails(t *testing.T) {
-	dir := t.TempDir()
-	unwritable := filepath.Join(dir, "noperm")
-	require.NoError(t, os.MkdirAll(unwritable, 0500))
-	policyPath := filepath.Join(unwritable, "subdir", "policy.json")
-
-	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &policyMockTPM{
-			mockTPM: *defaultMockTPM(),
-			pcrBanksOverride: []xkms.PCRBank{
-				{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
-			},
-		}
-	}))
-	svc.SetContext(context.Background())
-
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256",
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-
-	status, err := svc.UpdatePolicy([]int{0}, "sha256")
-	assert.Nil(t, status)
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-// TestSA_PlatformPolicy_DeletePolicy_RemoveError covers L305-307:
-// DeletePolicy returns ErrPolicySaveFailed when os.Remove fails (not ENOENT).
-func TestSA_PlatformPolicy_DeletePolicy_RemoveError(t *testing.T) {
-	dir := t.TempDir()
-	// Create a directory at the policy path; os.Remove on a non-empty
-	// directory fails with a non-ENOENT error.
-	policyPath := filepath.Join(dir, "policy.json")
-	require.NoError(t, os.Mkdir(policyPath, 0700))
-	// Put a file inside so os.Remove on the directory fails.
-	require.NoError(t, os.WriteFile(filepath.Join(policyPath, "blocker"), []byte("x"), 0600))
-
-	svc := NewPlatformPolicyService(policyPath)
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256",
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-
-	err := svc.DeletePolicy()
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-// TestSA_PlatformPolicy_VerifyPolicy_InnerRecovery covers L316-320 indirectly:
-// VerifyPolicy calls verifyDigests which calls readPCRDigests, both with their
-// own panic recovery. The inner recovery catches the TPM panic.
-func TestSA_PlatformPolicy_VerifyPolicy_InnerRecovery(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &saPanicTPM{mockTPM: *defaultMockTPM()}
-	}))
-	svc.SetContext(context.Background())
-
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256",
-		Digests:   map[int]string{0: "aabb"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-
-	valid, err := svc.VerifyPolicy()
-	assert.False(t, valid)
-	assert.Error(t, err)
-	// Error propagated from readPCRDigests' recovery through verifyDigests.
-	assert.Contains(t, err.Error(), "panic in readPCRDigests")
-}
-
-// TestSA_PlatformPolicy_ExportPolicy_NormalPath covers L346-349 defer and L378-381:
-// ExportPolicy defer block runs on every call (covering L345-350 defer registration).
-// The panic recovery branch (L346-349) requires an actual panic in the function body
-// which is unreachable with the current data types.
-func TestSA_PlatformPolicy_ExportPolicy_NormalPath(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetContext(context.Background())
-
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:      []int{0, 7},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aabb", 7: "ccdd"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	})
-
-	result, err := svc.ExportPolicy()
-	require.NoError(t, err)
-	assert.Contains(t, result, "Platform Policy")
-	assert.Contains(t, result, "sha256")
-}
-
-// TestSA_PlatformPolicy_GetPlatformPolicyAsPCRPolicy_InnerRecovery covers L391-395:
-// The inner recovery in verifyDigests catches the TPM panic. The outer function
-// returns a policy with Valid=nil (unknown state).
-func TestSA_PlatformPolicy_GetPlatformPolicyAsPCRPolicy_InnerRecovery(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &saPanicTPM{mockTPM: *defaultMockTPM()}
-	}))
-	svc.SetContext(context.Background())
-
-	// Store policy with digests to trigger verifyDigests -> readPCRDigests -> panic.
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aabb"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	})
-
-	policy, err := svc.GetPlatformPolicyAsPCRPolicy()
-	// The panic in readPCRDigests is caught by readPCRDigests' own recovery,
-	// which returns an error. validatePlatformPolicyDigests returns nil
-	// (unknown state). The outer function returns successfully.
-	assert.NoError(t, err)
-	assert.NotNil(t, policy)
-	assert.Nil(t, policy.Valid) // TPM unavailable => validity unknown
-}
-
-// TestSA_PlatformPolicy_RefreshPlatformPolicyPCRs_InnerRecovery covers L416-420:
-// readPCRDigests has its own panic recovery that catches the inner panic
-// and returns an error. RefreshPlatformPolicyPCRs receives that error.
-func TestSA_PlatformPolicy_RefreshPlatformPolicyPCRs_InnerRecovery(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &saPanicTPM{mockTPM: *defaultMockTPM()}
-	}))
-	svc.SetContext(context.Background())
-
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256",
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-
-	policy, err := svc.RefreshPlatformPolicyPCRs()
-	assert.Nil(t, policy)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "panic in readPCRDigests")
-}
-
-// TestSA_PlatformPolicy_RefreshPolicyPCRs_SaveFails covers L436-438:
-// RefreshPlatformPolicyPCRs returns error when savePolicy fails.
-func TestSA_PlatformPolicy_RefreshPolicyPCRs_SaveFails(t *testing.T) {
-	dir := t.TempDir()
-	unwritable := filepath.Join(dir, "noperm")
-	require.NoError(t, os.MkdirAll(unwritable, 0500))
-	policyPath := filepath.Join(unwritable, "subdir", "policy.json")
-
-	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &policyMockTPM{
-			mockTPM: *defaultMockTPM(),
-			pcrBanksOverride: []xkms.PCRBank{
-				{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
-			},
-		}
-	}))
-	svc.SetContext(context.Background())
-
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256",
-		Digests:   map[int]string{0: "aa"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-
-	policy, err := svc.RefreshPlatformPolicyPCRs()
-	assert.Nil(t, policy)
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-// TestSA_PlatformPolicy_ReadPCRDigests_Panic covers L565-569:
-// Panic recovery in readPCRDigests.
-func TestSA_PlatformPolicy_ReadPCRDigests_Panic(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &saPanicTPM{mockTPM: *defaultMockTPM()}
-	}))
-	svc.SetContext(context.Background())
-
-	digests, err := svc.readPCRDigests([]int{0}, "sha256")
-	assert.Nil(t, digests)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "panic in readPCRDigests")
-}
-
-// TestSA_PlatformPolicy_VerifyDigests_Panic covers L615-619:
-// Panic recovery in verifyDigests.
-func TestSA_PlatformPolicy_VerifyDigests_Panic(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return &saPanicTPM{mockTPM: *defaultMockTPM()}
-	}))
-	svc.SetContext(context.Background())
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "aabb"},
-	}
-
-	valid, err := svc.verifyDigests(def)
-	assert.False(t, valid)
-	assert.Error(t, err)
-	// readPCRDigests catches its own panic and returns error;
-	// verifyDigests passes that error through (not its own panic recovery).
-	assert.Contains(t, err.Error(), "panic in readPCRDigests")
-}
-
-// TestSA_PlatformPolicy_VerifyDigests_BadStoredHex covers L633-635:
-// verifyDigests returns ErrPolicyVerifyFailed when hex.DecodeString(storedHex) fails.
-func TestSA_PlatformPolicy_VerifyDigests_BadStoredHex(t *testing.T) {
-	svc := newPolicyServiceWithMock(t, defaultPolicyMock())
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "not-valid-hex!!"},
-	}
-
-	valid, err := svc.verifyDigests(def)
-	assert.False(t, valid)
-	assert.ErrorIs(t, err, ErrPolicyVerifyFailed)
-}
-
-// TestSA_PlatformPolicy_VerifyDigests_PCRNotFound covers L629-630:
-// verifyDigests returns (false, nil) when a stored PCR index is not in live data.
-func TestSA_PlatformPolicy_VerifyDigests_PCRNotFound(t *testing.T) {
-	mock := &policyMockTPM{
-		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []xkms.PCRBank{
-			{
-				Algorithm: "SHA256",
-				// PCR 0 present but PCR 7 missing in live data
-				PCRs: []xkms.PCR{
-					{ID: 0, Value: []byte{0xAA, 0xBB}},
-				},
-			},
-		},
-	}
-	svc := newPolicyServiceWithMock(t, mock)
-
-	def := &PlatformPolicyDefinition{
-		PCRs: []int{0, 7},
-		Bank: "sha256",
-		Digests: map[int]string{
-			0: hex.EncodeToString([]byte{0xAA, 0xBB}),
-			7: hex.EncodeToString([]byte{0x11, 0x22}), // PCR 7 not in live data
-		},
-	}
-
-	valid, err := svc.verifyDigests(def)
-	assert.False(t, valid)
-	assert.NoError(t, err) // returns false, nil for missing PCR
-}
-
-// TestSA_PlatformPolicy_VerifyDigests_Match covers L642-647:
-// verifyDigests returns (true, nil) when all stored and live digests match.
-func TestSA_PlatformPolicy_VerifyDigests_Match(t *testing.T) {
-	pcrValue := []byte{0xAA, 0xBB, 0xCC, 0xDD}
-	mock := &policyMockTPM{
-		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []xkms.PCRBank{
-			{
-				Algorithm: "SHA256",
-				PCRs: []xkms.PCR{
-					{ID: 0, Value: pcrValue},
-				},
-			},
-		},
-	}
-	svc := newPolicyServiceWithMock(t, mock)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: hex.EncodeToString(pcrValue)},
-	}
-
-	valid, err := svc.verifyDigests(def)
-	assert.True(t, valid)
-	assert.NoError(t, err)
-}
-
-// TestSA_PlatformPolicy_VerifyDigests_Mismatch covers L642-643:
-// verifyDigests returns (false, nil) when digests do not match.
-func TestSA_PlatformPolicy_VerifyDigests_Mismatch(t *testing.T) {
-	mock := &policyMockTPM{
-		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []xkms.PCRBank{
-			{
-				Algorithm: "SHA256",
-				PCRs: []xkms.PCR{
-					{ID: 0, Value: []byte{0x11, 0x22}},
-				},
-			},
-		},
-	}
-	svc := newPolicyServiceWithMock(t, mock)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: hex.EncodeToString([]byte{0xFF, 0xEE})},
-	}
-
-	valid, err := svc.verifyDigests(def)
-	assert.False(t, valid)
-	assert.NoError(t, err)
-}
-
-// TestSA_PlatformPolicy_SavePolicy_Success covers savePolicy normal path.
-func TestSA_PlatformPolicy_SavePolicy_Success(t *testing.T) {
-	dir := t.TempDir()
-	policyPath := filepath.Join(dir, "test.policy")
-	svc := NewPlatformPolicyService(policyPath)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0, 7},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aa", 7: "bb"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	err := svc.savePolicy(def)
-	assert.NoError(t, err)
-
-	// Verify file was written.
-	data, readErr := os.ReadFile(policyPath)
-	require.NoError(t, readErr)
-	assert.Contains(t, string(data), "sha256")
-}
-
-// TestSA_PlatformPolicy_SavePolicy_WriteFileFail covers L664-666:
-// savePolicy returns ErrPolicySaveFailed when os.WriteFile fails.
-func TestSA_PlatformPolicy_SavePolicy_WriteFileFail(t *testing.T) {
-	dir := t.TempDir()
-	// Create the parent directory as read-only so WriteFile fails.
-	subdir := filepath.Join(dir, "readonly")
-	require.NoError(t, os.MkdirAll(subdir, 0700))
-	policyPath := filepath.Join(subdir, "test.policy")
-
-	svc := NewPlatformPolicyService(policyPath)
-
-	// Make the directory read-only AFTER the service is created.
-	require.NoError(t, os.Chmod(subdir, 0500))
-	t.Cleanup(func() { os.Chmod(subdir, 0700) })
-
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	err := svc.savePolicy(def)
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-// TestSA_PlatformPolicy_SavePolicy_RenameSuccess covers L668-670:
-// Verify the full save flow including rename.
-func TestSA_PlatformPolicy_SavePolicy_RenameSuccess(t *testing.T) {
-	dir := t.TempDir()
-	policyPath := filepath.Join(dir, "test.policy")
-	svc := NewPlatformPolicyService(policyPath)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0, 7},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aa", 7: "bb"},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	require.NoError(t, svc.savePolicy(def))
-	// Verify the file exists (the rename succeeded).
-	_, err := os.Stat(policyPath)
-	assert.NoError(t, err)
-}
-
-// =========================================================================
-// pin_service.go tests
-// =========================================================================
 
 // TestSA_PINService_GetPINStatus_Panic covers L79-83:
 // Panic recovery in GetPINStatus.
@@ -769,20 +275,19 @@ func TestSA_SealService_ListBlobs_WithBlobs(t *testing.T) {
 
 	// Create two blobs with different timestamps.
 	blob1 := &sealedBlobStorage{
-		BackendID:  "software",
-		ID:         "blob-older",
-		Label:      "user_pin", // user category (deletable from UI)
-		SizeBytes:  100,
-		PolicyType: "password",
-		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeTPM2, Ciphertext: []byte("a")},
-		CreatedAt:  now.Add(-1 * time.Hour),
+		BackendID:   "software",
+		ID:          "blob-older",
+		Label:       "user_pin", // user category (deletable from UI)
+		SizeBytes:   100,
+		HasPassword: true,
+		SealedData:  &xkms.SealedData{Backend: xkms.BackendTypeTPM2, Ciphertext: []byte("a")},
+		CreatedAt:   now.Add(-1 * time.Hour),
 	}
 	blob2 := &sealedBlobStorage{
 		BackendID:  "software",
 		ID:         "blob-newer",
 		Label:      "my-secret", // user category
 		SizeBytes:  200,
-		PolicyType: "none",
 		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeTPM2, Ciphertext: []byte("b")},
 		CreatedAt:  now,
 	}
@@ -813,10 +318,10 @@ func TestSA_SealService_ListBlobs_WithBlobs(t *testing.T) {
 	assert.Equal(t, "blob-older", entries[1].ID)
 
 	// Category defaults.
-	assert.Equal(t, "user", entries[0].Category)   // "my-secret" => user
-	assert.Equal(t, "user", entries[1].Category)   // "user_pin" => user (deletable from UI)
-	assert.Equal(t, "none", entries[0].PolicyType) // empty => "none"
-	assert.Equal(t, "password", entries[1].PolicyType)
+	assert.Equal(t, "user", entries[0].Category) // "my-secret" => user
+	assert.Equal(t, "user", entries[1].Category) // "user_pin" => user (deletable from UI)
+	assert.False(t, entries[0].PasswordProtected)
+	assert.True(t, entries[1].PasswordProtected)
 }
 
 // TestSA_SealService_SealData_Panic covers L353-357:
@@ -827,9 +332,8 @@ func TestSA_SealService_SealData_Panic(t *testing.T) {
 	saWirePanicClient(svc)
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
+		Label: "test",
+		Data:  base64.StdEncoding.EncodeToString([]byte("hello")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -845,9 +349,8 @@ func TestSA_SealService_SealData_DecodeFail(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test",
-		Data:       "not-valid-base64!!!",
+		Label: "test",
+		Data:  "not-valid-base64!!!",
 	}
 
 	entry, err := svc.SealData(req)
@@ -864,33 +367,14 @@ func TestSA_SealService_SealData_BackendNotFound(t *testing.T) {
 	// No SDK client configured, so SealData/UnsealData will return ErrSealBackendNotFound.
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
-		Backend:    "nonexistent",
+		Label:   "test",
+		Data:    base64.StdEncoding.EncodeToString([]byte("hello")),
+		Backend: "nonexistent",
 	}
 
 	entry, err := svc.SealData(req)
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealBackendNotFound)
-}
-
-// TestSA_SealService_SealData_InvalidPolicyType covers L404-406:
-// SealData returns ErrSealInvalidPolicyType for an unknown policy type.
-func TestSA_SealService_SealData_InvalidPolicyType(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	svc.SetContext(context.Background())
-	saWireSealClient(svc, &saSealer{canSeal: true})
-
-	req := &SealRequest{
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
-		PolicyType: "totally-invalid-policy",
-	}
-
-	entry, err := svc.SealData(req)
-	assert.Nil(t, entry)
-	assert.ErrorIs(t, err, ErrSealInvalidPolicyType)
 }
 
 // TestSA_SealService_SealData_NilContext covers L412-413:
@@ -901,9 +385,8 @@ func TestSA_SealService_SealData_NilContext(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: true})
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test-nil-ctx",
-		Data:       base64.StdEncoding.EncodeToString([]byte("data")),
+		Label: "test-nil-ctx",
+		Data:  base64.StdEncoding.EncodeToString([]byte("data")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -919,9 +402,8 @@ func TestSA_SealService_SealData_NormalSealPath(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: true})
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test-secret",
-		Data:       base64.StdEncoding.EncodeToString([]byte("sensitive data")),
+		Label: "test-secret",
+		Data:  base64.StdEncoding.EncodeToString([]byte("sensitive data")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -938,16 +420,16 @@ func TestSA_SealService_SealData_PasswordPolicy(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: true})
 
 	req := &SealRequest{
-		Label:      "test-password",
-		Data:       base64.StdEncoding.EncodeToString([]byte("secret")),
-		PolicyType: "password",
-		Password:   "my-strong-password",
+		Label:    "test-password",
+		Data:     base64.StdEncoding.EncodeToString([]byte("secret")),
+		Backend:  "software",
+		Password: "my-strong-password",
 	}
 
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
 	assert.NotNil(t, entry)
-	assert.Equal(t, "password", entry.PolicyType)
+	assert.True(t, entry.PasswordProtected)
 }
 
 // TestSA_SealService_SealData_SaveBlobFail covers L453-455:
@@ -963,9 +445,8 @@ func TestSA_SealService_SealData_SaveBlobFail(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(dir, 0700) })
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
+		Label: "test",
+		Data:  base64.StdEncoding.EncodeToString([]byte("hello")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -980,7 +461,7 @@ func TestSA_SealService_SealData_LabelEmpty(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	entry, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "", Data: "aGVsbG8="})
+		Label: "", Data: "aGVsbG8="})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealInvalidLabel)
 }
@@ -992,7 +473,7 @@ func TestSA_SealService_SealData_DataEmpty(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	entry, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "test", Data: ""})
+		Label: "test", Data: ""})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealInvalidData)
 }
@@ -1018,10 +499,9 @@ func TestSA_SealService_UnsealData_Panic(t *testing.T) {
 
 	// Create a blob file that can be loaded, so the unseal reaches the sealer.
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-blob-id",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "test-blob-id",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("encrypted"),
@@ -1062,10 +542,9 @@ func TestSA_SealService_SaveBlob_StorageDirNotSet(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-id",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "test-id",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
@@ -1089,10 +568,9 @@ func TestSA_SealService_SaveBlob_WriteFileFail(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(dir, 0700) })
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-id",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "test-id",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
@@ -1111,10 +589,9 @@ func TestSA_SealService_SaveBlob_Success(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-save",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "test-save",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
@@ -1128,31 +605,6 @@ func TestSA_SealService_SaveBlob_Success(t *testing.T) {
 	// Verify the file exists.
 	_, statErr := os.Stat(filepath.Join(dir, "test-save.sealed.json"))
 	assert.NoError(t, statErr)
-}
-
-// TestSA_SealService_HandlePolicyPlatformPolicy_UnknownBank covers L637-639:
-// handlePolicyPlatformPolicy falls back to SHA256 when bank is not in pcrBankAlgMap.
-func TestSA_SealService_HandlePolicyPlatformPolicy_UnknownBank(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	svc.SetContext(context.Background())
-
-	// Create a PlatformPolicyService with an unusual bank name.
-	ppSvc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	ppSvc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sm3", // not in pcrBankAlgMap, triggers fallback at L637-639
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	})
-	svc.SetPlatformPolicyService(ppSvc)
-
-	req := &SealRequest{
-		PolicyType: "none", Label: "test", Data: base64.StdEncoding.EncodeToString([]byte("data"))}
-	opts := &xkms.SealOptions{}
-
-	err := handlePolicyPlatformPolicy(svc, req, opts)
-	assert.NoError(t, err)
-	assert.NotNil(t, opts.TPMPolicy)
 }
 
 // TestSA_SealService_HashPassword_Success covers L706-713:
@@ -1181,9 +633,8 @@ func TestSA_SealService_SealData_NotSupported(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: false, sealErr: ErrSealNotSupported})
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
+		Label: "test",
+		Data:  base64.StdEncoding.EncodeToString([]byte("hello")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -1199,9 +650,9 @@ func TestSA_SealService_SealData_PolicyRequiresTPM(t *testing.T) {
 	svc.SetDefaultBackend("software")
 
 	req := &SealRequest{
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
-		PolicyType: "platform_policy",
+		Label:     "test",
+		Data:      base64.StdEncoding.EncodeToString([]byte("hello")),
+		TPMPolicy: xkms.TPMPolicyPlatform,
 	}
 
 	entry, err := svc.SealData(req)
@@ -1217,9 +668,8 @@ func TestSA_SealService_SealData_SealerError(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: true, sealErr: errSeal})
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
+		Label: "test",
+		Data:  base64.StdEncoding.EncodeToString([]byte("hello")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -1236,9 +686,8 @@ func TestSA_SealService_SealData_DefaultBackendFallback(t *testing.T) {
 	svc.SetDefaultBackend("custom")
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test-default",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
+		Label: "test-default",
+		Data:  base64.StdEncoding.EncodeToString([]byte("hello")),
 		// Backend intentionally empty to use default
 	}
 
@@ -1256,10 +705,9 @@ func TestSA_SealService_SealData_ExplicitBackend(t *testing.T) {
 	svc.SetDefaultBackend(string(xkms.BackendTypeTPM2)) // set a different default
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "test-explicit",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
-		Backend:    "explicit-backend",
+		Label:   "test-explicit",
+		Data:    base64.StdEncoding.EncodeToString([]byte("hello")),
+		Backend: "explicit-backend",
 	}
 
 	entry, err := svc.SealData(req)
@@ -1276,10 +724,9 @@ func TestSA_SealService_UnsealData_BackendNotFound(t *testing.T) {
 	// No SDK client configured, so SealData/UnsealData will return ErrSealBackendNotFound.
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-unseal-nobe",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "test-unseal-nobe",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendType("nonexistent"),
 			Ciphertext: []byte("data"),
@@ -1304,10 +751,9 @@ func TestSA_SealService_UnsealData_Success(t *testing.T) {
 
 	plaintext := []byte("sensitive-data-1234")
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-unseal-ok",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "test-unseal-ok",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: plaintext,
@@ -1334,118 +780,6 @@ func TestSA_SealService_UnsealData_BlobNotFound(t *testing.T) {
 	result, err := svc.UnsealData("nonexistent-blob", "")
 	assert.Empty(t, result)
 	assert.ErrorIs(t, err, ErrSealBlobNotFound)
-}
-
-// TestSA_SealService_SealData_PasswordRequired covers password policy with empty password.
-func TestSA_SealService_SealData_PasswordRequired(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	svc.SetContext(context.Background())
-	saWireSealClient(svc, &saSealer{canSeal: true})
-
-	req := &SealRequest{
-		Label:      "test",
-		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
-		PolicyType: "password",
-		Password:   "", // empty password
-	}
-
-	entry, err := svc.SealData(req)
-	assert.Nil(t, entry)
-	assert.ErrorIs(t, err, ErrSealPasswordRequired)
-}
-
-// TestSA_SealService_UnsealData_PasswordRequired covers unseal with password policy but no password.
-func TestSA_SealService_UnsealData_PasswordRequired(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewSealService(dir)
-	svc.SetContext(context.Background())
-	saWireSealClient(svc, &saSealer{canSeal: true})
-
-	blob := &sealedBlobStorage{
-		BackendID:  "software",
-		ID:         "test-pw-required",
-		Label:      "test",
-		PolicyType: string(PolicyTypePassword),
-		Password:   "somehash:somevalue",
-		SealedData: &xkms.SealedData{
-			Backend:    xkms.BackendTypeTPM2,
-			Ciphertext: []byte("data"),
-		},
-		CreatedAt: time.Now(),
-	}
-	data, err := json.Marshal(blob)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-pw-required.sealed.json"), data, 0600))
-
-	result, unsealErr := svc.UnsealData("test-pw-required", "")
-	assert.Empty(t, result)
-	assert.ErrorIs(t, unsealErr, ErrSealPasswordRequired)
-}
-
-// TestSA_SealService_UnsealData_PasswordMismatch covers unseal with wrong password.
-func TestSA_SealService_UnsealData_PasswordMismatch(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewSealService(dir)
-	svc.SetContext(context.Background())
-	saWireSealClient(svc, &saSealer{canSeal: true})
-
-	// Create a blob with a properly hashed password.
-	hash, hashErr := hashPassword("correct-password")
-	require.NoError(t, hashErr)
-
-	blob := &sealedBlobStorage{
-		BackendID:  "software",
-		ID:         "test-pw-mismatch",
-		Label:      "test",
-		PolicyType: string(PolicyTypePassword),
-		Password:   hash,
-		SealedData: &xkms.SealedData{
-			Backend:    xkms.BackendTypeTPM2,
-			Ciphertext: []byte("data"),
-		},
-		CreatedAt: time.Now(),
-	}
-	data, err := json.Marshal(blob)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-pw-mismatch.sealed.json"), data, 0600))
-
-	result, unsealErr := svc.UnsealData("test-pw-mismatch", "wrong-password")
-	assert.Empty(t, result)
-	assert.ErrorIs(t, unsealErr, ErrSealPolicyMismatch)
-}
-
-// TestSA_SealService_UnsealData_PasswordSuccess covers successful unseal with correct password.
-func TestSA_SealService_UnsealData_PasswordSuccess(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewSealService(dir)
-	svc.SetContext(context.Background())
-	saWireSealClient(svc, &saSealer{canSeal: true})
-
-	hash, hashErr := hashPassword("correct-password")
-	require.NoError(t, hashErr)
-
-	plaintext := []byte("secret-data")
-	blob := &sealedBlobStorage{
-		BackendID:  "software",
-		ID:         "test-pw-success",
-		Label:      "test",
-		PolicyType: string(PolicyTypePassword),
-		Password:   hash,
-		SealedData: &xkms.SealedData{
-			Backend:    xkms.BackendTypeTPM2,
-			Ciphertext: plaintext,
-		},
-		CreatedAt: time.Now(),
-	}
-	data, err := json.Marshal(blob)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-pw-success.sealed.json"), data, 0600))
-
-	result, unsealErr := svc.UnsealData("test-pw-success", "correct-password")
-	assert.NoError(t, unsealErr)
-	decoded, decErr := base64.StdEncoding.DecodeString(result)
-	require.NoError(t, decErr)
-	assert.Equal(t, plaintext, decoded)
 }
 
 // TestSA_SealService_ClassifyCategory covers classifyCategory for system and user labels.
@@ -1488,10 +822,9 @@ func TestSA_SealService_UnsealData_UnsealerError(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: true, unsealErr: errUnseal})
 
 	blob := &sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software",
-		ID:         "test-unseal-err",
-		Label:      "test",
+		BackendID: "software",
+		ID:        "test-unseal-err",
+		Label:     "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),

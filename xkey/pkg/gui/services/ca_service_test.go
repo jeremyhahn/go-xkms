@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
+
 	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -38,6 +40,9 @@ var errMockCA = errors.New("mock CA error")
 // mockCAClient implements the transport.Client interface for CA service tests.
 // Only the CA-related methods are implemented; all others return nil/error.
 type mockCAClient struct {
+	// Fake serves the TPM policy API, which these tests do not exercise.
+	*tpmpolicyfake.Fake
+
 	getCACertificateResp  *transport.GetCACertificateResponse
 	getCACertificateErr   error
 	issueCertificateResp  *transport.IssueCertificateResponse
@@ -993,34 +998,6 @@ func (m *mockCAClient) RevokeEscrow(_ context.Context, _ string) error {
 }
 
 // Policy operations stub implementations
-
-func (m *mockCAClient) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCAClient) PolicyGet(_ context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCAClient) PolicyList(_ context.Context) (*transport.PolicyListResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCAClient) PolicyDelete(_ context.Context, _ *transport.PolicyDeleteRequest) error {
-	return nil
-}
-
-func (m *mockCAClient) PolicyRefresh(_ context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCAClient) PolicyVerify(_ context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCAClient) PolicyExport(_ context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
-	return nil, nil
-}
 
 func (m *mockCAClient) CreateCustodianGroup(_ context.Context, _ *transport.CreateCustodianGroupRequest) (*transport.CreateCustodianGroupResponse, error) {
 	return nil, nil

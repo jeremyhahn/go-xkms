@@ -70,8 +70,8 @@ export interface GUIConfig {
   server_auto_connect: boolean;
   auto_unseal_enabled: boolean;
   auto_unseal_blob_id: string;
-  auto_unseal_pcrs: number[];
-  auto_unseal_pcr_bank: string;
+  /** TPM policy the LUKS auto-unseal passphrase is sealed under ("platform", a named policy, or empty for none). */
+  auto_unseal_tpm_policy: string;
   fido2_authenticator_enabled: boolean;
   clipboard_timeout: number;
   require_auth: boolean;
@@ -98,16 +98,19 @@ export interface AutoUnsealResult {
 }
 
 export interface BarrierAutoUnsealStatus {
-  /** False only when no PCR policy store has been wired yet (e.g. very
-   * early in startup); the frontend should render an "unavailable" panel
-   * instead of retrying indefinitely. */
+  /** False when there is no local TPM policy service (no TPM, or the data
+   * directory is not open yet); the frontend renders an "unavailable" panel
+   * instead of retrying. */
   available: boolean;
   /** Human-readable explanation, populated only when available is false. */
   reason?: string;
-  tpm_available: boolean;
   barrier_sealed: boolean;
+  /** Whether a named TPM policy carries the auto-unseal mark, and its name. */
   policy_configured: boolean;
   policy_name: string;
+  /** Whether the barrier password is sealed in the TPM under that policy. */
+  credential_sealed: boolean;
+  /** Whether the live PCRs satisfy the policy (advisory; the TPM decides). */
   pcrs_match: boolean;
 }
 
@@ -244,8 +247,9 @@ export interface SealedBlobEntry {
   id: string;
   label: string;
   size_bytes: number;
-  pcr_bound: boolean;
-  policy_type: string;
+  /** TPM policy the blob is bound to: "platform", a named policy, or "" for none. */
+  tpm_policy: string;
+  password_protected: boolean;
   created_at: string;
   category: string;
   backend_id: string;
@@ -255,21 +259,12 @@ export interface SealedBlobEntry {
 export interface SealRequest {
   label: string;
   data: string;
-  pcrs: number[];
-  pcr_bank: string;
-  policy_type: string;
+  /** TPM policy (tpm2 backend only): "platform", a named policy, or "" for none. */
+  tpm_policy: string;
+  /** Optional password also required to unseal. */
   password: string;
   backend?: string;
   storage_type?: string;  // "disk" (default) or "nvram"
-}
-
-export interface PlatformPolicyStatus {
-  configured: boolean;
-  pcrs: number[];
-  bank: string;
-  valid: boolean;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface SealProtectionStatus {
@@ -468,6 +463,8 @@ export interface GenerateKeyParams {
   curve?: string;
   exportable?: boolean;
   // TPM-specific fields
+  /** TPM policy the key is bound to: "" or "platform" for the built-in policy, or a named policy. */
+  tpm_policy?: string;
   hierarchy?: string;
   handle?: number;
   is_primary?: boolean;
@@ -745,58 +742,56 @@ export interface CertificateDetails {
   extensions: ExtensionInfo[];
 }
 
-export interface PCRSelection {
-  index: number;
-  bank: string;
-}
-
-export interface PCRPolicy {
+/** A named TPM policy (services.TPMPolicyInfo). */
+export interface TPMPolicyInfo {
   name: string;
-  description: string;
-  pcr_selections: PCRSelection[];
-  created_at: string;
+  /** The built-in platform policy: the platform PCR or the object's password. */
+  builtin: boolean;
+  bank?: string;
+  pcrs?: number[];
+  /** Hex PCR values captured from the TPM, keyed by PCR index. */
+  pcr_values?: Record<string, string>;
+  pcr_digest?: string;
+  index?: number;
+  approved: boolean;
+  epoch?: number;
+  authority_generation?: number;
+  auto_unseal: boolean;
+  object_count: number;
+  created_at?: string;
   updated_at?: string;
-  pcr_digests?: Record<string, string>;
-  is_platform_policy?: boolean;
-  valid?: boolean | null;
 }
 
-export interface PolicyAssignment {
-  policy_name: string;
-  key_handle: string;
-  assigned_at: string;
-}
-
-export interface ConflictingAssignment {
-  key_handle: string;
-  current_policy: string;
-  assigned_at: string;
-}
-
-export interface PolicyElement {
-  type: string;
-  pcr_selections?: PCRSelection[];
-  pcr_bank?: string;
-  password_hash?: string;
-}
-
-export interface CompositePolicy {
+/** Live PCRs compared with a policy's captured values (services.TPMPolicyVerification). */
+export interface TPMPolicyVerification {
   name: string;
-  description: string;
-  operator: string;
-  elements: PolicyElement[];
-  created_at: string;
-  updated_at?: string;
-  pcr_digests?: Record<string, string>;
-  valid?: boolean | null;
+  match: boolean;
+  mismatched: number[];
+  approved: boolean;
 }
 
-export interface PolicyDeletionImpact {
-  policy_name: string;
-  policy_type: string;
-  assigned_key_handles: string[];
-  has_password_entry: boolean;
-  password_entry_id?: string;
+/** Where TPM policy operations run (services.TPMPolicyStatus). */
+export interface TPMPolicyStatus {
+  available: boolean;
+  /** "local", "server" or "unavailable". */
+  mode: string;
+  scope: string;
+}
+
+/** The policy authority a rotation installed (services.TPMAuthorityInfo). */
+export interface TPMAuthorityInfo {
+  generation: number;
+  authority_name: string;
+  epoch: number;
+}
+
+/** The policy a TPM object was created under (services.TPMObjectPolicyInfo). */
+export interface TPMObjectPolicyInfo {
+  object_id: string;
+  kind: string;
+  policy: string;
+  auth_policy?: string;
+  created_at?: string;
 }
 
 export interface PCRReplayEntry {
@@ -815,26 +810,6 @@ export interface EventLogReplayResult {
   entries: PCRReplayEntry[];
   banks: string[];
   event_count: number;
-  error?: string;
-}
-
-export interface PCRComparisonEntry {
-  key: string;
-  bank: string;
-  index: number;
-  saved: string;
-  current: string;
-  match: boolean;
-}
-
-export interface PolicyComparisonResult {
-  policy_name: string;
-  all_match: boolean;
-  total_pcrs: number;
-  match_count: number;
-  mismatch_count: number;
-  entries: PCRComparisonEntry[];
-  compared_at: string;
   error?: string;
 }
 

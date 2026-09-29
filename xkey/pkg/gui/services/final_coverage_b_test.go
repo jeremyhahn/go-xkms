@@ -7,14 +7,9 @@ import (
 	crand "crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -89,236 +84,6 @@ func (m *fbMockTokenStore) Load(_ string) (*oidc.TokenResponse, error) {
 func (m *fbMockTokenStore) Delete(_ string) error   { return m.delErr }
 func (m *fbMockTokenStore) List() ([]string, error) { return nil, nil }
 func (m *fbMockTokenStore) Close() error            { return m.closeErr }
-
-// fbWireSealClient wires a sealMockClient into the given SealService,
-// deriving SDK client behavior from the fbMockSealer configuration.
-func fbWireSealClient(svc *SealService, m *fbMockSealer) {
-	mc := &sealMockClient{
-		sealFn: func(_ context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
-			if m.sealErr != nil {
-				return nil, m.sealErr
-			}
-			ciphertext := req.Data
-			if m.sealResult != nil {
-				ciphertext = m.sealResult.Ciphertext
-			}
-			return &transport.SealResponse{
-				Backend:    req.Backend,
-				Ciphertext: ciphertext,
-				TPMPublic:  []byte("tpm-public"),
-				TPMPrivate: []byte("tpm-private"),
-			}, nil
-		},
-		unsealFn: func(_ context.Context, req *transport.UnsealRequest) (*transport.UnsealResponse, error) {
-			if m.unsealErr != nil {
-				return nil, m.unsealErr
-			}
-			data := req.Ciphertext
-			if m.unsealData != nil {
-				data = m.unsealData
-			}
-			return &transport.UnsealResponse{Plaintext: data}, nil
-		},
-		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
-			return &transport.CanSealResponse{CanSeal: m.canSeal, Backend: backend}, nil
-		},
-	}
-	svc.SetClientFunc(func() xkms.Client { return mc })
-	svc.SetContext(context.Background())
-}
-
-// =========================================================================
-// 1. PlatformPolicyService (27 stmts)
-// =========================================================================
-
-func TestFB_PlatformPolicy_GetStatus_PanicRecover(t *testing.T) {
-	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	// readPCRDigests catches the panic internally and returns error.
-	// GetStatus discards the verifyDigests error with _, so it returns
-	// a non-nil status with Valid=false and nil error.
-	status, err := svc.GetStatus()
-	assert.NoError(t, err)
-	assert.NotNil(t, status)
-	assert.True(t, status.Configured)
-	assert.False(t, status.Valid)
-}
-
-func TestFB_PlatformPolicy_CreatePolicy_PanicRecover(t *testing.T) {
-	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-	status, err := svc.CreatePolicy([]int{0}, "sha256")
-	assert.Nil(t, status)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "panic")
-}
-
-func TestFB_PlatformPolicy_UpdatePolicy_PanicRecover(t *testing.T) {
-	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	status, err := svc.UpdatePolicy([]int{0}, "sha256")
-	assert.Nil(t, status)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "panic")
-}
-
-func TestFB_PlatformPolicy_VerifyPolicy_PanicRecover(t *testing.T) {
-	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	valid, err := svc.VerifyPolicy()
-	assert.False(t, valid)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "panic")
-}
-
-func TestFB_PlatformPolicy_ExportPolicy_WithStoredPolicy(t *testing.T) {
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	result, err := svc.ExportPolicy()
-	assert.NoError(t, err)
-	assert.Contains(t, result, "Platform Policy")
-}
-
-func TestFB_PlatformPolicy_GetPlatformPolicyAsPCRPolicy_PanicRecover(t *testing.T) {
-	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	// readPCRDigests catches the panic internally; validatePlatformPolicyDigests
-	// returns nil (unknown validity); policy is returned with Valid=nil.
-	policy, err := svc.GetPlatformPolicyAsPCRPolicy()
-	assert.NoError(t, err)
-	assert.NotNil(t, policy)
-	assert.Nil(t, policy.Valid)
-}
-
-func TestFB_PlatformPolicy_RefreshPlatformPolicyPCRs_PanicRecover(t *testing.T) {
-	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	policy, err := svc.RefreshPlatformPolicyPCRs()
-	assert.Nil(t, policy)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "panic")
-}
-
-func TestFB_PlatformPolicy_VerifyDigests_InvalidStoredHex(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := newPolicyServiceWithMock(t, mock)
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "ZZZZ"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	valid, err := svc.VerifyPolicy()
-	assert.False(t, valid)
-	assert.ErrorIs(t, err, ErrPolicyVerifyFailed)
-}
-
-func TestFB_PlatformPolicy_VerifyDigests_Mismatch(t *testing.T) {
-	mock := defaultPolicyMock()
-	svc := newPolicyServiceWithMock(t, mock)
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "ff00ff00"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	valid, err := svc.VerifyPolicy()
-	assert.False(t, valid)
-	assert.NoError(t, err)
-}
-
-func TestFB_PlatformPolicy_VerifyDigests_MissingPCR(t *testing.T) {
-	mock := &policyMockTPM{
-		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []xkms.PCRBank{
-			{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
-		},
-	}
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs: []int{0, 7}, Bank: "sha256",
-		Digests:   map[int]string{0: hex.EncodeToString([]byte{0xAA, 0xBB}), 7: "ccdd"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	valid, err := svc.VerifyPolicy()
-	assert.False(t, valid)
-	assert.NoError(t, err)
-}
-
-func TestFB_PlatformPolicy_SavePolicy_ReadonlyDir(t *testing.T) {
-	roDir := filepath.Join(t.TempDir(), "readonly")
-	require.NoError(t, os.MkdirAll(roDir, 0700))
-	policyPath := filepath.Join(roDir, "sub", "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(policyPath), 0700))
-	require.NoError(t, os.Chmod(filepath.Dir(policyPath), 0500))
-	defer os.Chmod(filepath.Dir(policyPath), 0700)
-	err := svc.savePolicy(&PlatformPolicyDefinition{
-		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	})
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-func TestFB_PlatformPolicy_SavePolicy_Success(t *testing.T) {
-	policyPath := filepath.Join(t.TempDir(), "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-	def := &PlatformPolicyDefinition{
-		PCRs: []int{0, 7}, Bank: "sha256",
-		Digests:   map[int]string{0: "aabb", 7: "ccdd"},
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
-	}
-	err := svc.savePolicy(def)
-	assert.NoError(t, err)
-	data, readErr := os.ReadFile(policyPath)
-	assert.NoError(t, readErr)
-	var loaded PlatformPolicyDefinition
-	assert.NoError(t, json.Unmarshal(data, &loaded))
-	assert.Equal(t, def.PCRs, loaded.PCRs)
-}
-
-func TestFB_PlatformPolicy_CreatePolicy_SaveError(t *testing.T) {
-	mock := defaultPolicyMock()
-	roDir := filepath.Join(t.TempDir(), "readonly")
-	require.NoError(t, os.MkdirAll(roDir, 0500))
-	defer os.Chmod(roDir, 0700)
-	policyPath := filepath.Join(roDir, "sub", "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
-	status, err := svc.CreatePolicy([]int{0}, "sha256")
-	assert.Nil(t, status)
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-// =========================================================================
-// 2. OIDCService (22 stmts)
-// =========================================================================
 
 func TestFB_OIDCService_Close_NilTokenStore(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
@@ -749,34 +514,6 @@ func TestFB_TPM_SetHandleDescription_Success(t *testing.T) {
 	assert.NoError(t, svc.SetHandleDescription("0x81000001", "my key"))
 }
 
-func TestFB_TPM_GetConflictingAssignments_Empty(t *testing.T) {
-	svc := NewTPMService()
-	svc.SetDataDir(t.TempDir())
-	result, err := svc.GetConflictingAssignments([]string{"0x81000001"})
-	assert.NoError(t, err)
-	assert.Empty(t, result)
-}
-
-func TestFB_TPM_SaveAssignments_NoDataDir(t *testing.T) {
-	svc := NewTPMService()
-	assert.ErrorIs(t, svc.saveAssignments([]PolicyAssignment{{PolicyName: "test", KeyHandle: "0x81000001"}}), ErrTPMDataDirNotSet)
-}
-
-func TestFB_TPM_LoadAssignments_Empty(t *testing.T) {
-	svc := NewTPMService()
-	svc.SetDataDir(t.TempDir())
-	assert.Empty(t, svc.loadAssignments())
-}
-
-func TestFB_TPM_ListPolicies_NilAccessor(t *testing.T) {
-	svc := fbTPMSvcNilTPM()
-	svc.SetDataDir(t.TempDir())
-	svc.SetPolicyStore(newTestPCRPolicyStore(t))
-	policies, err := svc.ListPolicies()
-	assert.NoError(t, err)
-	assert.Empty(t, policies)
-}
-
 func TestFB_TPM_GetPlatformPolicy_NilAccessor(t *testing.T) {
 	r, err := fbTPMSvcNilTPM().GetPlatformPolicy()
 	assert.Empty(t, r)
@@ -797,7 +534,7 @@ func TestFB_SealService_SealData_InvalidBase64(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	fbWireSealClient(svc, &fbMockSealer{canSeal: true})
 	r, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "test", Data: "!!!invalid!!!"})
+		Label: "test", Data: "!!!invalid!!!"})
 	assert.Nil(t, r)
 	assert.ErrorIs(t, err, ErrSealDecodeFailed)
 }
@@ -805,7 +542,7 @@ func TestFB_SealService_SealData_InvalidBase64(t *testing.T) {
 func TestFB_SealService_SealData_BackendNotFound(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	r, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s")), Backend: "missing"})
+		Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s")), Backend: "missing"})
 	assert.Nil(t, r)
 	assert.ErrorIs(t, err, ErrSealBackendNotFound)
 }
@@ -814,35 +551,16 @@ func TestFB_SealService_SealData_CannotSeal(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	fbWireSealClient(svc, &fbMockSealer{canSeal: false, sealErr: ErrSealNotSupported})
 	r, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s"))})
+		Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s"))})
 	assert.Nil(t, r)
 	assert.ErrorIs(t, err, ErrSealNotSupported)
-}
-
-func TestFB_SealService_SealData_InvalidPolicyType(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	fbWireSealClient(svc, &fbMockSealer{canSeal: true})
-	r, err := svc.SealData(&SealRequest{Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s")), PolicyType: "bogus"})
-	assert.Nil(t, r)
-	assert.ErrorIs(t, err, ErrSealInvalidPolicyType)
-}
-
-func TestFB_SealService_SealData_PolicyRequiresTPM(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	fbWireSealClient(svc, &fbMockSealer{canSeal: true})
-	r, err := svc.SealData(&SealRequest{
-		Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s")),
-		Backend: "software", PolicyType: string(PolicyTypePlatformPolicy),
-	})
-	assert.Nil(t, r)
-	assert.ErrorIs(t, err, ErrSealPolicyRequiresTPM)
 }
 
 func TestFB_SealService_SealData_SealError(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	fbWireSealClient(svc, &fbMockSealer{canSeal: true, sealErr: errors.New("seal failed")})
 	r, err := svc.SealData(&SealRequest{
-		PolicyType: "none", Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s"))})
+		Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s"))})
 	assert.Nil(t, r)
 	assert.Error(t, err)
 }
@@ -850,8 +568,7 @@ func TestFB_SealService_SealData_SealError(t *testing.T) {
 func TestFB_SealService_SaveBlob_BadDir(t *testing.T) {
 	svc := NewSealService("/dev/null/impossible")
 	assert.ErrorIs(t, svc.saveBlob(&sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software", ID: "id", Label: "l"}), ErrSealStorageFailed)
+		BackendID: "software", ID: "id", Label: "l"}), ErrSealStorageFailed)
 }
 
 func TestFB_SealService_CanSeal_NoBackend(t *testing.T) {
@@ -902,7 +619,7 @@ func TestFB_AutoUnseal_Enable_ConfigFuncNil(t *testing.T) {
 	ss := NewSealService(t.TempDir())
 	fbWireSealClient(ss, &fbMockSealer{canSeal: true})
 	svc := NewAutoUnsealService(ss, NewStorageService())
-	r, err := svc.Enable("passphrase-long-enough", nil, "", "policy", "", "tpm2")
+	r, err := svc.Enable("passphrase-long-enough", xkms.TPMPolicyPlatform, "tpm2")
 	assert.Nil(t, r)
 	assert.ErrorIs(t, err, ErrAutoUnsealConfigFuncNil)
 }
@@ -912,7 +629,7 @@ func TestFB_AutoUnseal_Enable_ConfigSaveFuncNil(t *testing.T) {
 	fbWireSealClient(ss, &fbMockSealer{canSeal: true})
 	svc := NewAutoUnsealService(ss, NewStorageService())
 	svc.SetConfigFunc(func() *GUIConfigData { return &GUIConfigData{} })
-	r, err := svc.Enable("passphrase-long-enough", nil, "", "policy", "", "tpm2")
+	r, err := svc.Enable("passphrase-long-enough", xkms.TPMPolicyPlatform, "tpm2")
 	assert.Nil(t, r)
 	assert.ErrorIs(t, err, ErrAutoUnsealConfigSaveFuncNil)
 }
@@ -1059,4 +776,41 @@ func TestFB_PhoneService_PubKeyFP_ValidCert(t *testing.T) {
 	fp := pubKeyFP(cert)
 	assert.NotEmpty(t, fp)
 	assert.Len(t, fp, 64) // SHA-256 hex = 64 chars
+}
+
+// fbWireSealClient wires a sealMockClient into the given SealService,
+// deriving SDK client behavior from the fbMockSealer configuration.
+func fbWireSealClient(svc *SealService, m *fbMockSealer) {
+	mc := &sealMockClient{
+		sealFn: func(_ context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
+			if m.sealErr != nil {
+				return nil, m.sealErr
+			}
+			ciphertext := req.Data
+			if m.sealResult != nil {
+				ciphertext = m.sealResult.Ciphertext
+			}
+			return &transport.SealResponse{
+				Backend:    req.Backend,
+				Ciphertext: ciphertext,
+				TPMPublic:  []byte("tpm-public"),
+				TPMPrivate: []byte("tpm-private"),
+			}, nil
+		},
+		unsealFn: func(_ context.Context, req *transport.UnsealRequest) (*transport.UnsealResponse, error) {
+			if m.unsealErr != nil {
+				return nil, m.unsealErr
+			}
+			data := req.Ciphertext
+			if m.unsealData != nil {
+				data = m.unsealData
+			}
+			return &transport.UnsealResponse{Plaintext: data}, nil
+		},
+		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
+			return &transport.CanSealResponse{CanSeal: m.canSeal, Backend: backend}, nil
+		},
+	}
+	svc.SetClientFunc(func() xkms.Client { return mc })
+	svc.SetContext(context.Background())
 }

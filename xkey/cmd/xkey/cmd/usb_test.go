@@ -269,7 +269,7 @@ func TestUSBCommandsAreLUKSExempt(t *testing.T) {
 // command ("status", "init", "lock", "unseal", "verify") but manage no
 // LUKS/barrier/PIN state, so they must still be gated on an unlocked home.
 func TestNonLUKSCommandsAreNotExempt(t *testing.T) {
-	for _, cmd := range []*cobra.Command{PIVCmd, PasswordCmd, shareCmd, configCmd, PolicyCmd, deviceCmd, authCmd} {
+	for _, cmd := range []*cobra.Command{PIVCmd, PasswordCmd, shareCmd, configCmd, tpmPolicyVerifyCmd, deviceCmd, authCmd} {
 		t.Run(cmd.Name(), func(t *testing.T) {
 			assert.False(t, isLUKSExempt(cmd),
 				"%q must NOT be LUKS-exempt", cmd.CommandPath())

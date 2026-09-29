@@ -5,7 +5,7 @@ import {context} from '../models';
 
 export function Disable():Promise<void>;
 
-export function Enable(arg1:string,arg2:Array<number>,arg3:string,arg4:string,arg5:string,arg6:string):Promise<services.AutoUnsealResult>;
+export function Enable(arg1:string,arg2:string,arg3:string):Promise<services.AutoUnsealResult>;
 
 export function GetStatus():Promise<services.AutoUnsealStatus>;
 

@@ -1,6 +1,6 @@
 # xKey Desktop GUI — API
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 The GUI's API is the set of Go types Wails binds to the frontend — there is
 no separate network protocol for it (the Unix-socket IPC server is a
@@ -37,7 +37,8 @@ full method-by-method detail instead of repeating it.
 | Service | Method groups | File |
 |---|---|---|
 | `AppService` | Status/config/theme (`GetStatus`, `GetConfig`, `UpdateConfig`, `GetTheme`, `SetTheme`); identity (`GetIdentity`, `UpdateIdentity`); window (`MinimizeToTray`, `ToggleFIDO2Authenticator`); file save (`SaveTextFile`, `SavePEMFile`); ~15 `SetXxxFunc` wiring hooks other services report status through | `app_service.go` |
-| `TPMService` | Device/EK/IAK/IDevID/SRK info and cert import/export; PCR read/quote/event-log; key provisioning, listing, certify; NV index define/read/write/extend/delete; policy CRUD (PCR, password, composite) and assignment; lockout; factory/force clear — the largest single service (~90 methods) | `tpm_service.go` |
+| `TPMService` | Device/EK/IAK/IDevID/SRK info and cert import/export; PCR read/quote/event-log; key provisioning, listing, certify; NV index define/read/write/extend/delete; lockout; factory/force clear — the largest single service | `tpm_service.go` |
+| `TPMPolicyService` | Named TPM policies ([docs/tpm-policies](../../../docs/tpm-policies/api.md)): `GetStatus`, `CreatePolicy`, `ListPolicies` (with object counts, built-in `platform` first), `GetPolicy`, `UpdatePolicy`, `RevokePolicy`, `VerifyPolicy`, `DeletePolicy` (refused while objects are bound), `PolicyObjects`, `KeyPolicy`, `SetAutoUnseal`, `RotateAuthority` — on the connected server, else on xKey's own TPM | `tpm_policy_service.go` |
 | `AuditService` | `GetEntries`, `ExportEntries` | `audit_service.go` |
 | `AdminService` | Server status; backend list/rename/info/default/configure/test-connection; audit-log export | `admin_service.go` |
 | `ConnectionService` | `GetConnectionInfo`, `IsConnected`, `GetClient`, `Connect`, `Disconnect`, `HealthCheck` | `connection_service.go` |
@@ -45,9 +46,8 @@ full method-by-method detail instead of repeating it.
 | `StorageService` | `GetStatus`, `CreateVolume`, `UnlockVolume`, `LockVolume`, `MigrateToEncrypted`, `WipeVolume`, `RequireUnlocked` | `storage_service.go` |
 | `NotificationService` | `SendNotification`, `NotifyTouchRequired`, enable/availability checks | `notification_service.go` |
 | `SealProtectionService` | `GetStatus` (UI access gating for seal operations) | `seal_protection_service.go` |
-| `PlatformPolicyService` | Policy CRUD, verify, export, PCR refresh (local and `...Remote` variants for a connected server) | `platform_policy_service.go` |
 | `AutoUnsealService` | `GetStatus`, `Enable`, `Disable`, `TryAutoUnseal`, `Reseal` | `auto_unseal_service.go` |
-| `BarrierAutoUnsealService` | `TryAutoUnseal`, `CaptureCurrentPCRs`, auto-unseal policy get/set/clear | `barrier_auto_unseal.go` |
+| `BarrierAutoUnsealService` | `GetAutoUnsealStatus`, `EnableAutoUnseal` (seals the barrier password under a named TPM policy), `DisableAutoUnseal`, `TryAutoUnseal` | `barrier_auto_unseal.go` |
 | `OIDCService` | Provider CRUD/discovery; login/logout, token info/refresh/auto-refresh; script-based token post-processing (execute/save/list/delete) | `oidc_service.go` |
 | `ClipboardService` | `Copy`, `CopyWithClear`, `ClearClipboard`, timeout get/set | `clipboard_service.go` |
 | `TrustService` | Certificate list/add/remove/import/export (PEM/DER); browser trust bundle export; system install/remove | `trust_service.go` |

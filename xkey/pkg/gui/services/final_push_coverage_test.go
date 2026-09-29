@@ -4,9 +4,10 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"log/slog"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
@@ -90,71 +91,6 @@ func (m *fpMockStaticPWStore) RemoveFolder(_ string) error { return nil }
 //   barrier_service.go L192-194 (createBaseBackend error in Initialize - 1 stmt)
 // ---------------------------------------------------------------------------
 
-// TestFP_BarrierService_Initialize_FactoryError verifies that Initialize
-// propagates an error from the custom BaseBackendFactory. The factory is
-// called at barrier_service.go L191 via createBaseBackend (L329) which
-// enters the custom factory path because SetBaseBackendFactory (L92) was
-// called. The barrier directory does not exist, so the existence-check
-// branch at L158 is skipped.
-func TestFP_BarrierService_Initialize_FactoryError(t *testing.T) {
-	svc := NewBarrierService(t.TempDir(), slog.Default())
-
-	factoryErr := errors.New("factory error: backend unavailable")
-
-	// SetBaseBackendFactory covers L92 (body of the setter).
-	svc.SetBaseBackendFactory(func(_ string) (xkms.StorageBackend, error) {
-		// Returning an error exercises:
-		//   - L329 (createBaseBackend enters factory branch)
-		//   - L192 (Initialize handles error from createBaseBackend)
-		return nil, factoryErr
-	})
-
-	err := svc.Initialize("test-password-123", "passphrase")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, factoryErr)
-}
-
-// ---------------------------------------------------------------------------
-// 2. SealService: policyHandlers miss (bogus policy type in policyTypeMap)
-// Targets:
-//   seal_service.go L404-406 (policyHandlers lookup miss - 1 stmt)
-// ---------------------------------------------------------------------------
-
-// TestFP_SealService_SealData_PolicyHandlersMiss injects a bogus entry into
-// the package-level policyTypeMap so the policyTypeMap lookup at L392
-// succeeds but the policyHandlers lookup at L404 fails. This exercises
-// the defensive guard at L405-406 that returns ErrSealInvalidPolicyType.
-func TestFP_SealService_SealData_PolicyHandlersMiss(t *testing.T) {
-	// Inject a bogus entry that resolves in policyTypeMap but has no handler.
-	bogusKey := "fp_test_bogus_policy"
-	bogusType := PolicyType("fp-test-bogus-type")
-	policyTypeMap[bogusKey] = bogusType
-	defer delete(policyTypeMap, bogusKey)
-
-	dir := t.TempDir()
-	svc := NewSealService(dir)
-	wireSealMockClient(svc, &sealMockTPM{mockTPM: *defaultMockTPM(), canSeal: true})
-	svc.SetContext(context.Background())
-	svc.SetDefaultBackend("software")
-
-	req := &SealRequest{
-		Label:      "test-label",
-		Data:       "dGVzdA==", // base64("test")
-		PolicyType: bogusKey,
-		Backend:    "software",
-	}
-
-	entry, err := svc.SealData(req)
-	assert.Nil(t, entry)
-	assert.ErrorIs(t, err, ErrSealInvalidPolicyType)
-}
-
-// ---------------------------------------------------------------------------
-// 3. SetupWizardService: FactoryReset panic recovery
-// Targets:
-//   setup_wizard_service.go L1015-1018 (panic recovery - 2 stmts)
-// ---------------------------------------------------------------------------
-
 // TestFP_SetupWizardService_FactoryReset_PanicRecovery triggers the panic
 // recovery defer block in FactoryReset (L1014-1019). A panicking configFunc
 // is injected so the call at L1057 panics and the recovery at L1015-1018
@@ -229,9 +165,9 @@ func TestFP_TrustService_SeedEmbeddedRoots_AddCertError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestFP_SetupWizard_ApplySetup_BarrierAutoUnseal exercises the barrier
-// auto-unseal code path in ApplySetup. When the barrier initializes with
-// a "software" strategy and EnableAutoUnseal is true, the wizard seals
-// the barrier password to enable auto-unseal on restart.
+// auto-unseal code path in ApplySetup without a local TPM policy service:
+// setup completes, warns that the barrier needs a manual unlock on restart,
+// and leaves auto-unseal off for a passphrase barrier.
 func TestFP_SetupWizard_ApplySetup_BarrierAutoUnseal(t *testing.T) {
 	tmpDir := t.TempDir()
 	config.SetConfigDir(tmpDir)
@@ -276,78 +212,11 @@ func TestFP_SetupWizard_ApplySetup_BarrierAutoUnseal(t *testing.T) {
 	require.NotNil(t, result)
 	assert.True(t, result.Success, "ApplySetup should succeed; errors: %v", result.Errors)
 
-	// Verify the config was saved with barrier auto-unseal blob ID.
 	assert.True(t, cfg.BarrierInitialized)
 	assert.Equal(t, "passphrase", cfg.BarrierStrategy)
-	assert.NotEmpty(t, cfg.BarrierAutoUnsealBlobID, "barrier auto-unseal blob ID should be set")
-}
-
-// ---------------------------------------------------------------------------
-// 6. SetupWizardService: ApplySetup barrier auto-unseal (seal fails path)
-// Targets:
-//   setup_wizard_service.go L574-577 (SealData error warning - 1 stmt)
-// ---------------------------------------------------------------------------
-
-// TestFP_SetupWizard_ApplySetup_BarrierAutoUnsealSealFail exercises the
-// error path where the barrier password seal fails during auto-unseal
-// setup. This covers L574-577 where the SealData error is appended to
-// the result warnings.
-func TestFP_SetupWizard_ApplySetup_BarrierAutoUnsealSealFail(t *testing.T) {
-	tmpDir := t.TempDir()
-	config.SetConfigDir(tmpDir)
-	defer config.ResetConfigDir()
-
-	// Create a real BarrierService.
-	barrierSvc := NewBarrierService(tmpDir, slog.Default())
-
-	// Create a SealService with a sealer that fails on Seal.
-	sealDir := t.TempDir()
-	sealSvc := NewSealService(sealDir)
-	wireSealMockClient(sealSvc, &sealMockTPM{mockTPM: *defaultMockTPM(), canSeal: true, sealErr: errors.New("seal failed")})
-	sealSvc.SetContext(context.Background())
-	sealSvc.SetDefaultBackend("software")
-
-	svc := &SetupWizardService{}
-	svc.configDir = tmpDir
-	svc.barrierSvc = barrierSvc
-	svc.sealSvc = sealSvc
-
-	cfg := &GUIConfigData{SetupComplete: false}
-	svc.configFunc = func() *GUIConfigData { return cfg }
-	svc.configSave = func(c *GUIConfigData) error {
-		*cfg = *c
-		return nil
-	}
-
-	choices := &SetupChoices{
-		Mode:             "standalone",
-		SOPin:            "123456",
-		UserPin:          "654321",
-		StorageType:      "barrier",
-		BarrierPassword:  "barrier-test-pw",
-		SealerBackend:    "passphrase",
-		EnableAutoUnseal: true,
-	}
-
-	result, err := svc.ApplySetup(choices)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// Result should still succeed (seal failure is a warning, not an error).
-	assert.True(t, result.Success)
-	assert.True(t, cfg.BarrierInitialized)
-
-	// Verify that the seal failure was captured as a warning.
-	found := false
-	for _, w := range result.Warnings {
-		if len(w) > 0 {
-			found = true
-		}
-	}
-	assert.True(t, found, "expected a warning about barrier auto-unseal failure")
-
-	// BarrierAutoUnsealBlobID should be empty because seal failed.
-	assert.Empty(t, cfg.BarrierAutoUnsealBlobID)
+	assert.False(t, cfg.BarrierAutoUnsealEnabled, "no TPM policy service: no auto-unseal")
+	assert.True(t, containsSubstring(result.Warnings, "barrier auto-unseal"),
+		"expected a barrier auto-unseal warning, got %v", result.Warnings)
 }
 
 // ---------------------------------------------------------------------------
@@ -369,4 +238,28 @@ func TestFP_StaticPW_ListPasswords_BarrierSealed(t *testing.T) {
 	entries, err := svc.ListPasswords()
 	assert.Nil(t, entries)
 	assert.ErrorIs(t, err, ErrStaticPWBarrierSealed)
+}
+
+// TestFP_BarrierService_Initialize_FactoryError verifies that Initialize
+// propagates an error from the custom BaseBackendFactory. The factory is
+// called at barrier_service.go L191 via createBaseBackend (L329) which
+// enters the custom factory path because SetBaseBackendFactory (L92) was
+// called. The barrier directory does not exist, so the existence-check
+// branch at L158 is skipped.
+func TestFP_BarrierService_Initialize_FactoryError(t *testing.T) {
+	svc := NewBarrierService(t.TempDir(), slog.Default())
+
+	factoryErr := errors.New("factory error: backend unavailable")
+
+	// SetBaseBackendFactory covers L92 (body of the setter).
+	svc.SetBaseBackendFactory(func(_ string) (xkms.StorageBackend, error) {
+		// Returning an error exercises:
+		//   - L329 (createBaseBackend enters factory branch)
+		//   - L192 (Initialize handles error from createBaseBackend)
+		return nil, factoryErr
+	})
+
+	err := svc.Initialize("test-password-123", "passphrase")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, factoryErr)
 }

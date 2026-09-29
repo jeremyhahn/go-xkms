@@ -129,16 +129,20 @@ func (s *AutoUnsealService) GetStatus() *AutoUnsealStatus {
 	return status
 }
 
-// Enable seals the passphrase with the specified backend and stores the
-// configuration for automatic unseal on startup.
-func (s *AutoUnsealService) Enable(passphrase string, pcrs []int, pcrBank string, policyType string, policyName string, backend string) (*AutoUnsealResult, error) {
+// Enable seals the passphrase with the specified backend, bound to
+// tpmPolicy on the tpm2 backend ("platform", a named policy, or empty for
+// none), and stores the configuration for automatic unseal on startup.
+func (s *AutoUnsealService) Enable(passphrase, tpmPolicy, backend string) (*AutoUnsealResult, error) {
 	// Validate passphrase.
 	if len(passphrase) < autoUnsealMinPassphraseLength {
 		return nil, ErrAutoUnsealInvalidPassphrase
 	}
 
 	// Verify sealer can seal.
-	canSeal, _ := s.sealSvc.CanSeal()
+	canSeal, err := s.sealSvc.CanSeal()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrAutoUnsealTPMNotAvailable, Cause: err}
+	}
 	if !canSeal {
 		return nil, ErrAutoUnsealTPMNotAvailable
 	}
@@ -154,17 +158,11 @@ func (s *AutoUnsealService) Enable(passphrase string, pcrs []int, pcrBank string
 	// Base64-encode the passphrase and seal it via the SealService.
 	b64Passphrase := base64.StdEncoding.EncodeToString([]byte(passphrase))
 
-	if pcrBank == "" {
-		pcrBank = "sha256"
-	}
-
 	req := &SealRequest{
-		Label:      "auto-unseal-passphrase",
-		Data:       b64Passphrase,
-		PCRs:       pcrs,
-		PCRBank:    pcrBank,
-		PolicyType: policyType,
-		Backend:    backend,
+		Label:     "auto-unseal-passphrase",
+		Data:      b64Passphrase,
+		TPMPolicy: tpmPolicy,
+		Backend:   backend,
 	}
 
 	entry, err := s.sealSvc.SealData(req)
@@ -178,10 +176,7 @@ func (s *AutoUnsealService) Enable(passphrase string, pcrs []int, pcrBank string
 	updated := *cfg
 	updated.AutoUnsealEnabled = true
 	updated.AutoUnsealBlobID = entry.ID
-	updated.AutoUnsealPCRs = pcrs
-	updated.AutoUnsealPCRBank = pcrBank
-	updated.AutoUnsealPolicyType = policyType
-	updated.AutoUnsealPolicyName = policyName
+	updated.AutoUnsealTPMPolicy = tpmPolicy
 	updated.AutoUnsealBackend = backend
 
 	if err := s.configSave(&updated); err != nil {
@@ -228,10 +223,7 @@ func (s *AutoUnsealService) Disable() error {
 	updated := *cfg
 	updated.AutoUnsealEnabled = false
 	updated.AutoUnsealBlobID = ""
-	updated.AutoUnsealPCRs = nil
-	updated.AutoUnsealPCRBank = ""
-	updated.AutoUnsealPolicyType = ""
-	updated.AutoUnsealPolicyName = ""
+	updated.AutoUnsealTPMPolicy = ""
 	updated.AutoUnsealBackend = ""
 
 	if err := s.configSave(&updated); err != nil {
@@ -309,9 +301,11 @@ func (s *AutoUnsealService) TryAutoUnseal() *AutoUnsealResult {
 	}
 }
 
-// Reseal re-seals the auto-unseal passphrase with the current PCR
-// values. This should be called during shutdown so the seal reflects
-// the current boot measurements and remains valid for the next boot.
+// Reseal re-seals the auto-unseal passphrase under its TPM policy. For
+// the built-in platform policy this re-binds it to the current platform
+// PCR, so it is called during shutdown to keep the seal valid for the next
+// boot; an object under a named policy follows that policy's updates and is
+// unaffected.
 //
 // The method creates the new sealed blob first and only deletes the
 // old one after the config update succeeds, so a failure at any step
@@ -339,19 +333,12 @@ func (s *AutoUnsealService) Reseal() error {
 		return errors.Join(ErrAutoUnsealResealFailed, err)
 	}
 
-	pcrBank := cfg.AutoUnsealPCRBank
-	if pcrBank == "" {
-		pcrBank = "sha256"
-	}
-
-	// Re-seal with current PCR values (creates a new blob).
+	// Re-seal under the same policy (creates a new blob).
 	req := &SealRequest{
-		Label:      "auto-unseal-passphrase",
-		Data:       b64Passphrase,
-		PCRs:       cfg.AutoUnsealPCRs,
-		PCRBank:    pcrBank,
-		PolicyType: cfg.AutoUnsealPolicyType,
-		Backend:    cfg.AutoUnsealBackend,
+		Label:     "auto-unseal-passphrase",
+		Data:      b64Passphrase,
+		TPMPolicy: cfg.AutoUnsealTPMPolicy,
+		Backend:   cfg.AutoUnsealBackend,
 	}
 	entry, err := s.sealSvc.SealData(req)
 	if err != nil {

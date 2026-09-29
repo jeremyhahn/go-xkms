@@ -9,21 +9,18 @@
   import Icon from '$lib/components/Icon.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import Input from '$lib/components/Input.svelte';
-  import StatusBadge from '$lib/components/StatusBadge.svelte';
-  import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
   import BackendBadge from '$lib/components/BackendBadge.svelte';
+  import SealPolicyPicker from '$lib/components/SealPolicyPicker.svelte';
   import { mdiFilter } from '$lib/utils/icons';
   import {
     mdiPlus, mdiLockOutline, mdiDelete,
-    mdiShieldCheckOutline, mdiChip, mdiContentCopy, mdiShieldOutline
+    mdiShieldCheckOutline, mdiContentCopy, mdiShieldOutline
   } from '$lib/utils/icons';
   import { addNotification } from '$lib/stores/notifications';
   import { appLocked } from '$lib/stores/events';
   import { isWailsAvailable, callBackend, callBackendVoid } from '$lib/api/backend';
-  import type { SealedBlobEntry, SealRequest, PlatformPolicyStatus } from '$lib/api/backend';
+  import type { SealedBlobEntry, SealRequest } from '$lib/api/backend';
   import type { SealerInfo } from '$lib/types/setup';
-
-  type PolicyType = 'none' | 'password' | 'platform_policy' | 'custom_pcr';
 
   let blobs: SealedBlobEntry[] = [];
   let canSeal = false;
@@ -35,10 +32,10 @@
   let showSealDialog = false;
   let sealLabel = '';
   let sealData = '';
-  let sealPolicyType: PolicyType = 'none';
+  let sealTPMPolicy = 'platform';
+  let sealRequirePassword = false;
   let sealPassword = '';
   let sealPasswordConfirm = '';
-  let sealPCRs: number[] = [];
   let sealing = false;
   let sealBackend: string = '';
   let sealStorageType: string = 'disk';
@@ -46,19 +43,10 @@
   // Effective backend: use sealBackend directly, fallback to first available
   $: effectiveBackend = sealBackend || (availableSealers.length > 0 ? availableSealers[0].id : '');
 
-  // Reset storage type and TPM-only policy when switching away from TPM2
-  $: if (effectiveBackend !== 'tpm2') {
-    if (sealStorageType === 'nvram') {
-      sealStorageType = 'disk';
-    }
-    if (sealPolicyType === 'platform_policy' || sealPolicyType === 'custom_pcr') {
-      sealPolicyType = 'none';
-    }
+  // Reset the TPM-only storage type when switching away from TPM2
+  $: if (effectiveBackend !== 'tpm2' && sealStorageType === 'nvram') {
+    sealStorageType = 'disk';
   }
-
-  // Platform policy status (loaded when platform_policy is selected)
-  let platformPolicyStatus: PlatformPolicyStatus | null = null;
-  let platformPolicyLoading = false;
 
   // Clipboard / auto-clear timeout (seconds), loaded from backend config
   let clipboardTimeout = 30;
@@ -76,6 +64,7 @@
   let unsealPassword = '';
   let pendingUnsealId = '';
   let pendingUnsealLabel = '';
+  let passwordUnsealReason = '';
 
   // Delete confirmation
   let showDeleteConfirm = false;
@@ -123,21 +112,6 @@
   });
   onDestroy(unsubLock);
 
-  function isPlainPolicy(policyType: string): boolean {
-    return !policyType || policyType === 'none';
-  }
-
-  async function loadPlatformPolicyStatus(): Promise<void> {
-    platformPolicyLoading = true;
-    const result = await callBackend<PlatformPolicyStatus>('PlatformPolicyService', 'GetStatus');
-    platformPolicyStatus = result;
-    platformPolicyLoading = false;
-  }
-
-  $: if (sealPolicyType === 'platform_policy' && showSealDialog && !platformPolicyStatus && !platformPolicyLoading) {
-    loadPlatformPolicyStatus();
-  }
-
   // Filter blobs by selected sealer backend.
   $: filteredBlobs = selectedBackend === 'all'
     ? blobs
@@ -172,7 +146,7 @@
       return;
     }
 
-    if (sealPolicyType === 'password') {
+    if (sealRequirePassword) {
       if (!sealPassword) {
         addNotification('error', 'Password is required');
         return;
@@ -187,16 +161,6 @@
       }
     }
 
-    if (sealPolicyType === 'custom_pcr' && sealPCRs.length === 0) {
-      addNotification('error', 'Select at least one PCR for custom PCR binding');
-      return;
-    }
-
-    if (sealPolicyType === 'platform_policy' && (!platformPolicyStatus || !platformPolicyStatus.configured)) {
-      addNotification('error', 'Platform policy must be configured before use');
-      return;
-    }
-
     sealing = true;
 
     const encoded = btoa(sealData);
@@ -204,10 +168,8 @@
     const req: SealRequest = {
       label: sealLabel,
       data: encoded,
-      pcrs: sealPolicyType === 'custom_pcr' ? sealPCRs : [],
-      pcr_bank: 'sha256',
-      policy_type: sealPolicyType,
-      password: sealPolicyType === 'password' ? sealPassword : '',
+      tpm_policy: effectiveBackend === 'tpm2' ? sealTPMPolicy : '',
+      password: sealRequirePassword ? sealPassword : '',
       backend: sealBackend || undefined,
       storage_type: sealStorageType,
     };
@@ -225,14 +187,25 @@
     }
   }
 
-  function initiateUnseal(id: string, label: string, policyType: string): void {
-    if (policyType === 'password') {
-      pendingUnsealId = id;
-      pendingUnsealLabel = label;
-      unsealPassword = '';
-      showPasswordUnsealDialog = true;
-    } else {
-      performUnseal(id, label, '');
+  function askUnsealPassword(blob: SealedBlobEntry, reason: string): void {
+    pendingUnsealId = blob.id;
+    pendingUnsealLabel = blob.label;
+    passwordUnsealReason = reason;
+    unsealPassword = '';
+    showPasswordUnsealDialog = true;
+  }
+
+  async function initiateUnseal(blob: SealedBlobEntry): Promise<void> {
+    // A blob with only a password needs it. One with a TPM policy tries the
+    // policy first; if the platform state changed, its password (when it
+    // has one) still unseals it.
+    if (blob.password_protected && !blob.tpm_policy) {
+      askUnsealPassword(blob, 'This sealed data is password protected.');
+      return;
+    }
+    const ok = await performUnseal(blob.id, blob.label, '', !blob.password_protected);
+    if (!ok && blob.password_protected) {
+      askUnsealPassword(blob, 'The TPM policy is not satisfied (the platform state changed). Its password still unseals it.');
     }
   }
 
@@ -245,7 +218,7 @@
     await performUnseal(pendingUnsealId, pendingUnsealLabel, unsealPassword);
   }
 
-  async function performUnseal(id: string, label: string, password: string): Promise<void> {
+  async function performUnseal(id: string, label: string, password: string, reportFailure = true): Promise<boolean> {
     unsealBlobId = id;
     unsealBlobLabel = label;
     unsealedData = '';
@@ -268,10 +241,13 @@
         callBackendVoid('ClipboardService', 'ClearClipboard');
         addNotification('info', 'Unsealed data cleared for security');
       }, clipboardTimeout * 1000);
-    } else {
-      addNotification('error', `Failed to unseal "${label}"`);
-      showUnsealDialog = false;
+      return true;
     }
+    if (reportFailure) {
+      addNotification('error', `Failed to unseal "${label}"`);
+    }
+    showUnsealDialog = false;
+    return false;
   }
 
   function handleCloseUnseal(): void {
@@ -318,24 +294,15 @@
     }
   }
 
-  function togglePCR(index: number): void {
-    if (sealPCRs.includes(index)) {
-      sealPCRs = sealPCRs.filter(p => p !== index);
-    } else {
-      sealPCRs = [...sealPCRs, index].sort((a, b) => a - b);
-    }
-  }
-
   function resetSealForm(): void {
     sealLabel = '';
     sealData = '';
-    sealPolicyType = 'none';
+    sealTPMPolicy = 'platform';
+    sealRequirePassword = false;
     sealPassword = '';
     sealPasswordConfirm = '';
-    sealPCRs = [];
     sealBackend = availableSealers.length > 0 ? availableSealers[0].id : '';
     sealStorageType = 'disk';
-    platformPolicyStatus = null;
   }
 
   function formatDate(iso: string): string {
@@ -349,22 +316,12 @@
     }
   }
 
-  function getPolicyIcon(policyType: string): string {
-    const iconMap: Record<string, string> = {
-      password: mdiLockOutline,
-      platform_policy: mdiShieldOutline,
-      custom_pcr: mdiChip,
-    };
-    return iconMap[policyType] ?? '';
-  }
-
-  function getPolicyLabel(policyType: string): string {
-    const labelMap: Record<string, string> = {
-      password: 'Password Protected',
-      platform_policy: 'Platform Policy',
-      custom_pcr: 'Custom PCR',
-    };
-    return labelMap[policyType] ?? '';
+  function policyLabel(blob: SealedBlobEntry): string {
+    if (!blob.tpm_policy) {
+      return blob.password_protected ? 'Password' : '';
+    }
+    const name = blob.tpm_policy === 'platform' ? 'Platform' : blob.tpm_policy;
+    return blob.password_protected ? `${name} or password` : name;
   }
 </script>
 
@@ -426,7 +383,7 @@
         columns={[
           { key: 'label', label: 'Label', sortable: true },
           { key: 'backend_id', label: 'Backend', width: '120px', sortable: true },
-          { key: 'policy_type', label: 'Policy', width: '150px', sortable: true },
+          { key: 'tpm_policy', label: 'Policy', width: '150px', sortable: true },
           { key: 'created_at', label: 'Created', width: '160px', sortable: true },
         ]}
         rows={filteredBlobs}
@@ -437,7 +394,7 @@
         emptyTitle="No matching sealed data"
         emptyDescription="Try selecting a different backend filter."
         loading={loading}
-        on:rowdblclick={(e) => initiateUnseal(e.detail.row.id, e.detail.row.label, e.detail.row.policy_type || 'none')}
+        on:rowdblclick={(e) => initiateUnseal(e.detail.row)}
       >
         <svelte:fragment slot="cell" let:row let:column let:value>
           {#if column.key === 'label'}
@@ -447,11 +404,11 @@
             </div>
           {:else if column.key === 'backend_id'}
             <BackendBadge backend={value} compact />
-          {:else if column.key === 'policy_type'}
-            {#if value && value !== 'none'}
+          {:else if column.key === 'tpm_policy'}
+            {#if policyLabel(row)}
               <span class="policy-badge">
-                <Icon path={getPolicyIcon(value)} size={14} />
-                {getPolicyLabel(value)}
+                <Icon path={row.tpm_policy ? mdiShieldOutline : mdiLockOutline} size={14} />
+                {policyLabel(row)}
               </span>
             {:else}
               <span class="text-body-small policy-none">None</span>
@@ -464,7 +421,7 @@
         </svelte:fragment>
         <svelte:fragment slot="actions" let:row>
           <div class="action-buttons">
-            <button class="action-btn" title="Unseal & Copy" on:click|stopPropagation={() => initiateUnseal(row.id, row.label, row.policy_type || 'none')}>
+            <button class="action-btn" title="Unseal & Copy" on:click|stopPropagation={() => initiateUnseal(row)}>
               <Icon path={mdiContentCopy} size={18} />
             </button>
             <button class="action-btn action-btn-danger" title="Delete" on:click|stopPropagation={() => confirmDelete(row.id, row.label)} disabled={row.category === 'system'}>
@@ -539,113 +496,14 @@
       <!-- Protection Policy -->
       <div class="policy-section">
         <span class="text-title-small policy-heading">Protection Policy</span>
-        <div class="policy-options">
-          {#each (effectiveBackend === 'tpm2'
-            ? [
-                { value: 'none', label: 'None', desc: 'Basic sealing without additional policy' },
-                { value: 'password', label: 'Password', desc: 'Require a password to unseal' },
-                { value: 'platform_policy', label: 'Platform Policy', desc: 'Bind to platform PCR measurements' },
-                { value: 'custom_pcr', label: 'Custom PCR', desc: 'Select specific PCRs to bind' },
-              ]
-            : [
-                { value: 'none', label: 'None', desc: 'Basic sealing without additional policy' },
-                { value: 'password', label: 'Password', desc: 'Require a password to unseal' },
-              ]
-          ) as option}
-            <label class="policy-radio" class:policy-radio-selected={sealPolicyType === option.value}>
-              <input
-                type="radio"
-                name="policy-type"
-                value={option.value}
-                bind:group={sealPolicyType}
-                class="policy-radio-input"
-              />
-              <div class="policy-radio-indicator">
-                {#if sealPolicyType === option.value}
-                  <div class="policy-radio-dot"></div>
-                {/if}
-              </div>
-              <div class="policy-radio-content">
-                <span class="text-title-small">{option.label}</span>
-                <span class="text-body-small policy-radio-desc">{option.desc}</span>
-              </div>
-            </label>
-          {/each}
-        </div>
+        <SealPolicyPicker
+          backend={effectiveBackend}
+          bind:tpmPolicy={sealTPMPolicy}
+          bind:requirePassword={sealRequirePassword}
+          bind:password={sealPassword}
+          bind:passwordConfirm={sealPasswordConfirm}
+        />
       </div>
-
-      <!-- Password fields (shown when password policy selected) -->
-      {#if sealPolicyType === 'password'}
-        <div class="policy-detail-section">
-          <Input
-            label="Password"
-            type="password"
-            placeholder="Enter password for sealed data"
-            bind:value={sealPassword}
-          />
-          <Input
-            label="Confirm Password"
-            type="password"
-            placeholder="Re-enter password"
-            bind:value={sealPasswordConfirm}
-          />
-          {#if sealPassword && sealPasswordConfirm && sealPassword !== sealPasswordConfirm}
-            <span class="text-body-small password-mismatch">Passwords do not match</span>
-          {/if}
-        </div>
-      {/if}
-
-      <!-- Platform Policy status (TPM2 only, shown when platform_policy selected) -->
-      {#if effectiveBackend === 'tpm2' && sealPolicyType === 'platform_policy'}
-        <div class="policy-detail-section">
-          {#if platformPolicyLoading}
-            <div class="pp-status-loading">
-              <LoadingSpinner size={20} />
-              <span class="text-body-small">Loading platform policy status...</span>
-            </div>
-          {:else if platformPolicyStatus && platformPolicyStatus.configured}
-            <div class="pp-status-card">
-              <div class="pp-status-row">
-                <StatusBadge status={platformPolicyStatus.valid ? 'verified' : 'error'} />
-                <span class="text-body-medium">
-                  {platformPolicyStatus.valid ? 'Policy is valid and current' : 'Policy validation failed'}
-                </span>
-              </div>
-              <div class="pp-status-detail">
-                <span class="text-label-small pp-detail-label">Bank</span>
-                <span class="text-body-small">{platformPolicyStatus.bank.toUpperCase()}</span>
-              </div>
-              <div class="pp-status-detail">
-                <span class="text-label-small pp-detail-label">PCRs</span>
-                <span class="text-body-small">{platformPolicyStatus.pcrs.join(', ')}</span>
-              </div>
-            </div>
-          {:else}
-            <div class="pp-status-card pp-not-configured">
-              <Icon path={mdiShieldOutline} size={20} />
-              <span class="text-body-medium">Platform policy is not configured. Configure it in Settings before using this option.</span>
-            </div>
-          {/if}
-        </div>
-      {/if}
-
-      <!-- Custom PCR grid (TPM2 only, shown when custom_pcr selected) -->
-      {#if effectiveBackend === 'tpm2' && sealPolicyType === 'custom_pcr'}
-        <div class="policy-detail-section">
-          <p class="text-body-small pcr-desc">Select PCRs to bind. Data can only be unsealed when these PCR values match.</p>
-          <div class="pcr-grid">
-            {#each Array.from({length: 24}, (_, i) => i) as idx}
-              <button
-                class="pcr-chip"
-                class:pcr-selected={sealPCRs.includes(idx)}
-                on:click={() => togglePCR(idx)}
-              >
-                {idx}
-              </button>
-            {/each}
-          </div>
-        </div>
-      {/if}
     </div>
     <svelte:fragment slot="actions">
       <Button variant="text" on:click={() => (showSealDialog = false)} disabled={sealing}>Cancel</Button>
@@ -659,7 +517,7 @@
   <Modal bind:open={showPasswordUnsealDialog} title="Enter Password" maxWidth="400px">
     <div class="password-unseal-form">
       <p class="text-body-medium">
-        This sealed data is password protected. Enter the password to unseal "<strong>{pendingUnsealLabel}</strong>".
+        {passwordUnsealReason} Enter the password to unseal "<strong>{pendingUnsealLabel}</strong>".
       </p>
       <Input
         label="Password"
@@ -887,185 +745,6 @@
 
   .policy-heading {
     color: var(--color-on-surface);
-  }
-
-  .policy-options {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .policy-radio {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 10px 12px;
-    border: 1px solid var(--color-outline-variant);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    cursor: pointer;
-    transition: border-color var(--transition-fast), background-color var(--transition-fast);
-  }
-
-  .policy-radio:hover {
-    background-color: var(--color-surface-container-low);
-  }
-
-  .policy-radio-selected {
-    border-color: var(--color-primary);
-    background-color: var(--color-primary-95);
-  }
-
-  :global([data-theme="dark"]) .policy-radio-selected {
-    background-color: var(--color-primary-container);
-  }
-
-  .policy-radio-input {
-    position: absolute;
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .policy-radio-indicator {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    border: 2px solid var(--color-outline);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    margin-top: 2px;
-    transition: border-color var(--transition-fast);
-  }
-
-  .policy-radio-selected .policy-radio-indicator {
-    border-color: var(--color-primary);
-  }
-
-  .policy-radio-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background-color: var(--color-primary);
-  }
-
-  .policy-radio-content {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-
-  .policy-radio-content span:first-child {
-    color: var(--color-on-surface);
-  }
-
-  .policy-radio-desc {
-    color: var(--color-on-surface-variant);
-  }
-
-  /* Policy detail sections */
-  .policy-detail-section {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 12px;
-    border: 1px solid var(--color-outline-variant);
-    border-radius: var(--radius-md);
-    background-color: var(--color-surface-container-lowest);
-  }
-
-  .password-mismatch {
-    color: var(--color-error);
-  }
-
-  /* Platform Policy status in seal dialog */
-  .pp-status-loading {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--color-on-surface-variant);
-  }
-
-  .pp-status-card {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .pp-status-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .pp-status-detail {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding-left: 4px;
-  }
-
-  .pp-detail-label {
-    color: var(--color-on-surface-variant);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    min-width: 40px;
-  }
-
-  .pp-not-configured {
-    flex-direction: row;
-    align-items: flex-start;
-    gap: 10px;
-    color: var(--color-on-surface-variant);
-  }
-
-  .pp-not-configured span {
-    line-height: 1.4;
-  }
-
-  /* PCR Grid */
-  .pcr-desc {
-    color: var(--color-on-surface-variant);
-    margin: 0;
-  }
-
-  .pcr-grid {
-    display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 4px;
-  }
-
-  .pcr-chip {
-    width: 100%;
-    aspect-ratio: 1;
-    border: 1px solid var(--color-outline-variant);
-    border-radius: var(--radius-sm);
-    background: var(--color-surface);
-    color: var(--color-on-surface-variant);
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all var(--transition-fast);
-    font-family: var(--font-sans);
-  }
-
-  .pcr-chip:hover {
-    background: var(--color-surface-container);
-  }
-
-  .pcr-selected {
-    background: var(--color-primary);
-    color: var(--color-on-primary);
-    border-color: var(--color-primary);
-  }
-
-  .pcr-selected:hover {
-    filter: brightness(1.1);
   }
 
   /* Password Unseal Dialog */

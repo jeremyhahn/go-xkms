@@ -23,7 +23,7 @@ flowchart TD
         S2A[PINService.SetSOPIN] --> S2B[PINService.SetUserPIN]
         S2B --> S2C{PINManager ready?}
         S2C -->|Yes| S2D[Apply immediately]
-        S2C -->|No| S2E[Defer to Step 7]
+        S2C -->|No| S2E[Defer to Step 6]
     end
 
     subgraph S3["Step 3: Provision TPM Keys"]
@@ -40,47 +40,43 @@ flowchart TD
         S4C -->|No| S4E[CreateSRK + SetUserPIN]
     end
 
-    subgraph S5["Step 5: Apply Platform Policy"]
-        S5A[PlatformPolicyService.CreatePolicy]
-        S5A --> S5B["PCRs 0, 7, 9 / SHA-256"]
+    subgraph S5["Step 5: Initialize Barrier"]
+        S5A{UseUserPinAsMaster?}
+        S5A -->|Yes| S5B[barrierPassword = userPIN]
+        S5A -->|No| S5C[Use explicit barrier password]
+        S5B & S5C --> S5D[BarrierService.Initialize]
+        S5D --> S5E{Best strategy}
+        S5E -->|TPM2| S5F[TPM2 strategy — auto-unseal]
+        S5E -->|Software| S5G[Software AES-256-GCM]
     end
 
-    subgraph S6["Step 6: Initialize Barrier"]
-        S6A{UseUserPinAsMaster?}
-        S6A -->|Yes| S6B[barrierPassword = userPIN]
-        S6A -->|No| S6C[Use explicit barrier password]
-        S6B & S6C --> S6D[BarrierService.Initialize]
-        S6D --> S6E{Best strategy}
-        S6E -->|TPM2| S6F[TPM2 strategy — auto-unseal]
-        S6E -->|Software| S6G[Software AES-256-GCM]
+    subgraph S6["Step 6: Initialize Data Directory"]
+        S6A["Create ~/.xkey/data/"] --> S6B[initPINService — TPM2Backend or SoftwareBackend]
+        S6B --> S6C[initializeAuthenticator — PINVerifier wired, already populated]
+        S6C --> S6G[postDataDirStartup]
+        S6G --> S6D{PIN deferred from Step 2?}
+        S6D -->|Yes| S6E[Retry SetSOPIN + SetUserPIN]
+        S6D -->|No| S6F[Skip]
     end
 
-    subgraph S7["Step 7: Initialize Data Directory"]
-        S7A["Create ~/.xkey/data/"] --> S7B[initPINService — TPM2Backend or SoftwareBackend]
-        S7B --> S7C[initializeAuthenticator — PINVerifier wired, already populated]
-        S7C --> S7G[postDataDirStartup]
-        S7G --> S7D{PIN deferred from Step 2?}
-        S7D -->|Yes| S7E[Retry SetSOPIN + SetUserPIN]
-        S7D -->|No| S7F[Skip]
+    subgraph S7["Step 7: Password Protection"]
+        S7A{Mode?}
+        S7A -->|aes_software| S7B[Argon2id key derivation]
+        S7A -->|tpm_sealed| S7C[TPM sealed master key]
     end
 
-    subgraph S8["Step 8: Password Protection"]
-        S8A{Mode?}
-        S8A -->|aes_software| S8B[Argon2id key derivation]
-        S8A -->|tpm_sealed| S8C[TPM sealed master key]
+    subgraph S8["Step 8: Auto-Unseal"]
+        S8A[TPMPolicyService: create named policy auto-unseal over PCRs 0, 7, 9]
+        S8A --> S8B[BarrierAutoUnsealService.EnableAutoUnseal: seal barrier password under it]
+        S8B --> S8C[LUKS passphrase sealed under the built-in platform policy]
     end
 
-    subgraph S9["Step 9: Auto-Unseal"]
-        S9A[SealService.SealData with PolicyTypePlatformPolicy]
-        S9A --> S9B[Seal barrier or LUKS password to TPM]
+    subgraph S9["Step 9: Save Config"]
+        S9A[SetupComplete = true]
     end
 
-    subgraph S10["Step 10: Save Config"]
-        S10A[SetupComplete = true]
-    end
-
-    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8 --> S9 --> S10
-    S10 --> DONE([Setup Complete])
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8 --> S9
+    S9 --> DONE([Setup Complete])
 ```
 
 ### Step 4 Detail: Platform SRK Provisioning
@@ -110,8 +106,8 @@ If eviction fails because the TPM owner hierarchy has auth from a prior installa
 flowchart TD
     START([App Starts]) --> D1{Auto-unseal configured?}
 
-    D1 -->|Yes| AU[PasswordProtectionService.AutoUnlockTPM]
-    AU --> AUR{PCR policy match?}
+    D1 -->|Yes| AU[BarrierAutoUnsealService.TryAutoUnseal]
+    AU --> AUR{TPM releases the password under the auto-unseal policy?}
     AUR -->|Yes| AUTO([App Unlocked — no interaction])
     AUR -->|No| PROMPT
 

@@ -92,7 +92,7 @@ RUN npx playwright install --with-deps chromium
 # wails v2.12.0 pins x/tools v0.30.0, whose go/packages type-checker aborts with
 # `internal error: package "github.com/jeremyhahn/go-qrdb/sdk/go" without types`
 # when the bound type graph transitively reaches go-qrdb/sdk/go's generic DAO
-# types (e.g. via xkey/pkg/pcr_policy). Bumping x/tools to v0.45.0 fixes the
+# types (e.g. via the authenticator RP policy store). Bumping x/tools to v0.45.0 fixes the
 # binding analysis so `wails dev` starts. The app's linked wails lib is unchanged.
 RUN mkdir -p /tmp/wails-cli && cd /tmp/wails-cli && \
     GOFLAGS=-mod=mod GOWORK=off go mod init wailscli && \

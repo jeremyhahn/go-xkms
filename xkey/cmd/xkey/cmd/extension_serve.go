@@ -243,21 +243,21 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				}
 
 			case xkms.StrategyTPM2:
-				// TPM2 strategy: try PCR-policy auto-unseal first (see
-				// `xkey policy set-auto-unseal`) -- it needs no password
-				// because the TPM's own PCR policy session authorizes the
-				// unseal. Fall back to a direct TPM unseal (also
-				// passwordless) when no auto-unseal policy is configured
-				// or auto-unseal fails for any other reason.
+				// TPM2 strategy: try TPM-policy auto-unseal first (see
+				// `xkey tpm policy auto-unseal`) -- it needs no password
+				// because the TPM releases the barrier credential through
+				// the auto-unseal policy's session. Fall back to a direct
+				// TPM unseal (passwordless tpm2 barriers only) when no
+				// auto-unseal policy is configured or the TPM refuses it.
 				tpmDevice, _ := cmd.Flags().GetString("tpm-device")
 				tpmSimulator, _ := cmd.Flags().GetBool("tpm-simulator")
 
-				unsealed, autoCloser, autoErr := tryBarrierPolicyAutoUnseal(context.Background(), logger, barrierSvc, dataDir, tpmDevice, tpmSimulator)
+				unsealed, autoCloser, autoErr := tryBarrierPolicyAutoUnseal(context.Background(), logger, barrierSvc, dataDir, strategy, tpmDevice, tpmSimulator)
 				switch {
 				case autoErr != nil:
-					logger.Warn("barrier PCR-policy auto-unseal failed, falling back to direct TPM unseal", "error", autoErr)
+					logger.Warn("barrier TPM-policy auto-unseal failed, falling back to direct TPM unseal", "error", autoErr)
 				case unsealed:
-					logger.Info("barrier auto-unsealed via PCR policy")
+					logger.Info("barrier auto-unsealed through the TPM auto-unseal policy")
 				}
 
 				if unsealed {

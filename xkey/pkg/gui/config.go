@@ -108,17 +108,9 @@ type GUIConfig struct {
 	// AutoUnsealBlobID is the sealed blob ID containing the encrypted passphrase.
 	AutoUnsealBlobID string `mapstructure:"auto_unseal_blob_id" json:"auto_unseal_blob_id"`
 
-	// AutoUnsealPCRs is the list of TPM PCR indices the sealed blob is bound to.
-	AutoUnsealPCRs []int `mapstructure:"auto_unseal_pcrs" json:"auto_unseal_pcrs"`
-
-	// AutoUnsealPCRBank is the PCR hash algorithm bank (e.g., "sha256").
-	AutoUnsealPCRBank string `mapstructure:"auto_unseal_pcr_bank" json:"auto_unseal_pcr_bank"`
-
-	// AutoUnsealPolicyType is the policy type used when sealing the auto-unseal passphrase.
-	AutoUnsealPolicyType string `mapstructure:"auto_unseal_policy_type" json:"auto_unseal_policy_type"`
-
-	// AutoUnsealPolicyName is the human-readable name of the policy used for auto-unseal.
-	AutoUnsealPolicyName string `mapstructure:"auto_unseal_policy_name" json:"auto_unseal_policy_name"`
+	// AutoUnsealTPMPolicy names the TPM policy the auto-unseal passphrase
+	// is sealed under: "platform", a named policy, or empty for none.
+	AutoUnsealTPMPolicy string `mapstructure:"auto_unseal_tpm_policy" json:"auto_unseal_tpm_policy"`
 
 	// AutoUnsealBackend is the seal backend used for auto-unseal (e.g., "tpm2", "passphrase").
 	AutoUnsealBackend string `mapstructure:"auto_unseal_backend" json:"auto_unseal_backend"`
@@ -150,9 +142,6 @@ type GUIConfig struct {
 
 	// BarrierStrategy is the active barrier strategy ID (e.g., "passphrase", "tpm2").
 	BarrierStrategy string `mapstructure:"barrier_strategy" json:"barrier_strategy"`
-
-	// BarrierAutoUnsealBlobID is the sealed blob ID containing the barrier password for auto-unseal.
-	BarrierAutoUnsealBlobID string `mapstructure:"barrier_auto_unseal_blob_id" json:"barrier_auto_unseal_blob_id,omitempty"`
 
 	// BarrierAutoUnsealEnabled controls whether the barrier is automatically unsealed
 	// on startup (e.g., via TPM PCR policy or sealed password). When false, the user
@@ -375,14 +364,8 @@ func LoadGUIConfig() (*GUIConfig, error) {
 	if viper.IsSet("gui.auto_unseal_blob_id") {
 		cfg.AutoUnsealBlobID = viper.GetString("gui.auto_unseal_blob_id")
 	}
-	if viper.IsSet("gui.auto_unseal_pcr_bank") {
-		cfg.AutoUnsealPCRBank = viper.GetString("gui.auto_unseal_pcr_bank")
-	}
-	if viper.IsSet("gui.auto_unseal_policy_type") {
-		cfg.AutoUnsealPolicyType = viper.GetString("gui.auto_unseal_policy_type")
-	}
-	if viper.IsSet("gui.auto_unseal_policy_name") {
-		cfg.AutoUnsealPolicyName = viper.GetString("gui.auto_unseal_policy_name")
+	if viper.IsSet("gui.auto_unseal_tpm_policy") {
+		cfg.AutoUnsealTPMPolicy = viper.GetString("gui.auto_unseal_tpm_policy")
 	}
 	if viper.IsSet("gui.auto_unseal_backend") {
 		cfg.AutoUnsealBackend = viper.GetString("gui.auto_unseal_backend")
@@ -404,9 +387,6 @@ func LoadGUIConfig() (*GUIConfig, error) {
 	}
 	if viper.IsSet("gui.setup_complete") {
 		cfg.SetupComplete = viper.GetBool("gui.setup_complete")
-	}
-	if viper.IsSet("gui.barrier_auto_unseal_blob_id") {
-		cfg.BarrierAutoUnsealBlobID = viper.GetString("gui.barrier_auto_unseal_blob_id")
 	}
 	if viper.IsSet("gui.barrier_auto_unseal_enabled") {
 		cfg.BarrierAutoUnsealEnabled = viper.GetBool("gui.barrier_auto_unseal_enabled")

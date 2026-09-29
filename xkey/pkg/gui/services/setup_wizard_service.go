@@ -16,7 +16,6 @@ package services
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +27,7 @@ import (
 	"strings"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
@@ -155,22 +155,23 @@ type UserOnboardingChoices struct {
 // SetupWizardService orchestrates the first-run setup wizard by delegating
 // to existing services (StorageService, TPMService, PINService, etc.).
 type SetupWizardService struct {
-	ctx               context.Context
-	storageSvc        *StorageService
-	tpmSvc            *TPMService
-	pinSvc            *PINService
-	sealSvc           *SealService
-	platformPolicySvc *PlatformPolicyService
-	autoUnsealSvc     *AutoUnsealService
-	barrierSvc        *BarrierService
-	staticPwSvc       *StaticPasswordService
-	adminSvc          *AdminService
-	tpmStatusFn       TPMStatusFunc
-	configFunc        func() *GUIConfigData
-	configSave        func(*GUIConfigData) error
-	eventEmitter      func(events.Event)
-	initDataDirFunc   func() error
-	configDir         string
+	ctx             context.Context
+	storageSvc      *StorageService
+	tpmSvc          *TPMService
+	pinSvc          *PINService
+	sealSvc         *SealService
+	tpmPolicySvc    *TPMPolicyService
+	barrierAutoSvc  *BarrierAutoUnsealService
+	autoUnsealSvc   *AutoUnsealService
+	barrierSvc      *BarrierService
+	staticPwSvc     *StaticPasswordService
+	adminSvc        *AdminService
+	tpmStatusFn     TPMStatusFunc
+	configFunc      func() *GUIConfigData
+	configSave      func(*GUIConfigData) error
+	eventEmitter    func(events.Event)
+	initDataDirFunc func() error
+	configDir       string
 }
 
 // NewSetupWizardService creates a new SetupWizardService with its required
@@ -314,9 +315,16 @@ func (s *SetupWizardService) SetSealService(svc *SealService) {
 	s.sealSvc = svc
 }
 
-// SetPlatformPolicyService sets the platform policy service dependency.
-func (s *SetupWizardService) SetPlatformPolicyService(svc *PlatformPolicyService) {
-	s.platformPolicySvc = svc
+// SetTPMPolicyService sets the TPM policy service the wizard creates the
+// barrier auto-unseal policy with.
+func (s *SetupWizardService) SetTPMPolicyService(svc *TPMPolicyService) {
+	s.tpmPolicySvc = svc
+}
+
+// SetBarrierAutoUnsealService sets the service that seals the barrier
+// credential under the auto-unseal policy.
+func (s *SetupWizardService) SetBarrierAutoUnsealService(svc *BarrierAutoUnsealService) {
+	s.barrierAutoSvc = svc
 }
 
 // SetAutoUnsealService sets the auto-unseal service dependency.
@@ -454,7 +462,18 @@ func (s *SetupWizardService) ProbeEnvironment() (*EnvironmentProbe, error) {
 }
 
 // setupTotalSteps is the number of progress steps emitted during ApplySetup.
-const setupTotalSteps = 10
+const setupTotalSteps = 9
+
+// Barrier auto-unseal policy the wizard creates: a named TPM policy over the
+// firmware, Secure Boot and boot-loader PCRs of the SHA-256 bank. The
+// built-in platform policy cannot carry auto-unseal.
+const (
+	wizardAutoUnsealPolicy = "auto-unseal"
+	wizardAutoUnsealBank   = "sha256"
+)
+
+// wizardAutoUnsealPCRs are the PCRs the wizard's auto-unseal policy selects.
+var wizardAutoUnsealPCRs = []uint{0, 7, 9}
 
 // emitProgress sends a setup:progress event to the frontend if an emitter is set.
 func (s *SetupWizardService) emitProgress(step int, label string) {
@@ -529,7 +548,6 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 	}
 
 	// Track TPM-specific outcomes for the event payload.
-	platformPolicyCreated := false
 	tpmSealedPasswords := false
 
 	// Step 1: Apply LUKS encrypted storage (only for LUKS storage type).
@@ -622,21 +640,6 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 		}
 	}
 
-	// Step 5: Apply platform policy.
-	s.emitProgress(5, "Creating platform policy")
-	if s.platformPolicySvc != nil {
-		defaultPCRs := []int{0, 7, 9}
-		defaultBank := "sha256"
-		if _, err := s.platformPolicySvc.CreatePolicy(defaultPCRs, defaultBank); err != nil {
-			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("platform policy creation failed: %v", err))
-		} else {
-			platformPolicyCreated = true
-		}
-	} else {
-		result.Warnings = append(result.Warnings, "platform policy service unavailable")
-	}
-
 	// requestedSealerBackend captures the user's explicit strategy choice before
 	// auto-fill may overwrite an empty value with the best available sealer.
 	// An empty string means "no explicit preference"; "tpm2" / "pkcs11" means
@@ -661,15 +664,15 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 		choices.SealerBackend = "passphrase"
 	}
 
-	// Step 6: Initialize built-in encryption (barrier).
+	// Step 5: Initialize built-in encryption (barrier).
 	// Barrier ALWAYS wraps the base backend (filesystem or LUKS).
 	// When LUKS is selected, the barrier encrypts on top of LUKS.
 	// NOTE: This step must run AFTER TPM provisioning (steps 3-4) because
 	// the TPM2 sealing strategy requires a provisioned SRK.
-	s.emitProgress(6, "Initializing built-in encryption")
+	s.emitProgress(5, "Initializing built-in encryption")
 	barrierInitialized := false
 	barrierStrategy := ""
-	barrierAutoUnsealBlobID := ""
+	barrierAutoUnsealEnabled := false
 	if s.barrierSvc == nil {
 		result.Warnings = append(result.Warnings, "barrier service unavailable")
 	} else {
@@ -788,13 +791,13 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 		}
 	}
 
-	// Step 7: Initialize data directory.
+	// Step 6: Initialize data directory.
 	// NOTE: Must run AFTER barrier init (step 6) so that the static password
 	// store can use the barrier as its encrypted backend.
 	// This also creates the PINManager and starts the FIDO2 device via
 	// postDataDirStartup(). PINs set at step 2 may have failed because
 	// the PINManager did not exist yet; retry here.
-	s.emitProgress(7, "Initializing data directory")
+	s.emitProgress(6, "Initializing data directory")
 	dataDirReady := true
 	if s.initDataDirFunc != nil {
 		if err := s.initDataDirFunc(); err != nil {
@@ -876,7 +879,7 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 		}
 	}
 
-	// Step 8: Configure password protection.
+	// Step 7: Configure password protection.
 	// In quick-setup personal mode, save the auto-generated User PIN to the
 	// password store so the user can retrieve it after the app locks.
 	//
@@ -887,7 +890,7 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 	// generated SO PIN once and requires the operator to acknowledge
 	// recording it out of band (see SOPINRecorded); only the PIN service's
 	// verifier persists.
-	s.emitProgress(8, "Configuring password protection")
+	s.emitProgress(7, "Configuring password protection")
 	saveUserPin := (choices.QuickSetup && choices.DeploymentMode == "personal") || choices.SavePinsToStore
 	if dataDirReady && saveUserPin && s.staticPwSvc != nil {
 		if choices.UserPin != "" {
@@ -904,24 +907,15 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 		}
 	}
 
-	// Step 9: Configure auto-unseal.
-	s.emitProgress(9, "Configuring auto-unseal")
+	// Step 8: Configure auto-unseal.
+	s.emitProgress(8, "Configuring auto-unseal")
 	if choices.EnableAutoUnseal {
 		if choices.StorageType == "luks" && choices.EnableStorage && choices.StoragePass != "" {
 			// LUKS auto-unseal (existing logic).
 			if s.autoUnsealSvc != nil {
-				policyType := string(PolicyTypeNone)
-				policyName := ""
-				if platformPolicyCreated {
-					policyType = string(PolicyTypePlatformPolicy)
-					policyName = "Platform Policy"
-				}
 				if _, err := s.autoUnsealSvc.Enable(
 					choices.StoragePass,
-					[]int{0, 7, 9},
-					"sha256",
-					policyType,
-					policyName,
+					xkms.TPMPolicyPlatform,
 					string(xkms.BackendTypeTPM2),
 				); err != nil {
 					result.Warnings = append(result.Warnings,
@@ -931,48 +925,29 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 				result.Warnings = append(result.Warnings, "auto-unseal service unavailable")
 			}
 		}
-		// Barrier auto-unseal: when using passphrase strategy, seal the
-		// barrier password to TPM so the barrier can auto-unseal on restart.
-		// TPM2 strategy auto-unseals inherently (no password needed).
-		if barrierInitialized && barrierStrategy == "passphrase" {
+		// Barrier auto-unseal: seal the barrier password in the TPM under a
+		// named policy, so the barrier opens at boot while the platform is in
+		// the state the policy approves.
+		if barrierInitialized {
 			barrierPW := choices.BarrierPassword
-			if choices.UseUserPinAsMaster && choices.UserPin != "" {
+			if barrierPW == "" || choices.UseUserPinAsMaster {
 				barrierPW = choices.UserPin
 			}
-			// s.sealSvc must be checked before CanSeal is called, not just
-			// before the result is used: CanSeal has a pointer receiver, and
-			// calling it through a nil *SealService dereferences the receiver
-			// inside the method before any nil check of ours runs.
-			canSeal := false
-			if s.sealSvc != nil {
-				var canSealErr error
-				canSeal, canSealErr = s.sealSvc.CanSeal()
-				if canSealErr != nil {
-					slog.Warn("wizard: failed to check whether the sealer can seal", "error", canSealErr)
-				}
+			ownerAuth := ""
+			if choices.SetHierarchyAuth {
+				ownerAuth = choices.SOPin
 			}
-			if barrierPW != "" && s.sealSvc != nil && canSeal {
-				policyType := string(PolicyTypeNone)
-				if platformPolicyCreated {
-					policyType = string(PolicyTypePlatformPolicy)
-				}
-				req := &SealRequest{
-					Label:      "barrier_password",
-					Data:       base64.StdEncoding.EncodeToString([]byte(barrierPW)),
-					PolicyType: policyType,
-				}
-				if entry, err := s.sealSvc.SealData(req); err != nil {
-					result.Warnings = append(result.Warnings,
-						fmt.Sprintf("barrier auto-unseal: %v (manual unlock on restart)", err))
-				} else {
-					barrierAutoUnsealBlobID = entry.ID
-				}
+			if err := s.enableBarrierAutoUnseal(barrierPW, ownerAuth); err != nil {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("barrier auto-unseal: %v (manual unlock on restart)", err))
+			} else {
+				barrierAutoUnsealEnabled = true
 			}
 		}
 	}
 
-	// Step 10: Save configuration.
-	s.emitProgress(10, "Saving configuration")
+	// Step 9: Save configuration.
+	s.emitProgress(9, "Saving configuration")
 	updated := *cfg
 	if choices.Mode == "server" || choices.Mode == "both" {
 		updated.ServerAddress = choices.ServerAddress
@@ -1006,10 +981,7 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 		updated.SetupComplete = true
 		updated.BarrierInitialized = true
 		updated.BarrierStrategy = barrierStrategy
-		updated.BarrierAutoUnsealEnabled = (barrierStrategy == "tpm2")
-		if barrierAutoUnsealBlobID != "" {
-			updated.BarrierAutoUnsealBlobID = barrierAutoUnsealBlobID
-		}
+		updated.BarrierAutoUnsealEnabled = barrierAutoUnsealEnabled || barrierStrategy == "tpm2"
 		result.SetupComplete = true
 	case barrierAttempted:
 		// Barrier init was attempted with a real service and failed.
@@ -1048,19 +1020,42 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 	// Emit setup completed event.
 	if s.eventEmitter != nil {
 		s.eventEmitter(events.NewEvent(events.EventSetupCompleted, events.SetupCompletedPayload{
-			Mode:                  choices.Mode,
-			StorageCreated:        choices.EnableStorage && result.Success,
-			MasterPWSet:           choices.EnableMasterPW && choices.MasterPassword != "" && result.Success,
-			PlatformPolicyCreated: platformPolicyCreated && result.Success,
-			TPMSealedPasswords:    tpmSealedPasswords && result.Success,
-			UserPINSet:            userPINSet,
-			SOPINSet:              soPINSet,
-			BarrierInitialized:    barrierInitialized,
-			BarrierStrategy:       barrierStrategy,
+			Mode:               choices.Mode,
+			StorageCreated:     choices.EnableStorage && result.Success,
+			MasterPWSet:        choices.EnableMasterPW && choices.MasterPassword != "" && result.Success,
+			TPMSealedPasswords: tpmSealedPasswords && result.Success,
+			UserPINSet:         userPINSet,
+			SOPINSet:           soPINSet,
+			BarrierInitialized: barrierInitialized,
+			BarrierStrategy:    barrierStrategy,
 		}))
 	}
 
 	return result, nil
+}
+
+// enableBarrierAutoUnseal creates the wizard's auto-unseal policy over the
+// live PCRs of the local TPM, or reuses it when a previous run created it,
+// and seals the barrier credential under it. ownerAuth authorizes defining
+// the policy's NV index when the TPM's owner hierarchy has a password.
+func (s *SetupWizardService) enableBarrierAutoUnseal(credential, ownerAuth string) error {
+	if s.tpmPolicySvc == nil || s.barrierAutoSvc == nil {
+		return ErrBarrierAutoUnsealNoPolicyService
+	}
+	local := s.tpmPolicySvc.Local()
+	if local == nil {
+		return ErrBarrierAutoUnsealNoPolicyService
+	}
+	_, err := local.TPMPolicyCreate(context.Background(), &transport.TPMPolicyCreateRequest{
+		Name:      wizardAutoUnsealPolicy,
+		Bank:      wizardAutoUnsealBank,
+		PCRs:      wizardAutoUnsealPCRs,
+		OwnerAuth: ownerAuthBytes(ownerAuth),
+	})
+	if err != nil && !errors.Is(err, xkms.ErrTPMPolicyExists) {
+		return err
+	}
+	return s.barrierAutoSvc.EnableAutoUnseal(wizardAutoUnsealPolicy, credential)
 }
 
 // refuseUnavailableStrategyPersist returns ErrSetupSealStrategyUnavailable

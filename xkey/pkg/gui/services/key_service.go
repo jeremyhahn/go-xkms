@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -58,6 +59,11 @@ type GenerateKeyParams struct {
 	Exportable bool   `json:"exportable,omitempty"`
 
 	// TPM-specific options (used when Backend is "tpm2").
+
+	// TPMPolicy names the TPM policy the key is bound to: empty or
+	// "platform" for the built-in platform policy, or a named policy.
+	TPMPolicy string `json:"tpm_policy,omitempty"`
+
 	Hierarchy    string `json:"hierarchy,omitempty"`
 	Handle       uint32 `json:"handle,omitempty"`
 	IsPrimary    bool   `json:"is_primary,omitempty"`
@@ -112,6 +118,7 @@ type KeyService struct {
 	localClient xkms.Client        // embedded local client (always available after init)
 	auditLogger audit.Logger
 	registry    backendregistry.Registry
+	tpmPolicies *TPMPolicyService
 }
 
 // NewKeyService creates a new KeyService.
@@ -139,6 +146,12 @@ func (s *KeyService) SetAuditLogger(l audit.Logger) {
 // SetLocalClient sets the embedded local client for local key operations.
 func (s *KeyService) SetLocalClient(c xkms.Client) {
 	s.localClient = c
+}
+
+// SetTPMPolicyService sets the TPM policy service that records, in local
+// mode, which policy each local TPM key is bound to.
+func (s *KeyService) SetTPMPolicyService(svc *TPMPolicyService) {
+	s.tpmPolicies = svc
 }
 
 // SetRegistry sets the backend registry for listing registered backends.
@@ -419,6 +432,7 @@ func (s *KeyService) GenerateKey(source string, req *GenerateKeyParams) (*Genera
 		KeySize:    req.KeySize,
 		Curve:      req.Curve,
 		Exportable: req.Exportable,
+		TPMPolicy:  req.TPMPolicy,
 	})
 	if s.auditLogger != nil {
 		if auditErr := s.auditLogger.LogKeyOperation(audit.OpKeyCreated, req.Backend, req.KeyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
@@ -427,6 +441,12 @@ func (s *KeyService) GenerateKey(source string, req *GenerateKeyParams) (*Genera
 	}
 	if err != nil {
 		return nil, err
+	}
+	if err := s.recordLocalTPMKey(source, req.Backend, resp.KeyID, req.TPMPolicy); err != nil {
+		// A key the registry does not know would keep its policy from ever
+		// being deleted safely, so it does not survive the failure.
+		_, delErr := client.DeleteKey(s.ctx, req.Backend, resp.KeyID)
+		return nil, errors.Join(err, delErr)
 	}
 	return &GenerateKeyResult{
 		KeyID:        resp.KeyID,
@@ -449,7 +469,37 @@ func (s *KeyService) DeleteKey(source, backend, keyID string) error {
 			return auditErr
 		}
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return s.forgetLocalTPMKey(source, backend, keyID)
+}
+
+// recordLocalTPMKey records, for a key created on xKey's own TPM, the policy
+// it is bound to, so the policy's objects include it. A server records its
+// own keys, and keys on other backends have no TPM policy.
+func (s *KeyService) recordLocalTPMKey(source, backend, keyID, policy string) error {
+	if source != "local" || backend != string(xkms.BackendTypeTPM2) || s.tpmPolicies == nil {
+		return nil
+	}
+	name, err := objectName(keyID)
+	if err != nil {
+		return err
+	}
+	return s.tpmPolicies.assignLocal(s.ctx, xkms.TPMObjectKindKey, name, policy)
+}
+
+// forgetLocalTPMKey removes the policy assignment of a deleted local TPM
+// key.
+func (s *KeyService) forgetLocalTPMKey(source, backend, keyID string) error {
+	if source != "local" || backend != string(xkms.BackendTypeTPM2) || s.tpmPolicies == nil {
+		return nil
+	}
+	name, err := objectName(keyID)
+	if err != nil {
+		return err
+	}
+	return s.tpmPolicies.unassignLocal(s.ctx, xkms.TPMObjectKindKey, name)
 }
 
 // SignData signs base64-encoded data and returns the base64-encoded signature.

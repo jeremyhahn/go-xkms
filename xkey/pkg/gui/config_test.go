@@ -235,84 +235,6 @@ func TestGUIConfig_JSONRoundtrip(t *testing.T) {
 // Auto-unseal config field tests
 // ---------------------------------------------------------------------------
 
-func TestGUIConfig_AutoUnsealFields_JSONRoundtrip(t *testing.T) {
-	cfg := &GUIConfig{
-		Theme:             ThemeSystem,
-		WindowWidth:       1024,
-		WindowHeight:      768,
-		AutoUnsealEnabled: true,
-		AutoUnsealBlobID:  "blob-abc123",
-		AutoUnsealPCRs:    []int{0, 7, 14},
-		AutoUnsealPCRBank: "sha256",
-	}
-
-	data, err := json.Marshal(cfg)
-	require.NoError(t, err)
-
-	var decoded GUIConfig
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-	assert.True(t, decoded.AutoUnsealEnabled)
-	assert.Equal(t, "blob-abc123", decoded.AutoUnsealBlobID)
-	assert.Equal(t, []int{0, 7, 14}, decoded.AutoUnsealPCRs)
-	assert.Equal(t, "sha256", decoded.AutoUnsealPCRBank)
-}
-
-func TestGUIConfig_AutoUnsealFields_DefaultsZero(t *testing.T) {
-	cfg := DefaultGUIConfig()
-	assert.False(t, cfg.AutoUnsealEnabled)
-	assert.Empty(t, cfg.AutoUnsealBlobID)
-	assert.Nil(t, cfg.AutoUnsealPCRs)
-	assert.Empty(t, cfg.AutoUnsealPCRBank)
-}
-
-func TestSaveAndLoadGUIConfig_AutoUnsealFields(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer func() {
-		_ = os.Setenv("HOME", origHome)
-	}()
-
-	cfg := DefaultGUIConfig()
-	cfg.AutoUnsealEnabled = true
-	cfg.AutoUnsealBlobID = "blob-xyz789"
-	cfg.AutoUnsealPCRs = []int{0, 1, 7}
-	cfg.AutoUnsealPCRBank = "sha384"
-
-	// Save.
-	err := SaveGUIConfig(cfg)
-	require.NoError(t, err)
-
-	// Read file and verify the auto-unseal fields are persisted.
-	cfgPath := filepath.Join(tmpDir, ".config", "xkey", "gui.json")
-	data, readErr := os.ReadFile(cfgPath)
-	require.NoError(t, readErr)
-
-	var loaded GUIConfig
-	err = json.Unmarshal(data, &loaded)
-	require.NoError(t, err)
-	assert.True(t, loaded.AutoUnsealEnabled)
-	assert.Equal(t, "blob-xyz789", loaded.AutoUnsealBlobID)
-	assert.Equal(t, []int{0, 1, 7}, loaded.AutoUnsealPCRs)
-	assert.Equal(t, "sha384", loaded.AutoUnsealPCRBank)
-}
-
-func TestGUIConfig_AutoUnsealFields_Validate_DoesNotReject(t *testing.T) {
-	cfg := DefaultGUIConfig()
-	cfg.AutoUnsealEnabled = true
-	cfg.AutoUnsealBlobID = "test-blob"
-	cfg.AutoUnsealPCRs = []int{0}
-	cfg.AutoUnsealPCRBank = "sha256"
-
-	err := cfg.Validate()
-	assert.NoError(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// SetupComplete config field tests
-// ---------------------------------------------------------------------------
-
 func TestGUIConfig_SetupComplete_DefaultFalse(t *testing.T) {
 	cfg := DefaultGUIConfig()
 	assert.False(t, cfg.SetupComplete)
@@ -432,7 +354,7 @@ func TestSaveLoadGUIConfig_AllBarrierFieldsPreserved(t *testing.T) {
 	cfg.SetupComplete = true
 	cfg.BarrierInitialized = true
 	cfg.BarrierStrategy = "tpm2"
-	cfg.BarrierAutoUnsealBlobID = "blob-barrier-99"
+	cfg.BarrierAutoUnsealEnabled = true
 	cfg.StorageType = "barrier"
 	cfg.SealerBackend = "tpm2"
 
@@ -444,7 +366,7 @@ func TestSaveLoadGUIConfig_AllBarrierFieldsPreserved(t *testing.T) {
 	assert.True(t, loaded.SetupComplete)
 	assert.True(t, loaded.BarrierInitialized)
 	assert.Equal(t, "tpm2", loaded.BarrierStrategy)
-	assert.Equal(t, "blob-barrier-99", loaded.BarrierAutoUnsealBlobID)
+	assert.True(t, loaded.BarrierAutoUnsealEnabled)
 	assert.Equal(t, "barrier", loaded.StorageType)
 	assert.Equal(t, "tpm2", loaded.SealerBackend)
 }

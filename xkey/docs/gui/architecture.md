@@ -1,6 +1,6 @@
 # xKey Desktop GUI — Architecture
 
-> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-28
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-29
 
 This file replaces the pre-convention `gui/architecture.md`. The other files
 in this folder — `README.md`, `features.md`, `design-system.md`,
@@ -52,9 +52,9 @@ groups naturally by domain:
 
 | Domain | Representative services |
 |---|---|
-| Credentials & backends | `FIDO2Service`, `FIDO2DeviceService`, `OATHService`, `PIVService`, `StaticPasswordService`, `SSHService`/`SSHProfileService`/`SSHConnectService`/`SSHConsoleService`/`SSHLocalService`, `PKCS11Service`, `TPMService`, `KeyService`, `CertificateService` |
+| Credentials & backends | `FIDO2Service`, `FIDO2DeviceService`, `OATHService`, `PIVService`, `StaticPasswordService`, `SSHService`/`SSHProfileService`/`SSHConnectService`/`SSHConsoleService`/`SSHLocalService`, `PKCS11Service`, `TPMService`, `TPMPolicyService`, `KeyService`, `CertificateService` |
 | Phone | `PhoneService` — see [../phone/](../phone/architecture.md) |
-| Barrier / seal / lock | `SealService`, `SealProtectionService`, `BarrierService`, `BarrierAutoUnsealService`, `AutoUnsealService`, `AppLockService`, `PasswordProtectionService`, `PlatformPolicyService`, `PINService` |
+| Barrier / seal / lock | `SealService`, `SealProtectionService`, `BarrierService`, `BarrierAutoUnsealService`, `AutoUnsealService`, `AppLockService`, `PasswordProtectionService`, `PINService` |
 | Identity & auth | `AuthService`, `SecurityFactorService`, `OIDCService`, `PairingService` (extension pairing) |
 | Admin & multi-tenant | `AdminService`, `TrustService`, `TenantService`, `TeamService`, `AgentService`, `ConnectionService` |
 | Browser | `BrowserService`, `SecureBrowserService`, `AutoFillService` (all three appended only when non-nil, `app.go:2650-2659`) |

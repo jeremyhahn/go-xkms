@@ -16,13 +16,11 @@ package services
 import (
 	"context"
 	"errors"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/stretchr/testify/assert"
@@ -270,131 +268,3 @@ func TestFinal_FactoryReset_ConfigSaveError(t *testing.T) {
 // =========================================================================
 // File 2: platform_policy_service.go error branch coverage
 // =========================================================================
-
-func TestFinal_PlatformPolicy_VerifyDigests_BadHexInStored(t *testing.T) {
-	// Covers L633-635: storedBytes decode error -> ErrPolicyVerifyFailed.
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return defaultMockTPM()
-	}))
-
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "ZZZZ"}, // invalid hex
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	svc.policy.Store(def)
-
-	valid, err := svc.verifyDigests(def)
-	assert.False(t, valid)
-	assert.ErrorIs(t, err, ErrPolicyVerifyFailed)
-}
-
-func TestFinal_PlatformPolicy_VerifyDigests_DigestMismatch(t *testing.T) {
-	// Covers L642-644: stored hex is valid but doesn't match live -> false, nil.
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return defaultMockTPM()
-	}))
-
-	def := &PlatformPolicyDefinition{
-		PCRs:      []int{0},
-		Bank:      "sha256",
-		Digests:   map[int]string{0: "aabbccdd"}, // valid hex, won't match live
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	svc.policy.Store(def)
-
-	valid, err := svc.verifyDigests(def)
-	// Mismatch -> returns false, nil.
-	assert.False(t, valid)
-	assert.NoError(t, err)
-}
-
-func TestFinal_PlatformPolicy_SavePolicy_MkdirAllError(t *testing.T) {
-	// Covers L654-655: os.MkdirAll fails -> ErrPolicySaveFailed.
-	tmpDir := t.TempDir()
-	blockingFile := filepath.Join(tmpDir, "blocker")
-	require.NoError(t, os.WriteFile(blockingFile, []byte("x"), 0600))
-
-	policyPath := filepath.Join(blockingFile, "subdir", "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "aabb"},
-	}
-
-	err := svc.savePolicy(def)
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-func TestFinal_PlatformPolicy_SavePolicy_WriteFileError(t *testing.T) {
-	// Covers L664-665: os.WriteFile fails -> ErrPolicySaveFailed.
-	tmpDir := t.TempDir()
-	policyDir := filepath.Join(tmpDir, "policies")
-	require.NoError(t, os.MkdirAll(policyDir, 0500)) // read+execute only
-
-	policyPath := filepath.Join(policyDir, "platform.policy")
-	svc := NewPlatformPolicyService(policyPath)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "aabb"},
-	}
-
-	err := svc.savePolicy(def)
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-
-	// Restore permissions so cleanup works.
-	_ = os.Chmod(policyDir, 0700)
-}
-
-func TestFinal_PlatformPolicy_SavePolicy_RenameError(t *testing.T) {
-	// Covers L668-670: os.Rename fails -> ErrPolicySaveFailed.
-	// Create a directory at the policy path so rename of .tmp -> dir fails.
-	tmpDir := t.TempDir()
-	policyPath := filepath.Join(tmpDir, "platform.policy")
-	require.NoError(t, os.MkdirAll(policyPath, 0700))
-
-	svc := NewPlatformPolicyService(policyPath)
-
-	def := &PlatformPolicyDefinition{
-		PCRs:    []int{0},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "aabb"},
-	}
-
-	err := svc.savePolicy(def)
-	assert.ErrorIs(t, err, ErrPolicySaveFailed)
-}
-
-func TestFinal_PlatformPolicy_ExportPolicy_FullOutput(t *testing.T) {
-	// Covers L378-381: json.MarshalIndent success path in ExportPolicy.
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.policy.Store(&PlatformPolicyDefinition{
-		PCRs:    []int{0, 7},
-		Bank:    "sha256",
-		Digests: map[int]string{0: "aa", 7: "bb"},
-	})
-
-	val, err := svc.ExportPolicy()
-	require.NoError(t, err)
-	assert.Contains(t, val, "pcr_digests")
-	assert.Contains(t, val, "sha256:0")
-	assert.Contains(t, val, "sha256:7")
-}
-
-func TestFinal_PlatformPolicy_GetPolicyPCRs_NilPolicy(t *testing.T) {
-	// Covers the nil policy path in GetPolicyPCRs.
-	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	pcrs, bank, err := svc.GetPolicyPCRs()
-	assert.Nil(t, pcrs)
-	assert.Empty(t, bank)
-	assert.ErrorIs(t, err, ErrPolicyNotConfigured)
-}

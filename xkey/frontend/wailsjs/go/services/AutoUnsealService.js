@@ -6,8 +6,8 @@ export function Disable() {
   return window['go']['services']['AutoUnsealService']['Disable']();
 }
 
-export function Enable(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['services']['AutoUnsealService']['Enable'](arg1, arg2, arg3, arg4, arg5, arg6);
+export function Enable(arg1, arg2, arg3) {
+  return window['go']['services']['AutoUnsealService']['Enable'](arg1, arg2, arg3);
 }
 
 export function GetStatus() {

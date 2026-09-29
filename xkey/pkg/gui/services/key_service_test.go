@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
+
 	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -35,6 +37,9 @@ import (
 // mockClient implements the subset of transport.Client that KeyService uses.
 // Methods not used by KeyService panic to detect accidental usage.
 type mockClient struct {
+	// Fake serves the TPM policy API, which these tests do not exercise.
+	*tpmpolicyfake.Fake
+
 	listBackendsFn func(ctx context.Context) (*transport.ListBackendsResponse, error)
 	getBackendFn   func(ctx context.Context, id string) (*transport.BackendInfo, error)
 	listKeysFn     func(ctx context.Context, backend string) (*transport.ListKeysResponse, error)
@@ -393,27 +398,6 @@ func (m *mockClient) ListEscrowed(context.Context) ([]transport.EscrowRecord, er
 	panic("not implemented")
 }
 func (m *mockClient) RevokeEscrow(context.Context, string) error {
-	panic("not implemented")
-}
-func (m *mockClient) PolicyCreate(context.Context, *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) PolicyGet(context.Context, *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) PolicyList(context.Context) (*transport.PolicyListResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) PolicyDelete(context.Context, *transport.PolicyDeleteRequest) error {
-	panic("not implemented")
-}
-func (m *mockClient) PolicyRefresh(context.Context, *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) PolicyVerify(context.Context, *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) PolicyExport(context.Context, *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
 	panic("not implemented")
 }
 

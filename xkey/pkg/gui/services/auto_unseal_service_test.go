@@ -186,77 +186,6 @@ func TestAutoUnsealService_GetStatus_EnabledButNoBlobID(t *testing.T) {
 // Enable
 // ---------------------------------------------------------------------------
 
-func TestAutoUnsealService_Enable_Success(t *testing.T) {
-	mock := defaultSealMock()
-	autoSvc, _, _ := newAutoUnsealTestSvc(t, mock)
-
-	cfg := testConfigData()
-	var savedCfg *GUIConfigData
-	autoSvc.SetConfigFunc(func() *GUIConfigData { return cfg })
-	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error {
-		savedCfg = c
-		return nil
-	})
-
-	result, err := autoSvc.Enable("strongpassphrase", []int{0, 7}, "sha256", "none", "", "")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.Success)
-	assert.Contains(t, result.Message, "enabled")
-
-	// Verify config was updated.
-	require.NotNil(t, savedCfg)
-	assert.True(t, savedCfg.AutoUnsealEnabled)
-	assert.NotEmpty(t, savedCfg.AutoUnsealBlobID)
-	assert.Equal(t, []int{0, 7}, savedCfg.AutoUnsealPCRs)
-	assert.Equal(t, "sha256", savedCfg.AutoUnsealPCRBank)
-}
-
-func TestAutoUnsealService_Enable_WithPolicyType(t *testing.T) {
-	mock := defaultSealMock()
-	autoSvc, _, _ := newAutoUnsealTestSvc(t, mock)
-
-	cfg := testConfigData()
-	var savedCfg *GUIConfigData
-	autoSvc.SetConfigFunc(func() *GUIConfigData { return cfg })
-	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error {
-		savedCfg = c
-		return nil
-	})
-
-	// Use custom_pcr policy type which does not require a PlatformPolicyService.
-	result, err := autoSvc.Enable("strongpassphrase", []int{0, 7, 9}, "sha256",
-		string(PolicyTypeCustomPCR), "Custom PCR Policy", "")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.Success)
-
-	// Verify policy fields were persisted.
-	require.NotNil(t, savedCfg)
-	assert.Equal(t, string(PolicyTypeCustomPCR), savedCfg.AutoUnsealPolicyType)
-	assert.Equal(t, "Custom PCR Policy", savedCfg.AutoUnsealPolicyName)
-}
-
-func TestAutoUnsealService_Enable_DefaultPCRBank(t *testing.T) {
-	mock := defaultSealMock()
-	autoSvc, _, _ := newAutoUnsealTestSvc(t, mock)
-
-	cfg := testConfigData()
-	var savedCfg *GUIConfigData
-	autoSvc.SetConfigFunc(func() *GUIConfigData { return cfg })
-	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error {
-		savedCfg = c
-		return nil
-	})
-
-	// Empty PCR bank should default to sha256.
-	result, err := autoSvc.Enable("strongpassphrase", []int{0}, "", "none", "", "")
-	require.NoError(t, err)
-	assert.True(t, result.Success)
-	require.NotNil(t, savedCfg)
-	assert.Equal(t, "sha256", savedCfg.AutoUnsealPCRBank)
-}
-
 func TestAutoUnsealService_Enable_NoTPM(t *testing.T) {
 	// Use a mock with canSeal = false.
 	mock := defaultSealMock()
@@ -266,7 +195,7 @@ func TestAutoUnsealService_Enable_NoTPM(t *testing.T) {
 	autoSvc.SetConfigFunc(func() *GUIConfigData { return testConfigData() })
 	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error { return nil })
 
-	_, err := autoSvc.Enable("strongpassphrase", []int{0}, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("strongpassphrase", "", "")
 	assert.ErrorIs(t, err, ErrAutoUnsealTPMNotAvailable)
 }
 
@@ -274,7 +203,7 @@ func TestAutoUnsealService_Enable_EmptyPassphrase(t *testing.T) {
 	mock := defaultSealMock()
 	autoSvc, _, _ := newAutoUnsealTestSvc(t, mock)
 
-	_, err := autoSvc.Enable("", nil, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("", "", "")
 	assert.ErrorIs(t, err, ErrAutoUnsealInvalidPassphrase)
 }
 
@@ -282,7 +211,7 @@ func TestAutoUnsealService_Enable_ShortPassphrase(t *testing.T) {
 	mock := defaultSealMock()
 	autoSvc, _, _ := newAutoUnsealTestSvc(t, mock)
 
-	_, err := autoSvc.Enable("short", nil, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("short", "", "")
 	assert.ErrorIs(t, err, ErrAutoUnsealInvalidPassphrase)
 }
 
@@ -294,7 +223,7 @@ func TestAutoUnsealService_Enable_ExactlyMinLength(t *testing.T) {
 	autoSvc.SetConfigFunc(func() *GUIConfigData { return cfg })
 	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error { return nil })
 
-	result, err := autoSvc.Enable("12345678", nil, "sha256", "none", "", "")
+	result, err := autoSvc.Enable("12345678", "", "")
 	require.NoError(t, err)
 	assert.True(t, result.Success)
 }
@@ -308,7 +237,7 @@ func TestAutoUnsealService_Enable_SealFailed(t *testing.T) {
 	autoSvc.SetConfigFunc(func() *GUIConfigData { return cfg })
 	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error { return nil })
 
-	_, err := autoSvc.Enable("strongpassphrase", nil, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("strongpassphrase", "", "")
 	assert.ErrorIs(t, err, ErrAutoUnsealSealFailed)
 }
 
@@ -321,7 +250,7 @@ func TestAutoUnsealService_Enable_ConfigSaveFails(t *testing.T) {
 	autoSvc.SetConfigFunc(func() *GUIConfigData { return cfg })
 	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error { return saveErr })
 
-	_, err := autoSvc.Enable("strongpassphrase", nil, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("strongpassphrase", "", "")
 	assert.Equal(t, saveErr, err)
 
 	// Verify the sealed blob was cleaned up (deleted).
@@ -336,7 +265,7 @@ func TestAutoUnsealService_Enable_NilConfigFunc(t *testing.T) {
 	// Do not set configFunc.
 	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error { return nil })
 
-	_, err := autoSvc.Enable("strongpassphrase", nil, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("strongpassphrase", "", "")
 	assert.ErrorIs(t, err, ErrAutoUnsealConfigFuncNil)
 }
 
@@ -346,60 +275,13 @@ func TestAutoUnsealService_Enable_NilConfigSaveFunc(t *testing.T) {
 	autoSvc.SetConfigFunc(func() *GUIConfigData { return testConfigData() })
 	// Do not set configSave.
 
-	_, err := autoSvc.Enable("strongpassphrase", nil, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("strongpassphrase", "", "")
 	assert.ErrorIs(t, err, ErrAutoUnsealConfigSaveFuncNil)
 }
 
 // ---------------------------------------------------------------------------
 // Disable
 // ---------------------------------------------------------------------------
-
-func TestAutoUnsealService_Disable_Success(t *testing.T) {
-	mock := defaultSealMock()
-	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
-
-	// First enable auto-unseal with a custom PCR policy.
-	cfg := testConfigData()
-	var savedCfg *GUIConfigData
-	autoSvc.SetConfigFunc(func() *GUIConfigData {
-		if savedCfg != nil {
-			return savedCfg
-		}
-		return cfg
-	})
-	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error {
-		savedCfg = c
-		return nil
-	})
-
-	result, err := autoSvc.Enable("strongpassphrase", []int{0}, "sha256",
-		string(PolicyTypeCustomPCR), "Custom PCR Policy", "")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// Verify blob exists.
-	blobs, listErr := sealSvc.ListBlobs()
-	require.NoError(t, listErr)
-	require.Len(t, blobs, 1)
-
-	// Now disable.
-	err = autoSvc.Disable()
-	require.NoError(t, err)
-
-	// Verify blob was deleted.
-	blobs, listErr = sealSvc.ListBlobs()
-	require.NoError(t, listErr)
-	assert.Empty(t, blobs)
-
-	// Verify config was cleared.
-	assert.False(t, savedCfg.AutoUnsealEnabled)
-	assert.Empty(t, savedCfg.AutoUnsealBlobID)
-	assert.Nil(t, savedCfg.AutoUnsealPCRs)
-	assert.Empty(t, savedCfg.AutoUnsealPCRBank)
-	assert.Empty(t, savedCfg.AutoUnsealPolicyType)
-	assert.Empty(t, savedCfg.AutoUnsealPolicyName)
-	assert.Empty(t, savedCfg.AutoUnsealBackend)
-}
 
 func TestAutoUnsealService_Disable_NotConfigured(t *testing.T) {
 	mock := defaultSealMock()
@@ -521,7 +403,7 @@ func TestAutoUnsealService_TryAutoUnseal_AlreadyMounted(t *testing.T) {
 	})
 
 	// Enable auto-unseal first.
-	_, err := autoSvc.Enable("strongpassphrase", nil, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("strongpassphrase", "", "")
 	require.NoError(t, err)
 
 	// Create a mock elevator that makes GetStatus report mounted.
@@ -569,7 +451,7 @@ func TestAutoUnsealService_TryAutoUnseal_UnlockFails(t *testing.T) {
 		return nil
 	})
 
-	_, err := autoSvc.Enable("strongpassphrase", nil, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("strongpassphrase", "", "")
 	require.NoError(t, err)
 	require.NotEmpty(t, cfg.AutoUnsealBlobID)
 
@@ -597,7 +479,7 @@ func TestAutoUnsealService_TryAutoUnseal_Success(t *testing.T) {
 		return nil
 	})
 
-	_, err := autoSvc.Enable("strongpassphrase", nil, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("strongpassphrase", "", "")
 	require.NoError(t, err)
 	require.NotEmpty(t, cfg.AutoUnsealBlobID)
 
@@ -667,7 +549,7 @@ func TestAutoUnsealService_EnableDisableRoundTrip(t *testing.T) {
 	})
 
 	// Enable.
-	result, err := autoSvc.Enable("strongpassphrase", []int{0, 7}, "sha256", "none", "", "")
+	result, err := autoSvc.Enable("strongpassphrase", "", "")
 	require.NoError(t, err)
 	assert.True(t, result.Success)
 
@@ -701,48 +583,6 @@ func TestAutoUnsealService_EnableDisableRoundTrip(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Reseal
 // ---------------------------------------------------------------------------
-
-func TestAutoUnsealService_Reseal_Success(t *testing.T) {
-	mock := defaultSealMock()
-	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
-
-	// Enable auto-unseal first with a custom PCR policy.
-	cfg := testConfigData()
-	autoSvc.SetConfigFunc(func() *GUIConfigData { return cfg })
-	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error {
-		cfg = c
-		return nil
-	})
-
-	result, err := autoSvc.Enable("strongpassphrase", []int{0, 7}, "sha256",
-		string(PolicyTypeCustomPCR), "Custom PCR Policy", "")
-	require.NoError(t, err)
-	assert.True(t, result.Success)
-
-	oldBlobID := cfg.AutoUnsealBlobID
-	require.NotEmpty(t, oldBlobID)
-
-	// Reseal.
-	err = autoSvc.Reseal()
-	require.NoError(t, err)
-
-	// Blob ID should have changed.
-	assert.NotEqual(t, oldBlobID, cfg.AutoUnsealBlobID)
-	assert.NotEmpty(t, cfg.AutoUnsealBlobID)
-
-	// Config should still be enabled with the same PCRs and policy.
-	assert.True(t, cfg.AutoUnsealEnabled)
-	assert.Equal(t, []int{0, 7}, cfg.AutoUnsealPCRs)
-	assert.Equal(t, "sha256", cfg.AutoUnsealPCRBank)
-	assert.Equal(t, string(PolicyTypeCustomPCR), cfg.AutoUnsealPolicyType)
-	assert.Equal(t, "Custom PCR Policy", cfg.AutoUnsealPolicyName)
-
-	// Exactly one blob should remain (old deleted, new created).
-	blobs, listErr := sealSvc.ListBlobs()
-	require.NoError(t, listErr)
-	assert.Len(t, blobs, 1)
-	assert.Equal(t, cfg.AutoUnsealBlobID, blobs[0].ID)
-}
 
 func TestAutoUnsealService_Reseal_NotConfigured(t *testing.T) {
 	mock := defaultSealMock()
@@ -802,7 +642,7 @@ func TestAutoUnsealService_Reseal_SealFails(t *testing.T) {
 		return nil
 	})
 
-	_, err := autoSvc.Enable("strongpassphrase", []int{0, 7}, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("strongpassphrase", "", "")
 	require.NoError(t, err)
 
 	oldBlobID := cfg.AutoUnsealBlobID
@@ -833,7 +673,7 @@ func TestAutoUnsealService_Reseal_ConfigSaveFails(t *testing.T) {
 		return nil
 	})
 
-	_, err := autoSvc.Enable("strongpassphrase", []int{0, 7}, "sha256", "none", "", "")
+	_, err := autoSvc.Enable("strongpassphrase", "", "")
 	require.NoError(t, err)
 
 	oldBlobID := cfg.AutoUnsealBlobID
@@ -854,67 +694,6 @@ func TestAutoUnsealService_Reseal_ConfigSaveFails(t *testing.T) {
 	assert.Equal(t, oldBlobID, blobs[0].ID)
 }
 
-func TestAutoUnsealService_Reseal_DefaultPCRBank(t *testing.T) {
-	mock := defaultSealMock()
-	autoSvc, _, _ := newAutoUnsealTestSvc(t, mock)
-
-	// Enable auto-unseal with empty PCR bank.
-	cfg := testConfigData()
-	autoSvc.SetConfigFunc(func() *GUIConfigData { return cfg })
-	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error {
-		cfg = c
-		return nil
-	})
-
-	_, err := autoSvc.Enable("strongpassphrase", []int{0}, "", "none", "", "")
-	require.NoError(t, err)
-
-	// Manually clear the PCR bank in config to test default.
-	cfg.AutoUnsealPCRBank = ""
-
-	err = autoSvc.Reseal()
-	require.NoError(t, err)
-
-	// Config should still work after reseal.
-	assert.True(t, cfg.AutoUnsealEnabled)
-	assert.NotEmpty(t, cfg.AutoUnsealBlobID)
-}
-
-func TestAutoUnsealService_Reseal_PreservesPolicyType(t *testing.T) {
-	mock := defaultSealMock()
-	autoSvc, _, _ := newAutoUnsealTestSvc(t, mock)
-
-	// Enable with custom PCR policy (does not require PlatformPolicyService).
-	cfg := testConfigData()
-	autoSvc.SetConfigFunc(func() *GUIConfigData { return cfg })
-	autoSvc.SetConfigSaveFunc(func(c *GUIConfigData) error {
-		cfg = c
-		return nil
-	})
-
-	_, err := autoSvc.Enable("strongpassphrase", []int{0, 7, 9}, "sha256",
-		string(PolicyTypeCustomPCR), "Custom PCR Policy", "")
-	require.NoError(t, err)
-
-	// Verify policy type is stored.
-	assert.Equal(t, string(PolicyTypeCustomPCR), cfg.AutoUnsealPolicyType)
-
-	oldBlobID := cfg.AutoUnsealBlobID
-
-	// Reseal should preserve the policy type in the new seal request.
-	err = autoSvc.Reseal()
-	require.NoError(t, err)
-
-	// Blob ID changed but policy fields persisted.
-	assert.NotEqual(t, oldBlobID, cfg.AutoUnsealBlobID)
-	assert.Equal(t, string(PolicyTypeCustomPCR), cfg.AutoUnsealPolicyType)
-	assert.Equal(t, "Custom PCR Policy", cfg.AutoUnsealPolicyName)
-}
-
-// ---------------------------------------------------------------------------
-// Enable with explicit backend
-// ---------------------------------------------------------------------------
-
 func TestAutoUnsealService_Enable_WithExplicitBackend(t *testing.T) {
 	mock := defaultSealMock()
 	autoSvc, _, _ := newAutoUnsealTestSvc(t, mock)
@@ -927,7 +706,7 @@ func TestAutoUnsealService_Enable_WithExplicitBackend(t *testing.T) {
 		return nil
 	})
 
-	result, err := autoSvc.Enable("strongpassphrase", []int{0, 7}, "sha256", "none", "", "tpm2")
+	result, err := autoSvc.Enable("strongpassphrase", "", "tpm2")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.True(t, result.Success)
@@ -957,7 +736,7 @@ func TestAutoUnsealService_Reseal_PreservesBackend(t *testing.T) {
 		return nil
 	})
 
-	result, err := autoSvc.Enable("strongpassphrase", []int{0, 7}, "sha256", "none", "", "tpm2")
+	result, err := autoSvc.Enable("strongpassphrase", "", "tpm2")
 	require.NoError(t, err)
 	assert.True(t, result.Success)
 

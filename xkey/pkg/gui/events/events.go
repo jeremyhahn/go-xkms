@@ -333,15 +333,14 @@ type CredentialCreatedPayload struct {
 
 // SetupCompletedPayload carries data for the setup:completed event.
 type SetupCompletedPayload struct {
-	Mode                  string `json:"mode"`
-	StorageCreated        bool   `json:"storage_created"`
-	MasterPWSet           bool   `json:"master_password_set"`
-	PlatformPolicyCreated bool   `json:"platform_policy_created"`
-	TPMSealedPasswords    bool   `json:"tpm_sealed_passwords"`
-	UserPINSet            bool   `json:"user_pin_set"`
-	SOPINSet              bool   `json:"so_pin_set"`
-	BarrierInitialized    bool   `json:"barrier_initialized"`
-	BarrierStrategy       string `json:"barrier_strategy"`
+	Mode               string `json:"mode"`
+	StorageCreated     bool   `json:"storage_created"`
+	MasterPWSet        bool   `json:"master_password_set"`
+	TPMSealedPasswords bool   `json:"tpm_sealed_passwords"`
+	UserPINSet         bool   `json:"user_pin_set"`
+	SOPINSet           bool   `json:"so_pin_set"`
+	BarrierInitialized bool   `json:"barrier_initialized"`
+	BarrierStrategy    string `json:"barrier_strategy"`
 }
 
 // SetupProgressPayload carries data for the setup:progress event.

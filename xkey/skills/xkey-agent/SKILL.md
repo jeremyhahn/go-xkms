@@ -117,7 +117,7 @@ xkey version; xkey config init      # default config file (--force overwrites)
 xkey config show                    # effective config as YAML; config path lists search order
 xkey barrier init --strategy tpm2   # first time only: software|tpm2|pkcs11 (default auto-detect)
 xkey barrier status --json          # sealed? which strategy?
-xkey barrier unseal --auto          # TPM PCR-policy auto-unseal, reads no secret
+xkey barrier unseal --auto          # TPM-policy auto-unseal, reads no secret
 xkey barrier unseal < "$BARRIER_PASSWORD_FILE"   # otherwise, password on stdin
 printf '%s' "$PIN" | xkey unlock --pin-stdin      # unlock a running daemon (app lock + barrier)
 xkey barrier seal                   # lock the barrier again
@@ -359,16 +359,19 @@ xkey tpm provision --confirm                         # clears the TPM, the manuf
 xkey tpm clear --hierarchy lockout --yes
 ```
 
-TPM group flags are `--device`, `--simulator`, `--hierarchy-auth` and `-o json`. PCR policies control barrier auto-unseal:
+TPM group flags are `--device`, `--simulator`, `--hierarchy-auth` and `-o json`. Named TPM policies bind keys and sealed data to a PCR state the TPM enforces; the built-in `platform` policy (PCR 16 or the object's password) is the default. With `--xkmsd-url` (or `XKMSD_URL`) they run on the server, otherwise on this host's TPM:
 
 ```bash
-xkey policy create <name> --pcrs 0,2,4,7 --bank sha256
-xkey policy set-auto-unseal <name>
-xkey policy verify <name>                            # do the current PCRs still match?
-xkey policy refresh <name>                           # re-baseline after a known-good update
-xkey policy list                                     # policy get <name>, policy export <name> (JSON)
-xkey policy clear-auto-unseal
-xkey policy delete <name>
+xkey tpm policy create <name> --pcrs 0,7 --bank sha256   # values are read from the TPM
+xkey tpm policy list                                     # object counts per policy
+xkey tpm policy verify <name>                            # exits non-zero when the PCRs changed
+xkey tpm policy update <name>                            # re-capture + re-approve after a known-good update (no re-key)
+xkey tpm policy revoke <name>
+xkey tpm policy objects <name>
+xkey tpm policy delete <name>                            # refused, listing them, while objects are bound
+echo "$BARRIER_PASSWORD" | xkey tpm policy auto-unseal <name>   # seals the barrier password under it
+xkey tpm policy auto-unseal --off
+xkey tpm authority rotate
 ```
 
 ## Devices: phones and remote agents

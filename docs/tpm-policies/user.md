@@ -25,3 +25,33 @@ Tenants: each tenant has its own policies and keys. The system administrator
 chooses a tenant's TPM mode with `xkmsctl tenant tpm-mode <tenant>
 none|shared|vtpm`; a mode can change only while the tenant has no TPM keys,
 sealed objects or policies.
+
+## xKey
+
+The xKey desktop app manages the same policies — on its connected server, or,
+without one, on the machine's own TPM.
+
+1. **TPM → Policies** lists the built-in `platform` policy and every named
+   policy with the number of keys and sealed objects bound to it (click the
+   number to see them). The panel says whether it is showing the local TPM
+   or the connected server.
+2. **Create Policy**: give it a name, choose the PCR bank and tick the PCRs.
+   The values are read from the TPM. `xkey tpm policy create boot --pcrs 0,7`
+   does the same from the CLI.
+3. **Sealed Data → Seal New Data**: choose the TPM policy (the built-in
+   platform policy by default, a named policy, or none) and, optionally, a
+   password. With a policy and a password, the password still unseals the
+   data after the platform state changes.
+4. **Barrier auto-unseal**: switch on a policy's *Auto-unseal* toggle (or use
+   Settings → Storage → Barrier Auto-Unseal) and enter the barrier password
+   once. At startup the TPM releases it only while the platform is in the
+   state the policy approves; otherwise xKey asks for the password. From the
+   CLI: `xkey tpm policy auto-unseal boot`.
+5. After a trusted firmware or kernel update, **Verify** shows which PCRs
+   changed and **Update** re-approves the policy; nothing is re-sealed or
+   re-keyed. **Revoke** stops every object bound to the policy from opening
+   without its password.
+6. **Delete** is refused, listing the objects, while anything — the barrier
+   auto-unseal password included — is bound to the policy.
+7. **Rotate Authority** replaces the TPM-resident key that approves the
+   policies; every policy is re-approved and nothing is re-keyed.

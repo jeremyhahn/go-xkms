@@ -139,8 +139,7 @@ func TestSurg_SealListBlobs_UnreadableDir(t *testing.T) {
 func TestSurg_SealSaveBlob_StorageDirNotSet(t *testing.T) {
 	svc := NewSealService("")
 	err := svc.saveBlob(&sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software", ID: "test"})
+		BackendID: "software", ID: "test"})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrSealStorageFailed))
 }
@@ -149,8 +148,7 @@ func TestSurg_SealSaveBlob_StorageDirNotSet(t *testing.T) {
 func TestSurg_SealSaveBlob_RelativePath(t *testing.T) {
 	svc := NewSealService("relative/path")
 	err := svc.saveBlob(&sealedBlobStorage{
-		PolicyType: "none",
-		BackendID:  "software", ID: "test"})
+		BackendID: "software", ID: "test"})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrSealStorageFailed))
 }
@@ -162,7 +160,7 @@ func TestSurg_SealSealData_PolicyRequiresTPM(t *testing.T) {
 	svc := newSealServiceWithMock(t, mock)
 
 	req := validSealRequest()
-	req.PolicyType = "platform_policy"
+	req.TPMPolicy = xkms.TPMPolicyPlatform
 	req.Backend = "software"
 
 	_, err := svc.SealData(req)
@@ -171,19 +169,19 @@ func TestSurg_SealSealData_PolicyRequiresTPM(t *testing.T) {
 }
 
 // TestSurg_SealSealData_PasswordPolicyStoresHash covers L442-448:
-// hashPassword is called and stored when PolicyTypePassword is used.
+// hashPassword is called and stored for a password on a non-TPM backend.
 func TestSurg_SealSealData_PasswordPolicyStoresHash(t *testing.T) {
 	mock := defaultSealMock()
 	svc := newSealServiceWithMock(t, mock)
 
 	req := validSealRequest()
-	req.PolicyType = "password"
+	req.Backend = "software"
 	req.Password = "mysecretpassword"
 
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
 	require.NotNil(t, entry)
-	assert.Equal(t, "password", entry.PolicyType)
+	assert.True(t, entry.PasswordProtected)
 
 	blob, loadErr := svc.loadBlobByID(entry.ID)
 	require.NoError(t, loadErr)
@@ -326,14 +324,7 @@ func TestSurg_AutoUnsealEnable_ConfigSaveFailsCleanup(t *testing.T) {
 		return errors.New("disk full")
 	})
 
-	_, err := autoSvc.Enable(
-		"longpassphrase",
-		[]int{0, 7},
-		"sha256",
-		"none",
-		"",
-		"tpm2",
-	)
+	_, err := autoSvc.Enable("longpassphrase", "", "tpm2")
 	assert.Error(t, err)
 }
 
@@ -358,9 +349,8 @@ func TestSurg_AutoUnsealReseal_ConfigSaveFailsDeleteCleanup(t *testing.T) {
 	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "auto-unseal-passphrase",
-		Data:       base64.StdEncoding.EncodeToString([]byte("longpassphrase")),
+		Label: "auto-unseal-passphrase",
+		Data:  base64.StdEncoding.EncodeToString([]byte("longpassphrase")),
 	}
 	entry, err := sealSvc.SealData(req)
 	require.NoError(t, err)
@@ -382,9 +372,8 @@ func TestSurg_AutoUnsealReseal_DeleteOldBlobFails(t *testing.T) {
 	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
 
 	req := &SealRequest{
-		PolicyType: "none",
-		Label:      "auto-unseal-passphrase",
-		Data:       base64.StdEncoding.EncodeToString([]byte("longpassphrase")),
+		Label: "auto-unseal-passphrase",
+		Data:  base64.StdEncoding.EncodeToString([]byte("longpassphrase")),
 	}
 	entry, err := sealSvc.SealData(req)
 	require.NoError(t, err)
