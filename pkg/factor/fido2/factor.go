@@ -18,15 +18,19 @@
 // key.
 //
 // Enrollment captures the credential's COSE-encoded public key (the
-// authenticatorData attested credential key) plus the credential id and rp id.
-// Challenge issues a random WebAuthn challenge nonce and carries the enrolled
-// COSE key and rp id with it. Verify checks the assertion's rpIdHash and
-// user-presence flag, the clientDataJSON ceremony type and challenge, then
-// reconstructs the WebAuthn signed message -- authenticatorData ||
-// SHA-256(clientDataJSON) -- and verifies the assertion signature against the
-// enrolled COSE public key using the canonical go-webauthn webauthncose
-// verifier. This is the same signature check the go-xkms WebAuthn relying
-// party performs in FinishLogin; there is no stubbed always-pass path.
+// authenticatorData attested credential key), the credential id, rp id, the
+// expected clientData origin(s), and whether the assertion must carry user
+// verification (not just presence). Challenge issues a random WebAuthn
+// challenge nonce and carries the enrolled COSE key, rp id, origins, and UV
+// requirement with it. Verify checks the assertion's rpIdHash and
+// user-presence flag (and, when the enrollment requires it, the
+// user-verified flag), the clientDataJSON ceremony type, challenge and
+// origin (via the canonical go-webauthn protocol helpers), then reconstructs
+// the WebAuthn signed message -- authenticatorData || SHA-256(clientDataJSON)
+// -- and verifies the assertion signature against the enrolled COSE public
+// key using the canonical go-webauthn webauthncose verifier. This is the
+// same signature check the go-xkms WebAuthn relying party performs in
+// FinishLogin; there is no stubbed always-pass path.
 //
 // Usage:
 //
@@ -42,6 +46,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -67,6 +72,17 @@ const (
 	// relying-party id, whose SHA-256 the assertion's authenticatorData must
 	// begin with.
 	methodDataRPID = "rp_id"
+
+	// methodDataOrigins is the challenge MethodData key carrying the enrolled
+	// expected clientData origin(s) ([]string). Verify refuses a response
+	// whose clientDataJSON "origin" is not exactly one of these, per WebAuthn
+	// L2/L3 assertion verification step 9.
+	methodDataOrigins = "origins"
+
+	// methodDataRequireUV is the challenge MethodData key carrying whether
+	// the enrollment requires the assertion's user-verified flag, not just
+	// user-presence.
+	methodDataRequireUV = "require_uv"
 )
 
 // Config configures a FIDO2 Factor. The zero value is valid.
@@ -132,10 +148,17 @@ func (f *Factor) Name() string { return FactorName }
 
 // Enroll records a registered WebAuthn credential. MethodParams accepts:
 //
-//	"cose_public_key" string  base64-encoded COSE public key (required)
-//	"credential_id"   string  base64url-encoded credential id (required)
-//	"rp_id"           string  Relying Party id; defaults to Config.RPID
-//	"aaguid"          string  authenticator AAGUID (recorded as metadata)
+//	"cose_public_key"             string  base64-encoded COSE public key (required)
+//	"credential_id"               string  base64url-encoded credential id (required)
+//	"rp_id"                       string  Relying Party id; defaults to Config.RPID
+//	"aaguid"                      string  authenticator AAGUID (recorded as metadata)
+//	"origins"                     string or []string  expected clientData origin(s);
+//	                                      defaults to ["https://" + rp_id]
+//	"require_user_verification"   bool    whether Verify requires the assertion's
+//	                                      user-verified flag, not just user-presence;
+//	                                      defaults to true, the WebAuthn/CTAP2 best
+//	                                      practice for a factor used to unseal or
+//	                                      authenticate
 //
 // The COSE public key may alternatively be supplied as raw []byte under
 // "cose_public_key" for in-process callers that already hold the bytes. No
@@ -165,10 +188,25 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 		rpID = v
 	}
 
+	origins, err := originsParam(params.MethodParams["origins"], rpID)
+	if err != nil {
+		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "fido2: origins " + err.Error()}
+	}
+
+	requireUV := true
+	if v, ok := params.MethodParams["require_user_verification"]; ok {
+		requireUV, err = boolParam(v)
+		if err != nil {
+			return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "fido2: require_user_verification " + err.Error()}
+		}
+	}
+
 	metadata := map[string]string{
 		"credential_id": credentialID,
 		"rp_id":         rpID,
 		"ttl":           strconv.Itoa(f.cfg.ChallengeTTLSeconds),
+		"origins":       strings.Join(origins, ","),
+		"require_uv":    strconv.FormatBool(requireUV),
 	}
 	if v := stringParam(params.MethodParams["aaguid"]); v != "" {
 		metadata["aaguid"] = v
@@ -187,10 +225,16 @@ func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParam
 
 // Challenge produces a 32-byte random WebAuthn challenge the authenticator must
 // sign as part of an assertion (navigator.credentials.get). The enrolled COSE
-// public key (MethodData["enrolled_cose_public_key"], standard base64) and rp
-// id (MethodData["rp_id"]) travel with the challenge so Verify checks the
-// assertion against the server-held enrollment rather than anything the
-// response supplies.
+// public key (MethodData["enrolled_cose_public_key"], standard base64), rp id
+// (MethodData["rp_id"]), expected origin(s) (MethodData["origins"]) and the
+// user-verification requirement (MethodData["require_uv"]) travel with the
+// challenge so Verify checks the assertion against the server-held enrollment
+// rather than anything the response supplies.
+//
+// An enrollment recorded before "origins" or "require_uv" existed (or with
+// either otherwise malformed) leaves the corresponding MethodData key unset;
+// Verify treats that the same as any other tampered or incomplete challenge
+// and refuses.
 func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnrollment) (*qrdbsdk.AuthFactorChallenge, error) {
 	if enrollment == nil {
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "enrollment must not be nil"}
@@ -208,17 +252,24 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 			ttl = v
 		}
 	}
+	methodData := map[string]any{
+		"challenge_base64":    base64.RawURLEncoding.EncodeToString(nonce),
+		methodDataRPID:        enrollment.Metadata["rp_id"],
+		"credential_id":       enrollment.Metadata["credential_id"],
+		methodDataEnrolledKey: base64.StdEncoding.EncodeToString(enrollment.PublicKey),
+	}
+	if v := enrollment.Metadata["origins"]; v != "" {
+		methodData[methodDataOrigins] = strings.Split(v, ",")
+	}
+	if v, err := strconv.ParseBool(enrollment.Metadata["require_uv"]); err == nil {
+		methodData[methodDataRequireUV] = v
+	}
 	return &qrdbsdk.AuthFactorChallenge{
 		ChallengeID:  qrdbsdk.NewAuthFactorChallengeID(),
 		EnrollmentID: enrollment.EnrollmentID,
 		Nonce:        nonce,
 		ExpiresAt:    time.Now().UTC().Add(time.Duration(ttl) * time.Second),
-		MethodData: map[string]any{
-			"challenge_base64":    base64.RawURLEncoding.EncodeToString(nonce),
-			methodDataRPID:        enrollment.Metadata["rp_id"],
-			"credential_id":       enrollment.Metadata["credential_id"],
-			methodDataEnrolledKey: base64.StdEncoding.EncodeToString(enrollment.PublicKey),
-		},
+		MethodData:   methodData,
 	}, nil
 }
 
@@ -235,10 +286,12 @@ func (f *Factor) Challenge(_ context.Context, enrollment *qrdbsdk.AuthFactorEnro
 // credential of their own and presenting its key alongside the assertion.
 //
 // Checks, following the WebAuthn assertion procedure: authenticatorData begins
-// with SHA-256 of the enrolled rp id and has the user-present flag set;
-// clientDataJSON is a "webauthn.get" ceremony whose challenge is the issued
-// nonce (base64url); the signature over authenticatorData ||
-// SHA-256(clientDataJSON) verifies under the enrolled COSE key.
+// with SHA-256 of the enrolled rp id and has the user-present flag set (and,
+// when the enrollment requires it, the user-verified flag); clientDataJSON is
+// a "webauthn.get" ceremony whose challenge is the issued nonce (base64url)
+// and whose origin exactly matches one the enrollment recorded; the signature
+// over authenticatorData || SHA-256(clientDataJSON) verifies under the
+// enrolled COSE key.
 func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChallenge, response *qrdbsdk.AuthFactorResponse) error {
 	if challenge == nil {
 		return &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "challenge must not be nil"}
@@ -283,6 +336,19 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 		return verificationFailed("authenticator_data user-present flag is not set")
 	}
 
+	// The enrollment records whether this factor requires user verification
+	// (not just presence) — the WebAuthn/CTAP2 best practice default for a
+	// factor used to unseal or authenticate. An enrollment recorded before
+	// this requirement existed carries no MethodData for it and is refused,
+	// same as any other missing enrollment field.
+	requireUV, ok := challenge.MethodData[methodDataRequireUV].(bool)
+	if !ok {
+		return verificationFailed(methodDataRequireUV + " missing from challenge MethodData")
+	}
+	if requireUV && !parsed.Flags.UserVerified() {
+		return verificationFailed("authenticator_data user-verified flag is not set")
+	}
+
 	// Bind the assertion to this challenge: clientDataJSON must describe an
 	// assertion ceremony over the exact challenge nonce, base64url-encoded per
 	// the WebAuthn CollectedClientData format. This prevents replay of an
@@ -298,6 +364,18 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 	wantChallenge := base64.RawURLEncoding.EncodeToString(challenge.Nonce)
 	if subtle.ConstantTimeCompare([]byte(collected.Challenge), []byte(wantChallenge)) != 1 {
 		return verificationFailed("clientDataJSON does not bind the issued challenge")
+	}
+
+	// The enrollment records the expected clientData origin(s); the
+	// assertion's origin must exactly match one of them (WebAuthn L2/L3 §7.2
+	// step 9), checked with the canonical go-webauthn origin comparator
+	// rather than a naive string equality.
+	origins, ok := challenge.MethodData[methodDataOrigins].([]string)
+	if !ok || len(origins) == 0 {
+		return verificationFailed(methodDataOrigins + " missing from challenge MethodData")
+	}
+	if !protocol.IsOriginInHaystack(collected.Origin, origins) {
+		return verificationFailed("clientDataJSON origin does not match an enrolled origin")
 	}
 
 	// WebAuthn signs authenticatorData || SHA-256(clientDataJSON).
@@ -380,6 +458,61 @@ func stringParam(v any) string {
 		return s
 	}
 	return ""
+}
+
+// originsParam resolves the "origins" MethodParams value: a single origin
+// string, a []string, or a []any of strings. Nil defaults to the single
+// origin "https://" + rpID, the same default the FIDO2 local CTAP2 ceremony
+// uses when driving an attached authenticator.
+func originsParam(v any, rpID string) ([]string, error) {
+	switch t := v.(type) {
+	case nil:
+		return []string{"https://" + rpID}, nil
+	case string:
+		if t == "" {
+			return nil, &decodeError{reason: "must not be empty"}
+		}
+		return []string{t}, nil
+	case []string:
+		if len(t) == 0 {
+			return nil, &decodeError{reason: "must not be empty"}
+		}
+		out := make([]string, len(t))
+		copy(out, t)
+		return out, nil
+	case []any:
+		if len(t) == 0 {
+			return nil, &decodeError{reason: "must not be empty"}
+		}
+		out := make([]string, 0, len(t))
+		for _, e := range t {
+			s, ok := e.(string)
+			if !ok || s == "" {
+				return nil, &decodeError{reason: "must be non-empty strings"}
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	default:
+		return nil, &decodeError{reason: "must be a string or []string"}
+	}
+}
+
+// boolParam resolves a MethodParams value as a bool, accepting a native bool
+// or a parseable string.
+func boolParam(v any) (bool, error) {
+	switch t := v.(type) {
+	case bool:
+		return t, nil
+	case string:
+		b, err := strconv.ParseBool(t)
+		if err != nil {
+			return false, &decodeError{reason: "must be a bool"}
+		}
+		return b, nil
+	default:
+		return false, &decodeError{reason: "must be a bool"}
+	}
 }
 
 // decodeError is a typed error for malformed FIDO2 metadata inputs.
