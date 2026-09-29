@@ -150,6 +150,29 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
   (`pkg/api/rest/handlers_certseal_crosstenant_test.go`,
   `pkg/api/grpc/service_certseal_crosstenant_test.go`,
   `pkg/api/mcp/handlers_certseal_crosstenant_test.go`).
+- **A CA-issued certificate's revoke is confined to its issuing tenant**
+  (go-xkms#1229). `signCSR` (`pkg/ca/ca.go`) — the single issuance site
+  shared by `SignCSR`/`SignCSRWithSPIFFE` and
+  `IssueCertificate`/`IssueCertificateWithProfile` — records the tenant the
+  certificate was issued for (`""` for the system/platform scope) against
+  its serial via `recordCertTenant`, in the same `revocationStore` as
+  `recordIssuedKey` (`pkg/ca/ca_extensions.go`, `cert-tenant/<serial-decimal
+  >.json`). `XKMSService.RevokeCertificate` (`pkg/xkms/servicer_ca.go`)
+  reads it back with `CertificateTenant` and runs it through the same
+  `bindTenantTarget` every other tenant-scoped operation uses: a
+  tenant-scoped caller may revoke only its own tenant's certificates, a
+  cross-tenant (system) caller may revoke any certificate including the
+  system/platform scope's own. `IssueCertificate` binds `req.TenantID`
+  the same way before forwarding it, so a tenant-scoped caller cannot mint
+  a certificate attributed to a different tenant either. A certificate
+  issued through a path that never calls `signCSR` — the TCG device-identity
+  family (EK/AK/IDevID) and the CA's own root/intermediate certificates —
+  carries no record and so resolves to the system/platform scope, reachable
+  only by a cross-tenant caller. `certs:revoke` (and `certs:generate`) is
+  the same permission on every transport (REST, gRPC, MCP); go-qrdb's
+  built-in Admin role grants it by default in every tenant it is seeded
+  into, including the system tenant, so both a system admin and a tenant
+  admin hold it without any xkms-side default-grant registration.
 - **A malformed certificate is a request fault.** `certFromPEM`
   (`pkg/xkms/servicer_cert.go:340`) returns `ErrInvalidEncodingPEM` (via
   `ErrPEMBlock` for a wrong block type) or `ErrCertificateParse`, which matches
@@ -408,6 +431,7 @@ config exists for it.
 |---|---|---|
 | `revocations/<serial-decimal>.json` | `persistedRevocation{Serial, Reason, RevokedAt, DeletedKeys}` | `recordRevocation` (`Revoke`, `RevokeCert`) |
 | `crl/<issuer-ski-hex>` | `persistedCRL{DER, Number, ThisUpdate, NextUpdate}` | `generateAndPersistCRL` (`GenerateCRL`, `CRL`, and the refresh-on-revoke hook in `recordRevocation`) |
+| `cert-tenant/<serial-decimal>.json` | `persistedCertTenant{Serial, TenantID}` | `recordCertTenant`, called from `signCSR` after `certStore.StoreCertificate` succeeds (go-xkms#1229) |
 
 `recordRevocation` (`pkg/ca/ca_extensions.go:745`) persists before it
 caches (go-xkms#1131): it checks for a duplicate via `lookupRevocation` --
