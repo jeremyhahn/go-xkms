@@ -30,10 +30,10 @@ disappear when you stop it**. Fine for a look; not what you want next.
 ## The configuration to actually use
 
 ```
-xkey fido2 \
+echo "$PIN" | xkey fido2 \
     --storage file --storage-path "$XDG_DATA_HOME/xkey" \
     --backend tpm2 --attestation tpm \
-    --pin --set-pin - --require-touch \
+    --pin --set-pin-stdin --require-touch \
     --notify dialog
 ```
 

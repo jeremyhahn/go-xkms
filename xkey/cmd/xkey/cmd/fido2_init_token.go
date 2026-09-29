@@ -37,7 +37,7 @@ import (
 // verb was unreachable (#233).
 //
 // These commands drive InitializeToken and ChangeSOPIN directly, the way
-// `xkey fido2 --set-pin` drives Authenticator.SetInitialPIN for the user PIN
+// `xkey fido2 --set-pin-stdin` drives Authenticator.SetInitialPIN for the user PIN
 // (#411): the in-process counterpart of the wire ceremony, not a second
 // establishment mechanism. handleVendorSetSOPIN and handleVendorChangeSOPIN
 // pass straight through to the same two methods, so there remains exactly one

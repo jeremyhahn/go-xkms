@@ -8,8 +8,9 @@
 # Easiest: scan the QR code a service shows on screen
 xkey oath scan
 
-# Or paste the secret directly
-xkey oath add --name "GitHub" --secret JBSWY3DPEHPK3PXP --issuer "GitHub"
+# Or paste the secret directly (there is no --secret value flag; it is
+# read from standard input or XKEY_OATH_SECRET)
+echo JBSWY3DPEHPK3PXP | xkey oath add --name "GitHub" --secret-stdin --issuer "GitHub"
 
 # Or paste the otpauth:// URI from the QR code
 xkey oath add --uri "otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"

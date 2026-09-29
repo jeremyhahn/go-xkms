@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -26,9 +27,19 @@ import (
 
 // SealStore command errors.
 var (
-	ErrSealStoreMissingName       = errors.New("platform-store: secret name is required")
-	ErrSealStoreMissingSource     = errors.New("platform-store: --value or --file is required")
-	ErrSealStoreMutualExclusive   = errors.New("platform-store: --value and --file are mutually exclusive")
+	ErrSealStoreMissingName   = errors.New("platform-store: secret name is required")
+	ErrSealStoreMissingSource = errors.New(
+		"platform-store: a value (--value-stdin or XKEY_PLATFORM_STORE_VALUE) or --file is required")
+	ErrSealStoreMutualExclusive = errors.New(
+		"platform-store: a value (--value-stdin or XKEY_PLATFORM_STORE_VALUE) and --file are mutually exclusive")
+
+	// ErrSealStoreValueStdinEmpty indicates --value-stdin was given but
+	// standard input carried no value.
+	ErrSealStoreValueStdinEmpty = errors.New("platform-store: --value-stdin was given but standard input carried no value")
+
+	// ErrSealStoreValueStdinRead indicates standard input could not be read
+	// for --value-stdin.
+	ErrSealStoreValueStdinRead    = errors.New("platform-store: failed to read the value from standard input")
 	ErrSealStoreFileRead          = errors.New("platform-store: failed to read file")
 	ErrSealStorePutFailed         = errors.New("platform-store: put operation failed")
 	ErrSealStoreGetFailed         = errors.New("platform-store: get operation failed")
@@ -40,6 +51,20 @@ var (
 	ErrSealStoreOutputWrite       = errors.New("platform-store: failed to write output file")
 	ErrSealStoreNoSecretsToReseal = errors.New("platform-store: no secrets to reseal")
 )
+
+// sealStoreValueSource is the one way a secret's value enters the CLI for
+// "platform-store put". It follows the PIN convention (pin_input.go):
+// standard input or the environment, never a "--value" value flag -- a value
+// on the command line is visible to every other process on the host via 'ps'
+// (go-xkms#1209). The --file alternative is unaffected: a file path is not
+// itself a secret.
+var sealStoreValueSource = pinSource{
+	label:      "secret value",
+	stdinFlag:  "value-stdin",
+	envVar:     "XKEY_PLATFORM_STORE_VALUE",
+	stdinEmpty: ErrSealStoreValueStdinEmpty,
+	stdinRead:  ErrSealStoreValueStdinRead,
+}
 
 // clientFactory is the function used to create transport clients.
 // It is a package-level variable to allow tests to inject mock clients.
@@ -100,7 +125,7 @@ Commands:
 
 Examples:
   # Store a secret by value
-  xkey platform-store put my-secret --value "s3cret"
+  echo -n "s3cret" | xkey platform-store put my-secret --value-stdin
 
   # Store a secret from a file
   xkey platform-store put my-cert --file /path/to/cert.pem
@@ -133,13 +158,15 @@ var platformStorePutCmd = &cobra.Command{
 	Short: "Store a secret in the platform store",
 	Long: `Store a secret in the platform store.
 
-The secret is sealed using the best available sealing mechanism and
-stored locally. Provide the secret value directly with --value, or
-read it from a file with --file. These options are mutually exclusive.
+The secret is sealed using the best available sealing mechanism and stored
+locally. Provide the secret value through --value-stdin or
+XKEY_PLATFORM_STORE_VALUE, or read it from a file with --file. These are
+mutually exclusive. There is no "--value" value flag: a value on the command
+line is visible to every other process on the host via 'ps'.
 
 Examples:
   # Store a secret by value
-  xkey platform-store put my-secret --value "s3cret"
+  echo -n "s3cret" | xkey platform-store put my-secret --value-stdin
 
   # Store a secret from a file
   xkey platform-store put my-cert --file /path/to/cert.pem`,
@@ -252,7 +279,7 @@ func init() {
 		"TLS CA certificate file used to verify the xkmsd server")
 
 	// platform-store put flags.
-	platformStorePutCmd.Flags().String("value", "", "Secret value to store")
+	sealStoreValueSource.addFlags(platformStorePutCmd)
 	platformStorePutCmd.Flags().String("file", "", "Path to file containing the secret")
 
 	// platform-store get flags.
@@ -280,10 +307,14 @@ func connectSealStore() (SealStoreService, error) {
 // runSealStorePut executes the platform-store put command.
 func runSealStorePut(cmd *cobra.Command, args []string) (err error) {
 	name := args[0]
-	value, _ := cmd.Flags().GetString("value")
+	value, err := sealStoreValueSource.resolveBytes(cmd)
+	if err != nil {
+		return err
+	}
+	defer enclave.Wipe(value)
 	filePath, _ := cmd.Flags().GetString("file")
 
-	hasValue := value != ""
+	hasValue := len(value) > 0
 	hasFile := filePath != ""
 
 	if !hasValue && !hasFile {
@@ -301,7 +332,10 @@ func runSealStorePut(cmd *cobra.Command, args []string) (err error) {
 		}
 		secret = data
 	} else {
-		secret = []byte(value)
+		// Copy rather than alias value: the deferred Wipe above must not
+		// zero the bytes the request below hands to the transport after
+		// this function returns.
+		secret = append([]byte(nil), value...)
 	}
 
 	client, err := connectSealStore()

@@ -20,11 +20,11 @@ process needs to inspect, the same shape as `xkey extension serve`.
 | `--strategy` | string | the strategy the barrier was initialized with | Barrier seal strategy override: `software`, `tpm2`, `pkcs11` |
 | `--tpm-device` | string | `$TPM_DEVICE_PATH` or `/dev/tpmrm0` | TPM device path, with `--strategy tpm2` |
 | `--tpm-simulator` | bool | `false` | Use the in-process TPM simulator (simulator builds only) |
-| `--barrier-password` | string | — | Barrier password, used both at startup and to resolve every later `Unlock` prompt |
+| `--barrier-password-stdin` | bool | `false` | Read the barrier password from standard input; used both at startup and to resolve every later `Unlock` prompt |
 | `--barrier-password-file` | string | — | Path to a file containing the barrier password |
 
 Password resolution order (identical to `xkey barrier unseal`):
-`--barrier-password`, then `--barrier-password-file`, then
+`--barrier-password-stdin`, then `--barrier-password-file`, then
 `XKEY_BARRIER_PASSWORD`, then — only when a client's `Unlock` opens a
 `Prompt` and the process has a controlling terminal — an interactive
 `term.ReadPassword` prompt.

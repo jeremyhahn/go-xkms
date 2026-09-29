@@ -357,10 +357,12 @@ func TestSealStoreCmd_PutWithValue(t *testing.T) {
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
 
+	t.Setenv("XKEY_PLATFORM_STORE_VALUE", "s3cret")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"platform-store", "put", "my-secret", "--value", "s3cret"})
+	RootCmd.SetArgs([]string{"platform-store", "put", "my-secret"})
 
 	err := RootCmd.Execute()
 	if err != nil {
@@ -440,12 +442,13 @@ func TestSealStoreCmd_PutMutuallyExclusive(t *testing.T) {
 	mock := newMockSealStoreClient()
 	withMockClient(t, mock)
 
+	t.Setenv("XKEY_PLATFORM_STORE_VALUE", "direct")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
 	RootCmd.SetArgs([]string{
 		"platform-store", "put", "my-secret",
-		"--value", "direct",
 		"--file", "/some/path",
 	})
 
@@ -485,10 +488,12 @@ func TestSealStoreCmd_PutServerError(t *testing.T) {
 	mock.putErr = errors.New("server unavailable")
 	withMockClient(t, mock)
 
+	t.Setenv("XKEY_PLATFORM_STORE_VALUE", "data")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"platform-store", "put", "my-secret", "--value", "data"})
+	RootCmd.SetArgs([]string{"platform-store", "put", "my-secret"})
 
 	err := RootCmd.Execute()
 	if err == nil {
@@ -982,10 +987,12 @@ func TestSealStoreCmd_ConnectErrorOnPut(t *testing.T) {
 	resetSealStoreFlags()
 	withFailingClientFactory(t, errors.New("no server"))
 
+	t.Setenv("XKEY_PLATFORM_STORE_VALUE", "val")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"platform-store", "put", "name", "--value", "val"})
+	RootCmd.SetArgs([]string{"platform-store", "put", "name"})
 
 	err := RootCmd.Execute()
 	if err == nil {
@@ -1005,10 +1012,12 @@ func TestSealStoreCmd_PutAndGetRoundtrip(t *testing.T) {
 	withMockClient(t, mock)
 
 	// Put a secret.
+	t.Setenv("XKEY_PLATFORM_STORE_VALUE", "round-trip-value")
+
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"platform-store", "put", "roundtrip", "--value", "round-trip-value"})
+	RootCmd.SetArgs([]string{"platform-store", "put", "roundtrip"})
 
 	err := RootCmd.Execute()
 	if err != nil {

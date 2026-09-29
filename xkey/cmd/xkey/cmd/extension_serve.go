@@ -26,6 +26,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -98,7 +99,7 @@ used by the GUI, ensuring full compatibility.
 
 Examples:
   # Start with barrier encryption (production)
-  xkey extension serve --barrier-password "my-secret"
+  xkey extension serve --barrier-password-stdin < password.txt
 
   # Start with password from environment
   XKEY_BARRIER_PASSWORD=secret xkey extension serve
@@ -133,8 +134,7 @@ func init() {
 
 	extensionServeCmd.Flags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	extensionServeCmd.Flags().String("log-file", "", "Log file path (default: stderr)")
-	extensionServeCmd.Flags().String("barrier-password", "", "Barrier password")
-	extensionServeCmd.Flags().String("barrier-password-file", "", "Read barrier password from file (first line)")
+	addBarrierPasswordFlags(extensionServeCmd)
 	extensionServeCmd.Flags().Bool("no-barrier", false, "Skip barrier, use plain file storage (testing/development)")
 	extensionServeCmd.Flags().Int("auto-lock-minutes", 15, "Inactivity lock timeout (0=disabled)")
 	extensionServeCmd.Flags().String("pin-state", "", "PIN state directory path")
@@ -674,12 +674,25 @@ func serveEnterprisePolicy(cmd *cobra.Command, unified *config.Config, configDir
 	return &policy.Policy, nil
 }
 
-// resolveBarrierPassword resolves the barrier password from flags, file,
-// environment variable, or interactive terminal prompt (in priority order).
+// resolveBarrierPassword resolves the barrier password from
+// --barrier-password-stdin, --barrier-password-file, the
+// XKEY_BARRIER_PASSWORD environment variable, or an interactive terminal
+// prompt (in priority order). There is no "--barrier-password" value flag
+// (go-xkms#1209): a value on the command line is visible to every other
+// process on the host via 'ps'.
 func resolveBarrierPassword(cmd *cobra.Command) (string, error) {
-	// 1. --barrier-password flag
-	if pw, _ := cmd.Flags().GetString("barrier-password"); pw != "" {
-		return pw, nil
+	// 1. --barrier-password-stdin flag
+	fromStdin, err := cmd.Flags().GetBool(barrierPasswordSource.stdinFlag)
+	if err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
+	}
+	if fromStdin {
+		secret, err := barrierPasswordSource.resolveBytesFrom(true)
+		if err != nil {
+			return "", err
+		}
+		defer enclave.Wipe(secret)
+		return string(secret), nil
 	}
 
 	// 2. --barrier-password-file flag
@@ -693,7 +706,7 @@ func resolveBarrierPassword(cmd *cobra.Command) (string, error) {
 	}
 
 	// 3. XKEY_BARRIER_PASSWORD environment variable
-	if pw := os.Getenv("XKEY_BARRIER_PASSWORD"); pw != "" {
+	if pw := os.Getenv(barrierPasswordSource.envVar); pw != "" {
 		return pw, nil
 	}
 

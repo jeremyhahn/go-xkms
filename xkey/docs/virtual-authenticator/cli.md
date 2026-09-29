@@ -22,7 +22,7 @@ xkey fido2 --storage file --storage-path ~/.local/share/xkey --pin --require-tou
 |---|---|---|
 | `--storage` | `memory` | `memory`, `file`, `barrier` |
 | `--storage-path` | `~/.xkey/data/fido2` | for `file`; resolved through the shared xkey data-directory chain (`XKEY_HOME`/`XKEY_DATA_DIR`), never the working directory (go-xkms#929) |
-| `--barrier-password` | `""` | for `barrier` |
+| `--barrier-password-stdin` | `false` | read the barrier password from standard input, for `barrier` |
 | `--barrier-password-file` | `""` | first line of a file |
 
 **The default is `memory`, and credentials do not survive a restart.** That is
@@ -86,21 +86,21 @@ empty precisely so an unconfigured `xkey fido2` keeps behaving as this page's
 | Flag | Default | Notes |
 |---|---|---|
 | `--pin` | `true` | require a PIN |
-| `--set-pin` | `""` | establish the initial PIN when the store has none (needs `--pin`; refused if a PIN is already set) |
+| `--set-pin-stdin` | `false` | read the initial PIN to establish from standard input (needs `--pin`; refused if a PIN is already set) |
 | `--require-touch` | `true` | **require a touch even after a verified PIN** |
 | `--unified-pin` | `true` | propagate the host PIN service's user PIN to this authenticator's CTAP2 PIN hash — not a separate PKCS#11/file sync; see [the setup-wizard doc on the one governing PIN backend](../setup-wizard/engineering.md#shared-governing-pin-strategy-go-xkms307) |
 | `--timeout` | `30s` | how long to wait for presence |
 
-`--set-pin` is a first-PIN operation. It runs the authenticator's
+`--set-pin-stdin` is a first-PIN operation. It runs the authenticator's
 `SetInitialPIN`, the in-process counterpart of the CTAP `setPIN` ceremony,
 and refuses to start when the store already holds a PIN:
 
 ```
-fido2: --set-pin refused: a PIN is already configured in this store; drop --set-pin or change the PIN through the FIDO2 client
+fido2: --set-pin-stdin refused: a PIN is already configured in this store; drop --set-pin-stdin or change the PIN through the FIDO2 client
 ```
 
 With `--storage memory` every start is a first start. With `--storage file`
-or `--storage barrier`, pass `--set-pin` once; on later starts drop it, and
+or `--storage barrier`, pass `--set-pin-stdin` once; on later starts drop it, and
 change the PIN through any FIDO2 client (`changePIN`), which proves the
 current PIN before replacing it.
 

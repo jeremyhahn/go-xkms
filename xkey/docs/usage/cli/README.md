@@ -51,10 +51,10 @@ and `--no-gui` forces the CLI even with none. Otherwise any subcommand (or
 These three are what make xkey drivable without a human present.
 
 ```bash
-# Unlock a running instance (stdin > XKEY_PIN > --pin)
+# Unlock a running instance (stdin > XKEY_PIN; there is no --pin value flag,
+# which would be visible in the process list)
 printf '%s' "$PIN" | xkey unlock --pin-stdin
 XKEY_PIN="$PIN" xkey unlock
-xkey unlock --pin "$PIN"          # visible in the process list; avoid
 
 # Approve a pending user-presence request, or type a stored password
 xkey touch
@@ -133,7 +133,7 @@ which drives *external* FIDO2 hardware keys.)
 | `xkey share` | `list`, `receive`, `import`, `export`, `unseal`, `delete` |
 
 ```bash
-xkey oath add --name GitHub --issuer GitHub --secret BASE32SECRET
+echo BASE32SECRET | xkey oath add --name GitHub --issuer GitHub --secret-stdin
 xkey oath add --uri 'otpauth://totp/...'
 xkey oath generate GitHub     # the current TOTP code
 xkey oath scan                # read a QR code off the screen

@@ -399,15 +399,17 @@ sudo xkey fido2 --pin
 
 When enabled:
 - Relying parties can request user verification via PIN
-- PIN must be set before use (via `--set-pin` or WebAuthn PIN management)
+- PIN must be set before use (via `--set-pin-stdin` or WebAuthn PIN management)
 - PIN has 8 retry attempts before lockout
 
 ### Setting Initial PIN
 
-The `--set-pin` flag sets the initial PIN during startup. Requires `--pin`.
+The `--set-pin-stdin` flag reads the initial PIN from standard input during
+startup. Requires `--pin`. There is no `--set-pin` value flag: a value on the
+command line is visible to every other process on the host via `ps`.
 
 ```bash
-sudo xkey fido2 --pin --set-pin 123456
+echo 123456 | sudo xkey fido2 --pin --set-pin-stdin
 ```
 
 PIN requirements:
@@ -509,8 +511,8 @@ command line in any of these.
 
 ```bash
 xkey pin set-so                 # prompts for the SO PIN
-sudo xkey fido2 \
-  --pin --set-pin 123456 \
+echo 123456 | sudo xkey fido2 \
+  --pin --set-pin-stdin \
   --log-level debug
 ```
 
@@ -815,9 +817,9 @@ sudo xkey fido2 \
 ### CI/CD Integration
 
 ```bash
-sudo xkey fido2 \
+echo testpin | sudo xkey fido2 \
   --storage memory \
-  --pin --set-pin testpin \
+  --pin --set-pin-stdin \
   --log-level error
 ```
 
@@ -847,11 +849,11 @@ sudo xkey fido2 \
 ### Interactive Manual Testing
 
 ```bash
-sudo xkey fido2 \
+echo 123456 | sudo xkey fido2 \
   --interactive \
   --timeout 60s \
   --log-level info \
-  --pin --set-pin 123456
+  --pin --set-pin-stdin
 ```
 
 ## SSH Agent Configuration
