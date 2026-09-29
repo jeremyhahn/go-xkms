@@ -31,26 +31,17 @@ package main
 //
 // buildCAttributeArray's CK_ATTRIBUTE.pValue is written with putPtr, which
 // stores the address as a bare uint64 (exports_template_test.go /
-// exports_mechdecode_test.go): the Go garbage collector does not see that
-// field as a pointer, so nothing keeps the attribute *value* backing arrays
-// reachable once the []module.Attribute literal that built them goes out of
-// scope. runtime.KeepAlive(template) on the returned []byte only protects the
-// CK_ATTRIBUTE records themselves, not what their pValue fields point at.
-// This surfaced here as a genuine, reproducible failure (C_EncapsulateKey
-// returning CKR_ATTRIBUTE_VALUE_INVALID because a decoded attribute value had
-// been silently overwritten between construction and use -- confirmed with a
-// throwaway convertCTemplateToGo probe during triage, not guessed at) rather
-// than in the RSA/AES paths elsewhere in this package, most likely because
-// ML-KEM-768's key generation is by far the largest allocation any fixture in
-// this package makes, and is what gives the collector a window the smaller
-// fixtures don't. Every template built in this file therefore keeps its
-// source []module.Attribute slice (not just the built buffer) alive with
-// runtime.KeepAlive across the reflect.Call it feeds.
-//
-// This is latent existing fragility in the shared test-helper pattern, not a
-// new one introduced here, and this batch's scope is new test files in
-// cmd/pkcs11-module -- so the fix here is confined to this file's own call
-// sites rather than to buildCAttributeArray itself.
+// exports_mechdecode_test.go). putPtr pins the memory that address points
+// into for the rest of the test (runtime.Pinner, unpinned via t.Cleanup), so
+// the attribute *value* backing arrays stay reachable regardless of how long
+// the built template remains in use -- this once had to be enforced by hand
+// with runtime.KeepAlive on every source []module.Attribute slice, which is
+// exactly the fragile, easy-to-miss pattern that let a real bug through here
+// (C_EncapsulateKey returning CKR_ATTRIBUTE_VALUE_INVALID because a decoded
+// attribute value had been silently overwritten between construction and
+// use, most likely because ML-KEM-768's key generation is by far the largest
+// allocation any fixture in this package makes, giving the collector a
+// window the smaller fixtures don't); see #1197.
 
 import (
 	"bytes"
@@ -104,8 +95,8 @@ func generateMLKEMKeyPairViaC(t *testing.T, session module.SessionHandle, parame
 	mechBuf := buildCMechanism(module.CKM_ML_KEM_KEY_PAIR_GEN)
 	pubEntries := mlkemKeyGenEntries(parameterSet, module.CKO_PUBLIC_KEY, "mlkem-roundtrip-pub")
 	privEntries := mlkemKeyGenEntries(parameterSet, module.CKO_PRIVATE_KEY, "mlkem-roundtrip-priv")
-	pubTemplate := buildCAttributeArray(pubEntries)
-	privTemplate := buildCAttributeArray(privEntries)
+	pubTemplate := buildCAttributeArray(t, pubEntries)
+	privTemplate := buildCAttributeArray(t, privEntries)
 
 	fn := reflect.ValueOf(C_GenerateKeyPair)
 	ft := fn.Type()
@@ -120,11 +111,6 @@ func generateMLKEMKeyPairViaC(t *testing.T, session module.SessionHandle, parame
 		allocOf(ft, 7),
 	}
 	out := fn.Call(args)
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(pubTemplate)
-	runtime.KeepAlive(privTemplate)
-	runtime.KeepAlive(pubEntries)
-	runtime.KeepAlive(privEntries)
 
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_GenerateKeyPair(ML-KEM) = %s, want CKR_OK", rv)
@@ -141,7 +127,7 @@ func encapsulateKeyViaC(t *testing.T, session module.SessionHandle, pub module.O
 	fn := reflect.ValueOf(C_EncapsulateKey)
 	ft := fn.Type()
 	entries := mlkemSharedSecretEntries()
-	template := buildCAttributeArray(entries)
+	template := buildCAttributeArray(t, entries)
 
 	queryLen := reflect.New(ft.In(6).Elem())
 	out := fn.Call([]reflect.Value{
@@ -154,9 +140,6 @@ func encapsulateKeyViaC(t *testing.T, session module.SessionHandle, pub module.O
 		queryLen,
 		allocOf(ft, 7),
 	})
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(template)
-	runtime.KeepAlive(entries)
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_OK {
 		return module.ObjectHandle(module.InvalidHandle), nil, rv
 	}
@@ -175,9 +158,6 @@ func encapsulateKeyViaC(t *testing.T, session module.SessionHandle, pub module.O
 		fillLen,
 		keyOut,
 	})
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(template)
-	runtime.KeepAlive(entries)
 	runtime.KeepAlive(ctBuf)
 	rv := module.CK_RV(out[0].Uint())
 	if rv != module.CKR_OK {
@@ -193,7 +173,7 @@ func decapsulateKeyViaC(t *testing.T, session module.SessionHandle, priv module.
 	fn := reflect.ValueOf(C_DecapsulateKey)
 	ft := fn.Type()
 	entries := mlkemSharedSecretEntries()
-	template := buildCAttributeArray(entries)
+	template := buildCAttributeArray(t, entries)
 
 	keyOut := allocOf(ft, 7)
 	out := fn.Call([]reflect.Value{
@@ -206,9 +186,6 @@ func decapsulateKeyViaC(t *testing.T, session module.SessionHandle, priv module.
 		scalarOf(ft, 6, uint64(len(ciphertext))),
 		keyOut,
 	})
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(template)
-	runtime.KeepAlive(entries)
 	runtime.KeepAlive(ciphertext)
 	rv := module.CK_RV(out[0].Uint())
 	if rv != module.CKR_OK {
@@ -284,7 +261,7 @@ func TestCEncapsulateKey_BufferTooSmall(t *testing.T) {
 	pub, _ := generateMLKEMKeyPairViaC(t, f.session, module.CKP_ML_KEM_768)
 	mechBuf := buildCMechanism(module.CKM_ML_KEM)
 	entries := mlkemSharedSecretEntries()
-	template := buildCAttributeArray(entries)
+	template := buildCAttributeArray(t, entries)
 
 	fn := reflect.ValueOf(C_EncapsulateKey)
 	ft := fn.Type()
@@ -302,9 +279,6 @@ func TestCEncapsulateKey_BufferTooSmall(t *testing.T) {
 		fillLen,
 		allocOf(ft, 7),
 	})
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(template)
-	runtime.KeepAlive(entries)
 	runtime.KeepAlive(undersized)
 
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_BUFFER_TOO_SMALL {
@@ -323,7 +297,7 @@ func TestCEncapsulateKey_WrongMechanismIsRefused(t *testing.T) {
 	pub, _ := generateMLKEMKeyPairViaC(t, f.session, module.CKP_ML_KEM_768)
 	mechBuf := buildCMechanism(module.CKM_AES_KEY_GEN)
 	entries := mlkemSharedSecretEntries()
-	template := buildCAttributeArray(entries)
+	template := buildCAttributeArray(t, entries)
 
 	fn := reflect.ValueOf(C_EncapsulateKey)
 	ft := fn.Type()
@@ -337,9 +311,6 @@ func TestCEncapsulateKey_WrongMechanismIsRefused(t *testing.T) {
 		allocOf(ft, 6),
 		allocOf(ft, 7),
 	})
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(template)
-	runtime.KeepAlive(entries)
 
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_MECHANISM_INVALID {
 		t.Fatalf("C_EncapsulateKey(CKM_AES_KEY_GEN) = %s, want CKR_MECHANISM_INVALID", rv)
@@ -372,8 +343,8 @@ func TestCEncapsulateKey_WrongKeyTypeIsRefused(t *testing.T) {
 		module.NewBoolAttribute(module.CKA_SENSITIVE, false),
 		module.NewBoolAttribute(module.CKA_EXTRACTABLE, true),
 	}
-	pubTemplate := buildCAttributeArray(pubEntries)
-	privTemplate := buildCAttributeArray(privEntries)
+	pubTemplate := buildCAttributeArray(t, pubEntries)
+	privTemplate := buildCAttributeArray(t, privEntries)
 
 	genFn := reflect.ValueOf(C_GenerateKeyPair)
 	gft := genFn.Type()
@@ -388,11 +359,6 @@ func TestCEncapsulateKey_WrongKeyTypeIsRefused(t *testing.T) {
 		allocOf(gft, 7),
 	}
 	genOut := genFn.Call(genArgs)
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(pubTemplate)
-	runtime.KeepAlive(privTemplate)
-	runtime.KeepAlive(pubEntries)
-	runtime.KeepAlive(privEntries)
 	if rv := module.CK_RV(genOut[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_GenerateKeyPair(no CKA_ENCAPSULATE) = %s, want CKR_OK", rv)
 	}
@@ -400,7 +366,7 @@ func TestCEncapsulateKey_WrongKeyTypeIsRefused(t *testing.T) {
 
 	kemMechBuf := buildCMechanism(module.CKM_ML_KEM)
 	sharedEntries := mlkemSharedSecretEntries()
-	template := buildCAttributeArray(sharedEntries)
+	template := buildCAttributeArray(t, sharedEntries)
 	encFn := reflect.ValueOf(C_EncapsulateKey)
 	eft := encFn.Type()
 	out := encFn.Call([]reflect.Value{
@@ -413,9 +379,6 @@ func TestCEncapsulateKey_WrongKeyTypeIsRefused(t *testing.T) {
 		allocOf(eft, 6),
 		allocOf(eft, 7),
 	})
-	runtime.KeepAlive(kemMechBuf)
-	runtime.KeepAlive(template)
-	runtime.KeepAlive(sharedEntries)
 
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_KEY_TYPE_INCONSISTENT {
 		t.Fatalf("C_EncapsulateKey(no CKA_ENCAPSULATE) = %s, want CKR_KEY_TYPE_INCONSISTENT", rv)
@@ -435,7 +398,7 @@ func TestCEncapsulateKey_NotLoggedInIsRefused(t *testing.T) {
 
 	mechBuf := buildCMechanism(module.CKM_ML_KEM)
 	entries := mlkemSharedSecretEntries()
-	template := buildCAttributeArray(entries)
+	template := buildCAttributeArray(t, entries)
 	fn := reflect.ValueOf(C_EncapsulateKey)
 	ft := fn.Type()
 	out := fn.Call([]reflect.Value{
@@ -448,9 +411,6 @@ func TestCEncapsulateKey_NotLoggedInIsRefused(t *testing.T) {
 		allocOf(ft, 6),
 		allocOf(ft, 7),
 	})
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(template)
-	runtime.KeepAlive(entries)
 
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_USER_NOT_LOGGED_IN {
 		t.Fatalf("C_EncapsulateKey(logged out) = %s, want CKR_USER_NOT_LOGGED_IN", rv)
@@ -499,9 +459,9 @@ func TestCEncapsulateKey_MalformedMechanismParamIsRefused(t *testing.T) {
 	// CKM_RSA_PKCS_OAEP requires a CK_RSA_PKCS_OAEP_PARAMS; a 1-byte
 	// parameter is short for any registered mechanism parameter.
 	shortParam := []byte{0x01}
-	mechBuf := buildCMechanismWithParam(module.CKM_RSA_PKCS_OAEP, shortParam)
+	mechBuf := buildCMechanismWithParam(t, module.CKM_RSA_PKCS_OAEP, shortParam)
 	entries := mlkemSharedSecretEntries()
-	template := buildCAttributeArray(entries)
+	template := buildCAttributeArray(t, entries)
 
 	fn := reflect.ValueOf(C_EncapsulateKey)
 	ft := fn.Type()
@@ -515,10 +475,6 @@ func TestCEncapsulateKey_MalformedMechanismParamIsRefused(t *testing.T) {
 		allocOf(ft, 6),
 		allocOf(ft, 7),
 	})
-	runtime.KeepAlive(mechBuf)
-	runtime.KeepAlive(shortParam)
-	runtime.KeepAlive(template)
-	runtime.KeepAlive(entries)
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_MECHANISM_PARAM_INVALID {
 		t.Fatalf("C_EncapsulateKey(short OAEP params) = %s, want CKR_MECHANISM_PARAM_INVALID", rv)
 	}
@@ -532,7 +488,7 @@ func TestCDecapsulateKey_ArgumentValidation(t *testing.T) {
 	f := newTestFixture(t)
 	_, priv := generateMLKEMKeyPairViaC(t, f.session, module.CKP_ML_KEM_768)
 	entries := mlkemSharedSecretEntries()
-	template := buildCAttributeArray(entries)
+	template := buildCAttributeArray(t, entries)
 
 	t.Run("NULL ciphertext with nonzero length", func(t *testing.T) {
 		mechBuf := buildCMechanism(module.CKM_ML_KEM)
@@ -548,7 +504,6 @@ func TestCDecapsulateKey_ArgumentValidation(t *testing.T) {
 			scalarOf(ft, 6, 16),
 			allocOf(ft, 7),
 		})
-		runtime.KeepAlive(mechBuf)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_ARGUMENTS_BAD {
 			t.Fatalf("C_DecapsulateKey(pCiphertext=NULL, len=16) = %s, want CKR_ARGUMENTS_BAD", rv)
 		}
@@ -556,7 +511,7 @@ func TestCDecapsulateKey_ArgumentValidation(t *testing.T) {
 
 	t.Run("malformed mechanism param", func(t *testing.T) {
 		shortParam := []byte{0x01}
-		mechBuf := buildCMechanismWithParam(module.CKM_RSA_PKCS_OAEP, shortParam)
+		mechBuf := buildCMechanismWithParam(t, module.CKM_RSA_PKCS_OAEP, shortParam)
 		ciphertext := make([]byte, module.MLKEM768CiphertextSize)
 		fn := reflect.ValueOf(C_DecapsulateKey)
 		ft := fn.Type()
@@ -570,14 +525,9 @@ func TestCDecapsulateKey_ArgumentValidation(t *testing.T) {
 			scalarOf(ft, 6, uint64(len(ciphertext))),
 			allocOf(ft, 7),
 		})
-		runtime.KeepAlive(mechBuf)
-		runtime.KeepAlive(shortParam)
 		runtime.KeepAlive(ciphertext)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_MECHANISM_PARAM_INVALID {
 			t.Fatalf("C_DecapsulateKey(short OAEP params) = %s, want CKR_MECHANISM_PARAM_INVALID", rv)
 		}
 	})
-
-	runtime.KeepAlive(template)
-	runtime.KeepAlive(entries)
 }

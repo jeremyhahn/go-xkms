@@ -117,13 +117,11 @@ func TestDigestEncryptUpdate_RoundTrip(t *testing.T) {
 	if rv := startDigestViaC(t, session); rv != module.CKR_OK {
 		t.Fatalf("C_DigestInit = %s, want CKR_OK", rv)
 	}
-	gcmParams := buildGCMParams(gcmRoundTripIV, 96, nil, 128)
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, gcmParams)
+	gcmParams := buildGCMParams(t, gcmRoundTripIV, 96, nil, 128)
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, gcmParams)
 	if rv := encryptInitViaC(t, session, key, mechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_EncryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(gcmParams)
-	runtime.KeepAlive(mechBuf)
 
 	plaintext := []byte("digest-and-encrypt-this-plaintext-together")
 	out, rv := dualUpdateViaC(t, C_DigestEncryptUpdate, session, plaintext)
@@ -151,7 +149,7 @@ func TestDigestEncryptUpdate_RoundTrip(t *testing.T) {
 		t.Fatalf("ciphertext is %d bytes, want %d (plaintext + 16-byte GCM tag)", len(ciphertext), len(plaintext)+16)
 	}
 
-	decryptMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	decryptMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	if rv := decryptInitViaC(t, session, key, decryptMechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_DecryptInit = %s, want CKR_OK", rv)
 	}
@@ -162,7 +160,6 @@ func TestDigestEncryptUpdate_RoundTrip(t *testing.T) {
 	if !bytes.Equal(recovered, plaintext) {
 		t.Fatalf("recovered = %q, want %q", recovered, plaintext)
 	}
-	runtime.KeepAlive(decryptMechBuf)
 }
 
 // startDigestViaC drives C_DigestInit with CKM_SHA256.
@@ -175,7 +172,6 @@ func startDigestViaC(t *testing.T, session module.SessionHandle) module.CK_RV {
 		scalarOf(ft, 0, uint64(session)),
 		cMechanismPtr(mechBuf, ft, 1),
 	})
-	runtime.KeepAlive(mechBuf)
 	return module.CK_RV(out[0].Uint())
 }
 
@@ -189,11 +185,10 @@ func TestDecryptDigestUpdate_RoundTrip(t *testing.T) {
 	plaintext := []byte("decrypt-and-digest-this-ciphertext-together")
 	ciphertext := encryptOnceViaC(t, session, key, gcmRoundTripIV, plaintext)
 
-	decryptMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	decryptMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	if rv := decryptInitViaC(t, session, key, decryptMechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_DecryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(decryptMechBuf)
 	if rv := startDigestViaC(t, session); rv != module.CKR_OK {
 		t.Fatalf("C_DigestInit = %s, want CKR_OK", rv)
 	}
@@ -228,13 +223,11 @@ func TestSignEncryptUpdate_RoundTrip(t *testing.T) {
 	if rv := signInitViaC(t, session, priv, module.CKM_SHA256_RSA_PKCS); rv != module.CKR_OK {
 		t.Fatalf("C_SignInit = %s, want CKR_OK", rv)
 	}
-	gcmParams := buildGCMParams(gcmRoundTripIV, 96, nil, 128)
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, gcmParams)
+	gcmParams := buildGCMParams(t, gcmRoundTripIV, 96, nil, 128)
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, gcmParams)
 	if rv := encryptInitViaC(t, session, key, mechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_EncryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(gcmParams)
-	runtime.KeepAlive(mechBuf)
 
 	plaintext := []byte("sign-and-encrypt-this-plaintext-together")
 	out, rv := dualUpdateViaC(t, C_SignEncryptUpdate, session, plaintext)
@@ -262,7 +255,7 @@ func TestSignEncryptUpdate_RoundTrip(t *testing.T) {
 	if ecrv != module.CKR_OK {
 		t.Fatalf("C_EncryptFinal (collecting the buffered plaintext) = %s, want CKR_OK", ecrv)
 	}
-	decryptMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	decryptMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	if rv := decryptInitViaC(t, session, key, decryptMechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_DecryptInit = %s, want CKR_OK", rv)
 	}
@@ -273,7 +266,6 @@ func TestSignEncryptUpdate_RoundTrip(t *testing.T) {
 	if !bytes.Equal(recovered, plaintext) {
 		t.Fatalf("recovered = %q, want %q", recovered, plaintext)
 	}
-	runtime.KeepAlive(decryptMechBuf)
 }
 
 // TestDecryptVerifyUpdate_RoundTrip proves C_DecryptVerifyUpdate genuinely
@@ -293,11 +285,10 @@ func TestDecryptVerifyUpdate_RoundTrip(t *testing.T) {
 	}
 	signature := signViaC(t, session, plaintext)
 
-	decryptMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	decryptMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	if rv := decryptInitViaC(t, session, key, decryptMechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_DecryptInit = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(decryptMechBuf)
 	if rv := verifyInitViaC(t, session, pub, module.CKM_SHA256_RSA_PKCS); rv != module.CKR_OK {
 		t.Fatalf("C_VerifyInit = %s, want CKR_OK", rv)
 	}

@@ -40,7 +40,6 @@ import (
 	"encoding/binary"
 	"math"
 	"reflect"
-	"runtime"
 	"testing"
 	"unsafe"
 
@@ -57,18 +56,21 @@ func getULong(buf []byte, offset int) uint64 {
 	return binary.LittleEndian.Uint64(buf[offset : offset+8])
 }
 
-// buildCAttribute writes one CK_ATTRIBUTE record into buf[offset:].
-func buildCAttribute(buf []byte, offset int, attrType module.AttributeType, value []byte) {
+// buildCAttribute writes one CK_ATTRIBUTE record into buf[offset:], pinning
+// value's backing storage for the rest of t (see putPtr/pin in
+// exports_mechdecode_test.go) so it survives regardless of how long buf
+// remains in use.
+func buildCAttribute(t testing.TB, buf []byte, offset int, attrType module.AttributeType, value []byte) {
 	putULong(buf, offset, uint64(attrType))
-	putPtr(buf, offset+8, bytePtr(value))
+	putPtr(t, buf, offset+8, bytePtr(value))
 	putULong(buf, offset+16, uint64(len(value)))
 }
 
 // buildCAttributeArray lays out entries as a contiguous CK_ATTRIBUTE array.
-func buildCAttributeArray(entries []module.Attribute) []byte {
+func buildCAttributeArray(t testing.TB, entries []module.Attribute) []byte {
 	buf := newAlignedBuf(cAttributeSize * len(entries))
 	for i, e := range entries {
-		buildCAttribute(buf, cAttributeSize*i, e.Type, e.Value)
+		buildCAttribute(t, buf, cAttributeSize*i, e.Type, e.Value)
 	}
 	return buf
 }
@@ -108,11 +110,9 @@ func readCAttributeArrayLen(n uint64) reflect.Value {
 func TestReadCAttributeArray_WellFormed(t *testing.T) {
 	label := []byte("nested-label")
 	entries := []module.Attribute{{Type: module.CKA_LABEL, Value: label}}
-	buf := buildCAttributeArray(entries)
+	buf := buildCAttributeArray(t, entries)
 
 	out := callCFn(readCAttributeArray, cPtr(unsafe.Pointer(&buf[0]), reflect.ValueOf(readCAttributeArray).Type(), 0), readCAttributeArrayLen(cAttributeSize))
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(label)
 	if !out[1].Bool() {
 		t.Fatal("readCAttributeArray(well-formed) ok = false, want true")
 	}
@@ -127,11 +127,10 @@ func TestReadCAttributeArray_WellFormed(t *testing.T) {
 // ulValueLen it declares -- readCAttributeArray must not read through a NULL
 // pointer just because a nonzero length sits next to it.
 func TestReadCAttributeArray_NilValueElementHasNoValue(t *testing.T) {
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}})
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}})
 	putULong(buf, 16, 32) // ulValueLen says 32 bytes; pValue is still NULL.
 
 	out := callCFn(readCAttributeArray, cPtr(unsafe.Pointer(&buf[0]), reflect.ValueOf(readCAttributeArray).Type(), 0), readCAttributeArrayLen(cAttributeSize))
-	runtime.KeepAlive(buf)
 	if !out[1].Bool() {
 		t.Fatal("readCAttributeArray(NULL pValue) ok = false, want true")
 	}
@@ -147,12 +146,10 @@ func TestReadCAttributeArray_NilValueElementHasNoValue(t *testing.T) {
 // with a non-NULL pValue -- is refused rather than read.
 func TestReadCAttributeArray_UnaddressableElementValueLenIsRefused(t *testing.T) {
 	sentinel := []byte{0}
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL, Value: sentinel}})
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL, Value: sentinel}})
 	putULong(buf, 16, math.MaxUint64) // CK_UNAVAILABLE_INFORMATION.
 
 	out := callCFn(readCAttributeArray, cPtr(unsafe.Pointer(&buf[0]), reflect.ValueOf(readCAttributeArray).Type(), 0), readCAttributeArrayLen(cAttributeSize))
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(sentinel)
 	if out[1].Bool() {
 		t.Error("readCAttributeArray(ulValueLen=CK_UNAVAILABLE_INFORMATION, non-NULL pValue) ok = true, want false")
 	}
@@ -169,14 +166,13 @@ func TestConvertCTemplateToGo_WellFormedSimpleAttributes(t *testing.T) {
 	entries := []module.Attribute{
 		{Type: module.CKA_LABEL, Value: []byte("widget")},
 	}
-	buf := buildCAttributeArray(entries)
+	buf := buildCAttributeArray(t, entries)
 
 	ptr := cAttributePtr(buf, ft, 0)
 	count := reflect.New(ft.In(1)).Elem()
 	count.SetUint(1)
 
 	out := callCFn(convertCTemplateToGo, ptr, count)
-	runtime.KeepAlive(buf)
 	if !out[1].Bool() {
 		t.Fatal("convertCTemplateToGo(well-formed) ok = false, want true")
 	}
@@ -194,7 +190,7 @@ func TestConvertCTemplateToGo_NilValueAttributeIsTypeOnly(t *testing.T) {
 	fn := reflect.ValueOf(convertCTemplateToGo)
 	ft := fn.Type()
 
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}})
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}})
 	putULong(buf, 16, 64) // ulValueLen says 64 bytes; pValue is still NULL.
 
 	ptr := cAttributePtr(buf, ft, 0)
@@ -202,7 +198,6 @@ func TestConvertCTemplateToGo_NilValueAttributeIsTypeOnly(t *testing.T) {
 	count.SetUint(1)
 
 	out := callCFn(convertCTemplateToGo, ptr, count)
-	runtime.KeepAlive(buf)
 	if !out[1].Bool() {
 		t.Fatal("convertCTemplateToGo(NULL pValue) ok = false, want true")
 	}
@@ -223,9 +218,9 @@ func TestConvertCTemplateToGo_NestedArrayAttributeIsFlattened(t *testing.T) {
 	ft := fn.Type()
 
 	inner := []module.Attribute{{Type: module.CKA_LABEL, Value: []byte("inner")}}
-	innerBuf := buildCAttributeArray(inner)
-	outerBuf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_WRAP_TEMPLATE}})
-	putPtr(outerBuf, 8, unsafe.Pointer(&innerBuf[0]))
+	innerBuf := buildCAttributeArray(t, inner)
+	outerBuf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_WRAP_TEMPLATE}})
+	putPtr(t, outerBuf, 8, unsafe.Pointer(&innerBuf[0]))
 	putULong(outerBuf, 16, cAttributeSize)
 
 	ptr := cAttributePtr(outerBuf, ft, 0)
@@ -233,8 +228,6 @@ func TestConvertCTemplateToGo_NestedArrayAttributeIsFlattened(t *testing.T) {
 	count.SetUint(1)
 
 	out := callCFn(convertCTemplateToGo, ptr, count)
-	runtime.KeepAlive(outerBuf)
-	runtime.KeepAlive(innerBuf)
 	if !out[1].Bool() {
 		t.Fatal("convertCTemplateToGo(nested array) ok = false, want true")
 	}
@@ -253,8 +246,8 @@ func TestConvertCTemplateToGo_NestedArrayFailurePropagates(t *testing.T) {
 	ft := fn.Type()
 
 	innerBuf := newAlignedBuf(8) // not a multiple of cAttributeSize.
-	outerBuf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_WRAP_TEMPLATE}})
-	putPtr(outerBuf, 8, unsafe.Pointer(&innerBuf[0]))
+	outerBuf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_WRAP_TEMPLATE}})
+	putPtr(t, outerBuf, 8, unsafe.Pointer(&innerBuf[0]))
 	putULong(outerBuf, 16, 8)
 
 	ptr := cAttributePtr(outerBuf, ft, 0)
@@ -262,8 +255,6 @@ func TestConvertCTemplateToGo_NestedArrayFailurePropagates(t *testing.T) {
 	count.SetUint(1)
 
 	out := callCFn(convertCTemplateToGo, ptr, count)
-	runtime.KeepAlive(outerBuf)
-	runtime.KeepAlive(innerBuf)
 	if out[1].Bool() {
 		t.Error("convertCTemplateToGo(malformed nested array) ok = true, want false")
 	}
@@ -276,7 +267,7 @@ func TestConvertCTemplateToGo_DanglingValueLenIsRefused(t *testing.T) {
 	ft := fn.Type()
 
 	sentinel := []byte{0}
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL, Value: sentinel}})
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL, Value: sentinel}})
 	putULong(buf, 16, math.MaxUint64)
 
 	ptr := cAttributePtr(buf, ft, 0)
@@ -284,8 +275,6 @@ func TestConvertCTemplateToGo_DanglingValueLenIsRefused(t *testing.T) {
 	count.SetUint(1)
 
 	out := callCFn(convertCTemplateToGo, ptr, count)
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(sentinel)
 	if out[1].Bool() {
 		t.Error("convertCTemplateToGo(unaddressable ulValueLen) ok = true, want false")
 	}
@@ -298,14 +287,13 @@ func TestConvertCTemplateToGo_CountOverflowIsRefused(t *testing.T) {
 	fn := reflect.ValueOf(convertCTemplateToGo)
 	ft := fn.Type()
 
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}})
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}})
 
 	ptr := cAttributePtr(buf, ft, 0)
 	count := reflect.New(ft.In(1)).Elem()
 	count.SetUint(uint64(math.MaxInt32) + 1)
 
 	out := callCFn(convertCTemplateToGo, ptr, count)
-	runtime.KeepAlive(buf)
 	if out[1].Bool() {
 		t.Error("convertCTemplateToGo(ulCount > MaxInt32) ok = true, want false")
 	}
@@ -328,15 +316,13 @@ func TestRequestedAttributes_ReadsTypeOnly(t *testing.T) {
 		{Type: module.CKA_LABEL, Value: garbage},
 		{Type: module.CKA_CLASS},
 	}
-	buf := buildCAttributeArray(entries)
+	buf := buildCAttributeArray(t, entries)
 
 	ptr := cAttributePtr(buf, ft, 0)
 	count := reflect.New(ft.In(1)).Elem()
 	count.SetUint(2)
 
 	out := callCFn(requestedAttributes, ptr, count)
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(garbage)
 	if !out[1].Bool() {
 		t.Fatal("requestedAttributes(well-formed) ok = false, want true")
 	}
@@ -364,14 +350,13 @@ func TestRequestedAttributes_CountOverflowIsRefused(t *testing.T) {
 	fn := reflect.ValueOf(requestedAttributes)
 	ft := fn.Type()
 
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}})
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}})
 
 	ptr := cAttributePtr(buf, ft, 0)
 	count := reflect.New(ft.In(1)).Elem()
 	count.SetUint(uint64(math.MaxInt32) + 1)
 
 	out := callCFn(requestedAttributes, ptr, count)
-	runtime.KeepAlive(buf)
 	if out[1].Bool() {
 		t.Error("requestedAttributes(ulCount > MaxInt32) ok = true, want false")
 	}
@@ -387,14 +372,13 @@ func TestCopyGoTemplateToCTemplate_QueryModeReportsLength(t *testing.T) {
 
 	value := []byte("copy-me")
 	attrs := []module.Attribute{{Type: module.CKA_LABEL, Value: value}}
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}}) // pValue NULL: query mode.
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}}) // pValue NULL: query mode.
 
 	ptr := cAttributePtr(buf, ft, 1)
 	count := reflect.New(ft.In(2)).Elem()
 	count.SetUint(1)
 
 	out := callCFn(copyGoTemplateToCTemplate, reflect.ValueOf(attrs), ptr, count)
-	runtime.KeepAlive(buf)
 	if out[0].Bool() {
 		t.Error("copyGoTemplateToCTemplate(query mode) bufferTooSmall = true, want false")
 	}
@@ -410,15 +394,13 @@ func TestCopyGoTemplateToCTemplate_CopiesValueWhenBufferFits(t *testing.T) {
 	value := []byte("copy-me")
 	attrs := []module.Attribute{{Type: module.CKA_LABEL, Value: value}}
 	dest := make([]byte, len(value))
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL, Value: dest}})
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL, Value: dest}})
 
 	ptr := cAttributePtr(buf, ft, 1)
 	count := reflect.New(ft.In(2)).Elem()
 	count.SetUint(1)
 
 	out := callCFn(copyGoTemplateToCTemplate, reflect.ValueOf(attrs), ptr, count)
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(dest)
 	if out[0].Bool() {
 		t.Error("copyGoTemplateToCTemplate(buffer fits) bufferTooSmall = true, want false")
 	}
@@ -440,15 +422,13 @@ func TestCopyGoTemplateToCTemplate_BufferTooSmallSetsUnavailableSentinel(t *test
 	value := []byte("this-value-is-too-long-for-the-buffer")
 	attrs := []module.Attribute{{Type: module.CKA_LABEL, Value: value}}
 	dest := make([]byte, 4) // shorter than value.
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL, Value: dest}})
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL, Value: dest}})
 
 	ptr := cAttributePtr(buf, ft, 1)
 	count := reflect.New(ft.In(2)).Elem()
 	count.SetUint(1)
 
 	out := callCFn(copyGoTemplateToCTemplate, reflect.ValueOf(attrs), ptr, count)
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(dest)
 	if !out[0].Bool() {
 		t.Error("copyGoTemplateToCTemplate(buffer too small) bufferTooSmall = false, want true")
 	}
@@ -467,15 +447,13 @@ func TestCopyGoTemplateToCTemplate_UnavailableAttributeSetsSentinelWithoutCopyin
 
 	attrs := []module.Attribute{{Type: module.CKA_LABEL, Unavailable: true}}
 	dest := make([]byte, 64) // plenty of room; must still be refused.
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL, Value: dest}})
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL, Value: dest}})
 
 	ptr := cAttributePtr(buf, ft, 1)
 	count := reflect.New(ft.In(2)).Elem()
 	count.SetUint(1)
 
 	out := callCFn(copyGoTemplateToCTemplate, reflect.ValueOf(attrs), ptr, count)
-	runtime.KeepAlive(buf)
-	runtime.KeepAlive(dest)
 	if out[0].Bool() {
 		t.Error("copyGoTemplateToCTemplate(Unavailable) bufferTooSmall = true, want false")
 	}
@@ -494,14 +472,13 @@ func TestCopyGoTemplateToCTemplate_NestedArrayDelegatesToWriteCAttributeArray(t 
 
 	inner := []module.Attribute{{Type: module.CKA_LABEL, Value: []byte("inner")}}
 	attrs := []module.Attribute{{Type: module.CKA_WRAP_TEMPLATE, Value: module.EncodeAttributeArray(inner)}}
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_WRAP_TEMPLATE}}) // pValue NULL: query mode.
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_WRAP_TEMPLATE}}) // pValue NULL: query mode.
 
 	ptr := cAttributePtr(buf, ft, 1)
 	count := reflect.New(ft.In(2)).Elem()
 	count.SetUint(1)
 
 	out := callCFn(copyGoTemplateToCTemplate, reflect.ValueOf(attrs), ptr, count)
-	runtime.KeepAlive(buf)
 	if out[0].Bool() {
 		t.Error("copyGoTemplateToCTemplate(nested, query mode) bufferTooSmall = true, want false")
 	}
@@ -526,14 +503,13 @@ func TestCopyGoTemplateToCTemplate_CountOverflowIsANoOp(t *testing.T) {
 	ft := fn.Type()
 
 	attrs := []module.Attribute{{Type: module.CKA_LABEL, Value: []byte("x")}}
-	buf := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}})
+	buf := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}})
 
 	ptr := cAttributePtr(buf, ft, 1)
 	count := reflect.New(ft.In(2)).Elem()
 	count.SetUint(uint64(math.MaxInt32) + 1)
 
 	out := callCFn(copyGoTemplateToCTemplate, reflect.ValueOf(attrs), ptr, count)
-	runtime.KeepAlive(buf)
 	if out[0].Bool() {
 		t.Error("copyGoTemplateToCTemplate(ulCount > MaxInt32) bufferTooSmall = true, want false")
 	}

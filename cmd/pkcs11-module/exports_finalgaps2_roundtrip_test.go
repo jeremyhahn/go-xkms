@@ -146,7 +146,7 @@ func TestCCreateObject_ArgumentAndModuleErrors(t *testing.T) {
 	f := newTestFixture(t)
 
 	t.Run("template count overflow", func(t *testing.T) {
-		template := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}})
+		template := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}})
 		fn := reflect.ValueOf(C_CreateObject)
 		ft := fn.Type()
 		out := fn.Call([]reflect.Value{
@@ -155,7 +155,6 @@ func TestCCreateObject_ArgumentAndModuleErrors(t *testing.T) {
 			scalarOf(ft, 2, uint64(math.MaxInt32)+1),
 			allocOf(ft, 3),
 		})
-		runtime.KeepAlive(template)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_ARGUMENTS_BAD {
 			t.Fatalf("C_CreateObject(ulCount > MaxInt32) = %s, want CKR_ARGUMENTS_BAD", rv)
 		}
@@ -164,7 +163,7 @@ func TestCCreateObject_ArgumentAndModuleErrors(t *testing.T) {
 	t.Run("incomplete template is refused", func(t *testing.T) {
 		// No CKA_CLASS: the object layer cannot tell what kind of object
 		// this is meant to be.
-		template := buildCAttributeArray([]module.Attribute{
+		template := buildCAttributeArray(t, []module.Attribute{
 			module.NewStringAttribute(module.CKA_LABEL, "incomplete"),
 		})
 		fn := reflect.ValueOf(C_CreateObject)
@@ -175,7 +174,6 @@ func TestCCreateObject_ArgumentAndModuleErrors(t *testing.T) {
 			scalarOf(ft, 2, attrCount(template)),
 			allocOf(ft, 3),
 		})
-		runtime.KeepAlive(template)
 		if rv := module.CK_RV(out[0].Uint()); rv == module.CKR_OK {
 			t.Fatal("C_CreateObject(no CKA_CLASS) = CKR_OK, want an error")
 		}
@@ -190,7 +188,7 @@ func TestCGenerateKeyPair_ArgumentAndModuleErrors(t *testing.T) {
 
 	t.Run("malformed mechanism param", func(t *testing.T) {
 		shortParam := []byte{0x01}
-		mechBuf := buildCMechanismWithParam(module.CKM_RSA_PKCS_OAEP, shortParam)
+		mechBuf := buildCMechanismWithParam(t, module.CKM_RSA_PKCS_OAEP, shortParam)
 		fn := reflect.ValueOf(C_GenerateKeyPair)
 		ft := fn.Type()
 		out := fn.Call([]reflect.Value{
@@ -203,8 +201,6 @@ func TestCGenerateKeyPair_ArgumentAndModuleErrors(t *testing.T) {
 			allocOf(ft, 6),
 			allocOf(ft, 7),
 		})
-		runtime.KeepAlive(mechBuf)
-		runtime.KeepAlive(shortParam)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_MECHANISM_PARAM_INVALID {
 			t.Fatalf("C_GenerateKeyPair(short OAEP params) = %s, want CKR_MECHANISM_PARAM_INVALID", rv)
 		}
@@ -225,7 +221,6 @@ func TestCGenerateKeyPair_ArgumentAndModuleErrors(t *testing.T) {
 			allocOf(ft, 6),
 			allocOf(ft, 7),
 		})
-		runtime.KeepAlive(mechBuf)
 		if rv := module.CK_RV(out[0].Uint()); rv == module.CKR_OK {
 			t.Fatal("C_GenerateKeyPair(CKM_AES_KEY_GEN) = CKR_OK, want an error")
 		}
@@ -237,7 +232,7 @@ func TestCGenerateKeyPair_ArgumentAndModuleErrors(t *testing.T) {
 // range.
 func TestCFindObjectsInit_TemplateCountOverflowIsRefused(t *testing.T) {
 	f := newTestFixture(t)
-	template := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}})
+	template := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}})
 
 	fn := reflect.ValueOf(C_FindObjectsInit)
 	ft := fn.Type()
@@ -246,7 +241,6 @@ func TestCFindObjectsInit_TemplateCountOverflowIsRefused(t *testing.T) {
 		cAttributePtr(template, ft, 1),
 		scalarOf(ft, 2, uint64(math.MaxInt32)+1),
 	})
-	runtime.KeepAlive(template)
 	if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_ARGUMENTS_BAD {
 		t.Fatalf("C_FindObjectsInit(ulCount > MaxInt32) = %s, want CKR_ARGUMENTS_BAD", rv)
 	}
@@ -397,7 +391,7 @@ func TestCGenerateKey_ArgumentErrors(t *testing.T) {
 
 	t.Run("malformed mechanism param", func(t *testing.T) {
 		shortParam := []byte{0x01}
-		mechBuf := buildCMechanismWithParam(module.CKM_RSA_PKCS_OAEP, shortParam)
+		mechBuf := buildCMechanismWithParam(t, module.CKM_RSA_PKCS_OAEP, shortParam)
 		fn := reflect.ValueOf(C_GenerateKey)
 		ft := fn.Type()
 		out := fn.Call([]reflect.Value{
@@ -407,8 +401,6 @@ func TestCGenerateKey_ArgumentErrors(t *testing.T) {
 			scalarOf(ft, 3, 0),
 			allocOf(ft, 4),
 		})
-		runtime.KeepAlive(mechBuf)
-		runtime.KeepAlive(shortParam)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_MECHANISM_PARAM_INVALID {
 			t.Fatalf("C_GenerateKey(short OAEP params) = %s, want CKR_MECHANISM_PARAM_INVALID", rv)
 		}
@@ -416,7 +408,7 @@ func TestCGenerateKey_ArgumentErrors(t *testing.T) {
 
 	t.Run("template count overflow", func(t *testing.T) {
 		mechBuf := buildCMechanism(module.CKM_AES_KEY_GEN)
-		template := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}})
+		template := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}})
 		fn := reflect.ValueOf(C_GenerateKey)
 		ft := fn.Type()
 		out := fn.Call([]reflect.Value{
@@ -426,8 +418,6 @@ func TestCGenerateKey_ArgumentErrors(t *testing.T) {
 			scalarOf(ft, 3, uint64(math.MaxInt32)+1),
 			allocOf(ft, 4),
 		})
-		runtime.KeepAlive(mechBuf)
-		runtime.KeepAlive(template)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_ARGUMENTS_BAD {
 			t.Fatalf("C_GenerateKey(ulCount > MaxInt32) = %s, want CKR_ARGUMENTS_BAD", rv)
 		}
@@ -441,7 +431,7 @@ func TestCDeriveKey_ArgumentErrors(t *testing.T) {
 
 	t.Run("malformed mechanism param", func(t *testing.T) {
 		shortParam := []byte{0x01}
-		mechBuf := buildCMechanismWithParam(module.CKM_RSA_PKCS_OAEP, shortParam)
+		mechBuf := buildCMechanismWithParam(t, module.CKM_RSA_PKCS_OAEP, shortParam)
 		fn := reflect.ValueOf(C_DeriveKey)
 		ft := fn.Type()
 		out := fn.Call([]reflect.Value{
@@ -452,8 +442,6 @@ func TestCDeriveKey_ArgumentErrors(t *testing.T) {
 			scalarOf(ft, 4, 0),
 			allocOf(ft, 5),
 		})
-		runtime.KeepAlive(mechBuf)
-		runtime.KeepAlive(shortParam)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_MECHANISM_PARAM_INVALID {
 			t.Fatalf("C_DeriveKey(short OAEP params) = %s, want CKR_MECHANISM_PARAM_INVALID", rv)
 		}
@@ -461,7 +449,7 @@ func TestCDeriveKey_ArgumentErrors(t *testing.T) {
 
 	t.Run("template count overflow", func(t *testing.T) {
 		mechBuf := buildCMechanism(module.CKM_HKDF_DERIVE)
-		template := buildCAttributeArray([]module.Attribute{{Type: module.CKA_LABEL}})
+		template := buildCAttributeArray(t, []module.Attribute{{Type: module.CKA_LABEL}})
 		fn := reflect.ValueOf(C_DeriveKey)
 		ft := fn.Type()
 		out := fn.Call([]reflect.Value{
@@ -472,8 +460,6 @@ func TestCDeriveKey_ArgumentErrors(t *testing.T) {
 			scalarOf(ft, 4, uint64(math.MaxInt32)+1),
 			allocOf(ft, 5),
 		})
-		runtime.KeepAlive(mechBuf)
-		runtime.KeepAlive(template)
 		if rv := module.CK_RV(out[0].Uint()); rv != module.CKR_ARGUMENTS_BAD {
 			t.Fatalf("C_DeriveKey(ulCount > MaxInt32) = %s, want CKR_ARGUMENTS_BAD", rv)
 		}

@@ -156,8 +156,8 @@ func TestStreamingEncryptDecrypt_RoundTrip(t *testing.T) {
 	plaintext := []byte("the first part!the second, longer part.the third and final part")
 	parts := [][]byte{plaintext[:15], plaintext[15:40], plaintext[40:]}
 
-	gcmParams := buildGCMParams(gcmRoundTripIV, 96, nil, 128)
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, gcmParams)
+	gcmParams := buildGCMParams(t, gcmRoundTripIV, 96, nil, 128)
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, gcmParams)
 	if rv := encryptInitViaC(t, session, key, mechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_EncryptInit = %s, want CKR_OK", rv)
 	}
@@ -171,13 +171,11 @@ func TestStreamingEncryptDecrypt_RoundTrip(t *testing.T) {
 	if len(ciphertext) != len(plaintext)+16 {
 		t.Fatalf("ciphertext is %d bytes, want %d (plaintext + 16-byte GCM tag)", len(ciphertext), len(plaintext)+16)
 	}
-	runtime.KeepAlive(gcmParams)
-	runtime.KeepAlive(mechBuf)
 
 	// Decrypt back in a different split to prove the framing does not depend
 	// on the boundaries the caller happened to use on the way in.
 	decryptParts := [][]byte{ciphertext[:20], ciphertext[20:]}
-	decryptMechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, buildGCMParams(gcmRoundTripIV, 96, nil, 128))
+	decryptMechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, buildGCMParams(t, gcmRoundTripIV, 96, nil, 128))
 	if rv := decryptInitViaC(t, session, key, decryptMechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_DecryptInit = %s, want CKR_OK", rv)
 	}
@@ -188,7 +186,6 @@ func TestStreamingEncryptDecrypt_RoundTrip(t *testing.T) {
 	if !bytes.Equal(recovered, plaintext) {
 		t.Fatalf("recovered = %q, want %q", recovered, plaintext)
 	}
-	runtime.KeepAlive(decryptMechBuf)
 }
 
 // TestCEncryptFinal_BufferTooSmall proves C_EncryptFinal's two-call idiom
@@ -199,8 +196,8 @@ func TestCEncryptFinal_BufferTooSmall(t *testing.T) {
 	key := generateAESKeyViaC(t, session, "streaming-buffertoosmall-aes")
 
 	plaintext := []byte("plaintext for the buffer-too-small probe")
-	gcmParams := buildGCMParams(gcmRoundTripIV, 96, nil, 128)
-	mechBuf := buildCMechanismWithParam(module.CKM_AES_GCM, gcmParams)
+	gcmParams := buildGCMParams(t, gcmRoundTripIV, 96, nil, 128)
+	mechBuf := buildCMechanismWithParam(t, module.CKM_AES_GCM, gcmParams)
 	if rv := encryptInitViaC(t, session, key, mechBuf); rv != module.CKR_OK {
 		t.Fatalf("C_EncryptInit = %s, want CKR_OK", rv)
 	}
@@ -222,8 +219,6 @@ func TestCEncryptFinal_BufferTooSmall(t *testing.T) {
 	if rv := module.CK_RV(uout[0].Uint()); rv != module.CKR_OK {
 		t.Fatalf("C_EncryptUpdate = %s, want CKR_OK", rv)
 	}
-	runtime.KeepAlive(gcmParams)
-	runtime.KeepAlive(mechBuf)
 
 	finalFn := reflect.ValueOf(C_EncryptFinal)
 	fft := finalFn.Type()

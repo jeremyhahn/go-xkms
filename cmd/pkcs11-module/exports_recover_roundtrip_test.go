@@ -69,7 +69,6 @@ func signRecoverInitViaC(t *testing.T, session module.SessionHandle, key module.
 		cMechanismPtr(mechBuf, ft, 1),
 		scalarOf(ft, 2, uint64(key)),
 	})
-	runtime.KeepAlive(mechBuf)
 	return module.CK_RV(out[0].Uint())
 }
 
@@ -84,7 +83,6 @@ func verifyRecoverInitViaC(t *testing.T, session module.SessionHandle, key modul
 		cMechanismPtr(mechBuf, ft, 1),
 		scalarOf(ft, 2, uint64(key)),
 	})
-	runtime.KeepAlive(mechBuf)
 	return module.CK_RV(out[0].Uint())
 }
 
