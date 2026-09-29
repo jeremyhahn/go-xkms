@@ -2851,7 +2851,7 @@ integration-test-cli:
 .PHONY: integration-test-cli-local
 ## integration-test-cli-local: Run CLI integration tests locally (runs in devcontainer)
 integration-test-cli-local:
-	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)frost' ./test/integration/api/... -timeout 15m,integration-test-cli-local)
+	$(call run_in_devcontainer,XKMS_FROST_PASSPHRASE=frost-integration-passphrase $(GO) test -v -tags='integration$(comma)frost' ./test/integration/api/... -timeout 15m,integration-test-cli-local)
 
 .PHONY: integration-test-signing
 ## integration-test-signing: Run signing package integration tests (runs in devcontainer)

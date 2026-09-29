@@ -11,6 +11,9 @@ services:
       - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - GO111MODULE=on
       - CGO_ENABLED=0
+      # The xkmsctl frost share verbs encrypt their wrapping key under this
+      # passphrase (go-xkms#1324); the CLI subprocesses inherit it.
+      - XKMS_FROST_PASSPHRASE=frost-integration-passphrase
     volumes:
       - ../../../:/workspace
       - go-modules:/go/pkg/mod

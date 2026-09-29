@@ -142,6 +142,11 @@ type PKCS8BackendConfig = pkcs8.Config
 // types.KeyProvider and types.KeyAgreement.
 var NewPKCS8Backend = pkcs8.NewBackend
 
+// ErrPKCS8KeyDecodingFailed is returned when a stored PKCS#8 key cannot be
+// decoded, including when a password-encrypted key is opened with the wrong
+// password.
+var ErrPKCS8KeyDecodingFailed = pkcs8.ErrKeyDecodingFailed
+
 // ---------------------------------------------------------------------------
 // Symmetric backend (from pkg/backend/symmetric/)
 //
